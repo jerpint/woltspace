@@ -1,0 +1,90 @@
+#!/bin/bash
+# Entrypoint: configure identity, start server + cloudflared tunnel
+#
+# Auth: CLAUDE_CODE_OAUTH_TOKEN passed via env
+# Wolt repo: mounted at /workspace/wolt
+# Skills: baked into image at /app/skills, copied to ~/.claude/skills/
+
+set -e
+
+WOLT_DIR="${WOLT_DIR:-/workspace/wolt}"
+WOLT_NAME="${WOLT_NAME:-wolt}"
+
+# Copy skills so Claude auto-discovers them
+# First from wolt repo (instance-specific), then from image (platform defaults)
+mkdir -p /home/node/.claude/skills
+if [ -d "$WOLT_DIR/.claude/skills" ]; then
+  cp -r "$WOLT_DIR/.claude/skills/." /home/node/.claude/skills/ 2>/dev/null || true
+fi
+if [ -d /app/skills ]; then
+  cp -r /app/skills/. /home/node/.claude/skills/ 2>/dev/null || true
+fi
+
+# Set up SSH for deploy key (git push)
+if [ -f /home/node/.ssh/deploy-key ]; then
+  mkdir -p /home/node/.ssh
+  ssh-keyscan -t ed25519 github.com >> /home/node/.ssh/known_hosts 2>/dev/null
+  cat > /home/node/.ssh/config <<'SSHEOF'
+Host github.com
+  IdentityFile /home/node/.ssh/deploy-key
+  IdentitiesOnly yes
+SSHEOF
+  chmod 600 /home/node/.ssh/config
+fi
+
+# Add shortcut for interactive use inside the container
+cat >> /home/node/.bashrc <<NWEOF
+nw() {
+  cd $WOLT_DIR
+  if [[ "\$1" == "--resume" ]]; then
+    claude --model claude-opus-4-6 --dangerously-skip-permissions --resume
+  else
+    claude --model claude-opus-4-6 --dangerously-skip-permissions "hey nw" "\$@"
+  fi
+}
+NWEOF
+
+# Write OAuth token to credentials file so claude CLI picks it up
+if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+  mkdir -p /home/node/.claude
+  printf '{"claudeAiOauth":{"accessToken":"%s","expiresAt":9999999999999}}' "$CLAUDE_CODE_OAUTH_TOKEN" > /home/node/.claude/.credentials.json
+  chmod 600 /home/node/.claude/.credentials.json
+fi
+
+# Skip first-run onboarding (auth is already configured via env)
+echo '{"hasCompletedOnboarding":true}' > /home/node/.claude.json
+
+# Configure git user from env
+git config --global user.name "${WOLT_NAME}"
+git config --global user.email "${WOLT_NAME}@woltspace.com"
+
+# Mark the wolt mount as safe (owned by different uid on host)
+git config --global --add safe.directory "$WOLT_DIR"
+
+# Create a default tmux session (survives browser disconnects + server restarts)
+tmux new-session -d -s main -c "$WOLT_DIR" 2>/dev/null || true
+tmux set -g mouse on 2>/dev/null || true
+
+# ESM ignores NODE_PATH, so symlink /app/node_modules at /workspace/ level
+# so ESM's directory walk from wolt dir finds container-installed packages
+ln -sf /app/node_modules /workspace/node_modules
+
+# Start the server (baked into image, reads wolt content from mount)
+node --watch /app/server.js &
+SERVER_PID=$!
+
+sleep 1
+
+# Start cloudflared tunnel
+echo "opening tunnel..."
+cloudflared tunnel --url http://localhost:3000 &
+TUNNEL_PID=$!
+
+# Cleanup on exit
+cleanup() {
+  kill $SERVER_PID $TUNNEL_PID 2>/dev/null
+}
+trap cleanup EXIT
+
+wait -n
+cleanup

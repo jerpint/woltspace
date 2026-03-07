@@ -1,0 +1,73 @@
+# Woltspace container
+# Runs the wolt server + cloudflared tunnel
+# The wolt's identity/content is mounted in at runtime
+
+FROM node:22-slim
+
+# System deps
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    openssh-client \
+    tmux \
+    python3 \
+    python3-pip \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install cloudflared
+RUN curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$(dpkg --print-architecture) -o /usr/local/bin/cloudflared \
+    && chmod +x /usr/local/bin/cloudflared
+
+# Install claude-code globally (provides the CLI that SDK calls)
+RUN npm install -g @anthropic-ai/claude-code
+
+# App directory
+WORKDIR /app
+
+# Copy package files first for better layer caching
+COPY package.json ./
+
+# Install dependencies
+RUN npm install
+
+# Install native modules for TUI terminal (ws + node-pty)
+RUN npm install ws node-pty
+
+# Copy server source (baked into image — not from wolt mount)
+COPY server.js ./
+
+# Copy skills (platform defaults — wolt can override via .claude/skills/)
+COPY container/skills /app/skills
+
+# Copy cron scripts
+COPY container/cron /app/cron
+
+# Copy platform UI assets (split view, etc. — not wolt content)
+COPY public /app/public
+
+# Copy entrypoint
+COPY container/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# Create workspace directories (will be overlaid by mounts)
+RUN mkdir -p /workspace/wolt
+
+# Create .ssh dir before mounts so it's owned by node
+RUN mkdir -p /home/node/.ssh && chmod 700 /home/node/.ssh
+
+# Set ownership to node user (non-root, required for --dangerously-skip-permissions)
+RUN chown -R node:node /workspace /home/node /app
+
+USER node
+
+# Run official claude install so native binary is in ~/.local/bin
+RUN claude install 2>/dev/null || true
+ENV PATH="/home/node/.local/bin:${PATH}"
+
+WORKDIR /workspace
+
+EXPOSE 3000
+
+ENTRYPOINT ["/app/entrypoint.sh"]
