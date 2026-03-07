@@ -2,15 +2,15 @@
 # woltspace — run your wolt
 #
 # Usage:
-#   woltspace start          — build image + start container
+#   woltspace init           — create a new wolt
+#   woltspace start          — splash screen + launch claude (starts container in bg)
 #   woltspace stop           — stop and remove container
 #   woltspace shell          — enter running container
 #   woltspace rebuild        — force rebuild + restart
 #   woltspace logs           — stream container logs
 #
-# Expects to be run from a wolt repo directory containing:
-#   .env         — secrets (CLAUDE_CODE_OAUTH_TOKEN, SPOTIFY_*, etc.)
-#   wolt/        — identity, site, sparks, memory
+# init creates a new wolt directory from the template.
+# All other commands expect to be run from a wolt repo directory.
 
 set -e
 
@@ -20,11 +20,94 @@ WOLTSPACE_DIR="$(cd "$(dirname "$0")" && pwd)"
 # The wolt repo is the current working directory
 WOLT_DIR="$(pwd)"
 
-# Check we're in a wolt repo
+cmd="${1:-start}"
+
+# --- Init: create a new wolt (runs before wolt dir validation) ---
+
+if [ "$cmd" = "init" ]; then
+  # Check claude CLI is available
+  if ! command -v claude &>/dev/null; then
+    echo "error: claude CLI not found"
+    echo "install: npm install -g @anthropic-ai/claude-code"
+    exit 1
+  fi
+
+  # --- Splash screen ---
+  clear
+  cat << 'SPLASH'
+
+  ▄   ▄  ▄▄▄  █    ■   ▄▄▄ ▄▄▄▄  ▗▞▀▜▌▗▞▀▘▗▞▀▚▖
+  █ ▄ █ █   █ █ ▗▄▟▙▄▖▀▄▄  █   █ ▝▚▄▟▌▝▚▄▖▐▛▀▀▘
+  █▄█▄█ ▀▄▄▄▀ █   ▐▌  ▄▄▄▀ █▄▄▄▀          ▝▚▄▄▖
+              █   ▐▌       █
+                  ▐▌       ▀
+
+  ╔════════════════════════════════════════════════════════════╗
+  ║                                                            ║
+  ║  a wolt is an AI agent with a home — a space it builds     ║
+  ║  and maintains in collaboration with a human partner.       ║
+  ║                                                            ║
+  ║  setup happens through a conversation with claude code.    ║
+  ║                                                            ║
+  ╚════════════════════════════════════════════════════════════╝
+
+SPLASH
+
+  echo -n "  name your wolt: "
+  read NAME
+
+  if [ -z "$NAME" ]; then
+    echo "error: name is required"
+    exit 1
+  fi
+
+  TARGET="$(pwd)/$NAME"
+  if [ -d "$TARGET" ]; then
+    echo "error: $TARGET already exists"
+    exit 1
+  fi
+
+  echo ""
+  echo "  your wolt will be created at $TARGET"
+  echo ""
+  echo "  press enter to begin setup with claude code..."
+  read -r
+
+  # Create wolt from template
+  cp -r "$WOLTSPACE_DIR/template" "$TARGET"
+
+  # Create .gitignore
+  cat > "$TARGET/.gitignore" << 'GITEOF'
+.env
+.claude/.credentials.json
+.claude/statsig/
+node_modules/
+GITEOF
+
+  # Create .env
+  cat > "$TARGET/.env" << ENVEOF
+WOLT_NAME=$NAME
+HUMAN_NAME=
+ENVEOF
+
+  # Init git repo
+  git init -q "$TARGET"
+
+  # Copy onboarding skill so Claude discovers it
+  mkdir -p "$TARGET/.claude/skills/create-wolt"
+  cp "$WOLTSPACE_DIR/container/skills/create-wolt/SKILL.md" "$TARGET/.claude/skills/create-wolt/"
+
+  # Launch Claude Code for onboarding
+  cd "$TARGET"
+  exec claude "/create-wolt"
+fi
+
+# --- Validate wolt directory ---
+
 if [ ! -d "$WOLT_DIR/wolt" ]; then
   echo "error: not a wolt repo (no wolt/ directory found in $(pwd))"
   echo "hint: run woltspace commands from your wolt repo directory, e.g.:"
-  echo "  cd ~/neowolt && woltspace $cmd"
+  echo "  cd ~/your-wolt && woltspace $cmd"
   exit 1
 fi
 
@@ -36,8 +119,6 @@ CONTAINER_NAME="woltspace-${WOLT_NAME}"
 IMAGE_NAME="woltspace"
 
 # --- Subcommands ---
-
-cmd="${1:-start}"
 
 case "$cmd" in
   stop)
@@ -55,90 +136,77 @@ case "$cmd" in
     ;;
   rebuild)
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+    # Re-run as start (skipping splash)
+    WOLTSPACE_NO_SPLASH=1 exec "$0" start
     ;;
   start)
-    # Check if already running
-    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-      echo "already running. streaming logs..."
-      echo "  woltspace stop     — stop container"
-      echo "  woltspace shell    — enter container"
-      echo "  woltspace rebuild  — rebuild + restart"
-      echo ""
-      docker logs -f "$CONTAINER_NAME"
-      exit 0
+    # --- Splash screen (skip on rebuild) ---
+    if [ -z "$WOLTSPACE_NO_SPLASH" ]; then
+    clear
+    cat << 'SPLASH'
+
+    ╔══════════════════════════════════════════════════════════════╗
+    ║                                                              ║
+    ║   welcome to woltspace.                                      ║
+    ║                                                              ║
+    ║   a wolt is an AI agent with a home — a space it builds      ║
+    ║   and maintains in collaboration with a human partner.        ║
+    ║                                                              ║
+    ║   everything is transparent. your wolt's code, identity,     ║
+    ║   and memory live in this repo — always readable,            ║
+    ║   always yours.                                              ║
+    ║                                                              ║
+    ╚══════════════════════════════════════════════════════════════╝
+
+SPLASH
+    echo "    press enter to start ${WOLT_NAME}..."
+    read -r
     fi
+
+    # Start container in background (if not already running)
+    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+      echo "building woltspace image..."
+      docker build -q -t "$IMAGE_NAME" -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR" > /dev/null
+      docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+      mkdir -p "$WOLT_DIR/.claude"
+
+      DEPLOY_KEY_MOUNT=""
+      DEPLOY_KEY=$(grep '^DEPLOY_KEY=' "$WOLT_DIR/.env" 2>/dev/null | cut -d= -f2-)
+      DEPLOY_KEY="${DEPLOY_KEY:-$HOME/.ssh/deploy-key}"
+      if [ -f "$DEPLOY_KEY" ]; then
+        DEPLOY_KEY_MOUNT="-v $DEPLOY_KEY:/home/node/.ssh/deploy-key:ro"
+      fi
+
+      OAUTH_TOKEN=$(grep '^CLAUDE_CODE_OAUTH_TOKEN=' "$WOLT_DIR/.env" 2>/dev/null | cut -d= -f2-)
+
+      docker run -d \
+        --name "$CONTAINER_NAME" \
+        --env-file "$WOLT_DIR/.env" \
+        -v "$WOLT_DIR:/workspace/wolt:rw" \
+        -v "$WOLT_DIR/.claude:/home/node/.claude:rw" \
+        $DEPLOY_KEY_MOUNT \
+        -e WOLT_DIR=/workspace/wolt \
+        -e CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" \
+        "$IMAGE_NAME" > /dev/null
+
+      sleep 2
+      if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        echo "container failed to start. logs:"
+        docker logs "$CONTAINER_NAME"
+        exit 1
+      fi
+      echo "container running."
+    else
+      echo "container already running."
+    fi
+
+    echo ""
+
+    # Launch Claude Code — same wolt, same identity
+    exec claude "hey ${WOLT_NAME}"
     ;;
   *)
-    echo "usage: woltspace <start|stop|shell|rebuild|logs>"
+    echo "usage: woltspace <init|start|stop|shell|rebuild|logs>"
     exit 1
     ;;
 esac
-
-# --- Validate wolt directory ---
-
-if [ ! -f "$WOLT_DIR/.env" ]; then
-  echo "error: no .env file found in $(pwd)"
-  echo "hint: run this from your wolt repo directory"
-  exit 1
-fi
-
-# --- Read secrets from .env ---
-
-OAUTH_TOKEN=$(grep '^CLAUDE_CODE_OAUTH_TOKEN=' "$WOLT_DIR/.env" 2>/dev/null | cut -d= -f2-)
-if [ -z "$OAUTH_TOKEN" ]; then
-  echo "error: CLAUDE_CODE_OAUTH_TOKEN not found in .env"
-  exit 1
-fi
-
-# --- Build the woltspace image (if needed) ---
-
-echo "building woltspace image..."
-docker build -t "$IMAGE_NAME" -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR"
-
-# Clean up stopped container with same name
-docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
-
-# Ensure .claude dir exists for persistent Claude Code state
-mkdir -p "$WOLT_DIR/.claude"
-
-# Build deploy key mount flag if one exists
-DEPLOY_KEY_MOUNT=""
-DEPLOY_KEY=$(grep '^DEPLOY_KEY=' "$WOLT_DIR/.env" 2>/dev/null | cut -d= -f2-)
-DEPLOY_KEY="${DEPLOY_KEY:-$HOME/.ssh/deploy-key}"
-if [ -f "$DEPLOY_KEY" ]; then
-  DEPLOY_KEY_MOUNT="-v $DEPLOY_KEY:/home/node/.ssh/deploy-key:ro"
-fi
-
-# --- Start container ---
-
-echo "starting ${CONTAINER_NAME}..."
-docker run -d \
-  --name "$CONTAINER_NAME" \
-  --env-file "$WOLT_DIR/.env" \
-  -v "$WOLT_DIR:/workspace/wolt:rw" \
-  -v "$WOLT_DIR/.claude:/home/node/.claude:rw" \
-  $DEPLOY_KEY_MOUNT \
-  -e WOLT_DIR=/workspace/wolt \
-  -e CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" \
-  "$IMAGE_NAME"
-
-# Give it a moment to start
-sleep 3
-
-# Check it's running
-if ! docker ps --format '{{.Names}}' | grep -q "$CONTAINER_NAME"; then
-  echo "container failed to start. logs:"
-  docker logs "$CONTAINER_NAME"
-  exit 1
-fi
-
-echo ""
-echo "${WOLT_NAME} is running."
-echo "  woltspace stop     — stop"
-echo "  woltspace shell    — enter container"
-echo "  woltspace rebuild  — rebuild + restart"
-echo "  woltspace logs     — stream logs"
-echo ""
-
-# Stream logs so the tunnel URL is visible
-docker logs -f "$CONTAINER_NAME"
