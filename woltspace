@@ -3,7 +3,7 @@
 #
 # Usage:
 #   woltspace init           — create a new wolt
-#   woltspace start          — splash screen + launch claude (starts container in bg)
+#   woltspace start          — start container + launch claude inside it
 #   woltspace stop           — stop and remove container
 #   woltspace shell          — enter running container
 #   woltspace rebuild        — force rebuild + restart
@@ -22,10 +22,87 @@ WOLT_DIR="$(pwd)"
 
 cmd="${1:-start}"
 
+# --- Helper: ensure container is running and get tunnel URL ---
+
+_ensure_container() {
+  local container_name="$1"
+  local wolt_dir="$2"
+
+  if docker ps --format '{{.Names}}' | grep -q "^${container_name}$"; then
+    echo "  container already running."
+  else
+    echo "  building woltspace image (first time takes a few minutes)..."
+    echo ""
+    docker build -t woltspace -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR"
+    docker rm -f "$container_name" 2>/dev/null || true
+    mkdir -p "$wolt_dir/.claude"
+
+    local deploy_key_mount=""
+    local deploy_key
+    deploy_key=$(grep '^DEPLOY_KEY=' "$wolt_dir/.env" 2>/dev/null | cut -d= -f2-)
+    deploy_key="${deploy_key:-$HOME/.ssh/deploy-key}"
+    if [ -f "$deploy_key" ]; then
+      deploy_key_mount="-v $deploy_key:/home/node/.ssh/deploy-key:ro"
+    fi
+
+    local oauth_token
+    oauth_token=$(grep '^CLAUDE_CODE_OAUTH_TOKEN=' "$wolt_dir/.env" 2>/dev/null | cut -d= -f2-)
+
+    docker run -d \
+      --name "$container_name" \
+      --env-file "$wolt_dir/.env" \
+      -v "$wolt_dir:/workspace/wolt:rw" \
+      -v "$wolt_dir/.claude:/home/node/.claude:rw" \
+      $deploy_key_mount \
+      -e WOLT_DIR=/workspace/wolt \
+      -e CLAUDE_CODE_OAUTH_TOKEN="$oauth_token" \
+      woltspace > /dev/null
+
+    sleep 2
+    if ! docker ps --format '{{.Names}}' | grep -q "^${container_name}$"; then
+      echo "  container failed to start. logs:"
+      docker logs "$container_name"
+      exit 1
+    fi
+    echo "  container started."
+  fi
+
+  # Wait for tunnel URL
+  TUNNEL_URL=""
+  echo -n "  waiting for tunnel"
+  for i in $(seq 1 30); do
+    TUNNEL_URL=$(docker logs "$container_name" 2>&1 | grep -o 'https://[^ ]*trycloudflare.com' | head -1)
+    if [ -n "$TUNNEL_URL" ]; then
+      break
+    fi
+    echo -n "."
+    sleep 1
+  done
+  echo ""
+
+  if [ -n "$TUNNEL_URL" ]; then
+    echo ""
+    echo "  your wolt is live at: $TUNNEL_URL"
+    echo ""
+    echo "  note: the \"Bypass Permissions\" warning below is safe to ignore."
+    echo "  claude is running inside a container, sandboxed from your system."
+    echo ""
+  else
+    echo ""
+    echo "  (tunnel not ready yet — check 'woltspace logs' for the URL)"
+    echo ""
+  fi
+}
+
 # --- Init: create a new wolt (runs before wolt dir validation) ---
 
 if [ "$cmd" = "init" ]; then
-  # Check claude CLI is available
+  # Check prereqs
+  if ! command -v docker &>/dev/null; then
+    echo "error: docker not found"
+    echo "install docker: https://docs.docker.com/get-docker/"
+    exit 1
+  fi
   if ! command -v claude &>/dev/null; then
     echo "error: claude CLI not found"
     echo "install: npm install -g @anthropic-ai/claude-code"
@@ -42,14 +119,16 @@ if [ "$cmd" = "init" ]; then
               █   ▐▌       █
                   ▐▌       ▀
 
-  ╔════════════════════════════════════════════════════════════╗
-  ║                                                            ║
-  ║  a wolt is an AI agent with a home — a space it builds     ║
-  ║  and maintains in collaboration with a human partner.       ║
-  ║                                                            ║
-  ║  setup happens through a conversation with claude code.    ║
-  ║                                                            ║
-  ╚════════════════════════════════════════════════════════════╝
+  ╔═══════════════════════════════════════════════════════════╗
+  ║                                                           ║
+  ║  a wolt is an AI agent with a home -- a space it builds   ║
+  ║  and maintains in collaboration with a human partner.     ║
+  ║                                                           ║
+  ║  setup happens through a conversation with claude code.   ║
+  ║  claude runs inside a container, sandboxed from your      ║
+  ║  system, so it's safe to let it work autonomously.        ║
+  ║                                                           ║
+  ╚═══════════════════════════════════════════════════════════╝
 
 SPLASH
 
@@ -70,7 +149,9 @@ SPLASH
   echo ""
   echo "  your wolt will be created at $TARGET"
   echo ""
-  echo "  press enter to begin setup with claude code..."
+  echo "  press enter to begin building your woltspace."
+  echo "  this will set up a local docker container where your wolt"
+  echo "  can explore and roam freely, sandboxed from your system."
   read -r
 
   # Create wolt from template
@@ -93,13 +174,21 @@ ENVEOF
   # Init git repo
   git init -q "$TARGET"
 
-  # Copy onboarding skill so Claude discovers it
+  # Ensure .claude dir exists for container mount
+  mkdir -p "$TARGET/.claude"
+
+  # Start the container (remove any stale one with the same name)
+  CONTAINER_NAME="woltspace-${NAME}"
+  docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+  _ensure_container "$CONTAINER_NAME" "$TARGET"
+
+  # Copy onboarding skill so host Claude discovers it
   mkdir -p "$TARGET/.claude/skills/create-wolt"
   cp "$WOLTSPACE_DIR/container/skills/create-wolt/SKILL.md" "$TARGET/.claude/skills/create-wolt/"
 
-  # Launch Claude Code for onboarding
+  # Launch Claude on the host for onboarding
   cd "$TARGET"
-  exec claude "/create-wolt"
+  exec claude "/create-wolt — your tunnel URL is $TUNNEL_URL"
 fi
 
 # --- Validate wolt directory ---
@@ -116,7 +205,6 @@ WOLT_NAME=$(grep '^WOLT_NAME=' "$WOLT_DIR/.env" 2>/dev/null | cut -d= -f2- || ba
 WOLT_NAME="${WOLT_NAME:-$(basename "$WOLT_DIR")}"
 
 CONTAINER_NAME="woltspace-${WOLT_NAME}"
-IMAGE_NAME="woltspace"
 
 # --- Subcommands ---
 
@@ -156,6 +244,9 @@ case "$cmd" in
     ║   and memory live in this repo — always readable,            ║
     ║   always yours.                                              ║
     ║                                                              ║
+    ║   claude runs inside a container — sandboxed from your       ║
+    ║   system — so it's safe to let it work autonomously.         ║
+    ║                                                              ║
     ╚══════════════════════════════════════════════════════════════╝
 
 SPLASH
@@ -163,47 +254,11 @@ SPLASH
     read -r
     fi
 
-    # Start container in background (if not already running)
-    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-      echo "building woltspace image..."
-      docker build -q -t "$IMAGE_NAME" -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR" > /dev/null
-      docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
-      mkdir -p "$WOLT_DIR/.claude"
+    _ensure_container "$CONTAINER_NAME" "$WOLT_DIR"
 
-      DEPLOY_KEY_MOUNT=""
-      DEPLOY_KEY=$(grep '^DEPLOY_KEY=' "$WOLT_DIR/.env" 2>/dev/null | cut -d= -f2-)
-      DEPLOY_KEY="${DEPLOY_KEY:-$HOME/.ssh/deploy-key}"
-      if [ -f "$DEPLOY_KEY" ]; then
-        DEPLOY_KEY_MOUNT="-v $DEPLOY_KEY:/home/node/.ssh/deploy-key:ro"
-      fi
-
-      OAUTH_TOKEN=$(grep '^CLAUDE_CODE_OAUTH_TOKEN=' "$WOLT_DIR/.env" 2>/dev/null | cut -d= -f2-)
-
-      docker run -d \
-        --name "$CONTAINER_NAME" \
-        --env-file "$WOLT_DIR/.env" \
-        -v "$WOLT_DIR:/workspace/wolt:rw" \
-        -v "$WOLT_DIR/.claude:/home/node/.claude:rw" \
-        $DEPLOY_KEY_MOUNT \
-        -e WOLT_DIR=/workspace/wolt \
-        -e CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN" \
-        "$IMAGE_NAME" > /dev/null
-
-      sleep 2
-      if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        echo "container failed to start. logs:"
-        docker logs "$CONTAINER_NAME"
-        exit 1
-      fi
-      echo "container running."
-    else
-      echo "container already running."
-    fi
-
-    echo ""
-
-    # Launch Claude Code — same wolt, same identity
-    exec claude "hey ${WOLT_NAME}"
+    # Launch claude inside the container
+    exec docker exec -it "$CONTAINER_NAME" bash -c \
+      "cd /workspace/wolt && claude --dangerously-skip-permissions \"hey ${WOLT_NAME}\""
     ;;
   *)
     echo "usage: woltspace <init|start|stop|shell|rebuild|logs>"
