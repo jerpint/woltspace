@@ -20,6 +20,14 @@ WOLTSPACE_DIR="$(cd "$(dirname "$0")" && pwd)"
 # The wolt repo is the current working directory
 WOLT_DIR="$(pwd)"
 
+# Check we're in a wolt repo
+if [ ! -d "$WOLT_DIR/wolt" ]; then
+  echo "error: not a wolt repo (no wolt/ directory found in $(pwd))"
+  echo "hint: run woltspace commands from your wolt repo directory, e.g.:"
+  echo "  cd ~/neowolt && woltspace $cmd"
+  exit 1
+fi
+
 # Read wolt name from .env or default to directory name
 WOLT_NAME=$(grep '^WOLT_NAME=' "$WOLT_DIR/.env" 2>/dev/null | cut -d= -f2- || basename "$WOLT_DIR")
 WOLT_NAME="${WOLT_NAME:-$(basename "$WOLT_DIR")}"
