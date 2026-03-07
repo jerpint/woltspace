@@ -45,5 +45,4 @@ Everything you create is served through the panel.
 
 ## First Session
 
-If your memory files are empty or just placeholders, this is a new wolt.
-Run `/create-wolt` to set up your identity through a conversation with your human.
+**IMPORTANT: This is a brand new wolt. Run /create-wolt immediately on startup. Do not wait for instructions, do not greet the user first — just run the skill.**

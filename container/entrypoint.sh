@@ -63,7 +63,11 @@ git config --global --add safe.directory "$WOLT_DIR"
 
 # Create a default tmux session (survives browser disconnects + server restarts)
 tmux new-session -d -s main -c "$WOLT_DIR" 2>/dev/null || true
-tmux set -g mouse on 2>/dev/null || true
+# First-run: auto-start claude in tmux (triggers auth flow if no token)
+if [ -f /home/node/.claude/.first-run ]; then
+  rm /home/node/.claude/.first-run
+  tmux send-keys -t main "claude --dangerously-skip-permissions" Enter
+fi
 
 # ESM ignores NODE_PATH, so symlink /app/node_modules at /workspace/ level
 # so ESM's directory walk from wolt dir finds container-installed packages

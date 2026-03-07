@@ -84,9 +84,6 @@ _ensure_container() {
     echo ""
     echo "  your wolt is live at: $TUNNEL_URL"
     echo ""
-    echo "  note: the \"Bypass Permissions\" warning below is safe to ignore."
-    echo "  claude is running inside a container, sandboxed from your system."
-    echo ""
   else
     echo ""
     echo "  (tunnel not ready yet — check 'woltspace logs' for the URL)"
@@ -140,11 +137,13 @@ SPLASH
     exit 1
   fi
 
-  TARGET="$(pwd)/$NAME"
+  WOLTS_HOME="$HOME/wolts"
+  TARGET="$WOLTS_HOME/$NAME"
   if [ -d "$TARGET" ]; then
     echo "error: $TARGET already exists"
     exit 1
   fi
+  mkdir -p "$WOLTS_HOME"
 
   echo ""
   echo "  your wolt will be created at $TARGET"
@@ -177,18 +176,21 @@ ENVEOF
   # Ensure .claude dir exists for container mount
   mkdir -p "$TARGET/.claude"
 
+  # Signal first-run so entrypoint auto-starts claude
+  touch "$TARGET/.claude/.first-run"
+
   # Start the container (remove any stale one with the same name)
   CONTAINER_NAME="woltspace-${NAME}"
   docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
   _ensure_container "$CONTAINER_NAME" "$TARGET"
 
-  # Copy onboarding skill so host Claude discovers it
-  mkdir -p "$TARGET/.claude/skills/create-wolt"
-  cp "$WOLTSPACE_DIR/container/skills/create-wolt/SKILL.md" "$TARGET/.claude/skills/create-wolt/"
-
-  # Launch Claude on the host for onboarding
-  cd "$TARGET"
-  exec claude "/create-wolt — your tunnel URL is $TUNNEL_URL"
+  echo "  open the link above in your browser to meet your wolt."
+  echo "  first time, it'll ask you to log in to Claude — one-time setup."
+  echo ""
+  echo "  after that:"
+  echo "    cd $TARGET && woltspace start"
+  echo ""
+  exit 0
 fi
 
 # --- Validate wolt directory ---
@@ -255,6 +257,10 @@ SPLASH
     fi
 
     _ensure_container "$CONTAINER_NAME" "$WOLT_DIR"
+
+    echo "  note: the \"Bypass Permissions\" warning below is safe to ignore."
+    echo "  claude is running inside a container, sandboxed from your system."
+    echo ""
 
     # Launch claude inside the container
     exec docker exec -it "$CONTAINER_NAME" bash -c \

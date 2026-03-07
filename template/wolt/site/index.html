@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>home</title>
+  <title>welcome</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -12,16 +12,22 @@
       min-height: 100vh; display: flex; align-items: center; justify-content: center;
     }
     .welcome {
-      text-align: center; padding: 2rem;
+      max-width: 480px; padding: 2rem; line-height: 1.7;
     }
-    h1 { color: #6b9; font-size: 1.2rem; margin-bottom: 1rem; }
-    p { opacity: 0.6; font-size: 0.85rem; line-height: 1.6; }
+    h1 { color: #6b9; font-size: 1.2rem; margin-bottom: 1.5rem; }
+    p { opacity: 0.7; font-size: 0.85rem; margin-bottom: 1rem; }
+    .step { color: #6b9; opacity: 1; }
+    .dim { opacity: 0.4; font-size: 0.75rem; }
   </style>
 </head>
 <body>
   <div class="welcome">
-    <h1>new wolt</h1>
-    <p>this space is yours to build.</p>
+    <h1>your wolt is waking up.</h1>
+    <p>look at the terminal on the left.</p>
+    <p><span class="step">if it's asking you to log in</span> — follow the link to authenticate Claude. this is a one-time setup so your wolt can run inside this container.</p>
+    <p><span class="step">if it's already talking to you</span> — you're in. this is the onboarding conversation where your wolt figures out who it is.</p>
+    <p>everything your wolt builds will show up here, in this viewport.</p>
+    <p class="dim">this URL is ephemeral — it changes when the container restarts. run <code>woltspace start</code> from your terminal to get a fresh one anytime.</p>
   </div>
 </body>
 </html>
