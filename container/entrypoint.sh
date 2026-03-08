@@ -11,13 +11,13 @@ WOLT_DIR="${WOLT_DIR:-/workspace/wolt}"
 WOLT_NAME="${WOLT_NAME:-wolt}"
 
 # Copy skills so Claude auto-discovers them
-# First from wolt repo (instance-specific), then from image (platform defaults)
+# Platform defaults first, then wolt-specific overrides win
 mkdir -p /home/node/.claude/skills
-if [ -d "$WOLT_DIR/.claude/skills" ]; then
-  cp -r "$WOLT_DIR/.claude/skills/." /home/node/.claude/skills/ 2>/dev/null || true
-fi
 if [ -d /app/skills ]; then
   cp -r /app/skills/. /home/node/.claude/skills/ 2>/dev/null || true
+fi
+if [ -d "$WOLT_DIR/.claude/skills" ]; then
+  cp -r "$WOLT_DIR/.claude/skills/." /home/node/.claude/skills/ 2>/dev/null || true
 fi
 
 # Set up SSH for deploy key (git push)

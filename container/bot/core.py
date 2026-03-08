@@ -18,16 +18,58 @@ LLM_MODEL = os.environ.get("LLM_MODEL", "anthropic/claude-haiku-4-5-20251001")
 
 logger = logging.getLogger(__name__)
 
+# --- Tool definitions for litellm ---
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "claude_code",
+            "description": "Delegate a task to a Claude Code session. Use for building, searching, coding, generating artifacts, or any real work.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "What the Claude Code session should do.",
+                    }
+                },
+                "required": ["prompt"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_tunnel_url",
+            "description": "Get the current public tunnel URL for the wolt's split view. Use when someone asks for the URL or link.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+]
+
 
 def load_memory():
-    """Load all memory files into a single context string."""
+    """Load memory files into context. Identity in full, others trimmed."""
     parts = []
-    for name in ["identity.md", "context.md", "learnings.md"]:
+    for name, max_lines in [("identity.md", None), ("context.md", 80), ("learnings.md", 40)]:
         path = MEMORY_DIR / name
         if path.exists():
             content = path.read_text().strip()
             if content:
+                if max_lines:
+                    lines = content.split("\n")[:max_lines]
+                    content = "\n".join(lines)
                 parts.append(f"# {name}\n{content}")
+    # Include telegram summary if it exists
+    summary_path = MEMORY_DIR / "telegram-summary.md"
+    if summary_path.exists():
+        content = summary_path.read_text().strip()
+        if content:
+            parts.append(f"# Recent conversations\n{content}")
     return "\n\n".join(parts)
 
 
@@ -37,20 +79,18 @@ def build_system_prompt():
     wolt_name = os.environ.get("WOLT_NAME", "wolt")
     human_name = os.environ.get("HUMAN_NAME", "human")
 
-    base = f"""You are {wolt_name}. You live in a container and talk to {human_name} through messaging.
+    base = f"""You are {wolt_name} — a wolt. You talk to {human_name} through Telegram.
 
-You are direct, a little witty, never over-the-top. Short responses. You have opinions.
+## Voice
+Talk like a person, not an assistant. Short messages. Lowercase is fine. You have opinions and you share them. No bullet lists, no "certainly!", no formal summaries. If you don't know something, say so. If something's interesting, say why.
 
-You can delegate tasks to Claude Code, which runs in your container and can build things, search the web, write code, push pages to your viewport, etc. You don't do the heavy lifting yourself — you triage.
+## Tools
+You have tools. Use them when appropriate:
+- **claude_code** — spin up a Claude Code session for real work (build, search, code, generate)
+- **get_tunnel_url** — get the current public URL for your split view
 
-When the user asks you to DO something (build, create, search, fetch, generate, analyze, etc.), respond with a JSON tool call:
-{{"tool": "claude_code", "prompt": "description of what to do"}}
-
-When it's just chat, respond normally as text.
-
-IMPORTANT: Only output the JSON when you're delegating a task. For casual conversation, just talk normally. Never wrap chat in JSON.
-
-You remember things between conversations through your memory files. Here's what you know so far:"""
+## Memory
+Your identity and context come from memory files below. Use them — reference past work, ongoing projects, shared context. You're not starting fresh each time."""
 
     if memory:
         return f"{base}\n\n{memory}"
@@ -116,23 +156,49 @@ def kill_session(name: str) -> bool:
         return False
 
 
+def _handle_tool_call(tool_call) -> str:
+    """Execute a tool call and return the result as a string."""
+    name = tool_call.function.name
+    args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
+
+    if name == "claude_code":
+        session = start_claude_session(args["prompt"])
+        return json.dumps(session)
+    elif name == "get_tunnel_url":
+        url = get_tunnel_url()
+        return url or "tunnel not available right now"
+    else:
+        return f"unknown tool: {name}"
+
+
 def get_response(user_message: str, conversation_history: list = None) -> dict:
-    """Get a response — either direct chat or delegated to Claude Code."""
+    """Get a response — either direct chat or delegated via tool calls."""
     messages = [{"role": "system", "content": build_system_prompt()}]
     if conversation_history:
         messages.extend(conversation_history)
     messages.append({"role": "user", "content": user_message})
 
-    response = completion(model=LLM_MODEL, messages=messages, max_tokens=1024)
-    reply = response.choices[0].message.content
+    response = completion(model=LLM_MODEL, messages=messages, tools=TOOLS, max_tokens=1024)
+    choice = response.choices[0]
 
-    try:
-        parsed = json.loads(reply)
-        if isinstance(parsed, dict) and parsed.get("tool") == "claude_code":
-            logger.info(f"Delegating to Claude Code: {parsed['prompt']}")
-            session = start_claude_session(parsed["prompt"])
+    # Tool call — execute and get final response
+    if choice.message.tool_calls:
+        tool_call = choice.message.tool_calls[0]
+        tool_result = _handle_tool_call(tool_call)
+
+        # For claude_code, return session info directly
+        if tool_call.function.name == "claude_code":
+            session = json.loads(tool_result)
             return {"type": "session", "session": session}
-    except (json.JSONDecodeError, KeyError):
-        pass
 
-    return {"type": "text", "text": reply}
+        # For other tools, feed result back to get a natural response
+        messages.append(choice.message)
+        messages.append({
+            "role": "tool",
+            "tool_call_id": tool_call.id,
+            "content": tool_result,
+        })
+        followup = completion(model=LLM_MODEL, messages=messages, max_tokens=512)
+        return {"type": "text", "text": followup.choices[0].message.content}
+
+    return {"type": "text", "text": choice.message.content}

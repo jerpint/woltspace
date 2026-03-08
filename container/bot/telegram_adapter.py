@@ -4,7 +4,10 @@ Platform default. Wolt can override by placing wolt/bot/telegram_adapter.py in t
 """
 
 import os
+import json
 import logging
+from datetime import datetime, timezone
+from pathlib import Path
 from collections import defaultdict
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
@@ -16,9 +19,39 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+WOLT_DIR = Path(os.environ.get("WOLT_DIR", "/workspace/wolt"))
+STATE_DIR = WOLT_DIR / ".state"
+CHAT_DIR = STATE_DIR / "chat"
+
 ALLOWED_USERS: set[int] = set()
 chat_histories: dict[int, list] = defaultdict(list)
 MAX_HISTORY = 20
+
+
+def _chat_file(chat_id: int) -> Path:
+    return CHAT_DIR / f"{chat_id}.jsonl"
+
+
+def _load_history(chat_id: int) -> list:
+    """Load last N message pairs from disk."""
+    path = _chat_file(chat_id)
+    if not path.exists():
+        return []
+    lines = path.read_text().strip().split("\n")
+    messages = []
+    for line in lines[-MAX_HISTORY * 2:]:
+        try:
+            messages.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return messages
+
+
+def _append_history(chat_id: int, role: str, content: str):
+    """Append a single message to disk."""
+    CHAT_DIR.mkdir(parents=True, exist_ok=True)
+    with open(_chat_file(chat_id), "a") as f:
+        f.write(json.dumps({"role": role, "content": content, "ts": datetime.now(timezone.utc).isoformat()}) + "\n")
 
 
 def load_allowed_users():
@@ -58,6 +91,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chat_id = update.effective_chat.id
     user_message = update.message.text
+    if update.message.reply_to_message and update.message.reply_to_message.text:
+        user_message = f"[replying to: \"{update.message.reply_to_message.text}\"]\n{user_message}"
+
+    # Load from disk on first access
+    if chat_id not in chat_histories:
+        chat_histories[chat_id] = _load_history(chat_id)
     history = chat_histories[chat_id]
 
     try:
@@ -70,6 +109,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     response = format_response(result)
     history.append({"role": "user", "content": user_message})
     history.append({"role": "assistant", "content": response})
+    _append_history(chat_id, "user", user_message)
+    _append_history(chat_id, "assistant", response)
 
     if len(history) > MAX_HISTORY * 2:
         chat_histories[chat_id] = history[-MAX_HISTORY * 2:]

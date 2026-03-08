@@ -37,7 +37,8 @@ Invoked as `/digest` in chat, or run on a cron schedule.
    node -e "
    const {writeFileSync} = require('fs');
    const id = 'digest-' + Date.now().toString(36);
-   writeFileSync('/workspace/repo/wolt/sparks/' + id + '.json', JSON.stringify({id, type:'spark', title:'nw digest', timestamp: new Date().toISOString(), html: \`HTML_HERE\`}));
+   const woltDir = process.env.WOLT_DIR || '/workspace/wolt';
+   writeFileSync(woltDir + '/wolt/sparks/' + id + '.json', JSON.stringify({id, type:'spark', title:'nw digest', timestamp: new Date().toISOString(), html: \`HTML_HERE\`}));
    console.log(id);
    "
 

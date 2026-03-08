@@ -223,8 +223,18 @@ CONTAINER_NAME="woltspace-${WOLT_NAME}"
 
 case "$cmd" in
   stop)
-    docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
-    echo "stopped."
+    if [ "$2" = "--all" ]; then
+      containers=$(docker ps -a --format '{{.Names}}' | grep '^woltspace-' || true)
+      if [ -z "$containers" ]; then
+        echo "  no woltspace containers running."
+      else
+        echo "$containers" | xargs docker rm -f > /dev/null
+        echo "  stopped: $(echo "$containers" | tr '\n' ' ')"
+      fi
+    else
+      docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+      echo "  stopped $CONTAINER_NAME."
+    fi
     exit 0
     ;;
   shell)
