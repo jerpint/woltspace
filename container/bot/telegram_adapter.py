@@ -6,6 +6,7 @@ Platform default. Wolt can override by placing wolt/bot/telegram_adapter.py in t
 import os
 import json
 import logging
+import asyncio
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -90,8 +91,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Blocked user_id={user_id}")
         return
 
+    # In group chats, only respond when @mentioned by bot username
+    chat_type = update.effective_chat.type
+    if chat_type in ("group", "supergroup"):
+        bot_username = context.bot.username
+        text = update.message.text or ""
+        if f"@{bot_username}" not in text:
+            return
+        # Strip the @mention from the message
+        text = text.replace(f"@{bot_username}", "").strip()
+    else:
+        text = update.message.text
+
     chat_id = update.effective_chat.id
-    user_message = update.message.text
+    user_message = text
     if update.message.reply_to_message and update.message.reply_to_message.text:
         user_message = f"[replying to: \"{update.message.reply_to_message.text}\"]\n{user_message}"
 
@@ -238,6 +251,41 @@ async def handle_wolt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"No wolt named '{name}' found.")
 
 
+RESULTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts")) / ".state" / "task-results"
+_notified_sessions: set[str] = set()
+
+
+async def _watch_task_results(app):
+    """Background task: watch for completed sessions and notify via Telegram."""
+    allowed = os.environ.get("TELEGRAM_ALLOWED_USERS", "").split(",")
+    chat_id = int(allowed[0].strip()) if allowed and allowed[0].strip().isdigit() else None
+    if not chat_id:
+        return
+
+    while True:
+        await asyncio.sleep(10)
+        if not RESULTS_DIR.exists():
+            continue
+        for f in RESULTS_DIR.glob("*.json"):
+            if f.stem in _notified_sessions:
+                continue
+            try:
+                data = json.loads(f.read_text())
+                session = data.get("session", f.stem)
+                output = data.get("output", "")
+                # Trim output for telegram
+                if len(output) > 2000:
+                    output = output[-2000:]
+                tunnel_url = data.get("url", "")
+                msg = f"session {session} finished.\n\n{output}"
+                if tunnel_url:
+                    msg += f"\n\n{tunnel_url}"
+                await app.bot.send_message(chat_id=chat_id, text=msg)
+                _notified_sessions.add(f.stem)
+            except Exception as e:
+                logger.error(f"Error reading task result {f}: {e}")
+
+
 def run():
     """Start the Telegram bot."""
     load_allowed_users()
@@ -250,6 +298,9 @@ def run():
     app.add_handler(CommandHandler("wolt", handle_wolt))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
+
+    # Start background watcher for task completions
+    app.job_queue.run_once(lambda ctx: asyncio.ensure_future(_watch_task_results(app)), when=5)
 
     wolt_name = os.environ.get("WOLT_NAME", "wolt")
     logger.info(f"{wolt_name} telegram bot starting...")

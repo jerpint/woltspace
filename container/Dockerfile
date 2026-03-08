@@ -51,6 +51,9 @@ COPY container/cron /app/cron
 # Copy platform UI assets (split view, etc. — not wolt content)
 COPY public /app/public
 
+# Copy hooks
+COPY container/hooks /app/hooks
+
 # Copy entrypoint
 COPY container/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh

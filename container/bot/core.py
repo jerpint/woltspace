@@ -101,6 +101,22 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_session",
+            "description": "Check on a running Claude Code session. Returns the last few lines of output so you can see what it's doing, whether it's done, or if it produced artifacts. Use when someone asks about task status or progress.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "session_name": {
+                        "type": "string",
+                        "description": "The session name (e.g. 'neowolt-77139'). If not provided, checks the most recent task session.",
+                    }
+                },
+            },
+        },
+    },
 ]
 
 
@@ -215,6 +231,48 @@ def list_sessions() -> list[dict]:
         return []
 
 
+def check_session(session_name: str = None) -> dict:
+    """Check on a running session — capture recent terminal output."""
+    # If no name given, find the most recent task session
+    if not session_name:
+        sessions = list_sessions()
+        if not sessions:
+            return {"status": "no_sessions", "output": "No active task sessions."}
+        session_name = sessions[-1]["name"]
+
+    # Check if session is still alive
+    result = subprocess.run(
+        ["tmux", "has-session", "-t", session_name],
+        capture_output=True,
+    )
+    alive = result.returncode == 0
+
+    # Capture the pane content
+    output = ""
+    try:
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-t", session_name, "-p", "-l", "30"],
+            capture_output=True, text=True, check=True,
+        )
+        output = result.stdout.strip()
+        # Take last 30 non-empty lines
+        lines = [l for l in output.split("\n") if l.strip()][-30:]
+        output = "\n".join(lines)
+    except subprocess.CalledProcessError:
+        output = "(couldn't read session output)"
+
+    tunnel_url = get_tunnel_url()
+    session_url = f"{tunnel_url}/tui?session={session_name}" if tunnel_url else None
+
+    return {
+        "session": session_name,
+        "alive": alive,
+        "status": "running" if alive else "finished",
+        "output": output,
+        "url": session_url,
+    }
+
+
 def kill_session(name: str) -> bool:
     """Kill a tmux session by name. Refuses to kill 'main'."""
     if name == "main":
@@ -238,6 +296,9 @@ def _handle_tool_call(tool_call) -> str:
     elif name == "get_tunnel_url":
         url = get_tunnel_url()
         return url or "tunnel not available right now"
+    elif name == "check_session":
+        result = check_session(args.get("session_name"))
+        return json.dumps(result)
     else:
         return f"unknown tool: {name}"
 

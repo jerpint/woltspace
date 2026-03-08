@@ -66,6 +66,29 @@ cat > /home/node/.claude.json << CJEOF
 {"hasCompletedOnboarding":true,"projects":{"$WOLT_DIR":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}
 CJEOF
 
+# Install session-done hook (notifies bot when claude sessions end)
+if [ -f /app/hooks/session-done.sh ]; then
+  mkdir -p /home/node/.claude
+  # Merge hook into settings if not already present
+  SETTINGS_FILE="/home/node/.claude/settings.json"
+  cat > "$SETTINGS_FILE" << 'HOOKEOF'
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/app/hooks/session-done.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+HOOKEOF
+fi
+
 # Configure git user from env
 git config --global user.name "${WOLT_NAME}"
 git config --global user.email "${WOLT_NAME}@woltspace.com"
