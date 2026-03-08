@@ -91,14 +91,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Blocked user_id={user_id}")
         return
 
-    # In group chats, only respond when @mentioned by bot username
+    # In group chats, only respond when @mentioned or replied to
     chat_type = update.effective_chat.type
     if chat_type in ("group", "supergroup"):
         bot_username = context.bot.username
+        bot_id = context.bot.id
         text = update.message.text or ""
-        if f"@{bot_username}" not in text:
+        is_mention = f"@{bot_username}" in text
+        is_reply = (update.message.reply_to_message
+                    and update.message.reply_to_message.from_user
+                    and update.message.reply_to_message.from_user.id == bot_id)
+        if not is_mention and not is_reply:
             return
-        # Strip the @mention from the message
         text = text.replace(f"@{bot_username}", "").strip()
     else:
         text = update.message.text
