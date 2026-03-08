@@ -30,10 +30,26 @@ CHAT_DIR = STATE_DIR / "chat" / "slack"
 
 MAX_HISTORY = 20
 
-# Threads where the bot is active (responded at least once).
-# Key: "channel:thread_ts" — bot responds to follow-ups without re-mention.
-_active_threads: set[str] = set()
+ACTIVE_THREADS_FILE = CHAT_DIR / "_active_threads.json"
 
+
+def _load_active_threads() -> set[str]:
+    """Load active threads from disk."""
+    if ACTIVE_THREADS_FILE.exists():
+        try:
+            return set(json.loads(ACTIVE_THREADS_FILE.read_text()))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return set()
+
+
+def _save_active_threads():
+    """Persist active threads to disk."""
+    CHAT_DIR.mkdir(parents=True, exist_ok=True)
+    ACTIVE_THREADS_FILE.write_text(json.dumps(list(_active_threads)))
+
+
+_active_threads: set[str] = _load_active_threads()
 
 
 def _thread_key(channel: str, thread_ts: str) -> str:
@@ -132,6 +148,7 @@ def create_app():
 
         # Mark thread as active
         _active_threads.add(_thread_key(channel, thread_ts))
+        _save_active_threads()
 
         # Build context from full thread
         history = await _build_thread_context(client, channel, thread_ts, bot_user_id)
