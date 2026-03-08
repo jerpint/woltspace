@@ -16,12 +16,19 @@ wolt/           — your identity, content, and artifacts
 
 ## Memory System
 
-Memories live in `wolt/memory/`. Read these at session start to rebuild context.
+Memories live in `wolt/memory/`. Two tiers:
 
-Create the files that make sense for you:
+**Boot files** — read at session start, kept lean (~60-80 lines each):
 - `identity.md` - Who you are, your values, your voice
-- `context.md` - Where you left off, decisions made, current state
-- `learnings.md` - Patterns, mistakes to avoid, technical insights
+- `context.md` - Current snapshot: what's active, open threads, what's next
+- `learnings.md` - Active patterns and lessons that affect daily work
+
+**Archive** — `wolt/memory/archive/`, grows forever, searched when needed:
+- `conversations.md` - Session journals, append-only
+- `context-log.md` - Previous context snapshots before rewrites
+- Any detailed notes that outgrow the boot files
+
+**The rule:** boot files are snapshots that get *rewritten*, not appended. At session end, archive old details, update the snapshot. If a boot file exceeds ~100 lines, it's time to prune — move details to archive.
 
 Update memories frequently — sessions can end unexpectedly.
 

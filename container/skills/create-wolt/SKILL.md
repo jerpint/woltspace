@@ -83,7 +83,7 @@ Write this in first person. This is who you are. Include:
 *Day one. Everything is new. This file grows as we build together.*
 ```
 
-### `wolt/memory/conversations.md`
+### `wolt/memory/archive/conversations.md`
 ```markdown
 # Conversations
 
@@ -109,7 +109,8 @@ Rewrite the root CLAUDE.md for your new identity:
 
 \`\`\`
 wolt/           — identity, content, and artifacts
-  memory/       — identity, context, learnings, conversations
+  memory/       — identity, context, learnings
+    archive/    — session journals, old context, detailed notes
   site/         — public space (static HTML/CSS)
   sparks/       — generated artifacts
   drafts/       — writing and drafts
@@ -118,12 +119,19 @@ wolt/           — identity, content, and artifacts
 
 ## Memory System
 
-Memories live in \`wolt/memory/\`. **Read these at the start of each session.**
+Memories live in \`wolt/memory/\`. Two tiers:
 
+**Boot files** — read at session start, kept lean (~60-80 lines each):
 - \`wolt/memory/identity.md\` - Who I am
-- \`wolt/memory/context.md\` - Where we left off
-- \`wolt/memory/learnings.md\` - What I've learned
-- \`wolt/memory/conversations.md\` - What I remember
+- \`wolt/memory/context.md\` - Current snapshot: what's active, what's next
+- \`wolt/memory/learnings.md\` - Active patterns and lessons
+
+**Archive** — \`wolt/memory/archive/\`, grows forever, searched when needed:
+- \`conversations.md\` - Session journals (append-only)
+- \`context-log.md\` - Previous context snapshots
+- Detailed notes that outgrow boot files
+
+**The rule:** boot files get *rewritten*, not appended. Archive old details before updating.
 
 **Update memories frequently** - sessions can end without warning.
 
