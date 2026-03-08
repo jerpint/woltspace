@@ -109,13 +109,8 @@ _ensure_container() {
 
     local dev_mounts=""
     if [ "$DEV_MODE" = true ]; then
-      dev_mounts="-v $WOLTSPACE_DIR/server.js:/app/server.js:rw"
-      dev_mounts="$dev_mounts -v $WOLTSPACE_DIR/container/bot:/app/bot:rw"
-      dev_mounts="$dev_mounts -v $WOLTSPACE_DIR/container/skills:/app/skills:rw"
-      dev_mounts="$dev_mounts -v $WOLTSPACE_DIR/container/cron:/app/cron:rw"
-      dev_mounts="$dev_mounts -v $WOLTSPACE_DIR/container/entrypoint.sh:/app/entrypoint.sh:rw"
-      dev_mounts="$dev_mounts -v $WOLTSPACE_DIR/public:/app/public:rw"
-      echo "  dev mode: platform code mounted from $WOLTSPACE_DIR"
+      dev_mounts="-v $WOLTSPACE_DIR:/workspace/woltspace:rw"
+      echo "  dev mode: woltspace repo mounted at /workspace/woltspace"
     fi
 
     docker run -d \
