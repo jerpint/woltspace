@@ -105,8 +105,16 @@ done
 
 # Start Telegram bot if enabled (backgrounded, not tracked by wait -n)
 if [ "${ENABLE_TELEGRAM_BOT:-}" = "true" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
-  echo "starting telegram bot..."
-  (cd "$WOLT_DIR" && uv run python -m wolt.bot.telegram_adapter) &
+  # Prefer wolt's own bot code, fall back to platform default (/app/bot)
+  if [ -f "$WOLT_DIR/wolt/bot/telegram_adapter.py" ]; then
+    BOT_DIR="$WOLT_DIR"
+    BOT_MODULE="wolt.bot.telegram_adapter"
+  else
+    BOT_DIR="/app"
+    BOT_MODULE="bot.telegram_adapter"
+  fi
+  echo "starting telegram bot ($BOT_DIR)..."
+  (cd "$BOT_DIR" && uv run --project bot/pyproject.toml python -m "$BOT_MODULE") &
   disown
 fi
 

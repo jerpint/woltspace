@@ -22,8 +22,6 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/b
 RUN curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$(dpkg --print-architecture) -o /usr/local/bin/cloudflared \
     && chmod +x /usr/local/bin/cloudflared
 
-# Install claude-code globally (provides the CLI that SDK calls)
-RUN npm install -g @anthropic-ai/claude-code
 
 # App directory
 WORKDIR /app
@@ -39,6 +37,9 @@ COPY server.js ./
 
 # Copy skills (platform defaults — wolt can override via .claude/skills/)
 COPY container/skills /app/skills
+
+# Copy bot code (platform default — wolt can override via wolt/bot/)
+COPY container/bot /app/bot
 
 # Copy cron scripts
 COPY container/cron /app/cron
@@ -61,8 +62,8 @@ RUN chown -R node:node /workspace /home/node /app
 
 USER node
 
-# Run official claude install so native binary is in ~/.local/bin
-RUN claude install 2>/dev/null || true
+# Install claude-code (native binary → ~/.local/bin/claude)
+RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV PATH="/home/node/.local/bin:${PATH}"
 
 WORKDIR /workspace
