@@ -178,6 +178,20 @@ if [ "${ENABLE_TELEGRAM_BOT:-}" = "true" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; 
   disown
 fi
 
+# Start Slack bot if enabled (backgrounded, not tracked by wait -n)
+if [ "${ENABLE_SLACK_BOT:-}" = "true" ] && [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -n "${SLACK_APP_TOKEN:-}" ]; then
+  if [ -f "$WOLT_DIR/wolt/bot/slack_adapter.py" ]; then
+    SLACK_BOT_DIR="$WOLT_DIR"
+    SLACK_BOT_MODULE="wolt.bot.slack_adapter"
+  else
+    SLACK_BOT_DIR="/app"
+    SLACK_BOT_MODULE="bot.slack_adapter"
+  fi
+  echo "starting slack bot ($SLACK_BOT_DIR)..."
+  (cd "$SLACK_BOT_DIR" && BOT_ADAPTER=slack uv run --project bot/pyproject.toml python -m "$SLACK_BOT_MODULE") &
+  disown
+fi
+
 # Cleanup on exit — only kill the critical processes (server + tunnel)
 cleanup() {
   kill $SERVER_PID $TUNNEL_PID 2>/dev/null

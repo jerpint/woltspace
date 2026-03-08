@@ -6,4 +6,6 @@ dependencies = [
     "litellm",
     "openai",
     "python-telegram-bot",
+    "slack-bolt",
+    "slack-sdk",
 ]

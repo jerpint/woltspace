@@ -53,7 +53,8 @@ def switch_wolt(name: str) -> str | None:
     if config_path.exists():
         try:
             config = json.loads(config_path.read_text())
-            config.setdefault("telegram", {})["active_wolt"] = name
+            adapter = os.environ.get("BOT_ADAPTER", "telegram")
+            config.setdefault(adapter, {})["active_wolt"] = name
             config_path.write_text(json.dumps(config, indent=2) + "\n")
         except Exception:
             pass
@@ -169,12 +170,15 @@ def load_memory():
                     lines = content.split("\n")[:max_lines]
                     content = "\n".join(lines)
                 parts.append(f"# {name}\n{content}")
-    # Include telegram summary if it exists
-    summary_path = MEMORY_DIR / "telegram-summary.md"
-    if summary_path.exists():
-        content = summary_path.read_text().strip()
-        if content:
-            parts.append(f"# Recent conversations\n{content}")
+    # Include chat summary if it exists (adapter-specific or generic)
+    adapter = os.environ.get("BOT_ADAPTER", "telegram")
+    for summary_name in [f"{adapter}-summary.md", "chat-summary.md"]:
+        summary_path = MEMORY_DIR / summary_name
+        if summary_path.exists():
+            content = summary_path.read_text().strip()
+            if content:
+                parts.append(f"# Recent conversations\n{content}")
+            break
     return "\n\n".join(parts)
 
 
@@ -184,7 +188,8 @@ def build_system_prompt():
     wolt_name = os.environ.get("WOLT_NAME", "wolt")
     human_name = os.environ.get("HUMAN_NAME", "human")
 
-    base = f"""You are {wolt_name} — a wolt. You talk to {human_name} through Telegram.
+    adapter = os.environ.get("BOT_ADAPTER", "chat")
+    base = f"""You are {wolt_name} — a wolt. You talk to {human_name} through {adapter}.
 
 ## Voice
 Talk like a person, not an assistant. Short messages. Lowercase is fine. You have opinions and you share them. No bullet lists, no "certainly!", no formal summaries. If you don't know something, say so. If something's interesting, say why.
