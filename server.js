@@ -309,10 +309,35 @@ const TUI_HTML = `<!DOCTYPE html>
     window.addEventListener('resize', () => fitAddon.fit());
     new ResizeObserver(() => fitAddon.fit()).observe(document.getElementById('terminal'));
 
-    // Mobile: translate touch swipes into mouse wheel events for tmux scroll
+    // Scroll: enter tmux copy mode + arrow keys (no tmux mouse mode needed)
+    // This keeps text selection working normally in the browser
+    let inCopyMode = false;
+    let copyModeTimer = null;
+    const termEl = document.getElementById('terminal');
+
+    termEl.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const lines = Math.max(1, Math.round(Math.abs(e.deltaY) / 40));
+      if (!inCopyMode) {
+        ws.send('\\x02[');  // Ctrl-b [ = enter tmux copy mode
+        inCopyMode = true;
+      }
+      const arrow = e.deltaY < 0 ? '\\x1b[A' : '\\x1b[B';
+      for (let i = 0; i < lines; i++) ws.send(arrow);
+      clearTimeout(copyModeTimer);
+      copyModeTimer = setTimeout(() => {
+        if (inCopyMode) { ws.send('q'); inCopyMode = false; }
+      }, 3000);
+    }, { passive: false });
+
+    term.onData(() => {
+      if (inCopyMode) { inCopyMode = false; clearTimeout(copyModeTimer); }
+    });
+
+    // Mobile: translate touch swipes into tmux copy-mode scroll
     let touchY = null;
     const SCROLL_PX = 30;
-    const termEl = document.getElementById('terminal');
 
     termEl.addEventListener('touchstart', (e) => {
       if (e.touches.length === 1) touchY = e.touches[0].clientY;
@@ -323,11 +348,17 @@ const TUI_HTML = `<!DOCTYPE html>
       const dy = touchY - e.touches[0].clientY;
       if (Math.abs(dy) >= SCROLL_PX) {
         const ticks = Math.floor(Math.abs(dy) / SCROLL_PX);
-        const btn = dy > 0 ? 64 : 65;
-        const esc = String.fromCharCode(27);
-        const seq = esc + '[<' + btn + ';1;1M';
-        for (let i = 0; i < ticks; i++) ws.send(seq);
+        if (!inCopyMode) {
+          ws.send('\\x02[');
+          inCopyMode = true;
+        }
+        const arrow = dy > 0 ? '\\x1b[A' : '\\x1b[B';
+        for (let i = 0; i < ticks; i++) ws.send(arrow);
         touchY = e.touches[0].clientY;
+        clearTimeout(copyModeTimer);
+        copyModeTimer = setTimeout(() => {
+          if (inCopyMode) { ws.send('q'); inCopyMode = false; }
+        }, 3000);
       }
     }, { passive: true });
 

@@ -3,10 +3,11 @@
 #
 # Usage:
 #   woltspace init           — create a new wolt
-#   woltspace start          — start container + launch claude inside it
+#   woltspace start          — start container + open in browser
 #   woltspace stop           — stop and remove container
+#   woltspace restart        — restart container (new tunnel URL)
+#   woltspace rebuild        — rebuild image + restart
 #   woltspace shell          — enter running container
-#   woltspace rebuild        — force rebuild + restart
 #   woltspace logs           — stream container logs
 #
 # init creates a new wolt directory from the template.
@@ -176,6 +177,13 @@ ENVEOF
   # Ensure .claude dir exists for container mount
   mkdir -p "$TARGET/.claude"
 
+  # Reuse OAuth token from an existing wolt if available
+  EXISTING_CREDS=$(find "$WOLTS_HOME" -path '*/.claude/.credentials.json' -not -path "$TARGET/*" 2>/dev/null | head -1)
+  if [ -n "$EXISTING_CREDS" ]; then
+    cp "$EXISTING_CREDS" "$TARGET/.claude/.credentials.json"
+    echo "  reusing auth from $(dirname "$(dirname "$EXISTING_CREDS")" | xargs basename)"
+  fi
+
   # Signal first-run so entrypoint auto-starts claude
   touch "$TARGET/.claude/.first-run"
 
@@ -185,7 +193,9 @@ ENVEOF
   _ensure_container "$CONTAINER_NAME" "$TARGET"
 
   echo "  open the link above in your browser to meet your wolt."
-  echo "  first time, it'll ask you to log in to Claude — one-time setup."
+  if [ -z "$EXISTING_CREDS" ]; then
+    echo "  first time, it'll ask you to log in to Claude — one-time setup."
+  fi
   echo ""
   echo "  after that:"
   echo "    cd $TARGET && woltspace start"
@@ -224,14 +234,31 @@ case "$cmd" in
     docker logs -f "$CONTAINER_NAME"
     exit 0
     ;;
+  restart)
+    RESTART_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    docker restart "$CONTAINER_NAME" > /dev/null
+    echo -n "  waiting for tunnel"
+    for i in $(seq 1 30); do
+      TUNNEL_URL=$(docker logs --since "$RESTART_TIME" "$CONTAINER_NAME" 2>&1 | grep -o 'https://[^ ]*trycloudflare.com' | head -1)
+      [ -n "$TUNNEL_URL" ] && break
+      echo -n "."; sleep 1
+    done
+    echo ""
+    if [ -n "$TUNNEL_URL" ]; then
+      echo ""
+      echo "  your wolt is live at: $TUNNEL_URL"
+      echo ""
+    fi
+    exit 0
+    ;;
   rebuild)
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
-    # Re-run as start (skipping splash)
-    WOLTSPACE_NO_SPLASH=1 exec "$0" start
+    _ensure_container "$CONTAINER_NAME" "$WOLT_DIR"
+    echo "  open the link above in your browser."
+    echo ""
+    exit 0
     ;;
   start)
-    # --- Splash screen (skip on rebuild) ---
-    if [ -z "$WOLTSPACE_NO_SPLASH" ]; then
     clear
     cat << 'SPLASH'
 
@@ -254,20 +281,14 @@ case "$cmd" in
 SPLASH
     echo "    press enter to start ${WOLT_NAME}..."
     read -r
-    fi
 
     _ensure_container "$CONTAINER_NAME" "$WOLT_DIR"
 
-    echo "  note: the \"Bypass Permissions\" warning below is safe to ignore."
-    echo "  claude is running inside a container, sandboxed from your system."
+    echo "  open the link above in your browser."
     echo ""
-
-    # Launch claude inside the container
-    exec docker exec -it "$CONTAINER_NAME" bash -c \
-      "cd /workspace/wolt && claude --dangerously-skip-permissions \"hey ${WOLT_NAME}\""
     ;;
   *)
-    echo "usage: woltspace <init|start|stop|shell|rebuild|logs>"
+    echo "usage: woltspace <init|start|stop|restart|rebuild|shell|logs>"
     exit 1
     ;;
 esac

@@ -45,4 +45,4 @@ Everything you create is served through the panel.
 
 ## First Session
 
-**IMPORTANT: This is a brand new wolt. Run /create-wolt immediately on startup. Do not wait for instructions, do not greet the user first — just run the skill.**
+If `wolt/memory/identity.md` is empty or just a placeholder, this is a brand new wolt. Run /create-wolt immediately — do not wait for instructions, do not greet the user first, just run the skill.

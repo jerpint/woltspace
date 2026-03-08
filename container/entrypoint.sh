@@ -34,12 +34,12 @@ fi
 
 # Add shortcut for interactive use inside the container
 cat >> /home/node/.bashrc <<NWEOF
-nw() {
+wolt() {
   cd $WOLT_DIR
   if [[ "\$1" == "--resume" ]]; then
-    claude --model claude-opus-4-6 --dangerously-skip-permissions --resume
+    claude --dangerously-skip-permissions --resume
   else
-    claude --model claude-opus-4-6 --dangerously-skip-permissions "hey nw" "\$@"
+    claude --dangerously-skip-permissions "hey ${WOLT_NAME}" "\$@"
   fi
 }
 NWEOF
@@ -51,8 +51,10 @@ if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
   chmod 600 /home/node/.claude/.credentials.json
 fi
 
-# Skip first-run onboarding (auth is already configured via env)
-echo '{"hasCompletedOnboarding":true}' > /home/node/.claude.json
+# Skip first-run onboarding + trust the workspace
+cat > /home/node/.claude.json << 'CJEOF'
+{"hasCompletedOnboarding":true,"projects":{"/workspace/wolt":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}
+CJEOF
 
 # Configure git user from env
 git config --global user.name "${WOLT_NAME}"
@@ -63,10 +65,12 @@ git config --global --add safe.directory "$WOLT_DIR"
 
 # Create a default tmux session (survives browser disconnects + server restarts)
 tmux new-session -d -s main -c "$WOLT_DIR" 2>/dev/null || true
-# First-run: auto-start claude in tmux (triggers auth flow if no token)
+# Auto-start claude in tmux
 if [ -f /home/node/.claude/.first-run ]; then
   rm /home/node/.claude/.first-run
-  tmux send-keys -t main "claude --dangerously-skip-permissions" Enter
+  tmux send-keys -t main "claude --dangerously-skip-permissions /create-wolt" Enter
+else
+  tmux send-keys -t main "claude --dangerously-skip-permissions \"hey ${WOLT_NAME}\"" Enter
 fi
 
 # ESM ignores NODE_PATH, so symlink /app/node_modules at /workspace/ level
