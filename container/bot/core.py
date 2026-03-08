@@ -5,6 +5,7 @@ Platform default. Wolt can override by placing wolt/bot/core.py in their repo.
 
 import os
 import json
+import shlex
 import subprocess
 import logging
 import time
@@ -241,11 +242,28 @@ def start_claude_session(prompt: str, wolt: str = None) -> dict:
         ["tmux", "send-keys", "-t", session_name, f"export WOLT_SESSION={session_name}", "Enter"],
         check=True,
     )
-    claude_cmd = f'claude --dangerously-skip-permissions {json.dumps(prompt)}'
+    claude_cmd = f'claude --dangerously-skip-permissions {shlex.quote(prompt)}'
     subprocess.run(
         ["tmux", "send-keys", "-t", session_name, claude_cmd, "Enter"],
         check=True,
     )
+
+    # Wait briefly then capture pane to check for shell errors
+    time.sleep(1.5)
+    try:
+        pane_out = subprocess.run(
+            ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-10"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        # Check for common shell errors that mean claude never started
+        error_indicators = [": event not found", ": command not found", ": syntax error",
+                           ": No such file", ": Permission denied", "error:"]
+        for indicator in error_indicators:
+            if indicator in pane_out:
+                _bot_log("session_error", {"session": session_name, "error": pane_out})
+                break
+    except subprocess.CalledProcessError:
+        _bot_log("session_error", {"session": session_name, "error": "couldn't read pane after spawn"})
 
     tunnel_url = get_tunnel_url()
     session_url = f"{tunnel_url}/tui?session={session_name}" if tunnel_url else None
@@ -295,7 +313,7 @@ def check_session(session_name: str = None) -> dict:
     output = ""
     try:
         result = subprocess.run(
-            ["tmux", "capture-pane", "-t", session_name, "-p", "-l", "30"],
+            ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-30"],
             capture_output=True, text=True, check=True,
         )
         output = result.stdout.strip()
