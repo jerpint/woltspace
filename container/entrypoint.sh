@@ -4,12 +4,23 @@
 # Auth: CLAUDE_CODE_OAUTH_TOKEN passed via env
 # Wolts dir: mounted at /workspace/wolts (all wolts)
 # Active wolt: WOLT_NAME env var selects which wolt to boot
-# Skills: baked into image at /app/skills, copied to ~/.claude/skills/
+# Skills: at /workspace/woltspace/container/skills, copied to ~/.claude/skills/
 
 set -e
 
+WOLTSPACE_DIR="/workspace/woltspace"
 WOLTS_DIR="${WOLTS_DIR:-/workspace/wolts}"
 WOLT_NAME="${WOLT_NAME:-wolt}"
+
+# Dev mode: deps wiped by mount — reinstall
+if [ ! -d "$WOLTSPACE_DIR/node_modules" ]; then
+  echo "dev mode: installing node deps..."
+  (cd "$WOLTSPACE_DIR" && npm install && npm install ws node-pty)
+fi
+if [ ! -d "$WOLTSPACE_DIR/container/bot/.venv" ]; then
+  echo "dev mode: installing python deps..."
+  (cd "$WOLTSPACE_DIR" && uv sync --project container/bot/pyproject.toml)
+fi
 
 # Resolve active wolt directory
 # If WOLTS_DIR is set (multi-wolt mode), derive WOLT_DIR from it
@@ -23,8 +34,8 @@ export WOLT_DIR
 # Copy skills so Claude auto-discovers them
 # Platform defaults first, then wolt-specific overrides win
 mkdir -p /home/node/.claude/skills
-if [ -d /app/skills ]; then
-  cp -r /app/skills/. /home/node/.claude/skills/ 2>/dev/null || true
+if [ -d "$WOLTSPACE_DIR/container/skills" ]; then
+  cp -r "$WOLTSPACE_DIR/container/skills/." /home/node/.claude/skills/ 2>/dev/null || true
 fi
 if [ -d "$WOLT_DIR/.claude/skills" ]; then
   cp -r "$WOLT_DIR/.claude/skills/." /home/node/.claude/skills/ 2>/dev/null || true
@@ -78,11 +89,11 @@ json.dump({'hasCompletedOnboarding': True, 'bypassPermissionsAccepted': True, 'p
 "
 
 # Install session-done hook (notifies bot when claude sessions end)
-if [ -f /app/hooks/session-done.sh ]; then
+if [ -f "$WOLTSPACE_DIR/container/hooks/session-done.sh" ]; then
   mkdir -p /home/node/.claude
   # Merge hook into settings if not already present
   SETTINGS_FILE="/home/node/.claude/settings.json"
-  cat > "$SETTINGS_FILE" << 'HOOKEOF'
+  cat > "$SETTINGS_FILE" << HOOKEOF
 {
   "skipDangerousModePermissionPrompt": true,
   "hooks": {
@@ -91,7 +102,7 @@ if [ -f /app/hooks/session-done.sh ]; then
         "hooks": [
           {
             "type": "command",
-            "command": "/app/hooks/session-done.sh"
+            "command": "$WOLTSPACE_DIR/container/hooks/session-done.sh"
           }
         ]
       }
@@ -101,7 +112,7 @@ if [ -f /app/hooks/session-done.sh ]; then
         "hooks": [
           {
             "type": "command",
-            "command": "/app/hooks/notify.sh"
+            "command": "$WOLTSPACE_DIR/container/hooks/notify.sh"
           }
         ]
       }
@@ -115,8 +126,9 @@ fi
 git config --global user.name "${WOLT_NAME}"
 git config --global user.email "${WOLT_NAME}@woltspace.com"
 
-# Mark the wolt mount as safe (owned by different uid on host)
+# Mark mounts as safe (owned by different uid on host)
 git config --global --add safe.directory "$WOLT_DIR"
+git config --global --add safe.directory "$WOLTSPACE_DIR"
 
 # Create a default tmux session (survives browser disconnects + server restarts)
 tmux new-session -d -s main -c "$WOLT_DIR" 2>/dev/null || true
@@ -128,14 +140,14 @@ else
   tmux send-keys -t main "claude --dangerously-skip-permissions \"hey ${WOLT_NAME}\"" Enter
 fi
 
-# ESM ignores NODE_PATH, so symlink /app/node_modules at /workspace/ level
+# ESM ignores NODE_PATH, so symlink node_modules at /workspace/ level
 # so ESM's directory walk from wolt dir finds container-installed packages
-ln -sf /app/node_modules /workspace/node_modules
+ln -sf "$WOLTSPACE_DIR/node_modules" /workspace/node_modules
 # Also at wolts level for multi-wolt mount
-[ -d "$WOLTS_DIR" ] && ln -sf /app/node_modules "$WOLTS_DIR/node_modules" 2>/dev/null || true
+[ -d "$WOLTS_DIR" ] && ln -sf "$WOLTSPACE_DIR/node_modules" "$WOLTS_DIR/node_modules" 2>/dev/null || true
 
 # Start the server (baked into image, reads wolt content from mount)
-node --watch /app/server.js &
+node --watch "$WOLTSPACE_DIR/server.js" &
 SERVER_PID=$!
 
 sleep 1
@@ -164,13 +176,13 @@ for i in $(seq 1 30); do
 done
 
 # Start Telegram bot if enabled (backgrounded, not tracked by wait -n)
-# To restart after code changes: pkill -f telegram_adapter && cd /app && uv run --project bot/pyproject.toml python -m bot.telegram_adapter &
+# To restart after code changes: pkill -f telegram_adapter && cd /workspace/woltspace/container && uv run --project bot/pyproject.toml python -m bot.telegram_adapter &
 if [ "${ENABLE_TELEGRAM_BOT:-}" = "true" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
   if [ -f "$WOLT_DIR/wolt/bot/telegram_adapter.py" ]; then
     BOT_DIR="$WOLT_DIR"
     BOT_MODULE="wolt.bot.telegram_adapter"
   else
-    BOT_DIR="/app"
+    BOT_DIR="$WOLTSPACE_DIR/container"
     BOT_MODULE="bot.telegram_adapter"
   fi
   echo "starting telegram bot ($BOT_DIR)..."
@@ -184,7 +196,7 @@ if [ "${ENABLE_SLACK_BOT:-}" = "true" ] && [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -n
     SLACK_BOT_DIR="$WOLT_DIR"
     SLACK_BOT_MODULE="wolt.bot.slack_adapter"
   else
-    SLACK_BOT_DIR="/app"
+    SLACK_BOT_DIR="$WOLTSPACE_DIR/container"
     SLACK_BOT_MODULE="bot.slack_adapter"
   fi
   echo "starting slack bot ($SLACK_BOT_DIR)..."

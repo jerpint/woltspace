@@ -74,11 +74,11 @@ Then try a task — ask the bot to build or search something. It should spawn a 
 
 ## Customizing
 
-The bot code lives at `/app/bot/` in the container (platform default). To customize:
+The bot code lives at `/workspace/woltspace/container/bot/` in the container (platform default). To customize:
 
-1. Copy it: `cp -r /app/bot wolt/bot`
+1. Copy it: `cp -r /workspace/woltspace/container/bot wolt/bot`
 2. Add a `pyproject.toml` with deps at `wolt/bot/pyproject.toml`
-3. Edit freely — the entrypoint prefers `wolt/bot/` over `/app/bot/`
+3. Edit freely — the entrypoint prefers `wolt/bot/` over `/workspace/woltspace/container/bot/`
 
 The bot is yours to modify. The platform default is just a starting point.
 

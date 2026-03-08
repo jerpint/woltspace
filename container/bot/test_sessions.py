@@ -26,7 +26,7 @@ class TestBuildSessionCommand:
 
     def _build(self, session_name, work_dir, prompt):
         """Mimics build_session_command from core.py."""
-        script = "/app/container/bin/run-session.sh"
+        script = "/workspace/woltspace/container/bin/run-session.sh"
         return f"{script} {shlex.quote(session_name)} {shlex.quote(work_dir)} {shlex.quote(prompt)}"
 
     def test_simple_prompt(self):

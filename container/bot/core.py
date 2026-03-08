@@ -279,7 +279,7 @@ def get_tunnel_url() -> str:
 
 SESSION_STATUS_DIR = STATE_DIR / "sessions"
 SESSION_ROUTING_DIR = WOLTS_DIR / ".state" / "session-routing"
-RUN_SESSION_SCRIPT = Path("/app/container/bin/run-session.sh")
+RUN_SESSION_SCRIPT = Path("/workspace/woltspace/container/bin/run-session.sh")
 
 
 def write_session_routing(session_name: str, routing: dict):

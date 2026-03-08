@@ -404,6 +404,10 @@
       }
       setTimeout(() => fitAddon.fit(), 250);
     };
+
+    // ── View mode from URL ─────────────────────────────────────────────────────
+    if (new URLSearchParams(location.search).get('view') === 'session')
+      toggleFull('right');
   </script>
 </body>
 </html>

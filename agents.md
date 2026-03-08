@@ -142,7 +142,7 @@ All paths use `WOLT_DIR` env var. Memory is read for curation context. Sparks ar
 Skills are `SKILL.md` files in `container/skills/<name>/`. Claude Code auto-discovers them from `~/.claude/skills/`.
 
 **Load order** (entrypoint):
-1. Platform skills from `/app/skills/` (baked into image)
+1. Platform skills from `/workspace/woltspace/skills/` (baked into image)
 2. Wolt-specific overrides from `$WOLT_DIR/.claude/skills/` (mounted)
 3. Wolt overrides win on conflict (same directory name)
 
@@ -174,7 +174,7 @@ Bash script. Key design:
 ## File paths inside the container
 
 ```
-/app/                    — platform code (baked in)
+/workspace/woltspace/                    — platform code (baked in)
   server.js
   bot/
   cron/

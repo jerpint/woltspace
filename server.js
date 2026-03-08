@@ -697,7 +697,7 @@ server.listen(PORT, () => {
       SPOTIFY_USER: process.env.SPOTIFY_USER || dotEnv.SPOTIFY_USER,
       WOLT_NAME: WOLT_NAME,
       WOLT_DIR: WOLT_DIR,
-      NODE_PATH: '/app/node_modules',
+      NODE_PATH: '/workspace/woltspace/node_modules',
     };
     const child = spawn('node', [DIGEST_SCRIPT], { env: cleanEnv, stdio: 'inherit', detached: false });
     writeStatus({ digest: { state: 'running', startedAt: Date.now(), reason, pid: child.pid } });

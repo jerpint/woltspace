@@ -394,6 +394,7 @@ case "$cmd" in
     ;;
   rebuild)
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+    rm -f "$ACTIVE_WOLT_DIR/.state/tunnel-url"
     _ensure_container "$CONTAINER_NAME"
     echo "  open the link above in your browser."
     echo ""

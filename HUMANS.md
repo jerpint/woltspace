@@ -133,7 +133,7 @@ Then `woltspace restart`. The bot starts automatically.
 
 **Commands:** `/sessions` (list active sessions with links), `/kill <name>` (cleanup)
 
-**Customizing:** Copy `/app/bot/` to `wolt/bot/` in your repo and edit freely. The entrypoint prefers your code over the platform default.
+**Customizing:** Copy `/workspace/woltspace/container/bot/` to `wolt/bot/` in your repo and edit freely. The entrypoint prefers your code over the platform default.
 
 ## Named sessions
 
@@ -157,10 +157,10 @@ Container image (~800MB):
 ├── cloudflared           — tunnel to internet (no account, ephemeral URL)
 ├── claude                — native binary (installed via curl|bash, auto-updates)
 ├── uv                    — Python package manager (runs bot)
-├── /app/bot/             — Telegram bot (litellm + python-telegram-bot)
-├── /app/skills/          — platform skills (create-wolt, telegram, digest, music, work)
-├── /app/cron/            — digest pipeline
-└── /app/public/          — split view UI assets
+├── /workspace/woltspace/container/bot/             — Telegram bot (litellm + python-telegram-bot)
+├── /workspace/woltspace/container/skills/          — platform skills (create-wolt, telegram, digest, music, work)
+├── /workspace/woltspace/container/cron/            — digest pipeline
+└── /workspace/woltspace/public/          — split view UI assets
 
 Host mount (persists across rebuilds):
 └── ~/wolts/<name>/
