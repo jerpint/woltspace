@@ -73,13 +73,17 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "claude_code",
-            "description": "Delegate a task to a Claude Code session. Use for building, searching, coding, generating artifacts, or any real work.",
+            "description": "Delegate a task to a Claude Code session. Use for building, searching, coding, generating artifacts, or any real work. You can target a specific wolt by name (e.g. 'neowolt' for music/curation, or yourself for general tasks).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "prompt": {
                         "type": "string",
                         "description": "What the Claude Code session should do.",
+                    },
+                    "wolt": {
+                        "type": "string",
+                        "description": "Which wolt to run the session as. Defaults to current active wolt. Use 'neowolt' for music, curation, infra work.",
                     }
                 },
                 "required": ["prompt"],
@@ -158,12 +162,25 @@ def get_tunnel_url() -> str:
     return ""
 
 
-def start_claude_session(prompt: str) -> dict:
-    """Start an interactive Claude Code session in a named tmux session."""
-    session_name = f"task-{int(time.time()) % 100000}"
+def start_claude_session(prompt: str, wolt: str = None) -> dict:
+    """Start an interactive Claude Code session in a named tmux session.
+
+    If wolt is specified, run the session in that wolt's directory.
+    """
+    # Resolve target wolt directory
+    if wolt:
+        target_dir = WOLTS_DIR / wolt
+        if not target_dir.is_dir():
+            target_dir = WOLT_DIR  # fallback to active
+            wolt = None
+    else:
+        target_dir = WOLT_DIR
+
+    target_name = wolt or os.environ.get("WOLT_NAME", "wolt")
+    session_name = f"{target_name}-{int(time.time()) % 100000}"
 
     subprocess.run(
-        ["tmux", "new-session", "-d", "-s", session_name, "-c", str(WOLT_DIR)],
+        ["tmux", "new-session", "-d", "-s", session_name, "-c", str(target_dir)],
         check=True,
     )
     claude_cmd = f'claude --dangerously-skip-permissions {json.dumps(prompt)}'
@@ -174,7 +191,8 @@ def start_claude_session(prompt: str) -> dict:
 
     tunnel_url = get_tunnel_url()
     session_url = f"{tunnel_url}/tui?session={session_name}" if tunnel_url else None
-    return {"name": session_name, "url": session_url}
+    target_name = wolt or os.environ.get("WOLT_NAME", "wolt")
+    return {"name": session_name, "url": session_url, "wolt": target_name}
 
 
 def list_sessions() -> list[dict]:
@@ -215,7 +233,7 @@ def _handle_tool_call(tool_call) -> str:
     args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
 
     if name == "claude_code":
-        session = start_claude_session(args["prompt"])
+        session = start_claude_session(args["prompt"], wolt=args.get("wolt"))
         return json.dumps(session)
     elif name == "get_tunnel_url":
         url = get_tunnel_url()
