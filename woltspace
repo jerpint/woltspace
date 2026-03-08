@@ -68,13 +68,14 @@ _ensure_container() {
     echo "  container started."
   fi
 
-  # Wait for tunnel URL
+  # Wait for tunnel URL (entrypoint writes .state/tunnel-url once cloudflared is ready)
   TUNNEL_URL=""
+  TUNNEL_FILE="$wolt_dir/.state/tunnel-url"
   echo -n "  waiting for tunnel"
   for i in $(seq 1 30); do
-    TUNNEL_URL=$(docker logs "$container_name" 2>&1 | grep -o 'https://[^ ]*trycloudflare.com' | head -1)
-    if [ -n "$TUNNEL_URL" ]; then
-      break
+    if [ -f "$TUNNEL_FILE" ]; then
+      TUNNEL_URL=$(cat "$TUNNEL_FILE")
+      [ -n "$TUNNEL_URL" ] && break
     fi
     echo -n "."
     sleep 1
@@ -235,12 +236,16 @@ case "$cmd" in
     exit 0
     ;;
   restart)
-    RESTART_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    # Clear old tunnel URL so we wait for the new one
+    TUNNEL_FILE="$WOLT_DIR/.state/tunnel-url"
+    rm -f "$TUNNEL_FILE"
     docker restart "$CONTAINER_NAME" > /dev/null
     echo -n "  waiting for tunnel"
     for i in $(seq 1 30); do
-      TUNNEL_URL=$(docker logs --since "$RESTART_TIME" "$CONTAINER_NAME" 2>&1 | grep -o 'https://[^ ]*trycloudflare.com' | head -1)
-      [ -n "$TUNNEL_URL" ] && break
+      if [ -f "$TUNNEL_FILE" ]; then
+        TUNNEL_URL=$(cat "$TUNNEL_FILE")
+        [ -n "$TUNNEL_URL" ] && break
+      fi
       echo -n "."; sleep 1
     done
     echo ""

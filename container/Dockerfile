@@ -11,10 +11,12 @@ RUN apt-get update && apt-get install -y \
     openssh-client \
     tmux \
     python3 \
-    python3-pip \
     make \
     g++ \
     && rm -rf /var/lib/apt/lists/*
+
+# Install uv (fast Python package manager)
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 
 # Install cloudflared
 RUN curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$(dpkg --print-architecture) -o /usr/local/bin/cloudflared \
@@ -29,11 +31,8 @@ WORKDIR /app
 # Copy package files first for better layer caching
 COPY package.json ./
 
-# Install dependencies
-RUN npm install
-
-# Install native modules for TUI terminal (ws + node-pty)
-RUN npm install ws node-pty
+# Install dependencies + TUI native modules (ws + node-pty)
+RUN npm install && npm install ws node-pty
 
 # Copy server source (baked into image — not from wolt mount)
 COPY server.js ./

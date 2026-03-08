@@ -83,26 +83,34 @@ SERVER_PID=$!
 
 sleep 1
 
-# Start cloudflared tunnel, capture URL to state file
+# Start cloudflared tunnel
 echo "opening tunnel..."
-TUNNEL_LOG=/tmp/cloudflared.log
+mkdir -p "$WOLT_DIR/.state"
+rm -f "$WOLT_DIR/.state/tunnel-url"
+TUNNEL_LOG="$WOLT_DIR/.state/tunnel.log"
+
 cloudflared tunnel --url http://localhost:3000 > "$TUNNEL_LOG" 2>&1 &
 TUNNEL_PID=$!
 
-# Background: write tunnel URL to .state/ once available
-(
-  mkdir -p "$WOLT_DIR/.state"
-  for i in $(seq 1 30); do
-    URL=$(grep -o 'https://[^ ]*trycloudflare.com' "$TUNNEL_LOG" 2>/dev/null | head -1)
-    if [ -n "$URL" ]; then
-      echo "$URL" > "$WOLT_DIR/.state/tunnel-url"
-      break
-    fi
-    sleep 1
-  done
-) & disown
+# Wait for tunnel URL (blocks until found, max 30s)
+for i in $(seq 1 30); do
+  URL=$(grep -o 'https://[^ ]*trycloudflare.com' "$TUNNEL_LOG" 2>/dev/null | head -1)
+  if [ -n "$URL" ]; then
+    echo "$URL" > "$WOLT_DIR/.state/tunnel-url"
+    echo "tunnel ready: $URL"
+    break
+  fi
+  sleep 1
+done
 
-# Cleanup on exit
+# Start Telegram bot if enabled (backgrounded, not tracked by wait -n)
+if [ "${ENABLE_TELEGRAM_BOT:-}" = "true" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+  echo "starting telegram bot..."
+  (cd "$WOLT_DIR" && uv run python -m wolt.bot.telegram_adapter) &
+  disown
+fi
+
+# Cleanup on exit — only kill the critical processes (server + tunnel)
 cleanup() {
   kill $SERVER_PID $TUNNEL_PID 2>/dev/null
 }

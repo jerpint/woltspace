@@ -202,12 +202,13 @@ const MIME = {
 
 // --- TUI HTML ---
 
-const TUI_HTML = `<!DOCTYPE html>
+function tuiHtml(sessionName = 'main') {
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>tui</title>
+  <title>tui · ${sessionName}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -228,7 +229,7 @@ const TUI_HTML = `<!DOCTYPE html>
 <body>
   <div id="topbar">
     <div>
-      <span class="title">tui</span>
+      <span class="title">tui · ${sessionName}</span>
       <span class="status" id="status">connecting...</span>
     </div>
   </div>
@@ -271,7 +272,8 @@ const TUI_HTML = `<!DOCTYPE html>
 
     function connect() {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(proto + '//' + location.host + '/tui');
+      const sessionParam = new URLSearchParams(location.search).get('session') || '${sessionName}';
+      ws = new WebSocket(proto + '//' + location.host + '/tui?session=' + encodeURIComponent(sessionParam));
 
       ws.onopen = () => {
         statusEl.textContent = 'connected';
@@ -368,6 +370,7 @@ const TUI_HTML = `<!DOCTYPE html>
   </script>
 </body>
 </html>`;
+}
 
 
 // --- Live-reload ---
@@ -600,8 +603,9 @@ const server = createServer(async (req, res) => {
         res.end('TUI not available — ws/node-pty not installed');
         return;
       }
+      const sessionName = url.searchParams.get('session') || 'main';
       res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end(TUI_HTML);
+      res.end(tuiHtml(sessionName));
       return;
     }
     // --- Sparks/digests ---
@@ -624,6 +628,23 @@ const server = createServer(async (req, res) => {
       }
       return;
     }
+    // --- Sessions (list active tmux sessions) ---
+    if (url.pathname === '/sessions') {
+      try {
+        const raw = execSync('tmux list-sessions -F "#{session_name}|#{session_created}|#{session_windows}|#{session_attached}"', { encoding: 'utf8' }).trim();
+        const sessions = raw.split('\n').filter(Boolean).map(line => {
+          const [name, created, windows, attached] = line.split('|');
+          return { name, created: Number(created), windows: Number(windows), attached: Number(attached) > 0 };
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(sessions));
+      } catch {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('[]');
+      }
+      return;
+    }
+
     // --- Tools ---
     if (url.pathname === '/tools') {
       const tools = [];
@@ -677,19 +698,23 @@ const server = createServer(async (req, res) => {
 if (WebSocketServer && pty) {
   const wss = new WebSocketServer({ noServer: true });
 
-  function ensureTmuxSession() {
+  function ensureTmuxSession(name = 'main') {
+    // Sanitize: only allow alphanumeric, dash, underscore
+    const safe = name.replace(/[^a-zA-Z0-9_-]/g, '');
     try {
-      execSync('tmux has-session -t main 2>/dev/null');
+      execSync(`tmux has-session -t ${safe} 2>/dev/null`);
     } catch {
-      execSync(`tmux new-session -d -s main -c ${WOLT_DIR}`);
+      execSync(`tmux new-session -d -s ${safe} -c ${WOLT_DIR}`);
     }
+    return safe;
   }
 
-  wss.on('connection', (ws) => {
-    console.log('[tui] client connected');
-    ensureTmuxSession();
+  wss.on('connection', (ws, req) => {
+    const wsUrl = new URL(req.url, `http://localhost:${PORT}`);
+    const sessionName = ensureTmuxSession(wsUrl.searchParams.get('session') || 'main');
+    console.log(`[tui] client connected → session: ${sessionName}`);
 
-    const shell = pty.spawn('tmux', ['attach', '-t', 'main'], {
+    const shell = pty.spawn('tmux', ['attach', '-t', sessionName], {
       name: 'xterm-256color',
       cols: 80,
       rows: 24,
