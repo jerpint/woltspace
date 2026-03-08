@@ -23,6 +23,12 @@ WOLT_DIR="$(pwd)"
 
 cmd="${1:-start}"
 
+# --dev flag: mount platform source for live editing (changes persist on host)
+DEV_MODE=false
+for arg in "$@"; do
+  [ "$arg" = "--dev" ] && DEV_MODE=true
+done
+
 # --- Helper: ensure container is running and get tunnel URL ---
 
 _ensure_container() {
@@ -49,12 +55,24 @@ _ensure_container() {
     local oauth_token
     oauth_token=$(grep '^CLAUDE_CODE_OAUTH_TOKEN=' "$wolt_dir/.env" 2>/dev/null | cut -d= -f2-)
 
+    local dev_mounts=""
+    if [ "$DEV_MODE" = true ]; then
+      dev_mounts="-v $WOLTSPACE_DIR/server.js:/app/server.js:rw"
+      dev_mounts="$dev_mounts -v $WOLTSPACE_DIR/container/bot:/app/bot:rw"
+      dev_mounts="$dev_mounts -v $WOLTSPACE_DIR/container/skills:/app/skills:rw"
+      dev_mounts="$dev_mounts -v $WOLTSPACE_DIR/container/cron:/app/cron:rw"
+      dev_mounts="$dev_mounts -v $WOLTSPACE_DIR/container/entrypoint.sh:/app/entrypoint.sh:rw"
+      dev_mounts="$dev_mounts -v $WOLTSPACE_DIR/public:/app/public:rw"
+      echo "  dev mode: platform code mounted from $WOLTSPACE_DIR"
+    fi
+
     docker run -d \
       --name "$container_name" \
       --env-file "$wolt_dir/.env" \
       -v "$wolt_dir:/workspace/wolt:rw" \
       -v "$wolt_dir/.claude:/home/node/.claude:rw" \
       $deploy_key_mount \
+      $dev_mounts \
       -e WOLT_DIR=/workspace/wolt \
       -e CLAUDE_CODE_OAUTH_TOKEN="$oauth_token" \
       woltspace > /dev/null
@@ -274,8 +292,9 @@ case "$cmd" in
     exit 0
     ;;
   start)
-    clear
-    cat << 'SPLASH'
+    if [ "$DEV_MODE" = false ]; then
+      clear
+      cat << 'SPLASH'
 
     ╔══════════════════════════════════════════════════════════════╗
     ║                                                              ║
@@ -294,8 +313,9 @@ case "$cmd" in
     ╚══════════════════════════════════════════════════════════════╝
 
 SPLASH
-    echo "    press enter to start ${WOLT_NAME}..."
-    read -r
+      echo "    press enter to start ${WOLT_NAME}..."
+      read -r
+    fi
 
     _ensure_container "$CONTAINER_NAME" "$WOLT_DIR"
 

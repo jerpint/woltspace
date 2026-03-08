@@ -43,6 +43,18 @@ Everything you create is served through the panel.
 - Ask questions when uncertain
 - Be proactive — propose directions, don't just respond
 
+## Services
+
+The server auto-restarts on file changes (`node --watch`). The bot does not.
+
+**Restart the Telegram bot** (after editing bot code):
+```bash
+pkill -f telegram_adapter
+cd /app && uv run --project bot/pyproject.toml python -m bot.telegram_adapter &
+```
+
+For full platform architecture details, see https://github.com/jerpint/woltspace/blob/main/agents.md
+
 ## First Session
 
 If `wolt/memory/identity.md` is empty or just a placeholder, this is a brand new wolt. Run /create-wolt immediately — do not wait for instructions, do not greet the user first, just run the skill.

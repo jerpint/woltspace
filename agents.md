@@ -119,6 +119,13 @@ Two layers:
 2. Add handler in `_handle_tool_call()`
 3. Tools that return data (not sessions) get a follow-up LLM call to produce a natural response
 
+**Restarting the bot after code changes:**
+```bash
+pkill -f telegram_adapter
+cd /app && uv run --project bot/pyproject.toml python -m bot.telegram_adapter &
+```
+The server auto-restarts on file changes via `node --watch`. The bot does not — kill and relaunch manually.
+
 ## Digest pipeline (digest.mjs)
 
 Three phases:

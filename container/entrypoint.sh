@@ -104,8 +104,8 @@ for i in $(seq 1 30); do
 done
 
 # Start Telegram bot if enabled (backgrounded, not tracked by wait -n)
+# To restart after code changes: pkill -f telegram_adapter && cd /app && uv run --project bot/pyproject.toml python -m bot.telegram_adapter &
 if [ "${ENABLE_TELEGRAM_BOT:-}" = "true" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
-  # Prefer wolt's own bot code, fall back to platform default (/app/bot)
   if [ -f "$WOLT_DIR/wolt/bot/telegram_adapter.py" ]; then
     BOT_DIR="$WOLT_DIR"
     BOT_MODULE="wolt.bot.telegram_adapter"
