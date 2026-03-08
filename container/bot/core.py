@@ -19,6 +19,22 @@ MEMORY_DIR = WOLT_DIR / "wolt" / "memory"
 STATE_DIR = WOLT_DIR / ".state"
 LLM_MODEL = os.environ.get("LLM_MODEL", "anthropic/claude-haiku-4-5-20251001")
 
+# Fixed log dir — always at wolts level, never moves with wolt switch
+BOT_LOG_DIR = WOLTS_DIR / ".state" / "bot-debug"
+BOT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+logger = logging.getLogger(__name__)
+
+
+def _bot_log(event: str, data: dict):
+    """Append a structured event to the bot debug log."""
+    entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "event": event, **data}
+    try:
+        with open(BOT_LOG_DIR / "bot.jsonl", "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        logger.error(f"Failed to write bot log: {e}")
+
 
 def switch_wolt(name: str) -> str | None:
     """Switch active wolt. Returns the new wolt name or None if not found."""
@@ -220,6 +236,11 @@ def start_claude_session(prompt: str, wolt: str = None) -> dict:
         ["tmux", "new-session", "-d", "-s", session_name, "-c", str(target_dir)],
         check=True,
     )
+    # Set session name as env var so hooks can identify which session they belong to
+    subprocess.run(
+        ["tmux", "send-keys", "-t", session_name, f"export WOLT_SESSION={session_name}", "Enter"],
+        check=True,
+    )
     claude_cmd = f'claude --dangerously-skip-permissions {json.dumps(prompt)}'
     subprocess.run(
         ["tmux", "send-keys", "-t", session_name, claude_cmd, "Enter"],
@@ -229,7 +250,9 @@ def start_claude_session(prompt: str, wolt: str = None) -> dict:
     tunnel_url = get_tunnel_url()
     session_url = f"{tunnel_url}/tui?session={session_name}" if tunnel_url else None
     target_name = wolt or os.environ.get("WOLT_NAME", "wolt")
-    return {"name": session_name, "url": session_url, "wolt": target_name}
+    result = {"name": session_name, "url": session_url, "wolt": target_name}
+    _bot_log("session_start", {"session": session_name, "wolt": target_name, "dir": str(target_dir), "prompt": prompt[:500]})
+    return result
 
 
 def list_sessions() -> list[dict]:
@@ -335,6 +358,11 @@ def kill_session(name: str) -> bool:
         return False
 
 
+def _log_tool_call(name: str, args: dict, result: str):
+    """Append tool call to debug log."""
+    _bot_log("tool_call", {"tool": name, "args": args, "result": result[:2000]})
+
+
 def _handle_tool_call(tool_call) -> str:
     """Execute a tool call and return the result as a string."""
     name = tool_call.function.name
@@ -342,22 +370,25 @@ def _handle_tool_call(tool_call) -> str:
 
     if name == "claude_code":
         session = start_claude_session(args["prompt"], wolt=args.get("wolt"))
-        return json.dumps(session)
+        result = json.dumps(session)
     elif name == "get_tunnel_url":
         url = get_tunnel_url()
-        return url or "tunnel not available right now"
+        result = url or "tunnel not available right now"
     elif name == "check_session":
-        result = check_session(args.get("session_name"))
-        return json.dumps(result)
+        result = json.dumps(check_session(args.get("session_name")))
     elif name == "get_recent_sessions":
-        result = get_recent_sessions(n=args.get("n", 5), tag=args.get("tag"))
-        return json.dumps(result)
+        result = json.dumps(get_recent_sessions(n=args.get("n", 5), tag=args.get("tag")))
     else:
-        return f"unknown tool: {name}"
+        result = f"unknown tool: {name}"
+
+    _log_tool_call(name, args, result)
+    return result
 
 
 def get_response(user_message: str, conversation_history: list = None) -> dict:
     """Get a response — either direct chat or delegated via tool calls."""
+    _bot_log("request", {"message": user_message[:500], "history_len": len(conversation_history) if conversation_history else 0})
+
     messages = [{"role": "system", "content": build_system_prompt()}]
     if conversation_history:
         messages.extend(conversation_history)
@@ -369,6 +400,7 @@ def get_response(user_message: str, conversation_history: list = None) -> dict:
     # Tool call — execute and get final response
     if choice.message.tool_calls:
         tool_call = choice.message.tool_calls[0]
+        _bot_log("llm_tool_call", {"tool": tool_call.function.name, "args": tool_call.function.arguments[:500] if tool_call.function.arguments else ""})
         tool_result = _handle_tool_call(tool_call)
 
         # For claude_code, return session info directly

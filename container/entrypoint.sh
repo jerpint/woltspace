@@ -61,10 +61,21 @@ if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
   chmod 600 /home/node/.claude/.credentials.json
 fi
 
-# Skip first-run onboarding + trust the workspace
-cat > /home/node/.claude.json << CJEOF
-{"hasCompletedOnboarding":true,"projects":{"$WOLT_DIR":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}
-CJEOF
+# Skip first-run onboarding + trust all wolt dirs + accept bypass permissions
+TRUST_PROJECTS="{}"
+for d in "$WOLTS_DIR"/*/; do
+  [ -d "$d" ] && TRUST_PROJECTS=$(echo "$TRUST_PROJECTS" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+d['/workspace/wolts/$(basename "$d")'] = {'hasTrustDialogAccepted': True, 'hasCompletedProjectOnboarding': True}
+json.dump(d, sys.stdout)
+")
+done
+python3 -c "
+import json
+projects = json.loads('$TRUST_PROJECTS')
+json.dump({'hasCompletedOnboarding': True, 'bypassPermissionsAccepted': True, 'projects': projects}, open('/home/node/.claude.json', 'w'), indent=2)
+"
 
 # Install session-done hook (notifies bot when claude sessions end)
 if [ -f /app/hooks/session-done.sh ]; then
@@ -73,6 +84,7 @@ if [ -f /app/hooks/session-done.sh ]; then
   SETTINGS_FILE="/home/node/.claude/settings.json"
   cat > "$SETTINGS_FILE" << 'HOOKEOF'
 {
+  "skipDangerousModePermissionPrompt": true,
   "hooks": {
     "Stop": [
       {
@@ -80,6 +92,16 @@ if [ -f /app/hooks/session-done.sh ]; then
           {
             "type": "command",
             "command": "/app/hooks/session-done.sh"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/app/hooks/notify.sh"
           }
         ]
       }

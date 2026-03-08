@@ -13,7 +13,7 @@ from pathlib import Path
 from collections import defaultdict
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
-from bot.core import get_response, transcribe_audio, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts
+from bot.core import get_response, transcribe_audio, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, _bot_log
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -260,6 +260,38 @@ async def handle_wolt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 RESULTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts")) / ".state" / "task-results"
+
+def _summarize_session(session: str, output: str, tunnel_url: str = "") -> str:
+    """Summarize a finished session into a natural language Telegram message."""
+    from litellm import completion
+    LLM_MODEL = os.environ.get("BOT_LLM_MODEL", "claude-haiku-4-5")
+    try:
+        resp = completion(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": (
+                    "You relay session updates to a human via Telegram. Be casual and short — "
+                    "like texting a coworker. Say what got done, whether it worked, and if "
+                    "they need to do anything. No greetings, no fluff. Just the update. "
+                    "If there's a link, drop it naturally. End with whether they're needed or not."
+                )},
+                {"role": "user", "content": (
+                    f"Session '{session}' just finished. Here's what the terminal showed:\n\n"
+                    f"{output}\n\n"
+                    f"{'Live at: ' + tunnel_url if tunnel_url else ''}\n"
+                    f"Summarize this for me — what happened, did it work, do I need to do anything?"
+                )},
+            ],
+            max_tokens=200,
+        )
+        return resp.choices[0].message.content
+    except Exception as e:
+        # Fallback to raw output if LLM fails
+        msg = f"session {session} finished.\n\n{output[-1500:]}"
+        if tunnel_url:
+            msg += f"\n\n{tunnel_url}"
+        return msg
+
 _notified_sessions: set[str] = set()
 # Maps session_name -> chat_id that triggered it
 _session_chat_map: dict[str, int] = {}
@@ -274,7 +306,7 @@ async def _watch_task_results(app):
         return
 
     while True:
-        await asyncio.sleep(10)
+        await asyncio.sleep(5)
         if not RESULTS_DIR.exists():
             continue
         for f in RESULTS_DIR.glob("*.json"):
@@ -283,18 +315,31 @@ async def _watch_task_results(app):
             try:
                 data = json.loads(f.read_text())
                 session = data.get("session", f.stem)
-                output = data.get("output", "")
-                # Trim output for telegram
-                if len(output) > 2000:
-                    output = output[-2000:]
-                tunnel_url = data.get("url", "")
-                msg = f"session {session} finished.\n\n{output}"
-                if tunnel_url:
-                    msg += f"\n\n{tunnel_url}"
-                # Send to the chat that triggered this session, or fallback
+                event_type = data.get("type", "done")
                 notify_chat_id = _session_chat_map.get(session, fallback_chat_id)
-                await app.bot.send_message(chat_id=notify_chat_id, text=msg)
+                logger.info(f"Task result: {event_type} for {session}, chat_id={notify_chat_id}, file={f.name}")
+
+                if event_type == "notification":
+                    message = data.get("message", "")
+                    if message:
+                        msg = f"[{session}] {message}"
+                        await app.bot.send_message(chat_id=notify_chat_id, text=msg)
+                        _bot_log("notify_sent", {"session": session, "type": "notification", "chat_id": notify_chat_id, "message": message[:500]})
+                else:
+                    # Session done — use Claude's own last message
+                    message = data.get("message", data.get("output", ""))
+                    if len(message) > 2000:
+                        message = message[:2000] + "..."
+                    tunnel_url = get_tunnel_url()
+                    msg = f"[{session}] {message}"
+                    if tunnel_url:
+                        msg += f"\n\n{tunnel_url}/tui?session={session}"
+                    await app.bot.send_message(chat_id=notify_chat_id, text=msg)
+                    _bot_log("notify_sent", {"session": session, "type": "done", "chat_id": notify_chat_id, "message": message[:500]})
+
                 _notified_sessions.add(f.stem)
+                # Clean up result file after notifying
+                f.unlink(missing_ok=True)
             except Exception as e:
                 logger.error(f"Error reading task result {f}: {e}")
 
