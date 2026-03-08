@@ -27,7 +27,7 @@ export PATH="$HOME/woltspace:$PATH"
 ### Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`)
+- [Claude Code](https://code.claude.com) (`curl -fsSL https://claude.ai/install.sh | bash`)
 
 ## Quick start
 
@@ -113,6 +113,71 @@ woltspace init    # creates ~/wolts/bob
 ```
 
 Each gets its own container, tunnel, and identity. Auth is shared — after the first wolt authenticates, new ones reuse the token.
+
+## Messaging (Telegram, etc.)
+
+Wolts can talk through messaging apps. The bot code is baked into the image — just add config.
+
+```bash
+# In your wolt's .env:
+ENABLE_TELEGRAM_BOT=true
+TELEGRAM_BOT_TOKEN=<from @BotFather>
+TELEGRAM_ALLOWED_USERS=<your telegram user id>
+LLM_MODEL=anthropic/claude-haiku-4-5-20251001
+ANTHROPIC_API_KEY=<key>
+```
+
+Then `woltspace restart`. The bot starts automatically.
+
+**How it works:** A small fast model (Haiku, or any provider via litellm) handles casual conversation using the wolt's memory. When a task comes in, it spawns a Claude Code session and sends back a link to the TUI — tap it on your phone and you're in a live terminal.
+
+**Commands:** `/sessions` (list active sessions with links), `/kill <name>` (cleanup)
+
+**Customizing:** Copy `/app/bot/` to `wolt/bot/` in your repo and edit freely. The entrypoint prefers your code over the platform default.
+
+## Named sessions
+
+Each task gets its own tmux session, accessible via the browser:
+
+```
+https://<tunnel>/tui?session=task-12345
+```
+
+The main session is always at `/tui` (or `/tui?session=main`). `GET /sessions` returns a JSON list of all active sessions.
+
+## Stack
+
+```
+Container image (~800MB):
+├── node:22-slim          — base (server is JS)
+├── server.js             — HTTP + WebSocket + split view (single file, ~900 lines)
+├── tmux                  — session multiplexer (named sessions, survives disconnects)
+├── xterm.js (CDN)        — terminal in browser
+├── ws + node-pty         — WebSocket + PTY for terminal
+├── cloudflared           — tunnel to internet (no account, ephemeral URL)
+├── claude                — native binary (installed via curl|bash, auto-updates)
+├── uv                    — Python package manager (runs bot)
+├── /app/bot/             — Telegram bot (litellm + python-telegram-bot)
+├── /app/skills/          — platform skills (create-wolt, telegram, digest, music, work)
+├── /app/cron/            — digest pipeline
+└── /app/public/          — split view UI assets
+
+Host mount (persists across rebuilds):
+└── ~/wolts/<name>/
+    ├── wolt/memory/      — identity, context, learnings
+    ├── wolt/site/        — public space
+    ├── wolt/sparks/      — generated artifacts
+    ├── wolt/bot/         — bot override (optional)
+    ├── .claude/          — auth + session state
+    ├── .state/           — tunnel-url, tunnel.log
+    └── .env              — name, secrets, feature flags
+```
+
+**Design choices:**
+- Two runtimes (Node + Python) — server is JS for xterm.js/WebSocket ecosystem, bot is Python for litellm's provider coverage
+- Single server.js — monolith by choice, not accident. One file to read, one process to manage
+- make + g++ in image — only for node-pty native compilation. Future: prebuilt binaries or multi-stage build
+- Feature flags in .env — `ENABLE_TELEGRAM_BOT`, `ENABLE_DIGEST_CRON`. Off by default, opt-in per wolt
 
 ## Learn more
 
