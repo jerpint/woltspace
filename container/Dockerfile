@@ -14,6 +14,9 @@ RUN apt-get update && apt-get install -y \
     make \
     g++ \
     procps \
+    jq \
+    less \
+    vim-tiny \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv (fast Python package manager)
