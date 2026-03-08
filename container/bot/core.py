@@ -117,6 +117,26 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_recent_sessions",
+            "description": "Get summaries of recent Claude Code sessions — what was built, artifact links, brief reasoning. Use this FIRST when someone asks what happened, what was made, what's the link, or what came out of a session. Don't rely only on check_session — sessions write summaries here when they finish.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "n": {
+                        "type": "integer",
+                        "description": "Number of recent sessions to return (default 5).",
+                    },
+                    "tag": {
+                        "type": "string",
+                        "description": "Optional tag to filter by (e.g. 'music', 'bot', 'site').",
+                    },
+                },
+            },
+        },
+    },
 ]
 
 
@@ -156,6 +176,7 @@ Talk like a person, not an assistant. Short messages. Lowercase is fine. You hav
 You have tools. Use them when appropriate:
 - **claude_code** — spin up a Claude Code session for real work (build, search, code, generate)
 - **get_tunnel_url** — get the current public URL for your split view
+- **get_recent_sessions** — read summaries of recent sessions (what was built, artifact links). Use when someone asks what happened, what was made, or wants a link from a past session.
 
 ## Memory
 Your identity and context come from memory files below. Use them — reference past work, ongoing projects, shared context. You're not starting fresh each time."""
@@ -264,13 +285,42 @@ def check_session(session_name: str = None) -> dict:
     tunnel_url = get_tunnel_url()
     session_url = f"{tunnel_url}/tui?session={session_name}" if tunnel_url else None
 
-    return {
+    result = {
         "session": session_name,
         "alive": alive,
         "status": "running" if alive else "finished",
         "output": output,
         "url": session_url,
     }
+
+    # Always attach the latest session summary so the bot has context
+    recent = get_recent_sessions(n=1)
+    if recent:
+        result["latest_summary"] = recent[0]
+
+    return result
+
+
+def get_recent_sessions(n: int = 5, tag: str = None) -> list[dict]:
+    """Read recent session summaries from .state/sessions.jsonl."""
+    sessions_file = STATE_DIR / "sessions.jsonl"
+    if not sessions_file.exists():
+        return []
+    try:
+        lines = sessions_file.read_text().strip().split("\n")
+        entries = []
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        if tag:
+            entries = [e for e in entries if tag in e.get("tags", [])]
+        return entries[-n:][::-1]  # most recent first
+    except Exception:
+        return []
 
 
 def kill_session(name: str) -> bool:
@@ -298,6 +348,9 @@ def _handle_tool_call(tool_call) -> str:
         return url or "tunnel not available right now"
     elif name == "check_session":
         result = check_session(args.get("session_name"))
+        return json.dumps(result)
+    elif name == "get_recent_sessions":
+        result = get_recent_sessions(n=args.get("n", 5), tag=args.get("tag"))
         return json.dumps(result)
     else:
         return f"unknown tool: {name}"

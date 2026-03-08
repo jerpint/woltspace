@@ -125,6 +125,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     response = format_response(result)
+    if result["type"] == "session":
+        _session_chat_map[result["session"]["name"]] = chat_id
     history.append({"role": "user", "content": user_message})
     history.append({"role": "assistant", "content": response})
     _append_history(chat_id, "user", user_message)
@@ -179,6 +181,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     response = format_response(result)
+    if result["type"] == "session":
+        _session_chat_map[result["session"]["name"]] = chat_id
     history.append({"role": "user", "content": user_message})
     history.append({"role": "assistant", "content": response})
     _append_history(chat_id, "user", user_message)
@@ -257,13 +261,16 @@ async def handle_wolt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 RESULTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts")) / ".state" / "task-results"
 _notified_sessions: set[str] = set()
+# Maps session_name -> chat_id that triggered it
+_session_chat_map: dict[str, int] = {}
 
 
 async def _watch_task_results(app):
     """Background task: watch for completed sessions and notify via Telegram."""
+    # Fallback chat_id if session origin is unknown
     allowed = os.environ.get("TELEGRAM_ALLOWED_USERS", "").split(",")
-    chat_id = int(allowed[0].strip()) if allowed and allowed[0].strip().isdigit() else None
-    if not chat_id:
+    fallback_chat_id = int(allowed[0].strip()) if allowed and allowed[0].strip().isdigit() else None
+    if not fallback_chat_id:
         return
 
     while True:
@@ -284,7 +291,9 @@ async def _watch_task_results(app):
                 msg = f"session {session} finished.\n\n{output}"
                 if tunnel_url:
                     msg += f"\n\n{tunnel_url}"
-                await app.bot.send_message(chat_id=chat_id, text=msg)
+                # Send to the chat that triggered this session, or fallback
+                notify_chat_id = _session_chat_map.get(session, fallback_chat_id)
+                await app.bot.send_message(chat_id=notify_chat_id, text=msg)
                 _notified_sessions.add(f.stem)
             except Exception as e:
                 logger.error(f"Error reading task result {f}: {e}")
