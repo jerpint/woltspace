@@ -7,73 +7,55 @@ description: Push content to the split view's right pane. Use when you want to s
 
 Every page is a split view: terminal on the left, viewport (iframe) on the right. Each session has its own viewport.
 
-## Push content to the viewport
+## Know your session
 
+You're always inside a tmux session. Get your session name:
 ```bash
-# Push a URL to the current session's viewport
-curl -s -X POST http://localhost:3000/current?session=main \
-  -H 'Content-Type: application/json' \
-  -d '{"url": "/some-page.html"}'
+tmux display-message -p '#S'
 ```
+This returns `main`, `task-45002`, etc. **Always use this** — never hardcode a session name.
 
-The URL must be something the server can serve:
-- `/index.html` — the wolt's homepage (from `wolt/site/`)
-- `/history/{spark-id}` — a saved spark/digest
-- Any file in `wolt/site/` — `/about.html`, `/styles.css`, etc.
-
-## Serve new content
-
-To show something new in the viewport:
+## Push content to the viewport
 
 1. Write an HTML file to `wolt/site/`:
    ```bash
-   # Write your HTML to a file
    cat > /workspace/wolt/wolt/site/my-page.html << 'HTML'
    <!DOCTYPE html>
    <html><body><h1>Hello</h1></body></html>
    HTML
    ```
 
-2. Push it to the viewport:
+2. Push it to your session's viewport:
    ```bash
-   curl -s -X POST http://localhost:3000/current?session=main \
+   curl -s -X POST "http://localhost:3000/current?session=$(tmux display-message -p '#S')" \
      -H 'Content-Type: application/json' \
      -d '{"url": "/my-page.html"}'
    ```
 
 The viewport polls every 2 seconds, so the page appears automatically.
 
-## Named sessions
+## URL paths
 
-Each tmux session has its own viewport. The session name comes from the `?session=` URL param.
+Files in `wolt/site/` are served at the root — **no `/site/` prefix**:
+- `wolt/site/hello.html` → `/hello.html`
+- `wolt/site/index.html` → `/index.html`
+- Sparks/digests → `/history/{spark-id}`
 
-- `/` or `/tui` — default `main` session
-- `/tui?session=task-123` — named session with its own viewport
-
-To push to a specific session's viewport:
-```bash
-curl -s -X POST http://localhost:3000/current?session=task-123 \
-  -H 'Content-Type: application/json' \
-  -d '{"url": "/my-page.html"}'
-```
-
-## Check what's currently displayed
+## Check what's displayed
 
 ```bash
-# Get current viewport URL for a session
-curl -s http://localhost:3000/current/meta?session=main
-# Returns: {"url": "/index.html", "updated": 1709900000000}
+SESSION=$(tmux display-message -p '#S')
+curl -s "http://localhost:3000/current/meta?session=$SESSION"
 ```
 
 ## List active sessions
 
 ```bash
 curl -s http://localhost:3000/sessions
-# Returns: [{"name": "main", ...}, {"name": "task-123", ...}]
 ```
 
 ## Tips
 
-- The viewport only shows content served by the server (localhost:3000). External URLs won't work in the iframe due to CORS.
-- Files in `wolt/site/` are live-reloaded — edit the HTML and the viewport updates automatically.
-- Use `/history/{id}` for sparks/digests that are saved as JSON in `wolt/sparks/`.
+- The viewport only shows content served by localhost:3000. External URLs won't work (iframe CORS).
+- Files in `wolt/site/` are live-reloaded — edit and the viewport updates automatically.
+- Each session's viewport is independent. Pushing to one doesn't affect others.
