@@ -299,12 +299,23 @@ def run():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
 
-    # Start background watcher for task completions
-    app.job_queue.run_once(lambda ctx: asyncio.ensure_future(_watch_task_results(app)), when=5)
-
     wolt_name = os.environ.get("WOLT_NAME", "wolt")
     logger.info(f"{wolt_name} telegram bot starting...")
-    app.run_polling()
+
+    # Start background watcher for task completions alongside polling
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    async def _run():
+        async with app:
+            await app.start()
+            await app.updater.start_polling()
+            # Run task result watcher in background
+            asyncio.create_task(_watch_task_results(app))
+            # Keep running forever
+            await asyncio.Event().wait()
+
+    loop.run_until_complete(_run())
 
 
 if __name__ == "__main__":
