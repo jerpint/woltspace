@@ -54,6 +54,10 @@ COPY public /app/public
 # Copy hooks
 COPY container/hooks /app/hooks
 
+# Copy bin scripts
+COPY container/bin /app/container/bin
+RUN chmod +x /app/container/bin/*.sh
+
 # Copy entrypoint
 COPY container/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh

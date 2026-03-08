@@ -216,6 +216,29 @@ def get_tunnel_url() -> str:
     return ""
 
 
+SESSION_STATUS_DIR = STATE_DIR / "sessions"
+RUN_SESSION_SCRIPT = Path("/app/container/bin/run-session.sh")
+
+
+def build_session_command(session_name: str, work_dir: str, prompt: str) -> str:
+    """Build the shell command that tmux will execute directly.
+
+    Separated out so it can be tested without tmux.
+    """
+    return f"{RUN_SESSION_SCRIPT} {shlex.quote(session_name)} {shlex.quote(work_dir)} {shlex.quote(prompt)}"
+
+
+def get_session_status(session_name: str) -> dict | None:
+    """Read structured status file for a session, if it exists."""
+    status_file = SESSION_STATUS_DIR / f"{session_name}.json"
+    if status_file.exists():
+        try:
+            return json.loads(status_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            return None
+    return None
+
+
 def start_claude_session(prompt: str, wolt: str = None) -> dict:
     """Start an interactive Claude Code session in a named tmux session.
 
@@ -233,37 +256,12 @@ def start_claude_session(prompt: str, wolt: str = None) -> dict:
     target_name = wolt or os.environ.get("WOLT_NAME", "wolt")
     session_name = f"{target_name}-{int(time.time()) % 100000}"
 
+    # Build command and launch tmux with it directly — no send-keys
+    cmd = build_session_command(session_name, str(target_dir), prompt)
     subprocess.run(
-        ["tmux", "new-session", "-d", "-s", session_name, "-c", str(target_dir)],
+        ["tmux", "new-session", "-d", "-s", session_name, "-c", str(target_dir), cmd],
         check=True,
     )
-    # Set session name as env var so hooks can identify which session they belong to
-    subprocess.run(
-        ["tmux", "send-keys", "-t", session_name, f"export WOLT_SESSION={session_name}", "Enter"],
-        check=True,
-    )
-    claude_cmd = f'claude --dangerously-skip-permissions {shlex.quote(prompt)}'
-    subprocess.run(
-        ["tmux", "send-keys", "-t", session_name, claude_cmd, "Enter"],
-        check=True,
-    )
-
-    # Wait briefly then capture pane to check for shell errors
-    time.sleep(1.5)
-    try:
-        pane_out = subprocess.run(
-            ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-10"],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip()
-        # Check for common shell errors that mean claude never started
-        error_indicators = [": event not found", ": command not found", ": syntax error",
-                           ": No such file", ": Permission denied", "error:"]
-        for indicator in error_indicators:
-            if indicator in pane_out:
-                _bot_log("session_error", {"session": session_name, "error": pane_out})
-                break
-    except subprocess.CalledProcessError:
-        _bot_log("session_error", {"session": session_name, "error": "couldn't read pane after spawn"})
 
     tunnel_url = get_tunnel_url()
     session_url = f"{tunnel_url}/tui?session={session_name}" if tunnel_url else None
@@ -294,7 +292,7 @@ def list_sessions() -> list[dict]:
 
 
 def check_session(session_name: str = None) -> dict:
-    """Check on a running session — capture recent terminal output."""
+    """Check on a running session — structured status file first, pane capture as fallback."""
     # If no name given, find the most recent task session
     if not session_name:
         sessions = list_sessions()
@@ -302,26 +300,39 @@ def check_session(session_name: str = None) -> dict:
             return {"status": "no_sessions", "output": "No active task sessions."}
         session_name = sessions[-1]["name"]
 
-    # Check if session is still alive
-    result = subprocess.run(
+    # Check structured status file first
+    status = get_session_status(session_name)
+
+    # Check if tmux session is still alive
+    tmux_result = subprocess.run(
         ["tmux", "has-session", "-t", session_name],
         capture_output=True,
     )
-    alive = result.returncode == 0
+    alive = tmux_result.returncode == 0
 
-    # Capture the pane content
+    # Capture pane content for live output
     output = ""
-    try:
-        result = subprocess.run(
-            ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-30"],
-            capture_output=True, text=True, check=True,
-        )
-        output = result.stdout.strip()
-        # Take last 30 non-empty lines
-        lines = [l for l in output.split("\n") if l.strip()][-30:]
-        output = "\n".join(lines)
-    except subprocess.CalledProcessError:
-        output = "(couldn't read session output)"
+    if alive:
+        try:
+            tmux_result = subprocess.run(
+                ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-30"],
+                capture_output=True, text=True, check=True,
+            )
+            output = tmux_result.stdout.strip()
+            lines = [l for l in output.split("\n") if l.strip()][-30:]
+            output = "\n".join(lines)
+        except subprocess.CalledProcessError:
+            output = "(couldn't read session output)"
+
+    # Determine status: structured file wins, then tmux liveness
+    if status and status.get("status") in ("completed", "failed"):
+        session_status = status["status"]
+    elif alive:
+        session_status = "running"
+    elif status:
+        session_status = status.get("status", "unknown")
+    else:
+        session_status = "finished"
 
     tunnel_url = get_tunnel_url()
     session_url = f"{tunnel_url}/tui?session={session_name}" if tunnel_url else None
@@ -329,10 +340,13 @@ def check_session(session_name: str = None) -> dict:
     result = {
         "session": session_name,
         "alive": alive,
-        "status": "running" if alive else "finished",
+        "status": session_status,
         "output": output,
         "url": session_url,
     }
+
+    if status and "exit_code" in status:
+        result["exit_code"] = status["exit_code"]
 
     # Always attach the latest session summary so the bot has context
     recent = get_recent_sessions(n=1)
