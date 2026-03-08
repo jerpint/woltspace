@@ -96,10 +96,11 @@ SERVER_PID=$!
 sleep 1
 
 # Start cloudflared tunnel
+# Tunnel URL is shared across all wolts — stored at wolts level
 echo "opening tunnel..."
-mkdir -p "$WOLT_DIR/.state"
-rm -f "$WOLT_DIR/.state/tunnel-url"
-TUNNEL_LOG="$WOLT_DIR/.state/tunnel.log"
+mkdir -p "$WOLTS_DIR/.state" "$WOLT_DIR/.state"
+rm -f "$WOLTS_DIR/.state/tunnel-url" "$WOLT_DIR/.state/tunnel-url"
+TUNNEL_LOG="$WOLTS_DIR/.state/tunnel.log"
 
 cloudflared tunnel --url http://localhost:3000 > "$TUNNEL_LOG" 2>&1 &
 TUNNEL_PID=$!
@@ -108,6 +109,8 @@ TUNNEL_PID=$!
 for i in $(seq 1 30); do
   URL=$(grep -o 'https://[^ ]*trycloudflare.com' "$TUNNEL_LOG" 2>/dev/null | head -1)
   if [ -n "$URL" ]; then
+    echo "$URL" > "$WOLTS_DIR/.state/tunnel-url"
+    # Also write to active wolt for backward compat (CLI reads it)
     echo "$URL" > "$WOLT_DIR/.state/tunnel-url"
     echo "tunnel ready: $URL"
     break

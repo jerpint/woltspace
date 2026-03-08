@@ -88,7 +88,7 @@ _ensure_container() {
     echo ""
     docker build -t woltspace -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR"
     docker rm -f "$container_name" 2>/dev/null || true
-    mkdir -p "$ACTIVE_WOLT_DIR/.claude"
+    mkdir -p "$WOLTS_DIR/.claude"
 
     # Find .env: shared (~/wolts/.env) or per-wolt fallback
     local env_file="$WOLTS_DIR/.env"
@@ -122,7 +122,7 @@ _ensure_container() {
       --name "$container_name" \
       --env-file "$env_file" \
       -v "$WOLTS_DIR:/workspace/wolts:rw" \
-      -v "$ACTIVE_WOLT_DIR/.claude:/home/node/.claude:rw" \
+      -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
       $deploy_key_mount \
       $dev_mounts \
       -e WOLTS_DIR=/workspace/wolts \

@@ -12,7 +12,7 @@ from pathlib import Path
 from collections import defaultdict
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
-from bot.core import get_response, transcribe_audio, list_sessions, kill_session, get_tunnel_url
+from bot.core import get_response, transcribe_audio, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -212,6 +212,32 @@ async def handle_kill(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Couldn't kill {name}.")
 
 
+async def handle_wolt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /wolt [name] — switch active wolt or list available."""
+    if not is_allowed(update):
+        return
+    args = context.args
+    if not args:
+        wolts = list_wolts()
+        active = os.environ.get("WOLT_NAME", "?")
+        lines = [f"active: {active}", "", "available:"]
+        for w in wolts:
+            marker = " ←" if w == active else ""
+            lines.append(f"  • {w}{marker}")
+        lines.append("\n/wolt <name> to switch")
+        await update.message.reply_text("\n".join(lines))
+        return
+    name = args[0]
+    result = switch_wolt(name)
+    if result:
+        # Clear in-memory history so the new wolt starts fresh
+        chat_id = update.effective_chat.id
+        chat_histories[chat_id] = []
+        await update.message.reply_text(f"Switched to {name}.")
+    else:
+        await update.message.reply_text(f"No wolt named '{name}' found.")
+
+
 def run():
     """Start the Telegram bot."""
     load_allowed_users()
@@ -221,6 +247,7 @@ def run():
     app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(CommandHandler("sessions", handle_sessions))
     app.add_handler(CommandHandler("kill", handle_kill))
+    app.add_handler(CommandHandler("wolt", handle_wolt))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
 

@@ -13,10 +13,44 @@ from pathlib import Path
 from litellm import completion
 from openai import OpenAI
 
+WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 WOLT_DIR = Path(os.environ.get("WOLT_DIR", "/workspace/wolt"))
 MEMORY_DIR = WOLT_DIR / "wolt" / "memory"
 STATE_DIR = WOLT_DIR / ".state"
 LLM_MODEL = os.environ.get("LLM_MODEL", "anthropic/claude-haiku-4-5-20251001")
+
+
+def switch_wolt(name: str) -> str | None:
+    """Switch active wolt. Returns the new wolt name or None if not found."""
+    global WOLT_DIR, MEMORY_DIR, STATE_DIR
+    target = WOLTS_DIR / name
+    if not target.is_dir() or not (target / "wolt").is_dir():
+        return None
+    WOLT_DIR = target
+    MEMORY_DIR = WOLT_DIR / "wolt" / "memory"
+    STATE_DIR = WOLT_DIR / ".state"
+    os.environ["WOLT_DIR"] = str(WOLT_DIR)
+    os.environ["WOLT_NAME"] = name
+    # Update woltspace.json
+    config_path = WOLTS_DIR / "woltspace.json"
+    if config_path.exists():
+        try:
+            config = json.loads(config_path.read_text())
+            config.setdefault("telegram", {})["active_wolt"] = name
+            config_path.write_text(json.dumps(config, indent=2) + "\n")
+        except Exception:
+            pass
+    return name
+
+
+def list_wolts() -> list[str]:
+    """List available wolts."""
+    wolts = []
+    if WOLTS_DIR.is_dir():
+        for entry in sorted(WOLTS_DIR.iterdir()):
+            if entry.is_dir() and (entry / "wolt").is_dir():
+                wolts.append(entry.name)
+    return wolts
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +146,12 @@ Your identity and context come from memory files below. Use them — reference p
 
 
 def get_tunnel_url() -> str:
-    """Read the tunnel URL from .state/tunnel-url."""
+    """Read the tunnel URL from shared .state/tunnel-url."""
+    # Tunnel is shared across all wolts — check wolts-level first
+    shared_file = WOLTS_DIR / ".state" / "tunnel-url"
+    if shared_file.exists():
+        return shared_file.read_text().strip().rstrip("/")
+    # Fallback to per-wolt
     tunnel_file = STATE_DIR / "tunnel-url"
     if tunnel_file.exists():
         return tunnel_file.read_text().strip().rstrip("/")
