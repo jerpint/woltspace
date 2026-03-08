@@ -846,35 +846,41 @@ server.listen(PORT, () => {
       timeZone: 'America/Montreal', hour: 'numeric', hour12: false }).format(new Date()));
   }
 
-  setInterval(() => {
-    const h = montrealHour();
-    const today = montrealDateStr();
-    const lastRun = existsSync(DIGEST_FLAG)
-      ? readFileSync(DIGEST_FLAG, 'utf8').trim() : '';
-    if (h >= 6 && lastRun !== today) {
-      writeFileSync(DIGEST_FLAG, today);
-      spawnDigest('6am daily');
-    }
-  }, 60 * 1000);
+  // Digest cron — opt-in via ENABLE_DIGEST_CRON=true in .env
+  const digestEnabled = (process.env.ENABLE_DIGEST_CRON || loadDotEnv().ENABLE_DIGEST_CRON || '').toLowerCase() === 'true';
 
-  const DIGEST_3PM_FLAG = join(STATE_DIR, 'digest-3pm-run.txt');
-  setInterval(() => {
-    const h = montrealHour();
-    const today = montrealDateStr();
-    const lastRun = existsSync(DIGEST_3PM_FLAG)
-      ? readFileSync(DIGEST_3PM_FLAG, 'utf8').trim() : '';
-    if (h >= 15 && lastRun !== today) {
-      writeFileSync(DIGEST_3PM_FLAG, today);
-      spawnDigest('3pm afternoon');
-    }
-  }, 60 * 1000);
+  if (digestEnabled) {
+    setInterval(() => {
+      const h = montrealHour();
+      const today = montrealDateStr();
+      const lastRun = existsSync(DIGEST_FLAG)
+        ? readFileSync(DIGEST_FLAG, 'utf8').trim() : '';
+      if (h >= 6 && lastRun !== today) {
+        writeFileSync(DIGEST_FLAG, today);
+        spawnDigest('6am daily');
+      }
+    }, 60 * 1000);
 
-  const testFlag = join(STATE_DIR, 'digest-test-fired.txt');
-  if (!existsSync(testFlag)) {
-    setTimeout(() => {
-      writeFileSync(testFlag, new Date().toISOString());
-      spawnDigest('5-minute test');
-    }, 5 * 60 * 1000);
-    console.log('[cron] one-time digest test scheduled in 5 minutes');
+    const DIGEST_3PM_FLAG = join(STATE_DIR, 'digest-3pm-run.txt');
+    setInterval(() => {
+      const h = montrealHour();
+      const today = montrealDateStr();
+      const lastRun = existsSync(DIGEST_3PM_FLAG)
+        ? readFileSync(DIGEST_3PM_FLAG, 'utf8').trim() : '';
+      if (h >= 15 && lastRun !== today) {
+        writeFileSync(DIGEST_3PM_FLAG, today);
+        spawnDigest('3pm afternoon');
+      }
+    }, 60 * 1000);
+
+    const testFlag = join(STATE_DIR, 'digest-test-fired.txt');
+    if (!existsSync(testFlag)) {
+      setTimeout(() => {
+        writeFileSync(testFlag, new Date().toISOString());
+        spawnDigest('5-minute test');
+      }, 5 * 60 * 1000);
+      console.log('[cron] one-time digest test scheduled in 5 minutes');
+    }
+    console.log('[cron] digest cron enabled');
   }
 });
