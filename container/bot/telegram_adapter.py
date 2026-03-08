@@ -6,12 +6,13 @@ Platform default. Wolt can override by placing wolt/bot/telegram_adapter.py in t
 import os
 import json
 import logging
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from collections import defaultdict
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
-from bot.core import get_response, list_sessions, kill_session, get_tunnel_url
+from bot.core import get_response, transcribe_audio, list_sessions, kill_session, get_tunnel_url
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -118,6 +119,60 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(response)
 
 
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle incoming voice messages — transcribe and process as text."""
+    user_id = update.effective_user.id if update.effective_user else None
+    logger.info(f"Voice message from user_id={user_id}")
+    if not is_allowed(update):
+        return
+
+    voice = update.message.voice or update.message.audio
+    if not voice:
+        return
+
+    file = await context.bot.get_file(voice.file_id)
+    with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+        await file.download_to_drive(tmp.name)
+        tmp_path = tmp.name
+
+    try:
+        text = transcribe_audio(tmp_path)
+    except Exception as e:
+        logger.error(f"Transcription failed: {e}")
+        await update.message.reply_text("Couldn't transcribe that voice message.")
+        return
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+    logger.info(f"Transcribed: {text[:100]}")
+
+    # Process as a normal text message
+    chat_id = update.effective_chat.id
+    user_message = f"[voice message] {text}"
+
+    if chat_id not in chat_histories:
+        chat_histories[chat_id] = _load_history(chat_id)
+    history = chat_histories[chat_id]
+
+    try:
+        result = get_response(user_message, conversation_history=list(history))
+    except Exception as e:
+        logger.error(f"Error getting response: {e}")
+        await update.message.reply_text("Something broke on my end. Try again in a sec.")
+        return
+
+    response = format_response(result)
+    history.append({"role": "user", "content": user_message})
+    history.append({"role": "assistant", "content": response})
+    _append_history(chat_id, "user", user_message)
+    _append_history(chat_id, "assistant", response)
+
+    if len(history) > MAX_HISTORY * 2:
+        chat_histories[chat_id] = history[-MAX_HISTORY * 2:]
+
+    await update.message.reply_text(response)
+
+
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command."""
     if not is_allowed(update):
@@ -167,6 +222,7 @@ def run():
     app.add_handler(CommandHandler("sessions", handle_sessions))
     app.add_handler(CommandHandler("kill", handle_kill))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
 
     wolt_name = os.environ.get("WOLT_NAME", "wolt")
     logger.info(f"{wolt_name} telegram bot starting...")

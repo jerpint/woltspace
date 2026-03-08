@@ -8,8 +8,10 @@ import json
 import subprocess
 import logging
 import time
+import tempfile
 from pathlib import Path
 from litellm import completion
+from openai import OpenAI
 
 WOLT_DIR = Path(os.environ.get("WOLT_DIR", "/workspace/wolt"))
 MEMORY_DIR = WOLT_DIR / "wolt" / "memory"
@@ -17,6 +19,18 @@ STATE_DIR = WOLT_DIR / ".state"
 LLM_MODEL = os.environ.get("LLM_MODEL", "anthropic/claude-haiku-4-5-20251001")
 
 logger = logging.getLogger(__name__)
+
+
+def transcribe_audio(file_path: str) -> str:
+    """Transcribe audio file using OpenAI Whisper."""
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return "[voice message — no OPENAI_API_KEY set for transcription]"
+    client = OpenAI(api_key=api_key)
+    with open(file_path, "rb") as f:
+        result = client.audio.transcriptions.create(model="whisper-1", file=f)
+    return result.text
+
 
 # --- Tool definitions for litellm ---
 
