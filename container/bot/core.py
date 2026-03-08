@@ -155,6 +155,62 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_sessions",
+            "description": "List all active Claude Code sessions. Shows session names and when they were created.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "kill_session",
+            "description": "Kill a running Claude Code session by name. Use when a session is stale or stuck.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "session_name": {
+                        "type": "string",
+                        "description": "The session name to kill (e.g. 'neowolt-77139').",
+                    }
+                },
+                "required": ["session_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_wolts",
+            "description": "List all available wolts.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "switch_wolt",
+            "description": "Switch the active wolt identity. Changes which wolt's memory, personality, and context are used.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The wolt name to switch to.",
+                    }
+                },
+                "required": ["name"],
+            },
+        },
+    },
 ]
 
 
@@ -222,7 +278,25 @@ def get_tunnel_url() -> str:
 
 
 SESSION_STATUS_DIR = STATE_DIR / "sessions"
+SESSION_ROUTING_DIR = WOLTS_DIR / ".state" / "session-routing"
 RUN_SESSION_SCRIPT = Path("/app/container/bin/run-session.sh")
+
+
+def write_session_routing(session_name: str, routing: dict):
+    """Write routing info so notifications go to the right adapter."""
+    SESSION_ROUTING_DIR.mkdir(parents=True, exist_ok=True)
+    (SESSION_ROUTING_DIR / f"{session_name}.json").write_text(json.dumps(routing))
+
+
+def read_session_routing(session_name: str) -> dict | None:
+    """Read routing info for a session."""
+    path = SESSION_ROUTING_DIR / f"{session_name}.json"
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return None
+    return None
 
 
 def build_session_command(session_name: str, work_dir: str, prompt: str) -> str:
@@ -400,13 +474,15 @@ def _log_tool_call(name: str, args: dict, result: str):
     _bot_log("tool_call", {"tool": name, "args": args, "result": result[:2000]})
 
 
-def _handle_tool_call(tool_call) -> str:
+def _handle_tool_call(tool_call, routing: dict = None) -> str:
     """Execute a tool call and return the result as a string."""
     name = tool_call.function.name
     args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
 
     if name == "claude_code":
         session = start_claude_session(args["prompt"], wolt=args.get("wolt"))
+        if routing:
+            write_session_routing(session["name"], routing)
         result = json.dumps(session)
     elif name == "get_tunnel_url":
         url = get_tunnel_url()
@@ -415,6 +491,17 @@ def _handle_tool_call(tool_call) -> str:
         result = json.dumps(check_session(args.get("session_name")))
     elif name == "get_recent_sessions":
         result = json.dumps(get_recent_sessions(n=args.get("n", 5), tag=args.get("tag")))
+    elif name == "list_sessions":
+        result = json.dumps(list_sessions())
+    elif name == "kill_session":
+        killed = kill_session(args["session_name"])
+        result = json.dumps({"killed": killed, "session": args["session_name"]})
+    elif name == "list_wolts":
+        active = os.environ.get("WOLT_NAME", "?")
+        result = json.dumps({"active": active, "available": list_wolts()})
+    elif name == "switch_wolt":
+        switched = switch_wolt(args["name"])
+        result = json.dumps({"switched": bool(switched), "name": args["name"]})
     else:
         result = f"unknown tool: {name}"
 
@@ -422,8 +509,14 @@ def _handle_tool_call(tool_call) -> str:
     return result
 
 
-def get_response(user_message: str, conversation_history: list = None) -> dict:
-    """Get a response — either direct chat or delegated via tool calls."""
+def get_response(user_message: str, conversation_history: list = None, routing: dict = None) -> dict:
+    """Get a response — either direct chat or delegated via tool calls.
+
+    routing: optional dict identifying where this request came from.
+    Written to disk when a session starts so notifications go to the right adapter.
+    e.g. {"adapter": "slack", "channel": "C0AK...", "thread_ts": "123.456"}
+    e.g. {"adapter": "telegram", "chat_id": 12345}
+    """
     _bot_log("request", {"message": user_message[:500], "history_len": len(conversation_history) if conversation_history else 0})
 
     messages = [{"role": "system", "content": build_system_prompt()}]
@@ -438,7 +531,7 @@ def get_response(user_message: str, conversation_history: list = None) -> dict:
     if choice.message.tool_calls:
         tool_call = choice.message.tool_calls[0]
         _bot_log("llm_tool_call", {"tool": tool_call.function.name, "args": tool_call.function.arguments[:500] if tool_call.function.arguments else ""})
-        tool_result = _handle_tool_call(tool_call)
+        tool_result = _handle_tool_call(tool_call, routing=routing)
 
         # For claude_code, return session info directly
         if tool_call.function.name == "claude_code":

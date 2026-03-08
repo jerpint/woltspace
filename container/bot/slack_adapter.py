@@ -14,7 +14,7 @@ from pathlib import Path
 from collections import defaultdict
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
-from bot.core import get_response, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, _bot_log
+from bot.core import get_response, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, read_session_routing, _bot_log
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -34,8 +34,6 @@ MAX_HISTORY = 20
 # Key: "channel:thread_ts" — bot responds to follow-ups without re-mention.
 _active_threads: set[str] = set()
 
-# Maps session_name -> (channel, thread_ts) for notifications
-_session_thread_map: dict[str, tuple[str, str]] = {}
 
 
 def _thread_key(channel: str, thread_ts: str) -> str:
@@ -141,8 +139,9 @@ def create_app():
         if history and history[-1]["role"] == "user":
             history = history[:-1]
 
+        routing = {"adapter": "slack", "channel": channel, "thread_ts": thread_ts}
         try:
-            result = get_response(user_message, conversation_history=list(history))
+            result = get_response(user_message, conversation_history=list(history), routing=routing)
         except Exception as e:
             logger.error(f"Error getting response: {e}")
             await client.chat_postMessage(channel=channel, thread_ts=thread_ts,
@@ -150,8 +149,6 @@ def create_app():
             return
 
         response = format_response(result)
-        if result["type"] == "session":
-            _session_thread_map[result["session"]["name"]] = (channel, thread_ts)
 
         # Persist to disk
         _append_history(channel, thread_ts, "user", user_message)
@@ -194,8 +191,9 @@ def create_app():
         if history and history[-1]["role"] == "user":
             history = history[:-1]
 
+        routing = {"adapter": "slack", "channel": channel, "thread_ts": thread_ts}
         try:
-            result = get_response(user_message, conversation_history=list(history))
+            result = get_response(user_message, conversation_history=list(history), routing=routing)
         except Exception as e:
             logger.error(f"Error getting response: {e}")
             await client.chat_postMessage(channel=channel, thread_ts=thread_ts,
@@ -235,10 +233,15 @@ async def _watch_task_results(client):
                 session = data.get("session", f.stem)
                 event_type = data.get("type", "done")
 
+                # Check routing — only handle slack sessions
+                routing = read_session_routing(session)
+                if routing and routing.get("adapter") != "slack":
+                    continue
+
                 # Find where to notify
-                thread_info = _session_thread_map.get(session)
-                if thread_info:
-                    channel, thread_ts = thread_info
+                if routing and routing.get("channel"):
+                    channel = routing["channel"]
+                    thread_ts = routing.get("thread_ts")
                 elif fallback_channel:
                     channel, thread_ts = fallback_channel, None
                 else:

@@ -13,7 +13,7 @@ from pathlib import Path
 from collections import defaultdict
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
-from bot.core import get_response, transcribe_audio, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, _bot_log
+from bot.core import get_response, transcribe_audio, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, read_session_routing, _bot_log
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -117,16 +117,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_histories[chat_id] = _load_history(chat_id)
     history = chat_histories[chat_id]
 
+    routing = {"adapter": "telegram", "chat_id": chat_id}
     try:
-        result = get_response(user_message, conversation_history=list(history))
+        result = get_response(user_message, conversation_history=list(history), routing=routing)
     except Exception as e:
         logger.error(f"Error getting response: {e}")
         await update.message.reply_text("Something broke on my end. Try again in a sec.")
         return
 
     response = format_response(result)
-    if result["type"] == "session":
-        _session_chat_map[result["session"]["name"]] = chat_id
     history.append({"role": "user", "content": user_message})
     history.append({"role": "assistant", "content": response})
     _append_history(chat_id, "user", user_message)
@@ -173,16 +172,15 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_histories[chat_id] = _load_history(chat_id)
     history = chat_histories[chat_id]
 
+    routing = {"adapter": "telegram", "chat_id": chat_id}
     try:
-        result = get_response(user_message, conversation_history=list(history))
+        result = get_response(user_message, conversation_history=list(history), routing=routing)
     except Exception as e:
         logger.error(f"Error getting response: {e}")
         await update.message.reply_text("Something broke on my end. Try again in a sec.")
         return
 
     response = format_response(result)
-    if result["type"] == "session":
-        _session_chat_map[result["session"]["name"]] = chat_id
     history.append({"role": "user", "content": user_message})
     history.append({"role": "assistant", "content": response})
     _append_history(chat_id, "user", user_message)
@@ -294,7 +292,7 @@ def _summarize_session(session: str, output: str, tunnel_url: str = "") -> str:
 
 _notified_sessions: set[str] = set()
 # Maps session_name -> chat_id that triggered it
-_session_chat_map: dict[str, int] = {}
+
 
 
 async def _watch_task_results(app):
@@ -316,7 +314,13 @@ async def _watch_task_results(app):
                 data = json.loads(f.read_text())
                 session = data.get("session", f.stem)
                 event_type = data.get("type", "done")
-                notify_chat_id = _session_chat_map.get(session, fallback_chat_id)
+
+                # Check routing — only handle telegram sessions (or unrouted ones)
+                routing = read_session_routing(session)
+                if routing and routing.get("adapter") != "telegram":
+                    continue
+
+                notify_chat_id = routing.get("chat_id", fallback_chat_id) if routing else fallback_chat_id
                 logger.info(f"Task result: {event_type} for {session}, chat_id={notify_chat_id}, file={f.name}")
 
                 if event_type == "notification":
