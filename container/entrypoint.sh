@@ -83,10 +83,24 @@ SERVER_PID=$!
 
 sleep 1
 
-# Start cloudflared tunnel
+# Start cloudflared tunnel, capture URL to state file
 echo "opening tunnel..."
-cloudflared tunnel --url http://localhost:3000 &
+TUNNEL_LOG=/tmp/cloudflared.log
+cloudflared tunnel --url http://localhost:3000 > "$TUNNEL_LOG" 2>&1 &
 TUNNEL_PID=$!
+
+# Background: write tunnel URL to .state/ once available
+(
+  mkdir -p "$WOLT_DIR/.state"
+  for i in $(seq 1 30); do
+    URL=$(grep -o 'https://[^ ]*trycloudflare.com' "$TUNNEL_LOG" 2>/dev/null | head -1)
+    if [ -n "$URL" ]; then
+      echo "$URL" > "$WOLT_DIR/.state/tunnel-url"
+      break
+    fi
+    sleep 1
+  done
+) & disown
 
 # Cleanup on exit
 cleanup() {
