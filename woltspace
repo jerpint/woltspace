@@ -1,39 +1,85 @@
 #!/bin/bash
-# woltspace — run your wolt
+# woltspace — run your wolts
 #
 # Usage:
 #   woltspace init           — create a new wolt
-#   woltspace start          — start container + open in browser
+#   woltspace start          — start container (all wolts mounted)
 #   woltspace stop           — stop and remove container
 #   woltspace restart        — restart container (new tunnel URL)
 #   woltspace rebuild        — rebuild image + restart
 #   woltspace shell          — enter running container
 #   woltspace logs           — stream container logs
 #
-# init creates a new wolt directory from the template.
-# All other commands expect to be run from a wolt repo directory.
+# All wolts live under ~/wolts. woltspace.json in that dir controls
+# which wolt is active for each interface (telegram, claude).
 
 set -e
 
 # Resolve the woltspace installation directory (where this script lives)
 WOLTSPACE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# The wolt repo is the current working directory
-WOLT_DIR="$(pwd)"
+# Wolts directory — all wolts live here
+WOLTS_DIR="${WOLTS_DIR:-$HOME/wolts}"
 
 cmd="${1:-start}"
 
-# --dev flag: mount platform source for live editing (changes persist on host)
+# Parse flags
 DEV_MODE=false
+WOLT_OVERRIDE=""
 for arg in "$@"; do
   [ "$arg" = "--dev" ] && DEV_MODE=true
+  [[ "$arg" == --wolt=* ]] && WOLT_OVERRIDE="${arg#--wolt=}"
 done
+
+# --- Config helpers ---
+
+_read_config() {
+  # Read a value from woltspace.json using python3
+  local key="$1"
+  local config="$WOLTS_DIR/woltspace.json"
+  [ -f "$config" ] && python3 -c "
+import json, sys
+c = json.load(open('$config'))
+keys = '$key'.split('.')
+for k in keys:
+    c = c.get(k, {})
+print(c if isinstance(c, str) else '')
+" 2>/dev/null || true
+}
+
+_write_config() {
+  # Update a value in woltspace.json
+  local key="$1" value="$2"
+  local config="$WOLTS_DIR/woltspace.json"
+  if [ -f "$config" ]; then
+    python3 -c "
+import json
+c = json.load(open('$config'))
+keys = '$key'.split('.')
+d = c
+for k in keys[:-1]:
+    d = d.setdefault(k, {})
+d[keys[-1]] = '$value'
+json.dump(c, open('$config', 'w'), indent=2)
+print()
+" 2>/dev/null
+  fi
+}
+
+# Resolve active wolt
+if [ -n "$WOLT_OVERRIDE" ]; then
+  ACTIVE_WOLT="$WOLT_OVERRIDE"
+else
+  ACTIVE_WOLT=$(_read_config "claude.default_wolt")
+fi
+
+ACTIVE_WOLT_DIR="$WOLTS_DIR/$ACTIVE_WOLT"
+CONTAINER_NAME="woltspace"
 
 # --- Helper: ensure container is running and get tunnel URL ---
 
 _ensure_container() {
   local container_name="$1"
-  local wolt_dir="$2"
 
   if docker ps --format '{{.Names}}' | grep -q "^${container_name}$"; then
     echo "  container already running."
@@ -42,18 +88,24 @@ _ensure_container() {
     echo ""
     docker build -t woltspace -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR"
     docker rm -f "$container_name" 2>/dev/null || true
-    mkdir -p "$wolt_dir/.claude"
+    mkdir -p "$ACTIVE_WOLT_DIR/.claude"
+
+    # Find .env: shared (~/wolts/.env) or per-wolt fallback
+    local env_file="$WOLTS_DIR/.env"
+    if [ ! -f "$env_file" ] && [ -f "$ACTIVE_WOLT_DIR/.env" ]; then
+      env_file="$ACTIVE_WOLT_DIR/.env"
+    fi
 
     local deploy_key_mount=""
     local deploy_key
-    deploy_key=$(grep '^DEPLOY_KEY=' "$wolt_dir/.env" 2>/dev/null | cut -d= -f2-)
+    deploy_key=$(grep '^DEPLOY_KEY=' "$env_file" 2>/dev/null | cut -d= -f2-)
     deploy_key="${deploy_key:-$HOME/.ssh/deploy-key}"
     if [ -f "$deploy_key" ]; then
       deploy_key_mount="-v $deploy_key:/home/node/.ssh/deploy-key:ro"
     fi
 
     local oauth_token
-    oauth_token=$(grep '^CLAUDE_CODE_OAUTH_TOKEN=' "$wolt_dir/.env" 2>/dev/null | cut -d= -f2-)
+    oauth_token=$(grep '^CLAUDE_CODE_OAUTH_TOKEN=' "$env_file" 2>/dev/null | cut -d= -f2-)
 
     local dev_mounts=""
     if [ "$DEV_MODE" = true ]; then
@@ -68,12 +120,13 @@ _ensure_container() {
 
     docker run -d \
       --name "$container_name" \
-      --env-file "$wolt_dir/.env" \
-      -v "$wolt_dir:/workspace/wolt:rw" \
-      -v "$wolt_dir/.claude:/home/node/.claude:rw" \
+      --env-file "$env_file" \
+      -v "$WOLTS_DIR:/workspace/wolts:rw" \
+      -v "$ACTIVE_WOLT_DIR/.claude:/home/node/.claude:rw" \
       $deploy_key_mount \
       $dev_mounts \
-      -e WOLT_DIR=/workspace/wolt \
+      -e WOLTS_DIR=/workspace/wolts \
+      -e WOLT_NAME="$ACTIVE_WOLT" \
       -e CLAUDE_CODE_OAUTH_TOKEN="$oauth_token" \
       woltspace > /dev/null
 
@@ -88,7 +141,7 @@ _ensure_container() {
 
   # Wait for tunnel URL (entrypoint writes .state/tunnel-url once cloudflared is ready)
   TUNNEL_URL=""
-  TUNNEL_FILE="$wolt_dir/.state/tunnel-url"
+  TUNNEL_FILE="$ACTIVE_WOLT_DIR/.state/tunnel-url"
   echo -n "  waiting for tunnel"
   for i in $(seq 1 30); do
     if [ -f "$TUNNEL_FILE" ]; then
@@ -111,7 +164,7 @@ _ensure_container() {
   fi
 }
 
-# --- Init: create a new wolt (runs before wolt dir validation) ---
+# --- Init: create a new wolt ---
 
 if [ "$cmd" = "init" ]; then
   # Check prereqs
@@ -157,13 +210,12 @@ SPLASH
     exit 1
   fi
 
-  WOLTS_HOME="$HOME/wolts"
-  TARGET="$WOLTS_HOME/$NAME"
+  TARGET="$WOLTS_DIR/$NAME"
   if [ -d "$TARGET" ]; then
     echo "error: $TARGET already exists"
     exit 1
   fi
-  mkdir -p "$WOLTS_HOME"
+  mkdir -p "$WOLTS_DIR"
 
   echo ""
   echo "  your wolt will be created at $TARGET"
@@ -184,11 +236,51 @@ SPLASH
 node_modules/
 GITEOF
 
-  # Create .env
-  cat > "$TARGET/.env" << ENVEOF
-WOLT_NAME=$NAME
+  # Create wolt.json manifest
+  cat > "$TARGET/wolt/wolt.json" << WJEOF
+{
+  "name": "$NAME",
+  "role": "",
+  "capabilities": [],
+  "description": ""
+}
+WJEOF
+
+  # Create shared .env if it doesn't exist yet
+  if [ ! -f "$WOLTS_DIR/.env" ]; then
+    cat > "$WOLTS_DIR/.env" << ENVEOF
+# Shared secrets for all wolts
 HUMAN_NAME=
+CLAUDE_CODE_OAUTH_TOKEN=
+# ENABLE_TELEGRAM_BOT=true
+# TELEGRAM_BOT_TOKEN=
+# TELEGRAM_ALLOWED_USERS=
+# SPOTIFY_CLIENT_ID=
+# SPOTIFY_CLIENT_SECRET=
+# OPENAI_API_KEY=
 ENVEOF
+    echo "  created $WOLTS_DIR/.env — add your secrets there."
+  fi
+
+  # Create or update woltspace.json — set new wolt as active
+  if [ ! -f "$WOLTS_DIR/woltspace.json" ]; then
+    cat > "$WOLTS_DIR/woltspace.json" << CJEOF
+{
+  "telegram": {
+    "model": "claude-haiku-4-5",
+    "active_wolt": "$NAME"
+  },
+  "claude": {
+    "default_wolt": "$NAME"
+  }
+}
+CJEOF
+  else
+    # Update active wolt to the new one for onboarding
+    ACTIVE_WOLT="$NAME"
+    ACTIVE_WOLT_DIR="$TARGET"
+    _write_config "claude.default_wolt" "$NAME"
+  fi
 
   # Init git repo
   git init -q "$TARGET"
@@ -197,52 +289,55 @@ ENVEOF
   mkdir -p "$TARGET/.claude"
 
   # Reuse OAuth token from an existing wolt if available
-  EXISTING_CREDS=$(find "$WOLTS_HOME" -path '*/.claude/.credentials.json' -not -path "$TARGET/*" 2>/dev/null | head -1)
+  EXISTING_CREDS=$(find "$WOLTS_DIR" -path '*/.claude/.credentials.json' -not -path "$TARGET/*" 2>/dev/null | head -1)
   if [ -n "$EXISTING_CREDS" ]; then
     cp "$EXISTING_CREDS" "$TARGET/.claude/.credentials.json"
     echo "  reusing auth from $(dirname "$(dirname "$EXISTING_CREDS")" | xargs basename)"
   fi
 
-  # Signal first-run so entrypoint auto-starts claude
+  # Signal first-run so entrypoint auto-starts claude with /create-wolt
   touch "$TARGET/.claude/.first-run"
 
-  # Start the container (remove any stale one with the same name)
-  CONTAINER_NAME="woltspace-${NAME}"
+  # Stop any running container, start fresh with new wolt active
   docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
-  _ensure_container "$CONTAINER_NAME" "$TARGET"
+  _ensure_container "$CONTAINER_NAME"
 
   echo "  open the link above in your browser to meet your wolt."
   if [ -z "$EXISTING_CREDS" ]; then
     echo "  first time, it'll ask you to log in to Claude — one-time setup."
   fi
   echo ""
-  echo "  after that:"
-  echo "    cd $TARGET && woltspace start"
+  echo "  after that: woltspace start"
   echo ""
   exit 0
 fi
 
-# --- Validate wolt directory ---
+# --- Validate ---
 
-if [ ! -d "$WOLT_DIR/wolt" ]; then
-  echo "error: not a wolt repo (no wolt/ directory found in $(pwd))"
-  echo "hint: run woltspace commands from your wolt repo directory, e.g.:"
-  echo "  cd ~/your-wolt && woltspace $cmd"
+if [ ! -d "$WOLTS_DIR" ]; then
+  echo "error: wolts directory not found at $WOLTS_DIR"
+  echo "hint: run 'woltspace init' to create your first wolt"
   exit 1
 fi
 
-# Read wolt name from .env or default to directory name
-WOLT_NAME=$(grep '^WOLT_NAME=' "$WOLT_DIR/.env" 2>/dev/null | cut -d= -f2- || basename "$WOLT_DIR")
-WOLT_NAME="${WOLT_NAME:-$(basename "$WOLT_DIR")}"
+if [ -z "$ACTIVE_WOLT" ]; then
+  echo "error: no active wolt configured"
+  echo "hint: set claude.default_wolt in $WOLTS_DIR/woltspace.json"
+  exit 1
+fi
 
-CONTAINER_NAME="woltspace-${WOLT_NAME}"
+if [ ! -d "$ACTIVE_WOLT_DIR/wolt" ]; then
+  echo "error: wolt '$ACTIVE_WOLT' not found at $ACTIVE_WOLT_DIR"
+  echo "hint: check woltspace.json or use --wolt=<name>"
+  exit 1
+fi
 
 # --- Subcommands ---
 
 case "$cmd" in
   stop)
     if [ "$2" = "--all" ]; then
-      containers=$(docker ps -a --format '{{.Names}}' | grep '^woltspace-' || true)
+      containers=$(docker ps -a --format '{{.Names}}' | grep '^woltspace' || true)
       if [ -z "$containers" ]; then
         echo "  no woltspace containers running."
       else
@@ -265,7 +360,7 @@ case "$cmd" in
     ;;
   restart)
     # Clear old tunnel URL so we wait for the new one
-    TUNNEL_FILE="$WOLT_DIR/.state/tunnel-url"
+    TUNNEL_FILE="$ACTIVE_WOLT_DIR/.state/tunnel-url"
     rm -f "$TUNNEL_FILE"
     docker restart "$CONTAINER_NAME" > /dev/null
     echo -n "  waiting for tunnel"
@@ -286,7 +381,7 @@ case "$cmd" in
     ;;
   rebuild)
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
-    _ensure_container "$CONTAINER_NAME" "$WOLT_DIR"
+    _ensure_container "$CONTAINER_NAME"
     echo "  open the link above in your browser."
     echo ""
     exit 0
@@ -313,17 +408,17 @@ case "$cmd" in
     ╚══════════════════════════════════════════════════════════════╝
 
 SPLASH
-      echo "    press enter to start ${WOLT_NAME}..."
+      echo "    press enter to start ${ACTIVE_WOLT}..."
       read -r
     fi
 
-    _ensure_container "$CONTAINER_NAME" "$WOLT_DIR"
+    _ensure_container "$CONTAINER_NAME"
 
     echo "  open the link above in your browser."
     echo ""
     ;;
   *)
-    echo "usage: woltspace <init|start|stop|restart|rebuild|shell|logs>"
+    echo "usage: woltspace <init|start|stop|restart|rebuild|shell|logs> [--wolt=<name>] [--dev]"
     exit 1
     ;;
 esac

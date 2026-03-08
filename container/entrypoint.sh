@@ -2,13 +2,23 @@
 # Entrypoint: configure identity, start server + cloudflared tunnel
 #
 # Auth: CLAUDE_CODE_OAUTH_TOKEN passed via env
-# Wolt repo: mounted at /workspace/wolt
+# Wolts dir: mounted at /workspace/wolts (all wolts)
+# Active wolt: WOLT_NAME env var selects which wolt to boot
 # Skills: baked into image at /app/skills, copied to ~/.claude/skills/
 
 set -e
 
-WOLT_DIR="${WOLT_DIR:-/workspace/wolt}"
+WOLTS_DIR="${WOLTS_DIR:-/workspace/wolts}"
 WOLT_NAME="${WOLT_NAME:-wolt}"
+
+# Resolve active wolt directory
+# If WOLTS_DIR is set (multi-wolt mode), derive WOLT_DIR from it
+if [ -d "$WOLTS_DIR/$WOLT_NAME" ]; then
+  WOLT_DIR="$WOLTS_DIR/$WOLT_NAME"
+else
+  WOLT_DIR="${WOLT_DIR:-/workspace/wolt}"
+fi
+export WOLT_DIR
 
 # Copy skills so Claude auto-discovers them
 # Platform defaults first, then wolt-specific overrides win
@@ -52,8 +62,8 @@ if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
 fi
 
 # Skip first-run onboarding + trust the workspace
-cat > /home/node/.claude.json << 'CJEOF'
-{"hasCompletedOnboarding":true,"projects":{"/workspace/wolt":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}
+cat > /home/node/.claude.json << CJEOF
+{"hasCompletedOnboarding":true,"projects":{"$WOLT_DIR":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}
 CJEOF
 
 # Configure git user from env
@@ -76,6 +86,8 @@ fi
 # ESM ignores NODE_PATH, so symlink /app/node_modules at /workspace/ level
 # so ESM's directory walk from wolt dir finds container-installed packages
 ln -sf /app/node_modules /workspace/node_modules
+# Also at wolts level for multi-wolt mount
+[ -d "$WOLTS_DIR" ] && ln -sf /app/node_modules "$WOLTS_DIR/node_modules" 2>/dev/null || true
 
 # Start the server (baked into image, reads wolt content from mount)
 node --watch /app/server.js &
