@@ -113,7 +113,7 @@
 <body>
   <div id="topbar">
     <div class="left">
-      <span class="title">nw</span>
+      <span class="title" id="session-name">nw</span>
       <span class="status" id="tui-status">connecting...</span>
     </div>
     <div class="actions">
@@ -145,6 +145,11 @@
     import { Terminal }     from 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm';
     import { FitAddon }     from 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm';
     import { WebLinksAddon } from 'https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/+esm';
+
+    // ── Session ───────────────────────────────────────────────────────────────
+    const session = new URLSearchParams(location.search).get('session') || 'main';
+    document.getElementById('session-name').textContent = session === 'main' ? document.getElementById('session-name').textContent : session;
+    document.title = session === 'main' ? document.title : `${session} · tui`;
 
     // ── Terminal ──────────────────────────────────────────────────────────────
     const statusEl = document.getElementById('tui-status');
@@ -178,7 +183,7 @@
     let ws = null;
     function connectTUI() {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(proto + '//' + location.host + '/tui');
+      ws = new WebSocket(proto + '//' + location.host + '/tui?session=' + encodeURIComponent(session));
       ws.onopen = () => {
         statusEl.textContent = 'connected';
         statusEl.style.color = '#6b9';
@@ -280,7 +285,7 @@
 
     // Tell server what we're viewing so the poll doesn't fight us
     function setCurrent(url) {
-      fetch('/current', {
+      fetch('/current?session=' + encodeURIComponent(session), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url }),
@@ -326,7 +331,7 @@
 
     async function pollCurrent() {
       try {
-        const { url } = await fetch('/current/meta').then(r => r.json());
+        const { url } = await fetch('/current/meta?session=' + encodeURIComponent(session)).then(r => r.json());
         if (url && url !== lastUrl) {
           // derive title from path (server has richer title but we don't need it here)
           const title = url.split('/').pop().replace('.html','').replace(/-/g,' ') || url;

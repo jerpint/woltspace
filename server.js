@@ -32,7 +32,7 @@ const PORT = 3000;
 // --- State dir (session data, tool registry, cron flags) ---
 
 const TOOL_REGISTRY_FILE = join(STATE_DIR, 'tool-registry.json');
-const CURRENT_URL_FILE   = join(STATE_DIR, 'current-url.json');
+// Per-session current URL files: current-url-{session}.json (see currentUrlFile())
 const VIEWS_HISTORY_FILE = join(STATE_DIR, 'views-history.jsonl');
 const STATUS_FILE        = join(STATE_DIR, 'status.json');
 
@@ -40,17 +40,27 @@ async function ensureStateDir() {
   await mkdir(STATE_DIR, { recursive: true });
 }
 
-// --- Current view (right pane of split) ---
+// --- Current view (right pane of split, per-session) ---
 
-function getCurrentUrl() {
-  if (!existsSync(CURRENT_URL_FILE)) return '/index.html';
-  try { return JSON.parse(readFileSync(CURRENT_URL_FILE, 'utf8')).url || '/index.html'; } catch { return '/index.html'; }
+function sanitizeSession(name) {
+  return (name || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64) || 'main';
 }
 
-function setCurrentUrl(url) {
+function currentUrlFile(session) {
+  return join(STATE_DIR, `current-url-${sanitizeSession(session)}.json`);
+}
+
+function getCurrentUrl(session = 'main') {
+  const f = currentUrlFile(session);
+  if (!existsSync(f)) return '/index.html';
+  try { return JSON.parse(readFileSync(f, 'utf8')).url || '/index.html'; } catch { return '/index.html'; }
+}
+
+function setCurrentUrl(url, session = 'main') {
   mkdirSync(STATE_DIR, { recursive: true });
-  writeFileSync(CURRENT_URL_FILE, JSON.stringify({ url, updated: Date.now() }));
-  console.log(`[current] → ${url}`);
+  const safe = sanitizeSession(session);
+  writeFileSync(currentUrlFile(safe), JSON.stringify({ url, updated: Date.now() }));
+  console.log(`[current:${safe}] → ${url}`);
 }
 
 function deriveTitleForUrl(u) {
@@ -200,177 +210,7 @@ const MIME = {
   '.txt': 'text/plain', '.pub': 'text/plain',
 };
 
-// --- TUI HTML ---
-
-function tuiHtml(sessionName = 'main') {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>tui · ${sessionName}</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { height: 100dvh; overflow: hidden; background: #0d1117; overscroll-behavior: none; }
-    body { display: flex; flex-direction: column; font-family: 'SF Mono','Fira Code','Consolas',monospace; }
-    #terminal { touch-action: none; }
-    #topbar {
-      background: #161b22; border-bottom: 1px solid #21262d;
-      padding: 0.4rem 0.75rem; display: flex; align-items: center;
-      justify-content: space-between; font-size: 0.8rem; flex-shrink: 0;
-    }
-    #topbar .title { color: #6b9; font-weight: 600; }
-    #topbar .status { color: #555; font-size: 0.7rem; }
-    #terminal { flex: 1; overflow: hidden; touch-action: none; }
-    .xterm { height: 100%; touch-action: none; }
-  </style>
-</head>
-<body>
-  <div id="topbar">
-    <div>
-      <span class="title">tui · ${sessionName}</span>
-      <span class="status" id="status">connecting...</span>
-    </div>
-  </div>
-  <div id="terminal"></div>
-
-  <script type="module">
-    import { Terminal } from 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm';
-    import { FitAddon } from 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm';
-    import { WebLinksAddon } from 'https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/+esm';
-
-    const statusEl = document.getElementById('status');
-    const term = new Terminal({
-      cursorBlink: true,
-      fontSize: 14,
-      fontFamily: "'SF Mono','Fira Code','Consolas',monospace",
-      theme: {
-        background: '#0d1117',
-        foreground: '#c9d1d9',
-        cursor: '#6b9',
-        selectionBackground: '#264f78',
-        black: '#0d1117',
-        red: '#f66',
-        green: '#6b9',
-        yellow: '#e5c07b',
-        blue: '#61afef',
-        magenta: '#c678dd',
-        cyan: '#56b6c2',
-        white: '#c9d1d9',
-      },
-    });
-
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    term.loadAddon(new WebLinksAddon());
-    term.open(document.getElementById('terminal'));
-    fitAddon.fit();
-
-    let ws = null;
-    let reconnectTimer = null;
-
-    function connect() {
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const sessionParam = new URLSearchParams(location.search).get('session') || '${sessionName}';
-      ws = new WebSocket(proto + '//' + location.host + '/tui?session=' + encodeURIComponent(sessionParam));
-
-      ws.onopen = () => {
-        statusEl.textContent = 'connected';
-        statusEl.style.color = '#6b9';
-        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-      };
-
-      ws.onmessage = (ev) => {
-        term.write(ev.data);
-      };
-
-      ws.onclose = () => {
-        statusEl.textContent = 'disconnected — reconnecting...';
-        statusEl.style.color = '#f66';
-        reconnectTimer = setTimeout(connect, 2000);
-      };
-
-      ws.onerror = () => {
-        ws.close();
-      };
-    }
-
-    term.onData((data) => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(data);
-      }
-    });
-
-    term.onResize(({ cols, rows }) => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-      }
-    });
-
-    window.addEventListener('resize', () => fitAddon.fit());
-    new ResizeObserver(() => fitAddon.fit()).observe(document.getElementById('terminal'));
-
-    // Scroll: enter tmux copy mode + arrow keys (no tmux mouse mode needed)
-    // This keeps text selection working normally in the browser
-    let inCopyMode = false;
-    let copyModeTimer = null;
-    const termEl = document.getElementById('terminal');
-
-    termEl.addEventListener('wheel', (e) => {
-      e.preventDefault();
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      const lines = Math.max(1, Math.round(Math.abs(e.deltaY) / 40));
-      if (!inCopyMode) {
-        ws.send('\\x02[');  // Ctrl-b [ = enter tmux copy mode
-        inCopyMode = true;
-      }
-      const arrow = e.deltaY < 0 ? '\\x1b[A' : '\\x1b[B';
-      for (let i = 0; i < lines; i++) ws.send(arrow);
-      clearTimeout(copyModeTimer);
-      copyModeTimer = setTimeout(() => {
-        if (inCopyMode) { ws.send('q'); inCopyMode = false; }
-      }, 3000);
-    }, { passive: false });
-
-    term.onData(() => {
-      if (inCopyMode) { inCopyMode = false; clearTimeout(copyModeTimer); }
-    });
-
-    // Mobile: translate touch swipes into tmux copy-mode scroll
-    let touchY = null;
-    const SCROLL_PX = 30;
-
-    termEl.addEventListener('touchstart', (e) => {
-      if (e.touches.length === 1) touchY = e.touches[0].clientY;
-    }, { passive: true });
-
-    termEl.addEventListener('touchmove', (e) => {
-      if (touchY === null || !ws || ws.readyState !== WebSocket.OPEN) return;
-      const dy = touchY - e.touches[0].clientY;
-      if (Math.abs(dy) >= SCROLL_PX) {
-        const ticks = Math.floor(Math.abs(dy) / SCROLL_PX);
-        if (!inCopyMode) {
-          ws.send('\\x02[');
-          inCopyMode = true;
-        }
-        const arrow = dy > 0 ? '\\x1b[A' : '\\x1b[B';
-        for (let i = 0; i < ticks; i++) ws.send(arrow);
-        touchY = e.touches[0].clientY;
-        clearTimeout(copyModeTimer);
-        copyModeTimer = setTimeout(() => {
-          if (inCopyMode) { ws.send('q'); inCopyMode = false; }
-        }, 3000);
-      }
-    }, { passive: true });
-
-    termEl.addEventListener('touchend', () => { touchY = null; }, { passive: true });
-
-    connect();
-  </script>
-</body>
-</html>`;
-}
+// tuiHtml removed — all TUI pages now use split.html (the split view is the unit)
 
 
 // --- Live-reload ---
@@ -536,18 +376,19 @@ const server = createServer(async (req, res) => {
 
   if (url.pathname === '/version') { res.writeHead(200); res.end('woltspace-v1'); return; }
 
-  // --- Current view (split view control) ---
+  // --- Current view (split view control, per-session) ---
   if (req.method === 'POST' && url.pathname === '/current') {
+    const session = sanitizeSession(url.searchParams.get('session'));
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
       const { url: newUrl, title } = JSON.parse(body || '{}');
       if (newUrl) {
-        setCurrentUrl(newUrl);
+        setCurrentUrl(newUrl, session);
         logView(newUrl, title);
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ url: getCurrentUrl() }));
+      res.end(JSON.stringify({ url: getCurrentUrl(session) }));
     });
     return;
   }
@@ -566,7 +407,7 @@ const server = createServer(async (req, res) => {
     res.end(JSON.stringify({
       wolt: WOLT_NAME,
       digest: status.digest || { state: 'unknown' },
-      currentView: getCurrentUrl(),
+      currentView: getCurrentUrl('main'),
       latestSpark,
       serverUptime: Math.floor(process.uptime()),
       updatedAt: status.updatedAt,
@@ -580,15 +421,18 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (req.method === 'GET' && url.pathname === '/current/meta') {
-    const data = existsSync(CURRENT_URL_FILE)
-      ? JSON.parse(readFileSync(CURRENT_URL_FILE, 'utf8'))
+    const session = sanitizeSession(url.searchParams.get('session'));
+    const f = currentUrlFile(session);
+    const data = existsSync(f)
+      ? JSON.parse(readFileSync(f, 'utf8'))
       : { url: '/index.html', updated: 0 };
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(data));
     return;
   }
   if (req.method === 'GET' && url.pathname === '/current') {
-    res.writeHead(302, { Location: getCurrentUrl() });
+    const session = sanitizeSession(url.searchParams.get('session'));
+    res.writeHead(302, { Location: getCurrentUrl(session) });
     res.end();
     return;
   }
@@ -597,15 +441,21 @@ const server = createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/tools/spawn') return handleToolSpawn(req, res);
 
   if (req.method === 'GET') {
-    if (url.pathname === '/tui') {
+    // Split view is the unit of page — / and /tui both serve it
+    if (url.pathname === '/' || url.pathname === '/tui') {
       if (!WebSocketServer || !pty) {
+        // Outside Docker — serve the static site instead
+        if (url.pathname === '/') {
+          const served = await serveStatic('/index.html', res, req);
+          if (!served) { res.writeHead(404); res.end('Not found'); }
+          return;
+        }
         res.writeHead(503, { 'Content-Type': 'text/plain' });
         res.end('TUI not available — ws/node-pty not installed');
         return;
       }
-      const sessionName = url.searchParams.get('session') || 'main';
-      res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end(tuiHtml(sessionName));
+      const served = await servePlatformUI(res);
+      if (!served) { res.writeHead(500); res.end('split.html not found'); }
       return;
     }
     // --- Sparks/digests ---
@@ -678,14 +528,8 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // / serves the platform split view; everything else is wolt content
-    if (url.pathname === '/') {
-      const served = await servePlatformUI(res);
-      if (!served) { res.writeHead(500); res.end('Platform UI not found'); }
-    } else {
-      const served = await serveStatic(url.pathname, res, req);
-      if (!served) { res.writeHead(404); res.end('Not found'); }
-    }
+    const served = await serveStatic(url.pathname, res, req);
+    if (!served) { res.writeHead(404); res.end('Not found'); }
     return;
   }
 
@@ -759,7 +603,7 @@ if (WebSocketServer && pty) {
 
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url, `http://localhost:${PORT}`);
-    if (url.pathname === '/tui') {
+    if (url.pathname === '/tui' || url.pathname === '/') {
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit('connection', ws, req);
       });
@@ -781,11 +625,12 @@ server.listen(PORT, () => {
   wolt: ${WOLT_NAME}
 
   endpoints:
-    /              — site
-    /tui           — browser terminal (tmux)
+    /              — split view (default session)
+    /tui?session=X — split view (named session)
+    /sessions      — list active sessions
     /history       — sparks viewer
     /status        — status dashboard
-    /current       — panel control
+    /current?session=X — viewport control
     /tools         — running tools
     /tools/spawn   — start a tool (POST)
   `);
