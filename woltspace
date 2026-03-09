@@ -135,27 +135,38 @@ _ensure_container() {
     echo "  container started."
   fi
 
-  # Wait for tunnel URL (entrypoint writes .state/tunnel-url once cloudflared is ready)
-  TUNNEL_URL=""
-  TUNNEL_FILE="$ACTIVE_WOLT_DIR/.state/tunnel-url"
-  echo -n "  waiting for tunnel"
-  for i in $(seq 1 30); do
-    if [ -f "$TUNNEL_FILE" ]; then
-      TUNNEL_URL=$(cat "$TUNNEL_FILE")
-      [ -n "$TUNNEL_URL" ] && break
-    fi
-    echo -n "."
-    sleep 1
-  done
-  echo ""
+  # Check if tunnel is enabled
+  local tunnel_enabled
+  tunnel_enabled=$(grep '^ENABLE_TUNNEL=' "$env_file" 2>/dev/null | cut -d= -f2-)
+  tunnel_enabled="${tunnel_enabled:-true}"
 
-  if [ -n "$TUNNEL_URL" ]; then
+  if [ "$tunnel_enabled" != "false" ]; then
+    # Wait for tunnel URL (entrypoint writes .state/tunnel-url once cloudflared is ready)
+    TUNNEL_URL=""
+    TUNNEL_FILE="$ACTIVE_WOLT_DIR/.state/tunnel-url"
+    echo -n "  waiting for tunnel"
+    for i in $(seq 1 30); do
+      if [ -f "$TUNNEL_FILE" ]; then
+        TUNNEL_URL=$(cat "$TUNNEL_FILE")
+        [ -n "$TUNNEL_URL" ] && break
+      fi
+      echo -n "."
+      sleep 1
+    done
     echo ""
-    echo "  your wolt is live at: $TUNNEL_URL"
-    echo ""
+
+    if [ -n "$TUNNEL_URL" ]; then
+      echo ""
+      echo "  your wolt is live at: $TUNNEL_URL"
+      echo ""
+    else
+      echo ""
+      echo "  (tunnel not ready yet — check 'woltspace logs' for the URL)"
+      echo ""
+    fi
   else
     echo ""
-    echo "  (tunnel not ready yet — check 'woltspace logs' for the URL)"
+    echo "  your wolt is live at: http://localhost:4444"
     echo ""
   fi
 }
@@ -254,6 +265,7 @@ CLAUDE_CODE_OAUTH_TOKEN=
 # SPOTIFY_CLIENT_ID=
 # SPOTIFY_CLIENT_SECRET=
 # OPENAI_API_KEY=
+# ENABLE_TUNNEL=false  # disable public URL, use http://localhost:4444
 ENVEOF
     echo "  created $WOLTS_DIR/.env — add your secrets there."
   fi
