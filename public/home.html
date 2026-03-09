@@ -140,12 +140,12 @@
 <body>
   <div class="header">
     <h1 id="wolt-name">woltspace</h1>
-    <div class="sub" id="wolt-sub"></div>
+    <div class="sub" id="wolt-sub">🦫 wolt beaver builder</div>
   </div>
 
   <div class="prompt-box">
     <form id="prompt-form">
-      <input type="text" id="prompt-input" placeholder="what should we work on?" autocomplete="off" autofocus>
+      <input type="text" id="prompt-input" placeholder="what should we gnaw on today?" autocomplete="off" autofocus>
       <button type="submit" id="submit-btn">go</button>
     </form>
   </div>
@@ -208,7 +208,7 @@
       const prompt = input.value.trim();
       if (!prompt) return;
       btn.disabled = true;
-      btn.textContent = 'starting...';
+      btn.textContent = 'gnawing...';
       try {
         const res = await fetch('/sessions/new', {
           method: 'POST',
@@ -227,6 +227,37 @@
 
     loadSessions();
     setInterval(loadSessions, 5000);
+
+    // 🦫 beaver easter egg — click the h1 5× for a surprise
+    const h1 = document.getElementById('wolt-name');
+    let bClicks = 0, bTimer;
+    h1.style.cursor = 'default';
+    h1.addEventListener('click', () => {
+      bClicks++;
+      clearTimeout(bTimer);
+      bTimer = setTimeout(() => { bClicks = 0; }, 1500);
+      if (bClicks >= 5) {
+        bClicks = 0;
+        document.getElementById('wolt-sub').textContent = '🦫🦫🦫 BEAVER MODE 🦫🦫🦫';
+        document.getElementById('prompt-input').placeholder = 'gnaw gnaw gnaw...';
+        for (let i = 0; i < 20; i++) {
+          setTimeout(() => {
+            const b = document.createElement('div');
+            b.textContent = '🦫';
+            b.style.cssText = `position:fixed;font-size:${1+Math.random()*2}rem;left:${Math.random()*100}vw;top:-2rem;animation:beavFall ${2+Math.random()*2}s linear forwards;pointer-events:none;z-index:9999;`;
+            document.body.appendChild(b);
+            setTimeout(() => b.remove(), 4500);
+          }, i * 100);
+        }
+      }
+    });
+
+    // console 🦫
+    console.log('%c🦫', 'font-size:2rem');
+    console.log('%cwolt beaver builder\ngnaw first, ask questions later.', 'color:#6b9;');
   </script>
+  <style>
+    @keyframes beavFall { to { transform: translateY(110vh) rotate(360deg); opacity: 0; } }
+  </style>
 </body>
 </html>
