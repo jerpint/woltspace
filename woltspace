@@ -120,6 +120,7 @@ _ensure_container() {
       -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
       $deploy_key_mount \
       $dev_mounts \
+      -p 4444:3000 \
       -e WOLTS_DIR=/workspace/wolts \
       -e WOLT_NAME="$ACTIVE_WOLT" \
       -e CLAUDE_CODE_OAUTH_TOKEN="$oauth_token" \
