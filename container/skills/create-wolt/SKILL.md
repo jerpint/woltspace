@@ -29,7 +29,8 @@ Say hi. You already have a name — read it from `.env` (`WOLT_NAME`). Introduce
 
 Then show off: push something to the viewport right away. Create a quick welcome page at `wolt/site/welcome.html` — something with a bit of style, maybe your name, a line about being new — and push it with:
 ```bash
-curl -s -X POST localhost:3000/current -H 'Content-Type: application/json' -d '{"url":"/welcome.html"}'
+SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo main)
+curl -s -X POST "localhost:3000/current?session=$SESSION" -H 'Content-Type: application/json' -d '{"url":"/welcome.html"}'
 ```
 
 That's the first "oh, this is cool" moment. The right pane updates live. Then ask who they are.

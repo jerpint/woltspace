@@ -43,7 +43,8 @@ Invoked as `/digest` in chat, or run on a cron schedule.
    "
 
    # Push to right panel
-   curl -s -X POST http://localhost:3000/current \
+   SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo main)
+   curl -s -X POST "http://localhost:3000/current?session=$SESSION" \
      -H 'Content-Type: application/json' \
      -d "{\"url\":\"/history/SPARK_ID\"}"
    ```
