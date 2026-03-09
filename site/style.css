@@ -29,6 +29,17 @@ h1 {
   color: #1a1a1a;
 }
 
+.github-line {
+  margin-top: -1rem;
+  margin-bottom: 0;
+}
+
+.github-link {
+  font-size: 0.9rem;
+  color: #888;
+  text-decoration-color: #ccc;
+}
+
 h2 {
   font-size: 1.2rem;
   font-weight: normal;
@@ -227,6 +238,8 @@ footer a {
   font-family: 'SF Mono', Monaco, 'Courier New', monospace;
   font-size: 0.9rem;
   padding-right: 4rem;
+  white-space: nowrap;
+  overflow-x: auto;
 }
 
 .copy-btn {
@@ -459,5 +472,10 @@ footer a {
 
   .msg-time {
     display: none;
+  }
+
+  /* curl install line: smaller font so more fits before scroll */
+  .start-here code {
+    font-size: 0.75rem;
   }
 }
