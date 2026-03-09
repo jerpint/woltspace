@@ -32,6 +32,7 @@
     #topbar .actions button:hover { border-color: #6b9; color: #c9d1d9; }
     #topbar .actions button:disabled { opacity: 0.3; cursor: default; border-color: #30363d; color: #444; }
     #topbar .actions button.active { border-color: #6b9; color: #6b9; }
+    #btn-share.copied { border-color: #6b9; color: #6b9; }
 
     /* history panel */
     #right { position: relative; }
@@ -119,6 +120,7 @@
     <div class="actions">
       <button id="btn-back"    onclick="goBack()"            title="Back" disabled>◁</button>
       <button id="btn-hist"    onclick="toggleHist()"        title="View history">≡</button>
+      <button id="btn-share"   onclick="copyPublicLink()"    title="Copy public live link">↗ share</button>
       <button id="btn-term"    onclick="toggleFull('left')"  title="Fullscreen terminal">⬛ term</button>
       <button id="btn-preview" onclick="toggleFull('right')" title="Session view">⬛ session</button>
     </div>
@@ -322,6 +324,19 @@
       histPanel.classList.toggle('open', histOpen);
       btnHist.classList.toggle('active', histOpen);
       if (histOpen) renderHist();
+    };
+
+    window.copyPublicLink = () => {
+      const link = location.origin + '/public/' + encodeURIComponent(session);
+      navigator.clipboard.writeText(link).then(() => {
+        const btn = document.getElementById('btn-share');
+        btn.textContent = '✓ copied';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = '↗ share'; btn.classList.remove('copied'); }, 2000);
+      }).catch(() => {
+        // fallback: open in new tab so user can copy from address bar
+        window.open('/public/' + encodeURIComponent(session), '_blank');
+      });
     };
 
     // Load all sparks for the history panel

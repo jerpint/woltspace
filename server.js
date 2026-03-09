@@ -649,6 +649,21 @@ const server = createServer(async (req, res) => {
   // --- Tools (proxy + registry) ---
   if (req.method === 'POST' && url.pathname === '/tools/spawn') return handleToolSpawn(req, res);
 
+  // --- Public live view (read-only, no auth) ---
+  if (req.method === 'GET' && url.pathname.startsWith('/public/')) {
+    const sessionId = sanitizeSession(url.pathname.slice('/public/'.length));
+    if (!sessionId) { res.writeHead(400); res.end('session id required'); return; }
+    try {
+      const html = await readFile(join(PUBLIC_DIR, 'public-view.html'), 'utf8');
+      const injected = html.replace(/__SESSION_ID__/g, sessionId);
+      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
+      res.end(injected);
+    } catch {
+      res.writeHead(500); res.end('public-view.html not found');
+    }
+    return;
+  }
+
   if (req.method === 'GET') {
     // Homepage — session launcher + history
     if (url.pathname === '/') {
@@ -872,6 +887,7 @@ server.listen(PORT, () => {
     /history       — sparks viewer
     /status        — status dashboard
     /current?session=X — viewport control
+    /public/:session   — public live view (read-only, no auth)
     /tools         — running tools
     /tools/spawn   — start a tool (POST)
     /memory/read   — read a memory file (POST {path})

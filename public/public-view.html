@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>nw · live</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <meta name="wolt-session" content="__SESSION_ID__">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100dvh; overflow: hidden; background: #0d1117; }
+    body { display: flex; flex-direction: column; }
+
+    #statusbar {
+      position: fixed; bottom: 1rem; right: 1rem;
+      display: flex; align-items: center; gap: 0.4rem;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.65rem; color: #484f58;
+      background: #161b22cc; border: 1px solid #21262d;
+      border-radius: 20px; padding: 0.3rem 0.7rem;
+      z-index: 100; backdrop-filter: blur(4px);
+      transition: opacity 0.3s;
+    }
+    #statusbar.hidden { opacity: 0; pointer-events: none; }
+    #live-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: #6b9; flex-shrink: 0;
+      box-shadow: 0 0 6px #6b9;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    #live-dot.stale { background: #555; box-shadow: none; animation: none; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    #waiting {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 1rem;
+      color: #484f58; font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.8rem;
+    }
+    #waiting .dot-row { display: flex; gap: 0.4rem; }
+    #waiting .dot-row span {
+      width: 5px; height: 5px; border-radius: 50%;
+      background: #30363d; animation: blink 1.4s ease-in-out infinite;
+    }
+    #waiting .dot-row span:nth-child(2) { animation-delay: 0.2s; }
+    #waiting .dot-row span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes blink { 0%, 80%, 100% { opacity: 0.2; } 40% { opacity: 1; } }
+
+    #preview {
+      flex: 1; border: none; background: #0d1117;
+      display: none; /* shown once we have a URL */
+    }
+  </style>
+</head>
+<body>
+  <div id="waiting">
+    <div class="dot-row"><span></span><span></span><span></span></div>
+    <span>waiting for session…</span>
+  </div>
+  <iframe id="preview"></iframe>
+  <div id="statusbar" class="hidden">
+    <div id="live-dot"></div>
+    <span id="live-label">live</span>
+  </div>
+
+  <script>
+    // Session ID injected by server into <meta name="wolt-session">; URL param fallback for dev
+    const metaSession = document.querySelector('meta[name="wolt-session"]')?.content;
+    const SESSION_ID = (metaSession && metaSession !== '__SESSION_ID__')
+      ? metaSession
+      : (new URLSearchParams(location.search).get('session') || 'main');
+
+    const preview   = document.getElementById('preview');
+    const waiting   = document.getElementById('waiting');
+    const statusbar = document.getElementById('statusbar');
+    const liveDot   = document.getElementById('live-dot');
+    const liveLabel = document.getElementById('live-label');
+
+    let lastUrl = null;
+    let lastSeen = 0;
+    let hideTimer = null;
+
+    function showStatusbar() {
+      statusbar.classList.remove('hidden');
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => statusbar.classList.add('hidden'), 3000);
+    }
+
+    function loadUrl(url) {
+      if (url === lastUrl) return;
+      lastUrl = url;
+      lastSeen = Date.now();
+
+      // Show preview, hide waiting
+      waiting.style.display = 'none';
+      preview.style.display = 'block';
+      preview.src = url;
+
+      liveDot.classList.remove('stale');
+      liveLabel.textContent = 'live';
+      showStatusbar();
+    }
+
+    async function pollCurrent() {
+      try {
+        const data = await fetch('/current/meta?session=' + encodeURIComponent(SESSION_ID)).then(r => r.json());
+        if (data.url) {
+          loadUrl(data.url);
+        }
+        // Mark stale if no update in 30s
+        if (lastUrl && Date.now() - lastSeen > 30000) {
+          liveDot.classList.add('stale');
+          liveLabel.textContent = 'idle';
+        }
+      } catch {
+        if (lastUrl) {
+          liveDot.classList.add('stale');
+          liveLabel.textContent = 'reconnecting…';
+          showStatusbar();
+        }
+      }
+    }
+
+    // Initial poll + interval
+    pollCurrent();
+    setInterval(pollCurrent, 2000);
+
+    // Show statusbar briefly on any mouse/touch
+    document.addEventListener('mousemove', showStatusbar, { passive: true });
+    document.addEventListener('touchstart', showStatusbar, { passive: true });
+  </script>
+</body>
+</html>
