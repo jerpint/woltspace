@@ -24,10 +24,10 @@ WOLTS_DIR="${WOLTS_DIR:-$HOME/wolts}"
 cmd="${1:-start}"
 
 # Parse flags
-DEV_MODE=false
+DEV_MODE=true
 WOLT_OVERRIDE=""
 for arg in "$@"; do
-  [ "$arg" = "--dev" ] && DEV_MODE=true
+  [ "$arg" = "--no-dev" ] && DEV_MODE=false
   [[ "$arg" == --wolt=* ]] && WOLT_OVERRIDE="${arg#--wolt=}"
 done
 
@@ -364,7 +364,7 @@ case "$cmd" in
       if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
         if ! docker inspect "$CONTAINER_NAME" --format '{{range .Mounts}}{{.Source}} {{end}}' | grep -q "$WOLTSPACE_DIR"; then
           echo "  container is running without dev mounts."
-          echo "  restarting with --dev will kill any active sessions inside the container."
+          echo "  restarting with dev mounts will kill any active sessions inside the container."
           echo ""
           echo -n "  continue? [y/N] "
           read -r answer
@@ -408,6 +408,7 @@ case "$cmd" in
   rebuild)
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
     rm -f "$ACTIVE_WOLT_DIR/.state/tunnel-url"
+    docker build -t woltspace -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR"
     _ensure_container "$CONTAINER_NAME"
     echo "  open the link above in your browser."
     echo ""
@@ -445,7 +446,7 @@ SPLASH
     echo ""
     ;;
   *)
-    echo "usage: woltspace <init|start|stop|restart|rebuild|shell|logs> [--wolt=<name>] [--dev]"
+    echo "usage: woltspace <init|start|stop|restart|rebuild|shell|logs> [--wolt=<name>] [--no-dev]"
     exit 1
     ;;
 esac
