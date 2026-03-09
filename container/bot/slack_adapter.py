@@ -218,8 +218,6 @@ def create_app():
             return
 
         response = format_response(result)
-        if result["type"] == "session":
-            _session_thread_map[result["session"]["name"]] = (channel, thread_ts)
 
         _append_history(channel, thread_ts, "user", user_message)
         _append_history(channel, thread_ts, "assistant", response)

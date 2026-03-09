@@ -21,6 +21,10 @@ try {
 }
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
+
+function shellQuote(s) {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
 const WOLT_DIR = process.env.WOLT_DIR || __dirname;
 const SITE_DIR = join(WOLT_DIR, 'wolt', 'site');
 const SPARKS_DIR = join(WOLT_DIR, 'wolt', 'sparks');
@@ -52,8 +56,8 @@ function currentUrlFile(session) {
 
 function getCurrentUrl(session = 'main') {
   const f = currentUrlFile(session);
-  if (!existsSync(f)) return '/index.html';
-  try { return JSON.parse(readFileSync(f, 'utf8')).url || '/index.html'; } catch { return '/index.html'; }
+  if (!existsSync(f)) return null;
+  try { return JSON.parse(readFileSync(f, 'utf8')).url || null; } catch { return null; }
 }
 
 function setCurrentUrl(url, session = 'main') {
@@ -331,10 +335,10 @@ function proxyToolWebSocket(req, socket, head, pathname) {
 
 // --- Static file serving ---
 
-// Serve platform UI (split view) — baked into image, not wolt content
-async function servePlatformUI(res) {
+// Serve platform UI files — baked into image, not wolt content
+async function servePlatformFile(res, filename) {
   try {
-    const content = await readFile(join(PUBLIC_DIR, 'split.html'), 'utf8');
+    const content = await readFile(join(PUBLIC_DIR, filename), 'utf8');
     res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
     res.end(content);
     return true;
@@ -425,15 +429,47 @@ const server = createServer(async (req, res) => {
     const f = currentUrlFile(session);
     const data = existsSync(f)
       ? JSON.parse(readFileSync(f, 'utf8'))
-      : { url: '/index.html', updated: 0 };
+      : { url: null, updated: 0 };
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(data));
     return;
   }
   if (req.method === 'GET' && url.pathname === '/current') {
     const session = sanitizeSession(url.searchParams.get('session'));
-    res.writeHead(302, { Location: getCurrentUrl(session) });
+    const curUrl = getCurrentUrl(session);
+    if (curUrl) {
+      res.writeHead(302, { Location: curUrl });
+    } else {
+      res.writeHead(204);
+    }
     res.end();
+    return;
+  }
+
+  // --- Session spawning ---
+  if (req.method === 'POST' && url.pathname === '/sessions/new') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        const { prompt } = JSON.parse(body || '{}');
+        if (!prompt) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'prompt required' }));
+          return;
+        }
+        const sessionName = `${WOLT_NAME}-${Date.now() % 100000}`;
+        const runScript = join(__dirname, 'container', 'bin', 'run-session.sh');
+        const cmd = `${runScript} ${shellQuote(sessionName)} ${shellQuote(WOLT_DIR)} ${shellQuote(prompt)}`;
+        execSync(`tmux new-session -d -s ${sessionName} -c ${shellQuote(WOLT_DIR)} ${shellQuote(cmd)}`);
+        console.log(`[sessions] spawned ${sessionName}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ name: sessionName }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
     return;
   }
 
@@ -441,20 +477,26 @@ const server = createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/tools/spawn') return handleToolSpawn(req, res);
 
   if (req.method === 'GET') {
-    // Split view is the unit of page — / and /tui both serve it
-    if (url.pathname === '/' || url.pathname === '/tui') {
+    // Homepage — session launcher + history
+    if (url.pathname === '/') {
       if (!WebSocketServer || !pty) {
         // Outside Docker — serve the static site instead
-        if (url.pathname === '/') {
-          const served = await serveStatic('/index.html', res, req);
-          if (!served) { res.writeHead(404); res.end('Not found'); }
-          return;
-        }
+        const served = await serveStatic('/index.html', res, req);
+        if (!served) { res.writeHead(404); res.end('Not found'); }
+        return;
+      }
+      const served = await servePlatformFile(res, 'home.html');
+      if (!served) { res.writeHead(500); res.end('home.html not found'); }
+      return;
+    }
+    // Split view (terminal + viewport)
+    if (url.pathname === '/tui') {
+      if (!WebSocketServer || !pty) {
         res.writeHead(503, { 'Content-Type': 'text/plain' });
         res.end('TUI not available — ws/node-pty not installed');
         return;
       }
-      const served = await servePlatformUI(res);
+      const served = await servePlatformFile(res, 'split.html');
       if (!served) { res.writeHead(500); res.end('split.html not found'); }
       return;
     }
@@ -478,14 +520,38 @@ const server = createServer(async (req, res) => {
       }
       return;
     }
-    // --- Sessions (list active tmux sessions) ---
+    // --- Sessions (list with status from .state/sessions/) ---
     if (url.pathname === '/sessions') {
       try {
-        const raw = execSync('tmux list-sessions -F "#{session_name}|#{session_created}|#{session_windows}|#{session_attached}"', { encoding: 'utf8' }).trim();
-        const sessions = raw.split('\n').filter(Boolean).map(line => {
-          const [name, created, windows, attached] = line.split('|');
-          return { name, created: Number(created), windows: Number(windows), attached: Number(attached) > 0 };
+        // Get live tmux sessions
+        const tmuxSessions = new Set();
+        try {
+          const raw = execSync('tmux list-sessions -F "#{session_name}"', { encoding: 'utf8' }).trim();
+          raw.split('\n').filter(Boolean).forEach(n => tmuxSessions.add(n));
+        } catch {}
+
+        // Read status files (includes completed sessions)
+        const sessionsDir = join(STATE_DIR, 'sessions');
+        const sessions = [];
+        try {
+          const files = readdirSync(sessionsDir).filter(f => f.endsWith('.json'));
+          for (const f of files) {
+            try {
+              const data = JSON.parse(readFileSync(join(sessionsDir, f), 'utf8'));
+              // If tmux session is still alive, it's running regardless of file status
+              if (tmuxSessions.has(data.session)) data.status = 'running';
+              sessions.push(data);
+            } catch {}
+          }
+        } catch {}
+
+        // Sort: running first, then by start time descending
+        sessions.sort((a, b) => {
+          if (a.status === 'running' && b.status !== 'running') return -1;
+          if (b.status === 'running' && a.status !== 'running') return 1;
+          return (b.started || 0) - (a.started || 0);
         });
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(sessions));
       } catch {
@@ -603,7 +669,7 @@ if (WebSocketServer && pty) {
 
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url, `http://localhost:${PORT}`);
-    if (url.pathname === '/tui' || url.pathname === '/') {
+    if (url.pathname === '/tui') {
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit('connection', ws, req);
       });
@@ -625,9 +691,9 @@ server.listen(PORT, () => {
   wolt: ${WOLT_NAME}
 
   endpoints:
-    /              — split view (default session)
-    /tui?session=X — split view (named session)
-    /sessions      — list active sessions
+    /              — session launcher + history
+    /tui?session=X — split view (terminal + viewport)
+    /sessions      — list sessions (GET) / spawn (POST /sessions/new)
     /history       — sparks viewer
     /status        — status dashboard
     /current?session=X — viewport control

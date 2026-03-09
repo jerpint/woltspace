@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>woltspace</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100dvh; background: #0d1117; color: #c9d1d9; }
+    body {
+      font-family: 'SF Mono','Fira Code','Cascadia Code',monospace;
+      display: flex; flex-direction: column; align-items: center;
+      padding: 2rem 1rem;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    .header h1 {
+      font-size: 1.4rem;
+      color: #6b9;
+      font-weight: 600;
+      margin-bottom: 0.3rem;
+    }
+    .header .sub {
+      font-size: 0.75rem;
+      color: #555;
+    }
+
+    .prompt-box {
+      width: 100%;
+      max-width: 640px;
+      margin-bottom: 2.5rem;
+    }
+    .prompt-box form {
+      display: flex;
+      gap: 0.5rem;
+    }
+    .prompt-box input {
+      flex: 1;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 0.7rem 1rem;
+      color: #c9d1d9;
+      font-family: inherit;
+      font-size: 0.85rem;
+      outline: none;
+    }
+    .prompt-box input:focus {
+      border-color: #6b9;
+    }
+    .prompt-box input::placeholder {
+      color: #484f58;
+    }
+    .prompt-box button {
+      background: #238636;
+      border: none;
+      border-radius: 6px;
+      padding: 0.7rem 1.2rem;
+      color: #fff;
+      font-family: inherit;
+      font-size: 0.85rem;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .prompt-box button:hover { background: #2ea043; }
+    .prompt-box button:disabled {
+      background: #21262d;
+      color: #484f58;
+      cursor: not-allowed;
+    }
+
+    .sessions {
+      width: 100%;
+      max-width: 640px;
+    }
+    .sessions h2 {
+      font-size: 0.8rem;
+      color: #555;
+      margin-bottom: 0.75rem;
+      text-transform: lowercase;
+    }
+    .session-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .session-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #161b22;
+      border: 1px solid #21262d;
+      border-radius: 6px;
+      padding: 0.6rem 0.8rem;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.15s;
+    }
+    .session-item:hover {
+      border-color: #30363d;
+    }
+    .session-left {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      min-width: 0;
+    }
+    .session-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .session-dot.running { background: #3fb950; }
+    .session-dot.completed { background: #484f58; }
+    .session-dot.failed { background: #f85149; }
+    .session-name {
+      font-size: 0.8rem;
+      color: #c9d1d9;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .session-meta {
+      font-size: 0.7rem;
+      color: #484f58;
+      flex-shrink: 0;
+    }
+    .empty {
+      font-size: 0.8rem;
+      color: #30363d;
+      text-align: center;
+      padding: 2rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1 id="wolt-name">woltspace</h1>
+    <div class="sub" id="wolt-sub"></div>
+  </div>
+
+  <div class="prompt-box">
+    <form id="prompt-form">
+      <input type="text" id="prompt-input" placeholder="what should we work on?" autocomplete="off" autofocus>
+      <button type="submit" id="submit-btn">go</button>
+    </form>
+  </div>
+
+  <div class="sessions">
+    <h2>sessions</h2>
+    <div class="session-list" id="session-list">
+      <div class="empty">loading...</div>
+    </div>
+  </div>
+
+  <script>
+    const listEl = document.getElementById('session-list');
+    const form = document.getElementById('prompt-form');
+    const input = document.getElementById('prompt-input');
+    const btn = document.getElementById('submit-btn');
+
+    // Load wolt name
+    fetch('/status').then(r => r.json()).then(d => {
+      if (d.wolt) {
+        document.getElementById('wolt-name').textContent = d.wolt;
+        document.title = d.wolt;
+      }
+    }).catch(() => {});
+
+    function timeAgo(ts) {
+      const s = Math.floor((Date.now() / 1000) - ts);
+      if (s < 60) return 'just now';
+      if (s < 3600) return Math.floor(s / 60) + 'm ago';
+      if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+      return Math.floor(s / 86400) + 'd ago';
+    }
+
+    async function loadSessions() {
+      try {
+        const res = await fetch('/sessions');
+        const sessions = await res.json();
+        // Filter out 'main' session (that's the default claude session)
+        const filtered = sessions.filter(s => s.name !== 'main');
+        if (!filtered.length) {
+          listEl.innerHTML = '<div class="empty">no sessions yet — type a prompt above to start one</div>';
+          return;
+        }
+        listEl.innerHTML = filtered.map(s => {
+          const status = s.status || (s.attached ? 'running' : 'running');
+          const dot = `<span class="session-dot ${status}"></span>`;
+          const time = s.started ? timeAgo(s.started) : (s.created ? timeAgo(s.created) : '');
+          return `<a class="session-item" href="/tui?session=${encodeURIComponent(s.name)}">
+            <span class="session-left">${dot}<span class="session-name">${s.name}</span></span>
+            <span class="session-meta">${status} · ${time}</span>
+          </a>`;
+        }).join('');
+      } catch {
+        listEl.innerHTML = '<div class="empty">failed to load sessions</div>';
+      }
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const prompt = input.value.trim();
+      if (!prompt) return;
+      btn.disabled = true;
+      btn.textContent = 'starting...';
+      try {
+        const res = await fetch('/sessions/new', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt }),
+        });
+        const data = await res.json();
+        if (data.name) {
+          window.location.href = '/tui?session=' + encodeURIComponent(data.name);
+        }
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = 'go';
+      }
+    });
+
+    loadSessions();
+    setInterval(loadSessions, 5000);
+  </script>
+</body>
+</html>

@@ -130,7 +130,7 @@
     </div>
     <div id="drag-handle"></div>
     <div id="right">
-      <iframe id="preview" src="/index.html"></iframe>
+      <iframe id="preview" src="about:blank"></iframe>
       <div id="hist-panel">
         <div id="hist-header">
           <span>views</span>
@@ -150,6 +150,15 @@
     const session = new URLSearchParams(location.search).get('session') || 'main';
     document.getElementById('session-name').textContent = session === 'main' ? document.getElementById('session-name').textContent : session;
     document.title = session === 'main' ? document.title : `${session} · tui`;
+
+    // ── Viewport placeholder ─────────────────────────────────────────────────
+    const preview = document.getElementById('preview');
+    const placeholderDoc = preview.contentDocument;
+    if (placeholderDoc) {
+      placeholderDoc.open();
+      placeholderDoc.write('<style>*{margin:0;background:#0d1117;color:#484f58;font-family:monospace;display:flex;height:100vh;align-items:center;justify-content:center}</style><div>session starting\u2026</div>');
+      placeholderDoc.close();
+    }
 
     // ── Terminal ──────────────────────────────────────────────────────────────
     const statusEl = document.getElementById('tui-status');
@@ -229,7 +238,6 @@
     connectTUI();
 
     // ── Right pane: views + history ───────────────────────────────────────────
-    const preview  = document.getElementById('preview');
     const btnBack  = document.getElementById('btn-back');
     const btnHist  = document.getElementById('btn-hist');
     const histPanel = document.getElementById('hist-panel');
@@ -331,11 +339,10 @@
 
     async function pollCurrent() {
       try {
-        const { url } = await fetch('/current/meta?session=' + encodeURIComponent(session)).then(r => r.json());
-        if (url && url !== lastUrl) {
-          // derive title from path (server has richer title but we don't need it here)
-          const title = url.split('/').pop().replace('.html','').replace(/-/g,' ') || url;
-          loadView(url, title);
+        const data = await fetch('/current/meta?session=' + encodeURIComponent(session)).then(r => r.json());
+        if (data.url && data.url !== lastUrl) {
+          const title = data.url.split('/').pop().replace('.html','').replace(/-/g,' ') || data.url;
+          loadView(data.url, title);
         }
       } catch {}
     }
