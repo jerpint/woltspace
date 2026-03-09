@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { join, extname, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { existsSync, statSync, readFileSync, readdirSync, writeFileSync, appendFileSync, mkdirSync, watch } from 'node:fs';
@@ -448,6 +448,38 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // --- Memory read (wolt/memory/ only, path-whitelist enforced) ---
+  if (req.method === 'POST' && url.pathname === '/memory/read') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { path: memPath } = JSON.parse(body || '{}');
+        if (!memPath || typeof memPath !== 'string') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'path required' }));
+          return;
+        }
+        // Security: normalize and ensure path stays within wolt/memory/
+        const MEMORY_DIR = join(WOLT_DIR, 'wolt', 'memory');
+        const abs = resolvePath(MEMORY_DIR, memPath);
+        if (!abs.startsWith(MEMORY_DIR + '/') && abs !== MEMORY_DIR) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'path outside memory directory' }));
+          return;
+        }
+        const content = await readFile(abs, 'utf8');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ path: memPath, content }));
+      } catch (err) {
+        const status = err.code === 'ENOENT' ? 404 : 500;
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.code === 'ENOENT' ? 'not found' : err.message }));
+      }
+    });
+    return;
+  }
+
   // --- Session spawning ---
   if (req.method === 'POST' && url.pathname === '/sessions/new') {
     let body = '';
@@ -540,8 +572,9 @@ const server = createServer(async (req, res) => {
           for (const f of files) {
             try {
               const data = JSON.parse(readFileSync(join(sessionsDir, f), 'utf8'));
-              // If tmux session is still alive, it's running regardless of file status
+              // Reconcile status against live tmux sessions
               if (tmuxSessions.has(data.session)) data.status = 'running';
+              else if (data.status === 'running') data.status = 'done';
               sessions.push(data);
             } catch {}
           }
@@ -702,6 +735,7 @@ server.listen(PORT, () => {
     /current?session=X — viewport control
     /tools         — running tools
     /tools/spawn   — start a tool (POST)
+    /memory/read   — read a memory file (POST {path})
   `);
 
   // --- Digest cron ---

@@ -199,6 +199,23 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "read_memory",
+            "description": "Read a memory file by path (relative to wolt/memory/). Use to recall specific details — music taste, following list, past context — without loading everything into the system prompt. Check the memory index first to know what's available.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path within wolt/memory/, e.g. 'music-taste.md' or 'archive/conversations.md'.",
+                    }
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "switch_wolt",
             "description": "Switch the active wolt identity. Changes which wolt's memory, personality, and context are used.",
             "parameters": {
@@ -219,6 +236,10 @@ TOOLS = [
 def load_memory():
     """Load memory files into context. Identity in full, others trimmed."""
     parts = []
+    # Memory index first — gives Haiku a map of what's available via read_memory
+    index_path = MEMORY_DIR / "index.md"
+    if index_path.exists():
+        parts.append(index_path.read_text().strip())
     for name, max_lines in [("identity.md", None), ("context.md", 80), ("learnings.md", 40)]:
         path = MEMORY_DIR / name
         if path.exists():
@@ -255,6 +276,7 @@ Talk like a person, not an assistant. Short messages. Lowercase is fine. You hav
 ## Tools
 You have tools. Use them when appropriate:
 - **claude_code** — spin up a Claude Code session for real work (build, search, code, generate)
+- **read_memory** — read a specific memory file (music-taste.md, following.md, etc.) when you need details not in the system prompt
 - **get_tunnel_url** — get the current public URL for your split view
 - **get_recent_sessions** — read summaries of recent sessions (what was built, artifact links). Use when someone asks what happened, what was made, or wants a link from a past session.
 
@@ -459,6 +481,20 @@ def get_recent_sessions(n: int = 5, tag: str = None) -> list[dict]:
         return []
 
 
+def read_memory(path: str) -> dict:
+    """Read a memory file. Path must stay within wolt/memory/."""
+    try:
+        abs_path = (MEMORY_DIR / path).resolve()
+        memory_root = MEMORY_DIR.resolve()
+        if not str(abs_path).startswith(str(memory_root) + "/"):
+            return {"error": "path outside memory directory"}
+        if not abs_path.exists():
+            return {"error": "not found", "path": path}
+        return {"path": path, "content": abs_path.read_text()}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def kill_session(name: str) -> bool:
     """Kill a tmux session by name. Refuses to kill 'main'."""
     if name == "main":
@@ -498,6 +534,8 @@ def _handle_tool_call(tool_call, routing: dict = None) -> str:
     elif name == "kill_session":
         killed = kill_session(args["session_name"])
         result = json.dumps({"killed": killed, "session": args["session_name"]})
+    elif name == "read_memory":
+        result = json.dumps(read_memory(args["path"]))
     elif name == "list_wolts":
         active = os.environ.get("WOLT_NAME", "?")
         result = json.dumps({"active": active, "available": list_wolts()})
