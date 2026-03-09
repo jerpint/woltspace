@@ -36,8 +36,7 @@ Update memories frequently — sessions can end unexpectedly.
 
 The split view is your primary surface. Push anything to it:
 ```bash
-SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo main)
-curl -s -X POST "localhost:3000/current?session=$SESSION" -H 'Content-Type: application/json' -d '{"url":"/path"}'
+push-view /path
 ```
 
 Your site lives at `wolt/site/`. Sparks (generated pages) live at `wolt/sparks/`.

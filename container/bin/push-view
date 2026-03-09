@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Push a URL to the viewport for the current session.
+# Usage: push-view /path/to/page.html
+#
+# Auto-detects which session we're in. Just works.
+
+URL="${1:?usage: push-view /path}"
+
+# Detect session: env var first (set by run-session.sh), then tmux, then main
+SESSION="${WOLT_SESSION:-}"
+if [ -z "$SESSION" ]; then
+  SESSION=$(tmux display-message -p '#S' 2>/dev/null || true)
+fi
+SESSION="${SESSION:-main}"
+
+curl -s -X POST "http://localhost:3000/current?session=${SESSION}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"url\":\"${URL}\"}" > /dev/null
+
+echo "[viewport:${SESSION}] → ${URL}"

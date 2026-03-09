@@ -56,7 +56,8 @@ COPY container/hooks /workspace/woltspace/container/hooks
 
 # Copy bin scripts
 COPY container/bin /workspace/woltspace/container/bin
-RUN chmod +x /workspace/woltspace/container/bin/*.sh
+RUN chmod +x /workspace/woltspace/container/bin/*
+ENV PATH="/workspace/woltspace/container/bin:${PATH}"
 
 # Copy entrypoint
 COPY container/entrypoint.sh /workspace/woltspace/container/entrypoint.sh

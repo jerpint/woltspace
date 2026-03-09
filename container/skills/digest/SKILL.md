@@ -43,10 +43,7 @@ Invoked as `/digest` in chat, or run on a cron schedule.
    "
 
    # Push to right panel
-   SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo main)
-   curl -s -X POST "http://localhost:3000/current?session=$SESSION" \
-     -H 'Content-Type: application/json' \
-     -d "{\"url\":\"/history/SPARK_ID\"}"
+   push-view /history/SPARK_ID
    ```
 
 5. Tell jerpint: "digest is live" with one sentence on the top pick.
