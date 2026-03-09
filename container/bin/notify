@@ -1,0 +1,28 @@
+#!/bin/bash
+# Send a notification to the originating chat (Telegram/Slack)
+# Usage: notify "message"
+#
+# POSTs to the local server which sends directly via Telegram/Slack API.
+# Works from any session — bot-spawned sessions auto-route via WOLT_SESSION.
+
+MESSAGE="${1:-}"
+if [ -z "$MESSAGE" ]; then
+  echo "Usage: notify <message>" >&2
+  exit 1
+fi
+
+SESSION="${WOLT_SESSION:-}"
+PAYLOAD=$(python3 -c "import json,sys; print(json.dumps({'session': sys.argv[1], 'message': sys.argv[2]}))" "$SESSION" "$MESSAGE")
+
+RESPONSE=$(curl -s -X POST http://localhost:3000/notify \
+  -H "Content-Type: application/json" \
+  -d "$PAYLOAD")
+
+if echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get('ok') else 1)" 2>/dev/null; then
+  ADAPTER=$(echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('adapter','?'))")
+  echo "[notify] → $ADAPTER: $MESSAGE"
+else
+  ERROR=$(echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('error','unknown error'))" 2>/dev/null || echo "$RESPONSE")
+  echo "[notify] failed: $ERROR" >&2
+  exit 1
+fi

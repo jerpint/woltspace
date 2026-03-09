@@ -7,6 +7,7 @@ import { existsSync, statSync, readFileSync, readdirSync, writeFileSync, appendF
 import { execSync, spawn } from 'node:child_process';
 import { createConnection } from 'node:net';
 import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 
 // Optional TUI deps — only available inside the Docker container
 // Use createRequire instead of dynamic import() because NODE_PATH
@@ -217,6 +218,109 @@ const MIME = {
 };
 
 // tuiHtml removed — all TUI pages now use split.html (the split view is the unit)
+
+// --- .env loader (used by notify + digest cron) ---
+
+function loadDotEnv() {
+  const envFile = join(WOLT_DIR, '.env');
+  if (!existsSync(envFile)) return {};
+  return Object.fromEntries(
+    readFileSync(envFile, 'utf8').trim().split('\n')
+      .filter(l => l && !l.startsWith('#'))
+      .map(l => { const eq = l.indexOf('='); return eq > 0 ? [l.slice(0, eq), l.slice(eq + 1)] : null; })
+      .filter(Boolean)
+  );
+}
+
+function getEnv(key) {
+  return process.env[key] || loadDotEnv()[key] || '';
+}
+
+// --- Notify: send a message to the originating chat ---
+
+const SESSION_ROUTING_DIR = join(WOLTS_STATE_DIR, 'session-routing');
+
+function readSessionRouting(session) {
+  const f = join(SESSION_ROUTING_DIR, `${sanitizeSession(session)}.json`);
+  if (!existsSync(f)) return null;
+  try { return JSON.parse(readFileSync(f, 'utf8')); } catch { return null; }
+}
+
+async function sendNotification(session, message) {
+  const routing = readSessionRouting(session);
+  const adapter = routing?.adapter || 'telegram';
+
+  if (adapter === 'telegram') {
+    const token = getEnv('TELEGRAM_BOT_TOKEN');
+    if (!token) throw new Error('TELEGRAM_BOT_TOKEN not set');
+    const chatId = routing?.chat_id || (() => {
+      const allowed = getEnv('TELEGRAM_ALLOWED_USERS').split(',').map(s => s.trim()).filter(Boolean);
+      if (!allowed.length) throw new Error('no chat_id and no TELEGRAM_ALLOWED_USERS fallback');
+      return allowed[0];
+    })();
+    await telegramSend(token, chatId, message);
+    return { adapter: 'telegram', chat_id: chatId };
+  }
+
+  if (adapter === 'slack') {
+    const token = getEnv('SLACK_BOT_TOKEN');
+    if (!token) throw new Error('SLACK_BOT_TOKEN not set');
+    const channel = routing?.channel || getEnv('SLACK_NOTIFY_CHANNEL');
+    if (!channel) throw new Error('no slack channel in routing and SLACK_NOTIFY_CHANNEL not set');
+    await slackSend(token, channel, routing?.thread_ts || null, message);
+    return { adapter: 'slack', channel };
+  }
+
+  throw new Error(`unknown adapter: ${adapter}`);
+}
+
+function telegramSend(token, chatId, text) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ chat_id: chatId, text });
+    const req = httpsRequest({
+      hostname: 'api.telegram.org',
+      path: `/bot${token}/sendMessage`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        const parsed = (() => { try { return JSON.parse(data); } catch { return {}; } })();
+        if (parsed.ok) resolve(parsed); else reject(new Error(parsed.description || 'telegram error'));
+      });
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
+function slackSend(token, channel, threadTs, text) {
+  return new Promise((resolve, reject) => {
+    const payload = { channel, text };
+    if (threadTs) payload.thread_ts = threadTs;
+    const body = JSON.stringify(payload);
+    const req = httpsRequest({
+      hostname: 'slack.com',
+      path: '/api/chat.postMessage',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        const parsed = (() => { try { return JSON.parse(data); } catch { return {}; } })();
+        if (parsed.ok) resolve(parsed); else reject(new Error(parsed.error || 'slack error'));
+      });
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+}
 
 
 // --- Live-reload ---
@@ -445,6 +549,31 @@ const server = createServer(async (req, res) => {
       res.writeHead(204);
     }
     res.end();
+    return;
+  }
+
+  // --- Notify: push message to originating chat ---
+  if (req.method === 'POST' && url.pathname === '/notify') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const { session, message } = JSON.parse(body || '{}');
+        if (!message) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'message required' }));
+          return;
+        }
+        const result = await sendNotification(session || '', message);
+        console.log(`[notify] → ${result.adapter} | ${message.slice(0, 80)}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, ...result }));
+      } catch (err) {
+        console.error('[notify] error:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
     return;
   }
 
@@ -736,6 +865,7 @@ server.listen(PORT, () => {
     /tools         — running tools
     /tools/spawn   — start a tool (POST)
     /memory/read   — read a memory file (POST {path})
+    /notify        — push message to originating chat (POST {session, message})
   `);
 
   // --- Digest cron ---
@@ -771,17 +901,6 @@ server.listen(PORT, () => {
     } catch {}
   }
   reconcileDigestState();
-
-  function loadDotEnv() {
-    const envFile = join(WOLT_DIR, '.env');
-    if (!existsSync(envFile)) return {};
-    return Object.fromEntries(
-      readFileSync(envFile, 'utf8').trim().split('\n')
-        .filter(l => l && !l.startsWith('#'))
-        .map(l => { const eq = l.indexOf('='); return eq > 0 ? [l.slice(0, eq), l.slice(eq + 1)] : null; })
-        .filter(Boolean)
-    );
-  }
 
   function spawnDigest(reason) {
     if (!existsSync(DIGEST_SCRIPT)) {
