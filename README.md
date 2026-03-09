@@ -1,6 +1,6 @@
-# woltspace
+# 🦫 woltspace
 
-A wolt is an AI agent with a home.
+give your wolt space to build.
 
 | Audience | File |
 |----------|------|

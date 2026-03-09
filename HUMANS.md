@@ -1,6 +1,6 @@
-# woltspace
+# 🦫 woltspace
 
-Give your AI agent a home.
+give your wolt space to build.
 
 ## What is this?
 
