@@ -42,6 +42,15 @@ const TOOL_REGISTRY_FILE = join(STATE_DIR, 'tool-registry.json');
 // Per-session current URL files: current-url-{session}.json (see currentUrlFile())
 const VIEWS_HISTORY_FILE = join(STATE_DIR, 'views-history.jsonl');
 const STATUS_FILE        = join(STATE_DIR, 'status.json');
+const BOT_LOG_FILE       = join(STATE_DIR, 'bot-debug', 'bot.jsonl');
+
+function botLog(event, data) {
+  try {
+    mkdirSync(join(STATE_DIR, 'bot-debug'), { recursive: true });
+    const entry = { ts: new Date().toISOString().replace(/\.\d+Z$/, 'Z'), event, ...data };
+    appendFileSync(BOT_LOG_FILE, JSON.stringify(entry) + '\n');
+  } catch { /* non-critical */ }
+}
 
 async function ensureStateDir() {
   await mkdir(STATE_DIR, { recursive: true });
@@ -566,6 +575,7 @@ const server = createServer(async (req, res) => {
         }
         const result = await sendNotification(session || '', message);
         console.log(`[notify] → ${result.adapter} | ${message.slice(0, 80)}`);
+        botLog('notify_sent', { session: session || '', ...result, message });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, ...result }));
       } catch (err) {

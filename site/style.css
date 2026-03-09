@@ -218,21 +218,41 @@ footer a {
   margin-bottom: 0;
 }
 
+.start-here {
+  position: relative;
+}
+
+.start-here code {
+  display: block;
+  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+  font-size: 0.9rem;
+  padding-right: 4rem;
+}
+
 .copy-btn {
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: 0.85rem;
-  padding: 0.35rem 0.7rem;
+  position: absolute;
+  top: 50%;
+  right: 1.5rem;
+  transform: translateY(-50%);
+  width: 3.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  justify-content: center;
+  padding: 0.35rem 0.5rem;
   background: #2a2a2a;
   color: #fdfcfa;
   border: none;
   border-radius: 3px;
   cursor: pointer;
   transition: background 0.15s ease;
+  flex-shrink: 0;
 }
 
 .copy-btn:hover {
   background: #444;
 }
+
 
 /* Network messages */
 .network-section {

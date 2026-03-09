@@ -24,9 +24,30 @@ cat > "$STATUS_FILE" <<EOJSON
 {"session": "$SESSION_NAME", "status": "running", "started": $(date +%s), "dir": "$WORK_DIR"}
 EOJSON
 
+# Read session routing to tell Claude which platform to notify
+ROUTING_FILE="${WOLT_STATE_DIR:-/workspace/wolts/.state}/session-routing/${SESSION_NAME}.json"
+NOTIFY_CONTEXT=""
+if [ -f "$ROUTING_FILE" ]; then
+  ADAPTER=$(python3 -c "import json,sys; d=json.load(open('$ROUTING_FILE')); print(d.get('adapter','telegram'))" 2>/dev/null || echo "telegram")
+  case "$ADAPTER" in
+    slack)    NOTIFY_PLATFORM="Slack" ;;
+    telegram) NOTIFY_PLATFORM="Telegram" ;;
+    *)        NOTIFY_PLATFORM="$ADAPTER" ;;
+  esac
+  NOTIFY_CONTEXT="
+---
+This session was started from $NOTIFY_PLATFORM. You can push messages directly to the user with \`notify \"your message\"\`. Rules:
+1. **Start**: immediately call notify with a one-liner saying you picked it up. Casual, like \"on it — building the playlist\" or \"got it, digging in\".
+2. **Mid-task** (optional): if it's taking a while or you hit something interesting, drop a short update. Keep it loose — \"halfway there\", \"found some good stuff\", etc.
+3. **Done**: call notify when you finish. Short and human — say what got done, link if there's one. Example: \`notify \"playlist built — 12 tracks. link in viewport\"\`.
+Don't over-notify. 3 messages max across the whole session."
+fi
+
+FULL_PROMPT="$PROMPT$NOTIFY_CONTEXT"
+
 # Run claude — capture exit code
 EXIT_CODE=0
-claude --dangerously-skip-permissions "$PROMPT" || EXIT_CODE=$?
+claude --dangerously-skip-permissions "$FULL_PROMPT" || EXIT_CODE=$?
 
 # Write final status
 if [ "$EXIT_CODE" -eq 0 ]; then

@@ -227,64 +227,6 @@ def create_app():
     return app
 
 
-RESULTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts")) / ".state" / "task-results"
-
-
-async def _watch_task_results(client):
-    """Background task: watch for completed sessions and notify via Slack."""
-    notified: set[str] = set()
-    # Fallback channel from env
-    fallback_channel = os.environ.get("SLACK_NOTIFY_CHANNEL", "")
-
-    while True:
-        await asyncio.sleep(5)
-        if not RESULTS_DIR.exists():
-            continue
-        for f in RESULTS_DIR.glob("*.json"):
-            if f.stem in notified:
-                continue
-            try:
-                data = json.loads(f.read_text())
-                session = data.get("session", f.stem)
-                event_type = data.get("type", "done")
-
-                # Check routing — only handle slack sessions
-                routing = read_session_routing(session)
-                if routing and routing.get("adapter") != "slack":
-                    continue
-
-                # Find where to notify
-                if routing and routing.get("channel"):
-                    channel = routing["channel"]
-                    thread_ts = routing.get("thread_ts")
-                elif fallback_channel:
-                    channel, thread_ts = fallback_channel, None
-                else:
-                    notified.add(f.stem)
-                    continue
-
-                message = data.get("message", data.get("output", ""))
-                if len(message) > 2000:
-                    message = message[:2000] + "..."
-
-                if event_type == "notification":
-                    msg = f"[`{session}`] {message}"
-                else:
-                    tunnel_url = get_tunnel_url()
-                    msg = f"[`{session}`] {message}"
-                    if tunnel_url:
-                        msg += f"\n\n{tunnel_url}/tui?session={session}"
-
-                kwargs = {"channel": channel, "text": msg}
-                if thread_ts:
-                    kwargs["thread_ts"] = thread_ts
-                await client.chat_postMessage(**kwargs)
-                _bot_log("notify_sent", {"session": session, "type": event_type, "channel": channel})
-
-                notified.add(f.stem)
-                f.unlink(missing_ok=True)
-            except Exception as e:
-                logger.error(f"Error reading task result {f}: {e}")
 
 
 def run():
@@ -295,8 +237,6 @@ def run():
 
     async def _run():
         handler = AsyncSocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
-        # Start task result watcher
-        asyncio.create_task(_watch_task_results(app.client))
         await handler.start_async()
 
     asyncio.run(_run())

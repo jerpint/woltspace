@@ -1,8 +1,229 @@
 <!DOCTYPE html>
-<html>
-<head><style>
-*{margin:0;background:#0d1117;color:#484f58;font-family:'SF Mono','Fira Code',monospace}
-body{display:flex;height:100vh;align-items:center;justify-content:center}
-</style></head>
-<body><div>session starting&hellip;</div></body>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0d1117;
+    color: #c9d1d9;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  /* scanline overlay */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.03) 2px,
+      rgba(0,0,0,0.03) 4px
+    );
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  .center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2rem;
+  }
+
+  /* beaver with glow pulse */
+  .beaver {
+    font-size: 3.2rem;
+    line-height: 1;
+    filter: drop-shadow(0 0 12px rgba(102, 187, 153, 0.4));
+    animation: beaverBreathe 2.4s ease-in-out infinite;
+    user-select: none;
+  }
+
+  @keyframes beaverBreathe {
+    0%, 100% {
+      transform: scale(1);
+      filter: drop-shadow(0 0 8px rgba(102, 187, 153, 0.3));
+    }
+    50% {
+      transform: scale(1.08);
+      filter: drop-shadow(0 0 20px rgba(102, 187, 153, 0.7));
+    }
+  }
+
+  /* main label */
+  .label {
+    font-size: 0.82rem;
+    color: #6b9;
+    letter-spacing: 0.12em;
+    text-transform: lowercase;
+    display: flex;
+    align-items: center;
+    gap: 0;
+  }
+
+  .label-text {
+    opacity: 0;
+    animation: fadeInText 0.6s ease forwards 0.3s;
+  }
+
+  @keyframes fadeInText {
+    to { opacity: 1; }
+  }
+
+  .dots {
+    display: inline-flex;
+  }
+
+  .dots span {
+    opacity: 0;
+    animation: dotBlink 1.4s ease-in-out infinite;
+  }
+  .dots span:nth-child(1) { animation-delay: 0s; }
+  .dots span:nth-child(2) { animation-delay: 0.2s; }
+  .dots span:nth-child(3) { animation-delay: 0.4s; }
+
+  @keyframes dotBlink {
+    0%, 60%, 100% { opacity: 0; }
+    30% { opacity: 1; }
+  }
+
+  /* activity log */
+  .log {
+    width: 240px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .log-line {
+    font-size: 0.64rem;
+    color: #3a4450;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    opacity: 0;
+    transform: translateY(4px);
+    animation: lineIn 0.3s ease forwards;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  .log-line::before {
+    content: '▸';
+    color: #2a3a2a;
+    flex-shrink: 0;
+  }
+
+  .log-line.active {
+    color: #4a6a5a;
+  }
+
+  .log-line.active::before {
+    color: #6b9;
+    animation: arrowPulse 0.8s ease-in-out infinite;
+  }
+
+  @keyframes arrowPulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+
+  @keyframes lineIn {
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* progress bar */
+  .progress {
+    width: 200px;
+    height: 2px;
+    background: #161b22;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 0.5rem;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #2a4a3a, #6b9, #2a4a3a);
+    background-size: 200% 100%;
+    animation: progressShimmer 1.8s ease-in-out infinite;
+    border-radius: 2px;
+    width: 60%;
+  }
+
+  @keyframes progressShimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="center">
+  <div class="beaver">🦫</div>
+
+  <div class="label">
+    <span class="label-text">the wolt is building</span>
+    <span class="dots">
+      <span>.</span><span>.</span><span>.</span>
+    </span>
+  </div>
+
+  <div class="progress">
+    <div class="progress-fill"></div>
+  </div>
+
+  <div class="log" id="log"></div>
+</div>
+
+<script>
+  const lines = [
+    { t: 400,  text: 'booting memory',         active: false },
+    { t: 900,  text: 'loading identity',        active: false },
+    { t: 1500, text: 'reading context',         active: false },
+    { t: 2200, text: 'connecting to claude',    active: true  },
+  ];
+
+  const logEl = document.getElementById('log');
+
+  lines.forEach(({ t, text, active }) => {
+    setTimeout(() => {
+      const el = document.createElement('div');
+      el.className = 'log-line' + (active ? ' active' : '');
+      el.textContent = text;
+      logEl.appendChild(el);
+      // keep max 4 lines
+      while (logEl.children.length > 4) logEl.removeChild(logEl.firstChild);
+    }, t);
+  });
+
+  // cycle the active line to keep it feeling alive
+  let activeIdx = 0;
+  const actives = [
+    'connecting to claude',
+    'warming up tools',
+    'ready soon',
+    'standing by',
+  ];
+
+  setInterval(() => {
+    const active = logEl.querySelector('.active');
+    if (active) {
+      activeIdx = (activeIdx + 1) % actives.length;
+      active.textContent = actives[activeIdx];
+    }
+  }, 2800);
+</script>
+
+</body>
 </html>
