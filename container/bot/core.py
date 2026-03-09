@@ -35,6 +35,8 @@ def _bot_log(event: str, data: dict):
             f.write(json.dumps(entry) + "\n")
     except Exception as e:
         logger.error(f"Failed to write bot log: {e}")
+        import sys
+        print(f"[bot-log-error] {e} | entry: {json.dumps(entry)}", file=sys.stderr, flush=True)
 
 
 def switch_wolt(name: str) -> str | None:
@@ -524,14 +526,23 @@ def get_response(user_message: str, conversation_history: list = None, routing: 
         messages.extend(conversation_history)
     messages.append({"role": "user", "content": user_message})
 
-    response = completion(model=LLM_MODEL, messages=messages, tools=TOOLS, max_tokens=1024)
+    try:
+        response = completion(model=LLM_MODEL, messages=messages, tools=TOOLS, max_tokens=1024)
+    except Exception as e:
+        _bot_log("llm_error", {"error": str(e), "message": user_message[:500]})
+        raise
+
     choice = response.choices[0]
 
     # Tool call — execute and get final response
     if choice.message.tool_calls:
         tool_call = choice.message.tool_calls[0]
         _bot_log("llm_tool_call", {"tool": tool_call.function.name, "args": tool_call.function.arguments[:500] if tool_call.function.arguments else ""})
-        tool_result = _handle_tool_call(tool_call, routing=routing)
+        try:
+            tool_result = _handle_tool_call(tool_call, routing=routing)
+        except Exception as e:
+            _bot_log("tool_error", {"tool": tool_call.function.name, "error": str(e)})
+            raise
 
         # For claude_code, return session info directly
         if tool_call.function.name == "claude_code":
@@ -548,4 +559,7 @@ def get_response(user_message: str, conversation_history: list = None, routing: 
         followup = completion(model=LLM_MODEL, messages=messages, max_tokens=512)
         return {"type": "text", "text": followup.choices[0].message.content}
 
-    return {"type": "text", "text": choice.message.content}
+    # No tool call — log what the LLM said
+    text = choice.message.content
+    _bot_log("llm_response", {"text": text[:500] if text else ""})
+    return {"type": "text", "text": text}
