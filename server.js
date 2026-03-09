@@ -26,10 +26,12 @@ function shellQuote(s) {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 const WOLT_DIR = process.env.WOLT_DIR || __dirname;
+const WOLTS_DIR = process.env.WOLTS_DIR || join(WOLT_DIR, '..');
 const SITE_DIR = join(WOLT_DIR, 'wolt', 'site');
 const SPARKS_DIR = join(WOLT_DIR, 'wolt', 'sparks');
 const PUBLIC_DIR = join(__dirname, 'public');  // platform UI assets (baked into image)
 const STATE_DIR = join(WOLT_DIR, '.state');
+const WOLTS_STATE_DIR = join(WOLTS_DIR, '.state');  // shared across wolts (sessions, routing)
 const WOLT_NAME = process.env.WOLT_NAME || 'wolt';
 const PORT = 3000;
 
@@ -531,7 +533,7 @@ const server = createServer(async (req, res) => {
         } catch {}
 
         // Read status files (includes completed sessions)
-        const sessionsDir = join(STATE_DIR, 'sessions');
+        const sessionsDir = join(WOLTS_STATE_DIR, 'sessions');
         const sessions = [];
         try {
           const files = readdirSync(sessionsDir).filter(f => f.endsWith('.json'));
@@ -594,7 +596,8 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    const served = await serveStatic(url.pathname, res, req);
+    // Try wolt site first, then platform public dir
+    const served = await serveStatic(url.pathname, res, req) || await servePlatformFile(res, url.pathname.slice(1));
     if (!served) { res.writeHead(404); res.end('Not found'); }
     return;
   }

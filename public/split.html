@@ -130,7 +130,7 @@
     </div>
     <div id="drag-handle"></div>
     <div id="right">
-      <iframe id="preview" src="about:blank"></iframe>
+      <iframe id="preview" src="/placeholder.html"></iframe>
       <div id="hist-panel">
         <div id="hist-header">
           <span>views</span>
@@ -151,14 +151,7 @@
     document.getElementById('session-name').textContent = session === 'main' ? document.getElementById('session-name').textContent : session;
     document.title = session === 'main' ? document.title : `${session} · tui`;
 
-    // ── Viewport placeholder ─────────────────────────────────────────────────
     const preview = document.getElementById('preview');
-    const placeholderDoc = preview.contentDocument;
-    if (placeholderDoc) {
-      placeholderDoc.open();
-      placeholderDoc.write('<style>*{margin:0;background:#0d1117;color:#484f58;font-family:monospace;display:flex;height:100vh;align-items:center;justify-content:center}</style><div>session starting\u2026</div>');
-      placeholderDoc.close();
-    }
 
     // ── Terminal ──────────────────────────────────────────────────────────────
     const statusEl = document.getElementById('tui-status');

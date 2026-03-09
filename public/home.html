@@ -184,7 +184,7 @@
         const res = await fetch('/sessions');
         const sessions = await res.json();
         // Filter out 'main' session (that's the default claude session)
-        const filtered = sessions.filter(s => s.name !== 'main');
+        const filtered = sessions.filter(s => s.session !== 'main');
         if (!filtered.length) {
           listEl.innerHTML = '<div class="empty">no sessions yet — type a prompt above to start one</div>';
           return;
@@ -193,8 +193,8 @@
           const status = s.status || (s.attached ? 'running' : 'running');
           const dot = `<span class="session-dot ${status}"></span>`;
           const time = s.started ? timeAgo(s.started) : (s.created ? timeAgo(s.created) : '');
-          return `<a class="session-item" href="/tui?session=${encodeURIComponent(s.name)}">
-            <span class="session-left">${dot}<span class="session-name">${s.name}</span></span>
+          return `<a class="session-item" href="/tui?session=${encodeURIComponent(s.session)}">
+            <span class="session-left">${dot}<span class="session-name">${s.session}</span></span>
             <span class="session-meta">${status} · ${time}</span>
           </a>`;
         }).join('');
