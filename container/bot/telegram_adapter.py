@@ -5,6 +5,7 @@ Platform default. Wolt can override by placing wolt/bot/telegram_adapter.py in t
 
 import os
 import json
+import base64
 import logging
 import asyncio
 import tempfile
@@ -13,7 +14,7 @@ from pathlib import Path
 from collections import defaultdict
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
-from bot.core import get_response, transcribe_audio, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, read_session_routing, _bot_log, build_ack_text
+from bot.core import get_response, transcribe_audio, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, read_session_routing, _bot_log, build_ack_text, _sanitize_history
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -35,7 +36,7 @@ def _chat_file(chat_id: int) -> Path:
 
 
 def _load_history(chat_id: int) -> list:
-    """Load last N message pairs from disk."""
+    """Load last N message pairs from disk, sanitized."""
     path = _chat_file(chat_id)
     if not path.exists():
         return []
@@ -46,7 +47,7 @@ def _load_history(chat_id: int) -> list:
             messages.append(json.loads(line))
         except json.JSONDecodeError:
             continue
-    return messages
+    return _sanitize_history(messages)
 
 
 def _append_history(chat_id: int, role: str, content: str):
@@ -207,6 +208,75 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(response)
 
 
+def _photo_content(image_bytes: bytes, mime_type: str = "image/jpeg", caption: str = "") -> list:
+    """Build a multimodal content list for an image (litellm image_url format)."""
+    b64 = base64.b64encode(image_bytes).decode()
+    content = [{"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64}"}}]
+    content.append({"type": "text", "text": caption if caption else "What's in this image?"})
+    return content
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle incoming photos and image documents — pass to Haiku for analysis."""
+    user_id = update.effective_user.id if update.effective_user else None
+    logger.info(f"Photo from user_id={user_id}")
+    if not is_allowed(update):
+        return
+
+    # Compressed photo array vs. original image sent as document
+    if update.message.photo:
+        photo = update.message.photo[-1]  # highest resolution
+        mime_type = "image/jpeg"
+    elif update.message.document and (update.message.document.mime_type or "").startswith("image/"):
+        photo = update.message.document
+        mime_type = update.message.document.mime_type or "image/jpeg"
+    else:
+        return
+
+    caption = update.message.caption or ""
+
+    try:
+        file = await context.bot.get_file(photo.file_id)
+        image_bytes = bytes(await file.download_as_bytearray())
+    except Exception as e:
+        logger.error(f"Photo download failed: {e}")
+        await update.message.reply_text("Couldn't download that image.")
+        return
+
+    chat_id = update.effective_chat.id
+    user_message = f"[image] {caption}" if caption else "[image]"
+    user_content = _photo_content(image_bytes, mime_type, caption)
+
+    if chat_id not in chat_histories:
+        chat_histories[chat_id] = _load_history(chat_id)
+    history = chat_histories[chat_id]
+
+    routing = {"adapter": "telegram", "chat_id": chat_id}
+    try:
+        result = get_response(user_message, conversation_history=list(history), routing=routing, user_content=user_content)
+    except Exception as e:
+        logger.error(f"Error getting response for photo: {e}")
+        await update.message.reply_text(f"photo error: {e}")
+        return
+
+    response = format_response(result)
+    # Store text-only in history — no point persisting base64 blobs
+    history.append({"role": "user", "content": user_message})
+    for msg in result["history_messages"] if result["type"] == "session" else [{"role": "assistant", "content": response}]:
+        history.append(msg)
+    _append_history(chat_id, "user", user_message)
+    if result["type"] == "session":
+        for msg in result["history_messages"]:
+            _append_message(chat_id, msg)
+    else:
+        _append_history(chat_id, "assistant", response)
+
+    if len(history) > MAX_HISTORY * 2:
+        chat_histories[chat_id] = history[-MAX_HISTORY * 2:]
+
+    await update.message.reply_text(response)
+
+
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command."""
     if not is_allowed(update):
@@ -286,6 +356,7 @@ def run():
     app.add_handler(CommandHandler("wolt", handle_wolt))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
 
     wolt_name = os.environ.get("WOLT_NAME", "wolt")
     logger.info(f"{wolt_name} telegram bot starting...")

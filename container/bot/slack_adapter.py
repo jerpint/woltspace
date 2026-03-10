@@ -7,8 +7,10 @@ Uses Socket Mode (no public HTTP endpoint needed).
 import os
 import re
 import json
+import base64
 import logging
 import asyncio
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from collections import defaultdict
@@ -95,6 +97,38 @@ def _strip_mention(text: str, bot_user_id: str) -> str:
     return re.sub(rf"<@{bot_user_id}>", "", text).strip()
 
 
+def _extract_image(event: dict) -> tuple[bytes, str] | None:
+    """Download the first image file attached to a Slack event, if any.
+
+    Returns (image_bytes, mime_type) or None.
+    Requires the bot token for authenticated download from url_private.
+    """
+    files = event.get("files", [])
+    token = os.environ.get("SLACK_BOT_TOKEN", "")
+    for f in files:
+        mime = f.get("mimetype", "")
+        if not mime.startswith("image/"):
+            continue
+        url = f.get("url_private")
+        if not url:
+            continue
+        try:
+            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return resp.read(), mime
+        except Exception as e:
+            logger.error(f"Slack image download failed: {e}")
+    return None
+
+
+def _image_content(image_bytes: bytes, mime_type: str, caption: str = "") -> list:
+    """Build multimodal content list for an image."""
+    b64 = base64.b64encode(image_bytes).decode()
+    content = [{"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64}"}}]
+    content.append({"type": "text", "text": caption if caption else "What's in this image?"})
+    return content
+
+
 async def _build_thread_context(client, channel: str, thread_ts: str, bot_user_id: str) -> list:
     """Fetch full thread from Slack API and build conversation history."""
     try:
@@ -146,7 +180,15 @@ def create_app():
         bot_user_id = context.get("bot_user_id", "")
         user_message = _strip_mention(text, bot_user_id)
 
-        if not user_message:
+        # Check for image attachment
+        image_result = await asyncio.get_event_loop().run_in_executor(None, _extract_image, event)
+        user_content = None
+        if image_result:
+            image_bytes, mime_type = image_result
+            user_content = _image_content(image_bytes, mime_type, user_message)
+            user_message = f"[image] {user_message}" if user_message else "[image]"
+
+        if not user_message and user_content is None:
             return
 
         logger.info(f"Mention from user={user} in channel={channel} thread={thread_ts}")
@@ -163,7 +205,7 @@ def create_app():
 
         routing = {"adapter": "slack", "channel": channel, "thread_ts": thread_ts}
         try:
-            result = get_response(user_message, conversation_history=list(history), routing=routing)
+            result = get_response(user_message, conversation_history=list(history), routing=routing, user_content=user_content)
         except Exception as e:
             logger.error(f"Error getting response: {e}")
             await client.chat_postMessage(channel=channel, thread_ts=thread_ts,
@@ -201,11 +243,19 @@ def create_app():
         bot_user_id = context.get("bot_user_id", "")
         user_message = _strip_mention(text, bot_user_id)
 
-        if not user_message:
-            return
-
         # Skip if this is an @mention (already handled by handle_mention)
         if bot_user_id and f"<@{bot_user_id}>" in (event.get("text", "")):
+            return
+
+        # Check for image attachment
+        image_result = await asyncio.get_event_loop().run_in_executor(None, _extract_image, event)
+        user_content = None
+        if image_result:
+            image_bytes, mime_type = image_result
+            user_content = _image_content(image_bytes, mime_type, user_message)
+            user_message = f"[image] {user_message}" if user_message else "[image]"
+
+        if not user_message and user_content is None:
             return
 
         logger.info(f"Thread follow-up from user={user} in channel={channel} thread={thread_ts}")
@@ -217,7 +267,7 @@ def create_app():
 
         routing = {"adapter": "slack", "channel": channel, "thread_ts": thread_ts}
         try:
-            result = get_response(user_message, conversation_history=list(history), routing=routing)
+            result = get_response(user_message, conversation_history=list(history), routing=routing, user_content=user_content)
         except Exception as e:
             logger.error(f"Error getting response: {e}")
             await client.chat_postMessage(channel=channel, thread_ts=thread_ts,

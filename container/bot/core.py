@@ -615,20 +615,43 @@ def _handle_tool_call(tool_call, routing: dict = None) -> str:
     return result
 
 
-def get_response(user_message: str, conversation_history: list = None, routing: dict = None) -> dict:
+def _sanitize_history(messages: list) -> list:
+    """Drop orphaned tool-result messages that have no preceding assistant tool_call.
+
+    Can happen when history is sliced at a message-pair boundary — e.g. the
+    assistant message with tool_calls falls outside the window, leaving the
+    tool result dangling. Anthropic rejects these with invalid_request_error.
+    """
+    valid = []
+    for msg in messages:
+        if msg.get("role") == "tool":
+            if valid and valid[-1].get("role") == "assistant" and valid[-1].get("tool_calls"):
+                valid.append(msg)
+            # else: orphaned tool result — drop it
+        else:
+            valid.append(msg)
+    return valid
+
+
+def get_response(user_message: str, conversation_history: list = None, routing: dict = None, user_content: list = None) -> dict:
     """Get a response — either direct chat or delegated via tool calls.
 
     routing: optional dict identifying where this request came from.
     Written to disk when a session starts so notifications go to the right adapter.
     e.g. {"adapter": "slack", "channel": "C0AK...", "thread_ts": "123.456"}
     e.g. {"adapter": "telegram", "chat_id": 12345}
+
+    user_content: optional multimodal content list (images, etc.). When provided,
+    used as the user message content instead of user_message string. user_message
+    is still used for logging and text-only history storage.
     """
     _bot_log("request", {"message": user_message[:500], "history_len": len(conversation_history) if conversation_history else 0})
 
     messages = [{"role": "system", "content": build_system_prompt()}]
     if conversation_history:
-        messages.extend(conversation_history)
-    messages.append({"role": "user", "content": user_message})
+        messages.extend(_sanitize_history(conversation_history))
+    # Use multimodal content if provided, otherwise plain text
+    messages.append({"role": "user", "content": user_content if user_content is not None else user_message})
 
     try:
         response = completion(model=LLM_MODEL, messages=messages, tools=TOOLS, max_tokens=1024)
