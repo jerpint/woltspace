@@ -76,6 +76,9 @@ def load_allowed_users():
 def format_response(result: dict) -> str:
     """Format a core response dict for Telegram."""
     if result["type"] == "session":
+        # Use nw's crafted response if available; fall back to static ack
+        if result.get("text"):
+            return result["text"]
         s = result["session"]
         return build_ack_text(s.get("url"), s.get("name"), "telegram")
     return result["text"]
@@ -118,9 +121,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.reply_to_message and update.message.reply_to_message.text:
         user_message = f"[replying to: \"{update.message.reply_to_message.text}\"]\n{user_message}"
 
-    # Load from disk on first access
-    if chat_id not in chat_histories:
-        chat_histories[chat_id] = _load_history(chat_id)
+    # Always reload from disk to pick up out-of-band messages (e.g. notify from sessions)
+    chat_histories[chat_id] = _load_history(chat_id)
     history = chat_histories[chat_id]
 
     routing = {"adapter": "telegram", "chat_id": chat_id}
@@ -179,8 +181,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_message = f"[voice message] {text}"
 
-    if chat_id not in chat_histories:
-        chat_histories[chat_id] = _load_history(chat_id)
+    chat_histories[chat_id] = _load_history(chat_id)
     history = chat_histories[chat_id]
 
     routing = {"adapter": "telegram", "chat_id": chat_id}
@@ -247,8 +248,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = f"[image] {caption}" if caption else "[image]"
     user_content = _photo_content(image_bytes, mime_type, caption)
 
-    if chat_id not in chat_histories:
-        chat_histories[chat_id] = _load_history(chat_id)
+    chat_histories[chat_id] = _load_history(chat_id)
     history = chat_histories[chat_id]
 
     routing = {"adapter": "telegram", "chat_id": chat_id}

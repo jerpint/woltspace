@@ -255,6 +255,20 @@ function readSessionRouting(session) {
   try { return JSON.parse(readFileSync(f, 'utf8')); } catch { return null; }
 }
 
+function appendChatHistory(adapter, chatId, content) {
+  // Write notify messages into the bot's chat history so it sees them on the next turn.
+  // Adapter determines the subdir: telegram uses .state/chat/, slack uses .state/chat/slack/
+  const subdir = adapter === 'slack' ? join(STATE_DIR, 'chat', 'slack') : join(STATE_DIR, 'chat');
+  const chatFile = join(subdir, `${chatId}.jsonl`);
+  const entry = { role: 'assistant', content: `🦫 ${content}`, ts: new Date().toISOString() };
+  try {
+    mkdirSync(subdir, { recursive: true });
+    appendFileSync(chatFile, JSON.stringify(entry) + '\n');
+  } catch (e) {
+    console.error('[notify] failed to append chat history:', e.message);
+  }
+}
+
 async function sendNotification(session, message) {
   const routing = readSessionRouting(session);
   const adapter = routing?.adapter || 'telegram';
@@ -268,6 +282,7 @@ async function sendNotification(session, message) {
       return allowed[0];
     })();
     await telegramSend(token, chatId, message);
+    appendChatHistory('telegram', chatId, message);
     return { adapter: 'telegram', chat_id: chatId };
   }
 
@@ -277,6 +292,7 @@ async function sendNotification(session, message) {
     const channel = routing?.channel || getEnv('SLACK_NOTIFY_CHANNEL');
     if (!channel) throw new Error('no slack channel in routing and SLACK_NOTIFY_CHANNEL not set');
     await slackSend(token, channel, routing?.thread_ts || null, message);
+    appendChatHistory('slack', channel, message);
     return { adapter: 'slack', channel };
   }
 

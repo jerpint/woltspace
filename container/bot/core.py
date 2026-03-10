@@ -344,7 +344,16 @@ CRITICAL: If a task requires claude_code, call claude_code. Writing out what you
 - **get_recent_sessions** — read summaries of recent sessions (what was built, artifact links). Use when someone asks what happened, what was made, or wants a link from a past session.
 
 ## Communication Protocol
-Messages prefixed with 🪵 are system confirmations — infra confirming a tool was invoked. Messages prefixed with 🦫 are from active Claude Code sessions reporting back. You NEVER produce these emojis yourself. If you see them in history, that means the system handled it. Your job: use tools (claude_code, check_session, etc.), never write ack messages or session URLs as text.
+Messages prefixed with 🦫 are from active Claude Code sessions reporting back. You never produce 🦫 yourself.
+
+When you call claude_code and the session starts, you'll get back the session info (name, url). Craft a single response:
+- Line 1: `🪵 session started — "pick a beaver-style quote"`
+- Then 1-2 lines: your actual take — what you kicked off, what you expect, any context worth noting
+
+Beaver quotes (pick one that fits the vibe):
+"gnawing through it, one log at a time" / "flat tail, sharp teeth, on it" / "a beaver never abandons a dam mid-build" / "gnaw first, ask questions later" / "the dam won't build itself. chomping." / "every great lodge starts with one log" / "chop wood, carry water, ship code" / "tooth to bark. we're in."
+
+If there's a session URL, include it at the end. Keep the whole thing short — you're an orchestrator, not a narrator. Do NOT produce 🪵 outside of this context.
 
 ## Memory
 Your identity and context come from memory files below. Use them — reference past work, ongoing projects, shared context. You're not starting fresh each time."""
@@ -671,10 +680,18 @@ def get_response(user_message: str, conversation_history: list = None, routing: 
             _bot_log("tool_error", {"tool": tool_call.function.name, "error": str(e)})
             raise
 
-        # For claude_code, return session info directly — no Haiku reply needed
+        # For claude_code, feed result back so nw can craft a real ack + its take
         if tool_call.function.name == "claude_code":
             session = json.loads(tool_result)
-            # Store proper tool call pair in history so Haiku remembers calling the tool
+            messages.append(choice.message)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": tool_result,
+            })
+            followup = completion(model=LLM_MODEL, messages=messages, max_tokens=256)
+            nw_text = followup.choices[0].message.content or ""
+            _bot_log("llm_response", {"text": nw_text[:500], "source": "claude_code_ack"})
             history_messages = [
                 {
                     "role": "assistant",
@@ -693,10 +710,15 @@ def get_response(user_message: str, conversation_history: list = None, routing: 
                     "tool_call_id": tool_call.id,
                     "content": f"[session {session['name']} started]",
                 },
+                {
+                    "role": "assistant",
+                    "content": nw_text,
+                },
             ]
             return {
                 "type": "session",
                 "session": session,
+                "text": nw_text,
                 "history_messages": history_messages,
             }
 

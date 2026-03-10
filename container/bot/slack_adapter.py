@@ -158,6 +158,9 @@ async def _build_thread_context(client, channel: str, thread_ts: str, bot_user_i
 def format_response(result: dict) -> str:
     """Format a core response dict for Slack."""
     if result["type"] == "session":
+        # Use nw's crafted response if available; fall back to static ack
+        if result.get("text"):
+            return result["text"]
         s = result["session"]
         return build_ack_text(s.get("url"), s.get("name"), "slack")
     return result["text"]
