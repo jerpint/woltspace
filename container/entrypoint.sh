@@ -180,8 +180,16 @@ else
   echo "tunnel disabled — access via http://localhost:4444"
 fi
 
+# Dev mode: woltspace repo is mounted (has .git) → enable watchfiles auto-restart
+# In prod the image is baked — no .git, no auto-restart (wolts could modify bot code)
+if [ -d "$WOLTSPACE_DIR/.git" ]; then
+  DEV_MODE=true
+else
+  DEV_MODE=false
+fi
+
 # Start Telegram bot if enabled (backgrounded, not tracked by wait -n)
-# To restart after code changes: pkill -f telegram_adapter && cd /workspace/woltspace/container && uv run --project bot/pyproject.toml python -m bot.telegram_adapter &
+# In dev mode, watchfiles auto-restarts on .py changes. Disabled in prod (wolts could modify bot code).
 if [ "${ENABLE_TELEGRAM_BOT:-}" = "true" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
   if [ -f "$WOLT_DIR/wolt/bot/telegram_adapter.py" ]; then
     BOT_DIR="$WOLT_DIR"
@@ -190,8 +198,12 @@ if [ "${ENABLE_TELEGRAM_BOT:-}" = "true" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; 
     BOT_DIR="$WOLTSPACE_DIR/container"
     BOT_MODULE="bot.telegram_adapter"
   fi
-  echo "starting telegram bot ($BOT_DIR)..."
-  (cd "$BOT_DIR" && uv run --project bot/pyproject.toml python -m "$BOT_MODULE") &
+  echo "starting telegram bot ($BOT_DIR, dev=$DEV_MODE)..."
+  if [ "$DEV_MODE" = "true" ]; then
+    (cd "$BOT_DIR" && uv run --project bot/pyproject.toml watchfiles --filter python "python -m $BOT_MODULE" bot/) &
+  else
+    (cd "$BOT_DIR" && uv run --project bot/pyproject.toml python -m "$BOT_MODULE") &
+  fi
   disown
 fi
 
@@ -204,8 +216,12 @@ if [ "${ENABLE_SLACK_BOT:-}" = "true" ] && [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -n
     SLACK_BOT_DIR="$WOLTSPACE_DIR/container"
     SLACK_BOT_MODULE="bot.slack_adapter"
   fi
-  echo "starting slack bot ($SLACK_BOT_DIR)..."
-  (cd "$SLACK_BOT_DIR" && BOT_ADAPTER=slack uv run --project bot/pyproject.toml python -m "$SLACK_BOT_MODULE") &
+  echo "starting slack bot ($SLACK_BOT_DIR, dev=$DEV_MODE)..."
+  if [ "$DEV_MODE" = "true" ]; then
+    (cd "$SLACK_BOT_DIR" && BOT_ADAPTER=slack uv run --project bot/pyproject.toml watchfiles --filter python "python -m $SLACK_BOT_MODULE" bot/) &
+  else
+    (cd "$SLACK_BOT_DIR" && BOT_ADAPTER=slack uv run --project bot/pyproject.toml python -m "$SLACK_BOT_MODULE") &
+  fi
   disown
 fi
 

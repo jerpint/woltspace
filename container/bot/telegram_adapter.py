@@ -13,7 +13,7 @@ from pathlib import Path
 from collections import defaultdict
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
-from bot.core import get_response, transcribe_audio, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, read_session_routing, _bot_log
+from bot.core import get_response, transcribe_audio, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, read_session_routing, _bot_log, build_ack_text
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -56,6 +56,13 @@ def _append_history(chat_id: int, role: str, content: str):
         f.write(json.dumps({"role": role, "content": content, "ts": datetime.now(timezone.utc).isoformat()}) + "\n")
 
 
+def _append_message(chat_id: int, msg: dict):
+    """Append any message dict to disk (e.g. tool call entries with full structure)."""
+    CHAT_DIR.mkdir(parents=True, exist_ok=True)
+    with open(_chat_file(chat_id), "a") as f:
+        f.write(json.dumps({**msg, "ts": datetime.now(timezone.utc).isoformat()}) + "\n")
+
+
 def load_allowed_users():
     """Load allowed user IDs from env. Comma-separated."""
     raw = os.environ.get("TELEGRAM_ALLOWED_USERS", "")
@@ -69,9 +76,7 @@ def format_response(result: dict) -> str:
     """Format a core response dict for Telegram."""
     if result["type"] == "session":
         s = result["session"]
-        if s["url"]:
-            return f"On it — started a session.\n\n{s['url']}\n\n({s['name']})"
-        return f"Started session {s['name']} but couldn't find tunnel URL."
+        return build_ack_text(s.get("url"), s.get("name"), "telegram")
     return result["text"]
 
 
@@ -127,14 +132,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     response = format_response(result)
     history.append({"role": "user", "content": user_message})
-    history.append({"role": "assistant", "content": response})
+    for msg in result["history_messages"] if result["type"] == "session" else [{"role": "assistant", "content": response}]:
+        history.append(msg)
     _append_history(chat_id, "user", user_message)
-    _append_history(chat_id, "assistant", response)
+    if result["type"] == "session":
+        for msg in result["history_messages"]:
+            _append_message(chat_id, msg)
+    else:
+        _append_history(chat_id, "assistant", response)
 
     if len(history) > MAX_HISTORY * 2:
         chat_histories[chat_id] = history[-MAX_HISTORY * 2:]
 
-    await update.message.reply_text(response)
+    parse_mode = "Markdown" if result["type"] == "session" else None
+    await update.message.reply_text(response, parse_mode=parse_mode)
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -182,14 +193,20 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     response = format_response(result)
     history.append({"role": "user", "content": user_message})
-    history.append({"role": "assistant", "content": response})
+    for msg in result["history_messages"] if result["type"] == "session" else [{"role": "assistant", "content": response}]:
+        history.append(msg)
     _append_history(chat_id, "user", user_message)
-    _append_history(chat_id, "assistant", response)
+    if result["type"] == "session":
+        for msg in result["history_messages"]:
+            _append_message(chat_id, msg)
+    else:
+        _append_history(chat_id, "assistant", response)
 
     if len(history) > MAX_HISTORY * 2:
         chat_histories[chat_id] = history[-MAX_HISTORY * 2:]
 
-    await update.message.reply_text(response)
+    parse_mode = "Markdown" if result["type"] == "session" else None
+    await update.message.reply_text(response, parse_mode=parse_mode)
 
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -14,7 +14,7 @@ from pathlib import Path
 from collections import defaultdict
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
-from bot.core import get_response, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, read_session_routing, _bot_log
+from bot.core import get_response, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, read_session_routing, _bot_log, build_ack_text
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -68,6 +68,13 @@ def _append_history(channel: str, thread_ts: str, role: str, content: str):
         f.write(json.dumps({"role": role, "content": content, "ts": datetime.now(timezone.utc).isoformat()}) + "\n")
 
 
+def _append_message(channel: str, thread_ts: str, msg: dict):
+    """Append any message dict to disk (e.g. tool call entries with full structure)."""
+    CHAT_DIR.mkdir(parents=True, exist_ok=True)
+    with open(_thread_file(channel, thread_ts), "a") as f:
+        f.write(json.dumps({**msg, "ts": datetime.now(timezone.utc).isoformat()}) + "\n")
+
+
 def _load_history(channel: str, thread_ts: str) -> list:
     """Load history from disk for a thread."""
     path = _thread_file(channel, thread_ts)
@@ -118,9 +125,7 @@ def format_response(result: dict) -> str:
     """Format a core response dict for Slack."""
     if result["type"] == "session":
         s = result["session"]
-        if s["url"]:
-            return f"On it — started a session.\n\n{s['url']}\n\n(`{s['name']}`)"
-        return f"Started session `{s['name']}` but couldn't find tunnel URL."
+        return build_ack_text(s.get("url"), s.get("name"), "slack")
     return result["text"]
 
 
@@ -166,10 +171,12 @@ def create_app():
             return
 
         response = format_response(result)
-
-        # Persist to disk
         _append_history(channel, thread_ts, "user", user_message)
-        _append_history(channel, thread_ts, "assistant", response)
+        if result["type"] == "session":
+            for msg in result["history_messages"]:
+                _append_message(channel, thread_ts, msg)
+        else:
+            _append_history(channel, thread_ts, "assistant", response)
 
         await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=response)
 
@@ -216,6 +223,13 @@ def create_app():
             await client.chat_postMessage(channel=channel, thread_ts=thread_ts,
                                           text="Something broke on my end. Try again in a sec.")
             return
+
+        # Session type: 🪵 ack already sent directly, store proper tool call history
+        if result["type"] == "session":
+            _append_history(channel, thread_ts, "user", user_message)
+            for msg in result["history_messages"]:
+                _append_message(channel, thread_ts, msg)
+            return  # no reply — 🪵 ack already sent
 
         response = format_response(result)
 

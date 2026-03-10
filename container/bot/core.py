@@ -9,13 +9,80 @@ import shlex
 import subprocess
 import logging
 import time
+import random
 import tempfile
 from pathlib import Path
 from litellm import completion
 from openai import OpenAI
 
+# Beaver-themed session naming
+SESSION_ADJECTIVES = [
+    "chompy", "soggy", "toothy", "muddy", "slappy", "chunky", "bushy", "gnarly",
+    "burly", "scruffy", "grumpy", "plucky", "scrappy", "sly", "crafty", "sturdy",
+    "sleek", "mossy", "gritty", "silty", "damp", "rugged", "brisk", "snug",
+    "bold", "keen", "wild", "swift", "broad", "dense", "dusty", "fuzzy",
+]
+SESSION_NOUNS = [
+    "dam", "lodge", "pond", "creek", "bark", "branch", "log", "stump", "knot",
+    "chip", "den", "burrow", "bank", "marsh", "grove", "thicket", "hollow",
+    "trail", "ford", "eddy", "tail", "paw", "tooth", "fur", "mound", "birch",
+    "oak", "elm", "pine", "cedar", "maple", "willow", "bog", "ridge", "brook",
+]
+
+
+def _session_name(prefix: str) -> str:
+    """Generate a session name: adjective-noun-4hex. Always unique."""
+    adj = random.choice(SESSION_ADJECTIVES)
+    noun = random.choice(SESSION_NOUNS)
+    hex6 = f"{random.randint(0, 0xFFFFFF):06x}"
+    return f"{prefix}-{adj}-{noun}-{hex6}"
+
+
+BEAVER_ACKS = [
+    "gnawing through it, one log at a time",
+    "flat tail, sharp teeth, on it",
+    "a beaver never abandons a dam mid-build",
+    "gnaw first, ask questions later",
+    "the dam won't build itself. chomping.",
+    "every great lodge starts with one log",
+    "chop wood, carry water, ship code",
+    "tooth to bark. we're in.",
+]
+
+
+def _short_session_name(session_name: str) -> str:
+    """'neowolt-chompy-dam-a3f1e2' → 'chompy-dam'"""
+    parts = session_name.split("-", 1)
+    rest = parts[1] if len(parts) > 1 else session_name
+    return "-".join(rest.split("-")[:-1]) if rest.count("-") >= 2 else rest
+
+
+def build_ack_text(url: str = None, session_name: str = None, adapter: str = None) -> str:
+    """Build the 🪵 ack message shown when a session starts.
+
+    Formats the session link as a clickable hyperlink for adapters that support it.
+    - telegram: [short-name](url)
+    - slack:    <url|short-name>
+    - plain:    short-name\\nurl
+    """
+    quote = random.choice(BEAVER_ACKS)
+    short = _short_session_name(session_name) if session_name else None
+    text = f'🪵 session started - "{quote}"'
+    if url and short:
+        if adapter == "telegram":
+            text += f"\nlink: [{short}]({url})"
+        elif adapter == "slack":
+            text += f"\nlink: <{url}|{short}>"
+        else:
+            text += f"\nlink: {short}\n{url}"
+    elif url:
+        text += f"\nlink: {url}"
+    return text
+
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
-WOLT_DIR = Path(os.environ.get("WOLT_DIR", "/workspace/wolt"))
+_wolt_name = os.environ.get("WOLT_NAME", "wolt")
+_derived = WOLTS_DIR / _wolt_name
+WOLT_DIR = Path(os.environ.get("WOLT_DIR") or (_derived if _derived.exists() else "/workspace/wolt"))
 MEMORY_DIR = WOLT_DIR / "wolt" / "memory"
 STATE_DIR = WOLT_DIR / ".state"
 LLM_MODEL = os.environ.get("LLM_MODEL", "anthropic/claude-haiku-4-5-20251001")
@@ -274,11 +341,16 @@ def build_system_prompt():
 Talk like a person, not an assistant. Short messages. Lowercase is fine. You have opinions and you share them. No bullet lists, no "certainly!", no formal summaries. If you don't know something, say so. If something's interesting, say why.
 
 ## Tools
-You have tools. Use them when appropriate:
+You have tools. Use them. Never describe what you would do — always invoke the tool directly.
+CRITICAL: If a task requires claude_code, call claude_code. Writing out what you would do instead of calling the tool is a failure.
+
 - **claude_code** — spin up a Claude Code session for real work (build, search, code, generate)
 - **read_memory** — read a specific memory file (music-taste.md, following.md, etc.) when you need details not in the system prompt
 - **get_tunnel_url** — get the current public URL for your split view
 - **get_recent_sessions** — read summaries of recent sessions (what was built, artifact links). Use when someone asks what happened, what was made, or wants a link from a past session.
+
+## Communication Protocol
+Messages prefixed with 🪵 are system confirmations — infra confirming a tool was invoked. Messages prefixed with 🦫 are from active Claude Code sessions reporting back. You NEVER produce these emojis yourself. If you see them in history, that means the system handled it. Your job: use tools (claude_code, check_session, etc.), never write ack messages or session URLs as text.
 
 ## Memory
 Your identity and context come from memory files below. Use them — reference past work, ongoing projects, shared context. You're not starting fresh each time."""
@@ -357,7 +429,7 @@ def start_claude_session(prompt: str, wolt: str = None) -> dict:
         target_dir = WOLT_DIR
 
     target_name = wolt or os.environ.get("WOLT_NAME", "wolt")
-    session_name = f"{target_name}-{int(time.time()) % 100000}"
+    session_name = _session_name(target_name)
 
     # Build command and launch tmux with it directly — no send-keys
     cmd = build_session_command(session_name, str(target_dir), prompt)
@@ -582,10 +654,34 @@ def get_response(user_message: str, conversation_history: list = None, routing: 
             _bot_log("tool_error", {"tool": tool_call.function.name, "error": str(e)})
             raise
 
-        # For claude_code, return session info directly
+        # For claude_code, return session info directly — no Haiku reply needed
         if tool_call.function.name == "claude_code":
             session = json.loads(tool_result)
-            return {"type": "session", "session": session}
+            # Store proper tool call pair in history so Haiku remembers calling the tool
+            history_messages = [
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": tool_call.id,
+                        "type": "function",
+                        "function": {
+                            "name": "claude_code",
+                            "arguments": tool_call.function.arguments,
+                        },
+                    }],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": f"[session {session['name']} started]",
+                },
+            ]
+            return {
+                "type": "session",
+                "session": session,
+                "history_messages": history_messages,
+            }
 
         # For other tools, feed result back to get a natural response
         messages.append(choice.message)

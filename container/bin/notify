@@ -13,15 +13,11 @@ fi
 
 SESSION="${WOLT_SESSION:-}"
 
-# Append session link footer if we have a session name
-FULL_MESSAGE="$MESSAGE"
+# Prepend 🦫 prefix with session name for Claude Code session messages
 if [ -n "$SESSION" ]; then
-  TUNNEL_URL=$(cat "${WOLT_STATE_DIR:-/workspace/wolts/.state}/tunnel-url" 2>/dev/null | tr -d '[:space:]')
-  if [ -n "$TUNNEL_URL" ]; then
-    FULL_MESSAGE="$MESSAGE
-
-reply in session: ${TUNNEL_URL}/tui?session=${SESSION}"
-  fi
+  FULL_MESSAGE="🦫 [$SESSION] $MESSAGE"
+else
+  FULL_MESSAGE="🦫 $MESSAGE"
 fi
 
 PAYLOAD=$(python3 -c "import json,sys; print(json.dumps({'session': sys.argv[1], 'message': sys.argv[2]}))" "$SESSION" "$FULL_MESSAGE")

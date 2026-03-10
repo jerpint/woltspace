@@ -8,4 +8,5 @@ dependencies = [
     "python-telegram-bot",
     "slack-bolt",
     "slack-sdk",
+    "watchfiles",
 ]
