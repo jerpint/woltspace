@@ -67,16 +67,10 @@ def build_ack_text(url: str = None, session_name: str = None, adapter: str = Non
     """
     quote = random.choice(BEAVER_ACKS)
     short = _short_session_name(session_name) if session_name else None
-    text = f'🪵 session started - "{quote}"'
-    if url and short:
-        if adapter == "telegram":
-            text += f"\nlink: [{short}]({url})"
-        elif adapter == "slack":
-            text += f"\nlink: <{url}|{short}>"
-        else:
-            text += f"\nlink: {short}\n{url}"
-    elif url:
-        text += f"\nlink: {url}"
+    wolt_name = session_name.split("-")[0] if session_name else "wolt"
+    text = f'🪵 session started - "{quote}"\n\n🦫 assigned: {wolt_name}'
+    if url:
+        text += f"\n\n---\nsession: {url}"
     return text
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))

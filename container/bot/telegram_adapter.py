@@ -144,8 +144,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(history) > MAX_HISTORY * 2:
         chat_histories[chat_id] = history[-MAX_HISTORY * 2:]
 
-    parse_mode = "Markdown" if result["type"] == "session" else None
-    await update.message.reply_text(response, parse_mode=parse_mode)
+    await update.message.reply_text(response)
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -205,8 +204,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(history) > MAX_HISTORY * 2:
         chat_histories[chat_id] = history[-MAX_HISTORY * 2:]
 
-    parse_mode = "Markdown" if result["type"] == "session" else None
-    await update.message.reply_text(response, parse_mode=parse_mode)
+    await update.message.reply_text(response)
 
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):

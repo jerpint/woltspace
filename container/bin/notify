@@ -12,12 +12,26 @@ if [ -z "$MESSAGE" ]; then
 fi
 
 SESSION="${WOLT_SESSION:-}"
+STATE_DIR="${WOLT_STATE_DIR:-/workspace/wolts/.state}"
 
-# Prepend 🦫 prefix with session name for Claude Code session messages
+# Build 🦫 message with session link formatted per adapter
+FULL_MESSAGE="🦫 $MESSAGE"
 if [ -n "$SESSION" ]; then
-  FULL_MESSAGE="🦫 [$SESSION] $MESSAGE"
-else
-  FULL_MESSAGE="🦫 $MESSAGE"
+  TUNNEL_URL=$(cat "$STATE_DIR/tunnel-url" 2>/dev/null | tr -d '[:space:]')
+  SESSION_URL="${TUNNEL_URL}/tui?session=${SESSION}"
+  # Short name: strip wolt prefix and hex suffix (neowolt-sleek-burrow-5dd665 → sleek-burrow)
+  SHORT=$(echo "$SESSION" | sed 's/^[^-]*-//' | sed 's/-[0-9a-f]\{6\}$//')
+  # Read adapter from routing file
+  ROUTING_FILE="$STATE_DIR/session-routing/${SESSION}.json"
+  ADAPTER=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('adapter',''))" "$ROUTING_FILE" 2>/dev/null)
+
+  if [ -n "$TUNNEL_URL" ]; then
+    WOLT_NAME=$(echo "$SESSION" | cut -d'-' -f1)
+    FULL_MESSAGE="🦫 ${WOLT_NAME}: $MESSAGE
+
+---
+session: $SESSION_URL"
+  fi
 fi
 
 PAYLOAD=$(python3 -c "import json,sys; print(json.dumps({'session': sys.argv[1], 'message': sys.argv[2]}))" "$SESSION" "$FULL_MESSAGE")

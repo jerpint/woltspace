@@ -8,9 +8,4 @@ if [ -z "$SESSION_NAME" ]; then
   exit 0  # not a bot-spawned session
 fi
 
-MESSAGE=$(echo "$INPUT" | jq -r '.last_assistant_message // empty')
-if [ -n "$MESSAGE" ]; then
-  notify "$MESSAGE"
-fi
-
 exit 0
