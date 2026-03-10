@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Queue a message for delivery to a running session.
+# Delivered automatically when the target session goes idle.
+#
+# Usage: send-to-session <session-name> <message>
+#        send-to-session neowolt-12345 "hey, pivot to X"
+
+set -euo pipefail
+
+SESSION_NAME="${1:-}"
+MESSAGE="${2:-}"
+
+if [ -z "$SESSION_NAME" ] || [ -z "$MESSAGE" ]; then
+  echo "usage: send-to-session <session-name> <message>" >&2
+  exit 1
+fi
+
+curl -s -X POST "http://localhost:3000/sessions/${SESSION_NAME}/message" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n --arg t "$MESSAGE" '{text: $t}')" | jq .

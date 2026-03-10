@@ -635,6 +635,34 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // --- Session inbox: queue a message for delivery on next idle ---
+  if (req.method === 'POST' && url.pathname.match(/^\/sessions\/[^/]+\/message$/)) {
+    const sessionId = sanitizeSession(url.pathname.split('/')[2]);
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        const { text } = JSON.parse(body || '{}');
+        if (!text) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'text required' }));
+          return;
+        }
+        const inboxDir = join(WOLTS_STATE_DIR, 'inbox');
+        mkdirSync(inboxDir, { recursive: true });
+        const entry = JSON.stringify({ text, queued: Date.now(), from: 'nw' });
+        appendFileSync(join(inboxDir, `${sessionId}.jsonl`), entry + '\n');
+        console.log(`[inbox] queued for ${sessionId}: ${text.slice(0, 80)}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, session: sessionId }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
   // --- Session spawning ---
   if (req.method === 'POST' && url.pathname === '/sessions/new') {
     let body = '';
@@ -908,6 +936,7 @@ server.listen(PORT, () => {
     /tools/spawn   — start a tool (POST)
     /memory/read   — read a memory file (POST {path})
     /notify        — push message to originating chat (POST {session, message})
+    /sessions/:id/message — queue a message for delivery on next session idle (POST {text})
   `);
 
   // --- Digest cron ---
@@ -1018,3 +1047,5 @@ server.listen(PORT, () => {
     console.log('[cron] digest cron enabled');
   }
 });
+
+ 

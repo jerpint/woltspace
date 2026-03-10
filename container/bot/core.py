@@ -277,6 +277,27 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "send_message",
+            "description": "Send a message to a running Claude Code session. The message is queued and delivered automatically when the session goes idle (Claude finishes its current response). Use when you want to nudge, inform, or redirect a running session without spawning a new one.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "session_name": {
+                        "type": "string",
+                        "description": "The session name to message (e.g. 'neowolt-77139'). Use list_sessions to find active sessions.",
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "The message to send to the session.",
+                    },
+                },
+                "required": ["session_name", "text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "switch_wolt",
             "description": "Switch the active wolt identity. Changes which wolt's memory, personality, and context are used.",
             "parameters": {
@@ -339,6 +360,8 @@ You have tools. Use them. Never describe what you would do — always invoke the
 CRITICAL: If a task requires claude_code, call claude_code. Writing out what you would do instead of calling the tool is a failure.
 
 - **claude_code** — spin up a Claude Code session for real work (build, search, code, generate)
+- **send_message** — queue a message for delivery to a running session. Use when someone wants to nudge, redirect, or ask something of a running session. CRITICAL: actually call this tool — don't say "I'll send it" and skip the call.
+- **list_sessions** / **check_session** — list active sessions or check what one is doing
 - **read_memory** — read a specific memory file (music-taste.md, following.md, etc.) when you need details not in the system prompt
 - **get_tunnel_url** — get the current public URL for your split view
 - **get_recent_sessions** — read summaries of recent sessions (what was built, artifact links). Use when someone asks what happened, what was made, or wants a link from a past session.
@@ -570,6 +593,22 @@ def read_memory(path: str) -> dict:
         return {"error": str(e)}
 
 
+def message_session(session_name: str, text: str) -> dict:
+    """Queue a message for delivery to a running session's inbox."""
+    safe = "".join(c for c in session_name if c.isalnum() or c in "-_")
+    if not safe:
+        return {"error": "invalid session name"}
+    wolts_state_dir = Path(os.environ.get("WOLTS_STATE_DIR", "/workspace/wolts/.state"))
+    inbox_dir = wolts_state_dir / "inbox"
+    inbox_dir.mkdir(parents=True, exist_ok=True)
+    entry = json.dumps({"text": text, "queued": int(time.time()), "from": "nw"})
+    inbox_file = inbox_dir / f"{safe}.jsonl"
+    with open(inbox_file, "a") as f:
+        f.write(entry + "\n")
+    _bot_log("inbox_queued", {"session": safe, "text": text[:200]})
+    return {"ok": True, "session": safe, "inbox": str(inbox_file)}
+
+
 def kill_session(name: str) -> bool:
     """Kill a tmux session by name. Refuses to kill 'main'."""
     if name == "main":
@@ -609,6 +648,8 @@ def _handle_tool_call(tool_call, routing: dict = None) -> str:
     elif name == "kill_session":
         killed = kill_session(args["session_name"])
         result = json.dumps({"killed": killed, "session": args["session_name"]})
+    elif name == "send_message":
+        result = json.dumps(message_session(args["session_name"], args["text"]))
     elif name == "read_memory":
         result = json.dumps(read_memory(args["path"]))
     elif name == "list_wolts":
