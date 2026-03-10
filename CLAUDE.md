@@ -157,6 +157,13 @@ cd /workspace/woltspace/container && uv run --project bot/pyproject.toml python 
 
 ---
 
+## Known Bugs / TODO
+
+- **`SESSION_STATUS_DIR` goes stale after `switch_wolt`** (`container/bot/core.py:306`) — it's a module-level constant frozen at import time. `switch_wolt()` updates `STATE_DIR` but not `SESSION_STATUS_DIR`, so `check_session()` reads the wrong wolt's directory after a switch. Fix: evaluate `STATE_DIR / "sessions"` dynamically.
+- **`_send_ack` only handles Telegram** (`container/bot/core.py:512`) — Slack users get no "🦫 on it" ack when a session spawns. Easy fix: add the Slack API call alongside the Telegram one.
+- **`logger` defined twice** (`container/bot/core.py:27` and `:75`) — harmless but one is dead code.
+- **`container/bin/spawn-tool` is untracked in git** — new file sitting uncommitted.
+
 ## What's Messy / Still Iterating
 
 - **WhatsApp adapter**: not yet implemented
