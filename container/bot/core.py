@@ -594,19 +594,17 @@ def read_memory(path: str) -> dict:
 
 
 def message_session(session_name: str, text: str) -> dict:
-    """Queue a message for delivery to a running session's inbox."""
+    """Send a message directly to a running session via tmux."""
     safe = "".join(c for c in session_name if c.isalnum() or c in "-_")
     if not safe:
         return {"error": "invalid session name"}
-    wolts_state_dir = Path(os.environ.get("WOLTS_STATE_DIR", "/workspace/wolts/.state"))
-    inbox_dir = wolts_state_dir / "inbox"
-    inbox_dir.mkdir(parents=True, exist_ok=True)
-    entry = json.dumps({"text": text, "queued": int(time.time()), "from": "nw"})
-    inbox_file = inbox_dir / f"{safe}.jsonl"
-    with open(inbox_file, "a") as f:
-        f.write(entry + "\n")
-    _bot_log("inbox_queued", {"session": safe, "text": text[:200]})
-    return {"ok": True, "session": safe, "inbox": str(inbox_file)}
+    try:
+        subprocess.run(["tmux", "send-keys", "-t", safe, "-l", text], check=True)
+        subprocess.run(["tmux", "send-keys", "-t", safe, "", "Enter"], check=True)
+        _bot_log("message_sent", {"session": safe, "text": text[:200]})
+        return {"ok": True, "session": safe}
+    except subprocess.CalledProcessError as e:
+        return {"error": f"tmux send-keys failed: {e}"}
 
 
 def kill_session(name: str) -> bool:

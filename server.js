@@ -635,7 +635,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // --- Session inbox: queue a message for delivery on next idle ---
+  // --- Session messaging: inject directly into tmux pty ---
   if (req.method === 'POST' && url.pathname.match(/^\/sessions\/[^/]+\/message$/)) {
     const sessionId = sanitizeSession(url.pathname.split('/')[2]);
     let body = '';
@@ -648,11 +648,10 @@ const server = createServer(async (req, res) => {
           res.end(JSON.stringify({ error: 'text required' }));
           return;
         }
-        const inboxDir = join(WOLTS_STATE_DIR, 'inbox');
-        mkdirSync(inboxDir, { recursive: true });
-        const entry = JSON.stringify({ text, queued: Date.now(), from: 'nw' });
-        appendFileSync(join(inboxDir, `${sessionId}.jsonl`), entry + '\n');
-        console.log(`[inbox] queued for ${sessionId}: ${text.slice(0, 80)}`);
+        // Send directly to the tmux session's pty — keys buffer and Claude reads them next
+        execSync(`tmux send-keys -t ${shellQuote(sessionId)} -l ${shellQuote(text)}`);
+        execSync(`tmux send-keys -t ${shellQuote(sessionId)} Enter`);
+        console.log(`[message] → ${sessionId}: ${text.slice(0, 80)}`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, session: sessionId }));
       } catch (err) {
