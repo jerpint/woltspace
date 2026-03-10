@@ -359,22 +359,7 @@ case "$cmd" in
     exit 0
     ;;
   shell)
-    if [ "$DEV_MODE" = true ]; then
-      # Check if container is running without dev mounts
-      if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        if ! docker inspect "$CONTAINER_NAME" --format '{{range .Mounts}}{{.Source}} {{end}}' | grep -q "$WOLTSPACE_DIR"; then
-          echo "  container is running without dev mounts."
-          echo "  restarting with dev mounts will kill any active sessions inside the container."
-          echo ""
-          echo -n "  continue? [y/N] "
-          read -r answer
-          if [ "$answer" != "y" ] && [ "$answer" != "Y" ]; then
-            echo "  aborted."
-            exit 0
-          fi
-          docker rm -f "$CONTAINER_NAME" > /dev/null
-        fi
-      fi
+    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
       _ensure_container "$CONTAINER_NAME"
     fi
     docker exec -it "$CONTAINER_NAME" bash
