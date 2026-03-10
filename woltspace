@@ -8,6 +8,7 @@
 #   woltspace restart        — restart container (new tunnel URL)
 #   woltspace rebuild        — rebuild image + restart
 #   woltspace shell          — enter running container
+#   woltspace chat           — open claude (--dangerously-skip-permissions) in container
 #   woltspace logs           — stream container logs
 #
 # All wolts live under ~/wolts. woltspace.json in that dir controls
@@ -365,6 +366,13 @@ case "$cmd" in
     docker exec -it "$CONTAINER_NAME" bash
     exit 0
     ;;
+  chat)
+    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+      _ensure_container "$CONTAINER_NAME"
+    fi
+    docker exec -it "$CONTAINER_NAME" claude --dangerously-skip-permissions
+    exit 0
+    ;;
   logs)
     docker logs -f "$CONTAINER_NAME"
     exit 0
@@ -431,7 +439,7 @@ SPLASH
     echo ""
     ;;
   *)
-    echo "usage: woltspace <init|start|stop|restart|rebuild|shell|logs> [--wolt=<name>] [--no-dev]"
+    echo "usage: woltspace <init|start|stop|restart|rebuild|shell|chat|logs> [--wolt=<name>] [--no-dev]"
     exit 1
     ;;
 esac
