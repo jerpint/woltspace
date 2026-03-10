@@ -689,7 +689,7 @@ def get_response(user_message: str, conversation_history: list = None, routing: 
                 "tool_call_id": tool_call.id,
                 "content": tool_result,
             })
-            followup = completion(model=LLM_MODEL, messages=messages, max_tokens=256)
+            followup = completion(model=LLM_MODEL, messages=messages, max_tokens=512)
             nw_text = followup.choices[0].message.content or ""
             _bot_log("llm_response", {"text": nw_text[:500], "source": "claude_code_ack"})
             history_messages = [
