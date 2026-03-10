@@ -38,6 +38,16 @@ SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo main)
 curl -s "http://localhost:3000/current/meta?session=$SESSION"
 ```
 
+## Showing an app
+
+If you've built a full-stack app (see the `apps` skill), push it to the viewport:
+
+```bash
+push-view /app/myapp/
+```
+
+Apps served at `/app/{name}/` work in the viewport iframe with no extra setup.
+
 ## Tips
 
 - The viewport only shows content served by localhost:3000. External URLs won't work (iframe CORS).

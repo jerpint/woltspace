@@ -47,6 +47,7 @@ Single-file HTTP + WebSocket server running on port 3000 inside the container.
 - Manages per-session viewport URLs (`/current`)
 - Serves static files: `public/` (platform UI) → `wolt/site/` → `wolt/sparks/`
 - Proxies tool registrations at `/tools`
+- Serves apps at `/app/:name/` (static from `dist/` or proxy to port — see `apps` skill)
 - Runs the digest cron (6am + 3pm)
 - Live reload via SSE at `/livereload`
 
@@ -71,7 +72,7 @@ Entrypoint:
 6. Optionally starts Telegram/Slack bot
 
 ### `container/skills/`
-Discovery files Claude Code reads from `~/.claude/skills/`. Platform defaults baked into image; wolts can override. Current skills: `create-wolt`, `digest`, `music`, `viewport`, `telegram`, `notify`, `session-summary`, `organize-context`.
+Discovery files Claude Code reads from `~/.claude/skills/`. Platform defaults baked into image; wolts can override. Current skills: `apps`, `create-wolt`, `digest`, `music`, `viewport`, `telegram`, `notify`, `session-summary`, `organize-context`.
 
 ### `container/cron/digest.mjs`
 Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select via `claude -p` → render HTML. Writes to `wolt/sparks/`. Optional Spotify playlist curation.
@@ -96,6 +97,7 @@ Utility scripts available in container PATH:
       learnings.md     — active patterns (first 40 lines)
       index.md         — memory index for discoverability
       archive/         — grows forever, searched on demand
+    apps/              — full-stack apps (each has app.json, served at /app/:name/)
     site/              — static HTML/CSS public space
     sparks/            — generated artifacts
     drafts/

@@ -29,6 +29,7 @@ function shellQuote(s) {
 const WOLT_DIR = process.env.WOLT_DIR || __dirname;
 const WOLTS_DIR = process.env.WOLTS_DIR || join(WOLT_DIR, '..');
 const SITE_DIR = join(WOLT_DIR, 'wolt', 'site');
+const APPS_DIR = join(WOLT_DIR, 'wolt', 'apps');
 const SPARKS_DIR = join(WOLT_DIR, 'wolt', 'sparks');
 const PUBLIC_DIR = join(__dirname, 'public');  // platform UI assets (baked into image)
 const STATE_DIR = join(WOLT_DIR, '.state');
@@ -224,6 +225,15 @@ const MIME = {
   '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript',
   '.json': 'application/json', '.svg': 'image/svg+xml', '.xml': 'application/xml',
   '.txt': 'text/plain', '.pub': 'text/plain',
+};
+
+// Extended MIME types for app assets (fonts, images, etc.)
+const APP_MIME = {
+  '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.otf': 'font/otf',
+  '.ico': 'image/x-icon', '.webp': 'image/webp', '.avif': 'image/avif',
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.mp3': 'audio/mpeg',
+  '.wasm': 'application/wasm', '.map': 'application/json',
 };
 
 // tuiHtml removed — all TUI pages now use split.html (the split view is the unit)
@@ -464,6 +474,36 @@ function proxyToolWebSocket(req, socket, head, pathname) {
   socket.on('error', () => proxySocket.destroy());
 }
 
+// --- App WebSocket proxy (for dev servers with HMR/live-reload) ---
+
+function proxyAppWebSocket(req, socket, head, pathname) {
+  const match = pathname.match(/^\/app\/([a-zA-Z][a-zA-Z0-9_-]*)(\/.*)?$/);
+  if (!match) { socket.destroy(); return; }
+  const appName = match[1];
+  const appJsonPath = join(APPS_DIR, appName, 'app.json');
+  if (!existsSync(appJsonPath)) { socket.destroy(); return; }
+  let config;
+  try { config = JSON.parse(readFileSync(appJsonPath, 'utf8')); } catch { socket.destroy(); return; }
+  if (!config.port) { socket.destroy(); return; }
+
+  // Strip /app/:name prefix — app sees the bare path
+  const targetPath = match[2] || '/';
+  const proxySocket = createConnection({ port: config.port, host: '127.0.0.1' }, () => {
+    const reqLine = `${req.method} ${targetPath} HTTP/1.1\r\n`;
+    const rewrittenHeaders = {
+      ...req.headers,
+      host: `127.0.0.1:${config.port}`,
+      origin: `http://127.0.0.1:${config.port}`,
+    };
+    const headers = Object.entries(rewrittenHeaders).map(([k, v]) => `${k}: ${v}`).join('\r\n');
+    proxySocket.write(reqLine + headers + '\r\n\r\n');
+    if (head.length) proxySocket.write(head);
+    socket.pipe(proxySocket).pipe(socket);
+  });
+  proxySocket.on('error', () => socket.destroy());
+  socket.on('error', () => proxySocket.destroy());
+}
+
 // --- Static file serving ---
 
 // Serve platform UI files — baked into image, not wolt content
@@ -692,6 +732,70 @@ const server = createServer(async (req, res) => {
   // --- Tools (proxy + registry) ---
   if (req.method === 'POST' && url.pathname === '/tools/spawn') return handleToolSpawn(req, res);
 
+  // --- Apps: /app/:name/* → serve from wolt/apps/:name/ ---
+  // Requires app.json in the app dir. Serves dist/ (static) or proxies to port (server).
+  // See container/skills/apps/SKILL.md for the full protocol.
+  const appMatch = url.pathname.match(/^\/app\/([a-zA-Z][a-zA-Z0-9_-]*)(\/.*)?$/);
+  if (appMatch) {
+    const appName = appMatch[1];
+    const appDir = join(APPS_DIR, appName);
+    const appJsonPath = join(appDir, 'app.json');
+
+    // Gate: app.json must exist
+    if (!existsSync(appJsonPath)) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `app "${appName}" not found — missing app.json` }));
+      return;
+    }
+
+    let appConfig;
+    try { appConfig = JSON.parse(readFileSync(appJsonPath, 'utf8')); }
+    catch { res.writeHead(500); res.end('invalid app.json'); return; }
+
+    const subPath = (appMatch[2] || '/').replace(/\/$/, '') || '/';
+    const distDir = join(appDir, 'dist');
+
+    // Strategy 1: static — serve from dist/ if it exists
+    if (existsSync(distDir)) {
+      const candidates = [join(distDir, subPath), join(distDir, subPath, 'index.html')];
+      for (const candidate of candidates) {
+        const resolved = resolvePath(candidate);
+        // Security: ensure resolved path stays inside distDir
+        if (!resolved.startsWith(resolvePath(distDir))) continue;
+        if (existsSync(resolved) && statSync(resolved).isFile()) {
+          const ext = extname(resolved);
+          const mime = MIME[ext] || APP_MIME[ext] || 'application/octet-stream';
+          const content = await readFile(resolved);
+          res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'no-cache' });
+          res.end(content);
+          return;
+        }
+      }
+      res.writeHead(404); res.end('Not found in app');
+      return;
+    }
+
+    // Strategy 2: proxy — forward to localhost:port (strip /app/:name prefix)
+    const port = appConfig.port;
+    if (!port || port < 1024 || port > 65535) {
+      res.writeHead(500); res.end(`app "${appName}" has no dist/ and no valid port in app.json`);
+      return;
+    }
+    const targetPath = (subPath === '/' ? '/' : subPath) + (url.search || '');
+    const proxyHeaders = { ...req.headers, host: `localhost:${port}` };
+    delete proxyHeaders['x-frame-options'];
+    const proxyReq = httpRequest({ hostname: 'localhost', port, path: targetPath, method: req.method, headers: proxyHeaders }, (proxyRes) => {
+      const respHeaders = { ...proxyRes.headers };
+      delete respHeaders['x-frame-options'];
+      delete respHeaders['content-security-policy'];
+      res.writeHead(proxyRes.statusCode, respHeaders);
+      proxyRes.pipe(res);
+    });
+    proxyReq.on('error', () => { res.writeHead(502); res.end(`App "${appName}" not running on port ${port}`); });
+    req.pipe(proxyReq);
+    return;
+  }
+
   // --- Public live view (read-only, no auth) ---
   if (req.method === 'GET' && url.pathname.startsWith('/public/')) {
     const sessionId = sanitizeSession(url.pathname.slice('/public/'.length));
@@ -751,6 +855,30 @@ const server = createServer(async (req, res) => {
       }
       return;
     }
+    // --- Apps (list registered apps) ---
+    if (url.pathname === '/apps') {
+      try {
+        const apps = [];
+        if (existsSync(APPS_DIR)) {
+          for (const name of readdirSync(APPS_DIR)) {
+            const appJson = join(APPS_DIR, name, 'app.json');
+            if (!existsSync(appJson)) continue;
+            try {
+              const config = JSON.parse(readFileSync(appJson, 'utf8'));
+              const hasDist = existsSync(join(APPS_DIR, name, 'dist'));
+              apps.push({ name, url: `/app/${name}/`, mode: hasDist ? 'static' : (config.port ? 'proxy' : 'unconfigured'), ...config });
+            } catch {}
+          }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(apps));
+      } catch {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('[]');
+      }
+      return;
+    }
+
     // --- Sessions (list with status from .state/sessions/) ---
     if (url.pathname === '/sessions') {
       try {
@@ -912,6 +1040,8 @@ if (WebSocketServer && pty) {
       });
     } else if (url.pathname.startsWith('/tools/')) {
       proxyToolWebSocket(req, socket, head, url.pathname);
+    } else if (url.pathname.startsWith('/app/')) {
+      proxyAppWebSocket(req, socket, head, url.pathname);
     } else {
       socket.destroy();
     }
@@ -931,6 +1061,8 @@ server.listen(PORT, () => {
     /status        — status dashboard
     /current?session=X — viewport control
     /public/:session   — public live view (read-only, no auth)
+    /apps          — list registered apps
+    /app/:name/    — serve an app (static or proxy)
     /tools         — running tools
     /tools/spawn   — start a tool (POST)
     /memory/read   — read a memory file (POST {path})
