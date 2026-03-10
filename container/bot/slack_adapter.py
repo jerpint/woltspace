@@ -224,17 +224,13 @@ def create_app():
                                           text="Something broke on my end. Try again in a sec.")
             return
 
-        # Session type: 🪵 ack already sent directly, store proper tool call history
+        response = format_response(result)
+        _append_history(channel, thread_ts, "user", user_message)
         if result["type"] == "session":
-            _append_history(channel, thread_ts, "user", user_message)
             for msg in result["history_messages"]:
                 _append_message(channel, thread_ts, msg)
-            return  # no reply — 🪵 ack already sent
-
-        response = format_response(result)
-
-        _append_history(channel, thread_ts, "user", user_message)
-        _append_history(channel, thread_ts, "assistant", response)
+        else:
+            _append_history(channel, thread_ts, "assistant", response)
 
         await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=response)
 
