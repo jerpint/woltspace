@@ -74,14 +74,26 @@ def load_allowed_users():
 
 
 def format_response(result: dict) -> str:
-    """Format a core response dict for Telegram."""
+    """Format a core response dict for Telegram (text only)."""
     if result["type"] == "session":
         # Use nw's crafted response if available; fall back to static ack
         if result.get("text"):
             return result["text"]
         s = result["session"]
         return build_ack_text(s.get("url"), s.get("name"), "telegram")
+    if result["type"] == "image":
+        return result.get("caption", "") or result.get("filename", "image")
     return result["text"]
+
+
+async def _send_result(update: Update, result: dict):
+    """Send a result to the user — handles text, session, and image types."""
+    if result["type"] == "image":
+        caption = result.get("caption") or None
+        with open(result["path"], "rb") as f:
+            await update.message.reply_photo(photo=f, caption=caption)
+    else:
+        await update.message.reply_text(format_response(result))
 
 
 def is_allowed(update: Update) -> bool:
@@ -147,7 +159,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(history) > MAX_HISTORY * 2:
         chat_histories[chat_id] = history[-MAX_HISTORY * 2:]
 
-    await update.message.reply_text(response)
+    await _send_result(update, result)
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -206,7 +218,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(history) > MAX_HISTORY * 2:
         chat_histories[chat_id] = history[-MAX_HISTORY * 2:]
 
-    await update.message.reply_text(response)
+    await _send_result(update, result)
 
 
 def _photo_content(image_bytes: bytes, mime_type: str = "image/jpeg", caption: str = "") -> list:
@@ -274,7 +286,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(history) > MAX_HISTORY * 2:
         chat_histories[chat_id] = history[-MAX_HISTORY * 2:]
 
-    await update.message.reply_text(response)
+    await _send_result(update, result)
 
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):

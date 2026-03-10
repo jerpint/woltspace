@@ -298,6 +298,38 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "generate_image",
+            "description": "Generate an image using AI (gpt-image-1 via OpenAI). Use when someone asks to create, draw, visualize, or imagine something visual. The image is saved locally and sent as a file attachment.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Detailed description of the image to generate.",
+                    },
+                    "size": {
+                        "type": "string",
+                        "enum": ["1024x1024", "1536x1024", "1024x1536", "auto"],
+                        "description": "Image dimensions. Square (default), landscape (1536x1024), portrait (1024x1536), or auto.",
+                    },
+                    "quality": {
+                        "type": "string",
+                        "enum": ["low", "medium", "high", "auto"],
+                        "description": "Image quality. 'high' for maximum detail. Default: 'auto'.",
+                    },
+                    "provider": {
+                        "type": "string",
+                        "enum": ["openai"],
+                        "description": "Image provider. Default: 'openai'.",
+                    },
+                },
+                "required": ["prompt"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "switch_wolt",
             "description": "Switch the active wolt identity. Changes which wolt's memory, personality, and context are used.",
             "parameters": {
@@ -653,6 +685,18 @@ def _handle_tool_call(tool_call, routing: dict = None) -> str:
     elif name == "list_wolts":
         active = os.environ.get("WOLT_NAME", "?")
         result = json.dumps({"active": active, "available": list_wolts()})
+    elif name == "generate_image":
+        from bot.image_gen import generate_image
+        try:
+            img = generate_image(
+                prompt=args["prompt"],
+                size=args.get("size", "1024x1024"),
+                quality=args.get("quality", "auto"),
+                provider=args.get("provider", "openai"),
+            )
+            result = json.dumps(img)
+        except Exception as e:
+            result = json.dumps({"error": str(e)})
     elif name == "switch_wolt":
         switched = switch_wolt(args["name"])
         result = json.dumps({"switched": bool(switched), "name": args["name"]})
@@ -759,6 +803,24 @@ def get_response(user_message: str, conversation_history: list = None, routing: 
                 "session": session,
                 "text": nw_text,
                 "history_messages": history_messages,
+            }
+
+        # For generate_image, return image type so adapters can send the file
+        if tool_call.function.name == "generate_image":
+            img = json.loads(tool_result)
+            if "error" in img:
+                return {"type": "text", "text": f"image gen failed: {img['error']}"}
+            # Get a short caption from the LLM
+            messages.append(choice.message)
+            messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": tool_result})
+            followup = completion(model=LLM_MODEL, messages=messages, max_tokens=128)
+            caption = followup.choices[0].message.content or ""
+            return {
+                "type": "image",
+                "path": img["path"],
+                "filename": img["filename"],
+                "caption": caption,
+                "metadata": img,
             }
 
         # For other tools, feed result back to get a natural response

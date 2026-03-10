@@ -156,14 +156,36 @@ async def _build_thread_context(client, channel: str, thread_ts: str, bot_user_i
 
 
 def format_response(result: dict) -> str:
-    """Format a core response dict for Slack."""
+    """Format a core response dict for Slack (text only)."""
     if result["type"] == "session":
         # Use nw's crafted response if available; fall back to static ack
         if result.get("text"):
             return result["text"]
         s = result["session"]
         return build_ack_text(s.get("url"), s.get("name"), "slack")
+    if result["type"] == "image":
+        return result.get("caption", "") or result.get("filename", "image")
     return result["text"]
+
+
+async def _post_result(client, channel: str, thread_ts: str, result: dict):
+    """Post a result to Slack — handles text, session, and image types."""
+    if result["type"] == "image":
+        caption = result.get("caption", "")
+        with open(result["path"], "rb") as f:
+            await client.files_upload_v2(
+                channel=channel,
+                thread_ts=thread_ts,
+                filename=result.get("filename", "image.png"),
+                content=f.read(),
+                initial_comment=caption or None,
+            )
+    else:
+        await client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text=format_response(result),
+        )
 
 
 def create_app():
@@ -223,7 +245,7 @@ def create_app():
         else:
             _append_history(channel, thread_ts, "assistant", response)
 
-        await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=response)
+        await _post_result(client, channel, thread_ts, result)
 
     @app.event("message")
     async def handle_message(event, client, context):
@@ -285,7 +307,7 @@ def create_app():
         else:
             _append_history(channel, thread_ts, "assistant", response)
 
-        await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=response)
+        await _post_result(client, channel, thread_ts, result)
 
     return app
 
