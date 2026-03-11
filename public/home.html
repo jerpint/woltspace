@@ -295,7 +295,7 @@
   <div class="footer">
     🦫 woltspace &nbsp;·&nbsp;
     <a href="/tui">open terminal</a> &nbsp;·&nbsp;
-    <a href="/onboard">onboard</a> &nbsp;·&nbsp;
+    <a href="#" onclick="openOnboard();return false;">onboard</a> &nbsp;·&nbsp;
     <a href="/status">status</a>
   </div>
 
@@ -398,6 +398,15 @@
         }
       }
     });
+
+    async function openOnboard() {
+      await fetch('/current?session=main', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: '/onboard' }),
+      }).catch(() => {});
+      location.href = '/tui';
+    }
 
     console.log('%c🦫', 'font-size:3rem');
     console.log('%cwoltspace\nhow much wolt could a wolt chuck chuck\nif a wolt chuck could chuck wolt?', 'color:#c17f3a;font-family:monospace');
