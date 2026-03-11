@@ -39,7 +39,7 @@ if [ -f "$ROUTING_FILE" ]; then
 This session was started from $NOTIFY_PLATFORM. You can push messages directly to the user with \`notify \"your message\"\`. Rules:
 1. **Start**: immediately call notify with a one-liner saying you picked it up. Casual, like \"on it — building the playlist\" or \"got it, digging in\".
 2. **Mid-task** (optional): if it's taking a while or you hit something interesting, drop a short update. Keep it loose — \"halfway there\", \"found some good stuff\", etc.
-3. **Done**: call notify when you finish. Short and human — say what got done, link if there's one. Example: \`notify \"playlist built — 12 tracks. link in viewport\"\`.
+3. **Done**: call notify with a solid summary of what you did or found. The user reads this on $NOTIFY_PLATFORM and may not open the session. Include key findings, what you built, or the answer they asked for — telegram-friendly (a few short paragraphs, not a wall). The full detailed output stays in the session for anyone who opens the live view.
 Don't over-notify. 3 messages max across the whole session."
 fi
 
