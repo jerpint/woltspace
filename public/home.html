@@ -264,7 +264,7 @@
 <body>
 
   <div class="header">
-    <h1 id="wolt-name">🦫 wolt<span>space</span></h1>
+    <h1 id="wolt-name" style="visibility:hidden">🦫</h1>
     <p class="twister">
       "how much wolt could a <em>wolt chuck</em> chuck<br>
       if a wolt chuck could chuck <em>wolt</em>?"
@@ -306,12 +306,17 @@
     const btn     = document.getElementById('submit-btn');
 
     // Load wolt name
+    const h1 = document.getElementById('wolt-name');
     fetch('/status').then(r => r.json()).then(d => {
+      h1.innerHTML = '🦫 ' + (d.wolt || 'woltspace');
+      h1.style.visibility = '';
       if (d.wolt) {
-        document.getElementById('wolt-name').innerHTML = '🦫 ' + d.wolt;
         document.title = d.wolt;
       }
-    }).catch(() => {});
+    }).catch(() => {
+      h1.innerHTML = '🦫 woltspace';
+      h1.style.visibility = '';
+    });
 
     function timeAgo(ts) {
       const s = Math.floor((Date.now() / 1000) - ts);
@@ -371,7 +376,6 @@
     setInterval(loadSessions, 5000);
 
     // 🦫 click the name 5× for beaver rain
-    const h1 = document.getElementById('wolt-name');
     let bClicks = 0, bTimer;
     h1.style.cursor = 'default';
     h1.addEventListener('click', () => {

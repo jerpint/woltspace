@@ -310,6 +310,8 @@ ENVEOF
   }
 }
 CJEOF
+    ACTIVE_WOLT="$NAME"
+    ACTIVE_WOLT_DIR="$TARGET"
   else
     # Update active wolt to the new one for onboarding
     ACTIVE_WOLT="$NAME"
