@@ -151,7 +151,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"[user replied to den]: {text}"
                 ),
             })
-            await update.message.reply_text(f"sent to session")
+            await update.message.reply_text(f"🪵 sent to the session in the den")
         else:
             await update.message.reply_text(f"session {den_session} isn't running anymore")
         return
