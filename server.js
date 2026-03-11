@@ -307,22 +307,24 @@ function appendChatHistory(adapter, chatId, content) {
 
 async function sendNotification(session, message) {
   const routing = readSessionRouting(session);
-  const adapter = routing?.adapter || 'telegram';
 
-  if (adapter === 'telegram') {
-    const token = getEnv('TELEGRAM_BOT_TOKEN');
-    if (!token) throw new Error('TELEGRAM_BOT_TOKEN not set');
-    const chatId = routing?.chat_id || (() => {
-      const allowed = getEnv('TELEGRAM_ALLOWED_USERS').split(',').map(s => s.trim()).filter(Boolean);
-      if (!allowed.length) throw new Error('no chat_id and no TELEGRAM_ALLOWED_USERS fallback');
-      return allowed[0];
-    })();
-    await telegramSend(token, chatId, message + DEN_REPLY_FOOTER);
-    appendChatHistory('telegram', chatId, message);
-    return { adapter: 'telegram', chat_id: chatId };
+  // Always prefer Telegram — resolve chat_id from routing (if telegram) or fallback.
+  const telegramToken = getEnv('TELEGRAM_BOT_TOKEN');
+  const telegramChatId = routing?.adapter === 'telegram'
+    ? routing.chat_id
+    : (() => {
+        const allowed = getEnv('TELEGRAM_ALLOWED_USERS').split(',').map(s => s.trim()).filter(Boolean);
+        return allowed[0] || null;
+      })();
+
+  if (telegramToken && telegramChatId) {
+    await telegramSend(telegramToken, telegramChatId, message + DEN_REPLY_FOOTER);
+    appendChatHistory('telegram', telegramChatId, message);
+    return { adapter: 'telegram', chat_id: telegramChatId };
   }
 
-  if (adapter === 'slack') {
+  // Fallback: Slack (only if Telegram isn't configured)
+  if (routing?.adapter === 'slack') {
     const token = getEnv('SLACK_BOT_TOKEN');
     if (!token) throw new Error('SLACK_BOT_TOKEN not set');
     const channel = routing?.channel || getEnv('SLACK_NOTIFY_CHANNEL');
@@ -332,7 +334,7 @@ async function sendNotification(session, message) {
     return { adapter: 'slack', channel };
   }
 
-  throw new Error(`unknown adapter: ${adapter}`);
+  throw new Error('no notification target — set TELEGRAM_BOT_TOKEN + TELEGRAM_ALLOWED_USERS');
 }
 
 function telegramSend(token, chatId, text) {
