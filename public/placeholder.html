@@ -6,8 +6,8 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
   body {
-    background: #0d1117;
-    color: #c9d1d9;
+    background: #2a1f14;
+    color: #f0dfc0;
     font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
     height: 100vh;
     display: flex;
@@ -44,7 +44,7 @@
   .beaver {
     font-size: 3.2rem;
     line-height: 1;
-    filter: drop-shadow(0 0 12px rgba(102, 187, 153, 0.4));
+    filter: drop-shadow(0 0 12px rgba(193, 127, 58, 0.4));
     animation: beaverBreathe 2.4s ease-in-out infinite;
     user-select: none;
   }
@@ -52,18 +52,18 @@
   @keyframes beaverBreathe {
     0%, 100% {
       transform: scale(1);
-      filter: drop-shadow(0 0 8px rgba(102, 187, 153, 0.3));
+      filter: drop-shadow(0 0 8px rgba(193, 127, 58, 0.3));
     }
     50% {
       transform: scale(1.08);
-      filter: drop-shadow(0 0 20px rgba(102, 187, 153, 0.7));
+      filter: drop-shadow(0 0 20px rgba(193, 127, 58, 0.7));
     }
   }
 
   /* main label */
   .label {
     font-size: 0.82rem;
-    color: #6b9;
+    color: #7bbf8a;
     letter-spacing: 0.12em;
     text-transform: lowercase;
     display: flex;
@@ -107,7 +107,7 @@
 
   .log-line {
     font-size: 0.64rem;
-    color: #3a4450;
+    color: #5a4535;
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -120,16 +120,16 @@
 
   .log-line::before {
     content: '▸';
-    color: #2a3a2a;
+    color: #3d2b1a;
     flex-shrink: 0;
   }
 
   .log-line.active {
-    color: #4a6a5a;
+    color: #8a7060;
   }
 
   .log-line.active::before {
-    color: #6b9;
+    color: #7bbf8a;
     animation: arrowPulse 0.8s ease-in-out infinite;
   }
 
@@ -146,7 +146,7 @@
   .progress {
     width: 200px;
     height: 2px;
-    background: #161b22;
+    background: #3d2b1a;
     border-radius: 2px;
     overflow: hidden;
     margin-top: 0.5rem;
@@ -154,7 +154,7 @@
 
   .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #2a4a3a, #6b9, #2a4a3a);
+    background: linear-gradient(90deg, #5c3d24, #c17f3a, #5c3d24);
     background-size: 200% 100%;
     animation: progressShimmer 1.8s ease-in-out infinite;
     border-radius: 2px;
