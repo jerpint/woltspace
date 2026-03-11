@@ -294,7 +294,6 @@ ENABLE_TELEGRAM_BOT=true
 # Tunnel (disable to use http://localhost:4444 instead of public URL)
 # ENABLE_TUNNEL=false
 ENVEOF
-    echo "  created $WOLTS_DIR/.env — fill in CLAUDE_CODE_OAUTH_TOKEN and HUMAN_NAME to start."
   fi
 
   # Create or update woltspace.json — set new wolt as active
