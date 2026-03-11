@@ -89,10 +89,10 @@ function getCurrentUrl(session = 'main') {
   try { return JSON.parse(readFileSync(f, 'utf8')).url || null; } catch { return null; }
 }
 
-function setCurrentUrl(url, session = 'main') {
+function setCurrentUrl(url, session = 'main', port = 3000) {
   mkdirSync(STATE_DIR, { recursive: true });
   const safe = sanitizeSession(session);
-  writeFileSync(currentUrlFile(safe), JSON.stringify({ url, updated: Date.now() }));
+  writeFileSync(currentUrlFile(safe), JSON.stringify({ url, port, updated: Date.now() }));
   console.log(`[current:${safe}] → ${url}`);
 }
 
@@ -587,9 +587,9 @@ const server = createServer(async (req, res) => {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
-      const { url: newUrl, title } = JSON.parse(body || '{}');
+      const { url: newUrl, title, port } = JSON.parse(body || '{}');
       if (newUrl) {
-        setCurrentUrl(newUrl, session);
+        setCurrentUrl(newUrl, session, port || 3000);
         logView(newUrl, title);
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -841,27 +841,29 @@ const server = createServer(async (req, res) => {
 
 
   // --- Share link management ---
-  // POST /shares { port, label? } → create token
+  // POST /shares { session, label? } → create token (port resolved from session state)
   if (req.method === 'POST' && url.pathname === '/shares') {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
       try {
-        const { port, label } = JSON.parse(body || '{}');
-        if (!port || port < 1025 || port > 65535) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'port must be 1025–65535' }));
-          return;
-        }
+        const { session: shareSession, label } = JSON.parse(body || '{}');
+        const targetSession = sanitizeSession(shareSession || 'main');
+        // Resolve port from session's current viewport state
+        const sessionFile = currentUrlFile(targetSession);
+        const sessionData = existsSync(sessionFile)
+          ? JSON.parse(readFileSync(sessionFile, 'utf8'))
+          : {};
+        const port = sessionData.port || 3000;
         const token = randomBytes(6).toString('base64url');
         mkdirSync(SHARES_DIR, { recursive: true });
         writeFileSync(
           join(SHARES_DIR, `${token}.json`),
-          JSON.stringify({ port, label: label || null, created: Date.now(), wolt: WOLT_NAME })
+          JSON.stringify({ session: targetSession, port, label: label || null, created: Date.now(), wolt: WOLT_NAME })
         );
-        console.log(`[shares] created token ${token} → port ${port}`);
+        console.log(`[shares] created token ${token} → session ${targetSession} port ${port}`);
         res.writeHead(201, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ token, url: `/s/${token}`, port }));
+        res.end(JSON.stringify({ token, url: `/s/${token}`, session: targetSession, port }));
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
@@ -933,8 +935,19 @@ const server = createServer(async (req, res) => {
     try { shareData = JSON.parse(readFileSync(shareFile, 'utf8')); }
     catch { res.writeHead(500); res.end('invalid share config'); return; }
 
-    const { port } = shareData;
-    const subPath = (shareProxyMatch[2] || '/') + (url.search || '');
+    const { port, session: shareSession } = shareData;
+
+    // If no subpath, redirect to the session's current viewport URL
+    if (!shareProxyMatch[2]) {
+      const sessionFile = currentUrlFile(sanitizeSession(shareSession || 'main'));
+      const sessionData = existsSync(sessionFile) ? JSON.parse(readFileSync(sessionFile, 'utf8')) : {};
+      const viewportPath = sessionData.url || '/';
+      res.writeHead(302, { Location: `/s/${token}${viewportPath}` });
+      res.end();
+      return;
+    }
+
+    const subPath = shareProxyMatch[2] + (url.search || '');
     const proxyHeaders = { ...req.headers, host: `localhost:${port}` };
     const proxyReq = httpRequest({ hostname: 'localhost', port, path: subPath, method: req.method, headers: proxyHeaders }, (proxyRes) => {
       const respHeaders = { ...proxyRes.headers };
