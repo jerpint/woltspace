@@ -851,6 +851,11 @@ const server = createServer(async (req, res) => {
       if (!served) { res.writeHead(500); res.end('home.html not found'); }
       return;
     }
+    if (url.pathname === '/onboard') {
+      const served = await servePlatformFile(res, 'onboard.html');
+      if (!served) { res.writeHead(500); res.end('onboard.html not found'); }
+      return;
+    }
     // Split view (terminal + viewport)
     if (url.pathname === '/tui') {
       if (!WebSocketServer || !pty) {
