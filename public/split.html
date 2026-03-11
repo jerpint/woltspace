@@ -134,11 +134,16 @@
         min-width: 0;
       }
       #topbar .title {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        max-width: 180px;
-        display: inline-block;
+        font-size: 0;        /* hide text */
+        display: inline-flex;
+        align-items: center;
+        min-width: 44px;
+        min-height: 44px;
+        justify-content: center;
+      }
+      #topbar .title::before {
+        content: '🦫';
+        font-size: 1.4rem;
       }
       #topbar .actions {
         width: 100%;
@@ -163,7 +168,6 @@
     </div>
     <div class="actions">
       <button id="btn-back"    onclick="goBack()"            title="Back" disabled>◁</button>
-      <button id="btn-hist"    onclick="toggleHist()"        title="View history">≡</button>
       <button id="btn-share"   onclick="copyPublicLink()"    title="Copy public live link">↗ share</button>
       <button id="btn-term"    onclick="toggleFull('left')"  title="Fullscreen terminal">⬛ term</button>
       <button id="btn-preview" onclick="toggleFull('right')" title="Session view">⬛ session</button>
