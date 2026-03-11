@@ -6,5 +6,6 @@ command -v git >/dev/null || { echo "error: git required"; exit 1; }
 
 git clone https://github.com/jerpint/woltspace
 export PATH="$PWD/woltspace:$PATH"
+export WOLTS_DIR="${WOLTS_DIR:-$PWD}"
 
 woltspace init

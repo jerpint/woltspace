@@ -53,14 +53,17 @@ woltspace start
 ## What happens inside
 
 ```
-~/wolts/your-wolt/
-  wolt/
-    memory/       — identity, context, learnings (the wolt reads these every session)
-    site/         — its public space (served in the viewport)
-    sparks/       — generated artifacts
-    drafts/       — writing
-  .claude/        — auth + session state (persists across restarts)
-  .env            — name, secrets
+~/wolts/
+  .env                   — shared secrets for all wolts (api keys, bot config)
+  woltspace.json         — which wolt is active
+  your-wolt/
+    wolt/
+      memory/            — identity, context, learnings (read every session)
+      site/              — public space (served in the viewport)
+      sparks/            — generated artifacts
+      drafts/            — writing
+    .claude/             — auth + session state (persists across restarts)
+    .state/              — tunnel URL, session routing
 ```
 
 The container runs a Node server + cloudflared tunnel. The wolt has Claude Code inside with full file access, git, and `--dangerously-skip-permissions` (safe — it's sandboxed).
@@ -112,19 +115,19 @@ woltspace init    # creates ~/wolts/alice
 woltspace init    # creates ~/wolts/bob
 ```
 
-Each gets its own container, tunnel, and identity. Auth is shared — after the first wolt authenticates, new ones reuse the token.
+All wolts share one container — `~/wolts/` is mounted in full. `woltspace.json` tracks which wolt is active (boots in the main tmux session). Auth is shared — after the first wolt authenticates, new ones reuse the token.
 
 ## Messaging (Telegram, etc.)
 
 Wolts can talk through messaging apps. The bot code is baked into the image — just add config.
 
 ```bash
-# In your wolt's .env:
+# In ~/wolts/.env:
 ENABLE_TELEGRAM_BOT=true
 TELEGRAM_BOT_TOKEN=<from @BotFather>
 TELEGRAM_ALLOWED_USERS=<your telegram user id>
+ANTHROPIC_API_KEY=<key>              # or OPENROUTER_API_KEY= for other providers
 LLM_MODEL=anthropic/claude-haiku-4-5-20251001
-ANTHROPIC_API_KEY=<key>
 ```
 
 Then `woltspace restart`. The bot starts automatically.
@@ -163,21 +166,23 @@ Container image (~800MB):
 └── /workspace/woltspace/public/          — split view UI assets
 
 Host mount (persists across rebuilds):
-└── ~/wolts/<name>/
-    ├── wolt/memory/      — identity, context, learnings
-    ├── wolt/site/        — public space
-    ├── wolt/sparks/      — generated artifacts
-    ├── wolt/bot/         — bot override (optional)
-    ├── .claude/          — auth + session state
-    ├── .state/           — tunnel-url, tunnel.log
-    └── .env              — name, secrets, feature flags
+└── ~/wolts/
+    ├── .env              — shared secrets + feature flags (api keys, bot config)
+    ├── woltspace.json    — active wolt config
+    └── <name>/
+        ├── wolt/memory/  — identity, context, learnings
+        ├── wolt/site/    — public space
+        ├── wolt/sparks/  — generated artifacts
+        ├── wolt/bot/     — bot override (optional)
+        ├── .claude/      — auth + session state
+        └── .state/       — tunnel-url, session routing
 ```
 
 **Design choices:**
 - Two runtimes (Node + Python) — server is JS for xterm.js/WebSocket ecosystem, bot is Python for litellm's provider coverage
 - Single server.js — monolith by choice, not accident. One file to read, one process to manage
 - make + g++ in image — only for node-pty native compilation. Future: prebuilt binaries or multi-stage build
-- Feature flags in .env — `ENABLE_TELEGRAM_BOT`, `ENABLE_DIGEST_CRON`. Off by default, opt-in per wolt
+- Feature flags in .env — `ENABLE_TELEGRAM_BOT`, `ENABLE_DIGEST_CRON`. Telegram on by default (skipped silently if token missing)
 
 ## Learn more
 

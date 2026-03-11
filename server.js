@@ -26,6 +26,20 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 function shellQuote(s) {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
+
+function parseEnvFile(filePath) {
+  try {
+    const out = {};
+    for (const line of readFileSync(filePath, 'utf8').split('\n')) {
+      const t = line.trim();
+      if (!t || t.startsWith('#')) continue;
+      const idx = t.indexOf('=');
+      if (idx === -1) continue;
+      out[t.slice(0, idx).trim()] = t.slice(idx + 1).trim();
+    }
+    return out;
+  } catch { return {}; }
+}
 const WOLT_DIR = process.env.WOLT_DIR || __dirname;
 const WOLTS_DIR = process.env.WOLTS_DIR || join(WOLT_DIR, '..');
 const SITE_DIR = join(WOLT_DIR, 'wolt', 'site');
@@ -589,6 +603,19 @@ const server = createServer(async (req, res) => {
     }, null, 2));
     return;
   }
+  if (req.method === 'GET' && url.pathname === '/onboard-status') {
+    const env = parseEnvFile(join(WOLTS_DIR, '.env'));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      wolts_dir: WOLTS_DIR,
+      wolt_name: WOLT_NAME,
+      has_oauth:      existsSync('/home/node/.claude/.credentials.json') || !!(env.CLAUDE_CODE_OAUTH_TOKEN || process.env.CLAUDE_CODE_OAUTH_TOKEN),
+      has_human_name: !!(env.HUMAN_NAME && env.HUMAN_NAME.trim() && env.HUMAN_NAME !== 'your-name'),
+      has_llm_key:    !!(env.ANTHROPIC_API_KEY || env.OPENROUTER_API_KEY),
+      has_telegram:   env.ENABLE_TELEGRAM_BOT === 'true' && !!env.TELEGRAM_BOT_TOKEN,
+    }));
+    return;
+  }
   if (req.method === 'GET' && url.pathname === '/views/history') {
     const entries = readViewsHistory(100);
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -822,6 +849,11 @@ const server = createServer(async (req, res) => {
       }
       const served = await servePlatformFile(res, 'home.html');
       if (!served) { res.writeHead(500); res.end('home.html not found'); }
+      return;
+    }
+    if (url.pathname === '/onboard') {
+      const served = await servePlatformFile(res, 'onboard.html');
+      if (!served) { res.writeHead(500); res.end('onboard.html not found'); }
       return;
     }
     // Split view (terminal + viewport)

@@ -7,32 +7,145 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { height: 100dvh; background: #0d1117; color: #c9d1d9; }
-    body {
-      font-family: 'SF Mono','Fira Code','Cascadia Code',monospace;
-      display: flex; flex-direction: column; align-items: center;
-      padding: 2rem 1rem;
+
+    :root {
+      --bark:    #2a1f14;
+      --log:     #3d2b1a;
+      --wood:    #5c3d24;
+      --amber:   #c17f3a;
+      --straw:   #d4a96a;
+      --cream:   #f0dfc0;
+      --moss:    #4a7c59;
+      --fern:    #5e9e70;
+      --leaf:    #7bbf8a;
+      --pond:    #2d5a6e;
+      --water:   #4a8fa8;
+      --muted:   #8a7060;
+      --dim:     #5a4535;
     }
 
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bark:    #f5ede0;
+        --log:     #ecdcca;
+        --wood:    #dcc9b2;
+        --amber:   #9a5c1a;
+        --straw:   #7a4510;
+        --cream:   #3d2010;
+        --moss:    #2d5e3a;
+        --fern:    #3a7548;
+        --leaf:    #4a8a58;
+        --pond:    #1a4558;
+        --water:   #2a6a85;
+        --muted:   #7a6050;
+        --dim:     #a08878;
+      }
+    }
+
+    html, body {
+      min-height: 100dvh;
+      background: var(--bark);
+      color: var(--cream);
+    }
+
+    body {
+      font-family: 'SF Mono','Fira Code','Cascadia Code','Consolas',monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2.5rem 1.5rem 3rem;
+    }
+
+    /* ---- HEADER ---- */
     .header {
       text-align: center;
       margin-bottom: 2rem;
     }
     .header h1 {
-      font-size: 1.4rem;
-      color: #6b9;
-      font-weight: 600;
-      margin-bottom: 0.3rem;
+      font-size: 1.6rem;
+      color: var(--fern);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      margin-bottom: 0.4rem;
+      cursor: default;
+      user-select: none;
     }
-    .header .sub {
-      font-size: 0.75rem;
-      color: #555;
+    .header h1 span { color: var(--leaf); }
+
+    .twister {
+      font-size: 0.72rem;
+      color: var(--muted);
+      font-style: italic;
+      max-width: 480px;
+      line-height: 1.5;
+      margin: 0 auto 0.5rem;
+    }
+    .twister em {
+      color: var(--straw);
+      font-style: normal;
     }
 
+    .tagline {
+      font-size: 0.7rem;
+      color: var(--dim);
+      letter-spacing: 0.08em;
+      text-transform: lowercase;
+    }
+
+    /* ---- DIVIDER ---- */
+    .divider {
+      width: 100%;
+      max-width: 560px;
+      border: none;
+      border-top: 1px solid var(--log);
+      margin: 0 0 2rem;
+    }
+
+    /* ---- ONBOARD BANNER ---- */
+    .onboard-banner {
+      width: 100%;
+      max-width: 560px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--log);
+      border: 1px solid var(--amber);
+      border-radius: 6px;
+      padding: 0.65rem 0.9rem;
+      margin-bottom: 1.5rem;
+      gap: 1rem;
+    }
+    .onboard-banner span {
+      font-size: 0.72rem;
+      color: var(--straw);
+    }
+    .onboard-banner button {
+      font-family: inherit;
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 0.35rem 0.9rem;
+      background: var(--amber);
+      border: none;
+      border-radius: 4px;
+      color: var(--bark);
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .onboard-banner button:hover { background: var(--straw); }
+
+    /* ---- PROMPT ---- */
     .prompt-box {
       width: 100%;
-      max-width: 640px;
+      max-width: 560px;
       margin-bottom: 2.5rem;
+    }
+    .prompt-label {
+      font-size: 0.65rem;
+      color: var(--dim);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 0.5rem;
     }
     .prompt-box form {
       display: flex;
@@ -40,49 +153,71 @@
     }
     .prompt-box input {
       flex: 1;
-      background: #161b22;
-      border: 1px solid #30363d;
+      background: var(--log);
+      border: 1px solid var(--wood);
       border-radius: 6px;
-      padding: 0.7rem 1rem;
-      color: #c9d1d9;
+      padding: 0.75rem 1rem;
+      color: var(--cream);
       font-family: inherit;
       font-size: 0.85rem;
       outline: none;
+      transition: border-color 0.15s;
     }
     .prompt-box input:focus {
-      border-color: #6b9;
+      border-color: var(--amber);
     }
     .prompt-box input::placeholder {
-      color: #484f58;
+      color: var(--dim);
     }
     .prompt-box button {
-      background: #238636;
-      border: none;
+      background: var(--moss);
+      border: 1px solid var(--fern);
       border-radius: 6px;
-      padding: 0.7rem 1.2rem;
-      color: #fff;
+      padding: 0.75rem 1.4rem;
+      color: var(--cream);
       font-family: inherit;
       font-size: 0.85rem;
+      font-weight: 600;
       cursor: pointer;
       white-space: nowrap;
+      transition: background 0.15s, border-color 0.15s;
     }
-    .prompt-box button:hover { background: #2ea043; }
+    .prompt-box button:hover {
+      background: var(--fern);
+      border-color: var(--leaf);
+    }
     .prompt-box button:disabled {
-      background: #21262d;
-      color: #484f58;
+      background: var(--log);
+      border-color: var(--wood);
+      color: var(--dim);
       cursor: not-allowed;
     }
 
+    /* ---- SESSIONS ---- */
     .sessions {
       width: 100%;
-      max-width: 640px;
+      max-width: 560px;
+    }
+    .sessions-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
     }
     .sessions h2 {
-      font-size: 0.8rem;
-      color: #555;
-      margin-bottom: 0.75rem;
-      text-transform: lowercase;
+      font-size: 0.65rem;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
     }
+    .sessions-count {
+      font-size: 0.6rem;
+      background: var(--log);
+      color: var(--muted);
+      border-radius: 10px;
+      padding: 0.1rem 0.5rem;
+    }
+
     .session-list {
       display: flex;
       flex-direction: column;
@@ -92,16 +227,17 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      background: #161b22;
-      border: 1px solid #21262d;
+      background: var(--log);
+      border: 1px solid var(--wood);
       border-radius: 6px;
-      padding: 0.6rem 0.8rem;
+      padding: 0.65rem 0.9rem;
       text-decoration: none;
       color: inherit;
-      transition: border-color 0.15s;
+      transition: border-color 0.15s, background 0.15s;
     }
     .session-item:hover {
-      border-color: #30363d;
+      border-color: var(--amber);
+      background: var(--wood);
     }
     .session-left {
       display: flex;
@@ -114,62 +250,117 @@
       border-radius: 50%;
       flex-shrink: 0;
     }
-    .session-dot.running { background: #3fb950; }
-    .session-dot.completed { background: #484f58; }
-    .session-dot.failed { background: #f85149; }
+    .session-dot.running  { background: var(--leaf); box-shadow: 0 0 6px var(--leaf); }
+    .session-dot.completed { background: var(--dim); }
+    .session-dot.failed   { background: #c0392b; }
     .session-name {
       font-size: 0.8rem;
-      color: #c9d1d9;
+      color: var(--cream);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
     .session-meta {
-      font-size: 0.7rem;
-      color: #484f58;
+      font-size: 0.68rem;
+      color: var(--muted);
       flex-shrink: 0;
     }
     .empty {
-      font-size: 0.8rem;
-      color: #30363d;
+      font-size: 0.78rem;
+      color: var(--dim);
       text-align: center;
       padding: 2rem;
+      border: 1px dashed var(--wood);
+      border-radius: 6px;
+    }
+
+    /* ---- FOOTER ---- */
+    .footer {
+      margin-top: 3rem;
+      font-size: 0.62rem;
+      color: var(--dim);
+      text-align: center;
+      letter-spacing: 0.05em;
+    }
+    .footer a {
+      color: var(--muted);
+      text-decoration: none;
+    }
+    .footer a:hover { color: var(--amber); }
+
+    /* ---- BEAVERS RAIN ---- */
+    @keyframes beavFall {
+      to { transform: translateY(110vh) rotate(360deg); opacity: 0; }
     }
   </style>
 </head>
 <body>
+
   <div class="header">
-    <h1 id="wolt-name">woltspace</h1>
-    <div class="sub" id="wolt-sub">🦫 wolt beaver builder</div>
+    <h1 id="wolt-name" style="visibility:hidden">🦫</h1>
+    <p class="twister">
+      "how much wolt could a <em>wolt chuck</em> chuck<br>
+      if a wolt chuck could chuck <em>wolt</em>?"
+    </p>
+    <div class="tagline">gnaw first. ask questions later.</div>
+  </div>
+
+  <hr class="divider">
+
+  <div class="onboard-banner" id="onboard-banner" style="display:none">
+    <span>claude code isn't authenticated yet.</span>
+    <button onclick="openOnboard()">onboard →</button>
   </div>
 
   <div class="prompt-box">
+    <div class="prompt-label">new session</div>
     <form id="prompt-form">
       <input type="text" id="prompt-input" placeholder="what should we gnaw on today?" autocomplete="off" autofocus>
-      <button type="submit" id="submit-btn">go</button>
+      <button type="submit" id="submit-btn">gnaw →</button>
     </form>
   </div>
 
   <div class="sessions">
-    <h2>sessions</h2>
+    <div class="sessions-header">
+      <h2>sessions</h2>
+      <span class="sessions-count" id="sessions-count">–</span>
+    </div>
     <div class="session-list" id="session-list">
       <div class="empty">loading...</div>
     </div>
   </div>
 
+  <div class="footer">
+    🦫 woltspace &nbsp;·&nbsp;
+    <a href="/tui">open terminal</a> &nbsp;·&nbsp;
+    <a href="#" onclick="openOnboard();return false;">onboard</a> &nbsp;·&nbsp;
+    <a href="/status">status</a>
+  </div>
+
   <script>
-    const listEl = document.getElementById('session-list');
-    const form = document.getElementById('prompt-form');
-    const input = document.getElementById('prompt-input');
-    const btn = document.getElementById('submit-btn');
+    const listEl  = document.getElementById('session-list');
+    const countEl = document.getElementById('sessions-count');
+    const form    = document.getElementById('prompt-form');
+    const input   = document.getElementById('prompt-input');
+    const btn     = document.getElementById('submit-btn');
+
+    // Show onboard banner only if not authenticated
+    fetch('/onboard-status').then(r => r.json()).then(d => {
+      if (!d.has_oauth) document.getElementById('onboard-banner').style.display = '';
+    }).catch(() => {});
 
     // Load wolt name
+    const h1 = document.getElementById('wolt-name');
     fetch('/status').then(r => r.json()).then(d => {
+      h1.innerHTML = '🦫 ' + (d.wolt || 'woltspace');
+      h1.style.visibility = '';
       if (d.wolt) {
-        document.getElementById('wolt-name').textContent = d.wolt;
         document.title = d.wolt;
       }
-    }).catch(() => {});
+    }).catch(() => {
+      h1.innerHTML = '🦫 woltspace';
+      h1.style.visibility = '';
+    });
 
     function timeAgo(ts) {
       const s = Math.floor((Date.now() / 1000) - ts);
@@ -183,15 +374,15 @@
       try {
         const res = await fetch('/sessions');
         const sessions = await res.json();
-        // Filter out 'main' session (that's the default claude session)
         const filtered = sessions.filter(s => s.session !== 'main');
+        countEl.textContent = filtered.length || '0';
         if (!filtered.length) {
           listEl.innerHTML = '<div class="empty">no sessions yet — type a prompt above to start one</div>';
           return;
         }
         listEl.innerHTML = filtered.map(s => {
           const status = s.status || (s.attached ? 'running' : 'running');
-          const dot = `<span class="session-dot ${status}"></span>`;
+          const dot  = `<span class="session-dot ${status}"></span>`;
           const time = s.started ? timeAgo(s.started) : (s.created ? timeAgo(s.created) : '');
           return `<a class="session-item" href="/tui?session=${encodeURIComponent(s.session)}">
             <span class="session-left">${dot}<span class="session-name">${s.session}</span></span>
@@ -219,17 +410,16 @@
         if (data.name) {
           window.location.href = '/tui?session=' + encodeURIComponent(data.name);
         }
-      } catch (err) {
+      } catch {
         btn.disabled = false;
-        btn.textContent = 'go';
+        btn.textContent = 'gnaw →';
       }
     });
 
     loadSessions();
     setInterval(loadSessions, 5000);
 
-    // 🦫 beaver easter egg — click the h1 5× for a surprise
-    const h1 = document.getElementById('wolt-name');
+    // 🦫 click the name 5× for beaver rain
     let bClicks = 0, bTimer;
     h1.style.cursor = 'default';
     h1.addEventListener('click', () => {
@@ -238,26 +428,31 @@
       bTimer = setTimeout(() => { bClicks = 0; }, 1500);
       if (bClicks >= 5) {
         bClicks = 0;
-        document.getElementById('wolt-sub').textContent = '🦫🦫🦫 BEAVER MODE 🦫🦫🦫';
-        document.getElementById('prompt-input').placeholder = 'gnaw gnaw gnaw...';
-        for (let i = 0; i < 20; i++) {
+        document.querySelector('.twister').innerHTML =
+          '"<em>wolt wolt wolt wolt</em> wolt wolt wolt wolt<br>wolt wolt wolt <em>wolt</em> wolt wolt wolt"';
+        for (let i = 0; i < 30; i++) {
           setTimeout(() => {
             const b = document.createElement('div');
             b.textContent = '🦫';
-            b.style.cssText = `position:fixed;font-size:${1+Math.random()*2}rem;left:${Math.random()*100}vw;top:-2rem;animation:beavFall ${2+Math.random()*2}s linear forwards;pointer-events:none;z-index:9999;`;
+            b.style.cssText = `position:fixed;font-size:${1+Math.random()*2.5}rem;left:${Math.random()*100}vw;top:-2rem;animation:beavFall ${1.5+Math.random()*2.5}s linear forwards;pointer-events:none;z-index:9999;`;
             document.body.appendChild(b);
-            setTimeout(() => b.remove(), 4500);
-          }, i * 100);
+            setTimeout(() => b.remove(), 5000);
+          }, i * 80);
         }
       }
     });
 
-    // console 🦫
-    console.log('%c🦫', 'font-size:2rem');
-    console.log('%cwolt beaver builder\ngnaw first, ask questions later.', 'color:#6b9;');
+    async function openOnboard() {
+      await fetch('/current?session=main', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: '/onboard' }),
+      }).catch(() => {});
+      location.href = '/tui';
+    }
+
+    console.log('%c🦫', 'font-size:3rem');
+    console.log('%cwoltspace\nhow much wolt could a wolt chuck chuck\nif a wolt chuck could chuck wolt?', 'color:#c17f3a;font-family:monospace');
   </script>
-  <style>
-    @keyframes beavFall { to { transform: translateY(110vh) rotate(360deg); opacity: 0; } }
-  </style>
 </body>
 </html>

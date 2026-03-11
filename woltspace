@@ -21,6 +21,8 @@ WOLTSPACE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Wolts directory — all wolts live here
 WOLTS_DIR="${WOLTS_DIR:-$HOME/wolts}"
+# Expand ~ in case WOLTS_DIR was set externally with an unexpanded tilde
+WOLTS_DIR="${WOLTS_DIR/#\~/$HOME}"
 
 cmd="${1:-start}"
 
@@ -181,34 +183,11 @@ if [ "$cmd" = "init" ]; then
     echo "install docker: https://docs.docker.com/get-docker/"
     exit 1
   fi
-  if ! command -v claude &>/dev/null; then
-    echo "error: claude CLI not found"
-    echo "install: npm install -g @anthropic-ai/claude-code"
-    exit 1
-  fi
-
   # --- Splash screen ---
   clear
-  cat << 'SPLASH'
-
-  ▄   ▄  ▄▄▄  █    ■   ▄▄▄ ▄▄▄▄  ▗▞▀▜▌▗▞▀▘▗▞▀▚▖
-  █ ▄ █ █   █ █ ▗▄▟▙▄▖▀▄▄  █   █ ▝▚▄▟▌▝▚▄▖▐▛▀▀▘
-  █▄█▄█ ▀▄▄▄▀ █   ▐▌  ▄▄▄▀ █▄▄▄▀          ▝▚▄▄▖
-              █   ▐▌       █
-                  ▐▌       ▀
-
-  ╔═══════════════════════════════════════════════════════════╗
-  ║                                                           ║
-  ║  a wolt is an AI agent with a home -- a space it builds   ║
-  ║  and maintains in collaboration with a human partner.     ║
-  ║                                                           ║
-  ║  setup happens through a conversation with claude code.   ║
-  ║  claude runs inside a container, sandboxed from your      ║
-  ║  system, so it's safe to let it work autonomously.        ║
-  ║                                                           ║
-  ╚═══════════════════════════════════════════════════════════╝
-
-SPLASH
+  _G=$'\033[0;32m'; _B=$'\033[1m'; _D=$'\033[2m'; _R=$'\033[0m'; _A=$'\033[0;33m'
+  printf "\n  %b🦫%b  %b\n\n" "${_A}" "${_R}" "${_B}${_G}woltspace${_R}"
+  printf "  %b\n\n" "${_D}\"how much wolt could a wolt chuck chuck\n   if a wolt chuck could chuck wolt?\"${_R}"
 
   echo -n "  name your wolt: "
   read NAME
@@ -219,33 +198,49 @@ SPLASH
   fi
 
   TARGET="$WOLTS_DIR/$NAME"
-  if [ -d "$TARGET" ]; then
-    echo "error: $TARGET already exists"
-    exit 1
+  IDENTITY_FILE="$TARGET/wolt/memory/identity.md"
+
+  # Idempotency: if wolt already has an identity, protect it
+  if [ -s "$IDENTITY_FILE" ]; then
+    echo ""
+    echo "  $NAME already exists and is initialized."
+    echo "  run 'woltspace start' to start it."
+    echo ""
+    exit 0
   fi
+
+  _C=$'\033[0;36m'
+  echo ""
+  printf "  %b%s%b is ready to start gnawing. 🦫🪵🌲\n" "${_B}${_A}" "$NAME" "${_R}"
+  echo ""
+  printf "  %bpressing enter will build a space for %s — a sandboxed docker container%b\n" "${_D}" "$NAME" "${_R}"
+  printf "  %bwhere your wolt can gnaw freely. your wolts will persist at %b%s%b\n" "${_D}" "${_R}${_C}" "$WOLTS_DIR" "${_R}"
+  echo ""
+  echo -n "  ${_C}continue? [Y/n]${_R} "
+  read -r CONFIRM
+  CONFIRM="${CONFIRM:-Y}"
+  if [[ "$CONFIRM" != [Yy] ]]; then
+    echo ""
+    echo "  🦫 aborting. no wood was harmed."
+    echo ""
+    exit 0
+  fi
+  echo ""
+
   mkdir -p "$WOLTS_DIR"
 
-  echo ""
-  echo "  your wolt will be created at $TARGET"
-  echo ""
-  echo "  press enter to begin building your woltspace."
-  echo "  this will set up a local docker container where your wolt"
-  echo "  can explore and roam freely, sandboxed from your system."
-  read -r
+  # Create wolt from template (only if fresh)
+  if [ ! -d "$TARGET" ]; then
+    cp -r "$WOLTSPACE_DIR/template" "$TARGET"
 
-  # Create wolt from template
-  cp -r "$WOLTSPACE_DIR/template" "$TARGET"
-
-  # Create .gitignore
-  cat > "$TARGET/.gitignore" << 'GITEOF'
+    cat > "$TARGET/.gitignore" << 'GITEOF'
 .env
 .claude/.credentials.json
 .claude/statsig/
 node_modules/
 GITEOF
 
-  # Create wolt.json manifest
-  cat > "$TARGET/wolt/wolt.json" << WJEOF
+    cat > "$TARGET/wolt/wolt.json" << WJEOF
 {
   "name": "$NAME",
   "role": "",
@@ -253,22 +248,46 @@ GITEOF
   "description": ""
 }
 WJEOF
+  fi
 
   # Create shared .env if it doesn't exist yet
   if [ ! -f "$WOLTS_DIR/.env" ]; then
-    cat > "$WOLTS_DIR/.env" << ENVEOF
-# Shared secrets for all wolts
-HUMAN_NAME=
+    cat > "$WOLTS_DIR/.env" << 'ENVEOF'
+# Shared secrets for all wolts — lives at ~/wolts/.env
+
+# Required
 CLAUDE_CODE_OAUTH_TOKEN=
-# ENABLE_TELEGRAM_BOT=true
+HUMAN_NAME=
+
+# Bot LLM (pick one provider — litellm routes by model prefix)
+# ANTHROPIC_API_KEY=       # for anthropic/... models
+# OPENROUTER_API_KEY=      # for openrouter/... models
+# LLM_MODEL=anthropic/claude-haiku-4-5-20251001
+
+# Telegram bot
+ENABLE_TELEGRAM_BOT=true
 # TELEGRAM_BOT_TOKEN=
-# TELEGRAM_ALLOWED_USERS=
-# SPOTIFY_CLIENT_ID=
-# SPOTIFY_CLIENT_SECRET=
+# TELEGRAM_ALLOWED_USERS=   # comma-separated IDs, or empty for open
+
+# Slack bot
+# ENABLE_SLACK_BOT=true
+# SLACK_BOT_TOKEN=           # xoxb-...
+# SLACK_APP_TOKEN=           # xapp-... (Socket Mode)
+# SLACK_NOTIFY_CHANNEL=
+
+# Spotify (for music curation in digests)
+# SPOTIFY_ID=
+# SPOTIFY_SECRET=
+# SPOTIFY_ACCESS_TOKEN=
+# SPOTIFY_REFRESH_TOKEN=
+# SPOTIFY_USER=
+
+# Image generation
 # OPENAI_API_KEY=
-# ENABLE_TUNNEL=false  # disable public URL, use http://localhost:4444
+
+# Tunnel (disable to use http://localhost:4444 instead of public URL)
+# ENABLE_TUNNEL=false
 ENVEOF
-    echo "  created $WOLTS_DIR/.env — add your secrets there."
   fi
 
   # Create or update woltspace.json — set new wolt as active
@@ -284,6 +303,8 @@ ENVEOF
   }
 }
 CJEOF
+    ACTIVE_WOLT="$NAME"
+    ACTIVE_WOLT_DIR="$TARGET"
   else
     # Update active wolt to the new one for onboarding
     ACTIVE_WOLT="$NAME"
@@ -291,8 +312,8 @@ CJEOF
     _write_config "claude.default_wolt" "$NAME"
   fi
 
-  # Init git repo
-  git init -q "$TARGET"
+  # Init git repo (only if fresh)
+  [ ! -d "$TARGET/.git" ] && git init -q "$TARGET"
 
   # Ensure .claude dir exists for container mount
   mkdir -p "$TARGET/.claude"
@@ -305,33 +326,38 @@ CJEOF
   fi
 
   # Signal first-run so entrypoint auto-starts claude with /create-wolt
-  touch "$TARGET/.claude/.first-run"
+  # Must go in the shared .claude dir — that's what's mounted at /home/node/.claude
+  mkdir -p "$WOLTS_DIR/.claude"
+  touch "$WOLTS_DIR/.claude/.first-run"
+
+  # Show existing wolts so user knows they're safe
+  EXISTING_WOLTS=$(find "$WOLTS_DIR" -maxdepth 2 -name "identity.md" -not -path "$TARGET/*" 2>/dev/null \
+    | sed 's|.*/wolts/||;s|/wolt/memory/identity.md||' | sort)
+  if [ -n "$EXISTING_WOLTS" ]; then
+    echo ""
+    echo "  existing wolts (untouched):"
+    echo "$EXISTING_WOLTS" | while read -r w; do echo "    · $w"; done
+  fi
 
   # Stop any running container, start fresh with new wolt active
   docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
   _ensure_container "$CONTAINER_NAME"
 
-  echo "  open the link above in your browser to meet your wolt."
+  echo "  open the link above in your browser to meet $NAME."
   if [ -z "$EXISTING_CREDS" ]; then
-    echo "  first time, it'll ask you to log in to Claude — one-time setup."
+    echo "  first time: it'll ask you to log in to Claude — one-time setup."
   fi
-  echo ""
-  echo "  after that: woltspace start"
   echo ""
   exit 0
 fi
 
 # --- Validate ---
 
-if [ ! -d "$WOLTS_DIR" ]; then
-  echo "error: wolts directory not found at $WOLTS_DIR"
-  echo "hint: run 'woltspace init' to create your first wolt"
-  exit 1
-fi
-
-if [ -z "$ACTIVE_WOLT" ]; then
-  echo "error: no active wolt configured"
-  echo "hint: set claude.default_wolt in $WOLTS_DIR/woltspace.json"
+if [ ! -d "$WOLTS_DIR" ] || [ -z "$ACTIVE_WOLT" ]; then
+  if [ "$cmd" = "start" ]; then
+    exec "$0" init
+  fi
+  echo "error: no wolts found — run 'woltspace init' first"
   exit 1
 fi
 
@@ -408,30 +434,9 @@ case "$cmd" in
     exit 0
     ;;
   start)
-    if [ "$DEV_MODE" = false ]; then
-      clear
-      cat << 'SPLASH'
-
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                                                              ║
-    ║   welcome to woltspace.                                      ║
-    ║                                                              ║
-    ║   a wolt is an AI agent with a home — a space it builds      ║
-    ║   and maintains in collaboration with a human partner.        ║
-    ║                                                              ║
-    ║   everything is transparent. your wolt's code, identity,     ║
-    ║   and memory live in this repo — always readable,            ║
-    ║   always yours.                                              ║
-    ║                                                              ║
-    ║   claude runs inside a container — sandboxed from your       ║
-    ║   system — so it's safe to let it work autonomously.         ║
-    ║                                                              ║
-    ╚══════════════════════════════════════════════════════════════╝
-
-SPLASH
-      echo "    press enter to start ${ACTIVE_WOLT}..."
-      read -r
-    fi
+    _G=$'\033[0;32m'; _B=$'\033[1m'; _D=$'\033[2m'; _R=$'\033[0m'; _A=$'\033[0;33m'
+    printf "\n  %b🦫%b  %b\n\n" "${_A}" "${_R}" "${_B}${_G}woltspace${_R}"
+    printf "  %bwaking up %s...%b\n\n" "${_D}" "$ACTIVE_WOLT" "${_R}"
 
     _ensure_container "$CONTAINER_NAME"
 

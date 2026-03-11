@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>woltspace · setup</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bark:   #2a1f14;
+      --log:    #3d2b1a;
+      --wood:   #5c3d24;
+      --amber:  #c17f3a;
+      --straw:  #d4a96a;
+      --cream:  #f0dfc0;
+      --moss:   #4a7c59;
+      --fern:   #5e9e70;
+      --leaf:   #7bbf8a;
+      --muted:  #8a7060;
+      --dim:    #5a4535;
+    }
+
+    html, body {
+      min-height: 100dvh;
+      background: var(--bark);
+      color: var(--cream);
+      font-family: 'SF Mono','Fira Code','Cascadia Code','Consolas',monospace;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2.5rem 1.5rem 3rem;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    .header h1 { font-size: 1.3rem; color: var(--fern); font-weight: 700; margin-bottom: 0.3rem; }
+    .header h1 span { color: var(--leaf); }
+    .header p { font-size: 0.72rem; color: var(--muted); }
+
+    hr.divider {
+      width: 100%; max-width: 480px;
+      border: none; border-top: 1px solid var(--log);
+      margin: 0 0 2rem;
+    }
+
+    .card {
+      width: 100%; max-width: 480px;
+      background: var(--log);
+      border: 1px solid var(--wood);
+      border-radius: 8px;
+      padding: 1.25rem 1.25rem;
+      margin-bottom: 0.75rem;
+      transition: border-color 0.2s;
+    }
+    .card.done { border-color: var(--moss); }
+
+    .card-title {
+      display: flex; align-items: center; gap: 0.6rem;
+      margin-bottom: 0.75rem;
+    }
+    .card-title h2 { font-size: 0.85rem; font-weight: 600; color: var(--cream); flex: 1; }
+    .badge {
+      font-size: 0.6rem; padding: 0.12rem 0.45rem;
+      border-radius: 10px; border: 1px solid var(--wood); color: var(--muted);
+    }
+    .badge.done { border-color: var(--moss); color: var(--leaf); }
+    .badge.waiting { border-color: var(--amber); color: var(--straw); }
+
+    .card p {
+      font-size: 0.72rem; color: var(--muted); line-height: 1.7;
+      margin-bottom: 0.5rem;
+    }
+    .card p:last-child { margin-bottom: 0; }
+
+    code {
+      background: var(--bark); border: 1px solid var(--wood);
+      border-radius: 3px; padding: 0.1rem 0.35rem;
+      font-family: inherit; color: var(--straw); font-size: 0.68rem;
+    }
+
+    .cmd {
+      display: block;
+      background: var(--bark); border: 1px solid var(--wood);
+      border-radius: 4px; padding: 0.5rem 0.75rem;
+      color: var(--leaf); font-size: 0.75rem;
+      margin: 0.5rem 0; letter-spacing: 0.02em;
+    }
+    .cmd::before { content: '$ '; color: var(--dim); }
+
+    .hint {
+      font-size: 0.65rem; color: var(--dim); margin-top: 0.6rem;
+    }
+
+    .next-steps {
+      width: 100%; max-width: 480px;
+      margin-top: 0.25rem;
+    }
+    .next-steps h3 {
+      font-size: 0.65rem; color: var(--dim);
+      text-transform: uppercase; letter-spacing: 0.1em;
+      margin-bottom: 0.6rem;
+    }
+    .next-step {
+      display: flex; align-items: baseline; gap: 0.6rem;
+      font-size: 0.72rem; color: var(--muted);
+      padding: 0.35rem 0;
+      border-bottom: 1px solid var(--log);
+    }
+    .next-step:last-child { border-bottom: none; }
+    .next-step code { flex-shrink: 0; }
+
+    .footer {
+      margin-top: 2.5rem; font-size: 0.62rem;
+      color: var(--dim); text-align: center;
+    }
+    .footer a { color: var(--muted); text-decoration: none; }
+    .footer a:hover { color: var(--amber); }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>🦫 wolt<span>space</span></h1>
+    <p>let's get you set up</p>
+  </div>
+
+  <hr class="divider">
+
+  <!-- Step 1: authenticate -->
+  <div class="card" id="card-auth">
+    <div class="card-title">
+      <h2>authenticate claude code</h2>
+      <span class="badge waiting" id="badge-auth">needed</span>
+    </div>
+    <div id="body-auth">
+      <p>In the terminal on the left, run:</p>
+      <code class="cmd">/login</code>
+      <p>Follow the login link that appears. Once authenticated, come back here.</p>
+      <p class="hint">This is a one-time setup — your credentials persist across restarts.</p>
+    </div>
+  </div>
+
+  <!-- Step 2: next steps -->
+  <div class="next-steps" id="next-steps">
+    <h3 id="next-title">after authentication</h3>
+    <div class="next-step">
+      <code>/create-wolt</code>
+      <span>introduce yourself to your wolt</span>
+    </div>
+    <div class="next-step">
+      <code>/telegram</code>
+      <span>connect a Telegram bot to chat with your wolt</span>
+    </div>
+  </div>
+
+  <div class="footer">
+    <a href="/">← home</a>
+  </div>
+
+  <script>
+    async function poll() {
+      try {
+        const d = await fetch('/onboard-status').then(r => r.json());
+        const authed = d.has_oauth;
+
+        document.getElementById('card-auth').classList.toggle('done', authed);
+        const badge = document.getElementById('badge-auth');
+        badge.className = 'badge ' + (authed ? 'done' : 'waiting');
+        badge.textContent = authed ? 'done' : 'needed';
+
+        document.getElementById('next-steps').style.opacity = authed ? '1' : '0.4';
+        if (authed) {
+          document.getElementById('body-auth').innerHTML =
+            '<p style="color:var(--leaf)">Claude Code is authenticated ✓</p>';
+          document.getElementById('next-title').textContent = "after authentication";
+        }
+      } catch {}
+    }
+
+    poll();
+    setInterval(poll, 3000);
+  </script>
+
+</body>
+</html>

@@ -3,42 +3,58 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>nw</title>
+  <title>woltspace</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { height: 100dvh; overflow: hidden; background: #0d1117; }
+
+    :root {
+      --bark:   #2a1f14;
+      --log:    #3d2b1a;
+      --wood:   #5c3d24;
+      --amber:  #c17f3a;
+      --straw:  #d4a96a;
+      --cream:  #f0dfc0;
+      --moss:   #4a7c59;
+      --fern:   #5e9e70;
+      --leaf:   #7bbf8a;
+      --water:  #4a8fa8;
+      --muted:  #8a7060;
+      --dim:    #5a4535;
+    }
+
+    html, body { height: 100dvh; overflow: hidden; background: var(--bark); }
     body { display: flex; flex-direction: column; }
 
     #topbar {
-      background: #161b22;
-      border-bottom: 1px solid #21262d;
+      background: var(--log);
+      border-bottom: 1px solid var(--wood);
       padding: 0.4rem 0.75rem;
       display: flex; align-items: center; justify-content: space-between;
       font-family: 'SF Mono','Fira Code',monospace;
       font-size: 0.8rem; flex-shrink: 0;
     }
     #topbar .left { display: flex; align-items: center; gap: 0.4rem; }
-    #topbar .title { color: #6b9; font-weight: 600; }
-    #topbar .status { color: #555; font-size: 0.65rem; }
+    #topbar .title { color: var(--leaf); font-weight: 600; }
+    #topbar .status { color: var(--muted); font-size: 0.65rem; }
     #topbar .actions { display: flex; gap: 0.4rem; }
     #topbar .actions button {
       font-family: inherit; font-size: 0.72rem;
-      padding: 0.25rem 0.6rem; background: #21262d;
-      border: 1px solid #30363d; border-radius: 4px;
-      color: #666; cursor: pointer;
+      padding: 0.25rem 0.6rem; background: var(--log);
+      border: 1px solid var(--wood); border-radius: 4px;
+      color: var(--muted); cursor: pointer;
     }
-    #topbar .actions button:hover { border-color: #6b9; color: #c9d1d9; }
-    #topbar .actions button:disabled { opacity: 0.3; cursor: default; border-color: #30363d; color: #444; }
-    #topbar .actions button.active { border-color: #6b9; color: #6b9; }
-    #btn-share.copied { border-color: #6b9; color: #6b9; }
+    #topbar .actions button:hover { border-color: var(--leaf); color: var(--cream); }
+    #topbar .actions button:disabled { opacity: 0.3; cursor: default; border-color: var(--wood); color: var(--dim); }
+    #topbar .actions button.active { border-color: var(--leaf); color: var(--leaf); }
+    #btn-share.copied { border-color: var(--leaf); color: var(--leaf); }
 
     /* history panel */
     #right { position: relative; }
     #hist-panel {
       position: absolute; top: 0; right: 0; bottom: 0; width: 220px;
-      background: #161b22; border-left: 1px solid #21262d;
+      background: var(--log); border-left: 1px solid var(--wood);
       display: flex; flex-direction: column;
       z-index: 50; transform: translateX(100%);
       transition: transform 0.2s ease;
@@ -46,27 +62,27 @@
     }
     #hist-panel.open { transform: translateX(0); }
     #hist-header {
-      padding: 0.4rem 0.75rem; border-bottom: 1px solid #21262d;
+      padding: 0.4rem 0.75rem; border-bottom: 1px solid var(--wood);
       display: flex; justify-content: space-between; align-items: center;
-      font-size: 0.7rem; color: #555; flex-shrink: 0;
+      font-size: 0.7rem; color: var(--muted); flex-shrink: 0;
     }
     #hist-header button {
-      background: none; border: none; color: #555; cursor: pointer;
+      background: none; border: none; color: var(--muted); cursor: pointer;
       font-size: 0.9rem; padding: 0; line-height: 1;
     }
-    #hist-header button:hover { color: #c9d1d9; }
+    #hist-header button:hover { color: var(--cream); }
     #hist-list { flex: 1; overflow-y: auto; padding: 0.25rem 0; }
     #hist-list::-webkit-scrollbar { width: 4px; }
-    #hist-list::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+    #hist-list::-webkit-scrollbar-thumb { background: var(--wood); border-radius: 2px; }
     .hist-item {
       padding: 0.45rem 0.75rem; cursor: pointer;
-      border-bottom: 1px solid #21262d11;
+      border-bottom: 1px solid #5c3d2411;
       transition: background 0.1s;
     }
-    .hist-item:hover { background: #21262d; }
-    .hist-item.current { background: #1a3a2a; }
-    .hist-title { display: block; font-size: 0.72rem; color: #c9d1d9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .hist-time  { display: block; font-size: 0.62rem; color: #484f58; margin-top: 1px; }
+    .hist-item:hover { background: var(--wood); }
+    .hist-item.current { background: #2d4030; }
+    .hist-title { display: block; font-size: 0.72rem; color: var(--cream); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hist-time  { display: block; font-size: 0.62rem; color: var(--dim); margin-top: 1px; }
 
     #split {
       flex: 1; display: flex; overflow: hidden;
@@ -85,11 +101,11 @@
 
     #drag-handle {
       width: 4px; flex-shrink: 0;
-      background: #21262d; cursor: col-resize;
+      background: var(--wood); cursor: col-resize;
       position: relative; touch-action: none; z-index: 10;
       transition: background 0.15s;
     }
-    #drag-handle:hover, #drag-handle.dragging { background: #3a7a5a; }
+    #drag-handle:hover, #drag-handle.dragging { background: var(--moss); }
     #drag-handle::before { content: ''; position: absolute; inset: 0 -6px; }
 
     #split.left-full  #left  { width: 100%; }
@@ -108,13 +124,13 @@
       #split.right-full #right { width: 100% !important; }
     }
 
-    #preview { flex: 1; border: none; background: #0d1117; display: block; }
+    #preview { flex: 1; border: none; background: var(--bark); display: block; }
   </style>
 </head>
 <body>
   <div id="topbar">
     <div class="left">
-      <a class="title" href="/" id="session-name" style="text-decoration:none">nw</a>
+      <a class="title" href="/" id="session-name" style="text-decoration:none">🦫 woltspace</a>
       <span class="status" id="tui-status">connecting...</span>
     </div>
     <div class="actions">
@@ -161,11 +177,11 @@
       cursorBlink: true, fontSize: 13,
       fontFamily: "'SF Mono','Fira Code','Consolas',monospace",
       theme: {
-        background: '#0d1117', foreground: '#c9d1d9', cursor: '#6b9',
-        selectionBackground: '#264f78',
-        black: '#0d1117', red: '#f66',    green: '#6b9',
-        yellow: '#e5c07b', blue: '#61afef', magenta: '#c678dd',
-        cyan: '#56b6c2',  white: '#c9d1d9',
+        background: '#2a1f14', foreground: '#f0dfc0', cursor: '#c17f3a',
+        selectionBackground: '#4a7c59',
+        black: '#2a1f14', red: '#c0392b',  green: '#7bbf8a',
+        yellow: '#d4a96a', blue: '#4a8fa8', magenta: '#c678dd',
+        cyan: '#5e9e70',  white: '#f0dfc0',
       },
     });
 
@@ -190,7 +206,7 @@
       ws = new WebSocket(proto + '//' + location.host + '/tui?session=' + encodeURIComponent(session));
       ws.onopen = () => {
         statusEl.textContent = 'connected';
-        statusEl.style.color = '#6b9';
+        statusEl.style.color = '#7bbf8a';
         ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
       };
       ws.onmessage = (e) => term.write(e.data);
@@ -202,7 +218,10 @@
       ws.onerror = () => ws.close();
     }
 
-    term.onData(d => ws?.readyState === WebSocket.OPEN && ws.send(d));
+    let authed = true;
+    fetch('/onboard-status').then(r => r.json()).then(d => { authed = d.has_oauth; }).catch(() => {});
+
+    term.onData(d => authed && ws?.readyState === WebSocket.OPEN && ws.send(d));
     term.onResize(({ cols, rows }) => {
       if (ws?.readyState === WebSocket.OPEN)
         ws.send(JSON.stringify({ type: 'resize', cols, rows }));

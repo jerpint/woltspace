@@ -86,6 +86,21 @@ Utility scripts available in container PATH:
 
 ---
 
+## ⚠️ VIEWPORT — HOW TO SHOW THINGS TO THE HUMAN
+
+**The right-hand pane of the split view is the viewport. Use it. Always push what you build.**
+
+The `/viewport` skill explains everything, but the short version:
+1. Write your HTML/app to `wolt/site/` (or build an app under `wolt/apps/`)
+2. Run `push-view /your-page.html` — this updates the right pane live
+3. The human sees it immediately in their browser
+
+`push-view` auto-detects the current session. **If you build something and don't push it to the viewport, the human can't see it.**
+
+Use `/viewport` for full details: URL paths, app serving, live-reload behavior.
+
+---
+
 ## Wolt Directory Structure (per wolt repo)
 
 ```
@@ -154,6 +169,7 @@ This repo is usually mounted into the container in dev mode (`woltspace start` a
 Restart Telegram bot:
 ```bash
 pkill -f telegram_adapter
+set -a && source /workspace/wolts/${WOLT_NAME}/.env && set +a
 cd /workspace/woltspace/container && uv run --project bot/pyproject.toml python -m bot.telegram_adapter &
 ```
 
