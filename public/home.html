@@ -254,11 +254,17 @@
     .session-dot.completed { background: var(--dim); }
     .session-dot.failed   { background: #c0392b; }
     .session-name {
-      font-size: 0.8rem;
-      color: var(--cream);
+      font-size: 0.72rem;
+      color: var(--muted);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      margin-top: 2px;
+    }
+    .session-title {
+      font-size: 0.82rem;
+      color: var(--cream);
+      line-height: 1.3;
     }
     .session-meta {
       font-size: 0.68rem;
@@ -272,6 +278,28 @@
       padding: 2rem;
       border: 1px dashed var(--wood);
       border-radius: 6px;
+    }
+
+    /* ---- MOBILE ---- */
+    @media (max-width: 600px) {
+      body { padding: 1.5rem 1rem 2rem; }
+
+      .prompt-box input,
+      .prompt-box button { font-size: 1rem; } /* prevent iOS zoom on tap */
+
+      .session-item {
+        padding: 0.85rem 0.9rem;
+        align-items: flex-start;
+        flex-wrap: wrap;
+        gap: 0.25rem;
+      }
+      .session-left { flex: 1; min-width: 0; }
+      .session-title { white-space: normal; } /* wrap on mobile */
+      .session-meta {
+        width: 100%;
+        padding-left: 1.3rem; /* align past the dot */
+        margin-top: 0.15rem;
+      }
     }
 
     /* ---- FOOTER ---- */
@@ -384,8 +412,11 @@
           const status = s.status || (s.attached ? 'running' : 'running');
           const dot  = `<span class="session-dot ${status}"></span>`;
           const time = s.started ? timeAgo(s.started) : (s.created ? timeAgo(s.created) : '');
+          const mainLabel = s.title
+            ? `<div class="session-title">${s.title}</div><span class="session-name">${s.session}</span>`
+            : `<div class="session-title">${s.session}</div>`;
           return `<a class="session-item" href="/tui?session=${encodeURIComponent(s.session)}">
-            <span class="session-left">${dot}<span class="session-name">${s.session}</span></span>
+            <div class="session-left">${dot}<div>${mainLabel}</div></div>
             <span class="session-meta">${status} · ${time}</span>
           </a>`;
         }).join('');

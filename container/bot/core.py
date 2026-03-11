@@ -313,23 +313,96 @@ def start_claude_session(prompt: str, wolt: str = None) -> dict:
 
 
 def list_sessions() -> list[dict]:
-    """List active tmux sessions (excluding 'main')."""
+    """List all sessions — live + completed, enriched with titles from status files."""
+    # Get live tmux sessions
+    tmux_alive = set()
     try:
         raw = subprocess.run(
-            ["tmux", "list-sessions", "-F", "#{session_name}|#{session_created}|#{session_activity}"],
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
             capture_output=True, text=True, check=True,
         ).stdout.strip()
-        sessions = []
-        for line in raw.split("\n"):
-            if not line:
+        for name in raw.split("\n"):
+            if name and name != "main":
+                tmux_alive.add(name)
+    except subprocess.CalledProcessError:
+        pass
+
+    tunnel_url = get_tunnel_url()
+    sessions = {}
+
+    # Read status files (have title, prompt, timestamps)
+    status_dir = _session_status_dir()
+    if status_dir.exists():
+        for f in status_dir.glob("*.json"):
+            try:
+                data = json.loads(f.read_text())
+                name = data.get("session", f.stem)
+                if name == "main":
+                    continue
+                alive = name in tmux_alive
+                entry = {
+                    "name": name,
+                    "title": data.get("title", ""),
+                    "status": "running" if alive else data.get("status", "completed"),
+                    "started": data.get("started"),
+                    "alive": alive,
+                }
+                if tunnel_url:
+                    entry["url"] = f"{tunnel_url}/tui?session={name}"
+                sessions[name] = entry
+            except Exception:
                 continue
-            name, created, activity = line.split("|")
+
+    # Include any live tmux sessions not in status files
+    for name in tmux_alive:
+        if name not in sessions:
+            entry = {"name": name, "title": "", "status": "running", "started": None, "alive": True}
+            if tunnel_url:
+                entry["url"] = f"{tunnel_url}/tui?session={name}"
+            sessions[name] = entry
+
+    return sorted(sessions.values(), key=lambda s: s.get("started") or 0, reverse=True)
+
+
+def find_session(query: str) -> list[dict]:
+    """Find sessions whose title or prompt matches the query."""
+    query_lower = query.lower()
+    words = query_lower.split()
+    status_dir = _session_status_dir()
+    tunnel_url = get_tunnel_url()
+    matches = []
+
+    if not status_dir.exists():
+        return []
+
+    for f in status_dir.glob("*.json"):
+        try:
+            data = json.loads(f.read_text())
+            name = data.get("session", f.stem)
             if name == "main":
                 continue
-            sessions.append({"name": name, "created": int(created), "last_activity": int(activity)})
-        return sessions
-    except subprocess.CalledProcessError:
-        return []
+            haystack = (data.get("title", "") + " " + data.get("prompt", "")).lower()
+            # match if any query word appears in title+prompt
+            if any(w in haystack for w in words):
+                alive = False
+                try:
+                    subprocess.run(["tmux", "has-session", "-t", name], capture_output=True, check=True)
+                    alive = True
+                except Exception:
+                    pass
+                entry = {
+                    "name": name,
+                    "title": data.get("title", ""),
+                    "status": "running" if alive else data.get("status", "completed"),
+                    "started": data.get("started"),
+                }
+                if tunnel_url:
+                    entry["url"] = f"{tunnel_url}/tui?session={name}"
+                matches.append(entry)
+        except Exception:
+            continue
+
+    return sorted(matches, key=lambda s: s.get("started") or 0, reverse=True)
 
 
 def check_session(session_name: str = None) -> dict:
@@ -480,6 +553,10 @@ def _tool_list_sessions(args: dict, routing: dict | None) -> str:
     return json.dumps(list_sessions())
 
 
+def _tool_find_session(args: dict, routing: dict | None) -> str:
+    return json.dumps(find_session(args["query"]))
+
+
 def _tool_kill_session(args: dict, routing: dict | None) -> str:
     killed = kill_session(args["session_name"])
     return json.dumps({"killed": killed, "session": args["session_name"]})
@@ -522,6 +599,7 @@ TOOL_HANDLERS: dict[str, callable] = {
     "check_session": _tool_check_session,
     "get_recent_sessions": _tool_get_recent_sessions,
     "list_sessions": _tool_list_sessions,
+    "find_session": _tool_find_session,
     "kill_session": _tool_kill_session,
     "send_message": _tool_send_message,
     "read_memory": _tool_read_memory,
@@ -605,8 +683,25 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "list_sessions",
-            "description": "List all active Claude Code sessions. Shows session names and when they were created.",
+            "description": "List all Claude Code sessions (running and completed), with their titles and live view URLs. Use to see what sessions exist and what they were building.",
             "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_session",
+            "description": "Find a session by what it was building. Searches session titles and prompts. Use when someone asks 'which session did we build X?' or 'link to the Y app'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Keywords describing what the session was building (e.g. 'workout tracker', 'blog', 'fitness app').",
+                    },
+                },
+                "required": ["query"],
+            },
         },
     },
     {

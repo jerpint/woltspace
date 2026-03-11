@@ -19,10 +19,25 @@ STATUS_FILE="$STATUS_DIR/${SESSION_NAME}.json"
 cd "$WORK_DIR"
 export WOLT_SESSION="$SESSION_NAME"
 
-# Write initial status
-cat > "$STATUS_FILE" <<EOJSON
-{"session": "$SESSION_NAME", "status": "running", "started": $(date +%s), "dir": "$WORK_DIR"}
-EOJSON
+# Generate a short descriptive title from the prompt (first line, ~60 chars, clean)
+TITLE=$(python3 -c "
+import re, sys
+p = sys.argv[1]
+first_line = p.split('\n')[0].split('.')[0].strip()
+clean = re.sub(r'[^\w\s-]', '', first_line).strip()
+print(clean[:60].lower())
+" "$PROMPT" 2>/dev/null || echo "")
+
+# Write initial status (Python for safe JSON serialization — prompt may contain quotes/newlines)
+python3 -c "
+import json, sys, time
+data = {
+    'session': sys.argv[1], 'status': 'running',
+    'started': int(time.time()), 'dir': sys.argv[2],
+    'title': sys.argv[3], 'prompt': sys.argv[4][:500],
+}
+print(json.dumps(data))
+" "$SESSION_NAME" "$WORK_DIR" "$TITLE" "$PROMPT" > "$STATUS_FILE"
 
 # Read session routing to tell Claude which platform to notify
 ROUTING_FILE="${WOLT_STATE_DIR:-/workspace/wolts/.state}/session-routing/${SESSION_NAME}.json"
@@ -66,6 +81,17 @@ else
     FINAL_STATUS="failed"
 fi
 
-cat > "$STATUS_FILE" <<EOJSON
-{"session": "$SESSION_NAME", "status": "$FINAL_STATUS", "exit_code": $EXIT_CODE, "started": $(date +%s), "finished": $(date +%s), "dir": "$WORK_DIR"}
-EOJSON
+# Preserve title/prompt from initial write
+python3 -c "
+import json, sys, time
+try:
+    prev = json.loads(open(sys.argv[1]).read())
+except Exception:
+    prev = {}
+data = {
+    'session': sys.argv[2], 'status': sys.argv[3], 'exit_code': int(sys.argv[4]),
+    'started': prev.get('started', int(time.time())), 'finished': int(time.time()),
+    'dir': sys.argv[5], 'title': prev.get('title', ''), 'prompt': prev.get('prompt', ''),
+}
+print(json.dumps(data))
+" "$STATUS_FILE" "$SESSION_NAME" "$FINAL_STATUS" "$EXIT_CODE" "$WORK_DIR" > "$STATUS_FILE.tmp" && mv "$STATUS_FILE.tmp" "$STATUS_FILE"
