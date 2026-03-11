@@ -863,7 +863,7 @@ const server = createServer(async (req, res) => {
         );
         console.log(`[shares] created token ${token} → session ${targetSession} port ${port}`);
         res.writeHead(201, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ token, url: `/s/${token}`, session: targetSession, port }));
+        res.end(JSON.stringify({ token, url: `/public/${token}`, session: targetSession, port }));
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
@@ -921,8 +921,8 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // /s/:token/* → public port proxy (no auth — token is the credential)
-  const shareProxyMatch = url.pathname.match(/^\/s\/([A-Za-z0-9_-]+)(\/.*)?$/);
+  // /public/:token/* → public port proxy (no auth — token is the credential)
+  const shareProxyMatch = url.pathname.match(/^\/public\/([A-Za-z0-9_-]+)(\/.*)?$/);
   if (shareProxyMatch) {
     const token = shareProxyMatch[1];
     const shareFile = join(SHARES_DIR, `${token}.json`);
@@ -942,7 +942,7 @@ const server = createServer(async (req, res) => {
       const sessionFile = currentUrlFile(sanitizeSession(shareSession || 'main'));
       const sessionData = existsSync(sessionFile) ? JSON.parse(readFileSync(sessionFile, 'utf8')) : {};
       const viewportPath = sessionData.url || '/';
-      res.writeHead(302, { Location: `/s/${token}${viewportPath}` });
+      res.writeHead(302, { Location: `/public/${token}${viewportPath}` });
       res.end();
       return;
     }
@@ -964,20 +964,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // --- Public live view (read-only, no auth) ---
-  if (req.method === 'GET' && url.pathname.startsWith('/public/')) {
-    const sessionId = sanitizeSession(url.pathname.slice('/public/'.length));
-    if (!sessionId) { res.writeHead(400); res.end('session id required'); return; }
-    try {
-      const html = await readFile(join(PUBLIC_DIR, 'public-view.html'), 'utf8');
-      const injected = html.replace(/__SESSION_ID__/g, sessionId);
-      res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
-      res.end(injected);
-    } catch {
-      res.writeHead(500); res.end('public-view.html not found');
-    }
-    return;
-  }
+
 
   if (req.method === 'GET') {
     // Homepage — session launcher + history
@@ -1234,8 +1221,7 @@ server.listen(PORT, () => {
     /status        — status dashboard
     /current?session=X — viewport control
     /shares            — list/create/revoke share tokens (GET/POST/DELETE)
-    /s/:token/*        — public port proxy (no auth, token = credential)
-    /public/:session   — public live view (read-only, no auth)
+    /public/:token/*   — public port proxy (no auth, token = credential)
     /apps          — list registered apps
     /app/:name/    — serve an app (static or proxy)
     /tools         — running tools

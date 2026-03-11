@@ -48,7 +48,7 @@
     #topbar .actions button:hover { border-color: var(--leaf); color: var(--cream); }
     #topbar .actions button:disabled { opacity: 0.3; cursor: default; border-color: var(--wood); color: var(--dim); }
     #topbar .actions button.active { border-color: var(--leaf); color: var(--leaf); }
-    #btn-share.copied { border-color: var(--leaf); color: var(--leaf); }
+    #btn-share.copied { border-color: var(--leaf); color: var(--leaf); background: rgba(107,153,102,0.12); font-weight: 600; }
 
     /* history panel */
     #right { position: relative; }
@@ -359,9 +359,9 @@
         if (!data.token) throw new Error(data.error || 'no token');
         const link = location.origin + data.url;
         await navigator.clipboard.writeText(link).catch(() => window.open(link, '_blank'));
-        btn.textContent = '✓ copied';
+        btn.textContent = '✓ link copied!';
         btn.classList.add('copied');
-        setTimeout(() => { btn.textContent = '↗ share'; btn.classList.remove('copied'); btn.disabled = false; }, 2000);
+        setTimeout(() => { btn.textContent = '↗ share'; btn.classList.remove('copied'); btn.disabled = false; }, 3000);
       } catch (err) {
         console.error('[share]', err);
         btn.textContent = '↗ share';
