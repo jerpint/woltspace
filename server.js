@@ -3,9 +3,10 @@ import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
 import { join, extname, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { existsSync, statSync, readFileSync, readdirSync, writeFileSync, appendFileSync, mkdirSync, watch } from 'node:fs';
+import { existsSync, statSync, readFileSync, readdirSync, writeFileSync, appendFileSync, mkdirSync, watch, unlinkSync } from 'node:fs';
 import { execSync, spawn } from 'node:child_process';
 import { createConnection } from 'node:net';
+import { randomBytes } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 
@@ -58,6 +59,7 @@ const TOOL_REGISTRY_FILE = join(STATE_DIR, 'tool-registry.json');
 const VIEWS_HISTORY_FILE = join(STATE_DIR, 'views-history.jsonl');
 const STATUS_FILE        = join(STATE_DIR, 'status.json');
 const BOT_LOG_FILE       = join(STATE_DIR, 'bot-debug', 'bot.jsonl');
+const SHARES_DIR          = join(STATE_DIR, 'shares');
 
 function botLog(event, data) {
   try {
@@ -837,6 +839,118 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+
+  // --- Share link management ---
+  // POST /shares { port, label? } → create token
+  if (req.method === 'POST' && url.pathname === '/shares') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        const { port, label } = JSON.parse(body || '{}');
+        if (!port || port < 1025 || port > 65535) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'port must be 1025–65535' }));
+          return;
+        }
+        const token = randomBytes(6).toString('base64url');
+        mkdirSync(SHARES_DIR, { recursive: true });
+        writeFileSync(
+          join(SHARES_DIR, `${token}.json`),
+          JSON.stringify({ port, label: label || null, created: Date.now(), wolt: WOLT_NAME })
+        );
+        console.log(`[shares] created token ${token} → port ${port}`);
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ token, url: `/s/${token}`, port }));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // GET /shares → list all tokens with liveness check
+  if (req.method === 'GET' && url.pathname === '/shares') {
+    try {
+      mkdirSync(SHARES_DIR, { recursive: true });
+      const files = readdirSync(SHARES_DIR).filter(f => f.endsWith('.json'));
+      const shares = await Promise.all(files.map(async f => {
+        try {
+          const token = f.replace(/\.json$/, '');
+          const data = JSON.parse(readFileSync(join(SHARES_DIR, f), 'utf8'));
+          const alive = await new Promise(resolve => {
+            const sock = createConnection({ port: data.port, host: 'localhost' });
+            sock.once('connect', () => { sock.destroy(); resolve(true); });
+            sock.once('error', () => resolve(false));
+            setTimeout(() => { sock.destroy(); resolve(false); }, 500);
+          });
+          return { token, ...data, alive };
+        } catch { return null; }
+      }));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(shares.filter(Boolean)));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // DELETE /shares/:token → revoke
+  const deleteShareMatch = url.pathname.match(/^\/shares\/([A-Za-z0-9_-]+)$/);
+  if (req.method === 'DELETE' && deleteShareMatch) {
+    const token = deleteShareMatch[1];
+    const shareFile = join(SHARES_DIR, `${token}.json`);
+    if (!existsSync(shareFile)) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'share not found' }));
+      return;
+    }
+    try {
+      unlinkSync(shareFile);
+      console.log(`[shares] revoked token ${token}`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, token }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // /s/:token/* → public port proxy (no auth — token is the credential)
+  const shareProxyMatch = url.pathname.match(/^\/s\/([A-Za-z0-9_-]+)(\/.*)?$/);
+  if (shareProxyMatch) {
+    const token = shareProxyMatch[1];
+    const shareFile = join(SHARES_DIR, `${token}.json`);
+    if (!existsSync(shareFile)) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Share link not found or revoked.');
+      return;
+    }
+    let shareData;
+    try { shareData = JSON.parse(readFileSync(shareFile, 'utf8')); }
+    catch { res.writeHead(500); res.end('invalid share config'); return; }
+
+    const { port } = shareData;
+    const subPath = (shareProxyMatch[2] || '/') + (url.search || '');
+    const proxyHeaders = { ...req.headers, host: `localhost:${port}` };
+    const proxyReq = httpRequest({ hostname: 'localhost', port, path: subPath, method: req.method, headers: proxyHeaders }, (proxyRes) => {
+      const respHeaders = { ...proxyRes.headers };
+      delete respHeaders['x-frame-options'];
+      delete respHeaders['content-security-policy'];
+      res.writeHead(proxyRes.statusCode, respHeaders);
+      proxyRes.pipe(res);
+    });
+    proxyReq.on('error', () => {
+      res.writeHead(502, { 'Content-Type': 'text/plain' });
+      res.end(`Service not running on port ${port}.`);
+    });
+    req.pipe(proxyReq);
+    return;
+  }
+
   // --- Public live view (read-only, no auth) ---
   if (req.method === 'GET' && url.pathname.startsWith('/public/')) {
     const sessionId = sanitizeSession(url.pathname.slice('/public/'.length));
@@ -1106,6 +1220,8 @@ server.listen(PORT, () => {
     /history       — sparks viewer
     /status        — status dashboard
     /current?session=X — viewport control
+    /shares            — list/create/revoke share tokens (GET/POST/DELETE)
+    /s/:token/*        — public port proxy (no auth, token = credential)
     /public/:session   — public live view (read-only, no auth)
     /apps          — list registered apps
     /app/:name/    — serve an app (static or proxy)

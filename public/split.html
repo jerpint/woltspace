@@ -345,17 +345,47 @@
       if (histOpen) renderHist();
     };
 
-    window.copyPublicLink = () => {
-      const link = location.origin + '/public/' + encodeURIComponent(session);
-      navigator.clipboard.writeText(link).then(() => {
-        const btn = document.getElementById('btn-share');
+    window.copyPublicLink = async () => {
+      const btn = document.getElementById('btn-share');
+      btn.textContent = '…';
+      btn.disabled = true;
+      try {
+        // Detect current app port from viewport URL
+        const meta = await fetch('/current/meta?session=' + encodeURIComponent(session)).then(r => r.json()).catch(() => ({}));
+        const appMatch = meta.url && meta.url.match(/^\/app\/([a-zA-Z][a-zA-Z0-9_-]*)/);
+        let port = null;
+        let label = null;
+        if (appMatch) {
+          const appName = appMatch[1];
+          const apps = await fetch('/apps').then(r => r.json()).catch(() => []);
+          const app = apps.find(a => a.name === appName);
+          port = app?.port || null;
+          label = appName;
+        }
+        if (!port) {
+          const input = window.prompt('Port to share (e.g. 4321):');
+          port = input ? parseInt(input, 10) : null;
+        }
+        if (!port || isNaN(port)) { btn.textContent = '↗ share'; btn.disabled = false; return; }
+
+        const res = await fetch('/shares', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ port, label }),
+        });
+        const data = await res.json();
+        if (!data.token) throw new Error(data.error || 'no token');
+
+        const link = location.origin + data.url;
+        await navigator.clipboard.writeText(link).catch(() => window.open(link, '_blank'));
         btn.textContent = '✓ copied';
         btn.classList.add('copied');
-        setTimeout(() => { btn.textContent = '↗ share'; btn.classList.remove('copied'); }, 2000);
-      }).catch(() => {
-        // fallback: open in new tab so user can copy from address bar
-        window.open('/public/' + encodeURIComponent(session), '_blank');
-      });
+        setTimeout(() => { btn.textContent = '↗ share'; btn.classList.remove('copied'); btn.disabled = false; }, 2000);
+      } catch (err) {
+        console.error('[share]', err);
+        btn.textContent = '↗ share';
+        btn.disabled = false;
+      }
     };
 
     // Load all sparks for the history panel
