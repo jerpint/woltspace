@@ -230,6 +230,23 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.info(f"Transcribed: {text[:100]}")
 
+    # If this is a reply to a den notify, route directly to that session
+    den_session = _is_den_reply(update)
+    if den_session:
+        chat_id = update.effective_chat.id
+        human_name = os.environ.get("HUMAN_NAME", "human")
+        den_msg = (
+            f"[telegram voice] {human_name} says: {text}\n"
+            f"Respond to them via the notify skill when you have an update."
+        )
+        result = message_session(den_session, den_msg)
+        _bot_log("den_reply_voice", {"session": den_session, "text": text[:200]})
+        if result.get("ok"):
+            await update.message.reply_text(f"🪵 sent to the session in the den")
+        else:
+            await update.message.reply_text(f"session {den_session} isn't running anymore")
+        return
+
     # Process as a normal text message
     chat_id = update.effective_chat.id
     user_message = f"[voice message] {text}"
