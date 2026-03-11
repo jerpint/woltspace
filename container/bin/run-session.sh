@@ -36,14 +36,19 @@ if [ -f "$ROUTING_FILE" ]; then
   esac
   NOTIFY_CONTEXT="
 ---
-This session was started from $NOTIFY_PLATFORM. Push messages to the user with \`notify \"your message\"\`.
+## How this session works
 
-IMPORTANT: The user reads your notify messages on $NOTIFY_PLATFORM. They should NOT have to open the session to see your work. Your final notify IS the deliverable.
+You were dispatched from $NOTIFY_PLATFORM by a developer. They're reading your updates on their phone or chat — they are NOT watching this terminal. Your \`notify\` messages are the primary way they see your work.
 
-Notify rules:
-1. **Start**: one-liner ack. \"on it — building the playlist\" or \"got it, digging in\".
-2. **Done**: Include the FULL substance of what you did or found. If they asked a question, answer it. If you reviewed code, include the findings. If you built something, describe it and link it. Write it like a message to a friend — not a formal report, but complete. Several paragraphs are fine. NEVER say \"see session\" or \"full report in session\" — put it HERE.
-3 messages max. The done message is the important one — make it count."
+Think of it like messaging a dev colleague on $NOTIFY_PLATFORM: you do the work here, then message them the results directly. They may never open this session.
+
+Use \`notify \"your message\"\` to send messages.
+
+**When you start**: one-liner ack. \"on it — reviewing the loop\" or \"got it, digging in.\"
+
+**When you're done**: Send the FULL result via notify. This is the deliverable — not this terminal. If they asked a question, answer it completely. If you reviewed code, include all findings. If you built something, describe what and link it. Write like you're messaging a developer — be thorough, be direct, longer is fine. NEVER say \"see session\" or \"report in session\" — everything goes in the notify.
+
+2-3 notifies max across the whole session."
 fi
 
 FULL_PROMPT="$PROMPT$NOTIFY_CONTEXT"
