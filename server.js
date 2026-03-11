@@ -855,13 +855,13 @@ const server = createServer(async (req, res) => {
           ? JSON.parse(readFileSync(sessionFile, 'utf8'))
           : {};
         const port = sessionData.port || 3000;
-        const token = randomBytes(6).toString('base64url');
+        const token = targetSession;
         mkdirSync(SHARES_DIR, { recursive: true });
         writeFileSync(
           join(SHARES_DIR, `${token}.json`),
           JSON.stringify({ session: targetSession, port, label: label || null, created: Date.now(), wolt: WOLT_NAME })
         );
-        console.log(`[shares] created token ${token} → session ${targetSession} port ${port}`);
+        console.log(`[shares] created ${token} → port ${port}`);
         res.writeHead(201, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ token, url: `/public/${token}`, session: targetSession, port }));
       } catch (err) {
