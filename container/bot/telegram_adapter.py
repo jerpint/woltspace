@@ -145,16 +145,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Something broke on my end. Try again in a sec.")
         return
 
-    response = format_response(result)
+    # Store history — history_messages always present, includes tool calls
     history.append({"role": "user", "content": user_message})
-    for msg in result["history_messages"] if result["type"] == "session" else [{"role": "assistant", "content": response}]:
+    for msg in result["history_messages"]:
         history.append(msg)
     _append_history(chat_id, "user", user_message)
-    if result["type"] == "session":
-        for msg in result["history_messages"]:
-            _append_message(chat_id, msg)
-    else:
-        _append_history(chat_id, "assistant", response)
+    for msg in result["history_messages"]:
+        _append_message(chat_id, msg)
 
     if len(history) > MAX_HISTORY * 2:
         chat_histories[chat_id] = history[-MAX_HISTORY * 2:]
@@ -204,16 +201,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Something broke on my end. Try again in a sec.")
         return
 
-    response = format_response(result)
+    # Store history
     history.append({"role": "user", "content": user_message})
-    for msg in result["history_messages"] if result["type"] == "session" else [{"role": "assistant", "content": response}]:
+    for msg in result["history_messages"]:
         history.append(msg)
     _append_history(chat_id, "user", user_message)
-    if result["type"] == "session":
-        for msg in result["history_messages"]:
-            _append_message(chat_id, msg)
-    else:
-        _append_history(chat_id, "assistant", response)
+    for msg in result["history_messages"]:
+        _append_message(chat_id, msg)
 
     if len(history) > MAX_HISTORY * 2:
         chat_histories[chat_id] = history[-MAX_HISTORY * 2:]
@@ -271,17 +265,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"photo error: {e}")
         return
 
-    response = format_response(result)
     # Store text-only in history — no point persisting base64 blobs
     history.append({"role": "user", "content": user_message})
-    for msg in result["history_messages"] if result["type"] == "session" else [{"role": "assistant", "content": response}]:
+    for msg in result["history_messages"]:
         history.append(msg)
     _append_history(chat_id, "user", user_message)
-    if result["type"] == "session":
-        for msg in result["history_messages"]:
-            _append_message(chat_id, msg)
-    else:
-        _append_history(chat_id, "assistant", response)
+    for msg in result["history_messages"]:
+        _append_message(chat_id, msg)
 
     if len(history) > MAX_HISTORY * 2:
         chat_histories[chat_id] = history[-MAX_HISTORY * 2:]
