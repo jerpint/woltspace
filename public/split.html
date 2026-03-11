@@ -218,7 +218,10 @@
       ws.onerror = () => ws.close();
     }
 
-    term.onData(d => ws?.readyState === WebSocket.OPEN && ws.send(d));
+    let authed = true;
+    fetch('/onboard-status').then(r => r.json()).then(d => { authed = d.has_oauth; }).catch(() => {});
+
+    term.onData(d => authed && ws?.readyState === WebSocket.OPEN && ws.send(d));
     term.onResize(({ cols, rows }) => {
       if (ws?.readyState === WebSocket.OPEN)
         ws.send(JSON.stringify({ type: 'resize', cols, rows }));
