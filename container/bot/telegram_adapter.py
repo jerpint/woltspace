@@ -214,6 +214,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not voice:
         return
 
+    chat_id = update.effective_chat.id
+
+    await update.message.reply_text("🦫 listening...")
+
     file = await context.bot.get_file(voice.file_id)
     with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
         await file.download_to_drive(tmp.name)
@@ -233,7 +237,6 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # If this is a reply to a den notify, route directly to that session
     den_session = _is_den_reply(update)
     if den_session:
-        chat_id = update.effective_chat.id
         human_name = os.environ.get("HUMAN_NAME", "human")
         den_msg = (
             f"[telegram voice] {human_name} says: {text}\n"
@@ -248,7 +251,6 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Process as a normal text message
-    chat_id = update.effective_chat.id
     user_message = f"[voice message] {text}"
 
     chat_histories[chat_id] = _load_history(chat_id)
