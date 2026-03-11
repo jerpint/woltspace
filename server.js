@@ -609,7 +609,7 @@ const server = createServer(async (req, res) => {
     res.end(JSON.stringify({
       wolts_dir: WOLTS_DIR,
       wolt_name: WOLT_NAME,
-      has_oauth:      !!(env.CLAUDE_CODE_OAUTH_TOKEN || process.env.CLAUDE_CODE_OAUTH_TOKEN),
+      has_oauth:      existsSync('/home/node/.claude/.credentials.json') || !!(env.CLAUDE_CODE_OAUTH_TOKEN || process.env.CLAUDE_CODE_OAUTH_TOKEN),
       has_human_name: !!(env.HUMAN_NAME && env.HUMAN_NAME.trim() && env.HUMAN_NAME !== 'your-name'),
       has_llm_key:    !!(env.ANTHROPIC_API_KEY || env.OPENROUTER_API_KEY),
       has_telegram:   env.ENABLE_TELEGRAM_BOT === 'true' && !!env.TELEGRAM_BOT_TOKEN,

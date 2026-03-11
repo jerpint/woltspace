@@ -307,9 +307,9 @@
 
   <hr class="divider">
 
-  <div class="onboard-banner">
-    <span>new here? get set up in a few steps.</span>
-    <button onclick="openOnboard()">set up →</button>
+  <div class="onboard-banner" id="onboard-banner" style="display:none">
+    <span>claude code isn't authenticated yet.</span>
+    <button onclick="openOnboard()">onboard →</button>
   </div>
 
   <div class="prompt-box">
@@ -343,6 +343,11 @@
     const form    = document.getElementById('prompt-form');
     const input   = document.getElementById('prompt-input');
     const btn     = document.getElementById('submit-btn');
+
+    // Show onboard banner only if not authenticated
+    fetch('/onboard-status').then(r => r.json()).then(d => {
+      if (!d.has_oauth) document.getElementById('onboard-banner').style.display = '';
+    }).catch(() => {});
 
     // Load wolt name
     const h1 = document.getElementById('wolt-name');

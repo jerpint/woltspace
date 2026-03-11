@@ -18,7 +18,6 @@
       --moss:   #4a7c59;
       --fern:   #5e9e70;
       --leaf:   #7bbf8a;
-      --water:  #4a8fa8;
       --muted:  #8a7060;
       --dim:    #5a4535;
     }
@@ -39,127 +38,87 @@
 
     .header {
       text-align: center;
-      margin-bottom: 2.5rem;
+      margin-bottom: 2rem;
     }
-    .header h1 {
-      font-size: 1.4rem;
-      color: var(--fern);
-      font-weight: 700;
-      margin-bottom: 0.4rem;
-    }
+    .header h1 { font-size: 1.3rem; color: var(--fern); font-weight: 700; margin-bottom: 0.3rem; }
     .header h1 span { color: var(--leaf); }
-    .header p {
-      font-size: 0.72rem;
-      color: var(--muted);
-    }
+    .header p { font-size: 0.72rem; color: var(--muted); }
 
     hr.divider {
-      width: 100%;
-      max-width: 560px;
-      border: none;
-      border-top: 1px solid var(--log);
+      width: 100%; max-width: 480px;
+      border: none; border-top: 1px solid var(--log);
       margin: 0 0 2rem;
     }
 
-    .steps {
-      width: 100%;
-      max-width: 560px;
-      display: flex;
-      flex-direction: column;
-      gap: 0.6rem;
-    }
-
-    .step {
+    .card {
+      width: 100%; max-width: 480px;
       background: var(--log);
       border: 1px solid var(--wood);
-      border-radius: 6px;
-      overflow: hidden;
+      border-radius: 8px;
+      padding: 1.25rem 1.25rem;
+      margin-bottom: 0.75rem;
       transition: border-color 0.2s;
     }
-    .step.done { border-color: var(--moss); }
+    .card.done { border-color: var(--moss); }
 
-    .step-header {
-      display: flex;
-      align-items: center;
-      gap: 0.6rem;
-      padding: 0.75rem 0.9rem;
-      cursor: pointer;
-      user-select: none;
+    .card-title {
+      display: flex; align-items: center; gap: 0.6rem;
+      margin-bottom: 0.75rem;
     }
-    .step-num {
-      font-size: 0.6rem;
-      color: var(--dim);
-      letter-spacing: 0.08em;
-      min-width: 1.6rem;
+    .card-title h2 { font-size: 0.85rem; font-weight: 600; color: var(--cream); flex: 1; }
+    .badge {
+      font-size: 0.6rem; padding: 0.12rem 0.45rem;
+      border-radius: 10px; border: 1px solid var(--wood); color: var(--muted);
     }
-    .step-title {
-      font-size: 0.82rem;
-      font-weight: 600;
-      color: var(--cream);
-      flex: 1;
-    }
-    .step-badge {
-      font-size: 0.6rem;
-      padding: 0.12rem 0.45rem;
-      border-radius: 10px;
-      border: 1px solid var(--wood);
-      color: var(--muted);
-      white-space: nowrap;
-    }
-    .step-badge.done  { border-color: var(--moss); color: var(--leaf); }
-    .step-badge.opt   { border-color: transparent; color: var(--dim); }
+    .badge.done { border-color: var(--moss); color: var(--leaf); }
+    .badge.waiting { border-color: var(--amber); color: var(--straw); }
 
-    .step-body {
-      font-size: 0.72rem;
-      color: var(--muted);
-      line-height: 1.7;
-      padding: 0 0.9rem 0.85rem 0.9rem;
-      padding-left: calc(0.9rem + 1.6rem + 0.6rem);
+    .card p {
+      font-size: 0.72rem; color: var(--muted); line-height: 1.7;
+      margin-bottom: 0.5rem;
     }
+    .card p:last-child { margin-bottom: 0; }
 
     code {
-      background: var(--bark);
-      border: 1px solid var(--wood);
-      border-radius: 3px;
-      padding: 0.1rem 0.35rem;
-      font-family: inherit;
-      color: var(--straw);
-      font-size: 0.68rem;
+      background: var(--bark); border: 1px solid var(--wood);
+      border-radius: 3px; padding: 0.1rem 0.35rem;
+      font-family: inherit; color: var(--straw); font-size: 0.68rem;
     }
 
-    .path { color: var(--amber); font-size: 0.7rem; }
+    .cmd {
+      display: block;
+      background: var(--bark); border: 1px solid var(--wood);
+      border-radius: 4px; padding: 0.5rem 0.75rem;
+      color: var(--leaf); font-size: 0.75rem;
+      margin: 0.5rem 0; letter-spacing: 0.02em;
+    }
+    .cmd::before { content: '$ '; color: var(--dim); }
 
-    .fields {
-      display: flex;
-      flex-direction: column;
-      gap: 0.3rem;
-      margin: 0.5rem 0;
+    .hint {
+      font-size: 0.65rem; color: var(--dim); margin-top: 0.6rem;
     }
-    .field-row {
-      display: flex;
-      align-items: baseline;
-      gap: 0.5rem;
-      flex-wrap: wrap;
-    }
-    .field-key { color: var(--leaf); white-space: nowrap; }
-    .field-desc { color: var(--dim); font-size: 0.65rem; }
 
-    .note {
-      margin-top: 0.6rem;
-      padding: 0.45rem 0.7rem;
-      background: var(--bark);
-      border-left: 2px solid var(--amber);
-      color: var(--muted);
-      border-radius: 0 4px 4px 0;
-      font-size: 0.68rem;
+    .next-steps {
+      width: 100%; max-width: 480px;
+      margin-top: 0.25rem;
     }
+    .next-steps h3 {
+      font-size: 0.65rem; color: var(--dim);
+      text-transform: uppercase; letter-spacing: 0.1em;
+      margin-bottom: 0.6rem;
+    }
+    .next-step {
+      display: flex; align-items: baseline; gap: 0.6rem;
+      font-size: 0.72rem; color: var(--muted);
+      padding: 0.35rem 0;
+      border-bottom: 1px solid var(--log);
+    }
+    .next-step:last-child { border-bottom: none; }
+    .next-step code { flex-shrink: 0; }
 
     .footer {
-      margin-top: 3rem;
-      font-size: 0.62rem;
-      color: var(--dim);
-      text-align: center;
-      letter-spacing: 0.05em;
+      margin-top: 2.5rem; font-size: 0.62rem;
+      color: var(--dim); text-align: center;
     }
     .footer a { color: var(--muted); text-decoration: none; }
     .footer a:hover { color: var(--amber); }
@@ -169,158 +128,60 @@
 
   <div class="header">
     <h1>🦫 wolt<span>space</span></h1>
-    <p>get set up in a few steps</p>
+    <p>let's get you set up</p>
   </div>
 
   <hr class="divider">
 
-  <div class="steps">
-
-    <!-- Step 1 -->
-    <div class="step" id="step-env">
-      <div class="step-header">
-        <span class="step-num">01</span>
-        <span class="step-title">environment</span>
-        <span class="step-badge" id="badge-env">pending</span>
-      </div>
-      <div class="step-body">
-        Fill in your secrets at <span class="path" id="env-path">~/wolts/.env</span>:
-        <div class="fields">
-          <div class="field-row">
-            <span class="field-key">CLAUDE_CODE_OAUTH_TOKEN</span>
-            <span class="field-desc">— from claude.ai/settings → API keys</span>
-          </div>
-          <div class="field-row">
-            <span class="field-key">HUMAN_NAME</span>
-            <span class="field-desc">— your name</span>
-          </div>
-        </div>
-        Then restart: <code>woltspace stop &amp;&amp; woltspace start</code>
-      </div>
+  <!-- Step 1: authenticate -->
+  <div class="card" id="card-auth">
+    <div class="card-title">
+      <h2>authenticate claude code</h2>
+      <span class="badge waiting" id="badge-auth">needed</span>
     </div>
-
-    <!-- Step 2 -->
-    <div class="step" id="step-claude">
-      <div class="step-header">
-        <span class="step-num">02</span>
-        <span class="step-title">claude code auth</span>
-        <span class="step-badge" id="badge-claude">pending</span>
-      </div>
-      <div class="step-body" id="body-claude">
-        Your <code>CLAUDE_CODE_OAUTH_TOKEN</code> authenticates Claude Code inside the container.<br>
-        Get it from <code>claude.ai/settings → API keys</code> and add it to your <code>.env</code>.
-        <div class="note">Token is injected at container start — a restart is needed after updating <code>.env</code>.</div>
-      </div>
+    <div id="body-auth">
+      <p>In the terminal on the left, run:</p>
+      <code class="cmd">/login</code>
+      <p>Follow the login link that appears. Once authenticated, come back here.</p>
+      <p class="hint">This is a one-time setup — your credentials persist across restarts.</p>
     </div>
+  </div>
 
-    <!-- Step 3 -->
-    <div class="step" id="step-llm">
-      <div class="step-header">
-        <span class="step-num">03</span>
-        <span class="step-title">language model</span>
-        <span class="step-badge opt" id="badge-llm">optional</span>
-      </div>
-      <div class="step-body">
-        Needed for the Telegram / Slack bot to reply. Add one to <code>.env</code>:
-        <div class="fields">
-          <div class="field-row">
-            <span class="field-key">ANTHROPIC_API_KEY</span>
-            <span class="field-desc">— console.anthropic.com</span>
-          </div>
-          <div class="field-row">
-            <span class="field-key">OPENROUTER_API_KEY</span>
-            <span class="field-desc">— openrouter.ai/keys</span>
-          </div>
-        </div>
-        The bot uses <code>claude-haiku-4-5</code> by default (fast &amp; cheap).
-      </div>
+  <!-- Step 2: next steps -->
+  <div class="next-steps" id="next-steps">
+    <h3 id="next-title">after authentication</h3>
+    <div class="next-step">
+      <code>/create-wolt</code>
+      <span>introduce yourself to your wolt</span>
     </div>
-
-    <!-- Step 4 -->
-    <div class="step" id="step-telegram">
-      <div class="step-header">
-        <span class="step-num">04</span>
-        <span class="step-title">telegram</span>
-        <span class="step-badge opt" id="badge-telegram">optional</span>
-      </div>
-      <div class="step-body">
-        Chat with your wolt on Telegram:
-        <div class="fields">
-          <div class="field-row">
-            <span class="field-key">TELEGRAM_BOT_TOKEN</span>
-            <span class="field-desc">— from @BotFather on Telegram</span>
-          </div>
-          <div class="field-row">
-            <span class="field-key">ENABLE_TELEGRAM_BOT</span>
-            <span class="field-desc">— set to <code>true</code></span>
-          </div>
-        </div>
-        Then run <code>/telegram</code> in the terminal to finish bot setup.
-      </div>
+    <div class="next-step">
+      <code>/telegram</code>
+      <span>connect a Telegram bot to chat with your wolt</span>
     </div>
-
-    <!-- Step 5 -->
-    <div class="step" id="step-create">
-      <div class="step-header">
-        <span class="step-num">05</span>
-        <span class="step-title">meet your wolt</span>
-        <span class="step-badge" id="badge-create">last</span>
-      </div>
-      <div class="step-body">
-        Once Claude Code is authenticated, run <code>/create-wolt</code> in the terminal.<br>
-        Your wolt introduces itself, asks who you are, and starts building its space.
-        <div class="note">On first boot this runs automatically — check the terminal (left pane).</div>
-      </div>
-    </div>
-
   </div>
 
   <div class="footer">
-    <a href="/">← back</a> &nbsp;·&nbsp; 🦫 woltspace
+    <a href="/">← home</a>
   </div>
 
   <script>
     async function poll() {
       try {
         const d = await fetch('/onboard-status').then(r => r.json());
+        const authed = d.has_oauth;
 
-        document.getElementById('env-path').textContent = d.wolts_dir + '/.env';
+        document.getElementById('card-auth').classList.toggle('done', authed);
+        const badge = document.getElementById('badge-auth');
+        badge.className = 'badge ' + (authed ? 'done' : 'waiting');
+        badge.textContent = authed ? 'done' : 'needed';
 
-        // Step 1: env
-        const envDone = d.has_oauth && d.has_human_name;
-        mark('env', envDone ? 'done' : 'pending');
-
-        // Step 2: claude auth
-        mark('claude', d.has_oauth ? 'done' : 'pending');
-        if (d.has_oauth) {
-          document.getElementById('body-claude').textContent = 'Claude Code is authenticated ✓';
+        document.getElementById('next-steps').style.opacity = authed ? '1' : '0.4';
+        if (authed) {
+          document.getElementById('body-auth').innerHTML =
+            '<p style="color:var(--leaf)">Claude Code is authenticated ✓</p>';
+          document.getElementById('next-title').textContent = "after authentication";
         }
-
-        // Step 3: LLM key (optional)
-        markOpt('llm', d.has_llm_key);
-
-        // Step 4: Telegram (optional)
-        markOpt('telegram', d.has_telegram);
-
-        // Step 5: create-wolt readiness
-        mark('create', d.has_oauth ? 'ready' : 'waiting');
-
       } catch {}
-    }
-
-    function mark(id, state) {
-      const done = state === 'done' || state === 'ready';
-      document.getElementById('step-' + id).classList.toggle('done', done);
-      const b = document.getElementById('badge-' + id);
-      b.className = 'step-badge' + (done ? ' done' : '');
-      b.textContent = state;
-    }
-
-    function markOpt(id, isDone) {
-      document.getElementById('step-' + id).classList.toggle('done', isDone);
-      const b = document.getElementById('badge-' + id);
-      b.className = 'step-badge' + (isDone ? ' done' : ' opt');
-      b.textContent = isDone ? 'done' : 'optional';
     }
 
     poll();
