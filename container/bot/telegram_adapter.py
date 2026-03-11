@@ -14,7 +14,8 @@ from pathlib import Path
 from collections import defaultdict
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
-from bot.core import get_response, transcribe_audio, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, read_session_routing, _bot_log, build_ack_text, _sanitize_history
+import re
+from bot.core import get_response, transcribe_audio, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, read_session_routing, _bot_log, build_ack_text, _sanitize_history, message_session
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -29,6 +30,21 @@ CHAT_DIR = STATE_DIR / "chat"
 ALLOWED_USERS: set[int] = set()
 chat_histories: dict[int, list] = defaultdict(list)
 MAX_HISTORY = 20
+
+# Must match the sentinel in server.js — used to detect replies-to-den
+DEN_REPLY_FOOTER = "\n↩️ reply to this message to talk to this session directly"
+DEN_SESSION_RE = re.compile(r"session=([a-z0-9-]+)")
+
+
+def _is_den_reply(update: Update) -> str | None:
+    """If this message is a reply to a den (notify) message, return the session name."""
+    reply = update.message.reply_to_message
+    if not reply or not reply.text:
+        return None
+    if DEN_REPLY_FOOTER.strip() not in reply.text:
+        return None
+    match = DEN_SESSION_RE.search(reply.text)
+    return match.group(1) if match else None
 
 
 def _chat_file(chat_id: int) -> Path:
@@ -110,6 +126,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Message from user_id={user_id}")
     if not is_allowed(update):
         logger.info(f"Blocked user_id={user_id}")
+        return
+
+    # --- Den reply: route directly to Claude Code session, bypass Haiku ---
+    den_session = _is_den_reply(update)
+    if den_session:
+        text = update.message.text or ""
+        human_name = os.environ.get("HUMAN_NAME", "human")
+        # Send to session with context about where it came from
+        den_msg = (
+            f"[telegram] {human_name} says: {text}\n"
+            f"Respond to them via the notify skill when you have an update."
+        )
+        result = message_session(den_session, den_msg)
+        chat_id = update.effective_chat.id
+        _bot_log("den_reply", {"session": den_session, "text": text[:200]})
+        if result.get("ok"):
+            # Append to history as context-only (Haiku sees it but doesn't respond)
+            _append_message(chat_id, {
+                "role": "user",
+                "content": (
+                    f"<system>The user replied directly to Claude Code session {den_session}. "
+                    f"This bypassed you — context only.</system>\n"
+                    f"[user replied to den]: {text}"
+                ),
+            })
+            await update.message.reply_text(f"sent to session")
+        else:
+            await update.message.reply_text(f"session {den_session} isn't running anymore")
         return
 
     # In group chats, only respond when @mentioned or replied to

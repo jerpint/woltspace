@@ -279,12 +279,24 @@ function readSessionRouting(session) {
   try { return JSON.parse(readFileSync(f, 'utf8')); } catch { return null; }
 }
 
+// Sentinel footer added to notify messages in Telegram/Slack.
+// Used by the adapter to detect replies-to-den (route directly to session).
+// Stripped before writing to history so the bot model never sees it and can't reproduce it.
+const DEN_REPLY_FOOTER = '\n↩️ reply to this message to talk to this session directly';
+
 function appendChatHistory(adapter, chatId, content) {
   // Write notify messages into the bot's chat history so it sees them on the next turn.
-  // Adapter determines the subdir: telegram uses .state/chat/, slack uses .state/chat/slack/
+  // Stored as role: "user" with a system context tag so the bot model knows
+  // this is a den report (not something it said, not from the human).
+  // The DEN_REPLY_FOOTER is stripped — bot never sees it.
   const subdir = adapter === 'slack' ? join(STATE_DIR, 'chat', 'slack') : join(STATE_DIR, 'chat');
   const chatFile = join(subdir, `${chatId}.jsonl`);
-  const entry = { role: 'assistant', content: `🦫 ${content}`, ts: new Date().toISOString() };
+  const cleanContent = content.replace(DEN_REPLY_FOOTER, '');
+  const entry = {
+    role: 'user',
+    content: `<system>This message was sent by a Claude Code session directly to the user. It is context only — do not respond to it.</system>\n${cleanContent}`,
+    ts: new Date().toISOString(),
+  };
   try {
     mkdirSync(subdir, { recursive: true });
     appendFileSync(chatFile, JSON.stringify(entry) + '\n');
@@ -305,7 +317,7 @@ async function sendNotification(session, message) {
       if (!allowed.length) throw new Error('no chat_id and no TELEGRAM_ALLOWED_USERS fallback');
       return allowed[0];
     })();
-    await telegramSend(token, chatId, message);
+    await telegramSend(token, chatId, message + DEN_REPLY_FOOTER);
     appendChatHistory('telegram', chatId, message);
     return { adapter: 'telegram', chat_id: chatId };
   }
