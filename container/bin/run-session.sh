@@ -46,7 +46,9 @@ Use \`notify \"your message\"\` to send messages.
 
 **When you start**: one-liner ack. \"on it — reviewing the loop\" or \"got it, digging in.\"
 
-**When you're done**: Send the FULL result via notify. This is the deliverable — not this terminal. If they asked a question, answer it completely. If you reviewed code, include all findings. If you built something, describe what and link it. Write like you're messaging a developer — be thorough, be direct, longer is fine. NEVER say \"see session\" or \"report in session\" — everything goes in the notify.
+**When you're done**: Send a complete summary via notify — all key findings, decisions, and results. The reader should get full context without opening the session. But write it for chat, not a terminal — short paragraphs, no code blocks or formatted logs. Think \"messaging a colleague your conclusions\" not \"pasting terminal output.\" Be thorough but digestible. NEVER say \"see session\" or \"report in session.\"
+
+Also: always print your full detailed output (code, logs, raw analysis) to this terminal too — it stays in the session for anyone who opens the live view later.
 
 2-3 notifies max across the whole session."
 fi
