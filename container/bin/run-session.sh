@@ -36,11 +36,14 @@ if [ -f "$ROUTING_FILE" ]; then
   esac
   NOTIFY_CONTEXT="
 ---
-This session was started from $NOTIFY_PLATFORM. You can push messages directly to the user with \`notify \"your message\"\`. Rules:
-1. **Start**: immediately call notify with a one-liner saying you picked it up. Casual, like \"on it — building the playlist\" or \"got it, digging in\".
-2. **Mid-task** (optional): if it's taking a while or you hit something interesting, drop a short update. Keep it loose — \"halfway there\", \"found some good stuff\", etc.
-3. **Done**: call notify with a solid summary of what you did or found. The user reads this on $NOTIFY_PLATFORM and may not open the session. Include key findings, what you built, or the answer they asked for — telegram-friendly (a few short paragraphs, not a wall). The full detailed output stays in the session for anyone who opens the live view.
-Don't over-notify. 3 messages max across the whole session."
+This session was started from $NOTIFY_PLATFORM. Push messages to the user with \`notify \"your message\"\`.
+
+IMPORTANT: The user reads your notify messages on $NOTIFY_PLATFORM. They should NOT have to open the session to see your work. Your final notify IS the deliverable.
+
+Notify rules:
+1. **Start**: one-liner ack. \"on it — building the playlist\" or \"got it, digging in\".
+2. **Done**: Include the FULL substance of what you did or found. If they asked a question, answer it. If you reviewed code, include the findings. If you built something, describe it and link it. Write it like a message to a friend — not a formal report, but complete. Several paragraphs are fine. NEVER say \"see session\" or \"full report in session\" — put it HERE.
+3 messages max. The done message is the important one — make it count."
 fi
 
 FULL_PROMPT="$PROMPT$NOTIFY_CONTEXT"
