@@ -56,21 +56,6 @@
       padding: 2.5rem 1.5rem 3rem;
     }
 
-    /* ---- ASCII BEAVER ---- */
-    .beaver-wrap {
-      margin-bottom: 1.5rem;
-      text-align: center;
-    }
-    .beaver-art {
-      font-size: 0.68rem;
-      line-height: 1.35;
-      color: var(--amber);
-      white-space: pre;
-      display: inline-block;
-      text-align: left;
-      letter-spacing: 0.02em;
-    }
-
     /* ---- HEADER ---- */
     .header {
       text-align: center;
@@ -278,20 +263,8 @@
 </head>
 <body>
 
-  <div class="beaver-wrap">
-    <pre class="beaver-art">
-        ___    ___
-       (o o)  (o o)
-      (  V  )(  V  )
-     /--m-m--m-m--\
-    | wolt builder  |
-     \____________/
-      ||||    ||||
-     =####====####=</pre>
-  </div>
-
   <div class="header">
-    <h1 id="wolt-name">wolt<span>space</span></h1>
+    <h1 id="wolt-name">🦫 wolt<span>space</span></h1>
     <p class="twister">
       "how much wolt could a <em>wolt chuck</em> chuck<br>
       if a wolt chuck could chuck <em>wolt</em>?"
@@ -335,7 +308,7 @@
     // Load wolt name
     fetch('/status').then(r => r.json()).then(d => {
       if (d.wolt) {
-        document.getElementById('wolt-name').textContent = d.wolt;
+        document.getElementById('wolt-name').innerHTML = '🦫 ' + d.wolt;
         document.title = d.wolt;
       }
     }).catch(() => {});
