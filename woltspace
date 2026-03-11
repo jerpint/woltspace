@@ -183,12 +183,6 @@ if [ "$cmd" = "init" ]; then
     echo "install docker: https://docs.docker.com/get-docker/"
     exit 1
   fi
-  if ! command -v claude &>/dev/null; then
-    echo "error: claude CLI not found"
-    echo "install: npm install -g @anthropic-ai/claude-code"
-    exit 1
-  fi
-
   # --- Splash screen ---
   clear
   _G=$'\033[0;32m'; _B=$'\033[1m'; _D=$'\033[2m'; _R=$'\033[0m'; _A=$'\033[0;33m'
