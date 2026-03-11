@@ -237,13 +237,9 @@ def create_app():
                                           text="Something broke on my end. Try again in a sec.")
             return
 
-        response = format_response(result)
         _append_history(channel, thread_ts, "user", user_message)
-        if result["type"] == "session":
-            for msg in result["history_messages"]:
-                _append_message(channel, thread_ts, msg)
-        else:
-            _append_history(channel, thread_ts, "assistant", response)
+        for msg in result["history_messages"]:
+            _append_message(channel, thread_ts, msg)
 
         await _post_result(client, channel, thread_ts, result)
 
@@ -299,13 +295,9 @@ def create_app():
                                           text="Something broke on my end. Try again in a sec.")
             return
 
-        response = format_response(result)
         _append_history(channel, thread_ts, "user", user_message)
-        if result["type"] == "session":
-            for msg in result["history_messages"]:
-                _append_message(channel, thread_ts, msg)
-        else:
-            _append_history(channel, thread_ts, "assistant", response)
+        for msg in result["history_messages"]:
+            _append_message(channel, thread_ts, msg)
 
         await _post_result(client, channel, thread_ts, result)
 

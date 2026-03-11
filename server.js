@@ -279,12 +279,24 @@ function readSessionRouting(session) {
   try { return JSON.parse(readFileSync(f, 'utf8')); } catch { return null; }
 }
 
+// Sentinel footer added to notify messages in Telegram/Slack.
+// Used by the adapter to detect replies-to-den (route directly to session).
+// Stripped before writing to history so the bot model never sees it and can't reproduce it.
+const DEN_REPLY_FOOTER = '\n↩️ reply to this message to talk to this session directly';
+
 function appendChatHistory(adapter, chatId, content) {
   // Write notify messages into the bot's chat history so it sees them on the next turn.
-  // Adapter determines the subdir: telegram uses .state/chat/, slack uses .state/chat/slack/
+  // Stored as role: "user" with a system context tag so the bot model knows
+  // this is a den report (not something it said, not from the human).
+  // The DEN_REPLY_FOOTER is stripped — bot never sees it.
   const subdir = adapter === 'slack' ? join(STATE_DIR, 'chat', 'slack') : join(STATE_DIR, 'chat');
   const chatFile = join(subdir, `${chatId}.jsonl`);
-  const entry = { role: 'assistant', content: `🦫 ${content}`, ts: new Date().toISOString() };
+  const cleanContent = content.replace(DEN_REPLY_FOOTER, '');
+  const entry = {
+    role: 'user',
+    content: `<system>This message was sent by a Claude Code session directly to the user. It is context only — do not respond to it.</system>\n${cleanContent}`,
+    ts: new Date().toISOString(),
+  };
   try {
     mkdirSync(subdir, { recursive: true });
     appendFileSync(chatFile, JSON.stringify(entry) + '\n');
@@ -295,22 +307,24 @@ function appendChatHistory(adapter, chatId, content) {
 
 async function sendNotification(session, message) {
   const routing = readSessionRouting(session);
-  const adapter = routing?.adapter || 'telegram';
 
-  if (adapter === 'telegram') {
-    const token = getEnv('TELEGRAM_BOT_TOKEN');
-    if (!token) throw new Error('TELEGRAM_BOT_TOKEN not set');
-    const chatId = routing?.chat_id || (() => {
-      const allowed = getEnv('TELEGRAM_ALLOWED_USERS').split(',').map(s => s.trim()).filter(Boolean);
-      if (!allowed.length) throw new Error('no chat_id and no TELEGRAM_ALLOWED_USERS fallback');
-      return allowed[0];
-    })();
-    await telegramSend(token, chatId, message);
-    appendChatHistory('telegram', chatId, message);
-    return { adapter: 'telegram', chat_id: chatId };
+  // Always prefer Telegram — resolve chat_id from routing (if telegram) or fallback.
+  const telegramToken = getEnv('TELEGRAM_BOT_TOKEN');
+  const telegramChatId = routing?.adapter === 'telegram'
+    ? routing.chat_id
+    : (() => {
+        const allowed = getEnv('TELEGRAM_ALLOWED_USERS').split(',').map(s => s.trim()).filter(Boolean);
+        return allowed[0] || null;
+      })();
+
+  if (telegramToken && telegramChatId) {
+    await telegramSend(telegramToken, telegramChatId, message + DEN_REPLY_FOOTER);
+    appendChatHistory('telegram', telegramChatId, message);
+    return { adapter: 'telegram', chat_id: telegramChatId };
   }
 
-  if (adapter === 'slack') {
+  // Fallback: Slack (only if Telegram isn't configured)
+  if (routing?.adapter === 'slack') {
     const token = getEnv('SLACK_BOT_TOKEN');
     if (!token) throw new Error('SLACK_BOT_TOKEN not set');
     const channel = routing?.channel || getEnv('SLACK_NOTIFY_CHANNEL');
@@ -320,7 +334,7 @@ async function sendNotification(session, message) {
     return { adapter: 'slack', channel };
   }
 
-  throw new Error(`unknown adapter: ${adapter}`);
+  throw new Error('no notification target — set TELEGRAM_BOT_TOKEN + TELEGRAM_ALLOWED_USERS');
 }
 
 function telegramSend(token, chatId, text) {

@@ -36,11 +36,21 @@ if [ -f "$ROUTING_FILE" ]; then
   esac
   NOTIFY_CONTEXT="
 ---
-This session was started from $NOTIFY_PLATFORM. You can push messages directly to the user with \`notify \"your message\"\`. Rules:
-1. **Start**: immediately call notify with a one-liner saying you picked it up. Casual, like \"on it — building the playlist\" or \"got it, digging in\".
-2. **Mid-task** (optional): if it's taking a while or you hit something interesting, drop a short update. Keep it loose — \"halfway there\", \"found some good stuff\", etc.
-3. **Done**: call notify when you finish. Short and human — say what got done, link if there's one. Example: \`notify \"playlist built — 12 tracks. link in viewport\"\`.
-Don't over-notify. 3 messages max across the whole session."
+## How this session works
+
+You were dispatched from $NOTIFY_PLATFORM by a developer. They're reading your updates on their phone or chat — they are NOT watching this terminal. Your \`notify\` messages are the primary way they see your work.
+
+Think of it like messaging a dev colleague on $NOTIFY_PLATFORM: you do the work here, then message them the results directly. They may never open this session.
+
+Use \`notify \"your message\"\` to send messages.
+
+**When you start**: one-liner ack. \"on it — reviewing the loop\" or \"got it, digging in.\"
+
+**When you're done**: Send a complete summary via notify — all key findings, decisions, and results. The reader should get full context without opening the session. But write it for chat, not a terminal — short paragraphs, no code blocks or formatted logs. Think \"messaging a colleague your conclusions\" not \"pasting terminal output.\" Be thorough but digestible. NEVER say \"see session\" or \"report in session.\"
+
+Also: always print your full detailed output (code, logs, raw analysis) to this terminal too — it stays in the session for anyone who opens the live view later.
+
+2-3 notifies max across the whole session."
 fi
 
 FULL_PROMPT="$PROMPT$NOTIFY_CONTEXT"
