@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>woltspace · setup</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bark:   #2a1f14;
+      --log:    #3d2b1a;
+      --wood:   #5c3d24;
+      --amber:  #c17f3a;
+      --straw:  #d4a96a;
+      --cream:  #f0dfc0;
+      --moss:   #4a7c59;
+      --fern:   #5e9e70;
+      --leaf:   #7bbf8a;
+      --water:  #4a8fa8;
+      --muted:  #8a7060;
+      --dim:    #5a4535;
+    }
+
+    html, body {
+      min-height: 100dvh;
+      background: var(--bark);
+      color: var(--cream);
+      font-family: 'SF Mono','Fira Code','Cascadia Code','Consolas',monospace;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2.5rem 1.5rem 3rem;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+    .header h1 {
+      font-size: 1.4rem;
+      color: var(--fern);
+      font-weight: 700;
+      margin-bottom: 0.4rem;
+    }
+    .header h1 span { color: var(--leaf); }
+    .header p {
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+
+    hr.divider {
+      width: 100%;
+      max-width: 560px;
+      border: none;
+      border-top: 1px solid var(--log);
+      margin: 0 0 2rem;
+    }
+
+    .steps {
+      width: 100%;
+      max-width: 560px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .step {
+      background: var(--log);
+      border: 1px solid var(--wood);
+      border-radius: 6px;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+    .step.done { border-color: var(--moss); }
+
+    .step-header {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.75rem 0.9rem;
+      cursor: pointer;
+      user-select: none;
+    }
+    .step-num {
+      font-size: 0.6rem;
+      color: var(--dim);
+      letter-spacing: 0.08em;
+      min-width: 1.6rem;
+    }
+    .step-title {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--cream);
+      flex: 1;
+    }
+    .step-badge {
+      font-size: 0.6rem;
+      padding: 0.12rem 0.45rem;
+      border-radius: 10px;
+      border: 1px solid var(--wood);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .step-badge.done  { border-color: var(--moss); color: var(--leaf); }
+    .step-badge.opt   { border-color: transparent; color: var(--dim); }
+
+    .step-body {
+      font-size: 0.72rem;
+      color: var(--muted);
+      line-height: 1.7;
+      padding: 0 0.9rem 0.85rem 0.9rem;
+      padding-left: calc(0.9rem + 1.6rem + 0.6rem);
+    }
+
+    code {
+      background: var(--bark);
+      border: 1px solid var(--wood);
+      border-radius: 3px;
+      padding: 0.1rem 0.35rem;
+      font-family: inherit;
+      color: var(--straw);
+      font-size: 0.68rem;
+    }
+
+    .path { color: var(--amber); font-size: 0.7rem; }
+
+    .fields {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      margin: 0.5rem 0;
+    }
+    .field-row {
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .field-key { color: var(--leaf); white-space: nowrap; }
+    .field-desc { color: var(--dim); font-size: 0.65rem; }
+
+    .note {
+      margin-top: 0.6rem;
+      padding: 0.45rem 0.7rem;
+      background: var(--bark);
+      border-left: 2px solid var(--amber);
+      color: var(--muted);
+      border-radius: 0 4px 4px 0;
+      font-size: 0.68rem;
+    }
+
+    .footer {
+      margin-top: 3rem;
+      font-size: 0.62rem;
+      color: var(--dim);
+      text-align: center;
+      letter-spacing: 0.05em;
+    }
+    .footer a { color: var(--muted); text-decoration: none; }
+    .footer a:hover { color: var(--amber); }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>🦫 wolt<span>space</span></h1>
+    <p>get set up in a few steps</p>
+  </div>
+
+  <hr class="divider">
+
+  <div class="steps">
+
+    <!-- Step 1 -->
+    <div class="step" id="step-env">
+      <div class="step-header">
+        <span class="step-num">01</span>
+        <span class="step-title">environment</span>
+        <span class="step-badge" id="badge-env">pending</span>
+      </div>
+      <div class="step-body">
+        Fill in your secrets at <span class="path" id="env-path">~/wolts/.env</span>:
+        <div class="fields">
+          <div class="field-row">
+            <span class="field-key">CLAUDE_CODE_OAUTH_TOKEN</span>
+            <span class="field-desc">— from claude.ai/settings → API keys</span>
+          </div>
+          <div class="field-row">
+            <span class="field-key">HUMAN_NAME</span>
+            <span class="field-desc">— your name</span>
+          </div>
+        </div>
+        Then restart: <code>woltspace stop &amp;&amp; woltspace start</code>
+      </div>
+    </div>
+
+    <!-- Step 2 -->
+    <div class="step" id="step-claude">
+      <div class="step-header">
+        <span class="step-num">02</span>
+        <span class="step-title">claude code auth</span>
+        <span class="step-badge" id="badge-claude">pending</span>
+      </div>
+      <div class="step-body" id="body-claude">
+        Your <code>CLAUDE_CODE_OAUTH_TOKEN</code> authenticates Claude Code inside the container.<br>
+        Get it from <code>claude.ai/settings → API keys</code> and add it to your <code>.env</code>.
+        <div class="note">Token is injected at container start — a restart is needed after updating <code>.env</code>.</div>
+      </div>
+    </div>
+
+    <!-- Step 3 -->
+    <div class="step" id="step-llm">
+      <div class="step-header">
+        <span class="step-num">03</span>
+        <span class="step-title">language model</span>
+        <span class="step-badge opt" id="badge-llm">optional</span>
+      </div>
+      <div class="step-body">
+        Needed for the Telegram / Slack bot to reply. Add one to <code>.env</code>:
+        <div class="fields">
+          <div class="field-row">
+            <span class="field-key">ANTHROPIC_API_KEY</span>
+            <span class="field-desc">— console.anthropic.com</span>
+          </div>
+          <div class="field-row">
+            <span class="field-key">OPENROUTER_API_KEY</span>
+            <span class="field-desc">— openrouter.ai/keys</span>
+          </div>
+        </div>
+        The bot uses <code>claude-haiku-4-5</code> by default (fast &amp; cheap).
+      </div>
+    </div>
+
+    <!-- Step 4 -->
+    <div class="step" id="step-telegram">
+      <div class="step-header">
+        <span class="step-num">04</span>
+        <span class="step-title">telegram</span>
+        <span class="step-badge opt" id="badge-telegram">optional</span>
+      </div>
+      <div class="step-body">
+        Chat with your wolt on Telegram:
+        <div class="fields">
+          <div class="field-row">
+            <span class="field-key">TELEGRAM_BOT_TOKEN</span>
+            <span class="field-desc">— from @BotFather on Telegram</span>
+          </div>
+          <div class="field-row">
+            <span class="field-key">ENABLE_TELEGRAM_BOT</span>
+            <span class="field-desc">— set to <code>true</code></span>
+          </div>
+        </div>
+        Then run <code>/telegram</code> in the terminal to finish bot setup.
+      </div>
+    </div>
+
+    <!-- Step 5 -->
+    <div class="step" id="step-create">
+      <div class="step-header">
+        <span class="step-num">05</span>
+        <span class="step-title">meet your wolt</span>
+        <span class="step-badge" id="badge-create">last</span>
+      </div>
+      <div class="step-body">
+        Once Claude Code is authenticated, run <code>/create-wolt</code> in the terminal.<br>
+        Your wolt introduces itself, asks who you are, and starts building its space.
+        <div class="note">On first boot this runs automatically — check the terminal (left pane).</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="footer">
+    <a href="/">← back</a> &nbsp;·&nbsp; 🦫 woltspace
+  </div>
+
+  <script>
+    async function poll() {
+      try {
+        const d = await fetch('/onboard-status').then(r => r.json());
+
+        document.getElementById('env-path').textContent = d.wolts_dir + '/.env';
+
+        // Step 1: env
+        const envDone = d.has_oauth && d.has_human_name;
+        mark('env', envDone ? 'done' : 'pending');
+
+        // Step 2: claude auth
+        mark('claude', d.has_oauth ? 'done' : 'pending');
+        if (d.has_oauth) {
+          document.getElementById('body-claude').textContent = 'Claude Code is authenticated ✓';
+        }
+
+        // Step 3: LLM key (optional)
+        markOpt('llm', d.has_llm_key);
+
+        // Step 4: Telegram (optional)
+        markOpt('telegram', d.has_telegram);
+
+        // Step 5: create-wolt readiness
+        mark('create', d.has_oauth ? 'ready' : 'waiting');
+
+      } catch {}
+    }
+
+    function mark(id, state) {
+      const done = state === 'done' || state === 'ready';
+      document.getElementById('step-' + id).classList.toggle('done', done);
+      const b = document.getElementById('badge-' + id);
+      b.className = 'step-badge' + (done ? ' done' : '');
+      b.textContent = state;
+    }
+
+    function markOpt(id, isDone) {
+      document.getElementById('step-' + id).classList.toggle('done', isDone);
+      const b = document.getElementById('badge-' + id);
+      b.className = 'step-badge' + (isDone ? ' done' : ' opt');
+      b.textContent = isDone ? 'done' : 'optional';
+    }
+
+    poll();
+    setInterval(poll, 3000);
+  </script>
+
+</body>
+</html>
