@@ -220,7 +220,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chat_id = update.effective_chat.id
 
-    await update.message.reply_text("🦫 listening...")
+    await update.message.reply_text("🐸 listening...")
 
     file = await context.bot.get_file(voice.file_id)
     with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
