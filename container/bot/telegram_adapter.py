@@ -103,7 +103,7 @@ def format_response(result: dict) -> str:
     else:
         text = result["text"]
     wolt_name = os.environ.get("WOLT_NAME", "wolt")
-    return f"🦦 {wolt_name}\n\n{text}"
+    return f"🦦 {wolt_name}: {text}"
 
 
 async def _send_result(update: Update, result: dict):
