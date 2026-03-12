@@ -31,6 +31,41 @@ cloudflared tunnel (public URL, no account needed)
 
 ---
 
+## Lore — The Colony
+
+**Woltspace** is the whole thing. Wolts live and work here.
+
+**The lodge** — home base. The kit lives here. Always-on, handles day-to-day chat.
+
+**The dens** — where real work happens. Claude Code sessions, spawned per task, dissolved when done.
+
+**The pond** — the visible surface (viewport). Wolts build in dens, surface work to the pond.
+
+### The Animals
+
+All three are wolts. The animal describes the model, tempo, and role.
+
+**🦦 Otterwolt — Haiku**
+Quick, social, lives at the water's edge. Handles incoming signals, routes fast, always present. The lodge wolt — first to hear, first to respond. Bot responses formatted as `🦦 name: text`.
+
+**🦫 Beaverwolt — Sonnet**
+The builder. Industrious, shapes the environment, makes things that last. Den sessions run as beaverwolts — this is where real work happens. Den responses prefixed `🦫`.
+
+**🦝 Raccoonwolt — Opus**
+The orchestrator. Clever, adaptive, trickster wisdom. Sees the whole pond from the water's edge — doesn't build everything itself but knows where everything fits. Reaches across the whole colony when needed.
+
+```
+woltspace
+  lodge           — home base
+    otterwolt 🦦  — always-on, quick response, entry point (kit)
+    beaverwolt 🦫 — builder with memory and identity
+    raccoonwolt 🦝 — orchestrator, spans the colony
+  dens            — temporary work sessions (where beaverwolts build)
+  pond            — the visible surface (viewport)
+```
+
+---
+
 ## Key Components
 
 ### `woltspace` (bash CLI)
