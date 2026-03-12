@@ -39,7 +39,7 @@ SESSION_ROUTING_DIR = WOLTS_DIR / ".state" / "session-routing"
 RUN_SESSION_SCRIPT = Path("/workspace/woltspace/container/bin/run-session.sh")
 
 # Tools that end the agent loop — one final LLM call for ack/caption, then return
-TERMINAL_TOOLS = {"claude_code", "generate_image"}
+TERMINAL_TOOLS = {"claude_code", "new_session", "generate_image"}
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -286,6 +286,20 @@ def get_tunnel_url() -> str:
     return ""
 
 
+def _call_server(method: str, path: str, body: dict | None = None) -> dict:
+    """Make an HTTP request to the local woltspace server."""
+    import urllib.request
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(
+        f"http://localhost:3000{path}",
+        data=data,
+        headers={"Content-Type": "application/json"} if data else {},
+        method=method,
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return json.loads(resp.read())
+
+
 def start_claude_session(prompt: str, wolt: str = None) -> dict:
     """Start an interactive Claude Code session in a named tmux session."""
     if wolt:
@@ -310,6 +324,28 @@ def start_claude_session(prompt: str, wolt: str = None) -> dict:
     result = {"name": session_name, "url": session_url, "wolt": target_name}
     _bot_log("session_start", {"session": session_name, "wolt": target_name, "dir": str(target_dir), "prompt": prompt[:500]})
     return result
+
+
+def new_session(prompt: str, from_session: str = None, wolt: str = None) -> dict:
+    """Start a fresh Claude Code session and redirect the current viewport to it."""
+    session = start_claude_session(prompt, wolt=wolt)
+
+    # Determine which viewport to redirect
+    redirect_from = from_session
+    if not redirect_from:
+        sessions = list_sessions()
+        alive = [s for s in sessions if s.get("alive") and s["name"] != session["name"]]
+        if alive:
+            redirect_from = alive[0]["name"]
+
+    if redirect_from:
+        try:
+            _call_server("POST", "/sessions/redirect", {"from": redirect_from, "to": session["name"]})
+            session["redirected_from"] = redirect_from
+        except Exception as e:
+            session["redirect_error"] = str(e)
+
+    return session
 
 
 def list_sessions() -> list[dict]:
@@ -537,6 +573,17 @@ def _tool_claude_code(args: dict, routing: dict | None) -> str:
     return json.dumps(session)
 
 
+def _tool_new_session(args: dict, routing: dict | None) -> str:
+    session = new_session(
+        args["prompt"],
+        from_session=args.get("from_session"),
+        wolt=args.get("wolt"),
+    )
+    if routing:
+        write_session_routing(session["name"], routing)
+    return json.dumps(session)
+
+
 def _tool_get_tunnel_url(args: dict, routing: dict | None) -> str:
     return get_tunnel_url() or "tunnel not available right now"
 
@@ -606,6 +653,7 @@ TOOL_HANDLERS: dict[str, callable] = {
     "list_wolts": _tool_list_wolts,
     "generate_image": _tool_generate_image,
     "switch_wolt": _tool_switch_wolt,
+    "new_session": _tool_new_session,
 }
 
 
@@ -629,6 +677,31 @@ TOOLS = [
                     "wolt": {
                         "type": "string",
                         "description": "Which wolt to run the session as. Defaults to current active wolt. Use 'neowolt' for music, curation, infra work.",
+                    },
+                },
+                "required": ["prompt"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "new_session",
+            "description": "Start a fresh Claude Code session and switch the current viewport to it — no new tab, no hunting for a link. Use when jerpint says 'new session', 'start fresh', 'open a new claude'. The terminal pane will automatically switch to the new session within ~2 seconds. Prefer over claude_code when the intent is starting an interactive session, not delegating a background task.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Opening message for the new session. Use 'hey nw' for a standard greeting, or a specific task prompt.",
+                    },
+                    "from_session": {
+                        "type": "string",
+                        "description": "Session name currently shown in the viewport to redirect. If omitted, redirects the most recently active session.",
+                    },
+                    "wolt": {
+                        "type": "string",
+                        "description": "Which wolt to run the session as. Defaults to current active wolt.",
                     },
                 },
                 "required": ["prompt"],

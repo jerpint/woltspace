@@ -2,6 +2,9 @@
   "name": "woltspace",
   "type": "module",
   "private": true,
+  "scripts": {
+    "test": "node --test test/**/*.test.mjs"
+  },
   "dependencies": {
     "node-pty": "^1.1.0",
     "ws": "^8.19.0"

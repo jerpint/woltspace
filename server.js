@@ -83,6 +83,10 @@ function currentUrlFile(session) {
   return join(STATE_DIR, `current-url-${sanitizeSession(session)}.json`);
 }
 
+function redirectFile(session) {
+  return join(STATE_DIR, `redirect-${sanitizeSession(session)}.json`);
+}
+
 function getCurrentUrl(session = 'main') {
   const f = currentUrlFile(session);
   if (!existsSync(f)) return null;
@@ -644,8 +648,42 @@ const server = createServer(async (req, res) => {
     const data = existsSync(f)
       ? JSON.parse(readFileSync(f, 'utf8'))
       : { url: null, updated: 0 };
+    // Check for a pending session redirect — consume it on read
+    const rf = redirectFile(session);
+    if (existsSync(rf)) {
+      try {
+        const rdata = JSON.parse(readFileSync(rf, 'utf8'));
+        data.redirect = rdata.to;
+        unlinkSync(rf);
+      } catch {}
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(data));
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/sessions/redirect') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        const { from, to } = JSON.parse(body || '{}');
+        if (!from || !to) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'from and to required' }));
+          return;
+        }
+        const safeFrom = sanitizeSession(from);
+        const safeTo = sanitizeSession(to);
+        writeFileSync(redirectFile(safeFrom), JSON.stringify({ from: safeFrom, to: safeTo, t: Date.now() }));
+        console.log(`[redirect] ${safeFrom} → ${safeTo}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
     return;
   }
   if (req.method === 'GET' && url.pathname === '/current') {

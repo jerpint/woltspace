@@ -411,6 +411,10 @@
     async function pollCurrent() {
       try {
         const data = await fetch('/current/meta?session=' + encodeURIComponent(session)).then(r => r.json());
+        if (data.redirect) {
+          location.replace('/tui?session=' + encodeURIComponent(data.redirect));
+          return;
+        }
         if (data.url && data.url !== lastUrl) {
           const title = data.url.split('/').pop().replace('.html','').replace(/-/g,' ') || data.url;
           loadView(data.url, title);
