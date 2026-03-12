@@ -94,12 +94,16 @@ def format_response(result: dict) -> str:
     if result["type"] == "session":
         # Use nw's crafted response if available; fall back to static ack
         if result.get("text"):
-            return result["text"]
-        s = result["session"]
-        return build_ack_text(s.get("url"), s.get("name"), "telegram")
-    if result["type"] == "image":
-        return result.get("caption", "") or result.get("filename", "image")
-    return result["text"]
+            text = result["text"]
+        else:
+            s = result["session"]
+            text = build_ack_text(s.get("url"), s.get("name"), "telegram")
+    elif result["type"] == "image":
+        text = result.get("caption", "") or result.get("filename", "image")
+    else:
+        text = result["text"]
+    wolt_name = os.environ.get("WOLT_NAME", "wolt")
+    return f"🦦 {wolt_name}\n\n{text}"
 
 
 async def _send_result(update: Update, result: dict):
