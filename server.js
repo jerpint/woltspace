@@ -329,7 +329,7 @@ async function sendNotification(session, message) {
     let tunnelUrl = '';
     try { tunnelUrl = readFileSync(tunnelFile, 'utf8').trim(); } catch {}
     const sessionUrl = tunnelUrl ? `${tunnelUrl}/tui?session=${session}` : `session=${session}`;
-    const footer = DEN_REPLY_FOOTER + `\n${sessionUrl}`;
+    const footer = `\n\n---` + DEN_REPLY_FOOTER + `\n${sessionUrl}`;
     await telegramSend(telegramToken, telegramChatId, message + footer);
     appendChatHistory('telegram', telegramChatId, message);
     return { adapter: 'telegram', chat_id: telegramChatId };
