@@ -1,3 +1,4 @@
+// should be in its own route maybe?
 """Tool proxy registry — spawn, track, and proxy to tool processes."""
 
 import json

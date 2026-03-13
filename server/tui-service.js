@@ -6,6 +6,7 @@
  *
  * Usage: TUI_PORT=3001 WOLT_DIR=/path node tui-service.js
  */
+// love how minimal this is
 
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
