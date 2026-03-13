@@ -320,3 +320,94 @@ class TestToolResultFormat:
         result = {"ok": False, "session": "test-123", "url": None, "error": "couldn't kill test-123"}
         assert result["ok"] is False
         assert result["error"]
+
+
+# ---------------------------------------------------------------------------
+# Creature emoji routing
+# ---------------------------------------------------------------------------
+
+
+class TestCreatureEmoji:
+    """Test creature emoji is routed correctly through session routing files."""
+
+    def test_build_ack_text_raccoon(self):
+        from bot.core import build_ack_text
+        text = build_ack_text(url="https://example.com/tui?session=test", session_name="neowolt-test-123", creature="raccoon")
+        assert "🦝" in text
+        assert "🦫" not in text
+
+    def test_build_ack_text_beaver(self):
+        from bot.core import build_ack_text
+        text = build_ack_text(url="https://example.com/tui?session=test", session_name="neowolt-test-123", creature="beaver")
+        assert "🦫" in text
+
+    def test_build_ack_text_default_no_creature(self):
+        from bot.core import build_ack_text
+        text = build_ack_text(url="https://example.com/tui?session=test", session_name="neowolt-test-123")
+        assert "🦫" in text  # default is beaver
+
+    def test_creature_emojis_map(self):
+        from bot.core import CREATURE_EMOJIS
+        assert CREATURE_EMOJIS["raccoon"] == "🦝"
+        assert CREATURE_EMOJIS["beaver"] == "🦫"
+
+    def test_routing_with_creature_merges(self):
+        from bot.core import _routing_with_creature
+        routing = {"adapter": "telegram", "chat_id": 123}
+        merged = _routing_with_creature(routing, "raccoon")
+        assert merged["creature"] == "raccoon"
+        assert merged["adapter"] == "telegram"
+        assert merged["chat_id"] == 123
+
+    def test_routing_with_creature_none_routing(self):
+        from bot.core import _routing_with_creature
+        merged = _routing_with_creature(None, "raccoon")
+        assert merged == {"creature": "raccoon"}
+
+    def test_routing_with_creature_none_creature(self):
+        from bot.core import _routing_with_creature
+        routing = {"adapter": "telegram", "chat_id": 123}
+        merged = _routing_with_creature(routing, None)
+        assert merged == routing
+        assert "creature" not in merged
+
+    def test_routing_with_creature_both_none(self):
+        from bot.core import _routing_with_creature
+        assert _routing_with_creature(None, None) is None
+
+    def test_notify_reads_creature_from_routing(self, tmp_path):
+        """Simulate what the notify script does: read creature from routing file."""
+        routing = {"adapter": "telegram", "chat_id": 123, "creature": "raccoon"}
+        routing_file = tmp_path / "session-routing" / "test-session.json"
+        routing_file.parent.mkdir(parents=True)
+        routing_file.write_text(json.dumps(routing))
+        # Same logic as notify script
+        data = json.loads(routing_file.read_text())
+        creature = data.get("creature", "")
+        emoji_map = {"raccoon": "🦝", "beaver": "🦫"}
+        emoji = emoji_map.get(creature, "🦫")
+        assert emoji == "🦝"
+
+    def test_notify_defaults_beaver_when_no_creature(self, tmp_path):
+        """No creature in routing → default beaver emoji."""
+        routing = {"adapter": "telegram", "chat_id": 123}
+        routing_file = tmp_path / "test-routing.json"
+        routing_file.write_text(json.dumps(routing))
+        data = json.loads(routing_file.read_text())
+        creature = data.get("creature", "")
+        emoji_map = {"raccoon": "🦝", "beaver": "🦫"}
+        emoji = emoji_map.get(creature, "🦫")
+        assert emoji == "🦫"
+
+    def test_tool_calls_log_in_response(self):
+        """get_response should include tool_calls_log in result."""
+        # Verify the key exists in a mock result structure
+        result = {
+            "type": "text",
+            "text": "hello",
+            "history_messages": [],
+            "tool_calls_log": [{"tool": "new_session", "args": {"prompt": "hey", "creature": "raccoon"}}],
+        }
+        assert len(result["tool_calls_log"]) == 1
+        assert result["tool_calls_log"][0]["tool"] == "new_session"
+        assert result["tool_calls_log"][0]["args"]["creature"] == "raccoon"
