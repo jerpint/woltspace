@@ -549,10 +549,13 @@ def message_session(session_name: str, text: str) -> dict:
     if not safe:
         return {"error": "invalid session name"}
 
+    tunnel_url = get_tunnel_url()
+    session_url = f"{tunnel_url}/tui?session={safe}" if tunnel_url else None
+
     # Check if tmux session exists
     cmd = _pane_command(safe)
     if cmd is None:
-        return {"error": f"session {safe} not found"}
+        return {"ok": False, "error": f"session {safe} not found — it may have been killed or expired", "session": safe, "url": session_url}
 
     # If Claude is still running, send keys directly
     if cmd not in ("bash", "sh", "zsh"):
@@ -560,9 +563,9 @@ def message_session(session_name: str, text: str) -> dict:
             subprocess.run(["tmux", "send-keys", "-t", safe, "-l", text], check=True)
             subprocess.run(["tmux", "send-keys", "-t", safe, "", "Enter"], check=True)
             _bot_log("message_sent", {"session": safe, "text": text[:200]})
-            return {"ok": True, "session": safe}
+            return {"ok": True, "session": safe, "url": session_url, "status": "delivered", "detail": "Claude is running, message sent directly"}
         except subprocess.CalledProcessError as e:
-            return {"error": f"tmux send-keys failed: {e}"}
+            return {"ok": False, "error": f"tmux send-keys failed: {e}", "session": safe, "url": session_url}
 
     # Claude exited — restart with --continue and deliver the message as the new prompt
     _bot_log("session_revive", {"session": safe, "text": text[:200]})
@@ -570,9 +573,9 @@ def message_session(session_name: str, text: str) -> dict:
         resume_cmd = f"claude --dangerously-skip-permissions --continue {shlex.quote(text)}"
         subprocess.run(["tmux", "send-keys", "-t", safe, "-l", resume_cmd], check=True)
         subprocess.run(["tmux", "send-keys", "-t", safe, "", "Enter"], check=True)
-        return {"ok": True, "session": safe, "revived": True}
+        return {"ok": True, "session": safe, "url": session_url, "status": "revived", "detail": "Claude had exited — restarted with --continue and delivered message"}
     except subprocess.CalledProcessError as e:
-        return {"error": f"session revive failed: {e}"}
+        return {"ok": False, "error": f"session revive failed: {e}", "session": safe, "url": session_url}
 
 
 def kill_session(name: str) -> bool:
@@ -632,8 +635,13 @@ def _tool_find_session(args: dict, routing: dict | None) -> str:
 
 
 def _tool_kill_session(args: dict, routing: dict | None) -> str:
-    killed = kill_session(args["session_name"])
-    return json.dumps({"killed": killed, "session": args["session_name"]})
+    name = args["session_name"]
+    killed = kill_session(name)
+    tunnel_url = get_tunnel_url()
+    url = f"{tunnel_url}/tui?session={name}" if tunnel_url else None
+    if killed:
+        return json.dumps({"ok": True, "session": name, "url": url, "detail": f"session {name} killed"})
+    return json.dumps({"ok": False, "session": name, "url": url, "error": f"couldn't kill {name} — may not exist or is the main session"})
 
 
 def _tool_send_message(args: dict, routing: dict | None) -> str:
