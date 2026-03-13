@@ -99,7 +99,7 @@ def format_response(result: dict) -> str:
             s = result["session"]
             text = build_ack_text(s.get("url"), s.get("name"), "telegram")
     elif result["type"] == "image":
-        text = result.get("caption", "") or result.get("filename", "image")
+        text = result.get("text", "") or result.get("caption", "") or result.get("filename", "image")
     else:
         text = result["text"]
     wolt_name = os.environ.get("WOLT_NAME", "wolt")
@@ -109,7 +109,7 @@ def format_response(result: dict) -> str:
 async def _send_result(update: Update, result: dict):
     """Send a result to the user — handles text, session, and image types."""
     if result["type"] == "image":
-        caption = result.get("caption") or None
+        caption = result.get("text") or result.get("caption") or None
         with open(result["path"], "rb") as f:
             await update.message.reply_photo(photo=f, caption=caption)
     else:

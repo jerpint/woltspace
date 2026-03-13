@@ -165,7 +165,7 @@ def format_response(result: dict) -> str:
             s = result["session"]
             text = build_ack_text(s.get("url"), s.get("name"), "slack")
     elif result["type"] == "image":
-        text = result.get("caption", "") or result.get("filename", "image")
+        text = result.get("text", "") or result.get("caption", "") or result.get("filename", "image")
     else:
         text = result["text"]
     wolt_name = os.environ.get("WOLT_NAME", "wolt")
@@ -175,7 +175,7 @@ def format_response(result: dict) -> str:
 async def _post_result(client, channel: str, thread_ts: str, result: dict):
     """Post a result to Slack — handles text, session, and image types."""
     if result["type"] == "image":
-        caption = result.get("caption", "")
+        caption = result.get("text", "") or result.get("caption", "")
         with open(result["path"], "rb") as f:
             await client.files_upload_v2(
                 channel=channel,
