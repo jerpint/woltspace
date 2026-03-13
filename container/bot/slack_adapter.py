@@ -173,18 +173,23 @@ def format_response(result: dict) -> str:
 
 
 def _format_tool_log(tc: dict) -> str:
-    """Format a single tool call as a deterministic log line."""
+    """Format a single tool call as a deterministic log line. Max ~120 chars."""
     name = tc["tool"]
     args = tc.get("args", {})
     parts = []
-    if "prompt" in args:
-        parts.append(args["prompt"][:80])
     if "session_name" in args:
         parts.append(f"session={args['session_name']}")
     if "creature" in args:
         parts.append(f"creature={args['creature']}")
-    if "text" in args:
-        parts.append(args["text"][:80])
+    if "wolt" in args:
+        parts.append(f"wolt={args['wolt']}")
+    for key in ("prompt", "text", "query"):
+        if key in args:
+            val = args[key][:40].replace("\n", " ")
+            parts.append(val)
+            break
+    if "path" in args:
+        parts.append(args["path"])
     detail = " — " + ", ".join(parts) if parts else ""
     return f"🪵 {name}{detail}"
 
