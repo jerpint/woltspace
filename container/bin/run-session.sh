@@ -2,13 +2,14 @@
 # Wrapper for claude sessions spawned by the bot.
 # Runs claude, captures exit code, writes structured status.
 #
-# Usage: run-session.sh <session-name> <work-dir> <prompt>
+# Usage: run-session.sh <session-name> <work-dir> <prompt> [model]
 
 set -euo pipefail
 
 SESSION_NAME="$1"
 WORK_DIR="$2"
 PROMPT="$3"
+MODEL="${4:-}"
 
 # Where we write structured status
 STATE_DIR="${WOLT_STATE_DIR:-/workspace/wolts/.state}"
@@ -72,7 +73,11 @@ FULL_PROMPT="$PROMPT$NOTIFY_CONTEXT"
 
 # Run claude — capture exit code
 EXIT_CODE=0
-claude --dangerously-skip-permissions "$FULL_PROMPT" || EXIT_CODE=$?
+MODEL_FLAG=""
+if [ -n "$MODEL" ]; then
+    MODEL_FLAG="--model $MODEL"
+fi
+claude --dangerously-skip-permissions $MODEL_FLAG "$FULL_PROMPT" || EXIT_CODE=$?
 
 # Write final status
 if [ "$EXIT_CODE" -eq 0 ]; then

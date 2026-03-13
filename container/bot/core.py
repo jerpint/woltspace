@@ -238,9 +238,12 @@ def read_session_routing(session_name: str) -> dict | None:
     return None
 
 
-def build_session_command(session_name: str, work_dir: str, prompt: str) -> str:
+def build_session_command(session_name: str, work_dir: str, prompt: str, model: str = None) -> str:
     """Build the shell command that tmux will execute. Separated for testability."""
-    return f"{RUN_SESSION_SCRIPT} {shlex.quote(session_name)} {shlex.quote(work_dir)} {shlex.quote(prompt)}"
+    cmd = f"{RUN_SESSION_SCRIPT} {shlex.quote(session_name)} {shlex.quote(work_dir)} {shlex.quote(prompt)}"
+    if model:
+        cmd += f" {shlex.quote(model)}"
+    return cmd
 
 
 def get_session_status(session_name: str) -> dict | None:
@@ -279,8 +282,18 @@ def _call_server(method: str, path: str, body: dict | None = None) -> dict:
         return json.loads(resp.read())
 
 
-def start_claude_session(prompt: str, wolt: str = None) -> dict:
-    """Start an interactive Claude Code session in a named tmux session."""
+# Map creature names to Claude model aliases
+CREATURE_MODELS = {
+    "raccoon": "opus",    # 🦝 orchestrator — complex planning, multi-step reasoning
+    "beaver": "sonnet",   # 🦫 worker — building, coding, grunt work
+}
+
+
+def start_claude_session(prompt: str, wolt: str = None, creature: str = None) -> dict:
+    """Start an interactive Claude Code session in a named tmux session.
+
+    creature: optional "raccoon" (opus) or "beaver" (sonnet) to pick the model.
+    """
     if wolt:
         target_dir = WOLTS_DIR / wolt
         if not target_dir.is_dir():
@@ -291,8 +304,9 @@ def start_claude_session(prompt: str, wolt: str = None) -> dict:
 
     target_name = wolt or os.environ.get("WOLT_NAME", "wolt")
     session_name = _session_name(target_name)
+    model = CREATURE_MODELS.get(creature) if creature else None
 
-    cmd = build_session_command(session_name, str(target_dir), prompt)
+    cmd = build_session_command(session_name, str(target_dir), prompt, model=model)
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", session_name, "-c", str(target_dir), cmd],
         check=True,
@@ -301,13 +315,16 @@ def start_claude_session(prompt: str, wolt: str = None) -> dict:
     tunnel_url = get_tunnel_url()
     session_url = f"{tunnel_url}/tui?session={session_name}" if tunnel_url else None
     result = {"name": session_name, "url": session_url, "wolt": target_name}
-    _bot_log("session_start", {"session": session_name, "wolt": target_name, "dir": str(target_dir), "prompt": prompt[:500]})
+    if creature:
+        result["creature"] = creature
+        result["model"] = model
+    _bot_log("session_start", {"session": session_name, "wolt": target_name, "dir": str(target_dir), "creature": creature, "model": model, "prompt": prompt[:500]})
     return result
 
 
-def new_session(prompt: str, from_session: str = None, wolt: str = None) -> dict:
+def new_session(prompt: str, from_session: str = None, wolt: str = None, creature: str = None) -> dict:
     """Start a fresh Claude Code session and redirect the current viewport to it."""
-    session = start_claude_session(prompt, wolt=wolt)
+    session = start_claude_session(prompt, wolt=wolt, creature=creature)
 
     # Determine which viewport to redirect
     redirect_from = from_session
@@ -546,7 +563,7 @@ def kill_session(name: str) -> bool:
 
 
 def _tool_claude_code(args: dict, routing: dict | None) -> str:
-    session = start_claude_session(args["prompt"], wolt=args.get("wolt"))
+    session = start_claude_session(args["prompt"], wolt=args.get("wolt"), creature=args.get("creature"))
     if routing:
         write_session_routing(session["name"], routing)
     return json.dumps(session)
@@ -557,6 +574,7 @@ def _tool_new_session(args: dict, routing: dict | None) -> str:
         args["prompt"],
         from_session=args.get("from_session"),
         wolt=args.get("wolt"),
+        creature=args.get("creature"),
     )
     if routing:
         write_session_routing(session["name"], routing)
@@ -645,7 +663,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "claude_code",
-            "description": "Delegate a task to a Claude Code session. Use for building, searching, coding, generating artifacts, or any real work. You can target a specific wolt by name (e.g. 'neowolt' for music/curation, or yourself for general tasks).",
+            "description": "Delegate a task to a Claude Code session. Use for building, searching, coding, generating artifacts, or any real work. You can target a specific wolt and pick a creature type (raccoon=opus for complex work, beaver=sonnet for building).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -655,7 +673,12 @@ TOOLS = [
                     },
                     "wolt": {
                         "type": "string",
-                        "description": "Which wolt to run the session as. Defaults to current active wolt. Use 'neowolt' for music, curation, infra work.",
+                        "description": "Which wolt to run the session as. Defaults to current active wolt.",
+                    },
+                    "creature": {
+                        "type": "string",
+                        "enum": ["raccoon", "beaver"],
+                        "description": "Which creature to run: 'raccoon' (🦝 opus — complex reasoning, orchestration) or 'beaver' (🦫 sonnet — building, coding). Defaults to the wolt's default model if omitted.",
                     },
                 },
                 "required": ["prompt"],
@@ -666,7 +689,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "new_session",
-            "description": "Start a fresh Claude Code session and switch the current viewport to it — no new tab, no hunting for a link. Use when jerpint says 'new session', 'start fresh', 'open a new claude'. The terminal pane will automatically switch to the new session within ~2 seconds. Prefer over claude_code when the intent is starting an interactive session, not delegating a background task.",
+            "description": "Start a fresh Claude Code session and switch the current viewport to it. Prefer over claude_code when the intent is starting an interactive session, not delegating a background task.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -681,6 +704,11 @@ TOOLS = [
                     "wolt": {
                         "type": "string",
                         "description": "Which wolt to run the session as. Defaults to current active wolt.",
+                    },
+                    "creature": {
+                        "type": "string",
+                        "enum": ["raccoon", "beaver"],
+                        "description": "Which creature to run: 'raccoon' (opus) or 'beaver' (sonnet). Defaults to wolt's default model.",
                     },
                 },
                 "required": ["prompt"],
