@@ -106,8 +106,40 @@ def format_response(result: dict) -> str:
     return f"🦦 {wolt_name}: {text}"
 
 
+def _format_tool_log(tc: dict) -> str:
+    """Format a single tool call as a deterministic log line."""
+    name = tc["tool"]
+    args = tc.get("args", {})
+    # Build a short summary of key args
+    parts = []
+    if "prompt" in args:
+        parts.append(args["prompt"][:80])
+    if "session_name" in args:
+        parts.append(f"session={args['session_name']}")
+    if "wolt" in args:
+        parts.append(f"wolt={args['wolt']}")
+    if "creature" in args:
+        parts.append(f"creature={args['creature']}")
+    if "text" in args:
+        parts.append(args["text"][:80])
+    if "query" in args:
+        parts.append(args["query"][:80])
+    if "path" in args:
+        parts.append(args["path"])
+    detail = " — " + ", ".join(parts) if parts else ""
+    return f"🪵 {name}{detail}"
+
+
 async def _send_result(update: Update, result: dict):
-    """Send a result to the user — handles text, session, and image types."""
+    """Send a result to the user — handles text, session, and image types.
+    Sends deterministic tool call logs before the final response."""
+    # Send tool call logs first
+    for tc in result.get("tool_calls_log", []):
+        try:
+            await update.message.reply_text(_format_tool_log(tc))
+        except Exception:
+            pass  # don't let log failures block the response
+
     if result["type"] == "image":
         caption = result.get("text") or result.get("caption") or None
         with open(result["path"], "rb") as f:

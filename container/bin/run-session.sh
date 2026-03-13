@@ -66,7 +66,11 @@ Use \`notify \"your message\"\` to send messages.
 
 Also: always print your full detailed output (code, logs, raw analysis) to this terminal too — it stays in the session for anyone who opens the live view later.
 
-2-3 notifies max across the whole session."
+2-3 notifies max across the whole session.
+
+## CRITICAL: Do not touch infrastructure
+
+**NEVER restart, kill, or modify server.js (port 3000)** — it runs the tunnel, split view, and all session routing. Restarting it breaks everything for everyone. If something seems wrong with the server, notify the developer and stop. Do not attempt to fix infrastructure yourself."
 fi
 
 FULL_PROMPT="$PROMPT$NOTIFY_CONTEXT"
@@ -100,3 +104,8 @@ data = {
 }
 print(json.dumps(data))
 " "$STATUS_FILE" "$SESSION_NAME" "$FINAL_STATUS" "$EXIT_CODE" "$WORK_DIR" > "$STATUS_FILE.tmp" && mv "$STATUS_FILE.tmp" "$STATUS_FILE"
+
+# Reset viewport to placeholder so it doesn't show "not found" for dead content
+curl -s -X POST "http://localhost:3000/current?session=${SESSION_NAME}" \
+  -H "Content-Type: application/json" \
+  -d "{\"url\": \"/placeholder.html\"}" > /dev/null 2>&1 || true

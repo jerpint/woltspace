@@ -172,8 +172,37 @@ def format_response(result: dict) -> str:
     return f"🦦 {wolt_name}: {text}"
 
 
+def _format_tool_log(tc: dict) -> str:
+    """Format a single tool call as a deterministic log line."""
+    name = tc["tool"]
+    args = tc.get("args", {})
+    parts = []
+    if "prompt" in args:
+        parts.append(args["prompt"][:80])
+    if "session_name" in args:
+        parts.append(f"session={args['session_name']}")
+    if "creature" in args:
+        parts.append(f"creature={args['creature']}")
+    if "text" in args:
+        parts.append(args["text"][:80])
+    detail = " — " + ", ".join(parts) if parts else ""
+    return f"🪵 {name}{detail}"
+
+
 async def _post_result(client, channel: str, thread_ts: str, result: dict):
-    """Post a result to Slack — handles text, session, and image types."""
+    """Post a result to Slack — handles text, session, and image types.
+    Sends deterministic tool call logs before the final response."""
+    # Send tool call logs first
+    for tc in result.get("tool_calls_log", []):
+        try:
+            await client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text=_format_tool_log(tc),
+            )
+        except Exception:
+            pass
+
     if result["type"] == "image":
         caption = result.get("text", "") or result.get("caption", "")
         with open(result["path"], "rb") as f:

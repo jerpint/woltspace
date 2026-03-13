@@ -531,14 +531,35 @@ def read_memory(path: str) -> dict:
         return {"error": str(e)}
 
 
-def _pane_command(session_name: str) -> str | None:
-    """Return the current command running in a tmux session's pane."""
+def _session_has_claude(session_name: str) -> bool | None:
+    """Check if a tmux session has a claude process running in its pane.
+
+    Returns True if claude is in the process tree, False if only a shell is running,
+    None if the session doesn't exist.
+
+    Uses pane_pid to walk the process tree instead of pane_current_command,
+    which only shows the foreground process (unreliable when Claude runs subprocesses).
+    """
     try:
         result = subprocess.run(
-            ["tmux", "list-panes", "-t", session_name, "-F", "#{pane_current_command}"],
+            ["tmux", "list-panes", "-t", session_name, "-F", "#{pane_pid}"],
             capture_output=True, text=True, check=True,
         )
-        return result.stdout.strip()
+        pane_pid = result.stdout.strip()
+        if not pane_pid:
+            return None
+        # Check all descendants of the pane's shell for a claude process
+        ps_result = subprocess.run(
+            ["ps", "--ppid", pane_pid, "-o", "comm=", "--no-headers"],
+            capture_output=True, text=True,
+        )
+        children = ps_result.stdout.strip().split("\n")
+        # claude or run-session (still launching) means alive
+        for child in children:
+            child = child.strip()
+            if child in ("claude", "run-session.sh", "run-session"):
+                return True
+        return False
     except subprocess.CalledProcessError:
         return None
 
@@ -552,13 +573,13 @@ def message_session(session_name: str, text: str) -> dict:
     tunnel_url = get_tunnel_url()
     session_url = f"{tunnel_url}/tui?session={safe}" if tunnel_url else None
 
-    # Check if tmux session exists
-    cmd = _pane_command(safe)
-    if cmd is None:
+    # Check if tmux session exists and whether Claude is running
+    claude_alive = _session_has_claude(safe)
+    if claude_alive is None:
         return {"ok": False, "error": f"session {safe} not found — it may have been killed or expired", "session": safe, "url": session_url}
 
     # If Claude is still running, send keys directly
-    if cmd not in ("bash", "sh", "zsh"):
+    if claude_alive:
         try:
             subprocess.run(["tmux", "send-keys", "-t", safe, "-l", text], check=True)
             subprocess.run(["tmux", "send-keys", "-t", safe, "", "Enter"], check=True)
@@ -1027,6 +1048,7 @@ def get_response(
 
     result_type = "text"
     result_extras = {}
+    tool_calls_log = []  # deterministic log of every tool call fired
     rounds_used = 0
 
     for round_num in range(MAX_TOOL_ROUNDS):
@@ -1058,6 +1080,7 @@ def get_response(
             name = tc.function.name
             args = json.loads(tc.function.arguments) if tc.function.arguments else {}
             _bot_log("tool_call", {"tool": name, "args": json.dumps(args)[:500], "round": round_num})
+            tool_calls_log.append({"tool": name, "args": args})
 
             try:
                 tool_result = _execute_tool(name, args, routing)
@@ -1114,12 +1137,13 @@ def get_response(
     # Build history: everything the model produced after the user message
     history_messages = messages[new_msg_start:]
 
-    _bot_log("response", {"type": result_type, "text": text[:500], "rounds": rounds_used})
+    _bot_log("response", {"type": result_type, "text": text[:500], "rounds": rounds_used, "tool_calls": len(tool_calls_log)})
 
     return {
         "type": result_type,
         "text": text,
         "history_messages": history_messages,
+        "tool_calls_log": tool_calls_log,
         **result_extras,
     }
 
