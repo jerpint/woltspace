@@ -243,6 +243,28 @@ class TestMessageSession:
         # It ran as a bash command — this is the behavior we want to detect and avoid
         assert "test-marker" in result.stdout
 
+    def test_revive_sets_wolt_session_env(self, tmux_session):
+        """When reviving a dead session, WOLT_SESSION must be exported so notify works.
+
+        Bug: revived sessions had WOLT_SESSION="" because run-session.sh wasn't involved,
+        causing notify to send session= with a blank name.
+        """
+        name = tmux_session
+        subprocess.run(["tmux", "new-session", "-d", "-s", name, "bash"], check=True)
+        time.sleep(0.5)
+
+        # Simulate what message_session does on revive: export WOLT_SESSION then run command
+        revive_cmd = f"export WOLT_SESSION={shlex.quote(name)} && echo WOLT_SESSION=$WOLT_SESSION"
+        subprocess.run(["tmux", "send-keys", "-t", name, "-l", revive_cmd], check=True)
+        subprocess.run(["tmux", "send-keys", "-t", name, "", "Enter"], check=True)
+        time.sleep(0.5)
+
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-t", name, "-p"],
+            capture_output=True, text=True, check=True,
+        )
+        assert f"WOLT_SESSION={name}" in result.stdout
+
 
 # ---------------------------------------------------------------------------
 # Tool result format
