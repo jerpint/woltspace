@@ -1125,7 +1125,7 @@ def get_response(
             })
 
             # Track terminal tools that define the response type
-            if name == "claude_code":
+            if name in ("claude_code", "new_session"):
                 result_type = "session"
                 result_extras["session"] = json.loads(tool_result)
                 has_terminal = True
