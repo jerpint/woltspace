@@ -9,11 +9,16 @@ import json
 import shlex
 import subprocess
 import logging
+import sys
 import time
 import random
 from pathlib import Path
 from litellm import completion
 from openai import OpenAI
+
+# Add lib/ to path for sessions module
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from sessions import SessionRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +39,9 @@ MAX_TOOL_ROUNDS = 5
 BOT_LOG_DIR = WOLTS_DIR / ".state" / "bot-debug"
 BOT_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-# Session routing is shared across all wolts
-SESSION_ROUTING_DIR = WOLTS_DIR / ".state" / "session-routing"
+# Session registry — single source of truth for all session metadata
+registry = SessionRegistry(WOLTS_DIR / ".state" / "registry")
+
 RUN_SESSION_SCRIPT = Path("/workspace/woltspace/container/bin/run-session.sh")
 
 # ---------------------------------------------------------------------------
@@ -220,28 +226,6 @@ def build_ack_text(url: str = None, session_name: str = None, adapter: str = Non
 # ---------------------------------------------------------------------------
 
 
-def _session_status_dir() -> Path:
-    """Session status dir — evaluated dynamically so it follows switch_wolt."""
-    return STATE_DIR / "sessions"
-
-
-def write_session_routing(session_name: str, routing: dict):
-    """Write routing info so notifications go to the right adapter."""
-    SESSION_ROUTING_DIR.mkdir(parents=True, exist_ok=True)
-    (SESSION_ROUTING_DIR / f"{session_name}.json").write_text(json.dumps(routing))
-
-
-def read_session_routing(session_name: str) -> dict | None:
-    """Read routing info for a session."""
-    path = SESSION_ROUTING_DIR / f"{session_name}.json"
-    if path.exists():
-        try:
-            return json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError):
-            return None
-    return None
-
-
 def build_session_command(session_name: str, work_dir: str, prompt: str, model: str = None) -> str:
     """Build the shell command that tmux will execute. Separated for testability."""
     cmd = f"{RUN_SESSION_SCRIPT} {shlex.quote(session_name)} {shlex.quote(work_dir)} {shlex.quote(prompt)}"
@@ -251,14 +235,8 @@ def build_session_command(session_name: str, work_dir: str, prompt: str, model: 
 
 
 def get_session_status(session_name: str) -> dict | None:
-    """Read structured status file for a session, if it exists."""
-    status_file = _session_status_dir() / f"{session_name}.json"
-    if status_file.exists():
-        try:
-            return json.loads(status_file.read_text())
-        except (json.JSONDecodeError, OSError):
-            return None
-    return None
+    """Read session status from registry."""
+    return registry.get(session_name, check_alive=False)
 
 
 def get_tunnel_url() -> str:
@@ -293,10 +271,11 @@ CREATURE_MODELS = {
 }
 
 
-def start_claude_session(prompt: str, wolt: str = None, creature: str = None) -> dict:
+def start_claude_session(prompt: str, wolt: str = None, creature: str = None, routing: dict = None) -> dict:
     """Start an interactive Claude Code session in a named tmux session.
 
     creature: optional "raccoon" (opus) or "beaver" (sonnet) to pick the model.
+    routing: adapter routing info (adapter, chat_id, etc.) — written to registry.
     """
     if wolt:
         target_dir = WOLTS_DIR / wolt
@@ -310,15 +289,31 @@ def start_claude_session(prompt: str, wolt: str = None, creature: str = None) ->
     session_name = _session_name(target_name)
     model = CREATURE_MODELS.get(creature) if creature else None
 
+    tunnel_url = get_tunnel_url()
+    session_url = f"{tunnel_url}/tui?session={session_name}" if tunnel_url else ""
+
+    # Register the session (single source of truth)
+    registry.create(
+        session_name,
+        wolt=target_name,
+        creature=creature or "",
+        model=model or "",
+        dir=str(target_dir),
+        prompt=prompt,
+        adapter=(routing or {}).get("adapter", ""),
+        chat_id=str((routing or {}).get("chat_id", "")),
+        user_id=str((routing or {}).get("user_id", "")),
+        thread_ts=str((routing or {}).get("thread_ts", "")),
+        session_url=session_url,
+    )
+
     cmd = build_session_command(session_name, str(target_dir), prompt, model=model)
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", session_name, "-c", str(target_dir), cmd],
         check=True,
     )
 
-    tunnel_url = get_tunnel_url()
-    session_url = f"{tunnel_url}/tui?session={session_name}" if tunnel_url else None
-    result = {"name": session_name, "url": session_url, "wolt": target_name}
+    result = {"name": session_name, "url": session_url or None, "wolt": target_name}
     if creature:
         result["creature"] = creature
         result["model"] = model
@@ -326,9 +321,9 @@ def start_claude_session(prompt: str, wolt: str = None, creature: str = None) ->
     return result
 
 
-def new_session(prompt: str, from_session: str = None, wolt: str = None, creature: str = None) -> dict:
+def new_session(prompt: str, from_session: str = None, wolt: str = None, creature: str = None, routing: dict = None) -> dict:
     """Start a fresh Claude Code session and redirect the current viewport to it."""
-    session = start_claude_session(prompt, wolt=wolt, creature=creature)
+    session = start_claude_session(prompt, wolt=wolt, creature=creature, routing=routing)
 
     # Determine which viewport to redirect
     redirect_from = from_session
@@ -349,113 +344,58 @@ def new_session(prompt: str, from_session: str = None, wolt: str = None, creatur
 
 
 def list_sessions() -> list[dict]:
-    """List all sessions — live + completed, enriched with titles from status files."""
-    # Get live tmux sessions
-    tmux_alive = set()
-    try:
-        raw = subprocess.run(
-            ["tmux", "list-sessions", "-F", "#{session_name}"],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip()
-        for name in raw.split("\n"):
-            if name and name != "main":
-                tmux_alive.add(name)
-    except subprocess.CalledProcessError:
-        pass
-
+    """List all sessions from the registry, enriched with liveness from tmux."""
     tunnel_url = get_tunnel_url()
-    sessions = {}
-
-    # Read status files (have title, prompt, timestamps)
-    status_dir = _session_status_dir()
-    if status_dir.exists():
-        for f in status_dir.glob("*.json"):
-            try:
-                data = json.loads(f.read_text())
-                name = data.get("session", f.stem)
-                if name == "main":
-                    continue
-                alive = name in tmux_alive
-                entry = {
-                    "name": name,
-                    "title": data.get("title", ""),
-                    "status": "running" if alive else data.get("status", "completed"),
-                    "started": data.get("started"),
-                    "alive": alive,
-                }
-                if tunnel_url:
-                    entry["url"] = f"{tunnel_url}/tui?session={name}"
-                sessions[name] = entry
-            except Exception:
-                continue
-
-    # Include any live tmux sessions not in status files
-    for name in tmux_alive:
-        if name not in sessions:
-            entry = {"name": name, "title": "", "status": "running", "started": None, "alive": True}
-            if tunnel_url:
-                entry["url"] = f"{tunnel_url}/tui?session={name}"
-            sessions[name] = entry
-
-    return sorted(sessions.values(), key=lambda s: s.get("started") or 0, reverse=True)
+    sessions = registry.list()
+    # Normalize output format for compatibility
+    results = []
+    for s in sessions:
+        entry = {
+            "name": s["name"],
+            "title": s.get("title", ""),
+            "status": s.get("status", "unknown"),
+            "started": s.get("created_at"),
+            "alive": s.get("alive", False),
+        }
+        if tunnel_url:
+            entry["url"] = f"{tunnel_url}/tui?session={s['name']}"
+        results.append(entry)
+    return results
 
 
 def find_session(query: str) -> list[dict]:
     """Find sessions whose title or prompt matches the query."""
     query_lower = query.lower()
     words = query_lower.split()
-    status_dir = _session_status_dir()
     tunnel_url = get_tunnel_url()
     matches = []
 
-    if not status_dir.exists():
-        return []
+    for s in registry.list():
+        haystack = (s.get("title", "") + " " + s.get("prompt", "")).lower()
+        if any(w in haystack for w in words):
+            entry = {
+                "name": s["name"],
+                "title": s.get("title", ""),
+                "status": s.get("status", "unknown"),
+                "started": s.get("created_at"),
+            }
+            if tunnel_url:
+                entry["url"] = f"{tunnel_url}/tui?session={s['name']}"
+            matches.append(entry)
 
-    for f in status_dir.glob("*.json"):
-        try:
-            data = json.loads(f.read_text())
-            name = data.get("session", f.stem)
-            if name == "main":
-                continue
-            haystack = (data.get("title", "") + " " + data.get("prompt", "")).lower()
-            # match if any query word appears in title+prompt
-            if any(w in haystack for w in words):
-                alive = False
-                try:
-                    subprocess.run(["tmux", "has-session", "-t", name], capture_output=True, check=True)
-                    alive = True
-                except Exception:
-                    pass
-                entry = {
-                    "name": name,
-                    "title": data.get("title", ""),
-                    "status": "running" if alive else data.get("status", "completed"),
-                    "started": data.get("started"),
-                }
-                if tunnel_url:
-                    entry["url"] = f"{tunnel_url}/tui?session={name}"
-                matches.append(entry)
-        except Exception:
-            continue
-
-    return sorted(matches, key=lambda s: s.get("started") or 0, reverse=True)
+    return matches
 
 
 def check_session(session_name: str = None) -> dict:
-    """Check on a running session — structured status file first, pane capture as fallback."""
+    """Check on a running session — registry + pane capture."""
     if not session_name:
         sessions = list_sessions()
         if not sessions:
             return {"status": "no_sessions", "output": "No active task sessions."}
         session_name = sessions[-1]["name"]
 
-    status = get_session_status(session_name)
-
-    tmux_result = subprocess.run(
-        ["tmux", "has-session", "-t", session_name],
-        capture_output=True,
-    )
-    alive = tmux_result.returncode == 0
+    data = registry.get(session_name, check_alive=True)
+    alive = data["alive"] if data else False
 
     output = ""
     if alive:
@@ -470,12 +410,10 @@ def check_session(session_name: str = None) -> dict:
         except subprocess.CalledProcessError:
             output = "(couldn't read session output)"
 
-    if status and status.get("status") in ("completed", "failed"):
-        session_status = status["status"]
+    if data:
+        session_status = data["status"]
     elif alive:
         session_status = "running"
-    elif status:
-        session_status = status.get("status", "unknown")
     else:
         session_status = "finished"
 
@@ -489,8 +427,8 @@ def check_session(session_name: str = None) -> dict:
         "output": output,
         "url": session_url,
     }
-    if status and "exit_code" in status:
-        result["exit_code"] = status["exit_code"]
+    if data and data.get("exit_code") is not None:
+        result["exit_code"] = data["exit_code"]
 
     recent = get_recent_sessions(n=1)
     if recent:
@@ -620,21 +558,9 @@ def kill_session(name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _routing_with_creature(routing: dict | None, creature: str | None) -> dict | None:
-    """Merge creature into routing dict so notify can read it."""
-    if not routing:
-        return {"creature": creature} if creature else None
-    if creature:
-        return {**routing, "creature": creature}
-    return routing
-
-
 def _tool_claude_code(args: dict, routing: dict | None) -> str:
     creature = args.get("creature")
-    session = start_claude_session(args["prompt"], wolt=args.get("wolt"), creature=creature)
-    merged = _routing_with_creature(routing, creature)
-    if merged:
-        write_session_routing(session["name"], merged)
+    session = start_claude_session(args["prompt"], wolt=args.get("wolt"), creature=creature, routing=routing)
     return json.dumps(session)
 
 
@@ -645,10 +571,8 @@ def _tool_new_session(args: dict, routing: dict | None) -> str:
         from_session=args.get("from_session"),
         wolt=args.get("wolt"),
         creature=creature,
+        routing=routing,
     )
-    merged = _routing_with_creature(routing, creature)
-    if merged:
-        write_session_routing(session["name"], merged)
     return json.dumps(session)
 
 
