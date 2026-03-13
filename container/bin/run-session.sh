@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Wrapper for claude sessions spawned by the bot.
-# Runs claude, captures exit code, writes structured status.
+# Runs claude, captures exit code, updates the session registry.
 #
 # Usage: run-session.sh <session-name> <work-dir> <prompt> [model]
 
@@ -11,11 +11,8 @@ WORK_DIR="$2"
 PROMPT="$3"
 MODEL="${4:-}"
 
-# Where we write structured status
-STATE_DIR="${WOLT_STATE_DIR:-/workspace/wolts/.state}"
-STATUS_DIR="$STATE_DIR/sessions"
-mkdir -p "$STATUS_DIR"
-STATUS_FILE="$STATUS_DIR/${SESSION_NAME}.json"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SESSION_REG="$SCRIPT_DIR/session-reg"
 
 cd "$WORK_DIR"
 export WOLT_SESSION="$SESSION_NAME"
@@ -29,22 +26,13 @@ clean = re.sub(r'[^\w\s-]', '', first_line).strip()
 print(clean[:60].lower())
 " "$PROMPT" 2>/dev/null || echo "")
 
-# Write initial status (Python for safe JSON serialization — prompt may contain quotes/newlines)
-python3 -c "
-import json, sys, time
-data = {
-    'session': sys.argv[1], 'status': 'running',
-    'started': int(time.time()), 'dir': sys.argv[2],
-    'title': sys.argv[3], 'prompt': sys.argv[4][:500],
-}
-print(json.dumps(data))
-" "$SESSION_NAME" "$WORK_DIR" "$TITLE" "$PROMPT" > "$STATUS_FILE"
+# Update registry with title (session was already created by core.py with routing info)
+$SESSION_REG update "$SESSION_NAME" "title=$TITLE" > /dev/null 2>&1 || true
 
-# Read session routing to tell Claude which platform to notify
-ROUTING_FILE="${WOLT_STATE_DIR:-/workspace/wolts/.state}/session-routing/${SESSION_NAME}.json"
+# Read adapter from registry to tell Claude which platform to notify
+ADAPTER=$($SESSION_REG get-field "$SESSION_NAME" adapter 2>/dev/null || echo "telegram")
 NOTIFY_CONTEXT=""
-if [ -f "$ROUTING_FILE" ]; then
-  ADAPTER=$(python3 -c "import json,sys; d=json.load(open('$ROUTING_FILE')); print(d.get('adapter','telegram'))" 2>/dev/null || echo "telegram")
+if [ -n "$ADAPTER" ] && [ "$ADAPTER" != "" ]; then
   case "$ADAPTER" in
     slack)    NOTIFY_PLATFORM="Slack" ;;
     telegram) NOTIFY_PLATFORM="Telegram" ;;
@@ -83,29 +71,8 @@ if [ -n "$MODEL" ]; then
 fi
 claude --dangerously-skip-permissions $MODEL_FLAG "$FULL_PROMPT" || EXIT_CODE=$?
 
-# Write final status
-if [ "$EXIT_CODE" -eq 0 ]; then
-    FINAL_STATUS="completed"
-else
-    FINAL_STATUS="failed"
-fi
-
-# Preserve title/prompt from initial write
-python3 -c "
-import json, sys, time
-try:
-    prev = json.loads(open(sys.argv[1]).read())
-except Exception:
-    prev = {}
-data = {
-    'session': sys.argv[2], 'status': sys.argv[3], 'exit_code': int(sys.argv[4]),
-    'started': prev.get('started', int(time.time())), 'finished': int(time.time()),
-    'dir': sys.argv[5], 'title': prev.get('title', ''), 'prompt': prev.get('prompt', ''),
-}
-print(json.dumps(data))
-" "$STATUS_FILE" "$SESSION_NAME" "$FINAL_STATUS" "$EXIT_CODE" "$WORK_DIR" > "$STATUS_FILE.tmp" && mv "$STATUS_FILE.tmp" "$STATUS_FILE"
+# Update registry with final status
+$SESSION_REG finish "$SESSION_NAME" "$EXIT_CODE" > /dev/null 2>&1 || true
 
 # Reset viewport to placeholder so it doesn't show "not found" for dead content
-curl -s -X POST "http://localhost:3000/current?session=${SESSION_NAME}" \
-  -H "Content-Type: application/json" \
-  -d "{\"url\": \"/placeholder.html\"}" > /dev/null 2>&1 || true
+$SESSION_REG update "$SESSION_NAME" "viewport_url=/placeholder.html" > /dev/null 2>&1 || true

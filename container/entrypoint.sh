@@ -53,6 +53,9 @@ SSHEOF
   chmod 600 /home/node/.ssh/config
 fi
 
+# Add container/lib to PYTHONPATH so sessions.py is importable everywhere
+export PYTHONPATH="$WOLTSPACE_DIR/container/lib:${PYTHONPATH:-}"
+
 # Add shortcut for interactive use inside the container
 cat >> /home/node/.bashrc <<NWEOF
 wolt() {

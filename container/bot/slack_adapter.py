@@ -16,7 +16,7 @@ from pathlib import Path
 from collections import defaultdict
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
-from bot.core import get_response, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, read_session_routing, _bot_log, build_ack_text, _sanitize_history
+from bot.core import get_response, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, _bot_log, build_ack_text, _sanitize_history
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
