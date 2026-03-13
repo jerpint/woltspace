@@ -14,9 +14,20 @@ fi
 SESSION="${WOLT_SESSION:-}"
 STATE_DIR="${WOLT_STATE_DIR:-/workspace/wolts/.state}"
 
-# Build 🦫 message — footer (session URL + reply hint) is added by server.js sendNotification
+# Build message — footer (session URL + reply hint) is added by server.js sendNotification
 WOLT_NAME="${WOLT_NAME:-wolt}"
-FULL_MESSAGE="🦫 ${WOLT_NAME}: $MESSAGE"
+
+# Read creature from session routing file (set by core.py when session starts)
+EMOJI="🦫"
+if [ -n "$SESSION" ]; then
+  ROUTING_FILE="$STATE_DIR/session-routing/${SESSION}.json"
+  CREATURE=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('creature',''))" "$ROUTING_FILE" 2>/dev/null || echo "")
+  case "$CREATURE" in
+    raccoon) EMOJI="🦝" ;;
+    beaver)  EMOJI="🦫" ;;
+  esac
+fi
+FULL_MESSAGE="${EMOJI} ${WOLT_NAME}: $MESSAGE"
 
 PAYLOAD=$(python3 -c "import json,sys; print(json.dumps({'session': sys.argv[1], 'message': sys.argv[2]}))" "$SESSION" "$FULL_MESSAGE")
 

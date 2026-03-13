@@ -163,7 +163,7 @@ def format_response(result: dict) -> str:
             text = result["text"]
         else:
             s = result["session"]
-            text = build_ack_text(s.get("url"), s.get("name"), "slack")
+            text = build_ack_text(s.get("url"), s.get("name"), "slack", creature=s.get("creature"))
     elif result["type"] == "image":
         text = result.get("text", "") or result.get("caption", "") or result.get("filename", "image")
     else:

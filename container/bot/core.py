@@ -201,11 +201,15 @@ def _short_session_name(session_name: str) -> str:
     return "-".join(rest.split("-")[:-1]) if rest.count("-") >= 2 else rest
 
 
-def build_ack_text(url: str = None, session_name: str = None, adapter: str = None) -> str:
+CREATURE_EMOJIS = {"raccoon": "🦝", "beaver": "🦫"}
+
+
+def build_ack_text(url: str = None, session_name: str = None, adapter: str = None, creature: str = None) -> str:
     """Build the 🪵 ack message shown when a session starts."""
     quote = random.choice(BEAVER_ACKS)
     wolt_name = session_name.split("-")[0] if session_name else "wolt"
-    text = f'🪵 session started - "{quote}"\n\n🦫 assigned: {wolt_name}'
+    emoji = CREATURE_EMOJIS.get(creature, "🦫")
+    text = f'🪵 session started - "{quote}"\n\n{emoji} assigned: {wolt_name}'
     if url:
         text += f"\n\n---\nsession: {url}"
     return text
@@ -616,22 +620,35 @@ def kill_session(name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _routing_with_creature(routing: dict | None, creature: str | None) -> dict | None:
+    """Merge creature into routing dict so notify can read it."""
+    if not routing:
+        return {"creature": creature} if creature else None
+    if creature:
+        return {**routing, "creature": creature}
+    return routing
+
+
 def _tool_claude_code(args: dict, routing: dict | None) -> str:
-    session = start_claude_session(args["prompt"], wolt=args.get("wolt"), creature=args.get("creature"))
-    if routing:
-        write_session_routing(session["name"], routing)
+    creature = args.get("creature")
+    session = start_claude_session(args["prompt"], wolt=args.get("wolt"), creature=creature)
+    merged = _routing_with_creature(routing, creature)
+    if merged:
+        write_session_routing(session["name"], merged)
     return json.dumps(session)
 
 
 def _tool_new_session(args: dict, routing: dict | None) -> str:
+    creature = args.get("creature")
     session = new_session(
         args["prompt"],
         from_session=args.get("from_session"),
         wolt=args.get("wolt"),
-        creature=args.get("creature"),
+        creature=creature,
     )
-    if routing:
-        write_session_routing(session["name"], routing)
+    merged = _routing_with_creature(routing, creature)
+    if merged:
+        write_session_routing(session["name"], merged)
     return json.dumps(session)
 
 
