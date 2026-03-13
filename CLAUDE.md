@@ -92,7 +92,7 @@ The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routi
 - Builds system prompt from wolt memory files
 - Defines 9 tools: `claude_code`, `get_tunnel_url`, `check_session`, `get_recent_sessions`, `list_sessions`, `kill_session`, `read_memory`, `list_wolts`, `switch_wolt`
 - When `claude_code` is called: spawns a tmux session running `run-session.sh` → Claude Code CLI
-- Session routing: writes `{session}.json` so notifications find their way back to the right chat
+- Session metadata (status, routing, creature, viewport) stored in the **session registry** — see `container/lib/sessions.py`
 
 ### `container/bot/telegram_adapter.py`
 Thin Telegram layer over core. Persists chat history to `.state/chat/{chat_id}.jsonl`. Group chat support (responds when @mentioned).
@@ -113,12 +113,23 @@ Discovery files Claude Code reads from `~/.claude/skills/`. Platform defaults ba
 ### `container/cron/digest.mjs`
 Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select via `claude -p` → render HTML. Writes to `wolt/sparks/`. Optional Spotify playlist curation.
 
+### `container/lib/sessions.py` (Session Registry)
+Centralized session metadata — single source of truth replacing the old scattered `sessions/*.json` + `session-routing/*.json` files. One JSON file per session in `.state/registry/{session_name}.json`.
+
+Each entry tracks: name, wolt, creature, model, status, timestamps, routing (adapter, chat_id, user_id, thread_ts), viewport URL, session URL.
+
+API: `SessionRegistry.create()`, `.update()`, `.get()`, `.list()`, `.finish()`, `.touch()`, `.reconcile()`, `.delete()`.
+
+Used by core.py, run-session.sh, notify, and server.js. CLI wrapper: `session-reg`.
+
 ### `container/bin/`
 Utility scripts available in container PATH:
 - `push-view <path>` — set viewport URL for current session
 - `run-session.sh` — wrapper that sends ack, injects notification context, runs Claude Code
 - `notify` — send message back to originating adapter (Telegram/Slack)
+- `session-reg` — CLI for the session registry (`session-reg list`, `session-reg get <name>`, `session-reg reconcile`)
 - `spawn-tool` — register a tool proxy with the server
+- `migrate-sessions-to-registry.sh` — one-time migration from old session files to registry format
 
 ---
 
@@ -153,7 +164,8 @@ Use `/viewport` for full details: URL paths, app serving, live-reload behavior.
     sparks/            — generated artifacts
     drafts/
   .claude/             — Claude Code auth + session state
-  .state/              — runtime (tunnel URL, session status, routing)
+  .state/              — runtime (tunnel URL, session registry)
+    registry/          — one JSON file per session (status, routing, metadata)
   .env                 — secrets (gitignored)
   CLAUDE.md            — wolt-specific instructions
   wolt.json            — manifest
@@ -166,7 +178,7 @@ Use `/viewport` for full details: URL paths, app serving, live-reload behavior.
 Multiple wolts can run in one container. They all share:
 - The same Node server
 - The same bot process
-- `~/wolts/.state/session-routing/` for notification routing
+- `~/wolts/.state/registry/` for session metadata and notification routing
 - `~/wolts/.claude/` for Claude Code auth
 
 `~/wolts/woltspace.json` tracks the active wolt per adapter. The bot can `switch_wolt` at runtime.
@@ -213,16 +225,15 @@ cd /workspace/woltspace/container && uv run --project bot/pyproject.toml python 
 
 ## Known Bugs / TODO
 
-- **`SESSION_STATUS_DIR` goes stale after `switch_wolt`** (`container/bot/core.py:306`) — it's a module-level constant frozen at import time. `switch_wolt()` updates `STATE_DIR` but not `SESSION_STATUS_DIR`, so `check_session()` reads the wrong wolt's directory after a switch. Fix: evaluate `STATE_DIR / "sessions"` dynamically.
-- **`_send_ack` only handles Telegram** (`container/bot/core.py:512`) — Slack users get no "🦫 on it" ack when a session spawns. Easy fix: add the Slack API call alongside the Telegram one.
-- **`logger` defined twice** (`container/bot/core.py:27` and `:75`) — harmless but one is dead code.
+- **`_send_ack` only handles Telegram** (`container/bot/core.py`) — Slack users get no "🦫 on it" ack when a session spawns. Easy fix: add the Slack API call alongside the Telegram one.
+- **`logger` defined twice** (`container/bot/core.py`) — harmless but one is dead code.
 - **`container/bin/spawn-tool` is untracked in git** — new file sitting uncommitted.
 
 ## What's Messy / Still Iterating
 
 - **WhatsApp adapter**: not yet implemented
 - **Multi-wolt UX**: switching wolts works but UI is minimal
-- **Session routing cleanup**: old routing files aren't pruned
+- **Old session files**: `.state/sessions/` and `.state/session-routing/` are superseded by `.state/registry/` — can be deleted once confirmed stable
 - **Digest cron**: timezone handling is approximate
 - The split view UI (`public/split.html`) has grown organically — could use cleanup
 - `agents.md` in the repo root is older technical reference, may be out of date
