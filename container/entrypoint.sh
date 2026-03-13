@@ -158,24 +158,41 @@ rm -f "$WOLTS_DIR/.state/tunnel-url" "$WOLT_DIR/.state/tunnel-url"
 TUNNEL_PID=""
 
 if [ "${ENABLE_TUNNEL:-true}" != "false" ]; then
-  echo "opening tunnel..."
   TUNNEL_LOG="$WOLTS_DIR/.state/tunnel.log"
 
-  cloudflared tunnel --url http://localhost:3000 > "$TUNNEL_LOG" 2>&1 &
-  TUNNEL_PID=$!
+  if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
+    # Managed tunnel: permanent domain via Cloudflare dashboard
+    echo "starting managed tunnel → ${CF_TUNNEL_HOSTNAME:-<no hostname configured>}..."
+    cloudflared tunnel run --token "$CF_TUNNEL_TOKEN" > "$TUNNEL_LOG" 2>&1 &
+    TUNNEL_PID=$!
 
-  # Wait for tunnel URL (blocks until found, max 30s)
-  for i in $(seq 1 30); do
-    URL=$(grep -o 'https://[^ ]*trycloudflare.com' "$TUNNEL_LOG" 2>/dev/null | head -1)
-    if [ -n "$URL" ]; then
-      echo "$URL" > "$WOLTS_DIR/.state/tunnel-url"
-      # Also write to active wolt for backward compat (CLI reads it)
-      echo "$URL" > "$WOLT_DIR/.state/tunnel-url"
-      echo "tunnel ready: $URL"
-      break
+    if [ -n "${CF_TUNNEL_HOSTNAME:-}" ]; then
+      TUNNEL_URL="https://${CF_TUNNEL_HOSTNAME}"
+      echo "$TUNNEL_URL" > "$WOLTS_DIR/.state/tunnel-url"
+      echo "$TUNNEL_URL" > "$WOLT_DIR/.state/tunnel-url"
+      echo "tunnel ready: $TUNNEL_URL (permanent)"
+    else
+      echo "warning: CF_TUNNEL_TOKEN set but CF_TUNNEL_HOSTNAME missing — tunnel-url not written"
     fi
-    sleep 1
-  done
+
+  else
+    # Quick tunnel: ephemeral *.trycloudflare.com URL (default)
+    echo "opening tunnel..."
+    cloudflared tunnel --url http://localhost:3000 > "$TUNNEL_LOG" 2>&1 &
+    TUNNEL_PID=$!
+
+    # Wait for tunnel URL (blocks until found, max 30s)
+    for i in $(seq 1 30); do
+      URL=$(grep -o 'https://[^ ]*trycloudflare.com' "$TUNNEL_LOG" 2>/dev/null | head -1)
+      if [ -n "$URL" ]; then
+        echo "$URL" > "$WOLTS_DIR/.state/tunnel-url"
+        echo "$URL" > "$WOLT_DIR/.state/tunnel-url"
+        echo "tunnel ready: $URL"
+        break
+      fi
+      sleep 1
+    done
+  fi
 else
   echo "tunnel disabled — access via http://localhost:4444"
 fi
