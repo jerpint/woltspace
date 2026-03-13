@@ -570,7 +570,7 @@ def message_session(session_name: str, text: str) -> dict:
     # Claude exited — restart with --continue and deliver the message as the new prompt
     _bot_log("session_revive", {"session": safe, "text": text[:200]})
     try:
-        resume_cmd = f"claude --dangerously-skip-permissions --continue {shlex.quote(text)}"
+        resume_cmd = f"export WOLT_SESSION={shlex.quote(safe)} && claude --dangerously-skip-permissions --continue {shlex.quote(text)}"
         subprocess.run(["tmux", "send-keys", "-t", safe, "-l", resume_cmd], check=True)
         subprocess.run(["tmux", "send-keys", "-t", safe, "", "Enter"], check=True)
         return {"ok": True, "session": safe, "url": session_url, "status": "revived", "detail": "Claude had exited — restarted with --continue and delivered message"}
