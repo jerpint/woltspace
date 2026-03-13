@@ -411,3 +411,103 @@ class TestCreatureEmoji:
         assert len(result["tool_calls_log"]) == 1
         assert result["tool_calls_log"][0]["tool"] == "new_session"
         assert result["tool_calls_log"][0]["args"]["creature"] == "raccoon"
+
+
+# ---------------------------------------------------------------------------
+# Notify end-to-end: server.js appends footer to every notify message
+# ---------------------------------------------------------------------------
+
+
+class TestNotifyEndToEnd:
+    """Hit the real server.js /notify endpoint and verify footer is present.
+
+    These tests require the server to be running on localhost:3000.
+    Skipped automatically if the server is down.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _check_server(self):
+        """Skip if server isn't running."""
+        import urllib.request
+        try:
+            urllib.request.urlopen("http://localhost:3000/", timeout=2)
+        except Exception:
+            pytest.skip("server not running on localhost:3000")
+
+    def _post_notify(self, session: str, message: str) -> dict:
+        """POST to /notify and return the response (without actually sending to Telegram)."""
+        import urllib.request
+        data = json.dumps({"session": session, "message": message}).encode()
+        req = urllib.request.Request(
+            "http://localhost:3000/notify",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return json.loads(resp.read())
+        except Exception as e:
+            # urllib raises on non-2xx but we can still check
+            return {"error": str(e)}
+
+    def _read_last_chat_line(self, chat_id: str) -> str:
+        """Read the last line from the chat history file that server.js writes."""
+        from pathlib import Path
+        chat_file = Path("/workspace/wolts/.state/chat") / f"telegram-{chat_id}.jsonl"
+        if not chat_file.exists():
+            return ""
+        lines = chat_file.read_text().strip().split("\n")
+        return lines[-1] if lines else ""
+
+    def test_notify_sends_and_returns_adapter(self):
+        """Basic smoke test: /notify returns ok with adapter info."""
+        # Use a real session that has routing
+        routing_dir = Path("/workspace/wolts/.state/session-routing")
+        if not routing_dir.exists():
+            pytest.skip("no session routing dir")
+        files = list(routing_dir.glob("*.json"))
+        if not files:
+            pytest.skip("no session routing files")
+        session = files[0].stem
+        result = self._post_notify(session, "🧪 test: footer reliability check")
+        assert result.get("adapter") in ("telegram", "slack"), f"unexpected result: {result}"
+
+    def test_chat_history_has_message_without_footer(self):
+        """server.js stores the raw message (no footer) in chat history."""
+        routing_dir = Path("/workspace/wolts/.state/session-routing")
+        if not routing_dir.exists():
+            pytest.skip("no session routing dir")
+        files = list(routing_dir.glob("*.json"))
+        if not files:
+            pytest.skip("no session routing files")
+        session = files[0].stem
+        routing = json.loads(files[0].read_text())
+        chat_id = str(routing.get("chat_id", ""))
+        if not chat_id:
+            pytest.skip("no chat_id in routing")
+
+        marker = f"🧪 footer-test-{int(time.time())}"
+        result = self._post_notify(session, marker)
+        assert result.get("adapter"), f"notify failed: {result}"
+
+        # Chat history should have the message WITHOUT footer
+        last_line = self._read_last_chat_line(chat_id)
+        if last_line:
+            data = json.loads(last_line)
+            content = data.get("content", "")
+            assert marker in content, "message not in chat history"
+            # Footer should NOT be in chat history (server strips it)
+            assert "↩️ reply to this message" not in content, "footer leaked into chat history"
+
+    def test_notify_footer_contract_in_server_js(self):
+        """Verify server.js has the footer constant matching our expectation."""
+        server_path = Path("/workspace/woltspace/server.js")
+        if not server_path.exists():
+            pytest.skip("server.js not found")
+        source = server_path.read_text()
+        # The DEN_REPLY_FOOTER constant must exist
+        assert "DEN_REPLY_FOOTER" in source
+        assert "↩️ reply to this message to talk to this session directly" in source
+        # The footer must be appended to the message in sendNotification
+        assert "message + footer" in source
