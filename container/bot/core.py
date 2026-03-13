@@ -531,18 +531,48 @@ def read_memory(path: str) -> dict:
         return {"error": str(e)}
 
 
+def _pane_command(session_name: str) -> str | None:
+    """Return the current command running in a tmux session's pane."""
+    try:
+        result = subprocess.run(
+            ["tmux", "list-panes", "-t", session_name, "-F", "#{pane_current_command}"],
+            capture_output=True, text=True, check=True,
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return None
+
+
 def message_session(session_name: str, text: str) -> dict:
-    """Send a message directly to a running session via tmux."""
+    """Send a message to a session. If Claude has exited, restart it with --continue."""
     safe = "".join(c for c in session_name if c.isalnum() or c in "-_")
     if not safe:
         return {"error": "invalid session name"}
+
+    # Check if tmux session exists
+    cmd = _pane_command(safe)
+    if cmd is None:
+        return {"error": f"session {safe} not found"}
+
+    # If Claude is still running, send keys directly
+    if cmd not in ("bash", "sh", "zsh"):
+        try:
+            subprocess.run(["tmux", "send-keys", "-t", safe, "-l", text], check=True)
+            subprocess.run(["tmux", "send-keys", "-t", safe, "", "Enter"], check=True)
+            _bot_log("message_sent", {"session": safe, "text": text[:200]})
+            return {"ok": True, "session": safe}
+        except subprocess.CalledProcessError as e:
+            return {"error": f"tmux send-keys failed: {e}"}
+
+    # Claude exited — restart with --continue and deliver the message as the new prompt
+    _bot_log("session_revive", {"session": safe, "text": text[:200]})
     try:
-        subprocess.run(["tmux", "send-keys", "-t", safe, "-l", text], check=True)
+        resume_cmd = f"claude --dangerously-skip-permissions --continue {shlex.quote(text)}"
+        subprocess.run(["tmux", "send-keys", "-t", safe, "-l", resume_cmd], check=True)
         subprocess.run(["tmux", "send-keys", "-t", safe, "", "Enter"], check=True)
-        _bot_log("message_sent", {"session": safe, "text": text[:200]})
-        return {"ok": True, "session": safe}
+        return {"ok": True, "session": safe, "revived": True}
     except subprocess.CalledProcessError as e:
-        return {"error": f"tmux send-keys failed: {e}"}
+        return {"error": f"session revive failed: {e}"}
 
 
 def kill_session(name: str) -> bool:
