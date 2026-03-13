@@ -154,10 +154,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"[user replied to den]: {text}"
                 ),
             })
+            session_link = result.get("url") or den_session
             if result.get("status") == "revived":
-                await update.message.reply_text(f"🪵 session had exited — revived and delivered")
+                await update.message.reply_text(f"🪵 session had exited — revived and delivered\n{session_link}")
             else:
-                await update.message.reply_text(f"🪵 sent to {den_session}")
+                await update.message.reply_text(f"🪵 sent\n{session_link}")
         else:
             error = result.get("error", "unknown error")
             await update.message.reply_text(f"couldn't deliver: {error}")
@@ -252,10 +253,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result = message_session(den_session, den_msg)
         _bot_log("den_reply_voice", {"session": den_session, "text": text[:200], "result": result})
         if result.get("ok"):
+            session_link = result.get("url") or den_session
             if result.get("status") == "revived":
-                await update.message.reply_text(f"🪵 session had exited — revived and delivered")
+                await update.message.reply_text(f"🪵 session had exited — revived and delivered\n{session_link}")
             else:
-                await update.message.reply_text(f"🪵 sent to {den_session}")
+                await update.message.reply_text(f"🪵 sent\n{session_link}")
         else:
             error = result.get("error", "unknown error")
             await update.message.reply_text(f"couldn't deliver: {error}")
