@@ -324,7 +324,9 @@ async function sendNotification(session, message) {
       })();
 
   if (telegramToken && telegramChatId) {
-    await telegramSend(telegramToken, telegramChatId, message + DEN_REPLY_FOOTER);
+    // Embed session name in footer so the adapter can always route replies back
+    const footer = DEN_REPLY_FOOTER + `\nsession=${session}`;
+    await telegramSend(telegramToken, telegramChatId, message + footer);
     appendChatHistory('telegram', telegramChatId, message);
     return { adapter: 'telegram', chat_id: telegramChatId };
   }
