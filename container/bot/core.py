@@ -1097,13 +1097,26 @@ def get_response(
             name = tc.function.name
             args = json.loads(tc.function.arguments) if tc.function.arguments else {}
             _bot_log("tool_call", {"tool": name, "args": json.dumps(args)[:500], "round": round_num})
-            tool_calls_log.append({"tool": name, "args": args})
 
             try:
                 tool_result = _execute_tool(name, args, routing)
             except Exception as e:
                 _bot_log("tool_error", {"tool": name, "error": str(e)})
                 tool_result = json.dumps({"error": str(e)})
+
+            # Log with result so adapters can extract session URLs
+            log_entry = {"tool": name, "args": args}
+            try:
+                parsed = json.loads(tool_result)
+                if isinstance(parsed, dict) and parsed.get("url"):
+                    log_entry["url"] = parsed["url"]
+                if isinstance(parsed, dict) and parsed.get("name"):
+                    log_entry["session"] = parsed["name"]
+                if isinstance(parsed, dict) and parsed.get("creature"):
+                    log_entry["creature"] = parsed["creature"]
+            except (json.JSONDecodeError, TypeError):
+                pass
+            tool_calls_log.append(log_entry)
 
             messages.append({
                 "role": "tool",

@@ -172,26 +172,24 @@ def format_response(result: dict) -> str:
     return f"🦦 {wolt_name}: {text}"
 
 
+CREATURE_EMOJIS = {"raccoon": "🦝", "beaver": "🦫"}
+
+
 def _format_tool_log(tc: dict) -> str:
-    """Format a single tool call as a deterministic log line. Max ~120 chars."""
+    """Format a single tool call as a compact log line."""
     name = tc["tool"]
-    args = tc.get("args", {})
-    parts = []
-    if "session_name" in args:
-        parts.append(f"session={args['session_name']}")
-    if "creature" in args:
-        parts.append(f"creature={args['creature']}")
-    if "wolt" in args:
-        parts.append(f"wolt={args['wolt']}")
-    for key in ("prompt", "text", "query"):
-        if key in args:
-            val = args[key][:40].replace("\n", " ")
-            parts.append(val)
-            break
-    if "path" in args:
-        parts.append(args["path"])
-    detail = " — " + ", ".join(parts) if parts else ""
-    return f"🪵 {name}{detail}"
+    creature = tc.get("creature") or tc.get("args", {}).get("creature", "")
+    emoji = CREATURE_EMOJIS.get(creature, "")
+    wolt = tc.get("args", {}).get("wolt", "")
+    recipient = f"{emoji} {wolt}".strip()
+
+    line = f"🪵 {recipient} — {name}" if recipient else f"🪵 {name}"
+
+    url = tc.get("url", "")
+    if url:
+        line += f"\n{url}"
+
+    return line
 
 
 async def _post_result(client, channel: str, thread_ts: str, result: dict):
