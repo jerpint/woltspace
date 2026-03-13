@@ -860,7 +860,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "send_message",
-            "description": "Send a message to a running Claude Code session. The message is queued and delivered automatically when the session goes idle (Claude finishes its current response). Use when you want to nudge, inform, or redirect a running session without spawning a new one.",
+            "description": "Send a message to a Claude Code session. If Claude is still running, delivers directly. If Claude exited (session idle at shell), revives it with --continue and delivers the message. Check the result: 'revived: true' means the session had died and was restarted — tell the user.",
             "parameters": {
                 "type": "object",
                 "properties": {
