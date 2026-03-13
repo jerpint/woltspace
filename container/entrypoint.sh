@@ -41,17 +41,17 @@ if [ -d "$WOLT_DIR/.claude/skills" ]; then
   cp -r "$WOLT_DIR/.claude/skills/." /home/node/.claude/skills/ 2>/dev/null || true
 fi
 
-# Set up SSH for deploy key (git push)
-if [ -f /home/node/.ssh/deploy-key ]; then
-  mkdir -p /home/node/.ssh
-  ssh-keyscan -t ed25519 github.com >> /home/node/.ssh/known_hosts 2>/dev/null
-  cat > /home/node/.ssh/config <<'SSHEOF'
-Host github.com
-  IdentityFile /home/node/.ssh/deploy-key
-  IdentitiesOnly yes
-SSHEOF
-  chmod 600 /home/node/.ssh/config
-fi
+# # Set up SSH for deploy key (git push)
+# if [ -f /home/node/.ssh/deploy-key ]; then
+#   mkdir -p /home/node/.ssh
+#   ssh-keyscan -t ed25519 github.com >> /home/node/.ssh/known_hosts 2>/dev/null
+#   cat > /home/node/.ssh/config <<'SSHEOF'
+# Host github.com
+#   IdentityFile /home/node/.ssh/deploy-key
+#   IdentitiesOnly yes
+# SSHEOF
+#   chmod 600 /home/node/.ssh/config
+# fi
 
 # Add container/lib to PYTHONPATH so sessions.py is importable everywhere
 export PYTHONPATH="$WOLTSPACE_DIR/container/lib:${PYTHONPATH:-}"
