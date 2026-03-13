@@ -324,7 +324,13 @@ async function sendNotification(session, message) {
       })();
 
   if (telegramToken && telegramChatId) {
-    await telegramSend(telegramToken, telegramChatId, message + DEN_REPLY_FOOTER);
+    // Embed session URL in footer — clickable link + adapter can extract session name
+    const tunnelFile = join(WOLTS_STATE_DIR, 'tunnel-url');
+    let tunnelUrl = '';
+    try { tunnelUrl = readFileSync(tunnelFile, 'utf8').trim(); } catch {}
+    const sessionUrl = tunnelUrl ? `${tunnelUrl}/tui?session=${session}` : `session=${session}`;
+    const footer = `\n\n---` + DEN_REPLY_FOOTER + `\n${sessionUrl}`;
+    await telegramSend(telegramToken, telegramChatId, message + footer);
     appendChatHistory('telegram', telegramChatId, message);
     return { adapter: 'telegram', chat_id: telegramChatId };
   }

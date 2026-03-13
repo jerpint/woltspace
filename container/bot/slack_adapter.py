@@ -16,7 +16,7 @@ from pathlib import Path
 from collections import defaultdict
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
-from bot.core import get_response, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, read_session_routing, _bot_log, build_ack_text
+from bot.core import get_response, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, read_session_routing, _bot_log, build_ack_text, _sanitize_history
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -89,7 +89,7 @@ def _load_history(channel: str, thread_ts: str) -> list:
             messages.append(json.loads(line))
         except json.JSONDecodeError:
             continue
-    return messages
+    return _sanitize_history(messages)
 
 
 def _strip_mention(text: str, bot_user_id: str) -> str:
@@ -163,19 +163,51 @@ def format_response(result: dict) -> str:
             text = result["text"]
         else:
             s = result["session"]
-            text = build_ack_text(s.get("url"), s.get("name"), "slack")
+            text = build_ack_text(s.get("url"), s.get("name"), "slack", creature=s.get("creature"))
     elif result["type"] == "image":
-        text = result.get("caption", "") or result.get("filename", "image")
+        text = result.get("text", "") or result.get("caption", "") or result.get("filename", "image")
     else:
         text = result["text"]
     wolt_name = os.environ.get("WOLT_NAME", "wolt")
     return f"🦦 {wolt_name}: {text}"
 
 
+CREATURE_EMOJIS = {"raccoon": "🦝", "beaver": "🦫"}
+
+
+def _format_tool_log(tc: dict) -> str:
+    """Format a single tool call as a compact log line."""
+    name = tc["tool"]
+    creature = tc.get("creature") or tc.get("args", {}).get("creature", "")
+    emoji = CREATURE_EMOJIS.get(creature, "")
+    wolt = tc.get("args", {}).get("wolt", "")
+    recipient = f"{emoji} {wolt}".strip()
+
+    line = f"🪵 {recipient} — {name}" if recipient else f"🪵 {name}"
+
+    url = tc.get("url", "")
+    if url:
+        line += f"\n{url}"
+
+    return line
+
+
 async def _post_result(client, channel: str, thread_ts: str, result: dict):
-    """Post a result to Slack — handles text, session, and image types."""
+    """Post a result to Slack — handles text, session, and image types.
+    Sends deterministic tool call logs before the final response."""
+    # Send tool call logs first
+    for tc in result.get("tool_calls_log", []):
+        try:
+            await client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text=_format_tool_log(tc),
+            )
+        except Exception:
+            pass
+
     if result["type"] == "image":
-        caption = result.get("caption", "")
+        caption = result.get("text", "") or result.get("caption", "")
         with open(result["path"], "rb") as f:
             await client.files_upload_v2(
                 channel=channel,

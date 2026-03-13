@@ -38,9 +38,6 @@ BOT_LOG_DIR.mkdir(parents=True, exist_ok=True)
 SESSION_ROUTING_DIR = WOLTS_DIR / ".state" / "session-routing"
 RUN_SESSION_SCRIPT = Path("/workspace/woltspace/container/bin/run-session.sh")
 
-# Tools that end the agent loop — one final LLM call for ack/caption, then return
-TERMINAL_TOOLS = {"claude_code", "new_session", "generate_image"}
-
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -131,45 +128,27 @@ def build_system_prompt() -> str:
     human_name = os.environ.get("HUMAN_NAME", "human")
     adapter = os.environ.get("BOT_ADAPTER", "chat")
 
-    base = f"""You are {wolt_name} — a wolt. You talk to {human_name} through {adapter}.
-
-## First contact
-If conversation history is empty (this is the first message), briefly introduce yourself in 1-2 sentences — your name, and the one thing you do: spin up work sessions to build stuff. Lead with eagerness: you've got a canvas and you want to use it. Invite them to throw something at you. Keep it casual and short, then respond to whatever they said.
+    base = f"""You are {wolt_name} — a wolt (🦦 otter). You talk to {human_name} through {adapter}.
+You're the router — you take requests and delegate real work to Claude Code sessions (🦫 beavers).
 
 ## Voice
-Talk like a person, not an assistant. Short messages. Lowercase is fine. You have opinions and you share them. No bullet lists, no "certainly!", no formal summaries. If you don't know something, say so. If something's interesting, say why.
-
-## Bias toward action
-If a request is vague but has enough to start, just start. Pick reasonable defaults, mention what you picked, and go. Only ask a clarifying question if you truly cannot proceed without the answer. Never ask more than one question at a time.
+Talk like a person, not an assistant. Short messages. Lowercase is fine. No bullet lists, no "certainly!", no formal summaries. If you don't know something, say so. If something's interesting, say why. Bias toward action — if a request has enough to start, just start.
 
 ## Tools
 You have tools. Use them. Never describe what you would do — always invoke the tool directly.
-CRITICAL: If a task requires claude_code, call claude_code. Writing out what you would do instead of calling the tool is a failure.
+CRITICAL: If a task requires claude_code, call claude_code. Don't narrate what you'd do instead.
 
-- **claude_code** — spin up a Claude Code session for real work (build, search, code, generate)
-- **send_message** — queue a message for delivery to a running session. Use when someone wants to nudge, redirect, or ask something of a running session. CRITICAL: actually call this tool — don't say "I'll send it" and skip the call.
-- **list_sessions** / **check_session** — list active sessions or check what one is doing
-- **read_memory** — read a specific memory file (music-taste.md, following.md, etc.) when you need details not in the system prompt
-- **get_tunnel_url** — get the current public URL for your split view
-- **get_recent_sessions** — read summaries of recent sessions (what was built, artifact links). Use when someone asks what happened, what was made, or wants a link from a past session.
+- **claude_code** — spin up a Claude Code session (🦫 beaver) for real work
+- **send_message** — send a message to a running session
+- **list_sessions** / **check_session** — see what's running or check on a session
+- **read_memory** — read a specific memory file when you need details
+- **get_recent_sessions** — read session summaries (what was built, links)
+- **get_tunnel_url** — get the public URL for the split view
 
 ## Communication Protocol
-Messages wrapped in <system>...</system> tags are context from Claude Code sessions (the "den").
-They were sent directly to the user — you didn't say them. They're in your history so you know
-what happened, but do not respond to them or repeat them. When the user asks about results,
-use the context from these messages to answer in your own words.
+Messages wrapped in <system>...</system> tags are from Claude Code sessions (the "den"). They were sent directly to the user — you didn't say them. Don't repeat them. When asked about results, use that context to answer in your own words.
 
-You never produce 🦫 yourself — that prefix belongs to den sessions.
-
-When you call claude_code and the session starts, you'll get back the session info (name, url). Craft a single response:
-- Line 1: `🪵 session started — "pick a beaver-style quote"`
-- Then 1-2 lines: your actual take — what you kicked off, what you expect, any context worth noting
-- If there's a session URL, include it at the end with a note that it's a **live view** — the human can open it to watch the work happen in real time (terminal on the left, preview on the right). The actual built thing will be linked when the session finishes.
-
-Beaver quotes (pick one that fits the vibe):
-"gnawing through it, one log at a time" / "flat tail, sharp teeth, on it" / "a beaver never abandons a dam mid-build" / "gnaw first, ask questions later" / "the dam won't build itself. chomping." / "every great lodge starts with one log" / "chop wood, carry water, ship code" / "tooth to bark. we're in."
-
-Keep the whole thing short — you're an orchestrator, not a narrator. Do NOT produce 🪵 outside of this context.
+When you start a session, keep the ack short: what you kicked off, what to expect, and the live view URL if available.
 
 ## Memory
 Your identity and context come from memory files below. Use them — reference past work, ongoing projects, shared context. You're not starting fresh each time."""
@@ -222,11 +201,15 @@ def _short_session_name(session_name: str) -> str:
     return "-".join(rest.split("-")[:-1]) if rest.count("-") >= 2 else rest
 
 
-def build_ack_text(url: str = None, session_name: str = None, adapter: str = None) -> str:
+CREATURE_EMOJIS = {"raccoon": "🦝", "beaver": "🦫"}
+
+
+def build_ack_text(url: str = None, session_name: str = None, adapter: str = None, creature: str = None) -> str:
     """Build the 🪵 ack message shown when a session starts."""
     quote = random.choice(BEAVER_ACKS)
     wolt_name = session_name.split("-")[0] if session_name else "wolt"
-    text = f'🪵 session started - "{quote}"\n\n🦫 assigned: {wolt_name}'
+    emoji = CREATURE_EMOJIS.get(creature, "🦫")
+    text = f'🪵 session started - "{quote}"\n\n{emoji} assigned: {wolt_name}'
     if url:
         text += f"\n\n---\nsession: {url}"
     return text
@@ -259,9 +242,12 @@ def read_session_routing(session_name: str) -> dict | None:
     return None
 
 
-def build_session_command(session_name: str, work_dir: str, prompt: str) -> str:
+def build_session_command(session_name: str, work_dir: str, prompt: str, model: str = None) -> str:
     """Build the shell command that tmux will execute. Separated for testability."""
-    return f"{RUN_SESSION_SCRIPT} {shlex.quote(session_name)} {shlex.quote(work_dir)} {shlex.quote(prompt)}"
+    cmd = f"{RUN_SESSION_SCRIPT} {shlex.quote(session_name)} {shlex.quote(work_dir)} {shlex.quote(prompt)}"
+    if model:
+        cmd += f" {shlex.quote(model)}"
+    return cmd
 
 
 def get_session_status(session_name: str) -> dict | None:
@@ -300,8 +286,18 @@ def _call_server(method: str, path: str, body: dict | None = None) -> dict:
         return json.loads(resp.read())
 
 
-def start_claude_session(prompt: str, wolt: str = None) -> dict:
-    """Start an interactive Claude Code session in a named tmux session."""
+# Map creature names to Claude model aliases
+CREATURE_MODELS = {
+    "raccoon": "opus",    # 🦝 orchestrator — complex planning, multi-step reasoning
+    "beaver": "sonnet",   # 🦫 worker — building, coding, grunt work
+}
+
+
+def start_claude_session(prompt: str, wolt: str = None, creature: str = None) -> dict:
+    """Start an interactive Claude Code session in a named tmux session.
+
+    creature: optional "raccoon" (opus) or "beaver" (sonnet) to pick the model.
+    """
     if wolt:
         target_dir = WOLTS_DIR / wolt
         if not target_dir.is_dir():
@@ -312,8 +308,9 @@ def start_claude_session(prompt: str, wolt: str = None) -> dict:
 
     target_name = wolt or os.environ.get("WOLT_NAME", "wolt")
     session_name = _session_name(target_name)
+    model = CREATURE_MODELS.get(creature) if creature else None
 
-    cmd = build_session_command(session_name, str(target_dir), prompt)
+    cmd = build_session_command(session_name, str(target_dir), prompt, model=model)
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", session_name, "-c", str(target_dir), cmd],
         check=True,
@@ -322,13 +319,16 @@ def start_claude_session(prompt: str, wolt: str = None) -> dict:
     tunnel_url = get_tunnel_url()
     session_url = f"{tunnel_url}/tui?session={session_name}" if tunnel_url else None
     result = {"name": session_name, "url": session_url, "wolt": target_name}
-    _bot_log("session_start", {"session": session_name, "wolt": target_name, "dir": str(target_dir), "prompt": prompt[:500]})
+    if creature:
+        result["creature"] = creature
+        result["model"] = model
+    _bot_log("session_start", {"session": session_name, "wolt": target_name, "dir": str(target_dir), "creature": creature, "model": model, "prompt": prompt[:500]})
     return result
 
 
-def new_session(prompt: str, from_session: str = None, wolt: str = None) -> dict:
+def new_session(prompt: str, from_session: str = None, wolt: str = None, creature: str = None) -> dict:
     """Start a fresh Claude Code session and redirect the current viewport to it."""
-    session = start_claude_session(prompt, wolt=wolt)
+    session = start_claude_session(prompt, wolt=wolt, creature=creature)
 
     # Determine which viewport to redirect
     redirect_from = from_session
@@ -535,18 +535,72 @@ def read_memory(path: str) -> dict:
         return {"error": str(e)}
 
 
+def _session_has_claude(session_name: str) -> bool | None:
+    """Check if a tmux session has a claude process running in its pane.
+
+    Returns True if claude is in the process tree, False if only a shell is running,
+    None if the session doesn't exist.
+
+    Uses pane_pid to walk the process tree instead of pane_current_command,
+    which only shows the foreground process (unreliable when Claude runs subprocesses).
+    """
+    try:
+        result = subprocess.run(
+            ["tmux", "list-panes", "-t", session_name, "-F", "#{pane_pid}"],
+            capture_output=True, text=True, check=True,
+        )
+        pane_pid = result.stdout.strip()
+        if not pane_pid:
+            return None
+        # Check all descendants of the pane's shell for a claude process
+        ps_result = subprocess.run(
+            ["ps", "--ppid", pane_pid, "-o", "comm=", "--no-headers"],
+            capture_output=True, text=True,
+        )
+        children = ps_result.stdout.strip().split("\n")
+        # claude or run-session (still launching) means alive
+        for child in children:
+            child = child.strip()
+            if child in ("claude", "run-session.sh", "run-session"):
+                return True
+        return False
+    except subprocess.CalledProcessError:
+        return None
+
+
 def message_session(session_name: str, text: str) -> dict:
-    """Send a message directly to a running session via tmux."""
+    """Send a message to a session. If Claude has exited, restart it with --continue."""
     safe = "".join(c for c in session_name if c.isalnum() or c in "-_")
     if not safe:
         return {"error": "invalid session name"}
+
+    tunnel_url = get_tunnel_url()
+    session_url = f"{tunnel_url}/tui?session={safe}" if tunnel_url else None
+
+    # Check if tmux session exists and whether Claude is running
+    claude_alive = _session_has_claude(safe)
+    if claude_alive is None:
+        return {"ok": False, "error": f"session {safe} not found — it may have been killed or expired", "session": safe, "url": session_url}
+
+    # If Claude is still running, send keys directly
+    if claude_alive:
+        try:
+            subprocess.run(["tmux", "send-keys", "-t", safe, "-l", text], check=True)
+            subprocess.run(["tmux", "send-keys", "-t", safe, "", "Enter"], check=True)
+            _bot_log("message_sent", {"session": safe, "text": text[:200]})
+            return {"ok": True, "session": safe, "url": session_url, "status": "delivered", "detail": "Claude is running, message sent directly"}
+        except subprocess.CalledProcessError as e:
+            return {"ok": False, "error": f"tmux send-keys failed: {e}", "session": safe, "url": session_url}
+
+    # Claude exited — restart with --continue and deliver the message as the new prompt
+    _bot_log("session_revive", {"session": safe, "text": text[:200]})
     try:
-        subprocess.run(["tmux", "send-keys", "-t", safe, "-l", text], check=True)
+        resume_cmd = f"export WOLT_SESSION={shlex.quote(safe)} && claude --dangerously-skip-permissions --continue {shlex.quote(text)}"
+        subprocess.run(["tmux", "send-keys", "-t", safe, "-l", resume_cmd], check=True)
         subprocess.run(["tmux", "send-keys", "-t", safe, "", "Enter"], check=True)
-        _bot_log("message_sent", {"session": safe, "text": text[:200]})
-        return {"ok": True, "session": safe}
+        return {"ok": True, "session": safe, "url": session_url, "status": "revived", "detail": "Claude had exited — restarted with --continue and delivered message"}
     except subprocess.CalledProcessError as e:
-        return {"error": f"tmux send-keys failed: {e}"}
+        return {"ok": False, "error": f"session revive failed: {e}", "session": safe, "url": session_url}
 
 
 def kill_session(name: str) -> bool:
@@ -566,21 +620,35 @@ def kill_session(name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _routing_with_creature(routing: dict | None, creature: str | None) -> dict | None:
+    """Merge creature into routing dict so notify can read it."""
+    if not routing:
+        return {"creature": creature} if creature else None
+    if creature:
+        return {**routing, "creature": creature}
+    return routing
+
+
 def _tool_claude_code(args: dict, routing: dict | None) -> str:
-    session = start_claude_session(args["prompt"], wolt=args.get("wolt"))
-    if routing:
-        write_session_routing(session["name"], routing)
+    creature = args.get("creature")
+    session = start_claude_session(args["prompt"], wolt=args.get("wolt"), creature=creature)
+    merged = _routing_with_creature(routing, creature)
+    if merged:
+        write_session_routing(session["name"], merged)
     return json.dumps(session)
 
 
 def _tool_new_session(args: dict, routing: dict | None) -> str:
+    creature = args.get("creature")
     session = new_session(
         args["prompt"],
         from_session=args.get("from_session"),
         wolt=args.get("wolt"),
+        creature=creature,
     )
-    if routing:
-        write_session_routing(session["name"], routing)
+    merged = _routing_with_creature(routing, creature)
+    if merged:
+        write_session_routing(session["name"], merged)
     return json.dumps(session)
 
 
@@ -605,8 +673,13 @@ def _tool_find_session(args: dict, routing: dict | None) -> str:
 
 
 def _tool_kill_session(args: dict, routing: dict | None) -> str:
-    killed = kill_session(args["session_name"])
-    return json.dumps({"killed": killed, "session": args["session_name"]})
+    name = args["session_name"]
+    killed = kill_session(name)
+    tunnel_url = get_tunnel_url()
+    url = f"{tunnel_url}/tui?session={name}" if tunnel_url else None
+    if killed:
+        return json.dumps({"ok": True, "session": name, "url": url, "detail": f"session {name} killed"})
+    return json.dumps({"ok": False, "session": name, "url": url, "error": f"couldn't kill {name} — may not exist or is the main session"})
 
 
 def _tool_send_message(args: dict, routing: dict | None) -> str:
@@ -666,7 +739,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "claude_code",
-            "description": "Delegate a task to a Claude Code session. Use for building, searching, coding, generating artifacts, or any real work. You can target a specific wolt by name (e.g. 'neowolt' for music/curation, or yourself for general tasks).",
+            "description": "Delegate a task to a Claude Code session. Use for building, searching, coding, generating artifacts, or any real work. You can target a specific wolt and pick a creature type (raccoon=opus for complex work, beaver=sonnet for building).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -676,7 +749,12 @@ TOOLS = [
                     },
                     "wolt": {
                         "type": "string",
-                        "description": "Which wolt to run the session as. Defaults to current active wolt. Use 'neowolt' for music, curation, infra work.",
+                        "description": "Which wolt to run the session as. Defaults to current active wolt.",
+                    },
+                    "creature": {
+                        "type": "string",
+                        "enum": ["raccoon", "beaver"],
+                        "description": "Which creature to run: 'raccoon' (🦝 opus — complex reasoning, orchestration) or 'beaver' (🦫 sonnet — building, coding). Defaults to the wolt's default model if omitted.",
                     },
                 },
                 "required": ["prompt"],
@@ -687,7 +765,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "new_session",
-            "description": "Start a fresh Claude Code session and switch the current viewport to it — no new tab, no hunting for a link. Use when jerpint says 'new session', 'start fresh', 'open a new claude'. The terminal pane will automatically switch to the new session within ~2 seconds. Prefer over claude_code when the intent is starting an interactive session, not delegating a background task.",
+            "description": "Start a fresh Claude Code session and switch the current viewport to it. Prefer over claude_code when the intent is starting an interactive session, not delegating a background task.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -702,6 +780,11 @@ TOOLS = [
                     "wolt": {
                         "type": "string",
                         "description": "Which wolt to run the session as. Defaults to current active wolt.",
+                    },
+                    "creature": {
+                        "type": "string",
+                        "enum": ["raccoon", "beaver"],
+                        "description": "Which creature to run: 'raccoon' (opus) or 'beaver' (sonnet). Defaults to wolt's default model.",
                     },
                 },
                 "required": ["prompt"],
@@ -823,7 +906,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "send_message",
-            "description": "Send a message to a running Claude Code session. The message is queued and delivered automatically when the session goes idle (Claude finishes its current response). Use when you want to nudge, inform, or redirect a running session without spawning a new one.",
+            "description": "Send a message to a Claude Code session. If Claude is still running, delivers directly. If Claude exited (session idle at shell), revives it with --continue and delivers the message. Check the result: 'revived: true' means the session had died and was restarted — tell the user.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -982,6 +1065,7 @@ def get_response(
 
     result_type = "text"
     result_extras = {}
+    tool_calls_log = []  # deterministic log of every tool call fired
     rounds_used = 0
 
     for round_num in range(MAX_TOOL_ROUNDS):
@@ -1020,6 +1104,20 @@ def get_response(
                 _bot_log("tool_error", {"tool": name, "error": str(e)})
                 tool_result = json.dumps({"error": str(e)})
 
+            # Log with result so adapters can extract session URLs
+            log_entry = {"tool": name, "args": args}
+            try:
+                parsed = json.loads(tool_result)
+                if isinstance(parsed, dict) and parsed.get("url"):
+                    log_entry["url"] = parsed["url"]
+                if isinstance(parsed, dict) and parsed.get("name"):
+                    log_entry["session"] = parsed["name"]
+                if isinstance(parsed, dict) and parsed.get("creature"):
+                    log_entry["creature"] = parsed["creature"]
+            except (json.JSONDecodeError, TypeError):
+                pass
+            tool_calls_log.append(log_entry)
+
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
@@ -1027,7 +1125,7 @@ def get_response(
             })
 
             # Track terminal tools that define the response type
-            if name == "claude_code":
+            if name in ("claude_code", "new_session"):
                 result_type = "session"
                 result_extras["session"] = json.loads(tool_result)
                 has_terminal = True
@@ -1069,12 +1167,13 @@ def get_response(
     # Build history: everything the model produced after the user message
     history_messages = messages[new_msg_start:]
 
-    _bot_log("response", {"type": result_type, "text": text[:500], "rounds": rounds_used})
+    _bot_log("response", {"type": result_type, "text": text[:500], "rounds": rounds_used, "tool_calls": len(tool_calls_log)})
 
     return {
         "type": result_type,
         "text": text,
         "history_messages": history_messages,
+        "tool_calls_log": tool_calls_log,
         **result_extras,
     }
 

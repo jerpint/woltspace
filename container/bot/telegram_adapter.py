@@ -97,19 +97,52 @@ def format_response(result: dict) -> str:
             text = result["text"]
         else:
             s = result["session"]
-            text = build_ack_text(s.get("url"), s.get("name"), "telegram")
+            text = build_ack_text(s.get("url"), s.get("name"), "telegram", creature=s.get("creature"))
     elif result["type"] == "image":
-        text = result.get("caption", "") or result.get("filename", "image")
+        text = result.get("text", "") or result.get("caption", "") or result.get("filename", "image")
     else:
         text = result["text"]
     wolt_name = os.environ.get("WOLT_NAME", "wolt")
     return f"🦦 {wolt_name}: {text}"
 
 
+CREATURE_EMOJIS = {"raccoon": "🦝", "beaver": "🦫"}
+
+
+def _format_tool_log(tc: dict) -> str:
+    """Format a single tool call as a compact log line.
+
+    Format: 🪵 🦝 neowolt — new_session
+            https://tunnel/tui?session=neowolt-xxx
+    """
+    name = tc["tool"]
+    creature = tc.get("creature") or tc.get("args", {}).get("creature", "")
+    emoji = CREATURE_EMOJIS.get(creature, "")
+    wolt = tc.get("args", {}).get("wolt", "")
+    recipient = f"{emoji} {wolt}".strip()
+
+    line = f"🪵 {recipient} — {name}" if recipient else f"🪵 {name}"
+
+    # Add session link from tool result
+    url = tc.get("url", "")
+    if url:
+        line += f"\n{url}"
+
+    return line
+
+
 async def _send_result(update: Update, result: dict):
-    """Send a result to the user — handles text, session, and image types."""
+    """Send a result to the user — handles text, session, and image types.
+    Sends deterministic tool call logs before the final response."""
+    # Send tool call logs first
+    for tc in result.get("tool_calls_log", []):
+        try:
+            await update.message.reply_text(_format_tool_log(tc))
+        except Exception:
+            pass  # don't let log failures block the response
+
     if result["type"] == "image":
-        caption = result.get("caption") or None
+        caption = result.get("text") or result.get("caption") or None
         with open(result["path"], "rb") as f:
             await update.message.reply_photo(photo=f, caption=caption)
     else:
@@ -139,14 +172,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         human_name = os.environ.get("HUMAN_NAME", "human")
         # Send to session with context about where it came from
         den_msg = (
-            f"[telegram] {human_name} says: {text}\n"
-            f"Respond to them via the notify skill when you have an update."
+            f"[telegram message from {human_name}]: {text}\n"
+            f"Reply back to them with: notify \"your message\""
         )
         result = message_session(den_session, den_msg)
         chat_id = update.effective_chat.id
-        _bot_log("den_reply", {"session": den_session, "text": text[:200]})
+        _bot_log("den_reply", {"session": den_session, "text": text[:200], "result": result})
         if result.get("ok"):
-            # Append to history as context-only (Haiku sees it but doesn't respond)
             _append_message(chat_id, {
                 "role": "user",
                 "content": (
@@ -155,9 +187,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"[user replied to den]: {text}"
                 ),
             })
-            await update.message.reply_text(f"🪵 sent to the session in the den")
+            session_link = result.get("url") or den_session
+            if result.get("status") == "revived":
+                await update.message.reply_text(f"🪵 session had exited — revived and delivered\n{session_link}")
+            else:
+                await update.message.reply_text(f"🪵 sent\n{session_link}")
         else:
-            await update.message.reply_text(f"session {den_session} isn't running anymore")
+            error = result.get("error", "unknown error")
+            await update.message.reply_text(f"couldn't deliver: {error}")
         return
 
     # In group chats, only respond when @mentioned or replied to
@@ -243,15 +280,20 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if den_session:
         human_name = os.environ.get("HUMAN_NAME", "human")
         den_msg = (
-            f"[telegram voice] {human_name} says: {text}\n"
-            f"Respond to them via the notify skill when you have an update."
+            f"[telegram voice from {human_name}]: {text}\n"
+            f"Reply back to them with: notify \"your message\""
         )
         result = message_session(den_session, den_msg)
-        _bot_log("den_reply_voice", {"session": den_session, "text": text[:200]})
+        _bot_log("den_reply_voice", {"session": den_session, "text": text[:200], "result": result})
         if result.get("ok"):
-            await update.message.reply_text(f"🪵 sent to the session in the den")
+            session_link = result.get("url") or den_session
+            if result.get("status") == "revived":
+                await update.message.reply_text(f"🪵 session had exited — revived and delivered\n{session_link}")
+            else:
+                await update.message.reply_text(f"🪵 sent\n{session_link}")
         else:
-            await update.message.reply_text(f"session {den_session} isn't running anymore")
+            error = result.get("error", "unknown error")
+            await update.message.reply_text(f"couldn't deliver: {error}")
         return
 
     # Process as a normal text message
