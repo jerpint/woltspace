@@ -163,7 +163,7 @@ def _start_digest_cron():
 
 
 # --- Tool GC ---
-// jerpint: what is this lol
+# jerpint: what is this lol
 
 def _start_tool_gc():
     import threading
@@ -178,7 +178,7 @@ def _start_tool_gc():
 
 
 # --- Lifespan ---
-// also this?
+# jerpint: also this?
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -200,7 +200,7 @@ app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
 
 # --- Middleware: CORS ---
 
-// nice well need some proper auth layers to separate /public/ from the rest
+# jerpint: nice well need some proper auth layers to separate /public/ from the rest
 
 @app.middleware("http")
 async def cors_middleware(request: Request, call_next):
@@ -221,18 +221,18 @@ def _shell_quote(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
 
 
-// what trickery is this well need to revise all these hacks
+# jerpint: what trickery is this well need to revise all these hacks
 def _inject_livereload(html: str) -> str:
     if "</body>" in html:
         return html.replace("</body>", LIVERELOAD_SCRIPT + "</body>")
     return html + LIVERELOAD_SCRIPT
 
 
-// what do we serve as static vs not?
-// overall i think it might be simpler to think of each serve as a single service
-// tbd how memory intensive this is, but e.g. each session is powered by its own single python --serve index.html with
-its own port so theyre really easy to just swap out and share. we shouldnt have different routes for different types
-// maybe static pages an have something less overkill, but it would be nice to have a unified way of doing things
+# jerpint: what do we serve as static vs not?
+# overall i think it might be simpler to think of each serve as a single service
+# tbd how memory intensive this is, but e.g. each session is powered by its own single python --serve index.html with
+# its own port so theyre really easy to just swap out and share. we shouldnt have different routes for different types
+# maybe static pages an have something less overkill, but it would be nice to have a unified way of doing things
 async def _serve_static(url_path: str, request: Request | None = None) -> Response | None:
     """Serve from wolt/site/."""
     full_path = SITE_DIR / url_path.lstrip("/")
@@ -253,7 +253,7 @@ async def _serve_static(url_path: str, request: Request | None = None) -> Respon
     return Response(content, media_type=mime, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
-// will have to look into how this works and security around it
+# jerpint: will have to look into how this works and security around it
 async def _serve_platform_file(filename: str) -> Response | None:
     """Serve from public/ (platform UI)."""
     path = PUBLIC_DIR / filename
@@ -267,7 +267,7 @@ async def _serve_platform_file(filename: str) -> Response | None:
 # ROUTES
 # ============================================================
 
-// good idea, but eventually should be tied to version of woltspace package not just plaintext
+# jerpint: good idea, but eventually should be tied to version of woltspace package not just plaintext
 @app.get("/version")
 async def version():
     return PlainTextResponse("woltspace-v1")
@@ -275,7 +275,7 @@ async def version():
 
 # --- Viewport control ---
 
-// not sure if a concept of current is useful, but could be, e.g. current vs last
+# jerpint: not sure if a concept of current is useful, but could be, e.g. current vs last
 @app.post("/current")
 async def post_current(request: Request):
     session = sanitize_session(request.query_params.get("session", "main"))
@@ -316,7 +316,7 @@ async def get_current_meta(request: Request):
     return data
 
 
-// why this?
+# jerpint: why this?
 @app.post("/sessions/redirect")
 async def post_session_redirect(request: Request):
     body = await request.json()
@@ -504,9 +504,9 @@ async def list_sessions():
 
 
 # --- Sparks ---
-// i think the concept of sparks will disappear, or be renamed and rethought as a concept
-// wee will need session history, and within a session we might want to support versionoing (though maybe just let users
-                                                                                             use git for that)
+# jerpint: i think the concept of sparks will disappear, or be renamed and rethought as a concept
+# wee will need session history, and within a session we might want to support versionoing (though maybe just let users
+# use git for that)
 
 @app.get("/history")
 async def history():
@@ -661,7 +661,7 @@ async def list_shares():
     return shares
 
 
-// what are these tokens? who issues them? isnt public just public?
+# jerpint: what are these tokens? who issues them? isnt public just public?
 @app.delete("/shares/{token}")
 async def delete_share(token: str):
     share_file = SHARES_DIR / f"{token}.json"
@@ -713,8 +713,8 @@ async def public_proxy(token: str, request: Request, path: str = ""):
 
 # --- Tools ---
 
-// this is for the telegram bots right? good idea to have them all in one place, but maybe we can have this in a
-separate /bot/ route
+# jerpint: this is for the telegram bots right? good idea to have them all in one place, but maybe we can have this in a
+# separate /bot/ route
 @app.get("/tools")
 async def list_tools():
     return tool_registry.list_all()
@@ -815,7 +815,7 @@ async def tui_page():
     return resp or PlainTextResponse("split.html not found", status_code=500)
 
 
-// this one will be important to nail we might review onboarding flow
+# jerpint: this one will be important to nail we might review onboarding flow
 @app.get("/onboard")
 async def onboard_page():
     resp = await _serve_platform_file("onboard.html")

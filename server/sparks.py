@@ -1,5 +1,5 @@
-// we need docs / session to brainstorm on what sparks are anymore - they were useful pre current woltspace but still
-seem to be everywhere not sure how they tie back in now
+# jerpint: we need docs / session to brainstorm on what sparks are anymore - they were useful pre current woltspace but still
+# seem to be everywhere not sure how they tie back in now
 """Spark/digest storage."""
 
 import json

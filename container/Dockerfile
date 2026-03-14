@@ -42,6 +42,7 @@ RUN npm install && npm install ws node-pty
 
 # Copy server source (baked into image — not from wolt mount)
 COPY server.js ./
+COPY server/ ./server/
 
 # Copy skills (platform defaults — wolt can override via .claude/skills/)
 COPY container/skills /workspace/woltspace/container/skills
@@ -84,6 +85,9 @@ ENV PATH="/home/node/.local/bin:${PATH}"
 
 # Install Python deps for bot
 RUN cd /workspace/woltspace/container && uv sync --project bot/pyproject.toml
+
+# Install Python server dependencies (FastAPI, uvicorn, etc.)
+RUN cd /workspace/woltspace && uv sync --project server
 
 WORKDIR /workspace
 
