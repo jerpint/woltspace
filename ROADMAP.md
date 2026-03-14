@@ -206,6 +206,7 @@ Mount `/workspace/woltspace/` as read-only in container. Filesystem-level enforc
 
 ## Misc Notes
 
+- **PR style:** Lead with a lore-flavored headline. Introduce each change with personality, not just bullets. Technical details go in a "What's in this PR" section. Keep it descriptive but fun — worth sharing with friends, not just reviewers.
 - `manifesto` naming → use lore-themed words instead
 - `HUMANS.md` should be oriented to devs who want to hack on it, with mermaid diagrams
 - `sparks/` will likely be deprecated
