@@ -21,6 +21,10 @@ if [ ! -d "$WOLTSPACE_DIR/container/bot/.venv" ]; then
   echo "dev mode: installing python deps..."
   (cd "$WOLTSPACE_DIR" && uv sync --project container/bot/pyproject.toml)
 fi
+if [ ! -d "$WOLTSPACE_DIR/server/.venv" ]; then
+  echo "dev mode: installing python server deps..."
+  (cd "$WOLTSPACE_DIR" && uv sync --project server)
+fi
 
 # Resolve active wolt directory
 # If WOLTS_DIR is set (multi-wolt mode), derive WOLT_DIR from it
@@ -149,11 +153,15 @@ ln -sf "$WOLTSPACE_DIR/node_modules" /workspace/node_modules
 # Also at wolts level for multi-wolt mount
 [ -d "$WOLTS_DIR" ] && ln -sf "$WOLTSPACE_DIR/node_modules" "$WOLTS_DIR/node_modules" 2>/dev/null || true
 
-# Start the server (baked into image, reads wolt content from mount)
-node --watch "$WOLTSPACE_DIR/server.js" &
+# TUI pty service (Node — only piece that needs node-pty)
+TUI_PORT=3001 WOLT_DIR="$WOLT_DIR" node "$WOLTSPACE_DIR/server/tui-service.js" &
+TUI_PID=$!
+
+# Python server (FastAPI)
+(cd "$WOLTSPACE_DIR" && uv run --project server uvicorn server.app:app --host 0.0.0.0 --port 3000 --reload) &
 SERVER_PID=$!
 
-sleep 1
+sleep 2
 
 # Start cloudflared tunnel (disable with ENABLE_TUNNEL=false)
 mkdir -p "$WOLTS_DIR/.state" "$WOLT_DIR/.state"
@@ -228,9 +236,9 @@ if [ "${ENABLE_SLACK_BOT:-}" = "true" ] && [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -n
   disown
 fi
 
-# Cleanup on exit — only kill the critical processes (server + tunnel)
+# Cleanup on exit — kill all critical processes
 cleanup() {
-  kill $SERVER_PID ${TUNNEL_PID:-} 2>/dev/null
+  kill $TUI_PID $SERVER_PID ${TUNNEL_PID:-} 2>/dev/null
 }
 trap cleanup EXIT
 

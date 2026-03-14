@@ -203,13 +203,10 @@ class TestNotifySeam:
         assert found, f"notify marker not found in bot log (checked last 30 entries)"
 
     def test_notify_footer_appended(self):
-        """server.js appends the DEN_REPLY_FOOTER to notify messages."""
-        # Verify the constant exists in server.js
-        server_js = Path("/workspace/woltspace/server.js")
-        source = server_js.read_text()
+        """notify.py appends the DEN_REPLY_FOOTER to notify messages."""
+        notify_py = Path("/workspace/woltspace/server/notify.py")
+        source = notify_py.read_text()
         assert "DEN_REPLY_FOOTER" in source
-        assert "↩️ reply to this message to talk to this session directly" in source
-        # Verify footer is appended (message + footer)
         assert "message + footer" in source
 
 
@@ -451,13 +448,13 @@ class TestRegressions:
         assert os.access(notify, os.X_OK)
 
     def test_den_reply_footer_consistent(self):
-        """Footer constant must match between server.js and telegram_adapter.py."""
-        server_src = Path("/workspace/woltspace/server.js").read_text()
+        """Footer constant must match between server/config.py and telegram_adapter.py."""
+        config_src = Path("/workspace/woltspace/server/config.py").read_text()
         adapter_src = Path("/workspace/woltspace/container/bot/telegram_adapter.py").read_text()
 
         # Both should contain the exact same sentinel string
         sentinel = "↩️ reply to this message to talk to this session directly"
-        assert sentinel in server_src
+        assert sentinel in config_src
         assert sentinel in adapter_src
 
     @requires_tmux
