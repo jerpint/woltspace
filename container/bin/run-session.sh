@@ -60,7 +60,7 @@ Also: always print your full detailed output (code, logs, raw analysis) to this 
 
 You're running inside a split view: terminal on the left, viewport (iframe) on the right. The developer can see whatever you push to the viewport. Use the \`/viewport\` skill whenever you produce something visual — HTML pages, dashboards, diagrams, reports, apps. Don't just write the file; push it so they can see it live.
 
-Any file you write to \`wolt/site/\` is served at the root (e.g. \`wolt/site/foo.html\` → \`/foo.html\`). After writing it, push:
+Any file you write to \`wolt/site/\` is served at the root (e.g. \`wolt/site/foo.html\` → \`/foo.html\`). After writing it, push to the viewport (this is ONLY for the viewport — do NOT use curl for sending messages):
 \`\`\`bash
 curl -s -X POST \"http://localhost:3000/current?session=\$(tmux display-message -p '#S')\" \\
   -H 'Content-Type: application/json' \\
@@ -68,6 +68,8 @@ curl -s -X POST \"http://localhost:3000/current?session=\$(tmux display-message 
 \`\`\`
 
 Rule of thumb: if you created an artifact someone would want to look at, push it to the viewport.
+
+**IMPORTANT**: To send a message to the developer, ALWAYS use \`notify "your message"\`. Never call /notify via curl directly — the notify script handles session routing, emoji prefix, and Telegram delivery correctly.
 
 ## CRITICAL: Do not touch infrastructure
 
