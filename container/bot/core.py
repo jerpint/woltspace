@@ -630,7 +630,7 @@ def _routing_with_creature(routing: dict | None, creature: str | None) -> dict |
 
 
 def _tool_claude_code(args: dict, routing: dict | None) -> str:
-    creature = args.get("creature")
+    creature = args.get("creature") or "beaver"
     session = start_claude_session(args["prompt"], wolt=args.get("wolt"), creature=creature)
     merged = _routing_with_creature(routing, creature)
     if merged:
@@ -639,7 +639,7 @@ def _tool_claude_code(args: dict, routing: dict | None) -> str:
 
 
 def _tool_new_session(args: dict, routing: dict | None) -> str:
-    creature = args.get("creature")
+    creature = args.get("creature") or "beaver"
     session = new_session(
         args["prompt"],
         from_session=args.get("from_session"),
