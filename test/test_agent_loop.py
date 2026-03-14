@@ -51,6 +51,13 @@ TRANSCRIPT_LOG = WOLTS_DIR / ".state" / "test-transcripts" / "agent-loop.jsonl"
 TEST_VERBOSE = os.environ.get("TEST_VERBOSE", "1") == "1"
 
 
+def _read_tunnel_url() -> str | None:
+    for p in [WOLTS_DIR / ".state" / "tunnel-url", WOLTS_DIR / WOLT_NAME / ".state" / "tunnel-url"]:
+        if p.exists():
+            return p.read_text().strip().rstrip("/")
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Transcript logging
 # ---------------------------------------------------------------------------
@@ -82,14 +89,29 @@ def _tg_send_transcript(test_name: str, entries: list[dict]):
     short_name = test_name.split("::")[-1] if "::" in test_name else test_name
     lines = [f"📝 {short_name}"]
     for e in entries:
-        lines.append(f"  👤 {e.get('user', '')[:120]}")
-        response = e.get('response', '')[:200]
+        lines.append(f"  👤 {e.get('user', '')}")
+        response = e.get('response', '')
         if response:
             lines.append(f"  🦦 {response}")
         tools = e.get('tools', [])
-        if tools:
-            tool_str = ", ".join(f"{t['tool']}({json.dumps(t.get('args', {}), default=str)[:60]})" for t in tools)
-            lines.append(f"  🔧 {tool_str}")
+        for t in tools:
+            args = t.get('args', {})
+            tool_str = f"  🔧 {t['tool']}"
+            # For e2e results, surface session link and status clearly
+            if t['tool'] == 'e2e_result':
+                session = args.get('session', '')
+                status = args.get('final_status', '')
+                file_ok = args.get('file_exists', False)
+                tool_str = f"  🔧 e2e: {'✅' if file_ok else '❌'} file_exists={file_ok}, status={status}"
+                if session:
+                    tunnel = _read_tunnel_url()
+                    if tunnel:
+                        tool_str += f"\n  🔗 {tunnel}/tui?session={session}"
+                    else:
+                        tool_str += f"\n  📎 session={session}"
+            else:
+                tool_str += f"({json.dumps(args, default=str)[:80]})"
+            lines.append(tool_str)
 
     msg = "\n".join(lines)
     # Telegram 4096 char limit
