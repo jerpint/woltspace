@@ -18,16 +18,11 @@ Each wolt gets:
 git clone https://github.com/jerpint/woltspace
 ```
 
-Add to your shell (e.g. `~/.zshrc`):
-
-```bash
-export PATH="$HOME/woltspace:$PATH"
-```
+Then run `woltspace init` — it will offer to add itself to your PATH automatically.
 
 ### Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/)
-- [Claude Code](https://code.claude.com) (`curl -fsSL https://claude.ai/install.sh | bash`)
 
 ## Quick start
 

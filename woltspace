@@ -183,6 +183,58 @@ if [ "$cmd" = "init" ]; then
     echo "install docker: https://docs.docker.com/get-docker/"
     exit 1
   fi
+
+  # --- PATH setup ---
+  # Ensure woltspace is on PATH so the user can run it from anywhere.
+  # Idempotent: skips if already on PATH or already in rc file.
+  if ! command -v woltspace &>/dev/null; then
+    _shell_rc=""
+    case "$(basename "$SHELL")" in
+      zsh)  _shell_rc="$HOME/.zshrc" ;;
+      bash)
+        # macOS uses .bash_profile for login shells, Linux uses .bashrc
+        if [ -f "$HOME/.bash_profile" ]; then
+          _shell_rc="$HOME/.bash_profile"
+        else
+          _shell_rc="$HOME/.bashrc"
+        fi
+        ;;
+    esac
+
+    _C=$'\033[0;36m'; _R=$'\033[0m'; _D=$'\033[2m'
+    _path_line="export PATH=\"$WOLTSPACE_DIR:\$PATH\""
+
+    if [ -n "$_shell_rc" ] && grep -q '# >>> woltspace >>>' "$_shell_rc" 2>/dev/null; then
+      # Already installed in rc file, just not sourced yet — apply for this session
+      export PATH="$WOLTSPACE_DIR:$PATH"
+    elif [ -n "$_shell_rc" ]; then
+      echo ""
+      echo "  woltspace isn't on your PATH yet."
+      echo "  ${_D}this lets you run 'woltspace' from anywhere.${_R}"
+      echo ""
+      echo -n "  ${_C}add it to $(basename "$_shell_rc")? [Y/n]${_R} "
+      read -r _path_confirm </dev/tty
+      _path_confirm="${_path_confirm:-Y}"
+      if [[ "$_path_confirm" == [Yy] ]]; then
+        echo "" >> "$_shell_rc"
+        echo "# >>> woltspace >>>" >> "$_shell_rc"
+        echo "$_path_line" >> "$_shell_rc"
+        echo "# <<< woltspace <<<" >> "$_shell_rc"
+        export PATH="$WOLTSPACE_DIR:$PATH"
+        echo "  ${_D}done — added to $_shell_rc${_R}"
+      else
+        echo "  ${_D}skipped — you can add it manually later:${_R}"
+        echo "  ${_D}  $_path_line${_R}"
+      fi
+      echo ""
+    else
+      echo ""
+      echo "  ${_D}to run woltspace from anywhere, add this to your shell config:${_R}"
+      echo "  ${_D}  $_path_line${_R}"
+      echo ""
+    fi
+  fi
+
   # --- Splash screen ---
   clear
   _G=$'\033[0;32m'; _B=$'\033[1m'; _D=$'\033[2m'; _R=$'\033[0m'; _A=$'\033[0;33m'
