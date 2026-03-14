@@ -210,6 +210,39 @@ ENABLE_TUNNEL=true
 
 ---
 
+## Testing
+
+Tests live in `test/` and run via `test/run-tests.sh`. The runner sources `/workspace/wolts/.env` for secrets automatically.
+
+```bash
+# From /workspace/woltspace:
+bash test/run-tests.sh              # all tests (103 tests, ~2 min)
+bash test/run-tests.sh unit         # pure Python, no server/tmux needed
+bash test/run-tests.sh integration  # requires running server + tmux
+bash test/run-tests.sh closed-loop  # full chain: telegram + server + tmux + registry
+bash test/run-tests.sh agent        # haiku in the loop (costs API tokens)
+bash test/run-tests.sh live         # requires TELEGRAM_BOT_TOKEN (hits real API)
+bash test/run-tests.sh -k "pattern" # pass any pytest args
+```
+
+**Test files:**
+- `test_bot_core.py` — pure unit tests: session naming, ack text, creature routing, command building, history sanitization, memory loading
+- `test_session_lifecycle.py` — session registry CRUD + tmux session management
+- `test_server_health.py` — HTTP endpoint health checks (requires server)
+- `test_telegram_loop.py` — Telegram adapter: message parsing, formatting, allowlist, notify round-trip, live API
+- `test_closed_loop.py` — full seam tests: Telegram API → notify pipeline → session creation → den reply → round-trip
+- `test_agent_loop.py` — haiku decision tests (mocked tools), conversation simulator, live session spawn, true e2e (haiku → beaver → file on disk → viewport)
+
+**Environment:**
+- `TEST_VERBOSE=1` (default) — posts per-test results to Telegram test group
+- `TEST_VERBOSE=0` — summary only
+- `TEST_CHAT_ID` — dedicated test group chat (set in `.env`)
+- `KEEP_E2E_ARTIFACTS=1` — preserve hello-wolt-test.html and session after e2e test
+
+**Dependencies:** `uv sync --project container/bot/pyproject.toml` (auto-installed by runner)
+
+---
+
 ## Development
 
 This repo is usually mounted into the container in dev mode (`woltspace start` auto-detects if you're in the repo and enables dev mode). The server runs with `node --watch` — save `server.js` and it restarts. The bot does NOT auto-restart; kill and relaunch it manually after edits.

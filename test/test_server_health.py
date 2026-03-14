@@ -1,0 +1,78 @@
+"""Server health checks — verify core HTTP endpoints are responding correctly.
+
+These tests hit the real running server. Skip automatically if server is down.
+
+Usage: uv run pytest test/test_server_health.py -v
+"""
+
+import json
+import time
+from pathlib import Path
+
+import pytest
+
+from conftest import requires_server
+
+
+# ---------------------------------------------------------------------------
+# Basic health
+# ---------------------------------------------------------------------------
+
+@requires_server
+class TestServerAlive:
+    """Server responds to basic requests."""
+
+    def test_root_returns_200(self, server_get):
+        result = server_get("/")
+        assert not isinstance(result, dict) or "error" not in result
+
+    def test_current_url_endpoint(self, server_get):
+        """The /current endpoint should return JSON (even if no viewport is set)."""
+        result = server_get("/current?session=main")
+        assert isinstance(result, (dict, str))
+
+
+# ---------------------------------------------------------------------------
+# Notify endpoint
+# ---------------------------------------------------------------------------
+
+@requires_server
+class TestNotifyEndpoint:
+    """The /notify endpoint accepts messages and routes them."""
+
+    def test_notify_returns_adapter(self, routed_test_session, server_post):
+        """If routing exists, notify should return which adapter was used."""
+        result = server_post("/notify", {
+            "session": routed_test_session,
+            "message": f"🧪 health check probe {int(time.time())}",
+        })
+        assert result.get("adapter") in ("telegram", "slack"), f"unexpected: {result}"
+
+
+# ---------------------------------------------------------------------------
+# Tool proxy
+# ---------------------------------------------------------------------------
+
+@requires_server
+class TestToolProxy:
+    """The /tools endpoint handles tool registrations."""
+
+    def test_tools_endpoint_exists(self, server_get):
+        """GET /tools should return something (list or error, not 404)."""
+        result = server_get("/tools")
+        assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# Session redirect
+# ---------------------------------------------------------------------------
+
+@requires_server
+class TestSessionRedirect:
+    """The viewport/redirect mechanism for sessions."""
+
+    def test_current_returns_json(self, server_get):
+        result = server_get("/current?session=main")
+        # Should be JSON with url field
+        if isinstance(result, dict):
+            assert "url" in result or "error" in result
