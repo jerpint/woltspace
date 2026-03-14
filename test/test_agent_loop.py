@@ -14,6 +14,9 @@ Usage:
   uv run pytest test/test_agent_loop.py -k "live" -v           # slow: real sessions spawned
 
 Cost: ~$0.01-0.05 per test (haiku calls), ~$0.10-0.50 for live tests (haiku + sonnet)
+
+Env vars:
+  KEEP_E2E_ARTIFACTS=1  — keep hello-wolt-test.html and spawned session alive after e2e test
 """
 
 import json
@@ -558,12 +561,14 @@ class TestEndToEnd:
 
     @pytest.fixture(autouse=True)
     def _cleanup(self):
-        """Clean up test artifacts."""
+        """Clean up test artifacts. Set KEEP_E2E_ARTIFACTS=1 to preserve output file and session."""
         # Remove output file if it exists from a previous run
         if self.E2E_OUTPUT.exists():
             self.E2E_OUTPUT.unlink()
         self._session_name = None
         yield
+        if os.environ.get("KEEP_E2E_ARTIFACTS"):
+            return
         # Clean up output file
         if self.E2E_OUTPUT.exists():
             self.E2E_OUTPUT.unlink()
