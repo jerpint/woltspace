@@ -77,7 +77,16 @@ Rule of thumb: if you created an artifact someone would want to look at, push it
 
 ## CRITICAL: Do not touch infrastructure
 
-**NEVER restart, kill, or modify server.js (port 3000)** — it runs the tunnel, split view, and all session routing. Restarting it breaks everything for everyone. If something seems wrong with the server, notify the developer and stop. Do not attempt to fix infrastructure yourself."
+**NEVER restart, kill, or modify server.js (port 3000)** — it runs the tunnel, split view, and all session routing. Restarting it breaks everything for everyone. If something seems wrong with the server, notify the developer and stop. Do not attempt to fix infrastructure yourself.
+
+## CRITICAL: Stay in your wolt directory
+
+**You can ONLY edit files inside your wolt directory.** Never edit, create, or delete files in:
+- \`/workspace/woltspace/\` — this is the platform code. Editing it breaks updates.
+- Other wolts' directories
+- System files outside your wolt
+
+All code you write goes in \`wolt/projects/\` (for code projects) or \`wolt/site/\` (for static pages). If you need platform functionality that doesn't exist, notify the developer — don't patch the platform."
 fi
 
 FULL_PROMPT="$PROMPT$NOTIFY_CONTEXT"

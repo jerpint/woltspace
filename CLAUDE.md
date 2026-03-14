@@ -11,6 +11,8 @@ The human chats with the wolt via Telegram. The wolt can spin up Claude Code ses
 
 **This repo is the platform** — the Docker image, server, bot brain, and CLI that makes wolts run. Individual wolt repos live separately (under `~/wolts/{name}/`).
 
+> **⚠️ Platform code is immutable from wolt sessions.** Wolts must NEVER edit files in `/workspace/woltspace/`. All wolt work happens inside their own directory (`/workspace/wolts/{name}/`). Code projects go in `wolt/projects/`. If a wolt needs new platform functionality, the human files an issue — wolts don't patch the platform.
+
 ---
 
 ## Architecture at a Glance
@@ -159,6 +161,7 @@ Use `/viewport` for full details: URL paths, app serving, live-reload behavior.
       learnings.md     — active patterns (first 40 lines)
       index.md         — memory index for discoverability
       archive/         — grows forever, searched on demand
+    projects/          — isolated code projects (apps, scripts, experiments)
     apps/              — full-stack apps (each has app.json, served at /app/:name/)
     site/              — static HTML/CSS public space
     sparks/            — generated artifacts
@@ -170,6 +173,8 @@ Use `/viewport` for full details: URL paths, app serving, live-reload behavior.
   CLAUDE.md            — wolt-specific instructions
   wolt.json            — manifest
 ```
+
+**Isolation boundary:** Sessions run inside the wolt directory. All code edits MUST stay within this directory. The platform (`/workspace/woltspace/`) is read-only to wolts.
 
 ---
 

@@ -185,6 +185,7 @@ CREATED → RUNNING → COMPLETED / FAILED
 ├─ wolt/
 │  ├─ memory/           # identity, context, learnings (boot files)
 │  │  └─ archive/       # grows forever, searched on demand
+│  ├─ projects/         # isolated code projects (apps, scripts, experiments)
 │  ├─ site/             # static HTML/CSS, live-reload watched
 │  ├─ apps/             # full-stack apps (each has app.json)
 │  ├─ sparks/           # generated artifacts (digest, etc.)
