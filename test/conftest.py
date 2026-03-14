@@ -123,6 +123,36 @@ def test_chat_id():
 
 
 @pytest.fixture
+def routed_test_session(test_chat_id):
+    """Create a temporary session registered with TEST_CHAT_ID routing.
+
+    Ensures notify probes go to the test group, never the main chat.
+    """
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+    from sessions import SessionRegistry
+
+    registry_dir = Path("/workspace/wolts/.state/registry")
+    reg = SessionRegistry(registry_dir)
+    name = f"test-probe-{int(time.time()) % 100000}-{os.getpid()}"
+    reg.create(
+        name=name,
+        wolt="neowolt",
+        creature="beaver",
+        model="sonnet",
+        dir="/workspace/wolts/neowolt",
+        prompt="test probe session",
+        adapter="telegram",
+        chat_id=test_chat_id,
+    )
+    yield name
+    # Cleanup registry entry
+    reg_file = registry_dir / f"{name}.json"
+    if reg_file.exists():
+        reg_file.unlink()
+
+
+@pytest.fixture
 def tunnel_url():
     """Read the current tunnel URL."""
     for path in [

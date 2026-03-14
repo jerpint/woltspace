@@ -197,10 +197,8 @@ class TestFullSessionLifecycle:
         )
         assert name in result.stdout
 
-    def test_notify_to_live_session(self, tmux_session, server_post):
-        """Messages sent via /notify should reach the session's routing."""
-        name = tmux_session
-        subprocess.run(["tmux", "new-session", "-d", "-s", name, "sleep 60"], check=True)
-        # Notify without routing — should fail gracefully
-        result = server_post("/notify", {"session": name, "message": "probe"})
+    def test_notify_to_live_session(self, routed_test_session, server_post):
+        """Messages sent via /notify to a routed session should go to the test group."""
+        result = server_post("/notify", {"session": routed_test_session, "message": "probe"})
         assert isinstance(result, dict)
+        assert result.get("adapter") == "telegram"

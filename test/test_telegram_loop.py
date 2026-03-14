@@ -169,10 +169,10 @@ class TestNotifyRoundTrip:
         assert notify_path.exists(), "notify script missing"
         assert os.access(notify_path, os.X_OK), "notify not executable"
 
-    def test_server_notify_json_contract(self, server_post):
+    def test_server_notify_json_contract(self, routed_test_session, server_post):
         """The /notify endpoint should accept {session, message} and return {ok/error, adapter}."""
         result = server_post("/notify", {
-            "session": "nonexistent-probe-test",
+            "session": routed_test_session,
             "message": "contract check",
         })
         # Should return a dict with either ok/adapter or error

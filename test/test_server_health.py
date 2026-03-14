@@ -40,45 +40,13 @@ class TestServerAlive:
 class TestNotifyEndpoint:
     """The /notify endpoint accepts messages and routes them."""
 
-    def test_notify_with_empty_session(self, server_post):
-        """Notify with empty session should fail gracefully."""
-        result = server_post("/notify", {"session": "", "message": "test"})
-        # Should either succeed with fallback or fail with clear error
-        assert "error" in result or "ok" in result or "adapter" in result
-
-    def test_notify_with_nonexistent_session(self, server_post):
-        """Notify to a session that doesn't exist should fail gracefully."""
-        result = server_post("/notify", {
-            "session": "nonexistent-test-session-xyz",
-            "message": "test probe",
-        })
-        # Should not crash — either error or fallback routing
-        assert isinstance(result, dict)
-
-    def test_notify_returns_adapter(self, server_post):
+    def test_notify_returns_adapter(self, routed_test_session, server_post):
         """If routing exists, notify should return which adapter was used."""
-        # Find any session with routing
-        registry_dir = Path("/workspace/wolts/.state/registry")
-        if not registry_dir.exists():
-            pytest.skip("no registry dir")
-        sessions = list(registry_dir.glob("*.json"))
-        if not sessions:
-            pytest.skip("no registered sessions")
-
-        for sf in sessions:
-            try:
-                data = json.loads(sf.read_text())
-                if data.get("adapter") and data.get("chat_id"):
-                    session_name = data["name"]
-                    result = server_post("/notify", {
-                        "session": session_name,
-                        "message": f"🧪 health check probe {int(time.time())}",
-                    })
-                    assert result.get("adapter") in ("telegram", "slack"), f"unexpected: {result}"
-                    return
-            except (json.JSONDecodeError, KeyError):
-                continue
-        pytest.skip("no sessions with routing found")
+        result = server_post("/notify", {
+            "session": routed_test_session,
+            "message": f"🧪 health check probe {int(time.time())}",
+        })
+        assert result.get("adapter") in ("telegram", "slack"), f"unexpected: {result}"
 
 
 # ---------------------------------------------------------------------------
