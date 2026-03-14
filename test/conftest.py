@@ -105,15 +105,6 @@ def tmux_session():
 
 
 @pytest.fixture
-def tmp_registry(tmp_path):
-    """Create a temporary session registry for isolated tests."""
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
-    from sessions import SessionRegistry
-    return SessionRegistry(tmp_path / "registry")
-
-
-@pytest.fixture
 def test_chat_id():
     """The dedicated test group chat ID. Skip if not configured."""
     chat_id = _test_chat_id()
@@ -124,32 +115,23 @@ def test_chat_id():
 
 @pytest.fixture
 def routed_test_session(test_chat_id):
-    """Create a temporary session registered with TEST_CHAT_ID routing.
+    """Create a temporary session with routing to TEST_CHAT_ID.
 
-    Ensures notify probes go to the test group, never the main chat.
+    Writes a session-routing file so notify probes go to the test group.
     """
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
-    from sessions import SessionRegistry
-
-    registry_dir = Path("/workspace/wolts/.state/registry")
-    reg = SessionRegistry(registry_dir)
+    routing_dir = Path("/workspace/wolts/.state/session-routing")
+    routing_dir.mkdir(parents=True, exist_ok=True)
     name = f"test-probe-{int(time.time()) % 100000}-{os.getpid()}"
-    reg.create(
-        name=name,
-        wolt="neowolt",
-        creature="beaver",
-        model="sonnet",
-        dir="/workspace/wolts/neowolt",
-        prompt="test probe session",
-        adapter="telegram",
-        chat_id=test_chat_id,
-    )
+    routing = {
+        "adapter": "telegram",
+        "chat_id": test_chat_id,
+    }
+    (routing_dir / f"{name}.json").write_text(json.dumps(routing))
     yield name
-    # Cleanup registry entry
-    reg_file = registry_dir / f"{name}.json"
-    if reg_file.exists():
-        reg_file.unlink()
+    # Cleanup routing file
+    routing_file = routing_dir / f"{name}.json"
+    if routing_file.exists():
+        routing_file.unlink()
 
 
 @pytest.fixture

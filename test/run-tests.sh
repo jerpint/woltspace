@@ -101,7 +101,7 @@ TIER="${1:-all}"
 case "$TIER" in
   unit)
     echo "=== Unit tests (no external deps) ==="
-    _run_tests "unit" uv run --project container/bot/pyproject.toml pytest test/test_bot_core.py test/test_session_lifecycle.py::TestSessionRegistry -v "${@:2}"
+    _run_tests "unit" uv run --project container/bot/pyproject.toml pytest test/test_bot_core.py test/test_session_lifecycle.py::TestSessionRouting test/test_session_lifecycle.py::TestSessionStatus -v "${@:2}"
     ;;
   integration)
     echo "=== Integration tests (requires server + tmux) ==="

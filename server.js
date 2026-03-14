@@ -277,10 +277,10 @@ function getEnv(key) {
 
 // --- Notify: send a message to the originating chat ---
 
-const SESSION_REGISTRY_DIR = join(WOLTS_STATE_DIR, 'registry');
+const SESSION_ROUTING_DIR = join(WOLTS_STATE_DIR, 'session-routing');
 
-function readSessionRegistry(session) {
-  const f = join(SESSION_REGISTRY_DIR, `${sanitizeSession(session)}.json`);
+function readSessionRouting(session) {
+  const f = join(SESSION_ROUTING_DIR, `${sanitizeSession(session)}.json`);
   if (!existsSync(f)) return null;
   try { return JSON.parse(readFileSync(f, 'utf8')); } catch { return null; }
 }
@@ -312,7 +312,7 @@ function appendChatHistory(adapter, chatId, content) {
 }
 
 async function sendNotification(session, message) {
-  const routing = readSessionRegistry(session);
+  const routing = readSessionRouting(session);
 
   // Always prefer Telegram — resolve chat_id from routing (if telegram) or fallback.
   const telegramToken = getEnv('TELEGRAM_BOT_TOKEN');
@@ -802,17 +802,6 @@ const server = createServer(async (req, res) => {
           return;
         }
         const sessionName = `${WOLT_NAME}-${Date.now() % 100000}`;
-        // Register the session
-        const regData = {
-          name: sessionName, wolt: WOLT_NAME, status: 'running',
-          created_at: Math.floor(Date.now() / 1000), dir: WOLT_DIR,
-          prompt: prompt.slice(0, 500), last_activity: Math.floor(Date.now() / 1000),
-        };
-        try {
-          mkdirSync(SESSION_REGISTRY_DIR, { recursive: true });
-          writeFileSync(join(SESSION_REGISTRY_DIR, `${sessionName}.json`), JSON.stringify(regData, null, 2) + '\n');
-        } catch (e) { console.error('[sessions] registry write failed:', e.message); }
-
         const runScript = join(__dirname, 'container', 'bin', 'run-session.sh');
         const cmd = `${runScript} ${shellQuote(sessionName)} ${shellQuote(WOLT_DIR)} ${shellQuote(prompt)}`;
         execSync(`tmux new-session -d -s ${sessionName} -c ${shellQuote(WOLT_DIR)} ${shellQuote(cmd)}`);
@@ -1094,7 +1083,7 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // --- Sessions (list from .state/registry/) ---
+    // --- Sessions (list with status from .state/sessions/) ---
     if (url.pathname === '/sessions') {
       try {
         // Get live tmux sessions
@@ -1104,27 +1093,27 @@ const server = createServer(async (req, res) => {
           raw.split('\n').filter(Boolean).forEach(n => tmuxSessions.add(n));
         } catch {}
 
-        // Read registry files
+        // Read status files (includes completed sessions)
+        const sessionsDir = join(WOLTS_STATE_DIR, 'sessions');
         const sessions = [];
         try {
-          const files = readdirSync(SESSION_REGISTRY_DIR).filter(f => f.endsWith('.json'));
+          const files = readdirSync(sessionsDir).filter(f => f.endsWith('.json'));
           for (const f of files) {
             try {
-              const data = JSON.parse(readFileSync(join(SESSION_REGISTRY_DIR, f), 'utf8'));
+              const data = JSON.parse(readFileSync(join(sessionsDir, f), 'utf8'));
               // Reconcile status against live tmux sessions
-              data.alive = tmuxSessions.has(data.name);
-              if (data.alive) data.status = 'running';
-              else if (data.status === 'running') data.status = 'orphaned';
+              if (tmuxSessions.has(data.session)) data.status = 'running';
+              else if (data.status === 'running') data.status = 'done';
               sessions.push(data);
             } catch {}
           }
         } catch {}
 
-        // Sort: running first, then by created_at descending
+        // Sort: running first, then by start time descending
         sessions.sort((a, b) => {
           if (a.status === 'running' && b.status !== 'running') return -1;
           if (b.status === 'running' && a.status !== 'running') return 1;
-          return (b.created_at || 0) - (a.created_at || 0);
+          return (b.started || 0) - (a.started || 0);
         });
 
         res.writeHead(200, { 'Content-Type': 'application/json' });

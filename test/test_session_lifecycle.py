@@ -22,103 +22,89 @@ from conftest import requires_server, requires_tmux
 
 
 # ---------------------------------------------------------------------------
-# Session registry (unit tests — no server needed)
+# Session routing + status (unit tests — no server needed)
 # ---------------------------------------------------------------------------
 
-class TestSessionRegistry:
-    """Pure-Python tests for the SessionRegistry class."""
+class TestSessionRouting:
+    """Pure-Python tests for session routing (write/read JSON files)."""
 
-    def test_create_and_get(self, tmp_registry):
-        reg = tmp_registry
-        data = reg.create("test-session-1", wolt="neowolt", creature="beaver")
-        assert data["name"] == "test-session-1"
-        assert data["wolt"] == "neowolt"
-        assert data["creature"] == "beaver"
-        assert data["status"] == "running"
+    def test_write_and_read_routing(self, tmp_path):
+        import bot.core as core
+        original = core.SESSION_ROUTING_DIR
+        try:
+            core.SESSION_ROUTING_DIR = tmp_path / "routing"
+            core.write_session_routing("test-session-1", {
+                "adapter": "telegram", "chat_id": "123456"
+            })
+            result = core.read_session_routing("test-session-1")
+            assert result["adapter"] == "telegram"
+            assert result["chat_id"] == "123456"
+        finally:
+            core.SESSION_ROUTING_DIR = original
 
-        fetched = reg.get("test-session-1", check_alive=False)
-        assert fetched["name"] == "test-session-1"
+    def test_read_nonexistent_routing(self, tmp_path):
+        import bot.core as core
+        original = core.SESSION_ROUTING_DIR
+        try:
+            core.SESSION_ROUTING_DIR = tmp_path / "routing"
+            assert core.read_session_routing("nope") is None
+        finally:
+            core.SESSION_ROUTING_DIR = original
 
-    def test_update_fields(self, tmp_registry):
-        reg = tmp_registry
-        reg.create("test-session-2", wolt="neowolt")
-        updated = reg.update("test-session-2", viewport_url="http://example.com")
-        assert updated["viewport_url"] == "http://example.com"
+    def test_corrupt_routing_returns_none(self, tmp_path):
+        import bot.core as core
+        original = core.SESSION_ROUTING_DIR
+        try:
+            routing_dir = tmp_path / "routing"
+            routing_dir.mkdir(parents=True)
+            core.SESSION_ROUTING_DIR = routing_dir
+            (routing_dir / "corrupt.json").write_text("{invalid json")
+            assert core.read_session_routing("corrupt") is None
+        finally:
+            core.SESSION_ROUTING_DIR = original
 
-    def test_finish_success(self, tmp_registry):
-        reg = tmp_registry
-        reg.create("test-session-3")
-        finished = reg.finish("test-session-3", exit_code=0)
-        assert finished["status"] == "completed"
-        assert finished["exit_code"] == 0
-        assert finished["finished_at"] is not None
 
-    def test_finish_failure(self, tmp_registry):
-        reg = tmp_registry
-        reg.create("test-session-4")
-        finished = reg.finish("test-session-4", exit_code=1)
-        assert finished["status"] == "failed"
-        assert finished["exit_code"] == 1
+class TestSessionStatus:
+    """Pure-Python tests for session status files."""
 
-    def test_list_sessions(self, tmp_registry):
-        reg = tmp_registry
-        reg.create("sess-a", wolt="neowolt")
-        reg.create("sess-b", wolt="blabo")
-        reg.create("sess-c", wolt="neowolt")
+    def test_read_status_file(self, tmp_path):
+        import bot.core as core
+        original_state = core.STATE_DIR
+        try:
+            core.STATE_DIR = tmp_path
+            status_dir = tmp_path / "sessions"
+            status_dir.mkdir()
+            (status_dir / "test-sess.json").write_text(json.dumps({
+                "session": "test-sess", "status": "running",
+                "started": int(time.time()),
+            }))
+            result = core.get_session_status("test-sess")
+            assert result["status"] == "running"
+            assert result["session"] == "test-sess"
+        finally:
+            core.STATE_DIR = original_state
 
-        all_sessions = reg.list()
-        assert len(all_sessions) == 3
+    def test_read_nonexistent_status(self, tmp_path):
+        import bot.core as core
+        original_state = core.STATE_DIR
+        try:
+            core.STATE_DIR = tmp_path
+            (tmp_path / "sessions").mkdir()
+            assert core.get_session_status("nope") is None
+        finally:
+            core.STATE_DIR = original_state
 
-        neowolt_only = reg.list(wolt="neowolt")
-        assert len(neowolt_only) == 2
-        assert all(s["wolt"] == "neowolt" for s in neowolt_only)
-
-    def test_delete_session(self, tmp_registry):
-        reg = tmp_registry
-        reg.create("to-delete")
-        assert reg.delete("to-delete") is True
-        assert reg.get("to-delete", check_alive=False) is None
-        assert reg.delete("to-delete") is False
-
-    def test_touch_updates_activity(self, tmp_registry):
-        reg = tmp_registry
-        reg.create("touch-me")
-        before = reg.get("touch-me", check_alive=False)["last_activity"]
-        time.sleep(1.1)
-        reg.touch("touch-me")
-        after = reg.get("touch-me", check_alive=False)["last_activity"]
-        assert after > before
-
-    def test_get_nonexistent(self, tmp_registry):
-        assert tmp_registry.get("nope", check_alive=False) is None
-
-    def test_update_nonexistent(self, tmp_registry):
-        assert tmp_registry.update("nope", status="done") is None
-
-    def test_prompt_truncated(self, tmp_registry):
-        reg = tmp_registry
-        long_prompt = "x" * 1000
-        data = reg.create("truncate-test", prompt=long_prompt)
-        assert len(data["prompt"]) == 500
-
-    def test_atomic_write(self, tmp_registry):
-        """Write uses tmp + rename for atomicity — no partial reads."""
-        reg = tmp_registry
-        reg.create("atomic-test", wolt="neowolt")
-        # The .tmp file should not linger
-        tmp_files = list(reg.dir.glob("*.tmp"))
-        assert len(tmp_files) == 0
-
-    def test_corrupt_json_handled(self, tmp_registry):
-        """Corrupt JSON in registry should not crash."""
-        reg = tmp_registry
-        bad_file = reg.dir / "corrupt.json"
-        bad_file.write_text("{invalid json")
-        # get should return None
-        assert reg.get("corrupt", check_alive=False) is None
-        # list should skip it
-        sessions = reg.list()
-        assert all(s["name"] != "corrupt" for s in sessions)
+    def test_corrupt_status_returns_none(self, tmp_path):
+        import bot.core as core
+        original_state = core.STATE_DIR
+        try:
+            core.STATE_DIR = tmp_path
+            status_dir = tmp_path / "sessions"
+            status_dir.mkdir()
+            (status_dir / "corrupt.json").write_text("{bad json")
+            assert core.get_session_status("corrupt") is None
+        finally:
+            core.STATE_DIR = original_state
 
 
 # ---------------------------------------------------------------------------

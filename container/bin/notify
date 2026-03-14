@@ -12,16 +12,16 @@ if [ -z "$MESSAGE" ]; then
 fi
 
 SESSION="${WOLT_SESSION:-}"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SESSION_REG="$SCRIPT_DIR/session-reg"
+STATE_DIR="${WOLT_STATE_DIR:-/workspace/wolts/.state}"
 
 # Build message — footer (session URL + reply hint) is added by server.js sendNotification
 WOLT_NAME="${WOLT_NAME:-wolt}"
 
-# Read creature from session registry
+# Read creature from session routing file (set by core.py when session starts)
 EMOJI="🦫"
 if [ -n "$SESSION" ]; then
-  CREATURE=$($SESSION_REG get-field "$SESSION" creature 2>/dev/null || echo "")
+  ROUTING_FILE="$STATE_DIR/session-routing/${SESSION}.json"
+  CREATURE=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('creature',''))" "$ROUTING_FILE" 2>/dev/null || echo "")
   case "$CREATURE" in
     raccoon) EMOJI="🦝" ;;
     beaver)  EMOJI="🦫" ;;

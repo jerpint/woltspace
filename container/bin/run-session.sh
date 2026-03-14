@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Wrapper for claude sessions spawned by the bot.
-# Runs claude, captures exit code, updates the session registry.
+# Runs claude, captures exit code, writes structured status.
 #
 # Usage: run-session.sh <session-name> <work-dir> <prompt> [model]
 
@@ -11,8 +11,11 @@ WORK_DIR="$2"
 PROMPT="$3"
 MODEL="${4:-}"
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SESSION_REG="$SCRIPT_DIR/session-reg"
+# Where we write structured status
+STATE_DIR="${WOLT_STATE_DIR:-/workspace/wolts/.state}"
+STATUS_DIR="$STATE_DIR/sessions"
+mkdir -p "$STATUS_DIR"
+STATUS_FILE="$STATUS_DIR/${SESSION_NAME}.json"
 
 cd "$WORK_DIR"
 export WOLT_SESSION="$SESSION_NAME"
@@ -26,13 +29,22 @@ clean = re.sub(r'[^\w\s-]', '', first_line).strip()
 print(clean[:60].lower())
 " "$PROMPT" 2>/dev/null || echo "")
 
-# Update registry with title (session was already created by core.py with routing info)
-$SESSION_REG update "$SESSION_NAME" "title=$TITLE" > /dev/null 2>&1 || true
+# Write initial status (Python for safe JSON serialization — prompt may contain quotes/newlines)
+python3 -c "
+import json, sys, time
+data = {
+    'session': sys.argv[1], 'status': 'running',
+    'started': int(time.time()), 'dir': sys.argv[2],
+    'title': sys.argv[3], 'prompt': sys.argv[4][:500],
+}
+print(json.dumps(data))
+" "$SESSION_NAME" "$WORK_DIR" "$TITLE" "$PROMPT" > "$STATUS_FILE"
 
-# Read adapter from registry to tell Claude which platform to notify
-ADAPTER=$($SESSION_REG get-field "$SESSION_NAME" adapter 2>/dev/null || echo "telegram")
+# Read session routing to tell Claude which platform to notify
+ROUTING_FILE="${WOLT_STATE_DIR:-/workspace/wolts/.state}/session-routing/${SESSION_NAME}.json"
 NOTIFY_CONTEXT=""
-if [ -n "$ADAPTER" ] && [ "$ADAPTER" != "" ]; then
+if [ -f "$ROUTING_FILE" ]; then
+  ADAPTER=$(python3 -c "import json,sys; d=json.load(open('$ROUTING_FILE')); print(d.get('adapter','telegram'))" 2>/dev/null || echo "telegram")
   case "$ADAPTER" in
     slack)    NOTIFY_PLATFORM="Slack" ;;
     telegram) NOTIFY_PLATFORM="Telegram" ;;
@@ -56,21 +68,6 @@ Also: always print your full detailed output (code, logs, raw analysis) to this 
 
 2-3 notifies max across the whole session.
 
-## Viewport — show your work
-
-You're running inside a split view: terminal on the left, viewport (iframe) on the right. The developer can see whatever you push to the viewport. Use the \`/viewport\` skill whenever you produce something visual — HTML pages, dashboards, diagrams, reports, apps. Don't just write the file; push it so they can see it live.
-
-Any file you write to \`wolt/site/\` is served at the root (e.g. \`wolt/site/foo.html\` → \`/foo.html\`). After writing it, push to the viewport (this is ONLY for the viewport — do NOT use curl for sending messages):
-\`\`\`bash
-curl -s -X POST \"http://localhost:3000/current?session=\$(tmux display-message -p '#S')\" \\
-  -H 'Content-Type: application/json' \\
-  -d '{\"url\": \"/foo.html\"}'
-\`\`\`
-
-Rule of thumb: if you created an artifact someone would want to look at, push it to the viewport.
-
-**IMPORTANT**: To send a message to the developer, ALWAYS use \`notify \"your message\"\`. Never call /notify via curl directly — the notify script handles session routing, emoji prefix, and Telegram delivery correctly.
-
 ## CRITICAL: Do not touch infrastructure
 
 **NEVER restart, kill, or modify server.js (port 3000)** — it runs the tunnel, split view, and all session routing. Restarting it breaks everything for everyone. If something seems wrong with the server, notify the developer and stop. Do not attempt to fix infrastructure yourself."
@@ -86,8 +83,29 @@ if [ -n "$MODEL" ]; then
 fi
 claude --dangerously-skip-permissions $MODEL_FLAG "$FULL_PROMPT" || EXIT_CODE=$?
 
-# Update registry with final status
-$SESSION_REG finish "$SESSION_NAME" "$EXIT_CODE" > /dev/null 2>&1 || true
+# Write final status
+if [ "$EXIT_CODE" -eq 0 ]; then
+    FINAL_STATUS="completed"
+else
+    FINAL_STATUS="failed"
+fi
+
+# Preserve title/prompt from initial write
+python3 -c "
+import json, sys, time
+try:
+    prev = json.loads(open(sys.argv[1]).read())
+except Exception:
+    prev = {}
+data = {
+    'session': sys.argv[2], 'status': sys.argv[3], 'exit_code': int(sys.argv[4]),
+    'started': prev.get('started', int(time.time())), 'finished': int(time.time()),
+    'dir': sys.argv[5], 'title': prev.get('title', ''), 'prompt': prev.get('prompt', ''),
+}
+print(json.dumps(data))
+" "$STATUS_FILE" "$SESSION_NAME" "$FINAL_STATUS" "$EXIT_CODE" "$WORK_DIR" > "$STATUS_FILE.tmp" && mv "$STATUS_FILE.tmp" "$STATUS_FILE"
 
 # Reset viewport to placeholder so it doesn't show "not found" for dead content
-$SESSION_REG update "$SESSION_NAME" "viewport_url=/placeholder.html" > /dev/null 2>&1 || true
+curl -s -X POST "http://localhost:3000/current?session=${SESSION_NAME}" \
+  -H "Content-Type: application/json" \
+  -d "{\"url\": \"/placeholder.html\"}" > /dev/null 2>&1 || true

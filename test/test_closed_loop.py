@@ -15,7 +15,7 @@ We can't impersonate a Telegram user (API doesn't allow it), so we test
 the chain at each seam:
   - Telegram API validity (bot can send/receive)
   - Server notify pipeline (POST /notify → Telegram sendMessage)
-  - Session creation via registry + tmux
+  - Session creation via routing files + tmux
   - Notify delivery verification via bot debug logs
   - Den reply routing (message → session via tmux send-keys)
 
@@ -51,7 +51,7 @@ BOT_LOG_PATHS = [
     WOLTS_DIR / WOLT_NAME / ".state" / "bot-debug" / "bot.jsonl",
     WOLTS_DIR / ".state" / "bot-debug" / "bot.jsonl",
 ]
-REGISTRY_DIR = WOLTS_DIR / ".state" / "registry"
+SESSION_ROUTING_DIR = WOLTS_DIR / ".state" / "session-routing"
 
 
 def _read_bot_log_tail(n: int = 20) -> list[dict]:
@@ -94,13 +94,13 @@ def _telegram_get_updates(token: str, offset: int = 0, limit: int = 5, timeout: 
 
 
 def _find_chat_id() -> str | None:
-    """Find a chat_id for tests — prefer TEST_CHAT_ID env var, fall back to registry."""
+    """Find a chat_id for tests — prefer TEST_CHAT_ID env var, fall back to routing files."""
     env_id = os.environ.get("TEST_CHAT_ID")
     if env_id:
         return env_id
-    if not REGISTRY_DIR.exists():
+    if not SESSION_ROUTING_DIR.exists():
         return None
-    for f in REGISTRY_DIR.glob("*.json"):
+    for f in SESSION_ROUTING_DIR.glob("*.json"):
         try:
             data = json.loads(f.read_text())
             if data.get("chat_id") and data.get("adapter") == "telegram":
@@ -108,6 +108,21 @@ def _find_chat_id() -> str | None:
         except (json.JSONDecodeError, KeyError):
             continue
     return None
+
+
+def _write_routing(session_name: str, adapter: str, chat_id: str):
+    """Write a session routing file."""
+    SESSION_ROUTING_DIR.mkdir(parents=True, exist_ok=True)
+    (SESSION_ROUTING_DIR / f"{session_name}.json").write_text(
+        json.dumps({"adapter": adapter, "chat_id": chat_id})
+    )
+
+
+def _delete_routing(session_name: str):
+    """Delete a session routing file."""
+    f = SESSION_ROUTING_DIR / f"{session_name}.json"
+    if f.exists():
+        f.unlink()
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +148,7 @@ class TestTelegramSeam:
         token = os.environ["TELEGRAM_BOT_TOKEN"]
         chat_id = _find_chat_id()
         if not chat_id:
-            pytest.skip("no chat_id found in registry")
+            pytest.skip("no chat_id found")
 
         marker = f"🧪 closed-loop probe {int(time.time())}"
         result = _telegram_send(token, chat_id, marker)
@@ -164,21 +179,16 @@ class TestNotifySeam:
     @pytest.fixture(autouse=True)
     def _test_session(self, tmux_session, server_post):
         """Create a temporary session routed to TEST_CHAT_ID for notify tests."""
-        from sessions import SessionRegistry
         self._name = tmux_session
         self._chat_id = _find_chat_id()
         if not self._chat_id:
             pytest.skip("no chat_id available (set TEST_CHAT_ID)")
-        self._reg = SessionRegistry(REGISTRY_DIR)
-        self._reg.create(
-            self._name, wolt="neowolt", creature="beaver",
-            adapter="telegram", chat_id=self._chat_id,
-        )
+        _write_routing(self._name, "telegram", self._chat_id)
         subprocess.run(["tmux", "new-session", "-d", "-s", self._name, "sleep 60"], check=True)
         time.sleep(0.3)
         self._server_post = server_post
         yield
-        self._reg.delete(self._name)
+        _delete_routing(self._name)
 
     def test_notify_delivers_to_telegram(self):
         """POST /notify with a test session routes to Telegram test group."""
@@ -214,74 +224,44 @@ class TestNotifySeam:
 
 
 # ---------------------------------------------------------------------------
-# Seam 3: Session creation and registry
+# Seam 3: Session creation and routing
 # ---------------------------------------------------------------------------
 
 @requires_tmux
 class TestSessionCreationSeam:
-    """Verify sessions can be created, tracked, and cleaned up."""
+    """Verify sessions can be created with routing and tracked via tmux."""
 
-    def test_create_session_updates_registry(self, tmp_registry):
-        """Creating a session writes to the registry."""
-        reg = tmp_registry
-        data = reg.create(
-            "test-loop-session",
-            wolt="neowolt",
-            creature="beaver",
-            adapter="telegram",
-            chat_id="123456",
-        )
-        assert data["status"] == "running"
-        assert data["adapter"] == "telegram"
-        assert data["chat_id"] == "123456"
+    def test_write_routing_creates_file(self, tmp_path):
+        """Writing routing creates a JSON file we can read back."""
+        import bot.core as core
+        original = core.SESSION_ROUTING_DIR
+        try:
+            core.SESSION_ROUTING_DIR = tmp_path / "routing"
+            core.write_session_routing("test-loop", {
+                "adapter": "telegram", "chat_id": "123456"
+            })
+            result = core.read_session_routing("test-loop")
+            assert result["adapter"] == "telegram"
+            assert result["chat_id"] == "123456"
+        finally:
+            core.SESSION_ROUTING_DIR = original
 
-        # Verify we can read it back
-        fetched = reg.get("test-loop-session", check_alive=False)
-        assert fetched is not None
-        assert fetched["creature"] == "beaver"
-
-    def test_tmux_session_matches_registry(self, tmux_session, tmp_registry):
-        """A tmux session should be detectable as alive by the registry."""
+    def test_tmux_session_alive_detection(self, tmux_session):
+        """A live tmux session should be detectable."""
         name = tmux_session
-        reg = tmp_registry
-
-        # Create registry entry
-        reg.create(name, wolt="neowolt")
-
-        # Create tmux session
         subprocess.run(["tmux", "new-session", "-d", "-s", name, "sleep 60"], check=True)
         time.sleep(0.3)
 
-        # Registry should see it as alive (using global tmux check)
-        from sessions import _tmux_alive
-        assert _tmux_alive(name) is True
+        result = subprocess.run(["tmux", "has-session", "-t", name], capture_output=True)
+        assert result.returncode == 0
 
-    def test_dead_session_detected(self, tmp_registry):
-        """A session that's not in tmux should be detectable."""
-        reg = tmp_registry
-        reg.create("ghost-session", wolt="neowolt")
-
-        from sessions import _tmux_alive
-        assert _tmux_alive("ghost-session") is False
-
-    def test_reconcile_marks_orphans(self, tmux_session, tmp_registry):
-        """reconcile() should mark non-tmux sessions as orphaned."""
-        reg = tmp_registry
-        reg.create("alive-session", wolt="neowolt")
-        reg.create("dead-session", wolt="neowolt")
-
-        # Only create tmux for the alive one
-        name = tmux_session
-        # Use tmux_session fixture name for the alive session
-        reg.create(name, wolt="neowolt")
-        subprocess.run(["tmux", "new-session", "-d", "-s", name, "sleep 30"], check=True)
-        time.sleep(0.3)
-
-        orphaned = reg.reconcile()
-        # alive-session and dead-session should be orphaned (not in tmux)
-        assert "alive-session" in orphaned
-        assert "dead-session" in orphaned
-        assert name not in orphaned
+    def test_dead_session_detected(self):
+        """A nonexistent session should not be detectable."""
+        result = subprocess.run(
+            ["tmux", "has-session", "-t", "ghost-session-xyz"],
+            capture_output=True,
+        )
+        assert result.returncode != 0
 
 
 # ---------------------------------------------------------------------------
@@ -340,38 +320,23 @@ class TestDenReplySeam:
 class TestFullRoundTrip:
     """End-to-end: create session → deliver message → notify back."""
 
-    def test_create_session_and_verify_in_registry(self, tmux_session):
-        """Create a real tmux session and verify it appears in the live registry."""
-        from sessions import SessionRegistry
+    def test_create_session_and_verify_alive(self, tmux_session):
+        """Create a real tmux session and verify it's alive."""
         name = tmux_session
-
-        reg = SessionRegistry(REGISTRY_DIR)
-        reg.create(name, wolt="neowolt", creature="beaver", adapter="telegram", chat_id="test")
-
         subprocess.run(["tmux", "new-session", "-d", "-s", name, "sleep 60"], check=True)
         time.sleep(0.5)
 
-        data = reg.get(name, check_alive=True)
-        assert data is not None
-        assert data["alive"] is True
-        assert data["status"] == "running"
+        result = subprocess.run(["tmux", "has-session", "-t", name], capture_output=True)
+        assert result.returncode == 0
 
-        # Cleanup registry
-        reg.delete(name)
-
-    def test_notify_with_freshly_created_session(self, tmux_session, server_post):
+    def test_notify_with_freshly_routed_session(self, tmux_session, server_post):
         """Create a session with routing, then notify through it."""
-        from sessions import SessionRegistry
         name = tmux_session
         chat_id = _find_chat_id()
         if not chat_id:
             pytest.skip("no chat_id available")
 
-        reg = SessionRegistry(REGISTRY_DIR)
-        reg.create(
-            name, wolt="neowolt", creature="beaver",
-            adapter="telegram", chat_id=chat_id,
-        )
+        _write_routing(name, "telegram", chat_id)
         subprocess.run(["tmux", "new-session", "-d", "-s", name, "sleep 60"], check=True)
         time.sleep(0.3)
 
@@ -382,7 +347,7 @@ class TestFullRoundTrip:
         assert result.get("adapter") == "telegram"
 
         # Cleanup
-        reg.delete(name)
+        _delete_routing(name)
 
     def test_session_env_available_for_notify(self, tmux_session):
         """A session with WOLT_SESSION set can use the notify script."""
@@ -460,10 +425,14 @@ class TestRegressions:
         assert sentinel in server_src
         assert sentinel in adapter_src
 
-    def test_session_registry_atomic_writes(self, tmp_path):
-        """Registry writes should use tmp+rename (no partial reads)."""
-        from sessions import SessionRegistry
-        reg = SessionRegistry(tmp_path / "reg")
-        reg.create("atomic-test")
-        # No .tmp files should remain
-        assert list((tmp_path / "reg").glob("*.tmp")) == []
+    def test_routing_file_write_is_clean(self, tmp_path):
+        """Routing file writes should not leave temp files."""
+        import bot.core as core
+        original = core.SESSION_ROUTING_DIR
+        try:
+            core.SESSION_ROUTING_DIR = tmp_path / "routing"
+            core.write_session_routing("clean-test", {"adapter": "telegram", "chat_id": "123"})
+            # No .tmp files should remain
+            assert list((tmp_path / "routing").glob("*.tmp")) == []
+        finally:
+            core.SESSION_ROUTING_DIR = original

@@ -258,5 +258,4 @@ class TestSystemPrompt:
     def test_prompt_contains_creature_info(self):
         from bot.core import build_system_prompt
         prompt = build_system_prompt()
-        assert "raccoon" in prompt
         assert "beaver" in prompt

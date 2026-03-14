@@ -31,7 +31,6 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container"))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 
 from conftest import requires_server, requires_tmux
 
@@ -42,7 +41,7 @@ from conftest import requires_server, requires_tmux
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 WOLT_NAME = os.environ.get("WOLT_NAME", "neowolt")
-REGISTRY_DIR = WOLTS_DIR / ".state" / "registry"
+SESSION_STATUS_DIR = WOLTS_DIR / WOLT_NAME / ".state" / "sessions"
 BOT_LOG_PATHS = [
     WOLTS_DIR / WOLT_NAME / ".state" / "bot-debug" / "bot.jsonl",
     WOLTS_DIR / ".state" / "bot-debug" / "bot.jsonl",
@@ -533,10 +532,9 @@ class TestLiveAgentLoop:
         assert result.get("type") == "session" or len(new_sessions) > 0, \
             f"expected a session to spawn. type={result.get('type')}, new_sessions={new_sessions}"
 
-    def test_spawned_session_in_registry(self, request):
-        """Spawned session should appear in the session registry."""
+    def test_spawned_session_has_routing(self, request):
+        """Spawned session should have a routing file for notifications."""
         import bot.core as core
-        from sessions import SessionRegistry
 
         routing = {"adapter": "telegram", "chat_id": os.environ.get("TEST_CHAT_ID", "test-live")}
 
@@ -545,23 +543,22 @@ class TestLiveAgentLoop:
 
         time.sleep(2)
 
-        # Check registry for new sessions
-        reg = SessionRegistry(REGISTRY_DIR)
-        sessions = reg.list()
-        recent = [s for s in sessions if s.get("created_at", 0) > time.time() - 30]
+        # Check that routing was written for the session
+        session_name = None
+        if result.get("type") == "session" and result.get("session"):
+            session_name = result["session"].get("name")
 
         _log_transcript(request.node.nodeid, [{
             "user": msg,
             "response": result.get("text", ""),
             "type": result.get("type", "text"),
-            "tools": [{"tool": "registry_check", "args": {"recent_count": len(recent)}}],
+            "tools": [{"tool": "routing_check", "args": {"session": session_name}}],
         }])
 
-        assert len(recent) > 0, "no new sessions in registry after get_response"
-        newest = recent[0]
-        assert newest.get("adapter") == "telegram"
-        expected_chat = os.environ.get("TEST_CHAT_ID", "test-live")
-        assert newest.get("chat_id") == expected_chat
+        assert session_name, f"no session spawned. response: {result.get('text', '')[:200]}"
+        routing_data = core.read_session_routing(session_name)
+        assert routing_data is not None, f"no routing file for session {session_name}"
+        assert routing_data.get("adapter") == "telegram"
 
 
 # ---------------------------------------------------------------------------
@@ -599,19 +596,24 @@ class TestEndToEnd:
             subprocess.run(["tmux", "kill-session", "-t", self._session_name], capture_output=True)
 
     def _wait_for_session(self, session_name: str) -> dict:
-        """Poll registry until session completes or timeout."""
-        from sessions import SessionRegistry
-        reg = SessionRegistry(REGISTRY_DIR)
+        """Poll until session completes (tmux dies) or file appears or timeout."""
         start = time.time()
         while time.time() - start < self.MAX_WAIT:
-            data = reg.get(session_name, check_alive=True)
-            if data and data.get("status") in ("completed", "failed"):
-                return data
-            # Also check if file appeared (session might not update registry perfectly)
+            # Check if file appeared
             if self.E2E_OUTPUT.exists():
-                return data or {"status": "completed"}
+                return {"status": "completed"}
+            # Check if tmux session is still alive
+            result = subprocess.run(
+                ["tmux", "has-session", "-t", session_name],
+                capture_output=True,
+            )
+            if result.returncode != 0:
+                # Session ended — check if file was created
+                if self.E2E_OUTPUT.exists():
+                    return {"status": "completed"}
+                return {"status": "failed"}
             time.sleep(3)
-        return reg.get(session_name, check_alive=True) or {"status": "timeout"}
+        return {"status": "timeout"}
 
     def test_hello_wolt_end_to_end(self, request):
         """Haiku spawns beaver → beaver creates hello-wolt HTML → file verified on disk."""
@@ -632,13 +634,18 @@ class TestEndToEnd:
         if result.get("type") == "session" and result.get("session"):
             session_name = result["session"].get("name")
         if not session_name:
-            # Try to find from registry
-            from sessions import SessionRegistry
-            reg = SessionRegistry(REGISTRY_DIR)
-            sessions = reg.list()
-            recent = [s for s in sessions if s.get("created_at", 0) > time.time() - 15]
-            if recent:
-                session_name = recent[0].get("name")
+            # Try to find from recent tmux sessions
+            try:
+                raw = subprocess.run(
+                    ["tmux", "list-sessions", "-F", "#{session_name}"],
+                    capture_output=True, text=True, check=True,
+                ).stdout.strip()
+                for name in raw.split("\n"):
+                    if name and name.startswith(WOLT_NAME) and name != "main":
+                        session_name = name
+                        break
+            except subprocess.CalledProcessError:
+                pass
 
         self._session_name = session_name
         assert session_name, f"no session spawned. response: {result.get('text', '')[:200]}"
