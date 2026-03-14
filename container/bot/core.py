@@ -151,9 +151,21 @@ CRITICAL: If a task requires claude_code, call claude_code. Don't narrate what y
 - **claude_code** — spin up a Claude Code session for real work (pick raccoon or beaver as needed)
 - **send_message** — send a message to a running session
 - **list_sessions** / **check_session** — see what's running or check on a session
+- **list_projects** — see what projects exist in the current wolt
 - **read_memory** — read a specific memory file when you need details
 - **get_recent_sessions** — read session summaries (what was built, links)
 - **get_tunnel_url** — get the public URL for the split view
+
+## Projects
+Projects live in `wolt/projects/`. They're isolated workspaces for building things.
+
+**When someone asks to build something** (app, tool, script, experiment): use `claude_code` with the `project` parameter set. Pick a short, descriptive name. The session runs scoped to that project directory.
+
+**When someone asks to work on an existing project** ("fix my dashboard", "update the todo app"): call `list_projects` first to find it, then `claude_code` with `project` set to the matching name.
+
+**When someone just wants to chat or do wolt-level work** (update memories, check on things, site changes): no project needed — run the session at the wolt root as usual.
+
+The key question: does this request belong to a specific project? If yes, scope it. If not, don't.
 
 ## Communication Protocol
 Messages wrapped in <system>...</system> tags are from Claude Code sessions (the "den"). They were sent directly to the user — you didn't say them. Don't repeat them. When asked about results, use that context to answer in your own words.
@@ -275,11 +287,12 @@ CREATURE_MODELS = {
 }
 
 
-def start_claude_session(prompt: str, wolt: str = None, creature: str = None, routing: dict = None) -> dict:
+def start_claude_session(prompt: str, wolt: str = None, creature: str = None, routing: dict = None, project: str = None) -> dict:
     """Start an interactive Claude Code session in a named tmux session.
 
     creature: optional "raccoon" (opus) or "beaver" (sonnet) to pick the model.
     routing: adapter routing info (adapter, chat_id, etc.) — written to registry.
+    project: optional project name — session will run in wolt/projects/{project}/.
     """
     if wolt:
         target_dir = WOLTS_DIR / wolt
@@ -288,6 +301,12 @@ def start_claude_session(prompt: str, wolt: str = None, creature: str = None, ro
             wolt = None
     else:
         target_dir = WOLT_DIR
+
+    # If a project is specified, scope the session to that project directory
+    if project:
+        project_dir = target_dir / "wolt" / "projects" / project
+        project_dir.mkdir(parents=True, exist_ok=True)
+        target_dir = project_dir
 
     target_name = wolt or os.environ.get("WOLT_NAME", "wolt")
     session_name = _session_name(target_name)
@@ -303,6 +322,7 @@ def start_claude_session(prompt: str, wolt: str = None, creature: str = None, ro
         creature=creature or "",
         model=model or "",
         dir=str(target_dir),
+        project=project or "",
         prompt=prompt,
         adapter=(routing or {}).get("adapter", ""),
         chat_id=str((routing or {}).get("chat_id", "")),
@@ -318,16 +338,18 @@ def start_claude_session(prompt: str, wolt: str = None, creature: str = None, ro
     )
 
     result = {"name": session_name, "url": session_url or None, "wolt": target_name}
+    if project:
+        result["project"] = project
     if creature:
         result["creature"] = creature
         result["model"] = model
-    _bot_log("session_start", {"session": session_name, "wolt": target_name, "dir": str(target_dir), "creature": creature, "model": model, "prompt": prompt[:500]})
+    _bot_log("session_start", {"session": session_name, "wolt": target_name, "project": project, "dir": str(target_dir), "creature": creature, "model": model, "prompt": prompt[:500]})
     return result
 
 
-def new_session(prompt: str, from_session: str = None, wolt: str = None, creature: str = None, routing: dict = None) -> dict:
+def new_session(prompt: str, from_session: str = None, wolt: str = None, creature: str = None, routing: dict = None, project: str = None) -> dict:
     """Start a fresh Claude Code session and redirect the current viewport to it."""
-    session = start_claude_session(prompt, wolt=wolt, creature=creature, routing=routing)
+    session = start_claude_session(prompt, wolt=wolt, creature=creature, routing=routing, project=project)
 
     # Determine which viewport to redirect
     redirect_from = from_session
@@ -573,7 +595,7 @@ def kill_session(name: str) -> bool:
 
 def _tool_claude_code(args: dict, routing: dict | None) -> str:
     creature = args.get("creature")
-    session = start_claude_session(args["prompt"], wolt=args.get("wolt"), creature=creature, routing=routing)
+    session = start_claude_session(args["prompt"], wolt=args.get("wolt"), creature=creature, routing=routing, project=args.get("project"))
     return json.dumps(session)
 
 
@@ -585,6 +607,7 @@ def _tool_new_session(args: dict, routing: dict | None) -> str:
         wolt=args.get("wolt"),
         creature=creature,
         routing=routing,
+        project=args.get("project"),
     )
     return json.dumps(session)
 
@@ -645,6 +668,25 @@ def _tool_generate_image(args: dict, routing: dict | None) -> str:
         return json.dumps({"error": str(e)})
 
 
+def _tool_list_projects(args: dict, routing: dict | None) -> str:
+    projects_dir = WOLT_DIR / "wolt" / "projects"
+    projects = []
+    if projects_dir.exists():
+        for entry in sorted(projects_dir.iterdir()):
+            if not entry.is_dir() or entry.name.startswith("."):
+                continue
+            proj = {"name": entry.name, "path": str(entry)}
+            proj_json = entry / "project.json"
+            if proj_json.exists():
+                try:
+                    config = json.loads(proj_json.read_text())
+                    proj.update(config)
+                except Exception:
+                    pass
+            projects.append(proj)
+    return json.dumps({"projects": projects, "count": len(projects)})
+
+
 def _tool_switch_wolt(args: dict, routing: dict | None) -> str:
     switched = switch_wolt(args["name"])
     return json.dumps({"switched": bool(switched), "name": args["name"]})
@@ -662,6 +704,7 @@ TOOL_HANDLERS: dict[str, callable] = {
     "read_memory": _tool_read_memory,
     "list_wolts": _tool_list_wolts,
     "generate_image": _tool_generate_image,
+    "list_projects": _tool_list_projects,
     "switch_wolt": _tool_switch_wolt,
     "new_session": _tool_new_session,
 }
@@ -676,7 +719,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "claude_code",
-            "description": "Delegate a task to a Claude Code session. Use for building, searching, coding, generating artifacts, or any real work. You can target a specific wolt and pick a creature type (raccoon=opus for complex work, beaver=sonnet for building).",
+            "description": "Delegate a task to a Claude Code session. Use for building, searching, coding, generating artifacts, or any real work. You can target a specific wolt, pick a creature type, and scope to a project.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -692,6 +735,10 @@ TOOLS = [
                         "type": "string",
                         "enum": ["raccoon", "beaver"],
                         "description": "Which creature to run: 'raccoon' (🦝 opus — complex reasoning, orchestration) or 'beaver' (🦫 sonnet — building, coding). Defaults to the wolt's default model if omitted.",
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "Project name to scope the session to. Session will run in wolt/projects/{name}/. The directory is created if it doesn't exist. Use this to keep work isolated from the wolt root.",
                     },
                 },
                 "required": ["prompt"],
@@ -722,6 +769,10 @@ TOOLS = [
                         "type": "string",
                         "enum": ["raccoon", "beaver"],
                         "description": "Which creature to run: 'raccoon' (opus) or 'beaver' (sonnet). Defaults to wolt's default model.",
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "Project name to scope the session to. Session runs in wolt/projects/{name}/.",
                     },
                 },
                 "required": ["prompt"],
@@ -890,6 +941,14 @@ TOOLS = [
                 },
                 "required": ["prompt"],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_projects",
+            "description": "List all projects in the current wolt. Returns project names, paths, and any metadata from project.json. Use this to see what projects exist before routing a session to one.",
+            "parameters": {"type": "object", "properties": {}},
         },
     },
     {

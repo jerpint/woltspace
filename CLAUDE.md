@@ -11,6 +11,8 @@ The human chats with the wolt via Telegram. The wolt can spin up Claude Code ses
 
 **This repo is the platform** — the Docker image, server, bot brain, and CLI that makes wolts run. Individual wolt repos live separately (under `~/wolts/{name}/`).
 
+> **⚠️ Platform code is immutable from wolt sessions.** Wolts must NEVER edit files in `/workspace/woltspace/`. All wolt work happens inside their own directory (`/workspace/wolts/{name}/`). Code projects go in `wolt/projects/`. If a wolt needs new platform functionality, the human files an issue — wolts don't patch the platform.
+
 ---
 
 ## Architecture at a Glance
@@ -90,7 +92,7 @@ Single-file HTTP + WebSocket server running on port 3000 inside the container.
 ### `container/bot/core.py` (Python)
 The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routing.
 - Builds system prompt from wolt memory files
-- Defines 9 tools: `claude_code`, `get_tunnel_url`, `check_session`, `get_recent_sessions`, `list_sessions`, `kill_session`, `read_memory`, `list_wolts`, `switch_wolt`
+- Defines tools: `claude_code`, `new_session`, `get_tunnel_url`, `check_session`, `get_recent_sessions`, `list_sessions`, `find_session`, `kill_session`, `send_message`, `read_memory`, `list_wolts`, `list_projects`, `generate_image`, `switch_wolt`
 - When `claude_code` is called: spawns a tmux session running `run-session.sh` → Claude Code CLI
 - Session metadata (status, routing, creature, viewport) stored in the **session registry** — see `container/lib/sessions.py`
 
@@ -108,7 +110,7 @@ Entrypoint:
 6. Optionally starts Telegram/Slack bot
 
 ### `container/skills/`
-Discovery files Claude Code reads from `~/.claude/skills/`. Platform defaults baked into image; wolts can override. Current skills: `apps`, `create-wolt`, `digest`, `music`, `viewport`, `telegram`, `notify`, `session-summary`, `organize-context`.
+Discovery files Claude Code reads from `~/.claude/skills/`. Platform defaults baked into image; wolts can override. Current skills: `apps`, `projects`, `new-project`, `migrate-to-projects`, `create-wolt`, `digest`, `music`, `viewport`, `telegram`, `notify`, `session-summary`, `organize-context`.
 
 ### `container/cron/digest.mjs`
 Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select via `claude -p` → render HTML. Writes to `wolt/sparks/`. Optional Spotify playlist curation.
@@ -159,6 +161,7 @@ Use `/viewport` for full details: URL paths, app serving, live-reload behavior.
       learnings.md     — active patterns (first 40 lines)
       index.md         — memory index for discoverability
       archive/         — grows forever, searched on demand
+    projects/          — isolated code projects (apps, scripts, experiments)
     apps/              — full-stack apps (each has app.json, served at /app/:name/)
     site/              — static HTML/CSS public space
     sparks/            — generated artifacts
@@ -170,6 +173,8 @@ Use `/viewport` for full details: URL paths, app serving, live-reload behavior.
   CLAUDE.md            — wolt-specific instructions
   wolt.json            — manifest
 ```
+
+**Isolation boundary:** Sessions run inside the wolt directory. All code edits MUST stay within this directory. The platform (`/workspace/woltspace/`) is read-only to wolts.
 
 ---
 

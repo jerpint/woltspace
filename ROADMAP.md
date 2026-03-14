@@ -71,18 +71,28 @@ Organized from jerpint's airplane-mode notes (2026-03-14).
 
 ---
 
-## 6. Projects Directory (Priority: Medium)
+## 6. Projects & Isolation (Priority: High — Phase 1 shipped)
 
-**What:** `projects/` folder, mounted on host for backup.
+**What:** Isolate user work from platform code. Users build in `wolt/projects/`, never touch `/workspace/woltspace/`.
 
-- All full-stack apps and session artifacts live here
-- Recommended stacks for easy projects (e.g. Python backend + SQLite + Vite)
+**Phase 1 (shipped):**
+- `wolt/projects/` directory as the standard location for all code projects
+- CLAUDE.md guardrails at template, platform, and session-injection level that forbid editing platform code
+- Clear instructions: code goes in `wolt/projects/`, static pages in `wolt/site/`
+
+**Phase 2 (next):**
 - Projects are discoverable, registered (like sessions), can be toggled on/off
-- Git-tracked, pushable if user provides their git
+- Bot tools get a `project=` parameter to scope sessions to a project directory
+- Session registry tracks which project each session is working on
+- Recommended stacks for easy projects (e.g. Python backend + SQLite + Vite)
+- Git-tracked per project, pushable if user provides their git
+
+**Phase 3 (future):**
+- Mount `/workspace/woltspace/` as read-only in container (filesystem-level enforcement)
 - North star: woltspace = place for tinkerers to build full-stack apps they can share from anywhere
 - Apps don't scale by design — extract and deploy elsewhere when ready
 
-**Why:** Currently artifacts are scattered. Host-mounted = survives container explosions.
+**Why:** Users' Claude sessions drift into platform code, making it impossible to merge upstream woltspace updates. Isolation keeps user work portable and the platform upgradeable.
 
 ---
 

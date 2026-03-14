@@ -138,6 +138,7 @@ split.html polls /current/meta every 2s
 | `get_tunnel_url` | Get current public URL |
 | `read_memory` | Read memory files (scoped to wolt/memory/) |
 | `list_wolts` | Multi-wolt: show available wolts |
+| `list_projects` | List projects in current wolt (names, paths, metadata) |
 | `switch_wolt` | Change active wolt identity |
 | `generate_image` | AI image gen (OpenAI) |
 
@@ -185,6 +186,7 @@ CREATED → RUNNING → COMPLETED / FAILED
 ├─ wolt/
 │  ├─ memory/           # identity, context, learnings (boot files)
 │  │  └─ archive/       # grows forever, searched on demand
+│  ├─ projects/         # isolated code projects (apps, scripts, experiments)
 │  ├─ site/             # static HTML/CSS, live-reload watched
 │  ├─ apps/             # full-stack apps (each has app.json)
 │  ├─ sparks/           # generated artifacts (digest, etc.)
