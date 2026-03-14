@@ -422,4 +422,5 @@ class TestLiveAgentLoop:
         assert len(recent) > 0, "no new sessions in registry after get_response"
         newest = recent[0]
         assert newest.get("adapter") == "telegram"
-        assert newest.get("chat_id") == "test-live"
+        expected_chat = os.environ.get("TEST_CHAT_ID", "test-live")
+        assert newest.get("chat_id") == expected_chat
