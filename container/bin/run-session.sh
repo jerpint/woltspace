@@ -17,6 +17,10 @@ SESSION_REG="$SCRIPT_DIR/session-reg"
 cd "$WORK_DIR"
 export WOLT_SESSION="$SESSION_NAME"
 
+# Generate a stable Claude session ID so we can --resume the right conversation later
+CLAUDE_SESSION_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
+$SESSION_REG update "$SESSION_NAME" "claude_session_id=$CLAUDE_SESSION_ID" > /dev/null 2>&1 || true
+
 # Generate a short descriptive title from the prompt (first line, ~60 chars, clean)
 TITLE=$(python3 -c "
 import re, sys
@@ -84,7 +88,7 @@ MODEL_FLAG=""
 if [ -n "$MODEL" ]; then
     MODEL_FLAG="--model $MODEL"
 fi
-claude --dangerously-skip-permissions $MODEL_FLAG "$FULL_PROMPT" || EXIT_CODE=$?
+claude --dangerously-skip-permissions --session-id "$CLAUDE_SESSION_ID" $MODEL_FLAG "$FULL_PROMPT" || EXIT_CODE=$?
 
 # Update registry with final status
 $SESSION_REG finish "$SESSION_NAME" "$EXIT_CODE" > /dev/null 2>&1 || true

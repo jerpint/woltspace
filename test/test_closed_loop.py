@@ -460,6 +460,97 @@ class TestRegressions:
         assert sentinel in server_src
         assert sentinel in adapter_src
 
+    @requires_tmux
+    def test_revival_picks_correct_session(self, tmp_path):
+        """Reviving session A must --resume A's UUID, not B's (the most recent).
+
+        Bug: message_session used --continue which picks the most recent
+        conversation in the directory. When multiple sessions share a dir,
+        this revives the wrong one. Fix: use --resume <uuid> from registry.
+        """
+        import bot.core as core
+        from sessions import SessionRegistry
+
+        # Use a temp registry so we don't pollute real state
+        tmp_reg = SessionRegistry(tmp_path / "registry")
+        original_reg = core.registry
+        core.registry = tmp_reg
+
+        session_a = f"test-revival-a-{int(time.time()) % 100000}"
+        session_b = f"test-revival-b-{int(time.time()) % 100000}"
+        uuid_a = "aaaaaaaa-1111-2222-3333-444444444444"
+        uuid_b = "bbbbbbbb-1111-2222-3333-444444444444"
+
+        try:
+            # Create registry entries with distinct claude_session_ids
+            tmp_reg.create(session_a, wolt="neowolt")
+            tmp_reg.update(session_a, claude_session_id=uuid_a)
+            tmp_reg.create(session_b, wolt="neowolt")
+            tmp_reg.update(session_b, claude_session_id=uuid_b)
+
+            # Create tmux sessions running bash (no claude → _session_has_claude returns False)
+            for name in [session_a, session_b]:
+                subprocess.run(["tmux", "new-session", "-d", "-s", name, "bash"], check=True)
+            time.sleep(0.3)
+
+            # Revive session A — should use --resume uuid_a
+            result = core.message_session(session_a, "test message")
+            assert result["ok"] is True
+            assert result["status"] == "revived"
+            assert uuid_a in result.get("detail", ""), (
+                f"Expected --resume {uuid_a} in detail, got: {result.get('detail')}"
+            )
+            assert uuid_b not in result.get("detail", ""), (
+                f"Should NOT contain session B's UUID: {result.get('detail')}"
+            )
+
+            # Verify the actual command sent to tmux contains --resume with the right UUID
+            # (tmux may line-wrap, so join all lines before checking)
+            time.sleep(0.3)
+            capture = subprocess.run(
+                ["tmux", "capture-pane", "-t", session_a, "-p", "-J"],
+                capture_output=True, text=True, check=True,
+            )
+            flat = capture.stdout.replace("\n", " ")
+            assert "--resume" in flat and uuid_a in flat, (
+                f"tmux pane should contain --resume {uuid_a}, got: {flat[:500]}"
+            )
+
+        finally:
+            core.registry = original_reg
+            for name in [session_a, session_b]:
+                subprocess.run(["tmux", "kill-session", "-t", name], capture_output=True)
+
+    @requires_tmux
+    def test_revival_falls_back_to_continue_without_uuid(self, tmp_path):
+        """Sessions without claude_session_id should fall back to --continue."""
+        import bot.core as core
+        from sessions import SessionRegistry
+
+        tmp_reg = SessionRegistry(tmp_path / "registry")
+        original_reg = core.registry
+        core.registry = tmp_reg
+
+        session_name = f"test-revival-old-{int(time.time()) % 100000}"
+
+        try:
+            # Create session without claude_session_id (pre-fix session)
+            tmp_reg.create(session_name, wolt="neowolt")
+
+            subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "bash"], check=True)
+            time.sleep(0.3)
+
+            result = core.message_session(session_name, "test fallback")
+            assert result["ok"] is True
+            assert result["status"] == "revived"
+            assert "--continue" in result.get("detail", ""), (
+                f"Expected --continue fallback, got: {result.get('detail')}"
+            )
+
+        finally:
+            core.registry = original_reg
+            subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
+
     def test_session_registry_atomic_writes(self, tmp_path):
         """Registry writes should use tmp+rename (no partial reads)."""
         from sessions import SessionRegistry
