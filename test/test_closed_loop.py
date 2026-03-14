@@ -94,7 +94,10 @@ def _telegram_get_updates(token: str, offset: int = 0, limit: int = 5, timeout: 
 
 
 def _find_chat_id() -> str | None:
-    """Find a chat_id from existing registry entries."""
+    """Find a chat_id for tests — prefer TEST_CHAT_ID env var, fall back to registry."""
+    env_id = os.environ.get("TEST_CHAT_ID")
+    if env_id:
+        return env_id
     if not REGISTRY_DIR.exists():
         return None
     for f in REGISTRY_DIR.glob("*.json"):
@@ -150,57 +153,54 @@ class TestTelegramSeam:
 # ---------------------------------------------------------------------------
 
 @requires_server
+@requires_tmux
 class TestNotifySeam:
-    """Verify the server's /notify endpoint delivers to Telegram."""
+    """Verify the server's /notify endpoint delivers to Telegram.
 
-    def test_notify_delivers_to_telegram(self, server_post):
-        """POST /notify with a valid session routes to Telegram."""
-        # Find a session with telegram routing
-        if not REGISTRY_DIR.exists():
-            pytest.skip("no registry")
+    Creates a temporary test session with TEST_CHAT_ID so notifies
+    go to the test group, not the main chat.
+    """
 
-        for f in REGISTRY_DIR.glob("*.json"):
-            try:
-                data = json.loads(f.read_text())
-                if data.get("adapter") == "telegram" and data.get("chat_id"):
-                    marker = f"🧪 notify-seam-{int(time.time())}"
-                    result = server_post("/notify", {
-                        "session": data["name"],
-                        "message": marker,
-                    })
-                    assert result.get("adapter") == "telegram"
-                    assert result.get("ok") is True
-                    return
-            except (json.JSONDecodeError, KeyError):
-                continue
-        pytest.skip("no telegram-routed sessions found")
+    @pytest.fixture(autouse=True)
+    def _test_session(self, tmux_session, server_post):
+        """Create a temporary session routed to TEST_CHAT_ID for notify tests."""
+        from sessions import SessionRegistry
+        self._name = tmux_session
+        self._chat_id = _find_chat_id()
+        if not self._chat_id:
+            pytest.skip("no chat_id available (set TEST_CHAT_ID)")
+        self._reg = SessionRegistry(REGISTRY_DIR)
+        self._reg.create(
+            self._name, wolt="neowolt", creature="beaver",
+            adapter="telegram", chat_id=self._chat_id,
+        )
+        subprocess.run(["tmux", "new-session", "-d", "-s", self._name, "sleep 60"], check=True)
+        time.sleep(0.3)
+        self._server_post = server_post
+        yield
+        self._reg.delete(self._name)
 
-    def test_notify_logged_in_bot_debug(self, server_post):
+    def test_notify_delivers_to_telegram(self):
+        """POST /notify with a test session routes to Telegram test group."""
+        marker = f"🧪 notify-seam-{int(time.time())}"
+        result = self._server_post("/notify", {
+            "session": self._name,
+            "message": marker,
+        })
+        assert result.get("adapter") == "telegram"
+        assert result.get("ok") is True
+
+    def test_notify_logged_in_bot_debug(self):
         """After notify, an entry should appear in bot debug log."""
-        if not REGISTRY_DIR.exists():
-            pytest.skip("no registry")
+        marker = f"🧪 log-check-{int(time.time())}"
+        self._server_post("/notify", {"session": self._name, "message": marker})
+        time.sleep(1)
 
-        # Record the timestamp before sending
-        before_ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-        for f in REGISTRY_DIR.glob("*.json"):
-            try:
-                data = json.loads(f.read_text())
-                if data.get("adapter") == "telegram" and data.get("chat_id"):
-                    marker = f"🧪 log-check-{int(time.time())}"
-                    server_post("/notify", {"session": data["name"], "message": marker})
-                    time.sleep(1)
-
-                    # Check for our marker in recent log entries
-                    recent = _read_bot_log_tail(30)
-                    found = any(
-                        marker in e.get("message", "") for e in recent
-                    )
-                    assert found, f"notify marker not found in bot log (checked last 30 entries)"
-                    return
-            except (json.JSONDecodeError, KeyError):
-                continue
-        pytest.skip("no telegram-routed sessions")
+        recent = _read_bot_log_tail(30)
+        found = any(
+            marker in e.get("message", "") for e in recent
+        )
+        assert found, f"notify marker not found in bot log (checked last 30 entries)"
 
     def test_notify_footer_appended(self):
         """server.js appends the DEN_REPLY_FOOTER to notify messages."""
