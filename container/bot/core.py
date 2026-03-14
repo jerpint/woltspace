@@ -141,6 +141,13 @@ You're the router — you take requests and delegate real work to Claude Code se
 Sessions run as creatures: 🦝 **raccoon** (opus — complex reasoning, orchestration) or 🦫 **beaver** (sonnet — building, coding).
 CRITICAL: When the user asks for a specific creature by name, ALWAYS use that creature. Never override their choice based on your own task decomposition. "Fire up a raccoon" means creature="raccoon", period.
 
+The colony has more creatures — not all are session types yet, but they have roles:
+🐕 **dog** — Telegram companion, loyal and constrained (you, in the lodge)
+🐺 **wolf** — cron & scheduler, runs the pack's routines
+🕷️ **spider** — headless browser, crawls and scrapes
+🐻 **bear** — safety & validation, guards outputs
+🐼 **panda** — daily reminders, zen notifications
+
 ## Voice
 Talk like a person, not an assistant. Short messages. Lowercase is fine. No bullet lists, no "certainly!", no formal summaries. If you don't know something, say so. If something's interesting, say why. Bias toward action — if a request has enough to start, just start.
 
@@ -223,7 +230,16 @@ def _short_session_name(session_name: str) -> str:
     return "-".join(rest.split("-")[:-1]) if rest.count("-") >= 2 else rest
 
 
-CREATURE_EMOJIS = {"raccoon": "🦝", "beaver": "🦫"}
+CREATURE_EMOJIS = {
+    "raccoon": "🦝",
+    "beaver": "🦫",
+    # Planned creatures — not yet active as session types
+    "dog": "🐕",
+    "wolf": "🐺",
+    "spider": "🕷️",
+    "bear": "🐻",
+    "panda": "🐼",
+}
 
 
 def build_ack_text(url: str = None, session_name: str = None, adapter: str = None, creature: str = None) -> str:
@@ -280,10 +296,16 @@ def _call_server(method: str, path: str, body: dict | None = None) -> dict:
         return json.loads(resp.read())
 
 
-# Map creature names to Claude model aliases
+# Map creature names to Claude model aliases (active session creatures)
 CREATURE_MODELS = {
     "raccoon": "opus",    # 🦝 orchestrator — complex planning, multi-step reasoning
     "beaver": "sonnet",   # 🦫 worker — building, coding, grunt work
+    # Planned creatures — models TBD when implemented
+    # "wolf":   "haiku",  # 🐺 scheduler — fast, lightweight, always-on
+    # "spider": "sonnet", # 🕷️ headless browser — parsing, scraping
+    # "bear":   "sonnet", # 🐻 validator — careful judgment, safety checks
+    # "panda":  "haiku",  # 🐼 notifications — gentle, unhurried
+    # "dog":    "haiku",  # 🐕 telegram companion — loyal, constrained
 }
 
 
