@@ -69,7 +69,7 @@ curl -s -X POST \"http://localhost:3000/current?session=\$(tmux display-message 
 
 Rule of thumb: if you created an artifact someone would want to look at, push it to the viewport.
 
-**IMPORTANT**: To send a message to the developer, ALWAYS use \`notify "your message"\`. Never call /notify via curl directly — the notify script handles session routing, emoji prefix, and Telegram delivery correctly.
+**IMPORTANT**: To send a message to the developer, ALWAYS use \`notify \"your message\"\`. Never call /notify via curl directly — the notify script handles session routing, emoji prefix, and Telegram delivery correctly.
 
 ## CRITICAL: Do not touch infrastructure
 
