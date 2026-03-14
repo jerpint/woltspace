@@ -672,12 +672,10 @@ class TestEndToEnd:
         # Check it's valid HTML
         assert "<" in content and ">" in content, "file doesn't look like HTML"
 
-        # Verify viewport serves it (if server is up)
-        try:
-            import urllib.request as req
-            url = f"http://localhost:3000/site/hello-wolt-test.html"
-            with req.urlopen(url, timeout=5) as resp:
-                served = resp.read().decode()
-                assert "Hello Wolt" in served, "viewport doesn't serve the file correctly"
-        except Exception:
-            pass  # Server might not serve wolt/site/ directly — not a hard failure
+        # Verify viewport serves it
+        import urllib.request as req
+        url = "http://localhost:3000/hello-wolt-test.html"
+        with req.urlopen(url, timeout=5) as resp:
+            served = resp.read().decode()
+            assert "Hello Wolt" in served, \
+                f"viewport doesn't serve the file correctly. Got: {served[:200]}"
