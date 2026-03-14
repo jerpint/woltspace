@@ -92,7 +92,7 @@ Single-file HTTP + WebSocket server running on port 3000 inside the container.
 ### `container/bot/core.py` (Python)
 The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routing.
 - Builds system prompt from wolt memory files
-- Defines 9 tools: `claude_code`, `get_tunnel_url`, `check_session`, `get_recent_sessions`, `list_sessions`, `kill_session`, `read_memory`, `list_wolts`, `switch_wolt`
+- Defines tools: `claude_code`, `new_session`, `get_tunnel_url`, `check_session`, `get_recent_sessions`, `list_sessions`, `find_session`, `kill_session`, `send_message`, `read_memory`, `list_wolts`, `list_projects`, `generate_image`, `switch_wolt`
 - When `claude_code` is called: spawns a tmux session running `run-session.sh` → Claude Code CLI
 - Session metadata (status, routing, creature, viewport) stored in the **session registry** — see `container/lib/sessions.py`
 
@@ -110,7 +110,7 @@ Entrypoint:
 6. Optionally starts Telegram/Slack bot
 
 ### `container/skills/`
-Discovery files Claude Code reads from `~/.claude/skills/`. Platform defaults baked into image; wolts can override. Current skills: `apps`, `create-wolt`, `digest`, `music`, `viewport`, `telegram`, `notify`, `session-summary`, `organize-context`.
+Discovery files Claude Code reads from `~/.claude/skills/`. Platform defaults baked into image; wolts can override. Current skills: `apps`, `projects`, `new-project`, `create-wolt`, `digest`, `music`, `viewport`, `telegram`, `notify`, `session-summary`, `organize-context`.
 
 ### `container/cron/digest.mjs`
 Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select via `claude -p` → render HTML. Writes to `wolt/sparks/`. Optional Spotify playlist curation.

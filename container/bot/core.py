@@ -151,9 +151,21 @@ CRITICAL: If a task requires claude_code, call claude_code. Don't narrate what y
 - **claude_code** — spin up a Claude Code session for real work (pick raccoon or beaver as needed)
 - **send_message** — send a message to a running session
 - **list_sessions** / **check_session** — see what's running or check on a session
+- **list_projects** — see what projects exist in the current wolt
 - **read_memory** — read a specific memory file when you need details
 - **get_recent_sessions** — read session summaries (what was built, links)
 - **get_tunnel_url** — get the public URL for the split view
+
+## Projects
+Projects live in `wolt/projects/`. They're isolated workspaces for building things.
+
+**When someone asks to build something** (app, tool, script, experiment): use `claude_code` with the `project` parameter set. Pick a short, descriptive name. The session runs scoped to that project directory.
+
+**When someone asks to work on an existing project** ("fix my dashboard", "update the todo app"): call `list_projects` first to find it, then `claude_code` with `project` set to the matching name.
+
+**When someone just wants to chat or do wolt-level work** (update memories, check on things, site changes): no project needed — run the session at the wolt root as usual.
+
+The key question: does this request belong to a specific project? If yes, scope it. If not, don't.
 
 ## Communication Protocol
 Messages wrapped in <system>...</system> tags are from Claude Code sessions (the "den"). They were sent directly to the user — you didn't say them. Don't repeat them. When asked about results, use that context to answer in your own words.
@@ -656,6 +668,25 @@ def _tool_generate_image(args: dict, routing: dict | None) -> str:
         return json.dumps({"error": str(e)})
 
 
+def _tool_list_projects(args: dict, routing: dict | None) -> str:
+    projects_dir = WOLT_DIR / "wolt" / "projects"
+    projects = []
+    if projects_dir.exists():
+        for entry in sorted(projects_dir.iterdir()):
+            if not entry.is_dir() or entry.name.startswith("."):
+                continue
+            proj = {"name": entry.name, "path": str(entry)}
+            proj_json = entry / "project.json"
+            if proj_json.exists():
+                try:
+                    config = json.loads(proj_json.read_text())
+                    proj.update(config)
+                except Exception:
+                    pass
+            projects.append(proj)
+    return json.dumps({"projects": projects, "count": len(projects)})
+
+
 def _tool_switch_wolt(args: dict, routing: dict | None) -> str:
     switched = switch_wolt(args["name"])
     return json.dumps({"switched": bool(switched), "name": args["name"]})
@@ -673,6 +704,7 @@ TOOL_HANDLERS: dict[str, callable] = {
     "read_memory": _tool_read_memory,
     "list_wolts": _tool_list_wolts,
     "generate_image": _tool_generate_image,
+    "list_projects": _tool_list_projects,
     "switch_wolt": _tool_switch_wolt,
     "new_session": _tool_new_session,
 }
@@ -909,6 +941,14 @@ TOOLS = [
                 },
                 "required": ["prompt"],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_projects",
+            "description": "List all projects in the current wolt. Returns project names, paths, and any metadata from project.json. Use this to see what projects exist before routing a session to one.",
+            "parameters": {"type": "object", "properties": {}},
         },
     },
     {
