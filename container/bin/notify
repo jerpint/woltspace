@@ -18,10 +18,14 @@ STATE_DIR="${WOLT_STATE_DIR:-/workspace/wolts/.state}"
 WOLT_NAME="${WOLT_NAME:-wolt}"
 
 # Read creature from session routing file (set by core.py when session starts)
+# Falls back to old registry if routing file doesn't exist yet
 EMOJI="🦫"
 if [ -n "$SESSION" ]; then
   ROUTING_FILE="$STATE_DIR/session-routing/${SESSION}.json"
-  CREATURE=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('creature',''))" "$ROUTING_FILE" 2>/dev/null || echo "")
+  REGISTRY_FILE="$STATE_DIR/registry/${SESSION}.json"
+  CREATURE=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('creature',''))" "$ROUTING_FILE" 2>/dev/null \
+    || python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('creature',''))" "$REGISTRY_FILE" 2>/dev/null \
+    || echo "")
   case "$CREATURE" in
     raccoon) EMOJI="🦝" ;;
     beaver)  EMOJI="🦫" ;;
