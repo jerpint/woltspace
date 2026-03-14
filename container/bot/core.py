@@ -275,11 +275,12 @@ CREATURE_MODELS = {
 }
 
 
-def start_claude_session(prompt: str, wolt: str = None, creature: str = None, routing: dict = None) -> dict:
+def start_claude_session(prompt: str, wolt: str = None, creature: str = None, routing: dict = None, project: str = None) -> dict:
     """Start an interactive Claude Code session in a named tmux session.
 
     creature: optional "raccoon" (opus) or "beaver" (sonnet) to pick the model.
     routing: adapter routing info (adapter, chat_id, etc.) — written to registry.
+    project: optional project name — session will run in wolt/projects/{project}/.
     """
     if wolt:
         target_dir = WOLTS_DIR / wolt
@@ -288,6 +289,12 @@ def start_claude_session(prompt: str, wolt: str = None, creature: str = None, ro
             wolt = None
     else:
         target_dir = WOLT_DIR
+
+    # If a project is specified, scope the session to that project directory
+    if project:
+        project_dir = target_dir / "wolt" / "projects" / project
+        project_dir.mkdir(parents=True, exist_ok=True)
+        target_dir = project_dir
 
     target_name = wolt or os.environ.get("WOLT_NAME", "wolt")
     session_name = _session_name(target_name)
@@ -303,6 +310,7 @@ def start_claude_session(prompt: str, wolt: str = None, creature: str = None, ro
         creature=creature or "",
         model=model or "",
         dir=str(target_dir),
+        project=project or "",
         prompt=prompt,
         adapter=(routing or {}).get("adapter", ""),
         chat_id=str((routing or {}).get("chat_id", "")),
@@ -318,16 +326,18 @@ def start_claude_session(prompt: str, wolt: str = None, creature: str = None, ro
     )
 
     result = {"name": session_name, "url": session_url or None, "wolt": target_name}
+    if project:
+        result["project"] = project
     if creature:
         result["creature"] = creature
         result["model"] = model
-    _bot_log("session_start", {"session": session_name, "wolt": target_name, "dir": str(target_dir), "creature": creature, "model": model, "prompt": prompt[:500]})
+    _bot_log("session_start", {"session": session_name, "wolt": target_name, "project": project, "dir": str(target_dir), "creature": creature, "model": model, "prompt": prompt[:500]})
     return result
 
 
-def new_session(prompt: str, from_session: str = None, wolt: str = None, creature: str = None, routing: dict = None) -> dict:
+def new_session(prompt: str, from_session: str = None, wolt: str = None, creature: str = None, routing: dict = None, project: str = None) -> dict:
     """Start a fresh Claude Code session and redirect the current viewport to it."""
-    session = start_claude_session(prompt, wolt=wolt, creature=creature, routing=routing)
+    session = start_claude_session(prompt, wolt=wolt, creature=creature, routing=routing, project=project)
 
     # Determine which viewport to redirect
     redirect_from = from_session
@@ -573,7 +583,7 @@ def kill_session(name: str) -> bool:
 
 def _tool_claude_code(args: dict, routing: dict | None) -> str:
     creature = args.get("creature")
-    session = start_claude_session(args["prompt"], wolt=args.get("wolt"), creature=creature, routing=routing)
+    session = start_claude_session(args["prompt"], wolt=args.get("wolt"), creature=creature, routing=routing, project=args.get("project"))
     return json.dumps(session)
 
 
@@ -585,6 +595,7 @@ def _tool_new_session(args: dict, routing: dict | None) -> str:
         wolt=args.get("wolt"),
         creature=creature,
         routing=routing,
+        project=args.get("project"),
     )
     return json.dumps(session)
 
@@ -676,7 +687,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "claude_code",
-            "description": "Delegate a task to a Claude Code session. Use for building, searching, coding, generating artifacts, or any real work. You can target a specific wolt and pick a creature type (raccoon=opus for complex work, beaver=sonnet for building).",
+            "description": "Delegate a task to a Claude Code session. Use for building, searching, coding, generating artifacts, or any real work. You can target a specific wolt, pick a creature type, and scope to a project.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -692,6 +703,10 @@ TOOLS = [
                         "type": "string",
                         "enum": ["raccoon", "beaver"],
                         "description": "Which creature to run: 'raccoon' (🦝 opus — complex reasoning, orchestration) or 'beaver' (🦫 sonnet — building, coding). Defaults to the wolt's default model if omitted.",
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "Project name to scope the session to. Session will run in wolt/projects/{name}/. The directory is created if it doesn't exist. Use this to keep work isolated from the wolt root.",
                     },
                 },
                 "required": ["prompt"],
@@ -722,6 +737,10 @@ TOOLS = [
                         "type": "string",
                         "enum": ["raccoon", "beaver"],
                         "description": "Which creature to run: 'raccoon' (opus) or 'beaver' (sonnet). Defaults to wolt's default model.",
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "Project name to scope the session to. Session runs in wolt/projects/{name}/.",
                     },
                 },
                 "required": ["prompt"],

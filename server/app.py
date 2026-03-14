@@ -28,6 +28,7 @@ from .config import (
     APP_MIME_TYPES,
     DEN_REPLY_FOOTER,
     MIME_TYPES,
+    PROJECTS_DIR,
     PUBLIC_DIR,
     SESSION_REGISTRY_DIR,
     SHARES_DIR,
@@ -615,6 +616,111 @@ async def serve_app(app_name: str, request: Request, path: str = ""):
             return Response(resp.content, status_code=resp.status_code, headers=headers)
         except httpx.ConnectError:
             return PlainTextResponse(f'App "{app_name}" not running on port {port}', status_code=502)
+
+
+# --- Projects ---
+
+@app.get("/projects")
+async def list_projects():
+    """List all projects with their status (has project.json, running port, etc.)."""
+    projects = []
+    if PROJECTS_DIR.exists():
+        for entry in sorted(PROJECTS_DIR.iterdir()):
+            if not entry.is_dir() or entry.name.startswith("."):
+                continue
+            proj_json = entry / "project.json"
+            config = {}
+            if proj_json.exists():
+                try:
+                    config = json.loads(proj_json.read_text())
+                except Exception:
+                    pass
+            has_dist = (entry / "dist").exists()
+            port = config.get("port")
+            if has_dist:
+                mode = "static"
+            elif port:
+                mode = "proxy"
+            else:
+                mode = "directory"
+            projects.append({
+                "name": entry.name,
+                "url": f"/project/{entry.name}/",
+                "mode": mode,
+                **config,
+            })
+    return projects
+
+
+@app.get("/project/{project_name}/{path:path}")
+@app.get("/project/{project_name}")
+async def serve_project(project_name: str, request: Request, path: str = ""):
+    """Serve a project — static files from dist/, or reverse proxy to a running port."""
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", project_name):
+        return JSONResponse({"error": "invalid project name"}, status_code=400)
+    project_dir = PROJECTS_DIR / project_name
+    if not project_dir.exists():
+        return JSONResponse({"error": f'project "{project_name}" not found'}, status_code=404)
+
+    # Read project.json if it exists (optional — beaver writes it)
+    proj_json_path = project_dir / "project.json"
+    proj_config = {}
+    if proj_json_path.exists():
+        try:
+            proj_config = json.loads(proj_json_path.read_text())
+        except Exception:
+            pass
+
+    sub_path = "/" + path if path else "/"
+    dist_dir = project_dir / "dist"
+
+    # Strategy 1: static from dist/
+    if dist_dir.exists():
+        candidates = [dist_dir / path, dist_dir / path / "index.html"]
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            if not str(resolved).startswith(str(dist_dir.resolve())):
+                continue
+            if resolved.exists() and resolved.is_file():
+                ext = resolved.suffix
+                mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
+                return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
+        return PlainTextResponse("Not found in project", status_code=404)
+
+    # Strategy 2: proxy to running port
+    port = proj_config.get("port")
+    if port and 1024 <= port <= 65535:
+        target = f"http://localhost:{port}{sub_path}"
+        if request.url.query:
+            target += f"?{request.url.query}"
+        async with httpx.AsyncClient() as client:
+            try:
+                resp = await client.request(
+                    request.method, target,
+                    headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
+                    content=await request.body(),
+                )
+                headers = dict(resp.headers)
+                headers.pop("x-frame-options", None)
+                headers.pop("content-security-policy", None)
+                return Response(resp.content, status_code=resp.status_code, headers=headers)
+            except httpx.ConnectError:
+                return PlainTextResponse(f'Project "{project_name}" not running on port {port}', status_code=502)
+
+    # Strategy 3: serve static files directly from project root (simple HTML projects)
+    candidates = [project_dir / path, project_dir / path / "index.html"]
+    if not path:
+        candidates = [project_dir / "index.html"]
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if not str(resolved).startswith(str(project_dir.resolve())):
+            continue
+        if resolved.exists() and resolved.is_file():
+            ext = resolved.suffix
+            mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
+            return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
+
+    return PlainTextResponse(f'Project "{project_name}" has no servable content', status_code=404)
 
 
 # --- Shares ---
