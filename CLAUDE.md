@@ -101,6 +101,7 @@ Thin Telegram layer over core. Persists chat history to `.state/chat/{chat_id}.j
 
 ### `container/Dockerfile` + `container/entrypoint.sh`
 Image based on `node:22-slim`. Installs: cloudflared, uv, Claude Code CLI, tmux.
+The Dockerfile uses a multi-stage build: Claude Code CLI is installed in an isolated `claude` stage, cached independently of app source changes. To update Claude without rebuilding everything: `docker build --no-cache-filter=claude ...`
 Entrypoint:
 1. Merges platform skills + wolt overrides into `~/.claude/skills/`
 2. Writes OAuth credentials and trust config

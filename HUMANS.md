@@ -76,7 +76,7 @@ The container runs a Node server + cloudflared tunnel. The wolt has Claude Code 
 | `woltspace start` | Start container, open in browser |
 | `woltspace stop` | Stop and remove container |
 | `woltspace restart` | Restart container (new tunnel URL) |
-| `woltspace rebuild` | Rebuild Docker image + restart |
+| `woltspace rebuild` | Rebuild Docker image + restart (Claude CLI cached) |
 | `woltspace shell` | Shell into running container |
 | `woltspace logs` | Stream container logs |
 
@@ -182,6 +182,7 @@ Host mount (persists across rebuilds):
 - Two runtimes (Node + Python) — server is JS for xterm.js/WebSocket ecosystem, bot is Python for litellm's provider coverage
 - Single server.js — monolith by choice, not accident. One file to read, one process to manage
 - make + g++ in image — only for node-pty native compilation. Future: prebuilt binaries or multi-stage build
+- Claude CLI in isolated build stage — cached across rebuilds, not re-downloaded on source changes. To update Claude: `docker build --no-cache-filter=claude -t woltspace -f container/Dockerfile .`
 - Feature flags in .env — `ENABLE_TELEGRAM_BOT`, `ENABLE_DIGEST_CRON`. Telegram on by default (skipped silently if token missing)
 
 ## Learn more
