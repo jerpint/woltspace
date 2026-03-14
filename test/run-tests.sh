@@ -6,6 +6,7 @@
 #   ./test/run-tests.sh unit          # pure-Python tests only (no server/tmux needed)
 #   ./test/run-tests.sh integration   # requires running server + tmux
 #   ./test/run-tests.sh closed-loop   # full chain: telegram + server + tmux + registry
+#   ./test/run-tests.sh agent         # haiku in the loop (costs API tokens)
 #   ./test/run-tests.sh live          # requires TELEGRAM_BOT_TOKEN (hits real API)
 #   ./test/run-tests.sh -k "pattern"  # pass any pytest args
 #
@@ -39,6 +40,13 @@ case "${1:-all}" in
   closed-loop)
     echo "=== Closed-loop tests (full chain: telegram + server + tmux + registry) ==="
     uv run --project container/bot/pyproject.toml pytest test/test_closed_loop.py -v "${@:2}"
+    ;;
+  agent)
+    echo "=== Agent loop tests (haiku in the loop — costs API tokens) ==="
+    echo "  decision: mocked tools, ~\$0.01/test"
+    echo "  scenario: multi-turn convos, ~\$0.05/test"
+    echo "  live: real sessions spawned, ~\$0.50/test"
+    uv run --project container/bot/pyproject.toml pytest test/test_agent_loop.py -v "${@:2}"
     ;;
   live)
     echo "=== Live tests (requires TELEGRAM_BOT_TOKEN) ==="
