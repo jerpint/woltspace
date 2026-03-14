@@ -21,6 +21,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -43,6 +44,66 @@ BOT_LOG_PATHS = [
     WOLTS_DIR / WOLT_NAME / ".state" / "bot-debug" / "bot.jsonl",
     WOLTS_DIR / ".state" / "bot-debug" / "bot.jsonl",
 ]
+TRANSCRIPT_LOG = WOLTS_DIR / ".state" / "test-transcripts" / "agent-loop.jsonl"
+TEST_VERBOSE = os.environ.get("TEST_VERBOSE", "1") == "1"
+
+
+# ---------------------------------------------------------------------------
+# Transcript logging
+# ---------------------------------------------------------------------------
+
+def _log_transcript(test_name: str, entries: list[dict]):
+    """Write test transcript to log file. Send to telegram if verbose."""
+    # Always write to file
+    TRANSCRIPT_LOG.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "test": test_name,
+        "turns": entries,
+    }
+    with open(TRANSCRIPT_LOG, "a") as f:
+        f.write(json.dumps(record) + "\n")
+
+    # Send to telegram if verbose
+    if TEST_VERBOSE:
+        _tg_send_transcript(test_name, entries)
+
+
+def _tg_send_transcript(test_name: str, entries: list[dict]):
+    """Send conversation transcript to test group."""
+    chat_id = os.environ.get("TEST_CHAT_ID")
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not chat_id or not token:
+        return
+
+    short_name = test_name.split("::")[-1] if "::" in test_name else test_name
+    lines = [f"📝 {short_name}"]
+    for e in entries:
+        lines.append(f"  👤 {e.get('user', '')[:120]}")
+        response = e.get('response', '')[:200]
+        if response:
+            lines.append(f"  🦦 {response}")
+        tools = e.get('tools', [])
+        if tools:
+            tool_str = ", ".join(f"{t['tool']}({json.dumps(t.get('args', {}), default=str)[:60]})" for t in tools)
+            lines.append(f"  🔧 {tool_str}")
+
+    msg = "\n".join(lines)
+    # Telegram 4096 char limit
+    if len(msg) > 4000:
+        msg = msg[:3997] + "..."
+
+    try:
+        body = json.dumps({"chat_id": chat_id, "text": msg}).encode()
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        pass  # Don't fail tests because of telegram
 
 
 def _haiku_available() -> bool:
@@ -127,6 +188,17 @@ def _find_bot_log_entries(event: str = None, after_ts: str = None, limit: int = 
 # Haiku decision tests — verify tool calls without spawning sessions
 # ---------------------------------------------------------------------------
 
+def _transcript_entry(user_msg: str, result: dict) -> dict:
+    """Build a transcript entry from a user message and response."""
+    tools = result.get("_captured_tool_calls", [])
+    return {
+        "user": user_msg,
+        "response": result.get("text", ""),
+        "type": result.get("type", "text"),
+        "tools": [{"tool": t["tool"], "args": t.get("args", {})} for t in tools],
+    }
+
+
 @requires_haiku
 class TestHaikuDecisions:
     """Test that haiku makes correct tool call decisions.
@@ -135,63 +207,79 @@ class TestHaikuDecisions:
     Each test makes 1-2 haiku API calls (~$0.01).
     """
 
-    def test_session_request_triggers_tool_call(self):
+    def test_session_request_triggers_tool_call(self, request):
         """Asking to build something should trigger claude_code or new_session."""
-        result = _get_response_with_mock_tools("build me a hello world html page")
+        msg = "build me a hello world html page"
+        result = _get_response_with_mock_tools(msg)
+        _log_transcript(request.node.nodeid, [_transcript_entry(msg, result)])
         tools = result["_captured_tool_calls"]
         assert len(tools) >= 1, f"expected tool call, got none. response: {result.get('text', '')[:200]}"
         tool_names = [t["tool"] for t in tools]
         assert any(n in ("claude_code", "new_session") for n in tool_names), \
             f"expected session tool, got: {tool_names}"
 
-    def test_beaver_creature_when_requested(self):
+    def test_beaver_creature_when_requested(self, request):
         """Asking for a beaver should set creature=beaver."""
-        result = _get_response_with_mock_tools("fire up a beaver to write a python script")
+        msg = "fire up a beaver to write a python script"
+        result = _get_response_with_mock_tools(msg)
+        _log_transcript(request.node.nodeid, [_transcript_entry(msg, result)])
         tools = result["_captured_tool_calls"]
         session_tools = [t for t in tools if t["tool"] in ("claude_code", "new_session")]
         assert len(session_tools) >= 1
         creature = session_tools[0]["args"].get("creature", "")
         assert creature == "beaver", f"expected beaver, got: {creature}"
 
-    def test_raccoon_creature_when_requested(self):
+    def test_raccoon_creature_when_requested(self, request):
         """Asking for a raccoon should set creature=raccoon."""
-        result = _get_response_with_mock_tools("spin up a raccoon to plan the architecture")
+        msg = "spin up a raccoon to plan the architecture"
+        result = _get_response_with_mock_tools(msg)
+        _log_transcript(request.node.nodeid, [_transcript_entry(msg, result)])
         tools = result["_captured_tool_calls"]
         session_tools = [t for t in tools if t["tool"] in ("claude_code", "new_session")]
         assert len(session_tools) >= 1
         creature = session_tools[0]["args"].get("creature", "")
         assert creature == "raccoon", f"expected raccoon, got: {creature}"
 
-    def test_simple_question_no_session(self):
+    def test_simple_question_no_session(self, request):
         """A simple question should NOT spawn a session."""
-        result = _get_response_with_mock_tools("what time is it?")
+        msg = "what time is it?"
+        result = _get_response_with_mock_tools(msg)
+        _log_transcript(request.node.nodeid, [_transcript_entry(msg, result)])
         tools = result["_captured_tool_calls"]
         session_tools = [t for t in tools if t["tool"] in ("claude_code", "new_session")]
         assert len(session_tools) == 0, \
             f"unexpected session spawn for simple question. tools: {[t['tool'] for t in tools]}"
 
-    def test_list_sessions_request(self):
+    def test_list_sessions_request(self, request):
         """Asking about sessions should call list_sessions, not spawn a new one."""
-        result = _get_response_with_mock_tools("what sessions are running?")
+        msg = "what sessions are running?"
+        result = _get_response_with_mock_tools(msg)
+        _log_transcript(request.node.nodeid, [_transcript_entry(msg, result)])
         tools = result["_captured_tool_calls"]
         tool_names = [t["tool"] for t in tools]
         assert "list_sessions" in tool_names, f"expected list_sessions, got: {tool_names}"
 
-    def test_response_has_text(self):
+    def test_response_has_text(self, request):
         """Every response should have text (the ack or answer)."""
-        result = _get_response_with_mock_tools("hey, how's it going?")
+        msg = "hey, how's it going?"
+        result = _get_response_with_mock_tools(msg)
+        _log_transcript(request.node.nodeid, [_transcript_entry(msg, result)])
         assert result.get("text"), "response should have text"
         assert isinstance(result["text"], str)
 
-    def test_response_has_history(self):
+    def test_response_has_history(self, request):
         """Every response should include history_messages for storage."""
-        result = _get_response_with_mock_tools("hello")
+        msg = "hello"
+        result = _get_response_with_mock_tools(msg)
+        _log_transcript(request.node.nodeid, [_transcript_entry(msg, result)])
         assert "history_messages" in result
         assert isinstance(result["history_messages"], list)
 
-    def test_prompt_with_special_chars(self):
+    def test_prompt_with_special_chars(self, request):
         """Prompts with special characters should not crash the agent loop."""
-        result = _get_response_with_mock_tools("build something with gy!be & $HOME && `whoami`")
+        msg = "build something with gy!be & $HOME && `whoami`"
+        result = _get_response_with_mock_tools(msg)
+        _log_transcript(request.node.nodeid, [_transcript_entry(msg, result)])
         # Should not crash — either spawns session or responds
         assert result.get("text") is not None or result.get("_captured_tool_calls")
 
@@ -296,6 +384,18 @@ class ConversationSimulator:
                 assert actual == expected_creature, \
                     f"expected creature '{expected_creature}', got '{actual}'"
 
+    def log_transcript(self, test_name: str):
+        """Write all turns to transcript log and optionally telegram."""
+        entries = []
+        for turn in self.turns:
+            entries.append({
+                "user": turn["user"],
+                "response": turn["response"],
+                "type": turn["type"],
+                "tools": [{"tool": t["tool"], "args": t.get("args", {})} for t in turn["tool_calls"]],
+            })
+        _log_transcript(test_name, entries)
+
     def summary(self) -> str:
         """Return a human-readable summary of the conversation."""
         lines = []
@@ -316,23 +416,26 @@ class ConversationSimulator:
 class TestConversationScenarios:
     """Multi-turn conversation scenarios using the simulator."""
 
-    def test_greeting_then_task(self):
+    def test_greeting_then_task(self, request):
         """Greeting should not spawn session, follow-up task should."""
         sim = ConversationSimulator()
         sim.say("hey nw, how's it going?", assertions=["no_session", "has_text"])
         sim.say("build me a simple todo app", assertions=["session_created"])
+        sim.log_transcript(request.node.nodeid)
 
-    def test_creature_request_respected(self):
+    def test_creature_request_respected(self, request):
         """Explicit creature request should be honored."""
         sim = ConversationSimulator()
         sim.say("fire up a raccoon to review our codebase", assertions=["creature:raccoon"])
+        sim.log_transcript(request.node.nodeid)
 
-    def test_session_inquiry(self):
+    def test_session_inquiry(self, request):
         """Asking about sessions should use list_sessions."""
         sim = ConversationSimulator()
         sim.say("what sessions are running right now?", assertions=["tool:list_sessions"])
+        sim.log_transcript(request.node.nodeid)
 
-    def test_multi_turn_context(self):
+    def test_multi_turn_context(self, request):
         """Bot should maintain context across turns."""
         sim = ConversationSimulator()
         sim.say("build me a hello world page", assertions=["session_created"])
@@ -340,6 +443,7 @@ class TestConversationScenarios:
         sim.say("what did you just start?")
         # Should have text (answering about the session)
         assert sim.last_result.get("text"), "expected response about the session"
+        sim.log_transcript(request.node.nodeid)
 
 
 # ---------------------------------------------------------------------------
@@ -380,37 +484,39 @@ class TestLiveAgentLoop:
         except subprocess.CalledProcessError:
             return set()
 
-    def test_session_actually_spawns(self):
+    def test_session_actually_spawns(self, request):
         """Full loop: ask haiku to build something, verify tmux session appears."""
         import bot.core as core
         routing = {"adapter": "telegram", "chat_id": os.environ.get("TEST_CHAT_ID", "test-live")}
         before = self._live_tmux_sessions()
 
-        result = core.get_response(
-            "create a beaver session that just echoes hello world and exits",
-            routing=routing,
-        )
+        msg = "create a beaver session that just echoes hello world and exits"
+        result = core.get_response(msg, routing=routing)
 
         # Give tmux a moment to create the session
         time.sleep(2)
         after = self._live_tmux_sessions()
         new_sessions = after - before
 
+        _log_transcript(request.node.nodeid, [{
+            "user": msg,
+            "response": result.get("text", ""),
+            "type": result.get("type", "text"),
+            "tools": [{"tool": "live_session", "args": {"new_sessions": list(new_sessions)}}],
+        }])
+
         assert result.get("type") == "session" or len(new_sessions) > 0, \
             f"expected a session to spawn. type={result.get('type')}, new_sessions={new_sessions}"
 
-    def test_spawned_session_in_registry(self):
+    def test_spawned_session_in_registry(self, request):
         """Spawned session should appear in the session registry."""
         import bot.core as core
         from sessions import SessionRegistry
 
         routing = {"adapter": "telegram", "chat_id": os.environ.get("TEST_CHAT_ID", "test-live")}
-        before_ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-        result = core.get_response(
-            "start a beaver to create a test file",
-            routing=routing,
-        )
+        msg = "start a beaver to create a test file"
+        result = core.get_response(msg, routing=routing)
 
         time.sleep(2)
 
@@ -418,6 +524,13 @@ class TestLiveAgentLoop:
         reg = SessionRegistry(REGISTRY_DIR)
         sessions = reg.list()
         recent = [s for s in sessions if s.get("created_at", 0) > time.time() - 30]
+
+        _log_transcript(request.node.nodeid, [{
+            "user": msg,
+            "response": result.get("text", ""),
+            "type": result.get("type", "text"),
+            "tools": [{"tool": "registry_check", "args": {"recent_count": len(recent)}}],
+        }])
 
         assert len(recent) > 0, "no new sessions in registry after get_response"
         newest = recent[0]
