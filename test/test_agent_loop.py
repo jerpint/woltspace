@@ -96,7 +96,7 @@ def _get_response_with_mock_tools(user_message: str, mock_session_result: dict =
 
     try:
         core._execute_tool = mock_execute
-        routing = {"adapter": "telegram", "chat_id": "test-123"}
+        routing = {"adapter": "telegram", "chat_id": os.environ.get("TEST_CHAT_ID", "test-123")}
         result = core.get_response(user_message, routing=routing)
         result["_captured_tool_calls"] = captured_tool_calls
         return result
@@ -242,7 +242,7 @@ class ConversationSimulator:
             tool_calls = result.get("_captured_tool_calls", [])
         else:
             import bot.core as core
-            routing = {"adapter": "telegram", "chat_id": "test-sim"}
+            routing = {"adapter": "telegram", "chat_id": os.environ.get("TEST_CHAT_ID", "test-sim")}
             result = core.get_response(
                 message,
                 conversation_history=list(self.history),
@@ -383,7 +383,7 @@ class TestLiveAgentLoop:
     def test_session_actually_spawns(self):
         """Full loop: ask haiku to build something, verify tmux session appears."""
         import bot.core as core
-        routing = {"adapter": "telegram", "chat_id": "test-live"}
+        routing = {"adapter": "telegram", "chat_id": os.environ.get("TEST_CHAT_ID", "test-live")}
         before = self._live_tmux_sessions()
 
         result = core.get_response(
@@ -404,7 +404,7 @@ class TestLiveAgentLoop:
         import bot.core as core
         from sessions import SessionRegistry
 
-        routing = {"adapter": "telegram", "chat_id": "test-live"}
+        routing = {"adapter": "telegram", "chat_id": os.environ.get("TEST_CHAT_ID", "test-live")}
         before_ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
         result = core.get_response(

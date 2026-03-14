@@ -21,6 +21,12 @@ WOLTSPACE_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$WOLTSPACE_DIR"
 
+# Source secrets for API keys (OpenRouter, Telegram, etc.)
+WOLTS_DIR="${WOLTS_DIR:-/workspace/wolts}"
+if [ -f "$WOLTS_DIR/.env" ]; then
+  set -a && source "$WOLTS_DIR/.env" && set +a
+fi
+
 # Ensure deps
 if [ ! -d "container/bot/.venv" ]; then
   echo "installing python deps..."

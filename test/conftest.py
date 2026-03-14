@@ -27,6 +27,12 @@ def _telegram_bot_configured() -> bool:
     return bool(os.environ.get("TELEGRAM_BOT_TOKEN"))
 
 
+def _test_chat_id() -> str | None:
+    """Get the dedicated test chat ID (group where test notifies go).
+    Set TEST_CHAT_ID in .env or fall back to None."""
+    return os.environ.get("TEST_CHAT_ID")
+
+
 def _tmux_available() -> bool:
     try:
         subprocess.run(["tmux", "-V"], capture_output=True, check=True)
@@ -105,6 +111,15 @@ def tmp_registry(tmp_path):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
     from sessions import SessionRegistry
     return SessionRegistry(tmp_path / "registry")
+
+
+@pytest.fixture
+def test_chat_id():
+    """The dedicated test group chat ID. Skip if not configured."""
+    chat_id = _test_chat_id()
+    if not chat_id:
+        pytest.skip("TEST_CHAT_ID not set — configure in .env for live tests")
+    return chat_id
 
 
 @pytest.fixture
