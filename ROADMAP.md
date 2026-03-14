@@ -93,14 +93,14 @@ Claude CLI install cached in isolated Docker build stage (faster rebuilds). `wol
 
 ### 5. Identity & Creatures (Priority: Medium)
 
-**What:** Finish the creature identity split.
+**What:** Finish the creature identity split. Formalize the full creature roster.
 
-- Telegram bot → **dog** (based on Fuji). Loyal, constrained, runs tools, fetches what you need.
 - Claude Code sessions → **otter** (wolt identity, deeper context)
-- Dog is also a wolt, but with limited roles and shorter memory
 - Creature routing is partially shipped — needs polish and clear boundaries
 
-**Why:** Single-identity-for-everything gets confused. Dog has a clear, constrained role.
+**See:** [Creature Roles](#creature-roles) section below for the full roster.
+
+**Why:** Single-identity-for-everything gets confused. Each creature has a clear, constrained role.
 
 ---
 
@@ -150,6 +150,39 @@ Claude CLI install cached in isolated Docker build stage (faster rebuilds). `wol
 
 ---
 
+---
+
+## Creature Roles
+
+The colony is expanding. Each creature has a single, clear role. Not all are built yet — this is the intended roster.
+
+### Active (shipped)
+
+| Creature | Emoji | Model | Role |
+|----------|-------|-------|------|
+| **otter** | 🦦 | haiku | Lodge brain — always-on, routes requests, first to hear |
+| **beaver** | 🦫 | sonnet | Builder — Claude Code sessions, coding, grunt work |
+| **raccoon** | 🦝 | opus | Orchestrator — complex reasoning, multi-task dispatch |
+
+### Planned (scaffolded, not yet built)
+
+| Creature | Emoji | Role | Entry Point |
+|----------|-------|------|-------------|
+| **dog** | 🐕 | Telegram companion — loyal, constrained, fetches what you need. Based on Fuji. | `container/creatures/dog.py` |
+| **wolf** | 🐺 | Cron & scheduler — runs the pack's routines. Fires tasks on schedule, tracks cadence. | `container/creatures/wolf.py` |
+| **spider** | 🕷️ | Headless browser — crawls, scrapes, watches the web. Playwright-backed, quiet and fast. | `container/creatures/spider.py` |
+| **bear** | 🐻 | Safety & validation — guards the den. Reviews outputs, flags risks, enforces boundaries. | `container/creatures/bear.py` |
+| **panda** | 🐼 | Daily reminders & zen notifications — gentle, unhurried. Surfaces what matters, when it matters. | `container/creatures/panda.py` |
+
+### Design Principles
+
+- **One role per creature.** Creatures don't overlap. Dog fetches; wolf schedules; spider crawls; bear validates; panda nudges.
+- **Model is separate from role.** A creature's model (haiku/sonnet/opus) is chosen for its tempo, not its identity. Wolf might be haiku — fast, lightweight, always-on. Bear might need sonnet for careful judgment.
+- **Entry points are services or session types.** Some creatures (wolf, panda) are background services. Others (spider, bear) are invoked per-task. Dog is the Telegram adapter itself.
+- **Creatures share the registry.** All sessions — regardless of creature — write to `.state/registry/`. Routing, status, and wolt are creature-agnostic fields.
+
+---
+
 ## North Star / Exploratory
 
 ### Read-only Platform Mount (Phase 3 of Isolation)
@@ -173,6 +206,7 @@ Mount `/workspace/woltspace/` as read-only in container. Filesystem-level enforc
 
 ## Misc Notes
 
+- **PR style:** Lead with a lore-flavored headline. Introduce each change with personality, not just bullets. Technical details go in a "What's in this PR" section. Keep it descriptive but fun — worth sharing with friends, not just reviewers.
 - `manifesto` naming → use lore-themed words instead
 - `HUMANS.md` should be oriented to devs who want to hack on it, with mermaid diagrams
 - `sparks/` will likely be deprecated
