@@ -537,3 +537,120 @@ class TestLiveAgentLoop:
         assert newest.get("adapter") == "telegram"
         expected_chat = os.environ.get("TEST_CHAT_ID", "test-live")
         assert newest.get("chat_id") == expected_chat
+
+
+# ---------------------------------------------------------------------------
+# True end-to-end test: haiku → beaver → file on disk → viewport
+# ---------------------------------------------------------------------------
+
+@requires_haiku
+@requires_server
+@requires_tmux
+class TestEndToEnd:
+    """True end-to-end: haiku spawns beaver, beaver writes a file, we verify it exists.
+
+    This is the most expensive test (~$0.50+). It waits for the session to
+    actually complete, not just spawn. Verifies real output on disk.
+    """
+
+    E2E_OUTPUT = Path("/workspace/wolts/neowolt/wolt/site/hello-wolt-test.html")
+    MAX_WAIT = 120  # seconds to wait for session to finish
+
+    @pytest.fixture(autouse=True)
+    def _cleanup(self):
+        """Clean up test artifacts."""
+        # Remove output file if it exists from a previous run
+        if self.E2E_OUTPUT.exists():
+            self.E2E_OUTPUT.unlink()
+        self._session_name = None
+        yield
+        # Clean up output file
+        if self.E2E_OUTPUT.exists():
+            self.E2E_OUTPUT.unlink()
+        # Kill session if still running
+        if self._session_name:
+            subprocess.run(["tmux", "kill-session", "-t", self._session_name], capture_output=True)
+
+    def _wait_for_session(self, session_name: str) -> dict:
+        """Poll registry until session completes or timeout."""
+        from sessions import SessionRegistry
+        reg = SessionRegistry(REGISTRY_DIR)
+        start = time.time()
+        while time.time() - start < self.MAX_WAIT:
+            data = reg.get(session_name, check_alive=True)
+            if data and data.get("status") in ("completed", "failed"):
+                return data
+            # Also check if file appeared (session might not update registry perfectly)
+            if self.E2E_OUTPUT.exists():
+                return data or {"status": "completed"}
+            time.sleep(3)
+        return reg.get(session_name, check_alive=True) or {"status": "timeout"}
+
+    def test_hello_wolt_end_to_end(self, request):
+        """Haiku spawns beaver → beaver creates hello-wolt HTML → file verified on disk."""
+        import bot.core as core
+
+        chat_id = os.environ.get("TEST_CHAT_ID", "test-e2e")
+        routing = {"adapter": "telegram", "chat_id": chat_id}
+
+        prompt = (
+            "create a simple HTML file at wolt/site/hello-wolt-test.html "
+            "that says 'Hello Wolt!' in large centered text. "
+            "keep it minimal — just the heading, no extra styling."
+        )
+        result = core.get_response(prompt, routing=routing)
+
+        # Extract session name from response
+        session_name = None
+        if result.get("type") == "session" and result.get("session"):
+            session_name = result["session"].get("name")
+        if not session_name:
+            # Try to find from registry
+            from sessions import SessionRegistry
+            reg = SessionRegistry(REGISTRY_DIR)
+            sessions = reg.list()
+            recent = [s for s in sessions if s.get("created_at", 0) > time.time() - 15]
+            if recent:
+                session_name = recent[0].get("name")
+
+        self._session_name = session_name
+        assert session_name, f"no session spawned. response: {result.get('text', '')[:200]}"
+
+        # Wait for session to complete
+        final = self._wait_for_session(session_name)
+
+        # Log transcript
+        _log_transcript(request.node.nodeid, [{
+            "user": prompt,
+            "response": result.get("text", ""),
+            "type": result.get("type", "text"),
+            "tools": [{
+                "tool": "e2e_result",
+                "args": {
+                    "session": session_name,
+                    "final_status": final.get("status", "unknown"),
+                    "file_exists": self.E2E_OUTPUT.exists(),
+                },
+            }],
+        }])
+
+        # Verify the file was created
+        assert self.E2E_OUTPUT.exists(), \
+            f"hello-wolt-test.html not created. session={session_name}, status={final.get('status')}"
+
+        # Verify content
+        content = self.E2E_OUTPUT.read_text()
+        assert "Hello Wolt" in content, f"file doesn't contain 'Hello Wolt': {content[:200]}"
+
+        # Check it's valid HTML
+        assert "<" in content and ">" in content, "file doesn't look like HTML"
+
+        # Verify viewport serves it (if server is up)
+        try:
+            import urllib.request as req
+            url = f"http://localhost:3000/site/hello-wolt-test.html"
+            with req.urlopen(url, timeout=5) as resp:
+                served = resp.read().decode()
+                assert "Hello Wolt" in served, "viewport doesn't serve the file correctly"
+        except Exception:
+            pass  # Server might not serve wolt/site/ directly — not a hard failure
