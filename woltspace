@@ -7,6 +7,7 @@
 #   woltspace stop           — stop and remove container
 #   woltspace restart        — restart container (new tunnel URL)
 #   woltspace rebuild        — rebuild image + restart
+#   woltspace list           — list all wolts (name, type, role)
 #   woltspace shell          — enter running container
 #   woltspace chat           — open claude (--dangerously-skip-permissions) in container
 #   woltspace logs           — stream container logs
@@ -295,6 +296,7 @@ GITEOF
     cat > "$TARGET/wolt/wolt.json" << WJEOF
 {
   "name": "$NAME",
+  "type": "rodent",
   "role": "",
   "capabilities": [],
   "description": ""
@@ -403,6 +405,38 @@ CJEOF
   exit 0
 fi
 
+# --- List wolts (no container needed) ---
+
+if [ "$cmd" = "list" ]; then
+  _D=$'\033[2m'; _R=$'\033[0m'; _B=$'\033[1m'; _G=$'\033[0;32m'; _A=$'\033[0;33m'
+  echo ""
+  printf "  %b%-20s %-10s %s%b\n" "${_B}" "NAME" "TYPE" "ROLE${_R}"
+  printf "  %b%-20s %-10s %s%b\n" "${_D}" "----" "----" "----${_R}"
+  for wolt_dir in "$WOLTS_DIR"/*/wolt/wolt.json; do
+    [ -f "$wolt_dir" ] || continue
+    wolt_name=$(python3 -c "import json; d=json.load(open('$wolt_dir')); print(d.get('name','?'))" 2>/dev/null)
+    wolt_type=$(python3 -c "import json; d=json.load(open('$wolt_dir')); print(d.get('type','rodent'))" 2>/dev/null)
+    wolt_role=$(python3 -c "import json; d=json.load(open('$wolt_dir')); print(d.get('role',''))" 2>/dev/null)
+    # Highlight active wolt
+    if [ "$wolt_name" = "$ACTIVE_WOLT" ]; then
+      printf "  ${_G}${_B}%-20s${_R} %-10s %s ${_D}(active)${_R}\n" "$wolt_name" "$wolt_type" "$wolt_role"
+    else
+      printf "  %-20s %-10s %s\n" "$wolt_name" "$wolt_type" "$wolt_role"
+    fi
+  done
+  # Show active creatures
+  ACTIVE_WOLF=$(_read_config "creatures.active_wolf")
+  ACTIVE_DOG=$(_read_config "creatures.active_dog")
+  if [ -n "$ACTIVE_WOLF" ] || [ -n "$ACTIVE_DOG" ]; then
+    echo ""
+    printf "  %b%s%b\n" "${_D}" "active creatures:" "${_R}"
+    [ -n "$ACTIVE_WOLF" ] && printf "    🐺 wolf: %s\n" "$ACTIVE_WOLF"
+    [ -n "$ACTIVE_DOG" ] && printf "    🐶 dog:  %s\n" "$ACTIVE_DOG"
+  fi
+  echo ""
+  exit 0
+fi
+
 # --- Validate ---
 
 if [ ! -d "$WOLTS_DIR" ] || [ -z "$ACTIVE_WOLT" ]; then
@@ -496,7 +530,7 @@ case "$cmd" in
     echo ""
     ;;
   *)
-    echo "usage: woltspace <init|start|stop|restart|rebuild|shell|chat|logs> [--wolt=<name>] [--no-dev]"
+    echo "usage: woltspace <init|start|stop|restart|rebuild|list|shell|chat|logs> [--wolt=<name>] [--no-dev]"
     exit 1
     ;;
 esac

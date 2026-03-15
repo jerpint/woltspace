@@ -7,9 +7,23 @@ description: Set up and manage scheduled cron jobs. Use when the user wants to r
 
 The wolf manages scheduled tasks. When a cron fires, the wolf sends an immediate notification and executes the action.
 
+## Wolf as its own wolt
+
+The wolf should be its own wolt with `"type": "wolf"` in its `wolt.json`. Before setting up crons:
+
+1. **Check if a wolf-wolt exists:** Read `woltspace.json` → `creatures.active_wolf`. Also scan `/workspace/wolts/*/wolt/wolt.json` for any wolt with `"type": "wolf"`.
+2. **If no wolf-wolt exists:** Ask the user to name their wolf. Then create a new wolt directory at `/workspace/wolts/{name}/` with a minimal structure:
+   - `wolt/wolt.json` — `{"name": "{name}", "type": "wolf", "role": "Scheduler", "capabilities": ["cron", "scheduling"], "description": "..."}`
+   - `wolt/memory/identity.md` — wolf identity (scheduler, fires tasks on schedule, loyal to the pack)
+   - `wolt/wolf.json` — the cron config (see below)
+   - Update `woltspace.json` → `creatures.active_wolf` to the new wolf's name
+3. **If a wolf-wolt already exists:** Edit its `wolt/wolf.json` directly.
+
+**Important:** Do NOT put `wolf.json` in a rodent-wolt. The wolf is a separate creature.
+
 ## Setting up a cron
 
-Create or edit `wolt/wolf.json` in the wolt directory:
+Create or edit `wolt/wolf.json` in the wolf-wolt's directory:
 
 ```json
 {
