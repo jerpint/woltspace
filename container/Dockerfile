@@ -39,6 +39,9 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/b
 RUN curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$(dpkg --print-architecture) -o /usr/local/bin/cloudflared \
     && chmod +x /usr/local/bin/cloudflared
 
+# Install bun (for worktui)
+RUN curl -fsSL https://bun.sh/install | bash && mv /root/.bun/bin/bun /usr/local/bin/bun
+
 
 # App directory — matches repo structure so --dev can mount directly
 WORKDIR /workspace/woltspace
@@ -63,6 +66,11 @@ USER node
 # Copy everything the Claude installer created (binary, launcher, shell integration)
 COPY --from=claude /home/node/ /home/node/
 ENV PATH="/home/node/.local/bin:${PATH}"
+
+# Install worktui (worktree + Claude session manager)
+RUN git clone https://github.com/jerpint/worktui.git /home/node/worktui \
+    && cd /home/node/worktui && bun install
+ENV WORKTUI_DIR="/workspace/wolts/.worktui"
 
 # --- App source (changes often — everything below here rebuilds on edits) ---
 
