@@ -6,8 +6,8 @@
 #   woltspace start          — start container (all wolts mounted)
 #   woltspace stop           — stop and remove container
 #   woltspace restart        — restart container (new tunnel URL)
-#   woltspace rebuild        — rebuild image from main + restart
-#   woltspace rebuild --dev  — rebuild image from staging + restart
+#   woltspace rebuild        — rebuild image from current checkout + restart
+#   woltspace rebuild --dev  — rebuild + track staging for updates
 #   woltspace update         — check if a new version is available
 #   woltspace list           — list all wolts (name, type, role)
 #   woltspace shell          — enter running container
@@ -515,32 +515,20 @@ case "$cmd" in
   rebuild)
     _D=$'\033[2m'; _R=$'\033[0m'; _B=$'\033[1m'; _G=$'\033[0;32m'; _Y=$'\033[0;33m'
 
-    # Determine which branch to build from
+    # Determine which branch to track for updates
     BUILD_BRANCH="main"
     for arg in "$@"; do
       [ "$arg" = "--dev" ] && BUILD_BRANCH="staging"
     done
 
-    # Save current branch to restore after build
     CURRENT_BRANCH=$(cd "$WOLTSPACE_DIR" && git rev-parse --abbrev-ref HEAD 2>/dev/null)
 
-    # Checkout the target branch
+    # Warn if checkout doesn't match expected branch
     if [ "$BUILD_BRANCH" != "$CURRENT_BRANCH" ]; then
-      echo "  switching to ${_B}${BUILD_BRANCH}${_R} branch..."
-      (cd "$WOLTSPACE_DIR" && git fetch origin "$BUILD_BRANCH" 2>/dev/null && git checkout "$BUILD_BRANCH" && git pull origin "$BUILD_BRANCH") || {
-        echo "  error: could not checkout $BUILD_BRANCH"
-        exit 1
-      }
-    else
-      echo "  already on ${_B}${BUILD_BRANCH}${_R}, pulling latest..."
-      (cd "$WOLTSPACE_DIR" && git pull origin "$BUILD_BRANCH" 2>/dev/null) || true
+      printf "  ${_Y}note:${_R} on ${_B}%s${_R} but tracking ${_B}%s${_R} for updates\n" "$CURRENT_BRANCH" "$BUILD_BRANCH"
     fi
 
-    if [ "$BUILD_BRANCH" = "staging" ]; then
-      printf "  building from ${_Y}staging${_R} (latest, may be rough)\n"
-    else
-      printf "  building from ${_G}main${_R} (stable)\n"
-    fi
+    printf "  rebuilding image from current checkout ${_D}(%s)${_R}\n" "$CURRENT_BRANCH"
 
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
     rm -f "$ACTIVE_WOLT_DIR/.state/tunnel-url"
@@ -552,6 +540,20 @@ case "$cmd" in
       mkdir -p "$ACTIVE_WOLT_DIR/.state"
       echo "$BUILD_COMMIT" > "$ACTIVE_WOLT_DIR/.state/woltspace-version"
       echo "$BUILD_BRANCH" > "$ACTIVE_WOLT_DIR/.state/woltspace-branch"
+    fi
+
+    # Check if there's a newer version available (fetch only, never pull)
+    if (cd "$WOLTSPACE_DIR" && git fetch origin "$BUILD_BRANCH" 2>/dev/null); then
+      LOCAL_HEAD=$(cd "$WOLTSPACE_DIR" && git rev-parse HEAD 2>/dev/null)
+      REMOTE_HEAD=$(cd "$WOLTSPACE_DIR" && git rev-parse "origin/$BUILD_BRANCH" 2>/dev/null)
+      if [ "$LOCAL_HEAD" != "$REMOTE_HEAD" ]; then
+        BEHIND=$(cd "$WOLTSPACE_DIR" && git rev-list --count HEAD.."origin/$BUILD_BRANCH" 2>/dev/null)
+        if [ "$BEHIND" -gt 0 ] 2>/dev/null; then
+          echo ""
+          printf "  🐶 ${_Y}woltspace update available${_R} — %s new commit(s)\n" "$BEHIND"
+          printf "  ${_D}updates happen in-app now! ask your dog or a beaver to help you update.${_R}\n"
+        fi
+      fi
     fi
 
     _ensure_container "$CONTAINER_NAME"
