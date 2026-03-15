@@ -19,6 +19,7 @@ from openai import OpenAI
 # Add lib/ to path for sessions module
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from sessions import SessionRegistry
+from wolts import get_active_creature, find_by_type
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,17 @@ def load_memory() -> str:
     return "\n\n".join(parts)
 
 
+def _load_dog_identity() -> str | None:
+    """Load identity from the active dog-wolt, if one exists."""
+    dog_name = get_active_creature("dog")
+    if not dog_name:
+        return None
+    dog_dir = WOLTS_DIR / dog_name / "wolt" / "memory" / "identity.md"
+    if dog_dir.exists():
+        return dog_dir.read_text().strip()
+    return None
+
+
 def build_system_prompt() -> str:
     """Build the system prompt from memory + base instructions."""
     memory = load_memory()
@@ -134,9 +146,24 @@ def build_system_prompt() -> str:
     human_name = os.environ.get("HUMAN_NAME", "human")
     adapter = os.environ.get("BOT_ADAPTER", "chat")
 
-    base = f"""You are {wolt_name} — a wolt (the dog). You talk to {human_name} through {adapter}.
-You're the lodge companion — loyal, constrained, and you route real work to Claude Code sessions.
+    # Try to load dog identity from a dedicated dog-wolt
+    dog_identity = _load_dog_identity()
+    dog_name = get_active_creature("dog")
+
+    if dog_identity:
+        intro = f"""You are {dog_name} — the dog. You talk to {human_name} through {adapter}.
+You route real work to Claude Code sessions run by rodent-wolts (the builders).
 Never prefix your messages with emojis or your name — the adapter handles that.
+
+## Your identity
+{dog_identity}"""
+    else:
+        # Fallback: hardcoded dog identity (no dog-wolt exists yet)
+        intro = f"""You are {wolt_name} — a wolt (the dog). You talk to {human_name} through {adapter}.
+You're the lodge companion — loyal, constrained, and you route real work to Claude Code sessions.
+Never prefix your messages with emojis or your name — the adapter handles that."""
+
+    base = f"""{intro}
 
 ## Creatures
 Sessions run as creatures: 🦝 **raccoon** (opus — complex reasoning, orchestration), 🦫 **beaver** (sonnet — building, coding), 🦦 **otter** (haiku — fast, lightweight tasks), or 🐺 **wolf** (sonnet — cron & schedule management).

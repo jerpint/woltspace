@@ -66,3 +66,64 @@ def set_active_creature(creature_type: str, wolt_name: str) -> None:
     config.setdefault("creatures", {})
     config["creatures"][f"active_{creature_type}"] = wolt_name
     CONFIG_FILE.write_text(json.dumps(config, indent=2) + "\n")
+
+
+def create_creature_wolt(name: str, creature_type: str, role: str = "", description: str = "") -> Path:
+    """Create a minimal creature-wolt directory.
+
+    Returns the path to the new wolt directory.
+    Raises ValueError if the type is invalid or the name already exists.
+    """
+    if creature_type not in VALID_TYPES:
+        raise ValueError(f"Invalid creature type: {creature_type}. Must be one of: {', '.join(sorted(VALID_TYPES))}")
+
+    wolt_dir = WOLTS_DIR / name
+    if wolt_dir.exists():
+        raise ValueError(f"Wolt '{name}' already exists at {wolt_dir}")
+
+    # Check singleton constraint
+    if creature_type in SINGLETON_TYPES:
+        active = get_active_creature(creature_type)
+        if active:
+            # Demote the old one to rodent
+            old_wolt_json = WOLTS_DIR / active / "wolt" / "wolt.json"
+            if old_wolt_json.exists():
+                try:
+                    old_data = json.loads(old_wolt_json.read_text())
+                    old_data["type"] = "rodent"
+                    old_wolt_json.write_text(json.dumps(old_data, indent=2) + "\n")
+                except (json.JSONDecodeError, OSError):
+                    pass
+
+    # Create directory structure
+    (wolt_dir / "wolt" / "memory" / "archive").mkdir(parents=True)
+    (wolt_dir / ".state").mkdir(parents=True)
+
+    # Write wolt.json
+    wolt_json = {
+        "name": name,
+        "type": creature_type,
+        "role": role or f"{creature_type.title()} creature",
+        "capabilities": [],
+        "description": description,
+    }
+    (wolt_dir / "wolt" / "wolt.json").write_text(json.dumps(wolt_json, indent=2) + "\n")
+
+    # Write minimal identity.md
+    (wolt_dir / "wolt" / "memory" / "identity.md").write_text(
+        f"# {name}\n\nI am {name}, a {creature_type}.\n"
+    )
+
+    # Write empty context and learnings
+    (wolt_dir / "wolt" / "memory" / "context.md").write_text(
+        f"# Context\n\n## Session 1\n\nJust created.\n"
+    )
+    (wolt_dir / "wolt" / "memory" / "learnings.md").write_text(
+        "# Learnings\n\n*Day one.*\n"
+    )
+
+    # Set as active creature if singleton
+    if creature_type in SINGLETON_TYPES:
+        set_active_creature(creature_type, name)
+
+    return wolt_dir
