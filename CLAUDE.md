@@ -103,10 +103,12 @@ Development workflow: `wt create feature-name` → work → PR to staging → me
 Updates are opt-in, never automatic:
 1. A **wolf cron** (`check-update.sh`) runs daily, compares local version against remote `main` using `git ls-remote`. If behind, sends a 🐺 notification: *"update available — ask a beaver or raccoon to update."*
 2. The **dog** has a `check_update` tool — when asked "is there an update?", it checks inline and reports.
-3. User asks a **rodent** (beaver/raccoon) to handle the update. The rodent evaluates the diff, explains impact, and only proceeds with user consent.
+3. User asks a **rodent** (beaver/raccoon) to handle the update. Use the `/update` skill — it reviews incoming changes, flags breaking changes or new requirements, and only pulls after user consent.
 4. `woltspace update` on the host shows the same info (commits behind + changelog).
 
-Version tracking: `.state/woltspace-version` stores the commit hash after each `rebuild`.
+**How the update works from inside the container:** `/workspace/woltspace` is always volume-mounted from the host. So `git pull` updates files live — no container rebuild needed. The `/update` skill reads `.state/woltspace-branch` to know which branch to pull (`main` by default, `staging` in dev mode). After pulling, it stamps `.state/woltspace-version` with the new commit so the update-check cron knows it's current.
+
+Version tracking: `.state/woltspace-version` stores the commit hash — written by `woltspace rebuild` on the host, or by the `/update` skill after a pull.
 
 ### `server.js` (Node.js, ~1400 lines)
 Single-file HTTP + WebSocket server running on port 3000 inside the container.
@@ -349,7 +351,7 @@ To test staging locally: `woltspace rebuild --dev` (builds from staging instead 
 
 ### Dev mode
 
-This repo is usually mounted into the container in dev mode (`woltspace start` auto-detects if you're in the repo and enables dev mode). The server runs with `node --watch` — save `server.js` and it restarts. The bot does NOT auto-restart; kill and relaunch it manually after edits.
+The woltspace repo is always mounted into the container at `/workspace/woltspace`. Dev mode (`woltspace start --dev`) tracks the `staging` branch instead of `main` — the update checker and `/update` skill will compare against and pull from staging. The server runs with `node --watch` — save `server.js` and it restarts. The bot does NOT auto-restart; kill and relaunch it manually after edits.
 
 Restart Telegram bot:
 ```bash
