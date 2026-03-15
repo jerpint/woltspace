@@ -1,27 +1,30 @@
 ---
 name: update
-description: "Update woltspace platform by pulling latest main. Use when asked to update woltspace."
+description: "Update woltspace platform by pulling latest changes. Use when asked to update woltspace."
 user_invocable: true
 ---
 
 # Update Woltspace
 
-Pull latest `main` and update version tracking. No rebuild needed — `/workspace/woltspace` is volume-mounted from the host, so files update live.
+Pull latest changes and update version tracking. `/workspace/woltspace` is volume-mounted from the host, so files update live — no rebuild needed.
 
 ## Steps
 
 ```bash
-# 1. Pull latest main
-cd /workspace/woltspace && git pull origin main
-
-# 2. Stamp the new version so update-check cron knows we're current
-NEW_VERSION=$(cd /workspace/woltspace && git rev-parse HEAD)
+# 1. Determine which branch to pull (dev mode tracks staging, otherwise main)
 WOLT_DIR="${WOLT_DIR:-/workspace/wolts/${WOLT_NAME:-wolt}}"
+BRANCH=$(cat "$WOLT_DIR/.state/woltspace-branch" 2>/dev/null || echo "main")
+
+# 2. Pull latest
+cd /workspace/woltspace && git pull origin "$BRANCH"
+
+# 3. Stamp the new version so update-check cron knows we're current
+NEW_VERSION=$(git rev-parse HEAD)
 mkdir -p "$WOLT_DIR/.state"
 echo "$NEW_VERSION" > "$WOLT_DIR/.state/woltspace-version"
-echo "main" > "$WOLT_DIR/.state/woltspace-branch"
+echo "$BRANCH" > "$WOLT_DIR/.state/woltspace-branch"
 
-echo "updated to $(echo $NEW_VERSION | cut -c1-7)"
+echo "updated to $(echo $NEW_VERSION | cut -c1-7) ($BRANCH)"
 ```
 
 ## What to report
