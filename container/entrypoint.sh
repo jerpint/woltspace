@@ -281,7 +281,7 @@ fi
 if [ -n "$WOLF_CONFIG" ]; then
   echo "starting wolf scheduler (config: $WOLF_CONFIG)..."
   (cd "$WOLTSPACE_DIR/container" && PYTHONPATH="$WOLTSPACE_DIR/container/lib:${PYTHONPATH:-}" \
-    uv run --project bot python -m creatures.wolf) &
+    uv run --project bot watchfiles --filter python "python -m creatures.wolf" creatures/) &
   disown
 fi
 
