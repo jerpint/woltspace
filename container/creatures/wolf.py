@@ -267,7 +267,9 @@ def run_script(entry: dict) -> Optional[str]:
     wolf_name = _get_wolf_name()
 
     # Build notification JSON payloads (avoid shell quoting hell by using heredocs)
-    ok_msg = f"🐺 {wolf_name}: cron '{cron_name}' completed successfully"
+    tunnel_url = _get_tunnel_url()
+    tui_link = f"\\n{tunnel_url}/tui?session={session_name}" if tunnel_url else ""
+    ok_msg = f"🐺 {wolf_name}: cron '{cron_name}' completed successfully{tui_link}"
     fail_prefix = f"🐺 {wolf_name}: cron '{cron_name}' failed (exit "
     notify_url = "http://localhost:3000/notify"
 
@@ -333,7 +335,7 @@ def run_session(entry: dict) -> Optional[str]:
             # Construct URL from tunnel
             tunnel_url = _get_tunnel_url()
             if tunnel_url:
-                return f"{tunnel_url}/?session={session_name}"
+                return f"{tunnel_url}/tui?session={session_name}"
         return None
     except Exception as e:
         print(f"[wolf] session dispatch error: {e}", file=sys.stderr)
@@ -367,7 +369,7 @@ def fire_cron(entry: dict):
         if session_name:
             tunnel_url = _get_tunnel_url()
             if tunnel_url:
-                link = f"{tunnel_url}/?session={session_name}"
+                link = f"{tunnel_url}/tui?session={session_name}"
     elif action == "session":
         link = run_session(entry)
     elif action == "skill":
