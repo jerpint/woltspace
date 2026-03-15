@@ -173,10 +173,12 @@ The colony is expanding. Each creature has a single, clear role. Not all are bui
 | **spider** | 🕷️ | Headless browser — crawls, scrapes, watches the web. Playwright-backed, quiet and fast. | `container/creatures/spider.py` |
 | **bear** | 🐻 | Safety & validation — guards the den. Reviews outputs, flags risks, enforces boundaries. | `container/creatures/bear.py` |
 | **panda** | 🐼 | Daily reminders & zen notifications — gentle, unhurried. Surfaces what matters, when it matters. | `container/creatures/panda.py` |
+| **ladybug** | 🐞 | PR reviewer — keen eye for bugs, always sweet about it. Scans diffs, flags issues, lands gently. | `container/creatures/ladybug.py` |
+| **elephant** | 🐘 | Memory & context curator — never forgets. Digests chat history, compresses context, maintains long-term memory. | `container/creatures/elephant.py` |
 
 ### Design Principles
 
-- **One role per creature.** Creatures don't overlap. Dog fetches; wolf schedules; spider crawls; bear validates; panda nudges.
+- **One role per creature.** Creatures don't overlap. Dog fetches; wolf schedules; spider crawls; bear validates; panda nudges; ladybug reviews; elephant remembers.
 - **Model is separate from role.** A creature's model (haiku/sonnet/opus) is chosen for its tempo, not its identity. Wolf might be haiku — fast, lightweight, always-on. Bear might need sonnet for careful judgment.
 - **Entry points are services or session types.** Some creatures (wolf, panda) are background services. Others (spider, bear) are invoked per-task. Dog is the Telegram adapter itself.
 - **Creatures share the registry.** All sessions — regardless of creature — write to `.state/registry/`. Routing, status, and wolt are creature-agnostic fields.
