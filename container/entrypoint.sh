@@ -279,14 +279,9 @@ elif [ -f "$WOLT_DIR/wolt/wolf.json" ]; then
   WOLF_CONFIG="$WOLT_DIR/wolt/wolf.json"
 fi
 if [ -n "$WOLF_CONFIG" ]; then
-  echo "starting wolf scheduler (config: $WOLF_CONFIG, dev=$DEV_MODE)..."
-  if [ "$DEV_MODE" = "true" ]; then
-    (cd "$WOLTSPACE_DIR/container" && PYTHONPATH="$WOLTSPACE_DIR/container/lib:${PYTHONPATH:-}" \
-      uv run --project bot watchfiles --filter python "python -m creatures.wolf" creatures/) &
-  else
-    (cd "$WOLTSPACE_DIR/container" && PYTHONPATH="$WOLTSPACE_DIR/container/lib:${PYTHONPATH:-}" \
-      uv run --project bot python -m creatures.wolf) &
-  fi
+  echo "starting wolf scheduler (config: $WOLF_CONFIG)..."
+  (cd "$WOLTSPACE_DIR/container" && PYTHONPATH="$WOLTSPACE_DIR/container/lib:${PYTHONPATH:-}" \
+    uv run --project bot watchfiles --filter python "python -m creatures.wolf" creatures/) &
   disown
 fi
 
