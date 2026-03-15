@@ -136,25 +136,24 @@ python -m creatures.wolf                # Run as background service (auto-starte
 
 ## Default crons
 
-Every wolt ships with a default `wolf.json` containing the **update checker** — a daily cron that checks if a woltspace update is available:
+New wolts ship with an empty `wolf.json` — add crons as needed:
 
 ```json
 {
   "crons": [
     {
-      "name": "update-check",
-      "schedule": "0 10 * * *",
+      "name": "digest",
+      "schedule": "0 6 * * *",
       "action": "script",
-      "command": "bash /workspace/woltspace/container/cron/check-update.sh",
+      "command": "node /workspace/woltspace/container/cron/digest.mjs",
+      "notify": "digest time — fetching news and papers",
       "timezone": "America/Montreal"
     }
   ]
 }
 ```
 
-The update checker uses `git ls-remote` (no LLM, no clone) to compare the stored version against remote `main`. It only sends a 🐺 notification when an update is actually found — completely silent otherwise. Version is tracked in `.state/woltspace-version`.
-
-When adding new crons, add them to the existing `crons` array alongside the update checker.
+Update checking is available on demand via the dog's `check_update` tool — not a wolf cron. Wolves are loud by design (every cron fires a notification), which doesn't fit quiet surveillance tasks like polling for updates.
 
 ## How it works
 

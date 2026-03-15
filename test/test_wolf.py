@@ -730,3 +730,105 @@ class TestWolfJobsTool:
         with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path):
             result = json.loads(_tool_wolf_jobs({}, None))
         assert result["count"] == 2  # skipped the bad line
+
+
+# ---------------------------------------------------------------------------
+# run_script env inheritance — the WOLT_DIR fix
+# ---------------------------------------------------------------------------
+
+class TestRunScriptEnv:
+    """Unit: run_script exports the wolf's own WOLT_DIR and WOLT_NAME
+    into the tmux session, not the container's inherited env."""
+
+    def test_tmux_command_includes_wolt_dir_export(self, tmp_path):
+        """The wrapped command should start with export WOLT_DIR=... WOLT_NAME=..."""
+        from creatures.wolf import run_script
+
+        wolf_dir = tmp_path / "howlie"
+        wolf_dir.mkdir()
+        entry = {"name": "update-check", "action": "script", "command": "bash check.sh"}
+
+        with patch("creatures.wolf.get_wolt_dir", return_value=wolf_dir), \
+             patch("creatures.wolf._get_wolf_name", return_value="howlie"), \
+             patch("creatures.wolf._get_tunnel_url", return_value=None), \
+             patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+             patch("creatures.wolf._log_job"), \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            run_script(entry)
+
+            # Inspect the bash -c command passed to tmux
+            call_args = mock_run.call_args[0][0]
+            # tmux new-session -d -s <name> -c <dir> bash -c <wrapped>
+            wrapped_cmd = call_args[-1]  # last arg is the wrapped command string
+            assert f"export WOLT_DIR={wolf_dir}" in wrapped_cmd
+            assert "WOLT_NAME=howlie" in wrapped_cmd
+
+    def test_env_export_precedes_command(self, tmp_path):
+        """The export must come BEFORE the actual command."""
+        from creatures.wolf import run_script
+
+        wolf_dir = tmp_path / "howlie"
+        wolf_dir.mkdir()
+        entry = {"name": "test", "action": "script", "command": "echo hello"}
+
+        with patch("creatures.wolf.get_wolt_dir", return_value=wolf_dir), \
+             patch("creatures.wolf._get_wolf_name", return_value="howlie"), \
+             patch("creatures.wolf._get_tunnel_url", return_value=None), \
+             patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+             patch("creatures.wolf._log_job"), \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            run_script(entry)
+
+            wrapped_cmd = mock_run.call_args[0][0][-1]
+            export_pos = wrapped_cmd.find("export WOLT_DIR=")
+            command_pos = wrapped_cmd.find("echo hello")
+            assert export_pos < command_pos, "WOLT_DIR export must come before the command"
+
+    def test_tmux_working_dir_matches_wolf_dir(self, tmp_path):
+        """tmux -c should also point to the wolf's directory."""
+        from creatures.wolf import run_script
+
+        wolf_dir = tmp_path / "howlie"
+        wolf_dir.mkdir()
+        entry = {"name": "test", "action": "script", "command": "echo hi"}
+
+        with patch("creatures.wolf.get_wolt_dir", return_value=wolf_dir), \
+             patch("creatures.wolf._get_wolf_name", return_value="howlie"), \
+             patch("creatures.wolf._get_tunnel_url", return_value=None), \
+             patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+             patch("creatures.wolf._log_job"), \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            run_script(entry)
+
+            call_args = mock_run.call_args[0][0]
+            # Find -c flag and the value after it
+            c_idx = call_args.index("-c")
+            assert call_args[c_idx + 1] == str(wolf_dir)
+
+    def test_different_wolf_dir_from_env(self, tmp_path):
+        """Even if WOLT_DIR env points elsewhere, run_script should use the wolf's dir."""
+        from creatures.wolf import run_script
+
+        wolf_dir = tmp_path / "howlie"
+        wolf_dir.mkdir()
+        entry = {"name": "test", "action": "script", "command": "bash check.sh"}
+
+        # Simulate container env pointing to a different wolt
+        with patch.dict(os.environ, {"WOLT_DIR": "/workspace/wolts/neowolt", "WOLT_NAME": "neowolt"}), \
+             patch("creatures.wolf.get_wolt_dir", return_value=wolf_dir), \
+             patch("creatures.wolf._get_wolf_name", return_value="howlie"), \
+             patch("creatures.wolf._get_tunnel_url", return_value=None), \
+             patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+             patch("creatures.wolf._log_job"), \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            run_script(entry)
+
+            wrapped_cmd = mock_run.call_args[0][0][-1]
+            # Should export howlie's dir, NOT neowolt
+            assert str(wolf_dir) in wrapped_cmd
+            assert "WOLT_NAME=howlie" in wrapped_cmd
+            assert "neowolt" not in wrapped_cmd

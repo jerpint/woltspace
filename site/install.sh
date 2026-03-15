@@ -6,11 +6,13 @@ command -v git >/dev/null || { echo "error: git required"; exit 1; }
 
 if [ -d "woltspace/.git" ]; then
   echo "  woltspace already cloned — pulling latest..."
-  git -C woltspace pull --ff-only
+  git -C woltspace fetch --quiet
+  git -C woltspace merge --ff-only FETCH_HEAD || {
+    echo "  warning: local changes detected — skipping pull. Run 'git -C woltspace pull' manually."
+  }
 elif [ -d "woltspace" ]; then
-  echo "  woltspace directory exists but isn't a git repo — removing and re-cloning..."
-  rm -rf woltspace
-  git clone https://github.com/jerpint/woltspace
+  echo "error: ./woltspace exists but isn't a git repo — remove it manually and re-run"
+  exit 1
 else
   git clone https://github.com/jerpint/woltspace
 fi

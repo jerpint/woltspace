@@ -273,9 +273,14 @@ def run_script(entry: dict) -> Optional[str]:
     fail_prefix = f"🐺 {wolf_name}: cron '{cron_name}' failed (exit "
     notify_url = "http://localhost:3000/notify"
 
+    # Export the wolf's own env so cron scripts use the right state directory
+    # (without this, scripts inherit WOLT_DIR from the container entrypoint,
+    # which points to the rodent-wolt, not the wolf-wolt)
+    env_setup = f"export WOLT_DIR={wolt_dir} WOLT_NAME={wolf_name}; "
+
     # Wrap: run command, capture exit code, notify completion, keep terminal open
     wrapped = (
-        f"{command}; _exit=$?; "
+        f"{env_setup}{command}; _exit=$?; "
         f"_notify() {{ curl -s -X POST {notify_url} -H 'Content-Type: application/json' "
         f"""-d "$(printf '{{"message":"%s","session":""}}' "$1")"; }}; """
         f'if [ "$_exit" -eq 0 ]; then '
