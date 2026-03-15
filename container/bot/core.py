@@ -139,7 +139,7 @@ You're the lodge companion — loyal, constrained, and you route real work to Cl
 Never prefix your messages with emojis or your name — the adapter handles that.
 
 ## Creatures
-Sessions run as creatures: 🦝 **raccoon** (opus — complex reasoning, orchestration) or 🦫 **beaver** (sonnet — building, coding).
+Sessions run as creatures: 🦝 **raccoon** (opus — complex reasoning, orchestration), 🦫 **beaver** (sonnet — building, coding), or 🐺 **wolf** (sonnet — cron & schedule management).
 CRITICAL: When the user asks for a specific creature by name, ALWAYS use that creature. Never override their choice based on your own task decomposition. "Fire up a raccoon" means creature="raccoon", period.
 
 The colony has more creatures — not all are session types yet, but they have roles:
@@ -149,6 +149,13 @@ The colony has more creatures — not all are session types yet, but they have r
 🐻 **bear** — safety & validation, guards outputs
 🐼 **panda** — daily reminders, zen notifications
 
+## Wolf — Scheduling & Crons 🐺
+When someone asks about schedules, reminders, crons, or recurring tasks:
+1. Use `wolf_schedules` to check what's already set up
+2. Spawn a **wolf** session (`creature="wolf"`) to help them configure it
+Wolves manage `wolt/wolf.json` — the schedule config. Each cron entry has a name, schedule (cron expression), action (script/session/skill), and optional notification message. When a cron fires, the wolf sends a 🐺 notification automatically.
+Route to wolf for: "remind me to...", "run X every morning", "set up a daily...", "what's scheduled?", "change the digest time"
+
 ## Voice
 Talk like a person, not an assistant. Short messages. Lowercase is fine. No bullet lists, no "certainly!", no formal summaries. If you don't know something, say so. If something's interesting, say why. Bias toward action — if a request has enough to start, just start.
 
@@ -156,7 +163,8 @@ Talk like a person, not an assistant. Short messages. Lowercase is fine. No bull
 You have tools. Use them. Never describe what you would do — always invoke the tool directly.
 CRITICAL: If a task requires claude_code, call claude_code. Don't narrate what you'd do instead.
 
-- **claude_code** — spin up a Claude Code session for real work (pick raccoon or beaver as needed)
+- **claude_code** — spin up a Claude Code session for real work (pick raccoon, beaver, or wolf as needed)
+- **wolf_schedules** — check what crons are configured and when they last ran
 - **send_message** — send a message to a running session
 - **list_sessions** / **check_session** — see what's running or check on a session
 - **list_projects** — see what projects exist in the current wolt
@@ -301,8 +309,8 @@ def _call_server(method: str, path: str, body: dict | None = None) -> dict:
 CREATURE_MODELS = {
     "raccoon": "opus",    # 🦝 orchestrator — complex planning, multi-step reasoning
     "beaver": "sonnet",   # 🦫 worker — building, coding, grunt work
+    "wolf": "sonnet",     # 🐺 scheduler — cron setup, schedule management
     # Planned creatures — models TBD when implemented
-    # "wolf":   "haiku",  # 🐺 scheduler — fast, lightweight, always-on
     # "spider": "sonnet", # 🕷️ headless browser — parsing, scraping
     # "bear":   "sonnet", # 🐻 validator — careful judgment, safety checks
     # "panda":  "haiku",  # 🐼 notifications — gentle, unhurried
@@ -715,6 +723,25 @@ def _tool_switch_wolt(args: dict, routing: dict | None) -> str:
     return json.dumps({"switched": bool(switched), "name": args["name"]})
 
 
+def _tool_wolf_schedules(args: dict, routing: dict | None) -> str:
+    """List all wolf cron schedules for the active wolt."""
+    wolf_config = WOLT_DIR / "wolt" / "wolf.json"
+    if not wolf_config.exists():
+        return json.dumps({"crons": [], "count": 0, "note": "no wolf.json — no crons configured"})
+    try:
+        data = json.loads(wolf_config.read_text())
+        crons = data.get("crons", [])
+        # Enrich with last-run info
+        state_dir = WOLT_DIR / ".state" / "wolf"
+        for entry in crons:
+            name = entry.get("name", "")
+            last_file = state_dir / f"{name}.last"
+            entry["last_run"] = last_file.read_text().strip() if last_file.exists() else "never"
+        return json.dumps({"crons": crons, "count": len(crons)})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 TOOL_HANDLERS: dict[str, callable] = {
     "claude_code": _tool_claude_code,
     "get_tunnel_url": _tool_get_tunnel_url,
@@ -730,6 +757,7 @@ TOOL_HANDLERS: dict[str, callable] = {
     "list_projects": _tool_list_projects,
     "switch_wolt": _tool_switch_wolt,
     "new_session": _tool_new_session,
+    "wolf_schedules": _tool_wolf_schedules,
 }
 
 
@@ -756,8 +784,8 @@ TOOLS = [
                     },
                     "creature": {
                         "type": "string",
-                        "enum": ["raccoon", "beaver"],
-                        "description": "Which creature to run: 'raccoon' (🦝 opus — complex reasoning, orchestration) or 'beaver' (🦫 sonnet — building, coding). Defaults to the wolt's default model if omitted.",
+                        "enum": ["raccoon", "beaver", "wolf"],
+                        "description": "Which creature to run: 'raccoon' (🦝 opus — complex reasoning, orchestration), 'beaver' (🦫 sonnet — building, coding), or 'wolf' (🐺 sonnet — cron setup, schedule management). Defaults to the wolt's default model if omitted.",
                     },
                     "project": {
                         "type": "string",
@@ -790,8 +818,8 @@ TOOLS = [
                     },
                     "creature": {
                         "type": "string",
-                        "enum": ["raccoon", "beaver"],
-                        "description": "Which creature to run: 'raccoon' (opus) or 'beaver' (sonnet). Defaults to wolt's default model.",
+                        "enum": ["raccoon", "beaver", "wolf"],
+                        "description": "Which creature to run: 'raccoon' (opus), 'beaver' (sonnet), or 'wolf' (sonnet — cron management). Defaults to wolt's default model.",
                     },
                     "project": {
                         "type": "string",
@@ -988,6 +1016,17 @@ TOOLS = [
                     },
                 },
                 "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "wolf_schedules",
+            "description": "List all wolf cron schedules — what's scheduled, when it runs, last run time. Use this when someone asks about scheduled tasks, crons, reminders, or recurring jobs.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
             },
         },
     },
