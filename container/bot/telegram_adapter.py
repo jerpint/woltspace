@@ -8,11 +8,13 @@ import json
 import base64
 import logging
 import asyncio
+import random
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from collections import defaultdict
 from telegram import Update
+from telegram.constants import ChatAction
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
 import re
 from bot.core import get_response, transcribe_audio, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, _bot_log, build_ack_text, _sanitize_history, message_session
@@ -37,6 +39,23 @@ def _dog_name() -> str:
 ALLOWED_USERS: set[int] = set()
 chat_histories: dict[int, list] = defaultdict(list)
 MAX_HISTORY = 20
+
+# Immediate ack messages — sent before processing starts so the user knows we heard them
+DOG_ACK_MESSAGES = [
+    "🐶 on it...",
+    "🐶 sniffing...",
+    "🐶 heard you",
+    "🐶 *perks ears*",
+    "🐶 one sec...",
+]
+
+
+async def _dog_ack(update: Update):
+    """Fire an immediate acknowledgment so the user knows the message landed."""
+    try:
+        await update.message.reply_text(random.choice(DOG_ACK_MESSAGES))
+    except Exception:
+        pass  # never let ack failure block the real work
 
 # Must match the sentinel in server.js — used to detect replies-to-den
 DEN_REPLY_FOOTER = "\n↩️ reply to this message to talk to this session directly"
@@ -229,6 +248,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     history = chat_histories[chat_id]
 
     routing = {"adapter": "telegram", "chat_id": chat_id}
+
+    # Immediate ack — let the user know we heard them before Haiku starts thinking
+    await _dog_ack(update)
+
     try:
         result = get_response(user_message, conversation_history=list(history), routing=routing)
     except Exception as e:
@@ -373,6 +396,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     history = chat_histories[chat_id]
 
     routing = {"adapter": "telegram", "chat_id": chat_id}
+
+    # Immediate ack — let the user know we're looking at their photo
+    await _dog_ack(update)
+
     try:
         result = get_response(user_message, conversation_history=list(history), routing=routing, user_content=user_content)
     except Exception as e:
