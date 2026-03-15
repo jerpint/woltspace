@@ -6,15 +6,17 @@ user_invocable: true
 
 # Update Woltspace
 
-You are the responsible updater. Your job is to protect the user — review what's coming, flag anything risky, and only pull with explicit consent.
+You are the lodge's gatekeeper for platform updates. Your job: check what's arriving from upstream, translate it into plain language (no git jargon), flag anything that could disrupt the lodge, and only open the gates when the human says go.
 
-`/workspace/woltspace` is volume-mounted from the host, so `git pull` updates files live — no rebuild needed.
+**Never pull without explicit user confirmation. This is the safety gate — updates can crash the app.**
+
+`/workspace/woltspace` is volume-mounted from the host, so `git pull` updates files live — no rebuild needed in most cases.
 
 ## Step 1: Determine what's incoming
 
 ```bash
 WOLT_DIR="${WOLT_DIR:-/workspace/wolts/${WOLT_NAME:-wolt}}"
-BRANCH=$(cat "$WOLT_DIR/.state/woltspace-branch" 2>/dev/null || echo "main")
+BRANCH=$(cat "$WOLT_DIR/.state/woltspace-branch" 2>/dev/null || echo "staging")
 
 cd /workspace/woltspace
 git fetch origin "$BRANCH"
@@ -50,19 +52,29 @@ If a merge PR exists for the incoming commits, read it for context. Check if the
 
 ## Step 3: Report to the user
 
+**Tone: lore-flavored, brief by default.** Lead with what's cool and new — speak like you're reporting back to the lodge, not filing a ticket. Only go technical if the user asks, or if something could break.
+
 Send a notify with your assessment. Structure it as:
 
 **If safe (no breaking changes):**
-> X commits incoming on [branch]. [1-2 sentence summary of what's new]. No breaking changes — safe to pull. Want me to update?
+> [1-2 sentence lore-flavored summary of what's new — e.g. "the wolf learned to read the stars" or "dog now barks before thinking"]. Good to pull — no side effects. Want me to bring it in?
 
 **If there are concerns:**
-> X commits incoming on [branch]. [summary of what's new]. Heads up: [specific concern — e.g. "new OPENAI_API_KEY env var required for image gen" or "wolf skill renamed, existing wolf crons may need reconfiguring"]. Want me to proceed anyway?
+> [lore summary of what's new]. One thing to know first: [plain-English description of the specific risk — e.g. "needs a new OPENAI_API_KEY in .env" or "wolf skill was renamed, existing schedules may need a look"]. Want details, or proceed?
 
-Be specific about what might break. Don't just say "there are breaking changes" — say exactly what and what the user would need to do.
+Rules:
+- Lead with the cool stuff, not the risk
+- Name the risk clearly but briefly — don't bury it in lore
+- Never say "breaking changes" without saying exactly what breaks and what the user needs to do
+- Offer "want more details?" rather than front-loading everything
 
-## Step 4: Pull (only after user says yes)
+## Step 4: Confirm before pulling
 
-Do NOT pull until the user explicitly confirms. Then:
+**Use `AskUserQuestion` to wait for the user's explicit yes/no.** Do not skip this. Do not assume consent. A raw "what's new?" message is not a pull request.
+
+Accept any of: "yes", "pull it", "go ahead", "do it", "yes pull", "/update confirm".
+
+Once confirmed:
 
 ```bash
 cd /workspace/woltspace && git pull origin "$BRANCH"
@@ -74,37 +86,24 @@ echo "$NEW_VERSION" > "$WOLT_DIR/.state/woltspace-version"
 echo "$BRANCH" > "$WOLT_DIR/.state/woltspace-branch"
 ```
 
-## Step 5: Post-update report
+## Step 5: Verify and report
 
-After pulling:
 ```bash
 git log --oneline ORIG_HEAD..HEAD
 ```
 
-### Start new platform services
+Notify the user: what landed, the short hash, and any action items.
 
-Some updates introduce new background services. Check and start them if they aren't already running:
-
-**Vulture (session reaper)** — if `container/creatures/vulture.py` exists but no vulture process is running:
-```bash
-# Check if vulture is already running
-if ! pgrep -f "creatures.vulture" > /dev/null 2>&1; then
-  echo "starting vulture reaper (new in this update)..."
-  cd /workspace/woltspace/container
-  PYTHONPATH="/workspace/woltspace/container/lib:${PYTHONPATH:-}" \
-    python -m creatures.vulture --once 2>/dev/null || true  # immediate first pass
-  PYTHONPATH="/workspace/woltspace/container/lib:${PYTHONPATH:-}" \
-    python -m creatures.vulture &
-  disown
-fi
-```
-
-Notify the user with: what was updated, the new version hash, and any action items (e.g. "bot behavior changed — restart the bot to pick it up").
+Action items to flag:
+- **Bot code changed** → "the bot needs a restart to pick this up — run `woltspace restart` from host"
+- **entrypoint.sh changed** → "container restart needed for this to take full effect"
+- **New env vars** → "add `VAR_NAME` to `~/wolts/.env` before restarting"
+- **server.js changed** → "server auto-reloads via --watch, should be live already"
 
 ## Notes
 
 - `woltspace rebuild` is a **host-only** command — no docker CLI inside the container
-- `server.js` runs with `--watch` so it picks up file changes automatically
-- The Telegram bot does NOT auto-restart — if bot code changed, tell the user to restart manually
-- If the update includes new env vars, tell the user to add them to `~/wolts/.env`
-- If entrypoint.sh changed, a container restart may be needed — flag this
+- `server.js` runs with `--watch` so JS changes auto-apply without restart
+- The Telegram bot does NOT auto-restart — if bot code changed, flag it explicitly
+- When in doubt about whether a change is breaking, err on the side of flagging it
+- If the user invokes `/update confirm` or already said "yes, pull it", skip straight to Step 4
