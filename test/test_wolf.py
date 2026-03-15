@@ -284,14 +284,14 @@ class TestFireCron:
             fire_cron(entry)
             mock.assert_called_once_with(entry)
 
-    def test_sends_notification_first(self):
+    def test_fires_action_then_notifies(self):
         from creatures.wolf import fire_cron
         call_order = []
         entry = {"name": "t", "action": "script", "command": "echo hi", "notify": "heads up"}
         with patch("creatures.wolf.send_wolf_notify", side_effect=lambda m: call_order.append("notify")), \
              patch("creatures.wolf.run_script", side_effect=lambda e: call_order.append("script")):
             fire_cron(entry)
-        assert call_order == ["notify", "script"]
+        assert call_order == ["script", "notify"]
 
     def test_no_notify_when_not_set(self):
         from creatures.wolf import fire_cron
@@ -361,7 +361,7 @@ class TestWolfSchedulesTool:
 
     def test_no_config_returns_empty(self, tmp_path):
         from bot.core import _tool_wolf_schedules
-        with patch("bot.core.WOLT_DIR", tmp_path):
+        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path):
             result = json.loads(_tool_wolf_schedules({}, None))
         assert result["count"] == 0
         assert result["crons"] == []
@@ -379,7 +379,7 @@ class TestWolfSchedulesTool:
         state_dir.mkdir(parents=True)
         (state_dir / "digest.last").write_text("2026-03-15-06:00")
 
-        with patch("bot.core.WOLT_DIR", tmp_path):
+        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path):
             result = json.loads(_tool_wolf_schedules({}, None))
         assert result["count"] == 1
         assert result["crons"][0]["last_run"] == "2026-03-15-06:00"
@@ -392,7 +392,7 @@ class TestWolfSchedulesTool:
             "crons": [{"name": "new-cron", "schedule": "0 6 * * *", "action": "script", "command": "echo"}]
         }))
 
-        with patch("bot.core.WOLT_DIR", tmp_path):
+        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path):
             result = json.loads(_tool_wolf_schedules({}, None))
         assert result["crons"][0]["last_run"] == "never"
 
@@ -552,3 +552,181 @@ class TestNotifyFooter:
             footer = f"\n\n---reply footer\n/tui?session={session}"
         assert "beaver-chunky-dam-abc123" in footer
         assert footer != ""
+
+
+# ---------------------------------------------------------------------------
+# Job logging (_log_job)
+# ---------------------------------------------------------------------------
+
+class TestJobLogging:
+    """Unit: _log_job writes valid JSONL to .state/wolf/jobs.jsonl."""
+
+    def test_creates_log_file(self, tmp_path):
+        from creatures.wolf import _log_job
+        with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
+            _log_job("test-cron", "script", event="started")
+        log_file = tmp_path / "jobs.jsonl"
+        assert log_file.exists()
+
+    def test_writes_valid_jsonl(self, tmp_path):
+        from creatures.wolf import _log_job
+        with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
+            _log_job("digest", "script", event="started", command="echo hi")
+        log_file = tmp_path / "jobs.jsonl"
+        entry = json.loads(log_file.read_text().strip())
+        assert entry["cron"] == "digest"
+        assert entry["action"] == "script"
+        assert entry["event"] == "started"
+        assert entry["command"] == "echo hi"
+        assert "ts" in entry
+
+    def test_appends_multiple_entries(self, tmp_path):
+        from creatures.wolf import _log_job
+        with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
+            _log_job("digest", "script", event="started")
+            _log_job("digest", "script", event="dispatched", session="wolf-digest-abc123")
+            _log_job("update-check", "session", event="started")
+        log_file = tmp_path / "jobs.jsonl"
+        lines = log_file.read_text().strip().split("\n")
+        assert len(lines) == 3
+        # Each line is valid JSON
+        for line in lines:
+            json.loads(line)
+
+    def test_includes_error_field(self, tmp_path):
+        from creatures.wolf import _log_job
+        with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
+            _log_job("broken", "script", event="error", error="tmux failed")
+        entry = json.loads((tmp_path / "jobs.jsonl").read_text().strip())
+        assert entry["error"] == "tmux failed"
+
+    def test_fire_cron_logs_started_and_dispatched(self, tmp_path):
+        """fire_cron should log both 'started' and 'dispatched' events."""
+        from creatures.wolf import fire_cron
+        entry = {"name": "test", "action": "script", "command": "echo hi"}
+        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+             patch("creatures.wolf.run_script", return_value="wolf-test-abc"), \
+             patch("creatures.wolf.send_wolf_notify"), \
+             patch("creatures.wolf._get_tunnel_url", return_value=None):
+            fire_cron(entry)
+        log_file = tmp_path / "jobs.jsonl"
+        lines = log_file.read_text().strip().split("\n")
+        events = [json.loads(l)["event"] for l in lines]
+        assert "started" in events
+        assert "dispatched" in events
+
+    def test_fire_cron_logs_error_on_unknown_action(self, tmp_path):
+        from creatures.wolf import fire_cron
+        entry = {"name": "bad", "action": "bogus"}
+        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+             patch("creatures.wolf.send_wolf_notify"):
+            fire_cron(entry)
+        log_file = tmp_path / "jobs.jsonl"
+        lines = log_file.read_text().strip().split("\n")
+        errors = [json.loads(l) for l in lines if json.loads(l).get("event") == "error"]
+        assert len(errors) >= 1
+        assert "unknown action" in errors[0]["error"]
+
+
+# ---------------------------------------------------------------------------
+# show_jobs CLI output
+# ---------------------------------------------------------------------------
+
+class TestShowJobs:
+    """Unit: --jobs CLI output."""
+
+    def test_no_log_file(self, tmp_path, capsys):
+        from creatures.wolf import show_jobs
+        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+             patch("creatures.wolf._get_wolf_name", return_value="howlie"):
+            show_jobs()
+        assert "No job log yet" in capsys.readouterr().out
+
+    def test_shows_recent_entries(self, tmp_path, capsys):
+        from creatures.wolf import show_jobs
+        log_file = tmp_path / "jobs.jsonl"
+        entries = [
+            json.dumps({"ts": "2026-03-15T06:00:00", "cron": "digest", "event": "started"}),
+            json.dumps({"ts": "2026-03-15T06:00:01", "cron": "digest", "event": "dispatched", "session": "wolf-digest-abc"}),
+        ]
+        log_file.write_text("\n".join(entries))
+        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+             patch("creatures.wolf._get_wolf_name", return_value="howlie"):
+            show_jobs(count=5)
+        out = capsys.readouterr().out
+        assert "digest" in out
+        assert "started" in out
+        assert "dispatched" in out
+
+    def test_respects_count_limit(self, tmp_path, capsys):
+        from creatures.wolf import show_jobs
+        log_file = tmp_path / "jobs.jsonl"
+        entries = [
+            json.dumps({"ts": f"2026-03-15T0{i}:00:00", "cron": f"job-{i}", "event": "started"})
+            for i in range(5)
+        ]
+        log_file.write_text("\n".join(entries))
+        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+             patch("creatures.wolf._get_wolf_name", return_value="howlie"):
+            show_jobs(count=2)
+        out = capsys.readouterr().out
+        # Should show only the last 2
+        assert "job-3" in out
+        assert "job-4" in out
+        assert "job-0" not in out
+
+
+# ---------------------------------------------------------------------------
+# wolf_jobs bot tool (from core.py)
+# ---------------------------------------------------------------------------
+
+class TestWolfJobsTool:
+    """Unit: the wolf_jobs tool exposed to the dog."""
+
+    def test_no_log_file(self, tmp_path):
+        from bot.core import _tool_wolf_jobs
+        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path):
+            result = json.loads(_tool_wolf_jobs({}, None))
+        assert result["jobs"] == []
+        assert "no job log" in result["note"]
+
+    def test_returns_recent_jobs(self, tmp_path):
+        from bot.core import _tool_wolf_jobs
+        log_dir = tmp_path / ".state" / "wolf"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "jobs.jsonl"
+        entries = [
+            json.dumps({"ts": "2026-03-15T06:00:00", "cron": "digest", "event": "started"}),
+            json.dumps({"ts": "2026-03-15T06:00:01", "cron": "digest", "event": "dispatched"}),
+        ]
+        log_file.write_text("\n".join(entries))
+        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path):
+            result = json.loads(_tool_wolf_jobs({}, None))
+        assert result["count"] == 2
+        assert result["jobs"][0]["cron"] == "digest"
+
+    def test_respects_count_param(self, tmp_path):
+        from bot.core import _tool_wolf_jobs
+        log_dir = tmp_path / ".state" / "wolf"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "jobs.jsonl"
+        entries = [
+            json.dumps({"ts": f"2026-03-15T0{i}:00:00", "cron": f"job-{i}", "event": "started"})
+            for i in range(5)
+        ]
+        log_file.write_text("\n".join(entries))
+        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path):
+            result = json.loads(_tool_wolf_jobs({"count": 2}, None))
+        assert result["count"] == 2
+        assert result["jobs"][0]["cron"] == "job-3"
+        assert result["jobs"][1]["cron"] == "job-4"
+
+    def test_handles_corrupted_lines(self, tmp_path):
+        from bot.core import _tool_wolf_jobs
+        log_dir = tmp_path / ".state" / "wolf"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "jobs.jsonl"
+        log_file.write_text('{"cron":"ok","event":"started"}\nnot json\n{"cron":"also-ok","event":"done"}\n')
+        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path):
+            result = json.loads(_tool_wolf_jobs({}, None))
+        assert result["count"] == 2  # skipped the bad line
