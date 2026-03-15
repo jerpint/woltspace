@@ -122,6 +122,44 @@ class TestCreatureRouting:
         from bot.core import CREATURE_EMOJIS
         assert CREATURE_EMOJIS.get("unknown", "🦫") == "🦫"
 
+    def test_otter_is_haiku(self):
+        """Otter should map to haiku model."""
+        from bot.core import CREATURE_MODELS
+        assert CREATURE_MODELS["otter"] == "haiku"
+
+    def test_otter_emoji(self):
+        from bot.core import CREATURE_EMOJIS
+        assert CREATURE_EMOJIS["otter"] == "🦦"
+
+    def test_otter_ack_emoji(self):
+        """Ack text should use otter emoji when creature is otter."""
+        from bot.core import build_ack_text
+        text = build_ack_text(session_name="neowolt-test-123", creature="otter")
+        assert "🦦" in text
+
+    def test_otter_in_tool_schemas(self):
+        """Otter should be in the creature enum for claude_code and new_session tools."""
+        from bot.core import TOOLS
+        for tool in TOOLS:
+            name = tool["function"]["name"]
+            if name in ("claude_code", "new_session"):
+                creature_prop = tool["function"]["parameters"]["properties"]["creature"]
+                assert "otter" in creature_prop["enum"], f"otter missing from {name} creature enum"
+                assert "otter" in creature_prop["description"], f"otter missing from {name} creature description"
+
+    def test_all_session_creatures_consistent(self):
+        """Every creature in CREATURE_MODELS should have an emoji and be in tool schemas."""
+        from bot.core import CREATURE_MODELS, CREATURE_EMOJIS, TOOLS
+        for creature in CREATURE_MODELS:
+            assert creature in CREATURE_EMOJIS, f"{creature} missing from CREATURE_EMOJIS"
+        # Check tool schemas include all active creatures
+        for tool in TOOLS:
+            name = tool["function"]["name"]
+            if name == "claude_code":
+                enum = tool["function"]["parameters"]["properties"]["creature"]["enum"]
+                for creature in CREATURE_MODELS:
+                    assert creature in enum, f"{creature} missing from claude_code creature enum"
+
 
 # ---------------------------------------------------------------------------
 # Command building

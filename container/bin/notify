@@ -25,6 +25,7 @@ if [ -n "$SESSION" ]; then
   case "$CREATURE" in
     raccoon) EMOJI="🦝" ;;
     beaver)  EMOJI="🦫" ;;
+    otter)   EMOJI="🦦" ;;
   esac
 fi
 FULL_MESSAGE="${EMOJI} ${WOLT_NAME}: $MESSAGE"
