@@ -203,6 +203,7 @@ CRITICAL: If a task requires claude_code, call claude_code. Don't narrate what y
 - **read_memory** — read a specific memory file when you need details
 - **get_recent_sessions** — read session summaries (what was built, links)
 - **get_tunnel_url** — get the public URL for the split view
+- **open_issue** — file a GitHub issue on woltspace (beavers pick these up asynchronously)
 
 ## Projects
 Projects live in `wolt/projects/`. They're isolated workspaces for building things.
@@ -873,6 +874,48 @@ def _tool_wolf_jobs(args: dict, routing: dict | None) -> str:
         return json.dumps({"error": str(e)})
 
 
+def _tool_open_issue(args: dict, routing: dict | None) -> str:
+    """Open a GitHub issue on the woltspace repo."""
+    import subprocess
+    title = args.get("title", "").strip()
+    body = args.get("body", "").strip()
+    labels = args.get("labels", [])
+    if not title:
+        return json.dumps({"error": "title is required"})
+
+    # Read PAT from wolt .env
+    env_file = WOLT_DIR / ".env"
+    gh_token = None
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if line.startswith("GH_PAT_TOKEN="):
+                gh_token = line.split("=", 1)[1].strip()
+                break
+
+    # Fall back to env var
+    if not gh_token:
+        gh_token = os.environ.get("GH_PAT_TOKEN", "")
+
+    if not gh_token:
+        return json.dumps({"error": "GH_PAT_TOKEN not found — add it to .env"})
+
+    cmd = ["gh", "issue", "create", "--repo", "jerpint/woltspace", "--title", title]
+    if body:
+        cmd += ["--body", body]
+    if labels:
+        cmd += ["--label", ",".join(labels)]
+
+    env = {**os.environ, "GH_TOKEN": gh_token}
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15, env=env)
+        if result.returncode == 0:
+            url = result.stdout.strip()
+            return json.dumps({"url": url, "title": title})
+        return json.dumps({"error": result.stderr.strip() or "gh issue create failed"})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 TOOL_HANDLERS: dict[str, callable] = {
     "claude_code": _tool_claude_code,
     "get_tunnel_url": _tool_get_tunnel_url,
@@ -892,6 +935,7 @@ TOOL_HANDLERS: dict[str, callable] = {
     "fire_wolf": _tool_fire_wolf,
     "wolf_jobs": _tool_wolf_jobs,
     "check_update": _tool_check_update,
+    "open_issue": _tool_open_issue,
 }
 
 
@@ -1205,6 +1249,32 @@ TOOLS = [
                         "description": "Number of recent job events to return (default 10).",
                     },
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "open_issue",
+            "description": "Open a GitHub issue on the woltspace repo. Use when someone asks to file a bug, log an idea, or track something for later. Beavers will pick these up asynchronously.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Short issue title (e.g. 'wolf notifications should include session link').",
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Issue body with context, motivation, and rough shape of the fix. Markdown supported.",
+                    },
+                    "labels": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional labels to apply (e.g. ['from-dog', 'bug']). Labels must already exist in the repo.",
+                    },
+                },
+                "required": ["title"],
             },
         },
     },
