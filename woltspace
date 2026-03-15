@@ -546,11 +546,12 @@ case "$cmd" in
     rm -f "$ACTIVE_WOLT_DIR/.state/tunnel-url"
     docker build -t woltspace -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR"
 
-    # Stamp the version so the update-check cron knows what we're running
+    # Stamp the version + branch so the update-check cron compares against the right remote
     BUILD_COMMIT=$(cd "$WOLTSPACE_DIR" && git rev-parse HEAD 2>/dev/null)
     if [ -n "$BUILD_COMMIT" ]; then
       mkdir -p "$ACTIVE_WOLT_DIR/.state"
       echo "$BUILD_COMMIT" > "$ACTIVE_WOLT_DIR/.state/woltspace-version"
+      echo "$BUILD_BRANCH" > "$ACTIVE_WOLT_DIR/.state/woltspace-branch"
     fi
 
     _ensure_container "$CONTAINER_NAME"
