@@ -103,10 +103,12 @@ Development workflow: `wt create feature-name` → work → PR to staging → me
 Updates are opt-in, never automatic:
 1. A **wolf cron** (`check-update.sh`) runs daily, compares local version against remote `main` using `git ls-remote`. If behind, sends a 🐺 notification: *"update available — ask a beaver or raccoon to update."*
 2. The **dog** has a `check_update` tool — when asked "is there an update?", it checks inline and reports.
-3. User asks a **rodent** (beaver/raccoon) to handle the update. The rodent evaluates the diff, explains impact, and only proceeds with user consent.
+3. User asks a **rodent** (beaver/raccoon) to handle the update. Use the `/update` skill — it pulls main, updates version tracking, and confirms what changed.
 4. `woltspace update` on the host shows the same info (commits behind + changelog).
 
-Version tracking: `.state/woltspace-version` stores the commit hash after each `rebuild`.
+**How the update works from inside the container:** `/workspace/woltspace` is always volume-mounted from the host (dev mode is the default). So `git pull origin main` updates files live — no container rebuild needed. After pulling, stamp `.state/woltspace-version` with the new commit so the update-check cron knows it's current.
+
+Version tracking: `.state/woltspace-version` stores the commit hash — written by `woltspace rebuild` on the host, or manually by the `/update` skill after a pull.
 
 ### `server.js` (Node.js, ~1400 lines)
 Single-file HTTP + WebSocket server running on port 3000 inside the container.
