@@ -45,7 +45,7 @@ cloudflared tunnel (public URL, no account needed)
 
 ### The Animals
 
-All three are wolts. The animal describes the model, tempo, and role.
+The animal describes the model, tempo, and role.
 
 **🐶 Dogwolt — Haiku**
 The lodge companion. Loyal, constrained, fetches what you need. Always present on Telegram — first to hear, first to respond. Bot responses formatted as `🐶 name: text`.
@@ -56,14 +56,21 @@ The builder. Industrious, shapes the environment, makes things that last. Den se
 **🦝 Raccoonwolt — Opus**
 The orchestrator. Clever, adaptive, trickster wisdom. Sees the whole pond from the water's edge — doesn't build everything itself but knows where everything fits. Reaches across the whole colony when needed.
 
+**🦦 Otterwolt — Haiku**
+The quick one. Fast, lightweight, cheap. Great for simple lookups, one-shot edits, file searches, quick scripts. When speed matters more than depth, send an otter.
+
+**🐺 Wolfwolt — Sonnet**
+The scheduler. Runs the pack's routines — crons, reminders, recurring tasks. Fires on schedule, sends notifications, dispatches other creatures. Manages `wolt/wolf.json`. Dog routes schedule questions to wolf sessions.
+
 ```
 woltspace
   lodge           — home base
     dogwolt 🐶    — always-on, lodge companion, entry point
     beaverwolt 🦫 — builder with memory and identity
     raccoonwolt 🦝 — orchestrator, spans the colony
-    ... other creatures may find roles here eventually
-  dens            — temporary work sessions (where beaverwolts build)
+    otterwolt 🦦  — quick tasks, fast and lightweight
+    wolfwolt 🐺   — scheduler, fires crons and dispatches creatures
+  dens            — temporary work sessions (where beaverwolts/raccoonwolts/otterwolts/wolfwolts build)
   pond            — the visible surface (viewport)
 ```
 
@@ -79,7 +86,7 @@ The host-side CLI. Commands:
 
 Reads `.env` for secrets, mounts all wolts into the container.
 
-### `server.js` (Node.js, ~900 lines)
+### `server.js` (Node.js, ~1400 lines)
 Single-file HTTP + WebSocket server running on port 3000 inside the container.
 - Serves the split view (`/tui?session=X`) — xterm.js terminal + iframe viewport
 - Manages per-session viewport URLs (`/current`)
@@ -92,7 +99,7 @@ Single-file HTTP + WebSocket server running on port 3000 inside the container.
 ### `container/bot/core.py` (Python)
 The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routing.
 - Builds system prompt from wolt memory files
-- Defines tools: `claude_code`, `new_session`, `get_tunnel_url`, `check_session`, `get_recent_sessions`, `list_sessions`, `find_session`, `kill_session`, `send_message`, `read_memory`, `list_wolts`, `list_projects`, `generate_image`, `switch_wolt`
+- Defines tools: `claude_code`, `new_session`, `get_tunnel_url`, `check_session`, `get_recent_sessions`, `list_sessions`, `find_session`, `kill_session`, `send_message`, `read_memory`, `list_wolts`, `list_projects`, `generate_image`, `switch_wolt`, `wolf_schedules`, `fire_wolf`
 - When `claude_code` is called: spawns a tmux session running `run-session.sh` → Claude Code CLI
 - Session metadata (status, routing, creature, viewport) stored in the **session registry** — see `container/lib/sessions.py`
 
@@ -111,13 +118,16 @@ Entrypoint:
 6. Optionally starts Telegram/Slack bot
 
 ### `container/skills/`
-Discovery files Claude Code reads from `~/.claude/skills/`. Platform defaults baked into image; wolts can override. Current skills: `apps`, `projects`, `new-project`, `migrate-to-projects`, `create-wolt`, `digest`, `music`, `viewport`, `telegram`, `notify`, `session-summary`, `organize-context`.
+Discovery files Claude Code reads from `~/.claude/skills/`. Platform defaults baked into image; wolts can override. Current skills: `apps`, `projects`, `new-project`, `migrate-to-projects`, `create-wolt`, `digest`, `music`, `viewport`, `telegram`, `notify`, `session-summary`, `organize-context`, `wolf`, `worktui`, `update-2026-03-13`.
 
 ### `container/cron/digest.mjs`
 Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select via `claude -p` → render HTML. Writes to `wolt/sparks/`. Optional Spotify playlist curation.
 
 ### `container/creatures/wolf.py` (Wolf Scheduler 🐺)
 Background cron service. Reads `wolt/wolf.json` for scheduled tasks, fires them on time, sends 🐺 notifications. Actions: `script` (shell command), `session` (Claude Code session), `skill` (invoke a skill). Tracks last-run per cron entry in `.state/wolf/`. Auto-starts when `wolf.json` exists. See `/wolf` skill for full config format.
+
+CLI: `--list` (show crons), `--once` (fire due crons and exit), `--fire NAME` (trigger a specific cron by name, ignoring schedule — great for debugging).
+
 
 ### `container/lib/sessions.py` (Session Registry)
 Centralized session metadata — single source of truth replacing the old scattered `sessions/*.json` + `session-routing/*.json` files. One JSON file per session in `.state/registry/{session_name}.json`.
@@ -256,7 +266,7 @@ Tests live in `test/` and run via `test/run-tests.sh`. The runner sources `/work
 
 ```bash
 # From /workspace/woltspace:
-bash test/run-tests.sh              # all tests (103 tests, ~2 min)
+bash test/run-tests.sh              # all tests (~186 tests, ~2 min)
 bash test/run-tests.sh unit         # pure Python, no server/tmux needed
 bash test/run-tests.sh integration  # requires running server + tmux
 bash test/run-tests.sh closed-loop  # full chain: telegram + server + tmux + registry
@@ -272,6 +282,7 @@ bash test/run-tests.sh -k "pattern" # pass any pytest args
 - `test_telegram_loop.py` — Telegram adapter: message parsing, formatting, allowlist, notify round-trip, live API
 - `test_closed_loop.py` — full seam tests: Telegram API → notify pipeline → session creation → den reply → round-trip
 - `test_agent_loop.py` — haiku decision tests (mocked tools), conversation simulator, live session spawn, true e2e (haiku → beaver → file on disk → viewport)
+- `test_wolf.py` — wolf scheduler: cron parser, schedule loading, state tracking, dispatch routing, fire-by-name, wolf_schedules/fire_wolf tools
 
 **Environment:**
 - `TEST_VERBOSE=1` (default) — posts per-test results to Telegram test group
@@ -279,7 +290,7 @@ bash test/run-tests.sh -k "pattern" # pass any pytest args
 - `TEST_CHAT_ID` — dedicated test group chat (set in `.env`)
 - `KEEP_E2E_ARTIFACTS=1` — preserve hello-wolt-test.html and session after e2e test
 
-**Dependencies:** `uv sync --project container/bot/pyproject.toml` (auto-installed by runner)
+**Dependencies:** `uv sync --project container/bot` (auto-installed by runner)
 
 ---
 
@@ -291,16 +302,14 @@ Restart Telegram bot:
 ```bash
 pkill -f telegram_adapter
 set -a && source /workspace/wolts/${WOLT_NAME}/.env && set +a
-cd /workspace/woltspace/container && uv run --project bot/pyproject.toml python -m bot.telegram_adapter &
+cd /workspace/woltspace/container && uv run --project bot python -m bot.telegram_adapter &
 ```
 
 ---
 
 ## Known Bugs / TODO
 
-- **`_send_ack` only handles Telegram** (`container/bot/core.py`) — Slack users get no "🦫 on it" ack when a session spawns. Easy fix: add the Slack API call alongside the Telegram one.
-- **`logger` defined twice** (`container/bot/core.py`) — harmless but one is dead code.
-- **`container/bin/spawn-tool` is untracked in git** — new file sitting uncommitted.
+*None currently tracked. File issues at the repo.*
 
 ## What's Messy / Still Iterating
 
