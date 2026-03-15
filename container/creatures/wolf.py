@@ -11,6 +11,7 @@ Usage:
   python -m creatures.wolf              # Run as background service
   python -m creatures.wolf --once       # Fire all due crons once and exit
   python -m creatures.wolf --list       # List registered crons
+  python -m creatures.wolf --fire NAME  # Fire a specific cron by name (ignores schedule)
 """
 
 import asyncio
@@ -354,12 +355,34 @@ def run_once():
         print("[wolf] nothing due right now")
 
 
+# ── Fire by name ───────────────────────────────────────────────────
+
+def fire_by_name(name: str) -> bool:
+    """Fire a specific cron by name, ignoring its schedule. Returns True if found and fired."""
+    crons = load_schedule()
+    for entry in crons:
+        if entry.get("name") == name:
+            print(f"[wolf] manually firing: {name}")
+            fire_cron(entry)
+            return True
+    print(f"[wolf] cron '{name}' not found", file=sys.stderr)
+    return False
+
+
 # ── Entry point ─────────────────────────────────────────────────────
 
 def run():
     args = sys.argv[1:]
     if "--list" in args:
         list_crons()
+    elif "--fire" in args:
+        idx = args.index("--fire")
+        if idx + 1 >= len(args):
+            print("usage: --fire <cron-name>", file=sys.stderr)
+            sys.exit(1)
+        name = args[idx + 1]
+        if not fire_by_name(name):
+            sys.exit(1)
     elif "--once" in args:
         run_once()
     else:

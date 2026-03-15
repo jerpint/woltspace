@@ -94,9 +94,10 @@ Examples:
 
 ```bash
 # From inside the container:
-python -m creatures.wolf --list    # Show registered crons + last run times
-python -m creatures.wolf --once    # Fire any due crons now and exit
-python -m creatures.wolf           # Run as background service (auto-started by entrypoint)
+python -m creatures.wolf --list         # Show registered crons + last run times
+python -m creatures.wolf --once         # Fire any due crons now and exit
+python -m creatures.wolf --fire NAME    # Fire a specific cron by name (ignores schedule — great for debugging)
+python -m creatures.wolf                # Run as background service (auto-started by entrypoint)
 ```
 
 ## How it works
