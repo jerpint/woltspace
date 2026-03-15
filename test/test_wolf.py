@@ -492,6 +492,41 @@ class TestCheckUpdateTool:
             result = json.loads(_tool_check_update({}, None))
         assert "error" in result
 
+    def test_staging_branch_compared_correctly(self, tmp_path):
+        """When built from staging, check_update should compare against staging, not main."""
+        from bot.core import _tool_check_update
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "woltspace-version").write_text("staging_commit_abc123")
+        (state_dir / "woltspace-branch").write_text("staging")
+
+        mock_result = MagicMock()
+        mock_result.stdout = "staging_commit_abc123\trefs/heads/staging\n"
+
+        with patch("bot.core.WOLT_DIR", tmp_path), \
+             patch("subprocess.run", return_value=mock_result) as mock_run:
+            result = json.loads(_tool_check_update({}, None))
+        assert result["up_to_date"] is True
+        # Verify it checked staging, not main
+        mock_run.assert_called_once()
+        assert "refs/heads/staging" in mock_run.call_args[0][0]
+
+    def test_defaults_to_main_without_branch_file(self, tmp_path):
+        """Without a branch file, should default to checking main."""
+        from bot.core import _tool_check_update
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "woltspace-version").write_text("abc1234567890")
+
+        mock_result = MagicMock()
+        mock_result.stdout = "abc1234567890\trefs/heads/main\n"
+
+        with patch("bot.core.WOLT_DIR", tmp_path), \
+             patch("subprocess.run", return_value=mock_result) as mock_run:
+            result = json.loads(_tool_check_update({}, None))
+        assert result["up_to_date"] is True
+        assert "refs/heads/main" in mock_run.call_args[0][0]
+
 
 # ---------------------------------------------------------------------------
 # Notify footer (from server/notify.py)

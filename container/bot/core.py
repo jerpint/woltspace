@@ -760,10 +760,12 @@ def _tool_check_update(args: dict, routing: dict | None) -> str:
     """Check if a woltspace update is available."""
     import subprocess
     version_file = WOLT_DIR / ".state" / "woltspace-version"
+    branch_file = WOLT_DIR / ".state" / "woltspace-branch"
+    # Check against the branch we built from (default: main)
+    build_branch = branch_file.read_text().strip() if branch_file.exists() else "main"
     try:
-        # Use git ls-remote to check remote main HEAD (no full repo needed)
         result = subprocess.run(
-            ["git", "ls-remote", "https://github.com/jerpint/woltspace.git", "refs/heads/main"],
+            ["git", "ls-remote", "https://github.com/jerpint/woltspace.git", f"refs/heads/{build_branch}"],
             capture_output=True, text=True, timeout=10,
         )
         remote_head = result.stdout.strip().split("\t")[0] if result.stdout.strip() else ""

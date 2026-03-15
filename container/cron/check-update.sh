@@ -4,7 +4,8 @@
 #
 # Designed to run as a wolf cron job (e.g., daily).
 # Stores last-known version in .state/woltspace-version.
-# If remote main has moved ahead, notifies the user.
+# If the remote branch has moved ahead, notifies the user.
+# Reads .state/woltspace-branch to know which branch to check (default: main).
 
 set -e
 
@@ -12,9 +13,16 @@ WOLTSPACE_REPO="https://github.com/jerpint/woltspace.git"
 WOLT_DIR="${WOLT_DIR:-/workspace/wolts/${WOLT_NAME:-wolt}}"
 STATE_DIR="$WOLT_DIR/.state"
 VERSION_FILE="$STATE_DIR/woltspace-version"
+BRANCH_FILE="$STATE_DIR/woltspace-branch"
 
-# Get remote main HEAD (no clone needed)
-REMOTE_HEAD=$(git ls-remote "$WOLTSPACE_REPO" refs/heads/main 2>/dev/null | cut -f1)
+# Read which branch we built from (default: main)
+BUILD_BRANCH="main"
+if [ -f "$BRANCH_FILE" ]; then
+  BUILD_BRANCH=$(cat "$BRANCH_FILE")
+fi
+
+# Get remote HEAD for the branch we're tracking (no clone needed)
+REMOTE_HEAD=$(git ls-remote "$WOLTSPACE_REPO" "refs/heads/$BUILD_BRANCH" 2>/dev/null | cut -f1)
 
 if [ -z "$REMOTE_HEAD" ]; then
   echo "[update-check] could not reach remote"
