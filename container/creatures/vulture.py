@@ -43,7 +43,7 @@ GRACE_PERIOD_SECONDS = 120
 # Don't kill the main tmux session
 PROTECTED_SESSIONS = {"main"}
 
-DEFAULT_INTERVAL = 300  # 5 minutes
+DEFAULT_INTERVAL = 1800  # 30 minutes
 
 
 def log(msg: str):
