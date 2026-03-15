@@ -523,9 +523,14 @@ case "$cmd" in
 
     CURRENT_BRANCH=$(cd "$WOLTSPACE_DIR" && git rev-parse --abbrev-ref HEAD 2>/dev/null)
 
-    # Warn if checkout doesn't match expected branch
+    # --dev: checkout staging (but don't pull — let rodents handle updates)
     if [ "$BUILD_BRANCH" != "$CURRENT_BRANCH" ]; then
-      printf "  ${_Y}note:${_R} on ${_B}%s${_R} but tracking ${_B}%s${_R} for updates\n" "$CURRENT_BRANCH" "$BUILD_BRANCH"
+      echo "  switching to ${_B}${BUILD_BRANCH}${_R}..."
+      (cd "$WOLTSPACE_DIR" && git fetch origin "$BUILD_BRANCH" 2>/dev/null && git checkout "$BUILD_BRANCH") || {
+        echo "  error: could not checkout $BUILD_BRANCH"
+        exit 1
+      }
+      CURRENT_BRANCH="$BUILD_BRANCH"
     fi
 
     printf "  rebuilding image from current checkout ${_D}(%s)${_R}\n" "$CURRENT_BRANCH"
