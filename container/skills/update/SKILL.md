@@ -81,6 +81,24 @@ After pulling:
 git log --oneline ORIG_HEAD..HEAD
 ```
 
+### Start new platform services
+
+Some updates introduce new background services. Check and start them if they aren't already running:
+
+**Vulture (session reaper)** — if `container/creatures/vulture.py` exists but no vulture process is running:
+```bash
+# Check if vulture is already running
+if ! pgrep -f "creatures.vulture" > /dev/null 2>&1; then
+  echo "starting vulture reaper (new in this update)..."
+  cd /workspace/woltspace/container
+  PYTHONPATH="/workspace/woltspace/container/lib:${PYTHONPATH:-}" \
+    python -m creatures.vulture --once 2>/dev/null || true  # immediate first pass
+  PYTHONPATH="/workspace/woltspace/container/lib:${PYTHONPATH:-}" \
+    python -m creatures.vulture &
+  disown
+fi
+```
+
 Notify the user with: what was updated, the new version hash, and any action items (e.g. "bot behavior changed — restart the bot to pick it up").
 
 ## Notes

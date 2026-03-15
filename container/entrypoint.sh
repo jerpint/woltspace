@@ -257,6 +257,15 @@ if [ ! -f "$WOLT_DIR/wolt/wolf.json" ] && [ -f "$WOLTSPACE_DIR/template/wolt/wol
   echo "seeded default wolf.json (update checker) for $WOLT_NAME"
 fi
 
+# Start vulture reaper — platform-level, always on, not wolf-managed
+# Cleans up dead sessions to prevent OOM from zombie accumulation
+echo "starting vulture reaper..."
+(cd "$WOLTSPACE_DIR/container" && PYTHONPATH="$WOLTSPACE_DIR/container/lib:${PYTHONPATH:-}" \
+  python -m creatures.vulture --once) 2>/dev/null || true  # immediate first pass
+(cd "$WOLTSPACE_DIR/container" && PYTHONPATH="$WOLTSPACE_DIR/container/lib:${PYTHONPATH:-}" \
+  python -m creatures.vulture) &
+disown
+
 # Start wolf scheduler — check for dedicated wolf-wolt first, then fall back to active wolt
 WOLF_CONFIG=""
 # Check woltspace.json for active_wolf creature
