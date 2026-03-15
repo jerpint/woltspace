@@ -98,6 +98,20 @@ Two branches:
 
 Development workflow: `wt create feature-name` → work → PR to staging → merge → when staging is solid, PR staging → main.
 
+**The full flow, step by step:**
+1. `wt create nw/fix-name` — creates an isolated worktree branched off staging
+2. Make changes in the worktree (at the path `wt` prints)
+3. Commit and push: `git push -u origin nw/fix-name`
+4. Open PR targeting **staging**: `gh pr create --base staging`
+5. jerpint reviews and merges on GitHub
+6. jerpint runs `/update` from Telegram (or asks a beaver) — pulls staging into the running container
+7. Changes are live. When staging is stable, jerpint PRs staging → main for release.
+
+**Rules:**
+- Every PR-bound task gets its own worktree — no exceptions
+- All PRs target `staging`, never `main`
+- Never commit directly to main or staging
+
 ### Updates
 
 Updates are opt-in, never automatic:
