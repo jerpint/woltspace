@@ -250,6 +250,13 @@ if [ "${ENABLE_SLACK_BOT:-}" = "true" ] && [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -n
   disown
 fi
 
+# Seed default wolf.json if active wolt doesn't have one
+# Ensures all users get the update checker without requiring manual setup
+if [ ! -f "$WOLT_DIR/wolt/wolf.json" ] && [ -f "$WOLTSPACE_DIR/template/wolt/wolf.json" ]; then
+  cp "$WOLTSPACE_DIR/template/wolt/wolf.json" "$WOLT_DIR/wolt/wolf.json"
+  echo "seeded default wolf.json (update checker) for $WOLT_NAME"
+fi
+
 # Start wolf scheduler — check for dedicated wolf-wolt first, then fall back to active wolt
 WOLF_CONFIG=""
 # Check woltspace.json for active_wolf creature
