@@ -71,9 +71,26 @@ The container runs a Node server + cloudflared tunnel. The wolt has Claude Code 
 | `woltspace start` | Start container, open in browser |
 | `woltspace stop` | Stop and remove container |
 | `woltspace restart` | Restart container (new tunnel URL) |
-| `woltspace rebuild` | Rebuild Docker image + restart (Claude CLI cached) |
+| `woltspace rebuild` | Rebuild image from `main` (stable) + restart |
+| `woltspace rebuild --dev` | Rebuild image from `staging` (latest, may be rough) |
+| `woltspace update` | Check if a new version is available |
 | `woltspace shell` | Shell into running container |
 | `woltspace logs` | Stream container logs |
+
+## Updates
+
+Updates are opt-in — your wolt checks for them daily and lets you know.
+
+**How it works:**
+- A wolf cron runs once a day, checks if `main` has moved ahead of your local version
+- If an update is available, you get a 🐺 notification: *"update available — ask a beaver or raccoon"*
+- You can also ask the dog directly: *"is there an update?"*
+- When ready, ask any rodent session to update — it'll evaluate the changes, explain impact, and wait for your go-ahead
+- Or from the host: `woltspace update` to check manually
+
+**Two branches:**
+- `woltspace rebuild` builds from `main` — stable, tested, what you should run
+- `woltspace rebuild --dev` builds from `staging` — latest development, may have rough edges
 
 ## How it works
 

@@ -83,9 +83,30 @@ woltspace
 The host-side CLI. Commands:
 - `woltspace init` — create a new wolt from template
 - `woltspace start` — start the container
-- `woltspace stop/restart/rebuild/shell/logs`
+- `woltspace stop/restart/shell/logs`
+- `woltspace rebuild` — rebuild image from `main` branch (stable, default)
+- `woltspace rebuild --dev` — rebuild image from `staging` branch (latest, may be rough)
+- `woltspace update` — check if a new version is available (compares local vs remote `main`)
 
 Reads `.env` for secrets, mounts all wolts into the container.
+
+### Branch Model
+
+Two branches:
+- **`main`** — stable. What containers run by default. What users install. Only gets merges via PR from staging.
+- **`staging`** — the workshop. All development merges here first via PR. Hot-reloaded only when explicitly pulled with `--dev`.
+
+Development workflow: `wt create feature-name` → work → PR to staging → merge → when staging is solid, PR staging → main.
+
+### Updates
+
+Updates are opt-in, never automatic:
+1. A **wolf cron** (`check-update.sh`) runs daily, compares local version against remote `main` using `git ls-remote`. If behind, sends a 🐺 notification: *"update available — ask a beaver or raccoon to update."*
+2. The **dog** has a `check_update` tool — when asked "is there an update?", it checks inline and reports.
+3. User asks a **rodent** (beaver/raccoon) to handle the update. The rodent evaluates the diff, explains impact, and only proceeds with user consent.
+4. `woltspace update` on the host shows the same info (commits behind + changelog).
+
+Version tracking: `.state/woltspace-version` stores the commit hash after each `rebuild`.
 
 ### `server.js` (Node.js, ~1400 lines)
 Single-file HTTP + WebSocket server running on port 3000 inside the container.
@@ -100,7 +121,7 @@ Single-file HTTP + WebSocket server running on port 3000 inside the container.
 ### `container/bot/core.py` (Python)
 The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routing.
 - Builds system prompt from wolt memory files
-- Defines tools: `claude_code`, `new_session`, `get_tunnel_url`, `check_session`, `get_recent_sessions`, `list_sessions`, `find_session`, `kill_session`, `send_message`, `read_memory`, `list_wolts`, `list_projects`, `generate_image`, `switch_wolt`, `wolf_schedules`, `fire_wolf`
+- Defines tools: `claude_code`, `new_session`, `get_tunnel_url`, `check_session`, `get_recent_sessions`, `list_sessions`, `find_session`, `kill_session`, `send_message`, `read_memory`, `list_wolts`, `list_projects`, `generate_image`, `switch_wolt`, `check_update`, `wolf_schedules`, `fire_wolf`
 - When `claude_code` is called: spawns a tmux session running `run-session.sh` → Claude Code CLI
 - Session metadata (status, routing, creature, viewport) stored in the **session registry** — see `container/lib/sessions.py`
 
@@ -112,17 +133,22 @@ Image based on `node:22-slim`. Installs: cloudflared, uv, Claude Code CLI, tmux.
 The Dockerfile uses a multi-stage build: Claude Code CLI is installed in an isolated `claude` stage, cached independently of app source changes. To update Claude without rebuilding everything: `docker build --no-cache-filter=claude ...`
 Entrypoint:
 1. Merges platform skills + wolt overrides into `~/.claude/skills/`
-2. Writes OAuth credentials and trust config
-3. Starts tmux `main` session with Claude Code auto-running
-4. Starts Node server with `--watch`
-5. Starts cloudflared tunnel (URL written to `.state/tunnel-url`)
-6. Optionally starts Telegram/Slack bot
+2. Seeds default `wolf.json` if the active wolt doesn't have one (ensures update checker runs for all users)
+3. Writes OAuth credentials and trust config
+4. Starts tmux `main` session with Claude Code auto-running
+5. Starts Node server with `--watch`
+6. Starts cloudflared tunnel (URL written to `.state/tunnel-url`)
+7. Optionally starts Telegram/Slack bot
+8. Starts wolf scheduler if `wolf.json` exists (dedicated wolf-wolt or active rodent-wolt fallback)
 
 ### `container/skills/`
 Discovery files Claude Code reads from `~/.claude/skills/`. Platform defaults baked into image; wolts can override. Current skills: `apps`, `projects`, `new-project`, `migrate-to-projects`, `create-wolt`, `digest`, `music`, `viewport`, `telegram`, `notify`, `session-summary`, `organize-context`, `wolf`, `worktui`, `update-2026-03-13`.
 
 ### `container/cron/digest.mjs`
 Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select via `claude -p` → render HTML. Writes to `wolt/sparks/`. Optional Spotify playlist curation.
+
+### `container/cron/check-update.sh`
+No-LLM update checker. Compares stored version (`.state/woltspace-version`) against remote `main` HEAD via `git ls-remote`. Only notifies (as 🐺) when an update is found — completely silent otherwise. Designed to run as a daily wolf cron.
 
 ### `container/creatures/wolf.py` (Wolf Scheduler 🐺)
 Background cron service. Reads `wolt/wolf.json` for scheduled tasks, fires them on time, sends 🐺 notifications. Actions: `script` (shell command), `session` (Claude Code session), `skill` (invoke a skill). Tracks last-run per cron entry in `.state/wolf/`. Auto-starts when `wolf.json` exists. See `/wolf` skill for full config format.
@@ -284,7 +310,7 @@ bash test/run-tests.sh -k "pattern" # pass any pytest args
 - `test_telegram_loop.py` — Telegram adapter: message parsing, formatting, allowlist, notify round-trip, live API
 - `test_closed_loop.py` — full seam tests: Telegram API → notify pipeline → session creation → den reply → round-trip
 - `test_agent_loop.py` — haiku decision tests (mocked tools), conversation simulator, live session spawn, true e2e (haiku → beaver → file on disk → viewport)
-- `test_wolf.py` — wolf scheduler: cron parser, schedule loading, state tracking, dispatch routing, fire-by-name, wolf_schedules/fire_wolf tools
+- `test_wolf.py` — wolf scheduler: cron parser, schedule loading, state tracking, dispatch routing, fire-by-name, wolf_schedules/fire_wolf/check_update tools, notify footer logic
 - `test_wolts.py` — wolt discovery, creature-type system, creature-wolt creation, singleton demotion, dog identity loading
 
 **Environment:**
@@ -301,23 +327,25 @@ bash test/run-tests.sh -k "pattern" # pass any pytest args
 
 ### ⚠️ HARD RULE: Never edit on main
 
-**All changes happen on branches, never on main directly.** Use a worktree for every change:
+**All changes happen on branches, never on main or staging directly.** Use a worktree for every change:
 
 ```bash
 wt create nw/my-feature      # creates isolated worktree
 # ... make changes, commit, push ...
-# open PR, get it reviewed, merge
+# open PR targeting staging, get it reviewed, merge
 wt delete nw/my-feature --branch   # clean up
 ```
 
-After merge, pull main to get the changes:
+PRs target **staging** first. When staging is solid, a PR from staging → main ships it to users.
+
+After merge to staging, pull to get the changes:
 ```bash
-cd /workspace/woltspace && git checkout main && git pull
+cd /workspace/woltspace && git checkout staging && git pull
 ```
 
-For quick local testing of a branch before merging, you can temporarily checkout the branch on main — but **never commit to main directly**.
+To test staging locally: `woltspace rebuild --dev` (builds from staging instead of main).
 
-**Why:** The container runs main. A bad edit on main crashes the server, tunnel, and bot for everyone. Branches + PRs give us a review gate.
+**Why:** The container runs main by default. A bad edit on main crashes the server, tunnel, and bot for everyone. Staging is the buffer — test there, ship to main when ready.
 
 ### Dev mode
 
