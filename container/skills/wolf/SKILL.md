@@ -107,6 +107,13 @@ Examples:
 { "action": "script", "command": "node /path/to/script.js" }
 ```
 
+If your script produces something visual (an HTML page, a spark), push it to the viewport with `push-view`:
+```bash
+push-view /history/SPARK_ID      # for sparks
+push-view /your-page.html        # for static pages in wolt/site/
+```
+`push-view` auto-detects the current session — just call it at the end of the script. Scripts that omit this will silently set the viewport on the wrong session.
+
 ### `session` — spawn a Claude Code session
 ```json
 { "action": "session", "prompt": "do the thing", "creature": "beaver" }

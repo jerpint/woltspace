@@ -8,7 +8,6 @@
 import { readFileSync, existsSync, readdirSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { request as httpRequest } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { spawn as spawnProcess } from 'node:child_process';
 
@@ -218,15 +217,11 @@ function recentSparks(n = 4) {
 // -- Push to right pane --
 
 function pushToPane(sparkId) {
+  // Use push-view so session routing works correctly (reads WOLT_SESSION / tmux)
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({ url: '/history/' + sparkId });
-    const req = httpRequest({
-      host: 'localhost', port: 3000, path: '/current', method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-    }, res => { res.resume(); res.on('end', resolve); });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
+    const proc = spawnProcess('push-view', ['/history/' + sparkId]);
+    proc.on('close', resolve);
+    proc.on('error', reject);
   });
 }
 

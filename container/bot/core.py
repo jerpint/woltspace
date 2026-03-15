@@ -196,12 +196,14 @@ CRITICAL: If a task requires claude_code, call claude_code. Don't narrate what y
 - **check_update** — check if a woltspace update is available. If yes, suggest the user ask a beaver or raccoon to update
 - **wolf_schedules** — check what crons are configured and when they last ran
 - **fire_wolf** — trigger a specific cron immediately by name (check wolf_schedules first for names)
+- **wolf_jobs** — show recent wolf job log (what fired, when, success/failure)
 - **send_message** — send a message to a running session
 - **list_sessions** / **check_session** — see what's running or check on a session
 - **list_projects** — see what projects exist in the current wolt
 - **read_memory** — read a specific memory file when you need details
 - **get_recent_sessions** — read session summaries (what was built, links)
 - **get_tunnel_url** — get the public URL for the split view
+- **open_issue** — file a GitHub issue on woltspace (beavers pick these up asynchronously)
 
 ## Projects
 Projects live in `wolt/projects/`. They're isolated workspaces for building things.
@@ -793,16 +795,36 @@ def _tool_check_update(args: dict, routing: dict | None) -> str:
         return json.dumps({"error": str(e)})
 
 
+def _get_wolf_wolt_dir() -> Path:
+    """Resolve the wolf's working directory — same logic as creatures/wolf.py.
+
+    Checks woltspace.json for active_wolf first, falls back to WOLT_DIR.
+    """
+    config_file = WOLTS_DIR / "woltspace.json"
+    if config_file.exists():
+        try:
+            config = json.loads(config_file.read_text())
+            active_wolf = config.get("creatures", {}).get("active_wolf")
+            if active_wolf:
+                wolf_dir = WOLTS_DIR / active_wolf
+                if (wolf_dir / "wolt" / "wolf.json").exists():
+                    return wolf_dir
+        except (json.JSONDecodeError, OSError):
+            pass
+    return WOLT_DIR
+
+
 def _tool_wolf_schedules(args: dict, routing: dict | None) -> str:
     """List all wolf cron schedules for the active wolt."""
-    wolf_config = WOLT_DIR / "wolt" / "wolf.json"
+    wolf_wolt = _get_wolf_wolt_dir()
+    wolf_config = wolf_wolt / "wolt" / "wolf.json"
     if not wolf_config.exists():
         return json.dumps({"crons": [], "count": 0, "note": "no wolf.json — no crons configured"})
     try:
         data = json.loads(wolf_config.read_text())
         crons = data.get("crons", [])
         # Enrich with last-run info
-        state_dir = WOLT_DIR / ".state" / "wolf"
+        state_dir = wolf_wolt / ".state" / "wolf"
         for entry in crons:
             name = entry.get("name", "")
             last_file = state_dir / f"{name}.last"
@@ -831,6 +853,72 @@ def _tool_fire_wolf(args: dict, routing: dict | None) -> str:
         return json.dumps({"ok": False, "error": str(e)})
 
 
+def _tool_wolf_jobs(args: dict, routing: dict | None) -> str:
+    """Show recent wolf job log entries."""
+    count = args.get("count", 10)
+    wolf_wolt = _get_wolf_wolt_dir()
+    log_file = wolf_wolt / ".state" / "wolf" / "jobs.jsonl"
+    if not log_file.exists():
+        return json.dumps({"jobs": [], "note": "no job log yet"})
+    try:
+        lines = log_file.read_text().strip().split("\n")
+        recent = lines[-count:]
+        jobs = []
+        for line in recent:
+            try:
+                jobs.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return json.dumps({"jobs": jobs, "count": len(jobs)})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def _tool_open_issue(args: dict, routing: dict | None) -> str:
+    """Open a GitHub issue on the woltspace repo."""
+    import subprocess
+    title = args.get("title", "").strip()
+    body = args.get("body", "").strip()
+    labels = args.get("labels", [])
+    if not title:
+        return json.dumps({"error": "title is required"})
+
+    # Read PAT from wolt .env
+    env_file = WOLT_DIR / ".env"
+    gh_token = None
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if line.startswith("GH_PAT_TOKEN="):
+                gh_token = line.split("=", 1)[1].strip()
+                break
+
+    # Fall back to env var
+    if not gh_token:
+        gh_token = os.environ.get("GH_PAT_TOKEN", "")
+
+    if not gh_token:
+        return json.dumps({"error": "GH_PAT_TOKEN not found — add it to .env"})
+
+    # Tag the issue with which wolt opened it — header, natural tone
+    header = f"🐶 *{_wolt_name}* noticed this one.\n\n"
+    full_body = header + body if body else header.strip()
+
+    cmd = ["gh", "issue", "create", "--repo", "jerpint/woltspace", "--title", title]
+    cmd += ["--body", full_body]
+    if labels:
+        cmd += ["--label", ",".join(labels)]
+
+    env = {**os.environ, "GH_TOKEN": gh_token}
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15, env=env)
+        if result.returncode == 0:
+            url = result.stdout.strip()
+            return json.dumps({"url": url, "title": title})
+        return json.dumps({"error": result.stderr.strip() or "gh issue create failed"})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 TOOL_HANDLERS: dict[str, callable] = {
     "claude_code": _tool_claude_code,
     "get_tunnel_url": _tool_get_tunnel_url,
@@ -848,7 +936,9 @@ TOOL_HANDLERS: dict[str, callable] = {
     "new_session": _tool_new_session,
     "wolf_schedules": _tool_wolf_schedules,
     "fire_wolf": _tool_fire_wolf,
+    "wolf_jobs": _tool_wolf_jobs,
     "check_update": _tool_check_update,
+    "open_issue": _tool_open_issue,
 }
 
 
@@ -1146,6 +1236,48 @@ TOOLS = [
                     },
                 },
                 "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "wolf_jobs",
+            "description": "Show recent wolf job log — what crons fired, when, whether they started successfully. Use when someone asks 'did the digest run?', 'what did wolf do?', 'any failed jobs?', or 'wolf log'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "count": {
+                        "type": "integer",
+                        "description": "Number of recent job events to return (default 10).",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "open_issue",
+            "description": "Open a GitHub issue on the woltspace repo. Use when someone asks to file a bug, log an idea, or track something for later. Beavers will pick these up asynchronously.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Short issue title (e.g. 'wolf notifications should include session link').",
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Issue body with context, motivation, and rough shape of the fix. Markdown supported.",
+                    },
+                    "labels": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional labels to apply (e.g. ['from-dog', 'bug']). Labels must already exist in the repo.",
+                    },
+                },
+                "required": ["title"],
             },
         },
     },

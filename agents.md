@@ -56,7 +56,6 @@ woltspace/
 - `HUMAN_NAME` — human's name
 - `CLAUDE_CODE_OAUTH_TOKEN` — auth for Claude Code CLI
 - `ENABLE_TELEGRAM_BOT`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS`
-- `ENABLE_DIGEST_CRON`, `DIGEST_MODEL` — digest settings
 - `SPOTIFY_*` — Spotify API credentials for music curation
 - `OPENROUTER_API_KEY`, `LLM_MODEL` — LLM provider for bot chat
 
@@ -87,7 +86,7 @@ Single Node.js HTTP server on port 3000. No framework. Serves everything.
 
 **Static file serving:** `wolt/site/` is served at root. `public/` (platform UI like split.html) takes priority. Sparks served from `wolt/sparks/`.
 
-**Digest cron:** If `ENABLE_DIGEST_CRON=true`, runs `digest.mjs` daily at 6am (wolt's timezone) and at 3pm. Flag files in `.state/` prevent double-runs.
+**Digest scheduling:** Owned by the wolf creature (see `creatures/wolf.py`). The active wolf-wolt's `wolt/wolf.json` defines the cron schedule. Wolf runs scripts in named tmux sessions with completion notifications.
 
 **LiveReload:** Watches `wolt/site/` for changes, notifies connected split views via SSE at `/livereload`.
 

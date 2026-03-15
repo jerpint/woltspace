@@ -12,17 +12,54 @@ Usage:
   python -m creatures.wolf --once       # Fire all due crons once and exit
   python -m creatures.wolf --list       # List registered crons
   python -m creatures.wolf --fire NAME  # Fire a specific cron by name (ignores schedule)
+  python -m creatures.wolf --jobs [N]   # Show last N job log entries (default 20)
 """
 
 import asyncio
 import json
 import os
+import secrets
 import subprocess
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+# ── Cached helpers ─────────────────────────────────────────────────
+
+_wolf_name_cache: Optional[str] = None
+
+
+def _get_wolf_name() -> str:
+    """Read wolf name from wolt.json, cached after first call."""
+    global _wolf_name_cache
+    if _wolf_name_cache is not None:
+        return _wolf_name_cache
+    try:
+        wolt_json = get_wolt_dir() / "wolt" / "wolt.json"
+        data = json.loads(wolt_json.read_text())
+        _wolf_name_cache = data.get("name", "wolf")
+    except Exception:
+        _wolf_name_cache = "wolf"
+    return _wolf_name_cache
+
+
+def _get_tunnel_url() -> Optional[str]:
+    """Read tunnel URL from .state/tunnel-url."""
+    wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    tunnel_file = wolts_dir / ".state" / "tunnel-url"
+    if tunnel_file.exists():
+        url = tunnel_file.read_text().strip()
+        return url if url else None
+    return None
+
+
+def _make_session_name(cron_name: str) -> str:
+    """Generate a tmux session name: {wolf}-{cron}-{hex6}."""
+    wolf = _get_wolf_name()
+    hex6 = secrets.token_hex(3)
+    return f"{wolf}-{cron_name}-{hex6}"
 
 # ── Cron expression parser (minimal, no deps) ──────────────────────
 
@@ -125,6 +162,22 @@ def get_state_dir() -> Path:
     return d
 
 
+def _log_job(name: str, action: str, **kwargs):
+    """Append a job event to .state/wolf/jobs.jsonl."""
+    log_file = get_state_dir() / "jobs.jsonl"
+    entry = {
+        "ts": datetime.now().isoformat(),
+        "cron": name,
+        "action": action,
+        **kwargs,
+    }
+    try:
+        with open(log_file, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        print(f"[wolf] log error: {e}", file=sys.stderr)
+
+
 def load_schedule() -> list[dict]:
     """Load wolf.json schedule config.
 
@@ -179,8 +232,8 @@ def set_last_run(name: str, dt: datetime):
 
 def send_wolf_notify(message: str):
     """Send a 🐺 wolf notification via the server."""
-    wolt_name = os.environ.get("WOLT_NAME", "wolt")
-    full_message = f"🐺 {wolt_name}: {message}"
+    wolf_name = _get_wolf_name()
+    full_message = f"🐺 {wolf_name}: {message}"
 
     # Use the notify endpoint directly (no session context needed)
     payload = json.dumps({"message": full_message, "session": ""})
@@ -201,34 +254,60 @@ def send_wolf_notify(message: str):
         print(f"[wolf] notify error: {e}", file=sys.stderr)
 
 
-def run_script(entry: dict):
-    """Run a shell command."""
+def run_script(entry: dict) -> Optional[str]:
+    """Run a shell command inside a tmux session. Returns session name."""
     command = entry.get("command", "")
+    cron_name = entry.get("name", "script")
     if not command:
-        print(f"[wolf] {entry['name']}: no command specified", file=sys.stderr)
-        return
+        print(f"[wolf] {cron_name}: no command specified", file=sys.stderr)
+        return None
 
-    print(f"[wolf] running script: {command}")
-    env = {**os.environ}
+    session_name = _make_session_name(cron_name)
+    wolt_dir = str(get_wolt_dir())
+    wolf_name = _get_wolf_name()
+
+    # Build notification JSON payloads (avoid shell quoting hell by using heredocs)
+    tunnel_url = _get_tunnel_url()
+    tui_link = f"\\n{tunnel_url}/tui?session={session_name}" if tunnel_url else ""
+    ok_msg = f"🐺 {wolf_name}: cron '{cron_name}' completed successfully{tui_link}"
+    fail_prefix = f"🐺 {wolf_name}: cron '{cron_name}' failed (exit "
+    notify_url = "http://localhost:3000/notify"
+
+    # Wrap: run command, capture exit code, notify completion, keep terminal open
+    wrapped = (
+        f"{command}; _exit=$?; "
+        f"_notify() {{ curl -s -X POST {notify_url} -H 'Content-Type: application/json' "
+        f"""-d "$(printf '{{"message":"%s","session":""}}' "$1")"; }}; """
+        f'if [ "$_exit" -eq 0 ]; then '
+        f'  _notify "{ok_msg}"; '
+        f"else "
+        f'  _notify "{fail_prefix}$_exit)"; '
+        f"fi; "
+        f"exec bash"
+    )
+
+    print(f"[wolf] running script in tmux session: {session_name}")
     try:
-        subprocess.Popen(
-            command,
-            shell=True,
-            env=env,
-            start_new_session=True,
+        subprocess.run(
+            ["tmux", "new-session", "-d", "-s", session_name, "-c", wolt_dir,
+             "bash", "-c", wrapped],
+            check=True, capture_output=True, text=True, timeout=10,
         )
+        return session_name
     except Exception as e:
         print(f"[wolf] script error: {e}", file=sys.stderr)
-        send_wolf_notify(f"cron '{entry['name']}' failed: {e}")
+        _log_job(cron_name, "script", event="error", error=str(e))
+        send_wolf_notify(f"cron '{cron_name}' failed to start: {e}")
+        return None
 
 
-def run_session(entry: dict):
-    """Dispatch a Claude Code session via the bot's API."""
+def run_session(entry: dict) -> Optional[str]:
+    """Dispatch a Claude Code session via the bot's API. Returns session URL if available."""
     prompt = entry.get("prompt", "")
     creature = entry.get("creature", "beaver")
     if not prompt:
         print(f"[wolf] {entry['name']}: no prompt specified", file=sys.stderr)
-        return
+        return None
 
     print(f"[wolf] dispatching {creature} session: {prompt[:80]}")
 
@@ -246,9 +325,22 @@ def run_session(entry: dict):
             capture_output=True, text=True, timeout=10,
         )
         print(f"[wolf] session response: {result.stdout[:200]}")
+        # Parse response for session name/URL
+        resp = json.loads(result.stdout) if result.stdout else {}
+        session_name = resp.get("name")
+        session_url = resp.get("url")
+        if session_url:
+            return session_url
+        elif session_name:
+            # Construct URL from tunnel
+            tunnel_url = _get_tunnel_url()
+            if tunnel_url:
+                return f"{tunnel_url}/tui?session={session_name}"
+        return None
     except Exception as e:
         print(f"[wolf] session dispatch error: {e}", file=sys.stderr)
         send_wolf_notify(f"cron '{entry['name']}' failed to dispatch: {e}")
+        return None
 
 
 def run_skill(entry: dict):
@@ -262,24 +354,38 @@ def run_skill(entry: dict):
 
 
 def fire_cron(entry: dict):
-    """Execute a cron entry."""
+    """Execute a cron entry — fire action first, then notify with link."""
     name = entry.get("name", "unnamed")
     action = entry.get("action", "script")
     notify_msg = entry.get("notify")
 
-    # Send notification first (deterministic, immediate)
-    if notify_msg:
-        send_wolf_notify(notify_msg)
+    _log_job(name, action, event="started", command=entry.get("command", ""))
 
-    # Execute the action
+    # Fire action first (to get session name/URL)
+    link = None
+    session_name = None
     if action == "script":
-        run_script(entry)
+        session_name = run_script(entry)
+        if session_name:
+            tunnel_url = _get_tunnel_url()
+            if tunnel_url:
+                link = f"{tunnel_url}/tui?session={session_name}"
     elif action == "session":
-        run_session(entry)
+        link = run_session(entry)
     elif action == "skill":
         run_skill(entry)
     else:
         print(f"[wolf] {name}: unknown action '{action}'", file=sys.stderr)
+        _log_job(name, action, event="error", error=f"unknown action '{action}'")
+
+    _log_job(name, action, event="dispatched", session=session_name, link=link)
+
+    # Send notification with link appended
+    if notify_msg:
+        msg = notify_msg
+        if link:
+            msg = f"{msg}\n{link}"
+        send_wolf_notify(msg)
 
 
 # ── Main loop ───────────────────────────────────────────────────────
@@ -405,10 +511,45 @@ def fire_by_name(name: str) -> bool:
 
 # ── Entry point ─────────────────────────────────────────────────────
 
+def show_jobs(count: int = 20):
+    """Show recent job log entries."""
+    log_file = get_state_dir() / "jobs.jsonl"
+    if not log_file.exists():
+        print("No job log yet. Jobs are logged when crons fire.")
+        return
+    lines = log_file.read_text().strip().split("\n")
+    recent = lines[-count:]
+    wolf = _get_wolf_name()
+    print(f"🐺 {wolf} — last {min(count, len(recent))} job events:\n")
+    for line in recent:
+        try:
+            entry = json.loads(line)
+            ts = entry.get("ts", "")[:19]
+            cron = entry.get("cron", "?")
+            event = entry.get("event", "?")
+            extra = ""
+            if entry.get("session"):
+                extra = f" session={entry['session']}"
+            if entry.get("error"):
+                extra = f" error={entry['error']}"
+            if entry.get("link"):
+                extra += f" {entry['link']}"
+            print(f"  {ts}  {cron:<20} {event:<12}{extra}")
+        except json.JSONDecodeError:
+            continue
+
+
 def run():
     args = sys.argv[1:]
     if "--list" in args:
         list_crons()
+    elif "--jobs" in args:
+        n = 20
+        if "--jobs" in args:
+            idx = args.index("--jobs")
+            if idx + 1 < len(args) and args[idx + 1].isdigit():
+                n = int(args[idx + 1])
+        show_jobs(n)
     elif "--fire" in args:
         idx = args.index("--fire")
         if idx + 1 >= len(args):

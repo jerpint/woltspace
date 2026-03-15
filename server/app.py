@@ -97,70 +97,8 @@ def _start_file_watcher():
         print(f"[livereload] watching {SITE_DIR}")
 
 
-# --- Digest cron ---
-
-def _start_digest_cron():
-    """Digest cron — runs at 6am and 3pm Montreal time."""
-    import threading
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-
-    digest_enabled = (os.environ.get("ENABLE_DIGEST_CRON") or load_dotenv().get("ENABLE_DIGEST_CRON", "")).lower() == "true"
-    if not digest_enabled:
-        return
-
-    digest_script = WOLT_DIR.parent / "woltspace" / "cron" / "digest.mjs"
-    digest_flag = STATE_DIR / "digest-last-run.txt"
-    digest_3pm_flag = STATE_DIR / "digest-3pm-run.txt"
-    tz = ZoneInfo("America/Montreal")
-
-    def _spawn_digest(reason: str):
-        if not digest_script.exists():
-            print(f"[cron] digest script not found at {digest_script}")
-            return
-        print(f"[cron] running digest ({reason})")
-        dotenv = load_dotenv()
-        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
-        clean_env.update({
-            "CLAUDE_CODE_OAUTH_TOKEN": os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or dotenv.get("CLAUDE_CODE_OAUTH_TOKEN", ""),
-            "SPOTIFY_ID": os.environ.get("SPOTIFY_ID") or dotenv.get("SPOTIFY_ID", ""),
-            "SPOTIFY_SECRET": os.environ.get("SPOTIFY_SECRET") or dotenv.get("SPOTIFY_SECRET", ""),
-            "SPOTIFY_ACCESS_TOKEN": os.environ.get("SPOTIFY_ACCESS_TOKEN") or dotenv.get("SPOTIFY_ACCESS_TOKEN", ""),
-            "SPOTIFY_REFRESH_TOKEN": os.environ.get("SPOTIFY_REFRESH_TOKEN") or dotenv.get("SPOTIFY_REFRESH_TOKEN", ""),
-            "SPOTIFY_USER": os.environ.get("SPOTIFY_USER") or dotenv.get("SPOTIFY_USER", ""),
-            "WOLT_NAME": WOLT_NAME,
-            "WOLT_DIR": str(WOLT_DIR),
-            "NODE_PATH": "/workspace/woltspace/node_modules",
-        })
-        child = subprocess.Popen(
-            ["node", str(digest_script)],
-            env=clean_env,
-            start_new_session=True,
-        )
-        write_status({"digest": {"state": "running", "startedAt": int(time.time() * 1000), "reason": reason, "pid": child.pid}})
-
-    def _cron_loop():
-        while True:
-            time.sleep(60)
-            now = datetime.now(tz)
-            today = now.strftime("%Y-%m-%d")
-            h = now.hour
-
-            # 6am run
-            last_run = digest_flag.read_text().strip() if digest_flag.exists() else ""
-            if h >= 6 and last_run != today:
-                digest_flag.write_text(today)
-                _spawn_digest("6am daily")
-
-            # 3pm run
-            last_3pm = digest_3pm_flag.read_text().strip() if digest_3pm_flag.exists() else ""
-            if h >= 15 and last_3pm != today:
-                digest_3pm_flag.write_text(today)
-                _spawn_digest("3pm afternoon")
-
-    t = threading.Thread(target=_cron_loop, daemon=True)
-    t.start()
-    print("[cron] digest cron enabled")
+# Digest cron removed — the wolf creature owns all scheduling via wolt/wolf.json.
+# See creatures/wolf.py.
 
 
 # --- Tool GC ---
@@ -187,7 +125,6 @@ async def lifespan(app: FastAPI):
     tool_registry.restore()
     _start_file_watcher()
     _start_tool_gc()
-    _start_digest_cron()
     print(f"""
   woltspace server (python) · http://localhost:{3000}
   wolt: {WOLT_NAME}

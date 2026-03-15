@@ -96,7 +96,21 @@ Two branches:
 - **`main`** — stable. What containers run by default. What users install. Only gets merges via PR from staging.
 - **`staging`** — the workshop. All development merges here first via PR. Hot-reloaded only when explicitly pulled with `--dev`.
 
-Development workflow: `wt create feature-name` → work → PR to staging → merge → when staging is solid, PR staging → main.
+Development workflow: `wt create $WOLT_NAME/feature-name` → work → PR to staging → merge → when staging is solid, PR staging → main.
+
+**The full flow, step by step:**
+1. `wt create $WOLT_NAME/fix-name` — creates an isolated worktree branched off staging. Branch names follow `{wolt-name}/{feature-description}` (e.g. `howlie/digest-timezone`, `fujiwolt/greeting-rework`).
+2. Make changes in the worktree (at the path `wt` prints)
+3. Commit and push: `git push -u origin $WOLT_NAME/fix-name`
+4. Open PR targeting **staging**: `gh pr create --base staging`
+5. The repo owner reviews and merges on GitHub
+6. Run `/update` from Telegram (or ask a beaver) — pulls staging into the running container
+7. Changes are live. When staging is stable, PR staging → main for release.
+
+**Rules:**
+- Every PR-bound task gets its own worktree — no exceptions
+- All PRs target `staging`, never `main`
+- Never commit directly to main or staging
 
 ### Updates
 
@@ -284,7 +298,6 @@ TELEGRAM_BOT_TOKEN=
 TELEGRAM_ALLOWED_USERS=   # comma-separated IDs, or empty for open
 ENABLE_SLACK_BOT=false
 LLM_MODEL=anthropic/claude-haiku-4-5-20251001  # bot model
-ENABLE_DIGEST_CRON=false
 ENABLE_TUNNEL=true
 ```
 
