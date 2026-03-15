@@ -4,6 +4,7 @@
 # Usage:
 #   woltspace init           — create a new wolt
 #   woltspace start          — start container (all wolts mounted)
+#   woltspace start --dev    — start in dev mode (tracks staging branch)
 #   woltspace stop           — stop and remove container
 #   woltspace restart        — restart container (new tunnel URL)
 #   woltspace rebuild        — rebuild image from main + restart
@@ -30,10 +31,10 @@ WOLTS_DIR="${WOLTS_DIR/#\~/$HOME}"
 cmd="${1:-start}"
 
 # Parse flags
-DEV_MODE=true
+DEV_MODE=false
 WOLT_OVERRIDE=""
 for arg in "$@"; do
-  [ "$arg" = "--no-dev" ] && DEV_MODE=false
+  [ "$arg" = "--dev" ] && DEV_MODE=true
   [[ "$arg" == --wolt=* ]] && WOLT_OVERRIDE="${arg#--wolt=}"
 done
 
@@ -113,10 +114,8 @@ _ensure_container() {
     local oauth_token
     oauth_token=$(grep '^CLAUDE_CODE_OAUTH_TOKEN=' "$env_file" 2>/dev/null | cut -d= -f2-)
 
-    local dev_mounts=""
     if [ "$DEV_MODE" = true ]; then
-      dev_mounts="-v $WOLTSPACE_DIR:/workspace/woltspace:rw"
-      echo "  dev mode: woltspace repo mounted at /workspace/woltspace"
+      echo "  dev mode: tracking staging branch"
     fi
 
     docker run -d \
@@ -124,11 +123,12 @@ _ensure_container() {
       --env-file "$env_file" \
       -v "$WOLTS_DIR:/workspace/wolts:rw" \
       -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
+      -v "$WOLTSPACE_DIR:/workspace/woltspace:rw" \
       $deploy_key_mount \
-      $dev_mounts \
       -p 4444:3000 \
       -e WOLTS_DIR=/workspace/wolts \
       -e WOLT_NAME="$ACTIVE_WOLT" \
+      -e DEV_MODE="$DEV_MODE" \
       -e CLAUDE_CODE_OAUTH_TOKEN="$oauth_token" \
       woltspace > /dev/null
 
@@ -608,7 +608,7 @@ case "$cmd" in
     echo ""
     ;;
   *)
-    echo "usage: woltspace <init|start|stop|restart|rebuild|update|list|shell|chat|logs> [--wolt=<name>] [--no-dev]"
+    echo "usage: woltspace <init|start|stop|restart|rebuild|update|list|shell|chat|logs> [--wolt=<name>] [--dev]"
     exit 1
     ;;
 esac
