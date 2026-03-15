@@ -1,11 +1,3 @@
 {
-  "crons": [
-    {
-      "name": "update-check",
-      "schedule": "*/5 * * * *",
-      "action": "script",
-      "command": "bash /workspace/woltspace/container/cron/check-update.sh",
-      "timezone": "America/Montreal"
-    }
-  ]
+  "crons": []
 }

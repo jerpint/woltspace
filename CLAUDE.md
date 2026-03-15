@@ -115,12 +115,13 @@ Development workflow: `wt create $WOLT_NAME/feature-name` → work → PR to sta
 ### Updates
 
 Updates are opt-in, never automatic:
-1. A **wolf cron** (`check-update.sh`) runs daily, compares local version against remote `main` using `git ls-remote`. If behind, sends a 🐺 notification: *"update available — ask a beaver or raccoon to update."*
-2. The **dog** has a `check_update` tool — when asked "is there an update?", it checks inline and reports.
-3. User asks a **rodent** (beaver/raccoon) to handle the update. Use the `/update` skill — it reviews incoming changes, flags breaking changes or new requirements, and only pulls after user consent.
-4. `woltspace update` on the host shows the same info (commits behind + changelog).
+1. The **dog** has a `check_update` tool — when asked "is there an update?", it checks inline and reports.
+2. User asks a **rodent** (beaver/raccoon) to handle the update. Use the `/update` skill — it reviews incoming changes, flags breaking changes or new requirements, and only pulls after user consent.
+3. `woltspace update` on the host shows the same info (commits behind + changelog).
 
-**How the update works from inside the container:** `/workspace/woltspace` is always volume-mounted from the host. So `git pull` updates files live — no container rebuild needed. The `/update` skill reads `.state/woltspace-branch` to know which branch to pull (`main` by default, `staging` in dev mode). After pulling, it stamps `.state/woltspace-version` with the new commit so the update-check cron knows it's current.
+Update checking is **not** a wolf cron. Wolves are loud by design — every cron fires a notification. Quiet surveillance tasks like polling for updates don't fit the wolf pattern. The `check-update.sh` script exists for on-demand use but is not registered in the default wolf.json.
+
+**How the update works from inside the container:** `/workspace/woltspace` is always volume-mounted from the host. So `git pull` updates files live — no container rebuild needed. The `/update` skill reads `.state/woltspace-branch` to know which branch to pull (`main` by default, `staging` in dev mode). After pulling, it stamps `.state/woltspace-version` with the new commit.
 
 Version tracking: `.state/woltspace-version` stores the commit hash — written by `woltspace rebuild` on the host, or by the `/update` skill after a pull.
 
@@ -164,7 +165,7 @@ Discovery files Claude Code reads from `~/.claude/skills/`. Platform defaults ba
 Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select via `claude -p` → render HTML. Writes to `wolt/sparks/`. Optional Spotify playlist curation.
 
 ### `container/cron/check-update.sh`
-No-LLM update checker. Compares stored version (`.state/woltspace-version`) against remote `main` HEAD via `git ls-remote`. Only notifies (as 🐺) when an update is found — completely silent otherwise. Designed to run as a daily wolf cron.
+No-LLM update checker. Compares stored version (`.state/woltspace-version`) against remote HEAD via `git ls-remote`. Available for on-demand use but not registered as a default wolf cron — wolves are loud, update checking is quiet surveillance.
 
 ### `container/creatures/wolf.py` (Wolf Scheduler 🐺)
 Background cron service. Reads `wolt/wolf.json` for scheduled tasks, fires them on time, sends 🐺 notifications. Actions: `script` (shell command), `session` (Claude Code session), `skill` (invoke a skill). Tracks last-run per cron entry in `.state/wolf/`. Auto-starts when `wolf.json` exists. See `/wolf` skill for full config format.
