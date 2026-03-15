@@ -95,7 +95,7 @@ COPY --chown=node:node container/entrypoint.sh /workspace/woltspace/container/en
 RUN chmod +x /workspace/woltspace/container/entrypoint.sh
 
 # Install Python deps for bot
-RUN cd /workspace/woltspace/container && uv sync --project bot/pyproject.toml
+RUN cd /workspace/woltspace/container && uv sync --project bot
 
 # Install Python server dependencies (FastAPI, uvicorn, etc.)
 RUN cd /workspace/woltspace && uv sync --project server
