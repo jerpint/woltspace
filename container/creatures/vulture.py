@@ -46,6 +46,26 @@ PROTECTED_SESSIONS = {"main"}
 DEFAULT_INTERVAL = 1800  # 30 minutes
 
 
+def _send_notify(message: str):
+    """Send a vulture notification via the server — only when there's something to report."""
+    full_message = f"🦅 {message}"
+    payload = json.dumps({"message": full_message, "session": ""})
+    try:
+        result = subprocess.run(
+            ["curl", "-s", "-X", "POST", "http://localhost:3000/notify",
+             "-H", "Content-Type: application/json",
+             "-d", payload],
+            capture_output=True, text=True, timeout=10,
+        )
+        resp = json.loads(result.stdout) if result.stdout else {}
+        if resp.get("ok"):
+            print(f"[vulture] notified: {message}")
+        else:
+            print(f"[vulture] notify failed: {resp.get('error', result.stdout)}", file=sys.stderr)
+    except Exception as e:
+        print(f"[vulture] notify error: {e}", file=sys.stderr)
+
+
 def log(msg: str):
     """Append to vulture log with timestamp."""
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -220,6 +240,8 @@ def run_loop(interval: int = DEFAULT_INTERVAL, dry_run: bool = False):
             total = len(stats["registry_reaped"]) + len(stats["tmux_killed"])
             if total > 0:
                 log(f"🦅 pass done — reaped {len(stats['registry_reaped'])} registry, killed {len(stats['tmux_killed'])} tmux")
+                if not dry_run:
+                    _send_notify(f"cleaned up {total} dead sessions — keep on wolting")
         except Exception as e:
             log(f"🦅 error during reap: {e}")
         time.sleep(interval)
