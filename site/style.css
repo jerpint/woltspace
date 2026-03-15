@@ -266,6 +266,47 @@ footer a {
   background: #444;
 }
 
+.prereqs {
+  font-size: 0.85rem;
+  color: #888;
+  margin-top: -1rem;
+  margin-bottom: 0.25rem;
+}
+
+.prereqs a {
+  color: #888;
+  text-decoration-color: #ccc;
+}
+
+.windows-note {
+  font-size: 0.85rem;
+  color: #888;
+  margin-bottom: 0;
+}
+
+.windows-note summary {
+  cursor: pointer;
+  color: #888;
+  text-decoration: underline;
+  text-decoration-color: #ccc;
+  text-underline-offset: 2px;
+  user-select: none;
+  display: inline;
+}
+
+.windows-note summary:hover {
+  color: #555;
+  text-decoration-color: #888;
+}
+
+.windows-note p {
+  margin-top: 0.5rem;
+  margin-bottom: 0;
+  color: #666;
+  padding-left: 0.75rem;
+  border-left: 2px solid #e0e0e0;
+}
+
 
 /* Network messages */
 .network-section {
