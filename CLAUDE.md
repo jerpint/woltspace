@@ -349,6 +349,17 @@ To test staging locally: `woltspace rebuild --dev` (builds from staging instead 
 
 **Why:** The container runs main by default. A bad edit on main crashes the server, tunnel, and bot for everyone. Staging is the buffer — test there, ship to main when ready.
 
+### PR style — use the lore
+
+PR descriptions should use the colony lore — creatures, places, metaphors. Don't write dry changelogs. Tell the story of what happened and why it matters, in the voice of the colony.
+
+Good examples:
+- *"The rebuild was pulling behind the colony's back"* — explains a trust violation in colony terms
+- *"The dog cried wolf 🐶🐺"* — false-alarm update checker, the title IS the bug
+- *"the dog watches the right stream now"* — one-line closer that lands the fix
+
+Structure: **narrative opener** (what went wrong / what's new, in lore) → **what changed** (concrete, bulleted) → **test plan** → **one-line closer** (optional, creature emoji welcome).
+
 ### Dev mode
 
 The woltspace repo is always mounted into the container at `/workspace/woltspace`. Dev mode (`woltspace start --dev`) tracks the `staging` branch instead of `main` — the update checker and `/update` skill will compare against and pull from staging. The server runs with `node --watch` — save `server.js` and it restarts. The bot does NOT auto-restart; kill and relaunch it manually after edits.
