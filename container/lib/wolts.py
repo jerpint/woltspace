@@ -68,10 +68,12 @@ def set_active_creature(creature_type: str, wolt_name: str) -> None:
     CONFIG_FILE.write_text(json.dumps(config, indent=2) + "\n")
 
 
-def create_creature_wolt(name: str, creature_type: str, role: str = "", description: str = "") -> Path:
+def create_creature_wolt(name: str, creature_type: str, role: str = "", description: str = "") -> dict:
     """Create a minimal creature-wolt directory.
 
-    Returns the path to the new wolt directory.
+    Returns a dict with:
+        - "dir": Path to the new wolt directory
+        - "demoted": name of the old wolt that was demoted to rodent, or None
     Raises ValueError if the type is invalid or the name already exists.
     """
     if creature_type not in VALID_TYPES:
@@ -82,6 +84,7 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "", descript
         raise ValueError(f"Wolt '{name}' already exists at {wolt_dir}")
 
     # Check singleton constraint
+    demoted = None
     if creature_type in SINGLETON_TYPES:
         active = get_active_creature(creature_type)
         if active:
@@ -92,6 +95,7 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "", descript
                     old_data = json.loads(old_wolt_json.read_text())
                     old_data["type"] = "rodent"
                     old_wolt_json.write_text(json.dumps(old_data, indent=2) + "\n")
+                    demoted = active
                 except (json.JSONDecodeError, OSError):
                     pass
 
@@ -126,4 +130,4 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "", descript
     if creature_type in SINGLETON_TYPES:
         set_active_creature(creature_type, name)
 
-    return wolt_dir
+    return {"dir": wolt_dir, "demoted": demoted}

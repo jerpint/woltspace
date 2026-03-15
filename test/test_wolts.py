@@ -165,7 +165,8 @@ class TestCreateCreatureWolt:
         with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.CONFIG_FILE", config_file):
             result = create_creature_wolt("luna", "wolf", role="Scheduler", description="Pack leader")
 
-        assert result == tmp_path / "luna"
+        assert result["dir"] == tmp_path / "luna"
+        assert result["demoted"] is None
         assert (tmp_path / "luna" / "wolt" / "wolt.json").exists()
         assert (tmp_path / "luna" / "wolt" / "memory" / "identity.md").exists()
         assert (tmp_path / "luna" / "wolt" / "memory" / "context.md").exists()
@@ -208,11 +209,14 @@ class TestCreateCreatureWolt:
         (old_dir / "wolt.json").write_text(json.dumps({"name": "old", "type": "wolf"}))
 
         with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.CONFIG_FILE", config_file):
-            create_creature_wolt("new", "wolf")
+            result = create_creature_wolt("new", "wolf")
 
         # Old wolf should be demoted to rodent
         old_data = json.loads((tmp_path / "old" / "wolt" / "wolt.json").read_text())
         assert old_data["type"] == "rodent"
+
+        # Return value should report demotion
+        assert result["demoted"] == "old"
 
         # New wolf should be active
         config = json.loads(config_file.read_text())
