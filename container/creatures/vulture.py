@@ -1,0 +1,251 @@
+"""
+🦅 Vulture — Session Reaper
+
+The vulture circles the lodge, cleaning up dead sessions before they
+pile up and choke the system. Runs as a platform-level background
+process — not managed by wolves.
+
+It does two things on each pass:
+  1. Reconciles the registry — marks "running" sessions as "reaped"
+     if their tmux session is gone.
+  2. Kills zombie tmux sessions — sessions where the claude process
+     has exited but the tmux session lingers.
+
+Config: none needed — it just runs.
+Logs:   .state/vulture/vulture.log
+State:  .state/vulture/last-run
+
+Usage:
+  python -m creatures.vulture              # Run as background service (default: every 5 min)
+  python -m creatures.vulture --once       # Single pass and exit
+  python -m creatures.vulture --interval N # Custom interval in seconds
+  python -m creatures.vulture --dry-run    # Show what would be reaped, don't touch anything
+"""
+
+import json
+import os
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+from sessions import SessionRegistry
+
+WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+STATE_DIR = WOLTS_DIR / ".state" / "vulture"
+LOG_FILE = STATE_DIR / "vulture.log"
+LAST_RUN_FILE = STATE_DIR / "last-run"
+
+# Sessions younger than this are never reaped (grace period for startup)
+GRACE_PERIOD_SECONDS = 120
+
+# Don't kill the main tmux session
+PROTECTED_SESSIONS = {"main"}
+
+DEFAULT_INTERVAL = 1800  # 30 minutes
+
+
+def log(msg: str):
+    """Append to vulture log with timestamp."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{ts}] {msg}"
+    print(line)
+    try:
+        with open(LOG_FILE, "a") as f:
+            f.write(line + "\n")
+        # Keep log from growing forever — trim to last 500 lines
+        _trim_log()
+    except OSError:
+        pass
+
+
+def _trim_log(max_lines: int = 500):
+    """Keep the log file from growing unbounded."""
+    try:
+        lines = LOG_FILE.read_text().splitlines()
+        if len(lines) > max_lines:
+            LOG_FILE.write_text("\n".join(lines[-max_lines:]) + "\n")
+    except OSError:
+        pass
+
+
+def _tmux_sessions() -> set[str]:
+    """Get all live tmux session names."""
+    try:
+        raw = subprocess.run(
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        return {name for name in raw.split("\n") if name}
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return set()
+
+
+def _session_has_claude(session_name: str) -> bool:
+    """Check if a tmux session has a claude process running inside it."""
+    try:
+        # Get the pane PID, then check if claude is among its descendants
+        pane_pid = subprocess.run(
+            ["tmux", "display-message", "-t", session_name, "-p", "#{pane_pid}"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        if not pane_pid:
+            return False
+        # Check process tree for claude
+        ps_out = subprocess.run(
+            ["ps", "--ppid", pane_pid, "-o", "comm="],
+            capture_output=True, text=True,
+        ).stdout
+        return "claude" in ps_out
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+def _kill_tmux_session(session_name: str) -> bool:
+    """Kill a tmux session. Returns True if successful."""
+    try:
+        subprocess.run(
+            ["tmux", "kill-session", "-t", session_name],
+            capture_output=True, check=True,
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+def reap(dry_run: bool = False) -> dict:
+    """
+    Single reaper pass. Returns stats dict:
+      { "registry_reaped": [...], "tmux_killed": [...], "errors": [...] }
+    """
+    reg = SessionRegistry()
+    now = int(time.time())
+    live_tmux = _tmux_sessions()
+    stats = {"registry_reaped": [], "tmux_killed": [], "errors": []}
+
+    # --- Pass 1: Registry reconciliation ---
+    # Find "running" registry entries whose tmux session is dead
+    for path in reg.dir.glob("*.json"):
+        if path.suffix == ".tmp":
+            continue
+        try:
+            data = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        name = data.get("name", path.stem)
+        status = data.get("status", "")
+        created_at = data.get("created_at", 0)
+
+        # Only reap sessions marked as running
+        if status != "running":
+            continue
+
+        # Grace period — don't reap sessions that just started
+        if now - created_at < GRACE_PERIOD_SECONDS:
+            continue
+
+        # If tmux session is gone, mark as reaped
+        if name not in live_tmux:
+            if dry_run:
+                log(f"[dry-run] would reap registry: {name}")
+            else:
+                data["status"] = "reaped"
+                data["finished_at"] = now
+                data["last_activity"] = now
+                reg._write(name, data)
+                log(f"🦅 reaped registry: {name}")
+            stats["registry_reaped"].append(name)
+
+    # --- Pass 2: Zombie tmux sessions ---
+    # Kill tmux sessions that exist but have no claude process and no registry
+    # entry marked "running" (they're leftover shells)
+    for session_name in live_tmux:
+        if session_name in PROTECTED_SESSIONS:
+            continue
+
+        # Check if this session has an active claude process
+        if _session_has_claude(session_name):
+            continue
+
+        # Check registry — if it's marked running, the claude might have
+        # just exited. The registry pass above would have caught it if
+        # tmux was gone, but here tmux is alive with no claude inside.
+        reg_data = reg._read(session_name)
+        if reg_data and reg_data.get("status") == "running":
+            # Claude exited but tmux lingers — mark reaped and kill tmux
+            if dry_run:
+                log(f"[dry-run] would kill zombie tmux + reap: {session_name}")
+            else:
+                reg_data["status"] = "reaped"
+                reg_data["finished_at"] = now
+                reg_data["last_activity"] = now
+                reg._write(session_name, reg_data)
+                _kill_tmux_session(session_name)
+                log(f"🦅 killed zombie tmux + reaped: {session_name}")
+            stats["tmux_killed"].append(session_name)
+        elif reg_data and reg_data.get("status") in ("reaped", "orphaned", "completed", "failed"):
+            # Already reaped/done but tmux still exists — clean up tmux
+            if dry_run:
+                log(f"[dry-run] would kill leftover tmux: {session_name}")
+            else:
+                _kill_tmux_session(session_name)
+                log(f"🦅 killed leftover tmux: {session_name}")
+            stats["tmux_killed"].append(session_name)
+        elif not reg_data:
+            # Tmux session with no registry entry and no claude — stale
+            if dry_run:
+                log(f"[dry-run] would kill unregistered tmux: {session_name}")
+            else:
+                _kill_tmux_session(session_name)
+                log(f"🦅 killed unregistered tmux: {session_name}")
+            stats["tmux_killed"].append(session_name)
+
+    # Write last-run timestamp
+    if not dry_run:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        LAST_RUN_FILE.write_text(str(now))
+
+    return stats
+
+
+def run_loop(interval: int = DEFAULT_INTERVAL, dry_run: bool = False):
+    """Run the vulture on a loop."""
+    log(f"🦅 vulture started — interval {interval}s, dry_run={dry_run}")
+    while True:
+        try:
+            stats = reap(dry_run=dry_run)
+            total = len(stats["registry_reaped"]) + len(stats["tmux_killed"])
+            if total > 0:
+                log(f"🦅 pass done — reaped {len(stats['registry_reaped'])} registry, killed {len(stats['tmux_killed'])} tmux")
+        except Exception as e:
+            log(f"🦅 error during reap: {e}")
+        time.sleep(interval)
+
+
+def main():
+    args = sys.argv[1:]
+
+    dry_run = "--dry-run" in args
+    once = "--once" in args
+    interval = DEFAULT_INTERVAL
+
+    for i, arg in enumerate(args):
+        if arg == "--interval" and i + 1 < len(args):
+            interval = int(args[i + 1])
+
+    if once:
+        stats = reap(dry_run=dry_run)
+        total = len(stats["registry_reaped"]) + len(stats["tmux_killed"])
+        if total == 0:
+            log("🦅 nothing to reap")
+        else:
+            log(f"🦅 reaped {len(stats['registry_reaped'])} registry, killed {len(stats['tmux_killed'])} tmux")
+    else:
+        run_loop(interval=interval, dry_run=dry_run)
+
+
+if __name__ == "__main__":
+    main()
