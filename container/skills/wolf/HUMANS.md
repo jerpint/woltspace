@@ -86,12 +86,19 @@ python -m creatures.wolf                # run as background service
 
 ## Dog integration
 
-The Telegram/Slack bot (dog 🐶) has two wolf tools:
+The Telegram/Slack bot (dog 🐶) has three wolf-related tools:
 
 - **`wolf_schedules`** — "what's scheduled?" → lists all crons + last run times
 - **`fire_wolf`** — "run the digest now" → triggers a cron by name
+- **`check_update`** — "is there an update?" → checks if woltspace has a newer version available (git ls-remote, no LLM needed)
 
 Dog can also spawn a **wolf session** (`creature="wolf"`) to help users set up or edit their `wolf.json` interactively.
+
+## Default update checker
+
+Every wolt ships with a built-in `update-check` cron that runs daily at 10am. It compares your local woltspace version against remote `main` — only notifies if an update is found (silent otherwise). No LLM, no sessions, just `git ls-remote`.
+
+If notified, ask a beaver or raccoon to handle the update — they'll evaluate the diff and explain what changed before proceeding.
 
 ## Key files
 
@@ -105,4 +112,4 @@ wolt/wolf.json                        ← per-wolt schedule config
 
 ## Auto-start
 
-Wolf starts automatically when `wolt/wolf.json` exists — the entrypoint checks for the file and launches `wolf.py` as a background process. No manual setup needed. Edit the JSON, wolf picks it up within 30 seconds.
+Wolf starts automatically when `wolt/wolf.json` exists — the entrypoint checks for the file and launches `wolf.py` as a background process. If the active wolt has no `wolf.json`, the entrypoint seeds one from the template (containing the update checker). No manual setup needed. Edit the JSON, wolf picks it up within 30 seconds.

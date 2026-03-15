@@ -56,13 +56,23 @@ git worktree remove ../woltspace-branches/feat-digest
 git branch -d feat/digest
 ```
 
+## Branch model
+
+Two branches:
+- **`main`** — stable. What containers run by default. What users install.
+- **`staging`** — the workshop. All development merges here first via PR.
+
+PRs target **staging**. When staging is solid, a PR from staging → main ships to users.
+
 ## Deploying changes
 
-Changes don't go live until they're merged to main and the mounted copy is updated:
+Changes go through staging first, then to main:
 
-1. PR gets merged on GitHub
-2. Human runs `woltspace rebuild` (which pulls latest main)
-3. Or: `cd /workspace/woltspace && git pull` for code-only changes
+1. PR gets merged to **staging** on GitHub
+2. Test with `woltspace rebuild --dev` (builds from staging)
+3. When ready to ship: PR from staging → main
+4. Human runs `woltspace rebuild` (builds from main — the default)
+5. Or: `cd /workspace/woltspace && git pull` for code-only changes in dev mode
 
 The tunnel always serves the mounted copy. Dev clones are for development only.
 

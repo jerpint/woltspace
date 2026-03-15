@@ -127,11 +127,33 @@ python -m creatures.wolf --fire NAME    # Fire a specific cron by name (ignores 
 python -m creatures.wolf                # Run as background service (auto-started by entrypoint)
 ```
 
+## Default crons
+
+Every wolt ships with a default `wolf.json` containing the **update checker** — a daily cron that checks if a woltspace update is available:
+
+```json
+{
+  "crons": [
+    {
+      "name": "update-check",
+      "schedule": "0 10 * * *",
+      "action": "script",
+      "command": "bash /workspace/woltspace/container/cron/check-update.sh",
+      "timezone": "America/Montreal"
+    }
+  ]
+}
+```
+
+The update checker uses `git ls-remote` (no LLM, no clone) to compare the stored version against remote `main`. It only sends a 🐺 notification when an update is actually found — completely silent otherwise. Version is tracked in `.state/woltspace-version`.
+
+When adding new crons, add them to the existing `crons` array alongside the update checker.
+
 ## How it works
 
 - Wolf reads `wolt/wolf.json` every 30 seconds
 - When a cron matches the current time, wolf fires it (idempotent — won't double-fire within the same minute)
-- Notifications go via 🐺 through the existing notify pipeline
+- Notifications go via 🐺 through the existing notify pipeline (sessionless notifications skip the reply footer)
 - Last-run timestamps stored in `.state/wolf/{name}.last`
-- Wolf starts automatically when `wolt/wolf.json` exists (entrypoint checks)
+- Wolf starts automatically when `wolt/wolf.json` exists (entrypoint seeds a default if missing)
 - To add a new cron, just edit wolf.json — wolf picks it up on next check

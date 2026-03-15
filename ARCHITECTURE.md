@@ -140,6 +140,7 @@ split.html polls /current/meta every 2s
 | `list_wolts` | Multi-wolt: show available wolts |
 | `list_projects` | List projects in current wolt (names, paths, metadata) |
 | `switch_wolt` | Change active wolt identity |
+| `check_update` | Check if woltspace update is available (git ls-remote, no LLM) |
 | `generate_image` | AI image gen (OpenAI) |
 
 ---
@@ -165,16 +166,19 @@ CREATED → RUNNING → COMPLETED / FAILED
 1. Install dev deps (if volume-mounted)
 2. Resolve WOLT_DIR from WOLTS_DIR/WOLT_NAME
 3. Copy skills: platform defaults + wolt overrides → ~/.claude/skills/
-4. SSH/git config (deploy key if present)
-5. Write OAuth credentials
-6. Install Claude Code hooks (notify + session-done)
-7. Start tmux main session → auto-launch Claude
-8. Start node --watch server.js (port 3000)
-9. Start cloudflared tunnel → write URL to .state/tunnel-url
-10. Start Telegram bot (optional, watchfiles reload)
-11. Start Slack bot (optional, watchfiles reload)
-12. Symlink node_modules for ESM resolution
-13. wait -n (exit if ANY critical process dies)
+4. Seed default wolf.json if active wolt doesn't have one (update checker)
+5. SSH/git config (deploy key if present)
+6. Write OAuth credentials
+7. Install Claude Code hooks (notify + session-done)
+8. Start tmux main session → auto-launch Claude
+9. Start TUI pty service (port 3001)
+10. Start FastAPI server (port 3000)
+11. Start cloudflared tunnel → write URL to .state/tunnel-url
+12. Start Telegram bot (optional, watchfiles reload)
+13. Start Slack bot (optional, watchfiles reload)
+14. Start wolf scheduler (if wolf.json exists)
+15. Symlink node_modules for ESM resolution
+16. wait -n (exit if ANY critical process dies)
 ```
 
 ---
