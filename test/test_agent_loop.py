@@ -92,7 +92,7 @@ def _tg_send_transcript(test_name: str, entries: list[dict]):
         lines.append(f"  👤 {e.get('user', '')}")
         response = e.get('response', '')
         if response:
-            lines.append(f"  🦦 {response}")
+            lines.append(f"  🐶 {response}")
         tools = e.get('tools', [])
         for t in tools:
             args = t.get('args', {})
@@ -314,7 +314,7 @@ class TestHaikuDecisions:
 # ---------------------------------------------------------------------------
 
 class ConversationSimulator:
-    """Simulate a multi-turn conversation between a user and the otter (haiku).
+    """Simulate a multi-turn conversation between a user and the dog (haiku).
 
     Each turn: send a message, get a response, optionally assert on the result.
     Maintains conversation history across turns (like the real telegram adapter).

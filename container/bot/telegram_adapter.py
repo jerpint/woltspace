@@ -103,10 +103,10 @@ def format_response(result: dict) -> str:
     else:
         text = result["text"]
     wolt_name = os.environ.get("WOLT_NAME", "wolt")
-    return f"🦦 {wolt_name}: {text}"
+    return f"🐶 {wolt_name}: {text}"
 
 
-CREATURE_EMOJIS = {"raccoon": "🦝", "beaver": "🦫"}
+CREATURE_EMOJIS = {"raccoon": "🦝", "beaver": "🦫", "dog": "🐶"}
 
 
 def _format_tool_log(tc: dict) -> str:
@@ -257,7 +257,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chat_id = update.effective_chat.id
 
-    await update.message.reply_text("🐸 listening...")
+    await update.message.reply_text("🐶 listening...")
 
     file = await context.bot.get_file(voice.file_id)
     with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:

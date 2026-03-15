@@ -64,7 +64,7 @@ class TestDenReplyDetection:
 
     def test_no_footer_returns_none(self):
         """Regular message without footer — not a den reply."""
-        msg = "🦦 neowolt: just chatting"
+        msg = "🐶 neowolt: just chatting"
         assert _extract_session_from_text(msg) is None
 
     def test_footer_without_session_returns_none(self):
@@ -271,7 +271,7 @@ class TestMessageSession:
 # ---------------------------------------------------------------------------
 
 class TestToolResultFormat:
-    """Verify tool results have the fields the otter needs."""
+    """Verify tool results have the fields the dog needs."""
 
     def test_send_message_success_fields(self):
         """Successful send_message should have ok, session, url, status, detail."""

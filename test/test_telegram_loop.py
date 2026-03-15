@@ -76,7 +76,7 @@ class TestResponseFormatting:
         with patch.dict(os.environ, {"WOLT_NAME": "neowolt"}):
             result = {"type": "text", "text": "hello world"}
             formatted = format_response(result)
-            assert "🦦" in formatted
+            assert "🐶" in formatted
             assert "neowolt" in formatted
             assert "hello world" in formatted
 
