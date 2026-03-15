@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y \
     procps \
     jq \
     less \
+    unzip \
     vim-tiny \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \

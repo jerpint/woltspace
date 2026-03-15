@@ -222,9 +222,9 @@ if [ "${ENABLE_TELEGRAM_BOT:-}" = "true" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; 
   fi
   echo "starting telegram bot ($BOT_DIR, dev=$DEV_MODE)..."
   if [ "$DEV_MODE" = "true" ]; then
-    (cd "$BOT_DIR" && uv run --project bot/pyproject.toml watchfiles --filter python "python -m $BOT_MODULE" bot/) &
+    (cd "$BOT_DIR" && uv run --project bot watchfiles --filter python "python -m $BOT_MODULE" bot/) &
   else
-    (cd "$BOT_DIR" && uv run --project bot/pyproject.toml python -m "$BOT_MODULE") &
+    (cd "$BOT_DIR" && uv run --project bot python -m "$BOT_MODULE") &
   fi
   disown
 fi
@@ -240,9 +240,9 @@ if [ "${ENABLE_SLACK_BOT:-}" = "true" ] && [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -n
   fi
   echo "starting slack bot ($SLACK_BOT_DIR, dev=$DEV_MODE)..."
   if [ "$DEV_MODE" = "true" ]; then
-    (cd "$SLACK_BOT_DIR" && BOT_ADAPTER=slack uv run --project bot/pyproject.toml watchfiles --filter python "python -m $SLACK_BOT_MODULE" bot/) &
+    (cd "$SLACK_BOT_DIR" && BOT_ADAPTER=slack uv run --project bot watchfiles --filter python "python -m $SLACK_BOT_MODULE" bot/) &
   else
-    (cd "$SLACK_BOT_DIR" && BOT_ADAPTER=slack uv run --project bot/pyproject.toml python -m "$SLACK_BOT_MODULE") &
+    (cd "$SLACK_BOT_DIR" && BOT_ADAPTER=slack uv run --project bot python -m "$SLACK_BOT_MODULE") &
   fi
   disown
 fi
