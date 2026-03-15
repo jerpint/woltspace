@@ -49,11 +49,14 @@ if [ "$LOCAL_VERSION" = "$REMOTE_HEAD" ]; then
   exit 0
 fi
 
-# Update available — notify via the notify binary (handles session routing correctly)
+# Update available — notify once, then stamp the new version so we don't spam
 LOCAL_SHORT=$(echo "$LOCAL_VERSION" | cut -c1-7)
 REMOTE_SHORT=$(echo "$REMOTE_HEAD" | cut -c1-7)
 
-MESSAGE="a woltspace update is available ($LOCAL_SHORT -> $REMOTE_SHORT). to update, ask: \"can you update woltspace?\""
+MESSAGE="a woltspace update is available ($LOCAL_SHORT -> $REMOTE_SHORT). to find out what changed, ask: \"can you update woltspace?\""
 notify "$MESSAGE"
+
+# Stamp the new remote version so we only notify once per release
+echo "$REMOTE_HEAD" > "$VERSION_FILE"
 
 echo "[update-check] notified: update available ($LOCAL_SHORT -> $REMOTE_SHORT)"
