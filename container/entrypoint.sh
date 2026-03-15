@@ -247,6 +247,15 @@ if [ "${ENABLE_SLACK_BOT:-}" = "true" ] && [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -n
   disown
 fi
 
+# Start wolf scheduler if wolf.json exists (backgrounded)
+WOLF_CONFIG="$WOLT_DIR/wolt/wolf.json"
+if [ -f "$WOLF_CONFIG" ]; then
+  echo "starting wolf scheduler..."
+  (cd "$WOLTSPACE_DIR/container" && PYTHONPATH="$WOLTSPACE_DIR/container/lib:${PYTHONPATH:-}" \
+    uv run --project bot python -m creatures.wolf) &
+  disown
+fi
+
 # Cleanup on exit — kill all critical processes
 cleanup() {
   kill $TUI_PID $SERVER_PID ${TUNNEL_PID:-} 2>/dev/null

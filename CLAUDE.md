@@ -116,6 +116,9 @@ Discovery files Claude Code reads from `~/.claude/skills/`. Platform defaults ba
 ### `container/cron/digest.mjs`
 Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select via `claude -p` → render HTML. Writes to `wolt/sparks/`. Optional Spotify playlist curation.
 
+### `container/creatures/wolf.py` (Wolf Scheduler 🐺)
+Background cron service. Reads `wolt/wolf.json` for scheduled tasks, fires them on time, sends 🐺 notifications. Actions: `script` (shell command), `session` (Claude Code session), `skill` (invoke a skill). Tracks last-run per cron entry in `.state/wolf/`. Auto-starts when `wolf.json` exists. See `/wolf` skill for full config format.
+
 ### `container/lib/sessions.py` (Session Registry)
 Centralized session metadata — single source of truth replacing the old scattered `sessions/*.json` + `session-routing/*.json` files. One JSON file per session in `.state/registry/{session_name}.json`.
 
