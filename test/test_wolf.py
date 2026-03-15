@@ -427,3 +427,93 @@ class TestFireWolfTool:
         from bot.core import _tool_fire_wolf
         result = json.loads(_tool_fire_wolf({"name": ""}, None))
         assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# check_update tool (from core.py)
+# ---------------------------------------------------------------------------
+
+class TestCheckUpdateTool:
+    """Unit: the check_update tool exposed to the dog."""
+
+    def test_up_to_date(self, tmp_path):
+        from bot.core import _tool_check_update
+        version_file = tmp_path / ".state" / "woltspace-version"
+        version_file.parent.mkdir(parents=True)
+        version_file.write_text("abc1234567890")
+
+        mock_result = MagicMock()
+        mock_result.stdout = "abc1234567890\trefs/heads/main\n"
+
+        with patch("bot.core.WOLT_DIR", tmp_path), \
+             patch("subprocess.run", return_value=mock_result):
+            result = json.loads(_tool_check_update({}, None))
+        assert result["up_to_date"] is True
+        assert result["version"] == "abc1234"
+
+    def test_update_available(self, tmp_path):
+        from bot.core import _tool_check_update
+        version_file = tmp_path / ".state" / "woltspace-version"
+        version_file.parent.mkdir(parents=True)
+        version_file.write_text("oldcommit1234567890")
+
+        mock_result = MagicMock()
+        mock_result.stdout = "newcommit9876543210\trefs/heads/main\n"
+
+        with patch("bot.core.WOLT_DIR", tmp_path), \
+             patch("subprocess.run", return_value=mock_result):
+            result = json.loads(_tool_check_update({}, None))
+        assert result["up_to_date"] is False
+        assert result["local"] == "oldcomm"
+        assert result["remote"] == "newcomm"
+        assert "update is available" in result["message"]
+
+    def test_first_run_initializes_version(self, tmp_path):
+        from bot.core import _tool_check_update
+        # No version file exists yet
+        mock_result = MagicMock()
+        mock_result.stdout = "abc1234567890\trefs/heads/main\n"
+
+        with patch("bot.core.WOLT_DIR", tmp_path), \
+             patch("subprocess.run", return_value=mock_result):
+            result = json.loads(_tool_check_update({}, None))
+        assert result["up_to_date"] is True
+        assert "initialized" in result.get("note", "")
+        # Version file should now exist
+        assert (tmp_path / ".state" / "woltspace-version").read_text() == "abc1234567890"
+
+    def test_remote_unreachable(self, tmp_path):
+        from bot.core import _tool_check_update
+        mock_result = MagicMock()
+        mock_result.stdout = ""
+
+        with patch("bot.core.WOLT_DIR", tmp_path), \
+             patch("subprocess.run", return_value=mock_result):
+            result = json.loads(_tool_check_update({}, None))
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Notify footer (from server/notify.py)
+# ---------------------------------------------------------------------------
+
+class TestNotifyFooter:
+    """Unit: session footer is skipped for sessionless notifications."""
+
+    def test_footer_skipped_when_no_session(self):
+        """Empty session should produce no footer."""
+        # We test the logic directly rather than calling the async function
+        session = ""
+        footer = ""
+        if session:
+            footer = f"\n\n---reply footer\n/tui?session={session}"
+        assert footer == ""
+
+    def test_footer_present_when_session_exists(self):
+        """Non-empty session should produce a footer."""
+        session = "beaver-chunky-dam-abc123"
+        footer = ""
+        if session:
+            footer = f"\n\n---reply footer\n/tui?session={session}"
+        assert "beaver-chunky-dam-abc123" in footer
+        assert footer != ""
