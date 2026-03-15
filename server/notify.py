@@ -93,8 +93,11 @@ async def send_notification(session: str, message: str) -> dict:
             tunnel_url = tunnel_file.read_text().strip()
         except Exception:
             pass
-        session_url = f"{tunnel_url}/tui?session={session}" if tunnel_url else f"session={session}"
-        footer = f"\n\n---{DEN_REPLY_FOOTER}\n{session_url}"
+        # Only append session footer if there's an actual session (skip for wolf cron, system notifications)
+        footer = ""
+        if session:
+            session_url = f"{tunnel_url}/tui?session={session}" if tunnel_url else f"session={session}"
+            footer = f"\n\n---{DEN_REPLY_FOOTER}\n{session_url}"
         await telegram_send(telegram_token, telegram_chat_id, message + footer)
         append_chat_history("telegram", telegram_chat_id, message)
         return {"adapter": "telegram", "chat_id": telegram_chat_id}

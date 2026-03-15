@@ -193,6 +193,7 @@ You have tools. Use them. Never describe what you would do — always invoke the
 CRITICAL: If a task requires claude_code, call claude_code. Don't narrate what you'd do instead.
 
 - **claude_code** — spin up a Claude Code session for real work (pick raccoon, beaver, otter, or wolf as needed)
+- **check_update** — check if a woltspace update is available. If yes, suggest the user ask a beaver or raccoon to update
 - **wolf_schedules** — check what crons are configured and when they last ran
 - **fire_wolf** — trigger a specific cron immediately by name (check wolf_schedules first for names)
 - **send_message** — send a message to a running session
@@ -755,6 +756,41 @@ def _tool_switch_wolt(args: dict, routing: dict | None) -> str:
     return json.dumps({"switched": bool(switched), "name": args["name"]})
 
 
+def _tool_check_update(args: dict, routing: dict | None) -> str:
+    """Check if a woltspace update is available."""
+    import subprocess
+    version_file = WOLT_DIR / ".state" / "woltspace-version"
+    try:
+        # Use git ls-remote to check remote main HEAD (no full repo needed)
+        result = subprocess.run(
+            ["git", "ls-remote", "https://github.com/jerpint/woltspace.git", "refs/heads/main"],
+            capture_output=True, text=True, timeout=10,
+        )
+        remote_head = result.stdout.strip().split("\t")[0] if result.stdout.strip() else ""
+        if not remote_head:
+            return json.dumps({"error": "could not reach remote"})
+
+        local_version = version_file.read_text().strip() if version_file.exists() else ""
+
+        if not local_version:
+            # First check — store version for future comparisons
+            version_file.parent.mkdir(parents=True, exist_ok=True)
+            version_file.write_text(remote_head)
+            return json.dumps({"up_to_date": True, "version": remote_head[:7], "note": "version tracking initialized"})
+
+        if local_version == remote_head:
+            return json.dumps({"up_to_date": True, "version": remote_head[:7]})
+
+        return json.dumps({
+            "up_to_date": False,
+            "local": local_version[:7],
+            "remote": remote_head[:7],
+            "message": "an update is available — suggest the user ask a beaver or raccoon to handle it",
+        })
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 def _tool_wolf_schedules(args: dict, routing: dict | None) -> str:
     """List all wolf cron schedules for the active wolt."""
     wolf_config = WOLT_DIR / "wolt" / "wolf.json"
@@ -810,6 +846,7 @@ TOOL_HANDLERS: dict[str, callable] = {
     "new_session": _tool_new_session,
     "wolf_schedules": _tool_wolf_schedules,
     "fire_wolf": _tool_fire_wolf,
+    "check_update": _tool_check_update,
 }
 
 
@@ -1068,6 +1105,17 @@ TOOLS = [
                     },
                 },
                 "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_update",
+            "description": "Check if a woltspace platform update is available. Use when someone asks 'is there an update?', 'any updates?', 'check for updates', or 'is woltspace up to date?'. Returns whether the platform is current or behind, and suggests routing to a rodent if an update is available.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
             },
         },
     },

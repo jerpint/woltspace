@@ -6,7 +6,9 @@
 #   woltspace start          — start container (all wolts mounted)
 #   woltspace stop           — stop and remove container
 #   woltspace restart        — restart container (new tunnel URL)
-#   woltspace rebuild        — rebuild image + restart
+#   woltspace rebuild        — rebuild image from main + restart
+#   woltspace rebuild --dev  — rebuild image from staging + restart
+#   woltspace update         — check if a new version is available
 #   woltspace list           — list all wolts (name, type, role)
 #   woltspace shell          — enter running container
 #   woltspace chat           — open claude (--dangerously-skip-permissions) in container
@@ -511,12 +513,87 @@ case "$cmd" in
     exit 0
     ;;
   rebuild)
+    _D=$'\033[2m'; _R=$'\033[0m'; _B=$'\033[1m'; _G=$'\033[0;32m'; _Y=$'\033[0;33m'
+
+    # Determine which branch to build from
+    BUILD_BRANCH="main"
+    for arg in "$@"; do
+      [ "$arg" = "--dev" ] && BUILD_BRANCH="staging"
+    done
+
+    # Save current branch to restore after build
+    CURRENT_BRANCH=$(cd "$WOLTSPACE_DIR" && git rev-parse --abbrev-ref HEAD 2>/dev/null)
+
+    # Checkout the target branch
+    if [ "$BUILD_BRANCH" != "$CURRENT_BRANCH" ]; then
+      echo "  switching to ${_B}${BUILD_BRANCH}${_R} branch..."
+      (cd "$WOLTSPACE_DIR" && git fetch origin "$BUILD_BRANCH" 2>/dev/null && git checkout "$BUILD_BRANCH" && git pull origin "$BUILD_BRANCH") || {
+        echo "  error: could not checkout $BUILD_BRANCH"
+        exit 1
+      }
+    else
+      echo "  already on ${_B}${BUILD_BRANCH}${_R}, pulling latest..."
+      (cd "$WOLTSPACE_DIR" && git pull origin "$BUILD_BRANCH" 2>/dev/null) || true
+    fi
+
+    if [ "$BUILD_BRANCH" = "staging" ]; then
+      printf "  building from ${_Y}staging${_R} (latest, may be rough)\n"
+    else
+      printf "  building from ${_G}main${_R} (stable)\n"
+    fi
+
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
     rm -f "$ACTIVE_WOLT_DIR/.state/tunnel-url"
     docker build -t woltspace -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR"
+
+    # Stamp the version so the update-check cron knows what we're running
+    BUILD_COMMIT=$(cd "$WOLTSPACE_DIR" && git rev-parse HEAD 2>/dev/null)
+    if [ -n "$BUILD_COMMIT" ]; then
+      mkdir -p "$ACTIVE_WOLT_DIR/.state"
+      echo "$BUILD_COMMIT" > "$ACTIVE_WOLT_DIR/.state/woltspace-version"
+    fi
+
     _ensure_container "$CONTAINER_NAME"
     echo "  open the link above in your browser."
     echo ""
+    exit 0
+    ;;
+  update)
+    _D=$'\033[2m'; _R=$'\033[0m'; _B=$'\033[1m'; _G=$'\033[0;32m'; _Y=$'\033[0;33m'
+
+    echo ""
+    echo "  checking for updates..."
+
+    # Fetch latest from remote
+    (cd "$WOLTSPACE_DIR" && git fetch origin main 2>/dev/null) || {
+      echo "  error: could not reach remote — check your connection"
+      exit 1
+    }
+
+    LOCAL_HEAD=$(cd "$WOLTSPACE_DIR" && git rev-parse main 2>/dev/null)
+    REMOTE_HEAD=$(cd "$WOLTSPACE_DIR" && git rev-parse origin/main 2>/dev/null)
+
+    if [ "$LOCAL_HEAD" = "$REMOTE_HEAD" ]; then
+      printf "  ${_G}you're up to date.${_R}\n"
+      echo ""
+      LOCAL_SHORT=$(echo "$LOCAL_HEAD" | cut -c1-7)
+      printf "  ${_D}main @ %s${_R}\n" "$LOCAL_SHORT"
+      echo ""
+    else
+      # Count commits behind
+      BEHIND=$(cd "$WOLTSPACE_DIR" && git rev-list --count main..origin/main 2>/dev/null)
+      printf "  ${_Y}update available${_R} — %s commit(s) behind\n" "$BEHIND"
+      echo ""
+      # Show what changed
+      printf "  ${_D}recent changes:${_R}\n"
+      (cd "$WOLTSPACE_DIR" && git log --oneline main..origin/main | head -10 | while read -r line; do
+        printf "    ${_D}%s${_R}\n" "$line"
+      done)
+      echo ""
+      printf "  to update, ask a beaver or raccoon:\n"
+      printf "    ${_D}\"can you update woltspace?\"${_R}\n"
+      echo ""
+    fi
     exit 0
     ;;
   start)
@@ -530,7 +607,7 @@ case "$cmd" in
     echo ""
     ;;
   *)
-    echo "usage: woltspace <init|start|stop|restart|rebuild|list|shell|chat|logs> [--wolt=<name>] [--no-dev]"
+    echo "usage: woltspace <init|start|stop|restart|rebuild|update|list|shell|chat|logs> [--wolt=<name>] [--no-dev]"
     exit 1
     ;;
 esac

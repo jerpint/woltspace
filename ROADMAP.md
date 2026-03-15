@@ -41,15 +41,30 @@ Claude CLI install cached in isolated Docker build stage (faster rebuilds). `wol
 - `wolt/projects/woltspace/` = dev clone (sessions work here)
 - `/workspace/woltspace/` = production (mounted, serves tunnel, read-only in practice)
 - Parallel work via `git worktree add` inside the dev clone
-- Each session pushes a branch, creates a PR — never edits main directly
-- Human reviews on phone, merges, rebuilds when ready
+- Each session pushes a branch, creates a PR targeting **staging** — never edits main directly
+- Human reviews on phone, merges to staging, then staging → main when ready to ship
 - Raccoons orchestrate parallel dispatch — not Haiku
 
-**Status:** Dev clone set up, flow documented in `DEV_FLOW.md`. Worktrees verified working.
+**Status:** Dev clone set up, flow documented in `DEV_FLOW.md`. Worktrees verified working. **Staging branch live** — `woltspace rebuild --dev` builds from staging, `woltspace rebuild` builds from main (stable default).
 
-**Still to do:** Raccoon orchestration for multi-task requests (multiple `claude_code` calls). Supersedes the original `WORKTREE_PLAN.md` — no custom tooling needed, just projects + git.
+**Still to do:** Raccoon orchestration for multi-task requests (multiple `claude_code` calls). Supersedes the original `WORKTREE_PLAN.md` — no custom tooling needed, just projects + git. GitHub branch protection on staging (manual setup). Raccoon migration evaluator (reads diff, explains impact to user before updating).
 
 **Why:** Dogfoods the project isolation system on the hardest case. If it works for woltspace itself, it works for everything. Unlocks parallel development without custom infra.
+
+### 1b. Update System (Priority: High — shipped)
+
+**What:** Opt-in update notifications + self-serve update flow.
+
+- **Wolf cron** (`check-update.sh`) — runs daily, no LLM. Uses `git ls-remote` to check remote `main`. If behind, sends 🐺 notification: *"update available — ask a beaver or raccoon."*
+- **Dog tool** (`check_update`) — inline check when asked "is there an update?" Uses same `git ls-remote` approach.
+- **CLI** (`woltspace update`) — host-side check, shows commits behind + changelog.
+- **Rodent handles the update** — evaluates diff, explains scope (clean merge vs breaking changes), user decides.
+- Version tracked in `.state/woltspace-version`, stamped on every `rebuild`.
+- Default `wolf.json` seeded for all wolts (new + existing) via entrypoint — ensures update checker runs from the start.
+
+**Status:** Shipped in PR #38. Wolf cron, dog tool, CLI command, entrypoint seeding, tests all in place.
+
+**Design:** No auto-updates, no background magic. Wolf is the lookout, rodent has hands on keyboard, user has final say.
 
 ---
 
@@ -169,7 +184,7 @@ The colony is expanding. Each creature has a single, clear role. Not all are bui
 
 | Creature | Emoji | Role | Entry Point |
 |----------|-------|------|-------------|
-| **wolf** | 🐺 | Cron & scheduler — runs the pack's routines. Fires tasks on schedule, tracks cadence. | `container/creatures/wolf.py` |
+| **wolf** | 🐺 | Cron & scheduler — runs the pack's routines. Fires tasks on schedule, tracks cadence. Ships with a default daily update checker. | `container/creatures/wolf.py` |
 | **spider** | 🕷️ | Headless browser — crawls, scrapes, watches the web. Playwright-backed, quiet and fast. | `container/creatures/spider.py` |
 | **bear** | 🐻 | Safety & validation — guards the den. Reviews outputs, flags risks, enforces boundaries. | `container/creatures/bear.py` |
 | **panda** | 🐼 | Daily reminders & zen notifications — gentle, unhurried. Surfaces what matters, when it matters. | `container/creatures/panda.py` |
