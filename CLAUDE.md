@@ -128,6 +128,7 @@ Background cron service. Reads `wolt/wolf.json` for scheduled tasks, fires them 
 
 CLI: `--list` (show crons), `--once` (fire due crons and exit), `--fire NAME` (trigger a specific cron by name, ignoring schedule — great for debugging).
 
+
 ### `container/lib/sessions.py` (Session Registry)
 Centralized session metadata — single source of truth replacing the old scattered `sessions/*.json` + `session-routing/*.json` files. One JSON file per session in `.state/registry/{session_name}.json`.
 
