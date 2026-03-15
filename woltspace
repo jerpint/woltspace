@@ -4,6 +4,7 @@
 # Usage:
 #   woltspace init           — create a new wolt
 #   woltspace start          — start container (all wolts mounted)
+#   woltspace start --dev    — start container with woltspace repo mounted (dev mode)
 #   woltspace stop           — stop and remove container
 #   woltspace restart        — restart container (new tunnel URL)
 #   woltspace rebuild        — rebuild image from main + restart
@@ -30,10 +31,10 @@ WOLTS_DIR="${WOLTS_DIR/#\~/$HOME}"
 cmd="${1:-start}"
 
 # Parse flags
-DEV_MODE=true
+DEV_MODE=false
 WOLT_OVERRIDE=""
 for arg in "$@"; do
-  [ "$arg" = "--no-dev" ] && DEV_MODE=false
+  [ "$arg" = "--dev" ] && DEV_MODE=true
   [[ "$arg" == --wolt=* ]] && WOLT_OVERRIDE="${arg#--wolt=}"
 done
 

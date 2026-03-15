@@ -106,7 +106,7 @@ Updates are opt-in, never automatic:
 3. User asks a **rodent** (beaver/raccoon) to handle the update. Use the `/update` skill — it pulls main, updates version tracking, and confirms what changed.
 4. `woltspace update` on the host shows the same info (commits behind + changelog).
 
-**How the update works from inside the container:** `/workspace/woltspace` is always volume-mounted from the host (dev mode is the default). So `git pull origin main` updates files live — no container rebuild needed. After pulling, stamp `.state/woltspace-version` with the new commit so the update-check cron knows it's current.
+**How the update works from inside the container:** When started with `--dev`, `/workspace/woltspace` is volume-mounted from the host. So `git pull origin main` updates files live — no container rebuild needed. After pulling, stamp `.state/woltspace-version` with the new commit so the update-check cron knows it's current.
 
 Version tracking: `.state/woltspace-version` stores the commit hash — written by `woltspace rebuild` on the host, or manually by the `/update` skill after a pull.
 
@@ -351,7 +351,7 @@ To test staging locally: `woltspace rebuild --dev` (builds from staging instead 
 
 ### Dev mode
 
-This repo is usually mounted into the container in dev mode (`woltspace start` auto-detects if you're in the repo and enables dev mode). The server runs with `node --watch` — save `server.js` and it restarts. The bot does NOT auto-restart; kill and relaunch it manually after edits.
+Dev mode mounts this repo into the container at `/workspace/woltspace`. Enable it with `woltspace start --dev`. The server runs with `node --watch` — save `server.js` and it restarts. The bot does NOT auto-restart; kill and relaunch it manually after edits.
 
 Restart Telegram bot:
 ```bash
