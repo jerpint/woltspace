@@ -16,6 +16,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
 import re
 from bot.core import get_response, transcribe_audio, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, _bot_log, build_ack_text, _sanitize_history, message_session
+from wolts import get_active_creature
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -26,6 +27,12 @@ logger = logging.getLogger(__name__)
 WOLT_DIR = Path(os.environ.get("WOLT_DIR", "/workspace/wolt"))
 STATE_DIR = WOLT_DIR / ".state"
 CHAT_DIR = STATE_DIR / "chat"
+
+
+def _dog_name() -> str:
+    """Get the dog's display name — from dog-wolt if available, else WOLT_NAME."""
+    name = get_active_creature("dog")
+    return name or os.environ.get("WOLT_NAME", "wolt")
 
 ALLOWED_USERS: set[int] = set()
 chat_histories: dict[int, list] = defaultdict(list)
@@ -102,8 +109,7 @@ def format_response(result: dict) -> str:
         text = result.get("text", "") or result.get("caption", "") or result.get("filename", "image")
     else:
         text = result["text"]
-    wolt_name = os.environ.get("WOLT_NAME", "wolt")
-    return f"🐶 {wolt_name}: {text}"
+    return f"🐶 {_dog_name()}: {text}"
 
 
 CREATURE_EMOJIS = {"raccoon": "🦝", "beaver": "🦫", "otter": "🦦", "dog": "🐶"}
@@ -392,8 +398,7 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command."""
     if not is_allowed(update):
         return
-    wolt_name = os.environ.get("WOLT_NAME", "wolt")
-    await update.message.reply_text(f"Hey. I'm {wolt_name}. Talk to me.")
+    await update.message.reply_text(f"Hey. I'm {_dog_name()}. Talk to me.")
 
 
 async def handle_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):

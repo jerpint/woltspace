@@ -65,6 +65,9 @@ fi
 # Add container/lib to PYTHONPATH so sessions.py is importable everywhere
 export PYTHONPATH="$WOLTSPACE_DIR/container/lib:${PYTHONPATH:-}"
 
+# Add container/bin to PATH so create-creature-wolt etc. are available in all sessions
+export PATH="$WOLTSPACE_DIR/container/bin:$PATH"
+
 # Add shortcut for interactive use inside the container
 cat >> /home/node/.bashrc <<NWEOF
 wolt() {

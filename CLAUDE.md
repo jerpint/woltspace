@@ -45,22 +45,23 @@ cloudflared tunnel (public URL, no account needed)
 
 ### The Animals
 
-The animal describes the model, tempo, and role.
+Every wolt has a fixed **creature type** (`"type"` in `wolt.json`). The type determines the model, tempo, and role. A wolt's type is permanent.
 
-**🐶 Dogwolt — Haiku**
-The lodge companion. Loyal, constrained, fetches what you need. Always present on Telegram — first to hear, first to respond. Bot responses formatted as `🐶 name: text`.
+**Rodents** (default) — general-purpose builders. Unlimited per workspace. Skill levels within the family:
+- **🦫 Beaver — Sonnet** — the builder. Industrious, shapes the environment, makes things that last. Den sessions run as beavers — this is where real work happens.
+- **🦝 Raccoon — Opus** — the orchestrator. Clever, adaptive. Sees the whole pond from the water's edge — doesn't build everything itself but knows where everything fits.
+- **🦦 Otter — Haiku** — the quick one. Fast, lightweight, cheap. Great for simple lookups, one-shot edits, quick scripts.
 
-**🦫 Beaverwolt — Sonnet**
-The builder. Industrious, shapes the environment, makes things that last. Den sessions run as beaverwolts — this is where real work happens. Den responses prefixed `🦫`.
+**Singleton creatures** — one active at a time per workspace. Each is its own wolt with its own identity.
+- **🐶 Dog — Haiku** — the lodge companion. Loyal, constrained, always present on Telegram. Bot responses formatted as `🐶 name: text`. Created via `/telegram` skill.
+- **🐺 Wolf — Sonnet** — the scheduler. Runs crons, reminders, recurring tasks. Manages `wolt/wolf.json`. Created via `/wolf` skill.
 
-**🦝 Raccoonwolt — Opus**
-The orchestrator. Clever, adaptive, trickster wisdom. Sees the whole pond from the water's edge — doesn't build everything itself but knows where everything fits. Reaches across the whole colony when needed.
-
-**🦦 Otterwolt — Haiku**
-The quick one. Fast, lightweight, cheap. Great for simple lookups, one-shot edits, file searches, quick scripts. When speed matters more than depth, send an otter.
-
-**🐺 Wolfwolt — Sonnet**
-The scheduler. Runs the pack's routines — crons, reminders, recurring tasks. Fires on schedule, sends notifications, dispatches other creatures. Manages `wolt/wolf.json`. Dog routes schedule questions to wolf sessions.
+**Creature-type rules:**
+- `wolt.json` → `"type"` field: `rodent` (default), `wolf`, `dog`, `spider`, `bear`, `panda`
+- `woltspace.json` → `creatures.active_wolf` / `creatures.active_dog` tracks the active singleton
+- Creating a new wolf/dog demotes the old one to rodent (with notification)
+- Discovery: scan `/workspace/wolts/*/wolt/wolt.json` or use `lib/wolts.py`
+- CLI: `create-creature-wolt <name> <type>` creates creature-wolts
 
 ```
 woltspace
@@ -144,6 +145,7 @@ Utility scripts available in container PATH:
 - `run-session.sh` — wrapper that sends ack, injects notification context, runs Claude Code
 - `notify` — send message back to originating adapter (Telegram/Slack)
 - `session-reg` — CLI for the session registry (`session-reg list`, `session-reg get <name>`, `session-reg reconcile`)
+- `create-creature-wolt <name> <type>` — create a new creature-wolt (wolf, dog, rodent, etc.)
 - `spawn-tool` — register a tool proxy with the server
 - `migrate-sessions-to-registry.sh` — one-time migration from old session files to registry format
 
@@ -283,6 +285,7 @@ bash test/run-tests.sh -k "pattern" # pass any pytest args
 - `test_closed_loop.py` — full seam tests: Telegram API → notify pipeline → session creation → den reply → round-trip
 - `test_agent_loop.py` — haiku decision tests (mocked tools), conversation simulator, live session spawn, true e2e (haiku → beaver → file on disk → viewport)
 - `test_wolf.py` — wolf scheduler: cron parser, schedule loading, state tracking, dispatch routing, fire-by-name, wolf_schedules/fire_wolf tools
+- `test_wolts.py` — wolt discovery, creature-type system, creature-wolt creation, singleton demotion, dog identity loading
 
 **Environment:**
 - `TEST_VERBOSE=1` (default) — posts per-test results to Telegram test group
@@ -295,6 +298,28 @@ bash test/run-tests.sh -k "pattern" # pass any pytest args
 ---
 
 ## Development
+
+### ⚠️ HARD RULE: Never edit on main
+
+**All changes happen on branches, never on main directly.** Use a worktree for every change:
+
+```bash
+wt create nw/my-feature      # creates isolated worktree
+# ... make changes, commit, push ...
+# open PR, get it reviewed, merge
+wt delete nw/my-feature --branch   # clean up
+```
+
+After merge, pull main to get the changes:
+```bash
+cd /workspace/woltspace && git checkout main && git pull
+```
+
+For quick local testing of a branch before merging, you can temporarily checkout the branch on main — but **never commit to main directly**.
+
+**Why:** The container runs main. A bad edit on main crashes the server, tunnel, and bot for everyone. Branches + PRs give us a review gate.
+
+### Dev mode
 
 This repo is usually mounted into the container in dev mode (`woltspace start` auto-detects if you're in the repo and enables dev mode). The server runs with `node --watch` — save `server.js` and it restarts. The bot does NOT auto-restart; kill and relaunch it manually after edits.
 

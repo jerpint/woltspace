@@ -11,13 +11,26 @@ The wolf manages scheduled tasks. When a cron fires, the wolf sends an immediate
 
 The wolf should be its own wolt with `"type": "wolf"` in its `wolt.json`. Before setting up crons:
 
-1. **Check if a wolf-wolt exists:** Read `woltspace.json` → `creatures.active_wolf`. Also scan `/workspace/wolts/*/wolt/wolt.json` for any wolt with `"type": "wolf"`.
-2. **If no wolf-wolt exists:** Ask the user to name their wolf. Then create a new wolt directory at `/workspace/wolts/{name}/` with a minimal structure:
-   - `wolt/wolt.json` — `{"name": "{name}", "type": "wolf", "role": "Scheduler", "capabilities": ["cron", "scheduling"], "description": "..."}`
-   - `wolt/memory/identity.md` — wolf identity (scheduler, fires tasks on schedule, loyal to the pack)
-   - `wolt/wolf.json` — the cron config (see below)
-   - Update `woltspace.json` → `creatures.active_wolf` to the new wolf's name
-3. **If a wolf-wolt already exists:** Edit its `wolt/wolf.json` directly.
+1. **Check if a wolf-wolt exists:** Run:
+   ```bash
+   python3 -c "
+   import sys; sys.path.insert(0, '/workspace/woltspace/container/lib')
+   from wolts import get_active_creature, find_by_type
+   wolf = get_active_creature('wolf')
+   print(f'active wolf: {wolf}' if wolf else 'no active wolf')
+   for w in find_by_type('wolf'): print(f'  found: {w[\"name\"]} at {w[\"dir\"]}')
+   "
+   ```
+
+2. **If no wolf-wolt exists:** Ask the user what to name their wolf. Then create it:
+   ```bash
+   create-creature-wolt <name> wolf --role "Scheduler" --description "Runs the pack's routines on schedule"
+   ```
+   This creates the wolt directory, sets `type: wolf` in wolt.json, writes minimal identity files, and registers it as the active wolf in woltspace.json.
+
+   After creation, customize the identity — write a proper `identity.md` in `/workspace/wolts/<name>/wolt/memory/identity.md` that reflects the wolf's personality. Then create the cron config at `/workspace/wolts/<name>/wolt/wolf.json`.
+
+3. **If a wolf-wolt already exists:** Edit its `wolt/wolf.json` directly at `/workspace/wolts/<name>/wolt/wolf.json`.
 
 **Important:** Do NOT put `wolf.json` in a rodent-wolt. The wolf is a separate creature.
 

@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Create a creature-wolt from the command line.
+
+Usage:
+    create-creature-wolt <name> <type> [--role "..."] [--description "..."]
+
+Examples:
+    create-creature-wolt luna wolf --role "Scheduler" --description "Runs the pack's routines"
+    create-creature-wolt rex dog --role "Lodge companion" --description "Guards the telegram gate"
+"""
+
+import argparse
+import subprocess
+import sys
+import os
+
+# Add lib to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
+
+from wolts import create_creature_wolt, get_active_creature, SINGLETON_TYPES
+
+
+def _notify(message: str) -> None:
+    """Send a notification via the notify script if available."""
+    try:
+        subprocess.run(["notify", message], timeout=10, capture_output=True)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Create a creature-wolt")
+    parser.add_argument("name", help="Name for the new wolt")
+    parser.add_argument("type", help="Creature type (rodent, wolf, dog, spider, bear, panda)")
+    parser.add_argument("--role", default="", help="Role description")
+    parser.add_argument("--description", default="", help="Full description")
+    args = parser.parse_args()
+
+    # Warn about singleton demotion
+    if args.type in SINGLETON_TYPES:
+        active = get_active_creature(args.type)
+        if active:
+            print(f"note: {active} is currently the active {args.type} — it will be demoted to rodent")
+
+    try:
+        result = create_creature_wolt(args.name, args.type, role=args.role, description=args.description)
+        wolt_dir = result["dir"]
+        demoted = result["demoted"]
+        print(f"created {args.type}-wolt '{args.name}' at {wolt_dir}")
+
+        if demoted:
+            msg = f"🔄 {demoted} was demoted from {args.type} to rodent — {args.name} is now the active {args.type}"
+            print(msg)
+            _notify(msg)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
