@@ -77,7 +77,41 @@ def cron_matches(expr: str, dt: datetime) -> bool:
 
 # ── Config & State ──────────────────────────────────────────────────
 
+def _find_wolf_wolt() -> Optional[Path]:
+    """Find the active wolf-wolt directory, if one exists."""
+    wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    config_file = wolts_dir / "woltspace.json"
+    # Check woltspace.json for active_wolf
+    if config_file.exists():
+        try:
+            config = json.loads(config_file.read_text())
+            active_wolf = config.get("creatures", {}).get("active_wolf")
+            if active_wolf:
+                wolf_dir = wolts_dir / active_wolf
+                if (wolf_dir / "wolt" / "wolf.json").exists():
+                    return wolf_dir
+        except (json.JSONDecodeError, OSError):
+            pass
+    # Fallback: scan for any wolt with type=wolf
+    for wolt_json in wolts_dir.glob("*/wolt/wolt.json"):
+        try:
+            data = json.loads(wolt_json.read_text())
+            if data.get("type") == "wolf":
+                return wolt_json.parent.parent
+        except (json.JSONDecodeError, OSError):
+            continue
+    return None
+
+
 def get_wolt_dir() -> Path:
+    """Get the wolf's working directory.
+
+    Prefers a dedicated wolf-wolt (type: wolf) if one exists.
+    Falls back to the active rodent-wolt for backwards compat.
+    """
+    wolf_wolt = _find_wolf_wolt()
+    if wolf_wolt:
+        return wolf_wolt
     return Path(os.environ.get("WOLT_DIR", "/workspace/wolt"))
 
 

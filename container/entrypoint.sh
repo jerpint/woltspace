@@ -247,10 +247,29 @@ if [ "${ENABLE_SLACK_BOT:-}" = "true" ] && [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -n
   disown
 fi
 
-# Start wolf scheduler if wolf.json exists (backgrounded)
-WOLF_CONFIG="$WOLT_DIR/wolt/wolf.json"
-if [ -f "$WOLF_CONFIG" ]; then
-  echo "starting wolf scheduler..."
+# Start wolf scheduler — check for dedicated wolf-wolt first, then fall back to active wolt
+WOLF_CONFIG=""
+# Check woltspace.json for active_wolf creature
+ACTIVE_WOLF=$(python3 -c "
+import json, os
+try:
+    c = json.load(open(os.path.join(os.environ.get('WOLTS_DIR', '/workspace/wolts'), 'woltspace.json')))
+    w = c.get('creatures', {}).get('active_wolf', '')
+    if w:
+        d = os.path.join(os.environ.get('WOLTS_DIR', '/workspace/wolts'), w, 'wolt', 'wolf.json')
+        print(d if os.path.isfile(d) else '')
+    else:
+        print('')
+except: print('')
+" 2>/dev/null)
+if [ -n "$ACTIVE_WOLF" ]; then
+  WOLF_CONFIG="$ACTIVE_WOLF"
+elif [ -f "$WOLT_DIR/wolt/wolf.json" ]; then
+  # Backwards compat: wolf.json in active rodent-wolt
+  WOLF_CONFIG="$WOLT_DIR/wolt/wolf.json"
+fi
+if [ -n "$WOLF_CONFIG" ]; then
+  echo "starting wolf scheduler (config: $WOLF_CONFIG)..."
   (cd "$WOLTSPACE_DIR/container" && PYTHONPATH="$WOLTSPACE_DIR/container/lib:${PYTHONPATH:-}" \
     uv run --project bot python -m creatures.wolf) &
   disown
