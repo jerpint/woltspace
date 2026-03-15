@@ -196,6 +196,7 @@ CRITICAL: If a task requires claude_code, call claude_code. Don't narrate what y
 - **check_update** — check if a woltspace update is available. If yes, suggest the user ask a beaver or raccoon to update
 - **wolf_schedules** — check what crons are configured and when they last ran
 - **fire_wolf** — trigger a specific cron immediately by name (check wolf_schedules first for names)
+- **wolf_jobs** — show recent wolf job log (what fired, when, success/failure)
 - **send_message** — send a message to a running session
 - **list_sessions** / **check_session** — see what's running or check on a session
 - **list_projects** — see what projects exist in the current wolt
@@ -851,6 +852,27 @@ def _tool_fire_wolf(args: dict, routing: dict | None) -> str:
         return json.dumps({"ok": False, "error": str(e)})
 
 
+def _tool_wolf_jobs(args: dict, routing: dict | None) -> str:
+    """Show recent wolf job log entries."""
+    count = args.get("count", 10)
+    wolf_wolt = _get_wolf_wolt_dir()
+    log_file = wolf_wolt / ".state" / "wolf" / "jobs.jsonl"
+    if not log_file.exists():
+        return json.dumps({"jobs": [], "note": "no job log yet"})
+    try:
+        lines = log_file.read_text().strip().split("\n")
+        recent = lines[-count:]
+        jobs = []
+        for line in recent:
+            try:
+                jobs.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return json.dumps({"jobs": jobs, "count": len(jobs)})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 TOOL_HANDLERS: dict[str, callable] = {
     "claude_code": _tool_claude_code,
     "get_tunnel_url": _tool_get_tunnel_url,
@@ -868,6 +890,7 @@ TOOL_HANDLERS: dict[str, callable] = {
     "new_session": _tool_new_session,
     "wolf_schedules": _tool_wolf_schedules,
     "fire_wolf": _tool_fire_wolf,
+    "wolf_jobs": _tool_wolf_jobs,
     "check_update": _tool_check_update,
 }
 
@@ -1166,6 +1189,22 @@ TOOLS = [
                     },
                 },
                 "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "wolf_jobs",
+            "description": "Show recent wolf job log — what crons fired, when, whether they started successfully. Use when someone asks 'did the digest run?', 'what did wolf do?', 'any failed jobs?', or 'wolf log'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "count": {
+                        "type": "integer",
+                        "description": "Number of recent job events to return (default 10).",
+                    },
+                },
             },
         },
     },
