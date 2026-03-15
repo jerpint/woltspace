@@ -96,12 +96,12 @@ Two branches:
 - **`main`** — stable. What containers run by default. What users install. Only gets merges via PR from staging.
 - **`staging`** — the workshop. All development merges here first via PR. Hot-reloaded only when explicitly pulled with `--dev`.
 
-Development workflow: `wt create feature-name` → work → PR to staging → merge → when staging is solid, PR staging → main.
+Development workflow: `wt create $WOLT_NAME/feature-name` → work → PR to staging → merge → when staging is solid, PR staging → main.
 
 **The full flow, step by step:**
-1. `wt create nw/fix-name` — creates an isolated worktree branched off staging
+1. `wt create $WOLT_NAME/fix-name` — creates an isolated worktree branched off staging. Branch names follow `{wolt-name}/{feature-description}` (e.g. `howlie/digest-timezone`, `fujiwolt/greeting-rework`).
 2. Make changes in the worktree (at the path `wt` prints)
-3. Commit and push: `git push -u origin nw/fix-name`
+3. Commit and push: `git push -u origin $WOLT_NAME/fix-name`
 4. Open PR targeting **staging**: `gh pr create --base staging`
 5. jerpint reviews and merges on GitHub
 6. jerpint runs `/update` from Telegram (or asks a beaver) — pulls staging into the running container
