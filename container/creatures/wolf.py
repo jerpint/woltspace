@@ -12,6 +12,7 @@ Usage:
   python -m creatures.wolf --once       # Fire all due crons once and exit
   python -m creatures.wolf --list       # List registered crons
   python -m creatures.wolf --fire NAME  # Fire a specific cron by name (ignores schedule)
+  python -m creatures.wolf --jobs [N]   # Show last N job log entries (default 20)
 """
 
 import asyncio
@@ -161,6 +162,22 @@ def get_state_dir() -> Path:
     return d
 
 
+def _log_job(name: str, action: str, **kwargs):
+    """Append a job event to .state/wolf/jobs.jsonl."""
+    log_file = get_state_dir() / "jobs.jsonl"
+    entry = {
+        "ts": datetime.now().isoformat(),
+        "cron": name,
+        "action": action,
+        **kwargs,
+    }
+    try:
+        with open(log_file, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        print(f"[wolf] log error: {e}", file=sys.stderr)
+
+
 def load_schedule() -> list[dict]:
     """Load wolf.json schedule config.
 
@@ -277,6 +294,7 @@ def run_script(entry: dict) -> Optional[str]:
         return session_name
     except Exception as e:
         print(f"[wolf] script error: {e}", file=sys.stderr)
+        _log_job(cron_name, "script", event="error", error=str(e))
         send_wolf_notify(f"cron '{cron_name}' failed to start: {e}")
         return None
 
@@ -339,8 +357,11 @@ def fire_cron(entry: dict):
     action = entry.get("action", "script")
     notify_msg = entry.get("notify")
 
+    _log_job(name, action, event="started", command=entry.get("command", ""))
+
     # Fire action first (to get session name/URL)
     link = None
+    session_name = None
     if action == "script":
         session_name = run_script(entry)
         if session_name:
@@ -353,6 +374,9 @@ def fire_cron(entry: dict):
         run_skill(entry)
     else:
         print(f"[wolf] {name}: unknown action '{action}'", file=sys.stderr)
+        _log_job(name, action, event="error", error=f"unknown action '{action}'")
+
+    _log_job(name, action, event="dispatched", session=session_name, link=link)
 
     # Send notification with link appended
     if notify_msg:
@@ -485,10 +509,45 @@ def fire_by_name(name: str) -> bool:
 
 # ── Entry point ─────────────────────────────────────────────────────
 
+def show_jobs(count: int = 20):
+    """Show recent job log entries."""
+    log_file = get_state_dir() / "jobs.jsonl"
+    if not log_file.exists():
+        print("No job log yet. Jobs are logged when crons fire.")
+        return
+    lines = log_file.read_text().strip().split("\n")
+    recent = lines[-count:]
+    wolf = _get_wolf_name()
+    print(f"🐺 {wolf} — last {min(count, len(recent))} job events:\n")
+    for line in recent:
+        try:
+            entry = json.loads(line)
+            ts = entry.get("ts", "")[:19]
+            cron = entry.get("cron", "?")
+            event = entry.get("event", "?")
+            extra = ""
+            if entry.get("session"):
+                extra = f" session={entry['session']}"
+            if entry.get("error"):
+                extra = f" error={entry['error']}"
+            if entry.get("link"):
+                extra += f" {entry['link']}"
+            print(f"  {ts}  {cron:<20} {event:<12}{extra}")
+        except json.JSONDecodeError:
+            continue
+
+
 def run():
     args = sys.argv[1:]
     if "--list" in args:
         list_crons()
+    elif "--jobs" in args:
+        n = 20
+        if "--jobs" in args:
+            idx = args.index("--jobs")
+            if idx + 1 < len(args) and args[idx + 1].isdigit():
+                n = int(args[idx + 1])
+        show_jobs(n)
     elif "--fire" in args:
         idx = args.index("--fire")
         if idx + 1 >= len(args):
