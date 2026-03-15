@@ -899,9 +899,12 @@ def _tool_open_issue(args: dict, routing: dict | None) -> str:
     if not gh_token:
         return json.dumps({"error": "GH_PAT_TOKEN not found — add it to .env"})
 
+    # Tag the issue with which wolt opened it — header, natural tone
+    header = f"🐶 *{_wolt_name}* noticed this one.\n\n"
+    full_body = header + body if body else header.strip()
+
     cmd = ["gh", "issue", "create", "--repo", "jerpint/woltspace", "--title", title]
-    if body:
-        cmd += ["--body", body]
+    cmd += ["--body", full_body]
     if labels:
         cmd += ["--label", ",".join(labels)]
 
