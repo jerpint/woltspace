@@ -49,17 +49,11 @@ if [ "$LOCAL_VERSION" = "$REMOTE_HEAD" ]; then
   exit 0
 fi
 
-# Update available — notify as wolf (bypass notify script which needs a session)
+# Update available — notify via the notify binary (handles session routing correctly)
 LOCAL_SHORT=$(echo "$LOCAL_VERSION" | cut -c1-7)
 REMOTE_SHORT=$(echo "$REMOTE_HEAD" | cut -c1-7)
 
-WOLT_NAME="${WOLT_NAME:-wolt}"
-MESSAGE="a woltspace update is available ($LOCAL_SHORT -> $REMOTE_SHORT). to update, ask a beaver or raccoon: \"can you update woltspace?\""
-FULL_MESSAGE=$(python3 -c "import json; print(json.dumps({'session': '', 'message': json.loads(json.dumps('🐺 $WOLT_NAME: $MESSAGE'))}))" 2>/dev/null)
-
-curl -s -X POST http://localhost:3000/notify \
-  -H "Content-Type: application/json" \
-  -d "$FULL_MESSAGE" > /dev/null 2>&1 || \
-  echo "[update-check] update available ($LOCAL_SHORT -> $REMOTE_SHORT) — notify failed"
+MESSAGE="a woltspace update is available ($LOCAL_SHORT -> $REMOTE_SHORT). to update, ask: \"can you update woltspace?\""
+notify "$MESSAGE"
 
 echo "[update-check] notified: update available ($LOCAL_SHORT -> $REMOTE_SHORT)"
