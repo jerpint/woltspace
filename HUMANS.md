@@ -195,7 +195,7 @@ Host mount (persists across rebuilds):
 - Single server.js — monolith by choice, not accident. One file to read, one process to manage
 - make + g++ in image — only for node-pty native compilation. Future: prebuilt binaries or multi-stage build
 - Claude CLI in isolated build stage — cached across rebuilds, not re-downloaded on source changes. To update Claude: `docker build --no-cache-filter=claude -t woltspace -f container/Dockerfile .`
-- Feature flags in .env — `ENABLE_TELEGRAM_BOT`, `ENABLE_DIGEST_CRON`. Telegram on by default (skipped silently if token missing)
+- Feature flags in .env — `ENABLE_TELEGRAM_BOT`. Telegram on by default (skipped silently if token missing). Digest scheduling is handled by the wolf creature, not server.js
 
 ## Learn more
 
