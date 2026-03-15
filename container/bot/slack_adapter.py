@@ -169,7 +169,7 @@ def format_response(result: dict) -> str:
     else:
         text = result["text"]
     wolt_name = os.environ.get("WOLT_NAME", "wolt")
-    return f"🦦 {wolt_name}: {text}"
+    return f"🐶 {wolt_name}: {text}"
 
 
 CREATURE_EMOJIS = {"raccoon": "🦝", "beaver": "🦫"}

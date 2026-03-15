@@ -25,7 +25,7 @@ Users build in `wolt/projects/`, never touch `/workspace/woltspace/`. Guardrails
 Centralized session registry replaced tmux-based session tracking. Session revival now picks the correct conversation.
 
 ### Bot & Creature Routing (PRs #8, #11)
-Creatures, notify, tool logging cleaned up. Explicit user creature choice is respected. Dog/otter split is partially in place.
+Creatures, notify, tool logging cleaned up. Explicit user creature choice is respected. Dog is now the lodge creature (replacing otter).
 
 ### Build & Init (PRs #18, #19)
 Claude CLI install cached in isolated Docker build stage (faster rebuilds). `woltspace` auto-added to PATH during init.
@@ -95,8 +95,9 @@ Claude CLI install cached in isolated Docker build stage (faster rebuilds). `wol
 
 **What:** Finish the creature identity split. Formalize the full creature roster.
 
-- Claude Code sessions → **otter** (wolt identity, deeper context)
-- Creature routing is partially shipped — needs polish and clear boundaries
+- Lodge companion (Telegram) → **dog** 🐶 (haiku — loyal, constrained, always-on)
+- Claude Code sessions → **beaver** (sonnet) or **raccoon** (opus)
+- Creature routing shipped — dog is live as the lodge creature
 
 **See:** [Creature Roles](#creature-roles) section below for the full roster.
 
@@ -160,7 +161,7 @@ The colony is expanding. Each creature has a single, clear role. Not all are bui
 
 | Creature | Emoji | Model | Role |
 |----------|-------|-------|------|
-| **otter** | 🦦 | haiku | Lodge brain — always-on, routes requests, first to hear |
+| **dog** | 🐶 | haiku | Lodge companion — always-on, loyal, routes requests, first to hear |
 | **beaver** | 🦫 | sonnet | Builder — Claude Code sessions, coding, grunt work |
 | **raccoon** | 🦝 | opus | Orchestrator — complex reasoning, multi-task dispatch |
 
@@ -168,7 +169,6 @@ The colony is expanding. Each creature has a single, clear role. Not all are bui
 
 | Creature | Emoji | Role | Entry Point |
 |----------|-------|------|-------------|
-| **dog** | 🐕 | Telegram companion — loyal, constrained, fetches what you need. Based on Fuji. | `container/creatures/dog.py` |
 | **wolf** | 🐺 | Cron & scheduler — runs the pack's routines. Fires tasks on schedule, tracks cadence. | `container/creatures/wolf.py` |
 | **spider** | 🕷️ | Headless browser — crawls, scrapes, watches the web. Playwright-backed, quiet and fast. | `container/creatures/spider.py` |
 | **bear** | 🐻 | Safety & validation — guards the den. Reviews outputs, flags risks, enforces boundaries. | `container/creatures/bear.py` |
