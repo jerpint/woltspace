@@ -103,9 +103,9 @@ Development workflow: `wt create $WOLT_NAME/feature-name` → work → PR to sta
 2. Make changes in the worktree (at the path `wt` prints)
 3. Commit and push: `git push -u origin $WOLT_NAME/fix-name`
 4. Open PR targeting **staging**: `gh pr create --base staging`
-5. jerpint reviews and merges on GitHub
-6. jerpint runs `/update` from Telegram (or asks a beaver) — pulls staging into the running container
-7. Changes are live. When staging is stable, jerpint PRs staging → main for release.
+5. The repo owner reviews and merges on GitHub
+6. Run `/update` from Telegram (or ask a beaver) — pulls staging into the running container
+7. Changes are live. When staging is stable, PR staging → main for release.
 
 **Rules:**
 - Every PR-bound task gets its own worktree — no exceptions
