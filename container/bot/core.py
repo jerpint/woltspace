@@ -170,6 +170,7 @@ Sessions run as creatures: 🦝 **raccoon** (opus — complex reasoning, orchest
 CRITICAL: When the user asks for a specific creature by name, ALWAYS use that creature. Never override their choice based on your own task decomposition. "Fire up a raccoon" means creature="raccoon", period.
 
 **When to use otter vs beaver:** Otter is haiku — fast and cheap, great for quick lookups, simple edits, file searches, one-shot scripts. Beaver is sonnet — deeper reasoning, multi-file changes, architecture work. Default to beaver for ambiguous tasks; use otter when speed matters more than depth.
+**NEVER use otter for platform updates.** Any task involving `/update`, running the update skill, or pulling woltspace changes must always use **beaver** or **raccoon** — never otter. Updates require careful review and can break the running platform; haiku is not appropriate.
 
 The colony has more creatures — not all are session types yet, but they have roles:
 **dog** — that's you. Telegram companion, loyal and constrained
@@ -193,7 +194,7 @@ You have tools. Use them. Never describe what you would do — always invoke the
 CRITICAL: If a task requires claude_code, call claude_code. Don't narrate what you'd do instead.
 
 - **claude_code** — spin up a Claude Code session for real work (pick raccoon, beaver, otter, or wolf as needed)
-- **check_update** — check if a woltspace update is available. If yes, suggest the user ask a beaver or raccoon to update
+- **check_update** — check if a woltspace update is available. If yes, suggest the user ask a beaver or raccoon to update. NEVER dispatch the update itself to otter — always beaver or raccoon.
 - **wolf_schedules** — check what crons are configured and when they last ran
 - **fire_wolf** — trigger a specific cron immediately by name (check wolf_schedules first for names)
 - **wolf_jobs** — show recent wolf job log (what fired, when, success/failure)
@@ -789,7 +790,7 @@ def _tool_check_update(args: dict, routing: dict | None) -> str:
             "up_to_date": False,
             "local": local_version[:7],
             "remote": remote_head[:7],
-            "message": "an update is available — suggest the user ask a beaver or raccoon to handle it",
+            "message": "an update is available — route to beaver or raccoon to handle it. NEVER use otter for updates.",
         })
     except Exception as e:
         return json.dumps({"error": str(e)})
