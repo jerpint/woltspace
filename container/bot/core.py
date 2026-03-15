@@ -165,6 +165,7 @@ CRITICAL: If a task requires claude_code, call claude_code. Don't narrate what y
 
 - **claude_code** — spin up a Claude Code session for real work (pick raccoon, beaver, or wolf as needed)
 - **wolf_schedules** — check what crons are configured and when they last ran
+- **fire_wolf** — trigger a specific cron immediately by name (check wolf_schedules first for names)
 - **send_message** — send a message to a running session
 - **list_sessions** / **check_session** — see what's running or check on a session
 - **list_projects** — see what projects exist in the current wolt
@@ -742,6 +743,25 @@ def _tool_wolf_schedules(args: dict, routing: dict | None) -> str:
         return json.dumps({"error": str(e)})
 
 
+def _tool_fire_wolf(args: dict, routing: dict | None) -> str:
+    """Fire a specific wolf cron by name, ignoring its schedule."""
+    name = args.get("name", "").strip()
+    if not name:
+        return json.dumps({"error": "name is required"})
+
+    # Import and call fire_by_name from wolf module
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from creatures.wolf import fire_by_name
+        fired = fire_by_name(name)
+        if fired:
+            return json.dumps({"ok": True, "fired": name})
+        else:
+            return json.dumps({"ok": False, "error": f"cron '{name}' not found in wolf.json"})
+    except Exception as e:
+        return json.dumps({"ok": False, "error": str(e)})
+
+
 TOOL_HANDLERS: dict[str, callable] = {
     "claude_code": _tool_claude_code,
     "get_tunnel_url": _tool_get_tunnel_url,
@@ -758,6 +778,7 @@ TOOL_HANDLERS: dict[str, callable] = {
     "switch_wolt": _tool_switch_wolt,
     "new_session": _tool_new_session,
     "wolf_schedules": _tool_wolf_schedules,
+    "fire_wolf": _tool_fire_wolf,
 }
 
 
@@ -1027,6 +1048,23 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fire_wolf",
+            "description": "Fire a specific wolf cron immediately by name, ignoring its schedule. Use when someone says 'run the digest now', 'fire the weekly review', 'trigger X'. Check wolf_schedules first to see available cron names.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The cron name to fire (must match a name in wolf.json).",
+                    },
+                },
+                "required": ["name"],
             },
         },
     },

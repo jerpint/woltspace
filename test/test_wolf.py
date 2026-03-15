@@ -395,3 +395,35 @@ class TestWolfSchedulesTool:
         with patch("bot.core.WOLT_DIR", tmp_path):
             result = json.loads(_tool_wolf_schedules({}, None))
         assert result["crons"][0]["last_run"] == "never"
+
+
+# ---------------------------------------------------------------------------
+# fire_wolf tool (from core.py)
+# ---------------------------------------------------------------------------
+
+class TestFireWolfTool:
+    """Unit: the fire_wolf tool exposed to the dog."""
+
+    def test_fire_existing_cron(self, tmp_path):
+        from bot.core import _tool_fire_wolf
+        with patch("creatures.wolf.get_schedule_path", return_value=tmp_path / "wolf.json"), \
+             patch("creatures.wolf.fire_cron") as mock_fire:
+            (tmp_path / "wolf.json").write_text(json.dumps({
+                "crons": [{"name": "digest", "schedule": "0 6 * * *", "action": "script", "command": "echo"}]
+            }))
+            result = json.loads(_tool_fire_wolf({"name": "digest"}, None))
+            assert result["ok"] is True
+            assert result["fired"] == "digest"
+            mock_fire.assert_called_once()
+
+    def test_fire_missing_cron(self, tmp_path):
+        from bot.core import _tool_fire_wolf
+        with patch("creatures.wolf.get_schedule_path", return_value=tmp_path / "wolf.json"):
+            (tmp_path / "wolf.json").write_text(json.dumps({"crons": []}))
+            result = json.loads(_tool_fire_wolf({"name": "nope"}, None))
+            assert result["ok"] is False
+
+    def test_fire_empty_name(self):
+        from bot.core import _tool_fire_wolf
+        result = json.loads(_tool_fire_wolf({"name": ""}, None))
+        assert "error" in result
