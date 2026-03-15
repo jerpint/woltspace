@@ -134,6 +134,37 @@ Utility scripts available in container PATH:
 - `spawn-tool` — register a tool proxy with the server
 - `migrate-sessions-to-registry.sh` — one-time migration from old session files to registry format
 
+### Worktui (`wt`)
+Worktree + Claude session manager, available in all sessions. Manages git worktrees for parallel development — each branch gets an isolated working directory.
+
+Worktrees live at `$WORKTUI_DIR` (`/workspace/wolts/.worktui` by default) — on the mounted volume, so they survive container rebuilds.
+
+**Use worktui when you need to work on a branch in isolation** — especially for platform work (woltspace PRs) or any task where you want a clean checkout without affecting other work.
+
+```bash
+# Interactive TUI
+wt                                # Browse worktrees, sessions, create/delete
+
+# CLI (non-interactive, scriptable)
+wt list [--json]                  # List worktrees
+wt create <branch> [--pr]        # Create worktree + optionally draft PR
+wt delete <branch> [--branch]    # Delete worktree + optionally its branch
+wt sessions [<branch>] [--json]  # List Claude sessions for a worktree
+wt projects [--json]             # List registered projects
+wt status                        # Current worktree info
+wt clean [--dry-run]             # Remove all non-dirty worktrees
+wt remote [--json]               # List remote-only branches
+wt pr <branch>                   # Show PR URL for branch
+```
+
+**Typical workflow:**
+1. `wt create nw/fix-bug-x` — creates isolated worktree
+2. Work on the fix in the worktree directory
+3. Push + open PR
+4. `wt delete nw/fix-bug-x --branch` — clean up after merge
+
+Source: `~/worktui/` (cloned from `jerpint/worktui` during image build). Shell wrapper sourced via `wt.sh` in `.bashrc`.
+
 ---
 
 ## ⚠️ VIEWPORT — HOW TO SHOW THINGS TO THE HUMAN
