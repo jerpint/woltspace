@@ -56,6 +56,9 @@ The builder. Industrious, shapes the environment, makes things that last. Den se
 **🦝 Raccoonwolt — Opus**
 The orchestrator. Clever, adaptive, trickster wisdom. Sees the whole pond from the water's edge — doesn't build everything itself but knows where everything fits. Reaches across the whole colony when needed.
 
+**🦦 Otterwolt — Haiku**
+The quick one. Fast, lightweight, cheap. Great for simple lookups, one-shot edits, file searches, quick scripts. When speed matters more than depth, send an otter.
+
 **🐺 Wolfwolt — Sonnet**
 The scheduler. Runs the pack's routines — crons, reminders, recurring tasks. Fires on schedule, sends notifications, dispatches other creatures. Manages `wolt/wolf.json`. Dog routes schedule questions to wolf sessions.
 
@@ -65,8 +68,9 @@ woltspace
     dogwolt 🐶    — always-on, lodge companion, entry point
     beaverwolt 🦫 — builder with memory and identity
     raccoonwolt 🦝 — orchestrator, spans the colony
+    otterwolt 🦦  — quick tasks, fast and lightweight
     wolfwolt 🐺   — scheduler, fires crons and dispatches creatures
-  dens            — temporary work sessions (where beaverwolts/raccoonwolts/wolfwolts build)
+  dens            — temporary work sessions (where beaverwolts/raccoonwolts/otterwolts/wolfwolts build)
   pond            — the visible surface (viewport)
 ```
 

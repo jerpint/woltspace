@@ -139,8 +139,10 @@ You're the lodge companion — loyal, constrained, and you route real work to Cl
 Never prefix your messages with emojis or your name — the adapter handles that.
 
 ## Creatures
-Sessions run as creatures: 🦝 **raccoon** (opus — complex reasoning, orchestration) or 🦫 **beaver** (sonnet — building, coding).
+Sessions run as creatures: 🦝 **raccoon** (opus — complex reasoning, orchestration), 🦫 **beaver** (sonnet — building, coding), or 🦦 **otter** (haiku — fast, lightweight tasks).
 CRITICAL: When the user asks for a specific creature by name, ALWAYS use that creature. Never override their choice based on your own task decomposition. "Fire up a raccoon" means creature="raccoon", period.
+
+**When to use otter vs beaver:** Otter is haiku — fast and cheap, great for quick lookups, simple edits, file searches, one-shot scripts. Beaver is sonnet — deeper reasoning, multi-file changes, architecture work. Default to beaver for ambiguous tasks; use otter when speed matters more than depth.
 
 The colony has more creatures — not all are session types yet, but they have roles:
 **dog** — that's you. Telegram companion, loyal and constrained
@@ -156,7 +158,7 @@ Talk like a person, not an assistant. Short messages. Lowercase is fine. No bull
 You have tools. Use them. Never describe what you would do — always invoke the tool directly.
 CRITICAL: If a task requires claude_code, call claude_code. Don't narrate what you'd do instead.
 
-- **claude_code** — spin up a Claude Code session for real work (pick raccoon or beaver as needed)
+- **claude_code** — spin up a Claude Code session for real work (pick raccoon, beaver, or otter as needed)
 - **send_message** — send a message to a running session
 - **list_sessions** / **check_session** — see what's running or check on a session
 - **list_projects** — see what projects exist in the current wolt
@@ -234,6 +236,7 @@ def _short_session_name(session_name: str) -> str:
 CREATURE_EMOJIS = {
     "raccoon": "🦝",
     "beaver": "🦫",
+    "otter": "🦦",
     # Planned creatures — not yet active as session types
     "dog": "🐶",
     "wolf": "🐺",
@@ -301,8 +304,9 @@ def _call_server(method: str, path: str, body: dict | None = None) -> dict:
 CREATURE_MODELS = {
     "raccoon": "opus",    # 🦝 orchestrator — complex planning, multi-step reasoning
     "beaver": "sonnet",   # 🦫 worker — building, coding, grunt work
+    "otter": "haiku",     # 🦦 quick tasks — fast, lightweight, cheap
     # Planned creatures — models TBD when implemented
-    # "wolf":   "haiku",  # 🐺 scheduler — fast, lightweight, always-on
+    # "wolf":   "sonnet",  # 🐺 scheduler — cron setup, schedule management
     # "spider": "sonnet", # 🕷️ headless browser — parsing, scraping
     # "bear":   "sonnet", # 🐻 validator — careful judgment, safety checks
     # "panda":  "haiku",  # 🐼 notifications — gentle, unhurried
@@ -756,8 +760,8 @@ TOOLS = [
                     },
                     "creature": {
                         "type": "string",
-                        "enum": ["raccoon", "beaver"],
-                        "description": "Which creature to run: 'raccoon' (🦝 opus — complex reasoning, orchestration) or 'beaver' (🦫 sonnet — building, coding). Defaults to the wolt's default model if omitted.",
+                        "enum": ["raccoon", "beaver", "otter"],
+                        "description": "Which creature to run: 'raccoon' (🦝 opus — complex reasoning, orchestration), 'beaver' (🦫 sonnet — building, coding), or 'otter' (🦦 haiku — fast, lightweight tasks). Defaults to the wolt's default model if omitted.",
                     },
                     "project": {
                         "type": "string",
@@ -790,8 +794,8 @@ TOOLS = [
                     },
                     "creature": {
                         "type": "string",
-                        "enum": ["raccoon", "beaver"],
-                        "description": "Which creature to run: 'raccoon' (opus) or 'beaver' (sonnet). Defaults to wolt's default model.",
+                        "enum": ["raccoon", "beaver", "otter"],
+                        "description": "Which creature to run: 'raccoon' (opus), 'beaver' (sonnet), or 'otter' (haiku — fast tasks). Defaults to wolt's default model.",
                     },
                     "project": {
                         "type": "string",

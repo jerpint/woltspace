@@ -172,7 +172,7 @@ def format_response(result: dict) -> str:
     return f"🐶 {wolt_name}: {text}"
 
 
-CREATURE_EMOJIS = {"raccoon": "🦝", "beaver": "🦫"}
+CREATURE_EMOJIS = {"raccoon": "🦝", "beaver": "🦫", "otter": "🦦"}
 
 
 def _format_tool_log(tc: dict) -> str:
