@@ -7,60 +7,6 @@ description: Set up and manage scheduled cron jobs. Use when the user wants to r
 
 The wolf manages scheduled tasks. When a cron fires, the wolf sends an immediate notification and executes the action.
 
-## How it works — at a glance
-
-```
-                        wolt/wolf.json
-                        ┌─────────────────────────┐
-                        │ { "crons": [             │
-                        │   { name, schedule,      │
-                        │     action, notify }     │
-                        │ ] }                      │
-                        └────────────┬────────────┘
-                                     │
-                                     │ reads every 30s
-                                     ▼
-                              ┌──────────────┐
-                              │  🐺 wolf.py  │
-                              │  (background) │
-                              └──────┬───────┘
-                                     │
-                    ┌────────────────┼────────────────┐
-                    │                │                │
-               cron matches?    idempotent?      fire action
-               (cron parser)   (last-run check)      │
-                    │                │                │
-                    │         .state/wolf/       ┌────┴────┐
-                    │         {name}.last        │         │
-                    │                       ┌────┴──┐  ┌──┴────┐
-                    │                       │notify │  │action │
-                    │                       │  🐺   │  │       │
-                    │                       └───┬───┘  └───┬───┘
-                    │                           │          │
-                    │                      telegram/   ┌───┼───────┐
-                    │                      slack       │   │       │
-                    │                                  │   │       │
-                    │                              script session skill
-                    │                              (shell)(claude)(skill)
-                    │
-                    │
-        ┌───────────┴───────────────────────────┐
-        │  Dog integration (haiku bot)          │
-        │                                       │
-        │  wolf_schedules → check what's set up │
-        │  fire_wolf      → trigger by name     │
-        │  creature=wolf  → spawn wolf session  │
-        │                   for interactive     │
-        │                   cron setup          │
-        └───────────────────────────────────────┘
-```
-
-**The loop:** wolf.json → wolf reads it → cron matches? → already fired this minute? → no → notify 🐺 → run action
-
-**Dog knows about wolves:** `wolf_schedules` tool checks crons, `fire_wolf` triggers one on demand, and dog can spawn a wolf session (`creature="wolf"`) to help users configure their schedules interactively.
-
----
-
 ## Setting up a cron
 
 Create or edit `wolt/wolf.json` in the wolt directory:
@@ -106,7 +52,7 @@ Create or edit `wolt/wolf.json` in the wolt directory:
 | `timezone` | no | IANA timezone (default: system timezone) |
 | `command` | script | Shell command to run |
 | `prompt` | session/skill | Prompt for Claude Code session |
-| `creature` | session/skill | `beaver` (default), `raccoon`, or `otter` |
+| `creature` | session/skill | `beaver` (default) or `raccoon` |
 | `skill` | skill | Skill name to invoke |
 
 ## Cron expression format
@@ -154,11 +100,11 @@ python -m creatures.wolf --fire NAME    # Fire a specific cron by name (ignores 
 python -m creatures.wolf                # Run as background service (auto-started by entrypoint)
 ```
 
-## Files
+## How it works
 
-```
-container/creatures/wolf.py       — the scheduler (background service)
-wolt/wolf.json                    — schedule config (per wolt)
-.state/wolf/{name}.last           — last-run timestamps (idempotency)
-container/skills/wolf/SKILL.md    — this file
-```
+- Wolf reads `wolt/wolf.json` every 30 seconds
+- When a cron matches the current time, wolf fires it (idempotent — won't double-fire within the same minute)
+- Notifications go via 🐺 through the existing notify pipeline
+- Last-run timestamps stored in `.state/wolf/{name}.last`
+- Wolf starts automatically when `wolt/wolf.json` exists (entrypoint checks)
+- To add a new cron, just edit wolf.json — wolf picks it up on next check
