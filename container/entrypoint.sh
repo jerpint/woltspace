@@ -19,11 +19,16 @@ if [ ! -d "$WOLTSPACE_DIR/node_modules" ]; then
 fi
 if [ ! -d "$WOLTSPACE_DIR/container/bot/.venv" ]; then
   echo "dev mode: installing python deps..."
-  (cd "$WOLTSPACE_DIR" && uv sync --project container/bot/pyproject.toml)
+  (cd "$WOLTSPACE_DIR" && uv sync --project container/bot)
 fi
 if [ ! -d "$WOLTSPACE_DIR/server/.venv" ]; then
   echo "dev mode: installing python server deps..."
   (cd "$WOLTSPACE_DIR" && uv sync --project server)
+fi
+# Worktui: reinstall if node_modules wiped
+if [ -d /home/node/worktui ] && [ ! -d /home/node/worktui/node_modules ]; then
+  echo "dev mode: installing worktui deps..."
+  (cd /home/node/worktui && bun install)
 fi
 
 # Resolve active wolt directory
@@ -71,6 +76,11 @@ wolt() {
   fi
 }
 NWEOF
+
+# Source worktui shell wrapper (wt command)
+if [ -f /home/node/worktui/wt.sh ]; then
+  echo "source /home/node/worktui/wt.sh" >> /home/node/.bashrc
+fi
 
 # Write OAuth token to credentials file so claude CLI picks it up
 if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
@@ -134,8 +144,9 @@ git config --global user.name "${WOLT_NAME}"
 git config --global user.email "${WOLT_NAME}@woltspace.com"
 
 # Mark mounts as safe (owned by different uid on host)
-git config --global --add safe.directory "$WOLT_DIR"
-git config --global --add safe.directory "$WOLTSPACE_DIR"
+# '*' trusts all directories — safe in a sandboxed container,
+# and required for worktui worktrees created under the mount
+git config --global --add safe.directory '*'
 
 # Create a default tmux session (survives browser disconnects + server restarts)
 tmux new-session -d -s main -c "$WOLT_DIR" 2>/dev/null || true
