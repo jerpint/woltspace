@@ -25,6 +25,7 @@ if [ -f /home/node/.claude/.first-run ]; then
   rm /home/node/.claude/.first-run
   tmux send-keys -t main "claude --dangerously-skip-permissions /create-wolt" Enter
 else
+  # TODO: replace with a /wake skill instead of hardcoded greeting
   tmux send-keys -t main "claude --dangerously-skip-permissions \"hey ${WOLT_NAME}\"" Enter
 fi
 
