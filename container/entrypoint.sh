@@ -12,13 +12,16 @@ source "$ENV_FILE"
 rm -f "$ENV_FILE"
 export WOLT_NAME WOLT_DIR DEV_MODE WOLF_CONFIG PYTHONPATH PATH
 
+# ── Reconcile stale sessions from previous boot ──
+python3 -c "from sessions import SessionRegistry; SessionRegistry.reconcile()" 2>/dev/null || true
+
 # ── tmux ──
 tmux new-session -d -s main -c "$WOLT_DIR" 2>/dev/null || true
 if [ -f /home/node/.claude/.first-run ]; then
   rm /home/node/.claude/.first-run
   tmux send-keys -t main "claude --dangerously-skip-permissions /create-wolt" Enter
 else
-  # TODO: replace with a /wake skill instead of hardcoded greeting
+  # TODO: replace with a /wake skill — check for recent sessions, offer resume or fresh start
   tmux send-keys -t main "claude --dangerously-skip-permissions \"hey ${WOLT_NAME}\"" Enter
 fi
 
