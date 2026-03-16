@@ -288,11 +288,30 @@ OVERALL: [SAFE TO PROCEED | NEEDS ATTENTION — list blockers]
 
 > **Only run this after the maintainer has reviewed the Phase 1 audit report and given explicit approval.**
 
-### 2.1 Back up wolts directory
+### 2.1 Snapshot the running container
+
+Before touching anything, save an image of the current container. This captures the entire runtime — code, deps, drift, everything. If migration goes wrong, you can spin this back up exactly as it was.
+
+```bash
+echo "=== CONTAINER SNAPSHOT ==="
+if docker ps -a --format '{{.Names}}' | grep -q '^woltspace$'; then
+  docker commit woltspace woltspace-backup:pre-migration
+  echo "  Saved: woltspace-backup:pre-migration"
+  docker image inspect woltspace-backup:pre-migration --format '  Size: {{.Size}}  Created: {{.Created}}'
+else
+  echo "  No container to snapshot (skipping)"
+fi
+```
+
+### 2.2 Back up wolts directory
+
+The wolts dir has all your data — identity, memory, site, sparks, .env. The container snapshot has the runtime. Belt and suspenders.
 
 ```bash
 WOLTS_DIR="${WOLTS_DIR:-$HOME/wolts}"
-BACKUP_DIR="$HOME/wolts-backup-$(date +%Y%m%d-%H%M%S)"
+BACKUP_NAME="wolts-backup-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$HOME/.woltspace"
+BACKUP_DIR="$HOME/.woltspace/$BACKUP_NAME"
 
 echo "Backing up $WOLTS_DIR → $BACKUP_DIR"
 cp -a "$WOLTS_DIR" "$BACKUP_DIR"
@@ -310,13 +329,13 @@ for d in "$BACKUP_DIR"/*/wolt; do
 done
 
 echo ""
-echo "Backup location: $BACKUP_DIR"
+echo "Backup: $BACKUP_DIR"
 echo "KEEP THIS until you've confirmed the migration works."
 ```
 
 **Verify sizes match before continuing.**
 
-### 2.2 Handle repo drift (if any found in audit)
+### 2.3 Handle repo drift (if any found in audit)
 
 If the Phase 1 audit found uncommitted changes in the woltspace repo:
 
@@ -332,18 +351,33 @@ git checkout main
 
 If the audit found the repo was **clean**, skip this step.
 
-### 2.3 Stop the container
+### 2.4 Stop the container
 
 ```bash
 docker stop woltspace 2>/dev/null
 docker rm woltspace 2>/dev/null
 ```
 
-### 2.4 Update .env
+### 2.5 Move wolts to new location
+
+The new default is `~/.woltspace/wolts`. Move your wolts there so the CLI finds them without env vars or symlinks.
 
 ```bash
 WOLTS_DIR="${WOLTS_DIR:-$HOME/wolts}"
-ENV_FILE="$WOLTS_DIR/.env"
+
+# Move to new location (backup is already saved in 2.2)
+mkdir -p "$HOME/.woltspace"
+mv "$WOLTS_DIR" "$HOME/.woltspace/wolts"
+
+# Verify
+ls "$HOME/.woltspace/wolts"/*/wolt/wolt.json
+echo "Wolts moved to ~/.woltspace/wolts"
+```
+
+### 2.6 Update .env
+
+```bash
+ENV_FILE="$HOME/.woltspace/wolts/.env"
 
 # Rename tunnel variable (preserves the value)
 if grep -q 'ENABLE_TUNNEL' "$ENV_FILE" 2>/dev/null; then
@@ -351,63 +385,30 @@ if grep -q 'ENABLE_TUNNEL' "$ENV_FILE" 2>/dev/null; then
   echo "Renamed ENABLE_TUNNEL → WOLTSPACE_PUBLIC_TUNNEL"
 fi
 
+# If neither tunnel var exists, add one explicitly
+if ! grep -q 'WOLTSPACE_PUBLIC_TUNNEL' "$ENV_FILE" 2>/dev/null; then
+  echo "" >> "$ENV_FILE"
+  echo "# Public tunnel (set false to use http://localhost:7777 only)" >> "$ENV_FILE"
+  echo "WOLTSPACE_PUBLIC_TUNNEL=true" >> "$ENV_FILE"
+  echo "Added WOLTSPACE_PUBLIC_TUNNEL=true (edit to =false if you want local only)"
+fi
+
 # Update port references in comments
 sed -i 's/localhost:4444/localhost:7777/g' "$ENV_FILE" 2>/dev/null
 
-# Verify the tunnel setting
+# Verify
 echo "Tunnel setting:"
-grep 'TUNNEL' "$ENV_FILE" || echo "  NONE — will default to public tunnel enabled"
+grep 'WOLTSPACE_PUBLIC_TUNNEL' "$ENV_FILE"
 ```
 
-### 2.5 Set WOLTS_DIR for the new CLI
-
-Choose one approach based on the maintainer's recommendation:
-
-**Option A: Keep wolts at `~/wolts` (set env var)**
-```bash
-# Detect the user's shell rc file
-SHELL_RC=""
-case "$(basename "$SHELL")" in
-  zsh)  SHELL_RC="$HOME/.zshrc" ;;
-  bash) [ -f "$HOME/.bash_profile" ] && SHELL_RC="$HOME/.bash_profile" || SHELL_RC="$HOME/.bashrc" ;;
-esac
-
-if [ -n "$SHELL_RC" ]; then
-  # Check if already set
-  if ! grep -q 'export WOLTS_DIR=' "$SHELL_RC" 2>/dev/null; then
-    echo '' >> "$SHELL_RC"
-    echo '# woltspace — keep wolts at old location' >> "$SHELL_RC"
-    echo 'export WOLTS_DIR="$HOME/wolts"' >> "$SHELL_RC"
-    echo "Added WOLTS_DIR to $SHELL_RC"
-  else
-    echo "WOLTS_DIR already in $SHELL_RC"
-  fi
-  export WOLTS_DIR="$HOME/wolts"
-fi
-```
-
-**Option B: Symlink**
-```bash
-mkdir -p "$HOME/.woltspace"
-ln -s "$HOME/wolts" "$HOME/.woltspace/wolts"
-echo "Symlinked ~/wolts → ~/.woltspace/wolts"
-```
-
-**Option C: Move**
-```bash
-mkdir -p "$HOME/.woltspace"
-mv "$HOME/wolts" "$HOME/.woltspace/wolts"
-echo "Moved ~/wolts → ~/.woltspace/wolts"
-```
-
-### 2.6 Update and rebuild
+### 2.7 Update and rebuild
 
 ```bash
 cd /path/to/woltspace
 
 # Ensure clean working tree
 git status --short
-# Should be empty (drift was handled in 2.2)
+# Should be empty (drift was handled in 2.3)
 
 # Switch to new branch
 git fetch origin
@@ -418,7 +419,7 @@ git pull origin refactor-init
 woltspace rebuild
 ```
 
-### 2.7 Post-migration validation
+### 2.8 Post-migration validation
 
 ```bash
 echo "=== POST-MIGRATION CHECK ==="
@@ -442,17 +443,21 @@ docker exec woltspace printenv WOLT_NAME 2>/dev/null || echo "NOT SET"
 
 # Tunnel
 echo -n "Tunnel: "
-TUNNEL_URL=$(cat "${WOLTS_DIR:-$HOME/.woltspace/wolts}/.state/tunnel-url" 2>/dev/null)
+TUNNEL_URL=$(cat "$HOME/.woltspace/wolts/.state/tunnel-url" 2>/dev/null)
 if [ -n "$TUNNEL_URL" ]; then
   echo "$TUNNEL_URL"
 else
   echo "none (expected if disabled)"
 fi
 
+# Backup reminder
 echo ""
-echo "If everything above looks correct, the migration is complete."
-echo "Your backup is at: $BACKUP_DIR"
-echo "Keep it until you're confident everything works."
+echo "Migration complete. Your backups:"
+echo "  Container image: woltspace-backup:pre-migration"
+echo "  Wolts data: ~/.woltspace/$BACKUP_NAME"
+echo ""
+echo "Keep these until you're confident everything works."
+echo "To remove later: docker rmi woltspace-backup:pre-migration && rm -rf ~/.woltspace/$BACKUP_NAME"
 ```
 
 ---
@@ -466,16 +471,23 @@ If anything went wrong at any point:
 docker stop woltspace 2>/dev/null
 docker rm woltspace 2>/dev/null
 
+# Option A: Restore from container snapshot (fastest — gets you the exact runtime back)
+docker run -d --name woltspace \
+  -v "$HOME/.woltspace/wolts:/workspace/wolts:rw" \
+  -v "$HOME/.woltspace/wolts/.claude:/home/node/.claude:rw" \
+  -p 4444:3000 \
+  woltspace-backup:pre-migration
+# Note: if you moved wolts, the mount path changed. Adjust or move wolts back first.
+
+# Option B: Full restore to pre-migration state
+# Move wolts back to old location
+mv "$HOME/.woltspace/wolts" "$HOME/wolts"
+# Or restore from backup if wolts were corrupted:
+# cp -a "$HOME/.woltspace/wolts-backup-XXXXXXXX/." "$HOME/wolts/"
+
 # Switch woltspace back to main
 cd /path/to/woltspace
 git checkout main
-
-# Restore from backup (use the actual backup path)
-BACKUP_DIR="$HOME/wolts-backup-XXXXXXXX"
-# If you moved wolts (Option C), move them back:
-# mv "$HOME/.woltspace/wolts" "$HOME/wolts"
-# Or restore from backup:
-cp -a "$BACKUP_DIR/." "${WOLTS_DIR:-$HOME/wolts}/"
 
 # Rebuild on main
 woltspace rebuild
