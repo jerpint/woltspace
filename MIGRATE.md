@@ -302,7 +302,7 @@ This creates:
 
 The command prints a restore snippet at the end — save it. **Keep both until you've confirmed the migration works.**
 
-### 2.3 Handle repo drift (if any found in audit)
+### 2.2 Handle repo drift (if any found in audit)
 
 If the Phase 1 audit found uncommitted changes in the woltspace repo:
 
@@ -318,21 +318,21 @@ git checkout main
 
 If the audit found the repo was **clean**, skip this step.
 
-### 2.4 Stop the container
+### 2.3 Stop the container
 
 ```bash
 docker stop woltspace 2>/dev/null
 docker rm woltspace 2>/dev/null
 ```
 
-### 2.5 Move wolts to new location
+### 2.4 Move wolts to new location
 
 The new default is `~/.woltspace/wolts`. Move your wolts there so the CLI finds them without env vars or symlinks.
 
 ```bash
 WOLTS_DIR="${WOLTS_DIR:-$HOME/wolts}"
 
-# Move to new location (backup is already saved in 2.2)
+# Move to new location (backup is already saved in 2.1)
 mkdir -p "$HOME/.woltspace"
 mv "$WOLTS_DIR" "$HOME/.woltspace/wolts"
 
@@ -341,14 +341,15 @@ ls "$HOME/.woltspace/wolts"/*/wolt/wolt.json
 echo "Wolts moved to ~/.woltspace/wolts"
 ```
 
-### 2.6 Update .env
+### 2.5 Update .env
 
 ```bash
 ENV_FILE="$HOME/.woltspace/wolts/.env"
 
 # Rename tunnel variable (preserves the value)
 if grep -q 'ENABLE_TUNNEL' "$ENV_FILE" 2>/dev/null; then
-  sed -i.bak 's/ENABLE_TUNNEL/WOLTSPACE_PUBLIC_TUNNEL/g' "$ENV_FILE"
+  sed -i '' 's/ENABLE_TUNNEL/WOLTSPACE_PUBLIC_TUNNEL/g' "$ENV_FILE" 2>/dev/null || \
+  sed -i 's/ENABLE_TUNNEL/WOLTSPACE_PUBLIC_TUNNEL/g' "$ENV_FILE"
   echo "Renamed ENABLE_TUNNEL → WOLTSPACE_PUBLIC_TUNNEL"
 fi
 
@@ -368,25 +369,24 @@ echo "Tunnel setting:"
 grep 'WOLTSPACE_PUBLIC_TUNNEL' "$ENV_FILE"
 ```
 
-### 2.7 Update and rebuild
+### 2.6 Update and rebuild
 
 ```bash
 cd /path/to/woltspace
 
 # Ensure clean working tree
 git status --short
-# Should be empty (drift was handled in 2.3)
+# Should be empty (drift was handled in 2.2)
 
-# Switch to new branch
-git fetch origin
-git checkout refactor-init
-git pull origin refactor-init
+# Pull latest main (which now includes the refactor)
+git checkout main
+git pull origin main
 
 # Rebuild
 woltspace rebuild
 ```
 
-### 2.8 Post-migration validation
+### 2.7 Post-migration validation
 
 ```bash
 echo "=== POST-MIGRATION CHECK ==="
@@ -421,10 +421,10 @@ fi
 echo ""
 echo "Migration complete. Your backups:"
 echo "  Container image: woltspace-backup:pre-migration"
-echo "  Wolts data: ~/.woltspace/$BACKUP_NAME"
+echo "  Wolts data: ~/.woltspace/wolts-backup-pre-migration"
 echo ""
 echo "Keep these until you're confident everything works."
-echo "To remove later: docker rmi woltspace-backup:pre-migration && rm -rf ~/.woltspace/$BACKUP_NAME"
+echo "To remove later: docker rmi woltspace-backup:pre-migration && rm -rf ~/.woltspace/wolts-backup-pre-migration"
 ```
 
 ---
@@ -441,6 +441,7 @@ docker rm woltspace 2>/dev/null
 # Option A: Restore from snapshot (fastest — exact runtime from before migration)
 docker run -d --name woltspace \
   -v "$HOME/.woltspace/wolts-backup-pre-migration:/workspace/wolts:rw" \
+  -v "$HOME/.woltspace/wolts-backup-pre-migration/.claude:/home/node/.claude:rw" \
   -p 7777:7777 \
   woltspace-backup:pre-migration
 
@@ -457,7 +458,7 @@ woltspace rebuild
 
 # Verify old setup works
 docker ps --filter name=woltspace
-curl -s http://localhost:7777/
+curl -s http://localhost:4444/  # old port
 ```
 
 ---
