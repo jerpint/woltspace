@@ -59,15 +59,27 @@ RUN git clone https://github.com/jerpint/worktui.git /home/node/worktui \
     && cd /home/node/worktui && bun install
 ENV WORKTUI_DIR="/workspace/wolts/.worktui"
 
-# --- App source: git clone ---
-# Branch is configurable via build arg (default: main)
-# In --dev mode, this gets shadowed by a host mount anyway
+# --- App source ---
+# Two paths, same result:
+#   --branch X  → git clone from github (default: main)
+#   --local     → COPY from build context (local repo)
+ARG USE_LOCAL=false
 ARG WOLTSPACE_BRANCH=main
-RUN git clone --branch ${WOLTSPACE_BRANCH} --single-branch --depth 1 \
-    https://github.com/jerpint/woltspace.git /workspace/woltspace
+
+# Clone from github (default path)
+RUN if [ "$USE_LOCAL" = "false" ]; then \
+      git clone --branch ${WOLTSPACE_BRANCH} --single-branch --depth 1 \
+        https://github.com/jerpint/woltspace.git /workspace/woltspace; \
+    fi
+
+# Copy local source (only meaningful when --local)
+COPY --chown=node:node . /tmp/local-src/
+RUN if [ "$USE_LOCAL" = "true" ]; then \
+      cp -r /tmp/local-src/. /workspace/woltspace/; \
+    fi; rm -rf /tmp/local-src
 
 # Stamp the version into the image
-RUN cd /workspace/woltspace && git rev-parse --short HEAD > /etc/woltspace-version
+RUN cd /workspace/woltspace && git rev-parse --short HEAD > /workspace/woltspace/.version 2>/dev/null || echo "local" > /workspace/woltspace/.version
 
 WORKDIR /workspace/woltspace
 

@@ -13,7 +13,7 @@
 #
 # Flags:
 #   --branch <name>   — build image from a specific branch (default: main)
-#   --local           — mount local repo into container (hot reload)
+#   --local           — build image from local repo instead of git clone
 #
 # All state lives under ~/.woltspace/wolts (overridable via WOLTS_DIR).
 # The container is disposable — ~/wolts is the backup.
@@ -30,8 +30,8 @@ WOLTS_DIR="${WOLTS_DIR/#\~/$HOME}"
 CONTAINER_NAME="woltspace"
 cmd="${1:-start}"
 
-# Parse flags
-LOCAL_MOUNT=false
+# Parse flags: --local, --branch <name>
+LOCAL_BUILD=false
 BUILD_BRANCH="main"
 _next=""
 for arg in "$@"; do
@@ -39,7 +39,7 @@ for arg in "$@"; do
     BUILD_BRANCH="$arg"
     _next=""
   elif [ "$arg" = "--local" ]; then
-    LOCAL_MOUNT=true
+    LOCAL_BUILD=true
   elif [ "$arg" = "--branch" ]; then
     _next=branch
   fi
@@ -52,30 +52,31 @@ _A=$'\033[0;33m'; _C=$'\033[0;36m'
 # --- Helpers ---
 
 _build_image() {
-  local branch="${1:-main}"
-  echo "  building woltspace image (branch: $branch)..."
-  echo ""
-  docker build -t woltspace \
-    --build-arg WOLTSPACE_BRANCH="$branch" \
-    -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR/container"
+  if [ "$LOCAL_BUILD" = true ]; then
+    echo "  building woltspace image (local)..."
+    echo ""
+    docker build -t woltspace \
+      --build-arg USE_LOCAL=true \
+      -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR"
+  else
+    echo "  building woltspace image (branch: $BUILD_BRANCH)..."
+    echo ""
+    docker build -t woltspace \
+      --build-arg WOLTSPACE_BRANCH="$BUILD_BRANCH" \
+      -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR/container"
+  fi
 }
 
 _start_container() {
   local wolt_name="${1:-}"
   docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
-  local env_file="$WOLTS_DIR/.env"
   local extra_args=""
-  [ -n "$wolt_name" ] && extra_args="$extra_args -e WOLT_NAME=$wolt_name"
-  # --local: mount local repo over the git clone for hot reload
-  if [ "$LOCAL_MOUNT" = true ]; then
-    echo "  local mount: $WOLTSPACE_DIR → /workspace/woltspace"
-    extra_args="$extra_args -v $WOLTSPACE_DIR:/workspace/woltspace:rw"
-  fi
+  [ -n "$wolt_name" ] && extra_args="-e WOLT_NAME=$wolt_name"
 
   docker run -d \
     --name "$CONTAINER_NAME" \
-    --env-file "$env_file" \
+    --env-file "$WOLTS_DIR/.env" \
     -v "$WOLTS_DIR:/workspace/wolts:rw" \
     -p 7777:7777 \
     $extra_args \
@@ -185,7 +186,7 @@ if [ "$cmd" = "init" ]; then
     echo "  found existing wolts at $WOLTS_DIR:"
     _list_wolt_names | while read -r w; do echo "    · $w"; done
     echo ""
-    _build_image "$BUILD_BRANCH"
+    _build_image
     _start_container
     _show_url
     echo "  open the link above in your browser."
@@ -225,7 +226,7 @@ if [ "$cmd" = "init" ]; then
   [ ! -f "$WOLTS_DIR/.env" ] && cp "$WOLTSPACE_DIR/.env.example" "$WOLTS_DIR/.env"
 
   # Build + start — container handles wolt scaffolding on first boot
-  _build_image "$BUILD_BRANCH"
+  _build_image
   _start_container "$NAME"
   _show_url
 
@@ -286,7 +287,7 @@ case "$cmd" in
   rebuild)
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
     rm -f "$WOLTS_DIR/.state/tunnel-url"
-    _build_image "$BUILD_BRANCH"
+    _build_image
     _start_container
     _show_url
     echo "  open the link above in your browser."
@@ -301,7 +302,7 @@ case "$cmd" in
     else
       # Build image if it doesn't exist
       if ! docker image inspect woltspace &>/dev/null; then
-        _build_image "$BUILD_BRANCH"
+        _build_image
       fi
       _start_container
       _show_url

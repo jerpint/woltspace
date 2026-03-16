@@ -1,15 +1,9 @@
 #!/bin/bash
-# Entrypoint: install deps (dev mode), run Python setup, start services.
+# Entrypoint: run Python setup, start services.
 set -e
 
 WOLTSPACE_DIR="/workspace/woltspace"  # mount point inside the container
 WOLTS_DIR="${WOLTS_DIR:-/workspace/wolts}"
-
-# ── Dev-mode dep installs (mounts wipe node_modules/.venv) ──
-[ ! -d "$WOLTSPACE_DIR/node_modules" ] && echo "dev: node deps..." && (cd "$WOLTSPACE_DIR" && npm install && npm install ws node-pty)
-[ ! -d "$WOLTSPACE_DIR/container/bot/.venv" ] && echo "dev: bot deps..." && (cd "$WOLTSPACE_DIR" && uv sync --project container/bot)
-[ ! -d "$WOLTSPACE_DIR/server/.venv" ] && echo "dev: server deps..." && (cd "$WOLTSPACE_DIR" && uv sync --project server)
-[ -d /home/node/worktui ] && [ ! -d /home/node/worktui/node_modules ] && echo "dev: worktui deps..." && (cd /home/node/worktui && bun install)
 
 # ── Python setup (config, identity, JSON files, env resolution) ──
 ENV_FILE=$(mktemp /tmp/entrypoint-env.XXXXXX)
