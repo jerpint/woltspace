@@ -30,7 +30,8 @@ CONTAINER_NAME="woltspace"
 cmd="${1:-start}"
 
 # Parse flags: --local, --branch <name>
-LOCAL_BUILD=false
+# WOLTSPACE_LOCAL=true is equivalent to --local (sticky dev mode)
+LOCAL_BUILD="${WOLTSPACE_LOCAL:-false}"
 BUILD_BRANCH="main"
 _next=""
 for arg in "$@"; do
@@ -297,6 +298,7 @@ case "$cmd" in
     ;;
   start)
     printf "\n  %b🦫%b  %b\n\n" "${_A}" "${_R}" "${_B}${_G}woltspace${_R}"
+    [ "$LOCAL_BUILD" = true ] && printf "  %b[local dev mode]%b\n\n" "${_A}" "${_R}"
 
     if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
       echo "  already running."
