@@ -15,7 +15,7 @@
 | Internal port | `3000` | `7777` | Container-internal references break |
 | Tunnel env var | `ENABLE_TUNNEL` | `WOLTSPACE_PUBLIC_TUNNEL` | **SECURITY** — disabled tunnel may re-enable |
 | Dev mode flag | `--dev` | `--local` / `--branch` | Workflow change |
-| Woltspace in container | Mounted from host (`-v`) | Baked into image (git clone) | `/update` skill stops working |
+| Woltspace in container | Mounted from host (`-v`) | Git clone inside image | `/update` still works; image goes stale until rebuild |
 
 ---
 
@@ -496,12 +496,12 @@ ENABLE_TUNNEL=false            → WOLTSPACE_PUBLIC_TUNNEL=false
 woltspace start --dev          → woltspace start --local
 woltspace rebuild --dev        → woltspace rebuild --local
 woltspace restart              → woltspace stop && woltspace start
-/update (inside container)     → git pull && woltspace rebuild (on host)
+/update (inside container)     → still works (git pull inside clone)
 ```
 
 ## Known limitations after migration
 
-1. **`/update` skill doesn't work** — platform code is baked into the image. Update from host: `git pull && woltspace rebuild`.
-2. **No live-reload of platform code** — changes require `woltspace rebuild --local`. Wolts can no longer accidentally modify platform code.
-3. **Dev mode changed** — `--local` builds from local repo into the image (COPY, not mount). More rebuilds, better isolation.
+1. **Image goes stale after in-app updates** — `/update` still works (the container has a git clone), but after pulling, the Docker image is stale vs the running container. Run `woltspace rebuild` from the host to re-bake the image for future cold starts (not required for the current session).
+2. **No live-mount of platform code** — on `main`, woltspace was mounted from the host so edits were instant. Now it's a clone inside the container. For iterative platform development, use `--local` builds.
+3. **Dev mode changed** — `--local` builds from your local repo into the image (COPY, not mount). More rebuilds, better isolation.
 4. **Deploy key mount removed** — use `GH_PAT_TOKEN` in `.env` instead of SSH deploy keys.
