@@ -1,10 +1,8 @@
 # Woltspace Migration Guide: main → refactor-init
 
-> **Audience:** This document is for a Claude session (or human) running on the **host machine**, outside the container. Copy-paste this entire file into a local Claude session and ask it to walk you through the migration.
+> **Audience:** A Claude session (or human) running on the **host machine**, outside the container. Copy-paste this entire file into a local Claude session.
 >
-> **Goal:** Safely migrate an existing woltspace installation from `main` to the new `refactor-init` architecture without losing data.
->
-> **Safety principle:** Back up first, validate everything, only proceed when clean.
+> **How this works:** Two phases. Phase 1 is a **read-only audit** — it touches nothing, modifies nothing, stops nothing. It produces a report. You send that report to the project maintainer for review. Only after approval do you run Phase 2, which performs the actual migration.
 
 ---
 
@@ -12,259 +10,456 @@
 
 | Area | main (old) | refactor-init (new) | Risk |
 |------|-----------|---------------------|------|
-| Wolts directory | `~/wolts` | `~/.woltspace/wolts` | **HIGH** — CLI can't find existing wolts |
+| Wolts directory | `~/wolts` | `~/.woltspace/wolts` | **HIGH** — CLI won't find existing wolts |
 | Host port | `4444` | `7777` | Bookmarks/scripts break |
 | Internal port | `3000` | `7777` | Container-internal references break |
 | Tunnel env var | `ENABLE_TUNNEL` | `WOLTSPACE_PUBLIC_TUNNEL` | **SECURITY** — disabled tunnel may re-enable |
 | Dev mode flag | `--dev` | `--local` / `--branch` | Workflow change |
 | Woltspace in container | Mounted from host (`-v`) | Baked into image (git clone) | `/update` skill stops working |
-| Container name | Hardcoded `woltspace` | `$WOLTSPACE_CONTAINER` (default: `woltspace`) | No risk |
 
 ---
 
-## Step-by-step migration
+## Phase 1: Read-only audit
 
-### Step 0: Pre-flight checks
+**This phase touches NOTHING. No files are modified, no containers are stopped, no backups are created.** It only reads and reports.
 
-Before touching anything, confirm the current state:
+Run every command below and compile the results into a single report.
+
+### 1.1 Locate wolts
 
 ```bash
-# Where are your wolts?
-echo "WOLTS_DIR: ${WOLTS_DIR:-~/wolts}"
-ls "${WOLTS_DIR:-$HOME/wolts}"/*/wolt/wolt.json 2>/dev/null
+# Check the default locations and the env var
+echo "=== WOLTS LOCATION ==="
+echo "WOLTS_DIR env: ${WOLTS_DIR:-<not set>}"
+echo ""
 
-# Is the container running?
-docker ps --filter name=woltspace --format '{{.Names}} {{.Status}}'
+# Check old default location (main)
+if [ -d "$HOME/wolts" ]; then
+  echo "~/wolts EXISTS"
+  echo "  Wolts found:"
+  for d in "$HOME/wolts"/*/wolt; do
+    [ -d "$d" ] && echo "    $(basename $(dirname $d))"
+  done
+  echo "  Size: $(du -sh "$HOME/wolts" 2>/dev/null | cut -f1)"
+  echo "  .env: $([ -f "$HOME/wolts/.env" ] && echo 'present' || echo 'MISSING')"
+  echo "  woltspace.json: $([ -f "$HOME/wolts/woltspace.json" ] && echo 'present' || echo 'MISSING')"
+else
+  echo "~/wolts DOES NOT EXIST"
+fi
+echo ""
 
-# What branch is your woltspace repo on?
-cd /path/to/woltspace && git branch --show-current
-
-# What port is currently mapped?
-docker port woltspace 2>/dev/null
+# Check new default location (refactor-init)
+if [ -d "$HOME/.woltspace/wolts" ]; then
+  echo "~/.woltspace/wolts EXISTS (new location already has data)"
+  ls "$HOME/.woltspace/wolts"/*/wolt/wolt.json 2>/dev/null
+else
+  echo "~/.woltspace/wolts does not exist (expected for pre-migration)"
+fi
 ```
 
-**Record these values.** You'll need them if anything goes wrong.
+### 1.2 Container state
+
+```bash
+echo "=== CONTAINER STATE ==="
+# Running containers
+echo "Running:"
+docker ps --filter name=woltspace --format '  {{.Names}}  {{.Status}}  ports={{.Ports}}' 2>/dev/null || echo "  (docker not available)"
+echo ""
+
+# Stopped containers
+echo "Stopped:"
+docker ps -a --filter name=woltspace --filter status=exited --format '  {{.Names}}  {{.Status}}' 2>/dev/null || echo "  (none)"
+echo ""
+
+# Port mapping
+echo "Port mapping:"
+docker port woltspace 2>/dev/null || echo "  (no running container)"
+echo ""
+
+# Image info
+echo "Image:"
+docker image inspect woltspace --format '  Created: {{.Created}}  Size: {{.Size}}' 2>/dev/null || echo "  (no woltspace image)"
+```
+
+### 1.3 Woltspace repo state
+
+```bash
+echo "=== WOLTSPACE REPO ==="
+
+# Find the repo — check common locations
+WOLTSPACE_REPO=""
+for candidate in "$HOME/woltspace" "$HOME/.woltspace/woltspace" "/workspace/woltspace" "$(dirname $(which woltspace 2>/dev/null))"; do
+  if [ -d "$candidate/.git" ] || [ -f "$candidate/woltspace" ]; then
+    WOLTSPACE_REPO="$candidate"
+    break
+  fi
+done
+
+if [ -z "$WOLTSPACE_REPO" ]; then
+  echo "Could not find woltspace repo. Check manually."
+else
+  echo "Repo location: $WOLTSPACE_REPO"
+  echo "Current branch: $(cd "$WOLTSPACE_REPO" && git branch --show-current)"
+  echo "Last commit: $(cd "$WOLTSPACE_REPO" && git log --oneline -1)"
+  echo ""
+
+  # CRITICAL: check for uncommitted changes (drift from wolts editing platform code)
+  echo "--- Uncommitted changes (drift check) ---"
+  DRIFT=$(cd "$WOLTSPACE_REPO" && git status --short)
+  if [ -z "$DRIFT" ]; then
+    echo "  CLEAN — no drift detected"
+  else
+    echo "  WARNING: uncommitted changes found!"
+    echo "$DRIFT" | while read line; do echo "    $line"; done
+    echo ""
+    echo "  --- Diff of changed files ---"
+    cd "$WOLTSPACE_REPO" && git diff --stat
+    echo ""
+    # Categorize the changes
+    echo "  --- Risk assessment ---"
+    cd "$WOLTSPACE_REPO" && git status --short | while read status file; do
+      case "$file" in
+        container/entrypoint.sh|container/entrypoint_setup.py|server.js|server/*|woltspace)
+          echo "    HIGH RISK: $file — platform infrastructure"
+          ;;
+        container/bot/*|container/creatures/*)
+          echo "    MEDIUM RISK: $file — bot/creature code"
+          ;;
+        container/skills/*|CLAUDE.md|HUMANS.md|*.md)
+          echo "    LOW RISK: $file — skills/docs (likely auto-updated)"
+          ;;
+        *)
+          echo "    UNKNOWN: $file — review manually"
+          ;;
+      esac
+    done
+  fi
+fi
+```
+
+### 1.4 Environment variables
+
+```bash
+echo "=== ENV FILE AUDIT ==="
+WOLTS_DIR="${WOLTS_DIR:-$HOME/wolts}"
+ENV_FILE="$WOLTS_DIR/.env"
+
+if [ ! -f "$ENV_FILE" ]; then
+  echo "No .env file found at $ENV_FILE"
+else
+  echo "Location: $ENV_FILE"
+  echo ""
+
+  # Check for vars that need renaming
+  echo "--- Variables that need migration ---"
+
+  if grep -q 'ENABLE_TUNNEL' "$ENV_FILE" 2>/dev/null; then
+    echo "  RENAME NEEDED: $(grep 'ENABLE_TUNNEL' "$ENV_FILE")"
+    echo "    → should become: $(grep 'ENABLE_TUNNEL' "$ENV_FILE" | sed 's/ENABLE_TUNNEL/WOLTSPACE_PUBLIC_TUNNEL/')"
+    # Check if tunnel was explicitly disabled — security risk if missed
+    if grep -q '^ENABLE_TUNNEL=false' "$ENV_FILE"; then
+      echo "    ⚠ SECURITY: tunnel was DISABLED. If this rename is missed, new code defaults to PUBLIC tunnel ENABLED."
+    fi
+  else
+    echo "  ENABLE_TUNNEL: not found (check if WOLTSPACE_PUBLIC_TUNNEL already set)"
+    if grep -q 'WOLTSPACE_PUBLIC_TUNNEL' "$ENV_FILE"; then
+      echo "    Already migrated: $(grep 'WOLTSPACE_PUBLIC_TUNNEL' "$ENV_FILE")"
+    else
+      echo "    Neither variable found — new code will default to WOLTSPACE_PUBLIC_TUNNEL=true (tunnel ENABLED)"
+    fi
+  fi
+  echo ""
+
+  # Check for port references
+  echo "--- Port references ---"
+  if grep -q '4444\|:3000' "$ENV_FILE"; then
+    echo "  Found old port references:"
+    grep -n '4444\|:3000' "$ENV_FILE" | while read line; do echo "    $line"; done
+  else
+    echo "  No old port references found (OK)"
+  fi
+  echo ""
+
+  # Check required vars are set
+  echo "--- Required variables ---"
+  for var in CLAUDE_CODE_OAUTH_TOKEN; do
+    val=$(grep "^${var}=" "$ENV_FILE" 2>/dev/null | cut -d= -f2-)
+    if [ -n "$val" ] && [ "$val" != "your_oauth_token_here" ]; then
+      echo "  $var: set ($(echo "$val" | cut -c1-8)...)"
+    else
+      echo "  $var: NOT SET or placeholder"
+    fi
+  done
+fi
+```
+
+### 1.5 Port conflicts
+
+```bash
+echo "=== PORT CHECK ==="
+# Check if anything is already on port 7777 (the new port)
+if command -v lsof &>/dev/null; then
+  CONFLICT=$(lsof -i :7777 2>/dev/null | grep LISTEN)
+  if [ -n "$CONFLICT" ]; then
+    echo "  WARNING: port 7777 is already in use!"
+    echo "  $CONFLICT"
+  else
+    echo "  Port 7777: available (OK)"
+  fi
+elif command -v ss &>/dev/null; then
+  CONFLICT=$(ss -tlnp 2>/dev/null | grep ':7777 ')
+  if [ -n "$CONFLICT" ]; then
+    echo "  WARNING: port 7777 is already in use!"
+    echo "  $CONFLICT"
+  else
+    echo "  Port 7777: available (OK)"
+  fi
+else
+  echo "  (cannot check — neither lsof nor ss available)"
+fi
+
+# Check what's on port 4444 (the old port)
+echo ""
+if command -v lsof &>/dev/null; then
+  OLD_PORT=$(lsof -i :4444 2>/dev/null | grep LISTEN)
+  if [ -n "$OLD_PORT" ]; then
+    echo "  Port 4444 (old): still in use — this is the current container"
+  else
+    echo "  Port 4444 (old): free"
+  fi
+fi
+```
+
+### 1.6 Shell profile check
+
+```bash
+echo "=== SHELL PROFILE ==="
+# Check if WOLTS_DIR is already exported in shell config
+for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
+  if [ -f "$rc" ]; then
+    WD=$(grep 'WOLTS_DIR' "$rc" 2>/dev/null)
+    WS=$(grep 'woltspace' "$rc" 2>/dev/null)
+    if [ -n "$WD" ] || [ -n "$WS" ]; then
+      echo "  $(basename $rc):"
+      [ -n "$WD" ] && echo "    WOLTS_DIR: $WD"
+      [ -n "$WS" ] && echo "    woltspace: $WS"
+    fi
+  fi
+done
+echo ""
+echo "  Current PATH woltspace: $(which woltspace 2>/dev/null || echo 'not on PATH')"
+```
+
+### 1.7 Compile the report
+
+After running all the above, compile the results into a single block:
+
+```
+=== MIGRATION AUDIT REPORT ===
+
+Wolts location: [~/wolts | ~/.woltspace/wolts | custom]
+Wolts found: [list of wolt names]
+Wolts size: [size]
+.env present: [yes/no]
+woltspace.json present: [yes/no]
+
+Container: [running on port XXXX | stopped | not found]
+Image: [present, created DATE | not found]
+
+Repo location: [path]
+Repo branch: [main | other]
+Repo drift: [CLEAN | changes found — see details]
+  [if drift: list changed files with risk levels]
+
+Env migration needed:
+  ENABLE_TUNNEL → WOLTSPACE_PUBLIC_TUNNEL: [yes, value=X | no | not set — DEFAULTS TO PUBLIC]
+
+Port 7777: [available | CONFLICT]
+WOLTS_DIR in shell profile: [yes | no — needs adding]
+
+OVERALL: [SAFE TO PROCEED | NEEDS ATTENTION — list blockers]
+```
+
+**Send this report to the maintainer. Do not proceed to Phase 2 until they confirm.**
 
 ---
 
-### Step 1: Back up wolts directory
+## Phase 2: Migration (requires approval)
 
-This is the most important step. Your wolts directory contains all identity, memory, site content, sparks, drafts, .env, and .claude config. Everything else is reconstructible.
+> **Only run this after the maintainer has reviewed the Phase 1 audit report and given explicit approval.**
+
+### 2.1 Back up wolts directory
 
 ```bash
-# Determine current wolts location
 WOLTS_DIR="${WOLTS_DIR:-$HOME/wolts}"
-
-# Create timestamped backup
 BACKUP_DIR="$HOME/wolts-backup-$(date +%Y%m%d-%H%M%S)"
+
+echo "Backing up $WOLTS_DIR → $BACKUP_DIR"
 cp -a "$WOLTS_DIR" "$BACKUP_DIR"
 
-# Verify backup
-echo "Backup created at: $BACKUP_DIR"
+# Verify
 echo "Original size: $(du -sh "$WOLTS_DIR" | cut -f1)"
 echo "Backup size:   $(du -sh "$BACKUP_DIR" | cut -f1)"
 
-# Verify key files exist in backup
+# Verify key files
 for f in "$BACKUP_DIR"/.env "$BACKUP_DIR"/woltspace.json; do
-  [ -f "$f" ] && echo "  OK: $(basename $f)" || echo "  MISSING: $(basename $f)"
+  [ -f "$f" ] && echo "  OK: $(basename $f)" || echo "  WARN: $(basename $f) not in backup"
 done
 for d in "$BACKUP_DIR"/*/wolt; do
   [ -d "$d" ] && echo "  OK: $(basename $(dirname $d))/wolt/"
 done
+
+echo ""
+echo "Backup location: $BACKUP_DIR"
+echo "KEEP THIS until you've confirmed the migration works."
 ```
 
-**Do not proceed until the backup is verified.** If sizes don't match or key files are missing, investigate before continuing.
+**Verify sizes match before continuing.**
 
----
+### 2.2 Handle repo drift (if any found in audit)
 
-### Step 2: Stop the running container
+If the Phase 1 audit found uncommitted changes in the woltspace repo:
+
+```bash
+cd /path/to/woltspace  # use the actual path from the audit
+
+# Save changes to a branch before they're lost
+git checkout -b backup/pre-migration
+git add -A
+git commit -m "pre-migration state — drift from main"
+git checkout main
+```
+
+If the audit found the repo was **clean**, skip this step.
+
+### 2.3 Stop the container
 
 ```bash
 docker stop woltspace 2>/dev/null
 docker rm woltspace 2>/dev/null
 ```
 
----
-
-### Step 3: Check woltspace repo for wolt-caused drift
-
-On `main`, the woltspace repo is mounted read-write into the container. Wolts (or Claude sessions) may have accidentally modified platform files. We need to check.
-
-```bash
-cd /path/to/woltspace  # wherever you cloned it
-
-# Check for uncommitted changes
-git status --short
-```
-
-**Evaluate the output:**
-
-- **Clean (no output):** Safe to proceed.
-- **Changes in `container/skills/`, `CLAUDE.md`, docs:** Likely harmless — skills or docs were auto-updated. Safe to discard with `git checkout -- .` after reviewing.
-- **Changes in `container/entrypoint.sh`, `server.js`, `container/bot/`, `woltspace`:** These are platform code changes. **Do NOT discard without understanding them.** A wolt or Claude session may have patched something important. Review each change:
-
-```bash
-# Review each changed file
-git diff
-
-# If there are changes you want to preserve, stash them
-git stash push -m "pre-migration-changes"
-```
-
-**If you find meaningful changes in platform code:**
-1. Note what was changed and why (check recent Claude session logs if needed)
-2. Stash or commit them to a branch: `git checkout -b backup/pre-migration && git add -A && git commit -m "pre-migration state"`
-3. Return to your working branch: `git checkout main` (or whatever branch you were on)
-
----
-
-### Step 4: Update .env for new variable names
+### 2.4 Update .env
 
 ```bash
 WOLTS_DIR="${WOLTS_DIR:-$HOME/wolts}"
 ENV_FILE="$WOLTS_DIR/.env"
 
-# Check for the old tunnel variable
-if grep -q '^ENABLE_TUNNEL=' "$ENV_FILE" 2>/dev/null; then
-  OLD_VALUE=$(grep '^ENABLE_TUNNEL=' "$ENV_FILE" | cut -d= -f2-)
-  echo "Found ENABLE_TUNNEL=$OLD_VALUE"
-  echo "This needs to become WOLTSPACE_PUBLIC_TUNNEL=$OLD_VALUE"
+# Rename tunnel variable (preserves the value)
+if grep -q 'ENABLE_TUNNEL' "$ENV_FILE" 2>/dev/null; then
+  sed -i.bak 's/ENABLE_TUNNEL/WOLTSPACE_PUBLIC_TUNNEL/g' "$ENV_FILE"
+  echo "Renamed ENABLE_TUNNEL → WOLTSPACE_PUBLIC_TUNNEL"
 fi
 
-if grep -q '# ENABLE_TUNNEL=' "$ENV_FILE" 2>/dev/null; then
-  echo "Found commented ENABLE_TUNNEL line — will need updating"
+# Update port references in comments
+sed -i 's/localhost:4444/localhost:7777/g' "$ENV_FILE" 2>/dev/null
+
+# Verify the tunnel setting
+echo "Tunnel setting:"
+grep 'TUNNEL' "$ENV_FILE" || echo "  NONE — will default to public tunnel enabled"
+```
+
+### 2.5 Set WOLTS_DIR for the new CLI
+
+Choose one approach based on the maintainer's recommendation:
+
+**Option A: Keep wolts at `~/wolts` (set env var)**
+```bash
+# Detect the user's shell rc file
+SHELL_RC=""
+case "$(basename "$SHELL")" in
+  zsh)  SHELL_RC="$HOME/.zshrc" ;;
+  bash) [ -f "$HOME/.bash_profile" ] && SHELL_RC="$HOME/.bash_profile" || SHELL_RC="$HOME/.bashrc" ;;
+esac
+
+if [ -n "$SHELL_RC" ]; then
+  # Check if already set
+  if ! grep -q 'export WOLTS_DIR=' "$SHELL_RC" 2>/dev/null; then
+    echo '' >> "$SHELL_RC"
+    echo '# woltspace — keep wolts at old location' >> "$SHELL_RC"
+    echo 'export WOLTS_DIR="$HOME/wolts"' >> "$SHELL_RC"
+    echo "Added WOLTS_DIR to $SHELL_RC"
+  else
+    echo "WOLTS_DIR already in $SHELL_RC"
+  fi
+  export WOLTS_DIR="$HOME/wolts"
 fi
 ```
 
-**Apply the rename** (review before running):
-
+**Option B: Symlink**
 ```bash
-# Preview the change
-sed -n 's/ENABLE_TUNNEL/WOLTSPACE_PUBLIC_TUNNEL/p' "$ENV_FILE"
-
-# Apply it
-sed -i.bak 's/ENABLE_TUNNEL/WOLTSPACE_PUBLIC_TUNNEL/g' "$ENV_FILE"
-
-# Also update the comment about the port if present
-sed -i 's/localhost:4444/localhost:7777/g' "$ENV_FILE"
-
-# Verify
-grep -n 'TUNNEL\|4444\|7777' "$ENV_FILE"
+mkdir -p "$HOME/.woltspace"
+ln -s "$HOME/wolts" "$HOME/.woltspace/wolts"
+echo "Symlinked ~/wolts → ~/.woltspace/wolts"
 ```
 
-**CRITICAL CHECK:** If the user had `ENABLE_TUNNEL=false` and this step is skipped, the new code defaults to `WOLTSPACE_PUBLIC_TUNNEL=true` and a public tunnel will be created. Verify:
-
+**Option C: Move**
 ```bash
-grep 'WOLTSPACE_PUBLIC_TUNNEL' "$ENV_FILE" || echo "WARNING: No tunnel setting found — will default to PUBLIC tunnel enabled"
+mkdir -p "$HOME/.woltspace"
+mv "$HOME/wolts" "$HOME/.woltspace/wolts"
+echo "Moved ~/wolts → ~/.woltspace/wolts"
 ```
 
----
-
-### Step 5: Decide on wolts directory location
-
-You have three options:
-
-**Option A: Keep wolts at `~/wolts` (recommended for existing users)**
-
-Set the env var so the new CLI finds your wolts at the old path:
-
-```bash
-# Add to your shell profile (~/.zshrc, ~/.bashrc, ~/.bash_profile)
-echo 'export WOLTS_DIR="$HOME/wolts"' >> ~/.zshrc  # or your shell's rc file
-source ~/.zshrc
-```
-
-**Option B: Symlink (clean path, no data move)**
-
-```bash
-mkdir -p ~/.woltspace
-ln -s ~/wolts ~/.woltspace/wolts
-```
-
-**Option C: Move wolts to new location**
-
-```bash
-mkdir -p ~/.woltspace
-mv ~/wolts ~/.woltspace/wolts
-# Update any scripts/aliases that reference ~/wolts
-```
-
-**Verify** whichever option you chose:
-
-```bash
-ls "${WOLTS_DIR:-$HOME/.woltspace/wolts}"/*/wolt/wolt.json
-# Should list your wolt(s)
-```
-
----
-
-### Step 6: Update the woltspace repo
+### 2.6 Update and rebuild
 
 ```bash
 cd /path/to/woltspace
 
-# Make sure working tree is clean (Step 3 should have handled this)
+# Ensure clean working tree
 git status --short
-# Should be empty
+# Should be empty (drift was handled in 2.2)
 
-# Fetch and switch to the new branch
+# Switch to new branch
 git fetch origin
 git checkout refactor-init
 git pull origin refactor-init
-```
 
----
-
-### Step 7: Rebuild and start
-
-```bash
-# Build the new image (this replaces the old one)
+# Rebuild
 woltspace rebuild
-
-# Or if this is a fresh start:
-woltspace init
 ```
 
-The new CLI will:
-- Detect your existing wolts (if Step 5 was done correctly)
-- Build a new Docker image with woltspace baked in
-- Start the container on port 7777
-
----
-
-### Step 8: Post-migration validation
+### 2.7 Post-migration validation
 
 ```bash
+echo "=== POST-MIGRATION CHECK ==="
+
 # Container running?
-docker ps --filter name=woltspace --format '{{.Names}} {{.Status}}'
+echo -n "Container: "
+docker ps --filter name=woltspace --format '{{.Names}} {{.Status}}' 2>/dev/null || echo "NOT RUNNING"
 
-# Server responding on new port?
-curl -s -o /dev/null -w "%{http_code}" http://localhost:7777/
+# Server responding?
+echo -n "Server (port 7777): "
+curl -s -o /dev/null -w "%{http_code}" http://localhost:7777/ 2>/dev/null || echo "NO RESPONSE"
+echo ""
 
-# Wolts visible inside container?
-docker exec woltspace ls /workspace/wolts/*/wolt/wolt.json
+# Wolts visible?
+echo "Wolts in container:"
+docker exec woltspace ls /workspace/wolts/*/wolt/wolt.json 2>/dev/null || echo "  NONE FOUND"
 
-# Check tunnel status (if enabled)
-cat "${WOLTS_DIR:-$HOME/.woltspace/wolts}/.state/tunnel-url" 2>/dev/null || echo "No tunnel URL (expected if tunnel disabled)"
+# Active wolt
+echo -n "Active wolt: "
+docker exec woltspace printenv WOLT_NAME 2>/dev/null || echo "NOT SET"
 
-# Verify wolt identity survived
-docker exec woltspace cat /workspace/wolts/$(docker exec woltspace printenv WOLT_NAME)/wolt/wolt.json
+# Tunnel
+echo -n "Tunnel: "
+TUNNEL_URL=$(cat "${WOLTS_DIR:-$HOME/.woltspace/wolts}/.state/tunnel-url" 2>/dev/null)
+if [ -n "$TUNNEL_URL" ]; then
+  echo "$TUNNEL_URL"
+else
+  echo "none (expected if disabled)"
+fi
+
+echo ""
+echo "If everything above looks correct, the migration is complete."
+echo "Your backup is at: $BACKUP_DIR"
+echo "Keep it until you're confident everything works."
 ```
 
 ---
 
-### Step 9: Update bookmarks and scripts
+## Rollback
 
-- `http://localhost:4444` → `http://localhost:7777`
-- `woltspace start --dev` → `woltspace start --local` (or `woltspace rebuild --local`)
-- `woltspace restart` → `woltspace stop && woltspace start`
-- The `/update` skill inside the container no longer works for updating the platform. Instead, update from the host: `cd /path/to/woltspace && git pull && woltspace rebuild`
-
----
-
-## Rollback plan
-
-If anything goes wrong:
+If anything went wrong at any point:
 
 ```bash
 # Stop the new container
@@ -275,26 +470,20 @@ docker rm woltspace 2>/dev/null
 cd /path/to/woltspace
 git checkout main
 
-# Restore backup if needed
-BACKUP_DIR="$HOME/wolts-backup-XXXXXXXX"  # use your actual backup dir
+# Restore from backup (use the actual backup path)
+BACKUP_DIR="$HOME/wolts-backup-XXXXXXXX"
+# If you moved wolts (Option C), move them back:
+# mv "$HOME/.woltspace/wolts" "$HOME/wolts"
+# Or restore from backup:
 cp -a "$BACKUP_DIR/." "${WOLTS_DIR:-$HOME/wolts}/"
 
 # Rebuild on main
 woltspace rebuild
 
-# Verify
+# Verify old setup works
 docker ps --filter name=woltspace
 curl -s http://localhost:4444/
 ```
-
----
-
-## Known limitations after migration
-
-1. **`/update` skill doesn't work** — platform code is baked into the image, not mounted. Update from host with `git pull && woltspace rebuild`.
-2. **No live-reload of platform code** — changes to woltspace source require `woltspace rebuild --local`. This is intentional: wolts can no longer accidentally modify platform code.
-3. **Dev mode changed** — `--local` builds from your local repo into the image (COPY, not mount). For iterative platform development, you'll rebuild more often but with better isolation.
-4. **Deploy key mount removed** — if you were using SSH deploy keys for git push from inside the container, this needs a different approach (e.g., GH_PAT_TOKEN in .env).
 
 ---
 
@@ -309,3 +498,10 @@ woltspace rebuild --dev        → woltspace rebuild --local
 woltspace restart              → woltspace stop && woltspace start
 /update (inside container)     → git pull && woltspace rebuild (on host)
 ```
+
+## Known limitations after migration
+
+1. **`/update` skill doesn't work** — platform code is baked into the image. Update from host: `git pull && woltspace rebuild`.
+2. **No live-reload of platform code** — changes require `woltspace rebuild --local`. Wolts can no longer accidentally modify platform code.
+3. **Dev mode changed** — `--local` builds from local repo into the image (COPY, not mount). More rebuilds, better isolation.
+4. **Deploy key mount removed** — use `GH_PAT_TOKEN` in `.env` instead of SSH deploy keys.
