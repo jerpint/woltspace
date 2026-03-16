@@ -10,6 +10,7 @@
 #   woltspace chat                    — open claude in container
 #   woltspace logs                    — stream container logs
 #   woltspace backup [tag]            — snapshot container + wolts (tag defaults to datetime)
+#   woltspace backup [tag] --bundle  — same, but zipped into one portable file
 #
 # Flags:
 #   --branch <name>   — build image from a specific branch (default: main)
@@ -326,15 +327,28 @@ case "$cmd" in
     docker logs -f "$CONTAINER_NAME"
     ;;
   backup)
-    TAG="${2:-$(date +%Y%m%d-%H%M%S)}"
+    # Parse: woltspace backup [tag] [--bundle]
+    BUNDLE=false
+    TAG=""
+    for arg in "${@:2}"; do
+      if [ "$arg" = "--bundle" ]; then
+        BUNDLE=true
+      elif [ -z "$TAG" ]; then
+        TAG="$arg"
+      fi
+    done
+    TAG="${TAG:-$(date +%Y%m%d-%H%M%S)}"
     BACKUP_DIR="$(dirname "$WOLTS_DIR")/wolts-backup-$TAG"
+
     echo ""
     echo "  🐘 backing up the lodge — $TAG"
     echo "  ${_D}snapshot tag: $TAG${_R}"
     echo ""
 
     # Container snapshot
+    HAS_CONTAINER=false
     if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+      HAS_CONTAINER=true
       echo "  ${_D}snapshotting container...${_R}"
       docker commit "$CONTAINER_NAME" "woltspace-backup:$TAG" > /dev/null
       echo "  ${_G}✓${_R} container → woltspace-backup:$TAG"
@@ -347,12 +361,59 @@ case "$cmd" in
     cp -r "$WOLTS_DIR" "$BACKUP_DIR"
     echo "  ${_G}✓${_R} wolts → $BACKUP_DIR"
 
+    # Bundle into single zip
+    if [ "$BUNDLE" = true ]; then
+      BUNDLE_FILE="$(dirname "$WOLTS_DIR")/woltspace-backup-$TAG.zip"
+      echo ""
+      echo "  ${_D}bundling into portable zip...${_R}"
+
+      TMPDIR=$(mktemp -d)
+      # Export docker image if we have one
+      if [ "$HAS_CONTAINER" = true ]; then
+        echo "  ${_D}exporting image (this may take a minute)...${_R}"
+        docker save "woltspace-backup:$TAG" > "$TMPDIR/image.tar"
+      fi
+      # Copy wolts into bundle staging dir
+      cp -r "$BACKUP_DIR" "$TMPDIR/wolts"
+      # Write restore script
+      echo "$TAG" > "$TMPDIR/.tag"
+      cat > "$TMPDIR/restore.sh" << 'RESTORE'
+#!/bin/bash
+set -e
+DIR="$(cd "$(dirname "$0")" && pwd)"
+TAG=$(cat "$DIR/.tag")
+if [ -f "$DIR/image.tar" ]; then
+  echo "loading container image..."
+  docker load < "$DIR/image.tar"
+fi
+echo ""
+echo "restore complete. run with:"
+echo "  docker run -d --name woltspace \\"
+echo "    -v $DIR/wolts:/workspace/wolts:rw \\"
+echo "    -p 7777:7777 \\"
+echo "    woltspace-backup:$TAG"
+RESTORE
+      chmod +x "$TMPDIR/restore.sh"
+
+      # Zip it
+      (cd "$TMPDIR" && zip -qr "$BUNDLE_FILE" .)
+      rm -rf "$TMPDIR"
+
+      SIZE=$(du -sh "$BUNDLE_FILE" | cut -f1)
+      echo "  ${_G}✓${_R} bundle → $BUNDLE_FILE ($SIZE)"
+    fi
+
     echo ""
     echo "  ${_D}restore with:${_R}"
-    echo "    docker run -d --name $CONTAINER_NAME \\"
-    echo "      -v $BACKUP_DIR:/workspace/wolts:rw \\"
-    echo "      -p ${WOLTSPACE_PORT:-7777}:7777 \\"
-    echo "      woltspace-backup:$TAG"
+    if [ "$BUNDLE" = true ]; then
+      echo "    unzip woltspace-backup-$TAG.zip -d woltspace-backup-$TAG"
+      echo "    cd woltspace-backup-$TAG && bash restore.sh"
+    else
+      echo "    docker run -d --name $CONTAINER_NAME \\"
+      echo "      -v $BACKUP_DIR:/workspace/wolts:rw \\"
+      echo "      -p ${WOLTSPACE_PORT:-7777}:7777 \\"
+      echo "      woltspace-backup:$TAG"
+    fi
     echo ""
     ;;
   rebuild)
@@ -393,7 +454,8 @@ case "$cmd" in
     fi
     ;;
   *)
-    echo "usage: woltspace <init|start|stop|rebuild|backup|shell|chat|logs> [--branch <name>] [--local]"
+    echo "usage: woltspace <init|start|stop|rebuild|backup|shell|chat|logs>"
+    echo "       woltspace backup [tag] [--bundle]"
     exit 1
     ;;
 esac

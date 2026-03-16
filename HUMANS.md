@@ -60,6 +60,7 @@ woltspace start
 | `woltspace start` | Start, restart, or resume container |
 | `woltspace stop` | Stop and remove container |
 | `woltspace backup [tag]` | Snapshot container + wolts (tag defaults to datetime) |
+| `woltspace backup [tag] --bundle` | Same, but zipped into one portable file |
 | `woltspace rebuild` | Rebuild image from `main` + restart |
 | `woltspace shell` | Shell into running container |
 | `woltspace chat` | Open Claude directly in container |
@@ -221,11 +222,29 @@ docker run -d --name woltspace \
 
 Container + data from the same moment, matched by name.
 
-To clean up old backups:
+### Portable bundle
+
+For a single-file backup you can take anywhere:
+
+```bash
+woltspace backup pre-migration --bundle
+```
+
+This creates `~/.woltspace/woltspace-backup-pre-migration.zip` containing the Docker image, wolts, and a restore script. To restore on any machine with Docker:
+
+```bash
+unzip woltspace-backup-pre-migration.zip -d restore
+cd restore && bash restore.sh
+```
+
+Note: bundles are large (2-3GB) since they include the full Docker image.
+
+### Cleanup
 
 ```bash
 docker rmi woltspace-backup:<tag>
 rm -rf ~/.woltspace/wolts-backup-<tag>
+rm -f ~/.woltspace/woltspace-backup-<tag>.zip
 ```
 
 ## Version checking

@@ -32,7 +32,7 @@ step() { printf "\n  ${_D}▸ %s${_N}\n" "$1"; }
 cleanup() {
   docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
   docker rmi woltspace 2>/dev/null || true
-  docker rmi woltspace-backup:test-snapshot 2>/dev/null || true
+  docker rmi woltspace-backup:test-snapshot woltspace-backup:test-bundle 2>/dev/null || true
   rm -rf /tmp/test-woltspace-cli
 }
 
@@ -139,9 +139,24 @@ step "running woltspace backup with custom tag..."
 docker image inspect woltspace-backup:test-snapshot >/dev/null 2>&1 && pass "container snapshot created" || fail "container snapshot not created"
 [ -d "/tmp/test-woltspace-cli/wolts-backup-test-snapshot" ] && pass "wolts backup created" || fail "wolts backup not created"
 
+step "running woltspace backup --bundle..."
+"$WOLTSPACE_DIR/woltspace" backup test-bundle --bundle 2>&1
+
+[ -f "/tmp/test-woltspace-cli/woltspace-backup-test-bundle.zip" ] && pass "bundle zip created" || fail "bundle zip not created"
+
+step "verifying bundle contents..."
+BUNDLE_CONTENTS=$(unzip -l /tmp/test-woltspace-cli/woltspace-backup-test-bundle.zip 2>/dev/null || echo "")
+echo "$BUNDLE_CONTENTS" | grep -q "image.tar" && pass "bundle contains image.tar" || fail "bundle missing image.tar"
+echo "$BUNDLE_CONTENTS" | grep -q "restore.sh" && pass "bundle contains restore.sh" || fail "bundle missing restore.sh"
+echo "$BUNDLE_CONTENTS" | grep -q "wolts/" && pass "bundle contains wolts/" || fail "bundle missing wolts/"
+echo "$BUNDLE_CONTENTS" | grep -q ".tag" && pass "bundle contains .tag" || fail "bundle missing .tag"
+
 step "cleaning up backup artifacts..."
-docker rmi woltspace-backup:test-snapshot >/dev/null 2>&1
+docker rmi woltspace-backup:test-snapshot 2>/dev/null || true
+docker rmi woltspace-backup:test-bundle 2>/dev/null || true
 rm -rf /tmp/test-woltspace-cli/wolts-backup-test-snapshot
+rm -rf /tmp/test-woltspace-cli/wolts-backup-test-bundle
+rm -f /tmp/test-woltspace-cli/woltspace-backup-test-bundle.zip
 
 # ── version stamp ──
 echo ""

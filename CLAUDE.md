@@ -88,7 +88,7 @@ Commands:
 - `woltspace init` — first-time setup (or reconnect existing wolts)
 - `woltspace start` — start, restart, or resume container
 - `woltspace stop` — stop and remove container
-- `woltspace backup [tag]` — snapshot container + wolts (tag defaults to datetime)
+- `woltspace backup [tag] [--bundle]` — snapshot container + wolts (tag defaults to datetime, `--bundle` zips into one portable file)
 - `woltspace rebuild` — rebuild image + restart
 - `woltspace shell/chat/logs` — interact with running container
 
