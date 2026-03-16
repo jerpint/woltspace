@@ -56,7 +56,7 @@ JS
 PORT=4001 node server.js &
 
 # 5. Test
-curl http://localhost:3000/app/api/
+curl http://localhost:7777/app/api/
 ```
 
 ## The protocol
@@ -119,7 +119,7 @@ Once an app is served at `/app/{name}/`, anyone with the tunnel URL can reach it
 ## Listing apps
 
 ```bash
-curl http://localhost:3000/apps
+curl http://localhost:7777/apps
 ```
 
 Returns JSON array of all registered apps with their mode (static/proxy).

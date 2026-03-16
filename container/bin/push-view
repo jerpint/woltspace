@@ -13,7 +13,7 @@ if [ -z "$SESSION" ]; then
 fi
 SESSION="${SESSION:-main}"
 
-curl -s -X POST "http://localhost:3000/current?session=${SESSION}" \
+curl -s -X POST "http://localhost:7777/current?session=${SESSION}" \
   -H 'Content-Type: application/json' \
   -d "{\"url\":\"${URL}\"}" > /dev/null
 

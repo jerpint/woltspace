@@ -50,7 +50,7 @@ const PUBLIC_DIR = join(__dirname, 'public');  // platform UI assets (baked into
 const STATE_DIR = join(WOLT_DIR, '.state');
 const WOLTS_STATE_DIR = join(WOLTS_DIR, '.state');  // shared across wolts (sessions, routing)
 const WOLT_NAME = process.env.WOLT_NAME || 'wolt';
-const PORT = 3000;
+const PORT = 7777;
 
 // --- State dir (session data, tool registry, cron flags) ---
 
@@ -93,7 +93,7 @@ function getCurrentUrl(session = 'main') {
   try { return JSON.parse(readFileSync(f, 'utf8')).url || null; } catch { return null; }
 }
 
-function setCurrentUrl(url, session = 'main', port = 3000) {
+function setCurrentUrl(url, session = 'main', port = 7777) {
   mkdirSync(STATE_DIR, { recursive: true });
   const safe = sanitizeSession(session);
   writeFileSync(currentUrlFile(safe), JSON.stringify({ url, port, updated: Date.now() }));
@@ -599,7 +599,7 @@ const server = createServer(async (req, res) => {
     req.on('end', () => {
       const { url: newUrl, title, port } = JSON.parse(body || '{}');
       if (newUrl) {
-        setCurrentUrl(newUrl, session, port || 3000);
+        setCurrentUrl(newUrl, session, port || 7777);
         logView(newUrl, title);
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -909,7 +909,7 @@ const server = createServer(async (req, res) => {
         const sessionData = existsSync(sessionFile)
           ? JSON.parse(readFileSync(sessionFile, 'utf8'))
           : {};
-        const port = sessionData.port || 3000;
+        const port = sessionData.port || 7777;
         const token = targetSession;
         mkdirSync(SHARES_DIR, { recursive: true });
         writeFileSync(

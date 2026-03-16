@@ -126,7 +126,7 @@ async def lifespan(app: FastAPI):
     _start_file_watcher()
     _start_tool_gc()
     print(f"""
-  woltspace server (python) · http://localhost:{3000}
+  woltspace server (python) · http://localhost:{PORT}
   wolt: {WOLT_NAME}
   tui proxy → localhost:{TUI_PORT}
     """)
@@ -220,7 +220,7 @@ async def post_current(request: Request):
     body = await request.json()
     url = body.get("url")
     if url:
-        set_current_url(url, session, body.get("port", 3000))
+        set_current_url(url, session, body.get("port", 7777))
         log_view(url, body.get("title"))
     return {"url": get_current_url(session)}
 
@@ -668,7 +668,7 @@ async def create_share(request: Request):
     target_session = sanitize_session(body.get("session", "main"))
     session_file = current_url_file(target_session)
     session_data = json.loads(session_file.read_text()) if session_file.exists() else {}
-    port = session_data.get("port", 3000)
+    port = session_data.get("port", 7777)
     token = target_session
     SHARES_DIR.mkdir(parents=True, exist_ok=True)
     (SHARES_DIR / f"{token}.json").write_text(json.dumps({

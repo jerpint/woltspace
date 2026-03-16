@@ -126,7 +126,7 @@ Update checking is **not** a wolf cron. Wolves are loud by design — every cron
 Version tracking: `.state/woltspace-version` stores the commit hash — written by `woltspace rebuild` on the host, or by the `/update` skill after a pull.
 
 ### `server.js` (Node.js, ~1400 lines)
-Single-file HTTP + WebSocket server running on port 3000 inside the container.
+Single-file HTTP + WebSocket server running on port 7777 inside the container.
 - Serves the split view (`/tui?session=X`) — xterm.js terminal + iframe viewport
 - Manages per-session viewport URLs (`/current`)
 - Serves static files: `public/` (platform UI) → `wolt/site/` → `wolt/sparks/`

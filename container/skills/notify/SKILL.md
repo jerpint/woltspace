@@ -48,4 +48,4 @@ notify "HN thread from 2019 has exactly what you were asking about — dropping 
 
 ## How it works
 
-`notify` POSTs to `localhost:3000/notify` → server reads session routing → calls Telegram/Slack API directly. Synchronous, no polling delay.
+`notify` POSTs to `localhost:7777/notify` → server reads session routing → calls Telegram/Slack API directly. Synchronous, no polling delay.

@@ -7,7 +7,7 @@ Last updated: 2026-03-14
 ## Recently Shipped
 
 ### Python Server Migration (PR #16)
-FastAPI server is now the default runtime on port 3000. Node `server.js` kept for rollback. TUI service (xterm.js WebSocket) stays on Node at port 3001. Single-language goal for bot + server is ~80% there.
+FastAPI server is now the default runtime on port 7777. Node `server.js` kept for rollback. TUI service (xterm.js WebSocket) stays on Node at port 3001. Single-language goal for bot + server is ~80% there.
 
 **Still to do:** Rewrite `woltspace` CLI from bash to Python (click). Mounts config needs a documented home.
 

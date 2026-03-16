@@ -66,7 +66,7 @@ You're running inside a split view: terminal on the left, viewport (iframe) on t
 
 Any file you write to \`wolt/site/\` is served at the root (e.g. \`wolt/site/foo.html\` → \`/foo.html\`). After writing it, push to the viewport (this is ONLY for the viewport — do NOT use curl for sending messages):
 \`\`\`bash
-curl -s -X POST \"http://localhost:3000/current?session=\$(tmux display-message -p '#S')\" \\
+curl -s -X POST \"http://localhost:7777/current?session=\$(tmux display-message -p '#S')\" \\
   -H 'Content-Type: application/json' \\
   -d '{\"url\": \"/foo.html\"}'
 \`\`\`
@@ -77,7 +77,7 @@ Rule of thumb: if you created an artifact someone would want to look at, push it
 
 ## CRITICAL: Do not touch infrastructure
 
-**NEVER restart, kill, or modify server.js (port 3000)** — it runs the tunnel, split view, and all session routing. Restarting it breaks everything for everyone. If something seems wrong with the server, notify the developer and stop. Do not attempt to fix infrastructure yourself.
+**NEVER restart, kill, or modify server.js (port 7777)** — it runs the tunnel, split view, and all session routing. Restarting it breaks everything for everyone. If something seems wrong with the server, notify the developer and stop. Do not attempt to fix infrastructure yourself.
 
 ## CRITICAL: Stay in your wolt directory
 

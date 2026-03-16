@@ -2,9 +2,8 @@
 # Entrypoint: install deps (dev mode), run Python setup, start services.
 set -e
 
-WOLTSPACE_DIR="/workspace/woltspace"
+WOLTSPACE_DIR="/workspace/woltspace"  # mount point inside the container
 WOLTS_DIR="${WOLTS_DIR:-/workspace/wolts}"
-WOLT_NAME="${WOLT_NAME:-wolt}"
 
 # ── Dev-mode dep installs (mounts wipe node_modules/.venv) ──
 [ ! -d "$WOLTSPACE_DIR/node_modules" ] && echo "dev: node deps..." && (cd "$WOLTSPACE_DIR" && npm install && npm install ws node-pty)
@@ -17,7 +16,7 @@ ENV_FILE=$(mktemp /tmp/entrypoint-env.XXXXXX)
 python3 "$WOLTSPACE_DIR/container/entrypoint_setup.py" --env-file "$ENV_FILE"
 source "$ENV_FILE"
 rm -f "$ENV_FILE"
-export WOLT_DIR DEV_MODE WOLF_CONFIG PYTHONPATH PATH
+export WOLT_NAME WOLT_DIR DEV_MODE WOLF_CONFIG PYTHONPATH PATH
 
 # ── tmux ──
 tmux new-session -d -s main -c "$WOLT_DIR" 2>/dev/null || true
@@ -36,7 +35,7 @@ TUI_PORT=3001 WOLT_DIR="$WOLT_DIR" node "$WOLTSPACE_DIR/server/tui-service.js" &
 TUI_PID=$!
 
 # Python server (FastAPI)
-(cd "$WOLTSPACE_DIR" && uv run --project server uvicorn server.app:app --host 0.0.0.0 --port 3000 --reload) &
+(cd "$WOLTSPACE_DIR" && uv run --project server uvicorn server.app:app --host 0.0.0.0 --port 7777 --reload) &
 SERVER_PID=$!
 
 sleep 2
@@ -47,7 +46,7 @@ rm -f "$WOLTS_DIR/.state/tunnel-url" "$WOLT_DIR/.state/tunnel-url"
 if [ "${ENABLE_TUNNEL:-true}" != "false" ]; then
   echo "opening tunnel..."
   TUNNEL_LOG="$WOLTS_DIR/.state/tunnel.log"
-  cloudflared tunnel --url http://localhost:3000 > "$TUNNEL_LOG" 2>&1 &
+  cloudflared tunnel --url http://localhost:7777 > "$TUNNEL_LOG" 2>&1 &
   disown
   for i in $(seq 1 30); do
     URL=$(grep -o 'https://[^ ]*trycloudflare.com' "$TUNNEL_LOG" 2>/dev/null | head -1)
@@ -60,7 +59,7 @@ if [ "${ENABLE_TUNNEL:-true}" != "false" ]; then
     sleep 1
   done
 else
-  echo "tunnel disabled — access via http://localhost:4444"
+  echo "tunnel disabled — access via http://localhost:7777"
 fi
 
 # Telegram bot

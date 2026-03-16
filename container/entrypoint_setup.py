@@ -17,6 +17,27 @@ WOLTSPACE_DIR = Path("/workspace/woltspace")
 HOME = Path("/home/node")
 
 
+def resolve_wolt_name(wolts_dir: Path) -> str:
+    """Resolve active wolt name: WOLT_NAME env > woltspace.json > first wolt found."""
+    env_name = os.environ.get("WOLT_NAME", "")
+    if env_name:
+        return env_name
+    config_file = wolts_dir / "woltspace.json"
+    if config_file.exists():
+        try:
+            config = json.loads(config_file.read_text())
+            name = config.get("claude", {}).get("default_wolt", "")
+            if name:
+                return name
+        except (json.JSONDecodeError, OSError):
+            pass
+    # Fallback: first wolt directory found
+    for d in sorted(wolts_dir.iterdir()):
+        if d.is_dir() and not d.name.startswith(".") and (d / "wolt").is_dir():
+            return d.name
+    return "wolt"
+
+
 def resolve_wolt_dir(wolts_dir: Path, wolt_name: str) -> Path:
     candidate = wolts_dir / wolt_name
     if candidate.is_dir():
@@ -103,6 +124,44 @@ def configure_git(wolt_name: str):
     subprocess.run(["git", "config", "--global", "--add", "safe.directory", "*"], check=True)
 
 
+def scaffold_wolt(wolt_name: str, wolts_dir: Path, woltspace_dir: Path) -> Path:
+    """Create wolt directory from template if it doesn't exist. Returns wolt_dir."""
+    wolt_dir = wolts_dir / wolt_name
+    if (wolt_dir / "wolt").is_dir():
+        return wolt_dir  # already exists
+
+    # Copy template
+    template = woltspace_dir / "template"
+    if template.is_dir():
+        shutil.copytree(template, wolt_dir, dirs_exist_ok=True)
+
+    # Write wolt.json
+    wolt_json = wolt_dir / "wolt" / "wolt.json"
+    wolt_json.parent.mkdir(parents=True, exist_ok=True)
+    wolt_json.write_text(json.dumps({
+        "name": wolt_name,
+        "type": "rodent",
+        "role": "",
+        "capabilities": [],
+        "description": "",
+    }, indent=2) + "\n")
+
+    # Write woltspace.json if missing
+    config_file = wolts_dir / "woltspace.json"
+    if not config_file.exists():
+        config_file.write_text(json.dumps({
+            "telegram": {"model": "claude-haiku-4-5", "active_wolt": wolt_name},
+            "claude": {"default_wolt": wolt_name},
+        }, indent=2) + "\n")
+
+    # Init git repo
+    if not (wolt_dir / ".git").is_dir():
+        subprocess.run(["git", "init", "-q", str(wolt_dir)], check=False)
+
+    print(f"scaffolded new wolt: {wolt_name}")
+    return wolt_dir
+
+
 def seed_wolf_json(wolt_dir: Path, woltspace_dir: Path):
     target = wolt_dir / "wolt" / "wolf.json"
     template = woltspace_dir / "template" / "wolt" / "wolf.json"
@@ -157,8 +216,10 @@ def main():
 
     woltspace_dir = WOLTSPACE_DIR
     wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
-    wolt_name = os.environ.get("WOLT_NAME", "wolt")
+    wolt_name = resolve_wolt_name(wolts_dir)
 
+    # Scaffold wolt if it doesn't exist (first boot with new name)
+    scaffold_wolt(wolt_name, wolts_dir, woltspace_dir)
     wolt_dir = resolve_wolt_dir(wolts_dir, wolt_name)
     dev_mode = (woltspace_dir / ".git").is_dir()
 
@@ -178,6 +239,7 @@ def main():
     slack_dir, slack_mod = resolve_bot_module(wolt_dir, woltspace_dir, "slack")
 
     write_env_file(Path(args.env_file), {
+        "WOLT_NAME": wolt_name,
         "WOLT_DIR": str(wolt_dir),
         "DEV_MODE": "true" if dev_mode else "false",
         "WOLF_CONFIG": wolf_config,

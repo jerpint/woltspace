@@ -331,7 +331,7 @@ def _call_server(method: str, path: str, body: dict | None = None) -> dict:
     import urllib.request
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(
-        f"http://localhost:3000{path}",
+        f"http://localhost:7777{path}",
         data=data,
         headers={"Content-Type": "application/json"} if data else {},
         method=method,

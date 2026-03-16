@@ -20,7 +20,7 @@
                      │
 ┌────────────────────▼────────────────────────────┐
 │            EXECUTION LAYER                        │
-│     Node.js server (port 3000)                   │
+│     Node.js server (port 7777)                   │
 │     tmux sessions running Claude Code            │
 │     Split-view browser UI · Cloudflare tunnel    │
 └─────────────────────────────────────────────────┘
@@ -172,7 +172,7 @@ CREATED → RUNNING → COMPLETED / FAILED
 7. Install Claude Code hooks (notify + session-done)
 8. Start tmux main session → auto-launch Claude
 9. Start TUI pty service (port 3001)
-10. Start FastAPI server (port 3000)
+10. Start FastAPI server (port 7777)
 11. Start cloudflared tunnel → write URL to .state/tunnel-url
 12. Start Telegram bot (optional, watchfiles reload)
 13. Start Slack bot (optional, watchfiles reload)

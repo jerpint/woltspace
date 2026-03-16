@@ -35,7 +35,7 @@ Files in `wolt/site/` are served at the root — **no `/site/` prefix**:
 
 ```bash
 SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo main)
-curl -s "http://localhost:3000/current/meta?session=$SESSION"
+curl -s "http://localhost:7777/current/meta?session=$SESSION"
 ```
 
 ## Showing an app
@@ -50,7 +50,7 @@ Apps served at `/app/{name}/` work in the viewport iframe with no extra setup.
 
 ## Tips
 
-- The viewport only shows content served by localhost:3000. External URLs won't work (iframe CORS).
+- The viewport only shows content served by localhost:7777. External URLs won't work (iframe CORS).
 - Files in `wolt/site/` are live-reloaded — edit and the viewport updates automatically.
 - Each session's viewport is independent. Pushing to one doesn't affect others.
 - **Always use `push-view`** — never manually curl to `/current`.

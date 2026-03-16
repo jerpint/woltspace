@@ -674,7 +674,7 @@ class TestEndToEnd:
 
         # Verify viewport serves it
         import urllib.request as req
-        url = "http://localhost:3000/hello-wolt-test.html"
+        url = "http://localhost:7777/hello-wolt-test.html"
         with req.urlopen(url, timeout=5) as resp:
             served = resp.read().decode()
             assert "Hello Wolt" in served, \

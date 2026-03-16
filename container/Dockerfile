@@ -112,6 +112,6 @@ RUN cd /workspace/woltspace && uv sync --project server
 
 WORKDIR /workspace
 
-EXPOSE 3000
+EXPOSE 7777
 
 ENTRYPOINT ["/workspace/woltspace/container/entrypoint.sh"]

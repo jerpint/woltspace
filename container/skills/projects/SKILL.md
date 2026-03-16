@@ -89,13 +89,13 @@ push-view /project/my-app/
 ## Listing projects
 
 ```bash
-curl http://localhost:3000/projects
+curl http://localhost:7777/projects
 ```
 
 ## Port allocation
 
 Use ports 4001-4999 for project servers. Each project gets its own port. Don't conflict with:
-- 3000 — platform server
+- 7777 — platform server
 - 3001 — TUI WebSocket service
 
 ## Key rules
