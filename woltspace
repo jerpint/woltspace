@@ -188,51 +188,14 @@ if [ "$cmd" = "init" ]; then
   read -r CONFIRM </dev/tty
   CONFIRM="${CONFIRM:-Y}"
   if [[ "$CONFIRM" != [Yy] ]]; then
-    echo "  🦫 aborting. no wood was harmed."
+    echo "  🦫 aborting. no wood was gnawed."
     exit 0
   fi
   echo ""
 
-  # Create wolts dir + .env
+  # Create wolts dir + .env from template
   mkdir -p "$WOLTS_DIR"
-  if [ ! -f "$WOLTS_DIR/.env" ]; then
-    cat > "$WOLTS_DIR/.env" << 'ENVEOF'
-# woltspace — shared secrets for all wolts
-
-# Required
-CLAUDE_CODE_OAUTH_TOKEN=
-HUMAN_NAME=
-
-# Bot LLM (pick one provider — litellm routes by model prefix)
-# ANTHROPIC_API_KEY=       # for anthropic/... models
-# OPENROUTER_API_KEY=      # for openrouter/... models
-# LLM_MODEL=anthropic/claude-haiku-4-5-20251001
-
-# Telegram bot
-ENABLE_TELEGRAM_BOT=true
-# TELEGRAM_BOT_TOKEN=
-# TELEGRAM_ALLOWED_USERS=   # comma-separated IDs, or empty for open
-
-# Slack bot
-# ENABLE_SLACK_BOT=true
-# SLACK_BOT_TOKEN=           # xoxb-...
-# SLACK_APP_TOKEN=           # xapp-... (Socket Mode)
-# SLACK_NOTIFY_CHANNEL=
-
-# Spotify (for music curation in digests)
-# SPOTIFY_ID=
-# SPOTIFY_SECRET=
-# SPOTIFY_ACCESS_TOKEN=
-# SPOTIFY_REFRESH_TOKEN=
-# SPOTIFY_USER=
-
-# Image generation
-# OPENAI_API_KEY=
-
-# Tunnel (disable to use http://localhost:7777 instead of public URL)
-# ENABLE_TUNNEL=false
-ENVEOF
-  fi
+  [ ! -f "$WOLTS_DIR/.env" ] && cp "$WOLTSPACE_DIR/.env.example" "$WOLTS_DIR/.env"
 
   # Build + start — container handles wolt scaffolding on first boot
   _build_image
