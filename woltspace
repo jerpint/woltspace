@@ -26,7 +26,7 @@ WOLTSPACE_DIR="$(cd "$(dirname "$0")" && pwd)"
 WOLTS_DIR="${WOLTS_DIR:-$HOME/.woltspace/wolts}"
 WOLTS_DIR="${WOLTS_DIR/#\~/$HOME}"
 
-CONTAINER_NAME="woltspace"
+CONTAINER_NAME="${WOLTSPACE_CONTAINER:-woltspace}"
 cmd="${1:-start}"
 
 # Parse flags: --local, --branch <name>
