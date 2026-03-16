@@ -140,115 +140,30 @@ def _load_dog_identity() -> str | None:
     return None
 
 
-def _load_prompt(name: str, variables: dict = None) -> str:
-    """Load a prompt fragment from the dog species prompts/ directory.
-
-    Supports {variable} substitution for dynamic values.
-    Returns empty string if file not found.
-    """
-    prompt_path = WOLTSPACE_DIR / "species" / "dog" / "prompts" / f"{name}.md"
-    if not prompt_path.exists():
-        return ""
-    text = prompt_path.read_text().strip()
-    if variables:
-        try:
-            text = text.format(**variables)
-        except KeyError:
-            pass  # leave unresolved placeholders as-is
-    return text
-
-
-def _build_creatures_list() -> dict:
-    """Build creature_list and species_list strings from species definitions."""
-    try:
-        from species import list_species
-        all_species = list_species()
-        if not all_species:
-            return {"creature_list": "", "species_list": ""}
-
-        # Rodent tiers
-        rodent = all_species.get("rodent", {})
-        tiers = rodent.get("tiers", {})
-        tier_parts = []
-        for name, tier in tiers.items():
-            emoji = tier.get("emoji", "")
-            desc = tier.get("description", "")
-            model = tier.get("model", "")
-            for alias in ("opus", "sonnet", "haiku"):
-                if alias in model:
-                    model = alias
-                    break
-            tier_parts.append(f"{emoji} **{name}** ({model} — {desc})")
-
-        # Other species
-        species_lines = []
-        for name, sp in all_species.items():
-            if name in ("rodent", "dog"):
-                continue
-            emoji = sp.get("emoji", "")
-            desc = sp.get("description", "")
-            species_lines.append(f"{emoji} **{name}** — {desc}")
-
-        return {
-            "creature_list": ", ".join(tier_parts),
-            "species_list": "\n".join(species_lines),
-        }
-    except (ImportError, Exception):
-        return {
-            "creature_list": "🦝 **raccoon** (opus — complex reasoning), 🦫 **beaver** (sonnet — building, coding), 🦦 **otter** (haiku — fast, lightweight)",
-            "species_list": "🐺 **wolf** — cron & scheduler\n🕷️ **spider** — headless browser\n🐻 **bear** — safety & validation\n🐼 **panda** — daily reminders",
-        }
-
-
 def build_system_prompt() -> str:
-    """Build the system prompt by loading and composing text files.
+    """Build the system prompt for the active dog species.
 
-    Prompt fragments live in species/dog/prompts/. Each section is a standalone
-    .md file. This function just loads, substitutes variables, and concatenates.
+    Delegates entirely to species.build_prompt() — all composition logic
+    lives in the species definition (species/dog/prompts/).
     """
+    from species import build_prompt
+
     memory = load_memory()
     wolt_name = os.environ.get("WOLT_NAME", "wolt")
     human_name = os.environ.get("HUMAN_NAME", "human")
     adapter = os.environ.get("BOT_ADAPTER", "chat")
-
-    # Shared variables for template substitution
-    dog_identity = _load_dog_identity()
     dog_name = get_active_creature("dog") or wolt_name
-    creatures = _build_creatures_list()
+    dog_identity = _load_dog_identity()
 
     variables = {
         "wolt_name": wolt_name,
         "human_name": human_name,
         "adapter": adapter,
         "dog_name": dog_name,
-        **creatures,
+        "dog_identity": f"## Your identity\n{dog_identity}" if dog_identity else "",
     }
 
-    # Build intro — use dog identity if available, otherwise fallback
-    if dog_identity:
-        intro = _load_prompt("intro", variables)
-        if intro:
-            intro += f"\n\n## Your identity\n{dog_identity}"
-        else:
-            intro = f"You are {dog_name} — the dog. You talk to {human_name} through {adapter}.\n\n## Your identity\n{dog_identity}"
-    else:
-        intro = _load_prompt("intro-fallback", variables)
-        if not intro:
-            intro = f"You are {wolt_name} — a wolt (the dog). You talk to {human_name} through {adapter}."
-
-    # Load each prompt section — order matters
-    sections = [
-        intro,
-        _load_prompt("creatures", variables),
-        _load_prompt("voice", variables),
-        _load_prompt("tools", variables),
-        _load_prompt("projects", variables),
-        _load_prompt("communication", variables),
-        _load_prompt("memory", variables),
-    ]
-
-    # Filter empty sections, join with double newlines
-    base = "\n\n".join(s for s in sections if s)
+    base = build_prompt("dog", variables)
 
     if memory:
         return f"{base}\n\n{memory}"
@@ -298,24 +213,12 @@ def _short_session_name(session_name: str) -> str:
     return "-".join(rest.split("-")[:-1]) if rest.count("-") >= 2 else rest
 
 
-CREATURE_EMOJIS = {
-    "raccoon": "🦝",
-    "beaver": "🦫",
-    "otter": "🦦",
-    # Planned creatures — not yet active as session types
-    "dog": "🐶",
-    "wolf": "🐺",
-    "spider": "🕷️",
-    "bear": "🐻",
-    "panda": "🐼",
-}
-
-
 def build_ack_text(url: str = None, session_name: str = None, adapter: str = None, creature: str = None) -> str:
     """Build the 🪵 ack message shown when a session starts."""
+    from species import get_creature_emoji
     quote = random.choice(BEAVER_ACKS)
     wolt_name = session_name.split("-")[0] if session_name else "wolt"
-    emoji = CREATURE_EMOJIS.get(creature, "🦫")
+    emoji = get_creature_emoji(creature) if creature else "🦫"
     text = f'🪵 session started - "{quote}"\n\n{emoji} assigned: {wolt_name}'
     if url:
         text += f"\n\n---\nsession: {url}"
@@ -365,27 +268,15 @@ def _call_server(method: str, path: str, body: dict | None = None) -> dict:
         return json.loads(resp.read())
 
 
-# Creature model resolution — reads from species/ definitions, falls back to hardcoded
 def _resolve_creature_model(creature: str) -> str | None:
-    """Resolve a creature name to a model alias using species definitions."""
-    try:
-        from species import get_creature_model
-        model = get_creature_model(creature)
-        if model:
-            # Convert full model ID to alias (anthropic/claude-sonnet-4 → sonnet)
-            for alias in ("opus", "sonnet", "haiku"):
-                if alias in model:
-                    return alias
-            return model
-    except ImportError:
-        pass
-    # Fallback: hardcoded mapping (removed once species/ is stable)
-    return {
-        "raccoon": "opus",
-        "beaver": "sonnet",
-        "otter": "haiku",
-        "wolf": "sonnet",
-    }.get(creature)
+    """Resolve a creature name to a short model alias (opus/sonnet/haiku)."""
+    from species import get_creature_model
+    model = get_creature_model(creature)
+    if model:
+        for alias in ("opus", "sonnet", "haiku"):
+            if alias in model:
+                return alias
+    return None
 
 
 def start_claude_session(prompt: str, wolt: str = None, creature: str = None, routing: dict = None, project: str = None) -> dict:

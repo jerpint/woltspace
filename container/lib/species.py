@@ -132,6 +132,78 @@ def get_species_skills_dir(species_name: str) -> Path | None:
     return None
 
 
+def build_prompt(species_name: str, variables: dict | None = None) -> str:
+    """Compose the system prompt for a species from its prompts/ directory.
+
+    Loads fragments in the order defined by prompts/order.txt (falls back to
+    alphabetical). Substitutes {variable} placeholders with values from
+    `variables`. Returns the concatenated prompt.
+    """
+    sp = get_species(species_name)
+    if not sp:
+        return ""
+
+    prompts_dir = Path(sp["_dir"]) / "prompts"
+    if not prompts_dir.is_dir():
+        return ""
+
+    order_file = prompts_dir / "order.txt"
+    if order_file.exists():
+        files = [prompts_dir / f.strip() for f in order_file.read_text().splitlines() if f.strip()]
+    else:
+        files = sorted(prompts_dir.glob("*.md"))
+
+    # Build dynamic variables from species data (creature/species lists)
+    dynamic = _build_dynamic_vars(species_name)
+    all_vars = {**(dynamic or {}), **(variables or {})}
+
+    sections = []
+    for path in files:
+        if path.exists():
+            text = path.read_text().strip()
+            if all_vars:
+                try:
+                    text = text.format(**all_vars)
+                except KeyError:
+                    pass
+            sections.append(text)
+
+    return "\n\n".join(s for s in sections if s)
+
+
+def _build_dynamic_vars(species_name: str) -> dict:
+    """Build dynamic template variables (creature_list, species_list) from species data."""
+    rodent = get_species("rodent")
+    all_sp = list_species()
+
+    # Rodent tier list
+    tiers = (rodent or {}).get("tiers", {})
+    tier_parts = []
+    for name, tier in tiers.items():
+        emoji = tier.get("emoji", "")
+        desc = tier.get("description", "")
+        model = tier.get("model", "")
+        for alias in ("opus", "sonnet", "haiku"):
+            if alias in model:
+                model = alias
+                break
+        tier_parts.append(f"{emoji} **{name}** ({model} — {desc})")
+
+    # Other species list (excluding rodent and the bot species itself)
+    species_lines = []
+    for name, sp in all_sp.items():
+        if name in ("rodent", species_name):
+            continue
+        emoji = sp.get("emoji", "")
+        desc = sp.get("description", "")
+        species_lines.append(f"{emoji} **{name}** — {desc}")
+
+    return {
+        "creature_list": ", ".join(tier_parts),
+        "species_list": "\n".join(species_lines),
+    }
+
+
 def resolve_species_for_creature(creature: str) -> str:
     """Given a creature name (beaver, wolf, raccoon...), return its species name.
 
