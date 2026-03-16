@@ -164,8 +164,6 @@ fi
 # ESM ignores NODE_PATH, so symlink node_modules at /workspace/ level
 # so ESM's directory walk from wolt dir finds container-installed packages
 ln -sf "$WOLTSPACE_DIR/node_modules" /workspace/node_modules
-# Also at wolts level for multi-wolt mount
-[ -d "$WOLTS_DIR" ] && ln -sf "$WOLTSPACE_DIR/node_modules" "$WOLTS_DIR/node_modules" 2>/dev/null || true
 
 # TUI pty service (Node — only piece that needs node-pty)
 TUI_PORT=3001 WOLT_DIR="$WOLT_DIR" node "$WOLTSPACE_DIR/server/tui-service.js" &
