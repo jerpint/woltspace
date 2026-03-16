@@ -92,6 +92,11 @@ _start_container() {
 }
 
 _show_url() {
+  echo ""
+  echo "  🦫 your wolts are gnawing at http://localhost:7777"
+  echo ""
+
+  # Check if tunnel is enabled
   local env_file="$WOLTS_DIR/.env"
   local tunnel_enabled
   tunnel_enabled=$(grep '^ENABLE_TUNNEL=' "$env_file" 2>/dev/null | cut -d= -f2-)
@@ -100,7 +105,7 @@ _show_url() {
   if [ "$tunnel_enabled" != "false" ]; then
     TUNNEL_URL=""
     TUNNEL_FILE="$WOLTS_DIR/.state/tunnel-url"
-    echo -n "  waiting for tunnel"
+    echo -n "  setting up public tunnel"
     for i in $(seq 1 30); do
       if [ -f "$TUNNEL_FILE" ]; then
         TUNNEL_URL=$(cat "$TUNNEL_FILE")
@@ -110,16 +115,13 @@ _show_url() {
     done
     echo ""
     if [ -n "$TUNNEL_URL" ]; then
-      echo ""
-      echo "  your wolt is live at: $TUNNEL_URL"
+      echo "  public URL: $TUNNEL_URL"
     else
-      echo ""
-      echo "  tunnel not ready — access via http://localhost:7777"
+      echo "  tunnel not ready — check 'woltspace logs'"
     fi
-  else
-    echo ""
-    echo "  your wolt is live at: http://localhost:7777"
   fi
+  echo ""
+  echo "  to stop: woltspace stop"
   echo ""
 }
 
