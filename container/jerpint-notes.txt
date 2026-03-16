@@ -1,0 +1,49 @@
+jerpint:
+
+wait no, hot reload is still very important.
+see we want to support live updates, which means if the wolts decide
+to do a git pull main on the repo, everything gets reloaded and works
+ (or maybe they can take care of reloading all services?), and dev
+mode could be we take in staging with hot reload?
+for now though one happy path to worry about is ideal so i dont have
+to think about it too much
+
+so: no more cloning woltspace github to the user's machine, drops git
+ as a requirement for the project
+it gets pulled in as main in the repo
+
+if --dev mode
+git clone .. branch = staging
+
+else
+git clone ..
+
+hot reload always on (just like it used to)
+new update? wolts for now just go thru the /update skill and git pull
+ from latest main.
+if changes need to be applied inside the container they do it
+
+~/wolts still needs to be mounted. only point of mount. everything
+inside ~/wolts persists. this is the "backup" all projects should
+live there.
+all wolts should live there. eventually we maybe teach or help the
+user make snapshots just in case.
+
+having a ~/wolts dir means you can always go back EXACTLY into
+woltspace as it was at the ref of main you were at. no exceptions.
+~/wolts is the entire app state. making a backup + branch ref means
+exact replica of woltspace. this is a new design requirement.
+
+before we start coding, lets go back to basics.
+localhost should always be available first. before cloudflare
+tunnels.
+cloudflare tunnels should fail gracefully, if theyre not available,
+you can still go to woltspace on localhost. always.
+
+# dont focus on this yet
+todo: woltspace doctor, which should run a vanilla claude session
+inside the continer, with minimal deps. it sees everything inside the
+ container, including mounts, and can help piece together whats gone
+wrong with the install.
+it tries its best to fix with consent, but never touches ~/wolts
+unless it first makes a backup.

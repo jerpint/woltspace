@@ -15,6 +15,6 @@ if [ -z "$SESSION_NAME" ] || [ -z "$MESSAGE" ]; then
   exit 1
 fi
 
-curl -s -X POST "http://localhost:3000/sessions/${SESSION_NAME}/message" \
+curl -s -X POST "http://localhost:7777/sessions/${SESSION_NAME}/message" \
   -H "Content-Type: application/json" \
   -d "$(jq -n --arg t "$MESSAGE" '{text: $t}')" | jq .

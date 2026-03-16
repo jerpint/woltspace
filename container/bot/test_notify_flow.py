@@ -421,7 +421,7 @@ class TestCreatureEmoji:
 class TestNotifyEndToEnd:
     """Hit the real server.js /notify endpoint and verify footer is present.
 
-    These tests require the server to be running on localhost:3000.
+    These tests require the server to be running on localhost:7777.
     Skipped automatically if the server is down.
     """
 
@@ -430,16 +430,16 @@ class TestNotifyEndToEnd:
         """Skip if server isn't running."""
         import urllib.request
         try:
-            urllib.request.urlopen("http://localhost:3000/", timeout=2)
+            urllib.request.urlopen("http://localhost:7777/", timeout=2)
         except Exception:
-            pytest.skip("server not running on localhost:3000")
+            pytest.skip("server not running on localhost:7777")
 
     def _post_notify(self, session: str, message: str) -> dict:
         """POST to /notify and return the response (without actually sending to Telegram)."""
         import urllib.request
         data = json.dumps({"session": session, "message": message}).encode()
         req = urllib.request.Request(
-            "http://localhost:3000/notify",
+            "http://localhost:7777/notify",
             data=data,
             headers={"Content-Type": "application/json"},
             method="POST",

@@ -43,24 +43,10 @@ RUN curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/downloa
 # Install bun (for worktui)
 RUN curl -fsSL https://bun.sh/install | bash && mv /root/.bun/bin/bun /usr/local/bin/bun
 
-
-# App directory — matches repo structure so --dev can mount directly
-WORKDIR /workspace/woltspace
-
-# Copy package files first for better layer caching
-COPY package.json ./
-
-# Install dependencies + TUI native modules (ws + node-pty)
-RUN npm install && npm install ws node-pty
-
-# Create workspace directories (will be overlaid by mounts)
-RUN mkdir -p /workspace/wolts
-
-# Create .ssh dir before mounts so it's owned by node
-RUN mkdir -p /home/node/.ssh && chmod 700 /home/node/.ssh
-
-# Set ownership to node user (non-root, required for --dangerously-skip-permissions)
-RUN chown -R node:node /workspace /home/node
+# Create workspace + ssh dirs
+RUN mkdir -p /workspace/wolts /home/node/.ssh \
+    && chmod 700 /home/node/.ssh \
+    && chown -R node:node /workspace /home/node
 
 USER node
 
@@ -73,44 +59,45 @@ RUN git clone https://github.com/jerpint/worktui.git /home/node/worktui \
     && cd /home/node/worktui && bun install
 ENV WORKTUI_DIR="/workspace/wolts/.worktui"
 
-# --- App source (changes often — everything below here rebuilds on edits) ---
+# --- App source ---
+# Two paths, same result:
+#   --branch X  → git clone from github (default: main)
+#   --local     → COPY from build context (local repo)
+ARG USE_LOCAL=false
+ARG WOLTSPACE_BRANCH=main
 
-# Copy server source (baked into image — not from wolt mount)
-COPY --chown=node:node server.js ./
-COPY --chown=node:node server/ ./server/
+# Clone from github (default path)
+RUN if [ "$USE_LOCAL" = "false" ]; then \
+      git clone --branch ${WOLTSPACE_BRANCH} --single-branch --depth 1 \
+        https://github.com/jerpint/woltspace.git /workspace/woltspace; \
+    fi
 
-# Copy skills (platform defaults — wolt can override via .claude/skills/)
-COPY --chown=node:node container/skills /workspace/woltspace/container/skills
+# Copy local source (only meaningful when --local)
+COPY --chown=node:node . /tmp/local-src/
+RUN if [ "$USE_LOCAL" = "true" ]; then \
+      cp -r /tmp/local-src/. /workspace/woltspace/; \
+    fi; rm -rf /tmp/local-src
 
-# Copy bot code (platform default — wolt can override via wolt/bot/)
-COPY --chown=node:node container/bot /workspace/woltspace/container/bot
+# Stamp the version into the image (prefer tag, fall back to commit hash)
+RUN cd /workspace/woltspace && \
+    (git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD 2>/dev/null || echo "local") > /workspace/woltspace/.version
 
-# Copy cron scripts
-COPY --chown=node:node container/cron /workspace/woltspace/container/cron
+WORKDIR /workspace/woltspace
 
-# Copy platform UI assets (split view, etc. — not wolt content)
-COPY --chown=node:node public /workspace/woltspace/public
+# Install node deps
+RUN npm install && npm install ws node-pty
 
-# Copy hooks
-COPY --chown=node:node container/hooks /workspace/woltspace/container/hooks
-
-# Copy bin scripts
-COPY --chown=node:node container/bin /workspace/woltspace/container/bin
-RUN chmod +x /workspace/woltspace/container/bin/*
+# Make bin scripts executable + add to PATH
+RUN chmod +x container/bin/*
 ENV PATH="/workspace/woltspace/container/bin:${PATH}"
+RUN chmod +x container/entrypoint.sh
 
-# Copy entrypoint
-COPY --chown=node:node container/entrypoint.sh /workspace/woltspace/container/entrypoint.sh
-RUN chmod +x /workspace/woltspace/container/entrypoint.sh
-
-# Install Python deps for bot
-RUN cd /workspace/woltspace/container && uv sync --project bot
-
-# Install Python server dependencies (FastAPI, uvicorn, etc.)
-RUN cd /workspace/woltspace && uv sync --project server
+# Install Python deps
+RUN cd container && uv sync --project bot
+RUN uv sync --project server
 
 WORKDIR /workspace
 
-EXPOSE 3000
+EXPOSE 7777
 
 ENTRYPOINT ["/workspace/woltspace/container/entrypoint.sh"]

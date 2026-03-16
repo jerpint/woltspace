@@ -20,7 +20,7 @@ SESSION_REGISTRY_DIR = WOLTS_STATE_DIR / "registry"
 SHARES_DIR = STATE_DIR / "shares"
 
 WOLT_NAME = os.environ.get("WOLT_NAME", "wolt")
-PORT = int(os.environ.get("PORT", "3000"))
+PORT = int(os.environ.get("PORT", "7777"))
 TUI_PORT = int(os.environ.get("TUI_PORT", "3001"))
 
 # --- State files ---

@@ -239,7 +239,7 @@ def send_wolf_notify(message: str):
     payload = json.dumps({"message": full_message, "session": ""})
     try:
         result = subprocess.run(
-            ["curl", "-s", "-X", "POST", "http://localhost:3000/notify",
+            ["curl", "-s", "-X", "POST", "http://localhost:7777/notify",
              "-H", "Content-Type: application/json",
              "-d", payload],
             capture_output=True, text=True, timeout=10,
@@ -271,7 +271,7 @@ def run_script(entry: dict) -> Optional[str]:
     tui_link = f"\\n{tunnel_url}/tui?session={session_name}" if tunnel_url else ""
     ok_msg = f"🐺 {wolf_name}: cron '{cron_name}' completed successfully{tui_link}"
     fail_prefix = f"🐺 {wolf_name}: cron '{cron_name}' failed (exit "
-    notify_url = "http://localhost:3000/notify"
+    notify_url = "http://localhost:7777/notify"
 
     # Export the wolf's own env so cron scripts use the right state directory
     # (without this, scripts inherit WOLT_DIR from the container entrypoint,
@@ -324,7 +324,7 @@ def run_session(entry: dict) -> Optional[str]:
     })
     try:
         result = subprocess.run(
-            ["curl", "-s", "-X", "POST", "http://localhost:3000/tools/claude_code",
+            ["curl", "-s", "-X", "POST", "http://localhost:7777/tools/claude_code",
              "-H", "Content-Type: application/json",
              "-d", payload],
             capture_output=True, text=True, timeout=10,

@@ -61,7 +61,7 @@ Claude Code session: notify "site's up, check the viewport"
 container/bin/notify (formats message with session URL)
   |
   v
-POST localhost:3000/notify
+POST localhost:7777/notify
   |
   v
 server.js sendNotification()

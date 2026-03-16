@@ -8,15 +8,57 @@ user_invocable: true
 
 You are the lodge's gatekeeper for platform updates. Your job: check what's arriving from upstream, translate it into plain language (no git jargon), flag anything that could disrupt the lodge, and only open the gates when the human says go.
 
-**Never pull without explicit user confirmation. This is the safety gate — updates can crash the app.**
+**Never pull without explicit user confirmation. This is the safety gate — updates can crash the running app.**
 
-`/workspace/woltspace` is volume-mounted from the host, so `git pull` updates files live — no rebuild needed in most cases.
+## Step 0: Check for local drift
+
+Before anything else, check if the platform code has been modified inside the container. Wolts or Claude sessions sometimes accidentally edit files in `/workspace/woltspace`. If there's drift, a pull will fail with merge conflicts.
+
+```bash
+cd /workspace/woltspace
+DRIFT=$(git status --short)
+```
+
+**If drift is found:**
+
+1. Show the user what's changed:
+```bash
+git status --short
+git diff --stat
+```
+
+2. Categorize the risk:
+   - `container/entrypoint.sh`, `server.js`, `server/`, `woltspace` → **HIGH** — platform infrastructure
+   - `container/bot/`, `container/creatures/` → **MEDIUM** — bot/creature code
+   - `container/skills/`, `CLAUDE.md`, `*.md` → **LOW** — skills/docs, likely auto-updated
+
+3. Notify the user about the drift and ask how to proceed:
+   - **If LOW risk only:** "found some skill/doc changes in the platform dir — safe to discard. want me to reset and pull?"
+   - **If MEDIUM/HIGH risk:** "found modifications to platform code — [list files]. these will be lost on pull. want me to save them to a branch first, or discard and proceed?"
+
+4. If the user wants to save:
+```bash
+cd /workspace/woltspace
+git checkout -b backup/pre-update-$(date +%Y%m%d-%H%M%S)
+git add -A
+git commit -m "pre-update snapshot — local modifications"
+git checkout -  # return to previous branch
+```
+
+5. Reset to clean state before proceeding:
+```bash
+cd /workspace/woltspace
+git checkout -- .
+git clean -fd
+```
+
+**If clean (no drift):** proceed to Step 1.
 
 ## Step 1: Determine what's incoming
 
 ```bash
 WOLT_DIR="${WOLT_DIR:-/workspace/wolts/${WOLT_NAME:-wolt}}"
-BRANCH=$(cat "$WOLT_DIR/.state/woltspace-branch" 2>/dev/null || echo "staging")
+BRANCH=$(cat "$WOLT_DIR/.state/woltspace-branch" 2>/dev/null || echo "main")
 
 cd /workspace/woltspace
 git fetch origin "$BRANCH"
@@ -29,6 +71,15 @@ REMOTE=$(git rev-parse "origin/$BRANCH")
 ```
 
 If they match, tell the user they're already up to date and stop.
+
+Also show the current version and latest available:
+```bash
+CURRENT=$(cat /workspace/woltspace/.version 2>/dev/null || git rev-parse --short HEAD)
+LATEST_TAG=$(git describe --tags --abbrev=0 origin/$BRANCH 2>/dev/null || echo "untagged")
+LATEST_HASH=$(git rev-parse --short origin/$BRANCH)
+echo "Current: $CURRENT"
+echo "Latest:  ${LATEST_TAG} (${LATEST_HASH})"
+```
 
 ## Step 2: Review the changes
 
@@ -43,8 +94,7 @@ Read the actual diff for anything that looks like it could break existing behavi
 - **Config/env changes** — new required env vars, renamed vars, changed defaults
 - **Removed or renamed files** — skills, cron scripts, bot tools that wolts might depend on
 - **CLAUDE.md changes** — new instructions that change how sessions behave
-- **entrypoint.sh changes** — startup behavior, process management
-- **woltspace CLI changes** — flag changes, new required args
+- **entrypoint.sh / entrypoint_setup.py changes** — startup behavior, process management
 - **Database/state format changes** — .state files, woltspace.json schema changes
 - **Bot behavior changes** — tool renames, removed capabilities, changed routing
 
@@ -79,11 +129,13 @@ Once confirmed:
 ```bash
 cd /workspace/woltspace && git pull origin "$BRANCH"
 
-# Stamp version
-NEW_VERSION=$(git rev-parse HEAD)
+# Stamp version (prefer tag if HEAD is tagged)
+NEW_VERSION=$(git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD)
 mkdir -p "$WOLT_DIR/.state"
 echo "$NEW_VERSION" > "$WOLT_DIR/.state/woltspace-version"
 echo "$BRANCH" > "$WOLT_DIR/.state/woltspace-branch"
+# Also update the .version file used at image build time
+echo "$NEW_VERSION" > /workspace/woltspace/.version
 ```
 
 ## Step 5: Verify and report
@@ -95,15 +147,17 @@ git log --oneline ORIG_HEAD..HEAD
 Notify the user: what landed, the short hash, and any action items.
 
 Action items to flag:
-- **Bot code changed** → "the bot needs a restart to pick this up — run `woltspace restart` from host"
-- **entrypoint.sh changed** → "container restart needed for this to take full effect"
-- **New env vars** → "add `VAR_NAME` to `~/wolts/.env` before restarting"
-- **server.js changed** → "server auto-reloads via --watch, should be live already"
+- **Bot code changed** → "the bot needs a restart to pick this up — a container restart is needed"
+- **entrypoint.sh or entrypoint_setup.py changed** → "container restart needed for this to take full effect"
+- **New env vars** → "add `VAR_NAME` to your `.env` before restarting"
+- **Server code changed** → "server auto-reloads via uvicorn --reload, should be live already"
+- **Skills changed** → "skills update on next session start — existing sessions keep the old version"
 
 ## Notes
 
-- `woltspace rebuild` is a **host-only** command — no docker CLI inside the container
-- `server.js` runs with `--watch` so JS changes auto-apply without restart
-- The Telegram bot does NOT auto-restart — if bot code changed, flag it explicitly
+- The platform code at `/workspace/woltspace` is a git clone inside the container — `git pull` works
+- After pulling, the running image is now stale vs the container's filesystem. A `woltspace rebuild` from the host will re-bake the image for future cold starts, but isn't required for the current session
+- The Telegram/Slack bots do NOT auto-restart — if bot code changed, flag it explicitly
+- The uvicorn server runs with `--reload` so Python server changes auto-apply
 - When in doubt about whether a change is breaking, err on the side of flagging it
 - If the user invokes `/update confirm` or already said "yes, pull it", skip straight to Step 4

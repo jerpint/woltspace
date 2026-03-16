@@ -12,7 +12,7 @@
 #
 # Environment:
 #   TELEGRAM_BOT_TOKEN  — set to run live Telegram API tests
-#   Server on :3000     — required for integration tests (auto-skipped if down)
+#   Server on :7777     — required for integration tests (auto-skipped if down)
 #   TEST_VERBOSE=1      — post every test result to test group (default: on)
 #   TEST_VERBOSE=0      — summary only
 

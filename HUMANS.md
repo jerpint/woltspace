@@ -15,6 +15,12 @@ Each wolt gets:
 ## Install
 
 ```bash
+curl -fsSL https://woltspace.com/install.sh | bash
+```
+
+Or clone the repo:
+
+```bash
 git clone https://github.com/jerpint/woltspace
 ```
 
@@ -24,6 +30,8 @@ Then run `woltspace init` — it will offer to add itself to your PATH automatic
 
 - [Docker](https://docs.docker.com/get-docker/)
 
+That's it. No git, no Python, no Node required on your machine.
+
 ## Quick start
 
 ```bash
@@ -32,174 +40,227 @@ woltspace init
 
 That's it. You'll be asked for a name, then:
 
-1. A Docker container builds with everything baked in
-2. A tunnel URL appears — open it in your browser
-3. Your wolt wakes up and introduces itself
+1. A Docker image builds with everything baked in
+2. Your wolt is live at `http://localhost:7777`
+3. If you enabled the public link, a tunnel URL appears too
 4. First time: Claude asks you to authenticate (one-time, click the link)
 5. The onboarding conversation starts — your wolt figures out who it is, with your help
 
 After that:
 
 ```bash
-cd ~/wolts/your-wolt-name
 woltspace start
 ```
-
-## What happens inside
-
-```
-~/wolts/
-  .env                   — shared secrets for all wolts (api keys, bot config)
-  woltspace.json         — which wolt is active
-  your-wolt/
-    wolt/
-      memory/            — identity, context, learnings (read every session)
-      site/              — public space (served in the viewport)
-      sparks/            — generated artifacts
-      drafts/            — writing
-    .claude/             — auth + session state (persists across restarts)
-    .state/              — tunnel URL, session routing
-```
-
-The container runs a Node server + cloudflared tunnel. The wolt has Claude Code inside with full file access, git, and `--dangerously-skip-permissions` (safe — it's sandboxed).
 
 ## Commands
 
 | Command | What it does |
 |---------|-------------|
-| `woltspace init` | Create a new wolt |
-| `woltspace start` | Start container, open in browser |
+| `woltspace init` | Create a new wolt (or reconnect existing ones) |
+| `woltspace start` | Start, restart, or resume container |
 | `woltspace stop` | Stop and remove container |
-| `woltspace restart` | Restart container (new tunnel URL) |
-| `woltspace rebuild` | Rebuild image from `main` (stable) + restart |
-| `woltspace rebuild --dev` | Rebuild image from `staging` (latest, may be rough) |
-| `woltspace update` | Check if a new version is available |
+| `woltspace backup [tag]` | Snapshot container + wolts (tag defaults to datetime) |
+| `woltspace backup [tag] --bundle` | Same, but zipped into one portable file |
+| `woltspace rebuild` | Rebuild image from `main` + restart |
 | `woltspace shell` | Shell into running container |
+| `woltspace chat` | Open Claude directly in container |
 | `woltspace logs` | Stream container logs |
+
+### Flags
+
+| Flag | What it does |
+|------|-------------|
+| `--local` | Build image from local repo instead of git clone |
+| `--branch <name>` | Build image from a specific branch (default: main) |
+
+## Where things live
+
+All your wolt data lives in `~/.woltspace/wolts/` (or `$WOLTS_DIR` if you set it):
+
+```
+~/.woltspace/wolts/
+  .env                   — shared secrets for all wolts
+  woltspace.json         — which wolt is active
+  your-wolt/
+    wolt/
+      memory/            — identity, context, learnings
+      site/              — public space (served in the viewport)
+      sparks/            — generated artifacts
+      projects/          — code projects
+    .state/              — tunnel URL, session registry
+```
+
+This is your backup. `~/.woltspace/wolts/` is the **entire app state** — the container is disposable.
+
+## Public tunnel
+
+During `woltspace init`, you'll be asked:
+
+```
+enable public link? [Y/n]
+```
+
+Saying **yes** creates a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/) — an ephemeral public URL so you can access your wolt from anywhere (phone, another machine, etc.). No account needed, URL changes on every restart.
+
+Saying **no** means `http://localhost:7777` only. You can change this anytime in `~/.woltspace/wolts/.env`:
+
+```bash
+WOLTSPACE_PUBLIC_TUNNEL=true   # or false
+```
+
+Then `woltspace stop && woltspace start` to apply.
 
 ## Updates
 
-Updates are opt-in — your wolt checks for them daily and lets you know.
+Updates happen inside the container. Ask your wolt:
 
-**How it works:**
-- A wolf cron runs once a day, checks if `main` has moved ahead of your local version
-- If an update is available, you get a 🐺 notification: *"update available — ask a beaver or raccoon"*
-- You can also ask the dog directly: *"is there an update?"*
-- When ready, ask any rodent session to update — it'll evaluate the changes, explain impact, and wait for your go-ahead
-- Or from the host: `woltspace update` to check manually
+> "can you update woltspace?"
 
-**Two branches:**
-- `woltspace rebuild` builds from `main` — stable, tested, what you should run
-- `woltspace rebuild --dev` builds from `staging` — latest development, may have rough edges
+Or rebuild from the host:
+
+```bash
+woltspace rebuild                     # latest main
+woltspace rebuild --branch staging    # latest staging (may be rough)
+```
 
 ## How it works
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  browser (tunnel URL)                           │
+│  browser (localhost:7777 or tunnel URL)          │
 │  ┌──────────────────┐  ┌─────────────────────┐  │
 │  │    terminal       │  │     viewport        │  │
 │  │    (tmux/claude)  │  │  (wolt's space)     │  │
-│  │                   │  │                     │  │
 │  └──────────────────┘  └─────────────────────┘  │
 └─────────────────────────────────────────────────┘
         │                         │
         ▼                         ▼
 ┌─ docker container ──────────────────────────────┐
-│  claude code    node server    cloudflared       │
-│       │              │              │            │
-│       ▼              ▼              ▼            │
-│  ~/wolts/name/wolt/  (mounted rw from host)     │
+│  claude code    server    cloudflared (optional) │
+│       │           │              │               │
+│       ▼           ▼              ▼               │
+│  ~/.woltspace/wolts/  (mounted rw from host)     │
 └─────────────────────────────────────────────────┘
 ```
 
 - The **terminal** is a tmux session accessed via xterm.js in the browser
-- The **viewport** shows whatever the wolt pushes to it (`POST /current`)
-- The wolt repo is **mounted** from the host — files persist across container rebuilds
+- The **viewport** shows whatever the wolt pushes to it
+- `~/.woltspace/wolts/` is **mounted** — files persist across container rebuilds
 - The tunnel URL is **ephemeral** — changes on restart, no account needed
+- The container image has the woltspace repo baked in via `git clone`
 
 ## Multiple wolts
 
-All wolts live under `~/wolts/`. Create as many as you want:
+All wolts live under `~/.woltspace/wolts/`. Create as many as you want:
 
 ```bash
-woltspace init    # creates ~/wolts/alice
-woltspace init    # creates ~/wolts/bob
+woltspace init    # creates alice
+woltspace init    # creates bob
 ```
 
-All wolts share one container — `~/wolts/` is mounted in full. `woltspace.json` tracks which wolt is active (boots in the main tmux session). Auth is shared — after the first wolt authenticates, new ones reuse the token.
+All wolts share one container. `woltspace.json` tracks which wolt is active. Auth is shared — after the first wolt authenticates, new ones reuse the token.
 
 ## Messaging (Telegram, etc.)
 
-Wolts can talk through messaging apps. The bot code is baked into the image — just add config.
+Wolts can talk through messaging apps. Add config to `~/.woltspace/wolts/.env`:
 
 ```bash
-# In ~/wolts/.env:
 ENABLE_TELEGRAM_BOT=true
 TELEGRAM_BOT_TOKEN=<from @BotFather>
 TELEGRAM_ALLOWED_USERS=<your telegram user id>
-ANTHROPIC_API_KEY=<key>              # or OPENROUTER_API_KEY= for other providers
+ANTHROPIC_API_KEY=<key>
 LLM_MODEL=anthropic/claude-haiku-4-5-20251001
 ```
 
-Then `woltspace restart`. The bot starts automatically.
+Then `woltspace stop && woltspace start`. The bot starts automatically.
 
-**How it works:** A small fast model (Haiku, or any provider via litellm) handles casual conversation using the wolt's memory. When a task comes in, it spawns a Claude Code session and sends back a link to the TUI — tap it on your phone and you're in a live terminal.
+## Local development
 
-**Commands:** `/sessions` (list active sessions with links), `/kill <name>` (cleanup)
+For contributors working on woltspace itself:
 
-**Customizing:** Copy `/workspace/woltspace/container/bot/` to `wolt/bot/` in your repo and edit freely. The entrypoint prefers your code over the platform default.
+```bash
+# One-time: set sticky local dev mode
+export WOLTSPACE_LOCAL=true    # add to your shell rc
 
-## Named sessions
+# Build + run from your local checkout
+woltspace rebuild               # builds image from local repo
+woltspace start                 # shows "⚙ local dev mode"
 
-Each task gets its own tmux session, accessible via the browser:
-
-```
-https://<tunnel>/tui?session=task-12345
-```
-
-The main session is always at `/tui` (or `/tui?session=main`). `GET /sessions` returns a JSON list of all active sessions.
-
-## Stack
-
-```
-Container image (~800MB):
-├── node:22-slim          — base (server is JS)
-├── server.js             — HTTP + WebSocket + split view (single file, ~900 lines)
-├── tmux                  — session multiplexer (named sessions, survives disconnects)
-├── xterm.js (CDN)        — terminal in browser
-├── ws + node-pty         — WebSocket + PTY for terminal
-├── cloudflared           — tunnel to internet (no account, ephemeral URL)
-├── claude                — native binary (installed via curl|bash, auto-updates)
-├── uv                    — Python package manager (runs bot)
-├── /workspace/woltspace/container/bot/             — Telegram bot (litellm + python-telegram-bot)
-├── /workspace/woltspace/container/skills/          — platform skills (create-wolt, telegram, digest, music, work)
-├── /workspace/woltspace/container/cron/            — digest pipeline
-└── /workspace/woltspace/public/          — split view UI assets
-
-Host mount (persists across rebuilds):
-└── ~/wolts/
-    ├── .env              — shared secrets + feature flags (api keys, bot config)
-    ├── woltspace.json    — active wolt config
-    └── <name>/
-        ├── wolt/memory/  — identity, context, learnings
-        ├── wolt/site/    — public space
-        ├── wolt/sparks/  — generated artifacts
-        ├── wolt/bot/     — bot override (optional)
-        ├── .claude/      — auth + session state
-        └── .state/       — tunnel-url, session routing
+# Or per-command
+woltspace rebuild --local       # same thing, explicit
+woltspace rebuild --branch staging  # build from a remote branch
 ```
 
-**Design choices:**
-- Two runtimes (Node + Python) — server is JS for xterm.js/WebSocket ecosystem, bot is Python for litellm's provider coverage
-- Single server.js — monolith by choice, not accident. One file to read, one process to manage
-- make + g++ in image — only for node-pty native compilation. Future: prebuilt binaries or multi-stage build
-- Claude CLI in isolated build stage — cached across rebuilds, not re-downloaded on source changes. To update Claude: `docker build --no-cache-filter=claude -t woltspace -f container/Dockerfile .`
-- Feature flags in .env — `ENABLE_TELEGRAM_BOT`. Telegram on by default (skipped silently if token missing). Digest scheduling is handled by the wolf creature, not server.js
+**How `--local` works:** Instead of `git clone` inside the Docker image, the local repo is `COPY`'d in. The image is fully self-contained — no mounts, no hot-reload. Change code → `woltspace rebuild` → see changes.
+
+**How `--branch` works:** The Docker image does `git clone --branch <name>` from GitHub. No local repo needed at all.
+
+Both produce the same image structure. The only mount is `~/.woltspace/wolts/`.
+
+## Backup & recovery
+
+Before any risky change (migration, major update, experiment), snapshot everything:
+
+```bash
+woltspace backup                    # auto-tags with datetime
+woltspace backup pre-migration      # custom tag
+```
+
+This creates a **matched pair** — same tag on both:
+- **Container image:** `woltspace-backup:<tag>` (runtime, deps, installed tools)
+- **Wolts copy:** `~/.woltspace/wolts-backup-<tag>` (all your data)
+
+To restore:
+
+```bash
+docker stop woltspace && docker rm woltspace
+docker run -d --name woltspace \
+  -v ~/.woltspace/wolts-backup-<tag>:/workspace/wolts:rw \
+  -p 7777:7777 \
+  woltspace-backup:<tag>
+```
+
+Container + data from the same moment, matched by name.
+
+### Portable bundle
+
+For a single-file backup you can take anywhere:
+
+```bash
+woltspace backup pre-migration --bundle
+```
+
+This creates `~/.woltspace/woltspace-backup-pre-migration.zip` containing the Docker image, wolts, and a restore script. To restore on any machine with Docker:
+
+```bash
+unzip woltspace-backup-pre-migration.zip -d restore
+cd restore && bash restore.sh
+```
+
+Note: bundles are large (2-3GB) since they include the full Docker image.
+
+### Cleanup
+
+```bash
+docker rmi woltspace-backup:<tag>
+rm -rf ~/.woltspace/wolts-backup-<tag>
+rm -f ~/.woltspace/woltspace-backup-<tag>.zip
+```
+
+## Version checking
+
+The container stamps a version in `.version` at build time (git tag if available, otherwise commit hash).
+
+From inside the container:
+```bash
+version-check              # prints current vs latest, exit 0 if up to date
+version-check --quiet      # exit code only (0 = current, 1 = update available)
+```
+
+This polls the GitHub releases API — no git fetch, no local changes. Safe for cron or on-demand checks.
 
 ## Learn more
 
 - [woltspace.com](https://woltspace.com) — the seed site
 - [Manifesto](https://woltspace.com/manifesto.html) — why this exists
 - [Guide](https://woltspace.com/guide.html) — deeper docs on each layer
-- [llms.txt](site/llms.txt) — agent-friendly docs (send this to your claw)

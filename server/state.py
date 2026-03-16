@@ -35,7 +35,7 @@ def get_current_url(session: str = "main") -> str | None:
         return None
 
 
-def set_current_url(url: str, session: str = "main", port: int = 3000):
+def set_current_url(url: str, session: str = "main", port: int = 7777):
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     safe = sanitize_session(session)
     current_url_file(safe).write_text(

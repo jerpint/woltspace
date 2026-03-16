@@ -9,7 +9,7 @@
 
 The human chats with the wolt via Telegram. The wolt can spin up Claude Code sessions to do real work — write code, build websites, generate content. The human can watch the work happen live via a split-view browser UI (terminal on left, viewport on right).
 
-**This repo is the platform** — the Docker image, server, bot brain, and CLI that makes wolts run. Individual wolt repos live separately (under `~/wolts/{name}/`).
+**This repo is the platform** — the Docker image, server, bot brain, and CLI that makes wolts run. Individual wolt data lives separately (under `~/.woltspace/wolts/{name}/`).
 
 > **⚠️ Platform code is immutable from wolt sessions.** Wolts must NEVER edit files in `/workspace/woltspace/`. All wolt work happens inside their own directory (`/workspace/wolts/{name}/`). Code projects go in `wolt/projects/`. If a wolt needs new platform functionality, the human files an issue — wolts don't patch the platform.
 
@@ -26,10 +26,12 @@ Tool: claude_code → tmux session → Claude Code CLI
     ↓
 Wolt builds things (site, sparks, artifacts)
     ↓
-Node.js server → split view in browser ← Human watches
+FastAPI server (port 7777) → split view in browser ← Human watches
     ↑
-cloudflared tunnel (public URL, no account needed)
+cloudflared tunnel (optional public URL, no account needed)
 ```
+
+**Key design:** The woltspace repo is `git clone`'d into the Docker image at build time. The only host mount is `~/.woltspace/wolts/` — all wolt data. The container is disposable; the wolts directory is the backup.
 
 ---
 
@@ -80,60 +82,63 @@ woltspace
 ## Key Components
 
 ### `woltspace` (bash CLI)
-The host-side CLI. Commands:
-- `woltspace init` — create a new wolt from template
-- `woltspace start` — start the container
-- `woltspace stop/restart/shell/logs`
-- `woltspace rebuild` — rebuild image from `main` branch (stable, default)
-- `woltspace rebuild --dev` — rebuild image from `staging` branch (latest, may be rough)
-- `woltspace update` — check if a new version is available (compares local vs remote `main`)
+The host-side CLI. A dumb pipe to Docker — no python3, no JSON parsing, no git required on host.
 
-Reads `.env` for secrets, mounts all wolts into the container.
+Commands:
+- `woltspace init` — first-time setup (or reconnect existing wolts)
+- `woltspace start` — start, restart, or resume container
+- `woltspace stop` — stop and remove container
+- `woltspace backup [tag] [--bundle]` — snapshot container + wolts (tag defaults to datetime, `--bundle` zips into one portable file)
+- `woltspace rebuild` — rebuild image + restart
+- `woltspace shell/chat/logs` — interact with running container
 
-### Branch Model
+Flags:
+- `--local` — build image from local repo (COPY) instead of git clone
+- `--branch <name>` — build image from a specific branch (default: main)
 
-Two branches:
-- **`main`** — stable. What containers run by default. What users install. Only gets merges via PR from staging.
-- **`staging`** — the workshop. All development merges here first via PR. Hot-reloaded only when explicitly pulled with `--dev`.
+Env vars:
+- `WOLTS_DIR` — override wolts directory (default: `~/.woltspace/wolts`)
+- `WOLTSPACE_LOCAL=true` — sticky equivalent of `--local` (for dev workflows)
 
-Development workflow: `wt create $WOLT_NAME/feature-name` → work → PR to staging → merge → when staging is solid, PR staging → main.
+The only mount is `$WOLTS_DIR:/workspace/wolts`. Everything else is baked into the image.
 
-**The full flow, step by step:**
-1. `wt create $WOLT_NAME/fix-name` — creates an isolated worktree branched off staging. Branch names follow `{wolt-name}/{feature-description}` (e.g. `howlie/digest-timezone`, `fujiwolt/greeting-rework`).
-2. Make changes in the worktree (at the path `wt` prints)
-3. Commit and push: `git push -u origin $WOLT_NAME/fix-name`
-4. Open PR targeting **staging**: `gh pr create --base staging`
-5. The repo owner reviews and merges on GitHub
-6. Run `/update` from Telegram (or ask a beaver) — pulls staging into the running container
-7. Changes are live. When staging is stable, PR staging → main for release.
+### Docker Image
 
-**Rules:**
-- Every PR-bound task gets its own worktree — no exceptions
-- All PRs target `staging`, never `main`
-- Never commit directly to main or staging
+The Dockerfile does `git clone` of the woltspace repo during build (branch configurable via `--build-arg WOLTSPACE_BRANCH`). With `--local`, the local repo is `COPY`'d instead. Both produce the same image structure — no separate code paths.
 
-### Updates
+Image based on `node:22-slim`. Installs: cloudflared, uv, Claude Code CLI, tmux, gh.
 
-Updates are opt-in, never automatic:
-1. The **dog** has a `check_update` tool — when asked "is there an update?", it checks inline and reports.
-2. User asks a **rodent** (beaver/raccoon) to handle the update. Use the `/update` skill — it reviews incoming changes, flags breaking changes or new requirements, and only pulls after user consent.
-3. `woltspace update` on the host shows the same info (commits behind + changelog).
+The Claude Code CLI is installed in an isolated `claude` build stage, cached independently. To update Claude: `docker build --no-cache-filter=claude ...`
 
-Update checking is **not** a wolf cron. Wolves are loud by design — every cron fires a notification. Quiet surveillance tasks like polling for updates don't fit the wolf pattern. The `check-update.sh` script exists for on-demand use but is not registered in the default wolf.json.
+### `container/entrypoint.sh`
+Slim bash (~100 lines). Two phases:
+1. **Python setup** — calls `entrypoint_setup.py` which handles all config/identity
+2. **Services** — starts TUI, server, tunnel, bots, creatures
 
-**How the update works from inside the container:** `/workspace/woltspace` is always volume-mounted from the host. So `git pull` updates files live — no container rebuild needed. The `/update` skill reads `.state/woltspace-branch` to know which branch to pull (`main` by default, `staging` in dev mode). After pulling, it stamps `.state/woltspace-version` with the new commit.
+### `container/entrypoint_setup.py`
+All config and identity logic in Python (stdlib only). Handles:
+- Resolve active wolt (from `WOLT_NAME` env, `woltspace.json`, or first wolt found)
+- Scaffold new wolt from template (first boot)
+- Copy skills (platform defaults + wolt overrides)
+- Write OAuth credentials, trust config, settings.json
+- Git config, wolf.json seeding, node_modules symlink
+- Resolve wolf config, bot modules, dev mode
+- Outputs a sourceable env file for bash
 
-Version tracking: `.state/woltspace-version` stores the commit hash — written by `woltspace rebuild` on the host, or by the `/update` skill after a pull.
-
-### `server.js` (Node.js, ~1400 lines)
-Single-file HTTP + WebSocket server running on port 3000 inside the container.
+### `server/app.py` (FastAPI)
+Python server running on port 7777 inside the container.
 - Serves the split view (`/tui?session=X`) — xterm.js terminal + iframe viewport
 - Manages per-session viewport URLs (`/current`)
 - Serves static files: `public/` (platform UI) → `wolt/site/` → `wolt/sparks/`
 - Proxies tool registrations at `/tools`
 - Serves apps at `/app/:name/` (static from `dist/` or proxy to port — see `apps` skill)
-- Runs the digest cron (6am + 3pm)
 - Live reload via SSE at `/livereload`
+
+### `server.js` (Node.js, legacy)
+The original server. Still in the repo for reference. The FastAPI server (`server/app.py`) is now the default.
+
+### `server/tui-service.js` (Node.js)
+TUI WebSocket service on port 3001. The only remaining Node service — handles xterm.js PTY via `node-pty`.
 
 ### `container/bot/core.py` (Python)
 The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routing.
@@ -144,19 +149,6 @@ The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routi
 
 ### `container/bot/telegram_adapter.py`
 Thin Telegram layer over core. Persists chat history to `.state/chat/{chat_id}.jsonl`. Group chat support (responds when @mentioned).
-
-### `container/Dockerfile` + `container/entrypoint.sh`
-Image based on `node:22-slim`. Installs: cloudflared, uv, Claude Code CLI, tmux.
-The Dockerfile uses a multi-stage build: Claude Code CLI is installed in an isolated `claude` stage, cached independently of app source changes. To update Claude without rebuilding everything: `docker build --no-cache-filter=claude ...`
-Entrypoint:
-1. Merges platform skills + wolt overrides into `~/.claude/skills/`
-2. Seeds default `wolf.json` if the active wolt doesn't have one (ensures update checker runs for all users)
-3. Writes OAuth credentials and trust config
-4. Starts tmux `main` session with Claude Code auto-running
-5. Starts Node server with `--watch`
-6. Starts cloudflared tunnel (URL written to `.state/tunnel-url`)
-7. Optionally starts Telegram/Slack bot
-8. Starts wolf scheduler if `wolf.json` exists (dedicated wolf-wolt or active rodent-wolt fallback)
 
 ### `container/skills/`
 Discovery files Claude Code reads from `~/.claude/skills/`. Platform defaults baked into image; wolts can override. Current skills: `apps`, `projects`, `new-project`, `migrate-to-projects`, `create-wolt`, `digest`, `music`, `viewport`, `telegram`, `notify`, `session-summary`, `organize-context`, `wolf`, `worktui`, `update-2026-03-13`.
@@ -172,15 +164,17 @@ Background cron service. Reads `wolt/wolf.json` for scheduled tasks, fires them 
 
 CLI: `--list` (show crons), `--once` (fire due crons and exit), `--fire NAME` (trigger a specific cron by name, ignoring schedule — great for debugging).
 
+### `container/creatures/vulture.py` (Vulture Reaper 🦅)
+Background session reaper. Cleans up dead sessions — reconciles registry, kills zombie tmux sessions. Platform-level, always on, not wolf-managed.
 
 ### `container/lib/sessions.py` (Session Registry)
-Centralized session metadata — single source of truth replacing the old scattered `sessions/*.json` + `session-routing/*.json` files. One JSON file per session in `.state/registry/{session_name}.json`.
+Centralized session metadata — single source of truth. One JSON file per session in `.state/registry/{session_name}.json`.
 
 Each entry tracks: name, wolt, creature, model, status, timestamps, routing (adapter, chat_id, user_id, thread_ts), viewport URL, session URL.
 
 API: `SessionRegistry.create()`, `.update()`, `.get()`, `.list()`, `.finish()`, `.touch()`, `.reconcile()`, `.delete()`.
 
-Used by core.py, run-session.sh, notify, and server.js. CLI wrapper: `session-reg`.
+Used by core.py, run-session.sh, notify, and server. CLI wrapper: `session-reg`.
 
 ### `container/bin/`
 Utility scripts available in container PATH:
@@ -189,8 +183,8 @@ Utility scripts available in container PATH:
 - `notify` — send message back to originating adapter (Telegram/Slack)
 - `session-reg` — CLI for the session registry (`session-reg list`, `session-reg get <name>`, `session-reg reconcile`)
 - `create-creature-wolt <name> <type>` — create a new creature-wolt (wolf, dog, rodent, etc.)
+- `version-check` — check for newer woltspace release (polls GitHub API, no git fetch)
 - `spawn-tool` — register a tool proxy with the server
-- `migrate-sessions-to-registry.sh` — one-time migration from old session files to registry format
 
 ### Worktui (`wt`)
 Worktree + Claude session manager, available in all sessions. Manages git worktrees for parallel development — each branch gets an isolated working directory.
@@ -240,10 +234,10 @@ Use `/viewport` for full details: URL paths, app serving, live-reload behavior.
 
 ---
 
-## Wolt Directory Structure (per wolt repo)
+## Wolt Directory Structure (per wolt)
 
 ```
-~/wolts/{name}/
+~/.woltspace/wolts/{name}/
   wolt/
     memory/
       identity.md      — personality, values, voice (full load)
@@ -256,10 +250,8 @@ Use `/viewport` for full details: URL paths, app serving, live-reload behavior.
     site/              — static HTML/CSS public space
     sparks/            — generated artifacts
     drafts/
-  .claude/             — Claude Code auth + session state
   .state/              — runtime (tunnel URL, session registry)
     registry/          — one JSON file per session (status, routing, metadata)
-  .env                 — secrets (gitignored)
   CLAUDE.md            — wolt-specific instructions
   wolt.json            — manifest
 ```
@@ -271,12 +263,11 @@ Use `/viewport` for full details: URL paths, app serving, live-reload behavior.
 ## Multi-Wolt Setup
 
 Multiple wolts can run in one container. They all share:
-- The same Node server
+- The same server
 - The same bot process
-- `~/wolts/.state/registry/` for session metadata and notification routing
-- `~/wolts/.claude/` for Claude Code auth
+- `~/.woltspace/wolts/.state/registry/` for session metadata and notification routing
 
-`~/wolts/woltspace.json` tracks the active wolt per adapter. The bot can `switch_wolt` at runtime.
+`~/.woltspace/wolts/woltspace.json` tracks the active wolt per adapter. The bot can `switch_wolt` at runtime.
 
 ---
 
@@ -290,17 +281,20 @@ Each adapter is a thin Python file over `core.py`. To add a new adapter: copy `t
 
 ## Key Environment Variables
 
+Set in `~/.woltspace/wolts/.env`:
+
 ```bash
-WOLT_NAME=alice           # which wolt to boot
-HUMAN_NAME=alice's human  # used in bot system prompt
 CLAUDE_CODE_OAUTH_TOKEN=  # auth for Claude Code CLI
+HUMAN_NAME=               # used in bot system prompt
 ENABLE_TELEGRAM_BOT=true
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_ALLOWED_USERS=   # comma-separated IDs, or empty for open
 ENABLE_SLACK_BOT=false
 LLM_MODEL=anthropic/claude-haiku-4-5-20251001  # bot model
-ENABLE_TUNNEL=true
+WOLTSPACE_PUBLIC_TUNNEL=true  # set false for localhost-only
 ```
+
+The container also accepts `WOLT_NAME` as an env var (passed by the CLI during `init` for first boot). After that, the container reads `woltspace.json` to resolve the active wolt.
 
 ---
 
@@ -329,6 +323,14 @@ bash test/run-tests.sh -k "pattern" # pass any pytest args
 - `test_wolf.py` — wolf scheduler: cron parser, schedule loading, state tracking, dispatch routing, fire-by-name, wolf_schedules/fire_wolf/check_update tools, notify footer logic
 - `test_wolts.py` — wolt discovery, creature-type system, creature-wolt creation, singleton demotion, dog identity loading
 
+**CLI smoke tests** (`test/test-cli.sh`) — full cycle: init → start → stop → rebuild → backup → reconcile → idempotent init → shell → version check. Run from host:
+
+```bash
+bash test/test-cli.sh              # test main branch
+bash test/test-cli.sh --local      # test local code
+bash test/test-cli.sh --branch X   # test a specific branch
+```
+
 **Environment:**
 - `TEST_VERBOSE=1` (default) — posts per-test results to Telegram test group
 - `TEST_VERBOSE=0` — summary only
@@ -354,14 +356,25 @@ wt delete nw/my-feature --branch   # clean up
 
 PRs target **staging** first. When staging is solid, a PR from staging → main ships it to users.
 
-After merge to staging, pull to get the changes:
+**Why:** The image builds from main by default. A bad edit on main breaks every `woltspace rebuild` for everyone. Staging is the buffer.
+
+### Local dev workflow
+
 ```bash
-cd /workspace/woltspace && git checkout staging && git pull
+# Set sticky local dev mode
+export WOLTSPACE_LOCAL=true    # add to shell rc
+
+# Build + run from local checkout
+woltspace rebuild               # COPY's local code into image
+woltspace start                 # shows "⚙ local dev mode"
 ```
 
-To test staging locally: `woltspace rebuild --dev` (builds from staging instead of main).
+No mounts, no hot-reload. Change code → `woltspace rebuild` → see changes. Same image structure as production.
 
-**Why:** The container runs main by default. A bad edit on main crashes the server, tunnel, and bot for everyone. Staging is the buffer — test there, ship to main when ready.
+To test a remote branch without checking it out locally:
+```bash
+woltspace rebuild --branch staging
+```
 
 ### PR style — use the lore
 
@@ -374,29 +387,12 @@ Good examples:
 
 Structure: **narrative opener** (what went wrong / what's new, in lore) → **what changed** (concrete, bulleted) → **test plan** → **one-line closer** (optional, creature emoji welcome).
 
-### Dev mode
-
-The woltspace repo is always mounted into the container at `/workspace/woltspace`. Dev mode (`woltspace start --dev`) tracks the `staging` branch instead of `main` — the update checker and `/update` skill will compare against and pull from staging. The server runs with `node --watch` — save `server.js` and it restarts. The bot does NOT auto-restart; kill and relaunch it manually after edits.
-
-Restart Telegram bot:
-```bash
-pkill -f telegram_adapter
-set -a && source /workspace/wolts/${WOLT_NAME}/.env && set +a
-cd /workspace/woltspace/container && uv run --project bot python -m bot.telegram_adapter &
-```
-
 ---
-
-## Known Bugs / TODO
-
-*None currently tracked. File issues at the repo.*
 
 ## What's Messy / Still Iterating
 
 - **WhatsApp adapter**: not yet implemented
 - **Multi-wolt UX**: switching wolts works but UI is minimal
-- **Old session files**: `.state/sessions/` and `.state/session-routing/` are superseded by `.state/registry/` — can be deleted once confirmed stable
 - **Digest cron**: timezone handling is approximate
 - The split view UI (`public/split.html`) has grown organically — could use cleanup
 - `agents.md` in the repo root is older technical reference, may be out of date
-- `site/llms.txt` is a stub from earlier, not used by agents in current architecture

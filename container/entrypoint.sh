@@ -1,198 +1,51 @@
 #!/bin/bash
-# Entrypoint: configure identity, start server + cloudflared tunnel
-#
-# Auth: CLAUDE_CODE_OAUTH_TOKEN passed via env
-# Wolts dir: mounted at /workspace/wolts (all wolts)
-# Active wolt: WOLT_NAME env var selects which wolt to boot
-# Skills: at /workspace/woltspace/container/skills, copied to ~/.claude/skills/
-
+# Entrypoint: run Python setup, start services.
 set -e
 
-WOLTSPACE_DIR="/workspace/woltspace"
+WOLTSPACE_DIR="/workspace/woltspace"  # mount point inside the container
 WOLTS_DIR="${WOLTS_DIR:-/workspace/wolts}"
-WOLT_NAME="${WOLT_NAME:-wolt}"
 
-# Dev mode: deps wiped by mount — reinstall
-if [ ! -d "$WOLTSPACE_DIR/node_modules" ]; then
-  echo "dev mode: installing node deps..."
-  (cd "$WOLTSPACE_DIR" && npm install && npm install ws node-pty)
-fi
-if [ ! -d "$WOLTSPACE_DIR/container/bot/.venv" ]; then
-  echo "dev mode: installing python deps..."
-  (cd "$WOLTSPACE_DIR" && uv sync --project container/bot)
-fi
-if [ ! -d "$WOLTSPACE_DIR/server/.venv" ]; then
-  echo "dev mode: installing python server deps..."
-  (cd "$WOLTSPACE_DIR" && uv sync --project server)
-fi
-# Worktui: reinstall if node_modules wiped
-if [ -d /home/node/worktui ] && [ ! -d /home/node/worktui/node_modules ]; then
-  echo "dev mode: installing worktui deps..."
-  (cd /home/node/worktui && bun install)
-fi
+# ── Python setup (config, identity, JSON files, env resolution) ──
+ENV_FILE=$(mktemp /tmp/entrypoint-env.XXXXXX)
+python3 "$WOLTSPACE_DIR/container/entrypoint_setup.py" --env-file "$ENV_FILE"
+source "$ENV_FILE"
+rm -f "$ENV_FILE"
+export WOLT_NAME WOLT_DIR DEV_MODE WOLF_CONFIG PYTHONPATH PATH
 
-# Resolve active wolt directory
-# If WOLTS_DIR is set (multi-wolt mode), derive WOLT_DIR from it
-if [ -d "$WOLTS_DIR/$WOLT_NAME" ]; then
-  WOLT_DIR="$WOLTS_DIR/$WOLT_NAME"
-else
-  WOLT_DIR="${WOLT_DIR:-/workspace/wolt}"
-fi
-export WOLT_DIR
-
-# Copy skills so Claude auto-discovers them
-# Platform defaults first, then wolt-specific overrides win
-mkdir -p /home/node/.claude/skills
-if [ -d "$WOLTSPACE_DIR/container/skills" ]; then
-  cp -r "$WOLTSPACE_DIR/container/skills/." /home/node/.claude/skills/ 2>/dev/null || true
-fi
-if [ -d "$WOLT_DIR/.claude/skills" ]; then
-  cp -r "$WOLT_DIR/.claude/skills/." /home/node/.claude/skills/ 2>/dev/null || true
-fi
-
-# # Set up SSH for deploy key (git push)
-# if [ -f /home/node/.ssh/deploy-key ]; then
-#   mkdir -p /home/node/.ssh
-#   ssh-keyscan -t ed25519 github.com >> /home/node/.ssh/known_hosts 2>/dev/null
-#   cat > /home/node/.ssh/config <<'SSHEOF'
-# Host github.com
-#   IdentityFile /home/node/.ssh/deploy-key
-#   IdentitiesOnly yes
-# SSHEOF
-#   chmod 600 /home/node/.ssh/config
-# fi
-
-# Add container/lib to PYTHONPATH so sessions.py is importable everywhere
-export PYTHONPATH="$WOLTSPACE_DIR/container/lib:${PYTHONPATH:-}"
-
-# Add container/bin to PATH so create-creature-wolt etc. are available in all sessions
-export PATH="$WOLTSPACE_DIR/container/bin:$PATH"
-
-# Add shortcut for interactive use inside the container
-cat >> /home/node/.bashrc <<NWEOF
-wolt() {
-  cd $WOLT_DIR
-  if [[ "\$1" == "--resume" ]]; then
-    claude --dangerously-skip-permissions --resume
-  else
-    claude --dangerously-skip-permissions "hey ${WOLT_NAME}" "\$@"
-  fi
-}
-NWEOF
-
-# Source worktui shell wrapper (wt command)
-if [ -f /home/node/worktui/wt.sh ]; then
-  echo "source /home/node/worktui/wt.sh" >> /home/node/.bashrc
-fi
-
-# Write OAuth token to credentials file so claude CLI picks it up
-if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
-  mkdir -p /home/node/.claude
-  printf '{"claudeAiOauth":{"accessToken":"%s","expiresAt":9999999999999}}' "$CLAUDE_CODE_OAUTH_TOKEN" > /home/node/.claude/.credentials.json
-  chmod 600 /home/node/.claude/.credentials.json
-fi
-
-# Skip first-run onboarding + trust all wolt dirs + accept bypass permissions
-TRUST_PROJECTS="{}"
-for d in "$WOLTS_DIR"/*/; do
-  [ -d "$d" ] && TRUST_PROJECTS=$(echo "$TRUST_PROJECTS" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-d['/workspace/wolts/$(basename "$d")'] = {'hasTrustDialogAccepted': True, 'hasCompletedProjectOnboarding': True}
-json.dump(d, sys.stdout)
-")
-done
-python3 -c "
-import json
-projects = json.loads('$TRUST_PROJECTS')
-json.dump({'hasCompletedOnboarding': True, 'bypassPermissionsAccepted': True, 'projects': projects}, open('/home/node/.claude.json', 'w'), indent=2)
-"
-
-# Install session-done hook (notifies bot when claude sessions end)
-if [ -f "$WOLTSPACE_DIR/container/hooks/session-done.sh" ]; then
-  mkdir -p /home/node/.claude
-  # Merge hook into settings if not already present
-  SETTINGS_FILE="/home/node/.claude/settings.json"
-  cat > "$SETTINGS_FILE" << HOOKEOF
-{
-  "skipDangerousModePermissionPrompt": true,
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$WOLTSPACE_DIR/container/hooks/session-done.sh"
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$WOLTSPACE_DIR/container/hooks/notify.sh"
-          }
-        ]
-      }
-    ]
-  }
-}
-HOOKEOF
-fi
-
-# Configure git user from env
-git config --global user.name "${WOLT_NAME}"
-git config --global user.email "${WOLT_NAME}@woltspace.com"
-
-# Mark mounts as safe (owned by different uid on host)
-# '*' trusts all directories — safe in a sandboxed container,
-# and required for worktui worktrees created under the mount
-git config --global --add safe.directory '*'
-
-# Create a default tmux session (survives browser disconnects + server restarts)
+# ── tmux ──
 tmux new-session -d -s main -c "$WOLT_DIR" 2>/dev/null || true
-# Auto-start claude in tmux
 if [ -f /home/node/.claude/.first-run ]; then
   rm /home/node/.claude/.first-run
   tmux send-keys -t main "claude --dangerously-skip-permissions /create-wolt" Enter
 else
+  # TODO: replace with a /wake skill — check for recent sessions, offer resume or fresh start
   tmux send-keys -t main "claude --dangerously-skip-permissions \"hey ${WOLT_NAME}\"" Enter
 fi
 
-# ESM ignores NODE_PATH, so symlink node_modules at /workspace/ level
-# so ESM's directory walk from wolt dir finds container-installed packages
-ln -sf "$WOLTSPACE_DIR/node_modules" /workspace/node_modules
+# ── Services ──
 
-# TUI pty service (Node — only piece that needs node-pty)
+# TUI pty service
 TUI_PORT=3001 WOLT_DIR="$WOLT_DIR" node "$WOLTSPACE_DIR/server/tui-service.js" &
 TUI_PID=$!
 
 # Python server (FastAPI)
-(cd "$WOLTSPACE_DIR" && uv run --project server uvicorn server.app:app --host 0.0.0.0 --port 3000 --reload) &
+(cd "$WOLTSPACE_DIR" && uv run --project server uvicorn server.app:app --host 0.0.0.0 --port 7777 --reload) &
 SERVER_PID=$!
 
 sleep 2
 
-# Start cloudflared tunnel (disable with ENABLE_TUNNEL=false)
+# Tunnel
 mkdir -p "$WOLTS_DIR/.state" "$WOLT_DIR/.state"
 rm -f "$WOLTS_DIR/.state/tunnel-url" "$WOLT_DIR/.state/tunnel-url"
-TUNNEL_PID=""
-
-if [ "${ENABLE_TUNNEL:-true}" != "false" ]; then
+if [ "${WOLTSPACE_PUBLIC_TUNNEL:-true}" = "true" ]; then
   echo "opening tunnel..."
   TUNNEL_LOG="$WOLTS_DIR/.state/tunnel.log"
-
-  cloudflared tunnel --url http://localhost:3000 > "$TUNNEL_LOG" 2>&1 &
-  TUNNEL_PID=$!
-
-  # Wait for tunnel URL (blocks until found, max 30s)
+  cloudflared tunnel --url http://localhost:7777 > "$TUNNEL_LOG" 2>&1 &
+  disown
   for i in $(seq 1 30); do
     URL=$(grep -o 'https://[^ ]*trycloudflare.com' "$TUNNEL_LOG" 2>/dev/null | head -1)
     if [ -n "$URL" ]; then
       echo "$URL" > "$WOLTS_DIR/.state/tunnel-url"
-      # Also write to active wolt for backward compat (CLI reads it)
       echo "$URL" > "$WOLT_DIR/.state/tunnel-url"
       echo "tunnel ready: $URL"
       break
@@ -200,45 +53,22 @@ if [ "${ENABLE_TUNNEL:-true}" != "false" ]; then
     sleep 1
   done
 else
-  echo "tunnel disabled — access via http://localhost:4444"
+  echo "tunnel disabled — access via http://localhost:7777"
 fi
 
-# Dev mode: woltspace repo is mounted (has .git) → enable watchfiles auto-restart
-# In prod the image is baked — no .git, no auto-restart (wolts could modify bot code)
-if [ -d "$WOLTSPACE_DIR/.git" ]; then
-  DEV_MODE=true
-else
-  DEV_MODE=false
-fi
-
-# Start Telegram bot if enabled (backgrounded, not tracked by wait -n)
-# In dev mode, watchfiles auto-restarts on .py changes. Disabled in prod (wolts could modify bot code).
+# Telegram bot
 if [ "${ENABLE_TELEGRAM_BOT:-}" = "true" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
-  if [ -f "$WOLT_DIR/wolt/bot/telegram_adapter.py" ]; then
-    BOT_DIR="$WOLT_DIR"
-    BOT_MODULE="wolt.bot.telegram_adapter"
-  else
-    BOT_DIR="$WOLTSPACE_DIR/container"
-    BOT_MODULE="bot.telegram_adapter"
-  fi
-  echo "starting telegram bot ($BOT_DIR, dev=$DEV_MODE)..."
+  echo "starting telegram bot ($TELEGRAM_BOT_DIR, dev=$DEV_MODE)..."
   if [ "$DEV_MODE" = "true" ]; then
-    (cd "$BOT_DIR" && uv run --project bot watchfiles --filter python "python -m $BOT_MODULE" bot/) &
+    (cd "$TELEGRAM_BOT_DIR" && uv run --project bot watchfiles --filter python "python -m $TELEGRAM_BOT_MODULE" bot/) &
   else
-    (cd "$BOT_DIR" && uv run --project bot python -m "$BOT_MODULE") &
+    (cd "$TELEGRAM_BOT_DIR" && uv run --project bot python -m "$TELEGRAM_BOT_MODULE") &
   fi
   disown
 fi
 
-# Start Slack bot if enabled (backgrounded, not tracked by wait -n)
+# Slack bot
 if [ "${ENABLE_SLACK_BOT:-}" = "true" ] && [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -n "${SLACK_APP_TOKEN:-}" ]; then
-  if [ -f "$WOLT_DIR/wolt/bot/slack_adapter.py" ]; then
-    SLACK_BOT_DIR="$WOLT_DIR"
-    SLACK_BOT_MODULE="wolt.bot.slack_adapter"
-  else
-    SLACK_BOT_DIR="$WOLTSPACE_DIR/container"
-    SLACK_BOT_MODULE="bot.slack_adapter"
-  fi
   echo "starting slack bot ($SLACK_BOT_DIR, dev=$DEV_MODE)..."
   if [ "$DEV_MODE" = "true" ]; then
     (cd "$SLACK_BOT_DIR" && BOT_ADAPTER=slack uv run --project bot watchfiles --filter python "python -m $SLACK_BOT_MODULE" bot/) &
@@ -248,55 +78,21 @@ if [ "${ENABLE_SLACK_BOT:-}" = "true" ] && [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -n
   disown
 fi
 
-# Seed default wolf.json if active wolt doesn't have one
-# Ensures all users get the update checker without requiring manual setup
-if [ ! -f "$WOLT_DIR/wolt/wolf.json" ] && [ -f "$WOLTSPACE_DIR/template/wolt/wolf.json" ]; then
-  cp "$WOLTSPACE_DIR/template/wolt/wolf.json" "$WOLT_DIR/wolt/wolf.json"
-  echo "seeded default wolf.json (update checker) for $WOLT_NAME"
-fi
-
-# Start vulture reaper — platform-level, always on, not wolf-managed
-# Cleans up dead sessions to prevent OOM from zombie accumulation
+# Vulture reaper
 echo "starting vulture reaper..."
-(cd "$WOLTSPACE_DIR/container" && PYTHONPATH="$WOLTSPACE_DIR/container/lib:${PYTHONPATH:-}" \
-  python -m creatures.vulture --once) 2>/dev/null || true  # immediate first pass
-(cd "$WOLTSPACE_DIR/container" && PYTHONPATH="$WOLTSPACE_DIR/container/lib:${PYTHONPATH:-}" \
-  python -m creatures.vulture) &
+(cd "$WOLTSPACE_DIR/container" && python3 -m creatures.vulture --once) 2>/dev/null || true
+(cd "$WOLTSPACE_DIR/container" && python3 -m creatures.vulture) &
 disown
 
-# Start wolf scheduler — check for dedicated wolf-wolt first, then fall back to active wolt
-WOLF_CONFIG=""
-# Check woltspace.json for active_wolf creature
-ACTIVE_WOLF=$(python3 -c "
-import json, os
-try:
-    c = json.load(open(os.path.join(os.environ.get('WOLTS_DIR', '/workspace/wolts'), 'woltspace.json')))
-    w = c.get('creatures', {}).get('active_wolf', '')
-    if w:
-        d = os.path.join(os.environ.get('WOLTS_DIR', '/workspace/wolts'), w, 'wolt', 'wolf.json')
-        print(d if os.path.isfile(d) else '')
-    else:
-        print('')
-except: print('')
-" 2>/dev/null)
-if [ -n "$ACTIVE_WOLF" ]; then
-  WOLF_CONFIG="$ACTIVE_WOLF"
-elif [ -f "$WOLT_DIR/wolt/wolf.json" ]; then
-  # Backwards compat: wolf.json in active rodent-wolt
-  WOLF_CONFIG="$WOLT_DIR/wolt/wolf.json"
-fi
+# Wolf scheduler
 if [ -n "$WOLF_CONFIG" ]; then
   echo "starting wolf scheduler (config: $WOLF_CONFIG)..."
-  (cd "$WOLTSPACE_DIR/container" && PYTHONPATH="$WOLTSPACE_DIR/container/lib:${PYTHONPATH:-}" \
-    uv run --project bot watchfiles --filter python "python -m creatures.wolf" creatures/) &
+  (cd "$WOLTSPACE_DIR/container" && uv run --project bot watchfiles --filter python "python -m creatures.wolf" creatures/) &
   disown
 fi
 
-# Cleanup on exit — kill all critical processes
-cleanup() {
-  kill $TUI_PID $SERVER_PID ${TUNNEL_PID:-} 2>/dev/null
-}
+# ── Cleanup ──
+cleanup() { kill $TUI_PID $SERVER_PID 2>/dev/null; }
 trap cleanup EXIT
-
 wait -n
 cleanup

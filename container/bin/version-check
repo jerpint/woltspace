@@ -1,0 +1,32 @@
+#!/bin/bash
+# Check if a newer woltspace version is available on GitHub.
+# Uses the GitHub API — no git fetch, no local changes, minimal footprint.
+#
+# Usage:
+#   version-check           # prints current + latest, exits 0 if up to date, 1 if update available
+#   version-check --quiet   # exits 0/1 only, no output (for cron/scripts)
+
+set -euo pipefail
+
+CURRENT=$(cat /workspace/woltspace/.version 2>/dev/null || echo "unknown")
+QUIET=false
+[[ "${1:-}" == "--quiet" ]] && QUIET=true
+
+# Try GitHub API for latest release tag (no auth needed for public repos)
+LATEST=$(curl -fsSL --max-time 5 \
+  "https://api.github.com/repos/jerpint/woltspace/releases/latest" 2>/dev/null \
+  | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4) || LATEST=""
+
+if [[ -z "$LATEST" ]]; then
+  # No releases yet — fall back to comparing commit hashes via git ls-remote
+  LATEST=$(git ls-remote --heads https://github.com/jerpint/woltspace.git main 2>/dev/null \
+    | cut -c1-7) || LATEST="unknown"
+fi
+
+if [[ "$CURRENT" == "$LATEST" ]]; then
+  $QUIET || echo "up to date: $CURRENT"
+  exit 0
+else
+  $QUIET || echo "update available: $CURRENT → $LATEST"
+  exit 1
+fi

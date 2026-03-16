@@ -61,7 +61,7 @@ woltspace/
 
 ## Server (server.js)
 
-Single Node.js HTTP server on port 3000. No framework. Serves everything.
+Single Node.js HTTP server on port 7777. No framework. Serves everything.
 
 **Routes:**
 

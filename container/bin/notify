@@ -33,7 +33,7 @@ FULL_MESSAGE="${EMOJI} ${WOLT_NAME}: $MESSAGE"
 
 PAYLOAD=$(python3 -c "import json,sys; print(json.dumps({'session': sys.argv[1], 'message': sys.argv[2]}))" "$SESSION" "$FULL_MESSAGE")
 
-RESPONSE=$(curl -s -X POST http://localhost:3000/notify \
+RESPONSE=$(curl -s -X POST http://localhost:7777/notify \
   -H "Content-Type: application/json" \
   -d "$PAYLOAD")
 

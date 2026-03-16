@@ -5,7 +5,7 @@ simulate a Telegram user interacting with the bot, verify the full chain works.
 
 Three tiers:
 1. Mock tests (no external deps) — test message parsing, routing logic
-2. Server tests (require localhost:3000) — test notify, session creation
+2. Server tests (require localhost:7777) — test notify, session creation
 3. Live bot tests (require TELEGRAM_BOT_TOKEN) — actual Telegram API calls
 
 Usage: uv run pytest test/test_telegram_loop.py -v

@@ -14,10 +14,10 @@ import pytest
 # ---------------------------------------------------------------------------
 
 def _server_up() -> bool:
-    """Check if the woltspace server is running on localhost:3000."""
+    """Check if the woltspace server is running on localhost:7777."""
     import urllib.request
     try:
-        urllib.request.urlopen("http://localhost:3000/", timeout=2)
+        urllib.request.urlopen("http://localhost:7777/", timeout=2)
         return True
     except Exception:
         return False
@@ -45,7 +45,7 @@ def _tmux_available() -> bool:
 # Markers / skips
 # ---------------------------------------------------------------------------
 
-requires_server = pytest.mark.skipif(not _server_up(), reason="server not running on localhost:3000")
+requires_server = pytest.mark.skipif(not _server_up(), reason="server not running on localhost:7777")
 requires_telegram = pytest.mark.skipif(not _telegram_bot_configured(), reason="TELEGRAM_BOT_TOKEN not set")
 requires_tmux = pytest.mark.skipif(not _tmux_available(), reason="tmux not installed")
 
@@ -56,13 +56,13 @@ requires_tmux = pytest.mark.skipif(not _tmux_available(), reason="tmux not insta
 
 @pytest.fixture
 def server_post():
-    """Helper to POST JSON to localhost:3000."""
+    """Helper to POST JSON to localhost:7777."""
     import urllib.request
 
     def _post(path: str, body: dict) -> dict:
         data = json.dumps(body).encode()
         req = urllib.request.Request(
-            f"http://localhost:3000{path}",
+            f"http://localhost:7777{path}",
             data=data,
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -78,11 +78,11 @@ def server_post():
 
 @pytest.fixture
 def server_get():
-    """Helper to GET from localhost:3000."""
+    """Helper to GET from localhost:7777."""
     import urllib.request
 
     def _get(path: str) -> dict | str:
-        req = urllib.request.Request(f"http://localhost:3000{path}", method="GET")
+        req = urllib.request.Request(f"http://localhost:7777{path}", method="GET")
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 text = resp.read().decode()
