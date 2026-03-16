@@ -3,9 +3,8 @@
 #
 # Usage:
 #   woltspace init                    — first-time setup (or reconnect existing wolts)
-#   woltspace start                   — start container
+#   woltspace start                   — start, restart, or resume container
 #   woltspace stop                    — stop and remove container
-#   woltspace restart                 — restart container (new tunnel URL)
 #   woltspace rebuild                 — rebuild image + restart
 #   woltspace shell                   — enter running container
 #   woltspace chat                    — open claude in container
@@ -289,39 +288,34 @@ case "$cmd" in
   logs)
     docker logs -f "$CONTAINER_NAME"
     ;;
-  restart)
-    rm -f "$WOLTS_DIR/.state/tunnel-url"
-    docker restart "$CONTAINER_NAME" > /dev/null
-    _show_url
-    ;;
   rebuild)
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
     rm -f "$WOLTS_DIR/.state/tunnel-url"
     _build_image
     _start_container
     _show_url
-    echo "  open the link above in your browser."
-    echo ""
     ;;
   start)
     printf "\n  %b🦫%b  %b\n\n" "${_A}" "${_R}" "${_B}${_G}woltspace${_R}"
 
     if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-      echo "  container already running."
+      echo "  already running."
+      _show_url
+    elif docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+      echo "  restarting..."
+      rm -f "$WOLTS_DIR/.state/tunnel-url"
+      docker restart "$CONTAINER_NAME" > /dev/null
       _show_url
     else
-      # Build image if it doesn't exist
       if ! docker image inspect woltspace &>/dev/null; then
         _build_image
       fi
       _start_container
       _show_url
-      echo "  open the link above in your browser."
-      echo ""
     fi
     ;;
   *)
-    echo "usage: woltspace <init|start|stop|restart|rebuild|shell|chat|logs> [--branch <name>] [--local]"
+    echo "usage: woltspace <init|start|stop|rebuild|shell|chat|logs> [--branch <name>] [--local]"
     exit 1
     ;;
 esac
