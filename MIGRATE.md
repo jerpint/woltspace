@@ -287,6 +287,8 @@ OVERALL: [SAFE TO PROCEED | NEEDS ATTENTION — list blockers]
 ## Phase 2: Migration (requires approval)
 
 > **Only run this after the maintainer has reviewed the Phase 1 audit report and given explicit approval.**
+>
+> **If anything goes wrong during migration: STOP. Do not attempt to fix it yourself.** The backup from step 2.1 means nothing is lost. Document exactly what happened — the command that failed, the error output, and the state of the system — and send it to the maintainer. The rollback section at the bottom restores everything. Panicking and running extra commands is how data gets lost.
 
 ### 2.1 Back up everything
 
