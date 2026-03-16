@@ -441,7 +441,7 @@ docker rm woltspace 2>/dev/null
 # Option A: Restore from snapshot (fastest — exact runtime from before migration)
 docker run -d --name woltspace \
   -v "$HOME/.woltspace/wolts-backup-pre-migration:/workspace/wolts:rw" \
-  -p 4444:3000 \
+  -p 7777:7777 \
   woltspace-backup:pre-migration
 
 # Option B: Full restore to pre-migration state
@@ -457,7 +457,7 @@ woltspace rebuild
 
 # Verify old setup works
 docker ps --filter name=woltspace
-curl -s http://localhost:4444/
+curl -s http://localhost:7777/
 ```
 
 ---
