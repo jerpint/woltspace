@@ -13,6 +13,7 @@ set -e
 
 WOLTSPACE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 export WOLTS_DIR="/tmp/test-woltspace-cli/wolts"
+unset WOLTSPACE_LOCAL
 export WOLTSPACE_CONTAINER="woltspace-test"
 export WOLTSPACE_PORT=7778
 export WOLTSPACE_NONINTERACTIVE=true
@@ -40,7 +41,13 @@ echo "  🦫 WOLTSPACE CLI SMOKE TEST"
 echo "  ════════════════════════════════════════"
 echo "  ${_D}WOLTS_DIR=$WOLTS_DIR${_N}"
 echo "  ${_D}container: $CONTAINER_NAME${_N}"
-echo "  ${_D}flags: ${BUILD_FLAGS:-main (default)}${_N}"
+if echo "$BUILD_FLAGS" | grep -q "\-\-local"; then
+  echo "  ${_D}source: local repo${_N}"
+elif echo "$BUILD_FLAGS" | grep -q "\-\-branch"; then
+  echo "  ${_D}source: branch $(echo "$BUILD_FLAGS" | sed 's/.*--branch //')${_N}"
+else
+  echo "  ${_D}source: branch main (default)${_N}"
+fi
 echo ""
 
 # Clean slate
