@@ -59,6 +59,7 @@ woltspace start
 | `woltspace init` | Create a new wolt (or reconnect existing ones) |
 | `woltspace start` | Start, restart, or resume container |
 | `woltspace stop` | Stop and remove container |
+| `woltspace backup [tag]` | Snapshot container + wolts (tag defaults to datetime) |
 | `woltspace rebuild` | Rebuild image from `main` + restart |
 | `woltspace shell` | Shell into running container |
 | `woltspace chat` | Open Claude directly in container |
@@ -194,6 +195,50 @@ woltspace rebuild --branch staging  # build from a remote branch
 **How `--branch` works:** The Docker image does `git clone --branch <name>` from GitHub. No local repo needed at all.
 
 Both produce the same image structure. The only mount is `~/.woltspace/wolts/`.
+
+## Backup & recovery
+
+Before any risky change (migration, major update, experiment), snapshot everything:
+
+```bash
+woltspace backup                    # auto-tags with datetime
+woltspace backup pre-migration      # custom tag
+```
+
+This creates a **matched pair** — same tag on both:
+- **Container image:** `woltspace-backup:<tag>` (runtime, deps, installed tools)
+- **Wolts copy:** `~/.woltspace/wolts-backup-<tag>` (all your data)
+
+To restore:
+
+```bash
+docker stop woltspace && docker rm woltspace
+docker run -d --name woltspace \
+  -v ~/.woltspace/wolts-backup-<tag>:/workspace/wolts:rw \
+  -p 7777:7777 \
+  woltspace-backup:<tag>
+```
+
+Container + data from the same moment, matched by name.
+
+To clean up old backups:
+
+```bash
+docker rmi woltspace-backup:<tag>
+rm -rf ~/.woltspace/wolts-backup-<tag>
+```
+
+## Version checking
+
+The container stamps a version in `.version` at build time (git tag if available, otherwise commit hash).
+
+From inside the container:
+```bash
+version-check              # prints current vs latest, exit 0 if up to date
+version-check --quiet      # exit code only (0 = current, 1 = update available)
+```
+
+This polls the GitHub releases API — no git fetch, no local changes. Safe for cron or on-demand checks.
 
 ## Learn more
 

@@ -88,6 +88,7 @@ Commands:
 - `woltspace init` — first-time setup (or reconnect existing wolts)
 - `woltspace start` — start, restart, or resume container
 - `woltspace stop` — stop and remove container
+- `woltspace backup [tag]` — snapshot container + wolts (tag defaults to datetime)
 - `woltspace rebuild` — rebuild image + restart
 - `woltspace shell/chat/logs` — interact with running container
 
@@ -182,6 +183,7 @@ Utility scripts available in container PATH:
 - `notify` — send message back to originating adapter (Telegram/Slack)
 - `session-reg` — CLI for the session registry (`session-reg list`, `session-reg get <name>`, `session-reg reconcile`)
 - `create-creature-wolt <name> <type>` — create a new creature-wolt (wolf, dog, rodent, etc.)
+- `version-check` — check for newer woltspace release (polls GitHub API, no git fetch)
 - `spawn-tool` — register a tool proxy with the server
 
 ### Worktui (`wt`)
@@ -320,6 +322,14 @@ bash test/run-tests.sh -k "pattern" # pass any pytest args
 - `test_agent_loop.py` — haiku decision tests (mocked tools), conversation simulator, live session spawn, true e2e (haiku → beaver → file on disk → viewport)
 - `test_wolf.py` — wolf scheduler: cron parser, schedule loading, state tracking, dispatch routing, fire-by-name, wolf_schedules/fire_wolf/check_update tools, notify footer logic
 - `test_wolts.py` — wolt discovery, creature-type system, creature-wolt creation, singleton demotion, dog identity loading
+
+**CLI smoke tests** (`test/test-cli.sh`) — full cycle: init → start → stop → rebuild → backup → reconcile → idempotent init → shell → version check. Run from host:
+
+```bash
+bash test/test-cli.sh              # test main branch
+bash test/test-cli.sh --local      # test local code
+bash test/test-cli.sh --branch X   # test a specific branch
+```
 
 **Environment:**
 - `TEST_VERBOSE=1` (default) — posts per-test results to Telegram test group
