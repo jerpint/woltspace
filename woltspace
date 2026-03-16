@@ -53,13 +53,15 @@ _A=$'\033[0;33m'; _C=$'\033[0;36m'
 
 _build_image() {
   if [ "$LOCAL_BUILD" = true ]; then
-    echo "  🪵 building from local timber..."
+    echo "  🪵 felling fresh timber..."
+    echo "  ${_D}building image from local source${_R}"
     echo ""
     docker build -t woltspace \
       --build-arg USE_LOCAL=true \
       -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR"
   else
-    echo "  🪵 felling fresh timber (branch: $BUILD_BRANCH)..."
+    echo "  🪵 felling fresh timber..."
+    echo "  ${_D}building image (branch: $BUILD_BRANCH)${_R}"
     echo ""
     docker build -t woltspace \
       --build-arg WOLTSPACE_BRANCH="$BUILD_BRANCH" \
@@ -86,11 +88,13 @@ _start_container() {
 
   sleep 2
   if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    echo "  the dam broke. logs:"
+    echo "  🧱 the dam broke"
+    echo "  ${_D}container failed to start. logs:${_R}"
     docker logs "$CONTAINER_NAME"
     exit 1
   fi
-  echo "  lodge is up."
+  echo "  🏕️ the lodge is open"
+  echo "  ${_D}container started${_R}"
 }
 
 _show_url() {
@@ -107,7 +111,9 @@ _show_url() {
   if [ "$tunnel_enabled" = "true" ]; then
     TUNNEL_URL=""
     TUNNEL_FILE="$WOLTS_DIR/.state/tunnel-url"
-    echo -n "  🌲 opening a path to the outside"
+    echo -n "  🌲 opening a path to the outside..."
+    echo ""
+    echo -n "  ${_D}starting tunnel${_R}"
     for i in $(seq 1 30); do
       if [ -f "$TUNNEL_FILE" ]; then
         TUNNEL_URL=$(cat "$TUNNEL_FILE")
@@ -186,7 +192,8 @@ if [ "$cmd" = "init" ]; then
   # Detect existing wolts
   if [ -d "$WOLTS_DIR" ] && [ "$(_count_wolts)" -gt 0 ]; then
     printf "\n  %b🦫%b  %b\n\n" "${_A}" "${_R}" "${_B}${_G}woltspace${_R}"
-    echo "  the lodge remembers. found your wolts:"
+    echo "  🐘 the lodge remembers"
+    echo "  ${_D}found existing wolts:${_R}"
     _list_wolt_names | while read -r w; do echo "    🪵 $w"; done
     echo ""
     _build_image
@@ -294,19 +301,22 @@ case "$cmd" in
       fi
     else
       docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
-      echo "  🪵 lodge closed."
+      echo "  🌙 lodge closed for the night"
+      echo "  ${_D}container stopped${_R}"
     fi
     ;;
   shell)
     docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" || {
-      echo "  lodge is closed — run 'woltspace start'"
+      echo "  💤 the lodge is quiet"
+      echo "  ${_D}container not running — run 'woltspace start'${_R}"
       exit 1
     }
     docker exec -it "$CONTAINER_NAME" bash
     ;;
   chat)
     docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" || {
-      echo "  lodge is closed — run 'woltspace start'"
+      echo "  💤 the lodge is quiet"
+      echo "  ${_D}container not running — run 'woltspace start'${_R}"
       exit 1
     }
     docker exec -it "$CONTAINER_NAME" claude --dangerously-skip-permissions
@@ -319,6 +329,7 @@ case "$cmd" in
       printf "  %b🪵 rebuilding from local timber — %s%b\n" "${_A}" "$WOLTSPACE_DIR" "${_R}"
     else
       echo "  🪵 rebuilding the lodge..."
+      echo "  ${_D}rebuilding image${_R}"
     fi
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
     rm -f "$WOLTS_DIR/.state/tunnel-url"
@@ -333,10 +344,12 @@ case "$cmd" in
     fi
 
     if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-      echo "  already gnawing."
+      echo "  🦫 already gnawing"
+      echo "  ${_D}container running${_R}"
       _show_url
     elif docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-      echo "  waking up the lodge..."
+      echo "  ☀️ waking up the lodge..."
+      echo "  ${_D}resuming container${_R}"
       rm -f "$WOLTS_DIR/.state/tunnel-url"
       docker restart "$CONTAINER_NAME" > /dev/null
       _show_url
