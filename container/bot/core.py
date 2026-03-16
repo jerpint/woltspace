@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+WOLTSPACE_DIR = Path(os.environ.get("WOLTSPACE_DIR", "/workspace/woltspace"))
 _wolt_name = os.environ.get("WOLT_NAME", "wolt")
 _derived = WOLTS_DIR / _wolt_name
 WOLT_DIR = Path(os.environ.get("WOLT_DIR") or (_derived if _derived.exists() else "/workspace/wolt"))
@@ -139,154 +140,115 @@ def _load_dog_identity() -> str | None:
     return None
 
 
-def _build_creatures_section() -> str:
-    """Build the creatures section of the system prompt from species definitions."""
+def _load_prompt(name: str, variables: dict = None) -> str:
+    """Load a prompt fragment from the dog species prompts/ directory.
+
+    Supports {variable} substitution for dynamic values.
+    Returns empty string if file not found.
+    """
+    prompt_path = WOLTSPACE_DIR / "species" / "dog" / "prompts" / f"{name}.md"
+    if not prompt_path.exists():
+        return ""
+    text = prompt_path.read_text().strip()
+    if variables:
+        try:
+            text = text.format(**variables)
+        except KeyError:
+            pass  # leave unresolved placeholders as-is
+    return text
+
+
+def _build_creatures_list() -> dict:
+    """Build creature_list and species_list strings from species definitions."""
     try:
-        from species import list_species, get_species
+        from species import list_species
         all_species = list_species()
         if not all_species:
-            raise ImportError("no species loaded")
+            return {"creature_list": "", "species_list": ""}
 
-        lines = []
-
-        # Session creatures (rodent tiers)
+        # Rodent tiers
         rodent = all_species.get("rodent", {})
         tiers = rodent.get("tiers", {})
-        if tiers:
-            tier_parts = []
-            for name, tier in tiers.items():
-                emoji = tier.get("emoji", "")
-                desc = tier.get("description", "")
-                # Extract model alias
-                model = tier.get("model", "")
-                for alias in ("opus", "sonnet", "haiku"):
-                    if alias in model:
-                        model = alias
-                        break
-                tier_parts.append(f"{emoji} **{name}** ({model} — {desc})")
-            lines.append("## Creatures")
-            lines.append(f"Sessions run as creatures: {', '.join(tier_parts)}.")
+        tier_parts = []
+        for name, tier in tiers.items():
+            emoji = tier.get("emoji", "")
+            desc = tier.get("description", "")
+            model = tier.get("model", "")
+            for alias in ("opus", "sonnet", "haiku"):
+                if alias in model:
+                    model = alias
+                    break
+            tier_parts.append(f"{emoji} **{name}** ({model} — {desc})")
 
-        lines.append('CRITICAL: When the user asks for a specific creature by name, ALWAYS use that creature. Never override their choice based on your own task decomposition. "Fire up a raccoon" means creature="raccoon", period.')
-        lines.append("")
-        lines.append("**When to use otter vs beaver:** Otter is haiku — fast and cheap, great for quick lookups, simple edits, file searches, one-shot scripts. Beaver is sonnet — deeper reasoning, multi-file changes, architecture work. Default to beaver for ambiguous tasks; use otter when speed matters more than depth.")
-        lines.append("**NEVER use otter for platform updates.** Any task involving `/update`, running the update skill, or pulling woltspace changes must always use **beaver** or **raccoon** — never otter. Updates require careful review and can break the running platform; haiku is not appropriate.")
-        lines.append("")
-
-        # Other species (non-rodent)
-        lines.append("The colony has more creatures — not all are session types yet, but they have roles:")
-        lines.append("**dog** — that's you. Telegram companion, loyal and constrained")
+        # Other species
+        species_lines = []
         for name, sp in all_species.items():
             if name in ("rodent", "dog"):
                 continue
             emoji = sp.get("emoji", "")
             desc = sp.get("description", "")
-            lines.append(f"{emoji} **{name}** — {desc}")
+            species_lines.append(f"{emoji} **{name}** — {desc}")
 
-        # Wolf-specific routing (if wolf species exists)
-        wolf = all_species.get("wolf")
-        if wolf:
-            lines.append("")
-            lines.append("## Wolf — Scheduling & Crons 🐺")
-            lines.append("When someone asks about schedules, reminders, crons, or recurring tasks:")
-            lines.append("1. Use `wolf_schedules` to check what's already set up")
-            lines.append('2. Spawn a **wolf** session (`creature="wolf"`) to help them configure it')
-            lines.append("Wolves manage `wolt/wolf.json` — the schedule config. Each cron entry has a name, schedule (cron expression), action (script/session/skill), and optional notification message. When a cron fires, the wolf sends a 🐺 notification automatically.")
-            lines.append('Route to wolf for: "remind me to...", "run X every morning", "set up a daily...", "what\'s scheduled?", "change the digest time"')
-
-        return "\n".join(lines)
+        return {
+            "creature_list": ", ".join(tier_parts),
+            "species_list": "\n".join(species_lines),
+        }
     except (ImportError, Exception):
-        # Fallback: hardcoded (identical to previous behavior)
-        return """## Creatures
-Sessions run as creatures: 🦝 **raccoon** (opus — complex reasoning, orchestration), 🦫 **beaver** (sonnet — building, coding), 🦦 **otter** (haiku — fast, lightweight tasks), or 🐺 **wolf** (sonnet — cron & schedule management).
-CRITICAL: When the user asks for a specific creature by name, ALWAYS use that creature. Never override their choice based on your own task decomposition. "Fire up a raccoon" means creature="raccoon", period.
-
-**When to use otter vs beaver:** Otter is haiku — fast and cheap, great for quick lookups, simple edits, file searches, one-shot scripts. Beaver is sonnet — deeper reasoning, multi-file changes, architecture work. Default to beaver for ambiguous tasks; use otter when speed matters more than depth.
-**NEVER use otter for platform updates.** Any task involving `/update`, running the update skill, or pulling woltspace changes must always use **beaver** or **raccoon** — never otter. Updates require careful review and can break the running platform; haiku is not appropriate.
-
-The colony has more creatures — not all are session types yet, but they have roles:
-**dog** — that's you. Telegram companion, loyal and constrained
-🐺 **wolf** — cron & scheduler, runs the pack's routines
-🕷️ **spider** — headless browser, crawls and scrapes
-🐻 **bear** — safety & validation, guards outputs
-🐼 **panda** — daily reminders, zen notifications
-
-## Wolf — Scheduling & Crons 🐺
-When someone asks about schedules, reminders, crons, or recurring tasks:
-1. Use `wolf_schedules` to check what's already set up
-2. Spawn a **wolf** session (`creature="wolf"`) to help them configure it
-Wolves manage `wolt/wolf.json` — the schedule config. Each cron entry has a name, schedule (cron expression), action (script/session/skill), and optional notification message. When a cron fires, the wolf sends a 🐺 notification automatically.
-Route to wolf for: "remind me to...", "run X every morning", "set up a daily...", "what's scheduled?", "change the digest time\""""
+        return {
+            "creature_list": "🦝 **raccoon** (opus — complex reasoning), 🦫 **beaver** (sonnet — building, coding), 🦦 **otter** (haiku — fast, lightweight)",
+            "species_list": "🐺 **wolf** — cron & scheduler\n🕷️ **spider** — headless browser\n🐻 **bear** — safety & validation\n🐼 **panda** — daily reminders",
+        }
 
 
 def build_system_prompt() -> str:
-    """Build the system prompt from memory + base instructions."""
+    """Build the system prompt by loading and composing text files.
+
+    Prompt fragments live in species/dog/prompts/. Each section is a standalone
+    .md file. This function just loads, substitutes variables, and concatenates.
+    """
     memory = load_memory()
     wolt_name = os.environ.get("WOLT_NAME", "wolt")
     human_name = os.environ.get("HUMAN_NAME", "human")
     adapter = os.environ.get("BOT_ADAPTER", "chat")
 
-    # Try to load dog identity from a dedicated dog-wolt
+    # Shared variables for template substitution
     dog_identity = _load_dog_identity()
-    dog_name = get_active_creature("dog")
+    dog_name = get_active_creature("dog") or wolt_name
+    creatures = _build_creatures_list()
 
+    variables = {
+        "wolt_name": wolt_name,
+        "human_name": human_name,
+        "adapter": adapter,
+        "dog_name": dog_name,
+        **creatures,
+    }
+
+    # Build intro — use dog identity if available, otherwise fallback
     if dog_identity:
-        intro = f"""You are {dog_name} — the dog. You talk to {human_name} through {adapter}.
-You route real work to Claude Code sessions run by rodent-wolts (the builders).
-Never prefix your messages with emojis or your name — the adapter handles that.
-
-## Your identity
-{dog_identity}"""
+        intro = _load_prompt("intro", variables)
+        if intro:
+            intro += f"\n\n## Your identity\n{dog_identity}"
+        else:
+            intro = f"You are {dog_name} — the dog. You talk to {human_name} through {adapter}.\n\n## Your identity\n{dog_identity}"
     else:
-        # Fallback: hardcoded dog identity (no dog-wolt exists yet)
-        intro = f"""You are {wolt_name} — a wolt (the dog). You talk to {human_name} through {adapter}.
-You're the lodge companion — loyal, constrained, and you route real work to Claude Code sessions.
-Never prefix your messages with emojis or your name — the adapter handles that."""
+        intro = _load_prompt("intro-fallback", variables)
+        if not intro:
+            intro = f"You are {wolt_name} — a wolt (the dog). You talk to {human_name} through {adapter}."
 
-    creatures_section = _build_creatures_section()
+    # Load each prompt section — order matters
+    sections = [
+        intro,
+        _load_prompt("creatures", variables),
+        _load_prompt("voice", variables),
+        _load_prompt("tools", variables),
+        _load_prompt("projects", variables),
+        _load_prompt("communication", variables),
+        _load_prompt("memory", variables),
+    ]
 
-    base = f"""{intro}
-
-{creatures_section}
-
-## Voice
-Talk like a person, not an assistant. Short messages. Lowercase is fine. No bullet lists, no "certainly!", no formal summaries. If you don't know something, say so. If something's interesting, say why. Bias toward action — if a request has enough to start, just start.
-
-## Tools
-You have tools. Use them. Never describe what you would do — always invoke the tool directly.
-CRITICAL: If a task requires claude_code, call claude_code. Don't narrate what you'd do instead.
-
-- **claude_code** — spin up a Claude Code session for real work (pick raccoon, beaver, otter, or wolf as needed)
-- **check_update** — check if a woltspace update is available. If yes, suggest the user ask a beaver or raccoon to update. NEVER dispatch the update itself to otter — always beaver or raccoon.
-- **wolf_schedules** — check what crons are configured and when they last ran
-- **fire_wolf** — trigger a specific cron immediately by name (check wolf_schedules first for names)
-- **wolf_jobs** — show recent wolf job log (what fired, when, success/failure)
-- **send_message** — send a message to a running session
-- **list_sessions** / **check_session** — see what's running or check on a session
-- **list_projects** — see what projects exist in the current wolt
-- **read_memory** — read a specific memory file when you need details
-- **get_recent_sessions** — read session summaries (what was built, links)
-- **get_tunnel_url** — get the public URL for the split view
-- **open_issue** — file a GitHub issue on woltspace (beavers pick these up asynchronously)
-
-## Projects
-Projects live in `wolt/projects/`. They're isolated workspaces for building things.
-
-**When someone asks to build something** (app, tool, script, experiment): use `claude_code` with the `project` parameter set. Pick a short, descriptive name. The session runs scoped to that project directory.
-
-**When someone asks to work on an existing project** ("fix my dashboard", "update the todo app"): call `list_projects` first to find it, then `claude_code` with `project` set to the matching name.
-
-**When someone just wants to chat or do wolt-level work** (update memories, check on things, site changes): no project needed — run the session at the wolt root as usual.
-
-The key question: does this request belong to a specific project? If yes, scope it. If not, don't.
-
-## Communication Protocol
-Messages wrapped in <system>...</system> tags are from Claude Code sessions (the "den"). They were sent directly to the user — you didn't say them. Don't repeat them. When asked about results, use that context to answer in your own words.
-
-When you start a session, keep the ack short: what you kicked off, what to expect, and the live view URL if available.
-
-## Memory
-Your identity and context come from memory files below. Use them — reference past work, ongoing projects, shared context. You're not starting fresh each time."""
+    # Filter empty sections, join with double newlines
+    base = "\n\n".join(s for s in sections if s)
 
     if memory:
         return f"{base}\n\n{memory}"
