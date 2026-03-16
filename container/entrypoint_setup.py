@@ -198,6 +198,28 @@ def resolve_bot_module(wolt_dir: Path, woltspace_dir: Path, adapter: str) -> tup
     return str(woltspace_dir / "container"), f"bot.{adapter}_adapter"
 
 
+def reconcile_sessions(wolts_dir: Path, woltspace_dir: Path):
+    """Mark any 'running' sessions as orphaned if their tmux session is gone.
+
+    Runs on container boot before tmux starts, so any session still marked
+    'running' from a previous boot is definitely dead.
+    """
+    registry_dir = wolts_dir / ".state" / "registry"
+    if not registry_dir.is_dir():
+        return
+    lib_dir = str(woltspace_dir / "container" / "lib")
+    if lib_dir not in sys.path:
+        sys.path.insert(0, lib_dir)
+    try:
+        from sessions import SessionRegistry
+        reg = SessionRegistry(registry_dir)
+        orphaned = reg.reconcile()
+        if orphaned:
+            print(f"reconciled {len(orphaned)} orphaned session(s): {', '.join(orphaned)}")
+    except Exception as e:
+        print(f"session reconcile skipped: {e}", file=sys.stderr)
+
+
 def symlink_node_modules(woltspace_dir: Path):
     target = Path("/workspace/node_modules")
     if target.is_symlink() or target.exists():
@@ -237,6 +259,9 @@ def main():
     configure_git(wolt_name)
     seed_wolf_json(wolt_dir, woltspace_dir)
     symlink_node_modules(woltspace_dir)
+
+    # Clean up stale sessions from previous boot
+    reconcile_sessions(wolts_dir, woltspace_dir)
 
     # Resolve derived values for bash
     wolf_config = resolve_wolf_config(wolts_dir, wolt_dir)
