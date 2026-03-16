@@ -32,7 +32,7 @@ step() { printf "\n  ${_D}▸ %s${_N}\n" "$1"; }
 cleanup() {
   docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
   docker rmi woltspace 2>/dev/null || true
-  docker rmi woltspace-test-snapshot:pre-test 2>/dev/null || true
+  docker rmi woltspace-backup:test-snapshot 2>/dev/null || true
   rm -rf /tmp/test-woltspace-cli
 }
 
@@ -130,17 +130,18 @@ sleep 3
 FAKE_STATUS=$(docker exec "$CONTAINER_NAME" cat /workspace/wolts/.state/registry/fake-session.json 2>/dev/null | grep -o '"status": *"[^"]*"' | head -1)
 [[ "$FAKE_STATUS" == *"orphaned"* ]] || [[ "$FAKE_STATUS" == *"reaped"* ]] && pass "stale session reconciled on boot" || fail "stale session not reconciled ($FAKE_STATUS)"
 
-# ── snapshot (docker commit) ──
+# ── backup ──
 echo ""
-echo "  --- snapshot ---"
-step "creating container snapshot..."
-docker commit "$CONTAINER_NAME" woltspace-test-snapshot:pre-test >/dev/null 2>&1 && pass "docker commit succeeded" || fail "docker commit failed"
+echo "  --- backup ---"
+step "running woltspace backup with custom tag..."
+"$WOLTSPACE_DIR/woltspace" backup test-snapshot 2>&1
 
-step "verifying snapshot image exists..."
-docker image inspect woltspace-test-snapshot:pre-test >/dev/null 2>&1 && pass "snapshot image exists" || fail "snapshot image not found"
+docker image inspect woltspace-backup:test-snapshot >/dev/null 2>&1 && pass "container snapshot created" || fail "container snapshot not created"
+[ -d "/tmp/test-woltspace-cli/wolts-backup-test-snapshot" ] && pass "wolts backup created" || fail "wolts backup not created"
 
-step "cleaning up snapshot..."
-docker rmi woltspace-test-snapshot:pre-test >/dev/null 2>&1
+step "cleaning up backup artifacts..."
+docker rmi woltspace-backup:test-snapshot >/dev/null 2>&1
+rm -rf /tmp/test-woltspace-cli/wolts-backup-test-snapshot
 
 # ── version stamp ──
 echo ""

@@ -288,52 +288,19 @@ OVERALL: [SAFE TO PROCEED | NEEDS ATTENTION — list blockers]
 
 > **Only run this after the maintainer has reviewed the Phase 1 audit report and given explicit approval.**
 
-### 2.1 Snapshot the running container
+### 2.1 Back up everything
 
-Before touching anything, save an image of the current container. This captures the entire runtime — code, deps, drift, everything. If migration goes wrong, you can spin this back up exactly as it was.
-
-```bash
-echo "=== CONTAINER SNAPSHOT ==="
-if docker ps -a --format '{{.Names}}' | grep -q '^woltspace$'; then
-  docker commit woltspace woltspace-backup:pre-migration
-  echo "  Saved: woltspace-backup:pre-migration"
-  docker image inspect woltspace-backup:pre-migration --format '  Size: {{.Size}}  Created: {{.Created}}'
-else
-  echo "  No container to snapshot (skipping)"
-fi
-```
-
-### 2.2 Back up wolts directory
-
-The wolts dir has all your data — identity, memory, site, sparks, .env. The container snapshot has the runtime. Belt and suspenders.
+One command snapshots the container (runtime, deps, code) and copies the wolts directory. Both get the same tag so they're paired for recovery.
 
 ```bash
-WOLTS_DIR="${WOLTS_DIR:-$HOME/wolts}"
-BACKUP_NAME="wolts-backup-$(date +%Y%m%d-%H%M%S)"
-mkdir -p "$HOME/.woltspace"
-BACKUP_DIR="$HOME/.woltspace/$BACKUP_NAME"
-
-echo "Backing up $WOLTS_DIR → $BACKUP_DIR"
-cp -a "$WOLTS_DIR" "$BACKUP_DIR"
-
-# Verify
-echo "Original size: $(du -sh "$WOLTS_DIR" | cut -f1)"
-echo "Backup size:   $(du -sh "$BACKUP_DIR" | cut -f1)"
-
-# Verify key files
-for f in "$BACKUP_DIR"/.env "$BACKUP_DIR"/woltspace.json; do
-  [ -f "$f" ] && echo "  OK: $(basename $f)" || echo "  WARN: $(basename $f) not in backup"
-done
-for d in "$BACKUP_DIR"/*/wolt; do
-  [ -d "$d" ] && echo "  OK: $(basename $(dirname $d))/wolt/"
-done
-
-echo ""
-echo "Backup: $BACKUP_DIR"
-echo "KEEP THIS until you've confirmed the migration works."
+woltspace backup pre-migration
 ```
 
-**Verify sizes match before continuing.**
+This creates:
+- **Container image:** `woltspace-backup:pre-migration`
+- **Wolts copy:** `~/.woltspace/wolts-backup-pre-migration`
+
+The command prints a restore snippet at the end — save it. **Keep both until you've confirmed the migration works.**
 
 ### 2.3 Handle repo drift (if any found in audit)
 
@@ -464,26 +431,22 @@ echo "To remove later: docker rmi woltspace-backup:pre-migration && rm -rf ~/.wo
 
 ## Rollback
 
-If anything went wrong at any point:
+If anything went wrong, the backup tag ties everything together:
 
 ```bash
-# Stop the new container
+# Stop the broken container
 docker stop woltspace 2>/dev/null
 docker rm woltspace 2>/dev/null
 
-# Option A: Restore from container snapshot (fastest — gets you the exact runtime back)
+# Option A: Restore from snapshot (fastest — exact runtime from before migration)
 docker run -d --name woltspace \
-  -v "$HOME/.woltspace/wolts:/workspace/wolts:rw" \
-  -v "$HOME/.woltspace/wolts/.claude:/home/node/.claude:rw" \
+  -v "$HOME/.woltspace/wolts-backup-pre-migration:/workspace/wolts:rw" \
   -p 4444:3000 \
   woltspace-backup:pre-migration
-# Note: if you moved wolts, the mount path changed. Adjust or move wolts back first.
 
 # Option B: Full restore to pre-migration state
 # Move wolts back to old location
-mv "$HOME/.woltspace/wolts" "$HOME/wolts"
-# Or restore from backup if wolts were corrupted:
-# cp -a "$HOME/.woltspace/wolts-backup-XXXXXXXX/." "$HOME/wolts/"
+mv "$HOME/.woltspace/wolts-backup-pre-migration" "$HOME/wolts"
 
 # Switch woltspace back to main
 cd /path/to/woltspace

@@ -9,6 +9,7 @@
 #   woltspace shell                   — enter running container
 #   woltspace chat                    — open claude in container
 #   woltspace logs                    — stream container logs
+#   woltspace backup [tag]            — snapshot container + wolts (tag defaults to datetime)
 #
 # Flags:
 #   --branch <name>   — build image from a specific branch (default: main)
@@ -324,6 +325,36 @@ case "$cmd" in
   logs)
     docker logs -f "$CONTAINER_NAME"
     ;;
+  backup)
+    TAG="${2:-$(date +%Y%m%d-%H%M%S)}"
+    BACKUP_DIR="$(dirname "$WOLTS_DIR")/wolts-backup-$TAG"
+    echo ""
+    echo "  🐘 backing up the lodge — $TAG"
+    echo "  ${_D}snapshot tag: $TAG${_R}"
+    echo ""
+
+    # Container snapshot
+    if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+      echo "  ${_D}snapshotting container...${_R}"
+      docker commit "$CONTAINER_NAME" "woltspace-backup:$TAG" > /dev/null
+      echo "  ${_G}✓${_R} container → woltspace-backup:$TAG"
+    else
+      echo "  ${_D}no container found — skipping container snapshot${_R}"
+    fi
+
+    # Wolts backup
+    echo "  ${_D}copying wolts...${_R}"
+    cp -r "$WOLTS_DIR" "$BACKUP_DIR"
+    echo "  ${_G}✓${_R} wolts → $BACKUP_DIR"
+
+    echo ""
+    echo "  ${_D}restore with:${_R}"
+    echo "    docker run -d --name $CONTAINER_NAME \\"
+    echo "      -v $BACKUP_DIR:/workspace/wolts:rw \\"
+    echo "      -p ${WOLTSPACE_PORT:-7777}:7777 \\"
+    echo "      woltspace-backup:$TAG"
+    echo ""
+    ;;
   rebuild)
     if [ "$LOCAL_BUILD" = true ]; then
       printf "  %b🪵 rebuilding from local timber — %s%b\n" "${_A}" "$WOLTSPACE_DIR" "${_R}"
@@ -362,7 +393,7 @@ case "$cmd" in
     fi
     ;;
   *)
-    echo "usage: woltspace <init|start|stop|rebuild|shell|chat|logs> [--branch <name>] [--local]"
+    echo "usage: woltspace <init|start|stop|rebuild|backup|shell|chat|logs> [--branch <name>] [--local]"
     exit 1
     ;;
 esac
