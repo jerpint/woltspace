@@ -12,9 +12,6 @@ source "$ENV_FILE"
 rm -f "$ENV_FILE"
 export WOLT_NAME WOLT_DIR DEV_MODE WOLF_CONFIG PYTHONPATH PATH
 
-# ── Reconcile stale sessions from previous boot ──
-python3 -c "from sessions import SessionRegistry; SessionRegistry.reconcile()" 2>/dev/null || true
-
 # ── tmux ──
 tmux new-session -d -s main -c "$WOLT_DIR" 2>/dev/null || true
 if [ -f /home/node/.claude/.first-run ]; then
