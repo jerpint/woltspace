@@ -139,6 +139,86 @@ def _load_dog_identity() -> str | None:
     return None
 
 
+def _build_creatures_section() -> str:
+    """Build the creatures section of the system prompt from species definitions."""
+    try:
+        from species import list_species, get_species
+        all_species = list_species()
+        if not all_species:
+            raise ImportError("no species loaded")
+
+        lines = []
+
+        # Session creatures (rodent tiers)
+        rodent = all_species.get("rodent", {})
+        tiers = rodent.get("tiers", {})
+        if tiers:
+            tier_parts = []
+            for name, tier in tiers.items():
+                emoji = tier.get("emoji", "")
+                desc = tier.get("description", "")
+                # Extract model alias
+                model = tier.get("model", "")
+                for alias in ("opus", "sonnet", "haiku"):
+                    if alias in model:
+                        model = alias
+                        break
+                tier_parts.append(f"{emoji} **{name}** ({model} — {desc})")
+            lines.append("## Creatures")
+            lines.append(f"Sessions run as creatures: {', '.join(tier_parts)}.")
+
+        lines.append('CRITICAL: When the user asks for a specific creature by name, ALWAYS use that creature. Never override their choice based on your own task decomposition. "Fire up a raccoon" means creature="raccoon", period.')
+        lines.append("")
+        lines.append("**When to use otter vs beaver:** Otter is haiku — fast and cheap, great for quick lookups, simple edits, file searches, one-shot scripts. Beaver is sonnet — deeper reasoning, multi-file changes, architecture work. Default to beaver for ambiguous tasks; use otter when speed matters more than depth.")
+        lines.append("**NEVER use otter for platform updates.** Any task involving `/update`, running the update skill, or pulling woltspace changes must always use **beaver** or **raccoon** — never otter. Updates require careful review and can break the running platform; haiku is not appropriate.")
+        lines.append("")
+
+        # Other species (non-rodent)
+        lines.append("The colony has more creatures — not all are session types yet, but they have roles:")
+        lines.append("**dog** — that's you. Telegram companion, loyal and constrained")
+        for name, sp in all_species.items():
+            if name in ("rodent", "dog"):
+                continue
+            emoji = sp.get("emoji", "")
+            desc = sp.get("description", "")
+            lines.append(f"{emoji} **{name}** — {desc}")
+
+        # Wolf-specific routing (if wolf species exists)
+        wolf = all_species.get("wolf")
+        if wolf:
+            lines.append("")
+            lines.append("## Wolf — Scheduling & Crons 🐺")
+            lines.append("When someone asks about schedules, reminders, crons, or recurring tasks:")
+            lines.append("1. Use `wolf_schedules` to check what's already set up")
+            lines.append('2. Spawn a **wolf** session (`creature="wolf"`) to help them configure it')
+            lines.append("Wolves manage `wolt/wolf.json` — the schedule config. Each cron entry has a name, schedule (cron expression), action (script/session/skill), and optional notification message. When a cron fires, the wolf sends a 🐺 notification automatically.")
+            lines.append('Route to wolf for: "remind me to...", "run X every morning", "set up a daily...", "what\'s scheduled?", "change the digest time"')
+
+        return "\n".join(lines)
+    except (ImportError, Exception):
+        # Fallback: hardcoded (identical to previous behavior)
+        return """## Creatures
+Sessions run as creatures: 🦝 **raccoon** (opus — complex reasoning, orchestration), 🦫 **beaver** (sonnet — building, coding), 🦦 **otter** (haiku — fast, lightweight tasks), or 🐺 **wolf** (sonnet — cron & schedule management).
+CRITICAL: When the user asks for a specific creature by name, ALWAYS use that creature. Never override their choice based on your own task decomposition. "Fire up a raccoon" means creature="raccoon", period.
+
+**When to use otter vs beaver:** Otter is haiku — fast and cheap, great for quick lookups, simple edits, file searches, one-shot scripts. Beaver is sonnet — deeper reasoning, multi-file changes, architecture work. Default to beaver for ambiguous tasks; use otter when speed matters more than depth.
+**NEVER use otter for platform updates.** Any task involving `/update`, running the update skill, or pulling woltspace changes must always use **beaver** or **raccoon** — never otter. Updates require careful review and can break the running platform; haiku is not appropriate.
+
+The colony has more creatures — not all are session types yet, but they have roles:
+**dog** — that's you. Telegram companion, loyal and constrained
+🐺 **wolf** — cron & scheduler, runs the pack's routines
+🕷️ **spider** — headless browser, crawls and scrapes
+🐻 **bear** — safety & validation, guards outputs
+🐼 **panda** — daily reminders, zen notifications
+
+## Wolf — Scheduling & Crons 🐺
+When someone asks about schedules, reminders, crons, or recurring tasks:
+1. Use `wolf_schedules` to check what's already set up
+2. Spawn a **wolf** session (`creature="wolf"`) to help them configure it
+Wolves manage `wolt/wolf.json` — the schedule config. Each cron entry has a name, schedule (cron expression), action (script/session/skill), and optional notification message. When a cron fires, the wolf sends a 🐺 notification automatically.
+Route to wolf for: "remind me to...", "run X every morning", "set up a daily...", "what's scheduled?", "change the digest time\""""
+
+
 def build_system_prompt() -> str:
     """Build the system prompt from memory + base instructions."""
     memory = load_memory()
@@ -163,28 +243,11 @@ Never prefix your messages with emojis or your name — the adapter handles that
 You're the lodge companion — loyal, constrained, and you route real work to Claude Code sessions.
 Never prefix your messages with emojis or your name — the adapter handles that."""
 
+    creatures_section = _build_creatures_section()
+
     base = f"""{intro}
 
-## Creatures
-Sessions run as creatures: 🦝 **raccoon** (opus — complex reasoning, orchestration), 🦫 **beaver** (sonnet — building, coding), 🦦 **otter** (haiku — fast, lightweight tasks), or 🐺 **wolf** (sonnet — cron & schedule management).
-CRITICAL: When the user asks for a specific creature by name, ALWAYS use that creature. Never override their choice based on your own task decomposition. "Fire up a raccoon" means creature="raccoon", period.
-
-**When to use otter vs beaver:** Otter is haiku — fast and cheap, great for quick lookups, simple edits, file searches, one-shot scripts. Beaver is sonnet — deeper reasoning, multi-file changes, architecture work. Default to beaver for ambiguous tasks; use otter when speed matters more than depth.
-**NEVER use otter for platform updates.** Any task involving `/update`, running the update skill, or pulling woltspace changes must always use **beaver** or **raccoon** — never otter. Updates require careful review and can break the running platform; haiku is not appropriate.
-
-The colony has more creatures — not all are session types yet, but they have roles:
-**dog** — that's you. Telegram companion, loyal and constrained
-🐺 **wolf** — cron & scheduler, runs the pack's routines
-🕷️ **spider** — headless browser, crawls and scrapes
-🐻 **bear** — safety & validation, guards outputs
-🐼 **panda** — daily reminders, zen notifications
-
-## Wolf — Scheduling & Crons 🐺
-When someone asks about schedules, reminders, crons, or recurring tasks:
-1. Use `wolf_schedules` to check what's already set up
-2. Spawn a **wolf** session (`creature="wolf"`) to help them configure it
-Wolves manage `wolt/wolf.json` — the schedule config. Each cron entry has a name, schedule (cron expression), action (script/session/skill), and optional notification message. When a cron fires, the wolf sends a 🐺 notification automatically.
-Route to wolf for: "remind me to...", "run X every morning", "set up a daily...", "what's scheduled?", "change the digest time"
+{creatures_section}
 
 ## Voice
 Talk like a person, not an assistant. Short messages. Lowercase is fine. No bullet lists, no "certainly!", no formal summaries. If you don't know something, say so. If something's interesting, say why. Bias toward action — if a request has enough to start, just start.
@@ -340,18 +403,27 @@ def _call_server(method: str, path: str, body: dict | None = None) -> dict:
         return json.loads(resp.read())
 
 
-# Map creature names to Claude model aliases (active session creatures)
-CREATURE_MODELS = {
-    "raccoon": "opus",    # 🦝 orchestrator — complex planning, multi-step reasoning
-    "beaver": "sonnet",   # 🦫 worker — building, coding, grunt work
-    "otter": "haiku",     # 🦦 quick tasks — fast, lightweight, cheap
-    "wolf": "sonnet",     # 🐺 scheduler — cron setup, schedule management
-    # Planned creatures — models TBD when implemented
-    # "spider": "sonnet", # 🕷️ headless browser — parsing, scraping
-    # "bear":   "sonnet", # 🐻 validator — careful judgment, safety checks
-    # "panda":  "haiku",  # 🐼 notifications — gentle, unhurried
-    # "dog":    "haiku",  # 🐶 lodge companion — loyal, constrained (active in system prompt, not a session creature)
-}
+# Creature model resolution — reads from species/ definitions, falls back to hardcoded
+def _resolve_creature_model(creature: str) -> str | None:
+    """Resolve a creature name to a model alias using species definitions."""
+    try:
+        from species import get_creature_model
+        model = get_creature_model(creature)
+        if model:
+            # Convert full model ID to alias (anthropic/claude-sonnet-4 → sonnet)
+            for alias in ("opus", "sonnet", "haiku"):
+                if alias in model:
+                    return alias
+            return model
+    except ImportError:
+        pass
+    # Fallback: hardcoded mapping (removed once species/ is stable)
+    return {
+        "raccoon": "opus",
+        "beaver": "sonnet",
+        "otter": "haiku",
+        "wolf": "sonnet",
+    }.get(creature)
 
 
 def start_claude_session(prompt: str, wolt: str = None, creature: str = None, routing: dict = None, project: str = None) -> dict:
@@ -377,7 +449,7 @@ def start_claude_session(prompt: str, wolt: str = None, creature: str = None, ro
 
     target_name = wolt or os.environ.get("WOLT_NAME", "wolt")
     session_name = _session_name(target_name)
-    model = CREATURE_MODELS.get(creature) if creature else None
+    model = _resolve_creature_model(creature) if creature else None
 
     tunnel_url = get_tunnel_url()
     session_url = f"{tunnel_url}/tui?session={session_name}" if tunnel_url else ""

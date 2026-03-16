@@ -1,0 +1,8 @@
+{
+  "name": "dog",
+  "emoji": "🐕",
+  "runtime": "bot",
+  "singleton": true,
+  "model": "anthropic/claude-haiku-4-5-20251001",
+  "description": "Chat companion — routes messages, always listening, loyal and constrained"
+}

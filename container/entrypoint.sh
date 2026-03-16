@@ -40,12 +40,21 @@ else
 fi
 export WOLT_DIR
 
-# Copy skills so Claude auto-discovers them
-# Platform defaults first, then wolt-specific overrides win
+# Copy skills — 3-layer inheritance: platform → species → wolt (later wins)
 mkdir -p /home/node/.claude/skills
+
+# Layer 1: Platform skills (universal — notify, viewport, session-summary)
 if [ -d "$WOLTSPACE_DIR/container/skills" ]; then
   cp -r "$WOLTSPACE_DIR/container/skills/." /home/node/.claude/skills/ 2>/dev/null || true
 fi
+
+# Layer 2: Species skills (inherited from wolt type)
+WOLT_TYPE=$(python3 -c "import json; print(json.load(open('$WOLT_DIR/wolt/wolt.json')).get('type','rodent'))" 2>/dev/null || echo "rodent")
+if [ -d "$WOLTSPACE_DIR/species/$WOLT_TYPE/skills" ]; then
+  cp -r "$WOLTSPACE_DIR/species/$WOLT_TYPE/skills/." /home/node/.claude/skills/ 2>/dev/null || true
+fi
+
+# Layer 3: Wolt overrides (user-owned, wins)
 if [ -d "$WOLT_DIR/.claude/skills" ]; then
   cp -r "$WOLT_DIR/.claude/skills/." /home/node/.claude/skills/ 2>/dev/null || true
 fi

@@ -14,15 +14,20 @@ Usage:
 import json
 import os
 from pathlib import Path
+from species import get_valid_types, get_singleton_types
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 CONFIG_FILE = WOLTS_DIR / "woltspace.json"
 
-# Valid creature types
-VALID_TYPES = {"rodent", "wolf", "dog", "spider", "bear", "panda"}
 
-# Types that can only have one active at a time
-SINGLETON_TYPES = {"wolf", "dog"}
+def _valid_types() -> set[str]:
+    """Valid creature types — read from species/ definitions."""
+    return get_valid_types()
+
+
+def _singleton_types() -> set[str]:
+    """Singleton types — read from species/ definitions."""
+    return get_singleton_types()
 
 
 def list_wolts() -> list[dict]:
@@ -46,7 +51,7 @@ def find_by_type(creature_type: str) -> list[dict]:
 
 def get_active_creature(creature_type: str) -> str | None:
     """Get the name of the active wolt for a singleton creature type (wolf/dog)."""
-    if creature_type not in SINGLETON_TYPES:
+    if creature_type not in _singleton_types():
         return None
     try:
         config = json.loads(CONFIG_FILE.read_text())
@@ -57,7 +62,7 @@ def get_active_creature(creature_type: str) -> str | None:
 
 def set_active_creature(creature_type: str, wolt_name: str) -> None:
     """Set the active wolt for a singleton creature type."""
-    if creature_type not in SINGLETON_TYPES:
+    if creature_type not in _singleton_types():
         return
     try:
         config = json.loads(CONFIG_FILE.read_text())
@@ -76,8 +81,9 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "", descript
         - "demoted": name of the old wolt that was demoted to rodent, or None
     Raises ValueError if the type is invalid or the name already exists.
     """
-    if creature_type not in VALID_TYPES:
-        raise ValueError(f"Invalid creature type: {creature_type}. Must be one of: {', '.join(sorted(VALID_TYPES))}")
+    valid = _valid_types()
+    if creature_type not in valid:
+        raise ValueError(f"Invalid creature type: {creature_type}. Must be one of: {', '.join(sorted(valid))}")
 
     wolt_dir = WOLTS_DIR / name
     if wolt_dir.exists():
@@ -85,7 +91,7 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "", descript
 
     # Check singleton constraint
     demoted = None
-    if creature_type in SINGLETON_TYPES:
+    if creature_type in _singleton_types():
         active = get_active_creature(creature_type)
         if active:
             # Demote the old one to rodent
@@ -127,7 +133,7 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "", descript
     )
 
     # Set as active creature if singleton
-    if creature_type in SINGLETON_TYPES:
+    if creature_type in _singleton_types():
         set_active_creature(creature_type, name)
 
     return {"dir": wolt_dir, "demoted": demoted}

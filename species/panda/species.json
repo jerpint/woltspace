@@ -1,0 +1,8 @@
+{
+  "name": "panda",
+  "emoji": "🐼",
+  "runtime": "daemon",
+  "singleton": false,
+  "model": "anthropic/claude-haiku-4-5-20251001",
+  "description": "Gentle reminders — daily nudges, zen notifications, wellness pings"
+}

@@ -1,0 +1,9 @@
+{
+  "name": "wolf",
+  "emoji": "🐺",
+  "runtime": "daemon",
+  "singleton": true,
+  "model": "anthropic/claude-sonnet-4",
+  "state_files": ["wolf.json"],
+  "description": "Cron scheduler — fires jobs on schedule, logs state, sends notifications"
+}

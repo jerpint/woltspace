@@ -1,0 +1,8 @@
+{
+  "name": "bear",
+  "emoji": "🐻",
+  "runtime": "session",
+  "singleton": false,
+  "model": "anthropic/claude-sonnet-4",
+  "description": "Validation and safety — reviews outputs, guards quality, checks before ship"
+}
