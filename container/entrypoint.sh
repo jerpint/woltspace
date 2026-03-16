@@ -37,7 +37,7 @@ sleep 2
 # Tunnel
 mkdir -p "$WOLTS_DIR/.state" "$WOLT_DIR/.state"
 rm -f "$WOLTS_DIR/.state/tunnel-url" "$WOLT_DIR/.state/tunnel-url"
-if [ "${ENABLE_TUNNEL:-true}" != "false" ]; then
+if [ "${WOLTSPACE_PUBLIC_TUNNEL:-true}" = "true" ]; then
   echo "opening tunnel..."
   TUNNEL_LOG="$WOLTS_DIR/.state/tunnel.log"
   cloudflared tunnel --url http://localhost:7777 > "$TUNNEL_LOG" 2>&1 &

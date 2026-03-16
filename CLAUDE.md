@@ -299,7 +299,7 @@ TELEGRAM_BOT_TOKEN=
 TELEGRAM_ALLOWED_USERS=   # comma-separated IDs, or empty for open
 ENABLE_SLACK_BOT=false
 LLM_MODEL=anthropic/claude-haiku-4-5-20251001  # bot model
-ENABLE_TUNNEL=true
+WOLTSPACE_PUBLIC_TUNNEL=true
 ```
 
 ---

@@ -99,10 +99,10 @@ _show_url() {
   # Check if tunnel is enabled
   local env_file="$WOLTS_DIR/.env"
   local tunnel_enabled
-  tunnel_enabled=$(grep '^ENABLE_TUNNEL=' "$env_file" 2>/dev/null | cut -d= -f2-)
+  tunnel_enabled=$(grep '^WOLTSPACE_PUBLIC_TUNNEL=' "$env_file" 2>/dev/null | cut -d= -f2-)
   tunnel_enabled="${tunnel_enabled:-true}"
 
-  if [ "$tunnel_enabled" != "false" ]; then
+  if [ "$tunnel_enabled" = "true" ]; then
     TUNNEL_URL=""
     TUNNEL_FILE="$WOLTS_DIR/.state/tunnel-url"
     echo -n "  setting up public tunnel"
@@ -116,6 +116,8 @@ _show_url() {
     echo ""
     if [ -n "$TUNNEL_URL" ]; then
       echo "  public URL: $TUNNEL_URL"
+      echo "  ${_D}only share this link with people you trust — this is still experimental.${_R}"
+      echo "  ${_D}to stop sharing: woltspace stop${_R}"
     else
       echo "  tunnel not ready — check 'woltspace logs'"
     fi
@@ -226,6 +228,23 @@ if [ "$cmd" = "init" ]; then
   # Create wolts dir + .env from template
   mkdir -p "$WOLTS_DIR"
   [ ! -f "$WOLTS_DIR/.env" ] && cp "$WOLTSPACE_DIR/.env.example" "$WOLTS_DIR/.env"
+
+  # Tunnel opt-in
+  echo -n "  ${_C}enable public link? [Y/n]${_R} "
+  read -r _tunnel </dev/tty
+  _tunnel="${_tunnel:-Y}"
+  if [[ "$_tunnel" == [Yy] ]]; then
+    echo "  ${_D}a public link lets you access your wolts from anywhere.${_R}"
+    # Set tunnel enabled explicitly
+    sed -i '' 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=true/' "$WOLTS_DIR/.env" 2>/dev/null || \
+    sed -i 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=true/' "$WOLTS_DIR/.env"
+  else
+    echo "  ${_D}no problem — your wolts will be at http://localhost:7777${_R}"
+    echo "  ${_D}you can enable it later in ~/.woltspace/wolts/.env${_R}"
+    sed -i '' 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=false/' "$WOLTS_DIR/.env" 2>/dev/null || \
+    sed -i 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=false/' "$WOLTS_DIR/.env"
+  fi
+  echo ""
 
   # Build + start — container handles wolt scaffolding on first boot
   _build_image
