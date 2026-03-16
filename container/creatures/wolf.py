@@ -22,7 +22,7 @@ import secrets
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -425,6 +425,55 @@ def check_and_fire(crons: list[dict], now: datetime):
         fire_cron(entry)
 
 
+def catch_up(crons: list[dict], now: datetime):
+    """Fire any crons that were missed while the wolf was down.
+
+    For each cron, walks backwards from now minute-by-minute (up to 24h)
+    looking for the most recent time the schedule would have matched.
+    If that time is after the last recorded run, fires the cron.
+    """
+    for entry in crons:
+        name = entry.get("name")
+        schedule = entry.get("schedule")
+        if not name or not schedule:
+            continue
+
+        # Opt out of catch-up per cron
+        if entry.get("catch_up") is False:
+            continue
+
+        tz_name = entry.get("timezone")
+        if tz_name:
+            from zoneinfo import ZoneInfo
+            local_now = now.astimezone(ZoneInfo(tz_name))
+        else:
+            local_now = now
+
+        last = get_last_run(name)
+
+        # Walk backwards minute by minute to find the most recent match
+        # (cap at 24h to avoid runaway loops)
+        check = local_now.replace(second=0, microsecond=0)
+        most_recent_match = None
+        for _ in range(24 * 60):
+            if cron_matches(schedule, check):
+                most_recent_match = check
+                break
+            check -= timedelta(minutes=1)
+
+        if most_recent_match is None:
+            continue
+
+        match_stamp = most_recent_match.strftime("%Y-%m-%d-%H:%M")
+        if last == match_stamp:
+            continue  # already fired for this window
+
+        print(f"[wolf] catch-up: {name} (missed {match_stamp}, last run: {last or 'never'})")
+        set_last_run(name, most_recent_match)
+        _log_job(name, entry.get("action", "script"), event="catch-up", missed=match_stamp)
+        fire_cron(entry)
+
+
 async def run_loop():
     """Main wolf loop — checks every 30 seconds."""
     print("[wolf] 🐺 wolf scheduler starting")
@@ -433,6 +482,15 @@ async def run_loop():
     if not schedule_path.exists():
         print(f"[wolf] no schedule found at {schedule_path} — wolf is idle")
         print("[wolf] create wolf.json to register crons")
+
+    # Catch up on anything missed while the wolf was down
+    try:
+        crons = load_schedule()
+        if crons:
+            now = datetime.now().astimezone()
+            catch_up(crons, now)
+    except Exception as e:
+        print(f"[wolf] catch-up error: {e}", file=sys.stderr)
 
     while True:
         try:
