@@ -241,7 +241,15 @@ if [ ! -d "$WOLTS_DIR" ] || [ "$(_count_wolts)" -eq 0 ]; then
   if [ "$cmd" = "start" ]; then
     exec "$0" init
   fi
-  echo "error: no wolts found — run 'woltspace init' first"
+  echo ""
+  echo "  🦫 no wolts gnawing at $WOLTS_DIR"
+  echo ""
+  echo "  if your wolts live elsewhere:"
+  echo "    WOLTS_DIR=/path/to/wolts woltspace start"
+  echo ""
+  echo "  or start fresh:"
+  echo "    woltspace init"
+  echo ""
   exit 1
 fi
 
