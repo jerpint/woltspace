@@ -80,7 +80,7 @@ _start_container() {
     --env-file "$WOLTS_DIR/.env" \
     -v "$WOLTS_DIR:/workspace/wolts:rw" \
     -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
-    -p 7777:7777 \
+    -p "${WOLTSPACE_PORT:-7777}":7777 \
     $extra_args \
     woltspace > /dev/null
 
@@ -200,29 +200,34 @@ if [ "$cmd" = "init" ]; then
   fi
 
   # Fresh install — splash + name prompt
-  clear
-  printf "\n  %b🦫%b  %b\n\n" "${_A}" "${_R}" "${_B}${_G}woltspace${_R}"
-  printf "  %b\n\n" "${_D}\"how much wolt could a wolt chuck chuck\n   if a wolt chuck could chuck wolt?\"${_R}"
+  if [ "${WOLTSPACE_NONINTERACTIVE:-}" = "true" ]; then
+    NAME="${WOLTSPACE_WOLT_NAME:-wolt}"
+    echo "  non-interactive: creating wolt '$NAME'"
+  else
+    clear
+    printf "\n  %b🦫%b  %b\n\n" "${_A}" "${_R}" "${_B}${_G}woltspace${_R}"
+    printf "  %b\n\n" "${_D}\"how much wolt could a wolt chuck chuck\n   if a wolt chuck could chuck wolt?\"${_R}"
 
-  echo -n "  name your wolt: "
-  read NAME </dev/tty
-  if [ -z "$NAME" ]; then
-    echo "error: name is required"
-    exit 1
-  fi
+    echo -n "  name your wolt: "
+    read NAME </dev/tty
+    if [ -z "$NAME" ]; then
+      echo "error: name is required"
+      exit 1
+    fi
 
-  echo ""
-  printf "  %b%s%b is ready to start gnawing. 🦫🪵🌲\n" "${_B}${_A}" "$NAME" "${_R}"
-  echo ""
-  printf "  %bthis will build a sandboxed docker container.%b\n" "${_D}" "${_R}"
-  printf "  %byour wolts will persist at %b%s%b\n" "${_D}" "${_R}${_C}" "$WOLTS_DIR" "${_R}"
-  echo ""
-  echo -n "  ${_C}continue? [Y/n]${_R} "
-  read -r CONFIRM </dev/tty
-  CONFIRM="${CONFIRM:-Y}"
-  if [[ "$CONFIRM" != [Yy] ]]; then
-    echo "  🦫 aborting. no wood was gnawed."
-    exit 0
+    echo ""
+    printf "  %b%s%b is ready to start gnawing. 🦫🪵🌲\n" "${_B}${_A}" "$NAME" "${_R}"
+    echo ""
+    printf "  %bthis will build a sandboxed docker container.%b\n" "${_D}" "${_R}"
+    printf "  %byour wolts will persist at %b%s%b\n" "${_D}" "${_R}${_C}" "$WOLTS_DIR" "${_R}"
+    echo ""
+    echo -n "  ${_C}continue? [Y/n]${_R} "
+    read -r CONFIRM </dev/tty
+    CONFIRM="${CONFIRM:-Y}"
+    if [[ "$CONFIRM" != [Yy] ]]; then
+      echo "  🦫 aborting. no wood was gnawed."
+      exit 0
+    fi
   fi
   echo ""
 
@@ -231,9 +236,13 @@ if [ "$cmd" = "init" ]; then
   [ ! -f "$WOLTS_DIR/.env" ] && cp "$WOLTSPACE_DIR/.env.example" "$WOLTS_DIR/.env"
 
   # Tunnel opt-in
-  echo -n "  ${_C}enable public link? [Y/n]${_R} "
-  read -r _tunnel </dev/tty
-  _tunnel="${_tunnel:-Y}"
+  if [ "${WOLTSPACE_NONINTERACTIVE:-}" = "true" ]; then
+    _tunnel="n"
+  else
+    echo -n "  ${_C}enable public link? [Y/n]${_R} "
+    read -r _tunnel </dev/tty
+    _tunnel="${_tunnel:-Y}"
+  fi
   if [[ "$_tunnel" == [Yy] ]]; then
     echo "  ${_D}a public link lets you access your wolts from anywhere.${_R}"
     # Set tunnel enabled explicitly
