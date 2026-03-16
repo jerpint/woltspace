@@ -24,8 +24,9 @@ BUILD_FLAGS="$*"
 
 _G=$'\033[0;32m'; _R=$'\033[0;31m'; _D=$'\033[2m'; _N=$'\033[0m'
 
-pass() { PASS=$((PASS + 1)); printf "  ${_G}✓${_N} %s\n" "$1"; }
-fail() { FAIL=$((FAIL + 1)); printf "  ${_R}✗${_N} %s\n" "$1"; }
+RESULTS=""
+pass() { PASS=$((PASS + 1)); RESULTS="$RESULTS\n    ${_G}✓${_N} $1"; printf "  ${_G}✓${_N} %s\n" "$1"; }
+fail() { FAIL=$((FAIL + 1)); RESULTS="$RESULTS\n    ${_R}✗${_N} $1"; printf "  ${_R}✗${_N} %s\n" "$1"; }
 step() { printf "\n  ${_D}▸ %s${_N}\n" "$1"; }
 cleanup() {
   docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
@@ -118,7 +119,7 @@ step "restarting to trigger reconcile..."
 "$WOLTSPACE_DIR/woltspace" start 2>&1
 
 sleep 3
-FAKE_STATUS=$(docker exec "$CONTAINER_NAME" cat /workspace/wolts/.state/registry/fake-session.json 2>/dev/null | grep -o '"status":"[^"]*"' | head -1)
+FAKE_STATUS=$(docker exec "$CONTAINER_NAME" cat /workspace/wolts/.state/registry/fake-session.json 2>/dev/null | grep -o '"status": *"[^"]*"' | head -1)
 [[ "$FAKE_STATUS" == *"orphaned"* ]] || [[ "$FAKE_STATUS" == *"reaped"* ]] && pass "stale session reconciled on boot" || fail "stale session not reconciled ($FAKE_STATUS)"
 
 # ── init with existing wolts (idempotent) ──
@@ -153,6 +154,7 @@ if [ "$FAIL" -eq 0 ]; then
 else
   printf "  ${_R}%d/%d failed${_N}\n" "$FAIL" "$TOTAL"
 fi
+printf "$RESULTS\n"
 echo "  ════════════════════════════════════════"
 echo ""
 exit "$FAIL"
