@@ -74,10 +74,12 @@ _start_container() {
   local extra_args=""
   [ -n "$wolt_name" ] && extra_args="-e WOLT_NAME=$wolt_name"
 
+  mkdir -p "$WOLTS_DIR/.claude"
   docker run -d \
     --name "$CONTAINER_NAME" \
     --env-file "$WOLTS_DIR/.env" \
     -v "$WOLTS_DIR:/workspace/wolts:rw" \
+    -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
     -p 7777:7777 \
     $extra_args \
     woltspace > /dev/null
