@@ -32,6 +32,7 @@ step() { printf "\n  ${_D}▸ %s${_N}\n" "$1"; }
 cleanup() {
   docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
   docker rmi woltspace 2>/dev/null || true
+  docker rmi woltspace-test-snapshot:pre-test 2>/dev/null || true
   rm -rf /tmp/test-woltspace-cli
 }
 
@@ -128,6 +129,25 @@ step "restarting to trigger reconcile..."
 sleep 3
 FAKE_STATUS=$(docker exec "$CONTAINER_NAME" cat /workspace/wolts/.state/registry/fake-session.json 2>/dev/null | grep -o '"status": *"[^"]*"' | head -1)
 [[ "$FAKE_STATUS" == *"orphaned"* ]] || [[ "$FAKE_STATUS" == *"reaped"* ]] && pass "stale session reconciled on boot" || fail "stale session not reconciled ($FAKE_STATUS)"
+
+# ── snapshot (docker commit) ──
+echo ""
+echo "  --- snapshot ---"
+step "creating container snapshot..."
+docker commit "$CONTAINER_NAME" woltspace-test-snapshot:pre-test >/dev/null 2>&1 && pass "docker commit succeeded" || fail "docker commit failed"
+
+step "verifying snapshot image exists..."
+docker image inspect woltspace-test-snapshot:pre-test >/dev/null 2>&1 && pass "snapshot image exists" || fail "snapshot image not found"
+
+step "cleaning up snapshot..."
+docker rmi woltspace-test-snapshot:pre-test >/dev/null 2>&1
+
+# ── version stamp ──
+echo ""
+echo "  --- version ---"
+step "checking version stamp..."
+VERSION=$(docker exec "$CONTAINER_NAME" cat /workspace/woltspace/.version 2>/dev/null || echo "")
+[ -n "$VERSION" ] && [ "$VERSION" != "" ] && pass "version stamped: $VERSION" || fail "no version stamp found"
 
 # ── init with existing wolts (idempotent) ──
 echo ""

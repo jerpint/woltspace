@@ -78,8 +78,9 @@ RUN if [ "$USE_LOCAL" = "true" ]; then \
       cp -r /tmp/local-src/. /workspace/woltspace/; \
     fi; rm -rf /tmp/local-src
 
-# Stamp the version into the image
-RUN cd /workspace/woltspace && git rev-parse --short HEAD > /workspace/woltspace/.version 2>/dev/null || echo "local" > /workspace/woltspace/.version
+# Stamp the version into the image (prefer tag, fall back to commit hash)
+RUN cd /workspace/woltspace && \
+    (git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD 2>/dev/null || echo "local") > /workspace/woltspace/.version
 
 WORKDIR /workspace/woltspace
 

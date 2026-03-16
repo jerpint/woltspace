@@ -72,10 +72,13 @@ REMOTE=$(git rev-parse "origin/$BRANCH")
 
 If they match, tell the user they're already up to date and stop.
 
-Also show the current version:
+Also show the current version and latest available:
 ```bash
-echo "Current: $(cat /workspace/woltspace/.version 2>/dev/null || git rev-parse --short HEAD)"
-echo "Latest:  $(git rev-parse --short origin/$BRANCH)"
+CURRENT=$(cat /workspace/woltspace/.version 2>/dev/null || git rev-parse --short HEAD)
+LATEST_TAG=$(git describe --tags --abbrev=0 origin/$BRANCH 2>/dev/null || echo "untagged")
+LATEST_HASH=$(git rev-parse --short origin/$BRANCH)
+echo "Current: $CURRENT"
+echo "Latest:  ${LATEST_TAG} (${LATEST_HASH})"
 ```
 
 ## Step 2: Review the changes
@@ -126,11 +129,13 @@ Once confirmed:
 ```bash
 cd /workspace/woltspace && git pull origin "$BRANCH"
 
-# Stamp version
-NEW_VERSION=$(git rev-parse HEAD)
+# Stamp version (prefer tag if HEAD is tagged)
+NEW_VERSION=$(git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD)
 mkdir -p "$WOLT_DIR/.state"
 echo "$NEW_VERSION" > "$WOLT_DIR/.state/woltspace-version"
 echo "$BRANCH" > "$WOLT_DIR/.state/woltspace-branch"
+# Also update the .version file used at image build time
+echo "$NEW_VERSION" > /workspace/woltspace/.version
 ```
 
 ## Step 5: Verify and report
