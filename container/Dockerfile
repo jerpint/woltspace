@@ -99,8 +99,9 @@ COPY --chown=node:node container/bin /workspace/woltspace/container/bin
 RUN chmod +x /workspace/woltspace/container/bin/*
 ENV PATH="/workspace/woltspace/container/bin:${PATH}"
 
-# Copy entrypoint
+# Copy entrypoint + setup
 COPY --chown=node:node container/entrypoint.sh /workspace/woltspace/container/entrypoint.sh
+COPY --chown=node:node container/entrypoint_setup.py /workspace/woltspace/container/entrypoint_setup.py
 RUN chmod +x /workspace/woltspace/container/entrypoint.sh
 
 # Install Python deps for bot

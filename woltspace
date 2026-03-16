@@ -73,15 +73,19 @@ print()
   fi
 }
 
-# Resolve active wolt
-if [ -n "$WOLT_OVERRIDE" ]; then
-  ACTIVE_WOLT="$WOLT_OVERRIDE"
-else
-  ACTIVE_WOLT=$(_read_config "claude.default_wolt")
-fi
-
-ACTIVE_WOLT_DIR="$WOLTS_DIR/$ACTIVE_WOLT"
 CONTAINER_NAME="woltspace"
+
+# Lazy-resolve active wolt — only called by commands that need it.
+# init sets ACTIVE_WOLT directly from user input; this keeps python3
+# out of the install path.
+_resolve_active_wolt() {
+  if [ -n "$WOLT_OVERRIDE" ]; then
+    ACTIVE_WOLT="$WOLT_OVERRIDE"
+  else
+    ACTIVE_WOLT=$(_read_config "claude.default_wolt")
+  fi
+  ACTIVE_WOLT_DIR="$WOLTS_DIR/$ACTIVE_WOLT"
+}
 
 # --- Helper: ensure container is running and get tunnel URL ---
 
@@ -406,6 +410,10 @@ CJEOF
   echo ""
   exit 0
 fi
+
+# --- Resolve active wolt for all commands after init ---
+
+_resolve_active_wolt
 
 # --- List wolts (no container needed) ---
 
