@@ -117,13 +117,12 @@ _show_url() {
     if [ -n "$TUNNEL_URL" ]; then
       echo "  public URL: $TUNNEL_URL"
       echo "  ${_D}only share this link with people you trust — this is still experimental.${_R}"
-      echo "  ${_D}to stop sharing: woltspace stop${_R}"
     else
       echo "  tunnel not ready — check 'woltspace logs'"
     fi
   fi
   echo ""
-  echo "  to stop: woltspace stop"
+  echo "  stop everything: woltspace stop"
   echo ""
 }
 
@@ -309,6 +308,9 @@ case "$cmd" in
     docker logs -f "$CONTAINER_NAME"
     ;;
   rebuild)
+    if [ "$LOCAL_BUILD" = true ]; then
+      printf "  %b⚙ local dev mode — building from %s%b\n" "${_A}" "$WOLTSPACE_DIR" "${_R}"
+    fi
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
     rm -f "$WOLTS_DIR/.state/tunnel-url"
     _build_image
@@ -317,7 +319,9 @@ case "$cmd" in
     ;;
   start)
     printf "\n  %b🦫%b  %b\n\n" "${_A}" "${_R}" "${_B}${_G}woltspace${_R}"
-    [ "$LOCAL_BUILD" = true ] && printf "  %b[local dev mode]%b\n\n" "${_A}" "${_R}"
+    if [ "$LOCAL_BUILD" = true ]; then
+      printf "  %b⚙ local dev mode — building from %s%b\n\n" "${_A}" "$WOLTSPACE_DIR" "${_R}"
+    fi
 
     if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
       echo "  already running."
