@@ -28,7 +28,15 @@ WOLTSPACE_DIR="$(cd "$(dirname "$0")" && pwd)"
 WOLTS_DIR="${WOLTS_DIR:-$HOME/.woltspace/wolts}"
 WOLTS_DIR="${WOLTS_DIR/#\~/$HOME}"
 
-CONTAINER_NAME="${WOLTSPACE_CONTAINER:-woltspace}"
+# Default name for default path, hash-suffixed for custom paths (avoids collisions)
+if [ -n "${WOLTSPACE_CONTAINER:-}" ]; then
+  CONTAINER_NAME="$WOLTSPACE_CONTAINER"
+elif [ "$WOLTS_DIR" = "$HOME/.woltspace/wolts" ]; then
+  CONTAINER_NAME="woltspace"
+else
+  _hash=$(printf '%s' "$WOLTS_DIR" | md5sum 2>/dev/null | cut -c1-6 || printf '%s' "$WOLTS_DIR" | md5 2>/dev/null | cut -c1-6)
+  CONTAINER_NAME="woltspace-${_hash}"
+fi
 cmd="${1:-start}"
 
 # Parse flags: --local, --branch <name>
