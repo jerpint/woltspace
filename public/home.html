@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>woltspace</title>
+  <title>woltspace — the lodge</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦫</text></svg>">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -447,12 +447,12 @@
 <body>
 
   <div class="header">
-    <h1 id="wolt-name" style="visibility:hidden">🦫</h1>
+    <h1 id="wolt-name">🦫 woltspace</h1>
     <p class="twister">
       "how much wolt could a <em>wolt chuck</em> chuck<br>
       if a wolt chuck could chuck <em>wolt</em>?"
     </p>
-    <div class="tagline">gnaw first. ask questions later.</div>
+    <div class="tagline">the lodge</div>
   </div>
 
   <hr class="divider">
@@ -517,18 +517,7 @@
       if (!d.has_oauth) document.getElementById('onboard-banner').style.display = '';
     }).catch(() => {});
 
-    // Load wolt name
     const h1 = document.getElementById('wolt-name');
-    fetch('/status').then(r => r.json()).then(d => {
-      h1.innerHTML = '🦫 ' + (d.wolt || 'woltspace');
-      h1.style.visibility = '';
-      if (d.wolt) {
-        document.title = d.wolt;
-      }
-    }).catch(() => {
-      h1.innerHTML = '🦫 woltspace';
-      h1.style.visibility = '';
-    });
 
     function timeAgo(ts) {
       const s = Math.floor((Date.now() / 1000) - ts);
