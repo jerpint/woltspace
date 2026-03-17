@@ -876,7 +876,7 @@ def _tool_wolf_jobs(args: dict, routing: dict | None) -> str:
 
 
 def _tool_open_issue(args: dict, routing: dict | None) -> str:
-    """Open a GitHub issue on the woltspace repo."""
+    """Open a GitHub issue on the woltspace repo via GitHub App."""
     import subprocess
     title = args.get("title", "").strip()
     body = args.get("body", "").strip()
@@ -884,23 +884,21 @@ def _tool_open_issue(args: dict, routing: dict | None) -> str:
     if not title:
         return json.dumps({"error": "title is required"})
 
-    # Read PAT from wolt .env
-    env_file = WOLT_DIR / ".env"
-    gh_token = None
-    if env_file.exists():
-        for line in env_file.read_text().splitlines():
-            if line.startswith("GH_PAT_TOKEN="):
-                gh_token = line.split("=", 1)[1].strip()
-                break
+    # Get token via GitHub App (gh-app-token prints a short-lived token)
+    bin_dir = Path(__file__).resolve().parent.parent / "bin"
+    try:
+        token_result = subprocess.run(
+            [str(bin_dir / "gh-app-token")],
+            capture_output=True, text=True, timeout=15,
+        )
+        if token_result.returncode != 0:
+            err = token_result.stderr.strip()
+            return json.dumps({"error": f"GitHub App auth failed: {err}"})
+        gh_token = token_result.stdout.strip()
+    except Exception as e:
+        return json.dumps({"error": f"GitHub App auth failed: {e}"})
 
-    # Fall back to env var
-    if not gh_token:
-        gh_token = os.environ.get("GH_PAT_TOKEN", "")
-
-    if not gh_token:
-        return json.dumps({"error": "GH_PAT_TOKEN not found — add it to .env"})
-
-    # Tag the issue with which wolt opened it — header, natural tone
+    # Tag the issue with which wolt opened it
     header = f"🐶 *{_wolt_name}* noticed this one.\n\n"
     full_body = header + body if body else header.strip()
 
