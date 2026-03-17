@@ -10,4 +10,5 @@ dependencies = [
     "slack-sdk",
     "watchfiles",
     "pyjwt[crypto]>=2.12.1",
+    "python-dotenv",
 ]

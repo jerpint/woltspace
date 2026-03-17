@@ -8,4 +8,5 @@ dependencies = [
     "websockets",
     "httpx",
     "watchfiles",
+    "python-dotenv",
 ]
