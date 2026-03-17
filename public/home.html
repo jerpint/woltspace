@@ -257,6 +257,20 @@
       color: var(--muted);
       line-height: 1.4;
     }
+    .wolt-card.passive {
+      opacity: 0.6;
+      cursor: default;
+    }
+    .wolt-card.passive:hover {
+      border-color: var(--wood);
+      background: var(--log);
+    }
+    .wolt-type-tag {
+      font-size: 0.58rem;
+      color: var(--dim);
+      margin-top: 0.3rem;
+      font-style: italic;
+    }
 
     /* ---- SESSIONS ---- */
     .sessions {
@@ -523,7 +537,16 @@
     });
 
     const WOLT_EMOJI = {
-      rodent: '🦫', wolf: '🐺', dog: '🐕', raccoon: '🦝',
+      raccoon: '🦝', beaver: '🦫', otter: '🦦', rodent: '🦝',
+      wolf: '🐺', dog: '🐕',
+    };
+    const RODENT_TYPES = new Set(['raccoon', 'beaver', 'otter', 'rodent']);
+    const WOLT_TYPE_HINT = {
+      wolf: 'scheduler — wakes up rodents on a timer',
+      dog: 'companion — lives on telegram & slack',
+    };
+    const TIER_LABEL = {
+      raccoon: 'opus', beaver: 'sonnet', otter: 'haiku', rodent: 'opus',
     };
 
     const woltGrid = document.getElementById('wolt-grid');
@@ -538,15 +561,30 @@
           woltGrid.innerHTML = '<div class="empty">no wolts yet</div>';
           return;
         }
-        woltGrid.innerHTML = wolts.map(w => {
+        // Rodents first (raccoon > beaver > otter), then others
+        const tierOrder = { raccoon: 0, rodent: 0, beaver: 1, otter: 2 };
+        const sorted = [...wolts].sort((a, b) => {
+          const aRodent = RODENT_TYPES.has(a.type) ? 0 : 1;
+          const bRodent = RODENT_TYPES.has(b.type) ? 0 : 1;
+          if (aRodent !== bRodent) return aRodent - bRodent;
+          return (tierOrder[a.type] ?? 99) - (tierOrder[b.type] ?? 99);
+        });
+        woltGrid.innerHTML = sorted.map(w => {
           const emoji = WOLT_EMOJI[w.type] || '🦫';
           const role = w.role || '';
-          return `<div class="wolt-card" onclick="startWoltSession('${w.name}')">
+          const isRodent = RODENT_TYPES.has(w.type);
+          const hint = WOLT_TYPE_HINT[w.type] || '';
+          const tier = TIER_LABEL[w.type];
+          const cls = isRodent ? 'wolt-card' : 'wolt-card passive';
+          const click = isRodent ? `onclick="startWoltSession('${w.name}')"` : '';
+          return `<div class="${cls}" ${click}>
             <div class="wolt-card-top">
               <span class="wolt-emoji">${emoji}</span>
               <span class="wolt-name">${w.name}</span>
             </div>
             <div class="wolt-role">${role}</div>
+            ${tier ? `<div class="wolt-type-tag">${w.type === 'rodent' ? 'raccoon' : w.type} · ${tier}</div>` : ''}
+            ${hint ? `<div class="wolt-type-tag">${hint}</div>` : ''}
           </div>`;
         }).join('');
       } catch {
@@ -557,7 +595,6 @@
     function startWoltSession(name) {
       input.value = '';
       input.placeholder = `talking to ${name}...`;
-      // For now, start a session with the wolt name as context
       fetch('/sessions/new', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
