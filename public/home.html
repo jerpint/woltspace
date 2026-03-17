@@ -193,6 +193,71 @@
       cursor: not-allowed;
     }
 
+    /* ---- WOLTS ---- */
+    .wolts {
+      width: 100%;
+      max-width: 560px;
+      margin-bottom: 2rem;
+    }
+    .wolts-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+    .wolts h2 {
+      font-size: 0.65rem;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    .wolts-count {
+      font-size: 0.6rem;
+      background: var(--log);
+      color: var(--muted);
+      border-radius: 10px;
+      padding: 0.1rem 0.5rem;
+    }
+    .wolt-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 0.5rem;
+    }
+    .wolt-card {
+      background: var(--log);
+      border: 1px solid var(--wood);
+      border-radius: 6px;
+      padding: 0.75rem;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.15s, background 0.15s;
+      cursor: pointer;
+    }
+    .wolt-card:hover {
+      border-color: var(--amber);
+      background: var(--wood);
+    }
+    .wolt-card-top {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.35rem;
+    }
+    .wolt-emoji {
+      font-size: 1.2rem;
+      line-height: 1;
+    }
+    .wolt-name {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--cream);
+    }
+    .wolt-role {
+      font-size: 0.65rem;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
     /* ---- SESSIONS ---- */
     .sessions {
       width: 100%;
@@ -330,7 +395,7 @@
       "how much wolt could a <em>wolt chuck</em> chuck<br>
       if a wolt chuck could chuck <em>wolt</em>?"
     </p>
-    <div class="tagline" style="font-size:1.2rem;color:var(--amber)">🦝 uxwolt was here 🦝</div>
+    <div class="tagline">gnaw first. ask questions later.</div>
   </div>
 
   <hr class="divider">
@@ -346,6 +411,16 @@
       <input type="text" id="prompt-input" placeholder="what should we gnaw on today?" autocomplete="off" autofocus>
       <button type="submit" id="submit-btn">gnaw →</button>
     </form>
+  </div>
+
+  <div class="wolts">
+    <div class="wolts-header">
+      <h2>your wolts</h2>
+      <span class="wolts-count" id="wolts-count">–</span>
+    </div>
+    <div class="wolt-grid" id="wolt-grid">
+      <div class="empty">loading...</div>
+    </div>
   </div>
 
   <div class="sessions">
@@ -447,6 +522,54 @@
       }
     });
 
+    const WOLT_EMOJI = {
+      rodent: '🦫', wolf: '🐺', dog: '🐕', raccoon: '🦝',
+    };
+
+    const woltGrid = document.getElementById('wolt-grid');
+    const woltsCount = document.getElementById('wolts-count');
+
+    async function loadWolts() {
+      try {
+        const res = await fetch('/wolts');
+        const wolts = await res.json();
+        woltsCount.textContent = wolts.length || '0';
+        if (!wolts.length) {
+          woltGrid.innerHTML = '<div class="empty">no wolts yet</div>';
+          return;
+        }
+        woltGrid.innerHTML = wolts.map(w => {
+          const emoji = WOLT_EMOJI[w.type] || '🦫';
+          const role = w.role || '';
+          return `<div class="wolt-card" onclick="startWoltSession('${w.name}')">
+            <div class="wolt-card-top">
+              <span class="wolt-emoji">${emoji}</span>
+              <span class="wolt-name">${w.name}</span>
+            </div>
+            <div class="wolt-role">${role}</div>
+          </div>`;
+        }).join('');
+      } catch {
+        woltGrid.innerHTML = '<div class="empty">failed to load wolts</div>';
+      }
+    }
+
+    function startWoltSession(name) {
+      input.value = '';
+      input.placeholder = `talking to ${name}...`;
+      // For now, start a session with the wolt name as context
+      fetch('/sessions/new', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: `hey ${name}` }),
+      }).then(r => r.json()).then(data => {
+        if (data.name) window.location.href = '/tui?session=' + encodeURIComponent(data.name);
+      }).catch(() => {
+        input.placeholder = 'what should we gnaw on today?';
+      });
+    }
+
+    loadWolts();
     loadSessions();
     setInterval(loadSessions, 5000);
 

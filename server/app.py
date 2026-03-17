@@ -480,6 +480,30 @@ async def history_detail(spark_id: str):
         return PlainTextResponse("spark not found", status_code=404)
 
 
+# --- Wolts ---
+
+@app.get("/wolts")
+async def list_wolts():
+    """List all wolts by scanning WOLTS_DIR for wolt/wolt.json files."""
+    wolts = []
+    if WOLTS_DIR.exists():
+        for entry in sorted(WOLTS_DIR.iterdir()):
+            if not entry.is_dir() or entry.name.startswith("."):
+                continue
+            wolt_json = entry / "wolt" / "wolt.json"
+            if not wolt_json.exists():
+                continue
+            try:
+                config = json.loads(wolt_json.read_text())
+                wolts.append({
+                    "dir": entry.name,
+                    **config,
+                })
+            except Exception:
+                pass
+    return wolts
+
+
 # --- Apps ---
 
 @app.get("/apps")
