@@ -173,11 +173,15 @@ else
 fi
 
 step "checking version matches latest remote tag..."
-LATEST_REMOTE_TAG=$(git ls-remote --tags https://github.com/jerpint/woltspace.git 2>/dev/null | grep -v '\^{}' | awk '{print $2}' | sed 's|refs/tags/||' | sort -V | tail -1)
-if [ -n "$LATEST_REMOTE_TAG" ]; then
-  [ "$VERSION" = "$LATEST_REMOTE_TAG" ] && pass "version matches latest remote tag ($LATEST_REMOTE_TAG)" || fail "version mismatch: container=$VERSION, latest remote tag=$LATEST_REMOTE_TAG"
+if echo "$BUILD_FLAGS" | grep -q "\-\-local"; then
+  pass "local build — skipping remote tag comparison (version: $VERSION)"
 else
-  pass "no remote tags found — skipping comparison (expected for fresh repos)"
+  LATEST_REMOTE_TAG=$(git ls-remote --tags https://github.com/jerpint/woltspace.git 2>/dev/null | grep -v '\^{}' | awk '{print $2}' | sed 's|refs/tags/||' | sort -V | tail -1)
+  if [ -n "$LATEST_REMOTE_TAG" ]; then
+    [ "$VERSION" = "$LATEST_REMOTE_TAG" ] && pass "version matches latest remote tag ($LATEST_REMOTE_TAG)" || fail "version mismatch: container=$VERSION, latest remote tag=$LATEST_REMOTE_TAG"
+  else
+    pass "no remote tags found — skipping comparison (expected for fresh repos)"
+  fi
 fi
 
 # ── init with existing wolts (idempotent) ──

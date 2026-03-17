@@ -90,8 +90,10 @@ RUN if [ "$USE_LOCAL" = "true" ]; then \
     fi; rm -rf /tmp/local-src
 
 # Stamp the version into the image (prefer tag, fall back to commit hash)
+# --exact-match for release builds (HEAD on a tag), then nearest ancestor tag for
+# local/branch builds, then commit hash, then "local" if no git at all.
 RUN cd /workspace/woltspace && \
-    (git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD 2>/dev/null || echo "local") > /workspace/woltspace/.version
+    (git describe --tags --exact-match 2>/dev/null || git describe --tags --abbrev=0 2>/dev/null || git rev-parse --short HEAD 2>/dev/null || echo "local") > /workspace/woltspace/.version
 
 WORKDIR /workspace/woltspace
 
