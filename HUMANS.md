@@ -174,6 +174,24 @@ LLM_MODEL=anthropic/claude-haiku-4-5-20251001
 
 Then `woltspace stop && woltspace start`. The bot starts automatically.
 
+## GitHub integration
+
+Wolts can open issues and PRs on GitHub using a **GitHub App** (short-lived tokens, no long-lived PATs).
+
+To set it up, ask your wolt to run `/create-github-bot` — it walks you through creating a GitHub App, generating a private key, and adding the credentials to `.env`:
+
+```bash
+GITHUB_APP_ID=<app id>
+GITHUB_APP_INSTALLATION_ID=<installation id>
+GITHUB_APP_PRIVATE_KEY=<PEM key with newlines escaped as \n>
+```
+
+Once configured, the bot's `open_issue` tool works automatically. You can also use the token directly:
+
+```bash
+GH_TOKEN=$(gh-app-token) gh issue list --repo jerpint/woltspace
+```
+
 ## Local development
 
 For contributors working on woltspace itself:

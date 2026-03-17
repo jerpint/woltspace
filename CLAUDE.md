@@ -151,7 +151,7 @@ The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routi
 Thin Telegram layer over core. Persists chat history to `.state/chat/{chat_id}.jsonl`. Group chat support (responds when @mentioned).
 
 ### `container/skills/`
-Discovery files Claude Code reads from `~/.claude/skills/`. Platform defaults baked into image; wolts can override. Current skills: `apps`, `projects`, `new-project`, `migrate-to-projects`, `create-wolt`, `digest`, `music`, `viewport`, `telegram`, `notify`, `session-summary`, `organize-context`, `wolf`, `worktui`, `update-2026-03-13`.
+Discovery files Claude Code reads from `~/.claude/skills/`. Platform defaults baked into image; wolts can override. Current skills: `apps`, `projects`, `new-project`, `migrate-to-projects`, `create-wolt`, `create-github-bot`, `digest`, `music`, `viewport`, `telegram`, `notify`, `session-summary`, `organize-context`, `wolf`, `worktui`, `update-2026-03-13`.
 
 ### `container/cron/digest.mjs`
 Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select via `claude -p` → render HTML. Writes to `wolt/sparks/`. Optional Spotify playlist curation.
@@ -185,6 +185,7 @@ Utility scripts available in container PATH:
 - `create-creature-wolt <name> <type>` — create a new creature-wolt (wolf, dog, rodent, etc.)
 - `version-check` — check for newer woltspace release (polls GitHub API, no git fetch)
 - `spawn-tool` — register a tool proxy with the server
+- `gh-app-token` — print a short-lived GitHub App installation token to stdout (used by `open_issue` tool and available for `gh` CLI auth)
 
 ### Worktui (`wt`)
 Worktree + Claude session manager, available in all sessions. Manages git worktrees for parallel development — each branch gets an isolated working directory.
@@ -292,6 +293,11 @@ TELEGRAM_ALLOWED_USERS=   # comma-separated IDs, or empty for open
 ENABLE_SLACK_BOT=false
 LLM_MODEL=anthropic/claude-haiku-4-5-20251001  # bot model
 WOLTSPACE_PUBLIC_TUNNEL=true  # set false for localhost-only
+
+# GitHub App auth (for issue creation, PRs — run /create-github-bot to set up)
+GITHUB_APP_ID=
+GITHUB_APP_INSTALLATION_ID=
+GITHUB_APP_PRIVATE_KEY=   # PEM key, newlines escaped as \n
 ```
 
 The container also accepts `WOLT_NAME` as an env var (passed by the CLI during `init` for first boot). After that, the container reads `woltspace.json` to resolve the active wolt.

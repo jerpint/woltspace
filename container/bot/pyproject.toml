@@ -9,4 +9,5 @@ dependencies = [
     "slack-bolt",
     "slack-sdk",
     "watchfiles",
+    "pyjwt[crypto]>=2.12.1",
 ]
