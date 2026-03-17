@@ -257,19 +257,62 @@
       color: var(--muted);
       line-height: 1.4;
     }
-    .wolt-card.passive {
-      opacity: 0.6;
-      cursor: default;
-    }
-    .wolt-card.passive:hover {
-      border-color: var(--wood);
-      background: var(--log);
-    }
     .wolt-type-tag {
       font-size: 0.58rem;
       color: var(--dim);
       margin-top: 0.3rem;
       font-style: italic;
+    }
+    .wolt-info {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 1px solid var(--dim);
+      font-size: 0.55rem;
+      color: var(--dim);
+      cursor: help;
+      flex-shrink: 0;
+      margin-left: auto;
+    }
+    .wolt-info:hover { border-color: var(--amber); color: var(--amber); }
+    .wolt-info .wolt-tooltip {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 6px);
+      right: -8px;
+      width: 220px;
+      background: var(--bark);
+      border: 1px solid var(--wood);
+      border-radius: 6px;
+      padding: 0.5rem 0.6rem;
+      font-size: 0.65rem;
+      font-style: normal;
+      color: var(--cream);
+      line-height: 1.5;
+      z-index: 10;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .wolt-info:hover .wolt-tooltip { display: block; }
+    .wolt-card .gnaw-btn {
+      margin-top: 0.5rem;
+      background: var(--moss);
+      border: 1px solid var(--fern);
+      border-radius: 4px;
+      padding: 0.3rem 0.7rem;
+      color: var(--cream);
+      font-family: inherit;
+      font-size: 0.68rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .wolt-card .gnaw-btn:hover {
+      background: var(--fern);
+      border-color: var(--leaf);
     }
 
     /* ---- SESSIONS ---- */
@@ -429,12 +472,20 @@
 
   <div class="wolts">
     <div class="wolts-header">
-      <h2>your wolts</h2>
+      <h2>your rodents</h2>
       <span class="wolts-count" id="wolts-count">–</span>
     </div>
-    <div class="wolt-grid" id="wolt-grid">
+    <div class="wolt-grid" id="rodent-grid">
       <div class="empty">loading...</div>
     </div>
+  </div>
+
+  <div class="wolts" id="pack-section" style="display:none">
+    <div class="wolts-header">
+      <h2>the pack</h2>
+      <span class="wolts-count" id="pack-count">–</span>
+    </div>
+    <div class="wolt-grid" id="pack-grid"></div>
   </div>
 
   <div class="sessions">
@@ -538,7 +589,7 @@
 
     const WOLT_EMOJI = {
       raccoon: '🦝', beaver: '🦫', otter: '🦦', rodent: '🦝',
-      wolf: '🐺', dog: '🐕',
+      wolf: '🐺', dog: '🐶',
     };
     const RODENT_TYPES = new Set(['raccoon', 'beaver', 'otter', 'rodent']);
     const WOLT_TYPE_HINT = {
@@ -549,46 +600,69 @@
       raccoon: 'opus', beaver: 'sonnet', otter: 'haiku', rodent: 'opus',
     };
 
-    const woltGrid = document.getElementById('wolt-grid');
+    const rodentGrid = document.getElementById('rodent-grid');
     const woltsCount = document.getElementById('wolts-count');
+    const packGrid = document.getElementById('pack-grid');
+    const packCount = document.getElementById('pack-count');
+    const packSection = document.getElementById('pack-section');
 
     async function loadWolts() {
       try {
         const res = await fetch('/wolts');
         const wolts = await res.json();
-        woltsCount.textContent = wolts.length || '0';
-        if (!wolts.length) {
-          woltGrid.innerHTML = '<div class="empty">no wolts yet</div>';
-          return;
-        }
-        // Rodents first (raccoon > beaver > otter), then others
+
+        const rodents = wolts.filter(w => RODENT_TYPES.has(w.type));
+        const pack = wolts.filter(w => !RODENT_TYPES.has(w.type));
+
+        // Sort rodents by tier: raccoon > beaver > otter
         const tierOrder = { raccoon: 0, rodent: 0, beaver: 1, otter: 2 };
-        const sorted = [...wolts].sort((a, b) => {
-          const aRodent = RODENT_TYPES.has(a.type) ? 0 : 1;
-          const bRodent = RODENT_TYPES.has(b.type) ? 0 : 1;
-          if (aRodent !== bRodent) return aRodent - bRodent;
-          return (tierOrder[a.type] ?? 99) - (tierOrder[b.type] ?? 99);
-        });
-        woltGrid.innerHTML = sorted.map(w => {
-          const emoji = WOLT_EMOJI[w.type] || '🦫';
-          const role = w.role || '';
-          const isRodent = RODENT_TYPES.has(w.type);
-          const hint = WOLT_TYPE_HINT[w.type] || '';
-          const tier = TIER_LABEL[w.type];
-          const cls = isRodent ? 'wolt-card' : 'wolt-card passive';
-          const click = isRodent ? `onclick="startWoltSession('${w.name}')"` : '';
-          return `<div class="${cls}" ${click}>
-            <div class="wolt-card-top">
-              <span class="wolt-emoji">${emoji}</span>
-              <span class="wolt-name">${w.name}</span>
-            </div>
-            <div class="wolt-role">${role}</div>
-            ${tier ? `<div class="wolt-type-tag">${w.type === 'rodent' ? 'raccoon' : w.type} · ${tier}</div>` : ''}
-            ${hint ? `<div class="wolt-type-tag">${hint}</div>` : ''}
-          </div>`;
-        }).join('');
+        rodents.sort((a, b) => (tierOrder[a.type] ?? 99) - (tierOrder[b.type] ?? 99));
+
+        woltsCount.textContent = rodents.length || '0';
+        if (!rodents.length) {
+          rodentGrid.innerHTML = '<div class="empty">no rodents yet</div>';
+        } else {
+          rodentGrid.innerHTML = rodents.map(w => {
+            const emoji = WOLT_EMOJI[w.type] || '🦫';
+            const role = w.role || '';
+            const tier = TIER_LABEL[w.type];
+            const displayType = w.type === 'rodent' ? 'raccoon' : w.type;
+            const desc = w.description || '';
+            return `<div class="wolt-card">
+              <div class="wolt-card-top">
+                <span class="wolt-emoji">${emoji}</span>
+                <span class="wolt-name">${w.name}</span>
+                ${desc ? `<span class="wolt-info">i<span class="wolt-tooltip">${desc}</span></span>` : ''}
+              </div>
+              <div class="wolt-role">${role}</div>
+              ${tier ? `<div class="wolt-type-tag">${displayType} · ${tier}</div>` : ''}
+              <button class="gnaw-btn" onclick="startWoltSession('${w.name}')">gnaw →</button>
+            </div>`;
+          }).join('');
+        }
+
+        // Pack section
+        if (pack.length) {
+          packSection.style.display = '';
+          packCount.textContent = pack.length;
+          packGrid.innerHTML = pack.map(w => {
+            const emoji = WOLT_EMOJI[w.type] || '❓';
+            const role = w.role || '';
+            const hint = WOLT_TYPE_HINT[w.type] || '';
+            const desc = w.description || '';
+            return `<div class="wolt-card">
+              <div class="wolt-card-top">
+                <span class="wolt-emoji">${emoji}</span>
+                <span class="wolt-name">${w.name}</span>
+                ${desc ? `<span class="wolt-info">i<span class="wolt-tooltip">${desc}</span></span>` : ''}
+              </div>
+              <div class="wolt-role">${role}</div>
+              ${hint ? `<div class="wolt-type-tag">${hint}</div>` : ''}
+            </div>`;
+          }).join('');
+        }
       } catch {
-        woltGrid.innerHTML = '<div class="empty">failed to load wolts</div>';
+        rodentGrid.innerHTML = '<div class="empty">failed to load wolts</div>';
       }
     }
 
