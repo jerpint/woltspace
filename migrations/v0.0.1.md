@@ -482,4 +482,4 @@ woltspace restart              → woltspace stop && woltspace start
 1. **Image goes stale after in-app updates** — `/update` still works (the container has a git clone), but after pulling, the Docker image is stale vs the running container. Run `woltspace rebuild` from the host to re-bake the image for future cold starts (not required for the current session).
 2. **No live-mount of platform code** — on `main`, woltspace was mounted from the host so edits were instant. Now it's a clone inside the container. For iterative platform development, use `--local` builds.
 3. **Dev mode changed** — `--local` builds from your local repo into the image (COPY, not mount). More rebuilds, better isolation.
-4. **Deploy key mount removed** — use `GH_PAT_TOKEN` in `.env` instead of SSH deploy keys.
+4. **Deploy key mount removed** — use GitHub App auth in `.env` instead of SSH deploy keys (run `/create-github-bot` to set up).

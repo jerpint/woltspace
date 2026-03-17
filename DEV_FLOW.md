@@ -88,7 +88,7 @@ cd wolt/projects/woltspace
 
 ## Git setup
 
-The clone uses the shared PAT from `wolts/.env` (GH_PAT_TOKEN) via credential helper.
+The clone uses GitHub App auth from `wolts/.env` via `gh-app-token` (short-lived installation tokens). Run `/create-github-bot` to set up.
 Commits are authored as `woltspace <woltspace@users.noreply.github.com>`.
 
 ## For Haiku (bot routing)
