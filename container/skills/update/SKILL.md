@@ -174,6 +174,18 @@ echo "$BRANCH" > "$WOLT_DIR/.state/woltspace-branch"
 echo "$NEW_VERSION" > /workspace/woltspace/.version
 ```
 
+## Step 5.5: Sync dependencies
+
+After pulling, always sync Python dependencies. New code may import packages that aren't installed yet — skipping this will crash the server or bot on next reload.
+
+```bash
+cd /workspace/woltspace
+uv sync --project server 2>&1
+uv sync --project container/bot 2>&1
+```
+
+This is fast (no-ops if deps haven't changed) and safe to run every time.
+
 ## Step 6: Run migration (minor/major bumps only)
 
 After pulling, check for a migration script:
