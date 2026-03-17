@@ -42,11 +42,23 @@ MAX_HISTORY = 20
 
 # Immediate ack messages — sent before processing starts so the user knows we heard them
 DOG_ACK_MESSAGES = [
-    "🐶 on it...",
-    "🐶 sniffing...",
-    "🐶 heard you",
+    "🐶 *tail wags vigorously*",
     "🐶 *perks ears*",
-    "🐶 one sec...",
+    "🐶 woof woof",
+    "🐶 ...",
+    "🐶 *sniffs curiously*",
+    "🐶 *head tilt*",
+    "🐶 *tippy taps*",
+    "🐶 *play bows*",
+    "🐶 *ears forward*",
+    "🐶 *full body wiggle*",
+]
+
+DOG_VOICE_ACKS = [
+    "🐶 *ear perks up*",
+    "🐶 *listens intently*",
+    "🐶 *head tilt*",
+    "🐶 ...",
 ]
 
 
@@ -286,7 +298,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chat_id = update.effective_chat.id
 
-    await update.message.reply_text("🐶 listening...")
+    await update.message.reply_text(random.choice(DOG_VOICE_ACKS))
 
     file = await context.bot.get_file(voice.file_id)
     with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
