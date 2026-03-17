@@ -70,18 +70,11 @@ APP_MIME_TYPES = {
 
 def load_dotenv() -> dict[str, str]:
     """Load .env file from WOLT_DIR."""
+    from dotenv import dotenv_values
     env_file = WOLT_DIR / ".env"
     if not env_file.exists():
         return {}
-    result = {}
-    for line in env_file.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        eq = line.find("=")
-        if eq > 0:
-            result[line[:eq].strip()] = line[eq + 1 :].strip()
-    return result
+    return {k: v for k, v in dotenv_values(env_file).items() if v is not None}
 
 
 def get_env(key: str) -> str:

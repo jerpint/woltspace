@@ -18,30 +18,24 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 # ---------------------------------------------------------------------------
-# Env loading — mirrors server/config.py pattern
+# Env loading — uses python-dotenv for reliable parsing (multi-line values, quotes)
 # ---------------------------------------------------------------------------
 
-def _load_dotenv() -> dict[str, str]:
+def _get_env(key: str) -> str:
+    val = os.environ.get(key)
+    if val:
+        return val
+    from dotenv import dotenv_values
     wolt_dir = os.environ.get("WOLT_DIR", "")
     for candidate in [
         Path(wolt_dir) / ".env" if wolt_dir else None,
         Path("/workspace/wolts/.env"),
     ]:
         if candidate and candidate.exists():
-            result = {}
-            for line in candidate.read_text().splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                eq = line.find("=")
-                if eq > 0:
-                    result[line[:eq].strip()] = line[eq + 1:].strip()
-            return result
-    return {}
-
-
-def _get_env(key: str) -> str:
-    return os.environ.get(key) or _load_dotenv().get(key, "")
+            vals = dotenv_values(candidate)
+            if key in vals and vals[key] is not None:
+                return vals[key]
+    return ""
 
 
 # ---------------------------------------------------------------------------
