@@ -67,9 +67,20 @@ ARG USE_LOCAL=false
 ARG WOLTSPACE_BRANCH=main
 
 # Clone from github (default path)
+# Clones the branch, then checks out the latest semver tag if available.
+# Falls back to branch tip if no tags exist (safe for fresh repos).
 RUN if [ "$USE_LOCAL" = "false" ]; then \
-      git clone --branch ${WOLTSPACE_BRANCH} --single-branch --depth 1 \
-        https://github.com/jerpint/woltspace.git /workspace/woltspace; \
+      git clone --branch ${WOLTSPACE_BRANCH} --single-branch \
+        https://github.com/jerpint/woltspace.git /workspace/woltspace && \
+      cd /workspace/woltspace && \
+      git fetch --tags && \
+      LATEST_TAG=$(git tag --sort=-v:refname | head -1) && \
+      if [ -n "$LATEST_TAG" ]; then \
+        echo "checking out release: $LATEST_TAG" && \
+        git checkout "$LATEST_TAG"; \
+      else \
+        echo "no tags found — using branch tip"; \
+      fi; \
     fi
 
 # Copy local source (only meaningful when --local)

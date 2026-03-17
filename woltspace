@@ -76,7 +76,7 @@ _build_image() {
       --build-arg USE_LOCAL=true \
       -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR"
   else
-    echo "  ${_D}🪵 building image (branch: $BUILD_BRANCH)${_R}"
+    echo "  ${_D}🪵 building image (branch: $BUILD_BRANCH, latest release tag)${_R}"
     echo "  ${_L}   felling fresh timber...${_R}"
     echo ""
     docker build -t woltspace \

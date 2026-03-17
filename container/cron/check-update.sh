@@ -21,15 +21,17 @@ if [ -f "$BRANCH_FILE" ]; then
   BUILD_BRANCH=$(cat "$BRANCH_FILE")
 fi
 
-# Get remote HEAD for the branch we're tracking (no clone needed)
-REMOTE_HEAD=$(git ls-remote "$WOLTSPACE_REPO" "refs/heads/$BUILD_BRANCH" 2>/dev/null | cut -f1)
+# Get the latest tag from the remote (semver-sorted)
+REMOTE_TAGS=$(git ls-remote --tags "$WOLTSPACE_REPO" 2>/dev/null | grep -v '\^{}' | awk '{print $2}' | sed 's|refs/tags/||' | sort -V)
 
-if [ -z "$REMOTE_HEAD" ]; then
-  echo "[update-check] could not reach remote"
+if [ -z "$REMOTE_TAGS" ]; then
+  echo "[update-check] no tags found on remote — nothing to compare"
   exit 0
 fi
 
-# Read stored version
+LATEST_TAG=$(echo "$REMOTE_TAGS" | tail -1)
+
+# Read stored version (could be a tag like "v0.1.0" or a commit hash from older installs)
 LOCAL_VERSION=""
 if [ -f "$VERSION_FILE" ]; then
   LOCAL_VERSION=$(cat "$VERSION_FILE")
@@ -38,25 +40,22 @@ fi
 # First run — store current version, don't notify
 if [ -z "$LOCAL_VERSION" ]; then
   mkdir -p "$STATE_DIR"
-  echo "$REMOTE_HEAD" > "$VERSION_FILE"
-  echo "[update-check] initialized version tracking ($(echo "$REMOTE_HEAD" | cut -c1-7))"
+  echo "$LATEST_TAG" > "$VERSION_FILE"
+  echo "[update-check] initialized version tracking ($LATEST_TAG)"
   exit 0
 fi
 
 # Compare
-if [ "$LOCAL_VERSION" = "$REMOTE_HEAD" ]; then
-  echo "[update-check] up to date ($(echo "$REMOTE_HEAD" | cut -c1-7))"
+if [ "$LOCAL_VERSION" = "$LATEST_TAG" ]; then
+  echo "[update-check] up to date ($LATEST_TAG)"
   exit 0
 fi
 
 # Update available — notify once, then stamp the new version so we don't spam
-LOCAL_SHORT=$(echo "$LOCAL_VERSION" | cut -c1-7)
-REMOTE_SHORT=$(echo "$REMOTE_HEAD" | cut -c1-7)
-
-MESSAGE="a woltspace update is available ($LOCAL_SHORT -> $REMOTE_SHORT). to find out what changed, ask: \"can you update woltspace?\""
+MESSAGE="a woltspace update is available ($LOCAL_VERSION -> $LATEST_TAG). to find out what changed, ask: \"can you update woltspace?\""
 notify "$MESSAGE"
 
-# Stamp the new remote version so we only notify once per release
-echo "$REMOTE_HEAD" > "$VERSION_FILE"
+# Stamp the new remote tag so we only notify once per release
+echo "$LATEST_TAG" > "$VERSION_FILE"
 
-echo "[update-check] notified: update available ($LOCAL_SHORT -> $REMOTE_SHORT)"
+echo "[update-check] notified: update available ($LOCAL_VERSION -> $LATEST_TAG)"
