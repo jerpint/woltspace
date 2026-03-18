@@ -307,6 +307,23 @@
       border-color: var(--leaf);
     }
 
+    .create-wolt-btn {
+      font-family: inherit;
+      font-size: 0.6rem;
+      font-weight: 600;
+      padding: 0.15rem 0.5rem;
+      background: transparent;
+      border: 1px solid var(--wood);
+      border-radius: 4px;
+      color: var(--muted);
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .create-wolt-btn:hover {
+      border-color: var(--amber);
+      color: var(--amber);
+    }
+
     /* ---- PROJECTS ---- */
     .projects {
       width: 100%;
@@ -520,6 +537,7 @@
     <div class="wolts-header">
       <h2>wolts</h2>
       <span class="wolts-count" id="wolts-count">–</span>
+      <button class="create-wolt-btn" id="create-wolt-btn" onclick="createWolt()" style="display:none">+ create</button>
     </div>
     <div class="wolt-grid" id="rodent-grid">
       <div class="empty">loading...</div>
@@ -653,6 +671,7 @@
         const tierOrder = { raccoon: 0, rodent: 0, beaver: 1, otter: 2, dog: 3 };
         woltsList.sort((a, b) => (tierOrder[a.type] ?? 99) - (tierOrder[b.type] ?? 99));
 
+        document.getElementById('create-wolt-btn').style.display = '';
         woltsCount.textContent = woltsList.length || '0';
         if (!woltsList.length) {
           rodentGrid.innerHTML = '<div class="empty">no wolts yet</div>';
@@ -716,6 +735,16 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ wolt: name }),
+      }).then(r => r.json()).then(data => {
+        if (data.name) window.open('/tui?session=' + encodeURIComponent(data.name), '_blank');
+      }).catch(() => {});
+    }
+
+    function createWolt() {
+      fetch('/sessions/new/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
       }).then(r => r.json()).then(data => {
         if (data.name) window.open('/tui?session=' + encodeURIComponent(data.name), '_blank');
       }).catch(() => {});

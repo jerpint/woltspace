@@ -10,9 +10,53 @@ This skill has two modes. Detect which one applies:
 
 ## Mode detection
 
-1. Read your own `wolt/wolt.json` and `wolt/memory/identity.md`.
-2. **If identity.md is empty or doesn't exist** → you ARE the new wolt being onboarded. Go to **Self-Onboarding** below.
-3. **If identity.md exists and has content** → you're an existing rodent creating another wolt. Go to **Create Another Wolt** below.
+Check the arguments passed to this skill:
+
+1. **If `new` is passed** (e.g. `/create-wolt new`) → you're a blank session with no wolt identity. Go to **Create From Scratch** below.
+2. Otherwise, read your own `wolt/wolt.json` and `wolt/memory/identity.md`.
+3. **If identity.md is empty or doesn't exist** → you ARE the new wolt being onboarded. Go to **Self-Onboarding** below.
+4. **If identity.md exists and has content** → you're an existing rodent creating another wolt. Go to **Create Another Wolt** below.
+
+---
+
+## Create From Scratch
+
+You're running from the lodge with no wolt identity. Your working directory is `/workspace/wolts/`. You need to create a new wolt from nothing.
+
+### Step 1: What kind?
+
+Ask the user what tier:
+
+> What kind of wolt?
+> - **raccoon** — thinker, designer. runs on opus.
+> - **beaver** — builder, workhorse. runs on sonnet. (default)
+> - **otter** — quick and light. runs on haiku.
+
+Default to **beaver** if they don't specify.
+
+### Step 2: Name it
+
+> What should they be called?
+
+The name is just a name — no prefixes, no conventions.
+
+### Step 3: Create the directory
+
+```bash
+/workspace/woltspace/container/bin/create-creature-wolt <name> <type> --role "<role>" --description "<description>"
+```
+
+Ask the user for a short role and description, or suggest one based on the conversation.
+
+### Step 4: Hand off to Self-Onboarding
+
+Once the directory exists, `cd` into `/workspace/wolts/<name>/` and then re-run the skill:
+
+```bash
+cd /workspace/wolts/<name>/ && claude --dangerously-skip-permissions '/create-wolt'
+```
+
+This will pick up Self-Onboarding mode since the wolt has no identity.md yet. Your job is done — the new session takes over.
 
 ---
 
@@ -22,11 +66,16 @@ You're an existing wolt (probably a rodent) and the user wants to create a new w
 
 ### Step 1: What kind?
 
-Ask the user what they need. Be direct:
+Ask the user what tier:
 
-> What kind of wolt? A **rodent** (builder — the default), a **wolf** (scheduler), or a **dog** (telegram/chat companion)?
+> What kind of wolt?
+> - **raccoon** — thinker, designer. runs on opus.
+> - **beaver** — builder, workhorse. runs on sonnet. (default)
+> - **otter** — quick and light. runs on haiku.
 
-If they don't know, default to rodent. If they ask about other types (spider, bear, panda), those exist but aren't fully implemented yet — mention that and suggest rodent for now.
+If they don't know, default to **beaver**. The generic "rodent" type is deprecated — always use a specific tier.
+
+**Only rodent types can be created here.** Dogs are created via `/telegram` or `/slack` setup. Wolf and eagle are platform-level creatures — hardcoded, not created by users.
 
 ### Step 2: Name it
 
@@ -90,22 +139,20 @@ You're running inside your container. Your human opened the tunnel URL in their 
 
 This is a guided conversation. Go step by step, one exchange at a time. Wait for the human to respond before moving on.
 
-### Creature types
+### Wolt types
 
 Every wolt has a fixed animal type. This is permanent — once set, it doesn't change. The types are:
 
-- **rodent** (default) — the general-purpose type. Skill levels within the family: otter (haiku), beaver (sonnet), raccoon (opus). Most wolts are rodents. They build, explore, curate.
-- **wolf** — scheduler. Runs crons, manages schedules, fires tasks. Only one active wolf per workspace.
-- **dog** — lodge companion. The Telegram/Slack presence. Loyal, always-on. Only one active dog per workspace.
-- **spider** — crawler/scraper (future)
-- **bear** — safety/validation (future)
-- **panda** — zen notifications (future)
+- **raccoon** — thinker, designer. Runs on opus. For complex planning, design, multi-step reasoning.
+- **beaver** — builder, workhorse. Runs on sonnet. The default for most wolts.
+- **otter** — quick and light. Runs on haiku. For fast, lightweight tasks.
+
+The generic "rodent" type is **deprecated** — always use a specific tier (raccoon, beaver, or otter).
+
+**Only rodent types can be created here.** Dogs are created via `/telegram` or `/slack` setup. Wolf and eagle are platform-level creatures — hardcoded, not created by users.
 
 **Rules:**
-- If no type is specified, the wolt is a **rodent**.
-- Only one wolf and one dog can be active at a time. If creating a new wolf/dog when one already exists, warn the user: the old one will be demoted to rodent.
-- Check `woltspace.json` → `creatures.active_wolf` / `creatures.active_dog` to see if one already exists.
-- When creating a wolf or dog, update `woltspace.json` → `creatures.active_wolf` / `creatures.active_dog` with the new wolt's name.
+- If no type is specified, the wolt is a **beaver**.
 
 The type goes into `wolt/wolt.json` as the `"type"` field.
 
