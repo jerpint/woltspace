@@ -134,9 +134,6 @@ Python server running on port 7777 inside the container.
 - Serves apps at `/app/:name/` (static from `dist/` or proxy to port — see `apps` skill)
 - Live reload via SSE at `/livereload`
 
-### `server.js` (Node.js, legacy)
-The original server. Still in the repo for reference. The FastAPI server (`server/app.py`) is now the default.
-
 ### `server/tui-service.js` (Node.js)
 TUI WebSocket service on port 3001. The only remaining Node service — handles xterm.js PTY via `node-pty`.
 
@@ -360,9 +357,9 @@ wt create nw/my-feature      # creates isolated worktree
 wt delete nw/my-feature --branch   # clean up
 ```
 
-PRs target **staging** first. When staging is solid, a PR from staging → main ships it to users.
+PRs target **main** directly. Use a worktree branch for every change, get it reviewed, merge to main.
 
-**Why:** The image builds from main by default. A bad edit on main breaks every `woltspace rebuild` for everyone. Staging is the buffer.
+**Why:** The image builds from main by default. A bad edit on main breaks every `woltspace rebuild` for everyone. Feature branches are the buffer.
 
 ### Local dev workflow
 
