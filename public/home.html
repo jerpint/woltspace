@@ -233,10 +233,10 @@
       line-height: 1.4;
     }
     .wolt-type-tag {
-      font-size: 0.58rem;
+      font-size: 0.55rem;
       color: var(--dim);
-      margin-top: 0.3rem;
       font-style: italic;
+      margin-left: auto;
     }
     .wolt-info {
       position: relative;
@@ -251,7 +251,6 @@
       color: var(--dim);
       cursor: help;
       flex-shrink: 0;
-      margin-left: auto;
       -webkit-tap-highlight-color: transparent;
       outline: none;
     }
@@ -517,30 +516,24 @@
     <button onclick="openOnboard()">onboard →</button>
   </div>
 
-  <details class="wolts-wrapper" open>
-    <summary class="wolts-toggle">
-      <h2>the wolts</h2>
-    </summary>
-
-    <div class="wolts">
-      <div class="wolts-header">
-        <h2>rodents</h2>
-        <span class="wolts-count" id="wolts-count">–</span>
-      </div>
-      <div class="wolt-grid" id="rodent-grid">
-        <div class="empty">loading...</div>
-      </div>
+  <div class="wolts">
+    <div class="wolts-header">
+      <h2>wolts</h2>
+      <span class="wolts-count" id="wolts-count">–</span>
     </div>
-
-    <div class="wolts" id="pack-section" style="display:none">
-      <div class="wolts-header">
-        <h2>creatures</h2>
-        <span class="wolts-count" id="pack-count">–</span>
-      </div>
-      <div class="wolt-grid" id="pack-grid"></div>
-      <div style="font-size:0.6rem;color:var(--dim);margin-top:0.5rem;font-style:italic">these run in the background — they can't be chatted with.</div>
+    <div class="wolt-grid" id="rodent-grid">
+      <div class="empty">loading...</div>
     </div>
-  </details>
+  </div>
+
+  <div class="wolts" id="pack-section" style="display:none">
+    <div class="wolts-header">
+      <h2>creatures</h2>
+      <span class="wolts-count" id="pack-count">–</span>
+    </div>
+    <div class="wolt-grid" id="pack-grid"></div>
+    <div style="font-size:0.6rem;color:var(--dim);margin-top:0.5rem;font-style:italic">these run in the background — they can't be chatted with.</div>
+  </div>
 
   <hr class="divider" id="projects-divider" style="display:none">
   <div class="projects" id="projects-section" style="display:none">
@@ -618,6 +611,7 @@
       wolf: '🐺', dog: '🐶', eagle: '🦅',
     };
     const RODENT_TYPES = new Set(['raccoon', 'beaver', 'otter', 'rodent']);
+    const WOLT_TYPES = new Set(['raccoon', 'beaver', 'otter', 'rodent', 'dog']);
     const WOLT_TYPE_HINT = {
       wolf: 'scheduler — wakes up rodents on a timer',
       dog: 'companion — lives on telegram & slack',
@@ -635,6 +629,10 @@
     const TIER_LABEL = {
       raccoon: 'opus', beaver: 'sonnet', otter: 'haiku', rodent: 'opus',
     };
+    const TYPE_TAG = {
+      raccoon: 'raccoon', beaver: 'beaver', otter: 'otter', rodent: 'raccoon',
+      dog: 'dog',
+    };
 
     const rodentGrid = document.getElementById('rodent-grid');
     const woltsCount = document.getElementById('wolts-count');
@@ -647,36 +645,40 @@
         const res = await fetch('/wolts');
         const wolts = await res.json();
 
-        const rodents = wolts.filter(w => RODENT_TYPES.has(w.type));
-        const pack = wolts.filter(w => !RODENT_TYPES.has(w.type));
+        // Wolts = things you can talk to (rodents + dog)
+        const woltsList = wolts.filter(w => WOLT_TYPES.has(w.type));
+        const pack = wolts.filter(w => !WOLT_TYPES.has(w.type));
 
-        // Sort rodents by tier: raccoon > beaver > otter
-        const tierOrder = { raccoon: 0, rodent: 0, beaver: 1, otter: 2 };
-        rodents.sort((a, b) => (tierOrder[a.type] ?? 99) - (tierOrder[b.type] ?? 99));
+        // Sort: raccoon > beaver > otter > dog
+        const tierOrder = { raccoon: 0, rodent: 0, beaver: 1, otter: 2, dog: 3 };
+        woltsList.sort((a, b) => (tierOrder[a.type] ?? 99) - (tierOrder[b.type] ?? 99));
 
-        woltsCount.textContent = rodents.length || '0';
-        if (!rodents.length) {
-          rodentGrid.innerHTML = '<div class="empty">no rodents yet</div>';
+        woltsCount.textContent = woltsList.length || '0';
+        if (!woltsList.length) {
+          rodentGrid.innerHTML = '<div class="empty">no wolts yet</div>';
         } else {
-          rodentGrid.innerHTML = rodents.map(w => {
+          rodentGrid.innerHTML = woltsList.map(w => {
             const emoji = WOLT_EMOJI[w.type] || '🦫';
             const role = w.role || '';
             const desc = w.description || '';
+            const tag = TYPE_TAG[w.type] || w.type;
             const speciesRole = SPECIES_TOOLTIP[w.type] || '';
             const fullTooltip = [speciesRole, desc].filter(Boolean).join('\n\n');
+            const isRodent = RODENT_TYPES.has(w.type);
             return `<div class="wolt-card">
               <div class="wolt-card-top">
                 <span class="wolt-emoji">${emoji}</span>
                 <span class="wolt-name">${w.name}</span>
+                <span class="wolt-type-tag">${tag}</span>
                 ${fullTooltip ? `<span class="wolt-info" tabindex="0">i<span class="wolt-tooltip">${speciesRole ? `<strong>${speciesRole}</strong>` : ''}${speciesRole && desc ? '<br><br>' : ''}${desc || ''}</span></span>` : ''}
               </div>
               <div class="wolt-role">${role}</div>
-              <button class="gnaw-btn" onclick="startWoltSession('${w.name}')">gnaw →</button>
+              ${isRodent ? `<button class="gnaw-btn" onclick="startWoltSession('${w.name}')">gnaw →</button>` : ''}
             </div>`;
           }).join('');
         }
 
-        // Creatures section — includes wolts from API + hardcoded platform creatures
+        // Creatures section — hardcoded platform-level background processes
         // TODO: rename vulture.py to eagle.py in container/creatures/, create wolts/eagle/ with wolt.json
         // TODO: move wolf out of wolts/ — it's platform infrastructure, not a named wolt
         const hardcodedCreatures = [
