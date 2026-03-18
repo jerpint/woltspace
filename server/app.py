@@ -666,48 +666,46 @@ async def serve_app(app_name: str, request: Request, path: str = ""):
 
 
 # --- Projects ---
-# Multi-wolt project discovery and management. Uses woltspace.json manifests.
-# Projects are identified by keeper (wolt name) + project name.
+# Centralized project management. Uses woltspace.json manifests.
+# Project names are globally unique. Keeper (owning wolt) is in woltspace.json.
 
 @app.get("/projects")
 async def list_projects_api():
-    """List all projects across all wolts that have woltspace.json."""
+    """List all projects that have woltspace.json."""
     projects = discover_projects()
-    running = {f"{r['keeper']}/{r['name']}": r for r in running_projects()}
+    running = {r["name"]: r for r in running_projects()}
     result = []
     for p in projects:
-        key = f"{p.keeper}/{p.name}"
         entry = p.model_dump()
-        run_state = running.get(key)
+        run_state = running.get(p.name)
         entry["running"] = run_state is not None
         entry["port"] = run_state["port"] if run_state else None
-        entry["url"] = f"/project/{p.keeper}/{p.name}/"
+        entry["url"] = f"/project/{p.name}/"
         result.append(entry)
     return result
 
 
-@app.get("/projects/{keeper}/{name}")
-async def project_detail(keeper: str, name: str):
+@app.get("/projects/{name}")
+async def project_detail(name: str):
     """Get a single project's manifest and running state."""
-    project = get_project(keeper, name)
+    project = get_project(name)
     if not project:
-        return JSONResponse({"error": f"project {keeper}/{name} not found"}, status_code=404)
-    running = {f"{r['keeper']}/{r['name']}": r for r in running_projects()}
-    key = f"{keeper}/{name}"
+        return JSONResponse({"error": f"project {name} not found"}, status_code=404)
+    running = {r["name"]: r for r in running_projects()}
     entry = project.model_dump()
-    run_state = running.get(key)
+    run_state = running.get(name)
     entry["running"] = run_state is not None
     entry["port"] = run_state["port"] if run_state else None
-    entry["url"] = f"/project/{keeper}/{name}/"
+    entry["url"] = f"/project/{name}/"
     return entry
 
 
-@app.post("/projects/{keeper}/{name}/start")
-async def project_start(keeper: str, name: str):
+@app.post("/projects/{name}/start")
+async def project_start(name: str):
     """Start a project's dev server."""
     try:
-        state = start_project(keeper, name)
-        print(f"[projects] started {keeper}/{name} on port {state['port']}")
+        state = start_project(name)
+        print(f"[projects] started {name} on port {state['port']}")
         return state
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
@@ -715,33 +713,31 @@ async def project_start(keeper: str, name: str):
         return JSONResponse({"error": str(e)}, status_code=409)
 
 
-@app.post("/projects/{keeper}/{name}/stop")
-async def project_stop(keeper: str, name: str):
+@app.post("/projects/{name}/stop")
+async def project_stop(name: str):
     """Stop a running project."""
-    was_running = stop_project(keeper, name)
+    was_running = stop_project(name)
     if was_running:
-        print(f"[projects] stopped {keeper}/{name}")
-        return {"ok": True, "keeper": keeper, "name": name}
-    return JSONResponse({"error": f"{keeper}/{name} is not running"}, status_code=404)
+        print(f"[projects] stopped {name}")
+        return {"ok": True, "name": name}
+    return JSONResponse({"error": f"{name} is not running"}, status_code=404)
 
 
-@app.get("/project/{keeper}/{proj_name}/{path:path}")
-@app.get("/project/{keeper}/{proj_name}")
-async def serve_project(keeper: str, proj_name: str, request: Request, path: str = ""):
+@app.get("/project/{proj_name}/{path:path}")
+@app.get("/project/{proj_name}")
+async def serve_project(proj_name: str, request: Request, path: str = ""):
     """Serve a project — proxy to running dev server, static from dist/, or direct files."""
-    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", keeper):
-        return JSONResponse({"error": "invalid keeper name"}, status_code=400)
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", proj_name):
         return JSONResponse({"error": "invalid project name"}, status_code=400)
-    pdir = project_dir(keeper, proj_name)
+    pdir = project_dir(proj_name)
     if not pdir.exists():
-        return JSONResponse({"error": f'project "{keeper}/{proj_name}" not found'}, status_code=404)
+        return JSONResponse({"error": f'project "{proj_name}" not found'}, status_code=404)
 
     sub_path = "/" + path if path else "/"
 
     # Strategy 1: proxy to running dev server (managed by start_project)
-    running = {f"{r['keeper']}/{r['name']}": r for r in running_projects()}
-    run_state = running.get(f"{keeper}/{proj_name}")
+    running = {r["name"]: r for r in running_projects()}
+    run_state = running.get(proj_name)
     if run_state:
         port = run_state["port"]
         target = f"http://localhost:{port}{sub_path}"
@@ -759,7 +755,7 @@ async def serve_project(keeper: str, proj_name: str, request: Request, path: str
                 headers.pop("content-security-policy", None)
                 return Response(resp.content, status_code=resp.status_code, headers=headers)
             except httpx.ConnectError:
-                return PlainTextResponse(f'Project "{keeper}/{proj_name}" not responding on port {port}', status_code=502)
+                return PlainTextResponse(f'Project "{proj_name}" not responding on port {port}', status_code=502)
 
     # Strategy 2: static from dist/
     dist_dir = pdir / "dist"

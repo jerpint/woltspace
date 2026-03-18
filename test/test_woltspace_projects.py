@@ -27,19 +27,22 @@ import projects
 
 @pytest.fixture
 def wolts_dir(tmp_path):
-    """Create a temporary wolts directory and patch projects.WOLTS_DIR."""
+    """Create a temporary wolts directory and patch projects module paths."""
     original = projects.WOLTS_DIR
+    original_projects = projects.PROJECTS_DIR
     original_state = projects._RUNNING_STATE_DIR
     projects.WOLTS_DIR = tmp_path
+    projects.PROJECTS_DIR = tmp_path / "projects"
     projects._RUNNING_STATE_DIR = tmp_path / ".state" / "projects"
     yield tmp_path
     projects.WOLTS_DIR = original
+    projects.PROJECTS_DIR = original_projects
     projects._RUNNING_STATE_DIR = original_state
 
 
-def _make_project(wolts_dir, keeper, name, **overrides):
+def _make_project(wolts_dir, name, keeper="neowolt", **overrides):
     """Create a project directory with woltspace.json."""
-    proj_dir = wolts_dir / keeper / "wolt" / "projects" / name
+    proj_dir = wolts_dir / "projects" / name
     proj_dir.mkdir(parents=True, exist_ok=True)
     manifest = {
         "woltspace_version": "0.1",
@@ -107,36 +110,36 @@ class TestDiscovery:
         assert projects.discover_projects() == []
 
     def test_discover_finds_projects(self, wolts_dir):
-        _make_project(wolts_dir, "neowolt", "forj", stack="node")
-        _make_project(wolts_dir, "uxwolt", "mockup", stack="html")
+        _make_project(wolts_dir, "forj", keeper="neowolt", stack="node")
+        _make_project(wolts_dir, "mockup", keeper="uxwolt", stack="html")
         found = projects.discover_projects()
         assert len(found) == 2
         names = {p.name for p in found}
         assert names == {"forj", "mockup"}
 
     def test_discover_skips_invalid_manifest(self, wolts_dir):
-        proj_dir = wolts_dir / "neowolt" / "wolt" / "projects" / "broken"
+        proj_dir = wolts_dir / "projects" / "broken"
         proj_dir.mkdir(parents=True)
         (proj_dir / "woltspace.json").write_text("not json")
         assert projects.discover_projects() == []
 
     def test_discover_skips_missing_manifest(self, wolts_dir):
-        proj_dir = wolts_dir / "neowolt" / "wolt" / "projects" / "nofile"
+        proj_dir = wolts_dir / "projects" / "nofile"
         proj_dir.mkdir(parents=True)
         assert projects.discover_projects() == []
 
     def test_get_project(self, wolts_dir):
-        _make_project(wolts_dir, "neowolt", "forj", description="workout app")
-        p = projects.get_project("neowolt", "forj")
+        _make_project(wolts_dir, "forj", description="workout app")
+        p = projects.get_project("forj")
         assert p is not None
         assert p.description == "workout app"
 
     def test_get_project_missing(self, wolts_dir):
-        assert projects.get_project("neowolt", "nope") is None
+        assert projects.get_project("nope") is None
 
     def test_project_dir(self, wolts_dir):
-        d = projects.project_dir("neowolt", "forj")
-        assert d == wolts_dir / "neowolt" / "wolt" / "projects" / "forj"
+        d = projects.project_dir("forj")
+        assert d == wolts_dir / "projects" / "forj"
 
 
 # ---------------------------------------------------------------------------
@@ -152,8 +155,8 @@ class TestPortAllocation:
         # Simulate a running project on PORT_MIN
         state_dir = projects._RUNNING_STATE_DIR
         state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "neo--app1.json").write_text(json.dumps({
-            "keeper": "neo", "name": "app1", "port": projects.PORT_MIN, "pid": os.getpid(),
+        (state_dir / "app1.json").write_text(json.dumps({
+            "name": "app1", "port": projects.PORT_MIN, "pid": os.getpid(),
         }))
         port = projects._allocate_port()
         assert port == projects.PORT_MIN + 1
@@ -171,11 +174,11 @@ class TestRunningState:
         """State files with dead PIDs get cleaned up."""
         state_dir = projects._RUNNING_STATE_DIR
         state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "neo--dead.json").write_text(json.dumps({
-            "keeper": "neo", "name": "dead", "port": 4001, "pid": 999999,
+        (state_dir / "dead.json").write_text(json.dumps({
+            "name": "dead", "port": 4001, "pid": 999999,
         }))
         assert projects.running_projects() == []
-        assert not (state_dir / "neo--dead.json").exists()
+        assert not (state_dir / "dead.json").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -185,12 +188,12 @@ class TestRunningState:
 class TestStartStop:
     def test_start_missing_project(self, wolts_dir):
         with pytest.raises(ValueError, match="not found"):
-            projects.start_project("neowolt", "nonexistent")
+            projects.start_project("nonexistent")
 
     def test_start_no_start_command(self, wolts_dir):
-        _make_project(wolts_dir, "neowolt", "static-only")
+        _make_project(wolts_dir, "static-only")
         with pytest.raises(ValueError, match="no start command"):
-            projects.start_project("neowolt", "static-only")
+            projects.start_project("static-only")
 
     def test_start_respects_max_running(self, wolts_dir):
         """Can't exceed MAX_RUNNING concurrent projects."""
@@ -198,22 +201,22 @@ class TestStartStop:
         state_dir.mkdir(parents=True, exist_ok=True)
         # Fake 2 running projects (using current PID so they appear alive)
         for i in range(projects.MAX_RUNNING):
-            (state_dir / f"neo--app{i}.json").write_text(json.dumps({
-                "keeper": "neo", "name": f"app{i}", "port": 4001 + i, "pid": os.getpid(),
+            (state_dir / f"app{i}.json").write_text(json.dumps({
+                "name": f"app{i}", "port": 4001 + i, "pid": os.getpid(),
             }))
-        _make_project(wolts_dir, "neowolt", "one-more", start="echo hi")
+        _make_project(wolts_dir, "one-more", start="echo hi")
         with pytest.raises(RuntimeError, match="Max"):
-            projects.start_project("neowolt", "one-more")
+            projects.start_project("one-more")
 
     @patch("projects.subprocess.Popen")
     def test_start_project_success(self, mock_popen, wolts_dir):
         mock_popen.return_value.pid = 12345
-        _make_project(wolts_dir, "neowolt", "runner", start="node server.js")
-        state = projects.start_project("neowolt", "runner")
+        _make_project(wolts_dir, "runner", start="node server.js")
+        state = projects.start_project("runner")
         assert state["port"] == projects.PORT_MIN
         assert state["pid"] == 12345
-        assert state["keeper"] == "neowolt"
         assert state["name"] == "runner"
+        assert state["keeper"] == "neowolt"
         # Verify Popen was called with correct args
         call_kwargs = mock_popen.call_args[1]
         assert call_kwargs["env"]["PORT"] == str(projects.PORT_MIN)
@@ -222,28 +225,28 @@ class TestStartStop:
     @patch("projects.subprocess.Popen")
     def test_start_returns_existing_if_alive(self, mock_popen, wolts_dir):
         """Starting an already-running project returns its existing state."""
-        _make_project(wolts_dir, "neowolt", "already", start="echo hi")
+        _make_project(wolts_dir, "already", start="echo hi")
         state_dir = projects._RUNNING_STATE_DIR
         state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "neowolt--already.json").write_text(json.dumps({
-            "keeper": "neowolt", "name": "already", "port": 4005, "pid": os.getpid(),
+        (state_dir / "already.json").write_text(json.dumps({
+            "name": "already", "port": 4005, "pid": os.getpid(),
         }))
-        state = projects.start_project("neowolt", "already")
+        state = projects.start_project("already")
         assert state["port"] == 4005
         mock_popen.assert_not_called()
 
     def test_stop_not_running(self, wolts_dir):
-        assert projects.stop_project("neowolt", "nothing") is False
+        assert projects.stop_project("nothing") is False
 
     @patch("projects.os.killpg")
     @patch("projects.os.getpgid", return_value=999)
     def test_stop_running_project(self, mock_getpgid, mock_killpg, wolts_dir):
         state_dir = projects._RUNNING_STATE_DIR
         state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "neowolt--app.json").write_text(json.dumps({
-            "keeper": "neowolt", "name": "app", "port": 4001, "pid": os.getpid(),
+        (state_dir / "app.json").write_text(json.dumps({
+            "name": "app", "port": 4001, "pid": os.getpid(),
         }))
-        result = projects.stop_project("neowolt", "app")
+        result = projects.stop_project("app")
         assert result is True
         mock_killpg.assert_called_once_with(999, signal.SIGTERM)
-        assert not (state_dir / "neowolt--app.json").exists()
+        assert not (state_dir / "app.json").exists()
