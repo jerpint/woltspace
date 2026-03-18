@@ -174,16 +174,7 @@ echo "$BRANCH" > "$WOLT_DIR/.state/woltspace-branch"
 echo "$NEW_VERSION" > /workspace/woltspace/.version
 ```
 
-## Step 5.5: Sync skills
-
-After pulling, always re-copy skills so new sessions pick up the updated versions immediately. This is critical — skills are copied to `~/.claude/skills/` at container startup and not auto-updated on pull without this step.
-
-```bash
-cp -rT /workspace/woltspace/container/skills/ /home/node/.claude/skills/
-echo "skills synced"
-```
-
-## Step 5.6: Sync dependencies
+## Step 5.5: Sync dependencies
 
 After pulling, always sync Python dependencies. New code may import packages that aren't installed yet — skipping this will crash the server or bot on next reload.
 
@@ -227,7 +218,7 @@ Action items to flag:
 - **entrypoint.sh or entrypoint_setup.py changed** → "container restart needed for this to take full effect"
 - **New env vars** → "add `VAR_NAME` to your `.env` before restarting"
 - **Server code changed** → "server auto-reloads via uvicorn --reload, should be live already"
-- **Skills changed** → "skills re-synced — new sessions will get the updated versions. existing sessions keep the old version until they restart"
+- **Skills changed** → "skills update on next session start — existing sessions keep the old version"
 
 ## Notes
 
