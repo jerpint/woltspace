@@ -1,28 +1,30 @@
 from __future__ import annotations
 
 """
-Session Registry — single source of truth for session metadata.
+Session Registry & Spawning — single source of truth for session lifecycle.
 
-One JSON file per session in .state/registry/{session_name}.json.
-Replaces the old scattered system (sessions/*.json + session-routing/*.json + current-url-*.json).
+Registry: one JSON file per session in .state/registry/{session_name}.json.
+Spawning: start_session() is the shared entry point for all session creation
+(lodge, telegram, slack, bot tools).
 
 Usage:
-    from sessions import SessionRegistry
+    from sessions import SessionRegistry, start_session
     reg = SessionRegistry()
     reg.create("neowolt-chompy-dam-a3f1e2", wolt="neowolt", creature="beaver", ...)
-    reg.update("neowolt-chompy-dam-a3f1e2", status="completed", exit_code=0)
-    s = reg.get("neowolt-chompy-dam-a3f1e2")
-    all_sessions = reg.list()
+    session = start_session(prompt="hey", wolt="neowolt", creature="beaver")
 """
 
 import json
 import os
+import random
+import shlex
 import subprocess
 import time
 from pathlib import Path
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 DEFAULT_REGISTRY_DIR = WOLTS_DIR / ".state" / "registry"
+RUN_SESSION_SCRIPT = Path("/workspace/woltspace/container/bin/run-session.sh")
 
 
 class SessionRegistry:
@@ -206,6 +208,125 @@ def _tmux_alive(name: str) -> bool:
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
+
+
+# ---------------------------------------------------------------------------
+# Session naming
+# ---------------------------------------------------------------------------
+
+SESSION_ADJECTIVES = [
+    "chompy", "soggy", "toothy", "muddy", "slappy", "chunky", "bushy", "gnarly",
+    "burly", "scruffy", "grumpy", "plucky", "scrappy", "sly", "crafty", "sturdy",
+    "sleek", "mossy", "gritty", "silty", "damp", "rugged", "brisk", "snug",
+    "bold", "keen", "wild", "swift", "broad", "dense", "dusty", "fuzzy",
+]
+SESSION_NOUNS = [
+    "dam", "lodge", "pond", "creek", "bark", "branch", "log", "stump", "knot",
+    "chip", "den", "burrow", "bank", "marsh", "grove", "thicket", "hollow",
+    "trail", "ford", "eddy", "tail", "paw", "tooth", "fur", "mound", "birch",
+    "oak", "elm", "pine", "cedar", "maple", "willow", "bog", "ridge", "brook",
+]
+
+CREATURE_MODELS = {
+    "raccoon": "opus",
+    "beaver": "sonnet",
+    "otter": "haiku",
+    "rodent": "opus",  # legacy type — treated as raccoon
+    "wolf": "sonnet",
+}
+
+
+def session_name(prefix: str) -> str:
+    """Generate a session name: prefix-adjective-noun-6hex."""
+    adj = random.choice(SESSION_ADJECTIVES)
+    noun = random.choice(SESSION_NOUNS)
+    hex6 = f"{random.randint(0, 0xFFFFFF):06x}"
+    return f"{prefix}-{adj}-{noun}-{hex6}"
+
+
+def get_tunnel_url() -> str:
+    """Read the tunnel URL from shared .state/tunnel-url."""
+    shared_file = WOLTS_DIR / ".state" / "tunnel-url"
+    if shared_file.exists():
+        return shared_file.read_text().strip().rstrip("/")
+    return ""
+
+
+def build_session_command(name: str, work_dir: str, prompt: str, model: str = None) -> str:
+    """Build the shell command that tmux will execute."""
+    cmd = f"{RUN_SESSION_SCRIPT} {shlex.quote(name)} {shlex.quote(work_dir)} {shlex.quote(prompt)}"
+    if model:
+        cmd += f" {shlex.quote(model)}"
+    return cmd
+
+
+# ---------------------------------------------------------------------------
+# Session spawning — shared entry point for all adapters
+# ---------------------------------------------------------------------------
+
+def start_session(
+    *,
+    wolt: str,
+    prompt: str = "",
+    creature: str = "",
+    routing: dict = None,
+    project: str = "",
+) -> dict:
+    """Start a Claude Code session for a specific wolt.
+
+    wolt: required — the target wolt name (e.g. "neowolt", "UXwolt").
+    prompt: opening message for the session.
+    creature: optional "raccoon"/"beaver"/"otter" to pick the model.
+    routing: adapter routing info (adapter, chat_id, etc.) for notifications.
+    project: optional project name — session runs in wolt/projects/{name}/.
+
+    Returns dict with session info: name, url, wolt, and optionally project/creature/model.
+    Raises ValueError if the wolt directory doesn't exist.
+    """
+    target_dir = WOLTS_DIR / wolt
+    if not target_dir.is_dir():
+        raise ValueError(f"wolt '{wolt}' not found at {target_dir}")
+
+    if project:
+        project_dir = target_dir / "wolt" / "projects" / project
+        project_dir.mkdir(parents=True, exist_ok=True)
+        target_dir = project_dir
+
+    name = session_name(wolt)
+    model = CREATURE_MODELS.get(creature) if creature else None
+
+    tunnel_url = get_tunnel_url()
+    session_url = f"{tunnel_url}/tui?session={name}" if tunnel_url else ""
+
+    registry = SessionRegistry()
+    registry.create(
+        name,
+        wolt=wolt,
+        creature=creature or "",
+        model=model or "",
+        dir=str(target_dir),
+        project=project or "",
+        prompt=prompt,
+        adapter=(routing or {}).get("adapter", ""),
+        chat_id=str((routing or {}).get("chat_id", "")),
+        user_id=str((routing or {}).get("user_id", "")),
+        thread_ts=str((routing or {}).get("thread_ts", "")),
+        session_url=session_url,
+    )
+
+    cmd = build_session_command(name, str(target_dir), prompt, model=model)
+    subprocess.run(
+        ["tmux", "new-session", "-d", "-s", name, "-c", str(target_dir), cmd],
+        check=True,
+    )
+
+    result = {"name": name, "url": session_url or None, "wolt": wolt}
+    if project:
+        result["project"] = project
+    if creature:
+        result["creature"] = creature
+        result["model"] = model
+    return result
 
 
 # --- CLI interface (used by session-reg bash wrapper) ---

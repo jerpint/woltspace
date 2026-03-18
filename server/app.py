@@ -47,6 +47,11 @@ from .config import (
 )
 from .notify import send_notification
 from .sparks import get_spark_with_chain, list_sparks
+
+# Session spawning — shared with bot
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+from sessions import start_session
 from .state import (
     bot_log,
     current_url_file,
@@ -374,37 +379,108 @@ async def session_message(session_id: str, request: Request):
 
 
 # --- Session spawning ---
+# All session creation goes through start_session() from container/lib/sessions.py.
+# Each adapter (lodge, telegram, slack) has its own route for adapter-specific params.
 
-@app.post("/sessions/new")
-async def session_new(request: Request):
-    body = await request.json()
-    prompt = body.get("prompt")
-    if not prompt:
-        return JSONResponse({"error": "prompt required"}, status_code=400)
-    session_name = f"{WOLT_NAME}-{int(time.time() * 1000) % 100000}"
-    reg_data = {
-        "name": session_name,
-        "wolt": WOLT_NAME,
-        "status": "running",
-        "created_at": int(time.time()),
-        "dir": str(WOLT_DIR),
-        "prompt": prompt[:500],
-        "last_activity": int(time.time()),
-    }
+@app.post("/sessions/new/create")
+async def session_new_create(request: Request):
+    """Start a session to create a new wolt. No existing wolt needed."""
+    name = f"create-wolt-{int(time.time() * 1000) % 100000}"
+    work_dir = str(WOLTS_DIR)
     try:
         SESSION_REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
-        (SESSION_REGISTRY_DIR / f"{session_name}.json").write_text(json.dumps(reg_data, indent=2) + "\n")
-    except Exception as e:
-        print(f"[sessions] registry write failed: {e}")
-    run_script = Path(__file__).resolve().parent.parent / "container" / "bin" / "run-session.sh"
-    cmd = f"{run_script} {_shell_quote(session_name)} {_shell_quote(str(WOLT_DIR))} {_shell_quote(prompt)}"
-    try:
+        import json as _json
+        (SESSION_REGISTRY_DIR / f"{name}.json").write_text(_json.dumps({
+            "name": name, "wolt": "", "creature": "beaver", "model": "sonnet",
+            "status": "running", "created_at": int(time.time()),
+            "dir": work_dir, "prompt": "/create-wolt", "adapter": "lodge",
+        }, indent=2) + "\n")
+        # Run claude directly — bypass run-session.sh since there's no wolt yet
+        cmd = f"claude --dangerously-skip-permissions --model sonnet '/create-wolt new'"
         subprocess.run(
-            ["tmux", "new-session", "-d", "-s", session_name, "-c", str(WOLT_DIR), cmd],
+            ["tmux", "new-session", "-d", "-s", name, "-c", work_dir, cmd],
             check=True,
         )
-        print(f"[sessions] spawned {session_name}")
-        return {"name": session_name}
+        print(f"[sessions/create] spawned {name}")
+        return {"name": name}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/sessions/new/lodge")
+async def session_new_lodge(request: Request):
+    """Start a session from the lodge (home page gnaw button)."""
+    body = await request.json()
+    wolt = body.get("wolt")
+    if not wolt:
+        return JSONResponse({"error": "wolt required"}, status_code=400)
+    try:
+        result = start_session(
+            wolt=wolt,
+            prompt=body.get("prompt", ""),
+            creature=body.get("creature", ""),
+            project=body.get("project", ""),
+            routing={"adapter": "lodge"},
+        )
+        print(f"[sessions/lodge] spawned {result['name']} for {wolt}")
+        return result
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/sessions/new/telegram")
+async def session_new_telegram(request: Request):
+    """Start a session from Telegram."""
+    body = await request.json()
+    wolt = body.get("wolt")
+    if not wolt:
+        return JSONResponse({"error": "wolt required"}, status_code=400)
+    try:
+        result = start_session(
+            wolt=wolt,
+            prompt=body.get("prompt", ""),
+            creature=body.get("creature", ""),
+            project=body.get("project", ""),
+            routing={
+                "adapter": "telegram",
+                "chat_id": body.get("chat_id", ""),
+                "user_id": body.get("user_id", ""),
+            },
+        )
+        print(f"[sessions/telegram] spawned {result['name']} for {wolt}")
+        return result
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/sessions/new/slack")
+async def session_new_slack(request: Request):
+    """Start a session from Slack."""
+    body = await request.json()
+    wolt = body.get("wolt")
+    if not wolt:
+        return JSONResponse({"error": "wolt required"}, status_code=400)
+    try:
+        result = start_session(
+            wolt=wolt,
+            prompt=body.get("prompt", ""),
+            creature=body.get("creature", ""),
+            project=body.get("project", ""),
+            routing={
+                "adapter": "slack",
+                "chat_id": body.get("channel", ""),
+                "user_id": body.get("user_id", ""),
+                "thread_ts": body.get("thread_ts", ""),
+            },
+        )
+        print(f"[sessions/slack] spawned {result['name']} for {wolt}")
+        return result
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
