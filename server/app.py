@@ -24,7 +24,6 @@ from fastapi.responses import (
 
 from . import tools as tool_registry
 from .config import (
-    APPS_DIR,
     APP_MIME_TYPES,
     DEN_REPLY_FOOTER,
     MIME_TYPES,
@@ -172,6 +171,92 @@ async def options_handler():
 
 def _shell_quote(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
+
+
+def _project_not_found(name: str) -> str:
+    """Styled 404 page for a project that doesn't exist."""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{name} — not found</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    background: #1a1a1a; color: #c8b89a;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 2rem;
+  }}
+  .card {{
+    max-width: 420px; width: 100%; text-align: center;
+    border: 1px solid #3a3a2a; border-radius: 12px;
+    padding: 2.5rem 2rem; background: #222218;
+  }}
+  .emoji {{ font-size: 3rem; margin-bottom: 1rem; }}
+  h1 {{ font-size: 1.3rem; color: #e8d8b8; margin-bottom: 0.5rem; }}
+  .desc {{ font-size: 0.85rem; color: #8a8060; margin-bottom: 1.5rem; }}
+  .hint {{ font-size: 0.75rem; color: #5a5a4a; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="emoji">🌲</div>
+  <h1>{name}</h1>
+  <p class="desc">This project doesn't exist yet.</p>
+  <p class="hint">Ask your wolt to create it, or check the name.</p>
+</div>
+</body>
+</html>"""
+
+
+def _project_placeholder(name: str, project: "WoltspaceProject | None" = None) -> str:
+    """Styled placeholder page for a project that has no servable content."""
+    emoji = project.emoji if project else "📦"
+    desc = project.description if project and project.description else "No description yet"
+    keeper = project.keeper if project else "unknown"
+    start_cmd = project.start if project and project.start else None
+    status = "Press start to start your project" if start_cmd else "No start command configured"
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{name} — off</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    background: #1a1a1a; color: #c8b89a;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 2rem;
+  }}
+  .card {{
+    max-width: 420px; width: 100%; text-align: center;
+    border: 1px solid #3a3a2a; border-radius: 12px;
+    padding: 2.5rem 2rem; background: #222218;
+  }}
+  .emoji {{ font-size: 3rem; margin-bottom: 1rem; }}
+  h1 {{ font-size: 1.3rem; color: #e8d8b8; margin-bottom: 0.5rem; }}
+  .desc {{ font-size: 0.85rem; color: #8a8060; margin-bottom: 1.5rem; }}
+  .status {{
+    font-size: 0.8rem; color: #6a7a4a;
+    border-top: 1px solid #3a3a2a; padding-top: 1rem;
+  }}
+  .keeper {{ font-size: 0.75rem; color: #5a5a4a; margin-top: 0.8rem; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="emoji">{emoji}</div>
+  <h1>{name}</h1>
+  <p class="desc">{desc}</p>
+  <p class="status">{status}</p>
+  <p class="keeper">keeper: {keeper}</p>
+</div>
+</body>
+</html>"""
 
 
 # jerpint: what trickery is this well need to revise all these hacks
@@ -589,80 +674,9 @@ async def list_wolts():
     return wolts
 
 
-# --- Apps ---
-
-@app.get("/apps")
-async def list_apps():
-    apps = []
-    if APPS_DIR.exists():
-        for entry in APPS_DIR.iterdir():
-            app_json = entry / "app.json"
-            if not app_json.exists():
-                continue
-            try:
-                config = json.loads(app_json.read_text())
-                has_dist = (entry / "dist").exists()
-                apps.append({
-                    "name": entry.name,
-                    "url": f"/app/{entry.name}/",
-                    "mode": "static" if has_dist else ("proxy" if config.get("port") else "unconfigured"),
-                    **config,
-                })
-            except Exception:
-                pass
-    return apps
-
-
-@app.get("/app/{app_name}/{path:path}")
-@app.get("/app/{app_name}")
-async def serve_app(app_name: str, request: Request, path: str = ""):
-    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", app_name):
-        return JSONResponse({"error": "invalid app name"}, status_code=400)
-    app_dir = APPS_DIR / app_name
-    app_json_path = app_dir / "app.json"
-    if not app_json_path.exists():
-        return JSONResponse({"error": f'app "{app_name}" not found — missing app.json'}, status_code=404)
-    try:
-        app_config = json.loads(app_json_path.read_text())
-    except Exception:
-        return PlainTextResponse("invalid app.json", status_code=500)
-
-    sub_path = "/" + path if path else "/"
-    dist_dir = app_dir / "dist"
-
-    # Strategy 1: static
-    if dist_dir.exists():
-        candidates = [dist_dir / path, dist_dir / path / "index.html"]
-        for candidate in candidates:
-            resolved = candidate.resolve()
-            if not str(resolved).startswith(str(dist_dir.resolve())):
-                continue
-            if resolved.exists() and resolved.is_file():
-                ext = resolved.suffix
-                mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
-                return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
-        return PlainTextResponse("Not found in app", status_code=404)
-
-    # Strategy 2: proxy
-    port = app_config.get("port")
-    if not port or port < 1024 or port > 65535:
-        return PlainTextResponse(f'app "{app_name}" has no dist/ and no valid port', status_code=500)
-    target = f"http://localhost:{port}{sub_path}"
-    if request.url.query:
-        target += f"?{request.url.query}"
-    async with httpx.AsyncClient() as client:
-        try:
-            resp = await client.request(
-                request.method, target,
-                headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
-                content=await request.body(),
-            )
-            headers = dict(resp.headers)
-            headers.pop("x-frame-options", None)
-            headers.pop("content-security-policy", None)
-            return Response(resp.content, status_code=resp.status_code, headers=headers)
-        except httpx.ConnectError:
-            return PlainTextResponse(f'App "{app_name}" not running on port {port}', status_code=502)
+# --- Apps (deprecated — use /projects/ and /project/) ---
+# Legacy /app/ routes removed. Apps are now projects with woltspace.json.
+# Existing apps in wolt/apps/ need migration to wolts/projects/.
 
 
 # --- Projects ---
@@ -731,7 +745,7 @@ async def serve_project(proj_name: str, request: Request, path: str = ""):
         return JSONResponse({"error": "invalid project name"}, status_code=400)
     pdir = project_dir(proj_name)
     if not pdir.exists():
-        return JSONResponse({"error": f'project "{proj_name}" not found'}, status_code=404)
+        return HTMLResponse(_project_not_found(proj_name), status_code=404)
 
     sub_path = "/" + path if path else "/"
 
@@ -784,7 +798,9 @@ async def serve_project(proj_name: str, request: Request, path: str = ""):
             mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
             return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
 
-    return PlainTextResponse(f'Project "{keeper}/{proj_name}" has no servable content', status_code=404)
+    # Strategy 4: off-state placeholder — project exists but has no servable content
+    project = get_project(proj_name)
+    return HTMLResponse(_project_placeholder(proj_name, project))
 
 
 # --- Shares ---
