@@ -436,96 +436,90 @@ class TestFireWolfTool:
 class TestCheckUpdateTool:
     """Unit: the check_update tool exposed to the dog."""
 
+    TAGS_OUTPUT = (
+        "aaa\trefs/tags/v0.1.0\n"
+        "bbb\trefs/tags/v0.1.1\n"
+        "ccc\trefs/tags/v0.1.2\n"
+    )
+
     def test_up_to_date(self, tmp_path):
         from bot.core import _tool_check_update
         version_file = tmp_path / ".state" / "woltspace-version"
         version_file.parent.mkdir(parents=True)
-        version_file.write_text("abc1234567890")
+        version_file.write_text("v0.1.2")
 
-        mock_result = MagicMock()
-        mock_result.stdout = "abc1234567890\trefs/heads/main\n"
+        mock_result = MagicMock(returncode=0, stdout=self.TAGS_OUTPUT)
 
         with patch("bot.core.WOLT_DIR", tmp_path), \
              patch("subprocess.run", return_value=mock_result):
             result = json.loads(_tool_check_update({}, None))
         assert result["up_to_date"] is True
-        assert result["version"] == "abc1234"
+        assert result["local_version"] == "v0.1.2"
+        assert result["latest_version"] == "v0.1.2"
 
     def test_update_available(self, tmp_path):
         from bot.core import _tool_check_update
         version_file = tmp_path / ".state" / "woltspace-version"
         version_file.parent.mkdir(parents=True)
-        version_file.write_text("oldcommit1234567890")
+        version_file.write_text("v0.1.0")
 
-        mock_result = MagicMock()
-        mock_result.stdout = "newcommit9876543210\trefs/heads/main\n"
+        mock_result = MagicMock(returncode=0, stdout=self.TAGS_OUTPUT)
 
         with patch("bot.core.WOLT_DIR", tmp_path), \
              patch("subprocess.run", return_value=mock_result):
             result = json.loads(_tool_check_update({}, None))
         assert result["up_to_date"] is False
-        assert result["local"] == "oldcomm"
-        assert result["remote"] == "newcomm"
-        assert "update is available" in result["message"]
+        assert result["local_version"] == "v0.1.0"
+        assert result["latest_version"] == "v0.1.2"
+        assert "v0.1.0" in result["message"]
+        assert "v0.1.2" in result["message"]
 
     def test_first_run_initializes_version(self, tmp_path):
         from bot.core import _tool_check_update
         # No version file exists yet
-        mock_result = MagicMock()
-        mock_result.stdout = "abc1234567890\trefs/heads/main\n"
+        mock_result = MagicMock(returncode=0, stdout=self.TAGS_OUTPUT)
 
         with patch("bot.core.WOLT_DIR", tmp_path), \
              patch("subprocess.run", return_value=mock_result):
             result = json.loads(_tool_check_update({}, None))
         assert result["up_to_date"] is True
         assert "initialized" in result.get("note", "")
-        # Version file should now exist
-        assert (tmp_path / ".state" / "woltspace-version").read_text() == "abc1234567890"
+        # Version file should now exist with latest tag
+        assert (tmp_path / ".state" / "woltspace-version").read_text() == "v0.1.2"
 
     def test_remote_unreachable(self, tmp_path):
         from bot.core import _tool_check_update
-        mock_result = MagicMock()
-        mock_result.stdout = ""
+        mock_result = MagicMock(returncode=1, stdout="")
 
         with patch("bot.core.WOLT_DIR", tmp_path), \
              patch("subprocess.run", return_value=mock_result):
             result = json.loads(_tool_check_update({}, None))
         assert "error" in result
 
-    def test_staging_branch_compared_correctly(self, tmp_path):
-        """When built from staging, check_update should compare against staging, not main."""
+    def test_no_tags_on_remote(self, tmp_path):
+        """When remote has no semver tags, return an error."""
+        from bot.core import _tool_check_update
+        mock_result = MagicMock(returncode=0, stdout="aaa\trefs/tags/not-a-version\n")
+
+        with patch("bot.core.WOLT_DIR", tmp_path), \
+             patch("subprocess.run", return_value=mock_result):
+            result = json.loads(_tool_check_update({}, None))
+        assert "error" in result
+
+    def test_fetches_tags_not_branches(self, tmp_path):
+        """Verify we use --tags, not refs/heads."""
         from bot.core import _tool_check_update
         state_dir = tmp_path / ".state"
         state_dir.mkdir(parents=True)
-        (state_dir / "woltspace-version").write_text("staging_commit_abc123")
-        (state_dir / "woltspace-branch").write_text("staging")
+        (state_dir / "woltspace-version").write_text("v0.1.2")
 
-        mock_result = MagicMock()
-        mock_result.stdout = "staging_commit_abc123\trefs/heads/staging\n"
+        mock_result = MagicMock(returncode=0, stdout=self.TAGS_OUTPUT)
 
         with patch("bot.core.WOLT_DIR", tmp_path), \
              patch("subprocess.run", return_value=mock_result) as mock_run:
-            result = json.loads(_tool_check_update({}, None))
-        assert result["up_to_date"] is True
-        # Verify it checked staging, not main
+            _tool_check_update({}, None)
         mock_run.assert_called_once()
-        assert "refs/heads/staging" in mock_run.call_args[0][0]
-
-    def test_defaults_to_main_without_branch_file(self, tmp_path):
-        """Without a branch file, should default to checking main."""
-        from bot.core import _tool_check_update
-        state_dir = tmp_path / ".state"
-        state_dir.mkdir(parents=True)
-        (state_dir / "woltspace-version").write_text("abc1234567890")
-
-        mock_result = MagicMock()
-        mock_result.stdout = "abc1234567890\trefs/heads/main\n"
-
-        with patch("bot.core.WOLT_DIR", tmp_path), \
-             patch("subprocess.run", return_value=mock_result) as mock_run:
-            result = json.loads(_tool_check_update({}, None))
-        assert result["up_to_date"] is True
-        assert "refs/heads/main" in mock_run.call_args[0][0]
+        assert "--tags" in mock_run.call_args[0][0]
 
 
 # ---------------------------------------------------------------------------
