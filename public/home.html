@@ -310,6 +310,8 @@
       cursor: help;
       flex-shrink: 0;
       margin-left: auto;
+      -webkit-tap-highlight-color: transparent;
+      outline: none;
     }
     .wolt-info:hover { border-color: var(--amber); color: var(--amber); }
     .wolt-info .wolt-tooltip {
@@ -329,7 +331,21 @@
       z-index: 10;
       box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     }
-    .wolt-info:hover .wolt-tooltip { display: block; }
+    .wolt-info:hover .wolt-tooltip,
+    .wolt-info:focus .wolt-tooltip { display: block; }
+
+    @media (max-width: 600px) {
+      .wolt-info .wolt-tooltip {
+        position: fixed;
+        bottom: auto;
+        right: auto;
+        left: 1rem;
+        right: 1rem;
+        top: 50%;
+        transform: translateY(-50%);
+        width: auto;
+      }
+    }
     .wolt-role { flex: 1; }
     .wolt-card .gnaw-btn {
       margin-top: 0.5rem;
@@ -670,7 +686,7 @@
               <div class="wolt-card-top">
                 <span class="wolt-emoji">${emoji}</span>
                 <span class="wolt-name">${w.name}</span>
-                ${fullTooltip ? `<span class="wolt-info">i<span class="wolt-tooltip">${speciesRole ? `<strong>${speciesRole}</strong>` : ''}${speciesRole && desc ? '<br><br>' : ''}${desc || ''}</span></span>` : ''}
+                ${fullTooltip ? `<span class="wolt-info" tabindex="0">i<span class="wolt-tooltip">${speciesRole ? `<strong>${speciesRole}</strong>` : ''}${speciesRole && desc ? '<br><br>' : ''}${desc || ''}</span></span>` : ''}
               </div>
               <div class="wolt-role">${role}</div>
               <button class="gnaw-btn" onclick="startWoltSession('${w.name}')">gnaw →</button>
@@ -693,7 +709,7 @@
               <div class="wolt-card-top">
                 <span class="wolt-emoji">${emoji}</span>
                 <span class="wolt-name">${w.name}</span>
-                ${fullTooltip ? `<span class="wolt-info">i<span class="wolt-tooltip">${speciesRole ? `<strong>${speciesRole}</strong>` : ''}${speciesRole && desc ? '<br><br>' : ''}${desc || ''}</span></span>` : ''}
+                ${fullTooltip ? `<span class="wolt-info" tabindex="0">i<span class="wolt-tooltip">${speciesRole ? `<strong>${speciesRole}</strong>` : ''}${speciesRole && desc ? '<br><br>' : ''}${desc || ''}</span></span>` : ''}
               </div>
               <div class="wolt-role">${role}</div>
             </div>`;
