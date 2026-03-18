@@ -217,7 +217,7 @@ def _project_placeholder(name: str, project: "WoltspaceProject | None" = None) -
     desc = project.description if project and project.description else "No description yet"
     keeper = project.keeper if project else "unknown"
     start_cmd = project.start if project and project.start else None
-    status = "Has a start command — try starting it" if start_cmd else "No start command configured"
+    status = "Press start to start your project" if start_cmd else "No start command configured"
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
