@@ -28,7 +28,7 @@ Do NOT summarize what you read. Just absorb the context and be ready to work.
 
 ## Constraints
 
-**NEVER restart, kill, or modify server.js (port 7777)** — it runs the tunnel, split view, and all session routing. Restarting it breaks everything for everyone. If something seems wrong with the server, notify the developer and stop.
+**NEVER restart, kill, or modify the woltspace server (FastAPI, port 7777)** — it runs the tunnel, split view, and all session routing. Restarting it breaks everything for everyone. If something seems wrong with the server, notify the developer and stop.
 
 **You can ONLY edit files inside your wolt directory.** Never edit, create, or delete files in:
 - `/workspace/woltspace/` — this is the platform code. Editing it breaks updates.
