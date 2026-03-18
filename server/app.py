@@ -52,6 +52,15 @@ from .sparks import get_spark_with_chain, list_sparks
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 from sessions import start_session
+from projects import (
+    WoltspaceProject,
+    discover_projects,
+    get_project,
+    project_dir,
+    running_projects,
+    start_project,
+    stop_project,
+)
 from .state import (
     bot_log,
     current_url_file,
@@ -657,77 +666,80 @@ async def serve_app(app_name: str, request: Request, path: str = ""):
 
 
 # --- Projects ---
+# Centralized project management. Uses woltspace.json manifests.
+# Project names are globally unique. Keeper (owning wolt) is in woltspace.json.
 
 @app.get("/projects")
-async def list_projects():
-    """List all projects with their status (has project.json, running port, etc.)."""
-    projects = []
-    if PROJECTS_DIR.exists():
-        for entry in sorted(PROJECTS_DIR.iterdir()):
-            if not entry.is_dir() or entry.name.startswith("."):
-                continue
-            proj_json = entry / "project.json"
-            config = {}
-            if proj_json.exists():
-                try:
-                    config = json.loads(proj_json.read_text())
-                except Exception:
-                    pass
-            has_dist = (entry / "dist").exists()
-            port = config.get("port")
-            if has_dist:
-                mode = "static"
-            elif port:
-                mode = "proxy"
-            else:
-                mode = "directory"
-            projects.append({
-                "name": entry.name,
-                "url": f"/project/{entry.name}/",
-                "mode": mode,
-                **config,
-            })
-    return projects
+async def list_projects_api():
+    """List all projects that have woltspace.json."""
+    projects = discover_projects()
+    running = {r["name"]: r for r in running_projects()}
+    result = []
+    for p in projects:
+        entry = p.model_dump()
+        run_state = running.get(p.name)
+        entry["running"] = run_state is not None
+        entry["port"] = run_state["port"] if run_state else None
+        entry["url"] = f"/project/{p.name}/"
+        result.append(entry)
+    return result
 
 
-@app.get("/project/{project_name}/{path:path}")
-@app.get("/project/{project_name}")
-async def serve_project(project_name: str, request: Request, path: str = ""):
-    """Serve a project — static files from dist/, or reverse proxy to a running port."""
-    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", project_name):
+@app.get("/projects/{name}")
+async def project_detail(name: str):
+    """Get a single project's manifest and running state."""
+    project = get_project(name)
+    if not project:
+        return JSONResponse({"error": f"project {name} not found"}, status_code=404)
+    running = {r["name"]: r for r in running_projects()}
+    entry = project.model_dump()
+    run_state = running.get(name)
+    entry["running"] = run_state is not None
+    entry["port"] = run_state["port"] if run_state else None
+    entry["url"] = f"/project/{name}/"
+    return entry
+
+
+@app.post("/projects/{name}/start")
+async def project_start(name: str):
+    """Start a project's dev server."""
+    try:
+        state = start_project(name)
+        print(f"[projects] started {name} on port {state['port']}")
+        return state
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=409)
+
+
+@app.post("/projects/{name}/stop")
+async def project_stop(name: str):
+    """Stop a running project."""
+    was_running = stop_project(name)
+    if was_running:
+        print(f"[projects] stopped {name}")
+        return {"ok": True, "name": name}
+    return JSONResponse({"error": f"{name} is not running"}, status_code=404)
+
+
+@app.get("/project/{proj_name}/{path:path}")
+@app.get("/project/{proj_name}")
+async def serve_project(proj_name: str, request: Request, path: str = ""):
+    """Serve a project — proxy to running dev server, static from dist/, or direct files."""
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", proj_name):
         return JSONResponse({"error": "invalid project name"}, status_code=400)
-    project_dir = PROJECTS_DIR / project_name
-    if not project_dir.exists():
-        return JSONResponse({"error": f'project "{project_name}" not found'}, status_code=404)
-
-    # Read project.json if it exists (optional — beaver writes it)
-    proj_json_path = project_dir / "project.json"
-    proj_config = {}
-    if proj_json_path.exists():
-        try:
-            proj_config = json.loads(proj_json_path.read_text())
-        except Exception:
-            pass
+    pdir = project_dir(proj_name)
+    if not pdir.exists():
+        return JSONResponse({"error": f'project "{proj_name}" not found'}, status_code=404)
 
     sub_path = "/" + path if path else "/"
-    dist_dir = project_dir / "dist"
 
-    # Strategy 1: static from dist/
-    if dist_dir.exists():
-        candidates = [dist_dir / path, dist_dir / path / "index.html"]
-        for candidate in candidates:
-            resolved = candidate.resolve()
-            if not str(resolved).startswith(str(dist_dir.resolve())):
-                continue
-            if resolved.exists() and resolved.is_file():
-                ext = resolved.suffix
-                mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
-                return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
-        return PlainTextResponse("Not found in project", status_code=404)
-
-    # Strategy 2: proxy to running port
-    port = proj_config.get("port")
-    if port and 1024 <= port <= 65535:
+    # Strategy 1: proxy to running dev server (managed by start_project)
+    running = {r["name"]: r for r in running_projects()}
+    run_state = running.get(proj_name)
+    if run_state:
+        port = run_state["port"]
         target = f"http://localhost:{port}{sub_path}"
         if request.url.query:
             target += f"?{request.url.query}"
@@ -743,22 +755,36 @@ async def serve_project(project_name: str, request: Request, path: str = ""):
                 headers.pop("content-security-policy", None)
                 return Response(resp.content, status_code=resp.status_code, headers=headers)
             except httpx.ConnectError:
-                return PlainTextResponse(f'Project "{project_name}" not running on port {port}', status_code=502)
+                return PlainTextResponse(f'Project "{proj_name}" not responding on port {port}', status_code=502)
+
+    # Strategy 2: static from dist/
+    dist_dir = pdir / "dist"
+    if dist_dir.exists():
+        candidates = [dist_dir / path, dist_dir / path / "index.html"]
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            if not str(resolved).startswith(str(dist_dir.resolve())):
+                continue
+            if resolved.exists() and resolved.is_file():
+                ext = resolved.suffix
+                mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
+                return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
+        return PlainTextResponse("Not found in project", status_code=404)
 
     # Strategy 3: serve static files directly from project root (simple HTML projects)
-    candidates = [project_dir / path, project_dir / path / "index.html"]
+    candidates = [pdir / path, pdir / path / "index.html"]
     if not path:
-        candidates = [project_dir / "index.html"]
+        candidates = [pdir / "index.html"]
     for candidate in candidates:
         resolved = candidate.resolve()
-        if not str(resolved).startswith(str(project_dir.resolve())):
+        if not str(resolved).startswith(str(pdir.resolve())):
             continue
         if resolved.exists() and resolved.is_file():
             ext = resolved.suffix
             mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
             return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
 
-    return PlainTextResponse(f'Project "{project_name}" has no servable content', status_code=404)
+    return PlainTextResponse(f'Project "{keeper}/{proj_name}" has no servable content', status_code=404)
 
 
 # --- Shares ---
