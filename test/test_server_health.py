@@ -96,3 +96,28 @@ class TestWoltsEndpoint:
             wolt = result[0]
             assert "name" in wolt
             assert "dir" in wolt
+
+
+# ---------------------------------------------------------------------------
+# Session routing
+# ---------------------------------------------------------------------------
+
+@requires_server
+class TestSessionRouting:
+    """The /sessions/new/{adapter} endpoints route to the correct wolt."""
+
+    def test_lodge_requires_wolt(self, server_post):
+        result = server_post("/sessions/new/lodge", {})
+        assert result.get("error"), "should reject missing wolt"
+
+    def test_lodge_rejects_unknown_wolt(self, server_post):
+        result = server_post("/sessions/new/lodge", {"wolt": "nonexistent-wolt-xyz"})
+        assert "error" in result
+
+    def test_telegram_requires_wolt(self, server_post):
+        result = server_post("/sessions/new/telegram", {})
+        assert result.get("error"), "should reject missing wolt"
+
+    def test_slack_requires_wolt(self, server_post):
+        result = server_post("/sessions/new/slack", {})
+        assert result.get("error"), "should reject missing wolt"
