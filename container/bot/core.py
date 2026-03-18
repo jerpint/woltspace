@@ -18,7 +18,16 @@ from openai import OpenAI
 
 # Add lib/ to path for sessions module
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
-from sessions import SessionRegistry
+from sessions import (
+    SessionRegistry,
+    CREATURE_MODELS,
+    SESSION_ADJECTIVES,
+    SESSION_NOUNS,
+    build_session_command,
+    get_tunnel_url,
+    session_name as _session_name,
+    start_session,
+)
 from wolts import get_active_creature, find_by_type
 
 logger = logging.getLogger(__name__)
@@ -43,7 +52,7 @@ BOT_LOG_DIR.mkdir(parents=True, exist_ok=True)
 # Session registry — single source of truth for all session metadata
 registry = SessionRegistry(WOLTS_DIR / ".state" / "registry")
 
-RUN_SESSION_SCRIPT = Path("/workspace/woltspace/container/bin/run-session.sh")
+# RUN_SESSION_SCRIPT — now in sessions module
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -234,18 +243,8 @@ Your identity and context come from memory files below. Use them — reference p
 # Session naming & ack text
 # ---------------------------------------------------------------------------
 
-SESSION_ADJECTIVES = [
-    "chompy", "soggy", "toothy", "muddy", "slappy", "chunky", "bushy", "gnarly",
-    "burly", "scruffy", "grumpy", "plucky", "scrappy", "sly", "crafty", "sturdy",
-    "sleek", "mossy", "gritty", "silty", "damp", "rugged", "brisk", "snug",
-    "bold", "keen", "wild", "swift", "broad", "dense", "dusty", "fuzzy",
-]
-SESSION_NOUNS = [
-    "dam", "lodge", "pond", "creek", "bark", "branch", "log", "stump", "knot",
-    "chip", "den", "burrow", "bank", "marsh", "grove", "thicket", "hollow",
-    "trail", "ford", "eddy", "tail", "paw", "tooth", "fur", "mound", "birch",
-    "oak", "elm", "pine", "cedar", "maple", "willow", "bog", "ridge", "brook",
-]
+
+# SESSION_ADJECTIVES, SESSION_NOUNS — imported from sessions
 BEAVER_ACKS = [
     "gnawing through it, one log at a time",
     "flat tail, sharp teeth, on it",
@@ -258,13 +257,8 @@ BEAVER_ACKS = [
 ]
 
 
-def _session_name(prefix: str) -> str:
-    """Generate a session name: prefix-adjective-noun-6hex."""
-    adj = random.choice(SESSION_ADJECTIVES)
-    noun = random.choice(SESSION_NOUNS)
-    hex6 = f"{random.randint(0, 0xFFFFFF):06x}"
-    return f"{prefix}-{adj}-{noun}-{hex6}"
 
+# _session_name — imported from sessions
 
 def _short_session_name(session_name: str) -> str:
     """'neowolt-chompy-dam-a3f1e2' → 'chompy-dam'"""
@@ -302,12 +296,7 @@ def build_ack_text(url: str = None, session_name: str = None, adapter: str = Non
 # ---------------------------------------------------------------------------
 
 
-def build_session_command(session_name: str, work_dir: str, prompt: str, model: str = None) -> str:
-    """Build the shell command that tmux will execute. Separated for testability."""
-    cmd = f"{RUN_SESSION_SCRIPT} {shlex.quote(session_name)} {shlex.quote(work_dir)} {shlex.quote(prompt)}"
-    if model:
-        cmd += f" {shlex.quote(model)}"
-    return cmd
+# build_session_command — imported from sessions
 
 
 def get_session_status(session_name: str) -> dict | None:
@@ -315,15 +304,7 @@ def get_session_status(session_name: str) -> dict | None:
     return registry.get(session_name, check_alive=False)
 
 
-def get_tunnel_url() -> str:
-    """Read the tunnel URL from shared .state/tunnel-url."""
-    shared_file = WOLTS_DIR / ".state" / "tunnel-url"
-    if shared_file.exists():
-        return shared_file.read_text().strip().rstrip("/")
-    tunnel_file = STATE_DIR / "tunnel-url"
-    if tunnel_file.exists():
-        return tunnel_file.read_text().strip().rstrip("/")
-    return ""
+# get_tunnel_url — imported from sessions
 
 
 def _call_server(method: str, path: str, body: dict | None = None) -> dict:
@@ -340,77 +321,29 @@ def _call_server(method: str, path: str, body: dict | None = None) -> dict:
         return json.loads(resp.read())
 
 
-# Map creature names to Claude model aliases (active session creatures)
-CREATURE_MODELS = {
-    "raccoon": "opus",    # 🦝 orchestrator — complex planning, multi-step reasoning
-    "beaver": "sonnet",   # 🦫 worker — building, coding, grunt work
-    "otter": "haiku",     # 🦦 quick tasks — fast, lightweight, cheap
-    "wolf": "sonnet",     # 🐺 scheduler — cron setup, schedule management
-    # Planned creatures — models TBD when implemented
-    # "spider": "sonnet", # 🕷️ headless browser — parsing, scraping
-    # "bear":   "sonnet", # 🐻 validator — careful judgment, safety checks
-    # "panda":  "haiku",  # 🐼 notifications — gentle, unhurried
-    # "dog":    "haiku",  # 🐶 lodge companion — loyal, constrained (active in system prompt, not a session creature)
-}
+# CREATURE_MODELS — imported from sessions
 
 
 def start_claude_session(prompt: str, wolt: str = None, creature: str = None, routing: dict = None, project: str = None) -> dict:
-    """Start an interactive Claude Code session in a named tmux session.
+    """Start an interactive Claude Code session. Delegates to sessions.start_session.
 
-    creature: optional "raccoon" (opus) or "beaver" (sonnet) to pick the model.
-    routing: adapter routing info (adapter, chat_id, etc.) — written to registry.
-    project: optional project name — session will run in wolt/projects/{project}/.
+    Wraps the shared start_session() with bot-specific logging and
+    backwards-compat fallback (wolt defaults to WOLT_NAME env var).
     """
-    if wolt:
-        target_dir = WOLTS_DIR / wolt
-        if not target_dir.is_dir():
-            target_dir = WOLT_DIR
-            wolt = None
-    else:
-        target_dir = WOLT_DIR
-
-    # If a project is specified, scope the session to that project directory
-    if project:
-        project_dir = target_dir / "wolt" / "projects" / project
-        project_dir.mkdir(parents=True, exist_ok=True)
-        target_dir = project_dir
-
-    target_name = wolt or os.environ.get("WOLT_NAME", "wolt")
-    session_name = _session_name(target_name)
-    model = CREATURE_MODELS.get(creature) if creature else None
-
-    tunnel_url = get_tunnel_url()
-    session_url = f"{tunnel_url}/tui?session={session_name}" if tunnel_url else ""
-
-    # Register the session (single source of truth)
-    registry.create(
-        session_name,
-        wolt=target_name,
-        creature=creature or "",
-        model=model or "",
-        dir=str(target_dir),
-        project=project or "",
+    target_wolt = wolt or os.environ.get("WOLT_NAME", "wolt")
+    result = start_session(
+        wolt=target_wolt,
         prompt=prompt,
-        adapter=(routing or {}).get("adapter", ""),
-        chat_id=str((routing or {}).get("chat_id", "")),
-        user_id=str((routing or {}).get("user_id", "")),
-        thread_ts=str((routing or {}).get("thread_ts", "")),
-        session_url=session_url,
+        creature=creature or "",
+        routing=routing,
+        project=project or "",
     )
-
-    cmd = build_session_command(session_name, str(target_dir), prompt, model=model)
-    subprocess.run(
-        ["tmux", "new-session", "-d", "-s", session_name, "-c", str(target_dir), cmd],
-        check=True,
-    )
-
-    result = {"name": session_name, "url": session_url or None, "wolt": target_name}
-    if project:
-        result["project"] = project
-    if creature:
-        result["creature"] = creature
-        result["model"] = model
-    _bot_log("session_start", {"session": session_name, "wolt": target_name, "project": project, "dir": str(target_dir), "creature": creature, "model": model, "prompt": prompt[:500]})
+    _bot_log("session_start", {
+        "session": result["name"], "wolt": target_wolt,
+        "project": project, "dir": str(WOLTS_DIR / target_wolt),
+        "creature": creature, "model": result.get("model"),
+        "prompt": prompt[:500],
+    })
     return result
 
 
