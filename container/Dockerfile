@@ -51,7 +51,7 @@ RUN mkdir -p /workspace/wolts /home/node/.ssh \
 USER node
 
 # Copy everything the Claude installer created (binary, launcher, shell integration)
-COPY --from=claude /home/node/ /home/node/
+COPY --chown=node:node --from=claude /home/node/ /home/node/
 ENV PATH="/home/node/.local/bin:${PATH}"
 
 # Install worktui (worktree + Claude session manager)

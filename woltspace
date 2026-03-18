@@ -43,6 +43,7 @@ cmd="${1:-start}"
 # WOLTSPACE_LOCAL=true is equivalent to --local (sticky dev mode)
 LOCAL_BUILD="${WOLTSPACE_LOCAL:-false}"
 BUILD_BRANCH="main"
+NO_CACHE=false
 _next=""
 for arg in "$@"; do
   if [ -n "$_next" ]; then
@@ -52,6 +53,8 @@ for arg in "$@"; do
     LOCAL_BUILD=true
   elif [ "$arg" = "--branch" ]; then
     _next=branch
+  elif [ "$arg" = "--no-cache" ]; then
+    NO_CACHE=true
   fi
 done
 
@@ -68,18 +71,21 @@ _G=$'\033[0;32m'; _B=$'\033[1m'; _R=$'\033[0m'
 # --- Helpers ---
 
 _build_image() {
+  local cache_flag=""
+  [ "$NO_CACHE" = true ] && cache_flag="--no-cache"
+
   if [ "$LOCAL_BUILD" = true ]; then
     echo "  ${_D}🪵 building image from local source${_R}"
     echo "  ${_L}   felling fresh timber...${_R}"
     echo ""
-    docker build -t woltspace \
+    docker build -t woltspace $cache_flag \
       --build-arg USE_LOCAL=true \
       -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR"
   else
     echo "  ${_D}🪵 building image (branch: $BUILD_BRANCH, latest release tag)${_R}"
     echo "  ${_L}   felling fresh timber...${_R}"
     echo ""
-    docker build -t woltspace \
+    docker build -t woltspace $cache_flag \
       --build-arg WOLTSPACE_BRANCH="$BUILD_BRANCH" \
       -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR/container"
   fi
@@ -93,6 +99,10 @@ _start_container() {
   [ -n "$wolt_name" ] && extra_args="-e WOLT_NAME=$wolt_name"
 
   mkdir -p "$WOLTS_DIR/.claude"
+  # Ensure writable by container's node user (1000) — handles root-owned dirs from Docker
+  chown 1000:1000 "$WOLTS_DIR/.claude" 2>/dev/null \
+    || docker run --rm -v "$WOLTS_DIR/.claude:/fix" node:22-slim chown -R 1000:1000 /fix 2>/dev/null \
+    || true
   docker run -d \
     --name "$CONTAINER_NAME" \
     --env-file "$WOLTS_DIR/.env" \
@@ -472,6 +482,7 @@ RESTORE
     ;;
   *)
     echo "usage: woltspace <init|start|stop|rebuild|backup|shell|chat|logs>"
+    echo "       woltspace rebuild [--no-cache]"
     echo "       woltspace backup [tag] [--bundle]"
     exit 1
     ;;
