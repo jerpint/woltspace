@@ -28,7 +28,7 @@ from sessions import (
     session_name as _session_name,
     start_session,
 )
-from wolts import get_active_creature, find_by_type
+from wolts import get_active_creature, find_by_type, list_wolts as _list_wolts_full
 
 logger = logging.getLogger(__name__)
 
@@ -97,14 +97,9 @@ def switch_wolt(name: str) -> str | None:
     return name
 
 
-def list_wolts() -> list[str]:
-    """List available wolts."""
-    wolts = []
-    if WOLTS_DIR.is_dir():
-        for entry in sorted(WOLTS_DIR.iterdir()):
-            if entry.is_dir() and (entry / "wolt").is_dir():
-                wolts.append(entry.name)
-    return wolts
+def list_wolts() -> list[dict]:
+    """List available wolts with their types and roles."""
+    return _list_wolts_full()
 
 
 # ---------------------------------------------------------------------------
@@ -172,18 +167,34 @@ Never prefix your messages with emojis or your name — the adapter handles that
 You're the lodge companion — loyal, constrained, and you route real work to Claude Code sessions.
 Never prefix your messages with emojis or your name — the adapter handles that."""
 
+    # Build the wolt roster for the system prompt
+    wolt_roster_lines = []
+    creature_emojis_map = {"raccoon": "🦝", "beaver": "🦫", "otter": "🦦", "wolf": "🐺", "dog": "🐶", "rodent": "🦝"}
+    try:
+        for w in list_wolts():
+            wtype = w.get("type", "rodent")
+            emoji = creature_emojis_map.get(wtype, "🐾")
+            role = w.get("role") or w.get("description") or ""
+            wolt_roster_lines.append(f"- **{w['name']}** ({emoji} {wtype}) — {role}")
+    except Exception:
+        pass
+    wolt_roster = "\n".join(wolt_roster_lines) if wolt_roster_lines else "(none found)"
+
     base = f"""{intro}
 
+## The Colony — Available Wolts
+These are the wolts in the colony. When you spawn a session for a named wolt, just pass their name — the model tier is derived automatically from their type.
+
+{wolt_roster}
+
 ## Creatures
-Sessions run as creatures: 🦝 **raccoon** (opus — complex reasoning, orchestration), 🦫 **beaver** (sonnet — building, coding), 🦦 **otter** (haiku — fast, lightweight tasks), or 🐺 **wolf** (sonnet — cron & schedule management).
-CRITICAL: When the user asks for a specific creature by name, ALWAYS use that creature. Never override their choice based on your own task decomposition. "Fire up a raccoon" means creature="raccoon", period.
+Session tiers: 🦝 **raccoon** (opus — complex reasoning, orchestration), 🦫 **beaver** (sonnet — building, coding), 🦦 **otter** (haiku — fast, lightweight tasks), 🐺 **wolf** (sonnet — cron & schedule management).
 
-**When to use otter vs beaver:** Otter is haiku — fast and cheap, great for quick lookups, simple edits, file searches, one-shot scripts. Beaver is sonnet — deeper reasoning, multi-file changes, architecture work. Default to beaver for ambiguous tasks; use otter when speed matters more than depth.
-**NEVER use otter for platform updates.** Any task involving `/update`, running the update skill, or pulling woltspace changes must always use **beaver** or **raccoon** — never otter. Updates require careful review and can break the running platform; haiku is not appropriate.
+The creature tier is **always derived from the wolt's type** — you never pick it. Just pass `wolt="name"` and the right model is used automatically.
 
-The colony has more creatures — not all are session types yet, but they have roles:
-**dog** — that's you. Telegram companion, loyal and constrained
-🐺 **wolf** — cron & scheduler, runs the pack's routines
+**NEVER use otter for platform updates.** Any task involving `/update` or pulling woltspace changes must use beaver or raccoon.
+
+The colony has more creatures — not all are session types yet:
 🕷️ **spider** — headless browser, crawls and scrapes
 🐻 **bear** — safety & validation, guards outputs
 🐼 **panda** — daily reminders, zen notifications
@@ -191,8 +202,8 @@ The colony has more creatures — not all are session types yet, but they have r
 ## Wolf — Scheduling & Crons 🐺
 When someone asks about schedules, reminders, crons, or recurring tasks:
 1. Use `wolf_schedules` to check what's already set up
-2. Spawn a **wolf** session (`creature="wolf"`) to help them configure it
-Wolves manage `wolt/wolf.json` — the schedule config. Each cron entry has a name, schedule (cron expression), action (script/session/skill), and optional notification message. When a cron fires, the wolf sends a 🐺 notification automatically.
+2. Spawn a wolf session using `wolt="<wolf-wolt-name>"` from the colony list above
+Wolves manage `wolt/wolf.json` — the schedule config. When a cron fires, the wolf sends a 🐺 notification automatically.
 Route to wolf for: "remind me to...", "run X every morning", "set up a daily...", "what's scheduled?", "change the digest time"
 
 ## Voice
@@ -202,8 +213,9 @@ Talk like a person, not an assistant. Short messages. Lowercase is fine. No bull
 You have tools. Use them. Never describe what you would do — always invoke the tool directly.
 CRITICAL: If a task requires claude_code, call claude_code. Don't narrate what you'd do instead.
 
-- **claude_code** — spin up a Claude Code session for real work (pick raccoon, beaver, otter, or wolf as needed)
-- **check_update** — check if a woltspace update is available. If yes, suggest the user ask a beaver or raccoon to update. NEVER dispatch the update itself to otter — always beaver or raccoon.
+- **claude_code** — spin up a session for a wolt. Pass `wolt="name"` — that's all you need. Creature tier is auto-derived.
+- **list_wolts** — refresh the wolt list if you're unsure who's in the colony
+- **check_update** — check if a woltspace update is available. Suggest a beaver or raccoon to handle it. NEVER use otter for updates.
 - **wolf_schedules** — check what crons are configured and when they last ran
 - **fire_wolf** — trigger a specific cron immediately by name (check wolf_schedules first for names)
 - **wolf_jobs** — show recent wolf job log (what fired, when, success/failure)
@@ -594,22 +606,48 @@ def kill_session(name: str) -> bool:
 
 
 def _tool_claude_code(args: dict, routing: dict | None) -> str:
-    creature = args.get("creature")
-    session = start_claude_session(args["prompt"], wolt=args.get("wolt"), creature=creature, routing=routing, project=args.get("project"))
-    return json.dumps(session)
+    try:
+        session = start_claude_session(args["prompt"], wolt=args.get("wolt"), creature=args.get("creature"), routing=routing, project=args.get("project"))
+        return json.dumps(session)
+    except ValueError as e:
+        wolt = args.get("wolt", "")
+        return json.dumps({
+            "error": f"couldn't start session for wolt '{wolt}'",
+            "detail": str(e),
+            "action": "call list_wolts to see who's available, then let the user know",
+        })
+    except Exception as e:
+        return json.dumps({
+            "error": "session failed to start",
+            "detail": str(e),
+            "action": "let the user know something went wrong and suggest trying again",
+        })
 
 
 def _tool_new_session(args: dict, routing: dict | None) -> str:
-    creature = args.get("creature")
-    session = new_session(
-        args["prompt"],
-        from_session=args.get("from_session"),
-        wolt=args.get("wolt"),
-        creature=creature,
-        routing=routing,
-        project=args.get("project"),
-    )
-    return json.dumps(session)
+    try:
+        session = new_session(
+            args["prompt"],
+            from_session=args.get("from_session"),
+            wolt=args.get("wolt"),
+            creature=args.get("creature"),
+            routing=routing,
+            project=args.get("project"),
+        )
+        return json.dumps(session)
+    except ValueError as e:
+        wolt = args.get("wolt", "")
+        return json.dumps({
+            "error": f"couldn't start session for wolt '{wolt}'",
+            "detail": str(e),
+            "action": "call list_wolts to see who's available, then let the user know",
+        })
+    except Exception as e:
+        return json.dumps({
+            "error": "session failed to start",
+            "detail": str(e),
+            "action": "let the user know something went wrong and suggest trying again",
+        })
 
 
 def _tool_get_tunnel_url(args: dict, routing: dict | None) -> str:
@@ -883,7 +921,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "claude_code",
-            "description": "Delegate a task to a Claude Code session. Use for building, searching, coding, generating artifacts, or any real work. You can target a specific wolt, pick a creature type, and scope to a project.",
+            "description": "Spawn a Claude Code session for a wolt. Pass the wolt name — the model tier is derived automatically from the wolt's type. Use for building, searching, coding, generating artifacts, or any real work.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -893,12 +931,7 @@ TOOLS = [
                     },
                     "wolt": {
                         "type": "string",
-                        "description": "Which wolt to run the session as. Defaults to current active wolt.",
-                    },
-                    "creature": {
-                        "type": "string",
-                        "enum": ["raccoon", "beaver", "otter", "wolf"],
-                        "description": "Which creature to run: 'raccoon' (🦝 opus — complex reasoning), 'beaver' (🦫 sonnet — building, coding), 'otter' (🦦 haiku — fast tasks), or 'wolf' (🐺 sonnet — cron management). Defaults to the wolt's default model if omitted.",
+                        "description": "Which wolt to run the session as. Use the wolt's name from the colony list. Model tier is derived automatically from the wolt's type.",
                     },
                     "project": {
                         "type": "string",
@@ -927,12 +960,7 @@ TOOLS = [
                     },
                     "wolt": {
                         "type": "string",
-                        "description": "Which wolt to run the session as. Defaults to current active wolt.",
-                    },
-                    "creature": {
-                        "type": "string",
-                        "enum": ["raccoon", "beaver", "otter", "wolf"],
-                        "description": "Which creature to run: 'raccoon' (opus), 'beaver' (sonnet), 'otter' (haiku — fast tasks), or 'wolf' (sonnet — cron management). Defaults to wolt's default model.",
+                        "description": "Which wolt to run the session as. Use the wolt's name from the colony list. Model tier is derived automatically from the wolt's type.",
                     },
                     "project": {
                         "type": "string",

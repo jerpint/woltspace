@@ -287,6 +287,18 @@ def start_session(
     if not target_dir.is_dir():
         raise ValueError(f"wolt '{wolt}' not found at {target_dir}")
 
+    # Always derive creature from the wolt's type — never let the caller override this.
+    # The wolt's wolt.json defines its tier (raccoon/beaver/otter); that's the model to use.
+    wolt_json_path = target_dir / "wolt" / "wolt.json"
+    if wolt_json_path.exists():
+        try:
+            wolt_data = json.loads(wolt_json_path.read_text())
+            wolt_type = wolt_data.get("type", "")
+            if wolt_type in CREATURE_MODELS:
+                creature = wolt_type
+        except (json.JSONDecodeError, OSError):
+            pass
+
     if project:
         project_dir = target_dir / "wolt" / "projects" / project
         project_dir.mkdir(parents=True, exist_ok=True)
