@@ -19,13 +19,3 @@ curl -s -X POST "http://localhost:7777/current?session=$(tmux display-message -p
   -d '{"url": "/foo.html"}'
 ```
 
-## Constraints
-
-**NEVER restart, kill, or modify server.js (port 7777)** — it runs the tunnel, split view, and all session routing. Restarting it breaks everything for everyone. If something seems wrong with the server, notify the developer and stop.
-
-**You can ONLY edit files inside your wolt directory.** Never edit, create, or delete files in:
-- `/workspace/woltspace/` — this is the platform code. Editing it breaks updates.
-- Other wolts' directories
-- System files outside your wolt
-
-All code you write goes in `wolt/projects/` (for code projects) or `wolt/site/` (for static pages). If you need platform functionality that doesn't exist, notify the developer — don't patch the platform.
