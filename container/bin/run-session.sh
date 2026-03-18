@@ -34,7 +34,7 @@ if wd not in projects or not projects[wd].get('hasTrustDialogAccepted'):
         'hasCompletedProjectOnboarding': True
     })
     p.write_text(json.dumps(data, indent=2))
-" "$WORK_DIR" 2>/dev/null || true
+" "$WORK_DIR" 2>&1 || echo "[run-session] WARNING: failed to pre-trust $WORK_DIR in ~/.claude.json" >&2
 fi
 
 # Generate a stable Claude session ID so we can --resume the right conversation later
