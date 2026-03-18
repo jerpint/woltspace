@@ -382,6 +382,31 @@ async def session_message(session_id: str, request: Request):
 # All session creation goes through start_session() from container/lib/sessions.py.
 # Each adapter (lodge, telegram, slack) has its own route for adapter-specific params.
 
+@app.post("/sessions/new/create")
+async def session_new_create(request: Request):
+    """Start a session to create a new wolt. No existing wolt needed."""
+    name = f"create-wolt-{int(time.time() * 1000) % 100000}"
+    work_dir = str(WOLTS_DIR)
+    try:
+        SESSION_REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+        import json as _json
+        (SESSION_REGISTRY_DIR / f"{name}.json").write_text(_json.dumps({
+            "name": name, "wolt": "", "creature": "beaver", "model": "sonnet",
+            "status": "running", "created_at": int(time.time()),
+            "dir": work_dir, "prompt": "/create-wolt", "adapter": "lodge",
+        }, indent=2) + "\n")
+        # Run claude directly — bypass run-session.sh since there's no wolt yet
+        cmd = f"claude --dangerously-skip-permissions --model sonnet '/create-wolt new'"
+        subprocess.run(
+            ["tmux", "new-session", "-d", "-s", name, "-c", work_dir, cmd],
+            check=True,
+        )
+        print(f"[sessions/create] spawned {name}")
+        return {"name": name}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.post("/sessions/new/lodge")
 async def session_new_lodge(request: Request):
     """Start a session from the lodge (home page gnaw button)."""
