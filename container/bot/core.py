@@ -731,37 +731,56 @@ def _tool_switch_wolt(args: dict, routing: dict | None) -> str:
 
 
 def _tool_check_update(args: dict, routing: dict | None) -> str:
-    """Check if a woltspace update is available."""
-    import subprocess
+    """Check if a woltspace update is available by comparing tagged versions."""
+    import subprocess, re
     version_file = WOLT_DIR / ".state" / "woltspace-version"
-    branch_file = WOLT_DIR / ".state" / "woltspace-branch"
-    # Check against the branch we built from (default: main)
-    build_branch = branch_file.read_text().strip() if branch_file.exists() else "main"
+
+    def _parse_semver(tag: str) -> tuple[int, ...] | None:
+        """Parse 'v1.2.3' into (1, 2, 3). Returns None if not a valid semver tag."""
+        m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)$", tag)
+        return tuple(int(x) for x in m.groups()) if m else None
+
     try:
         result = subprocess.run(
-            ["git", "ls-remote", "https://github.com/jerpint/woltspace.git", f"refs/heads/{build_branch}"],
+            ["git", "ls-remote", "--tags", "https://github.com/jerpint/woltspace.git"],
             capture_output=True, text=True, timeout=10,
         )
-        remote_head = result.stdout.strip().split("\t")[0] if result.stdout.strip() else ""
-        if not remote_head:
+        if result.returncode != 0 or not result.stdout.strip():
             return json.dumps({"error": "could not reach remote"})
+
+        # Parse all semver tags from remote
+        remote_tags = []
+        for line in result.stdout.strip().splitlines():
+            ref = line.split("\t")[-1]  # refs/tags/v0.1.2
+            tag = ref.rsplit("/", 1)[-1]
+            parsed = _parse_semver(tag)
+            if parsed:
+                remote_tags.append((parsed, tag))
+
+        if not remote_tags:
+            return json.dumps({"error": "no version tags found on remote"})
+
+        remote_tags.sort(key=lambda t: t[0])
+        latest_version = remote_tags[-1][1]
 
         local_version = version_file.read_text().strip() if version_file.exists() else ""
 
         if not local_version:
-            # First check — store version for future comparisons
             version_file.parent.mkdir(parents=True, exist_ok=True)
-            version_file.write_text(remote_head)
-            return json.dumps({"up_to_date": True, "version": remote_head[:7], "note": "version tracking initialized"})
+            version_file.write_text(latest_version)
+            return json.dumps({"up_to_date": True, "local_version": latest_version, "latest_version": latest_version, "note": "version tracking initialized"})
 
-        if local_version == remote_head:
-            return json.dumps({"up_to_date": True, "version": remote_head[:7]})
+        local_parsed = _parse_semver(local_version)
+        latest_parsed = _parse_semver(latest_version)
+
+        if local_parsed and latest_parsed and local_parsed >= latest_parsed:
+            return json.dumps({"up_to_date": True, "local_version": local_version, "latest_version": latest_version})
 
         return json.dumps({
             "up_to_date": False,
-            "local": local_version[:7],
-            "remote": remote_head[:7],
-            "message": "an update is available — route to beaver or raccoon to handle it. NEVER use otter for updates.",
+            "local_version": local_version,
+            "latest_version": latest_version,
+            "message": f"update available: {local_version} → {latest_version}. route to beaver or raccoon to handle it. NEVER use otter for updates.",
         })
     except Exception as e:
         return json.dumps({"error": str(e)})
