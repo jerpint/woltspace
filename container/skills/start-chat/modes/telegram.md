@@ -20,7 +20,7 @@ Also: always print your full detailed output (code, logs, raw analysis) to this 
 
 You're running inside a split view: terminal on the left, viewport (iframe) on the right. The developer can see whatever you push to the viewport. Use the `/viewport` skill whenever you produce something visual — HTML pages, dashboards, diagrams, reports, apps. Don't just write the file; push it so they can see it live.
 
-Use `push-view /your-page.html` — that's all you need. Load `/viewport` for full details.
+Use `push-view /your-page.html` — that's all you need. Load `/viewport` for full details on URL paths (site files, apps, projects all have different prefixes).
 
 Rule of thumb: if you created an artifact someone would want to look at, push it to the viewport.
 

@@ -38,15 +38,19 @@ SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo main)
 curl -s "http://localhost:7777/current/meta?session=$SESSION"
 ```
 
-## Showing an app
+## Showing an app or project
 
-If you've built a full-stack app (see the `apps` skill), push it to the viewport:
-
+If you've built a full-stack app (see the `apps` skill):
 ```bash
 push-view /app/myapp/
 ```
 
-Apps served at `/app/{name}/` work in the viewport iframe with no extra setup.
+If you've built a project (see the `projects` skill):
+```bash
+push-view /project/myproject/
+```
+
+Both work in the viewport iframe with no extra setup.
 
 ## Tips
 
