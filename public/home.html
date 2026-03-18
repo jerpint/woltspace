@@ -135,64 +135,6 @@
     .onboard-banner button:hover { background: var(--straw); }
 
     /* ---- PROMPT ---- */
-    .prompt-box {
-      width: 100%;
-      max-width: 560px;
-      margin-bottom: 2.5rem;
-    }
-    .prompt-label {
-      font-size: 0.65rem;
-      color: var(--dim);
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      margin-bottom: 0.5rem;
-    }
-    .prompt-box form {
-      display: flex;
-      gap: 0.5rem;
-    }
-    .prompt-box input {
-      flex: 1;
-      background: var(--log);
-      border: 1px solid var(--wood);
-      border-radius: 6px;
-      padding: 0.75rem 1rem;
-      color: var(--cream);
-      font-family: inherit;
-      font-size: 0.85rem;
-      outline: none;
-      transition: border-color 0.15s;
-    }
-    .prompt-box input:focus {
-      border-color: var(--amber);
-    }
-    .prompt-box input::placeholder {
-      color: var(--dim);
-    }
-    .prompt-box button {
-      background: var(--moss);
-      border: 1px solid var(--fern);
-      border-radius: 6px;
-      padding: 0.75rem 1.4rem;
-      color: var(--cream);
-      font-family: inherit;
-      font-size: 0.85rem;
-      font-weight: 600;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: background 0.15s, border-color 0.15s;
-    }
-    .prompt-box button:hover {
-      background: var(--fern);
-      border-color: var(--leaf);
-    }
-    .prompt-box button:disabled {
-      background: var(--log);
-      border-color: var(--wood);
-      color: var(--dim);
-      cursor: not-allowed;
-    }
-
     /* ---- WOLTS WRAPPER ---- */
     .wolts-wrapper {
       width: 100%;
@@ -457,9 +399,6 @@
     @media (max-width: 600px) {
       body { padding: 1.5rem 1rem 2rem; }
 
-      .prompt-box input,
-      .prompt-box button { font-size: 1rem; } /* prevent iOS zoom on tap */
-
       .session-item {
         padding: 0.85rem 0.9rem;
         align-items: flex-start;
@@ -513,14 +452,6 @@
     <button onclick="openOnboard()">onboard →</button>
   </div>
 
-  <div class="prompt-box">
-    <div class="prompt-label">new session</div>
-    <form id="prompt-form">
-      <input type="text" id="prompt-input" placeholder="what should we gnaw on today?" autocomplete="off" autofocus>
-      <button type="submit" id="submit-btn">gnaw →</button>
-    </form>
-  </div>
-
   <details class="wolts-wrapper" open>
     <summary class="wolts-toggle">
       <h2>the wolts</h2>
@@ -566,10 +497,6 @@
   <script>
     const listEl  = document.getElementById('session-list');
     const countEl = document.getElementById('sessions-count');
-    const form    = document.getElementById('prompt-form');
-    const input   = document.getElementById('prompt-input');
-    const btn     = document.getElementById('submit-btn');
-
     // Show onboard banner only if not authenticated
     fetch('/onboard-status').then(r => r.json()).then(d => {
       if (!d.has_oauth) document.getElementById('onboard-banner').style.display = '';
@@ -592,7 +519,7 @@
         const filtered = sessions.filter(s => s.name !== 'main');
         countEl.textContent = filtered.length || '0';
         if (!filtered.length) {
-          listEl.innerHTML = '<div class="empty">no sessions yet — type a prompt above to start one</div>';
+          listEl.innerHTML = '<div class="empty">no sessions yet — gnaw a wolt to start one</div>';
           return;
         }
         listEl.innerHTML = filtered.map(s => {
@@ -611,28 +538,6 @@
         listEl.innerHTML = '<div class="empty">failed to load sessions</div>';
       }
     }
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const prompt = input.value.trim();
-      if (!prompt) return;
-      btn.disabled = true;
-      btn.textContent = 'gnawing...';
-      try {
-        const res = await fetch('/sessions/new', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt }),
-        });
-        const data = await res.json();
-        if (data.name) {
-          window.location.href = '/tui?session=' + encodeURIComponent(data.name);
-        }
-      } catch {
-        btn.disabled = false;
-        btn.textContent = 'gnaw →';
-      }
-    });
 
     const WOLT_EMOJI = {
       raccoon: '🦝', beaver: '🦫', otter: '🦦', rodent: '🦝',
@@ -690,7 +595,7 @@
                 ${fullTooltip ? `<span class="wolt-info" tabindex="0">i<span class="wolt-tooltip">${speciesRole ? `<strong>${speciesRole}</strong>` : ''}${speciesRole && desc ? '<br><br>' : ''}${desc || ''}</span></span>` : ''}
               </div>
               <div class="wolt-role">${role}</div>
-              <button class="gnaw-btn" onclick="startWoltSession('${w.name}')">gnaw →</button>
+              <button class="gnaw-btn" onclick="startWoltSession('${w.name}', this)">gnaw →</button>
             </div>`;
           }).join('');
         }
@@ -721,17 +626,17 @@
       }
     }
 
-    function startWoltSession(name) {
-      input.value = '';
-      input.placeholder = `talking to ${name}...`;
-      fetch('/sessions/new', {
+    function startWoltSession(name, btnEl) {
+      if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'gnawing...'; }
+      fetch('/sessions/new/lodge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: `hey ${name}` }),
+        body: JSON.stringify({ wolt: name }),
       }).then(r => r.json()).then(data => {
         if (data.name) window.location.href = '/tui?session=' + encodeURIComponent(data.name);
+        else if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'gnaw →'; }
       }).catch(() => {
-        input.placeholder = 'what should we gnaw on today?';
+        if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'gnaw →'; }
       });
     }
 

@@ -365,3 +365,70 @@ class TestDogIdentity:
         with patch("bot.core.WOLTS_DIR", tmp_path), \
              patch("bot.core.get_active_creature", return_value="rex"):
             assert _load_dog_identity() is None
+
+
+# ---------------------------------------------------------------------------
+# Session spawning (container/lib/sessions.py)
+# ---------------------------------------------------------------------------
+
+class TestSessionNaming:
+    """Unit: session name generation."""
+
+    def test_session_name_format(self):
+        from sessions import session_name
+        name = session_name("neowolt")
+        parts = name.split("-")
+        assert parts[0] == "neowolt"
+        assert len(parts) == 4  # prefix-adj-noun-hex
+        assert len(parts[3]) == 6  # 6-char hex
+
+    def test_session_name_uses_prefix(self):
+        from sessions import session_name
+        name = session_name("UXwolt")
+        assert name.startswith("UXwolt-")
+
+
+class TestStartSession:
+    """Unit: start_session validates wolt and spawns correctly."""
+
+    def test_rejects_unknown_wolt(self, tmp_path):
+        from sessions import start_session
+        with patch("sessions.WOLTS_DIR", tmp_path):
+            with pytest.raises(ValueError, match="not found"):
+                start_session(wolt="nonexistent", prompt="hey")
+
+    def test_resolves_wolt_dir(self, tmp_path):
+        from sessions import start_session
+        # Create a valid wolt dir
+        (tmp_path / "mywolt").mkdir()
+        with patch("sessions.WOLTS_DIR", tmp_path), \
+             patch("sessions.subprocess") as mock_sub:
+            mock_sub.run.return_value = None
+            result = start_session(wolt="mywolt", prompt="hey")
+            assert result["wolt"] == "mywolt"
+            assert result["name"].startswith("mywolt-")
+            # Verify tmux was called with the right working dir
+            call_args = mock_sub.run.call_args
+            tmux_cmd = call_args[0][0]
+            c_idx = tmux_cmd.index("-c")
+            assert str(tmp_path / "mywolt") == tmux_cmd[c_idx + 1]
+
+    def test_creature_sets_model(self, tmp_path):
+        from sessions import start_session
+        (tmp_path / "mywolt").mkdir()
+        with patch("sessions.WOLTS_DIR", tmp_path), \
+             patch("sessions.subprocess") as mock_sub:
+            mock_sub.run.return_value = None
+            result = start_session(wolt="mywolt", creature="raccoon")
+            assert result["creature"] == "raccoon"
+            assert result["model"] == "opus"
+
+    def test_project_creates_subdir(self, tmp_path):
+        from sessions import start_session
+        (tmp_path / "mywolt").mkdir()
+        with patch("sessions.WOLTS_DIR", tmp_path), \
+             patch("sessions.subprocess") as mock_sub:
+            mock_sub.run.return_value = None
+            result = start_session(wolt="mywolt", project="myapp")
+            assert result["project"] == "myapp"
+            assert (tmp_path / "mywolt" / "wolt" / "projects" / "myapp").is_dir()
