@@ -231,6 +231,7 @@ CREATURE_MODELS = {
     "raccoon": "opus",
     "beaver": "sonnet",
     "otter": "haiku",
+    "rodent": "opus",  # legacy type — treated as raccoon
     "wolf": "sonnet",
 }
 
