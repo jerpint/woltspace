@@ -137,28 +137,20 @@ class TestCreatureRouting:
         text = build_ack_text(session_name="neowolt-test-123", creature="otter")
         assert "🦦" in text
 
-    def test_otter_in_tool_schemas(self):
-        """Otter should be in the creature enum for claude_code and new_session tools."""
+    def test_creature_not_in_tool_schemas(self):
+        """creature param removed from claude_code/new_session — derived from wolt type instead."""
         from bot.core import TOOLS
         for tool in TOOLS:
             name = tool["function"]["name"]
             if name in ("claude_code", "new_session"):
-                creature_prop = tool["function"]["parameters"]["properties"]["creature"]
-                assert "otter" in creature_prop["enum"], f"otter missing from {name} creature enum"
-                assert "otter" in creature_prop["description"], f"otter missing from {name} creature description"
+                props = tool["function"]["parameters"]["properties"]
+                assert "creature" not in props, f"creature should not be in {name} schema — it's auto-derived from wolt type"
 
-    def test_all_session_creatures_consistent(self):
-        """Every creature in CREATURE_MODELS should have an emoji and be in tool schemas."""
-        from bot.core import CREATURE_MODELS, CREATURE_EMOJIS, TOOLS
+    def test_all_session_creatures_have_emoji(self):
+        """Every creature in CREATURE_MODELS should have an emoji."""
+        from bot.core import CREATURE_MODELS, CREATURE_EMOJIS
         for creature in CREATURE_MODELS:
             assert creature in CREATURE_EMOJIS, f"{creature} missing from CREATURE_EMOJIS"
-        # Check tool schemas include all active creatures
-        for tool in TOOLS:
-            name = tool["function"]["name"]
-            if name == "claude_code":
-                enum = tool["function"]["parameters"]["properties"]["creature"]["enum"]
-                for creature in CREATURE_MODELS:
-                    assert creature in enum, f"{creature} missing from claude_code creature enum"
 
 
 # ---------------------------------------------------------------------------
