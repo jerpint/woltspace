@@ -372,7 +372,7 @@ case "$cmd" in
 
     # Wolts backup
     echo "  ${_D}copying wolts...${_R}"
-    cp -r "$WOLTS_DIR" "$BACKUP_DIR"
+    rsync -a "$WOLTS_DIR/" "$BACKUP_DIR/"
     echo "  ${_G}✓${_R} wolts → $BACKUP_DIR"
 
     # Bundle into single zip
@@ -388,7 +388,7 @@ case "$cmd" in
         docker save "woltspace-backup:$TAG" > "$TMPDIR/image.tar"
       fi
       # Copy wolts into bundle staging dir
-      cp -r "$BACKUP_DIR" "$TMPDIR/wolts"
+      rsync -a "$BACKUP_DIR/" "$TMPDIR/wolts/"
       # Write restore script
       echo "$TAG" > "$TMPDIR/.tag"
       cat > "$TMPDIR/restore.sh" << 'RESTORE'
