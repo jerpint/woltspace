@@ -595,7 +595,7 @@
                 ${fullTooltip ? `<span class="wolt-info" tabindex="0">i<span class="wolt-tooltip">${speciesRole ? `<strong>${speciesRole}</strong>` : ''}${speciesRole && desc ? '<br><br>' : ''}${desc || ''}</span></span>` : ''}
               </div>
               <div class="wolt-role">${role}</div>
-              <button class="gnaw-btn" onclick="startWoltSession('${w.name}', this)">gnaw →</button>
+              <button class="gnaw-btn" onclick="startWoltSession('${w.name}', event)">gnaw →</button>
             </div>`;
           }).join('');
         }
@@ -626,14 +626,19 @@
       }
     }
 
-    function startWoltSession(name, btnEl) {
+    function startWoltSession(name, e) {
+      const btnEl = e && e.currentTarget;
       if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'gnawing...'; }
       fetch('/sessions/new/lodge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ wolt: name }),
       }).then(r => r.json()).then(data => {
-        if (data.name) window.location.href = '/tui?session=' + encodeURIComponent(data.name);
+        if (data.name) {
+          const url = '/tui?session=' + encodeURIComponent(data.name);
+          if (e && (e.ctrlKey || e.metaKey || e.button === 1)) window.open(url, '_blank');
+          else window.open(url, '_blank');
+        }
         else if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'gnaw →'; }
       }).catch(() => {
         if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'gnaw →'; }
