@@ -609,8 +609,19 @@ def _tool_claude_code(args: dict, routing: dict | None) -> str:
     try:
         session = start_claude_session(args["prompt"], wolt=args.get("wolt"), creature=args.get("creature"), routing=routing, project=args.get("project"))
         return json.dumps(session)
+    except ValueError as e:
+        wolt = args.get("wolt", "")
+        return json.dumps({
+            "error": f"couldn't start session for wolt '{wolt}'",
+            "detail": str(e),
+            "action": "call list_wolts to see who's available, then let the user know",
+        })
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return json.dumps({
+            "error": "session failed to start",
+            "detail": str(e),
+            "action": "let the user know something went wrong and suggest trying again",
+        })
 
 
 def _tool_new_session(args: dict, routing: dict | None) -> str:
@@ -624,8 +635,19 @@ def _tool_new_session(args: dict, routing: dict | None) -> str:
             project=args.get("project"),
         )
         return json.dumps(session)
+    except ValueError as e:
+        wolt = args.get("wolt", "")
+        return json.dumps({
+            "error": f"couldn't start session for wolt '{wolt}'",
+            "detail": str(e),
+            "action": "call list_wolts to see who's available, then let the user know",
+        })
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return json.dumps({
+            "error": "session failed to start",
+            "detail": str(e),
+            "action": "let the user know something went wrong and suggest trying again",
+        })
 
 
 def _tool_get_tunnel_url(args: dict, routing: dict | None) -> str:
