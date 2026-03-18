@@ -76,3 +76,23 @@ class TestSessionRedirect:
         # Should be JSON with url field
         if isinstance(result, dict):
             assert "url" in result or "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Wolts endpoint
+# ---------------------------------------------------------------------------
+
+@requires_server
+class TestWoltsEndpoint:
+    """The /wolts endpoint lists all wolts."""
+
+    def test_wolts_returns_list(self, server_get):
+        result = server_get("/wolts")
+        assert isinstance(result, list)
+
+    def test_wolts_have_required_fields(self, server_get):
+        result = server_get("/wolts")
+        if result:
+            wolt = result[0]
+            assert "name" in wolt
+            assert "dir" in wolt

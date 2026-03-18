@@ -68,6 +68,23 @@ class TestListWolts:
         assert result == []
 
 
+class TestIsRodent:
+    """Unit: rodent type checking."""
+
+    def test_rodent_types(self):
+        from wolts import is_rodent
+        assert is_rodent("raccoon")
+        assert is_rodent("beaver")
+        assert is_rodent("otter")
+        assert is_rodent("rodent")  # legacy
+
+    def test_non_rodent_types(self):
+        from wolts import is_rodent
+        assert not is_rodent("wolf")
+        assert not is_rodent("dog")
+        assert not is_rodent("spider")
+
+
 class TestFindByType:
     """Unit: filtering wolts by creature type."""
 

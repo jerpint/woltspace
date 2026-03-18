@@ -19,10 +19,16 @@ WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 CONFIG_FILE = WOLTS_DIR / "woltspace.json"
 
 # Valid creature types
-VALID_TYPES = {"rodent", "wolf", "dog", "spider", "bear", "panda"}
+RODENT_TYPES = {"otter", "beaver", "raccoon", "rodent"}  # "rodent" = legacy, treated as raccoon
+VALID_TYPES = RODENT_TYPES | {"wolf", "dog", "spider", "bear", "panda"}
 
 # Types that can only have one active at a time
 SINGLETON_TYPES = {"wolf", "dog"}
+
+
+def is_rodent(creature_type: str) -> bool:
+    """Check if a creature type is a rodent (chatty, runs Claude Code sessions)."""
+    return creature_type in RODENT_TYPES
 
 
 def list_wolts() -> list[dict]:

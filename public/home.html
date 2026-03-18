@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>woltspace</title>
+  <title>woltspace — the lodge</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦫</text></svg>">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -193,6 +193,179 @@
       cursor: not-allowed;
     }
 
+    /* ---- WOLTS WRAPPER ---- */
+    .wolts-wrapper {
+      width: 100%;
+      max-width: 560px;
+      margin-bottom: 2rem;
+    }
+    .wolts-toggle {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      cursor: pointer;
+      list-style: none;
+      margin-bottom: 1rem;
+      user-select: none;
+    }
+    .wolts-toggle::-webkit-details-marker { display: none; }
+    .wolts-toggle h2 {
+      font-size: 0.72rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    .wolts-toggle::before {
+      content: '▾';
+      font-size: 0.65rem;
+      color: var(--dim);
+      transition: transform 0.15s;
+    }
+    .wolts-wrapper:not([open]) .wolts-toggle::before {
+      transform: rotate(-90deg);
+    }
+
+    /* ---- WOLTS ---- */
+    .wolts {
+      margin-bottom: 1.25rem;
+    }
+    .wolts:last-child { margin-bottom: 0; }
+    .wolts-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+    .wolts h2 {
+      font-size: 0.65rem;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    .wolts-count {
+      font-size: 0.6rem;
+      background: var(--log);
+      color: var(--muted);
+      border-radius: 10px;
+      padding: 0.1rem 0.5rem;
+    }
+    .wolt-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 0.5rem;
+    }
+    .wolt-card {
+      background: var(--log);
+      border: 1px solid var(--wood);
+      border-radius: 6px;
+      padding: 0.75rem;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.15s, background 0.15s;
+      cursor: default;
+      display: flex;
+      flex-direction: column;
+    }
+    .wolt-card:hover {
+      border-color: var(--amber);
+      background: var(--wood);
+    }
+    .wolt-card-top {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.35rem;
+    }
+    .wolt-emoji {
+      font-size: 1.2rem;
+      line-height: 1;
+    }
+    .wolt-name {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--cream);
+    }
+    .wolt-role {
+      font-size: 0.65rem;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+    .wolt-type-tag {
+      font-size: 0.58rem;
+      color: var(--dim);
+      margin-top: 0.3rem;
+      font-style: italic;
+    }
+    .wolt-info {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 1px solid var(--dim);
+      font-size: 0.55rem;
+      color: var(--dim);
+      cursor: help;
+      flex-shrink: 0;
+      margin-left: auto;
+      -webkit-tap-highlight-color: transparent;
+      outline: none;
+    }
+    .wolt-info:hover { border-color: var(--amber); color: var(--amber); }
+    .wolt-info .wolt-tooltip {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 6px);
+      right: -8px;
+      width: 220px;
+      background: var(--bark);
+      border: 1px solid var(--wood);
+      border-radius: 6px;
+      padding: 0.5rem 0.6rem;
+      font-size: 0.65rem;
+      font-style: normal;
+      color: var(--cream);
+      line-height: 1.5;
+      z-index: 10;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .wolt-info:hover .wolt-tooltip,
+    .wolt-info:focus .wolt-tooltip { display: block; }
+
+    @media (max-width: 600px) {
+      .wolt-info .wolt-tooltip {
+        position: fixed;
+        bottom: auto;
+        right: auto;
+        left: 1rem;
+        right: 1rem;
+        top: 50%;
+        transform: translateY(-50%);
+        width: auto;
+      }
+    }
+    .wolt-role { flex: 1; }
+    .wolt-card .gnaw-btn {
+      margin-top: 0.5rem;
+      align-self: flex-start;
+      background: var(--moss);
+      border: 1px solid var(--fern);
+      border-radius: 4px;
+      padding: 0.3rem 0.7rem;
+      color: var(--cream);
+      font-family: inherit;
+      font-size: 0.68rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .wolt-card .gnaw-btn:hover {
+      background: var(--fern);
+      border-color: var(--leaf);
+    }
+
     /* ---- SESSIONS ---- */
     .sessions {
       width: 100%;
@@ -325,12 +498,12 @@
 <body>
 
   <div class="header">
-    <h1 id="wolt-name" style="visibility:hidden">🦫</h1>
+    <h1 id="wolt-name">🦫 woltspace</h1>
     <p class="twister">
       "how much wolt could a <em>wolt chuck</em> chuck<br>
       if a wolt chuck could chuck <em>wolt</em>?"
     </p>
-    <div class="tagline">gnaw first. ask questions later.</div>
+    <div class="tagline">the lodge</div>
   </div>
 
   <hr class="divider">
@@ -347,6 +520,31 @@
       <button type="submit" id="submit-btn">gnaw →</button>
     </form>
   </div>
+
+  <details class="wolts-wrapper" open>
+    <summary class="wolts-toggle">
+      <h2>the wolts</h2>
+    </summary>
+
+    <div class="wolts">
+      <div class="wolts-header">
+        <h2>rodents</h2>
+        <span class="wolts-count" id="wolts-count">–</span>
+      </div>
+      <div class="wolt-grid" id="rodent-grid">
+        <div class="empty">loading...</div>
+      </div>
+    </div>
+
+    <div class="wolts" id="pack-section" style="display:none">
+      <div class="wolts-header">
+        <h2>the pack</h2>
+        <span class="wolts-count" id="pack-count">–</span>
+      </div>
+      <div class="wolt-grid" id="pack-grid"></div>
+      <div style="font-size:0.6rem;color:var(--dim);margin-top:0.5rem;font-style:italic">these wolts run in the background — they can't be chatted with here.</div>
+    </div>
+  </details>
 
   <div class="sessions">
     <div class="sessions-header">
@@ -377,18 +575,7 @@
       if (!d.has_oauth) document.getElementById('onboard-banner').style.display = '';
     }).catch(() => {});
 
-    // Load wolt name
     const h1 = document.getElementById('wolt-name');
-    fetch('/status').then(r => r.json()).then(d => {
-      h1.innerHTML = '🦫 ' + (d.wolt || 'woltspace');
-      h1.style.visibility = '';
-      if (d.wolt) {
-        document.title = d.wolt;
-      }
-    }).catch(() => {
-      h1.innerHTML = '🦫 woltspace';
-      h1.style.visibility = '';
-    });
 
     function timeAgo(ts) {
       const s = Math.floor((Date.now() / 1000) - ts);
@@ -447,6 +634,108 @@
       }
     });
 
+    const WOLT_EMOJI = {
+      raccoon: '🦝', beaver: '🦫', otter: '🦦', rodent: '🦝',
+      wolf: '🐺', dog: '🐶',
+    };
+    const RODENT_TYPES = new Set(['raccoon', 'beaver', 'otter', 'rodent']);
+    const WOLT_TYPE_HINT = {
+      wolf: 'scheduler — wakes up rodents on a timer',
+      dog: 'companion — lives on telegram & slack',
+    };
+    const SPECIES_TOOLTIP = {
+      raccoon: 'raccoon — thinker, designer. runs on opus.',
+      beaver: 'beaver — builder, workhorse. runs on sonnet.',
+      otter: 'otter — quick and light. runs on haiku.',
+      rodent: 'raccoon — thinker, designer. runs on opus.',
+      wolf: 'wolf — scheduler. wakes up rodents on a timer.',
+      dog: 'dog — companion. lives on telegram & slack.',
+    };
+    const TIER_LABEL = {
+      raccoon: 'opus', beaver: 'sonnet', otter: 'haiku', rodent: 'opus',
+    };
+
+    const rodentGrid = document.getElementById('rodent-grid');
+    const woltsCount = document.getElementById('wolts-count');
+    const packGrid = document.getElementById('pack-grid');
+    const packCount = document.getElementById('pack-count');
+    const packSection = document.getElementById('pack-section');
+
+    async function loadWolts() {
+      try {
+        const res = await fetch('/wolts');
+        const wolts = await res.json();
+
+        const rodents = wolts.filter(w => RODENT_TYPES.has(w.type));
+        const pack = wolts.filter(w => !RODENT_TYPES.has(w.type));
+
+        // Sort rodents by tier: raccoon > beaver > otter
+        const tierOrder = { raccoon: 0, rodent: 0, beaver: 1, otter: 2 };
+        rodents.sort((a, b) => (tierOrder[a.type] ?? 99) - (tierOrder[b.type] ?? 99));
+
+        woltsCount.textContent = rodents.length || '0';
+        if (!rodents.length) {
+          rodentGrid.innerHTML = '<div class="empty">no rodents yet</div>';
+        } else {
+          rodentGrid.innerHTML = rodents.map(w => {
+            const emoji = WOLT_EMOJI[w.type] || '🦫';
+            const role = w.role || '';
+            const desc = w.description || '';
+            const speciesRole = SPECIES_TOOLTIP[w.type] || '';
+            const fullTooltip = [speciesRole, desc].filter(Boolean).join('\n\n');
+            return `<div class="wolt-card">
+              <div class="wolt-card-top">
+                <span class="wolt-emoji">${emoji}</span>
+                <span class="wolt-name">${w.name}</span>
+                ${fullTooltip ? `<span class="wolt-info" tabindex="0">i<span class="wolt-tooltip">${speciesRole ? `<strong>${speciesRole}</strong>` : ''}${speciesRole && desc ? '<br><br>' : ''}${desc || ''}</span></span>` : ''}
+              </div>
+              <div class="wolt-role">${role}</div>
+              <button class="gnaw-btn" onclick="startWoltSession('${w.name}')">gnaw →</button>
+            </div>`;
+          }).join('');
+        }
+
+        // Pack section
+        if (pack.length) {
+          packSection.style.display = '';
+          packCount.textContent = pack.length;
+          packGrid.innerHTML = pack.map(w => {
+            const emoji = WOLT_EMOJI[w.type] || '❓';
+            const role = w.role || '';
+            const hint = WOLT_TYPE_HINT[w.type] || '';
+            const desc = w.description || '';
+            const speciesRole = SPECIES_TOOLTIP[w.type] || '';
+            const fullTooltip = [speciesRole, desc].filter(Boolean).join('\n\n');
+            return `<div class="wolt-card">
+              <div class="wolt-card-top">
+                <span class="wolt-emoji">${emoji}</span>
+                <span class="wolt-name">${w.name}</span>
+                ${fullTooltip ? `<span class="wolt-info" tabindex="0">i<span class="wolt-tooltip">${speciesRole ? `<strong>${speciesRole}</strong>` : ''}${speciesRole && desc ? '<br><br>' : ''}${desc || ''}</span></span>` : ''}
+              </div>
+              <div class="wolt-role">${role}</div>
+            </div>`;
+          }).join('');
+        }
+      } catch {
+        rodentGrid.innerHTML = '<div class="empty">failed to load wolts</div>';
+      }
+    }
+
+    function startWoltSession(name) {
+      input.value = '';
+      input.placeholder = `talking to ${name}...`;
+      fetch('/sessions/new', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: `hey ${name}` }),
+      }).then(r => r.json()).then(data => {
+        if (data.name) window.location.href = '/tui?session=' + encodeURIComponent(data.name);
+      }).catch(() => {
+        input.placeholder = 'what should we gnaw on today?';
+      });
+    }
+
+    loadWolts();
     loadSessions();
     setInterval(loadSessions, 5000);
 
