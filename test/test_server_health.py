@@ -121,3 +121,16 @@ class TestSessionRouting:
     def test_slack_requires_wolt(self, server_post):
         result = server_post("/sessions/new/slack", {})
         assert result.get("error"), "should reject missing wolt"
+
+    def test_lodge_spawns_session_for_valid_wolt(self, server_post):
+        """Gnaw on a real wolt → session spawns under that wolt."""
+        result = server_post("/sessions/new/lodge", {"wolt": "neowolt"})
+        assert "name" in result, f"expected session name, got: {result}"
+        assert result["name"].startswith("neowolt-"), f"session should be under neowolt, got: {result['name']}"
+        assert result["wolt"] == "neowolt"
+
+    def test_lodge_session_has_url(self, server_post):
+        """Spawned session should include a URL for the split view."""
+        result = server_post("/sessions/new/lodge", {"wolt": "neowolt"})
+        # url may be None if no tunnel is configured, but the key should exist
+        assert "url" in result
