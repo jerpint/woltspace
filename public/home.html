@@ -308,6 +308,71 @@
       border-color: var(--leaf);
     }
 
+    /* ---- PROJECTS ---- */
+    .projects {
+      width: 100%;
+      max-width: 560px;
+      margin-bottom: 2rem;
+    }
+    .projects-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+    .projects h2 {
+      font-size: 0.65rem;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    .projects-count {
+      font-size: 0.6rem;
+      background: var(--log);
+      color: var(--muted);
+      border-radius: 10px;
+      padding: 0.1rem 0.5rem;
+    }
+    .project-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .project-card {
+      display: block;
+      background: var(--log);
+      border: 1px solid var(--wood);
+      border-left: 3px solid var(--pond);
+      border-radius: 6px;
+      padding: 0.65rem 0.9rem;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.15s, background 0.15s;
+      cursor: pointer;
+    }
+    .project-card:hover {
+      border-color: var(--water);
+      border-left-color: var(--water);
+      background: var(--wood);
+    }
+    .project-name {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--cream);
+      margin-bottom: 0.25rem;
+    }
+    .project-desc {
+      font-size: 0.65rem;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+    .project-mode {
+      font-size: 0.58rem;
+      color: var(--dim);
+      margin-top: 0.3rem;
+      font-style: italic;
+    }
+
     /* ---- SESSIONS ---- */
     .sessions {
       width: 100%;
@@ -477,7 +542,16 @@
     </div>
   </details>
 
-  <div class="sessions">
+  <hr class="divider" id="projects-divider" style="display:none">
+  <div class="projects" id="projects-section" style="display:none">
+    <div class="projects-header">
+      <h2>projects</h2>
+      <span class="projects-count" id="projects-count">–</span>
+    </div>
+    <div class="project-grid" id="project-grid"></div>
+  </div>
+
+  <div class="sessions" id="sessions-section">
     <div class="sessions-header">
       <h2>sessions</h2>
       <span class="sessions-count" id="sessions-count">–</span>
@@ -513,29 +587,29 @@
     }
 
     async function loadSessions() {
+      const sessionsSection = document.getElementById('sessions-section');
       try {
         const res = await fetch('/sessions');
         const sessions = await res.json();
-        const filtered = sessions.filter(s => s.name !== 'main');
-        countEl.textContent = filtered.length || '0';
-        if (!filtered.length) {
-          listEl.innerHTML = '<div class="empty">no sessions yet — gnaw a wolt to start one</div>';
+        const running = sessions.filter(s => s.name !== 'main' && s.status === 'running');
+        countEl.textContent = running.length || '0';
+        if (!running.length) {
+          sessionsSection.style.display = 'none';
           return;
         }
-        listEl.innerHTML = filtered.map(s => {
-          const status = s.status || 'running';
-          const dot  = `<span class="session-dot ${status}"></span>`;
+        sessionsSection.style.display = '';
+        listEl.innerHTML = running.map(s => {
           const time = s.last_activity ? timeAgo(s.last_activity) : (s.created_at ? timeAgo(s.created_at) : '');
           const mainLabel = s.title
             ? `<div class="session-title">${s.title}</div><span class="session-name">${s.name}</span>`
             : `<div class="session-title">${s.name}</div>`;
           return `<a class="session-item" href="/tui?session=${encodeURIComponent(s.name)}">
-            <div class="session-left">${dot}<div>${mainLabel}</div></div>
-            <span class="session-meta">${status} · ${time}</span>
+            <div class="session-left"><span class="session-dot running"></span><div>${mainLabel}</div></div>
+            <span class="session-meta">${time}</span>
           </a>`;
         }).join('');
       } catch {
-        listEl.innerHTML = '<div class="empty">failed to load sessions</div>';
+        sessionsSection.style.display = 'none';
       }
     }
 
@@ -636,7 +710,40 @@
       }).catch(() => {});
     }
 
+    const projectGrid = document.getElementById('project-grid');
+    const projectsCount = document.getElementById('projects-count');
+    const projectsSection = document.getElementById('projects-section');
+    const projectsDivider = document.getElementById('projects-divider');
+
+    async function loadProjects() {
+      try {
+        const res = await fetch('/projects');
+        const projects = await res.json();
+        const active = projects.filter(p => p.mode === 'static' || p.mode === 'proxy');
+        if (!active.length) {
+          projectsSection.style.display = 'none';
+          projectsDivider.style.display = 'none';
+          return;
+        }
+        projectsSection.style.display = '';
+        projectsDivider.style.display = '';
+        projectsCount.textContent = active.length;
+        projectGrid.innerHTML = active.map(p => {
+          const desc = p.description || '';
+          return `<a class="project-card" href="${p.url}" target="_blank">
+            <div class="project-name">${p.name}</div>
+            ${desc ? `<div class="project-desc">${desc}</div>` : ''}
+            <div class="project-mode">${p.mode}</div>
+          </a>`;
+        }).join('');
+      } catch {
+        projectsSection.style.display = 'none';
+        projectsDivider.style.display = 'none';
+      }
+    }
+
     loadWolts();
+    loadProjects();
     loadSessions();
     setInterval(loadSessions, 5000);
 
