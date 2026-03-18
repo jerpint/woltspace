@@ -67,9 +67,20 @@ ARG USE_LOCAL=false
 ARG WOLTSPACE_BRANCH=main
 
 # Clone from github (default path)
+# Clones the branch, then checks out the latest semver tag if available.
+# Falls back to branch tip if no tags exist (safe for fresh repos).
 RUN if [ "$USE_LOCAL" = "false" ]; then \
-      git clone --branch ${WOLTSPACE_BRANCH} --single-branch --depth 1 \
-        https://github.com/jerpint/woltspace.git /workspace/woltspace; \
+      git clone --branch ${WOLTSPACE_BRANCH} --single-branch \
+        https://github.com/jerpint/woltspace.git /workspace/woltspace && \
+      cd /workspace/woltspace && \
+      git fetch --tags && \
+      LATEST_TAG=$(git tag --sort=-v:refname | head -1) && \
+      if [ -n "$LATEST_TAG" ]; then \
+        echo "checking out release: $LATEST_TAG" && \
+        git checkout "$LATEST_TAG"; \
+      else \
+        echo "no tags found — using branch tip"; \
+      fi; \
     fi
 
 # Copy local source (only meaningful when --local)
@@ -79,8 +90,10 @@ RUN if [ "$USE_LOCAL" = "true" ]; then \
     fi; rm -rf /tmp/local-src
 
 # Stamp the version into the image (prefer tag, fall back to commit hash)
+# --exact-match for release builds (HEAD on a tag), then nearest ancestor tag for
+# local/branch builds, then commit hash, then "local" if no git at all.
 RUN cd /workspace/woltspace && \
-    (git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD 2>/dev/null || echo "local") > /workspace/woltspace/.version
+    (git describe --tags --exact-match 2>/dev/null || git describe --tags --abbrev=0 2>/dev/null || git rev-parse --short HEAD 2>/dev/null || echo "local") > /workspace/woltspace/.version
 
 WORKDIR /workspace/woltspace
 

@@ -165,6 +165,25 @@ step "checking version stamp..."
 VERSION=$(docker exec "$CONTAINER_NAME" cat /workspace/woltspace/.version 2>/dev/null || echo "")
 [ -n "$VERSION" ] && [ "$VERSION" != "" ] && pass "version stamped: $VERSION" || fail "no version stamp found"
 
+step "checking version is a release tag (not a commit hash)..."
+if echo "$VERSION" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+'; then
+  pass "version is a semver tag: $VERSION"
+else
+  fail "version is not a semver tag: $VERSION (expected vX.Y.Z — build may be using branch tip instead of latest release)"
+fi
+
+step "checking version matches latest remote tag..."
+if echo "$BUILD_FLAGS" | grep -q "\-\-local"; then
+  pass "local build — skipping remote tag comparison (version: $VERSION)"
+else
+  LATEST_REMOTE_TAG=$(git ls-remote --tags https://github.com/jerpint/woltspace.git 2>/dev/null | grep -v '\^{}' | awk '{print $2}' | sed 's|refs/tags/||' | sort -V | tail -1)
+  if [ -n "$LATEST_REMOTE_TAG" ]; then
+    [ "$VERSION" = "$LATEST_REMOTE_TAG" ] && pass "version matches latest remote tag ($LATEST_REMOTE_TAG)" || fail "version mismatch: container=$VERSION, latest remote tag=$LATEST_REMOTE_TAG"
+  else
+    pass "no remote tags found — skipping comparison (expected for fresh repos)"
+  fi
+fi
+
 # ── init with existing wolts (idempotent) ──
 echo ""
 echo "  --- init (idempotent) ---"
