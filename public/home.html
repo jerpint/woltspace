@@ -534,11 +534,11 @@
 
     <div class="wolts" id="pack-section" style="display:none">
       <div class="wolts-header">
-        <h2>the pack</h2>
+        <h2>creatures</h2>
         <span class="wolts-count" id="pack-count">–</span>
       </div>
       <div class="wolt-grid" id="pack-grid"></div>
-      <div style="font-size:0.6rem;color:var(--dim);margin-top:0.5rem;font-style:italic">these wolts run in the background — they can't be chatted with here.</div>
+      <div style="font-size:0.6rem;color:var(--dim);margin-top:0.5rem;font-style:italic">these run in the background — they can't be chatted with.</div>
     </div>
   </details>
 
@@ -615,12 +615,13 @@
 
     const WOLT_EMOJI = {
       raccoon: '🦝', beaver: '🦫', otter: '🦦', rodent: '🦝',
-      wolf: '🐺', dog: '🐶',
+      wolf: '🐺', dog: '🐶', eagle: '🦅',
     };
     const RODENT_TYPES = new Set(['raccoon', 'beaver', 'otter', 'rodent']);
     const WOLT_TYPE_HINT = {
       wolf: 'scheduler — wakes up rodents on a timer',
       dog: 'companion — lives on telegram & slack',
+      eagle: 'reaper — cleans up dead sessions',
     };
     const SPECIES_TOOLTIP = {
       raccoon: 'raccoon — thinker, designer. runs on opus.',
@@ -629,6 +630,7 @@
       rodent: 'raccoon — thinker, designer. runs on opus.',
       wolf: 'wolf — scheduler. wakes up rodents on a timer.',
       dog: 'dog — companion. lives on telegram & slack.',
+      eagle: 'eagle — reaper. circles the lodge, cleaning up dead sessions.',
     };
     const TIER_LABEL = {
       raccoon: 'opus', beaver: 'sonnet', otter: 'haiku', rodent: 'opus',
@@ -674,11 +676,18 @@
           }).join('');
         }
 
-        // Pack section
-        if (pack.length) {
+        // Creatures section — includes wolts from API + hardcoded platform creatures
+        // TODO: rename vulture.py to eagle.py in container/creatures/, create wolts/eagle/ with wolt.json
+        // TODO: move wolf out of wolts/ — it's platform infrastructure, not a named wolt
+        const hardcodedCreatures = [
+          { name: 'wolf', type: 'wolf', role: 'timekeeper — runs scheduled jobs', description: 'Prowls the edges of the lodge on a schedule. When something needs doing — a digest, a review, a routine — the wolf howls and a rodent wakes.' },
+          { name: 'eagle', type: 'eagle', role: 'reaper — cleans up dead sessions', description: 'Circles high above the lodge, watching for sessions that have gone still. When a conversation dies and its tmux shell lingers, the eagle swoops down and cleans the bones.' },
+        ];
+        const creatures = [...pack.filter(w => w.type !== 'wolf'), ...hardcodedCreatures];
+        if (creatures.length) {
           packSection.style.display = '';
-          packCount.textContent = pack.length;
-          packGrid.innerHTML = pack.map(w => {
+          packCount.textContent = creatures.length;
+          packGrid.innerHTML = creatures.map(w => {
             const emoji = WOLT_EMOJI[w.type] || '❓';
             const role = w.role || '';
             const hint = WOLT_TYPE_HINT[w.type] || '';
