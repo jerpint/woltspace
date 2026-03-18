@@ -3,6 +3,7 @@ Woltspace project schema — defines the woltspace.json manifest.
 
 Usage:
     from projects import WoltspaceProject, load_project, discover_projects
+    from projects import project_dir, start_project, stop_project, running_projects
 
     project = load_project("/workspace/wolts/neowolt/wolt/projects/forj")
     all_projects = discover_projects()
@@ -11,16 +12,27 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import random
+import signal
+import subprocess
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-WOLTS_DIR = Path("/workspace/wolts")
+WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 
 VALID_STACKS = {"python", "vite", "node", "html"}
 
 MANIFEST = "woltspace.json"
+
+# Port range for project dev servers
+PORT_MIN = 4001
+PORT_MAX = 4999
+MAX_RUNNING = 2
+
+# Running project state — keyed by "keeper/name"
+_RUNNING_STATE_DIR = WOLTS_DIR / ".state" / "projects"
 
 # Wolt type emojis — reserved, never used as random defaults
 WOLT_EMOJIS = {"🦫", "🦝", "🦦", "🐺", "🐶", "🕷️", "🐻", "🐼"}
@@ -77,3 +89,143 @@ def discover_projects() -> list[WoltspaceProject]:
         if project:
             projects.append(project)
     return projects
+
+
+def project_dir(keeper: str, name: str) -> Path:
+    """Get the directory for a project."""
+    return WOLTS_DIR / keeper / "wolt" / "projects" / name
+
+
+def get_project(keeper: str, name: str) -> WoltspaceProject | None:
+    """Load a specific project by keeper and name."""
+    return load_project(project_dir(keeper, name))
+
+
+# --- Running state ---
+
+
+def _state_file(keeper: str, name: str) -> Path:
+    return _RUNNING_STATE_DIR / f"{keeper}--{name}.json"
+
+
+def _read_state(keeper: str, name: str) -> dict | None:
+    f = _state_file(keeper, name)
+    if not f.exists():
+        return None
+    try:
+        return json.loads(f.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _write_state(keeper: str, name: str, state: dict) -> None:
+    _RUNNING_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    _state_file(keeper, name).write_text(json.dumps(state, indent=2) + "\n")
+
+
+def _clear_state(keeper: str, name: str) -> None:
+    f = _state_file(keeper, name)
+    if f.exists():
+        f.unlink()
+
+
+def _is_pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def running_projects() -> list[dict]:
+    """List all currently running projects with their state."""
+    running = []
+    if not _RUNNING_STATE_DIR.exists():
+        return running
+    for f in sorted(_RUNNING_STATE_DIR.iterdir()):
+        if not f.name.endswith(".json"):
+            continue
+        try:
+            state = json.loads(f.read_text())
+            pid = state.get("pid")
+            if pid and _is_pid_alive(pid):
+                state["alive"] = True
+                running.append(state)
+            else:
+                # Stale state — process died
+                f.unlink()
+        except (json.JSONDecodeError, OSError):
+            continue
+    return running
+
+
+def _allocate_port() -> int:
+    """Find the next available port in the project range."""
+    used = {r["port"] for r in running_projects()}
+    for port in range(PORT_MIN, PORT_MAX + 1):
+        if port not in used:
+            return port
+    raise RuntimeError("No available ports in project range")
+
+
+def start_project(keeper: str, name: str) -> dict:
+    """Start a project's dev server. Returns state dict with port and pid."""
+    project = get_project(keeper, name)
+    if not project:
+        raise ValueError(f"Project {keeper}/{name} not found")
+    if not project.can_start():
+        raise ValueError(f"Project {keeper}/{name} has no start command")
+
+    # Check if already running
+    existing = _read_state(keeper, name)
+    if existing and _is_pid_alive(existing.get("pid", 0)):
+        return existing
+
+    # Check concurrency limit
+    current = running_projects()
+    if len(current) >= MAX_RUNNING:
+        names = [f"{r['keeper']}/{r['name']}" for r in current]
+        raise RuntimeError(f"Max {MAX_RUNNING} running projects. Stop one first: {', '.join(names)}")
+
+    port = _allocate_port()
+    work_dir = project_dir(keeper, name)
+
+    # Start the process with PORT env var
+    env = {**os.environ, "PORT": str(port)}
+    proc = subprocess.Popen(
+        project.start,
+        shell=True,
+        cwd=str(work_dir),
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+    state = {
+        "keeper": keeper,
+        "name": name,
+        "port": port,
+        "pid": proc.pid,
+        "start_command": project.start,
+    }
+    _write_state(keeper, name, state)
+    return state
+
+
+def stop_project(keeper: str, name: str) -> bool:
+    """Stop a running project. Returns True if it was running."""
+    state = _read_state(keeper, name)
+    if not state:
+        return False
+    pid = state.get("pid")
+    if pid and _is_pid_alive(pid):
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+        except OSError:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+    _clear_state(keeper, name)
+    return True
