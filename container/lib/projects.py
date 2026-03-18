@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -20,6 +21,17 @@ WOLTS_DIR = Path("/workspace/wolts")
 VALID_STACKS = {"python", "vite", "node", "html"}
 
 MANIFEST = "woltspace.json"
+
+# Wolt type emojis — reserved, never used as random defaults
+WOLT_EMOJIS = {"🦫", "🦝", "🦦", "🐺", "🐶", "🕷️", "🐻", "🐼"}
+
+# Forest creatures — used as random defaults for new projects
+FOREST_EMOJIS = ["🦅", "🦉", "🐿️", "🦊", "🐝", "🦌", "🐾", "🐸", "🦋", "🐛", "🪲", "🐞"]
+
+
+def random_emoji() -> str:
+    """Pick a random forest creature emoji for a new project."""
+    return random.choice(FOREST_EMOJIS)
 
 
 class WoltspaceProject(BaseModel):
@@ -38,7 +50,7 @@ class WoltspaceProject(BaseModel):
     start: str | None = Field(default=None, description="Start command (e.g. 'node server.js'). Null = can't start.")
     source: str | None = Field(default=None, description="Origin wolt if cloned/forked, null if created locally")
     keeper: str = Field(description="Owning wolt name")
-    emoji: str | None = Field(default=None, description="Project emoji for display")
+    emoji: str = Field(default_factory=random_emoji, description="Project emoji for display")
 
     def can_start(self) -> bool:
         """Project can only start if it has a start command."""
