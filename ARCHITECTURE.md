@@ -32,7 +32,7 @@
 
 | File | Lines | What it does |
 |------|-------|-------------|
-| `server.js` | ~1400 | Node HTTP/WS server. All endpoints: TUI, viewport, notify, apps, tools, shares, sessions |
+| `server/app.py` | ~800 | FastAPI server (port 7777). All endpoints: TUI, viewport, notify, apps, tools, sessions |
 | `container/bot/core.py` | ~1100 | The brain. Haiku agent loop, 13 tools, session spawning, memory loading |
 | `container/bot/telegram_adapter.py` | ~490 | Telegram handler: text, voice, photos, den replies, history |
 | `container/bot/slack_adapter.py` | ~360 | Slack handler: Socket Mode, thread-based, @mention routing |
