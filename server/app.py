@@ -173,6 +173,44 @@ def _shell_quote(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
 
 
+def _project_not_found(name: str) -> str:
+    """Styled 404 page for a project that doesn't exist."""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{name} — not found</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    background: #1a1a1a; color: #c8b89a;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 2rem;
+  }}
+  .card {{
+    max-width: 420px; width: 100%; text-align: center;
+    border: 1px solid #3a3a2a; border-radius: 12px;
+    padding: 2.5rem 2rem; background: #222218;
+  }}
+  .emoji {{ font-size: 3rem; margin-bottom: 1rem; }}
+  h1 {{ font-size: 1.3rem; color: #e8d8b8; margin-bottom: 0.5rem; }}
+  .desc {{ font-size: 0.85rem; color: #8a8060; margin-bottom: 1.5rem; }}
+  .hint {{ font-size: 0.75rem; color: #5a5a4a; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="emoji">🌲</div>
+  <h1>{name}</h1>
+  <p class="desc">This project doesn't exist yet.</p>
+  <p class="hint">Ask your wolt to create it, or check the name.</p>
+</div>
+</body>
+</html>"""
+
+
 def _project_placeholder(name: str, project: "WoltspaceProject | None" = None) -> str:
     """Styled placeholder page for a project that has no servable content."""
     emoji = project.emoji if project else "📦"
@@ -707,7 +745,7 @@ async def serve_project(proj_name: str, request: Request, path: str = ""):
         return JSONResponse({"error": "invalid project name"}, status_code=400)
     pdir = project_dir(proj_name)
     if not pdir.exists():
-        return JSONResponse({"error": f'project "{proj_name}" not found'}, status_code=404)
+        return HTMLResponse(_project_not_found(proj_name), status_code=404)
 
     sub_path = "/" + path if path else "/"
 
