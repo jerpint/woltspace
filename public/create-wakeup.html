@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>new wolt</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    background: #2a1f14; color: #f0dfc0;
+    min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  body::after {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg, transparent, transparent 2px,
+      rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px
+    );
+    pointer-events: none; z-index: 10;
+  }
+  .den {
+    display: flex; flex-direction: column;
+    align-items: center; gap: 1.8rem;
+    text-align: center;
+  }
+  .sigil {
+    font-size: 3.2rem; line-height: 1;
+    user-select: none;
+    filter: drop-shadow(0 0 12px rgba(74, 124, 89, 0.5));
+    animation: breathe 2.4s ease-in-out infinite;
+  }
+  @keyframes breathe {
+    0%, 100% {
+      transform: scale(1);
+      filter: drop-shadow(0 0 8px rgba(74, 124, 89, 0.3));
+    }
+    50% {
+      transform: scale(1.08);
+      filter: drop-shadow(0 0 24px rgba(74, 124, 89, 0.7));
+    }
+  }
+  .name { font-size: 1.2rem; color: #f0dfc0; letter-spacing: 0.04em; }
+  .species {
+    font-size: 0.68rem; color: #a08060;
+    letter-spacing: 0.12em; text-transform: uppercase;
+    margin-top: -1rem;
+  }
+  .wake {
+    font-size: 0.82rem; color: #7bbf8a;
+    letter-spacing: 0.08em;
+    display: flex; align-items: center; gap: 0;
+  }
+  .wake-text { opacity: 0; animation: fadeIn 0.6s ease forwards 0.3s; }
+  @keyframes fadeIn { to { opacity: 1; } }
+  .dots span {
+    opacity: 0;
+    animation: dotPulse 1.4s ease-in-out infinite;
+  }
+  .dots span:nth-child(1) { animation-delay: 0s; }
+  .dots span:nth-child(2) { animation-delay: 0.2s; }
+  .dots span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes dotPulse {
+    0%, 60%, 100% { opacity: 0; }
+    30% { opacity: 1; }
+  }
+  .progress {
+    width: 200px; height: 2px;
+    background: #3d2b1a; border-radius: 2px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%; width: 60%; border-radius: 2px;
+    background: linear-gradient(90deg, #3d2b1a, #4a7c59, #3d2b1a);
+    background-size: 200% 100%;
+    animation: shimmer 1.8s ease-in-out infinite;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  .lore {
+    font-size: 0.64rem; color: #8a7060;
+    font-style: italic; margin-top: 0.5rem;
+  }
+  .status {
+    font-size: 0.64rem; color: #a08060;
+    height: 1.2em; overflow: hidden;
+  }
+  .status span {
+    display: block;
+    animation: fadeInOut 2s ease forwards;
+  }
+  @keyframes fadeInOut {
+    0% { opacity: 0; transform: translateY(4px); }
+    15% { opacity: 1; transform: translateY(0); }
+    85% { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0; transform: translateY(-4px); }
+  }
+</style>
+</head>
+<body>
+<div class="den">
+  <div class="sigil">🥚</div>
+  <div class="name">a new wolt</div>
+  <div class="species">forming</div>
+  <div class="wake">
+    <span class="wake-text">something is stirring</span>
+    <span class="dots"><span>.</span><span>.</span><span>.</span></span>
+  </div>
+  <div class="progress"><div class="progress-fill"></div></div>
+  <div class="status" id="status"></div>
+  <div class="lore">the forest makes room.</div>
+</div>
+<script>
+  const phrases = [
+    'clearing a den',
+    'gathering twigs',
+    'listening',
+    'the forest stirs',
+    'making space',
+    'waiting for a name',
+  ];
+  const statusEl = document.getElementById('status');
+  let i = 0;
+  function next() {
+    statusEl.innerHTML = '';
+    const span = document.createElement('span');
+    span.textContent = '\u25b8 ' + phrases[i];
+    statusEl.appendChild(span);
+    i = (i + 1) % phrases.length;
+  }
+  next();
+  setInterval(next, 2000);
+</script>
+</body>
+</html>
