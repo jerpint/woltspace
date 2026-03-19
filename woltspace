@@ -306,18 +306,33 @@ if [ "$cmd" = "init" ]; then
   if [ ! -f "$WOLTS_DIR/.claude/.credentials.json" ] && [ "${WOLTSPACE_NONINTERACTIVE:-}" != "true" ]; then
     echo ""
     echo "  ${_D}🔑 almost there — log in to Claude Code${_R}"
-    echo "  ${_L}   a link will appear below. open it in your browser,${_R}"
-    echo "  ${_L}   authorize, then come back here.${_R}"
+    echo "  ${_L}   this will open a Claude Code session to handle login.${_R}"
+    echo "  ${_L}   type /login, follow the prompts, then /exit when done.${_R}"
     echo ""
     mkdir -p "$WOLTS_DIR/.claude"
     chown 1000:1000 "$WOLTS_DIR/.claude" 2>/dev/null \
       || docker run --rm -v "$WOLTS_DIR/.claude:/fix" node:22-slim chown -R 1000:1000 /fix 2>/dev/null \
       || true
+    # Write a temporary CLAUDE.md so Claude knows what's happening
+    cat > "$WOLTS_DIR/.claude/CLAUDE.md" << 'LOGINMD'
+# Woltspace Login
+
+The user is setting up woltspace for the first time. They need to log in to Claude Code.
+
+If they are NOT logged in:
+- Tell them to type /login to get started
+
+If they ARE already logged in (you can tell because /login will say "Already logged in"):
+- Say: "welcome to woltspace! you're all set. type /exit or press ctrl+c to continue setup."
+
+Keep it to one or two lines. Don't do anything else.
+LOGINMD
     docker run --rm -it \
       -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
       -e BROWSER= -e DISPLAY= \
       --entrypoint claude \
-      woltspace auth login </dev/tty
+      woltspace
+    rm -f "$WOLTS_DIR/.claude/CLAUDE.md"
     if [ -f "$WOLTS_DIR/.claude/.credentials.json" ]; then
       echo ""
       echo "  ${_G}✓${_R} logged in — $NAME can use Claude Code from day one"
