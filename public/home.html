@@ -872,7 +872,7 @@
     loadWolts();
     loadProjects();
     loadSessions();
-    setInterval(() => { loadSessions(); loadProjects(); }, 5000);
+    setInterval(loadSessions, 5000);
 
     // 🦫 click the name 5× for beaver rain
     let bClicks = 0, bTimer;
