@@ -207,35 +207,7 @@ def stop_site(wolt_name: str) -> bool:
 
 
 def _write_default_index(wolt_name: str, sdir: Path) -> None:
-    """Write a simple default index.html for a new wolt site."""
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{wolt_name}</title>
-<style>
-  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{
-    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-    background: #1a1a1a; color: #c8b89a;
-    display: flex; align-items: center; justify-content: center;
-    min-height: 100vh; padding: 2rem;
-  }}
-  .home {{
-    max-width: 480px; width: 100%; text-align: center;
-  }}
-  h1 {{ font-size: 1.5rem; color: #e8d8b8; margin-bottom: 0.5rem; }}
-  .sub {{ font-size: 0.85rem; color: #8a8060; margin-bottom: 2rem; }}
-  .hint {{ font-size: 0.75rem; color: #5a5a4a; }}
-</style>
-</head>
-<body>
-<div class="home">
-  <h1>{wolt_name}</h1>
-  <p class="sub">Nothing here yet. Start a conversation and I'll build something.</p>
-  <p class="hint">Pages I create will appear here as links.</p>
-</div>
-</body>
-</html>"""
-    (sdir / "index.html").write_text(html)
+    """Write a wakeup template index.html for a new wolt site."""
+    from wolts import _wakeup_template, _get_wolt_type
+    creature_type = _get_wolt_type(wolt_name)
+    (sdir / "index.html").write_text(_wakeup_template(wolt_name, creature_type))

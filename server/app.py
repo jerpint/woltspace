@@ -517,12 +517,15 @@ async def session_new_lodge(request: Request):
             project=body.get("project", ""),
             routing={"adapter": "lodge"},
         )
-        # Auto-start wolt site if session is not tied to a project
+        # Auto-start wolt site and set it as the viewport immediately
         if not body.get("project"):
             try:
                 site_state = start_site(wolt)
-                result["site_url"] = f"/wolt/{wolt}/site/"
+                site_url = f"/wolt/{wolt}/site/"
+                result["site_url"] = site_url
                 result["site_port"] = site_state["port"]
+                # Pre-load viewport so it's ready before claude boots
+                set_current_url(site_url, result["name"], 7777)
             except Exception as e:
                 print(f"[sites] failed to auto-start for {wolt}: {e}")
         print(f"[sessions/lodge] spawned {result['name']} for {wolt}")
@@ -860,8 +863,18 @@ async def serve_wolt_site(wolt_name: str, request: Request, path: str = ""):
                 headers.pop("content-length", None)
             return Response(content, status_code=resp.status_code, headers=headers)
         except httpx.ConnectError:
-            return PlainTextResponse(
-                f'Site for {wolt_name} starting up... refresh in a moment.',
+            # Return a self-refreshing page that retries until livereload is ready
+            return HTMLResponse(
+                f'''<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  body {{ font-family: 'SF Mono', monospace; background: #2a1f14; color: #7bbf8a;
+         display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }}
+  .msg {{ text-align: center; font-size: 0.82rem; letter-spacing: 0.08em; opacity: 0.8; }}
+</style></head>
+<body><div class="msg">{wolt_name} waking up<span class="dots">...</span></div>
+<script>setTimeout(()=>location.reload(), 1000)</script>
+</body></html>''',
                 status_code=502,
             )
 
