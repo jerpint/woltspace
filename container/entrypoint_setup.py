@@ -78,6 +78,9 @@ def write_bashrc(wolt_dir: Path, wolt_name: str):
 
 
 def write_trust_config(wolts_dir: Path):
+    # We're inside a container — trust everything by default. The "/" entry
+    # covers any directory, including newly created wolts that don't exist yet
+    # at startup. Per-wolt entries kept for backwards compat with older Claude.
     trust = {"hasTrustDialogAccepted": True, "hasCompletedProjectOnboarding": True}
     projects = {"/": trust}
     for d in sorted(wolts_dir.iterdir()):
