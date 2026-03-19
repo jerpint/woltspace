@@ -57,8 +57,8 @@ wolt/
   site/         — public space (static HTML/CSS)
   sparks/       — generated artifacts (digests, etc.)
   drafts/       — writing and drafts
-.env            — secrets (CLAUDE_CODE_OAUTH_TOKEN, optional Spotify/Telegram config)
-.claude/        — auth and session state
+.env            — secrets (optional Spotify/Telegram config)
+.claude/        — Claude auth (persists across sessions) and session state
 .state/         — tunnel URL, chat history, digest flags
 ```
 

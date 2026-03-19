@@ -75,15 +75,6 @@ def write_bashrc(wolt_dir: Path, wolt_name: str):
             f.write(f"source {worktui}\n")
 
 
-def write_oauth_credentials(token: str):
-    if not token:
-        return
-    claude_dir = HOME / ".claude"
-    claude_dir.mkdir(parents=True, exist_ok=True)
-    creds = {"claudeAiOauth": {"accessToken": token, "expiresAt": 9999999999999}}
-    creds_file = claude_dir / ".credentials.json"
-    creds_file.write_text(json.dumps(creds))
-    creds_file.chmod(0o600)
 
 
 def write_trust_config(wolts_dir: Path):
@@ -253,7 +244,6 @@ def main():
     # Config & identity
     copy_skills(woltspace_dir, wolt_dir)
     write_bashrc(wolt_dir, wolt_name)
-    write_oauth_credentials(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", ""))
     write_trust_config(wolts_dir)
     write_settings_json(woltspace_dir)
     configure_git(wolt_name)

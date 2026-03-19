@@ -3,9 +3,10 @@
 # Runs a full cycle: init → start → stop → rebuild → start → stop
 #
 # Usage:
-#   bash test/test-cli.sh              # test main branch (what users get)
-#   bash test/test-cli.sh --local      # test local code
-#   bash test/test-cli.sh --branch X   # test a specific branch
+#   bash test/test-cli.sh                    # test main branch (what users get)
+#   bash test/test-cli.sh --local              # test local code
+#   bash test/test-cli.sh --branch X           # test a specific branch
+#   bash test/test-cli.sh --local --no-cache   # clean build (simulates new user, slower)
 #
 # Uses a temp WOLTS_DIR so your real wolts are untouched.
 
@@ -199,6 +200,13 @@ echo "  --- shell ---"
 step "checking shell access..."
 WHOAMI=$(docker exec "$CONTAINER_NAME" whoami 2>/dev/null || echo "")
 [ "$WHOAMI" = "node" ] && pass "shell access works (user: node)" || fail "shell access failed ($WHOAMI)"
+
+# ── permissions ──
+echo ""
+echo "  --- permissions ---"
+step "checking /home/node/.claude is writable by node..."
+docker exec "$CONTAINER_NAME" touch /home/node/.claude/.test-write 2>/dev/null && pass "/home/node/.claude writable by node" || fail "/home/node/.claude not writable by node (COPY --from=claude missing --chown)"
+docker exec "$CONTAINER_NAME" rm -f /home/node/.claude/.test-write 2>/dev/null
 
 # ── cleanup ──
 echo ""
