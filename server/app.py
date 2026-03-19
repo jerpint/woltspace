@@ -211,6 +211,99 @@ def _project_not_found(name: str) -> str:
 </html>"""
 
 
+def _project_viewer(name: str, project: "WoltspaceProject | None", is_running: bool) -> str:
+    """Full-screen project viewer with top bar — served on direct browser visits."""
+    emoji = project.emoji if project else "📦"
+    keeper = project.keeper if project else "unknown"
+    can_start = project is not None and bool(project.start)
+    dot_class = "on" if is_running else "off"
+    if can_start:
+        toggle_action = "stop" if is_running else "start"
+        toggle_class = "stop" if is_running else "start"
+        toggle_btn = f'<button class="toggle-btn {toggle_class}" id="toggle-btn" onclick="toggleProject()">{toggle_action}</button>'
+    else:
+        toggle_btn = ""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{name} — woltspace</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  :root {{
+    --bark: #2a1f14; --log: #3d2b1a; --wood: #5c3d24;
+    --amber: #c17f3a; --cream: #f0dfc0; --moss: #4a7c59;
+    --fern: #5e9e70; --leaf: #7bbf8a; --muted: #8a7060; --dim: #5a4535;
+  }}
+  html, body {{ height: 100dvh; overflow: hidden; background: var(--bark); display: flex; flex-direction: column; }}
+  #topbar {{
+    background: var(--log); border-bottom: 1px solid var(--wood);
+    padding: 0.4rem 0.75rem; display: flex; align-items: center; gap: 0.6rem;
+    font-family: 'SF Mono','Fira Code','Cascadia Code','Consolas',monospace;
+    font-size: 0.8rem; flex-shrink: 0;
+  }}
+  .back {{ color: var(--muted); text-decoration: none; font-size: 0.82rem; padding: 0.2rem 0.4rem; border-radius: 4px; transition: color 0.15s; }}
+  .back:hover {{ color: var(--cream); }}
+  .sep {{ color: var(--wood); font-size: 0.7rem; }}
+  .project-id {{ display: flex; align-items: center; gap: 0.4rem; }}
+  .project-emoji {{ font-size: 1rem; }}
+  .project-name {{ color: var(--cream); font-weight: 600; font-size: 0.82rem; }}
+  .project-dot {{ width: 7px; height: 7px; border-radius: 50%; transition: background 0.3s, box-shadow 0.3s; }}
+  .project-dot.on {{ background: var(--leaf); box-shadow: 0 0 6px var(--leaf); }}
+  .project-dot.off {{ background: var(--dim); box-shadow: none; }}
+  .spacer {{ flex: 1; }}
+  .keeper {{ font-size: 0.62rem; color: var(--dim); font-style: italic; }}
+  .toggle-btn {{
+    font-family: inherit; font-size: 0.72rem; font-weight: 600;
+    padding: 0.25rem 0.7rem; border-radius: 4px; cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  }}
+  .toggle-btn.start {{ background: var(--moss); border: 1px solid var(--fern); color: var(--cream); }}
+  .toggle-btn.start:hover {{ background: var(--fern); }}
+  .toggle-btn.stop {{ background: transparent; border: 1px solid var(--wood); color: var(--muted); }}
+  .toggle-btn.stop:hover {{ border-color: #c0392b; color: #e74c3c; }}
+  .toggle-btn:disabled {{ opacity: 0.4; cursor: default; }}
+  iframe {{ flex: 1; border: none; background: var(--bark); display: block; width: 100%; }}
+  @media (max-width: 600px) {{ .keeper {{ display: none; }} }}
+</style>
+</head>
+<body>
+<div id="topbar">
+  <a class="back" href="/">◁ lodge</a>
+  <span class="sep">/</span>
+  <div class="project-id">
+    <span class="project-emoji">{emoji}</span>
+    <span class="project-name">{name}</span>
+    <span class="project-dot {dot_class}" id="status-dot"></span>
+  </div>
+  <span class="spacer"></span>
+  <span class="keeper">keeper: {keeper}</span>
+  {toggle_btn}
+</div>
+<iframe src="/project/{name}/" id="project-frame"></iframe>
+<script>
+  async function toggleProject() {{
+    const btn = document.getElementById('toggle-btn');
+    if (!btn) return;
+    const isRunning = btn.classList.contains('stop');
+    const action = isRunning ? 'stop' : 'start';
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {{
+      await fetch('/projects/{name}/' + action, {{ method: 'POST' }});
+      // reload page to reflect new state
+      location.reload();
+    }} catch {{
+      btn.disabled = false;
+      btn.textContent = action;
+    }}
+  }}
+</script>
+</body>
+</html>"""
+
+
 def _project_placeholder(name: str, project: "WoltspaceProject | None" = None) -> str:
     """Styled placeholder page for a project that has no servable content."""
     emoji = project.emoji if project else "📦"
@@ -740,12 +833,24 @@ async def project_stop(name: str):
 @app.get("/project/{proj_name}/{path:path}")
 @app.get("/project/{proj_name}")
 async def serve_project(proj_name: str, request: Request, path: str = ""):
-    """Serve a project — proxy to running dev server, static from dist/, or direct files."""
+    """Serve a project — proxy to running dev server, static from dist/, or direct files.
+
+    Direct browser visits to the root (/project/{name}/) get the full-screen viewer
+    wrapper with top bar. Iframe and sub-path requests get raw content.
+    """
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", proj_name):
         return JSONResponse({"error": "invalid project name"}, status_code=400)
     pdir = project_dir(proj_name)
     if not pdir.exists():
         return HTMLResponse(_project_not_found(proj_name), status_code=404)
+
+    # Direct browser visit to root → serve the full-screen project viewer
+    is_direct = request.headers.get("sec-fetch-dest") == "document"
+    if is_direct and not path:
+        project = get_project(proj_name)
+        running = {r["name"]: r for r in running_projects()}
+        is_running = proj_name in running
+        return HTMLResponse(_project_viewer(proj_name, project, is_running))
 
     sub_path = "/" + path if path else "/"
 
