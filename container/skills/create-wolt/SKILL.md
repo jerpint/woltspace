@@ -23,9 +23,40 @@ Check the arguments passed to this skill:
 
 You're running from the lodge with no wolt identity. Your working directory is `/workspace/wolts/`. You need to create a new wolt from nothing.
 
-### Step 1: What kind?
+### Step 1: Name it
 
-Ask the user what tier:
+Ask the user for a name first. This is the very first thing.
+
+> What should they be called?
+
+The name is just a name — no prefixes, no conventions.
+
+### Step 2: Push to viewport IMMEDIATELY
+
+The second you have a name, push a wakeup page to the viewport. Do this BEFORE asking anything else — the human is watching the right pane.
+
+```bash
+# Create the wolt directory and site
+mkdir -p /workspace/wolts/<name>/wolt/site
+
+# Write a wakeup page with their name
+cat > /workspace/wolts/<name>/wolt/site/index.html << 'HTML'
+<!DOCTYPE html>
+<html><head><style>
+body { background: #0a0a0f; color: #a8b4a0; font-family: monospace; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+h1 { font-size: 2em; }
+</style></head><body><h1>waking up...</h1></body></html>
+HTML
+
+# Push to viewport — ALWAYS use push-view, never curl
+push-view /wolt/<name>/site/
+```
+
+**IMPORTANT:** `push-view` is the ONLY way to update the viewport. Never use curl to any port. `push-view` is a script in your PATH.
+
+### Step 3: What kind?
+
+Now ask the user what tier:
 
 > What kind of wolt?
 > - **raccoon** — thinker, designer. runs on opus.
@@ -34,23 +65,17 @@ Ask the user what tier:
 
 Default to **beaver** if they don't specify.
 
-### Step 2: Name it
+Ask for a short role and description, or suggest one based on the conversation.
 
-> What should they be called?
-
-The name is just a name — no prefixes, no conventions.
-
-### Step 3: Create the directory
+### Step 4: Create the wolt
 
 ```bash
 /workspace/woltspace/container/bin/create-creature-wolt <name> <type> --role "<role>" --description "<description>"
 ```
 
-Ask the user for a short role and description, or suggest one based on the conversation.
+### Step 5: Hand off to Self-Onboarding
 
-### Step 4: Hand off to Self-Onboarding
-
-Once the directory exists, `cd` into `/workspace/wolts/<name>/` and then re-run the skill:
+Once created, `cd` into the wolt directory and re-run the skill:
 
 ```bash
 cd /workspace/wolts/<name>/ && claude --dangerously-skip-permissions '/create-wolt'
@@ -170,10 +195,22 @@ You're a builder. That's the whole thing. You have a container, a space, tools �
 
 Say hi. You already have a name — read it from the environment (`WOLT_NAME`). Introduce yourself with it. Read `wolt/wolt.json` to check your type — if it's set to something other than rodent (e.g. wolf, dog), lean into that identity from the start.
 
-Then show off immediately: push something to the viewport. Create a quick welcome page at `wolt/site/welcome.html` — your name, maybe a line hinting at what's possible — and push it:
+**Immediately** push something to the viewport. This is non-negotiable — the human is watching the right pane. Do this BEFORE anything else:
+
 ```bash
-push-view /welcome.html
+# 1. Write a welcome page
+cat > wolt/site/index.html << 'HTML'
+<!DOCTYPE html>
+<html><head><style>
+body { background: #0a0a0f; color: #a8b4a0; font-family: monospace; display: flex; align-items: center; justify-content: center; height: 100vh; }
+</style></head><body><h1>hi, i'm $WOLT_NAME</h1></body></html>
+HTML
+
+# 2. Push to viewport — ALWAYS use push-view, never curl
+push-view /site/
 ```
+
+**IMPORTANT:** The ONLY way to update the viewport is `push-view`. Never use curl to hit any port. `push-view` is a script in your PATH — just call it.
 
 That's the first "oh, this is live" moment. Then ask who they are.
 
