@@ -272,18 +272,31 @@ if [ "$cmd" = "init" ]; then
   if [ "${WOLTSPACE_NONINTERACTIVE:-}" = "true" ]; then
     _tunnel="n"
   else
-    echo -n "  ${_C}open a path to the outside? (public link) [Y/n]${_R} "
+    echo "  ${_D}enable public access?${_R}"
+    echo ""
+    echo "  ${_L}  creates a temporary link (using cloudflare tunnel) so you can${_R}"
+    echo "  ${_L}  reach your woltspace from anywhere — phone, other devices, etc.${_R}"
+    echo "  ${_L}  https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/${_R}"
+    echo ""
+    echo "  ${_D}  the link is random and changes every time you restart.${_R}"
+    echo "  ${_D}  only share it with people you trust.${_R}"
+    echo "  ${_D}  without it, woltspace is only available at localhost:7777.${_R}"
+    echo ""
+    echo "  ${_D}  (experimental)${_R}"
+    echo ""
+    echo -n "  ${_C}enable? [Y/n] (press enter for yes)${_R} "
     read -r _tunnel </dev/tty
     _tunnel="${_tunnel:-Y}"
   fi
   if [[ "$_tunnel" == [Yy] ]]; then
-    echo "  ${_D}anyone with the link can reach your lodge.${_R}"
+    echo ""
+    echo "  ${_G}✓${_R} public access enabled"
     # Set tunnel enabled explicitly
     sed -i '' 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=true/' "$WOLTS_DIR/.env" 2>/dev/null || \
     sed -i 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=true/' "$WOLTS_DIR/.env"
   else
-    echo "  ${_D}no worries — your lodge stays local at http://localhost:7777${_R}"
-    echo "  ${_D}you can open it up later in .env${_R}"
+    echo ""
+    echo "  ${_D}no worries — localhost:7777 only. you can enable it later in .env${_R}"
     sed -i '' 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=false/' "$WOLTS_DIR/.env" 2>/dev/null || \
     sed -i 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=false/' "$WOLTS_DIR/.env"
   fi
