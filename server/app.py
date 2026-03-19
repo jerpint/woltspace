@@ -490,10 +490,11 @@ async def session_new_create(request: Request):
             "status": "running", "created_at": int(time.time()),
             "dir": work_dir, "prompt": "/create-wolt", "adapter": "lodge",
         }, indent=2) + "\n")
-        # Run claude directly — bypass run-session.sh since there's no wolt yet
-        cmd = f"claude --dangerously-skip-permissions --model sonnet '/create-wolt new'"
+        # Run claude directly — bypass run-session.sh since there's no wolt yet.
+        # Set WOLT_SESSION so push-view can target the right viewport.
+        cmd = f"export WOLT_SESSION={name} && claude --dangerously-skip-permissions --model sonnet '/create-wolt new'"
         subprocess.run(
-            ["tmux", "new-session", "-d", "-s", name, "-c", work_dir, cmd],
+            ["tmux", "new-session", "-d", "-s", name, "-c", work_dir, "bash", "-c", cmd],
             check=True,
         )
         print(f"[sessions/create] spawned {name}")
