@@ -520,17 +520,9 @@ async def session_new_lodge(request: Request):
             project=body.get("project", ""),
             routing={"adapter": "lodge"},
         )
-        # Auto-start wolt site and set it as the viewport immediately
-        if not body.get("project"):
-            try:
-                site_state = start_site(wolt)
-                site_url = f"/wolt/{wolt}/site/"
-                result["site_url"] = site_url
-                result["site_port"] = site_state["port"]
-                # Pre-load viewport so it's ready before claude boots
-                set_current_url(site_url, result["name"], 7777)
-            except Exception as e:
-                print(f"[sites] failed to auto-start for {wolt}: {e}")
+        # Set viewport to wolt site (start_session auto-starts the site)
+        if result.get("site_url"):
+            set_current_url(result["site_url"], result["name"], 7777)
         print(f"[sessions/lodge] spawned {result['name']} for {wolt}")
         return result
     except ValueError as e:
@@ -558,6 +550,9 @@ async def session_new_telegram(request: Request):
                 "user_id": body.get("user_id", ""),
             },
         )
+        # Set viewport to wolt site (start_session auto-starts the site)
+        if result.get("site_url"):
+            set_current_url(result["site_url"], result["name"], 7777)
         print(f"[sessions/telegram] spawned {result['name']} for {wolt}")
         return result
     except ValueError as e:
@@ -586,6 +581,9 @@ async def session_new_slack(request: Request):
                 "thread_ts": body.get("thread_ts", ""),
             },
         )
+        # Set viewport to wolt site (start_session auto-starts the site)
+        if result.get("site_url"):
+            set_current_url(result["site_url"], result["name"], 7777)
         print(f"[sessions/slack] spawned {result['name']} for {wolt}")
         return result
     except ValueError as e:

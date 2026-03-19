@@ -22,6 +22,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from sites import start_site
+
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 DEFAULT_REGISTRY_DIR = WOLTS_DIR / ".state" / "registry"
 RUN_SESSION_SCRIPT = Path("/workspace/woltspace/container/bin/run-session.sh")
@@ -338,6 +340,17 @@ def start_session(
     if creature:
         result["creature"] = creature
         result["model"] = model
+
+    # Auto-start wolt site for non-project sessions.
+    # The site livereload server provides instant viewport content.
+    if not project:
+        try:
+            site_state = start_site(wolt)
+            result["site_url"] = f"/wolt/{wolt}/site/"
+            result["site_port"] = site_state["port"]
+        except Exception as e:
+            print(f"[sites] failed to auto-start for {wolt}: {e}")
+
     return result
 
 
