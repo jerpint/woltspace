@@ -82,10 +82,18 @@ _build_image() {
       --build-arg USE_LOCAL=true \
       -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR"
   else
-    echo "  ${_D}🪵 building image (branch: $BUILD_BRANCH, latest release tag)${_R}"
+    local version_arg=""
+    if [ -n "${CURRENT_VERSION:-}" ]; then
+      echo "  ${_D}🪵 building image (version: $CURRENT_VERSION)${_R}"
+      version_arg="--build-arg WOLTSPACE_VERSION=$CURRENT_VERSION"
+    elif [ "$BUILD_BRANCH" != "main" ]; then
+      echo "  ${_D}🪵 building image (branch: $BUILD_BRANCH)${_R}"
+    else
+      echo "  ${_D}🪵 building image (latest release)${_R}"
+    fi
     echo "  ${_L}   felling fresh timber...${_R}"
     echo ""
-    docker build -t woltspace $cache_flag \
+    docker build -t woltspace $cache_flag $version_arg \
       --build-arg WOLTSPACE_BRANCH="$BUILD_BRANCH" \
       -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR/container"
   fi
@@ -506,6 +514,11 @@ RESTORE
     echo ""
     ;;
   rebuild)
+    # Read current version before destroying container (rebuild stays on same version)
+    CURRENT_VERSION=""
+    if [ "$LOCAL_BUILD" != true ] && [ "$BUILD_BRANCH" = "main" ]; then
+      CURRENT_VERSION=$(docker exec "$CONTAINER_NAME" cat /workspace/woltspace/.version 2>/dev/null || echo "")
+    fi
     if [ "$LOCAL_BUILD" = true ]; then
       echo "  ${_D}🪵 rebuilding from local — $WOLTSPACE_DIR${_R}"
       echo "  ${_L}   felling local timber...${_R}"
