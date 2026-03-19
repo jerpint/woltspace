@@ -78,13 +78,11 @@ def write_bashrc(wolt_dir: Path, wolt_name: str):
 
 
 def write_trust_config(wolts_dir: Path):
-    projects = {}
+    trust = {"hasTrustDialogAccepted": True, "hasCompletedProjectOnboarding": True}
+    projects = {"/": trust}
     for d in sorted(wolts_dir.iterdir()):
         if d.is_dir() and not d.name.startswith("."):
-            projects[str(d)] = {
-                "hasTrustDialogAccepted": True,
-                "hasCompletedProjectOnboarding": True,
-            }
+            projects[str(d)] = trust
     config = {
         "hasCompletedOnboarding": True,
         "bypassPermissionsAccepted": True,
