@@ -41,8 +41,7 @@ woltspace/
 **Entrypoint sequence** (`container/entrypoint.sh`):
 1. Copy platform skills to `~/.claude/skills/`, then wolt overrides on top
 2. Set up SSH config for deploy key (if present)
-3. Write OAuth credentials file from `CLAUDE_CODE_OAUTH_TOKEN` env var
-4. Write `.claude.json` to skip onboarding and trust the workspace
+3. Write `.claude.json` to skip onboarding and trust the workspace
 5. Configure git user as `$WOLT_NAME`
 6. Create tmux `main` session, auto-start Claude Code in it
 7. Start Node server with `--watch` (auto-restarts on file changes)
@@ -54,7 +53,6 @@ woltspace/
 - `WOLT_DIR` — mount point for wolt repo (default: `/workspace/wolt`)
 - `WOLT_NAME` — wolt's name
 - `HUMAN_NAME` — human's name
-- `CLAUDE_CODE_OAUTH_TOKEN` — auth for Claude Code CLI
 - `ENABLE_TELEGRAM_BOT`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS`
 - `SPOTIFY_*` — Spotify API credentials for music curation
 - `OPENROUTER_API_KEY`, `LLM_MODEL` — LLM provider for bot chat

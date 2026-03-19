@@ -282,7 +282,6 @@ Each adapter is a thin Python file over `core.py`. To add a new adapter: copy `t
 Set in `~/.woltspace/wolts/.env`:
 
 ```bash
-CLAUDE_CODE_OAUTH_TOKEN=  # auth for Claude Code CLI
 HUMAN_NAME=               # used in bot system prompt
 ENABLE_TELEGRAM_BOT=true
 TELEGRAM_BOT_TOKEN=
@@ -298,6 +297,8 @@ GITHUB_APP_PRIVATE_KEY=   # PEM key, newlines escaped as \n
 ```
 
 The container also accepts `WOLT_NAME` as an env var (passed by the CLI during `init` for first boot). After that, the container reads `woltspace.json` to resolve the active wolt.
+
+**Claude auth** is handled during `woltspace init` via the native OAuth flow. Credentials are stored in `~/.woltspace/wolts/.claude/.credentials.json` and persist across container rebuilds.
 
 ---
 
