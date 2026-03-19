@@ -1,31 +1,32 @@
 ---
 name: new-project
-description: Set up a new project from scratch. Use when starting a fresh project — scaffolds the directory, detects the stack, starts the dev server, and writes project.json.
+description: Set up a new project from scratch. Use when starting a fresh project — scaffolds the directory, writes woltspace.json, starts the dev server.
 ---
 
 # New Project Setup
 
-You're setting up a new project. Follow these steps:
+A project is something you ship — an app, a tool, a service. It has its own server, dependencies, and manifest. It can be public. Projects live at `wolts/projects/{name}/` and are served at `/project/{name}/`.
 
-## 1. Confirm you're in the right place
+**Projects are an escalation, not a default.** Wolts should start with their site (`wolt/site/`) for lightweight work. Only create a project when the work needs its own server, dependencies, or is meant to be shared. Always confirm with the user before creating a project.
 
-You should be in `wolt/projects/{name}/`. If not, create the directory and cd into it:
+## 1. Confirm with the user
+
+Before creating a project, make sure they want one:
+
+> "This sounds like it needs its own server/deps — want me to set it up as a project? Or keep it simple in your site for now?"
+
+## 2. Create the directory
+
+Projects live in the global projects directory (shared across all wolts):
 
 ```bash
-mkdir -p wolt/projects/{name}
-cd wolt/projects/{name}
+mkdir -p /workspace/wolts/projects/{name}
+cd /workspace/wolts/projects/{name}
 ```
-
-## 2. Determine what to build
-
-Based on the user's request, figure out:
-- What kind of project (web app, API, static site, script, etc.)
-- What language/framework makes sense
-- Whether to clone an existing repo or start fresh
 
 ## 3. Scaffold it
 
-Some common starting points:
+Based on the user's request, figure out stack and scaffold:
 
 **Simple HTML page:**
 ```bash
@@ -54,36 +55,50 @@ git clone <url> .
 # Read the README, figure out deps, install them
 ```
 
-## 4. Configure for serving
+## 4. Write woltspace.json
 
-Pick a port (4001-4999, avoid conflicts with other projects). If it's a framework with a dev server:
+This is **required** — the platform only discovers projects that have `woltspace.json`. Without it, the project is invisible.
 
-- Set the base path to `/project/{name}/` for static builds
-- Or just run the dev server on your chosen port for proxy mode
+```json
+{
+  "name": "{name}",
+  "description": "What this project does",
+  "stack": "node",
+  "install": "npm install",
+  "start": "node server.js",
+  "keeper": "{your-wolt-name}",
+  "emoji": "🦊"
+}
+```
 
-## 5. Start it
+### Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | yes | Project name (matches directory name, globally unique) |
+| `keeper` | yes | Your wolt name — who owns this project |
+| `description` | no | What the project does |
+| `stack` | no | Tech stack: `python`, `vite`, `node`, `html` |
+| `install` | no | Install command (e.g. `npm install`, `uv sync`) |
+| `start` | no | Start command. **Null = project can't be started from the lodge.** |
+| `source` | no | Origin URL if cloned/forked |
+| `emoji` | no | Display emoji (auto-assigned if omitted) |
+
+**Important:** `project.json` and `app.json` are NOT recognized. Only `woltspace.json` works.
+
+## 5. Configure for serving
+
+Pick a port in the 4001-4999 range (auto-allocated by the platform when started from lodge). If it's a framework with a dev server:
+
+- **Static builds:** set the base path to `/project/{name}/` (Vite: `base`, Astro: `base`, Next: `basePath`)
+- **Dev servers:** just run on the allocated port — the platform sets `PORT` env var when starting
+
+## 6. Start it
 
 Run the dev server or build step. Verify it works:
 ```bash
 curl -s http://localhost:{port}/ | head -20
 ```
-
-## 6. Write project.json
-
-This is your receipt — documenting what you set up so the next session can pick it up:
-
-```json
-{
-  "name": "{name}",
-  "port": 4001,
-  "start": "npm run dev -- --port 4001",
-  "language": "javascript",
-  "framework": "vite-react",
-  "description": "What this project does"
-}
-```
-
-Only `port` is used by the platform. Everything else is for the next beaver/raccoon.
 
 ## 7. Push to viewport
 
@@ -99,9 +114,20 @@ Tell them what you built, where to see it, and how to run it next time.
 
 If you land in a project directory that already has files:
 
-1. Read `project.json` if it exists — it tells you what the last session set up
+1. Read `woltspace.json` — it tells you the stack, start command, and keeper
 2. Check for package.json, pyproject.toml, requirements.txt, etc.
 3. Install deps if needed
-4. Start the dev server using the command from project.json (or figure it out)
+4. Start the dev server using the command from woltspace.json (or figure it out)
 5. Push to viewport
 6. Continue the work from the user's prompt
+
+## Sites vs Projects
+
+| | Site (`wolt/site/`) | Project (`wolts/projects/`) |
+|---|---|---|
+| **Purpose** | Your private workspace | Something you ship |
+| **Visibility** | Private to the wolt owner | Can be public |
+| **Complexity** | Static HTML/CSS/JS, lightweight | Own server, deps, manifest |
+| **Created by** | Wolts, freely | User opts in |
+| **Manifest** | None needed | `woltspace.json` required |
+| **Example** | Personal digest, scratch mockups | Workout tracker, shared tool |

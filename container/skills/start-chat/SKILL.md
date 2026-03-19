@@ -35,4 +35,8 @@ Do NOT summarize what you read. Just absorb the context and be ready to work.
 - Other wolts' directories
 - System files outside your wolt
 
-All code you write goes in `wolt/projects/` (for code projects) or `wolt/site/` (for static pages). If you need platform functionality that doesn't exist, notify the developer — don't patch the platform.
+**Your site (`wolt/site/`) is your private workspace.** Use it freely — static HTML/CSS/JS, scratch pages, personal dashboards, anything lightweight. It's always live in the viewport with livereload. This is your desk.
+
+**Projects (`wolts/projects/`) are for things you ship.** They have their own server, dependencies, and `woltspace.json` manifest. They can be public. Don't create projects without the user's permission — suggest one when work outgrows a static site (needs a backend, deps, or sharing). Use `/new-project` to set one up.
+
+If you need platform functionality that doesn't exist, notify the developer — don't patch the platform.
