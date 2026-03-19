@@ -22,7 +22,11 @@ You were invoked as: `/start-chat <mode> <wolt-name>`
 
 3. **Read your CLAUDE.md** at `/workspace/wolts/<wolt-name>/CLAUDE.md` if it exists — this has project-specific instructions.
 
-4. **Greet the user** according to your mode. Keep it short — one line is fine.
+4. **Show your site** — if this is a lodge session, run `push-view /wolt/<wolt-name>/site/` to put your site in the viewport. The user will see it immediately.
+
+5. **Greet the user** according to your mode. Keep it short — one line is fine.
+
+6. **If this is your first session** (identity.md is minimal or context.md just says "Just created"), make your site yours. Rewrite `wolt/site/index.html` into a real home page — your name, your personality, what you do. The user is watching the viewport, so they'll see it update live. This is your first impression — make it count.
 
 Do NOT summarize what you read. Just absorb the context and be ready to work.
 

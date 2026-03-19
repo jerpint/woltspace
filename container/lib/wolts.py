@@ -22,6 +22,19 @@ CONFIG_FILE = WOLTS_DIR / "woltspace.json"
 RODENT_TYPES = {"otter", "beaver", "raccoon", "rodent"}  # "rodent" = legacy, treated as raccoon
 VALID_TYPES = RODENT_TYPES | {"wolf", "dog", "spider", "bear", "panda"}
 
+# Creature emojis and lore for default site template
+CREATURE_META = {
+    "raccoon": {"emoji": "🦝", "lore": "the den is warm. something stirs."},
+    "beaver":  {"emoji": "🦫", "lore": "the dam is quiet. wood creaks."},
+    "otter":   {"emoji": "🦦", "lore": "the river hums. a splash."},
+    "rodent":  {"emoji": "🦫", "lore": "the burrow is dark. eyes open."},
+    "wolf":    {"emoji": "🐺", "lore": "the forest listens. a howl."},
+    "dog":     {"emoji": "🐶", "lore": "ears perk up. tail wags."},
+    "spider":  {"emoji": "🕷️", "lore": "a thread catches the light."},
+    "bear":    {"emoji": "🐻", "lore": "the cave rumbles. something wakes."},
+    "panda":   {"emoji": "🐼", "lore": "bamboo rustles. a yawn."},
+}
+
 # Types that can only have one active at a time
 SINGLETON_TYPES = {"wolf", "dog"}
 
@@ -132,8 +145,168 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "", descript
         "# Learnings\n\n*Day one.*\n"
     )
 
+    # Create site with wakeup template
+    site_dir = wolt_dir / "wolt" / "site"
+    site_dir.mkdir(parents=True, exist_ok=True)
+    (site_dir / "index.html").write_text(
+        _wakeup_template(name, creature_type)
+    )
+
     # Set as active creature if singleton
     if creature_type in SINGLETON_TYPES:
         set_active_creature(creature_type, name)
 
     return {"dir": wolt_dir, "demoted": demoted}
+
+
+def _wakeup_template(name: str, creature_type: str) -> str:
+    """Generate the default wakeup site page for a new wolt."""
+    meta = CREATURE_META.get(creature_type, CREATURE_META["rodent"])
+    emoji = meta["emoji"]
+    lore = meta["lore"]
+    # Map creature type to model tier label
+    tier = {"raccoon": "opus", "beaver": "sonnet", "otter": "haiku"}.get(
+        creature_type, creature_type
+    )
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{name}</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    background: #2a1f14; color: #f0dfc0;
+    min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }}
+  body::after {{
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg, transparent, transparent 2px,
+      rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px
+    );
+    pointer-events: none; z-index: 10;
+  }}
+  .den {{
+    display: flex; flex-direction: column;
+    align-items: center; gap: 1.8rem;
+    text-align: center;
+  }}
+  .sigil {{
+    font-size: 3.2rem; line-height: 1;
+    user-select: none;
+    filter: drop-shadow(0 0 12px rgba(74, 124, 89, 0.5));
+    animation: breathe 2.4s ease-in-out infinite;
+  }}
+  @keyframes breathe {{
+    0%, 100% {{
+      transform: scale(1);
+      filter: drop-shadow(0 0 8px rgba(74, 124, 89, 0.3));
+    }}
+    50% {{
+      transform: scale(1.08);
+      filter: drop-shadow(0 0 24px rgba(74, 124, 89, 0.7));
+    }}
+  }}
+  .name {{ font-size: 1.2rem; color: #f0dfc0; letter-spacing: 0.04em; }}
+  .species {{
+    font-size: 0.68rem; color: #a08060;
+    letter-spacing: 0.12em; text-transform: uppercase;
+    margin-top: -1rem;
+  }}
+  .wake {{
+    font-size: 0.82rem; color: #7bbf8a;
+    letter-spacing: 0.08em;
+    display: flex; align-items: center; gap: 0;
+  }}
+  .wake-text {{ opacity: 0; animation: fadeIn 0.6s ease forwards 0.3s; }}
+  @keyframes fadeIn {{ to {{ opacity: 1; }} }}
+  .dots span {{
+    opacity: 0;
+    animation: dotPulse 1.4s ease-in-out infinite;
+  }}
+  .dots span:nth-child(1) {{ animation-delay: 0s; }}
+  .dots span:nth-child(2) {{ animation-delay: 0.2s; }}
+  .dots span:nth-child(3) {{ animation-delay: 0.4s; }}
+  @keyframes dotPulse {{
+    0%, 60%, 100% {{ opacity: 0; }}
+    30% {{ opacity: 1; }}
+  }}
+  .progress {{
+    width: 200px; height: 2px;
+    background: #3d2b1a; border-radius: 2px;
+    overflow: hidden;
+  }}
+  .progress-fill {{
+    height: 100%; width: 60%; border-radius: 2px;
+    background: linear-gradient(90deg, #3d2b1a, #4a7c59, #3d2b1a);
+    background-size: 200% 100%;
+    animation: shimmer 1.8s ease-in-out infinite;
+  }}
+  @keyframes shimmer {{
+    0% {{ background-position: 200% 0; }}
+    100% {{ background-position: -200% 0; }}
+  }}
+  .lore {{
+    font-size: 0.64rem; color: #8a7060;
+    font-style: italic; margin-top: 0.5rem;
+  }}
+  .status {{
+    font-size: 0.64rem; color: #a08060;
+    height: 1.2em; overflow: hidden;
+  }}
+  .status span {{
+    display: block;
+    animation: fadeInOut 2s ease forwards;
+  }}
+  @keyframes fadeInOut {{
+    0% {{ opacity: 0; transform: translateY(4px); }}
+    15% {{ opacity: 1; transform: translateY(0); }}
+    85% {{ opacity: 1; transform: translateY(0); }}
+    100% {{ opacity: 0; transform: translateY(-4px); }}
+  }}
+</style>
+</head>
+<body>
+<div class="den">
+  <div class="sigil">{emoji}</div>
+  <div class="name">{name}</div>
+  <div class="species">{creature_type} · {tier}</div>
+  <div class="wake">
+    <span class="wake-text">your wolt is waking up</span>
+    <span class="dots"><span>.</span><span>.</span><span>.</span></span>
+  </div>
+  <div class="progress"><div class="progress-fill"></div></div>
+  <div class="status" id="status"></div>
+  <div class="lore">{lore}</div>
+</div>
+<script>
+  const phrases = [
+    'sniffing around',
+    'creating identity',
+    'wolting',
+    'finding its footing',
+    'reading the forest',
+    'stretching',
+    'almost there',
+  ];
+  const statusEl = document.getElementById('status');
+  let i = 0;
+  function next() {{
+    statusEl.innerHTML = '';
+    const span = document.createElement('span');
+    span.textContent = '\\u25b8 ' + phrases[i];
+    statusEl.appendChild(span);
+    i = (i + 1) % phrases.length;
+  }}
+  next();
+  setInterval(next, 2000);
+</script>
+</body>
+</html>
+"""
