@@ -355,7 +355,9 @@
       gap: 0.4rem;
     }
     .project-card {
-      display: block;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
       background: var(--log);
       border: 1px solid var(--wood);
       border-left: 3px solid var(--pond);
@@ -363,7 +365,7 @@
       padding: 0.65rem 0.9rem;
       text-decoration: none;
       color: inherit;
-      transition: border-color 0.15s, background 0.15s;
+      transition: border-color 0.15s, background 0.15s, border-left-color 0.15s;
       cursor: pointer;
     }
     .project-card:hover {
@@ -371,22 +373,82 @@
       border-left-color: var(--water);
       background: var(--wood);
     }
+    .project-card.running {
+      border-left-color: var(--leaf);
+    }
+    .project-card.running:hover {
+      border-left-color: var(--leaf);
+    }
+    .project-emoji {
+      font-size: 1.4rem;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .project-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .project-name-row {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      margin-bottom: 0.2rem;
+    }
     .project-name {
       font-size: 0.82rem;
       font-weight: 600;
       color: var(--cream);
-      margin-bottom: 0.25rem;
     }
+    .project-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .project-dot.on { background: var(--leaf); box-shadow: 0 0 6px var(--leaf); }
+    .project-dot.off { background: var(--dim); }
     .project-desc {
       font-size: 0.65rem;
       color: var(--muted);
       line-height: 1.4;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
-    .project-mode {
+    .project-meta {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 0.25rem;
+    }
+    .project-keeper {
       font-size: 0.58rem;
       color: var(--dim);
-      margin-top: 0.3rem;
       font-style: italic;
+    }
+    .project-toggle {
+      flex-shrink: 0;
+      font-family: inherit;
+      font-size: 0.62rem;
+      font-weight: 600;
+      padding: 0.25rem 0.6rem;
+      border-radius: 4px;
+      border: 1px solid var(--wood);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .project-toggle:hover {
+      border-color: var(--amber);
+      color: var(--amber);
+    }
+    .project-toggle.stop {
+      border-color: var(--fern);
+      color: var(--leaf);
+    }
+    .project-toggle.stop:hover {
+      background: var(--fern);
+      color: var(--cream);
     }
 
     /* ---- SESSIONS ---- */
@@ -759,21 +821,38 @@
       try {
         const res = await fetch('/projects');
         const projects = await res.json();
-        const active = projects.filter(p => p.mode === 'static' || p.mode === 'proxy');
-        if (!active.length) {
+        if (!projects.length) {
           projectsSection.style.display = 'none';
           projectsDivider.style.display = 'none';
           return;
         }
         projectsSection.style.display = '';
         projectsDivider.style.display = '';
-        projectsCount.textContent = active.length;
-        projectGrid.innerHTML = active.map(p => {
-          const desc = p.description || '';
-          return `<a class="project-card" href="${p.url}" target="_blank">
-            <div class="project-name">${p.name}</div>
-            ${desc ? `<div class="project-desc">${desc}</div>` : ''}
-            <div class="project-mode">${p.mode}</div>
+        projectsCount.textContent = projects.length;
+        projectGrid.innerHTML = projects.map(p => {
+          const desc = p.description || 'No description yet';
+          const emoji = p.emoji || '📦';
+          const running = p.running;
+          const canStart = !!p.start;
+          const toggleLabel = running ? 'stop' : 'start';
+          const toggleClass = running ? 'stop' : '';
+          const dotClass = running ? 'on' : 'off';
+          const toggleBtn = canStart
+            ? `<button class="project-toggle ${toggleClass}" onclick="event.preventDefault();event.stopPropagation();toggleProject('${p.name}',${running})">${toggleLabel}</button>`
+            : '';
+          return `<a class="project-card ${running ? 'running' : ''}" href="${p.url}" target="_blank">
+            <span class="project-emoji">${emoji}</span>
+            <div class="project-info">
+              <div class="project-name-row">
+                <span class="project-name">${p.name}</span>
+                <span class="project-dot ${dotClass}"></span>
+              </div>
+              <div class="project-desc">${desc}</div>
+              <div class="project-meta">
+                <span class="project-keeper">keeper: ${p.keeper}</span>
+              </div>
+            </div>
+            ${toggleBtn}
           </a>`;
         }).join('');
       } catch {
@@ -782,10 +861,18 @@
       }
     }
 
+    async function toggleProject(name, isRunning) {
+      const action = isRunning ? 'stop' : 'start';
+      try {
+        await fetch(`/projects/${name}/${action}`, { method: 'POST' });
+        loadProjects();
+      } catch {}
+    }
+
     loadWolts();
     loadProjects();
     loadSessions();
-    setInterval(loadSessions, 5000);
+    setInterval(() => { loadSessions(); loadProjects(); }, 5000);
 
     // 🦫 click the name 5× for beaver rain
     let bClicks = 0, bTimer;
