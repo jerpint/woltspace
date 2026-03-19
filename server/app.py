@@ -60,6 +60,7 @@ from projects import (
     start_project,
     stop_project,
 )
+from sites import get_site_state, running_sites, site_dir, start_site, stop_site
 from .state import (
     bot_log,
     current_url_file,
@@ -516,6 +517,14 @@ async def session_new_lodge(request: Request):
             project=body.get("project", ""),
             routing={"adapter": "lodge"},
         )
+        # Auto-start wolt site if session is not tied to a project
+        if not body.get("project"):
+            try:
+                site_state = start_site(wolt)
+                result["site_url"] = f"/wolt/{wolt}/site/"
+                result["site_port"] = site_state["port"]
+            except Exception as e:
+                print(f"[sites] failed to auto-start for {wolt}: {e}")
         print(f"[sessions/lodge] spawned {result['name']} for {wolt}")
         return result
     except ValueError as e:
@@ -735,6 +744,148 @@ async def project_stop(name: str):
         print(f"[projects] stopped {name}")
         return {"ok": True, "name": name}
     return JSONResponse({"error": f"{name} is not running"}, status_code=404)
+
+
+# --- Wolt Sites ---
+# Each wolt has a persistent site at wolt/site/. Served via livereload.
+# Sites auto-start when a session begins outside a project context.
+
+@app.get("/sites")
+async def list_sites_api():
+    """List all running wolt sites."""
+    return running_sites()
+
+
+@app.get("/sites/{wolt_name}")
+async def site_detail(wolt_name: str):
+    """Get a wolt's site state."""
+    state = get_site_state(wolt_name)
+    sdir = site_dir(wolt_name)
+    return {
+        "wolt": wolt_name,
+        "running": state is not None,
+        "port": state["port"] if state else None,
+        "url": f"/wolt/{wolt_name}/site/",
+        "dir_exists": sdir.exists(),
+    }
+
+
+@app.post("/sites/{wolt_name}/start")
+async def site_start(wolt_name: str):
+    """Start a wolt's site livereload server."""
+    sdir = site_dir(wolt_name)
+    wolt_dir = WOLTS_DIR / wolt_name
+    if not wolt_dir.exists():
+        return JSONResponse({"error": f"wolt {wolt_name} not found"}, status_code=404)
+    try:
+        state = start_site(wolt_name)
+        print(f"[sites] started {wolt_name} on port {state['port']}")
+        return state
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=409)
+
+
+@app.post("/sites/{wolt_name}/stop")
+async def site_stop(wolt_name: str):
+    """Stop a wolt's site livereload server."""
+    was_running = stop_site(wolt_name)
+    if was_running:
+        print(f"[sites] stopped {wolt_name}")
+        return {"ok": True, "wolt": wolt_name}
+    return JSONResponse({"error": f"{wolt_name} site is not running"}, status_code=404)
+
+
+@app.get("/wolt/{wolt_name}/site/{path:path}")
+@app.get("/wolt/{wolt_name}/site")
+async def serve_wolt_site(wolt_name: str, request: Request, path: str = ""):
+    """Serve a wolt's site — proxy to livereload, rewrite reload script."""
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", wolt_name):
+        return JSONResponse({"error": "invalid wolt name"}, status_code=400)
+
+    wolt_dir = WOLTS_DIR / wolt_name
+    if not wolt_dir.exists():
+        return PlainTextResponse(f"Wolt {wolt_name} not found", status_code=404)
+
+    # Auto-start site if not running
+    state = get_site_state(wolt_name)
+    if not state:
+        try:
+            state = start_site(wolt_name)
+            print(f"[sites] auto-started {wolt_name} on port {state['port']}")
+        except RuntimeError as e:
+            return PlainTextResponse(f"Could not start site: {e}", status_code=503)
+
+    # Proxy to livereload
+    port = state["port"]
+    sub_path = "/" + path if path else "/"
+    target = f"http://localhost:{port}{sub_path}"
+    if request.url.query:
+        target += f"?{request.url.query}"
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.request(
+                request.method, target,
+                headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
+                content=await request.body(),
+            )
+            headers = dict(resp.headers)
+            headers.pop("x-frame-options", None)
+            headers.pop("content-security-policy", None)
+            content = resp.content
+            ct = headers.get("content-type", "")
+            if "text/html" in ct:
+                text = content.decode("utf-8", errors="replace")
+                # Strip livereload's native script (it connects to /livereload
+                # which doesn't work through our proxy)
+                text = re.sub(
+                    r'<script type="text/javascript">\(function\(\)\{var s=document\.createElement\("script"\).*?</script>',
+                    '',
+                    text,
+                )
+                # Inject our own reload script using a wolt-scoped WS path
+                reload_script = (
+                    '<script>(function(){'
+                    'var p=location.protocol==="https:"?"wss:":"ws:";'
+                    f'function c(){{var ws=new WebSocket(p+"//"+location.host+"/wolt/{wolt_name}/site/livereload");'
+                    'ws.onmessage=function(){location.reload()};'
+                    'ws.onclose=function(){setTimeout(c,3000)}}'
+                    'c()})()</script>'
+                )
+                if '</body>' in text:
+                    text = text.replace('</body>', reload_script + '</body>')
+                else:
+                    text += reload_script
+                content = text.encode("utf-8")
+                headers.pop("content-length", None)
+            return Response(content, status_code=resp.status_code, headers=headers)
+        except httpx.ConnectError:
+            return PlainTextResponse(
+                f'Site for {wolt_name} starting up... refresh in a moment.',
+                status_code=502,
+            )
+
+
+@app.websocket("/wolt/{wolt_name}/site/livereload")
+async def site_livereload_ws(wolt_name: str, ws: WebSocket):
+    """Watch a wolt's site dir for changes and push reload via WebSocket."""
+    from watchfiles import awatch
+
+    sdir = WOLTS_DIR / wolt_name / "wolt" / "site"
+    if not sdir.exists():
+        await ws.close()
+        return
+    await ws.accept()
+    try:
+        async for _changes in awatch(str(sdir)):
+            try:
+                await ws.send_text("reload")
+            except Exception:
+                break
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
 
 
 @app.get("/project/{proj_name}/{path:path}")
