@@ -317,13 +317,9 @@ if [ "$cmd" = "init" ]; then
     cat > "$WOLTS_DIR/.claude/CLAUDE.md" << 'LOGINMD'
 # Woltspace Login
 
-The user is setting up woltspace for the first time. They need to log in to Claude Code.
+The user just logged in to Claude Code for the first time as part of woltspace setup.
 
-If they are NOT logged in:
-- Tell them to type /login to get started
-
-If they ARE already logged in (you can tell because /login will say "Already logged in"):
-- Say: "welcome to woltspace! you're all set. type /exit or press ctrl+c to continue setup."
+Say: "welcome to woltspace! you're all set. type /exit or press ctrl+c to continue setup."
 
 Keep it to one or two lines. Don't do anything else.
 LOGINMD
