@@ -359,13 +359,29 @@
     let currentProjectName = null;
 
     async function updateProjectBar(url) {
-      const match = url.match(/^\/project\/([^/]+)/);
-      if (!match) {
+      // Check for project URL
+      const projectMatch = url.match(/^\/project\/([^/]+)/);
+      // Check for wolt site URL
+      const siteMatch = url.match(/^\/wolt\/([^/]+)\/site/);
+
+      if (siteMatch) {
+        // Wolt site — show wolt name, no start/stop
+        const woltName = siteMatch[1];
+        document.getElementById('p-emoji').textContent = '🦝';
+        document.getElementById('p-name').textContent = woltName;
+        document.getElementById('p-dot').className = 'p-dot on';
+        document.getElementById('p-toggle').style.display = 'none';
+        currentProjectName = null;
+        projectBar.classList.add('visible');
+        return;
+      }
+
+      if (!projectMatch) {
         projectBar.classList.remove('visible');
         currentProjectName = null;
         return;
       }
-      const name = match[1];
+      const name = projectMatch[1];
       currentProjectName = name;
       try {
         const p = await fetch('/projects/' + name).then(r => r.json());
