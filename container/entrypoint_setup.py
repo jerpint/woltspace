@@ -76,12 +76,16 @@ def write_bashrc(wolt_dir: Path, wolt_name: str):
 
 
 def write_oauth_credentials(token: str):
+    """Fallback for legacy CLAUDE_CODE_OAUTH_TOKEN env var.
+    Skips if .credentials.json already exists (native OAuth flow)."""
     if not token:
         return
     claude_dir = HOME / ".claude"
+    creds_file = claude_dir / ".credentials.json"
+    if creds_file.exists():
+        return
     claude_dir.mkdir(parents=True, exist_ok=True)
     creds = {"claudeAiOauth": {"accessToken": token, "expiresAt": 9999999999999}}
-    creds_file = claude_dir / ".credentials.json"
     creds_file.write_text(json.dumps(creds))
     creds_file.chmod(0o600)
 

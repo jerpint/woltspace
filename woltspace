@@ -285,8 +285,35 @@ if [ "$cmd" = "init" ]; then
   fi
   echo ""
 
-  # Build + start — container handles wolt scaffolding on first boot
+  # Build image
   _build_image
+
+  # Auth — run Claude login in a throwaway container if not already authenticated
+  if [ ! -f "$WOLTS_DIR/.claude/.credentials.json" ] && [ "${WOLTSPACE_NONINTERACTIVE:-}" != "true" ]; then
+    echo ""
+    echo "  ${_D}🔑 one last thing — let's log you in to Claude${_R}"
+    echo "  ${_L}   a link will appear. open it in your browser, then come back here.${_R}"
+    echo ""
+    mkdir -p "$WOLTS_DIR/.claude"
+    chown 1000:1000 "$WOLTS_DIR/.claude" 2>/dev/null \
+      || docker run --rm -v "$WOLTS_DIR/.claude:/fix" node:22-slim chown -R 1000:1000 /fix 2>/dev/null \
+      || true
+    docker run --rm -it \
+      -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
+      -e BROWSER= -e DISPLAY= \
+      --entrypoint claude \
+      woltspace auth login </dev/tty
+    if [ -f "$WOLTS_DIR/.claude/.credentials.json" ]; then
+      echo ""
+      echo "  ${_G}✓${_R} logged in — $NAME can use Claude Code from day one"
+    else
+      echo ""
+      echo "  ${_D}skipped — you can log in later from inside the container${_R}"
+    fi
+  fi
+  echo ""
+
+  # Start container
   _start_container "$NAME"
   _show_url
 
