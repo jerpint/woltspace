@@ -272,11 +272,14 @@ if [ "$cmd" = "init" ]; then
   if [ "${WOLTSPACE_NONINTERACTIVE:-}" = "true" ]; then
     _tunnel="n"
   else
-    echo "  ${_D}enable public access? (experimental)${_R}"
+    echo "  ${_D}enable public access?${_R}"
     echo ""
-    echo "  ${_L}  creates a temporary link so you can reach your woltspace from${_R}"
-    echo "  ${_L}  anywhere — phone, other devices, etc. the link is random and${_R}"
-    echo "  ${_L}  changes on every restart. only share it with people you trust.${_R}"
+    echo "  ${_L}  create a temporary link so you can reach your woltspace from${_R}"
+    echo "  ${_L}  anywhere — phone, other devices, etc.${_R}"
+    echo "  ${_L}  the link changes every time you restart woltspace.${_R}"
+    echo ""
+    echo "  ${_D}  ⚠️  this is an experimental feature.${_R}"
+    echo "  ${_D}  only share this link with people you trust.${_R}"
     echo ""
     echo "  ${_L}  without it, woltspace is only available at localhost:7777.${_R}"
     echo "  ${_D}  see: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/${_R}"
