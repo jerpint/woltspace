@@ -307,8 +307,18 @@ if [ "$cmd" = "init" ]; then
   if [ ! -f "$WOLTS_DIR/.claude/.credentials.json" ] && [ "${WOLTSPACE_NONINTERACTIVE:-}" != "true" ]; then
     echo ""
     echo "  ${_D}🔑 almost there — log in to Claude Code${_R}"
-    echo "  ${_L}   this will open a Claude Code session to handle login.${_R}"
-    echo "  ${_L}   type /login, follow the prompts, then /exit when done.${_R}"
+    echo ""
+    echo "  ${_L}  this will open a Claude Code session.${_R}"
+    echo "  ${_L}  type /login, follow the prompts, then /exit when done.${_R}"
+    echo "  ${_L}  you'll need a claude.ai account (free or pro).${_R}"
+    echo ""
+    echo -n "  ${_C}ready? [Y/n] (press enter for yes)${_R} "
+    read -r _auth </dev/tty
+    _auth="${_auth:-Y}"
+    if [[ "$_auth" != [Yy] ]]; then
+      echo ""
+      echo "  ${_D}skipped — you can log in later from inside the container${_R}"
+    else
     echo ""
     mkdir -p "$WOLTS_DIR/.claude"
     chown 1000:1000 "$WOLTS_DIR/.claude" 2>/dev/null \
@@ -336,6 +346,7 @@ LOGINMD
     else
       echo ""
       echo "  ${_D}skipped — you can log in later from inside the container${_R}"
+    fi
     fi
   fi
   echo ""
