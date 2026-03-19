@@ -247,7 +247,11 @@ if [ "$cmd" = "init" ]; then
     echo ""
     printf "  %b%s%b is ready to start gnawing. 🦫🪵🌲\n" "${_B}${_L}" "$NAME" "${_R}"
     echo ""
-    printf "  %bthis will build a sandboxed docker container.%b\n" "${_D}" "${_R}"
+    printf "  %bhere's what happens next:%b\n" "${_D}" "${_R}"
+    printf "  %b  1. build a sandboxed docker container (a few minutes)%b\n" "${_D}" "${_R}"
+    printf "  %b  2. log in to Claude Code (requires a claude.ai account)%b\n" "${_D}" "${_R}"
+    printf "  %b  3. $NAME wakes up 🦫%b\n" "${_D}" "${_R}"
+    echo ""
     printf "  %byour wolts will persist at %b%s%b\n" "${_D}" "${_R}${_C}" "$WOLTS_DIR" "${_R}"
     echo ""
     echo -n "  ${_C}continue? [Y/n]${_R} "
@@ -291,8 +295,9 @@ if [ "$cmd" = "init" ]; then
   # Auth — run Claude login in a throwaway container if not already authenticated
   if [ ! -f "$WOLTS_DIR/.claude/.credentials.json" ] && [ "${WOLTSPACE_NONINTERACTIVE:-}" != "true" ]; then
     echo ""
-    echo "  ${_D}🔑 one last thing — let's log you in to Claude${_R}"
-    echo "  ${_L}   a link will appear. open it in your browser, then come back here.${_R}"
+    echo "  ${_D}🔑 almost there — log in to Claude Code${_R}"
+    echo "  ${_L}   a link will appear below. open it in your browser,${_R}"
+    echo "  ${_L}   authorize, then come back here.${_R}"
     echo ""
     mkdir -p "$WOLTS_DIR/.claude"
     chown 1000:1000 "$WOLTS_DIR/.claude" 2>/dev/null \
