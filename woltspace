@@ -327,7 +327,7 @@ LOGINMD
       -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
       -e BROWSER= -e DISPLAY= \
       --entrypoint claude \
-      woltspace
+      woltspace || true
     rm -f "$WOLTS_DIR/.claude/CLAUDE.md"
     if [ -f "$WOLTS_DIR/.claude/.credentials.json" ]; then
       echo ""
