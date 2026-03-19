@@ -22,17 +22,12 @@ CONFIG_FILE = WOLTS_DIR / "woltspace.json"
 RODENT_TYPES = {"otter", "beaver", "raccoon", "rodent"}  # "rodent" = legacy, treated as raccoon
 VALID_TYPES = RODENT_TYPES | {"wolf", "dog", "spider", "bear", "panda"}
 
-# Creature emojis and lore for default site template
+# Rodent emojis and lore for default site template
 CREATURE_META = {
     "raccoon": {"emoji": "🦝", "lore": "the den is warm. something stirs."},
     "beaver":  {"emoji": "🦫", "lore": "the dam is quiet. wood creaks."},
     "otter":   {"emoji": "🦦", "lore": "the river hums. a splash."},
     "rodent":  {"emoji": "🦫", "lore": "the burrow is dark. eyes open."},
-    "wolf":    {"emoji": "🐺", "lore": "the forest listens. a howl."},
-    "dog":     {"emoji": "🐶", "lore": "ears perk up. tail wags."},
-    "spider":  {"emoji": "🕷️", "lore": "a thread catches the light."},
-    "bear":    {"emoji": "🐻", "lore": "the cave rumbles. something wakes."},
-    "panda":   {"emoji": "🐼", "lore": "bamboo rustles. a yawn."},
 }
 
 # Types that can only have one active at a time
@@ -145,12 +140,13 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "", descript
         "# Learnings\n\n*Day one.*\n"
     )
 
-    # Create site with wakeup template
-    site_dir = wolt_dir / "wolt" / "site"
-    site_dir.mkdir(parents=True, exist_ok=True)
-    (site_dir / "index.html").write_text(
-        _wakeup_template(name, creature_type)
-    )
+    # Create site with wakeup template (rodents only)
+    if is_rodent(creature_type):
+        site_dir = wolt_dir / "wolt" / "site"
+        site_dir.mkdir(parents=True, exist_ok=True)
+        (site_dir / "index.html").write_text(
+            _wakeup_template(name, creature_type)
+        )
 
     # Set as active creature if singleton
     if creature_type in SINGLETON_TYPES:
