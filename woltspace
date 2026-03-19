@@ -280,8 +280,6 @@ if [ "$cmd" = "init" ]; then
     echo ""
     echo "  ${_D}  ⚠️  this is an experimental feature.${_R}"
     echo "  ${_D}  only share this link with people you trust.${_R}"
-    echo ""
-    echo "  ${_L}  without it, woltspace is only available at localhost:7777.${_R}"
     echo "  ${_D}  see: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/${_R}"
     echo ""
     echo -n "  ${_C}enable? [Y/n] (press enter for yes)${_R} "
