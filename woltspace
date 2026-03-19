@@ -272,17 +272,13 @@ if [ "$cmd" = "init" ]; then
   if [ "${WOLTSPACE_NONINTERACTIVE:-}" = "true" ]; then
     _tunnel="n"
   else
-    echo "  ${_D}enable public access?${_R}"
+    echo "  ${_D}enable public access? (experimental)${_R}"
     echo ""
-    echo "  ${_L}  creates a temporary link (using cloudflare tunnel) so you can${_R}"
-    echo "  ${_L}  reach your woltspace from anywhere — phone, other devices, etc.${_R}"
-    echo "  ${_L}  https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/${_R}"
-    echo ""
-    echo "  ${_D}  the link is random and changes every time you restart.${_R}"
-    echo "  ${_D}  only share it with people you trust.${_R}"
-    echo "  ${_D}  without it, woltspace is only available at localhost:7777.${_R}"
-    echo ""
-    echo "  ${_D}  (experimental)${_R}"
+    echo "  ${_L}  creates a temporary link so you can reach your woltspace from${_R}"
+    echo "  ${_L}  anywhere — phone, other devices, etc. the link is random and${_R}"
+    echo "  ${_L}  changes on every restart. only share it with people you trust.${_R}"
+    echo "  ${_L}  without it, woltspace is only available at localhost:7777.${_R}"
+    echo "  ${_D}  (cloudflare tunnel — https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)${_R}"
     echo ""
     echo -n "  ${_C}enable? [Y/n] (press enter for yes)${_R} "
     read -r _tunnel </dev/tty
