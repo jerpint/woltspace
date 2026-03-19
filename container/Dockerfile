@@ -65,21 +65,34 @@ ENV WORKTUI_DIR="/workspace/wolts/.worktui"
 #   --local     → COPY from build context (local repo)
 ARG USE_LOCAL=false
 ARG WOLTSPACE_BRANCH=main
+ARG WOLTSPACE_VERSION=
 
 # Clone from github (default path)
-# Clones the branch, then checks out the latest semver tag if available.
-# Falls back to branch tip if no tags exist (safe for fresh repos).
+# --branch X    → use branch tip (no tag checkout)
+# --version X   → checkout that specific tag
+# --nightly     → use main branch tip (skip tags)
+# --latest      → checkout latest tag
+# default       → rebuild at current version, or latest tag for fresh init
 RUN if [ "$USE_LOCAL" = "false" ]; then \
       git clone --branch ${WOLTSPACE_BRANCH} --single-branch \
         https://github.com/jerpint/woltspace.git /workspace/woltspace && \
       cd /workspace/woltspace && \
       git fetch --tags && \
-      LATEST_TAG=$(git tag --sort=-v:refname | head -1) && \
-      if [ -n "$LATEST_TAG" ]; then \
-        echo "checking out release: $LATEST_TAG" && \
-        git checkout "$LATEST_TAG"; \
+      if [ "$WOLTSPACE_VERSION" = "HEAD" ]; then \
+        echo "using branch tip (nightly): $WOLTSPACE_BRANCH"; \
+      elif [ -n "$WOLTSPACE_VERSION" ]; then \
+        echo "checking out version: $WOLTSPACE_VERSION" && \
+        git checkout "$WOLTSPACE_VERSION"; \
+      elif [ "$WOLTSPACE_BRANCH" = "main" ]; then \
+        LATEST_TAG=$(git tag --sort=-v:refname | head -1) && \
+        if [ -n "$LATEST_TAG" ]; then \
+          echo "checking out release: $LATEST_TAG" && \
+          git checkout "$LATEST_TAG"; \
+        else \
+          echo "no tags found — using branch tip"; \
+        fi; \
       else \
-        echo "no tags found — using branch tip"; \
+        echo "using branch tip: $WOLTSPACE_BRANCH"; \
       fi; \
     fi
 

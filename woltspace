@@ -43,16 +43,25 @@ cmd="${1:-start}"
 # WOLTSPACE_LOCAL=true is equivalent to --local (sticky dev mode)
 LOCAL_BUILD="${WOLTSPACE_LOCAL:-false}"
 BUILD_BRANCH="main"
+BUILD_VERSION=""
+BUILD_LATEST=false
 NO_CACHE=false
 _next=""
 for arg in "$@"; do
   if [ -n "$_next" ]; then
-    BUILD_BRANCH="$arg"
+    if [ "$_next" = "branch" ]; then BUILD_BRANCH="$arg";
+    elif [ "$_next" = "version" ]; then BUILD_VERSION="$arg"; fi
     _next=""
   elif [ "$arg" = "--local" ]; then
     LOCAL_BUILD=true
   elif [ "$arg" = "--branch" ]; then
     _next=branch
+  elif [ "$arg" = "--version" ]; then
+    _next=version
+  elif [ "$arg" = "--latest" ]; then
+    BUILD_LATEST=true
+  elif [ "$arg" = "--nightly" ]; then
+    BUILD_VERSION="HEAD"
   elif [ "$arg" = "--no-cache" ]; then
     NO_CACHE=true
   fi
@@ -82,10 +91,21 @@ _build_image() {
       --build-arg USE_LOCAL=true \
       -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR"
   else
-    echo "  ${_D}🪵 building image (branch: $BUILD_BRANCH, latest release tag)${_R}"
+    local version_arg=""
+    if [ "${CURRENT_VERSION:-}" = "HEAD" ]; then
+      echo "  ${_D}🪵 building image (nightly — main branch tip)${_R}"
+      version_arg="--build-arg WOLTSPACE_VERSION=HEAD"
+    elif [ -n "${CURRENT_VERSION:-}" ]; then
+      echo "  ${_D}🪵 building image (version: $CURRENT_VERSION)${_R}"
+      version_arg="--build-arg WOLTSPACE_VERSION=$CURRENT_VERSION"
+    elif [ "$BUILD_BRANCH" != "main" ]; then
+      echo "  ${_D}🪵 building image (branch: $BUILD_BRANCH)${_R}"
+    else
+      echo "  ${_D}🪵 building image (latest release)${_R}"
+    fi
     echo "  ${_L}   felling fresh timber...${_R}"
     echo ""
-    docker build -t woltspace $cache_flag \
+    docker build -t woltspace $cache_flag $version_arg \
       --build-arg WOLTSPACE_BRANCH="$BUILD_BRANCH" \
       -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR/container"
   fi
@@ -506,12 +526,30 @@ RESTORE
     echo ""
     ;;
   rebuild)
+    # Resolve version: --version > --latest > current container version
+    CURRENT_VERSION=""
+    if [ -n "$BUILD_VERSION" ]; then
+      CURRENT_VERSION="$BUILD_VERSION"
+    elif [ "$BUILD_LATEST" = true ]; then
+      CURRENT_VERSION=""  # empty = Dockerfile picks latest tag
+    elif [ "$LOCAL_BUILD" != true ] && [ "$BUILD_BRANCH" = "main" ]; then
+      CURRENT_VERSION=$(docker exec "$CONTAINER_NAME" cat /workspace/woltspace/.version 2>/dev/null || echo "")
+    fi
     if [ "$LOCAL_BUILD" = true ]; then
       echo "  ${_D}🪵 rebuilding from local — $WOLTSPACE_DIR${_R}"
       echo "  ${_L}   felling local timber...${_R}"
+    elif [ "${CURRENT_VERSION:-}" = "HEAD" ]; then
+      echo "  ${_D}🪵 rebuilding from main branch tip (nightly)${_R}"
+      echo "  ${_L}   living on the edge...${_R}"
+    elif [ -n "${CURRENT_VERSION:-}" ]; then
+      echo "  ${_D}🪵 rebuilding at $CURRENT_VERSION${_R}"
+      echo "  ${_L}   same version, fresh timber${_R}"
+    elif [ "$BUILD_BRANCH" != "main" ]; then
+      echo "  ${_D}🪵 rebuilding from branch $BUILD_BRANCH${_R}"
+      echo "  ${_L}   felling branch timber...${_R}"
     else
-      echo "  ${_D}🪵 rebuilding image${_R}"
-      echo "  ${_L}   rebuilding the lodge...${_R}"
+      echo "  ${_D}🪵 rebuilding to latest release${_R}"
+      echo "  ${_L}   upgrading the lodge...${_R}"
     fi
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
     rm -f "$WOLTS_DIR/.state/tunnel-url"
@@ -547,7 +585,7 @@ RESTORE
     ;;
   *)
     echo "usage: woltspace <init|start|stop|rebuild|backup|shell|chat|logs>"
-    echo "       woltspace rebuild [--no-cache]"
+    echo "       woltspace rebuild [--latest|--version X|--nightly|--branch X|--no-cache]"
     echo "       woltspace backup [tag] [--bundle]"
     exit 1
     ;;
