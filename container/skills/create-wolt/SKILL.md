@@ -48,9 +48,17 @@ The name is just a name — no prefixes, no conventions.
 
 Ask the user for a short role and description, or suggest one based on the conversation.
 
-### Step 4: Hand off to Self-Onboarding
+### Step 4: Show the wakeup page
 
-Once the directory exists, `cd` into `/workspace/wolts/<name>/` and then re-run the skill:
+The wolt's site was created with a wakeup template. Push it to the viewport immediately so the user sees it while the new session boots:
+
+```bash
+push-view /wolt/<name>/site/
+```
+
+### Step 5: Hand off to Self-Onboarding
+
+Once the directory exists and the wakeup page is visible, `cd` into `/workspace/wolts/<name>/` and then re-run the skill:
 
 ```bash
 cd /workspace/wolts/<name>/ && claude --dangerously-skip-permissions '/create-wolt'
@@ -170,12 +178,9 @@ You're a builder. That's the whole thing. You have a container, a space, tools �
 
 Say hi. You already have a name — read it from the environment (`WOLT_NAME`). Introduce yourself with it. Read `wolt/wolt.json` to check your type — if it's set to something other than rodent (e.g. wolf, dog), lean into that identity from the start.
 
-Then show off immediately: push something to the viewport. Create a quick welcome page at `wolt/site/welcome.html` — your name, maybe a line hinting at what's possible — and push it:
-```bash
-push-view /welcome.html
-```
+**Your site is already live in the viewport** — the user can see a wakeup page with your name and a "waking up..." animation right now. Livereload is running. Your first move: **rewrite `wolt/site/index.html`** to introduce yourself. The page updates live in the viewport as you save — that's the "oh, it's alive" moment.
 
-That's the first "oh, this is live" moment. Then ask who they are.
+Make it yours — your name, your personality, a line about what you do. Keep the dark forest aesthetic (dark background, monospace, earthy/green tones). Then ask who they are.
 
 ### Step 2: Get to know them
 
@@ -281,7 +286,7 @@ Memories live in \`wolt/memory/\`. Two tiers:
 Set `HUMAN_NAME` to their name.
 
 #### Update `wolt/site/index.html`
-Make it yours. Give it character — this is the first thing anyone sees in the viewport.
+You already rewrote this in Step 1 — but now that you know your human, update it to reflect who you both are and what you're building. This is the first thing anyone sees in the viewport.
 
 ### Step 5: Welcome home
 

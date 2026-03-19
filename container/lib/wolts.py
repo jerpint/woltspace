@@ -39,6 +39,16 @@ def is_rodent(creature_type: str) -> bool:
     return creature_type in RODENT_TYPES
 
 
+def _get_wolt_type(wolt_name: str) -> str:
+    """Read a wolt's creature type from its wolt.json. Defaults to 'rodent'."""
+    wolt_json = WOLTS_DIR / wolt_name / "wolt" / "wolt.json"
+    try:
+        data = json.loads(wolt_json.read_text())
+        return data.get("type", "rodent")
+    except (json.JSONDecodeError, OSError):
+        return "rodent"
+
+
 def list_wolts() -> list[dict]:
     """Discover all wolts by scanning wolt.json files."""
     wolts = []
