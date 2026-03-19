@@ -39,6 +39,32 @@
     #topbar .title { color: var(--leaf); font-weight: 600; }
     #topbar .status { color: var(--muted); font-size: 0.65rem; }
     #topbar .actions { display: flex; gap: 0.4rem; }
+
+    /* project bar — shown when right pane is viewing a project */
+    #project-bar {
+      display: none;
+      align-items: center;
+      gap: 0.4rem;
+      border-left: 1px solid var(--wood);
+      padding-left: 0.6rem;
+      margin-left: 0.2rem;
+    }
+    #project-bar.visible { display: flex; }
+    #project-bar .p-emoji { font-size: 0.9rem; }
+    #project-bar .p-name { font-size: 0.75rem; font-weight: 600; color: var(--cream); }
+    #project-bar .p-dot { width: 6px; height: 6px; border-radius: 50%; }
+    #project-bar .p-dot.on  { background: var(--leaf); box-shadow: 0 0 5px var(--leaf); }
+    #project-bar .p-dot.off { background: var(--dim); }
+    #project-bar .p-toggle {
+      font-family: inherit; font-size: 0.65rem; font-weight: 600;
+      padding: 0.2rem 0.5rem; border-radius: 4px; cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+      background: transparent;
+    }
+    #project-bar .p-toggle.start { border: 1px solid var(--fern); color: var(--leaf); }
+    #project-bar .p-toggle.start:hover { background: var(--moss); color: var(--cream); }
+    #project-bar .p-toggle.stop  { border: 1px solid var(--wood); color: var(--muted); }
+    #project-bar .p-toggle.stop:hover  { border-color: #c0392b; color: #e74c3c; }
     #topbar .actions button {
       font-family: inherit; font-size: 0.72rem;
       padding: 0.25rem 0.6rem; background: var(--log);
@@ -166,11 +192,17 @@
       <a class="title" href="/" id="session-name" style="text-decoration:none">🦫 woltspace</a>
       <span class="status" id="tui-status">connecting...</span>
     </div>
+    <div id="project-bar">
+      <span class="p-emoji" id="p-emoji"></span>
+      <span class="p-name" id="p-name"></span>
+      <span class="p-dot" id="p-dot"></span>
+      <button class="p-toggle" id="p-toggle" onclick="toggleCurrentProject()"></button>
+    </div>
     <div class="actions">
       <button id="btn-back"    onclick="goBack()"            title="Back" disabled>◁</button>
       <button id="btn-share"   onclick="copyPublicLink()"    title="Copy public live link">↗ share</button>
       <button id="btn-term"    onclick="toggleFull('left')"  title="Fullscreen terminal">⬛ term</button>
-      <button id="btn-preview" onclick="toggleFull('right')" title="Session view">⬛ session</button>
+      <button id="btn-preview" onclick="toggleFull('right')" title="View">⬛ view</button>
     </div>
   </div>
 
@@ -322,6 +354,54 @@
       btnBack.disabled = stackIdx <= 0;
     }
 
+    // ── Project bar ───────────────────────────────────────────────────────────
+    const projectBar = document.getElementById('project-bar');
+    let currentProjectName = null;
+
+    async function updateProjectBar(url) {
+      const match = url.match(/^\/project\/([^/]+)/);
+      if (!match) {
+        projectBar.classList.remove('visible');
+        currentProjectName = null;
+        return;
+      }
+      const name = match[1];
+      currentProjectName = name;
+      try {
+        const p = await fetch('/projects/' + name).then(r => r.json());
+        document.getElementById('p-emoji').textContent = p.emoji || '📦';
+        document.getElementById('p-name').textContent = p.name;
+        const dot = document.getElementById('p-dot');
+        dot.className = 'p-dot ' + (p.running ? 'on' : 'off');
+        const btn = document.getElementById('p-toggle');
+        if (p.start) {
+          btn.textContent = p.running ? 'stop' : 'start';
+          btn.className = 'p-toggle ' + (p.running ? 'stop' : 'start');
+          btn.style.display = '';
+        } else {
+          btn.style.display = 'none';
+        }
+        projectBar.classList.add('visible');
+      } catch {
+        projectBar.classList.remove('visible');
+        currentProjectName = null;
+      }
+    }
+
+    window.toggleCurrentProject = async () => {
+      if (!currentProjectName) return;
+      const btn = document.getElementById('p-toggle');
+      const isRunning = btn.classList.contains('stop');
+      btn.disabled = true;
+      btn.textContent = '...';
+      try {
+        await fetch('/projects/' + currentProjectName + '/' + (isRunning ? 'stop' : 'start'), { method: 'POST' });
+        preview.src = preview.src; // reload iframe
+        await updateProjectBar('/project/' + currentProjectName + '/');
+      } catch {}
+      btn.disabled = false;
+    };
+
     function loadView(url, title, pushToStack = true) {
       preview.src = url;
       lastUrl = url;
@@ -332,6 +412,7 @@
       }
       updateBackBtn();
       renderHist();
+      updateProjectBar(url);
     }
 
     // Tell server what we're viewing so the poll doesn't fight us
@@ -473,12 +554,12 @@
         if (split.classList.contains(cls)) {
           split.classList.remove(cls);
           btnTerm.textContent    = '⬛ term';
-          btnPreview.textContent = '⬛ session';
+          btnPreview.textContent = '⬛ view';
         } else {
           split.classList.remove(other);
           split.classList.add(cls);
           btnTerm.textContent    = side === 'left'  ? '◧ split' : '⬛ term';
-          btnPreview.textContent = side === 'right' ? '◨ split' : '⬛ session';
+          btnPreview.textContent = side === 'right' ? '◨ split' : '⬛ view';
         }
       }
       setTimeout(() => fitAddon.fit(), 250);
