@@ -190,7 +190,7 @@ _setup_path() {
   elif [ -n "$_shell_rc" ]; then
     echo ""
     echo "  woltspace isn't on your PATH yet."
-    echo -n "  ${_C}add it to $(basename "$_shell_rc")? [Y/n]${_R} "
+    echo -n "  ${_C}add it to $(basename "$_shell_rc")? [Y/n] (press enter for yes)${_R} "
     read -r _confirm </dev/tty
     _confirm="${_confirm:-Y}"
     if [[ "$_confirm" == [Yy] ]]; then
@@ -254,7 +254,7 @@ if [ "$cmd" = "init" ]; then
     echo ""
     printf "  %byour wolts will persist at %b%s%b\n" "${_D}" "${_R}${_C}" "$WOLTS_DIR" "${_R}"
     echo ""
-    echo -n "  ${_C}continue? [Y/n]${_R} "
+    echo -n "  ${_C}continue? [Y/n] (press enter for yes)${_R} "
     read -r CONFIRM </dev/tty
     CONFIRM="${CONFIRM:-Y}"
     if [[ "$CONFIRM" != [Yy] ]]; then
