@@ -145,6 +145,8 @@ class TestStartSessionSiteAutoStart:
         monkeypatch.setattr(sessions, "RUN_SESSION_SCRIPT", Path("/bin/true"))
         monkeypatch.setattr(sites, "WOLTS_DIR", tmp_path)
         monkeypatch.setattr(sites, "_RUNNING_STATE_DIR", tmp_path / ".state" / "sites")
+        # WOLT_DIR is used by _set_viewport_url to find the state dir
+        monkeypatch.setenv("WOLT_DIR", str(tmp_path))
 
         # Create a rodent wolt
         wolt_dir = tmp_path / "testwolt" / "wolt"
@@ -200,6 +202,23 @@ class TestStartSessionSiteAutoStart:
                 routing={"adapter": adapter},
             )
             assert result.get("site_url") == "/wolt/testwolt/site/", f"failed for {adapter}"
+
+    @patch("sessions.subprocess.run")
+    @patch("sites.subprocess.Popen")
+    def test_viewport_url_file_written(self, mock_popen, mock_run, tmp_path):
+        """start_session() should write the viewport URL file directly."""
+        mock_popen.return_value.pid = 12345
+        result = self.sessions.start_session(
+            wolt="testwolt",
+            prompt="hello",
+            routing={"adapter": "telegram", "chat_id": "123"},
+        )
+        session_name = result["name"]
+        viewport_file = tmp_path / ".state" / f"current-url-{session_name}.json"
+        assert viewport_file.exists(), f"viewport file not written for {session_name}"
+        data = json.loads(viewport_file.read_text())
+        assert data["url"] == "/wolt/testwolt/site/"
+        assert data["port"] == 7777
 
     @patch("sessions.subprocess.run")
     @patch("sessions.start_site", side_effect=RuntimeError("no ports"))
