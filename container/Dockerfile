@@ -68,15 +68,19 @@ ARG WOLTSPACE_BRANCH=main
 ARG WOLTSPACE_VERSION=
 
 # Clone from github (default path)
-# --branch X  → use branch tip (no tag checkout)
-# WOLTSPACE_VERSION=vX.Y.Z → checkout that specific tag
-# default (no branch, no version) → checkout latest tag
+# --branch X    → use branch tip (no tag checkout)
+# --version X   → checkout that specific tag
+# --nightly     → use main branch tip (skip tags)
+# --latest      → checkout latest tag
+# default       → rebuild at current version, or latest tag for fresh init
 RUN if [ "$USE_LOCAL" = "false" ]; then \
       git clone --branch ${WOLTSPACE_BRANCH} --single-branch \
         https://github.com/jerpint/woltspace.git /workspace/woltspace && \
       cd /workspace/woltspace && \
       git fetch --tags && \
-      if [ -n "$WOLTSPACE_VERSION" ]; then \
+      if [ "$WOLTSPACE_VERSION" = "HEAD" ]; then \
+        echo "using branch tip (nightly): $WOLTSPACE_BRANCH"; \
+      elif [ -n "$WOLTSPACE_VERSION" ]; then \
         echo "checking out version: $WOLTSPACE_VERSION" && \
         git checkout "$WOLTSPACE_VERSION"; \
       elif [ "$WOLTSPACE_BRANCH" = "main" ]; then \
