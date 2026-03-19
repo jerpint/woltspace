@@ -277,8 +277,9 @@ if [ "$cmd" = "init" ]; then
     echo "  ${_L}  creates a temporary link so you can reach your woltspace from${_R}"
     echo "  ${_L}  anywhere — phone, other devices, etc. the link is random and${_R}"
     echo "  ${_L}  changes on every restart. only share it with people you trust.${_R}"
+    echo ""
     echo "  ${_L}  without it, woltspace is only available at localhost:7777.${_R}"
-    echo "  ${_D}  (cloudflare tunnel — https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)${_R}"
+    echo "  ${_D}  see: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/${_R}"
     echo ""
     echo -n "  ${_C}enable? [Y/n] (press enter for yes)${_R} "
     read -r _tunnel </dev/tty
