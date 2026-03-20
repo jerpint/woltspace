@@ -89,6 +89,7 @@ def write_trust_config(wolts_dir: Path):
     config = {
         "hasCompletedOnboarding": True,
         "bypassPermissionsAccepted": True,
+        "numStartups": 1,
         "projects": projects,
     }
     (HOME / ".claude.json").write_text(json.dumps(config, indent=2) + "\n")
