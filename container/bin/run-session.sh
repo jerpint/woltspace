@@ -17,9 +17,6 @@ SESSION_REG="$SCRIPT_DIR/session-reg"
 cd "$WORK_DIR"
 export WOLT_SESSION="$SESSION_NAME"
 
-# Pre-trust the work directory so the workspace trust dialog doesn't block.
-trust-dir "$WORK_DIR" 2>&1 || echo "[run-session] WARNING: trust-dir failed for $WORK_DIR" >&2
-
 # Generate a stable Claude session ID so we can --resume the right conversation later
 CLAUDE_SESSION_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
 $SESSION_REG update "$SESSION_NAME" "claude_session_id=$CLAUDE_SESSION_ID" > /dev/null 2>&1 || true

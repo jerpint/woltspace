@@ -62,7 +62,6 @@ def write_bashrc(wolt_dir: Path, wolt_name: str):
         f.write(
             f"wolt() {{\n"
             f'  cd {wolt_dir}\n'
-            f'  trust-dir {wolt_dir}\n'
             f'  if [[ "$1" == "--resume" ]]; then\n'
             f"    claude --dangerously-skip-permissions --resume\n"
             f"  else\n"

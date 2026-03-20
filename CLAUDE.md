@@ -175,9 +175,10 @@ Used by core.py, run-session.sh, notify, and server. CLI wrapper: `session-reg`.
 
 ### `container/bin/`
 Utility scripts available in container PATH:
-- `trust-dir <directory>` — add a directory to Claude's trusted projects in `~/.claude.json`. Called just-in-time before every `claude` invocation to prevent the workspace trust dialog. Only trusts dirs under `/workspace/wolts/`.
+- `claude` — wrapper that trusts `$PWD` before launching Claude Code. Shadows the real binary to prevent the workspace trust dialog inside the container. Uses `trust-dir` internally.
+- `trust-dir <directory>` — add a directory to Claude's trusted projects in `~/.claude.json`. Only trusts dirs under `/workspace/wolts/`.
 - `push-view <path>` — set viewport URL for current session
-- `run-session.sh` — wrapper that pre-trusts work dir, injects notification context, runs Claude Code
+- `run-session.sh` — wrapper that injects notification context and runs Claude Code
 - `notify` — send message back to originating adapter (Telegram/Slack)
 - `session-reg` — CLI for the session registry (`session-reg list`, `session-reg get <name>`, `session-reg reconcile`)
 - `create-creature-wolt <name> <type>` — create a new creature-wolt (wolf, dog, rodent, etc.)
