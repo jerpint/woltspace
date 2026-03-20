@@ -22,7 +22,7 @@ You were invoked as: `/start-chat <mode> <wolt-name>`
 
 3. **Read your CLAUDE.md** at `/workspace/wolts/<wolt-name>/CLAUDE.md` if it exists — this has project-specific instructions.
 
-4. **Your site is already in the viewport** — if this is a lodge session and you are a rodent (raccoon, beaver, or otter), your site at `wolt/site/` is already live in the viewport with livereload. The server pre-loaded it when the session started. You don't need to push-view — just edit `wolt/site/index.html` and changes appear instantly. Non-rodent creatures (wolf, dog, etc.) do not have sites.
+4. **Your site is already in the viewport** — if you are a rodent (raccoon, beaver, or otter), your site is already live in the viewport with livereload at `/wolt/<wolt-name>/site/`. The server pre-loaded it when the session started. Just edit `wolt/site/index.html` and changes appear instantly via livereload. If you need to push a different URL, use `push-view /wolt/<wolt-name>/site/page.html`. Non-rodent creatures (wolf, dog, etc.) do not have sites.
 
 5. **Greet the user** according to your mode. Keep it short — one line is fine.
 
