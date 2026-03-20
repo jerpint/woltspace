@@ -11,6 +11,7 @@ python3 "$WOLTSPACE_DIR/container/entrypoint_setup.py" --env-file "$ENV_FILE"
 source "$ENV_FILE"
 rm -f "$ENV_FILE"
 export WOLT_NAME WOLT_DIR DEV_MODE WOLF_CONFIG PYTHONPATH PATH
+export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
 
 # ── tmux ──
 tmux new-session -d -s main -c "$WOLT_DIR" 2>/dev/null || true
