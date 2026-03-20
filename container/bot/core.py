@@ -580,7 +580,9 @@ def message_session(session_name: str, text: str) -> dict:
             # Fallback for sessions started before this fix
             resume_flag = "--continue"
         _bot_log("session_revive_method", {"session": safe, "claude_session_id": claude_session_id or "none", "method": "resume" if claude_session_id else "continue"})
-        resume_cmd = f"export WOLT_SESSION={shlex.quote(safe)} && wclaude --dangerously-skip-permissions {resume_flag} {shlex.quote(text)}"
+        session_dir = reg_data.get("dir", "") if reg_data else ""
+        cd_prefix = f"cd {shlex.quote(session_dir)} && " if session_dir else ""
+        resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(safe)} && /workspace/woltspace/container/bin/wclaude --dangerously-skip-permissions {resume_flag} {shlex.quote(text)}"
         subprocess.run(["tmux", "send-keys", "-t", safe, "-l", resume_cmd], check=True)
         subprocess.run(["tmux", "send-keys", "-t", safe, "", "Enter"], check=True)
         return {"ok": True, "session": safe, "url": session_url, "status": "revived", "detail": f"Claude had exited — restarted with {'--resume ' + claude_session_id if claude_session_id else '--continue'} and delivered message"}
