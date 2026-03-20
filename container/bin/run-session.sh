@@ -17,25 +17,8 @@ SESSION_REG="$SCRIPT_DIR/session-reg"
 cd "$WORK_DIR"
 export WOLT_SESSION="$SESSION_NAME"
 
-# Pre-trust the work directory in Claude's config so the workspace trust dialog
-# doesn't block headless sessions (telegram, slack). Only auto-trust directories
-# under /workspace/wolts/ — everything else still gets the prompt.
-# Safe because we're inside a container and the user accepted that on setup.
-if [[ "$WORK_DIR" == /workspace/wolts/* ]]; then
-    python3 -c "
-import json, pathlib, sys
-p = pathlib.Path.home() / '.claude.json'
-data = json.loads(p.read_text()) if p.exists() else {}
-projects = data.setdefault('projects', {})
-wd = sys.argv[1]
-if wd not in projects or not projects[wd].get('hasTrustDialogAccepted'):
-    projects.setdefault(wd, {}).update({
-        'hasTrustDialogAccepted': True,
-        'hasCompletedProjectOnboarding': True
-    })
-    p.write_text(json.dumps(data, indent=2))
-" "$WORK_DIR" 2>&1 || echo "[run-session] WARNING: failed to pre-trust $WORK_DIR in ~/.claude.json" >&2
-fi
+# Pre-trust the work directory so the workspace trust dialog doesn't block.
+trust-dir "$WORK_DIR" 2>&1 || echo "[run-session] WARNING: trust-dir failed for $WORK_DIR" >&2
 
 # Generate a stable Claude session ID so we can --resume the right conversation later
 CLAUDE_SESSION_ID=$(python3 -c "import uuid; print(uuid.uuid4())")

@@ -62,6 +62,7 @@ def write_bashrc(wolt_dir: Path, wolt_name: str):
         f.write(
             f"wolt() {{\n"
             f'  cd {wolt_dir}\n'
+            f'  trust-dir {wolt_dir}\n'
             f'  if [[ "$1" == "--resume" ]]; then\n'
             f"    claude --dangerously-skip-permissions --resume\n"
             f"  else\n"
@@ -78,11 +79,11 @@ def write_bashrc(wolt_dir: Path, wolt_name: str):
 
 
 def write_trust_config(wolts_dir: Path):
-    # We're inside a container — trust everything by default. The "/" entry
-    # covers any directory, including newly created wolts that don't exist yet
-    # at startup. Per-wolt entries kept for backwards compat with older Claude.
+    # Pre-trust all known wolt directories at boot. This is a baseline —
+    # Claude Code may overwrite .claude.json with its own state, so trust-dir
+    # provides just-in-time injection before every claude invocation.
     trust = {"hasTrustDialogAccepted": True, "hasCompletedProjectOnboarding": True}
-    projects = {"/": trust}
+    projects = {}
     for d in sorted(wolts_dir.iterdir()):
         if d.is_dir() and not d.name.startswith("."):
             projects[str(d)] = trust
