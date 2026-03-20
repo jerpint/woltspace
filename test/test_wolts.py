@@ -168,6 +168,50 @@ class TestActiveCreature:
 
 
 # ---------------------------------------------------------------------------
+# Name slugification
+# ---------------------------------------------------------------------------
+
+class TestSlugifyWoltName:
+    """Unit: slugify_wolt_name sanitizes names into valid slugs."""
+
+    def test_spaces_to_hyphens(self):
+        from wolts import slugify_wolt_name
+        assert slugify_wolt_name("wolter white") == "wolter-white"
+
+    def test_lowercase(self):
+        from wolts import slugify_wolt_name
+        assert slugify_wolt_name("MyWolt") == "mywolt"
+
+    def test_strips_leading_numbers(self):
+        from wolts import slugify_wolt_name
+        assert slugify_wolt_name("123wolt") == "wolt"
+
+    def test_strips_special_chars(self):
+        from wolts import slugify_wolt_name
+        assert slugify_wolt_name("my!wolt@here") == "my-wolt-here"
+
+    def test_empty_returns_empty(self):
+        from wolts import slugify_wolt_name
+        assert slugify_wolt_name("") == ""
+
+    def test_all_special_returns_empty(self):
+        from wolts import slugify_wolt_name
+        assert slugify_wolt_name("!!!###") == ""
+
+    def test_truncates_long_names(self):
+        from wolts import slugify_wolt_name
+        assert len(slugify_wolt_name("a" * 30)) == 20
+
+    def test_trims_whitespace(self):
+        from wolts import slugify_wolt_name
+        assert slugify_wolt_name("  chip  ") == "chip"
+
+    def test_collapses_multiple_separators(self):
+        from wolts import slugify_wolt_name
+        assert slugify_wolt_name("my   wolt") == "my-wolt"
+
+
+# ---------------------------------------------------------------------------
 # Creature-wolt creation
 # ---------------------------------------------------------------------------
 
@@ -258,6 +302,73 @@ class TestCreateCreatureWolt:
         with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.CONFIG_FILE", config_file):
             with pytest.raises(ValueError, match="Invalid creature type"):
                 create_creature_wolt("test", "dragon")
+
+    def test_slugifies_name_with_spaces(self, tmp_path):
+        from wolts import create_creature_wolt
+        config_file = tmp_path / "woltspace.json"
+        config_file.write_text(json.dumps({}))
+
+        with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.CONFIG_FILE", config_file):
+            result = create_creature_wolt("wolter white", "beaver")
+            assert result["name"] == "wolter-white"
+            assert (tmp_path / "wolter-white" / "wolt" / "wolt.json").exists()
+
+    def test_slugifies_uppercase(self, tmp_path):
+        from wolts import create_creature_wolt
+        config_file = tmp_path / "woltspace.json"
+        config_file.write_text(json.dumps({}))
+
+        with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.CONFIG_FILE", config_file):
+            result = create_creature_wolt("MyWolt", "beaver")
+            assert result["name"] == "mywolt"
+            assert (tmp_path / "mywolt" / "wolt" / "wolt.json").exists()
+
+    def test_slugifies_leading_numbers(self, tmp_path):
+        from wolts import create_creature_wolt
+        config_file = tmp_path / "woltspace.json"
+        config_file.write_text(json.dumps({}))
+
+        with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.CONFIG_FILE", config_file):
+            result = create_creature_wolt("123wolt", "beaver")
+            assert result["name"] == "wolt"
+            assert (tmp_path / "wolt" / "wolt" / "wolt.json").exists()
+
+    def test_raises_on_empty_name(self, tmp_path):
+        from wolts import create_creature_wolt
+        config_file = tmp_path / "woltspace.json"
+        config_file.write_text(json.dumps({}))
+
+        with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.CONFIG_FILE", config_file):
+            with pytest.raises(ValueError, match="Invalid wolt name"):
+                create_creature_wolt("", "beaver")
+
+    def test_raises_on_unsalvageable_name(self, tmp_path):
+        from wolts import create_creature_wolt
+        config_file = tmp_path / "woltspace.json"
+        config_file.write_text(json.dumps({}))
+
+        with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.CONFIG_FILE", config_file):
+            with pytest.raises(ValueError, match="Invalid wolt name"):
+                create_creature_wolt("!!!###", "beaver")
+
+    def test_slugifies_long_name(self, tmp_path):
+        from wolts import create_creature_wolt
+        config_file = tmp_path / "woltspace.json"
+        config_file.write_text(json.dumps({}))
+
+        with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.CONFIG_FILE", config_file):
+            result = create_creature_wolt("a" * 30, "beaver")
+            assert len(result["name"]) == 20
+
+    def test_allows_valid_name_with_hyphens(self, tmp_path):
+        from wolts import create_creature_wolt
+        config_file = tmp_path / "woltspace.json"
+        config_file.write_text(json.dumps({}))
+
+        with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.CONFIG_FILE", config_file):
+            result = create_creature_wolt("wolter-white", "beaver")
+            assert result["name"] == "wolter-white"
+            assert (tmp_path / "wolter-white" / "wolt" / "wolt.json").exists()
 
     def test_rodent_no_singleton_tracking(self, tmp_path):
         from wolts import create_creature_wolt

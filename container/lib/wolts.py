@@ -13,6 +13,7 @@ Usage:
 
 import json
 import os
+import re
 from pathlib import Path
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
@@ -24,6 +25,23 @@ VALID_TYPES = RODENT_TYPES | {"wolf", "dog", "spider", "bear", "panda"}
 
 # Types that can only have one active at a time
 SINGLETON_TYPES = {"wolf", "dog"}
+
+# Name validation — lowercase letters, numbers, hyphens. Must start with a letter.
+WOLT_NAME_PATTERN = re.compile(r'^[a-z][a-z0-9-]*$')
+WOLT_NAME_MAX_LENGTH = 20
+
+
+def slugify_wolt_name(name: str) -> str:
+    """Sanitize a wolt name into a valid slug.
+
+    'Wolter White' → 'wolter-white', '  My Wolt! ' → 'my-wolt', '123bad' → 'bad'
+    Returns empty string if nothing salvageable.
+    """
+    s = name.strip().lower()
+    s = re.sub(r'[^a-z0-9]+', '-', s)  # replace non-alphanumeric runs with single hyphen
+    s = s.strip('-')                     # trim leading/trailing hyphens
+    s = re.sub(r'^[0-9-]+', '', s)       # strip leading numbers/hyphens
+    return s[:WOLT_NAME_MAX_LENGTH]
 
 
 def is_rodent(creature_type: str) -> bool:
@@ -77,11 +95,18 @@ def set_active_creature(creature_type: str, wolt_name: str) -> None:
 def create_creature_wolt(name: str, creature_type: str, role: str = "", description: str = "") -> dict:
     """Create a minimal creature-wolt directory.
 
+    The name is auto-slugified: 'Wolter White' → 'wolter-white'.
+
     Returns a dict with:
         - "dir": Path to the new wolt directory
+        - "name": the sanitized name (may differ from input)
         - "demoted": name of the old wolt that was demoted to rodent, or None
-    Raises ValueError if the type is invalid or the name already exists.
+    Raises ValueError if the name is unsalvageable, type is invalid, or the name already exists.
     """
+    name = slugify_wolt_name(name)
+    if not name:
+        raise ValueError(f"Invalid wolt name: '{name}'. Must contain at least one letter.")
+
     if creature_type not in VALID_TYPES:
         raise ValueError(f"Invalid creature type: {creature_type}. Must be one of: {', '.join(sorted(VALID_TYPES))}")
 
@@ -136,4 +161,4 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "", descript
     if creature_type in SINGLETON_TYPES:
         set_active_creature(creature_type, name)
 
-    return {"dir": wolt_dir, "demoted": demoted}
+    return {"dir": wolt_dir, "name": name, "demoted": demoted}
