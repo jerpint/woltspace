@@ -571,6 +571,139 @@
     }
     .footer a:hover { color: var(--amber); }
 
+    /* ---- CREATE MODAL ---- */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(10, 8, 6, 0.7);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: fadeIn 0.15s ease-out;
+    }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes scaleIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+    .modal-dialog {
+      background: var(--bark);
+      border: 1px solid var(--wood);
+      border-radius: 8px;
+      padding: 1.25rem;
+      width: 300px;
+      max-width: 90vw;
+      position: relative;
+      animation: scaleIn 0.2s ease-out;
+    }
+    .modal-close {
+      position: absolute;
+      top: 0.6rem;
+      right: 0.75rem;
+      background: none;
+      border: none;
+      color: var(--dim);
+      font-size: 1.2rem;
+      cursor: pointer;
+      line-height: 1;
+      padding: 0;
+      transition: color 0.15s;
+    }
+    .modal-close:hover { color: var(--cream); }
+    .modal-title {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--amber);
+      margin-bottom: 1rem;
+    }
+    .modal-label {
+      font-size: 0.58rem;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.25rem;
+      display: block;
+    }
+    .modal-input {
+      width: 100%;
+      font-family: inherit;
+      font-size: 0.78rem;
+      padding: 0.4rem 0.6rem;
+      background: var(--log);
+      border: 1px solid var(--wood);
+      border-radius: 4px;
+      color: var(--cream);
+      outline: none;
+      margin-bottom: 0.75rem;
+      transition: border-color 0.15s;
+    }
+    .modal-input:focus { border-color: var(--amber); }
+    .modal-input::placeholder { color: var(--dim); }
+    .type-picker {
+      display: flex;
+      gap: 0.35rem;
+      margin-bottom: 1rem;
+    }
+    .type-btn {
+      flex: 1;
+      font-family: inherit;
+      padding: 0.5rem 0.25rem;
+      background: var(--log);
+      border: 1px solid var(--wood);
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.15rem;
+    }
+    .type-btn:hover { border-color: var(--muted); }
+    .type-btn.selected {
+      border-color: var(--amber);
+      background: var(--log);
+      box-shadow: 0 0 0 1px var(--amber);
+    }
+    .type-emoji { font-size: 1.2rem; }
+    .type-name { font-size: 0.65rem; font-weight: 600; color: var(--cream); }
+    .type-hint { font-size: 0.52rem; color: var(--dim); }
+    .modal-preview {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 0.6rem;
+      background: var(--log);
+      border-radius: 4px;
+      margin-bottom: 0.75rem;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+    .modal-preview .preview-emoji { font-size: 1rem; }
+    .modal-submit {
+      width: 100%;
+      font-family: inherit;
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 0.5rem;
+      background: var(--moss);
+      border: 1px solid var(--fern);
+      border-radius: 4px;
+      color: var(--cream);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .modal-submit:hover:not(:disabled) { background: var(--fern); }
+    .modal-submit:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .modal-error {
+      font-size: 0.62rem;
+      color: #c0392b;
+      margin-top: 0.5rem;
+      display: none;
+    }
+
     /* ---- BEAVERS RAIN ---- */
     @keyframes beavFall {
       to { transform: translateY(110vh) rotate(360deg); opacity: 0; }
@@ -631,6 +764,44 @@
     </div>
     <div class="session-list" id="session-list">
       <div class="empty">loading...</div>
+    </div>
+  </div>
+
+  <!-- CREATE WOLT MODAL -->
+  <div class="modal-backdrop" id="create-modal" style="display:none" onclick="if(event.target===this)closeCreateModal()">
+    <div class="modal-dialog">
+      <button class="modal-close" onclick="closeCreateModal()">&times;</button>
+      <div class="modal-title">new wolt</div>
+
+      <label class="modal-label">name</label>
+      <input type="text" class="modal-input" id="create-name" placeholder="e.g. chip, luna, fang..." maxlength="20" autocomplete="off" spellcheck="false" oninput="updateCreatePreview()">
+
+      <label class="modal-label">type</label>
+      <div class="type-picker">
+        <button class="type-btn" data-type="otter" onclick="pickCreateType(this)">
+          <span class="type-emoji">🦦</span>
+          <span class="type-name">otter</span>
+          <span class="type-hint">quick — haiku</span>
+        </button>
+        <button class="type-btn" data-type="beaver" onclick="pickCreateType(this)">
+          <span class="type-emoji">🦫</span>
+          <span class="type-name">beaver</span>
+          <span class="type-hint">builder — sonnet</span>
+        </button>
+        <button class="type-btn" data-type="raccoon" onclick="pickCreateType(this)">
+          <span class="type-emoji">🦝</span>
+          <span class="type-name">raccoon</span>
+          <span class="type-hint">thinker — opus</span>
+        </button>
+      </div>
+
+      <div class="modal-preview" id="create-preview" style="display:none">
+        <span class="preview-emoji" id="preview-emoji">🦫</span>
+        <span id="preview-text">chip — beaver</span>
+      </div>
+
+      <button class="modal-submit" id="create-submit" onclick="submitCreateWolt()" disabled>create</button>
+      <div class="modal-error" id="create-error"></div>
     </div>
   </div>
 
@@ -802,15 +973,96 @@
       }).catch(() => {});
     }
 
-    function createWolt() {
-      fetch('/sessions/new/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-      }).then(r => r.json()).then(data => {
-        if (data.name) window.open('/tui?session=' + encodeURIComponent(data.name), '_blank');
-      }).catch(() => {});
+    // ---- Create wolt modal ----
+    let createSelectedType = null;
+    const CREATE_TYPE_EMOJI = { beaver: '🦫', raccoon: '🦝', otter: '🦦' };
+
+    function createWolt() { openCreateModal(); }
+
+    function openCreateModal() {
+      const modal = document.getElementById('create-modal');
+      modal.style.display = 'flex';
+      // reset
+      document.getElementById('create-name').value = '';
+      createSelectedType = null;
+      document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('selected'));
+      document.getElementById('create-submit').disabled = true;
+      document.getElementById('create-submit').textContent = 'create';
+      document.getElementById('create-preview').style.display = 'none';
+      document.getElementById('create-error').style.display = 'none';
+      setTimeout(() => document.getElementById('create-name').focus(), 50);
     }
+
+    function closeCreateModal() {
+      document.getElementById('create-modal').style.display = 'none';
+    }
+
+    function pickCreateType(el) {
+      document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('selected'));
+      el.classList.add('selected');
+      createSelectedType = el.dataset.type;
+      updateCreatePreview();
+    }
+
+    function updateCreatePreview() {
+      const raw = document.getElementById('create-name').value.trim().toLowerCase();
+      const name = raw.replace(/[^a-z0-9-]/g, '');
+      const preview = document.getElementById('create-preview');
+      const submit = document.getElementById('create-submit');
+      const error = document.getElementById('create-error');
+      error.style.display = 'none';
+
+      if (name && createSelectedType) {
+        preview.style.display = 'flex';
+        document.getElementById('preview-emoji').textContent = CREATE_TYPE_EMOJI[createSelectedType];
+        document.getElementById('preview-text').textContent = name + ' — ' + createSelectedType;
+        submit.disabled = false;
+      } else {
+        preview.style.display = 'none';
+        submit.disabled = true;
+      }
+    }
+
+    async function submitCreateWolt() {
+      const raw = document.getElementById('create-name').value.trim().toLowerCase();
+      const name = raw.replace(/[^a-z0-9-]/g, '');
+      if (!name || !createSelectedType) return;
+
+      const submit = document.getElementById('create-submit');
+      const error = document.getElementById('create-error');
+      submit.textContent = 'creating...';
+      submit.disabled = true;
+      error.style.display = 'none';
+
+      try {
+        const res = await fetch('/sessions/new/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: name, type: createSelectedType }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          error.textContent = data.detail || 'failed to create wolt';
+          error.style.display = 'block';
+          submit.textContent = 'create';
+          submit.disabled = false;
+          return;
+        }
+        closeCreateModal();
+        if (data.name) window.open('/tui?session=' + encodeURIComponent(data.name), '_blank');
+        // reload wolt list to show the new one
+        loadWolts();
+      } catch (e) {
+        error.textContent = 'network error — try again';
+        error.style.display = 'block';
+        submit.textContent = 'create';
+        submit.disabled = false;
+      }
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeCreateModal();
+    });
 
     const projectGrid = document.getElementById('project-grid');
     const projectsCount = document.getElementById('projects-count');

@@ -478,30 +478,50 @@ async def session_message(session_id: str, request: Request):
 
 @app.post("/sessions/new/create")
 async def session_new_create(request: Request):
-    """Start a session to create a new wolt. No existing wolt needed."""
-    name = f"create-wolt-{int(time.time() * 1000) % 100000}"
-    work_dir = str(WOLTS_DIR)
+    """Create a new wolt and start its first session.
+
+    Expects JSON body with:
+      - name: wolt name (required, lowercase alphanumeric + hyphens)
+      - type: creature type (required, one of: otter, beaver, raccoon)
+
+    The server scaffolds the full wolt directory (including .claude/ isolation)
+    before spawning the session. No fallback HOME needed.
+    """
+    body = await request.json()
+    wolt_name = (body.get("name") or "").strip().lower()
+    wolt_type = (body.get("type") or "").strip().lower()
+
+    # Validate name
+    if not wolt_name:
+        return JSONResponse({"detail": "name is required"}, status_code=400)
+    import re
+    if not re.match(r'^[a-z][a-z0-9-]*$', wolt_name):
+        return JSONResponse({"detail": "name must start with a letter and contain only lowercase letters, numbers, and hyphens"}, status_code=400)
+    if len(wolt_name) > 20:
+        return JSONResponse({"detail": "name must be 20 characters or less"}, status_code=400)
+
+    # Validate type — only rodent types can be created from the lodge
+    if wolt_type not in ("otter", "beaver", "raccoon"):
+        return JSONResponse({"detail": "type must be otter, beaver, or raccoon"}, status_code=400)
+
     try:
-        SESSION_REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
-        import json as _json
-        (SESSION_REGISTRY_DIR / f"{name}.json").write_text(_json.dumps({
-            "name": name, "wolt": "", "creature": "beaver", "model": "sonnet",
-            "status": "running", "created_at": int(time.time()),
-            "dir": work_dir, "prompt": "/create-wolt", "adapter": "lodge",
-        }, indent=2) + "\n")
-        # Pre-load viewport with generic wakeup page — instant wow before naming
-        set_current_url("/create-wakeup.html", name, 7777)
-        # Run claude directly — bypass run-session.sh since there's no wolt yet.
-        # Set WOLT_SESSION so push-view can target the right viewport.
-        cmd = f"export WOLT_SESSION={name} && wclaude --dangerously-skip-permissions --model sonnet '/create-wolt new'"
-        subprocess.run(
-            ["tmux", "new-session", "-d", "-s", name, "-c", work_dir, "bash", "-c", cmd],
-            check=True,
+        # Step 1: Scaffold the wolt (dir, wolt.json, memory, site, .claude/, CLAUDE.md)
+        from wolts import create_creature_wolt
+        create_creature_wolt(wolt_name, wolt_type)
+        print(f"[sessions/create] scaffolded wolt '{wolt_name}' ({wolt_type})")
+
+        # Step 2: Start a session — full isolation, site auto-start, viewport
+        result = start_session(
+            wolt=wolt_name,
+            prompt="/create-wolt",
+            routing={"adapter": "lodge"},
         )
-        print(f"[sessions/create] spawned {name}")
-        return {"name": name}
+        print(f"[sessions/create] spawned {result['name']} for {wolt_name}")
+        return result
+    except ValueError as e:
+        return JSONResponse({"detail": str(e)}, status_code=409)
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"detail": str(e)}, status_code=500)
 
 
 @app.post("/sessions/new/lodge")

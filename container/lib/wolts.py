@@ -13,9 +13,11 @@ Usage:
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+WOLTSPACE_DIR = Path(os.environ.get("WOLTSPACE_DIR", "/workspace/woltspace"))
 CONFIG_FILE = WOLTS_DIR / "woltspace.json"
 
 # Valid creature types
@@ -158,11 +160,125 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "", descript
             _wakeup_template(name, creature_type)
         )
 
+    # Set up per-wolt .claude/ config (isolation)
+    setup_wolt_claude_config(wolt_dir, name)
+
+    # Write seed CLAUDE.md
+    _write_seed_claude_md(wolt_dir, name, creature_type)
+
     # Set as active creature if singleton
     if creature_type in SINGLETON_TYPES:
         set_active_creature(creature_type, name)
 
     return {"dir": wolt_dir, "demoted": demoted}
+
+
+def setup_wolt_claude_config(wolt_dir: Path, name: str) -> None:
+    """Set up per-wolt .claude/ directory for config isolation.
+
+    Creates:
+      - .claude/settings.json — platform defaults (hooks, permissions)
+      - .claude/.credentials.json — symlink to shared credentials
+      - .claude/skills/ — copy of platform skills
+      - .claude.json — trust config for this wolt's directories
+    """
+    claude_dir = wolt_dir / ".claude"
+    claude_dir.mkdir(exist_ok=True)
+
+    # Settings — platform defaults
+    settings = {
+        "skipDangerousModePermissionPrompt": True,
+        "hooks": {
+            "Stop": [{"hooks": [{"type": "command", "command": str(WOLTSPACE_DIR / "container/hooks/session-done.sh")}]}],
+            "Notification": [{"hooks": [{"type": "command", "command": str(WOLTSPACE_DIR / "container/hooks/notify.sh")}]}],
+        },
+    }
+    (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
+
+    # Credentials — symlink to shared
+    shared_creds = WOLTS_DIR / ".credentials.json"
+    creds_link = claude_dir / ".credentials.json"
+    if shared_creds.exists() and not creds_link.exists():
+        creds_link.symlink_to(shared_creds)
+    elif not shared_creds.exists():
+        # Fall back: symlink to global if shared doesn't exist yet
+        global_creds = Path.home() / ".claude" / ".credentials.json"
+        if global_creds.exists() and not creds_link.exists():
+            creds_link.symlink_to(global_creds)
+
+    # Skills — copy platform skills
+    skills_dir = claude_dir / "skills"
+    platform_skills = WOLTSPACE_DIR / "container" / "skills"
+    if platform_skills.is_dir():
+        if skills_dir.exists():
+            shutil.rmtree(skills_dir)
+        shutil.copytree(platform_skills, skills_dir)
+
+    # Trust config — .claude.json at wolt root.
+    # Copy from global ~/.claude.json so the wolt inherits runtime state
+    # (firstStartTime, userID, etc.) that Claude needs to skip onboarding.
+    # Then merge in per-wolt trust entries.
+    trust_config = wolt_dir / ".claude.json"
+    if not trust_config.exists():
+        global_config = Path.home() / ".claude.json"
+        trust_data = json.loads(global_config.read_text()) if global_config.exists() else {}
+        trust = {"hasTrustDialogAccepted": True, "hasCompletedProjectOnboarding": True}
+        projects = trust_data.get("projects", {})
+        projects[str(wolt_dir)] = trust
+        projects[str(wolt_dir / "wolt")] = trust
+        trust_data["projects"] = projects
+        trust_data["autoUpdates"] = False
+        trust_config.write_text(json.dumps(trust_data, indent=2) + "\n")
+
+
+def _write_seed_claude_md(wolt_dir: Path, name: str, creature_type: str) -> None:
+    """Write a seed CLAUDE.md for a new wolt if one doesn't already exist."""
+    claude_md = wolt_dir / "CLAUDE.md"
+    if claude_md.exists():
+        return
+
+    tier = {"raccoon": "Opus", "beaver": "Sonnet", "otter": "Haiku"}.get(creature_type, creature_type.title())
+    claude_md.write_text(f"""# {name}
+
+{creature_type.title()} wolt ({tier}). Just born.
+
+## Project Structure
+
+```
+wolt/           — identity, content, and artifacts
+  memory/       — identity, context, learnings (boot files)
+    archive/    — session journals, old context, detailed notes
+  site/         — public space (static HTML/CSS)
+  sparks/       — generated artifacts
+  drafts/       — writing and drafts
+.env            — secrets (gitignored)
+```
+
+## Memory System
+
+Memories live in `wolt/memory/`. Two tiers:
+
+**Boot files** — read at session start, kept lean:
+- `wolt/memory/identity.md` - Who I am
+- `wolt/memory/context.md` - Current snapshot: what's active, what's next
+- `wolt/memory/learnings.md` - Active patterns and lessons
+
+**Archive** — `wolt/memory/archive/`, grows forever, searched when needed:
+- `conversations.md` - Session journals (append-only)
+
+**The rule:** boot files get *rewritten*, not appended. Archive old details before updating.
+
+**Update memories frequently** - sessions can end without warning.
+
+**DO NOT use built-in Claude Code memory system.** Only write to `wolts/{name}/wolt/memory/`.
+
+## Working Principles
+
+- Build first, explain after
+- Update memories as you go — sessions end without warning
+- Keep it simple — vanilla HTML/CSS is fine if it works
+- **I drive, human assists**
+""")
 
 
 def _wakeup_template(name: str, creature_type: str) -> str:
