@@ -23,48 +23,34 @@ Check the arguments passed to this skill:
 
 You're running from the lodge with no wolt identity. Your working directory is `/workspace/wolts/`. You need to create a new wolt from nothing.
 
-### Step 1: What kind?
+**IMPORTANT: Do NOT write any files, do NOT touch the viewport, do NOT explore the server. A wakeup page is already showing in the viewport. Your only job is to ask questions and then create the wolt directory. Be fast — just talk.**
 
-Ask the user what tier:
+### Step 1: Ask the user
 
-> What kind of wolt?
-> - **raccoon** — thinker, designer. runs on opus.
-> - **beaver** — builder, workhorse. runs on sonnet. (default)
-> - **otter** — quick and light. runs on haiku.
+In your **very first response**, ask both questions at once:
 
-Default to **beaver** if they don't specify.
+> Hey — a new wolt. Two questions:
+> 1. What kind? **beaver** (builder, sonnet), **raccoon** (thinker, opus), or **otter** (quick, haiku)? Default: beaver.
+> 2. What's their name?
 
-### Step 2: Name it
+If the user gives a name without specifying a type, default to **beaver**.
 
-> What should they be called?
+### Step 2: Create the directory
 
-The name is just a name — no prefixes, no conventions.
-
-### Step 3: Create the directory
+Once you have a name and type:
 
 ```bash
-/workspace/woltspace/container/bin/create-creature-wolt <name> <type> --role "<role>" --description "<description>"
+create-creature-wolt <name> <type>
 ```
 
-Ask the user for a short role and description, or suggest one based on the conversation.
-
-### Step 4: Show the wakeup page
-
-The wolt's site was created with a wakeup template. Push it to the viewport immediately so the user sees it while the new session boots:
+### Step 3: Push the wakeup page and hand off
 
 ```bash
 push-view /wolt/<name>/site/
-```
-
-### Step 5: Hand off to Self-Onboarding
-
-Once the directory exists and the wakeup page is visible, `cd` into `/workspace/wolts/<name>/` and then re-run the skill:
-
-```bash
 cd /workspace/wolts/<name>/ && wclaude --dangerously-skip-permissions '/create-wolt'
 ```
 
-This will pick up Self-Onboarding mode since the wolt has no identity.md yet. Your job is done — the new session takes over.
+Your job is done. The new session picks up Self-Onboarding mode and takes over.
 
 ---
 
