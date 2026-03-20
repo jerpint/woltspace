@@ -63,10 +63,10 @@ def write_bashrc(wolt_dir: Path, wolt_name: str):
             f"wolt() {{\n"
             f'  cd {wolt_dir}\n'
             f'  if [[ "$1" == "--resume" ]]; then\n'
-            f"    claude --dangerously-skip-permissions --resume\n"
+            f"    wclaude --dangerously-skip-permissions --resume\n"
             f"  else\n"
             # TODO: replace with a /wake skill instead of hardcoded greeting
-            f'    claude --dangerously-skip-permissions "hey {wolt_name}" "$@"\n'
+            f'    wclaude --dangerously-skip-permissions "hey {wolt_name}" "$@"\n'
             f"  fi\n"
             f"}}\n"
         )
@@ -78,13 +78,14 @@ def write_bashrc(wolt_dir: Path, wolt_name: str):
 
 
 def write_trust_config(wolts_dir: Path):
+    # Pre-trust all known wolt directories at boot. This is a baseline —
+    # Claude Code may overwrite .claude.json with its own state, so trust-dir
+    # provides just-in-time injection before every claude invocation.
+    trust = {"hasTrustDialogAccepted": True, "hasCompletedProjectOnboarding": True}
     projects = {}
     for d in sorted(wolts_dir.iterdir()):
         if d.is_dir() and not d.name.startswith("."):
-            projects[str(d)] = {
-                "hasTrustDialogAccepted": True,
-                "hasCompletedProjectOnboarding": True,
-            }
+            projects[str(d)] = trust
     config = {
         "hasCompletedOnboarding": True,
         "bypassPermissionsAccepted": True,

@@ -22,6 +22,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from sites import start_site
+
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 DEFAULT_REGISTRY_DIR = WOLTS_DIR / ".state" / "registry"
 RUN_SESSION_SCRIPT = Path("/workspace/woltspace/container/bin/run-session.sh")
@@ -338,7 +340,41 @@ def start_session(
     if creature:
         result["creature"] = creature
         result["model"] = model
+
+    # Auto-start wolt site for non-project sessions.
+    # The site livereload server provides instant viewport content.
+    if not project:
+        try:
+            site_state = start_site(wolt)
+            site_url = f"/wolt/{wolt}/site/"
+            result["site_url"] = site_url
+            result["site_port"] = site_state["port"]
+            # Write viewport URL file so split.html loads the site immediately.
+            # This must happen here (not in routes) because the bot calls
+            # start_session() directly without going through HTTP routes.
+            _set_viewport_url(site_url, name)
+        except Exception as e:
+            print(f"[sites] failed to auto-start for {wolt}: {e}")
+
     return result
+
+
+def _set_viewport_url(url: str, session: str, port: int = 7777):
+    """Write the viewport URL file for a session.
+
+    Writes to WOLT_DIR/.state/current-url-{session}.json — the same
+    location that server/state.py:set_current_url() uses. Duplicated here
+    to avoid coupling container/lib to the server package.
+    """
+    import re
+    wolt_dir = Path(os.environ.get("WOLT_DIR", str(WOLTS_DIR)))
+    state_dir = wolt_dir / ".state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "", session or "")[:64] or "main"
+    (state_dir / f"current-url-{safe}.json").write_text(
+        json.dumps({"url": url, "port": port, "updated": int(time.time() * 1000)})
+    )
+    print(f"[viewport:{safe}] → {url}")
 
 
 # --- CLI interface (used by session-reg bash wrapper) ---

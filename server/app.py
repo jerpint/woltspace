@@ -404,7 +404,6 @@ async def onboard_status():
         "wolts_dir": str(WOLTS_DIR),
         "wolt_name": WOLT_NAME,
         "has_oauth": Path("/home/node/.claude/.credentials.json").exists(),
-        "has_human_name": bool(env.get("HUMAN_NAME", "").strip() and env.get("HUMAN_NAME") != "your-name"),
         "has_llm_key": bool(env.get("ANTHROPIC_API_KEY") or env.get("OPENROUTER_API_KEY")),
         "has_telegram": env.get("ENABLE_TELEGRAM_BOT") == "true" and bool(env.get("TELEGRAM_BOT_TOKEN")),
     }
@@ -490,10 +489,13 @@ async def session_new_create(request: Request):
             "status": "running", "created_at": int(time.time()),
             "dir": work_dir, "prompt": "/create-wolt", "adapter": "lodge",
         }, indent=2) + "\n")
-        # Run claude directly — bypass run-session.sh since there's no wolt yet
-        cmd = f"claude --dangerously-skip-permissions --model sonnet '/create-wolt new'"
+        # Pre-load viewport with generic wakeup page — instant wow before naming
+        set_current_url("/create-wakeup.html", name, 7777)
+        # Run claude directly — bypass run-session.sh since there's no wolt yet.
+        # Set WOLT_SESSION so push-view can target the right viewport.
+        cmd = f"export WOLT_SESSION={name} && wclaude --dangerously-skip-permissions --model sonnet '/create-wolt new'"
         subprocess.run(
-            ["tmux", "new-session", "-d", "-s", name, "-c", work_dir, cmd],
+            ["tmux", "new-session", "-d", "-s", name, "-c", work_dir, "bash", "-c", cmd],
             check=True,
         )
         print(f"[sessions/create] spawned {name}")
@@ -517,17 +519,7 @@ async def session_new_lodge(request: Request):
             project=body.get("project", ""),
             routing={"adapter": "lodge"},
         )
-        # Auto-start wolt site and set it as the viewport immediately
-        if not body.get("project"):
-            try:
-                site_state = start_site(wolt)
-                site_url = f"/wolt/{wolt}/site/"
-                result["site_url"] = site_url
-                result["site_port"] = site_state["port"]
-                # Pre-load viewport so it's ready before claude boots
-                set_current_url(site_url, result["name"], 7777)
-            except Exception as e:
-                print(f"[sites] failed to auto-start for {wolt}: {e}")
+        # Site auto-start + viewport URL handled by start_session()
         print(f"[sessions/lodge] spawned {result['name']} for {wolt}")
         return result
     except ValueError as e:
@@ -555,6 +547,7 @@ async def session_new_telegram(request: Request):
                 "user_id": body.get("user_id", ""),
             },
         )
+        # Site auto-start + viewport URL handled by start_session()
         print(f"[sessions/telegram] spawned {result['name']} for {wolt}")
         return result
     except ValueError as e:
@@ -583,6 +576,7 @@ async def session_new_slack(request: Request):
                 "thread_ts": body.get("thread_ts", ""),
             },
         )
+        # Site auto-start + viewport URL handled by start_session()
         print(f"[sessions/slack] spawned {result['name']} for {wolt}")
         return result
     except ValueError as e:

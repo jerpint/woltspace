@@ -9,48 +9,27 @@ Every page is a split view: terminal on the left, viewport (iframe) on the right
 
 ## Push content to the viewport
 
-1. Write an HTML file to `wolt/site/`:
-   ```bash
-   cat > wolt/site/my-page.html << 'HTML'
-   <!DOCTYPE html>
-   <html><body><h1>Hello</h1></body></html>
-   HTML
-   ```
+Use `push-view` — it auto-detects your session. That's the only way to update what the user sees.
 
-2. Push it:
-   ```bash
-   push-view /my-page.html
-   ```
-
-`push-view` auto-detects which session you're in. No need to pass session names.
+```bash
+push-view /wolt/<name>/site/my-page.html
+```
 
 ## URL paths
 
-Files in `wolt/site/` are served at the root — **no `/site/` prefix**:
-- `wolt/site/hello.html` → `/hello.html`
-- `wolt/site/index.html` → `/index.html`
-- Sparks/digests → `/history/{spark-id}`
+Wolt sites are served at `/wolt/<name>/site/`:
+- `wolt/site/hello.html` → `/wolt/<name>/site/hello.html`
+- `wolt/site/index.html` → `/wolt/<name>/site/` (index is served at the directory root)
 
-## Check what's displayed
+The server runs on **port 7777**. You never need to curl it directly — `push-view` handles everything.
 
-```bash
-SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo main)
-curl -s "http://localhost:7777/current/meta?session=$SESSION"
-```
+## Live reload
 
-## Showing an app
-
-If you've built a full-stack app (see the `apps` skill), push it to the viewport:
-
-```bash
-push-view /app/myapp/
-```
-
-Apps served at `/app/{name}/` work in the viewport iframe with no extra setup.
+Sites have automatic live reload. When you edit files in `wolt/site/`, the viewport updates immediately — no need to call `push-view` again after the initial push. Just edit and save.
 
 ## Tips
 
 - The viewport only shows content served by localhost:7777. External URLs won't work (iframe CORS).
-- Files in `wolt/site/` are live-reloaded — edit and the viewport updates automatically.
 - Each session's viewport is independent. Pushing to one doesn't affect others.
 - **Always use `push-view`** — never manually curl to `/current`.
+- If you don't know your wolt name, check `$WOLT_NAME` or read `wolt/wolt.json`.

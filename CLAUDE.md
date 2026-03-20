@@ -175,8 +175,10 @@ Used by core.py, run-session.sh, notify, and server. CLI wrapper: `session-reg`.
 
 ### `container/bin/`
 Utility scripts available in container PATH:
+- `wclaude` — **always use this instead of bare `claude` inside the container.** Trusts `$PWD` via `trust-dir` before launching Claude Code — prevents the workspace trust dialog. All args pass through.
+- `trust-dir <directory>` — add a directory to Claude's trusted projects in `~/.claude.json`. Only trusts dirs under `/workspace/wolts/`. Used internally by `wclaude`.
 - `push-view <path>` — set viewport URL for current session
-- `run-session.sh` — wrapper that sends ack, injects notification context, runs Claude Code
+- `run-session.sh` — wrapper that injects notification context and runs Claude Code
 - `notify` — send message back to originating adapter (Telegram/Slack)
 - `session-reg` — CLI for the session registry (`session-reg list`, `session-reg get <name>`, `session-reg reconcile`)
 - `create-creature-wolt <name> <type>` — create a new creature-wolt (wolf, dog, rodent, etc.)
@@ -282,7 +284,6 @@ Each adapter is a thin Python file over `core.py`. To add a new adapter: copy `t
 Set in `~/.woltspace/wolts/.env`:
 
 ```bash
-HUMAN_NAME=               # used in bot system prompt
 ENABLE_TELEGRAM_BOT=true
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_ALLOWED_USERS=   # comma-separated IDs, or empty for open
