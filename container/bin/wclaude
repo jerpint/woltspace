@@ -1,0 +1,6 @@
+#!/bin/bash
+# Wrapper that trusts $PWD before launching Claude Code.
+# Use this instead of bare `claude` inside the container — prevents
+# the workspace trust dialog for directories under /workspace/wolts/.
+trust-dir "$(pwd)" 2>/dev/null
+exec claude "$@"

@@ -494,7 +494,7 @@ async def session_new_create(request: Request):
         set_current_url("/create-wakeup.html", name, 7777)
         # Run claude directly — bypass run-session.sh since there's no wolt yet.
         # Set WOLT_SESSION so push-view can target the right viewport.
-        cmd = f"export WOLT_SESSION={name} && claude --dangerously-skip-permissions --model sonnet '/create-wolt new'"
+        cmd = f"export WOLT_SESSION={name} && wclaude --dangerously-skip-permissions --model sonnet '/create-wolt new'"
         subprocess.run(
             ["tmux", "new-session", "-d", "-s", name, "-c", work_dir, "bash", "-c", cmd],
             check=True,

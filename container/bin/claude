@@ -1,6 +1,0 @@
-#!/bin/bash
-# Wrapper that trusts the current directory before launching Claude Code.
-# Shadows the real claude binary — prevents the workspace trust dialog
-# inside the container where everything under /workspace/wolts/ is safe.
-trust-dir "$(pwd)" 2>/dev/null
-exec /home/node/.local/bin/claude "$@"

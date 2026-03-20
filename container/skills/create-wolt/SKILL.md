@@ -61,7 +61,7 @@ push-view /wolt/<name>/site/
 Once the directory exists and the wakeup page is visible, `cd` into `/workspace/wolts/<name>/` and then re-run the skill:
 
 ```bash
-cd /workspace/wolts/<name>/ && claude --dangerously-skip-permissions '/create-wolt'
+cd /workspace/wolts/<name>/ && wclaude --dangerously-skip-permissions '/create-wolt'
 ```
 
 This will pick up Self-Onboarding mode since the wolt has no identity.md yet. Your job is done — the new session takes over.

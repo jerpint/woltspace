@@ -175,8 +175,8 @@ Used by core.py, run-session.sh, notify, and server. CLI wrapper: `session-reg`.
 
 ### `container/bin/`
 Utility scripts available in container PATH:
-- `claude` — wrapper that trusts `$PWD` before launching Claude Code. Shadows the real binary to prevent the workspace trust dialog inside the container. Uses `trust-dir` internally.
-- `trust-dir <directory>` — add a directory to Claude's trusted projects in `~/.claude.json`. Only trusts dirs under `/workspace/wolts/`.
+- `wclaude` — **always use this instead of bare `claude` inside the container.** Trusts `$PWD` via `trust-dir` before launching Claude Code — prevents the workspace trust dialog. All args pass through.
+- `trust-dir <directory>` — add a directory to Claude's trusted projects in `~/.claude.json`. Only trusts dirs under `/workspace/wolts/`. Used internally by `wclaude`.
 - `push-view <path>` — set viewport URL for current session
 - `run-session.sh` — wrapper that injects notification context and runs Claude Code
 - `notify` — send message back to originating adapter (Telegram/Slack)
