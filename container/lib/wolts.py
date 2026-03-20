@@ -214,23 +214,20 @@ def setup_wolt_claude_config(wolt_dir: Path, name: str) -> None:
             shutil.rmtree(skills_dir)
         shutil.copytree(platform_skills, skills_dir)
 
-    # Trust config — .claude.json at wolt root (HOME will be wolt_dir)
+    # Trust config — .claude.json at wolt root.
+    # Copy from global ~/.claude.json so the wolt inherits runtime state
+    # (firstStartTime, userID, etc.) that Claude needs to skip onboarding.
+    # Then merge in per-wolt trust entries.
     trust_config = wolt_dir / ".claude.json"
     if not trust_config.exists():
-        trust_data = {
-            "numStartups": 1,
-            "autoUpdates": False,
-            "projects": {
-                str(wolt_dir): {
-                    "hasTrustDialogAccepted": True,
-                    "hasCompletedProjectOnboarding": True,
-                },
-                str(wolt_dir / "wolt"): {
-                    "hasTrustDialogAccepted": True,
-                    "hasCompletedProjectOnboarding": True,
-                },
-            },
-        }
+        global_config = Path.home() / ".claude.json"
+        trust_data = json.loads(global_config.read_text()) if global_config.exists() else {}
+        trust = {"hasTrustDialogAccepted": True, "hasCompletedProjectOnboarding": True}
+        projects = trust_data.get("projects", {})
+        projects[str(wolt_dir)] = trust
+        projects[str(wolt_dir / "wolt")] = trust
+        trust_data["projects"] = projects
+        trust_data["autoUpdates"] = False
         trust_config.write_text(json.dumps(trust_data, indent=2) + "\n")
 
 

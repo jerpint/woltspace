@@ -78,23 +78,21 @@ def write_bashrc(wolt_dir: Path, wolt_name: str):
 
 
 def write_trust_config(wolts_dir: Path):
-    # Pre-trust all known wolt directories at boot. This is a baseline —
-    # Claude Code may overwrite .claude.json with its own state, so trust-dir
-    # provides just-in-time injection before every claude invocation.
+    # Merge trust entries into existing .claude.json rather than overwriting.
+    # Claude Code writes runtime state (firstStartTime, userID, etc.) that it
+    # needs to skip the onboarding/theme prompt. Overwriting nukes that state.
+    config_path = HOME / ".claude.json"
+    config = json.loads(config_path.read_text()) if config_path.exists() else {}
+
     trust = {"hasTrustDialogAccepted": True, "hasCompletedProjectOnboarding": True}
-    projects = {}
+    projects = config.get("projects", {})
     for d in sorted(wolts_dir.iterdir()):
         if d.is_dir() and not d.name.startswith("."):
             projects[str(d)] = trust
-    config = {
-        "hasCompletedOnboarding": True,
-        "bypassPermissionsAccepted": True,
-        "numStartups": 1,
-        "lastOnboardingVersion": "9.9.99",
-        "tipsHistory": {"new-user-warmup": 1},
-        "installMethod": "native",
-        "projects": projects,
-    }
+
+    config["hasCompletedOnboarding"] = True
+    config["bypassPermissionsAccepted"] = True
+    config["projects"] = projects
     (HOME / ".claude.json").write_text(json.dumps(config, indent=2) + "\n")
 
 
