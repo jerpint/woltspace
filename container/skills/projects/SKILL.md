@@ -5,80 +5,93 @@ description: Work with projects — the isolated workspace for building apps, sc
 
 # Projects — Isolated Workspaces
 
-Projects live at `wolt/projects/{name}/` and are served at `/project/{name}/`. Each project is self-contained — its own code, deps, and server.
+Projects are things you ship — apps, tools, services. They live at `wolts/projects/{name}/` and are served at `/project/{name}/`. Each project is self-contained with its own code, deps, and server.
+
+**Projects are an escalation from sites.** Your site (`wolt/site/`) is your lightweight private workspace. A project is for when the work needs its own server, dependencies, or is meant to be shared. Always confirm with the user before creating one.
+
+## Sites vs Projects
+
+| | Site (`wolt/site/`) | Project (`wolts/projects/`) |
+|---|---|---|
+| **Purpose** | Your private workspace | Something you ship |
+| **Visibility** | Private to the wolt owner | Can be public |
+| **Complexity** | Static HTML/CSS/JS, lightweight | Own server, deps, manifest |
+| **Created by** | Wolts, freely | User opts in |
+| **Manifest** | None needed | `woltspace.json` required |
+| **Example** | Personal digest, scratch mockups | Workout tracker, shared tool |
+
+**When to suggest a project:** the user wants a backend, deps, sharing, or something that outgrows static HTML. Say: "This is getting complex — want me to set it up as a project?"
 
 ## Creating a project
 
 ```bash
-mkdir -p wolt/projects/my-app
-cd wolt/projects/my-app
+mkdir -p /workspace/wolts/projects/my-app
+cd /workspace/wolts/projects/my-app
 # ... set up your code
 ```
 
-That's it. No manifest required upfront. Just start building.
+Then write `woltspace.json` — **this is required** for the platform to discover and serve the project:
+
+```json
+{
+  "name": "my-app",
+  "description": "What this does",
+  "stack": "node",
+  "install": "npm install",
+  "start": "npm run dev",
+  "keeper": "your-wolt-name"
+}
+```
+
+### Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | yes | Matches directory name, globally unique |
+| `keeper` | yes | Your wolt name — who owns this |
+| `description` | no | What the project does |
+| `stack` | no | `python`, `vite`, `node`, or `html` |
+| `install` | no | Install command |
+| `start` | no | Start command. Null = can't start from lodge. |
+| `source` | no | Origin URL if cloned |
+| `emoji` | no | Display emoji (auto-assigned) |
+
+**Important:** Only `woltspace.json` is recognized. Not `project.json`, not `app.json`.
 
 ## Serving a project
 
-Projects are served at `/project/{name}/` automatically. Three modes:
+Three modes, auto-detected:
 
 ### 1. Static files (simplest)
 
-Just put HTML/CSS/JS files in the project directory:
-
-```
-wolt/projects/my-page/
-  index.html
-  style.css
-```
-
-Served at `/project/my-page/`. No config needed.
+Put HTML/CSS/JS in the project directory. Served at `/project/{name}/`. No config needed.
 
 ### 2. Built static (Vite, Astro, etc.)
 
-Build to `dist/` and it gets served:
-
-```bash
-cd wolt/projects/my-app
-npm run build  # outputs to dist/
-```
-
-**Important:** Set your framework's base path to `/project/{name}/`:
+Build to `dist/` and set the framework base path to `/project/{name}/`:
 - Vite: `base: '/project/my-app/'` in `vite.config.js`
 - Astro: `base: '/project/my-app/'` in `astro.config.mjs`
 
 ### 3. Dev server (any language/framework)
 
-Run your own server and register the port in `project.json`:
+The platform starts the server and sets the `PORT` env var. The proxy strips the `/project/{name}` prefix — your server sees clean paths.
+
+## Starting and stopping
+
+From the lodge, users click start/stop on project cards. From code:
 
 ```bash
-cd wolt/projects/my-api
+# List projects
+curl http://localhost:7777/projects
 
-# Write project.json (the "receipt" — you figured out how to run it)
-cat > project.json << 'JSON'
-{"name": "my-api", "port": 4010, "start": "node server.js"}
-JSON
+# Start (platform allocates port and runs start command)
+curl -X POST http://localhost:7777/projects/my-app/start
 
-# Start it
-node server.js &
+# Stop
+curl -X POST http://localhost:7777/projects/my-app/stop
 ```
 
-The platform proxies `/project/my-api/` → `localhost:4010`, stripping the prefix.
-
-## project.json (optional)
-
-The beaver/raccoon writes this after setting up a project. It's a receipt, not a requirement.
-
-```json
-{
-  "name": "my-app",
-  "port": 4010,
-  "start": "npm run dev",
-  "language": "javascript",
-  "description": "A simple dashboard"
-}
-```
-
-Only `port` is used by the platform (for proxying). Everything else is documentation for future sessions.
+Max 2 running projects at once.
 
 ## Pushing to the viewport
 
@@ -86,22 +99,17 @@ Only `port` is used by the platform (for proxying). Everything else is documenta
 push-view /project/my-app/
 ```
 
-## Listing projects
-
-```bash
-curl http://localhost:7777/projects
-```
-
 ## Port allocation
 
-Use ports 4001-4999 for project servers. Each project gets its own port. Don't conflict with:
+Ports 4001-4999, auto-allocated by the platform. Don't hardcode ports in `woltspace.json` — the platform sets `PORT` at start time. Shared pool with wolt sites.
+
+Reserved:
 - 7777 — platform server
 - 3001 — TUI WebSocket service
 
 ## Key rules
 
-- **All code goes in projects** — don't scatter files in the wolt root
 - **Never edit `/workspace/woltspace/`** — that's the platform
-- **Projects are portable** — a project should work if you copy it out of woltspace
-- **Write project.json after setup** — so the next session knows how to run it
-- **One dev server at a time** is fine; be mindful of container resources
+- **Projects are portable** — should work if copied out of woltspace
+- **Write woltspace.json after setup** — or the project is invisible
+- **One dev server at a time** is fine; max 2 concurrent; be mindful of resources

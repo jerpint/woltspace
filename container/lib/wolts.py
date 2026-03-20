@@ -13,14 +13,24 @@ Usage:
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+WOLTSPACE_DIR = Path(os.environ.get("WOLTSPACE_DIR", "/workspace/woltspace"))
 CONFIG_FILE = WOLTS_DIR / "woltspace.json"
 
 # Valid creature types
 RODENT_TYPES = {"otter", "beaver", "raccoon", "rodent"}  # "rodent" = legacy, treated as raccoon
 VALID_TYPES = RODENT_TYPES | {"wolf", "dog", "spider", "bear", "panda"}
+
+# Rodent emojis and lore for default site template
+CREATURE_META = {
+    "raccoon": {"emoji": "🦝", "lore": "the den is warm. something stirs."},
+    "beaver":  {"emoji": "🦫", "lore": "the dam is quiet. wood creaks."},
+    "otter":   {"emoji": "🦦", "lore": "the river hums. a splash."},
+    "rodent":  {"emoji": "🦫", "lore": "the burrow is dark. eyes open."},
+}
 
 # Types that can only have one active at a time
 SINGLETON_TYPES = {"wolf", "dog"}
@@ -29,6 +39,16 @@ SINGLETON_TYPES = {"wolf", "dog"}
 def is_rodent(creature_type: str) -> bool:
     """Check if a creature type is a rodent (chatty, runs Claude Code sessions)."""
     return creature_type in RODENT_TYPES
+
+
+def _get_wolt_type(wolt_name: str) -> str:
+    """Read a wolt's creature type from its wolt.json. Defaults to 'rodent'."""
+    wolt_json = WOLTS_DIR / wolt_name / "wolt" / "wolt.json"
+    try:
+        data = json.loads(wolt_json.read_text())
+        return data.get("type", "rodent")
+    except (json.JSONDecodeError, OSError):
+        return "rodent"
 
 
 def list_wolts() -> list[dict]:
@@ -132,8 +152,283 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "", descript
         "# Learnings\n\n*Day one.*\n"
     )
 
+    # Create site with wakeup template (rodents only)
+    if is_rodent(creature_type):
+        site_dir = wolt_dir / "wolt" / "site"
+        site_dir.mkdir(parents=True, exist_ok=True)
+        (site_dir / "index.html").write_text(
+            _wakeup_template(name, creature_type)
+        )
+
+    # Set up per-wolt .claude/ config (isolation)
+    setup_wolt_claude_config(wolt_dir, name)
+
+    # Write seed CLAUDE.md
+    _write_seed_claude_md(wolt_dir, name, creature_type)
+
     # Set as active creature if singleton
     if creature_type in SINGLETON_TYPES:
         set_active_creature(creature_type, name)
 
     return {"dir": wolt_dir, "demoted": demoted}
+
+
+def setup_wolt_claude_config(wolt_dir: Path, name: str) -> None:
+    """Set up per-wolt .claude/ directory for config isolation.
+
+    Creates:
+      - .claude/settings.json — platform defaults (hooks, permissions)
+      - .claude/.credentials.json — symlink to shared credentials
+      - .claude/skills/ — copy of platform skills
+      - .claude.json — trust config for this wolt's directories
+    """
+    claude_dir = wolt_dir / ".claude"
+    claude_dir.mkdir(exist_ok=True)
+
+    # Settings — platform defaults
+    settings = {
+        "skipDangerousModePermissionPrompt": True,
+        "hooks": {
+            "Stop": [{"hooks": [{"type": "command", "command": str(WOLTSPACE_DIR / "container/hooks/session-done.sh")}]}],
+            "Notification": [{"hooks": [{"type": "command", "command": str(WOLTSPACE_DIR / "container/hooks/notify.sh")}]}],
+        },
+    }
+    (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
+
+    # Credentials — symlink to shared
+    shared_creds = WOLTS_DIR / ".credentials.json"
+    creds_link = claude_dir / ".credentials.json"
+    if shared_creds.exists() and not creds_link.exists():
+        creds_link.symlink_to(shared_creds)
+    elif not shared_creds.exists():
+        # Fall back: symlink to global if shared doesn't exist yet
+        global_creds = Path.home() / ".claude" / ".credentials.json"
+        if global_creds.exists() and not creds_link.exists():
+            creds_link.symlink_to(global_creds)
+
+    # Skills — copy platform skills
+    skills_dir = claude_dir / "skills"
+    platform_skills = WOLTSPACE_DIR / "container" / "skills"
+    if platform_skills.is_dir():
+        if skills_dir.exists():
+            shutil.rmtree(skills_dir)
+        shutil.copytree(platform_skills, skills_dir)
+
+    # Trust config — .claude.json at wolt root.
+    # Copy from global ~/.claude.json so the wolt inherits runtime state
+    # (firstStartTime, userID, etc.) that Claude needs to skip onboarding.
+    # Then merge in per-wolt trust entries.
+    trust_config = wolt_dir / ".claude.json"
+    if not trust_config.exists():
+        global_config = Path.home() / ".claude.json"
+        trust_data = json.loads(global_config.read_text()) if global_config.exists() else {}
+        trust = {"hasTrustDialogAccepted": True, "hasCompletedProjectOnboarding": True}
+        projects = trust_data.get("projects", {})
+        projects[str(wolt_dir)] = trust
+        projects[str(wolt_dir / "wolt")] = trust
+        trust_data["projects"] = projects
+        trust_data["autoUpdates"] = False
+        trust_config.write_text(json.dumps(trust_data, indent=2) + "\n")
+
+
+def _write_seed_claude_md(wolt_dir: Path, name: str, creature_type: str) -> None:
+    """Write a seed CLAUDE.md for a new wolt if one doesn't already exist."""
+    claude_md = wolt_dir / "CLAUDE.md"
+    if claude_md.exists():
+        return
+
+    tier = {"raccoon": "Opus", "beaver": "Sonnet", "otter": "Haiku"}.get(creature_type, creature_type.title())
+    claude_md.write_text(f"""# {name}
+
+{creature_type.title()} wolt ({tier}). Just born.
+
+## Project Structure
+
+```
+wolt/           — identity, content, and artifacts
+  memory/       — identity, context, learnings (boot files)
+    archive/    — session journals, old context, detailed notes
+  site/         — public space (static HTML/CSS)
+  sparks/       — generated artifacts
+  drafts/       — writing and drafts
+.env            — secrets (gitignored)
+```
+
+## Memory System
+
+Memories live in `wolt/memory/`. Two tiers:
+
+**Boot files** — read at session start, kept lean:
+- `wolt/memory/identity.md` - Who I am
+- `wolt/memory/context.md` - Current snapshot: what's active, what's next
+- `wolt/memory/learnings.md` - Active patterns and lessons
+
+**Archive** — `wolt/memory/archive/`, grows forever, searched when needed:
+- `conversations.md` - Session journals (append-only)
+
+**The rule:** boot files get *rewritten*, not appended. Archive old details before updating.
+
+**Update memories frequently** - sessions can end without warning.
+
+**DO NOT use built-in Claude Code memory system.** Only write to `wolts/{name}/wolt/memory/`.
+
+## Working Principles
+
+- Build first, explain after
+- Update memories as you go — sessions end without warning
+- Keep it simple — vanilla HTML/CSS is fine if it works
+- **I drive, human assists**
+""")
+
+
+def _wakeup_template(name: str, creature_type: str) -> str:
+    """Generate the default wakeup site page for a new wolt."""
+    meta = CREATURE_META.get(creature_type, CREATURE_META["rodent"])
+    emoji = meta["emoji"]
+    lore = meta["lore"]
+    # Map creature type to model tier label
+    tier = {"raccoon": "opus", "beaver": "sonnet", "otter": "haiku"}.get(
+        creature_type, creature_type
+    )
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{name}</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    background: #2a1f14; color: #f0dfc0;
+    min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }}
+  body::after {{
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg, transparent, transparent 2px,
+      rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px
+    );
+    pointer-events: none; z-index: 10;
+  }}
+  .den {{
+    display: flex; flex-direction: column;
+    align-items: center; gap: 1.8rem;
+    text-align: center;
+  }}
+  .sigil {{
+    font-size: 3.2rem; line-height: 1;
+    user-select: none;
+    filter: drop-shadow(0 0 12px rgba(74, 124, 89, 0.5));
+    animation: breathe 2.4s ease-in-out infinite;
+  }}
+  @keyframes breathe {{
+    0%, 100% {{
+      transform: scale(1);
+      filter: drop-shadow(0 0 8px rgba(74, 124, 89, 0.3));
+    }}
+    50% {{
+      transform: scale(1.08);
+      filter: drop-shadow(0 0 24px rgba(74, 124, 89, 0.7));
+    }}
+  }}
+  .name {{ font-size: 1.2rem; color: #f0dfc0; letter-spacing: 0.04em; }}
+  .species {{
+    font-size: 0.68rem; color: #a08060;
+    letter-spacing: 0.12em; text-transform: uppercase;
+    margin-top: -1rem;
+  }}
+  .wake {{
+    font-size: 0.82rem; color: #7bbf8a;
+    letter-spacing: 0.08em;
+    display: flex; align-items: center; gap: 0;
+  }}
+  .wake-text {{ opacity: 0; animation: fadeIn 0.6s ease forwards 0.3s; }}
+  @keyframes fadeIn {{ to {{ opacity: 1; }} }}
+  .dots span {{
+    opacity: 0;
+    animation: dotPulse 1.4s ease-in-out infinite;
+  }}
+  .dots span:nth-child(1) {{ animation-delay: 0s; }}
+  .dots span:nth-child(2) {{ animation-delay: 0.2s; }}
+  .dots span:nth-child(3) {{ animation-delay: 0.4s; }}
+  @keyframes dotPulse {{
+    0%, 60%, 100% {{ opacity: 0; }}
+    30% {{ opacity: 1; }}
+  }}
+  .progress {{
+    width: 200px; height: 2px;
+    background: #3d2b1a; border-radius: 2px;
+    overflow: hidden;
+  }}
+  .progress-fill {{
+    height: 100%; width: 60%; border-radius: 2px;
+    background: linear-gradient(90deg, #3d2b1a, #4a7c59, #3d2b1a);
+    background-size: 200% 100%;
+    animation: shimmer 1.8s ease-in-out infinite;
+  }}
+  @keyframes shimmer {{
+    0% {{ background-position: 200% 0; }}
+    100% {{ background-position: -200% 0; }}
+  }}
+  .lore {{
+    font-size: 0.64rem; color: #8a7060;
+    font-style: italic; margin-top: 0.5rem;
+  }}
+  .status {{
+    font-size: 0.64rem; color: #a08060;
+    height: 1.2em; overflow: hidden;
+  }}
+  .status span {{
+    display: block;
+    animation: fadeInOut 2s ease forwards;
+  }}
+  @keyframes fadeInOut {{
+    0% {{ opacity: 0; transform: translateY(4px); }}
+    15% {{ opacity: 1; transform: translateY(0); }}
+    85% {{ opacity: 1; transform: translateY(0); }}
+    100% {{ opacity: 0; transform: translateY(-4px); }}
+  }}
+</style>
+</head>
+<body>
+<div class="den">
+  <div class="sigil">{emoji}</div>
+  <div class="name">{name}</div>
+  <div class="species">{creature_type} · {tier}</div>
+  <div class="wake">
+    <span class="wake-text">your wolt is waking up</span>
+    <span class="dots"><span>.</span><span>.</span><span>.</span></span>
+  </div>
+  <div class="progress"><div class="progress-fill"></div></div>
+  <div class="status" id="status"></div>
+  <div class="lore">{lore}</div>
+</div>
+<script>
+  const phrases = [
+    'sniffing around',
+    'creating identity',
+    'wolting',
+    'finding its footing',
+    'reading the forest',
+    'stretching',
+    'almost there',
+  ];
+  const statusEl = document.getElementById('status');
+  let i = 0;
+  function next() {{
+    statusEl.innerHTML = '';
+    const span = document.createElement('span');
+    span.textContent = '\\u25b8 ' + phrases[i];
+    statusEl.appendChild(span);
+    i = (i + 1) % phrases.length;
+  }}
+  next();
+  setInterval(next, 2000);
+</script>
+</body>
+</html>
+"""

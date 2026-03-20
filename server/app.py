@@ -24,7 +24,6 @@ from fastapi.responses import (
 
 from . import tools as tool_registry
 from .config import (
-    APPS_DIR,
     APP_MIME_TYPES,
     DEN_REPLY_FOOTER,
     MIME_TYPES,
@@ -52,6 +51,16 @@ from .sparks import get_spark_with_chain, list_sparks
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 from sessions import start_session
+from projects import (
+    WoltspaceProject,
+    discover_projects,
+    get_project,
+    project_dir,
+    running_projects,
+    start_project,
+    stop_project,
+)
+from sites import get_site_state, running_sites, site_dir, start_site, stop_site
 from .state import (
     bot_log,
     current_url_file,
@@ -163,6 +172,92 @@ async def options_handler():
 
 def _shell_quote(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
+
+
+def _project_not_found(name: str) -> str:
+    """Styled 404 page for a project that doesn't exist."""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{name} — not found</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    background: #1a1a1a; color: #c8b89a;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 2rem;
+  }}
+  .card {{
+    max-width: 420px; width: 100%; text-align: center;
+    border: 1px solid #3a3a2a; border-radius: 12px;
+    padding: 2.5rem 2rem; background: #222218;
+  }}
+  .emoji {{ font-size: 3rem; margin-bottom: 1rem; }}
+  h1 {{ font-size: 1.3rem; color: #e8d8b8; margin-bottom: 0.5rem; }}
+  .desc {{ font-size: 0.85rem; color: #8a8060; margin-bottom: 1.5rem; }}
+  .hint {{ font-size: 0.75rem; color: #5a5a4a; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="emoji">🌲</div>
+  <h1>{name}</h1>
+  <p class="desc">This project doesn't exist yet.</p>
+  <p class="hint">Ask your wolt to create it, or check the name.</p>
+</div>
+</body>
+</html>"""
+
+
+def _project_placeholder(name: str, project: "WoltspaceProject | None" = None) -> str:
+    """Styled placeholder page for a project that has no servable content."""
+    emoji = project.emoji if project else "📦"
+    desc = project.description if project and project.description else "No description yet"
+    keeper = project.keeper if project else "unknown"
+    start_cmd = project.start if project and project.start else None
+    status = "Press start to start your project" if start_cmd else "No start command configured"
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{name} — off</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    background: #1a1a1a; color: #c8b89a;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 2rem;
+  }}
+  .card {{
+    max-width: 420px; width: 100%; text-align: center;
+    border: 1px solid #3a3a2a; border-radius: 12px;
+    padding: 2.5rem 2rem; background: #222218;
+  }}
+  .emoji {{ font-size: 3rem; margin-bottom: 1rem; }}
+  h1 {{ font-size: 1.3rem; color: #e8d8b8; margin-bottom: 0.5rem; }}
+  .desc {{ font-size: 0.85rem; color: #8a8060; margin-bottom: 1.5rem; }}
+  .status {{
+    font-size: 0.8rem; color: #6a7a4a;
+    border-top: 1px solid #3a3a2a; padding-top: 1rem;
+  }}
+  .keeper {{ font-size: 0.75rem; color: #5a5a4a; margin-top: 0.8rem; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="emoji">{emoji}</div>
+  <h1>{name}</h1>
+  <p class="desc">{desc}</p>
+  <p class="status">{status}</p>
+  <p class="keeper">keeper: {keeper}</p>
+</div>
+</body>
+</html>"""
 
 
 # jerpint: what trickery is this well need to revise all these hacks
@@ -309,7 +404,6 @@ async def onboard_status():
         "wolts_dir": str(WOLTS_DIR),
         "wolt_name": WOLT_NAME,
         "has_oauth": Path("/home/node/.claude/.credentials.json").exists(),
-        "has_human_name": bool(env.get("HUMAN_NAME", "").strip() and env.get("HUMAN_NAME") != "your-name"),
         "has_llm_key": bool(env.get("ANTHROPIC_API_KEY") or env.get("OPENROUTER_API_KEY")),
         "has_telegram": env.get("ENABLE_TELEGRAM_BOT") == "true" and bool(env.get("TELEGRAM_BOT_TOKEN")),
     }
@@ -384,27 +478,50 @@ async def session_message(session_id: str, request: Request):
 
 @app.post("/sessions/new/create")
 async def session_new_create(request: Request):
-    """Start a session to create a new wolt. No existing wolt needed."""
-    name = f"create-wolt-{int(time.time() * 1000) % 100000}"
-    work_dir = str(WOLTS_DIR)
+    """Create a new wolt and start its first session.
+
+    Expects JSON body with:
+      - name: wolt name (required, lowercase alphanumeric + hyphens)
+      - type: creature type (required, one of: otter, beaver, raccoon)
+
+    The server scaffolds the full wolt directory (including .claude/ isolation)
+    before spawning the session. No fallback HOME needed.
+    """
+    body = await request.json()
+    wolt_name = (body.get("name") or "").strip().lower()
+    wolt_type = (body.get("type") or "").strip().lower()
+
+    # Validate name
+    if not wolt_name:
+        return JSONResponse({"detail": "name is required"}, status_code=400)
+    import re
+    if not re.match(r'^[a-z][a-z0-9-]*$', wolt_name):
+        return JSONResponse({"detail": "name must start with a letter and contain only lowercase letters, numbers, and hyphens"}, status_code=400)
+    if len(wolt_name) > 20:
+        return JSONResponse({"detail": "name must be 20 characters or less"}, status_code=400)
+
+    # Validate type — only rodent types can be created from the lodge
+    if wolt_type not in ("otter", "beaver", "raccoon"):
+        return JSONResponse({"detail": "type must be otter, beaver, or raccoon"}, status_code=400)
+
     try:
-        SESSION_REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
-        import json as _json
-        (SESSION_REGISTRY_DIR / f"{name}.json").write_text(_json.dumps({
-            "name": name, "wolt": "", "creature": "beaver", "model": "sonnet",
-            "status": "running", "created_at": int(time.time()),
-            "dir": work_dir, "prompt": "/create-wolt", "adapter": "lodge",
-        }, indent=2) + "\n")
-        # Run claude directly — bypass run-session.sh since there's no wolt yet
-        cmd = f"claude --dangerously-skip-permissions --model sonnet '/create-wolt new'"
-        subprocess.run(
-            ["tmux", "new-session", "-d", "-s", name, "-c", work_dir, cmd],
-            check=True,
+        # Step 1: Scaffold the wolt (dir, wolt.json, memory, site, .claude/, CLAUDE.md)
+        from wolts import create_creature_wolt
+        create_creature_wolt(wolt_name, wolt_type)
+        print(f"[sessions/create] scaffolded wolt '{wolt_name}' ({wolt_type})")
+
+        # Step 2: Start a session — full isolation, site auto-start, viewport
+        result = start_session(
+            wolt=wolt_name,
+            prompt="/create-wolt",
+            routing={"adapter": "lodge"},
         )
-        print(f"[sessions/create] spawned {name}")
-        return {"name": name}
+        print(f"[sessions/create] spawned {result['name']} for {wolt_name}")
+        return result
+    except ValueError as e:
+        return JSONResponse({"detail": str(e)}, status_code=409)
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"detail": str(e)}, status_code=500)
 
 
 @app.post("/sessions/new/lodge")
@@ -422,6 +539,7 @@ async def session_new_lodge(request: Request):
             project=body.get("project", ""),
             routing={"adapter": "lodge"},
         )
+        # Site auto-start + viewport URL handled by start_session()
         print(f"[sessions/lodge] spawned {result['name']} for {wolt}")
         return result
     except ValueError as e:
@@ -449,6 +567,7 @@ async def session_new_telegram(request: Request):
                 "user_id": body.get("user_id", ""),
             },
         )
+        # Site auto-start + viewport URL handled by start_session()
         print(f"[sessions/telegram] spawned {result['name']} for {wolt}")
         return result
     except ValueError as e:
@@ -477,6 +596,7 @@ async def session_new_slack(request: Request):
                 "thread_ts": body.get("thread_ts", ""),
             },
         )
+        # Site auto-start + viewport URL handled by start_session()
         print(f"[sessions/slack] spawned {result['name']} for {wolt}")
         return result
     except ValueError as e:
@@ -580,67 +700,145 @@ async def list_wolts():
     return wolts
 
 
-# --- Apps ---
-
-@app.get("/apps")
-async def list_apps():
-    apps = []
-    if APPS_DIR.exists():
-        for entry in APPS_DIR.iterdir():
-            app_json = entry / "app.json"
-            if not app_json.exists():
-                continue
-            try:
-                config = json.loads(app_json.read_text())
-                has_dist = (entry / "dist").exists()
-                apps.append({
-                    "name": entry.name,
-                    "url": f"/app/{entry.name}/",
-                    "mode": "static" if has_dist else ("proxy" if config.get("port") else "unconfigured"),
-                    **config,
-                })
-            except Exception:
-                pass
-    return apps
+# --- Apps (deprecated — use /projects/ and /project/) ---
+# Legacy /app/ routes removed. Apps are now projects with woltspace.json.
+# Existing apps in wolt/apps/ need migration to wolts/projects/.
 
 
-@app.get("/app/{app_name}/{path:path}")
-@app.get("/app/{app_name}")
-async def serve_app(app_name: str, request: Request, path: str = ""):
-    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", app_name):
-        return JSONResponse({"error": "invalid app name"}, status_code=400)
-    app_dir = APPS_DIR / app_name
-    app_json_path = app_dir / "app.json"
-    if not app_json_path.exists():
-        return JSONResponse({"error": f'app "{app_name}" not found — missing app.json'}, status_code=404)
+# --- Projects ---
+# Centralized project management. Uses woltspace.json manifests.
+# Project names are globally unique. Keeper (owning wolt) is in woltspace.json.
+
+@app.get("/projects")
+async def list_projects_api():
+    """List all projects that have woltspace.json."""
+    projects = discover_projects()
+    running = {r["name"]: r for r in running_projects()}
+    result = []
+    for p in projects:
+        entry = p.model_dump()
+        run_state = running.get(p.name)
+        entry["running"] = run_state is not None
+        entry["port"] = run_state["port"] if run_state else None
+        entry["url"] = f"/project/{p.name}/"
+        result.append(entry)
+    return result
+
+
+@app.get("/projects/{name}")
+async def project_detail(name: str):
+    """Get a single project's manifest and running state."""
+    project = get_project(name)
+    if not project:
+        return JSONResponse({"error": f"project {name} not found"}, status_code=404)
+    running = {r["name"]: r for r in running_projects()}
+    entry = project.model_dump()
+    run_state = running.get(name)
+    entry["running"] = run_state is not None
+    entry["port"] = run_state["port"] if run_state else None
+    entry["url"] = f"/project/{name}/"
+    return entry
+
+
+@app.post("/projects/{name}/start")
+async def project_start(name: str):
+    """Start a project's dev server."""
     try:
-        app_config = json.loads(app_json_path.read_text())
-    except Exception:
-        return PlainTextResponse("invalid app.json", status_code=500)
+        state = start_project(name)
+        print(f"[projects] started {name} on port {state['port']}")
+        return state
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=409)
 
+
+@app.post("/projects/{name}/stop")
+async def project_stop(name: str):
+    """Stop a running project."""
+    was_running = stop_project(name)
+    if was_running:
+        print(f"[projects] stopped {name}")
+        return {"ok": True, "name": name}
+    return JSONResponse({"error": f"{name} is not running"}, status_code=404)
+
+
+# --- Wolt Sites ---
+# Each wolt has a persistent site at wolt/site/. Served via livereload.
+# Sites auto-start when a session begins outside a project context.
+
+@app.get("/sites")
+async def list_sites_api():
+    """List all running wolt sites."""
+    return running_sites()
+
+
+@app.get("/sites/{wolt_name}")
+async def site_detail(wolt_name: str):
+    """Get a wolt's site state."""
+    state = get_site_state(wolt_name)
+    sdir = site_dir(wolt_name)
+    return {
+        "wolt": wolt_name,
+        "running": state is not None,
+        "port": state["port"] if state else None,
+        "url": f"/wolt/{wolt_name}/site/",
+        "dir_exists": sdir.exists(),
+    }
+
+
+@app.post("/sites/{wolt_name}/start")
+async def site_start(wolt_name: str):
+    """Start a wolt's site livereload server."""
+    sdir = site_dir(wolt_name)
+    wolt_dir = WOLTS_DIR / wolt_name
+    if not wolt_dir.exists():
+        return JSONResponse({"error": f"wolt {wolt_name} not found"}, status_code=404)
+    try:
+        state = start_site(wolt_name)
+        print(f"[sites] started {wolt_name} on port {state['port']}")
+        return state
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=409)
+
+
+@app.post("/sites/{wolt_name}/stop")
+async def site_stop(wolt_name: str):
+    """Stop a wolt's site livereload server."""
+    was_running = stop_site(wolt_name)
+    if was_running:
+        print(f"[sites] stopped {wolt_name}")
+        return {"ok": True, "wolt": wolt_name}
+    return JSONResponse({"error": f"{wolt_name} site is not running"}, status_code=404)
+
+
+@app.get("/wolt/{wolt_name}/site/{path:path}")
+@app.get("/wolt/{wolt_name}/site")
+async def serve_wolt_site(wolt_name: str, request: Request, path: str = ""):
+    """Serve a wolt's site — proxy to livereload, rewrite reload script."""
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", wolt_name):
+        return JSONResponse({"error": "invalid wolt name"}, status_code=400)
+
+    wolt_dir = WOLTS_DIR / wolt_name
+    if not wolt_dir.exists():
+        return PlainTextResponse(f"Wolt {wolt_name} not found", status_code=404)
+
+    # Auto-start site if not running
+    state = get_site_state(wolt_name)
+    if not state:
+        try:
+            state = start_site(wolt_name)
+            print(f"[sites] auto-started {wolt_name} on port {state['port']}")
+        except RuntimeError as e:
+            return PlainTextResponse(f"Could not start site: {e}", status_code=503)
+
+    # Proxy to livereload
+    port = state["port"]
     sub_path = "/" + path if path else "/"
-    dist_dir = app_dir / "dist"
-
-    # Strategy 1: static
-    if dist_dir.exists():
-        candidates = [dist_dir / path, dist_dir / path / "index.html"]
-        for candidate in candidates:
-            resolved = candidate.resolve()
-            if not str(resolved).startswith(str(dist_dir.resolve())):
-                continue
-            if resolved.exists() and resolved.is_file():
-                ext = resolved.suffix
-                mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
-                return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
-        return PlainTextResponse("Not found in app", status_code=404)
-
-    # Strategy 2: proxy
-    port = app_config.get("port")
-    if not port or port < 1024 or port > 65535:
-        return PlainTextResponse(f'app "{app_name}" has no dist/ and no valid port', status_code=500)
     target = f"http://localhost:{port}{sub_path}"
     if request.url.query:
         target += f"?{request.url.query}"
+
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.request(
@@ -651,83 +849,89 @@ async def serve_app(app_name: str, request: Request, path: str = ""):
             headers = dict(resp.headers)
             headers.pop("x-frame-options", None)
             headers.pop("content-security-policy", None)
-            return Response(resp.content, status_code=resp.status_code, headers=headers)
+            content = resp.content
+            ct = headers.get("content-type", "")
+            if "text/html" in ct:
+                text = content.decode("utf-8", errors="replace")
+                # Strip livereload's native script (it connects to /livereload
+                # which doesn't work through our proxy)
+                text = re.sub(
+                    r'<script type="text/javascript">\(function\(\)\{var s=document\.createElement\("script"\).*?</script>',
+                    '',
+                    text,
+                )
+                # Inject our own reload script using a wolt-scoped WS path
+                reload_script = (
+                    '<script>(function(){'
+                    'var p=location.protocol==="https:"?"wss:":"ws:";'
+                    f'function c(){{var ws=new WebSocket(p+"//"+location.host+"/wolt/{wolt_name}/site/livereload");'
+                    'ws.onmessage=function(){location.reload()};'
+                    'ws.onclose=function(){setTimeout(c,3000)}}'
+                    'c()})()</script>'
+                )
+                if '</body>' in text:
+                    text = text.replace('</body>', reload_script + '</body>')
+                else:
+                    text += reload_script
+                content = text.encode("utf-8")
+                headers.pop("content-length", None)
+            return Response(content, status_code=resp.status_code, headers=headers)
         except httpx.ConnectError:
-            return PlainTextResponse(f'App "{app_name}" not running on port {port}', status_code=502)
+            # Return a self-refreshing page that retries until livereload is ready
+            return HTMLResponse(
+                f'''<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  body {{ font-family: 'SF Mono', monospace; background: #2a1f14; color: #7bbf8a;
+         display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }}
+  .msg {{ text-align: center; font-size: 0.82rem; letter-spacing: 0.08em; opacity: 0.8; }}
+</style></head>
+<body><div class="msg">{wolt_name} waking up<span class="dots">...</span></div>
+<script>setTimeout(()=>location.reload(), 1000)</script>
+</body></html>''',
+                status_code=502,
+            )
 
 
-# --- Projects ---
+@app.websocket("/wolt/{wolt_name}/site/livereload")
+async def site_livereload_ws(wolt_name: str, ws: WebSocket):
+    """Watch a wolt's site dir for changes and push reload via WebSocket."""
+    from watchfiles import awatch
 
-@app.get("/projects")
-async def list_projects():
-    """List all projects with their status (has project.json, running port, etc.)."""
-    projects = []
-    if PROJECTS_DIR.exists():
-        for entry in sorted(PROJECTS_DIR.iterdir()):
-            if not entry.is_dir() or entry.name.startswith("."):
-                continue
-            proj_json = entry / "project.json"
-            config = {}
-            if proj_json.exists():
-                try:
-                    config = json.loads(proj_json.read_text())
-                except Exception:
-                    pass
-            has_dist = (entry / "dist").exists()
-            port = config.get("port")
-            if has_dist:
-                mode = "static"
-            elif port:
-                mode = "proxy"
-            else:
-                mode = "directory"
-            projects.append({
-                "name": entry.name,
-                "url": f"/project/{entry.name}/",
-                "mode": mode,
-                **config,
-            })
-    return projects
+    sdir = WOLTS_DIR / wolt_name / "wolt" / "site"
+    if not sdir.exists():
+        await ws.close()
+        return
+    await ws.accept()
+    try:
+        async for _changes in awatch(str(sdir)):
+            try:
+                await ws.send_text("reload")
+            except Exception:
+                break
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
 
 
-@app.get("/project/{project_name}/{path:path}")
-@app.get("/project/{project_name}")
-async def serve_project(project_name: str, request: Request, path: str = ""):
-    """Serve a project — static files from dist/, or reverse proxy to a running port."""
-    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", project_name):
+@app.get("/project/{proj_name}/{path:path}")
+@app.get("/project/{proj_name}")
+async def serve_project(proj_name: str, request: Request, path: str = ""):
+    """Serve a project — proxy to running dev server, static from dist/, or direct files."""
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", proj_name):
         return JSONResponse({"error": "invalid project name"}, status_code=400)
-    project_dir = PROJECTS_DIR / project_name
-    if not project_dir.exists():
-        return JSONResponse({"error": f'project "{project_name}" not found'}, status_code=404)
-
-    # Read project.json if it exists (optional — beaver writes it)
-    proj_json_path = project_dir / "project.json"
-    proj_config = {}
-    if proj_json_path.exists():
-        try:
-            proj_config = json.loads(proj_json_path.read_text())
-        except Exception:
-            pass
+    pdir = project_dir(proj_name)
+    if not pdir.exists():
+        return HTMLResponse(_project_not_found(proj_name), status_code=404)
 
     sub_path = "/" + path if path else "/"
-    dist_dir = project_dir / "dist"
 
-    # Strategy 1: static from dist/
-    if dist_dir.exists():
-        candidates = [dist_dir / path, dist_dir / path / "index.html"]
-        for candidate in candidates:
-            resolved = candidate.resolve()
-            if not str(resolved).startswith(str(dist_dir.resolve())):
-                continue
-            if resolved.exists() and resolved.is_file():
-                ext = resolved.suffix
-                mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
-                return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
-        return PlainTextResponse("Not found in project", status_code=404)
-
-    # Strategy 2: proxy to running port
-    port = proj_config.get("port")
-    if port and 1024 <= port <= 65535:
+    # Strategy 1: proxy to running dev server (managed by start_project)
+    running = {r["name"]: r for r in running_projects()}
+    run_state = running.get(proj_name)
+    if run_state:
+        port = run_state["port"]
         target = f"http://localhost:{port}{sub_path}"
         if request.url.query:
             target += f"?{request.url.query}"
@@ -743,22 +947,38 @@ async def serve_project(project_name: str, request: Request, path: str = ""):
                 headers.pop("content-security-policy", None)
                 return Response(resp.content, status_code=resp.status_code, headers=headers)
             except httpx.ConnectError:
-                return PlainTextResponse(f'Project "{project_name}" not running on port {port}', status_code=502)
+                return PlainTextResponse(f'Project "{proj_name}" not responding on port {port}', status_code=502)
+
+    # Strategy 2: static from dist/
+    dist_dir = pdir / "dist"
+    if dist_dir.exists():
+        candidates = [dist_dir / path, dist_dir / path / "index.html"]
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            if not str(resolved).startswith(str(dist_dir.resolve())):
+                continue
+            if resolved.exists() and resolved.is_file():
+                ext = resolved.suffix
+                mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
+                return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
+        return PlainTextResponse("Not found in project", status_code=404)
 
     # Strategy 3: serve static files directly from project root (simple HTML projects)
-    candidates = [project_dir / path, project_dir / path / "index.html"]
+    candidates = [pdir / path, pdir / path / "index.html"]
     if not path:
-        candidates = [project_dir / "index.html"]
+        candidates = [pdir / "index.html"]
     for candidate in candidates:
         resolved = candidate.resolve()
-        if not str(resolved).startswith(str(project_dir.resolve())):
+        if not str(resolved).startswith(str(pdir.resolve())):
             continue
         if resolved.exists() and resolved.is_file():
             ext = resolved.suffix
             mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
             return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
 
-    return PlainTextResponse(f'Project "{project_name}" has no servable content', status_code=404)
+    # Strategy 4: off-state placeholder — project exists but has no servable content
+    project = get_project(proj_name)
+    return HTMLResponse(_project_placeholder(proj_name, project))
 
 
 # --- Shares ---

@@ -1,0 +1,15 @@
+#!/bin/bash
+# Wrapper that sets per-wolt HOME and trusts $PWD before launching Claude Code.
+# Use this instead of bare `claude` inside the container.
+#
+# If $PWD is under /workspace/wolts/<name>/, set HOME to that wolt's root dir.
+# This gives each wolt its own .claude/ config (settings, skills, sessions, history).
+# Credentials are shared via symlink to /workspace/wolts/.credentials.json.
+
+WOLT_HOME=$(echo "$PWD" | sed -n 's|\(/workspace/wolts/[^/]*\).*|\1|p')
+if [ -n "$WOLT_HOME" ] && [ -d "$WOLT_HOME/.claude" ]; then
+    export HOME="$WOLT_HOME"
+fi
+
+trust-dir "$(pwd)" 2>/dev/null
+exec claude "$@"

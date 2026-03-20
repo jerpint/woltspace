@@ -548,6 +548,55 @@ class TestRegressions:
             core.registry = original_reg
             subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
 
+    @requires_tmux
+    def test_revival_cds_into_session_wolt_dir(self, tmp_path):
+        """Reviving a session must cd into the session's wolt dir, not the current dir.
+
+        Bug: reviving uxwolt's session while neowolt was active ran wclaude
+        in neowolt's directory. The fix uses reg_data["dir"] to cd first.
+        Also verifies wclaude is invoked by absolute path (the bare bash shell
+        after Claude exits may not have PATH set).
+        """
+        import bot.core as core
+        from sessions import SessionRegistry
+
+        tmp_reg = SessionRegistry(tmp_path / "registry")
+        original_reg = core.registry
+        core.registry = tmp_reg
+
+        session_name = f"test-revival-dir-{int(time.time()) % 100000}"
+        uuid = "dddddddd-1111-2222-3333-444444444444"
+        wolt_dir = "/workspace/wolts/uxwolt"
+
+        try:
+            tmp_reg.create(session_name, wolt="uxwolt")
+            tmp_reg.update(session_name, claude_session_id=uuid, dir=wolt_dir)
+
+            subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "bash"], check=True)
+            time.sleep(0.3)
+
+            result = core.message_session(session_name, "test dir fix")
+            assert result["ok"] is True
+            assert result["status"] == "revived"
+
+            # Verify the command sent to tmux contains cd to the wolt dir and absolute wclaude path
+            time.sleep(0.3)
+            capture = subprocess.run(
+                ["tmux", "capture-pane", "-t", session_name, "-p", "-J"],
+                capture_output=True, text=True, check=True,
+            )
+            flat = capture.stdout.replace("\n", " ")
+            assert f"cd {wolt_dir}" in flat or f"cd '{wolt_dir}'" in flat or f'cd "{wolt_dir}"' in flat, (
+                f"tmux pane should contain cd to {wolt_dir}, got: {flat[:500]}"
+            )
+            assert "/workspace/woltspace/container/bin/wclaude" in flat, (
+                f"tmux pane should use absolute wclaude path, got: {flat[:500]}"
+            )
+
+        finally:
+            core.registry = original_reg
+            subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
+
     def test_session_registry_atomic_writes(self, tmp_path):
         """Registry writes should use tmp+rename (no partial reads)."""
         from sessions import SessionRegistry

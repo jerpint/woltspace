@@ -22,7 +22,11 @@ You were invoked as: `/start-chat <mode> <wolt-name>`
 
 3. **Read your CLAUDE.md** at `/workspace/wolts/<wolt-name>/CLAUDE.md` if it exists — this has project-specific instructions.
 
-4. **Greet the user** according to your mode. Keep it short — one line is fine.
+4. **Your site is already in the viewport** — if you are a rodent (raccoon, beaver, or otter), your site is already live in the viewport with livereload at `/wolt/<wolt-name>/site/`. The server pre-loaded it when the session started. Just edit `wolt/site/index.html` and changes appear instantly via livereload. If you need to push a different URL, use `push-view /wolt/<wolt-name>/site/page.html`. Non-rodent creatures (wolf, dog, etc.) do not have sites.
+
+5. **Greet the user** according to your mode. Keep it short — one line is fine.
+
+6. **If this is your first session** and you are a rodent (identity.md is minimal or context.md just says "Just created"), make your site yours. Rewrite `wolt/site/index.html` into a real home page — your name, your personality, what you do. The user is watching the viewport, so they'll see it update live. This is your first impression — make it count.
 
 Do NOT summarize what you read. Just absorb the context and be ready to work.
 
@@ -35,4 +39,8 @@ Do NOT summarize what you read. Just absorb the context and be ready to work.
 - Other wolts' directories
 - System files outside your wolt
 
-All code you write goes in `wolt/projects/` (for code projects) or `wolt/site/` (for static pages). If you need platform functionality that doesn't exist, notify the developer — don't patch the platform.
+**Your site (`wolt/site/`) is your private workspace.** Use it freely — static HTML/CSS/JS, scratch pages, personal dashboards, anything lightweight. It's always live in the viewport with livereload. This is your desk.
+
+**Projects (`wolts/projects/`) are for things you ship.** They have their own server, dependencies, and `woltspace.json` manifest. They can be public. Don't create projects without the user's permission — suggest one when work outgrows a static site (needs a backend, deps, or sharing). Use `/new-project` to set one up.
+
+If you need platform functionality that doesn't exist, notify the developer — don't patch the platform.

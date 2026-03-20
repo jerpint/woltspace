@@ -16,7 +16,6 @@ const WOLT_DIR   = process.env.WOLT_DIR || '/workspace/wolt';
 const MEMORY_DIR = join(WOLT_DIR, 'wolt', 'memory');
 const SPARKS_DIR = join(WOLT_DIR, 'wolt', 'sparks');
 const WOLT_NAME  = process.env.WOLT_NAME || 'wolt';
-const HUMAN_NAME = process.env.HUMAN_NAME || '';
 
 // -- Spotify API --
 
@@ -124,7 +123,7 @@ function montrealShort() {
 
 function greeting() {
   const h = montrealHour();
-  const name = HUMAN_NAME || 'there';
+  const name = 'there';
   if (h < 5)  return "still dark out";
   if (h < 9)  return "good morning " + name;
   if (h < 12) return "morning " + name;
@@ -559,7 +558,7 @@ async function runDigest() {
   console.log('[music] concept: ' + (concept || 'general'));
   console.log('[music] excluding ' + recentArtists.length + ' recent artists');
 
-  const humanRef = HUMAN_NAME || 'the listener';
+  const humanRef = 'the listener';
   const musicPrompt = [
     'You are ' + WOLT_NAME + ', curating a playlist for ' + humanRef + '.',
     '',

@@ -11,15 +11,26 @@ python3 "$WOLTSPACE_DIR/container/entrypoint_setup.py" --env-file "$ENV_FILE"
 source "$ENV_FILE"
 rm -f "$ENV_FILE"
 export WOLT_NAME WOLT_DIR DEV_MODE WOLF_CONFIG PYTHONPATH PATH
+export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
 
 # ── tmux ──
 tmux new-session -d -s main -c "$WOLT_DIR" 2>/dev/null || true
 if [ -f /home/node/.claude/.first-run ]; then
   rm /home/node/.claude/.first-run
-  tmux send-keys -t main "claude --dangerously-skip-permissions /create-wolt" Enter
+  # Pre-load viewport with wakeup page — user sees it instantly while wolt boots
+  mkdir -p "$WOLT_DIR/.state"
+  python3 -c "
+import json, time, sys
+wolt_name, state_dir = sys.argv[1], sys.argv[2]
+url = f'/wolt/{wolt_name}/site/'
+data = json.dumps({'url': url, 'port': 7777, 'updated': int(time.time() * 1000)})
+open(f'{state_dir}/current-url-main.json', 'w').write(data)
+print(f'[viewport:main] → {url}')
+" "$WOLT_NAME" "$WOLT_DIR/.state"
+  tmux send-keys -t main "export WOLT_SESSION=main && wclaude --dangerously-skip-permissions /create-wolt" Enter
 else
   # TODO: replace with a /wake skill — check for recent sessions, offer resume or fresh start
-  tmux send-keys -t main "claude --dangerously-skip-permissions \"hey ${WOLT_NAME}\"" Enter
+  tmux send-keys -t main "wclaude --dangerously-skip-permissions \"hey ${WOLT_NAME}\"" Enter
 fi
 
 # ── Services ──

@@ -63,10 +63,10 @@ def write_bashrc(wolt_dir: Path, wolt_name: str):
             f"wolt() {{\n"
             f'  cd {wolt_dir}\n'
             f'  if [[ "$1" == "--resume" ]]; then\n'
-            f"    claude --dangerously-skip-permissions --resume\n"
+            f"    wclaude --dangerously-skip-permissions --resume\n"
             f"  else\n"
             # TODO: replace with a /wake skill instead of hardcoded greeting
-            f'    claude --dangerously-skip-permissions "hey {wolt_name}" "$@"\n'
+            f'    wclaude --dangerously-skip-permissions "hey {wolt_name}" "$@"\n'
             f"  fi\n"
             f"}}\n"
         )
@@ -78,18 +78,21 @@ def write_bashrc(wolt_dir: Path, wolt_name: str):
 
 
 def write_trust_config(wolts_dir: Path):
-    projects = {}
+    # Merge trust entries into existing .claude.json rather than overwriting.
+    # Claude Code writes runtime state (firstStartTime, userID, etc.) that it
+    # needs to skip the onboarding/theme prompt. Overwriting nukes that state.
+    config_path = HOME / ".claude.json"
+    config = json.loads(config_path.read_text()) if config_path.exists() else {}
+
+    trust = {"hasTrustDialogAccepted": True, "hasCompletedProjectOnboarding": True}
+    projects = config.get("projects", {})
     for d in sorted(wolts_dir.iterdir()):
         if d.is_dir() and not d.name.startswith("."):
-            projects[str(d)] = {
-                "hasTrustDialogAccepted": True,
-                "hasCompletedProjectOnboarding": True,
-            }
-    config = {
-        "hasCompletedOnboarding": True,
-        "bypassPermissionsAccepted": True,
-        "projects": projects,
-    }
+            projects[str(d)] = trust
+
+    config["hasCompletedOnboarding"] = True
+    config["bypassPermissionsAccepted"] = True
+    config["projects"] = projects
     (HOME / ".claude.json").write_text(json.dumps(config, indent=2) + "\n")
 
 
