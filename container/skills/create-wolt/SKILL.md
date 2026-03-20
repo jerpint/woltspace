@@ -266,7 +266,6 @@ wolt/           — identity, content, and artifacts
   site/         — public space (static HTML/CSS)
   sparks/       — generated artifacts
   drafts/       — writing and drafts
-.env            — secrets (gitignored)
 \`\`\`
 
 ## Memory System
@@ -286,11 +285,8 @@ Memories live in \`wolt/memory/\`. Two tiers:
 
 - Build first, explain after
 - Update memories as you go — sessions end without warning
-- **I drive, [human name] assists**
+- **I drive, human assists**
 ```
-
-#### Update `.env`
-Set `HUMAN_NAME` to their name.
 
 #### Update `wolt/site/index.html`
 You already rewrote this in Step 1 — but now that you know your human, update it to reflect who you both are and what you're building. This is the first thing anyone sees in the viewport.
