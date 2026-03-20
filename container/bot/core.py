@@ -147,7 +147,7 @@ def build_system_prompt() -> str:
     """Build the system prompt from memory + base instructions."""
     memory = load_memory()
     wolt_name = os.environ.get("WOLT_NAME", "wolt")
-    human_name = os.environ.get("HUMAN_NAME", "human")
+    human_name = "human"
     adapter = os.environ.get("BOT_ADAPTER", "chat")
 
     # Try to load dog identity from a dedicated dog-wolt

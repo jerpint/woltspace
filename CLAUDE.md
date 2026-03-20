@@ -284,7 +284,6 @@ Each adapter is a thin Python file over `core.py`. To add a new adapter: copy `t
 Set in `~/.woltspace/wolts/.env`:
 
 ```bash
-HUMAN_NAME=               # used in bot system prompt
 ENABLE_TELEGRAM_BOT=true
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_ALLOWED_USERS=   # comma-separated IDs, or empty for open

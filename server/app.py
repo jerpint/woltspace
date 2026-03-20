@@ -404,7 +404,6 @@ async def onboard_status():
         "wolts_dir": str(WOLTS_DIR),
         "wolt_name": WOLT_NAME,
         "has_oauth": Path("/home/node/.claude/.credentials.json").exists(),
-        "has_human_name": bool(env.get("HUMAN_NAME", "").strip() and env.get("HUMAN_NAME") != "your-name"),
         "has_llm_key": bool(env.get("ANTHROPIC_API_KEY") or env.get("OPENROUTER_API_KEY")),
         "has_telegram": env.get("ENABLE_TELEGRAM_BOT") == "true" and bool(env.get("TELEGRAM_BOT_TOKEN")),
     }

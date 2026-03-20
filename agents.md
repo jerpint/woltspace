@@ -52,7 +52,6 @@ woltspace/
 **Key env vars:**
 - `WOLT_DIR` — mount point for wolt repo (default: `/workspace/wolt`)
 - `WOLT_NAME` — wolt's name
-- `HUMAN_NAME` — human's name
 - `ENABLE_TELEGRAM_BOT`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS`
 - `SPOTIFY_*` — Spotify API credentials for music curation
 - `OPENROUTER_API_KEY`, `LLM_MODEL` — LLM provider for bot chat

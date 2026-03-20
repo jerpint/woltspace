@@ -206,7 +206,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     den_session = _is_den_reply(update)
     if den_session:
         text = update.message.text or ""
-        human_name = os.environ.get("HUMAN_NAME", "human")
+        human_name = "human"
         # Send to session with context about where it came from
         den_msg = (
             f"[telegram message from {human_name}]: {text}\n"
@@ -319,7 +319,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # If this is a reply to a den notify, route directly to that session
     den_session = _is_den_reply(update)
     if den_session:
-        human_name = os.environ.get("HUMAN_NAME", "human")
+        human_name = "human"
         den_msg = (
             f"[telegram voice from {human_name}]: {text}\n"
             f"Reply back to them with: notify \"your message\""
