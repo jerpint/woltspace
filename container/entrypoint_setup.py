@@ -90,6 +90,7 @@ def write_trust_config(wolts_dir: Path):
         "hasCompletedOnboarding": True,
         "bypassPermissionsAccepted": True,
         "numStartups": 1,
+        "lastOnboardingVersion": "9.9.99",
         "tipsHistory": {"new-user-warmup": 1},
         "installMethod": "native",
         "projects": projects,
