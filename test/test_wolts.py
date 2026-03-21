@@ -276,6 +276,86 @@ class TestCreateCreatureWolt:
 
 
 # ---------------------------------------------------------------------------
+# Credential management
+# ---------------------------------------------------------------------------
+
+class TestCredentials:
+    """Unit: setup_wolt_claude_config manages credential copies correctly."""
+
+    def test_copies_shared_credentials(self, tmp_path):
+        """Fresh wolt gets a copy (not symlink) of shared creds."""
+        from wolts import setup_wolt_claude_config
+        shared_claude = tmp_path / ".claude"
+        shared_claude.mkdir()
+        (shared_claude / ".credentials.json").write_text('{"token": "test"}')
+
+        wolt_dir = tmp_path / "mywolt"
+        wolt_dir.mkdir()
+
+        with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.WOLTSPACE_DIR", tmp_path / "woltspace"):
+            setup_wolt_claude_config(wolt_dir, "mywolt")
+
+        wolt_creds = wolt_dir / ".claude" / ".credentials.json"
+        assert wolt_creds.exists()
+        assert not wolt_creds.is_symlink()
+        assert wolt_creds.read_text() == '{"token": "test"}'
+
+    def test_replaces_legacy_symlink_with_copy(self, tmp_path):
+        """Legacy symlink gets replaced with a real file."""
+        from wolts import setup_wolt_claude_config
+        shared_claude = tmp_path / ".claude"
+        shared_claude.mkdir()
+        shared_creds = shared_claude / ".credentials.json"
+        shared_creds.write_text('{"token": "test"}')
+
+        wolt_dir = tmp_path / "mywolt"
+        claude_dir = wolt_dir / ".claude"
+        claude_dir.mkdir(parents=True)
+
+        # Legacy symlink
+        creds = claude_dir / ".credentials.json"
+        creds.symlink_to(shared_creds)
+        assert creds.is_symlink()
+
+        with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.WOLTSPACE_DIR", tmp_path / "woltspace"):
+            setup_wolt_claude_config(wolt_dir, "mywolt")
+
+        assert not creds.is_symlink()
+        assert creds.read_text() == '{"token": "test"}'
+
+    def test_preserves_existing_credentials(self, tmp_path):
+        """Wolt with its own credentials file is left alone."""
+        from wolts import setup_wolt_claude_config
+        shared_claude = tmp_path / ".claude"
+        shared_claude.mkdir()
+        (shared_claude / ".credentials.json").write_text('{"token": "shared"}')
+
+        wolt_dir = tmp_path / "mywolt"
+        claude_dir = wolt_dir / ".claude"
+        claude_dir.mkdir(parents=True)
+        wolt_creds = claude_dir / ".credentials.json"
+        wolt_creds.write_text('{"token": "mine"}')
+
+        with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.WOLTSPACE_DIR", tmp_path / "woltspace"):
+            setup_wolt_claude_config(wolt_dir, "mywolt")
+
+        assert wolt_creds.read_text() == '{"token": "mine"}'
+
+    def test_no_shared_creds_no_copy(self, tmp_path):
+        """No shared creds file means no credentials created."""
+        from wolts import setup_wolt_claude_config
+        wolt_dir = tmp_path / "mywolt"
+        wolt_dir.mkdir()
+
+        with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.WOLTSPACE_DIR", tmp_path / "woltspace"):
+            setup_wolt_claude_config(wolt_dir, "mywolt")
+
+        wolt_creds = wolt_dir / ".claude" / ".credentials.json"
+        assert not wolt_creds.exists()
+        assert not wolt_creds.is_symlink()
+
+
+# ---------------------------------------------------------------------------
 # Wolf-wolt discovery in wolf.py
 # ---------------------------------------------------------------------------
 

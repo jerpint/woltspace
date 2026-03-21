@@ -195,16 +195,15 @@ def setup_wolt_claude_config(wolt_dir: Path, name: str) -> None:
     }
     (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
 
-    # Credentials — symlink to shared
-    shared_creds = WOLTS_DIR / ".credentials.json"
-    creds_link = claude_dir / ".credentials.json"
-    if shared_creds.exists() and not creds_link.exists():
-        creds_link.symlink_to(shared_creds)
-    elif not shared_creds.exists():
-        # Fall back: symlink to global if shared doesn't exist yet
-        global_creds = Path.home() / ".claude" / ".credentials.json"
-        if global_creds.exists() and not creds_link.exists():
-            creds_link.symlink_to(global_creds)
+    # Credentials — copy from shared (not symlink: Claude Code replaces files
+    # atomically on re-auth, which would break a symlink and leave shared stale)
+    shared_creds = WOLTS_DIR / ".claude" / ".credentials.json"
+    wolt_creds = claude_dir / ".credentials.json"
+    # Clean up legacy symlinks (from before we switched to copy)
+    if wolt_creds.is_symlink():
+        wolt_creds.unlink()
+    if shared_creds.exists() and not wolt_creds.exists():
+        shutil.copy2(shared_creds, wolt_creds)
 
     # Skills — copy platform skills
     skills_dir = claude_dir / "skills"
