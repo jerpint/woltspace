@@ -276,6 +276,96 @@ class TestCreateCreatureWolt:
 
 
 # ---------------------------------------------------------------------------
+# Credential symlink management
+# ---------------------------------------------------------------------------
+
+class TestCredentialSymlinks:
+    """Unit: setup_wolt_claude_config manages credential symlinks correctly."""
+
+    def test_creates_credential_symlink(self, tmp_path):
+        """Fresh wolt gets a credential symlink to shared creds."""
+        from wolts import setup_wolt_claude_config
+        # Create shared creds
+        shared_claude = tmp_path / ".claude"
+        shared_claude.mkdir()
+        shared_creds = shared_claude / ".credentials.json"
+        shared_creds.write_text('{"token": "test"}')
+
+        wolt_dir = tmp_path / "mywolt"
+        wolt_dir.mkdir()
+
+        with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.WOLTSPACE_DIR", tmp_path / "woltspace"):
+            setup_wolt_claude_config(wolt_dir, "mywolt")
+
+        creds_link = wolt_dir / ".claude" / ".credentials.json"
+        assert creds_link.is_symlink()
+        assert creds_link.resolve() == shared_creds.resolve()
+
+    def test_fixes_broken_credential_symlink(self, tmp_path):
+        """Broken symlink (target gone) gets replaced with valid one."""
+        from wolts import setup_wolt_claude_config
+        # Create shared creds
+        shared_claude = tmp_path / ".claude"
+        shared_claude.mkdir()
+        shared_creds = shared_claude / ".credentials.json"
+        shared_creds.write_text('{"token": "test"}')
+
+        wolt_dir = tmp_path / "mywolt"
+        claude_dir = wolt_dir / ".claude"
+        claude_dir.mkdir(parents=True)
+
+        # Create a broken symlink (points to nonexistent target)
+        creds_link = claude_dir / ".credentials.json"
+        creds_link.symlink_to("/nonexistent/path/.credentials.json")
+        assert creds_link.is_symlink()
+        assert not creds_link.exists()  # broken
+
+        with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.WOLTSPACE_DIR", tmp_path / "woltspace"):
+            setup_wolt_claude_config(wolt_dir, "mywolt")
+
+        assert creds_link.is_symlink()
+        assert creds_link.exists()  # now valid
+        assert creds_link.resolve() == shared_creds.resolve()
+
+    def test_preserves_existing_valid_symlink(self, tmp_path):
+        """Working symlink (even to a different target) is left alone."""
+        from wolts import setup_wolt_claude_config
+        # Create shared creds
+        shared_claude = tmp_path / ".claude"
+        shared_claude.mkdir()
+        (shared_claude / ".credentials.json").write_text('{"token": "shared"}')
+
+        # Create a valid symlink to a different target
+        alt_creds = tmp_path / "alt_creds.json"
+        alt_creds.write_text('{"token": "alt"}')
+
+        wolt_dir = tmp_path / "mywolt"
+        claude_dir = wolt_dir / ".claude"
+        claude_dir.mkdir(parents=True)
+        creds_link = claude_dir / ".credentials.json"
+        creds_link.symlink_to(alt_creds)
+
+        with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.WOLTSPACE_DIR", tmp_path / "woltspace"):
+            setup_wolt_claude_config(wolt_dir, "mywolt")
+
+        # Should still point to the original target
+        assert creds_link.resolve() == alt_creds.resolve()
+
+    def test_no_shared_creds_no_link(self, tmp_path):
+        """No shared creds file means no symlink created (no dangling link)."""
+        from wolts import setup_wolt_claude_config
+        wolt_dir = tmp_path / "mywolt"
+        wolt_dir.mkdir()
+
+        with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.WOLTSPACE_DIR", tmp_path / "woltspace"):
+            setup_wolt_claude_config(wolt_dir, "mywolt")
+
+        creds_link = wolt_dir / ".claude" / ".credentials.json"
+        assert not creds_link.exists()
+        assert not creds_link.is_symlink()
+
+
+# ---------------------------------------------------------------------------
 # Wolf-wolt discovery in wolf.py
 # ---------------------------------------------------------------------------
 

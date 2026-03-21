@@ -9,6 +9,12 @@
 WOLT_HOME=$(echo "$PWD" | sed -n 's|\(/workspace/wolts/[^/]*\).*|\1|p')
 if [ -n "$WOLT_HOME" ] && [ -d "$WOLT_HOME/.claude" ]; then
     export HOME="$WOLT_HOME"
+    # Self-heal missing credential symlink
+    CREDS_LINK="$WOLT_HOME/.claude/.credentials.json"
+    SHARED_CREDS="/workspace/wolts/.claude/.credentials.json"
+    if [ ! -e "$CREDS_LINK" ] && [ -f "$SHARED_CREDS" ]; then
+        ln -sf "$SHARED_CREDS" "$CREDS_LINK"
+    fi
 fi
 
 trust-dir "$(pwd)" 2>/dev/null
