@@ -4,16 +4,17 @@
 #
 # If $PWD is under /workspace/wolts/<name>/, set HOME to that wolt's root dir.
 # This gives each wolt its own .claude/ config (settings, skills, sessions, history).
-# Credentials are shared via symlink to /workspace/wolts/.credentials.json.
+# Credentials are copied from shared on first run (not symlinked — Claude Code
+# replaces files atomically on re-auth, which breaks symlinks).
 
 WOLT_HOME=$(echo "$PWD" | sed -n 's|\(/workspace/wolts/[^/]*\).*|\1|p')
 if [ -n "$WOLT_HOME" ] && [ -d "$WOLT_HOME/.claude" ]; then
     export HOME="$WOLT_HOME"
-    # Self-heal missing credential symlink
-    CREDS_LINK="$WOLT_HOME/.claude/.credentials.json"
+    # Self-heal missing credentials (copy from shared seed)
+    WOLT_CREDS="$WOLT_HOME/.claude/.credentials.json"
     SHARED_CREDS="/workspace/wolts/.claude/.credentials.json"
-    if [ ! -e "$CREDS_LINK" ] && [ -f "$SHARED_CREDS" ]; then
-        ln -sf "$SHARED_CREDS" "$CREDS_LINK"
+    if [ ! -e "$WOLT_CREDS" ] && [ -f "$SHARED_CREDS" ]; then
+        cp "$SHARED_CREDS" "$WOLT_CREDS"
     fi
 fi
 
