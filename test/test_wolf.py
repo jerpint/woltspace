@@ -813,3 +813,101 @@ class TestOneOffCrons:
         names = [c["name"] for c in data["crons"]]
         assert "ci-check" not in names
         assert "digest" in names
+
+
+# ---------------------------------------------------------------------------
+# Wolt emoji resolution
+# ---------------------------------------------------------------------------
+
+class TestWoltEmoji:
+    """Unit: _get_wolt_emoji resolves creature type to emoji."""
+
+    def _setup_wolt(self, tmp_path, name, wolt_type):
+        wolt_dir = tmp_path / name / "wolt"
+        wolt_dir.mkdir(parents=True)
+        (wolt_dir / "wolt.json").write_text(json.dumps({"name": name, "type": wolt_type}))
+
+    def test_beaver_emoji(self, tmp_path):
+        from creatures.wolf import _get_wolt_emoji
+        self._setup_wolt(tmp_path, "nunu", "beaver")
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
+            assert _get_wolt_emoji("nunu") == "🦫"
+
+    def test_raccoon_emoji(self, tmp_path):
+        from creatures.wolf import _get_wolt_emoji
+        self._setup_wolt(tmp_path, "uxwolt", "raccoon")
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
+            assert _get_wolt_emoji("uxwolt") == "🦝"
+
+    def test_otter_emoji(self, tmp_path):
+        from creatures.wolf import _get_wolt_emoji
+        self._setup_wolt(tmp_path, "woltywolt", "otter")
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
+            assert _get_wolt_emoji("woltywolt") == "🦦"
+
+    def test_rodent_gets_beaver_emoji(self, tmp_path):
+        from creatures.wolf import _get_wolt_emoji
+        self._setup_wolt(tmp_path, "neowolt", "rodent")
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
+            assert _get_wolt_emoji("neowolt") == "🦫"
+
+    def test_unknown_type_gets_fallback(self, tmp_path):
+        from creatures.wolf import _get_wolt_emoji
+        self._setup_wolt(tmp_path, "fujiwolt", "dog")
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
+            assert _get_wolt_emoji("fujiwolt") == "🐾"
+
+    def test_missing_wolt_gets_fallback(self, tmp_path):
+        from creatures.wolf import _get_wolt_emoji
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
+            assert _get_wolt_emoji("nonexistent") == "🐾"
+
+
+# ---------------------------------------------------------------------------
+# Howl notification format
+# ---------------------------------------------------------------------------
+
+class TestHowlNotification:
+    """Unit: fire_cron builds the correct notification message."""
+
+    def test_notify_with_custom_message(self, tmp_path):
+        from creatures.wolf import fire_cron
+        # Setup wolt.json for emoji resolution
+        wolt_dir = tmp_path / "nunu" / "wolt"
+        wolt_dir.mkdir(parents=True)
+        (wolt_dir / "wolt.json").write_text(json.dumps({"name": "nunu", "type": "beaver"}))
+
+        entry = {"name": "morning-playlist", "prompt": "/music", "_owner": "nunu", "notify": "morning playlist time"}
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
+             patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+             patch("creatures.wolf.dispatch_session", return_value="https://example.com/tui?session=nunu-abc"), \
+             patch("creatures.wolf.send_wolf_notify") as mock_notify:
+            fire_cron(entry)
+        msg = mock_notify.call_args[0][0]
+        assert '🦫 nunu has been notified: "morning playlist time"' in msg
+        assert "https://example.com/tui?session=nunu-abc" in msg
+
+    def test_notify_without_custom_message(self, tmp_path):
+        from creatures.wolf import fire_cron
+        wolt_dir = tmp_path / "nunu" / "wolt"
+        wolt_dir.mkdir(parents=True)
+        (wolt_dir / "wolt.json").write_text(json.dumps({"name": "nunu", "type": "beaver"}))
+
+        entry = {"name": "test", "prompt": "do stuff", "_owner": "nunu"}
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
+             patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+             patch("creatures.wolf.dispatch_session", return_value=None), \
+             patch("creatures.wolf.send_wolf_notify") as mock_notify:
+            fire_cron(entry)
+        msg = mock_notify.call_args[0][0]
+        assert "🦫 nunu has been woken up" in msg
+
+    def test_send_wolf_notify_format(self):
+        """send_wolf_notify wraps message with nameless wolf header."""
+        from creatures.wolf import send_wolf_notify
+        mock_result = MagicMock(stdout='{"ok": true, "adapter": "telegram"}', returncode=0)
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            send_wolf_notify("test message")
+        payload = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("-d") + 1])
+        assert payload["message"].startswith("🐺 *Howl*")
+        assert "test message" in payload["message"]
