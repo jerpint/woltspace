@@ -7,16 +7,12 @@
 - One-off crons via `"at"` field — fires once, auto-deletes from wolf.json.
 - Nameless wolf — notifications now show `🐺 *Howl*` with creature emoji for the wolt being woken up.
 - Rewritten `/wolf` skill for the new distributed model.
-- `/update` skill now syncs platform skills to all existing wolts after pulling.
 - Start-chat modes now mention `/wolf` for scheduling.
 
-**Action required:** The `/wolf` skill has been rewritten. Existing wolts have a stale copy. After updating, run:
+**Action required:** The `/wolf` skill has been rewritten. Existing wolts have a stale copy from the old model. After updating, replace it for each wolt:
 ```bash
-for d in /workspace/wolts/*/; do
-  [ -d "$d.claude/skills" ] && cp -r /workspace/woltspace/container/skills/wolf/ "$d.claude/skills/wolf/"
-done
+cp -r /workspace/woltspace/container/skills/wolf/ /workspace/wolts/<wolt-name>/.claude/skills/wolf/
 ```
-Or let `/update` handle it — this release adds automatic skill syncing to the update flow.
 
 ## v0.2.1 (2026-03-21)
 

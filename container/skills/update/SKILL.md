@@ -186,25 +186,6 @@ uv sync --project container/bot 2>&1
 
 This is fast (no-ops if deps haven't changed) and safe to run every time.
 
-## Step 5.6: Sync platform skills
-
-After pulling, copy updated platform skills to all existing wolts. Skills are copied at wolt creation but drift over time as the platform evolves. This keeps them in sync.
-
-```bash
-PLATFORM_SKILLS="/workspace/woltspace/container/skills"
-if [ -d "$PLATFORM_SKILLS" ]; then
-  for wolt_dir in /workspace/wolts/*/; do
-    skills_dir="${wolt_dir}.claude/skills"
-    if [ -d "$skills_dir" ]; then
-      cp -r "$PLATFORM_SKILLS"/* "$skills_dir/" 2>/dev/null
-    fi
-  done
-  echo "Platform skills synced to all wolts"
-fi
-```
-
-This preserves any wolt-specific skills (they live in their own subdirectories) while updating all platform skills. Fast and safe to run every time.
-
 ## Step 6: Run migration (minor/major bumps only)
 
 After pulling, check for a migration script:
@@ -237,7 +218,7 @@ Action items to flag:
 - **entrypoint.sh or entrypoint_setup.py changed** → "container restart needed for this to take full effect"
 - **New env vars** → "add `VAR_NAME` to your `.env` before restarting"
 - **Server code changed** → "server auto-reloads via uvicorn --reload, should be live already"
-- **Skills changed** → "platform skills have been synced to all wolts — new sessions will use the updated versions"
+- **Skills changed** → "skills update on next session start — existing sessions keep the old version"
 
 ## Notes
 
