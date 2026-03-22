@@ -136,43 +136,64 @@ class TestParseField:
 # ---------------------------------------------------------------------------
 
 class TestScheduleLoading:
-    """Unit: wolf.json loading and state management."""
+    """Unit: distributed wolf.json discovery across all wolts."""
 
-    def test_load_valid_schedule(self, tmp_path):
-        from creatures.wolf import load_schedule, get_schedule_path
-        config = {
-            "crons": [
-                {"name": "test-cron", "schedule": "0 6 * * *", "action": "script", "command": "echo hi"}
-            ]
-        }
-        wolf_json = tmp_path / "wolt" / "wolf.json"
-        wolf_json.parent.mkdir(parents=True)
-        wolf_json.write_text(json.dumps(config))
+    def _setup_wolt(self, wolts_dir, name, crons):
+        """Helper: create a wolt with a wolf.json."""
+        wolf_json = wolts_dir / name / "wolt" / "wolf.json"
+        wolf_json.parent.mkdir(parents=True, exist_ok=True)
+        wolf_json.write_text(json.dumps({"crons": crons}))
 
-        with patch("creatures.wolf.get_schedule_path", return_value=wolf_json):
+    def test_load_from_single_wolt(self, tmp_path):
+        from creatures.wolf import load_schedule
+        self._setup_wolt(tmp_path, "nunu", [
+            {"name": "playlist", "schedule": "0 8 * * *", "prompt": "/playlist"}
+        ])
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
             crons = load_schedule()
         assert len(crons) == 1
-        assert crons[0]["name"] == "test-cron"
+        assert crons[0]["name"] == "playlist"
+        assert crons[0]["_owner"] == "nunu"
+        assert crons[0]["_owner_dir"] == str(tmp_path / "nunu")
 
-    def test_load_missing_file(self, tmp_path):
+    def test_load_from_multiple_wolts(self, tmp_path):
         from creatures.wolf import load_schedule
-        with patch("creatures.wolf.get_schedule_path", return_value=tmp_path / "nope.json"):
+        self._setup_wolt(tmp_path, "nunu", [
+            {"name": "playlist", "schedule": "0 8 * * *", "prompt": "/playlist"}
+        ])
+        self._setup_wolt(tmp_path, "neowolt", [
+            {"name": "digest", "schedule": "0 6 * * *", "prompt": "/digest"},
+            {"name": "review", "schedule": "0 10 * * 1", "prompt": "weekly review"}
+        ])
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
+            crons = load_schedule()
+        assert len(crons) == 3
+        owners = {c["_owner"] for c in crons}
+        assert owners == {"nunu", "neowolt"}
+
+    def test_load_no_wolts(self, tmp_path):
+        from creatures.wolf import load_schedule
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
             crons = load_schedule()
         assert crons == []
 
-    def test_load_invalid_json(self, tmp_path):
+    def test_load_invalid_json_skipped(self, tmp_path):
         from creatures.wolf import load_schedule
-        bad = tmp_path / "wolf.json"
+        bad = tmp_path / "broken" / "wolt" / "wolf.json"
+        bad.parent.mkdir(parents=True)
         bad.write_text("not json {{{")
-        with patch("creatures.wolf.get_schedule_path", return_value=bad):
+        self._setup_wolt(tmp_path, "good", [
+            {"name": "ok", "schedule": "0 6 * * *", "prompt": "hi"}
+        ])
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
             crons = load_schedule()
-        assert crons == []
+        assert len(crons) == 1
+        assert crons[0]["_owner"] == "good"
 
     def test_load_empty_crons(self, tmp_path):
         from creatures.wolf import load_schedule
-        f = tmp_path / "wolf.json"
-        f.write_text(json.dumps({"crons": []}))
-        with patch("creatures.wolf.get_schedule_path", return_value=f):
+        self._setup_wolt(tmp_path, "empty", [])
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
             crons = load_schedule()
         assert crons == []
 
@@ -207,7 +228,7 @@ class TestCheckAndFire:
     def test_fires_matching_cron(self, tmp_path):
         from creatures.wolf import check_and_fire
         crons = [
-            {"name": "test", "schedule": "0 6 * * *", "action": "script", "command": "echo hi", "notify": "test"}
+            {"name": "test", "schedule": "0 6 * * *", "prompt": "do stuff", "_owner": "nunu", "notify": "test"}
         ]
         now = datetime(2026, 3, 15, 6, 0).astimezone()
 
@@ -219,7 +240,7 @@ class TestCheckAndFire:
     def test_skips_non_matching(self, tmp_path):
         from creatures.wolf import check_and_fire
         crons = [
-            {"name": "test", "schedule": "0 6 * * *", "action": "script", "command": "echo hi"}
+            {"name": "test", "schedule": "0 6 * * *", "prompt": "do stuff", "_owner": "nunu"}
         ]
         now = datetime(2026, 3, 15, 10, 0).astimezone()  # 10am, not 6am
 
@@ -231,7 +252,7 @@ class TestCheckAndFire:
     def test_skips_already_fired(self, tmp_path):
         from creatures.wolf import check_and_fire, set_last_run
         crons = [
-            {"name": "test", "schedule": "0 6 * * *", "action": "script", "command": "echo hi"}
+            {"name": "test", "schedule": "0 6 * * *", "prompt": "do stuff", "_owner": "nunu"}
         ]
         now = datetime(2026, 3, 15, 6, 0).astimezone()
 
@@ -244,7 +265,7 @@ class TestCheckAndFire:
 
     def test_skips_entries_without_name(self, tmp_path):
         from creatures.wolf import check_and_fire
-        crons = [{"schedule": "0 6 * * *", "action": "script"}]
+        crons = [{"schedule": "0 6 * * *", "prompt": "do stuff"}]
         now = datetime(2026, 3, 15, 6, 0).astimezone()
 
         with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
@@ -258,55 +279,50 @@ class TestCheckAndFire:
 # ---------------------------------------------------------------------------
 
 class TestFireCron:
-    """Unit: fire_cron routes to the right action handler."""
-
-    def test_dispatches_script(self):
-        from creatures.wolf import fire_cron
-        entry = {"name": "t", "action": "script", "command": "echo hi"}
-        with patch("creatures.wolf.run_script") as mock, \
-             patch("creatures.wolf.send_wolf_notify"):
-            fire_cron(entry)
-            mock.assert_called_once_with(entry)
+    """Unit: fire_cron dispatches session and always notifies."""
 
     def test_dispatches_session(self):
         from creatures.wolf import fire_cron
-        entry = {"name": "t", "action": "session", "prompt": "do stuff"}
-        with patch("creatures.wolf.run_session") as mock, \
-             patch("creatures.wolf.send_wolf_notify"):
+        entry = {"name": "t", "prompt": "do stuff", "_owner": "nunu", "_owner_dir": "/workspace/wolts/nunu"}
+        with patch("creatures.wolf.dispatch_session", return_value=None) as mock, \
+             patch("creatures.wolf.send_wolf_notify"), \
+             patch("creatures.wolf.get_state_dir", return_value=Path("/tmp")), \
+             patch("creatures.wolf._log_job"):
             fire_cron(entry)
             mock.assert_called_once_with(entry)
 
-    def test_dispatches_skill(self):
-        from creatures.wolf import fire_cron
-        entry = {"name": "t", "action": "skill", "skill": "digest"}
-        with patch("creatures.wolf.run_skill") as mock, \
-             patch("creatures.wolf.send_wolf_notify"):
-            fire_cron(entry)
-            mock.assert_called_once_with(entry)
-
-    def test_fires_action_then_notifies(self):
+    def test_dispatches_then_notifies(self):
         from creatures.wolf import fire_cron
         call_order = []
-        entry = {"name": "t", "action": "script", "command": "echo hi", "notify": "heads up"}
+        entry = {"name": "t", "prompt": "do stuff", "_owner": "nunu", "notify": "heads up"}
         with patch("creatures.wolf.send_wolf_notify", side_effect=lambda m: call_order.append("notify")), \
-             patch("creatures.wolf.run_script", side_effect=lambda e: call_order.append("script")):
+             patch("creatures.wolf.dispatch_session", side_effect=lambda e: call_order.append("session")), \
+             patch("creatures.wolf.get_state_dir", return_value=Path("/tmp")), \
+             patch("creatures.wolf._log_job"):
             fire_cron(entry)
-        assert call_order == ["script", "notify"]
+        assert call_order == ["session", "notify"]
 
-    def test_no_notify_when_not_set(self):
+    def test_always_notifies(self):
+        """Even without explicit notify field, fire_cron sends a default notification."""
         from creatures.wolf import fire_cron
-        entry = {"name": "t", "action": "script", "command": "echo hi"}
+        entry = {"name": "t", "prompt": "do stuff", "_owner": "nunu"}
         with patch("creatures.wolf.send_wolf_notify") as mock_notify, \
-             patch("creatures.wolf.run_script"):
+             patch("creatures.wolf.dispatch_session", return_value=None), \
+             patch("creatures.wolf.get_state_dir", return_value=Path("/tmp")), \
+             patch("creatures.wolf._log_job"):
             fire_cron(entry)
-            mock_notify.assert_not_called()
+            mock_notify.assert_called_once()
 
-    def test_unknown_action(self, capsys):
+    def test_notify_includes_link(self):
         from creatures.wolf import fire_cron
-        entry = {"name": "t", "action": "bogus"}
-        with patch("creatures.wolf.send_wolf_notify"):
+        entry = {"name": "t", "prompt": "do stuff", "_owner": "nunu", "notify": "test"}
+        with patch("creatures.wolf.send_wolf_notify") as mock_notify, \
+             patch("creatures.wolf.dispatch_session", return_value="https://example.com/tui?session=nunu-abc"), \
+             patch("creatures.wolf.get_state_dir", return_value=Path("/tmp")), \
+             patch("creatures.wolf._log_job"):
             fire_cron(entry)
-        assert "unknown action" in capsys.readouterr().err
+            msg = mock_notify.call_args[0][0]
+            assert "https://example.com/tui?session=nunu-abc" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -316,30 +332,30 @@ class TestFireCron:
 class TestFireByName:
     """Unit: --fire triggers a specific cron by name regardless of schedule."""
 
+    def _setup_wolt(self, wolts_dir, name, crons):
+        wolf_json = wolts_dir / name / "wolt" / "wolf.json"
+        wolf_json.parent.mkdir(parents=True, exist_ok=True)
+        wolf_json.write_text(json.dumps({"crons": crons}))
+
     def test_fire_existing_cron(self, tmp_path):
         from creatures.wolf import fire_by_name
-        config = {
-            "crons": [
-                {"name": "digest", "schedule": "0 6 * * *", "action": "script", "command": "echo hi", "notify": "go"}
-            ]
-        }
-        wolf_json = tmp_path / "wolf.json"
-        wolf_json.write_text(json.dumps(config))
-
-        with patch("creatures.wolf.get_schedule_path", return_value=wolf_json), \
+        self._setup_wolt(tmp_path, "nunu", [
+            {"name": "digest", "schedule": "0 6 * * *", "prompt": "/digest", "notify": "go"}
+        ])
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
              patch("creatures.wolf.fire_cron") as mock_fire:
             result = fire_by_name("digest")
             assert result is True
             mock_fire.assert_called_once()
             assert mock_fire.call_args[0][0]["name"] == "digest"
+            assert mock_fire.call_args[0][0]["_owner"] == "nunu"
 
     def test_fire_nonexistent_cron(self, tmp_path):
         from creatures.wolf import fire_by_name
-        config = {"crons": [{"name": "digest", "schedule": "0 6 * * *", "action": "script", "command": "echo hi"}]}
-        wolf_json = tmp_path / "wolf.json"
-        wolf_json.write_text(json.dumps(config))
-
-        with patch("creatures.wolf.get_schedule_path", return_value=wolf_json), \
+        self._setup_wolt(tmp_path, "nunu", [
+            {"name": "digest", "schedule": "0 6 * * *", "prompt": "/digest"}
+        ])
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
              patch("creatures.wolf.fire_cron") as mock_fire:
             result = fire_by_name("nope")
             assert result is False
@@ -347,7 +363,7 @@ class TestFireByName:
 
     def test_fire_no_config(self, tmp_path):
         from creatures.wolf import fire_by_name
-        with patch("creatures.wolf.get_schedule_path", return_value=tmp_path / "nope.json"):
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
             result = fire_by_name("anything")
             assert result is False
 
@@ -404,13 +420,18 @@ class TestWolfSchedulesTool:
 class TestFireWolfTool:
     """Unit: the fire_wolf tool exposed to the dog."""
 
+    def _setup_wolt(self, wolts_dir, name, crons):
+        wolf_json = wolts_dir / name / "wolt" / "wolf.json"
+        wolf_json.parent.mkdir(parents=True, exist_ok=True)
+        wolf_json.write_text(json.dumps({"crons": crons}))
+
     def test_fire_existing_cron(self, tmp_path):
         from bot.core import _tool_fire_wolf
-        with patch("creatures.wolf.get_schedule_path", return_value=tmp_path / "wolf.json"), \
+        self._setup_wolt(tmp_path, "nunu", [
+            {"name": "digest", "schedule": "0 6 * * *", "prompt": "/digest"}
+        ])
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
              patch("creatures.wolf.fire_cron") as mock_fire:
-            (tmp_path / "wolf.json").write_text(json.dumps({
-                "crons": [{"name": "digest", "schedule": "0 6 * * *", "action": "script", "command": "echo"}]
-            }))
             result = json.loads(_tool_fire_wolf({"name": "digest"}, None))
             assert result["ok"] is True
             assert result["fired"] == "digest"
@@ -418,8 +439,8 @@ class TestFireWolfTool:
 
     def test_fire_missing_cron(self, tmp_path):
         from bot.core import _tool_fire_wolf
-        with patch("creatures.wolf.get_schedule_path", return_value=tmp_path / "wolf.json"):
-            (tmp_path / "wolf.json").write_text(json.dumps({"crons": []}))
+        self._setup_wolt(tmp_path, "nunu", [])
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
             result = json.loads(_tool_fire_wolf({"name": "nope"}, None))
             assert result["ok"] is False
 
@@ -597,29 +618,16 @@ class TestJobLogging:
     def test_fire_cron_logs_started_and_dispatched(self, tmp_path):
         """fire_cron should log both 'started' and 'dispatched' events."""
         from creatures.wolf import fire_cron
-        entry = {"name": "test", "action": "script", "command": "echo hi"}
+        entry = {"name": "test", "prompt": "do stuff", "_owner": "nunu"}
         with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
-             patch("creatures.wolf.run_script", return_value="wolf-test-abc"), \
-             patch("creatures.wolf.send_wolf_notify"), \
-             patch("creatures.wolf._get_tunnel_url", return_value=None):
+             patch("creatures.wolf.dispatch_session", return_value=None), \
+             patch("creatures.wolf.send_wolf_notify"):
             fire_cron(entry)
         log_file = tmp_path / "jobs.jsonl"
         lines = log_file.read_text().strip().split("\n")
         events = [json.loads(l)["event"] for l in lines]
         assert "started" in events
         assert "dispatched" in events
-
-    def test_fire_cron_logs_error_on_unknown_action(self, tmp_path):
-        from creatures.wolf import fire_cron
-        entry = {"name": "bad", "action": "bogus"}
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
-             patch("creatures.wolf.send_wolf_notify"):
-            fire_cron(entry)
-        log_file = tmp_path / "jobs.jsonl"
-        lines = log_file.read_text().strip().split("\n")
-        errors = [json.loads(l) for l in lines if json.loads(l).get("event") == "error"]
-        assert len(errors) >= 1
-        assert "unknown action" in errors[0]["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -727,102 +735,84 @@ class TestWolfJobsTool:
 
 
 # ---------------------------------------------------------------------------
-# run_script env inheritance — the WOLT_DIR fix
+# dispatch_session — session spawning for owning wolt
 # ---------------------------------------------------------------------------
 
-class TestRunScriptEnv:
-    """Unit: run_script exports the wolf's own WOLT_DIR and WOLT_NAME
-    into the tmux session, not the container's inherited env."""
+class TestDispatchSession:
+    """Unit: dispatch_session spawns a session for the owning wolt."""
 
-    def test_tmux_command_includes_wolt_dir_export(self, tmp_path):
-        """The wrapped command should start with export WOLT_DIR=... WOLT_NAME=..."""
-        from creatures.wolf import run_script
+    def test_dispatches_with_owner(self, tmp_path):
+        from creatures.wolf import dispatch_session
+        entry = {"name": "playlist", "prompt": "/playlist", "_owner": "nunu"}
+        mock_result = MagicMock(stdout='{"name": "nunu-abc", "url": "https://example.com/tui?session=nunu-abc"}', returncode=0)
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            url = dispatch_session(entry)
+        assert url == "https://example.com/tui?session=nunu-abc"
+        call_args = mock_run.call_args[0][0]
+        payload = json.loads(call_args[call_args.index("-d") + 1])
+        assert payload["wolt"] == "nunu"
+        assert payload["prompt"] == "/playlist"
 
-        wolf_dir = tmp_path / "howlie"
-        wolf_dir.mkdir()
-        entry = {"name": "update-check", "action": "script", "command": "bash check.sh"}
+    def test_returns_none_without_prompt(self):
+        from creatures.wolf import dispatch_session
+        entry = {"name": "t", "prompt": "", "_owner": "nunu"}
+        assert dispatch_session(entry) is None
 
-        with patch("creatures.wolf.get_wolt_dir", return_value=wolf_dir), \
-             patch("creatures.wolf._get_wolf_name", return_value="howlie"), \
-             patch("creatures.wolf._get_tunnel_url", return_value=None), \
-             patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
-             patch("creatures.wolf._log_job"), \
-             patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            run_script(entry)
+    def test_returns_none_without_owner(self):
+        from creatures.wolf import dispatch_session
+        entry = {"name": "t", "prompt": "do stuff", "_owner": ""}
+        assert dispatch_session(entry) is None
 
-            # Inspect the bash -c command passed to tmux
-            call_args = mock_run.call_args[0][0]
-            # tmux new-session -d -s <name> -c <dir> bash -c <wrapped>
-            wrapped_cmd = call_args[-1]  # last arg is the wrapped command string
-            assert f"export WOLT_DIR={wolf_dir}" in wrapped_cmd
-            assert "WOLT_NAME=howlie" in wrapped_cmd
+    def test_constructs_url_from_tunnel(self):
+        from creatures.wolf import dispatch_session
+        entry = {"name": "t", "prompt": "hi", "_owner": "nunu"}
+        mock_result = MagicMock(stdout='{"name": "nunu-abc"}', returncode=0)
+        with patch("subprocess.run", return_value=mock_result), \
+             patch("creatures.wolf._get_tunnel_url", return_value="https://tunnel.example.com"):
+            url = dispatch_session(entry)
+        assert url == "https://tunnel.example.com/tui?session=nunu-abc"
 
-    def test_env_export_precedes_command(self, tmp_path):
-        """The export must come BEFORE the actual command."""
-        from creatures.wolf import run_script
 
-        wolf_dir = tmp_path / "howlie"
-        wolf_dir.mkdir()
-        entry = {"name": "test", "action": "script", "command": "echo hello"}
+# ---------------------------------------------------------------------------
+# One-off crons ("at" field)
+# ---------------------------------------------------------------------------
 
-        with patch("creatures.wolf.get_wolt_dir", return_value=wolf_dir), \
-             patch("creatures.wolf._get_wolf_name", return_value="howlie"), \
-             patch("creatures.wolf._get_tunnel_url", return_value=None), \
-             patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
-             patch("creatures.wolf._log_job"), \
-             patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            run_script(entry)
+class TestOneOffCrons:
+    """Unit: one-off crons fire at the specified time and self-delete."""
 
-            wrapped_cmd = mock_run.call_args[0][0][-1]
-            export_pos = wrapped_cmd.find("export WOLT_DIR=")
-            command_pos = wrapped_cmd.find("echo hello")
-            assert export_pos < command_pos, "WOLT_DIR export must come before the command"
+    def _setup_wolt(self, wolts_dir, name, crons):
+        wolf_json = wolts_dir / name / "wolt" / "wolf.json"
+        wolf_json.parent.mkdir(parents=True, exist_ok=True)
+        wolf_json.write_text(json.dumps({"crons": crons}))
 
-    def test_tmux_working_dir_matches_wolf_dir(self, tmp_path):
-        """tmux -c should also point to the wolf's directory."""
-        from creatures.wolf import run_script
+    def test_fires_when_past_due(self, tmp_path):
+        from creatures.wolf import check_and_fire
+        crons = [{"name": "ci-check", "at": "2026-03-21T20:00", "prompt": "check CI", "_owner": "nunu", "_owner_dir": str(tmp_path / "nunu")}]
+        now = datetime(2026, 3, 21, 21, 0).astimezone()
+        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+             patch("creatures.wolf.fire_cron") as mock_fire, \
+             patch("creatures.wolf.remove_cron"):
+            check_and_fire(crons, now)
+            mock_fire.assert_called_once()
 
-        wolf_dir = tmp_path / "howlie"
-        wolf_dir.mkdir()
-        entry = {"name": "test", "action": "script", "command": "echo hi"}
+    def test_does_not_fire_before_time(self, tmp_path):
+        from creatures.wolf import check_and_fire
+        crons = [{"name": "ci-check", "at": "2026-03-21T20:00", "prompt": "check CI", "_owner": "nunu", "_owner_dir": str(tmp_path / "nunu")}]
+        now = datetime(2026, 3, 21, 19, 0).astimezone()
+        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+             patch("creatures.wolf.fire_cron") as mock_fire:
+            check_and_fire(crons, now)
+            mock_fire.assert_not_called()
 
-        with patch("creatures.wolf.get_wolt_dir", return_value=wolf_dir), \
-             patch("creatures.wolf._get_wolf_name", return_value="howlie"), \
-             patch("creatures.wolf._get_tunnel_url", return_value=None), \
-             patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
-             patch("creatures.wolf._log_job"), \
-             patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            run_script(entry)
-
-            call_args = mock_run.call_args[0][0]
-            # Find -c flag and the value after it
-            c_idx = call_args.index("-c")
-            assert call_args[c_idx + 1] == str(wolf_dir)
-
-    def test_different_wolf_dir_from_env(self, tmp_path):
-        """Even if WOLT_DIR env points elsewhere, run_script should use the wolf's dir."""
-        from creatures.wolf import run_script
-
-        wolf_dir = tmp_path / "howlie"
-        wolf_dir.mkdir()
-        entry = {"name": "test", "action": "script", "command": "bash check.sh"}
-
-        # Simulate container env pointing to a different wolt
-        with patch.dict(os.environ, {"WOLT_DIR": "/workspace/wolts/neowolt", "WOLT_NAME": "neowolt"}), \
-             patch("creatures.wolf.get_wolt_dir", return_value=wolf_dir), \
-             patch("creatures.wolf._get_wolf_name", return_value="howlie"), \
-             patch("creatures.wolf._get_tunnel_url", return_value=None), \
-             patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
-             patch("creatures.wolf._log_job"), \
-             patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            run_script(entry)
-
-            wrapped_cmd = mock_run.call_args[0][0][-1]
-            # Should export howlie's dir, NOT neowolt
-            assert str(wolf_dir) in wrapped_cmd
-            assert "WOLT_NAME=howlie" in wrapped_cmd
-            assert "neowolt" not in wrapped_cmd
+    def test_remove_cron_deletes_entry(self, tmp_path):
+        from creatures.wolf import remove_cron
+        self._setup_wolt(tmp_path, "nunu", [
+            {"name": "ci-check", "at": "2026-03-21T20:00", "prompt": "check CI"},
+            {"name": "digest", "schedule": "0 6 * * *", "prompt": "/digest"}
+        ])
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
+            remove_cron("nunu", "ci-check")
+        data = json.loads((tmp_path / "nunu" / "wolt" / "wolf.json").read_text())
+        names = [c["name"] for c in data["crons"]]
+        assert "ci-check" not in names
+        assert "digest" in names

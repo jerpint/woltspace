@@ -1,11 +1,11 @@
 """
-🐺 Wolf — Cron & Scheduler
+🐺 Wolf — Distributed Cron Scheduler
 
-The wolf runs the pack's routines. Fires tasks on schedule, sends
-notifications, and dispatches work to other creatures when needed.
+Each wolt registers its own schedule in wolt/wolf.json. The wolf discovers
+all schedules, fires crons on time, and spawns sessions for the owning wolt.
 
-Schedule config: {wolt_dir}/wolt/wolf.json
-Last-run state:  {wolt_dir}/.state/wolf/
+Schedule config: {each_wolt}/wolt/wolf.json
+Last-run state:  {wolf_wolt}/.state/wolf/
 
 Usage:
   python -m creatures.wolf              # Run as background service
@@ -18,8 +18,6 @@ Usage:
 import asyncio
 import json
 import os
-import secrets
-import subprocess
 import sys
 import time
 from datetime import datetime, timedelta
@@ -27,6 +25,8 @@ from pathlib import Path
 from typing import Optional
 
 # ── Cached helpers ─────────────────────────────────────────────────
+
+WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 
 _wolf_name_cache: Optional[str] = None
 
@@ -47,19 +47,12 @@ def _get_wolf_name() -> str:
 
 def _get_tunnel_url() -> Optional[str]:
     """Read tunnel URL from .state/tunnel-url."""
-    wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
-    tunnel_file = wolts_dir / ".state" / "tunnel-url"
+    tunnel_file = WOLTS_DIR / ".state" / "tunnel-url"
     if tunnel_file.exists():
         url = tunnel_file.read_text().strip()
         return url if url else None
     return None
 
-
-def _make_session_name(cron_name: str) -> str:
-    """Generate a tmux session name: {wolf}-{cron}-{hex6}."""
-    wolf = _get_wolf_name()
-    hex6 = secrets.token_hex(3)
-    return f"{wolf}-{cron_name}-{hex6}"
 
 # ── Cron expression parser (minimal, no deps) ──────────────────────
 
@@ -116,21 +109,20 @@ def cron_matches(expr: str, dt: datetime) -> bool:
 
 def _find_wolf_wolt() -> Optional[Path]:
     """Find the active wolf-wolt directory, if one exists."""
-    wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
-    config_file = wolts_dir / "woltspace.json"
+    config_file = WOLTS_DIR / "woltspace.json"
     # Check woltspace.json for active_wolf
     if config_file.exists():
         try:
             config = json.loads(config_file.read_text())
             active_wolf = config.get("creatures", {}).get("active_wolf")
             if active_wolf:
-                wolf_dir = wolts_dir / active_wolf
-                if (wolf_dir / "wolt" / "wolf.json").exists():
+                wolf_dir = WOLTS_DIR / active_wolf
+                if wolf_dir.exists():
                     return wolf_dir
         except (json.JSONDecodeError, OSError):
             pass
     # Fallback: scan for any wolt with type=wolf
-    for wolt_json in wolts_dir.glob("*/wolt/wolt.json"):
+    for wolt_json in WOLTS_DIR.glob("*/wolt/wolt.json"):
         try:
             data = json.loads(wolt_json.read_text())
             if data.get("type") == "wolf":
@@ -150,10 +142,6 @@ def get_wolt_dir() -> Path:
     if wolf_wolt:
         return wolf_wolt
     return Path(os.environ.get("WOLT_DIR", "/workspace/wolt"))
-
-
-def get_schedule_path() -> Path:
-    return get_wolt_dir() / "wolt" / "wolf.json"
 
 
 def get_state_dir() -> Path:
@@ -179,39 +167,41 @@ def _log_job(name: str, action: str, **kwargs):
 
 
 def load_schedule() -> list[dict]:
-    """Load wolf.json schedule config.
+    """Discover crons from all wolts.
 
-    Format:
+    Scans wolts/*/wolt/wolf.json, merges all crons into one list.
+    Each cron is tagged with _owner (the wolt name) and _owner_dir (the wolt path).
+
+    Format per wolt:
     {
       "crons": [
         {
           "name": "digest",
           "schedule": "0 6 * * *",
-          "action": "script",
-          "command": "node /workspace/woltspace/cron/digest.mjs",
-          "notify": "🐺 digest time — fetching news and papers",
-          "timezone": "America/Montreal"
+          "prompt": "/digest",
+          "notify": "digest time"
         },
         {
-          "name": "weekly-review",
-          "schedule": "0 10 * * 1",
-          "action": "session",
-          "prompt": "Write a weekly review of what we shipped",
-          "creature": "beaver",
-          "notify": "🐺 weekly review firing up"
+          "name": "check-ci",
+          "at": "2026-03-21T20:00",
+          "prompt": "Check if PR #215 passed CI"
         }
       ]
     }
     """
-    path = get_schedule_path()
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text())
-        return data.get("crons", [])
-    except (json.JSONDecodeError, KeyError) as e:
-        print(f"[wolf] error reading {path}: {e}", file=sys.stderr)
-        return []
+    all_crons = []
+    for wolf_json in sorted(WOLTS_DIR.glob("*/wolt/wolf.json")):
+        wolt_dir = wolf_json.parent.parent
+        wolt_name = wolt_dir.name
+        try:
+            data = json.loads(wolf_json.read_text())
+            for cron in data.get("crons", []):
+                cron["_owner"] = wolt_name
+                cron["_owner_dir"] = str(wolt_dir)
+                all_crons.append(cron)
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"[wolf] error reading {wolf_json}: {e}", file=sys.stderr)
+    return all_crons
 
 
 def get_last_run(name: str) -> Optional[str]:
@@ -232,6 +222,7 @@ def set_last_run(name: str, dt: datetime):
 
 def send_wolf_notify(message: str):
     """Send a 🐺 wolf notification via the server."""
+    import subprocess
     wolf_name = _get_wolf_name()
     full_message = f"🐺 {wolf_name}: {message}"
 
@@ -254,73 +245,28 @@ def send_wolf_notify(message: str):
         print(f"[wolf] notify error: {e}", file=sys.stderr)
 
 
-def run_script(entry: dict) -> Optional[str]:
-    """Run a shell command inside a tmux session. Returns session name."""
-    command = entry.get("command", "")
-    cron_name = entry.get("name", "script")
-    if not command:
-        print(f"[wolf] {cron_name}: no command specified", file=sys.stderr)
-        return None
+def dispatch_session(entry: dict) -> Optional[str]:
+    """Spawn a Claude Code session for the owning wolt. Returns session URL if available.
 
-    session_name = _make_session_name(cron_name)
-    wolt_dir = str(get_wolt_dir())
-    wolf_name = _get_wolf_name()
-
-    # Build notification JSON payloads (avoid shell quoting hell by using heredocs)
-    tunnel_url = _get_tunnel_url()
-    tui_link = f"\\n{tunnel_url}/tui?session={session_name}" if tunnel_url else ""
-    ok_msg = f"🐺 {wolf_name}: cron '{cron_name}' completed successfully{tui_link}"
-    fail_prefix = f"🐺 {wolf_name}: cron '{cron_name}' failed (exit "
-    notify_url = "http://localhost:7777/notify"
-
-    # Export the wolf's own env so cron scripts use the right state directory
-    # (without this, scripts inherit WOLT_DIR from the container entrypoint,
-    # which points to the rodent-wolt, not the wolf-wolt)
-    env_setup = f"export WOLT_DIR={wolt_dir} WOLT_NAME={wolf_name}; "
-
-    # Wrap: run command, capture exit code, notify completion, keep terminal open
-    wrapped = (
-        f"{env_setup}{command}; _exit=$?; "
-        f"_notify() {{ curl -s -X POST {notify_url} -H 'Content-Type: application/json' "
-        f"""-d "$(printf '{{"message":"%s","session":""}}' "$1")"; }}; """
-        f'if [ "$_exit" -eq 0 ]; then '
-        f'  _notify "{ok_msg}"; '
-        f"else "
-        f'  _notify "{fail_prefix}$_exit)"; '
-        f"fi; "
-        f"exec bash"
-    )
-
-    print(f"[wolf] running script in tmux session: {session_name}")
-    try:
-        subprocess.run(
-            ["tmux", "new-session", "-d", "-s", session_name, "-c", wolt_dir,
-             "bash", "-c", wrapped],
-            check=True, capture_output=True, text=True, timeout=10,
-        )
-        return session_name
-    except Exception as e:
-        print(f"[wolf] script error: {e}", file=sys.stderr)
-        _log_job(cron_name, "script", event="error", error=str(e))
-        send_wolf_notify(f"cron '{cron_name}' failed to start: {e}")
-        return None
-
-
-def run_session(entry: dict) -> Optional[str]:
-    """Dispatch a Claude Code session via the bot's API. Returns session URL if available."""
+    Uses start_session() from sessions.py — the single entry point for all session creation.
+    The session runs in the wolt's directory, with the wolt's identity and skills.
+    """
+    import subprocess
     prompt = entry.get("prompt", "")
-    creature = entry.get("creature", "beaver")
+    owner = entry.get("_owner", "")
     if not prompt:
-        print(f"[wolf] {entry['name']}: no prompt specified", file=sys.stderr)
+        print(f"[wolf] {entry.get('name', '?')}: no prompt specified", file=sys.stderr)
+        return None
+    if not owner:
+        print(f"[wolf] {entry.get('name', '?')}: no _owner set", file=sys.stderr)
         return None
 
-    print(f"[wolf] dispatching {creature} session: {prompt[:80]}")
+    print(f"[wolf] dispatching session for {owner}: {prompt[:80]}")
 
-    # Use the server's session spawn endpoint
+    # Use the server's session spawn endpoint — pass the owning wolt
     payload = json.dumps({
         "prompt": prompt,
-        "creature": creature,
-        "wolt": os.environ.get("WOLT_NAME"),
+        "wolt": owner,
     })
     try:
         result = subprocess.run(
@@ -330,67 +276,51 @@ def run_session(entry: dict) -> Optional[str]:
             capture_output=True, text=True, timeout=10,
         )
         print(f"[wolf] session response: {result.stdout[:200]}")
-        # Parse response for session name/URL
         resp = json.loads(result.stdout) if result.stdout else {}
         session_name = resp.get("name")
         session_url = resp.get("url")
         if session_url:
             return session_url
         elif session_name:
-            # Construct URL from tunnel
             tunnel_url = _get_tunnel_url()
             if tunnel_url:
                 return f"{tunnel_url}/tui?session={session_name}"
         return None
     except Exception as e:
         print(f"[wolf] session dispatch error: {e}", file=sys.stderr)
-        send_wolf_notify(f"cron '{entry['name']}' failed to dispatch: {e}")
+        send_wolf_notify(f"cron '{entry.get('name', '?')}' failed to dispatch: {e}")
         return None
 
 
-def run_skill(entry: dict):
-    """Run a Claude Code skill via a session."""
-    skill = entry.get("skill", "")
-    prompt = entry.get("prompt", f"/{skill}")
-    creature = entry.get("creature", "beaver")
-
-    print(f"[wolf] running skill /{skill}")
-    run_session({**entry, "prompt": prompt, "creature": creature})
+def remove_cron(wolt_name: str, cron_name: str):
+    """Delete a one-off cron from the wolt's wolf.json after firing."""
+    path = WOLTS_DIR / wolt_name / "wolt" / "wolf.json"
+    try:
+        data = json.loads(path.read_text())
+        data["crons"] = [c for c in data.get("crons", []) if c.get("name") != cron_name]
+        path.write_text(json.dumps(data, indent=2) + "\n")
+        print(f"[wolf] removed one-off cron '{cron_name}' from {wolt_name}/wolt/wolf.json")
+    except Exception as e:
+        print(f"[wolf] failed to remove cron '{cron_name}' from {wolt_name}: {e}", file=sys.stderr)
 
 
 def fire_cron(entry: dict):
-    """Execute a cron entry — fire action first, then notify with link."""
+    """Execute a cron entry — dispatch session, then always notify with link."""
     name = entry.get("name", "unnamed")
-    action = entry.get("action", "script")
-    notify_msg = entry.get("notify")
+    owner = entry.get("_owner", "?")
 
-    _log_job(name, action, event="started", command=entry.get("command", ""))
+    _log_job(name, "session", event="started", owner=owner)
 
-    # Fire action first (to get session name/URL)
-    link = None
-    session_name = None
-    if action == "script":
-        session_name = run_script(entry)
-        if session_name:
-            tunnel_url = _get_tunnel_url()
-            if tunnel_url:
-                link = f"{tunnel_url}/tui?session={session_name}"
-    elif action == "session":
-        link = run_session(entry)
-    elif action == "skill":
-        run_skill(entry)
-    else:
-        print(f"[wolf] {name}: unknown action '{action}'", file=sys.stderr)
-        _log_job(name, action, event="error", error=f"unknown action '{action}'")
+    # Dispatch session for the owning wolt
+    link = dispatch_session(entry)
 
-    _log_job(name, action, event="dispatched", session=session_name, link=link)
+    _log_job(name, "session", event="dispatched", owner=owner, link=link)
 
-    # Send notification with link appended
-    if notify_msg:
-        msg = notify_msg
-        if link:
-            msg = f"{msg}\n{link}"
-        send_wolf_notify(msg)
+    # Always notify — use custom message or default
+    notify_msg = entry.get("notify") or f"{owner} — {name}"
+    if link:
+        notify_msg = f"{notify_msg}\n{link}"
+    send_wolf_notify(notify_msg)
 
 
 # ── Main loop ───────────────────────────────────────────────────────
@@ -399,17 +329,36 @@ def check_and_fire(crons: list[dict], now: datetime):
     """Check all crons and fire any that are due."""
     for entry in crons:
         name = entry.get("name")
-        schedule = entry.get("schedule")
-        if not name or not schedule:
+        if not name:
             continue
 
-        # Resolve timezone
-        tz_name = entry.get("timezone")
-        if tz_name:
-            from zoneinfo import ZoneInfo
-            local_now = now.astimezone(ZoneInfo(tz_name))
-        else:
-            local_now = now
+        # --- One-off: "at" field ---
+        at = entry.get("at")
+        if at:
+            try:
+                fire_time = datetime.fromisoformat(at)
+                # Make naive timestamps aware using local timezone
+                if fire_time.tzinfo is None:
+                    fire_time = fire_time.astimezone()
+            except ValueError:
+                print(f"[wolf] {name}: invalid 'at' timestamp: {at}", file=sys.stderr)
+                continue
+
+            if now >= fire_time:
+                owner = entry.get("_owner", "?")
+                print(f"[wolf] firing one-off: {name} (owner: {owner}, at: {at})")
+                # Use at-based stamp so it won't re-fire
+                set_last_run(name, now)
+                fire_cron(entry)
+                remove_cron(entry.get("_owner", ""), name)
+            continue
+
+        # --- Recurring: "schedule" field ---
+        schedule = entry.get("schedule")
+        if not schedule:
+            continue
+
+        local_now = now
 
         if not cron_matches(schedule, local_now):
             continue
@@ -420,7 +369,8 @@ def check_and_fire(crons: list[dict], now: datetime):
         if last == stamp:
             continue
 
-        print(f"[wolf] firing: {name} (schedule: {schedule})")
+        owner = entry.get("_owner", "?")
+        print(f"[wolf] firing: {name} (owner: {owner}, schedule: {schedule})")
         set_last_run(name, local_now)
         fire_cron(entry)
 
@@ -428,27 +378,47 @@ def check_and_fire(crons: list[dict], now: datetime):
 def catch_up(crons: list[dict], now: datetime):
     """Fire any crons that were missed while the wolf was down.
 
-    For each cron, walks backwards from now minute-by-minute (up to 24h)
+    For each recurring cron, walks backwards from now minute-by-minute (up to 24h)
     looking for the most recent time the schedule would have matched.
     If that time is after the last recorded run, fires the cron.
+
+    One-off crons with "at" in the past are also fired.
     """
     for entry in crons:
         name = entry.get("name")
-        schedule = entry.get("schedule")
-        if not name or not schedule:
+        if not name:
             continue
 
         # Opt out of catch-up per cron
         if entry.get("catch_up") is False:
             continue
 
-        tz_name = entry.get("timezone")
-        if tz_name:
-            from zoneinfo import ZoneInfo
-            local_now = now.astimezone(ZoneInfo(tz_name))
-        else:
-            local_now = now
+        # One-off catch-up: if "at" is in the past, fire it
+        at = entry.get("at")
+        if at:
+            try:
+                fire_time = datetime.fromisoformat(at)
+                if fire_time.tzinfo is None:
+                    fire_time = fire_time.astimezone()
+            except ValueError:
+                continue
 
+            if now >= fire_time:
+                last = get_last_run(name)
+                if last is None:  # never fired
+                    owner = entry.get("_owner", "?")
+                    print(f"[wolf] catch-up one-off: {name} (owner: {owner}, at: {at})")
+                    set_last_run(name, now)
+                    fire_cron(entry)
+                    remove_cron(entry.get("_owner", ""), name)
+            continue
+
+        # Recurring catch-up
+        schedule = entry.get("schedule")
+        if not schedule:
+            continue
+
+        local_now = now
         last = get_last_run(name)
 
         # Walk backwards minute by minute to find the most recent match
@@ -468,27 +438,28 @@ def catch_up(crons: list[dict], now: datetime):
         if last == match_stamp:
             continue  # already fired for this window
 
-        print(f"[wolf] catch-up: {name} (missed {match_stamp}, last run: {last or 'never'})")
+        owner = entry.get("_owner", "?")
+        print(f"[wolf] catch-up: {name} (owner: {owner}, missed {match_stamp}, last run: {last or 'never'})")
         set_last_run(name, most_recent_match)
-        _log_job(name, entry.get("action", "script"), event="catch-up", missed=match_stamp)
+        _log_job(name, "session", event="catch-up", owner=owner, missed=match_stamp)
         fire_cron(entry)
 
 
 async def run_loop():
     """Main wolf loop — checks every 30 seconds."""
-    print("[wolf] 🐺 wolf scheduler starting")
-
-    schedule_path = get_schedule_path()
-    if not schedule_path.exists():
-        print(f"[wolf] no schedule found at {schedule_path} — wolf is idle")
-        print("[wolf] create wolf.json to register crons")
+    print("[wolf] 🐺 wolf scheduler starting (distributed mode)")
+    print(f"[wolf] scanning {WOLTS_DIR}/*/wolt/wolf.json")
 
     # Catch up on anything missed while the wolf was down
     try:
         crons = load_schedule()
         if crons:
+            owners = set(c.get("_owner", "?") for c in crons)
+            print(f"[wolf] found {len(crons)} crons from {len(owners)} wolts: {', '.join(sorted(owners))}")
             now = datetime.now().astimezone()
             catch_up(crons, now)
+        else:
+            print("[wolf] no crons registered — wolf is idle")
     except Exception as e:
         print(f"[wolf] catch-up error: {e}", file=sys.stderr)
 
@@ -508,17 +479,25 @@ def list_crons():
     """Print registered crons."""
     crons = load_schedule()
     if not crons:
-        path = get_schedule_path()
-        print(f"No crons registered. Create {path}")
+        print(f"No crons registered. Wolts can add crons to their wolt/wolf.json.")
         return
 
-    for entry in crons:
-        name = entry.get("name", "?")
-        schedule = entry.get("schedule", "?")
-        action = entry.get("action", "?")
-        last = get_last_run(name) or "never"
-        notify = "🔔" if entry.get("notify") else "  "
-        print(f"  {notify} {name:<25} {schedule:<20} {action:<10} last: {last}")
+    # Group by owner
+    by_owner = {}
+    for c in crons:
+        owner = c.get("_owner", "?")
+        by_owner.setdefault(owner, []).append(c)
+
+    for owner in sorted(by_owner):
+        print(f"\n  {owner}:")
+        for entry in by_owner[owner]:
+            name = entry.get("name", "?")
+            schedule = entry.get("schedule", "")
+            at = entry.get("at", "")
+            when = schedule or f"at {at}"
+            last = get_last_run(name) or "never"
+            notify = "🔔" if entry.get("notify") else "  "
+            print(f"    {notify} {name:<25} {when:<25} last: {last}")
 
 
 def run_once():
@@ -532,25 +511,39 @@ def run_once():
     fired = 0
     for entry in crons:
         name = entry.get("name")
-        schedule = entry.get("schedule")
-        if not name or not schedule:
+        if not name:
             continue
 
-        tz_name = entry.get("timezone")
-        if tz_name:
-            from zoneinfo import ZoneInfo
-            local_now = now.astimezone(ZoneInfo(tz_name))
-        else:
-            local_now = now
+        # One-off
+        at = entry.get("at")
+        if at:
+            try:
+                fire_time = datetime.fromisoformat(at)
+                if fire_time.tzinfo is None:
+                    fire_time = fire_time.astimezone()
+            except ValueError:
+                continue
+            if now >= fire_time:
+                print(f"  [fire] {name} (one-off, owner: {entry.get('_owner', '?')})")
+                set_last_run(name, now)
+                fire_cron(entry)
+                remove_cron(entry.get("_owner", ""), name)
+                fired += 1
+            continue
 
-        if cron_matches(schedule, local_now):
-            stamp = local_now.strftime("%Y-%m-%d-%H:%M")
+        # Recurring
+        schedule = entry.get("schedule")
+        if not schedule:
+            continue
+
+        if cron_matches(schedule, now):
+            stamp = now.strftime("%Y-%m-%d-%H:%M")
             last = get_last_run(name)
             if last == stamp:
                 print(f"  [skip] {name} — already fired at {stamp}")
                 continue
-            print(f"  [fire] {name}")
-            set_last_run(name, local_now)
+            print(f"  [fire] {name} (owner: {entry.get('_owner', '?')})")
+            set_last_run(name, now)
             fire_cron(entry)
             fired += 1
 
@@ -565,7 +558,7 @@ def fire_by_name(name: str) -> bool:
     crons = load_schedule()
     for entry in crons:
         if entry.get("name") == name:
-            print(f"[wolf] manually firing: {name}")
+            print(f"[wolf] manually firing: {name} (owner: {entry.get('_owner', '?')})")
             fire_cron(entry)
             return True
     print(f"[wolf] cron '{name}' not found", file=sys.stderr)
@@ -590,11 +583,14 @@ def show_jobs(count: int = 20):
             ts = entry.get("ts", "")[:19]
             cron = entry.get("cron", "?")
             event = entry.get("event", "?")
+            owner = entry.get("owner", "")
             extra = ""
+            if owner:
+                extra = f" [{owner}]"
             if entry.get("session"):
-                extra = f" session={entry['session']}"
+                extra += f" session={entry['session']}"
             if entry.get("error"):
-                extra = f" error={entry['error']}"
+                extra += f" error={entry['error']}"
             if entry.get("link"):
                 extra += f" {entry['link']}"
             print(f"  {ts}  {cron:<20} {event:<12}{extra}")
