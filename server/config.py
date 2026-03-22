@@ -41,6 +41,7 @@ MIME_TYPES = {
     ".html": "text/html",
     ".css": "text/css",
     ".js": "text/javascript",
+    ".mjs": "text/javascript",
     ".json": "application/json",
     ".svg": "image/svg+xml",
     ".xml": "application/xml",

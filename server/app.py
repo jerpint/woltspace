@@ -298,8 +298,13 @@ async def _serve_platform_file(filename: str) -> Response | None:
     path = PUBLIC_DIR / filename
     if not path.exists():
         return None
-    content = path.read_text()
-    return HTMLResponse(content, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    ext = path.suffix.lower()
+    mime = MIME_TYPES.get(ext, "application/octet-stream")
+    if mime in ("text/html", "text/css", "text/javascript", "text/plain", "application/json"):
+        content = path.read_text()
+    else:
+        content = path.read_bytes()
+    return Response(content, media_type=mime, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 # ============================================================
