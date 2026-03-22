@@ -639,8 +639,7 @@ class TestShowJobs:
 
     def test_no_log_file(self, tmp_path, capsys):
         from creatures.wolf import show_jobs
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
-             patch("creatures.wolf._get_wolf_name", return_value="howlie"):
+        with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
             show_jobs()
         assert "No job log yet" in capsys.readouterr().out
 
@@ -652,8 +651,7 @@ class TestShowJobs:
             json.dumps({"ts": "2026-03-15T06:00:01", "cron": "digest", "event": "dispatched", "session": "wolf-digest-abc"}),
         ]
         log_file.write_text("\n".join(entries))
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
-             patch("creatures.wolf._get_wolf_name", return_value="howlie"):
+        with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
             show_jobs(count=5)
         out = capsys.readouterr().out
         assert "digest" in out
@@ -668,8 +666,7 @@ class TestShowJobs:
             for i in range(5)
         ]
         log_file.write_text("\n".join(entries))
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
-             patch("creatures.wolf._get_wolf_name", return_value="howlie"):
+        with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
             show_jobs(count=2)
         out = capsys.readouterr().out
         # Should show only the last 2

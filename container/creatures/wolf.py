@@ -28,21 +28,6 @@ from typing import Optional
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 
-_wolf_name_cache: Optional[str] = None
-
-
-def _get_wolf_name() -> str:
-    """Read wolf name from wolt.json, cached after first call."""
-    global _wolf_name_cache
-    if _wolf_name_cache is not None:
-        return _wolf_name_cache
-    try:
-        wolt_json = get_wolt_dir() / "wolt" / "wolt.json"
-        data = json.loads(wolt_json.read_text())
-        _wolf_name_cache = data.get("name", "wolf")
-    except Exception:
-        _wolf_name_cache = "wolf"
-    return _wolf_name_cache
 
 
 def _get_tunnel_url() -> Optional[str]:
@@ -223,8 +208,7 @@ def set_last_run(name: str, dt: datetime):
 def send_wolf_notify(message: str):
     """Send a 🐺 wolf notification via the server."""
     import subprocess
-    wolf_name = _get_wolf_name()
-    full_message = f"🐺 {wolf_name}: {message}"
+    full_message = f"🐺 *Howl*\n\n{message}"
 
     # Use the notify endpoint directly (no session context needed)
     payload = json.dumps({"message": full_message, "session": ""})
@@ -304,6 +288,21 @@ def remove_cron(wolt_name: str, cron_name: str):
         print(f"[wolf] failed to remove cron '{cron_name}' from {wolt_name}: {e}", file=sys.stderr)
 
 
+CREATURE_EMOJI = {
+    "raccoon": "🦝", "beaver": "🦫", "otter": "🦦", "rodent": "🦫",
+}
+
+
+def _get_wolt_emoji(wolt_name: str) -> str:
+    """Get the creature emoji for a wolt by reading its wolt.json."""
+    try:
+        wolt_json = WOLTS_DIR / wolt_name / "wolt" / "wolt.json"
+        data = json.loads(wolt_json.read_text())
+        return CREATURE_EMOJI.get(data.get("type", ""), "🐾")
+    except Exception:
+        return "🐾"
+
+
 def fire_cron(entry: dict):
     """Execute a cron entry — dispatch session, then always notify with link."""
     name = entry.get("name", "unnamed")
@@ -316,11 +315,16 @@ def fire_cron(entry: dict):
 
     _log_job(name, "session", event="dispatched", owner=owner, link=link)
 
-    # Always notify — use custom message or default
-    notify_msg = entry.get("notify") or f"{owner} — {name}"
+    # Build notification message
+    emoji = _get_wolt_emoji(owner)
+    custom_msg = entry.get("notify")
+    if custom_msg:
+        notify_body = f'{emoji} {owner} has been notified: "{custom_msg}"'
+    else:
+        notify_body = f"{emoji} {owner} has been woken up"
     if link:
-        notify_msg = f"{notify_msg}\n{link}"
-    send_wolf_notify(notify_msg)
+        notify_body = f"{notify_body}\n{link}"
+    send_wolf_notify(notify_body)
 
 
 # ── Main loop ───────────────────────────────────────────────────────
@@ -575,8 +579,7 @@ def show_jobs(count: int = 20):
         return
     lines = log_file.read_text().strip().split("\n")
     recent = lines[-count:]
-    wolf = _get_wolf_name()
-    print(f"🐺 {wolf} — last {min(count, len(recent))} job events:\n")
+    print(f"🐺 last {min(count, len(recent))} job events:\n")
     for line in recent:
         try:
             entry = json.loads(line)
