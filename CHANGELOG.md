@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.2.2 (2026-03-22)
+
+- **Distributed wolf scheduler** — each wolt owns its own crons in `wolt/wolf.json`. Wolf scans all wolts and dispatches sessions for the owning wolt. (#215, #221)
+- Simplified cron schema: `name` + `schedule`/`at` + `prompt` + optional `notify`. Removed old `action`/`script`/`skill`/`creature`/`timezone` fields.
+- One-off crons via `"at"` field — fires once, auto-deletes from wolf.json.
+- Nameless wolf — notifications now show `🐺 *Howl*` with creature emoji for the wolt being woken up.
+- Rewritten `/wolf` skill for the new distributed model.
+- Start-chat modes now mention `/wolf` for scheduling.
+
+**Action required:** The `/wolf` skill has been rewritten. Existing wolts have a stale copy from the old model. After updating, replace it for each wolt:
+```bash
+cp -r /workspace/woltspace/container/skills/wolf/ /workspace/wolts/<wolt-name>/.claude/skills/wolf/
+```
+
+## v0.2.1 (2026-03-21)
+
+- Credential symlink fix — `.claude/credentials.json` copied instead of symlinked to prevent atomic-replace breakage. (#216)
+
+## v0.2.0 (2026-03-20)
+
+- Wolt sites with per-wolt livereload (#198)
+- Projects system — woltspace.json schema, API routes, proxy, lodge cards (#183, #185, #187, #191)
+- Lodge redesign — wolt cards, gnaw buttons, info tooltips (#163)
+- Session routing — unified spawning from lodge/telegram/slack (#168)
+- Type system — raccoon/beaver/otter with creature-derived models (#169)
+- Wakeup template + instant viewport (#199)
+- Fast uvicorn reload (#203)
+
+See release notes: https://github.com/jerpint/woltspace/releases/tag/v0.2.0
+
 ## v0.1.0 (2026-03-17)
 
 - GitHub App auth — replace banned PAT with proper GitHub App (`container/bin/gh-app-token`) (#147)
