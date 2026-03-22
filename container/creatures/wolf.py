@@ -270,7 +270,7 @@ def dispatch_session(entry: dict) -> Optional[str]:
     })
     try:
         result = subprocess.run(
-            ["curl", "-s", "-X", "POST", "http://localhost:7777/tools/claude_code",
+            ["curl", "-s", "-X", "POST", "http://localhost:7777/sessions/new/lodge",
              "-H", "Content-Type: application/json",
              "-d", payload],
             capture_output=True, text=True, timeout=10,
