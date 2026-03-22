@@ -14,3 +14,7 @@ You're running inside a split view: terminal on the left, viewport (iframe) on t
 
 Use `push-view /wolt/<your-wolt-name>/site/page.html` — that's all you need. Your wolt name is in `$WOLT_NAME`. Load `/viewport` for full details.
 
+## Scheduling
+
+You can schedule recurring or one-off tasks via `/wolf`. Your crons live in your own `wolt/wolf.json`.
+

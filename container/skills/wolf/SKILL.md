@@ -3,163 +3,98 @@ name: wolf
 description: Set up and manage scheduled cron jobs. Use when the user wants to run something on a schedule — daily digests, weekly reviews, reminders, or any recurring task.
 ---
 
-# Wolf — Cron & Scheduler 🐺
+# Wolf — Cron Scheduler
 
-The wolf manages scheduled tasks. When a cron fires, the wolf sends an immediate notification and executes the action.
+The wolf is a background scheduler. Each wolt owns its own crons in `wolt/wolf.json`. The wolf scans all wolts, fires crons on schedule, and spawns sessions for the owning wolt.
 
-## Wolf as its own wolt
+## Your wolf.json
 
-The wolf should be its own wolt with `"type": "wolf"` in its `wolt.json`. Before setting up crons:
-
-1. **Check if a wolf-wolt exists:** Run:
-   ```bash
-   python3 -c "
-   import sys; sys.path.insert(0, '/workspace/woltspace/container/lib')
-   from wolts import get_active_creature, find_by_type
-   wolf = get_active_creature('wolf')
-   print(f'active wolf: {wolf}' if wolf else 'no active wolf')
-   for w in find_by_type('wolf'): print(f'  found: {w[\"name\"]} at {w[\"dir\"]}')
-   "
-   ```
-
-2. **If no wolf-wolt exists:** Ask the user what to name their wolf. Then create it:
-   ```bash
-   create-creature-wolt <name> wolf --role "Scheduler" --description "Runs the pack's routines on schedule"
-   ```
-   This creates the wolt directory, sets `type: wolf` in wolt.json, writes minimal identity files, and registers it as the active wolf in woltspace.json.
-
-   After creation, customize the identity — write a proper `identity.md` in `/workspace/wolts/<name>/wolt/memory/identity.md` that reflects the wolf's personality. Then create the cron config at `/workspace/wolts/<name>/wolt/wolf.json`.
-
-3. **If a wolf-wolt already exists:** Edit its `wolt/wolf.json` directly at `/workspace/wolts/<name>/wolt/wolf.json`.
-
-**Important:** Do NOT put `wolf.json` in a rodent-wolt. The wolf is a separate creature.
-
-## Setting up a cron
-
-Create or edit `wolt/wolf.json` in the wolf-wolt's directory:
+Your cron file lives at your own `wolt/wolf.json`:
 
 ```json
 {
   "crons": [
     {
-      "name": "digest",
-      "schedule": "0 6 * * *",
-      "action": "script",
-      "command": "node /workspace/woltspace/cron/digest.mjs",
-      "notify": "digest time — fetching news and papers",
-      "timezone": "America/Montreal"
-    },
-    {
-      "name": "weekly-review",
-      "schedule": "0 10 * * 1",
-      "action": "session",
-      "prompt": "Write a weekly review of what we shipped this week",
-      "creature": "beaver",
-      "notify": "weekly review firing up"
-    },
-    {
-      "name": "cleanup-worktrees",
-      "schedule": "0 0 * * 0",
-      "action": "script",
-      "command": "wt clean",
-      "notify": "cleaning up stale worktrees"
+      "name": "morning-playlist",
+      "schedule": "0 10 * * *",
+      "prompt": "/music",
+      "notify": "morning playlist time"
     }
   ]
 }
 ```
+
+To add a cron, edit your `wolt/wolf.json` directly. The wolf picks up changes every 30 seconds.
 
 ## Cron entry fields
 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | yes | Unique identifier for this cron |
-| `schedule` | yes | Cron expression: `minute hour day month weekday` |
-| `action` | yes | `script`, `session`, or `skill` |
-| `notify` | no | Message sent as 🐺 notification when cron fires |
-| `timezone` | no | IANA timezone (default: system timezone) |
-| `command` | script | Shell command to run |
-| `prompt` | session/skill | Prompt for Claude Code session |
-| `creature` | session/skill | `beaver` (default) or `raccoon` |
-| `skill` | skill | Skill name to invoke |
+| `schedule` | for recurring | Cron expression: `minute hour day month weekday` |
+| `at` | for one-offs | ISO timestamp (e.g. `2026-03-22T10:30`) — fires once, then auto-deletes |
+| `prompt` | yes | What the session runs — can be a `/skill` or plain text |
+| `notify` | no | Message sent as notification when cron fires |
+
+Every cron needs either `schedule` (recurring) or `at` (one-off), not both.
 
 ## Cron expression format
 
 ```
-┌───────── minute (0-59)
-│ ┌─────── hour (0-23)
-│ │ ┌───── day of month (1-31)
-│ │ │ ┌─── month (1-12)
-│ │ │ │ ┌─ day of week (0-6, 0=Sunday)
-│ │ │ │ │
-* * * * *
+minute hour day month weekday
+  0     10    *   *     *       = daily at 10:00 UTC
+  0     10    *   *     1       = Mondays at 10:00 UTC
+ */15    *    *   *     *       = every 15 minutes
+  0    9,17   *   *    1-5      = 9am and 5pm weekdays
 ```
 
-Examples:
-- `0 6 * * *` — daily at 6am
-- `0 10 * * 1` — Mondays at 10am
-- `*/15 * * * *` — every 15 minutes
-- `0 9,17 * * 1-5` — 9am and 5pm weekdays
+**Important:** The server runs on UTC. Convert your local time accordingly.
 
-## Action types
+## One-off crons
 
-### `script` — run a shell command
-```json
-{ "action": "script", "command": "node /path/to/script.js" }
-```
-
-If your script produces something visual (an HTML page, a spark), push it to the viewport with `push-view`:
-```bash
-push-view /history/SPARK_ID      # for sparks
-push-view /your-page.html        # for static pages in wolt/site/
-```
-`push-view` auto-detects the current session — just call it at the end of the script. Scripts that omit this will silently set the viewport on the wrong session.
-
-### `session` — spawn a Claude Code session
-```json
-{ "action": "session", "prompt": "do the thing", "creature": "beaver" }
-```
-
-### `skill` — invoke a Claude Code skill
-```json
-{ "action": "skill", "skill": "digest", "creature": "beaver" }
-```
-
-## CLI
-
-```bash
-# From inside the container:
-python -m creatures.wolf --list         # Show registered crons + last run times
-python -m creatures.wolf --once         # Fire any due crons now and exit
-python -m creatures.wolf --fire NAME    # Fire a specific cron by name (ignores schedule — great for debugging)
-python -m creatures.wolf                # Run as background service (auto-started by entrypoint)
-```
-
-## Default crons
-
-New wolts ship with an empty `wolf.json` — add crons as needed:
+Use `"at"` instead of `"schedule"` for tasks that should fire once:
 
 ```json
 {
-  "crons": [
-    {
-      "name": "digest",
-      "schedule": "0 6 * * *",
-      "action": "script",
-      "command": "node /workspace/woltspace/container/cron/digest.mjs",
-      "notify": "digest time — fetching news and papers",
-      "timezone": "America/Montreal"
-    }
-  ]
+  "name": "quick-check",
+  "at": "2026-03-22T14:30",
+  "prompt": "check if the deploy went through",
+  "notify": "running deploy check"
 }
 ```
 
-Update checking is available on demand via the dog's `check_update` tool — not a wolf cron. Wolves are loud by design (every cron fires a notification), which doesn't fit quiet surveillance tasks like polling for updates.
+The wolf auto-deletes one-off entries from your wolf.json after they fire.
+
+## Examples
+
+**Daily digest at 6am Montreal (10:00 UTC):**
+```json
+{ "name": "digest", "schedule": "0 10 * * *", "prompt": "/digest", "notify": "digest time" }
+```
+
+**Weekly review on Mondays:**
+```json
+{ "name": "weekly-review", "schedule": "0 14 * * 1", "prompt": "Write a weekly review of what we shipped", "notify": "weekly review time" }
+```
+
+**One-off reminder in 30 minutes:**
+```json
+{ "name": "reminder", "at": "2026-03-22T11:00", "prompt": "Remind jerpint to review the PR", "notify": "reminder" }
+```
 
 ## How it works
 
-- Wolf reads `wolt/wolf.json` every 30 seconds
-- When a cron matches the current time, wolf fires it (idempotent — won't double-fire within the same minute)
-- Notifications go via 🐺 through the existing notify pipeline (sessionless notifications skip the reply footer)
-- Last-run timestamps stored in `.state/wolf/{name}.last`
-- Wolf starts automatically when `wolt/wolf.json` exists (entrypoint seeds a default if missing)
-- To add a new cron, just edit wolf.json — wolf picks it up on next check
+- Wolf scans `wolts/*/wolt/wolf.json` every 30 seconds
+- When a cron matches, wolf spawns a session for the owning wolt via `/sessions/new/lodge`
+- A notification is sent: `🐺 *Howl* — 🦫 nunu has been notified: "morning playlist time"`
+- Won't double-fire within the same minute (idempotent)
+- Last-run timestamps stored in `.state/wolf/`
+
+## CLI (for debugging)
+
+```bash
+python -m creatures.wolf --list         # Show all crons + last run times
+python -m creatures.wolf --once         # Fire any due crons now and exit
+python -m creatures.wolf --fire NAME    # Fire a specific cron by name (ignores schedule)
+python -m creatures.wolf                # Run as background service
+```

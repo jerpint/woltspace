@@ -26,3 +26,7 @@ Rule of thumb: if you created an artifact someone would want to look at, push it
 
 **IMPORTANT**: To send a message to the developer, ALWAYS use `notify "your message"`. Never call /notify via curl directly — the notify script handles session routing, emoji prefix, and delivery correctly.
 
+## Scheduling
+
+You can schedule recurring or one-off tasks via `/wolf`. Your crons live in your own `wolt/wolf.json`.
+
