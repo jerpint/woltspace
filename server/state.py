@@ -1,10 +1,25 @@
 """State management — viewport, views history, bot log, status."""
 
 import json
+import sys
 import time
 from pathlib import Path
 
-from .config import STATE_DIR, VIEWS_HISTORY_FILE, STATUS_FILE, BOT_LOG_DIR, BOT_LOG_FILE
+from .config import (
+    STATE_DIR,
+    VIEWS_HISTORY_FILE,
+    STATUS_FILE,
+    BOT_LOG_DIR,
+    BOT_LOG_FILE,
+    WOLTS_DIR,
+)
+
+# Import session registry from container/lib
+_lib_path = Path(__file__).resolve().parent.parent / "container" / "lib"
+if str(_lib_path) not in sys.path:
+    sys.path.insert(0, str(_lib_path))
+
+from sessions import SessionRegistry  # noqa: E402
 
 
 def ensure_state_dir():
@@ -17,32 +32,47 @@ def sanitize_session(name: str) -> str:
     return clean or "main"
 
 
-def current_url_file(session: str) -> Path:
-    return STATE_DIR / f"current-url-{sanitize_session(session)}.json"
-
-
-def redirect_file(session: str) -> Path:
-    return STATE_DIR / f"redirect-{sanitize_session(session)}.json"
-
+# ---------------------------------------------------------------------------
+# Viewport — stored in session JSON, not in separate files
+# ---------------------------------------------------------------------------
 
 def get_current_url(session: str = "main") -> str | None:
-    f = current_url_file(session)
-    if not f.exists():
-        return None
-    try:
-        return json.loads(f.read_text()).get("url")
-    except Exception:
-        return None
+    reg = SessionRegistry(WOLTS_DIR)
+    data = reg.get(sanitize_session(session), check_alive=False)
+    if data:
+        return data.get("viewport_url") or None
+    return None
 
 
 def set_current_url(url: str, session: str = "main", port: int = 7777):
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    safe = sanitize_session(session)
-    current_url_file(safe).write_text(
-        json.dumps({"url": url, "port": port, "updated": int(time.time() * 1000)})
-    )
-    print(f"[current:{safe}] → {url}")
+    reg = SessionRegistry(WOLTS_DIR)
+    name = sanitize_session(session)
+    reg.set_viewport(name, url, port=port)
+    print(f"[current:{name}] → {url}")
 
+
+def get_current_meta(session: str = "main") -> dict:
+    """Get viewport metadata dict — url, port, updated, and any pending redirect."""
+    reg = SessionRegistry(WOLTS_DIR)
+    name = sanitize_session(session)
+    data = reg.get(name, check_alive=False)
+    if not data:
+        return {"url": None, "updated": 0}
+    meta = {
+        "url": data.get("viewport_url") or None,
+        "port": data.get("viewport_port", 7777),
+        "updated": data.get("viewport_updated", 0),
+    }
+    # Check for pending redirect and clear it atomically
+    redirect = reg.clear_redirect(name)
+    if redirect:
+        meta["redirect"] = redirect
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# Views history
+# ---------------------------------------------------------------------------
 
 def derive_title(url: str) -> str:
     from .config import SPARKS_DIR
@@ -86,6 +116,10 @@ def read_views_history(n: int = 100) -> list[dict]:
         return []
 
 
+# ---------------------------------------------------------------------------
+# Bot log
+# ---------------------------------------------------------------------------
+
 def bot_log(event: str, data: dict):
     try:
         BOT_LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -97,6 +131,10 @@ def bot_log(event: str, data: dict):
     except Exception:
         pass
 
+
+# ---------------------------------------------------------------------------
+# Status
+# ---------------------------------------------------------------------------
 
 def read_status() -> dict:
     if not STATUS_FILE.exists():

@@ -106,11 +106,13 @@ def tmux_session():
 
 @pytest.fixture
 def tmp_registry(tmp_path):
-    """Create a temporary session registry for isolated tests."""
+    """Create a temporary session registry with a temp wolts_dir."""
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
     from sessions import SessionRegistry
-    return SessionRegistry(tmp_path / "registry")
+    # Per-wolt model: registry uses WOLTS_DIR as root, sessions land in
+    # wolts_dir/{wolt}/.state/sessions/{name}.json
+    return SessionRegistry(tmp_path)
 
 
 @pytest.fixture
@@ -132,8 +134,7 @@ def routed_test_session(test_chat_id):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
     from sessions import SessionRegistry
 
-    registry_dir = Path("/workspace/wolts/.state/registry")
-    reg = SessionRegistry(registry_dir)
+    reg = SessionRegistry(Path("/workspace/wolts"))
     name = f"test-probe-{int(time.time()) % 100000}-{os.getpid()}"
     reg.create(
         name=name,
@@ -146,18 +147,15 @@ def routed_test_session(test_chat_id):
         chat_id=test_chat_id,
     )
     yield name
-    # Cleanup registry entry
-    reg_file = registry_dir / f"{name}.json"
-    if reg_file.exists():
-        reg_file.unlink()
+    reg.delete(name, wolt="neowolt")
 
 
 @pytest.fixture
 def tunnel_url():
     """Read the current tunnel URL."""
     for path in [
-        Path("/workspace/wolts/.state/tunnel-url"),
-        Path(os.environ.get("WOLT_DIR", "/workspace/wolt")) / ".state" / "tunnel-url",
+        Path("/workspace/wolts/.space/platform/tunnel-url"),
+        Path("/workspace/wolts/.state/tunnel-url"),  # backwards compat
     ]:
         if path.exists():
             return path.read_text().strip().rstrip("/")

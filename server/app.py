@@ -30,7 +30,6 @@ from .config import (
     PORT,
     PROJECTS_DIR,
     PUBLIC_DIR,
-    SESSION_REGISTRY_DIR,
     SHARES_DIR,
     SITE_DIR,
     SPARKS_DIR,
@@ -40,7 +39,6 @@ from .config import (
     WOLT_DIR,
     WOLT_NAME,
     WOLTS_DIR,
-    WOLTS_STATE_DIR,
     get_env,
     load_dotenv,
 )
@@ -63,12 +61,11 @@ from projects import (
 from sites import get_site_state, running_sites, site_dir, start_site, stop_site
 from .state import (
     bot_log,
-    current_url_file,
+    get_current_meta,
     get_current_url,
     log_view,
     read_status,
     read_views_history,
-    redirect_file,
     sanitize_session,
     set_current_url,
     write_status,
@@ -336,23 +333,9 @@ async def get_current(request: Request):
 
 
 @app.get("/current/meta")
-async def get_current_meta(request: Request):
+async def get_current_meta_route(request: Request):
     session = sanitize_session(request.query_params.get("session", "main"))
-    f = current_url_file(session)
-    if f.exists():
-        data = json.loads(f.read_text())
-    else:
-        data = {"url": None, "updated": 0}
-    # Check for pending redirect
-    rf = redirect_file(session)
-    if rf.exists():
-        try:
-            rdata = json.loads(rf.read_text())
-            data["redirect"] = rdata["to"]
-            rf.unlink()
-        except Exception:
-            pass
-    return data
+    return get_current_meta(session)
 
 
 # jerpint: why this?
@@ -365,7 +348,9 @@ async def post_session_redirect(request: Request):
         return JSONResponse({"error": "from and to required"}, status_code=400)
     safe_from = sanitize_session(from_s)
     safe_to = sanitize_session(to_s)
-    redirect_file(safe_from).write_text(json.dumps({"from": safe_from, "to": safe_to, "t": int(time.time() * 1000)}))
+    from sessions import SessionRegistry
+    reg = SessionRegistry(WOLTS_DIR)
+    reg.set_redirect(safe_from, safe_to)
     print(f"[redirect] {safe_from} → {safe_to}")
     return {"ok": True}
 
@@ -609,31 +594,9 @@ async def session_new_slack(request: Request):
 
 @app.get("/sessions")
 async def list_sessions():
-    tmux_sessions = set()
-    try:
-        raw = subprocess.check_output(
-            ["tmux", "list-sessions", "-F", "#{session_name}"], text=True
-        ).strip()
-        tmux_sessions = set(raw.splitlines())
-    except Exception:
-        pass
-    sessions = []
-    try:
-        for f in SESSION_REGISTRY_DIR.iterdir():
-            if not f.name.endswith(".json"):
-                continue
-            try:
-                data = json.loads(f.read_text())
-                data["alive"] = data.get("name") in tmux_sessions
-                if data["alive"]:
-                    data["status"] = "running"
-                elif data.get("status") == "running":
-                    data["status"] = "orphaned"
-                sessions.append(data)
-            except Exception:
-                pass
-    except Exception:
-        pass
+    from sessions import SessionRegistry
+    reg = SessionRegistry(WOLTS_DIR)
+    sessions = reg.list()
     sessions.sort(key=lambda s: (0 if s.get("status") == "running" else 1, -(s.get("created_at") or 0)))
     return sessions
 

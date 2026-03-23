@@ -37,7 +37,7 @@ class TestSessionRegistry:
         assert data["creature"] == "beaver"
         assert data["status"] == "running"
 
-        fetched = reg.get("test-session-1", check_alive=False)
+        fetched = reg.get("test-session-1", wolt="neowolt", check_alive=False)
         assert fetched["name"] == "test-session-1"
 
     def test_update_fields(self, tmp_registry):
@@ -48,16 +48,16 @@ class TestSessionRegistry:
 
     def test_finish_success(self, tmp_registry):
         reg = tmp_registry
-        reg.create("test-session-3")
-        finished = reg.finish("test-session-3", exit_code=0)
+        reg.create("test-session-3", wolt="neowolt")
+        finished = reg.finish("test-session-3", 0, wolt="neowolt")
         assert finished["status"] == "completed"
         assert finished["exit_code"] == 0
         assert finished["finished_at"] is not None
 
     def test_finish_failure(self, tmp_registry):
         reg = tmp_registry
-        reg.create("test-session-4")
-        finished = reg.finish("test-session-4", exit_code=1)
+        reg.create("test-session-4", wolt="neowolt")
+        finished = reg.finish("test-session-4", 1, wolt="neowolt")
         assert finished["status"] == "failed"
         assert finished["exit_code"] == 1
 
@@ -76,49 +76,52 @@ class TestSessionRegistry:
 
     def test_delete_session(self, tmp_registry):
         reg = tmp_registry
-        reg.create("to-delete")
-        assert reg.delete("to-delete") is True
-        assert reg.get("to-delete", check_alive=False) is None
-        assert reg.delete("to-delete") is False
+        reg.create("to-delete", wolt="neowolt")
+        assert reg.delete("to-delete", wolt="neowolt") is True
+        assert reg.get("to-delete", wolt="neowolt", check_alive=False) is None
+        assert reg.delete("to-delete", wolt="neowolt") is False
 
     def test_touch_updates_activity(self, tmp_registry):
         reg = tmp_registry
-        reg.create("touch-me")
-        before = reg.get("touch-me", check_alive=False)["last_activity"]
+        reg.create("touch-me", wolt="neowolt")
+        before = reg.get("touch-me", wolt="neowolt", check_alive=False)["last_activity"]
         time.sleep(1.1)
-        reg.touch("touch-me")
-        after = reg.get("touch-me", check_alive=False)["last_activity"]
+        reg.touch("touch-me", wolt="neowolt")
+        after = reg.get("touch-me", wolt="neowolt", check_alive=False)["last_activity"]
         assert after > before
 
     def test_get_nonexistent(self, tmp_registry):
-        assert tmp_registry.get("nope", check_alive=False) is None
+        assert tmp_registry.get("nope", wolt="neowolt", check_alive=False) is None
 
     def test_update_nonexistent(self, tmp_registry):
-        assert tmp_registry.update("nope", status="done") is None
+        assert tmp_registry.update("nope", wolt="neowolt", status="done") is None
 
     def test_prompt_truncated(self, tmp_registry):
         reg = tmp_registry
         long_prompt = "x" * 1000
-        data = reg.create("truncate-test", prompt=long_prompt)
+        data = reg.create("truncate-test", wolt="neowolt", prompt=long_prompt)
         assert len(data["prompt"]) == 500
 
     def test_atomic_write(self, tmp_registry):
         """Write uses tmp + rename for atomicity — no partial reads."""
         reg = tmp_registry
         reg.create("atomic-test", wolt="neowolt")
-        # The .tmp file should not linger
-        tmp_files = list(reg.dir.glob("*.tmp"))
+        sessions_dir = reg.wolts_dir / "neowolt" / ".state" / "sessions"
+        tmp_files = list(sessions_dir.glob("*.tmp"))
         assert len(tmp_files) == 0
 
     def test_corrupt_json_handled(self, tmp_registry):
         """Corrupt JSON in registry should not crash."""
         reg = tmp_registry
-        bad_file = reg.dir / "corrupt.json"
+        # Create a valid session first so the wolt dir exists
+        reg.create("valid-session", wolt="neowolt")
+        sessions_dir = reg.wolts_dir / "neowolt" / ".state" / "sessions"
+        bad_file = sessions_dir / "corrupt.json"
         bad_file.write_text("{invalid json")
         # get should return None
-        assert reg.get("corrupt", check_alive=False) is None
+        assert reg.get("corrupt", wolt="neowolt", check_alive=False) is None
         # list should skip it
-        sessions = reg.list()
+        sessions = reg.list(wolt="neowolt")
         assert all(s["name"] != "corrupt" for s in sessions)
 
 
@@ -136,6 +139,7 @@ class TestStartSessionSiteAutoStart:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
         import sessions
         import sites
+        import paths
 
         self.sessions = sessions
         self.sites = sites
@@ -144,9 +148,7 @@ class TestStartSessionSiteAutoStart:
         monkeypatch.setattr(sessions, "WOLTS_DIR", tmp_path)
         monkeypatch.setattr(sessions, "RUN_SESSION_SCRIPT", Path("/bin/true"))
         monkeypatch.setattr(sites, "WOLTS_DIR", tmp_path)
-        monkeypatch.setattr(sites, "_RUNNING_STATE_DIR", tmp_path / ".state" / "sites")
-        # WOLT_DIR is used by _set_viewport_url to find the state dir
-        monkeypatch.setenv("WOLT_DIR", str(tmp_path))
+        monkeypatch.setattr(paths, "WOLTS_DIR", tmp_path)
 
         # Create a rodent wolt
         wolt_dir = tmp_path / "testwolt" / "wolt"
@@ -205,8 +207,8 @@ class TestStartSessionSiteAutoStart:
 
     @patch("sessions.subprocess.run")
     @patch("sites.subprocess.Popen")
-    def test_viewport_url_file_written(self, mock_popen, mock_run, tmp_path):
-        """start_session() should write the viewport URL file directly."""
+    def test_viewport_url_stored_in_session(self, mock_popen, mock_run, tmp_path):
+        """start_session() should store viewport URL in the session JSON."""
         mock_popen.return_value.pid = 12345
         result = self.sessions.start_session(
             wolt="testwolt",
@@ -214,11 +216,12 @@ class TestStartSessionSiteAutoStart:
             routing={"adapter": "telegram", "chat_id": "123"},
         )
         session_name = result["name"]
-        viewport_file = tmp_path / ".state" / f"current-url-{session_name}.json"
-        assert viewport_file.exists(), f"viewport file not written for {session_name}"
-        data = json.loads(viewport_file.read_text())
-        assert data["url"] == "/wolt/testwolt/site/"
-        assert data["port"] == 7777
+        # Viewport URL is now stored in the session JSON itself
+        session_file = tmp_path / "testwolt" / ".state" / "sessions" / f"{session_name}.json"
+        assert session_file.exists(), f"session file not found at {session_file}"
+        data = json.loads(session_file.read_text())
+        assert data["viewport_url"] == "/wolt/testwolt/site/"
+        assert data["viewport_port"] == 7777
 
     @patch("sessions.subprocess.run")
     @patch("sessions.start_site", side_effect=RuntimeError("no ports"))

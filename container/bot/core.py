@@ -41,16 +41,15 @@ _wolt_name = os.environ.get("WOLT_NAME", "wolt")
 _derived = WOLTS_DIR / _wolt_name
 WOLT_DIR = Path(os.environ.get("WOLT_DIR") or (_derived if _derived.exists() else "/workspace/wolt"))
 MEMORY_DIR = WOLT_DIR / "wolt" / "memory"
-STATE_DIR = WOLT_DIR / ".state"
 LLM_MODEL = os.environ.get("LLM_MODEL", "anthropic/claude-haiku-4-5-20251001")
 MAX_TOOL_ROUNDS = 5
 
-# Fixed log dir — always at wolts level, never moves with wolt switch
-BOT_LOG_DIR = WOLTS_DIR / ".state" / "bot-debug"
+# Bot log at .space/logs/ — global, never moves with wolt switch
+BOT_LOG_DIR = WOLTS_DIR / ".space" / "logs"
 BOT_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-# Session registry — single source of truth for all session metadata
-registry = SessionRegistry(WOLTS_DIR / ".state" / "registry")
+# Session registry — per-wolt paths, wolts_dir is the root
+registry = SessionRegistry(WOLTS_DIR)
 
 # RUN_SESSION_SCRIPT — now in sessions module
 
@@ -76,13 +75,12 @@ def _bot_log(event: str, data: dict):
 
 def switch_wolt(name: str) -> str | None:
     """Switch active wolt. Returns the new wolt name or None if not found."""
-    global WOLT_DIR, MEMORY_DIR, STATE_DIR
+    global WOLT_DIR, MEMORY_DIR
     target = WOLTS_DIR / name
     if not target.is_dir() or not (target / "wolt").is_dir():
         return None
     WOLT_DIR = target
     MEMORY_DIR = WOLT_DIR / "wolt" / "memory"
-    STATE_DIR = WOLT_DIR / ".state"
     os.environ["WOLT_DIR"] = str(WOLT_DIR)
     os.environ["WOLT_NAME"] = name
     config_path = WOLTS_DIR / "woltspace.json"
@@ -477,7 +475,7 @@ def check_session(session_name: str = None) -> dict:
 
 def get_recent_sessions(n: int = 5, tag: str = None) -> list[dict]:
     """Read recent session summaries from .state/sessions.jsonl."""
-    sessions_file = STATE_DIR / "sessions.jsonl"
+    sessions_file = WOLT_DIR / ".state" / "sessions.jsonl"
     if not sessions_file.exists():
         return []
     try:

@@ -28,16 +28,20 @@ import projects
 @pytest.fixture
 def wolts_dir(tmp_path):
     """Create a temporary wolts directory and patch projects module paths."""
+    import paths
     original = projects.WOLTS_DIR
     original_projects = projects.PROJECTS_DIR
     original_state = projects._RUNNING_STATE_DIR
+    original_paths = paths.WOLTS_DIR
     projects.WOLTS_DIR = tmp_path
     projects.PROJECTS_DIR = tmp_path / "projects"
-    projects._RUNNING_STATE_DIR = tmp_path / ".state" / "projects"
+    projects._RUNNING_STATE_DIR = tmp_path / ".space" / "projects"
+    paths.WOLTS_DIR = tmp_path
     yield tmp_path
     projects.WOLTS_DIR = original
     projects.PROJECTS_DIR = original_projects
     projects._RUNNING_STATE_DIR = original_state
+    paths.WOLTS_DIR = original_paths
 
 
 def _make_project(wolts_dir, name, keeper="neowolt", **overrides):

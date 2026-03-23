@@ -20,6 +20,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from paths import space_projects_dir
+
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 PROJECTS_DIR = WOLTS_DIR / "projects"
 
@@ -32,8 +34,8 @@ PORT_MIN = 4001
 PORT_MAX = 4999
 MAX_RUNNING = 2
 
-# Running project state — keyed by project name
-_RUNNING_STATE_DIR = WOLTS_DIR / ".state" / "projects"
+# Running project state — now at .space/projects/
+_RUNNING_STATE_DIR = space_projects_dir(WOLTS_DIR)
 
 # Wolt type emojis — reserved, never used as random defaults
 WOLT_EMOJIS = {"🦫", "🦝", "🦦", "🐺", "🐶", "🕷️", "🐻", "🐼"}

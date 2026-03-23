@@ -1,10 +1,7 @@
 """
 Wolt site management — each wolt gets a livereload-powered static site.
 
-Sites are the wolt's persistent space: scratch files, mockups, diagrams.
-Served via `livereload` (one process per wolt), auto-started when a session
-begins outside a project context, stopped when no sessions are active.
-
+Per-wolt state model: site state lives at wolts/{wolt}/.state/site.json.
 Uses the same port pool as projects (4001-4999).
 
 Usage:
@@ -20,12 +17,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from paths import wolt_site_state_file, space_projects_dir
+
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 
-# Running site state — keyed by wolt name
-_RUNNING_STATE_DIR = WOLTS_DIR / ".state" / "sites"
-
-# Reuse the same port pool as projects — import the allocator constants
 # Port range 4001-4999, shared with projects
 PORT_MIN = 4001
 PORT_MAX = 4999
@@ -37,7 +32,7 @@ def site_dir(wolt_name: str) -> Path:
 
 
 def _state_file(wolt_name: str) -> Path:
-    return _RUNNING_STATE_DIR / f"{wolt_name}.json"
+    return wolt_site_state_file(wolt_name, WOLTS_DIR)
 
 
 def _read_state(wolt_name: str) -> dict | None:
@@ -51,8 +46,9 @@ def _read_state(wolt_name: str) -> dict | None:
 
 
 def _write_state(wolt_name: str, state: dict) -> None:
-    _RUNNING_STATE_DIR.mkdir(parents=True, exist_ok=True)
-    _state_file(wolt_name).write_text(json.dumps(state, indent=2) + "\n")
+    f = _state_file(wolt_name)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(state, indent=2) + "\n")
 
 
 def _clear_state(wolt_name: str) -> None:
@@ -72,21 +68,22 @@ def _is_pid_alive(pid: int) -> bool:
 def _used_ports() -> set[int]:
     """Collect all ports used by sites AND projects."""
     used = set()
-    # Sites
-    if _RUNNING_STATE_DIR.exists():
-        for f in _RUNNING_STATE_DIR.iterdir():
-            if not f.name.endswith(".json"):
-                continue
+    # Sites — scan per-wolt state
+    for wolt_dir in WOLTS_DIR.iterdir():
+        if not wolt_dir.is_dir() or wolt_dir.name.startswith("."):
+            continue
+        site_state = wolt_dir / ".state" / "site.json"
+        if site_state.exists():
             try:
-                state = json.loads(f.read_text())
+                state = json.loads(site_state.read_text())
                 if state.get("port"):
                     used.add(state["port"])
             except (json.JSONDecodeError, OSError):
                 continue
-    # Projects — check their state dir too
-    projects_state_dir = WOLTS_DIR / ".state" / "projects"
-    if projects_state_dir.exists():
-        for f in projects_state_dir.iterdir():
+    # Projects — check .space/projects/
+    projects_dir = space_projects_dir(WOLTS_DIR)
+    if projects_dir.exists():
+        for f in projects_dir.iterdir():
             if not f.name.endswith(".json"):
                 continue
             try:
@@ -110,20 +107,21 @@ def _allocate_port() -> int:
 def running_sites() -> list[dict]:
     """List all currently running wolt sites."""
     running = []
-    if not _RUNNING_STATE_DIR.exists():
-        return running
-    for f in sorted(_RUNNING_STATE_DIR.iterdir()):
-        if not f.name.endswith(".json"):
+    for wolt_dir in sorted(WOLTS_DIR.iterdir()):
+        if not wolt_dir.is_dir() or wolt_dir.name.startswith("."):
+            continue
+        site_state = wolt_dir / ".state" / "site.json"
+        if not site_state.exists():
             continue
         try:
-            state = json.loads(f.read_text())
+            state = json.loads(site_state.read_text())
             pid = state.get("pid")
             if pid and _is_pid_alive(pid):
                 state["alive"] = True
                 running.append(state)
             else:
                 # Stale state — process died
-                f.unlink()
+                site_state.unlink()
         except (json.JSONDecodeError, OSError):
             continue
     return running
@@ -148,14 +146,12 @@ def start_site(wolt_name: str) -> dict:
     Idempotent — if already running, returns existing state.
     Creates the site dir if it doesn't exist (with a default index.html).
     """
-    # Already running?
     existing = get_site_state(wolt_name)
     if existing:
         return existing
 
     sdir = site_dir(wolt_name)
 
-    # Create site dir + default index if needed
     if not sdir.exists():
         sdir.mkdir(parents=True, exist_ok=True)
 
@@ -164,8 +160,6 @@ def start_site(wolt_name: str) -> dict:
 
     port = _allocate_port()
 
-    # Start livereload as a subprocess
-    # livereload serves from the directory, watches for changes, injects WS reload script
     proc = subprocess.Popen(
         [
             sys.executable, "-c",
