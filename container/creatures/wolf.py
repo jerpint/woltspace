@@ -31,8 +31,9 @@ WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 
 
 def _get_tunnel_url() -> Optional[str]:
-    """Read tunnel URL from .state/tunnel-url."""
-    tunnel_file = WOLTS_DIR / ".state" / "tunnel-url"
+    """Read tunnel URL from .space/platform/tunnel-url."""
+    from lib.paths import tunnel_url_file
+    tunnel_file = tunnel_url_file()
     if tunnel_file.exists():
         url = tunnel_file.read_text().strip()
         return url if url else None

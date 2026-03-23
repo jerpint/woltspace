@@ -46,18 +46,18 @@ SERVER_PID=$!
 sleep 2
 
 # Tunnel
-mkdir -p "$WOLTS_DIR/.state" "$WOLT_DIR/.state"
-rm -f "$WOLTS_DIR/.state/tunnel-url" "$WOLT_DIR/.state/tunnel-url"
+mkdir -p "$WOLTS_DIR/.space/platform" "$WOLT_DIR/.state"
+rm -f "$WOLTS_DIR/.space/platform/tunnel-url" "$WOLTS_DIR/.state/tunnel-url" "$WOLT_DIR/.state/tunnel-url"
 if [ "${WOLTSPACE_PUBLIC_TUNNEL:-true}" = "true" ]; then
   echo "opening tunnel..."
-  TUNNEL_LOG="$WOLTS_DIR/.state/tunnel.log"
+  TUNNEL_LOG="$WOLTS_DIR/.space/platform/tunnel.log"
   cloudflared tunnel --url http://localhost:7777 > "$TUNNEL_LOG" 2>&1 &
   disown
   for i in $(seq 1 30); do
     URL=$(grep -o 'https://[^ ]*trycloudflare.com' "$TUNNEL_LOG" 2>/dev/null | head -1)
     if [ -n "$URL" ]; then
-      echo "$URL" > "$WOLTS_DIR/.state/tunnel-url"
-      echo "$URL" > "$WOLT_DIR/.state/tunnel-url"
+      echo "$URL" > "$WOLTS_DIR/.space/platform/tunnel-url"
+      echo "$URL" > "$WOLTS_DIR/.state/tunnel-url"  # backwards compat: host CLI reads this
       echo "tunnel ready: $URL"
       break
     fi
