@@ -41,6 +41,11 @@ def wolt_wolf_state_dir(wolt: str, wolts_dir: Path = None) -> Path:
     return wolt_state_dir(wolt, wolts_dir) / "wolf"
 
 
+def space_wolf_dir(wolts_dir: Path = None) -> Path:
+    """Global wolf scheduler state: wolts/.space/wolf/"""
+    return space_dir(wolts_dir) / "wolf"
+
+
 def wolt_chat_dir(wolt: str, wolts_dir: Path = None) -> Path:
     """Per-wolt chat history: wolts/{wolt}/.state/chat/"""
     return wolt_state_dir(wolt, wolts_dir) / "chat"

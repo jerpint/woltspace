@@ -31,7 +31,6 @@ from sessions import (
 from wolts import get_active_creature, find_by_type, list_wolts as _list_wolts_full
 from paths import (
     wolt_sessions_log,
-    wolt_wolf_state_dir,
     platform_version_file,
     space_logs_dir,
 )
@@ -792,36 +791,16 @@ def _tool_check_update(args: dict, routing: dict | None) -> str:
         return json.dumps({"error": str(e)})
 
 
-def _get_wolf_wolt_dir() -> Path:
-    """Resolve the wolf's working directory — same logic as creatures/wolf.py.
-
-    Checks woltspace.json for active_wolf first, falls back to WOLT_DIR.
-    """
-    config_file = WOLTS_DIR / "woltspace.json"
-    if config_file.exists():
-        try:
-            config = json.loads(config_file.read_text())
-            active_wolf = config.get("creatures", {}).get("active_wolf")
-            if active_wolf:
-                wolf_dir = WOLTS_DIR / active_wolf
-                if (wolf_dir / "wolt" / "wolf.json").exists():
-                    return wolf_dir
-        except (json.JSONDecodeError, OSError):
-            pass
-    return WOLT_DIR
-
-
 def _tool_wolf_schedules(args: dict, routing: dict | None) -> str:
-    """List all wolf cron schedules for the active wolt."""
-    wolf_wolt = _get_wolf_wolt_dir()
-    wolf_config = wolf_wolt / "wolt" / "wolf.json"
-    if not wolf_config.exists():
-        return json.dumps({"crons": [], "count": 0, "note": "no wolf.json — no crons configured"})
+    """List all wolf cron schedules across all wolts."""
     try:
-        data = json.loads(wolf_config.read_text())
-        crons = data.get("crons", [])
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from creatures.wolf import load_schedule, get_state_dir
+        crons = load_schedule()
+        if not crons:
+            return json.dumps({"crons": [], "count": 0, "note": "no crons registered"})
         # Enrich with last-run info
-        state_dir = wolt_wolf_state_dir(wolf_wolt.name, WOLTS_DIR)
+        state_dir = get_state_dir()
         for entry in crons:
             name = entry.get("name", "")
             last_file = state_dir / f"{name}.last"
@@ -853,8 +832,9 @@ def _tool_fire_wolf(args: dict, routing: dict | None) -> str:
 def _tool_wolf_jobs(args: dict, routing: dict | None) -> str:
     """Show recent wolf job log entries."""
     count = args.get("count", 10)
-    wolf_wolt = _get_wolf_wolt_dir()
-    log_file = wolt_wolf_state_dir(wolf_wolt.name, WOLTS_DIR) / "jobs.jsonl"
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from creatures.wolf import get_state_dir
+    log_file = get_state_dir() / "jobs.jsonl"
     if not log_file.exists():
         return json.dumps({"jobs": [], "note": "no job log yet"})
     try:

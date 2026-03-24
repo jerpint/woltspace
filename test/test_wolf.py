@@ -377,39 +377,38 @@ class TestWolfSchedulesTool:
 
     def test_no_config_returns_empty(self, tmp_path):
         from bot.core import _tool_wolf_schedules
-        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path):
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
             result = json.loads(_tool_wolf_schedules({}, None))
         assert result["count"] == 0
         assert result["crons"] == []
 
     def test_returns_crons_with_last_run(self, tmp_path):
         from bot.core import _tool_wolf_schedules
-        # Set up wolf.json
-        wolf_json = tmp_path / "wolt" / "wolf.json"
-        wolf_json.parent.mkdir(parents=True)
-        wolf_json.write_text(json.dumps({
+        # Set up a wolt with wolf.json (load_schedule scans WOLTS_DIR/*/wolt/wolf.json)
+        wolt_dir = tmp_path / "testwolt" / "wolt"
+        wolt_dir.mkdir(parents=True)
+        (wolt_dir / "wolf.json").write_text(json.dumps({
             "crons": [{"name": "digest", "schedule": "0 6 * * *", "prompt": "/digest"}]
         }))
-        # Set up last-run state — path must match wolt_wolf_state_dir(tmp_path.name, tmp_path.parent)
-        state_dir = tmp_path / ".state" / "wolf"
+        # Set up last-run state at .space/wolf/ (global wolf state)
+        state_dir = tmp_path / ".space" / "wolf"
         state_dir.mkdir(parents=True)
         (state_dir / "digest.last").write_text("2026-03-15-06:00")
 
-        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path), \
-             patch("bot.core.WOLTS_DIR", tmp_path.parent):
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
             result = json.loads(_tool_wolf_schedules({}, None))
         assert result["count"] == 1
         assert result["crons"][0]["last_run"] == "2026-03-15-06:00"
 
     def test_returns_never_when_no_state(self, tmp_path):
         from bot.core import _tool_wolf_schedules
-        wolf_json = tmp_path / "wolt" / "wolf.json"
-        wolf_json.parent.mkdir(parents=True)
-        wolf_json.write_text(json.dumps({
-            "crons": [{"name": "new-cron", "schedule": "0 6 * * *", "action": "script", "command": "echo"}]
+        wolt_dir = tmp_path / "testwolt" / "wolt"
+        wolt_dir.mkdir(parents=True)
+        (wolt_dir / "wolf.json").write_text(json.dumps({
+            "crons": [{"name": "new-cron", "schedule": "0 6 * * *", "prompt": "/digest"}]
         }))
 
-        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path):
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
             result = json.loads(_tool_wolf_schedules({}, None))
         assert result["crons"][0]["last_run"] == "never"
 
@@ -686,14 +685,14 @@ class TestWolfJobsTool:
 
     def test_no_log_file(self, tmp_path):
         from bot.core import _tool_wolf_jobs
-        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path):
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
             result = json.loads(_tool_wolf_jobs({}, None))
         assert result["jobs"] == []
         assert "no job log" in result["note"]
 
     def test_returns_recent_jobs(self, tmp_path):
         from bot.core import _tool_wolf_jobs
-        log_dir = tmp_path / ".state" / "wolf"
+        log_dir = tmp_path / ".space" / "wolf"
         log_dir.mkdir(parents=True)
         log_file = log_dir / "jobs.jsonl"
         entries = [
@@ -701,15 +700,14 @@ class TestWolfJobsTool:
             json.dumps({"ts": "2026-03-15T06:00:01", "cron": "digest", "event": "dispatched"}),
         ]
         log_file.write_text("\n".join(entries))
-        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path), \
-             patch("bot.core.WOLTS_DIR", tmp_path.parent):
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
             result = json.loads(_tool_wolf_jobs({}, None))
         assert result["count"] == 2
         assert result["jobs"][0]["cron"] == "digest"
 
     def test_respects_count_param(self, tmp_path):
         from bot.core import _tool_wolf_jobs
-        log_dir = tmp_path / ".state" / "wolf"
+        log_dir = tmp_path / ".space" / "wolf"
         log_dir.mkdir(parents=True)
         log_file = log_dir / "jobs.jsonl"
         entries = [
@@ -717,8 +715,7 @@ class TestWolfJobsTool:
             for i in range(5)
         ]
         log_file.write_text("\n".join(entries))
-        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path), \
-             patch("bot.core.WOLTS_DIR", tmp_path.parent):
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
             result = json.loads(_tool_wolf_jobs({"count": 2}, None))
         assert result["count"] == 2
         assert result["jobs"][0]["cron"] == "job-3"
@@ -726,12 +723,11 @@ class TestWolfJobsTool:
 
     def test_handles_corrupted_lines(self, tmp_path):
         from bot.core import _tool_wolf_jobs
-        log_dir = tmp_path / ".state" / "wolf"
+        log_dir = tmp_path / ".space" / "wolf"
         log_dir.mkdir(parents=True)
         log_file = log_dir / "jobs.jsonl"
         log_file.write_text('{"cron":"ok","event":"started"}\nnot json\n{"cron":"also-ok","event":"done"}\n')
-        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path), \
-             patch("bot.core.WOLTS_DIR", tmp_path.parent):
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
             result = json.loads(_tool_wolf_jobs({}, None))
         assert result["count"] == 2  # skipped the bad line
 

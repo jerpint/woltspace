@@ -356,61 +356,6 @@ class TestCredentials:
 
 
 # ---------------------------------------------------------------------------
-# Wolf-wolt discovery in wolf.py
-# ---------------------------------------------------------------------------
-
-class TestWolfWoltDiscovery:
-    """Unit: wolf.py finds the correct wolt directory."""
-
-    def test_finds_wolf_via_active_config(self, tmp_path):
-        from creatures.wolf import _find_wolf_wolt
-        # Set up woltspace.json
-        config = {"creatures": {"active_wolf": "luna"}}
-        (tmp_path / "woltspace.json").write_text(json.dumps(config))
-
-        # Set up wolf-wolt with wolf.json
-        wolf_dir = tmp_path / "luna" / "wolt"
-        wolf_dir.mkdir(parents=True)
-        (wolf_dir / "wolf.json").write_text(json.dumps({"crons": []}))
-
-        with patch.dict(os.environ, {"WOLTS_DIR": str(tmp_path)}):
-            result = _find_wolf_wolt()
-        assert result == tmp_path / "luna"
-
-    def test_finds_wolf_via_type_scan(self, tmp_path):
-        from creatures.wolf import _find_wolf_wolt
-        # No active_wolf in config
-        (tmp_path / "woltspace.json").write_text(json.dumps({}))
-
-        # But there's a wolt with type=wolf
-        wolf_dir = tmp_path / "fang" / "wolt"
-        wolf_dir.mkdir(parents=True)
-        (wolf_dir / "wolt.json").write_text(json.dumps({"name": "fang", "type": "wolf"}))
-
-        with patch.dict(os.environ, {"WOLTS_DIR": str(tmp_path)}):
-            result = _find_wolf_wolt()
-        assert result == tmp_path / "fang"
-
-    def test_returns_none_when_no_wolf(self, tmp_path):
-        from creatures.wolf import _find_wolf_wolt
-        (tmp_path / "woltspace.json").write_text(json.dumps({}))
-
-        with patch.dict(os.environ, {"WOLTS_DIR": str(tmp_path)}):
-            result = _find_wolf_wolt()
-        assert result is None
-
-    def test_fallback_to_wolt_dir(self, tmp_path):
-        """get_wolt_dir falls back to WOLT_DIR when no wolf-wolt exists."""
-        from creatures.wolf import get_wolt_dir
-        (tmp_path / "woltspace.json").write_text(json.dumps({}))
-        fallback = tmp_path / "neowolt"
-
-        with patch.dict(os.environ, {"WOLTS_DIR": str(tmp_path), "WOLT_DIR": str(fallback)}):
-            result = get_wolt_dir()
-        assert result == fallback
-
-
-# ---------------------------------------------------------------------------
 # Dog identity loading in core.py
 # ---------------------------------------------------------------------------
 
