@@ -205,113 +205,55 @@ class TestUnitListProjects:
 # ---------------------------------------------------------------------------
 
 class TestUnitSessionProjectScoping:
-    """start_claude_session creates project dirs and scopes correctly."""
+    """start_claude_session passes project info through to start_session correctly."""
 
-    @patch("bot.core.subprocess")
-    @patch("bot.core.registry")
-    @patch("bot.core.get_tunnel_url", return_value="https://test.trycloudflare.com")
-    def test_project_creates_directory(self, mock_tunnel, mock_registry, mock_subprocess, tmp_path):
-        import bot.core as core
-        original_wolt = core.WOLT_DIR
-        original_wolts = core.WOLTS_DIR
-        mock_registry.create.return_value = {}
-        mock_subprocess.run.return_value = MagicMock(returncode=0)
-        try:
-            core.WOLT_DIR = tmp_path
-            core.WOLTS_DIR = tmp_path.parent
-            os.environ["WOLT_NAME"] = "test"
-            result = core.start_claude_session("build something", project="new-app")
-            project_dir = tmp_path / "wolt" / "projects" / "new-app"
-            assert project_dir.exists()
-            assert project_dir.is_dir()
-        finally:
-            core.WOLT_DIR = original_wolt
-            core.WOLTS_DIR = original_wolts
+    def _mock_start_session(self, **kwargs):
+        """Build a mock return value matching start_session's output."""
+        result = {"name": "test-session-abc123", "url": None, "wolt": kwargs.get("wolt", "test")}
+        if kwargs.get("project"):
+            result["project"] = kwargs["project"]
+        return result
 
-    @patch("bot.core.subprocess")
-    @patch("bot.core.registry")
-    @patch("bot.core.get_tunnel_url", return_value="https://test.trycloudflare.com")
-    def test_project_scopes_working_dir(self, mock_tunnel, mock_registry, mock_subprocess, tmp_path):
+    @patch("bot.core.start_session")
+    def test_project_creates_directory(self, mock_start):
+        """start_claude_session passes project to start_session."""
         import bot.core as core
-        original_wolt = core.WOLT_DIR
-        original_wolts = core.WOLTS_DIR
-        mock_registry.create.return_value = {}
-        mock_subprocess.run.return_value = MagicMock(returncode=0)
-        try:
-            core.WOLT_DIR = tmp_path
-            core.WOLTS_DIR = tmp_path.parent
-            os.environ["WOLT_NAME"] = "test"
-            core.start_claude_session("build something", project="scoped-app")
-            # Check tmux was called with the project dir
-            tmux_call = mock_subprocess.run.call_args
-            tmux_args = tmux_call[0][0]
-            expected_dir = str(tmp_path / "wolt" / "projects" / "scoped-app")
-            assert expected_dir in tmux_args, f"Expected {expected_dir} in tmux args: {tmux_args}"
-        finally:
-            core.WOLT_DIR = original_wolt
-            core.WOLTS_DIR = original_wolts
+        mock_start.side_effect = lambda **kw: self._mock_start_session(**kw)
+        result = core.start_claude_session("build something", project="new-app")
+        mock_start.assert_called_once()
+        assert mock_start.call_args[1]["project"] == "new-app"
 
-    @patch("bot.core.subprocess")
-    @patch("bot.core.registry")
-    @patch("bot.core.get_tunnel_url", return_value="https://test.trycloudflare.com")
-    def test_project_passed_to_registry(self, mock_tunnel, mock_registry, mock_subprocess, tmp_path):
+    @patch("bot.core.start_session")
+    def test_project_scopes_working_dir(self, mock_start):
+        """start_session receives the project name for scoping."""
         import bot.core as core
-        original_wolt = core.WOLT_DIR
-        original_wolts = core.WOLTS_DIR
-        mock_registry.create.return_value = {}
-        mock_subprocess.run.return_value = MagicMock(returncode=0)
-        try:
-            core.WOLT_DIR = tmp_path
-            core.WOLTS_DIR = tmp_path.parent
-            os.environ["WOLT_NAME"] = "test"
-            core.start_claude_session("test", project="tracked-app")
-            registry_call = mock_registry.create.call_args
-            assert registry_call[1]["project"] == "tracked-app"
-        finally:
-            core.WOLT_DIR = original_wolt
-            core.WOLTS_DIR = original_wolts
+        mock_start.side_effect = lambda **kw: self._mock_start_session(**kw)
+        core.start_claude_session("build something", project="scoped-app")
+        assert mock_start.call_args[1]["project"] == "scoped-app"
 
-    @patch("bot.core.subprocess")
-    @patch("bot.core.registry")
-    @patch("bot.core.get_tunnel_url", return_value="https://test.trycloudflare.com")
-    def test_no_project_uses_wolt_root(self, mock_tunnel, mock_registry, mock_subprocess, tmp_path):
+    @patch("bot.core.start_session")
+    def test_project_passed_to_registry(self, mock_start):
+        """Project is forwarded to start_session which handles registry."""
         import bot.core as core
-        original_wolt = core.WOLT_DIR
-        original_wolts = core.WOLTS_DIR
-        mock_registry.create.return_value = {}
-        mock_subprocess.run.return_value = MagicMock(returncode=0)
-        try:
-            core.WOLT_DIR = tmp_path
-            core.WOLTS_DIR = tmp_path.parent
-            os.environ["WOLT_NAME"] = "test"
-            core.start_claude_session("test")
-            tmux_call = mock_subprocess.run.call_args
-            tmux_args = tmux_call[0][0]
-            # Should use wolt root, not a project subdir
-            assert str(tmp_path) in tmux_args
-            assert "projects" not in str(tmux_args)
-        finally:
-            core.WOLT_DIR = original_wolt
-            core.WOLTS_DIR = original_wolts
+        mock_start.side_effect = lambda **kw: self._mock_start_session(**kw)
+        core.start_claude_session("test", project="tracked-app")
+        assert mock_start.call_args[1]["project"] == "tracked-app"
 
-    @patch("bot.core.subprocess")
-    @patch("bot.core.registry")
-    @patch("bot.core.get_tunnel_url", return_value="https://test.trycloudflare.com")
-    def test_project_in_result(self, mock_tunnel, mock_registry, mock_subprocess, tmp_path):
+    @patch("bot.core.start_session")
+    def test_no_project_uses_wolt_root(self, mock_start):
+        """No project means empty string passed to start_session."""
         import bot.core as core
-        original_wolt = core.WOLT_DIR
-        original_wolts = core.WOLTS_DIR
-        mock_registry.create.return_value = {}
-        mock_subprocess.run.return_value = MagicMock(returncode=0)
-        try:
-            core.WOLT_DIR = tmp_path
-            core.WOLTS_DIR = tmp_path.parent
-            os.environ["WOLT_NAME"] = "test"
-            result = core.start_claude_session("test", project="visible-app")
-            assert result["project"] == "visible-app"
-        finally:
-            core.WOLT_DIR = original_wolt
-            core.WOLTS_DIR = original_wolts
+        mock_start.side_effect = lambda **kw: self._mock_start_session(**kw)
+        core.start_claude_session("test")
+        assert mock_start.call_args[1]["project"] == ""
+
+    @patch("bot.core.start_session")
+    def test_project_in_result(self, mock_start):
+        """Result includes project when provided."""
+        import bot.core as core
+        mock_start.side_effect = lambda **kw: self._mock_start_session(**kw)
+        result = core.start_claude_session("test", project="visible-app")
+        assert result["project"] == "visible-app"
 
 
 # ---------------------------------------------------------------------------
@@ -369,19 +311,24 @@ class TestIntegrationProjectsEndpoint:
 
 @requires_server
 class TestIntegrationProjectServing:
-    """Test that projects with actual files get served correctly."""
+    """Test that projects with woltspace.json get served correctly."""
+
+    WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 
     @pytest.fixture(autouse=True)
     def setup_test_project(self):
-        """Create a temporary test project with an HTML file."""
-        wolt_dir = Path(os.environ.get("WOLT_DIR", "/workspace/wolts/neowolt"))
-        self.project_dir = wolt_dir / "wolt" / "projects" / "test-serve-project"
+        """Create a temporary test project with woltspace.json and an HTML file."""
+        self.project_dir = self.WOLTS_DIR / "projects" / "test-serve-project"
         self.project_dir.mkdir(parents=True, exist_ok=True)
         (self.project_dir / "index.html").write_text(
             "<html><body><h1>Test Project</h1></body></html>"
         )
+        (self.project_dir / "woltspace.json").write_text(json.dumps({
+            "name": "test-serve-project",
+            "description": "A test project",
+            "keeper": "neowolt",
+        }))
         yield
-        # Cleanup
         import shutil
         if self.project_dir.exists():
             shutil.rmtree(self.project_dir)
@@ -404,27 +351,29 @@ class TestIntegrationProjectServing:
         assert isinstance(result, str)
         assert "About" in result
 
-    def test_project_mode_is_directory(self, server_get):
-        """Project without project.json or dist/ should be mode 'directory'."""
+    def test_project_has_description(self, server_get):
+        """Project with woltspace.json should have description in listing."""
         result = server_get("/projects")
         proj = next(p for p in result if p["name"] == "test-serve-project")
-        assert proj["mode"] == "directory"
+        assert proj["description"] == "A test project"
 
 
 @requires_server
 class TestIntegrationProjectWithManifest:
-    """Test project serving with project.json metadata."""
+    """Test project serving with full woltspace.json metadata."""
+
+    WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 
     @pytest.fixture(autouse=True)
     def setup_manifest_project(self):
-        wolt_dir = Path(os.environ.get("WOLT_DIR", "/workspace/wolts/neowolt"))
-        self.project_dir = wolt_dir / "wolt" / "projects" / "test-manifest-project"
+        self.project_dir = self.WOLTS_DIR / "projects" / "test-manifest-project"
         self.project_dir.mkdir(parents=True, exist_ok=True)
         (self.project_dir / "index.html").write_text("<html><body>Manifest App</body></html>")
-        (self.project_dir / "project.json").write_text(json.dumps({
+        (self.project_dir / "woltspace.json").write_text(json.dumps({
             "name": "test-manifest-project",
             "description": "A test project with manifest",
-            "language": "html",
+            "stack": "html",
+            "keeper": "neowolt",
         }))
         yield
         import shutil
@@ -435,7 +384,7 @@ class TestIntegrationProjectWithManifest:
         result = server_get("/projects")
         proj = next(p for p in result if p["name"] == "test-manifest-project")
         assert proj["description"] == "A test project with manifest"
-        assert proj["language"] == "html"
+        assert proj["stack"] == "html"
 
     def test_manifest_project_still_serves(self, server_get):
         result = server_get("/project/test-manifest-project/")
@@ -446,15 +395,21 @@ class TestIntegrationProjectWithManifest:
 class TestIntegrationProjectWithDist:
     """Test that dist/ directory takes priority for serving."""
 
+    WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+
     @pytest.fixture(autouse=True)
     def setup_dist_project(self):
-        wolt_dir = Path(os.environ.get("WOLT_DIR", "/workspace/wolts/neowolt"))
-        self.project_dir = wolt_dir / "wolt" / "projects" / "test-dist-project"
+        self.project_dir = self.WOLTS_DIR / "projects" / "test-dist-project"
         dist_dir = self.project_dir / "dist"
         dist_dir.mkdir(parents=True, exist_ok=True)
         # Root index should NOT be served — dist/ takes priority
         (self.project_dir / "index.html").write_text("<html>ROOT (should not see this)</html>")
         (dist_dir / "index.html").write_text("<html><body>Built App</body></html>")
+        (self.project_dir / "woltspace.json").write_text(json.dumps({
+            "name": "test-dist-project",
+            "description": "A dist project",
+            "keeper": "neowolt",
+        }))
         yield
         import shutil
         if self.project_dir.exists():
@@ -465,10 +420,10 @@ class TestIntegrationProjectWithDist:
         assert "Built App" in result
         assert "should not see this" not in result
 
-    def test_dist_mode_is_static(self, server_get):
+    def test_dist_listed_in_projects(self, server_get):
         result = server_get("/projects")
         proj = next(p for p in result if p["name"] == "test-dist-project")
-        assert proj["mode"] == "static"
+        assert proj["description"] == "A dist project"
 
 
 # ---------------------------------------------------------------------------
@@ -479,12 +434,17 @@ class TestIntegrationProjectWithDist:
 class TestIntegrationProjectSecurity:
     """Ensure projects can't serve files outside their directory."""
 
+    WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+
     @pytest.fixture(autouse=True)
     def setup_security_project(self):
-        wolt_dir = Path(os.environ.get("WOLT_DIR", "/workspace/wolts/neowolt"))
-        self.project_dir = wolt_dir / "wolt" / "projects" / "test-security-project"
+        self.project_dir = self.WOLTS_DIR / "projects" / "test-security-project"
         self.project_dir.mkdir(parents=True, exist_ok=True)
         (self.project_dir / "index.html").write_text("<html>safe</html>")
+        (self.project_dir / "woltspace.json").write_text(json.dumps({
+            "name": "test-security-project",
+            "keeper": "neowolt",
+        }))
         yield
         import shutil
         if self.project_dir.exists():
@@ -508,18 +468,20 @@ class TestIntegrationProjectSecurity:
 class TestE2EProjectLifecycle:
     """End-to-end: create project via bot tool, verify it's served."""
 
+    WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+
     @pytest.fixture(autouse=True)
     def setup_e2e_project(self):
         """Create a project directory with content for the e2e test."""
-        wolt_dir = Path(os.environ.get("WOLT_DIR", "/workspace/wolts/neowolt"))
-        self.project_dir = wolt_dir / "wolt" / "projects" / "e2e-test-app"
+        self.project_dir = self.WOLTS_DIR / "projects" / "e2e-test-app"
         self.project_dir.mkdir(parents=True, exist_ok=True)
         (self.project_dir / "index.html").write_text(
             "<html><body><h1>E2E Test App</h1><p>Built by beaver</p></body></html>"
         )
-        (self.project_dir / "project.json").write_text(json.dumps({
+        (self.project_dir / "woltspace.json").write_text(json.dumps({
             "name": "e2e-test-app",
             "description": "E2E test project",
+            "keeper": "neowolt",
         }))
         yield
         import shutil
@@ -548,32 +510,24 @@ class TestE2EProjectLifecycle:
         assert proj["url"] == "/project/e2e-test-app/"
 
     def test_project_session_scoping_creates_dir(self):
-        """start_claude_session with project= creates the project directory."""
-        wolt_dir = Path(os.environ.get("WOLT_DIR", "/workspace/wolts/neowolt"))
+        """start_session with project= creates the project directory under the wolt."""
+        # Use a real wolt dir that exists
+        wolt_name = os.environ.get("WOLT_NAME", "neowolt")
+        wolt_dir = self.WOLTS_DIR / wolt_name
         test_proj = wolt_dir / "wolt" / "projects" / "e2e-auto-created"
         try:
-            # Verify it doesn't exist yet
             if test_proj.exists():
                 import shutil
                 shutil.rmtree(test_proj)
             assert not test_proj.exists()
 
-            # Call tool handler (mocking tmux/registry to avoid side effects)
-            import bot.core as core
-            with patch("bot.core.subprocess") as mock_sub, \
-                 patch("bot.core.registry") as mock_reg, \
-                 patch("bot.core.get_tunnel_url", return_value="https://test.trycloudflare.com"):
-                mock_reg.create.return_value = {}
+            # Mock tmux and tunnel to avoid side effects, but let start_session
+            # do the real filesystem work (project dir creation)
+            with patch("sessions.subprocess") as mock_sub, \
+                 patch("sessions.get_tunnel_url", return_value="https://test.trycloudflare.com"):
                 mock_sub.run.return_value = MagicMock(returncode=0)
-                original_wolt = core.WOLT_DIR
-                original_wolts = core.WOLTS_DIR
-                try:
-                    core.WOLT_DIR = wolt_dir
-                    core.WOLTS_DIR = wolt_dir.parent
-                    core.start_claude_session("test", project="e2e-auto-created")
-                finally:
-                    core.WOLT_DIR = original_wolt
-                    core.WOLTS_DIR = original_wolts
+                from sessions import start_session
+                start_session(wolt=wolt_name, prompt="test", project="e2e-auto-created")
 
             assert test_proj.exists()
             assert test_proj.is_dir()

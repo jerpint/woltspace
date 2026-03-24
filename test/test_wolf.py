@@ -388,14 +388,15 @@ class TestWolfSchedulesTool:
         wolf_json = tmp_path / "wolt" / "wolf.json"
         wolf_json.parent.mkdir(parents=True)
         wolf_json.write_text(json.dumps({
-            "crons": [{"name": "digest", "schedule": "0 6 * * *", "action": "script", "command": "echo"}]
+            "crons": [{"name": "digest", "schedule": "0 6 * * *", "prompt": "/digest"}]
         }))
-        # Set up last-run state
+        # Set up last-run state — path must match wolt_wolf_state_dir(tmp_path.name, tmp_path.parent)
         state_dir = tmp_path / ".state" / "wolf"
         state_dir.mkdir(parents=True)
         (state_dir / "digest.last").write_text("2026-03-15-06:00")
 
-        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path):
+        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path), \
+             patch("bot.core.WOLTS_DIR", tmp_path.parent):
             result = json.loads(_tool_wolf_schedules({}, None))
         assert result["count"] == 1
         assert result["crons"][0]["last_run"] == "2026-03-15-06:00"
@@ -465,13 +466,14 @@ class TestCheckUpdateTool:
 
     def test_up_to_date(self, tmp_path):
         from bot.core import _tool_check_update
-        version_file = tmp_path / ".state" / "woltspace-version"
+        # Version file now at .space/platform/woltspace-version under WOLTS_DIR
+        version_file = tmp_path / ".space" / "platform" / "woltspace-version"
         version_file.parent.mkdir(parents=True)
         version_file.write_text("v0.1.2")
 
         mock_result = MagicMock(returncode=0, stdout=self.TAGS_OUTPUT)
 
-        with patch("bot.core.WOLT_DIR", tmp_path), \
+        with patch("bot.core.WOLTS_DIR", tmp_path), \
              patch("subprocess.run", return_value=mock_result):
             result = json.loads(_tool_check_update({}, None))
         assert result["up_to_date"] is True
@@ -480,13 +482,13 @@ class TestCheckUpdateTool:
 
     def test_update_available(self, tmp_path):
         from bot.core import _tool_check_update
-        version_file = tmp_path / ".state" / "woltspace-version"
+        version_file = tmp_path / ".space" / "platform" / "woltspace-version"
         version_file.parent.mkdir(parents=True)
         version_file.write_text("v0.1.0")
 
         mock_result = MagicMock(returncode=0, stdout=self.TAGS_OUTPUT)
 
-        with patch("bot.core.WOLT_DIR", tmp_path), \
+        with patch("bot.core.WOLTS_DIR", tmp_path), \
              patch("subprocess.run", return_value=mock_result):
             result = json.loads(_tool_check_update({}, None))
         assert result["up_to_date"] is False
@@ -500,19 +502,19 @@ class TestCheckUpdateTool:
         # No version file exists yet
         mock_result = MagicMock(returncode=0, stdout=self.TAGS_OUTPUT)
 
-        with patch("bot.core.WOLT_DIR", tmp_path), \
+        with patch("bot.core.WOLTS_DIR", tmp_path), \
              patch("subprocess.run", return_value=mock_result):
             result = json.loads(_tool_check_update({}, None))
         assert result["up_to_date"] is True
         assert "initialized" in result.get("note", "")
-        # Version file should now exist with latest tag
-        assert (tmp_path / ".state" / "woltspace-version").read_text() == "v0.1.2"
+        # Version file should now exist at new path
+        assert (tmp_path / ".space" / "platform" / "woltspace-version").read_text() == "v0.1.2"
 
     def test_remote_unreachable(self, tmp_path):
         from bot.core import _tool_check_update
         mock_result = MagicMock(returncode=1, stdout="")
 
-        with patch("bot.core.WOLT_DIR", tmp_path), \
+        with patch("bot.core.WOLTS_DIR", tmp_path), \
              patch("subprocess.run", return_value=mock_result):
             result = json.loads(_tool_check_update({}, None))
         assert "error" in result
@@ -522,7 +524,7 @@ class TestCheckUpdateTool:
         from bot.core import _tool_check_update
         mock_result = MagicMock(returncode=0, stdout="aaa\trefs/tags/not-a-version\n")
 
-        with patch("bot.core.WOLT_DIR", tmp_path), \
+        with patch("bot.core.WOLTS_DIR", tmp_path), \
              patch("subprocess.run", return_value=mock_result):
             result = json.loads(_tool_check_update({}, None))
         assert "error" in result
@@ -530,13 +532,13 @@ class TestCheckUpdateTool:
     def test_fetches_tags_not_branches(self, tmp_path):
         """Verify we use --tags, not refs/heads."""
         from bot.core import _tool_check_update
-        state_dir = tmp_path / ".state"
-        state_dir.mkdir(parents=True)
-        (state_dir / "woltspace-version").write_text("v0.1.2")
+        version_file = tmp_path / ".space" / "platform" / "woltspace-version"
+        version_file.parent.mkdir(parents=True)
+        version_file.write_text("v0.1.2")
 
         mock_result = MagicMock(returncode=0, stdout=self.TAGS_OUTPUT)
 
-        with patch("bot.core.WOLT_DIR", tmp_path), \
+        with patch("bot.core.WOLTS_DIR", tmp_path), \
              patch("subprocess.run", return_value=mock_result) as mock_run:
             _tool_check_update({}, None)
         mock_run.assert_called_once()
@@ -699,7 +701,8 @@ class TestWolfJobsTool:
             json.dumps({"ts": "2026-03-15T06:00:01", "cron": "digest", "event": "dispatched"}),
         ]
         log_file.write_text("\n".join(entries))
-        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path):
+        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path), \
+             patch("bot.core.WOLTS_DIR", tmp_path.parent):
             result = json.loads(_tool_wolf_jobs({}, None))
         assert result["count"] == 2
         assert result["jobs"][0]["cron"] == "digest"
@@ -714,7 +717,8 @@ class TestWolfJobsTool:
             for i in range(5)
         ]
         log_file.write_text("\n".join(entries))
-        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path):
+        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path), \
+             patch("bot.core.WOLTS_DIR", tmp_path.parent):
             result = json.loads(_tool_wolf_jobs({"count": 2}, None))
         assert result["count"] == 2
         assert result["jobs"][0]["cron"] == "job-3"
@@ -726,7 +730,8 @@ class TestWolfJobsTool:
         log_dir.mkdir(parents=True)
         log_file = log_dir / "jobs.jsonl"
         log_file.write_text('{"cron":"ok","event":"started"}\nnot json\n{"cron":"also-ok","event":"done"}\n')
-        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path):
+        with patch("bot.core._get_wolf_wolt_dir", return_value=tmp_path), \
+             patch("bot.core.WOLTS_DIR", tmp_path.parent):
             result = json.loads(_tool_wolf_jobs({}, None))
         assert result["count"] == 2  # skipped the bad line
 

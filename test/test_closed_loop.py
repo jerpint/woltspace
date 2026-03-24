@@ -601,6 +601,7 @@ class TestRegressions:
         """Registry writes should use tmp+rename (no partial reads)."""
         from sessions import SessionRegistry
         reg = SessionRegistry(tmp_path / "reg")
-        reg.create("atomic-test")
-        # No .tmp files should remain
-        assert list((tmp_path / "reg").glob("*.tmp")) == []
+        reg.create("atomic-test", wolt="neowolt")
+        # No .tmp files should remain in the sessions dir
+        sessions_dir = tmp_path / "reg" / "neowolt" / ".state" / "sessions"
+        assert list(sessions_dir.glob("*.tmp")) == []

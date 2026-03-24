@@ -73,11 +73,11 @@ class TestResponseFormatting:
 
     def test_text_response_format(self):
         from bot.telegram_adapter import format_response
-        with patch.dict(os.environ, {"WOLT_NAME": "neowolt"}):
+        with patch("bot.telegram_adapter._dog_name", return_value="testdog"):
             result = {"type": "text", "text": "hello world"}
             formatted = format_response(result)
             assert "🐶" in formatted
-            assert "neowolt" in formatted
+            assert "testdog" in formatted
             assert "hello world" in formatted
 
     def test_session_response_with_text(self):
