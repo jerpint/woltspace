@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/workspace/woltspace/container/bot/.venv/bin/python3
 """Print a short-lived GitHub App installation token to stdout.
 
 Usage:
