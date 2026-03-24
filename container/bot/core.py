@@ -29,6 +29,12 @@ from sessions import (
     start_session,
 )
 from wolts import get_active_creature, find_by_type, list_wolts as _list_wolts_full
+from paths import (
+    wolt_sessions_log,
+    wolt_wolf_state_dir,
+    platform_version_file,
+    space_logs_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +51,7 @@ LLM_MODEL = os.environ.get("LLM_MODEL", "anthropic/claude-haiku-4-5-20251001")
 MAX_TOOL_ROUNDS = 5
 
 # Bot log at .space/logs/ — global, never moves with wolt switch
-BOT_LOG_DIR = WOLTS_DIR / ".space" / "logs"
+BOT_LOG_DIR = space_logs_dir(WOLTS_DIR)
 BOT_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Session registry — per-wolt paths, wolts_dir is the root
@@ -474,8 +480,8 @@ def check_session(session_name: str = None) -> dict:
 
 
 def get_recent_sessions(n: int = 5, tag: str = None) -> list[dict]:
-    """Read recent session summaries from .state/sessions.jsonl."""
-    sessions_file = WOLT_DIR / ".state" / "sessions.jsonl"
+    """Read recent session summaries from {wolt}/.state/sessions.jsonl."""
+    sessions_file = wolt_sessions_log(WOLT_DIR.name, WOLTS_DIR)
     if not sessions_file.exists():
         return []
     try:
@@ -733,7 +739,7 @@ def _tool_switch_wolt(args: dict, routing: dict | None) -> str:
 def _tool_check_update(args: dict, routing: dict | None) -> str:
     """Check if a woltspace update is available by comparing tagged versions."""
     import subprocess, re
-    version_file = WOLT_DIR / ".state" / "woltspace-version"
+    version_file = platform_version_file(WOLTS_DIR)
 
     def _parse_semver(tag: str) -> tuple[int, ...] | None:
         """Parse 'v1.2.3' into (1, 2, 3). Returns None if not a valid semver tag."""
@@ -815,7 +821,7 @@ def _tool_wolf_schedules(args: dict, routing: dict | None) -> str:
         data = json.loads(wolf_config.read_text())
         crons = data.get("crons", [])
         # Enrich with last-run info
-        state_dir = wolf_wolt / ".state" / "wolf"
+        state_dir = wolt_wolf_state_dir(wolf_wolt.name, WOLTS_DIR)
         for entry in crons:
             name = entry.get("name", "")
             last_file = state_dir / f"{name}.last"
@@ -848,7 +854,7 @@ def _tool_wolf_jobs(args: dict, routing: dict | None) -> str:
     """Show recent wolf job log entries."""
     count = args.get("count", 10)
     wolf_wolt = _get_wolf_wolt_dir()
-    log_file = wolf_wolt / ".state" / "wolf" / "jobs.jsonl"
+    log_file = wolt_wolf_state_dir(wolf_wolt.name, WOLTS_DIR) / "jobs.jsonl"
     if not log_file.exists():
         return json.dumps({"jobs": [], "note": "no job log yet"})
     try:

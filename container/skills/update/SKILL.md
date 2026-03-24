@@ -57,8 +57,8 @@ git clean -fd
 ## Step 1: Determine what's incoming
 
 ```bash
-WOLT_DIR="${WOLT_DIR:-/workspace/wolts/${WOLT_NAME:-wolt}}"
-BRANCH=$(cat "$WOLT_DIR/.state/woltspace-branch" 2>/dev/null || echo "main")
+WOLTS_DIR="${WOLTS_DIR:-/workspace/wolts}"
+BRANCH=$(cat "$WOLTS_DIR/.space/platform/woltspace-branch" 2>/dev/null || echo "main")
 
 cd /workspace/woltspace
 git fetch origin "$BRANCH" --tags
@@ -167,9 +167,9 @@ cd /workspace/woltspace && git pull origin "$BRANCH"
 
 # Stamp version (prefer tag if HEAD is tagged)
 NEW_VERSION=$(git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD)
-mkdir -p "$WOLT_DIR/.state"
-echo "$NEW_VERSION" > "$WOLT_DIR/.state/woltspace-version"
-echo "$BRANCH" > "$WOLT_DIR/.state/woltspace-branch"
+mkdir -p "$WOLTS_DIR/.space/platform"
+echo "$NEW_VERSION" > "$WOLTS_DIR/.space/platform/woltspace-version"
+echo "$BRANCH" > "$WOLTS_DIR/.space/platform/woltspace-branch"
 # Also update the .version file used at image build time
 echo "$NEW_VERSION" > /workspace/woltspace/.version
 ```

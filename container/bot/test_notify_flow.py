@@ -451,10 +451,29 @@ class TestNotifyEndToEnd:
             # urllib raises on non-2xx but we can still check
             return {"error": str(e)}
 
+    def _find_session_with_routing(self):
+        """Find a session file that has routing info (adapter + chat_id)."""
+        wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+        for wolt_dir in wolts_dir.iterdir():
+            if not wolt_dir.is_dir() or wolt_dir.name.startswith("."):
+                continue
+            sessions_dir = wolt_dir / ".state" / "sessions"
+            if not sessions_dir.exists():
+                continue
+            for f in sessions_dir.glob("*.json"):
+                try:
+                    data = json.loads(f.read_text())
+                    if data.get("adapter"):
+                        return f.stem, data
+                except (json.JSONDecodeError, OSError):
+                    continue
+        return None, None
+
     def _read_last_chat_line(self, chat_id: str) -> str:
-        """Read the last line from the chat history file that server.js writes."""
-        from pathlib import Path
-        chat_file = Path("/workspace/wolts/.state/chat") / f"telegram-{chat_id}.jsonl"
+        """Read the last line from the chat history file."""
+        wolt_name = os.environ.get("WOLT_NAME", "wolt")
+        wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+        chat_file = wolts_dir / wolt_name / ".state" / "chat" / f"telegram-{chat_id}.jsonl"
         if not chat_file.exists():
             return ""
         lines = chat_file.read_text().strip().split("\n")
@@ -462,27 +481,17 @@ class TestNotifyEndToEnd:
 
     def test_notify_sends_and_returns_adapter(self):
         """Basic smoke test: /notify returns ok with adapter info."""
-        # Use a real session that has routing
-        routing_dir = Path("/workspace/wolts/.state/session-routing")
-        if not routing_dir.exists():
-            pytest.skip("no session routing dir")
-        files = list(routing_dir.glob("*.json"))
-        if not files:
-            pytest.skip("no session routing files")
-        session = files[0].stem
+        session, routing = self._find_session_with_routing()
+        if not session:
+            pytest.skip("no session with routing found")
         result = self._post_notify(session, "🧪 test: footer reliability check")
         assert result.get("adapter") in ("telegram", "slack"), f"unexpected result: {result}"
 
     def test_chat_history_has_message_without_footer(self):
-        """server.js stores the raw message (no footer) in chat history."""
-        routing_dir = Path("/workspace/wolts/.state/session-routing")
-        if not routing_dir.exists():
-            pytest.skip("no session routing dir")
-        files = list(routing_dir.glob("*.json"))
-        if not files:
-            pytest.skip("no session routing files")
-        session = files[0].stem
-        routing = json.loads(files[0].read_text())
+        """Notify stores the raw message (no footer) in chat history."""
+        session, routing = self._find_session_with_routing()
+        if not session:
+            pytest.skip("no session with routing found")
         chat_id = str(routing.get("chat_id", ""))
         if not chat_id:
             pytest.skip("no chat_id in routing")

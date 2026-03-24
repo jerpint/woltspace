@@ -36,6 +36,21 @@ def wolt_site_state_file(wolt: str, wolts_dir: Path = None) -> Path:
     return wolt_state_dir(wolt, wolts_dir) / "site.json"
 
 
+def wolt_wolf_state_dir(wolt: str, wolts_dir: Path = None) -> Path:
+    """Per-wolt wolf/cron state: wolts/{wolt}/.state/wolf/"""
+    return wolt_state_dir(wolt, wolts_dir) / "wolf"
+
+
+def wolt_chat_dir(wolt: str, wolts_dir: Path = None) -> Path:
+    """Per-wolt chat history: wolts/{wolt}/.state/chat/"""
+    return wolt_state_dir(wolt, wolts_dir) / "chat"
+
+
+def wolt_sessions_log(wolt: str, wolts_dir: Path = None) -> Path:
+    """Per-wolt session summaries: wolts/{wolt}/.state/sessions.jsonl"""
+    return wolt_state_dir(wolt, wolts_dir) / "sessions.jsonl"
+
+
 # ---------------------------------------------------------------------------
 # Global platform state
 # ---------------------------------------------------------------------------
@@ -67,3 +82,23 @@ def space_logs_dir(wolts_dir: Path = None) -> Path:
 def tunnel_url_file(wolts_dir: Path = None) -> Path:
     """Tunnel URL file: wolts/.space/platform/tunnel-url"""
     return space_platform_dir(wolts_dir) / "tunnel-url"
+
+
+def platform_version_file(wolts_dir: Path = None) -> Path:
+    """Platform version: wolts/.space/platform/woltspace-version"""
+    return space_platform_dir(wolts_dir) / "woltspace-version"
+
+
+def platform_branch_file(wolts_dir: Path = None) -> Path:
+    """Platform branch: wolts/.space/platform/woltspace-branch"""
+    return space_platform_dir(wolts_dir) / "woltspace-branch"
+
+
+def space_vulture_dir(wolts_dir: Path = None) -> Path:
+    """Vulture reaper state: wolts/.space/vulture/"""
+    return space_dir(wolts_dir) / "vulture"
+
+
+def space_task_results_dir(wolts_dir: Path = None) -> Path:
+    """Task results: wolts/.space/task-results/"""
+    return space_dir(wolts_dir) / "task-results"

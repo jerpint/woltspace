@@ -5,7 +5,7 @@ Each wolt registers its own schedule in wolt/wolf.json. The wolf discovers
 all schedules, fires crons on time, and spawns sessions for the owning wolt.
 
 Schedule config: {each_wolt}/wolt/wolf.json
-Last-run state:  {wolf_wolt}/.state/wolf/
+Last-run state:  {wolf_wolt}/.state/wolf/  (per-wolt)
 
 Usage:
   python -m creatures.wolf              # Run as background service
@@ -131,13 +131,16 @@ def get_wolt_dir() -> Path:
 
 
 def get_state_dir() -> Path:
-    d = get_wolt_dir() / ".state" / "wolf"
+    from paths import wolt_wolf_state_dir
+    wolt_dir = get_wolt_dir()
+    wolt_name = wolt_dir.name
+    d = wolt_wolf_state_dir(wolt_name, wolt_dir.parent)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def _log_job(name: str, action: str, **kwargs):
-    """Append a job event to .state/wolf/jobs.jsonl."""
+    """Append a job event to {wolt}/.state/wolf/jobs.jsonl."""
     log_file = get_state_dir() / "jobs.jsonl"
     entry = {
         "ts": datetime.now().isoformat(),
