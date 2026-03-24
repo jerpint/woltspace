@@ -20,7 +20,7 @@
                      │
 ┌────────────────────▼────────────────────────────┐
 │            EXECUTION LAYER                        │
-│     Node.js server (port 7777)                   │
+│     FastAPI server (port 7777)                   │
 │     tmux sessions running Claude Code            │
 │     Split-view browser UI · Cloudflare tunnel    │
 └─────────────────────────────────────────────────┘
@@ -36,7 +36,7 @@
 | `container/bot/core.py` | ~1100 | The brain. Haiku agent loop, 13 tools, session spawning, memory loading |
 | `container/bot/telegram_adapter.py` | ~490 | Telegram handler: text, voice, photos, den replies, history |
 | `container/bot/slack_adapter.py` | ~360 | Slack handler: Socket Mode, thread-based, @mention routing |
-| `container/lib/sessions.py` | ~320 | Session registry: one JSON file per session in `.state/registry/` |
+| `container/lib/sessions.py` | ~400 | Session registry: one JSON file per wolt at `wolts/{wolt}/.state/sessions/` |
 | `container/bot/image_gen.py` | ~130 | Image generation wrapper (OpenAI gpt-image-1) |
 | `container/bin/run-session.sh` | ~80 | Session wrapper: injects notify context, runs claude CLI, updates registry on exit |
 | `container/entrypoint.sh` | ~240 | Container init: skills, hooks, git, tmux, server, tunnel, bots |
@@ -55,7 +55,7 @@ User sends "build me a homepage"
   → core.get_response()                    # Haiku agent loop
   → Haiku picks tool: claude_code
   → core.start_claude_session()
-      ├─ registry.create()                 # .state/registry/{name}.json
+      ├─ registry.create()                 # wolts/{wolt}/.state/sessions/{name}.json
       ├─ tmux new-session                  # spawns run-session.sh
       └─ returns {name, url, creature}
   → adapter sends ack to Telegram
@@ -66,8 +66,8 @@ User sends "build me a homepage"
 ```
 Claude in session calls: notify "done, check it out"
   → hooks/notify.sh                        # Claude Code Notification hook
-  → POST /notify to server.js
-  → server reads registry routing info
+  → POST /notify to FastAPI
+  → server reads session routing info
   → sends to Telegram/Slack with footer:
       "↩️ reply to this message..."
       "https://tunnel/tui?session=NAME"
@@ -85,7 +85,7 @@ User replies in Telegram
 ```
 Claude Code pushes a view
   → POST /current?session=X {url: "/index.html"}
-  → server writes .state/current-url-X.json
+  → server writes viewport_url into session JSON
 
 split.html polls /current/meta every 2s
   → iframe loads the new URL
@@ -95,29 +95,34 @@ split.html polls /current/meta every 2s
 
 ---
 
-## server.js Endpoints
+## FastAPI Endpoints (server/app.py)
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/` | GET | Home page (session launcher) |
-| `/tui?session=X` | GET+WS | Split-view terminal (xterm.js ↔ tmux via node-pty) |
+| `/` | GET | Home page — the lodge (public/home.html) |
+| `/tui` | GET+WS | Split-view terminal (xterm.js ↔ tmux via tui-service.js) |
+| `/onboard` | GET | Auth wizard (public/onboard.html) |
 | `/current?session=X` | GET/POST | Viewport URL control per session |
-| `/current/meta?session=X` | GET | Viewport metadata + redirect check |
+| `/current/meta?session=X` | GET | Viewport metadata + redirect (reads session JSON) |
 | `/notify` | POST | Send message to originating Telegram/Slack chat |
-| `/sessions` | GET | List all sessions from registry |
-| `/sessions/new` | POST | Spawn new Claude Code session |
-| `/sessions/:id/message` | POST | Send text to session (revives if needed) |
+| `/sessions` | GET | List all sessions (scans per-wolt `.state/sessions/`) |
+| `/sessions/new/{adapter}` | POST | Spawn session — lodge, telegram, slack, or create |
+| `/sessions/redirect` | POST | Set redirect on a session |
+| `/sessions/{id}/message` | POST | Send text to session (revives if needed) |
+| `/wolts` | GET | List all wolts from wolt.json files |
+| `/projects` | GET | List projects (from `wolts/projects/`) |
+| `/projects/{name}/start` | POST | Start a project |
+| `/projects/{name}/stop` | POST | Stop a project |
+| `/project/{name}/*` | ALL | Serve project (proxy or static) |
+| `/wolt/{name}/site/*` | ALL | Serve wolt sites (per-wolt livereload proxy) |
 | `/history` | GET | List sparks (artifacts) |
-| `/history/:id` | GET | Serve spark HTML with version nav |
-| `/app/:name/*` | ALL | Serve wolt apps (static or proxy) |
-| `/apps` | GET | List registered apps |
+| `/history/{id}` | GET | Serve spark HTML with version nav |
 | `/tools` | GET | List running tool proxies |
 | `/tools/spawn` | POST | Start a tool process |
-| `/tools/:name/*` | ALL+WS | Proxy HTTP/WS to tool port |
+| `/tools/{name}/*` | ALL+WS | Proxy HTTP/WS to tool port |
 | `/shares` | GET/POST/DELETE | Public share link management |
-| `/public/:token/*` | GET | No-auth proxy via share token |
+| `/public/{token}/*` | GET | No-auth proxy via share token |
 | `/memory/read` | POST | Read wolt memory files |
-| `/status` | GET | Server + digest status |
 | `/views/history` | GET | Recent viewport changes |
 | `/livereload` | WS | File-change broadcast for live reload |
 
@@ -152,11 +157,14 @@ CREATED → RUNNING → COMPLETED / FAILED
                   ↘ ORPHANED (tmux died without exit handler)
 ```
 
-- **Registry**: one JSON file per session in `.state/registry/{name}.json`
+- **Registry**: one JSON file per session at `wolts/{wolt}/.state/sessions/{name}.json`
+- **Viewport URL**: stored in session JSON (`viewport_url` field) — no separate files
+- **Redirects**: stored in session JSON (`redirect_to` field) — atomically cleared on read
+- **Multi-adapter routing**: `routing` is an array — start on Slack, pick up in browser, get notified on Telegram
 - **Naming**: `{wolt}-{adj}-{noun}-{6hex}` (e.g. `neowolt-chompy-dam-a3f1e2`)
-- **Creature system**: beaver (🦫 sonnet) or raccoon (🦝 opus) — controls which Claude model runs
+- **Creature system**: otter (🦦 haiku), beaver (🦫 sonnet), or raccoon (🦝 opus) — controls which Claude model runs
 - **Reconciliation**: `registry.reconcile()` checks tmux, marks dead sessions orphaned
-- **No cleanup**: orphaned registry files accumulate (manual cleanup needed)
+- **Cleanup**: vulture reaps dead tmux sessions (state at `wolts/.space/vulture/`)
 
 ---
 
@@ -173,7 +181,7 @@ CREATED → RUNNING → COMPLETED / FAILED
 8. Start tmux main session → auto-launch Claude
 9. Start TUI pty service (port 3001)
 10. Start FastAPI server (port 7777)
-11. Start cloudflared tunnel → write URL to .state/tunnel-url
+11. Start cloudflared tunnel → write URL to .space/platform/tunnel-url
 12. Start Telegram bot (optional, watchfiles reload)
 13. Start Slack bot (optional, watchfiles reload)
 14. Start wolf scheduler (if wolf.json exists)
@@ -183,66 +191,84 @@ CREATED → RUNNING → COMPLETED / FAILED
 
 ---
 
-## File Layout (per wolt)
+## File Layout
+
+### Per wolt (`wolts/{name}/`)
 
 ```
-~/wolts/{name}/
+wolts/{name}/
 ├─ wolt/
 │  ├─ memory/           # identity, context, learnings (boot files)
 │  │  └─ archive/       # grows forever, searched on demand
-│  ├─ projects/         # isolated code projects (apps, scripts, experiments)
-│  ├─ site/             # static HTML/CSS, live-reload watched
-│  ├─ apps/             # full-stack apps (each has app.json)
+│  ├─ site/             # static HTML/CSS, per-wolt livereload
 │  ├─ sparks/           # generated artifacts (digest, etc.)
-│  ├─ drafts/           # manifesto, etc.
+│  ├─ drafts/           # writing and drafts
 │  └─ images/           # AI-generated images
 ├─ .claude/
 │  ├─ skills/           # wolt-specific skill overrides
 │  ├─ settings.json     # hooks config
 │  └─ .credentials.json # OAuth token
 ├─ .state/
-│  ├─ registry/         # session JSON files
-│  ├─ tunnel-url        # current public URL
-│  ├─ chat/             # Telegram/Slack message history (JSONL)
-│  └─ bot-debug/        # bot.jsonl event log
+│  ├─ sessions/         # one JSON per session (viewport_url, routing, status)
+│  ├─ site.json         # livereload port, pid, dir
+│  ├─ wolf/             # cron execution state
+│  └─ sessions.jsonl    # append-only session log
 ├─ .env                 # secrets (gitignored)
 ├─ CLAUDE.md            # wolt-specific instructions
-└─ wolt.json            # manifest
+└─ wolt.json            # manifest (name, type, role, description)
+```
+
+### Global (`wolts/.space/`)
+
+```
+wolts/.space/
+├─ platform/            # tunnel-url, woltspace-version, branch
+├─ projects/            # running project state (port, pid)
+├─ wolf/                # wolf scheduler state
+├─ vulture/             # session reaper state
+└─ logs/                # bot.jsonl event log
+```
+
+### Projects (`wolts/projects/`)
+
+```
+wolts/projects/{name}/
+├─ woltspace.json       # manifest (start command, port, description)
+└─ ...                  # project source code
 ```
 
 ---
 
 ## Known Issues & Future Optimization Notes
 
-_Use this section to jot down ideas as you work with the codebase._
-
 ### Complexity hotspots
-- **server.js (~1400 lines)** — single file doing HTTP, WebSocket, file watching, notifications, session management, tool proxy, share links. Could be split into modules (routes, ws, notify, proxy).
 - **core.py (~1100 lines)** — agent loop + all 13 tool implementations in one file. Tool functions could be extracted.
 
 ### Architecture concerns
 - **Session lifecycle is implicit** — no state machine, relies on tmux existence checks. Reconciliation is reactive, not proactive.
-- **No orphan cleanup** — dead registry files accumulate in `.state/registry/`.
-- **Notify is split across languages** — Telegram notify goes through Node (server.js POST /notify → Telegram API), while bot responses go through Python (telegram_adapter.py). Two codepaths owning Telegram.
 - **`_send_ack` only handles Telegram** — Slack users get no "🦫 on it" ack when sessions spawn.
 - **History window is fixed** — `MAX_HISTORY = 20` pairs for Telegram, Slack pulls full thread from API (inconsistent).
+- **Single-wolt Telegram** — one wolt owns the bot at a time. Den replies lose context (#218). Chat-per-wolt is the path forward (#184).
+- **Skill drift** — platform skills copied at wolt creation, never synced. Existing wolts run stale skills (#173).
+- **Project proxy links** — internal links break for multi-page apps behind `/project/{name}/` prefix (#212).
 
 ### Things that work well
-- **Session registry** — clean single-source-of-truth pattern, one JSON file per session.
-- **Den reply routing** — elegant: footer embeds session URL, adapter extracts it, message goes directly to tmux.
-- **Live reload** — file watcher + WebSocket broadcast + injected script = instant updates.
-- **Creature system** — simple model selection via metaphor (beaver/raccoon).
+- **Session registry** — one JSON file per session per wolt, queryable with `ls` and `cat`.
+- **Den reply routing** — footer embeds session URL, adapter extracts it, message goes directly to tmux.
+- **Per-wolt livereload** — file watcher + WebSocket broadcast + injected script = instant updates. Scoped per wolt.
+- **Creature system** — simple model selection via metaphor (otter/beaver/raccoon).
 - **Skills** — platform defaults baked in, wolt overrides win. Clean layering.
+- **Filesystem as database** — paths are queries, files are records, dirs are indexes, cleanup is `rm`.
 
 ### Potential optimizations
-- [ ] Split server.js into modules (routes/, ws/, middleware/)
 - [ ] Extract tool implementations from core.py into separate files
-- [ ] Add session TTL / auto-cleanup for orphaned registry entries
-- [ ] Consolidate Telegram into Python (eliminate Node→Telegram path)
+- [ ] Add session TTL / auto-cleanup for orphaned session files
 - [ ] Add Slack ack messages for session spawns
 - [ ] Consider event-driven viewport updates (SSE/WS) instead of 2s polling
 - [ ] Session state machine with explicit transitions
+- [ ] Chat-per-wolt Telegram architecture (#184)
+- [ ] Skill inheritance — platform skills vs local overrides (#173)
 
 ---
 
-*Generated 2026-03-13. This is a living document — add notes as you go.*
+*Last updated 2026-03-24. This is a living document — add notes as you go.*
