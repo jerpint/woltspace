@@ -17,6 +17,6 @@ else
   git clone https://github.com/jerpint/woltspace
 fi
 
-export WOLTS_DIR="${WOLTS_DIR:-$HOME/wolts}"
+export WOLTS_DIR="${WOLTS_DIR:-$HOME/.woltspace/wolts}"
 
 "$PWD/woltspace/woltspace" init
