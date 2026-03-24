@@ -204,8 +204,7 @@ CREATED → RUNNING → COMPLETED / FAILED
 │  ├─ registry/         # session JSON files
 │  ├─ tunnel-url        # current public URL
 │  ├─ chat/             # Telegram/Slack message history (JSONL)
-│  ├─ bot-debug/        # bot.jsonl event log
-│  └─ status.json       # digest + server state
+│  └─ bot-debug/        # bot.jsonl event log
 ├─ .env                 # secrets (gitignored)
 ├─ CLAUDE.md            # wolt-specific instructions
 └─ wolt.json            # manifest

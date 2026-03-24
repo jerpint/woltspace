@@ -35,7 +35,6 @@ TUI_PORT = int(os.environ.get("TUI_PORT", "3001"))
 
 TOOL_REGISTRY_FILE = STATE_DIR / "tool-registry.json"
 VIEWS_HISTORY_FILE = STATE_DIR / "views-history.jsonl"
-STATUS_FILE = STATE_DIR / "status.json"
 BOT_LOG_DIR = SPACE_LOGS_DIR
 BOT_LOG_FILE = BOT_LOG_DIR / "bot.jsonl"
 

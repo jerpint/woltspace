@@ -34,7 +34,6 @@ from .config import (
     SITE_DIR,
     SPARKS_DIR,
     STATE_DIR,
-    STATUS_FILE,
     TUI_PORT,
     WOLT_DIR,
     WOLT_NAME,
@@ -64,11 +63,9 @@ from .state import (
     get_current_meta,
     get_current_url,
     log_view,
-    read_status,
     read_views_history,
     sanitize_session,
     set_current_url,
-    write_status,
 )
 
 # --- Live reload ---
@@ -353,33 +350,6 @@ async def post_session_redirect(request: Request):
     reg.set_redirect(safe_from, safe_to)
     print(f"[redirect] {safe_from} → {safe_to}")
     return {"ok": True}
-
-
-# --- Status ---
-
-@app.get("/status")
-async def get_status():
-    status = read_status()
-    latest_spark = None
-    try:
-        files = sorted(
-            [f for f in SPARKS_DIR.iterdir() if f.name.endswith(".json")],
-            key=lambda f: f.stat().st_mtime,
-            reverse=True,
-        )
-        if files:
-            d = json.loads(files[0].read_text())
-            latest_spark = {"id": d["id"], "title": d.get("title"), "timestamp": d.get("timestamp"), "report": d.get("report")}
-    except Exception:
-        pass
-    return {
-        "wolt": WOLT_NAME,
-        "digest": status.get("digest", {"state": "unknown"}),
-        "currentView": get_current_url("main"),
-        "latestSpark": latest_spark,
-        "serverUptime": int(time.time() - _start_time),
-        "updatedAt": status.get("updatedAt"),
-    }
 
 
 @app.get("/onboard-status")

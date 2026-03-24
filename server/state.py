@@ -8,7 +8,6 @@ from pathlib import Path
 from .config import (
     STATE_DIR,
     VIEWS_HISTORY_FILE,
-    STATUS_FILE,
     BOT_LOG_DIR,
     BOT_LOG_FILE,
     WOLTS_DIR,
@@ -132,24 +131,3 @@ def bot_log(event: str, data: dict):
         pass
 
 
-# ---------------------------------------------------------------------------
-# Status
-# ---------------------------------------------------------------------------
-
-def read_status() -> dict:
-    if not STATUS_FILE.exists():
-        return {}
-    try:
-        return json.loads(STATUS_FILE.read_text())
-    except Exception:
-        return {}
-
-
-def write_status(patch: dict):
-    try:
-        cur = read_status()
-        cur.update(patch)
-        cur["updatedAt"] = int(time.time() * 1000)
-        STATUS_FILE.write_text(json.dumps(cur))
-    except Exception:
-        pass
