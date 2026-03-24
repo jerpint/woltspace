@@ -7,7 +7,7 @@ import httpx
 
 from .config import (
     STATE_DIR,
-    WOLTS_STATE_DIR,
+    SPACE_PLATFORM_DIR,
     SESSION_REGISTRY_DIR,
     DEN_REPLY_FOOTER,
     get_env,
@@ -88,7 +88,7 @@ async def send_notification(session: str, message: str) -> dict:
 
     if telegram_token and telegram_chat_id:
         tunnel_url = ""
-        tunnel_file = WOLTS_STATE_DIR / "tunnel-url"
+        tunnel_file = SPACE_PLATFORM_DIR / "tunnel-url"
         try:
             tunnel_url = tunnel_file.read_text().strip()
         except Exception:

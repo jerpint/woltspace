@@ -17,8 +17,12 @@ from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
 import re
+import sys
 from bot.core import get_response, transcribe_audio, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, _bot_log, build_ack_text, _sanitize_history, message_session
 from wolts import get_active_creature
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from paths import wolt_state_dir, wolt_chat_dir
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -27,8 +31,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 WOLT_DIR = Path(os.environ.get("WOLT_DIR", "/workspace/wolt"))
-STATE_DIR = WOLT_DIR / ".state"
-CHAT_DIR = STATE_DIR / "chat"
+_WOLT_NAME = os.environ.get("WOLT_NAME", WOLT_DIR.name)
+_WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", str(WOLT_DIR.parent)))
+STATE_DIR = wolt_state_dir(_WOLT_NAME, _WOLTS_DIR)
+CHAT_DIR = wolt_chat_dir(_WOLT_NAME, _WOLTS_DIR)
 
 
 def _dog_name() -> str:

@@ -11,7 +11,7 @@ if [ -z "$SESSION_NAME" ] || [ -z "$PROMPT" ]; then
 fi
 
 WOLTS_DIR="${WOLTS_DIR:-/workspace/wolts}"
-RESULTS_DIR="$WOLTS_DIR/.state/task-results"
+RESULTS_DIR="$WOLTS_DIR/.space/task-results"
 LOG_FILE="/tmp/${SESSION_NAME}.log"
 mkdir -p "$RESULTS_DIR"
 

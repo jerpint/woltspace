@@ -29,6 +29,11 @@ from sessions import (
     start_session,
 )
 from wolts import get_active_creature, find_by_type, list_wolts as _list_wolts_full
+from paths import (
+    wolt_sessions_log,
+    platform_version_file,
+    space_logs_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,16 +46,15 @@ _wolt_name = os.environ.get("WOLT_NAME", "wolt")
 _derived = WOLTS_DIR / _wolt_name
 WOLT_DIR = Path(os.environ.get("WOLT_DIR") or (_derived if _derived.exists() else "/workspace/wolt"))
 MEMORY_DIR = WOLT_DIR / "wolt" / "memory"
-STATE_DIR = WOLT_DIR / ".state"
 LLM_MODEL = os.environ.get("LLM_MODEL", "anthropic/claude-haiku-4-5-20251001")
 MAX_TOOL_ROUNDS = 5
 
-# Fixed log dir — always at wolts level, never moves with wolt switch
-BOT_LOG_DIR = WOLTS_DIR / ".state" / "bot-debug"
+# Bot log at .space/logs/ — global, never moves with wolt switch
+BOT_LOG_DIR = space_logs_dir(WOLTS_DIR)
 BOT_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-# Session registry — single source of truth for all session metadata
-registry = SessionRegistry(WOLTS_DIR / ".state" / "registry")
+# Session registry — per-wolt paths, wolts_dir is the root
+registry = SessionRegistry(WOLTS_DIR)
 
 # RUN_SESSION_SCRIPT — now in sessions module
 
@@ -76,13 +80,12 @@ def _bot_log(event: str, data: dict):
 
 def switch_wolt(name: str) -> str | None:
     """Switch active wolt. Returns the new wolt name or None if not found."""
-    global WOLT_DIR, MEMORY_DIR, STATE_DIR
+    global WOLT_DIR, MEMORY_DIR
     target = WOLTS_DIR / name
     if not target.is_dir() or not (target / "wolt").is_dir():
         return None
     WOLT_DIR = target
     MEMORY_DIR = WOLT_DIR / "wolt" / "memory"
-    STATE_DIR = WOLT_DIR / ".state"
     os.environ["WOLT_DIR"] = str(WOLT_DIR)
     os.environ["WOLT_NAME"] = name
     config_path = WOLTS_DIR / "woltspace.json"
@@ -476,8 +479,8 @@ def check_session(session_name: str = None) -> dict:
 
 
 def get_recent_sessions(n: int = 5, tag: str = None) -> list[dict]:
-    """Read recent session summaries from .state/sessions.jsonl."""
-    sessions_file = STATE_DIR / "sessions.jsonl"
+    """Read recent session summaries from {wolt}/.state/sessions.jsonl."""
+    sessions_file = wolt_sessions_log(WOLT_DIR.name, WOLTS_DIR)
     if not sessions_file.exists():
         return []
     try:
@@ -735,7 +738,7 @@ def _tool_switch_wolt(args: dict, routing: dict | None) -> str:
 def _tool_check_update(args: dict, routing: dict | None) -> str:
     """Check if a woltspace update is available by comparing tagged versions."""
     import subprocess, re
-    version_file = WOLT_DIR / ".state" / "woltspace-version"
+    version_file = platform_version_file(WOLTS_DIR)
 
     def _parse_semver(tag: str) -> tuple[int, ...] | None:
         """Parse 'v1.2.3' into (1, 2, 3). Returns None if not a valid semver tag."""
@@ -788,36 +791,16 @@ def _tool_check_update(args: dict, routing: dict | None) -> str:
         return json.dumps({"error": str(e)})
 
 
-def _get_wolf_wolt_dir() -> Path:
-    """Resolve the wolf's working directory — same logic as creatures/wolf.py.
-
-    Checks woltspace.json for active_wolf first, falls back to WOLT_DIR.
-    """
-    config_file = WOLTS_DIR / "woltspace.json"
-    if config_file.exists():
-        try:
-            config = json.loads(config_file.read_text())
-            active_wolf = config.get("creatures", {}).get("active_wolf")
-            if active_wolf:
-                wolf_dir = WOLTS_DIR / active_wolf
-                if (wolf_dir / "wolt" / "wolf.json").exists():
-                    return wolf_dir
-        except (json.JSONDecodeError, OSError):
-            pass
-    return WOLT_DIR
-
-
 def _tool_wolf_schedules(args: dict, routing: dict | None) -> str:
-    """List all wolf cron schedules for the active wolt."""
-    wolf_wolt = _get_wolf_wolt_dir()
-    wolf_config = wolf_wolt / "wolt" / "wolf.json"
-    if not wolf_config.exists():
-        return json.dumps({"crons": [], "count": 0, "note": "no wolf.json — no crons configured"})
+    """List all wolf cron schedules across all wolts."""
     try:
-        data = json.loads(wolf_config.read_text())
-        crons = data.get("crons", [])
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from creatures.wolf import load_schedule, get_state_dir
+        crons = load_schedule()
+        if not crons:
+            return json.dumps({"crons": [], "count": 0, "note": "no crons registered"})
         # Enrich with last-run info
-        state_dir = wolf_wolt / ".state" / "wolf"
+        state_dir = get_state_dir()
         for entry in crons:
             name = entry.get("name", "")
             last_file = state_dir / f"{name}.last"
@@ -849,8 +832,9 @@ def _tool_fire_wolf(args: dict, routing: dict | None) -> str:
 def _tool_wolf_jobs(args: dict, routing: dict | None) -> str:
     """Show recent wolf job log entries."""
     count = args.get("count", 10)
-    wolf_wolt = _get_wolf_wolt_dir()
-    log_file = wolf_wolt / ".state" / "wolf" / "jobs.jsonl"
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from creatures.wolf import get_state_dir
+    log_file = get_state_dir() / "jobs.jsonl"
     if not log_file.exists():
         return json.dumps({"jobs": [], "note": "no job log yet"})
     try:

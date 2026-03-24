@@ -3,17 +3,17 @@
 # No LLM — just git ls-remote + compare + notify
 #
 # Designed to run as a wolf cron job (e.g., daily).
-# Stores last-known version in .state/woltspace-version.
+# Stores last-known version in .space/platform/woltspace-version.
 # If the remote branch has moved ahead, notifies the user.
-# Reads .state/woltspace-branch to know which branch to check (default: main).
+# Reads .space/platform/woltspace-branch to know which branch to check (default: main).
 
 set -e
 
 WOLTSPACE_REPO="https://github.com/jerpint/woltspace.git"
-WOLT_DIR="${WOLT_DIR:-/workspace/wolts/${WOLT_NAME:-wolt}}"
-STATE_DIR="$WOLT_DIR/.state"
-VERSION_FILE="$STATE_DIR/woltspace-version"
-BRANCH_FILE="$STATE_DIR/woltspace-branch"
+WOLTS_DIR="${WOLTS_DIR:-/workspace/wolts}"
+PLATFORM_DIR="$WOLTS_DIR/.space/platform"
+VERSION_FILE="$PLATFORM_DIR/woltspace-version"
+BRANCH_FILE="$PLATFORM_DIR/woltspace-branch"
 
 # Read which branch we built from (default: main)
 BUILD_BRANCH="main"
@@ -39,7 +39,7 @@ fi
 
 # First run — store current version, don't notify
 if [ -z "$LOCAL_VERSION" ]; then
-  mkdir -p "$STATE_DIR"
+  mkdir -p "$PLATFORM_DIR"
   echo "$LATEST_TAG" > "$VERSION_FILE"
   echo "[update-check] initialized version tracking ($LATEST_TAG)"
   exit 0

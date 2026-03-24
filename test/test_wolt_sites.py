@@ -17,8 +17,9 @@ import sites
 @pytest.fixture(autouse=True)
 def tmp_wolts(tmp_path, monkeypatch):
     """Set up a temporary wolts directory structure."""
+    import paths
     monkeypatch.setattr(sites, "WOLTS_DIR", tmp_path)
-    monkeypatch.setattr(sites, "_RUNNING_STATE_DIR", tmp_path / ".state" / "sites")
+    monkeypatch.setattr(paths, "WOLTS_DIR", tmp_path)
 
     # Create a wolt with a site dir
     wolt_dir = tmp_path / "testwolt" / "wolt" / "site"
@@ -46,15 +47,15 @@ class TestSiteState:
 
     def test_stale_state_cleaned(self, tmp_wolts):
         """State file with dead PID should be cleaned up."""
-        state_dir = tmp_wolts / ".state" / "sites"
-        state_dir.mkdir(parents=True)
-        (state_dir / "testwolt.json").write_text(json.dumps({
+        state_file = tmp_wolts / "testwolt" / ".state" / "site.json"
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(json.dumps({
             "wolt": "testwolt", "port": 4001, "pid": 999999, "dir": "/fake",
         }))
         # PID 999999 is almost certainly dead
         assert sites.get_site_state("testwolt") is None
         # State file should be cleaned up
-        assert not (state_dir / "testwolt.json").exists()
+        assert not state_file.exists()
 
 
 class TestPortAllocation:
@@ -63,16 +64,16 @@ class TestPortAllocation:
         assert port == 4001
 
     def test_skips_used_site_ports(self, tmp_wolts):
-        """Port allocator checks both site and project state dirs."""
-        state_dir = tmp_wolts / ".state" / "sites"
-        state_dir.mkdir(parents=True)
-        (state_dir / "wolt1.json").write_text(json.dumps({"port": 4001}))
+        """Port allocator checks per-wolt site state."""
+        state_file = tmp_wolts / "testwolt" / ".state" / "site.json"
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(json.dumps({"wolt": "testwolt", "port": 4001}))
         port = sites._allocate_port()
         assert port == 4002
 
     def test_skips_used_project_ports(self, tmp_wolts):
-        """Port allocator also checks project state dir."""
-        proj_state = tmp_wolts / ".state" / "projects"
+        """Port allocator also checks .space/projects/ state."""
+        proj_state = tmp_wolts / ".space" / "projects"
         proj_state.mkdir(parents=True)
         (proj_state / "myproject.json").write_text(json.dumps({"port": 4001}))
         port = sites._allocate_port()
@@ -86,7 +87,7 @@ class TestStartStop:
         state = sites.start_site("testwolt")
         assert state["wolt"] == "testwolt"
         assert state["port"] == 4001
-        assert state["pid"] == 12345
+        assert "pid" not in state
         mock_popen.assert_called_once()
 
     @patch("sites.subprocess.Popen")
@@ -95,7 +96,7 @@ class TestStartStop:
         mock_popen.return_value.pid = 12345
         state1 = sites.start_site("testwolt")
 
-        with patch("sites._is_pid_alive", return_value=True):
+        with patch("sites._is_port_alive", return_value=True):
             state2 = sites.start_site("testwolt")
 
         assert state1 == state2
@@ -121,9 +122,7 @@ class TestStartStop:
         mock_popen.return_value.pid = 12345
         sites.start_site("testwolt")
 
-        with patch("sites._is_pid_alive", return_value=True), \
-             patch("sites.os.killpg"):
-            result = sites.stop_site("testwolt")
+        result = sites.stop_site("testwolt")
 
         assert result is True
         # State should be cleared

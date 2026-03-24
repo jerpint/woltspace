@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.3.0 (2026-03-24)
+
+- **Wolt-centric state model** — runtime state moved from a single shared `.state/` dump to per-wolt `wolts/{wolt}/.state/` directories. Global platform state lives at `wolts/.space/`. (#228)
+- **`lib/paths.py`** — central path helpers for all state locations. No more hardcoded `.state/` paths scattered across the codebase.
+- **Unified test runner** — top-level `pyproject.toml` resolves all deps (server + bot). Run tests with `uv run --extra test pytest test/`.
+- **Stale PID fix** — site health checks now probe the port directly instead of trusting `os.kill(pid, 0)`. Fixes stuck "waking up" when a PID gets reused. (#217)
+- **Dead code removed** — `status.json` singleton, `GET /status` endpoint, wolf-wolt discovery functions, `read_status()`/`write_status()`.
+- **gh-app-token fix** — shebang points to bot venv Python (has PyJWT).
+- **Reload optimization** — uvicorn reload watches specific dirs to avoid useless restarts.
+
+**Migration:** After updating, old `wolts/.state/` and `neowolt/.state/` directories are no longer read. Safe to delete after confirming everything works. Tunnel URL has a backwards-compat fallback during transition.
+
 ## v0.2.2 (2026-03-22)
 
 - **Distributed wolf scheduler** — each wolt owns its own crons in `wolt/wolf.json`. Wolf scans all wolts and dispatches sessions for the owning wolt. (#215, #221)

@@ -52,7 +52,7 @@ TEST_VERBOSE = os.environ.get("TEST_VERBOSE", "1") == "1"
 
 
 def _read_tunnel_url() -> str | None:
-    for p in [WOLTS_DIR / ".state" / "tunnel-url", WOLTS_DIR / WOLT_NAME / ".state" / "tunnel-url"]:
+    for p in [WOLTS_DIR / ".space" / "platform" / "tunnel-url", WOLTS_DIR / ".state" / "tunnel-url"]:
         if p.exists():
             return p.read_text().strip().rstrip("/")
     return None

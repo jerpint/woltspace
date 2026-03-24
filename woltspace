@@ -157,7 +157,8 @@ _show_url() {
 
   if [ "$tunnel_enabled" = "true" ]; then
     TUNNEL_URL=""
-    TUNNEL_FILE="$WOLTS_DIR/.state/tunnel-url"
+    TUNNEL_FILE="$WOLTS_DIR/.space/platform/tunnel-url"
+    [ ! -f "$TUNNEL_FILE" ] && TUNNEL_FILE="$WOLTS_DIR/.state/tunnel-url"  # backwards compat
     echo "  ${_D}🌲 starting tunnel${_R}"
     echo -n "  ${_L}   opening a path to the outside${_R}"
     for i in $(seq 1 30); do
@@ -552,7 +553,7 @@ RESTORE
       echo "  ${_L}   upgrading the lodge...${_R}"
     fi
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
-    rm -f "$WOLTS_DIR/.state/tunnel-url"
+    rm -f "$WOLTS_DIR/.space/platform/tunnel-url" "$WOLTS_DIR/.state/tunnel-url"
     _build_image
     _start_container
     _show_url
@@ -572,7 +573,7 @@ RESTORE
     elif docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
       echo "  ${_D}☀️ resuming container${_R}"
       echo "  ${_L}   waking up the lodge...${_R}"
-      rm -f "$WOLTS_DIR/.state/tunnel-url"
+      rm -f "$WOLTS_DIR/.space/platform/tunnel-url" "$WOLTS_DIR/.state/tunnel-url"
       docker restart "$CONTAINER_NAME" > /dev/null
       _show_url
     else

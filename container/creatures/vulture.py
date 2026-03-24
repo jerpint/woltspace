@@ -12,8 +12,8 @@ It does two things on each pass:
      has exited but the tmux session lingers.
 
 Config: none needed — it just runs.
-Logs:   .state/vulture/vulture.log
-State:  .state/vulture/last-run
+Logs:   .space/vulture/vulture.log
+State:  .space/vulture/last-run
 
 Usage:
   python -m creatures.vulture              # Run as background service (default: every 5 min)
@@ -31,9 +31,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from sessions import SessionRegistry
+from paths import space_vulture_dir
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
-STATE_DIR = WOLTS_DIR / ".state" / "vulture"
+STATE_DIR = space_vulture_dir(WOLTS_DIR)
 LOG_FILE = STATE_DIR / "vulture.log"
 LAST_RUN_FILE = STATE_DIR / "last-run"
 

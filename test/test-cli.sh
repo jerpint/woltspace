@@ -119,8 +119,8 @@ echo ""
 echo "  --- reconcile ---"
 step "injecting fake stale session..."
 docker exec "$CONTAINER_NAME" bash -c '
-  mkdir -p /workspace/wolts/.state/registry
-  echo "{\"name\":\"fake-session\",\"status\":\"running\",\"wolt\":\"testwolt\"}" > /workspace/wolts/.state/registry/fake-session.json
+  mkdir -p /workspace/wolts/testwolt/.state/sessions
+  echo "{\"name\":\"fake-session\",\"status\":\"running\",\"wolt\":\"testwolt\"}" > /workspace/wolts/testwolt/.state/sessions/fake-session.json
 '
 
 step "restarting to trigger reconcile..."
@@ -128,7 +128,7 @@ step "restarting to trigger reconcile..."
 "$WOLTSPACE_DIR/woltspace" start 2>&1
 
 sleep 3
-FAKE_STATUS=$(docker exec "$CONTAINER_NAME" cat /workspace/wolts/.state/registry/fake-session.json 2>/dev/null | grep -o '"status": *"[^"]*"' | head -1)
+FAKE_STATUS=$(docker exec "$CONTAINER_NAME" cat /workspace/wolts/testwolt/.state/sessions/fake-session.json 2>/dev/null | grep -o '"status": *"[^"]*"' | head -1)
 [[ "$FAKE_STATUS" == *"orphaned"* ]] || [[ "$FAKE_STATUS" == *"reaped"* ]] && pass "stale session reconciled on boot" || fail "stale session not reconciled ($FAKE_STATUS)"
 
 # ── backup ──

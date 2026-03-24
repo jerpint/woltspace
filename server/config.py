@@ -8,18 +8,26 @@ from pathlib import Path
 WOLTSPACE_DIR = Path(__file__).resolve().parent.parent  # /workspace/woltspace
 WOLT_DIR = Path(os.environ.get("WOLT_DIR", str(WOLTSPACE_DIR)))
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", str(WOLT_DIR.parent)))
+WOLT_NAME = os.environ.get("WOLT_NAME", "wolt")
 
 SITE_DIR = WOLT_DIR / "wolt" / "site"
 PROJECTS_DIR = WOLT_DIR / "wolt" / "projects"
 APPS_DIR = WOLT_DIR / "wolt" / "apps"
 SPARKS_DIR = WOLT_DIR / "wolt" / "sparks"
 PUBLIC_DIR = WOLTSPACE_DIR / "public"
-STATE_DIR = WOLT_DIR / ".state"
-WOLTS_STATE_DIR = WOLTS_DIR / ".state"
-SESSION_REGISTRY_DIR = WOLTS_STATE_DIR / "registry"
+
+# Per-wolt state: wolts/{wolt}/.state/
+STATE_DIR = WOLTS_DIR / WOLT_NAME / ".state"
 SHARES_DIR = STATE_DIR / "shares"
 
-WOLT_NAME = os.environ.get("WOLT_NAME", "wolt")
+# Global state: wolts/.space/
+SPACE_DIR = WOLTS_DIR / ".space"
+SPACE_PLATFORM_DIR = SPACE_DIR / "platform"
+SPACE_LOGS_DIR = SPACE_DIR / "logs"
+
+# Session registry — per-wolt; legacy dir kept for reference only
+SESSION_REGISTRY_DIR = WOLTS_DIR / WOLT_NAME / ".state" / "sessions"
+
 PORT = int(os.environ.get("PORT", "7777"))
 TUI_PORT = int(os.environ.get("TUI_PORT", "3001"))
 
@@ -27,8 +35,7 @@ TUI_PORT = int(os.environ.get("TUI_PORT", "3001"))
 
 TOOL_REGISTRY_FILE = STATE_DIR / "tool-registry.json"
 VIEWS_HISTORY_FILE = STATE_DIR / "views-history.jsonl"
-STATUS_FILE = STATE_DIR / "status.json"
-BOT_LOG_DIR = STATE_DIR / "bot-debug"
+BOT_LOG_DIR = SPACE_LOGS_DIR
 BOT_LOG_FILE = BOT_LOG_DIR / "bot.jsonl"
 
 # --- Notify sentinel ---

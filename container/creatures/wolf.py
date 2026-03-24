@@ -5,7 +5,7 @@ Each wolt registers its own schedule in wolt/wolf.json. The wolf discovers
 all schedules, fires crons on time, and spawns sessions for the owning wolt.
 
 Schedule config: {each_wolt}/wolt/wolf.json
-Last-run state:  {wolf_wolt}/.state/wolf/
+Last-run state:  {wolf_wolt}/.state/wolf/  (per-wolt)
 
 Usage:
   python -m creatures.wolf              # Run as background service
@@ -31,8 +31,9 @@ WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 
 
 def _get_tunnel_url() -> Optional[str]:
-    """Read tunnel URL from .state/tunnel-url."""
-    tunnel_file = WOLTS_DIR / ".state" / "tunnel-url"
+    """Read tunnel URL from .space/platform/tunnel-url."""
+    from lib.paths import tunnel_url_file
+    tunnel_file = tunnel_url_file()
     if tunnel_file.exists():
         url = tunnel_file.read_text().strip()
         return url if url else None
@@ -92,51 +93,16 @@ def cron_matches(expr: str, dt: datetime) -> bool:
 
 # ── Config & State ──────────────────────────────────────────────────
 
-def _find_wolf_wolt() -> Optional[Path]:
-    """Find the active wolf-wolt directory, if one exists."""
-    config_file = WOLTS_DIR / "woltspace.json"
-    # Check woltspace.json for active_wolf
-    if config_file.exists():
-        try:
-            config = json.loads(config_file.read_text())
-            active_wolf = config.get("creatures", {}).get("active_wolf")
-            if active_wolf:
-                wolf_dir = WOLTS_DIR / active_wolf
-                if wolf_dir.exists():
-                    return wolf_dir
-        except (json.JSONDecodeError, OSError):
-            pass
-    # Fallback: scan for any wolt with type=wolf
-    for wolt_json in WOLTS_DIR.glob("*/wolt/wolt.json"):
-        try:
-            data = json.loads(wolt_json.read_text())
-            if data.get("type") == "wolf":
-                return wolt_json.parent.parent
-        except (json.JSONDecodeError, OSError):
-            continue
-    return None
-
-
-def get_wolt_dir() -> Path:
-    """Get the wolf's working directory.
-
-    Prefers a dedicated wolf-wolt (type: wolf) if one exists.
-    Falls back to the active rodent-wolt for backwards compat.
-    """
-    wolf_wolt = _find_wolf_wolt()
-    if wolf_wolt:
-        return wolf_wolt
-    return Path(os.environ.get("WOLT_DIR", "/workspace/wolt"))
-
-
 def get_state_dir() -> Path:
-    d = get_wolt_dir() / ".state" / "wolf"
+    """Global wolf state directory at .space/wolf/."""
+    from paths import space_wolf_dir
+    d = space_wolf_dir(WOLTS_DIR)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def _log_job(name: str, action: str, **kwargs):
-    """Append a job event to .state/wolf/jobs.jsonl."""
+    """Append a job event to {wolt}/.state/wolf/jobs.jsonl."""
     log_file = get_state_dir() / "jobs.jsonl"
     entry = {
         "ts": datetime.now().isoformat(),

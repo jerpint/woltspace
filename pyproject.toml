@@ -1,0 +1,24 @@
+[project]
+name = "woltspace"
+version = "0.2.2"
+requires-python = ">=3.11"
+dependencies = [
+    # server deps
+    "fastapi",
+    "uvicorn[standard]",
+    "websockets",
+    "httpx",
+    "watchfiles",
+    "python-dotenv",
+    "livereload",
+    # bot deps
+    "litellm",
+    "openai",
+    "python-telegram-bot",
+    "slack-bolt",
+    "slack-sdk",
+    "pyjwt[crypto]>=2.12.1",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
