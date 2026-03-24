@@ -40,7 +40,7 @@ TUI_PORT=3001 WOLT_DIR="$WOLT_DIR" node "$WOLTSPACE_DIR/server/tui-service.js" &
 TUI_PID=$!
 
 # Python server (FastAPI)
-(cd "$WOLTSPACE_DIR" && uv run --project server uvicorn server.app:app --host 0.0.0.0 --port 7777 --reload --timeout-graceful-shutdown 1) &
+(cd "$WOLTSPACE_DIR" && uv run --project server uvicorn server.app:app --host 0.0.0.0 --port 7777 --reload --reload-dir server --timeout-graceful-shutdown 1) &
 SERVER_PID=$!
 
 sleep 2
