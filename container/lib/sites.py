@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import os
-import signal
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -57,10 +57,11 @@ def _clear_state(wolt_name: str) -> None:
         f.unlink()
 
 
-def _is_pid_alive(pid: int) -> bool:
+def _is_port_alive(port: int) -> bool:
+    """Check if something is listening on a port via TCP connect."""
     try:
-        os.kill(pid, 0)
-        return True
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            return True
     except OSError:
         return False
 
@@ -115,12 +116,11 @@ def running_sites() -> list[dict]:
             continue
         try:
             state = json.loads(site_state.read_text())
-            pid = state.get("pid")
-            if pid and _is_pid_alive(pid):
-                state["alive"] = True
+            port = state.get("port")
+            if port and _is_port_alive(port):
                 running.append(state)
             else:
-                # Stale state — process died
+                # Stale state — port not responding
                 site_state.unlink()
         except (json.JSONDecodeError, OSError):
             continue
@@ -132,10 +132,10 @@ def get_site_state(wolt_name: str) -> dict | None:
     state = _read_state(wolt_name)
     if not state:
         return None
-    pid = state.get("pid")
-    if pid and _is_pid_alive(pid):
+    port = state.get("port")
+    if port and _is_port_alive(port):
         return state
-    # Stale — clean up
+    # Stale — port not responding, clean up
     _clear_state(wolt_name)
     return None
 
@@ -175,7 +175,6 @@ def start_site(wolt_name: str) -> dict:
     state = {
         "wolt": wolt_name,
         "port": port,
-        "pid": proc.pid,
         "dir": str(sdir),
     }
     _write_state(wolt_name, state)
@@ -183,19 +182,10 @@ def start_site(wolt_name: str) -> dict:
 
 
 def stop_site(wolt_name: str) -> bool:
-    """Stop a wolt's site livereload server. Returns True if it was running."""
+    """Stop a wolt's site. Clears state so start_site will re-launch."""
     state = _read_state(wolt_name)
     if not state:
         return False
-    pid = state.get("pid")
-    if pid and _is_pid_alive(pid):
-        try:
-            os.killpg(os.getpgid(pid), signal.SIGTERM)
-        except OSError:
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except OSError:
-                pass
     _clear_state(wolt_name)
     return True
 

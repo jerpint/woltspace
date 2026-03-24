@@ -87,7 +87,7 @@ class TestStartStop:
         state = sites.start_site("testwolt")
         assert state["wolt"] == "testwolt"
         assert state["port"] == 4001
-        assert state["pid"] == 12345
+        assert "pid" not in state
         mock_popen.assert_called_once()
 
     @patch("sites.subprocess.Popen")
@@ -96,7 +96,7 @@ class TestStartStop:
         mock_popen.return_value.pid = 12345
         state1 = sites.start_site("testwolt")
 
-        with patch("sites._is_pid_alive", return_value=True):
+        with patch("sites._is_port_alive", return_value=True):
             state2 = sites.start_site("testwolt")
 
         assert state1 == state2
@@ -122,9 +122,7 @@ class TestStartStop:
         mock_popen.return_value.pid = 12345
         sites.start_site("testwolt")
 
-        with patch("sites._is_pid_alive", return_value=True), \
-             patch("sites.os.killpg"):
-            result = sites.stop_site("testwolt")
+        result = sites.stop_site("testwolt")
 
         assert result is True
         # State should be cleared
