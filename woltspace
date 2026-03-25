@@ -107,6 +107,7 @@ _build_image() {
     echo ""
     docker build -t woltspace $cache_flag $version_arg \
       --build-arg WOLTSPACE_BRANCH="$BUILD_BRANCH" \
+      --build-arg CACHE_BUST="$(date +%s)" \
       -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR/container"
   fi
 }
@@ -413,6 +414,7 @@ case "$cmd" in
       fi
     else
       docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+      rm -f "$WOLTS_DIR/.space/platform/tunnel-url" "$WOLTS_DIR/.state/tunnel-url"
       echo "  ${_D}🌙 container stopped${_R}"
       echo "  ${_L}   lodge closed for the night${_R}"
     fi

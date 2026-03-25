@@ -66,6 +66,9 @@ ENV WORKTUI_DIR="/workspace/wolts/.worktui"
 ARG USE_LOCAL=false
 ARG WOLTSPACE_BRANCH=main
 ARG WOLTSPACE_VERSION=
+# Changing CACHE_BUST invalidates the clone layer (and everything after it)
+# but keeps heavy layers above (node, claude, apt, uv, cloudflared) cached.
+ARG CACHE_BUST=
 
 # Clone from github (default path)
 # --branch X    → use branch tip (no tag checkout)
