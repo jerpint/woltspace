@@ -957,7 +957,7 @@ TOOLS = [
                 "properties": {
                     "prompt": {
                         "type": "string",
-                        "description": "Opening message for the new session. Use 'hey nw' for a standard greeting, or a specific task prompt.",
+                        "description": "A greeting or task description for the wolt. Pass the user's original message or a short task prompt.",
                     },
                     "from_session": {
                         "type": "string",

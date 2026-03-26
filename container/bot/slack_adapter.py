@@ -331,10 +331,14 @@ async def _post_result(client, channel: str, thread_ts: str, result: dict):
         _set_session_owner(channel, thread_ts, session_info["session"], session_info["wolt"], session_info["creature"])
         emoji = CREATURE_EMOJIS.get(session_info["creature"], "🐾")
         wolt = session_info["wolt"]
+        session_link = result.get("session", {}).get("url") or ""
+        handoff_text = f"{emoji} {wolt} is now active in this thread — messages here go directly to this session"
+        if session_link:
+            handoff_text += f"\n{session_link}"
         await client.chat_postMessage(
             channel=channel,
             thread_ts=thread_ts,
-            text=f"{emoji} {wolt} is now active in this thread — messages here go directly to this session",
+            text=handoff_text,
         )
 
 
@@ -366,7 +370,7 @@ async def _route_to_session(client, channel: str, thread_ts: str, owner: dict, t
             await client.chat_postMessage(
                 channel=channel,
                 thread_ts=thread_ts,
-                text=f"{emoji} {wolt}: → delivered to session {session_name}",
+                text=f"🪵 sent\n{session_link}",
             )
         _append_message(channel, thread_ts, {
             "role": "assistant",
