@@ -345,7 +345,11 @@ async def _route_to_session(client, channel: str, thread_ts: str, owner: dict, t
     creature = owner["creature"]
     emoji = CREATURE_EMOJIS.get(creature, "🐾")
 
-    result = message_session(session_name, text)
+    session_msg = (
+        f"[slack message from human]: {text}\n"
+        f"Reply back to them with: notify \"your message\""
+    )
+    result = message_session(session_name, session_msg)
     _bot_log("slack_session_route", {"session": session_name, "text": text[:200], "result": result})
 
     _append_history(channel, thread_ts, "user", text)
