@@ -1,13 +1,37 @@
 #!/bin/bash
 # Send a notification to the originating chat (Telegram/Slack)
-# Usage: notify "message"
 #
-# POSTs to the local server which sends directly via Telegram/Slack API.
-# Works from any session — bot-spawned sessions auto-route via WOLT_SESSION.
+# Usage:
+#   notify "message"                                  — auto-route via session registry (default: telegram)
+#   notify --slack CHANNEL THREAD_TS "message"        — send to specific Slack thread
+#   notify --telegram CHAT_ID "message"               — send to specific Telegram chat
+#
+# The --slack and --telegram flags let rodents explicitly target where to send,
+# based on the adapter info in their prepended message context.
+
+# --- Parse args ---
+ADAPTER=""
+SLACK_CHANNEL=""
+SLACK_THREAD=""
+TELEGRAM_CHAT_ID=""
+
+case "$1" in
+  --slack)
+    ADAPTER="slack"
+    SLACK_CHANNEL="${2:-}"
+    SLACK_THREAD="${3:-}"
+    shift 3 2>/dev/null || { echo "Usage: notify --slack CHANNEL THREAD_TS \"message\"" >&2; exit 1; }
+    ;;
+  --telegram)
+    ADAPTER="telegram"
+    TELEGRAM_CHAT_ID="${2:-}"
+    shift 2 2>/dev/null || { echo "Usage: notify --telegram CHAT_ID \"message\"" >&2; exit 1; }
+    ;;
+esac
 
 MESSAGE="${1:-}"
 if [ -z "$MESSAGE" ]; then
-  echo "Usage: notify <message>" >&2
+  echo "Usage: notify [--slack CHANNEL THREAD_TS | --telegram CHAT_ID] \"message\"" >&2
   exit 1
 fi
 
@@ -15,7 +39,7 @@ SESSION="${WOLT_SESSION:-}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SESSION_REG="$SCRIPT_DIR/session-reg"
 
-# Build message — footer (session URL + reply hint) is added by server.js sendNotification
+# Build message — footer (session URL + reply hint) is added by server
 WOLT_NAME="${WOLT_NAME:-wolt}"
 
 # Read creature from session registry
@@ -31,15 +55,28 @@ if [ -n "$SESSION" ]; then
 fi
 FULL_MESSAGE="${EMOJI} ${WOLT_NAME}: $MESSAGE"
 
-PAYLOAD=$(python3 -c "import json,sys; print(json.dumps({'session': sys.argv[1], 'message': sys.argv[2]}))" "$SESSION" "$FULL_MESSAGE")
+# Build JSON payload
+PAYLOAD=$(python3 -c "
+import json, sys
+d = {'session': sys.argv[1], 'message': sys.argv[2]}
+adapter = sys.argv[3]
+if adapter == 'slack':
+    d['adapter'] = 'slack'
+    d['channel'] = sys.argv[4]
+    d['thread_ts'] = sys.argv[5]
+elif adapter == 'telegram':
+    d['adapter'] = 'telegram'
+    d['chat_id'] = sys.argv[4]
+print(json.dumps(d))
+" "$SESSION" "$FULL_MESSAGE" "$ADAPTER" "${SLACK_CHANNEL:-${TELEGRAM_CHAT_ID:-}}" "${SLACK_THREAD:-}")
 
 RESPONSE=$(curl -s -X POST http://localhost:7777/notify \
   -H "Content-Type: application/json" \
   -d "$PAYLOAD")
 
 if echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get('ok') else 1)" 2>/dev/null; then
-  ADAPTER=$(echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('adapter','?'))")
-  echo "[notify] → $ADAPTER: $MESSAGE"
+  RESP_ADAPTER=$(echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('adapter','?'))")
+  echo "[notify] → $RESP_ADAPTER: $MESSAGE"
 else
   ERROR=$(echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('error','unknown error'))" 2>/dev/null || echo "$RESPONSE")
   echo "[notify] failed: $ERROR" >&2

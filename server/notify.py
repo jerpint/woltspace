@@ -1,4 +1,8 @@
-"""Notification system — send messages to Telegram/Slack."""
+"""Notification system — send messages to Telegram/Slack.
+
+Routing is explicit: the caller (rodent) tells us where to send via adapter flags.
+Falls back to session registry lookup, then Telegram default.
+"""
 
 import json
 from pathlib import Path
@@ -102,36 +106,55 @@ async def _send_telegram(session: str, message: str, chat_id: str) -> dict:
     return {"adapter": "telegram", "chat_id": chat_id}
 
 
-async def _send_slack(message: str, routing: dict) -> dict:
-    """Send a notification via Slack to the originating thread."""
+async def _send_slack(message: str, channel: str, thread_ts: str | None = None) -> dict:
+    """Send a notification via Slack to a specific channel/thread."""
     token = get_env("SLACK_BOT_TOKEN")
     if not token:
         raise RuntimeError("SLACK_BOT_TOKEN not set")
-    channel = routing.get("chat_id") or get_env("SLACK_NOTIFY_CHANNEL")
     if not channel:
-        raise RuntimeError("no slack channel in routing and SLACK_NOTIFY_CHANNEL not set")
-    await slack_send(token, channel, routing.get("thread_ts"), message)
+        channel = get_env("SLACK_NOTIFY_CHANNEL")
+    if not channel:
+        raise RuntimeError("no slack channel provided and SLACK_NOTIFY_CHANNEL not set")
+    await slack_send(token, channel, thread_ts, message)
     append_chat_history("slack", channel, message)
     return {"adapter": "slack", "channel": channel}
 
 
-async def send_notification(session: str, message: str) -> dict:
-    routing = read_session_registry(session)
+async def send_notification(session: str, message: str, explicit: dict | None = None) -> dict:
+    """Send a notification. Explicit routing takes priority over session lookup.
 
-    # Respect the session's routing adapter — Slack sessions go to Slack,
-    # Telegram sessions go to Telegram. Only fall back to Telegram default
-    # when there's no routing or the adapter is unknown.
-    adapter = routing.get("adapter") if routing else None
+    explicit dict can contain:
+      {"adapter": "slack", "channel": "C123", "thread_ts": "1234.5678"}
+      {"adapter": "telegram", "chat_id": "98765"}
+    """
 
-    if adapter == "slack":
-        return await _send_slack(message, routing)
+    # 1. Explicit routing — caller knows exactly where to send
+    if explicit and explicit.get("adapter"):
+        adapter = explicit["adapter"]
+        if adapter == "slack":
+            return await _send_slack(message, explicit.get("channel", ""), explicit.get("thread_ts"))
+        if adapter == "telegram":
+            chat_id = explicit.get("chat_id", "")
+            if chat_id:
+                return await _send_telegram(session, message, str(chat_id))
 
-    if adapter == "telegram":
-        chat_id = routing.get("chat_id")
-        if chat_id:
-            return await _send_telegram(session, message, str(chat_id))
+    # 2. Session registry lookup — find routing from session metadata
+    if session:
+        routing = read_session_registry(session)
+        if routing:
+            adapter = routing.get("adapter")
+            if adapter == "slack":
+                return await _send_slack(
+                    message,
+                    routing.get("chat_id", ""),
+                    routing.get("thread_ts"),
+                )
+            if adapter == "telegram":
+                chat_id = routing.get("chat_id")
+                if chat_id:
+                    return await _send_telegram(session, message, str(chat_id))
 
-    # No routing or unknown adapter — fall back to Telegram default
+    # 3. Telegram default — fall back to first allowed user
     telegram_token = get_env("TELEGRAM_BOT_TOKEN")
     allowed = [s.strip() for s in get_env("TELEGRAM_ALLOWED_USERS").split(",") if s.strip()]
     telegram_chat_id = allowed[0] if allowed else None

@@ -346,8 +346,8 @@ async def _route_to_session(client, channel: str, thread_ts: str, owner: dict, t
     emoji = CREATURE_EMOJIS.get(creature, "🐾")
 
     session_msg = (
-        f"[slack message from human]: {text}\n"
-        f"Reply back to them with: notify \"your message\""
+        f"[slack message from human, channel={channel}, thread={thread_ts}]: {text}\n"
+        f"Reply back to them with: notify --slack {channel} {thread_ts} \"your message\""
     )
     result = message_session(session_name, session_msg)
     _bot_log("slack_session_route", {"session": session_name, "text": text[:200], "result": result})

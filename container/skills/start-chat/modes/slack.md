@@ -6,7 +6,13 @@ Think of it like messaging a dev colleague on Slack: you do the work here, then 
 
 ## Notifications
 
-Use `notify "your message"` to send messages.
+Use `notify "your message"` to send messages. When the prepended message context includes Slack channel and thread IDs, use the explicit form:
+
+```bash
+notify --slack CHANNEL THREAD_TS "your message"
+```
+
+This ensures your reply lands in the right Slack thread. The prepended context will tell you exactly which flags to use.
 
 **When you start**: one-liner ack. "on it — reviewing the loop" or "got it, digging in."
 
