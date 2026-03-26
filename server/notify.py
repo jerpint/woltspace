@@ -1,4 +1,8 @@
-"""Notification system — send messages to Telegram/Slack."""
+"""Notification system — send messages to Telegram/Slack.
+
+Routing is explicit: the caller (rodent) tells us where to send via adapter flags.
+Falls back to session registry lookup, then Telegram default.
+"""
 
 import json
 from pathlib import Path
@@ -8,7 +12,7 @@ import httpx
 from .config import (
     STATE_DIR,
     SPACE_PLATFORM_DIR,
-    SESSION_REGISTRY_DIR,
+    WOLTS_DIR,
     DEN_REPLY_FOOTER,
     get_env,
 )
@@ -16,13 +20,18 @@ from .state import sanitize_session
 
 
 def read_session_registry(session: str) -> dict | None:
-    f = SESSION_REGISTRY_DIR / f"{sanitize_session(session)}.json"
-    if not f.exists():
-        return None
-    try:
-        return json.loads(f.read_text())
-    except Exception:
-        return None
+    """Find a session file by scanning all per-wolt .state/sessions/ dirs."""
+    safe = sanitize_session(session)
+    for entry in WOLTS_DIR.iterdir():
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        f = entry / ".state" / "sessions" / f"{safe}.json"
+        if f.exists():
+            try:
+                return json.loads(f.read_text())
+            except Exception:
+                return None
+    return None
 
 
 def append_chat_history(adapter: str, chat_id: str, content: str):
@@ -74,44 +83,83 @@ async def slack_send(token: str, channel: str, thread_ts: str | None, text: str)
         return data
 
 
-async def send_notification(session: str, message: str) -> dict:
-    routing = read_session_registry(session)
+async def _send_telegram(session: str, message: str, chat_id: str) -> dict:
+    """Send a notification via Telegram with den-reply footer."""
+    token = get_env("TELEGRAM_BOT_TOKEN")
+    if not token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
 
-    # Prefer Telegram
+    tunnel_url = ""
+    tunnel_file = SPACE_PLATFORM_DIR / "tunnel-url"
+    try:
+        tunnel_url = tunnel_file.read_text().strip()
+    except Exception:
+        pass
+
+    footer = ""
+    if session:
+        session_url = f"{tunnel_url}/tui?session={session}" if tunnel_url else f"session={session}"
+        footer = f"\n\n---{DEN_REPLY_FOOTER}\n{session_url}"
+
+    await telegram_send(token, chat_id, message + footer)
+    append_chat_history("telegram", chat_id, message)
+    return {"adapter": "telegram", "chat_id": chat_id}
+
+
+async def _send_slack(message: str, channel: str, thread_ts: str | None = None) -> dict:
+    """Send a notification via Slack to a specific channel/thread."""
+    token = get_env("SLACK_BOT_TOKEN")
+    if not token:
+        raise RuntimeError("SLACK_BOT_TOKEN not set")
+    if not channel:
+        channel = get_env("SLACK_NOTIFY_CHANNEL")
+    if not channel:
+        raise RuntimeError("no slack channel provided and SLACK_NOTIFY_CHANNEL not set")
+    await slack_send(token, channel, thread_ts, message)
+    append_chat_history("slack", channel, message)
+    return {"adapter": "slack", "channel": channel}
+
+
+async def send_notification(session: str, message: str, explicit: dict | None = None) -> dict:
+    """Send a notification. Explicit routing takes priority over session lookup.
+
+    explicit dict can contain:
+      {"adapter": "slack", "channel": "C123", "thread_ts": "1234.5678"}
+      {"adapter": "telegram", "chat_id": "98765"}
+    """
+
+    # 1. Explicit routing — caller knows exactly where to send
+    if explicit and explicit.get("adapter"):
+        adapter = explicit["adapter"]
+        if adapter == "slack":
+            return await _send_slack(message, explicit.get("channel", ""), explicit.get("thread_ts"))
+        if adapter == "telegram":
+            chat_id = explicit.get("chat_id", "")
+            if chat_id:
+                return await _send_telegram(session, message, str(chat_id))
+
+    # 2. Session registry lookup — find routing from session metadata
+    if session:
+        routing = read_session_registry(session)
+        if routing:
+            adapter = routing.get("adapter")
+            if adapter == "slack":
+                return await _send_slack(
+                    message,
+                    routing.get("chat_id", ""),
+                    routing.get("thread_ts"),
+                )
+            if adapter == "telegram":
+                chat_id = routing.get("chat_id")
+                if chat_id:
+                    return await _send_telegram(session, message, str(chat_id))
+
+    # 3. Telegram default — fall back to first allowed user
     telegram_token = get_env("TELEGRAM_BOT_TOKEN")
-    telegram_chat_id = None
-    if routing and routing.get("adapter") == "telegram":
-        telegram_chat_id = routing.get("chat_id")
-    else:
-        allowed = [s.strip() for s in get_env("TELEGRAM_ALLOWED_USERS").split(",") if s.strip()]
-        telegram_chat_id = allowed[0] if allowed else None
+    allowed = [s.strip() for s in get_env("TELEGRAM_ALLOWED_USERS").split(",") if s.strip()]
+    telegram_chat_id = allowed[0] if allowed else None
 
     if telegram_token and telegram_chat_id:
-        tunnel_url = ""
-        tunnel_file = SPACE_PLATFORM_DIR / "tunnel-url"
-        try:
-            tunnel_url = tunnel_file.read_text().strip()
-        except Exception:
-            pass
-        # Only append session footer if there's an actual session (skip for wolf cron, system notifications)
-        footer = ""
-        if session:
-            session_url = f"{tunnel_url}/tui?session={session}" if tunnel_url else f"session={session}"
-            footer = f"\n\n---{DEN_REPLY_FOOTER}\n{session_url}"
-        await telegram_send(telegram_token, telegram_chat_id, message + footer)
-        append_chat_history("telegram", telegram_chat_id, message)
-        return {"adapter": "telegram", "chat_id": telegram_chat_id}
-
-    # Fallback: Slack
-    if routing and routing.get("adapter") == "slack":
-        token = get_env("SLACK_BOT_TOKEN")
-        if not token:
-            raise RuntimeError("SLACK_BOT_TOKEN not set")
-        channel = routing.get("channel") or get_env("SLACK_NOTIFY_CHANNEL")
-        if not channel:
-            raise RuntimeError("no slack channel in routing and SLACK_NOTIFY_CHANNEL not set")
-        await slack_send(token, channel, routing.get("thread_ts"), message)
-        append_chat_history("slack", channel, message)
-        return {"adapter": "slack", "channel": channel}
+        return await _send_telegram(session, message, telegram_chat_id)
 
     raise RuntimeError("no notification target — set TELEGRAM_BOT_TOKEN + TELEGRAM_ALLOWED_USERS")

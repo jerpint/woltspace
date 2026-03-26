@@ -2,6 +2,13 @@
 Slack adapter — thin layer over core.
 Responds to @mentions, reads full thread context, follows up in threads.
 Uses Socket Mode (no public HTTP endpoint needed).
+
+Thread ownership model:
+  - @bot in channel → new thread, dog (Haiku) responds
+  - Dog spawns a session → thread becomes session-owned
+  - Messages in session-owned thread → routed directly to Claude Code session
+  - @bot in session-owned thread → escape hatch back to dog
+  - Dead session → error message, @bot to recover
 """
 
 import os
@@ -10,6 +17,7 @@ import json
 import base64
 import logging
 import asyncio
+import random
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,7 +25,8 @@ from collections import defaultdict
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 import sys
-from bot.core import get_response, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, _bot_log, build_ack_text, _sanitize_history
+from bot.core import get_response, message_session, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, _bot_log, build_ack_text, _sanitize_history
+from wolts import get_active_creature
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from paths import wolt_state_dir, wolt_chat_dir
@@ -38,7 +47,18 @@ CHAT_DIR = wolt_chat_dir(_WOLT_NAME, _WOLTS_DIR) / "slack"
 
 MAX_HISTORY = 20
 
+CREATURE_EMOJIS = {"raccoon": "🦝", "beaver": "🦫", "otter": "🦦", "dog": "🐶"}
+
+# --- Thread ownership persistence ---
+
 ACTIVE_THREADS_FILE = CHAT_DIR / "_active_threads.json"
+THREAD_SESSIONS_FILE = CHAT_DIR / "_thread_sessions.json"
+
+
+def _dog_name() -> str:
+    """Get the dog's display name — from dog-wolt if available, else WOLT_NAME."""
+    name = get_active_creature("dog")
+    return name or os.environ.get("WOLT_NAME", "wolt")
 
 
 def _load_active_threads() -> set[str]:
@@ -57,8 +77,46 @@ def _save_active_threads():
     ACTIVE_THREADS_FILE.write_text(json.dumps(list(_active_threads)))
 
 
-_active_threads: set[str] = _load_active_threads()
+def _load_thread_sessions() -> dict[str, dict]:
+    """Load thread → session ownership map from disk.
 
+    Each entry: thread_key → {"session": name, "wolt": wolt_name, "creature": type}
+    """
+    if THREAD_SESSIONS_FILE.exists():
+        try:
+            return json.loads(THREAD_SESSIONS_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def _save_thread_sessions():
+    """Persist thread → session map to disk."""
+    CHAT_DIR.mkdir(parents=True, exist_ok=True)
+    THREAD_SESSIONS_FILE.write_text(json.dumps(_thread_sessions))
+
+
+_active_threads: set[str] = _load_active_threads()
+_thread_sessions: dict[str, dict] = _load_thread_sessions()
+
+
+# --- Dog ack messages ---
+
+DOG_ACK_MESSAGES = [
+    "🐶 *tail wags vigorously*",
+    "🐶 *perks ears*",
+    "🐶 woof woof",
+    "🐶 ...",
+    "🐶 *sniffs curiously*",
+    "🐶 *head tilt*",
+    "🐶 *tippy taps*",
+    "🐶 *play bows*",
+    "🐶 *ears forward*",
+    "🐶 *full body wiggle*",
+]
+
+
+# --- Helpers ---
 
 def _thread_key(channel: str, thread_ts: str) -> str:
     return f"{channel}:{thread_ts}"
@@ -103,12 +161,13 @@ def _strip_mention(text: str, bot_user_id: str) -> str:
     return re.sub(rf"<@{bot_user_id}>", "", text).strip()
 
 
-def _extract_image(event: dict) -> tuple[bytes, str] | None:
-    """Download the first image file attached to a Slack event, if any.
+def _has_mention(text: str, bot_user_id: str) -> bool:
+    """Check if text contains an @mention of the bot."""
+    return bool(bot_user_id) and f"<@{bot_user_id}>" in text
 
-    Returns (image_bytes, mime_type) or None.
-    Requires the bot token for authenticated download from url_private.
-    """
+
+def _extract_image(event: dict) -> tuple[bytes, str] | None:
+    """Download the first image file attached to a Slack event, if any."""
     files = event.get("files", [])
     token = os.environ.get("SLACK_BOT_TOKEN", "")
     for f in files:
@@ -161,10 +220,11 @@ async def _build_thread_context(client, channel: str, thread_ts: str, bot_user_i
     return history[-MAX_HISTORY * 2:]
 
 
+# --- Response formatting ---
+
 def format_response(result: dict) -> str:
-    """Format a core response dict for Slack (text only)."""
+    """Format a core response dict for Slack with emoji+name identity prefix."""
     if result["type"] == "session":
-        # Use nw's crafted response if available; fall back to static ack
         if result.get("text"):
             text = result["text"]
         else:
@@ -174,11 +234,7 @@ def format_response(result: dict) -> str:
         text = result.get("text", "") or result.get("caption", "") or result.get("filename", "image")
     else:
         text = result["text"]
-    wolt_name = os.environ.get("WOLT_NAME", "wolt")
-    return f"🐶 {wolt_name}: {text}"
-
-
-CREATURE_EMOJIS = {"raccoon": "🦝", "beaver": "🦫", "otter": "🦦"}
+    return f"🐶 {_dog_name()}: {text}"
 
 
 def _format_tool_log(tc: dict) -> str:
@@ -198,10 +254,50 @@ def _format_tool_log(tc: dict) -> str:
     return line
 
 
+# --- Session ownership ---
+
+def _get_session_owner(channel: str, thread_ts: str) -> dict | None:
+    """Get session ownership info for a thread, or None if dog-owned."""
+    key = _thread_key(channel, thread_ts)
+    return _thread_sessions.get(key)
+
+
+def _set_session_owner(channel: str, thread_ts: str, session_name: str, wolt_name: str, creature: str):
+    """Mark a thread as owned by a session."""
+    key = _thread_key(channel, thread_ts)
+    _thread_sessions[key] = {
+        "session": session_name,
+        "wolt": wolt_name,
+        "creature": creature,
+    }
+    _save_thread_sessions()
+
+
+def _clear_session_owner(channel: str, thread_ts: str):
+    """Release thread ownership (back to dog)."""
+    key = _thread_key(channel, thread_ts)
+    _thread_sessions.pop(key, None)
+    _save_thread_sessions()
+
+
+def _extract_session_info(result: dict) -> dict | None:
+    """Extract session name, wolt, and creature from a get_response result."""
+    if result.get("type") != "session":
+        return None
+    session = result.get("session", {})
+    name = session.get("name")
+    if not name:
+        return None
+    wolt = session.get("wolt") or name.rsplit("-", 1)[0] if "-" in name else name
+    creature = session.get("creature", "")
+    return {"session": name, "wolt": wolt, "creature": creature}
+
+
+# --- Posting results ---
+
 async def _post_result(client, channel: str, thread_ts: str, result: dict):
     """Post a result to Slack — handles text, session, and image types.
-    Sends deterministic tool call logs before the final response."""
-    # Send tool call logs first
+    Sends tool call logs before the final response."""
     for tc in result.get("tool_calls_log", []):
         try:
             await client.chat_postMessage(
@@ -229,6 +325,72 @@ async def _post_result(client, channel: str, thread_ts: str, result: dict):
             text=format_response(result),
         )
 
+    # If a session was spawned, take ownership of the thread
+    session_info = _extract_session_info(result)
+    if session_info:
+        _set_session_owner(channel, thread_ts, session_info["session"], session_info["wolt"], session_info["creature"])
+        emoji = CREATURE_EMOJIS.get(session_info["creature"], "🐾")
+        wolt = session_info["wolt"]
+        session_link = result.get("session", {}).get("url") or ""
+        handoff_text = f"{emoji} {wolt} is now active in this thread — messages here go directly to this session"
+        if session_link:
+            handoff_text += f"\n{session_link}"
+        await client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text=handoff_text,
+        )
+
+
+async def _route_to_session(client, channel: str, thread_ts: str, owner: dict, text: str):
+    """Route a message directly to a Claude Code session."""
+    session_name = owner["session"]
+    wolt = owner["wolt"]
+    creature = owner["creature"]
+    emoji = CREATURE_EMOJIS.get(creature, "🐾")
+
+    session_msg = (
+        f"[slack message from human, channel={channel}, thread={thread_ts}]: {text}\n"
+        f"Reply back to them with: notify --slack {channel} {thread_ts} \"your message\""
+    )
+    result = message_session(session_name, session_msg)
+    _bot_log("slack_session_route", {"session": session_name, "text": text[:200], "result": result})
+
+    _append_history(channel, thread_ts, "user", text)
+
+    if result.get("ok"):
+        session_link = result.get("url") or session_name
+        if result.get("status") == "revived":
+            await client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text=f"{emoji} {wolt}: → session had exited — revived and delivered\n{session_link}",
+            )
+        else:
+            await client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text=f"🪵 sent\n{session_link}",
+            )
+        _append_message(channel, thread_ts, {
+            "role": "assistant",
+            "content": f"[delivered to session {session_name}]",
+        })
+    else:
+        error = result.get("error", "unknown error")
+        # Session is dead — tell user how to recover
+        await client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text=f"session {session_name} is no longer active — @mention me to start a new conversation",
+        )
+        _append_message(channel, thread_ts, {
+            "role": "assistant",
+            "content": f"[session {session_name} dead: {error}]",
+        })
+
+
+# --- Main app ---
 
 def create_app():
     """Create and configure the Slack Bolt app."""
@@ -236,13 +398,15 @@ def create_app():
 
     @app.event("app_mention")
     async def handle_mention(event, client, context):
-        """Handle @mentions — respond in thread, read full thread context."""
+        """Handle @mentions — always goes to dog (Haiku).
+
+        This is the entry point for new conversations and the escape hatch
+        from session-owned threads.
+        """
         channel = event["channel"]
         user = event.get("user", "unknown")
         text = event.get("text", "")
-        # Thread is either existing or starts from this message
         thread_ts = event.get("thread_ts", event["ts"])
-        msg_ts = event["ts"]
 
         bot_user_id = context.get("bot_user_id", "")
         user_message = _strip_mention(text, bot_user_id)
@@ -260,17 +424,36 @@ def create_app():
 
         logger.info(f"Mention from user={user} in channel={channel} thread={thread_ts}")
 
+        # If this thread was session-owned, release it back to dog
+        owner = _get_session_owner(channel, thread_ts)
+        if owner:
+            _clear_session_owner(channel, thread_ts)
+            await client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text=f"🐶 dog is back in this thread",
+            )
+
         # Mark thread as active
         _active_threads.add(_thread_key(channel, thread_ts))
         _save_active_threads()
 
+        # Immediate ack
+        try:
+            await client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text=random.choice(DOG_ACK_MESSAGES),
+            )
+        except Exception:
+            pass
+
         # Build context from full thread
         history = await _build_thread_context(client, channel, thread_ts, bot_user_id)
-        # Drop the last user message from thread context — we'll add it explicitly
         if history and history[-1]["role"] == "user":
             history = history[:-1]
 
-        routing = {"adapter": "slack", "channel": channel, "thread_ts": thread_ts}
+        routing = {"adapter": "slack", "chat_id": channel, "thread_ts": thread_ts}
         try:
             result = get_response(user_message, conversation_history=list(history), routing=routing, user_content=user_content)
         except Exception as e:
@@ -287,15 +470,18 @@ def create_app():
 
     @app.event("message")
     async def handle_message(event, client, context):
-        """Handle follow-up messages in active threads (no @mention needed)."""
-        # Skip bot messages, edits, and subtypes we don't care about
+        """Handle follow-up messages in active threads.
+
+        If thread is session-owned → route directly to Claude Code session.
+        If thread is dog-owned → route to dog (Haiku).
+        Skip if message contains @mention (handled by handle_mention).
+        """
         if event.get("bot_id") or event.get("subtype"):
             return
 
         channel = event["channel"]
         thread_ts = event.get("thread_ts")
 
-        # Only respond in threads where we're already active
         if not thread_ts:
             return
         if _thread_key(channel, thread_ts) not in _active_threads:
@@ -304,11 +490,12 @@ def create_app():
         user = event.get("user", "unknown")
         text = event.get("text", "")
         bot_user_id = context.get("bot_user_id", "")
-        user_message = _strip_mention(text, bot_user_id)
 
-        # Skip if this is an @mention (already handled by handle_mention)
-        if bot_user_id and f"<@{bot_user_id}>" in (event.get("text", "")):
+        # Skip if this is an @mention (handled by handle_mention)
+        if _has_mention(text, bot_user_id):
             return
+
+        user_message = _strip_mention(text, bot_user_id)
 
         # Check for image attachment
         image_result = await asyncio.get_event_loop().run_in_executor(None, _extract_image, event)
@@ -321,14 +508,31 @@ def create_app():
         if not user_message and user_content is None:
             return
 
+        # --- Session-owned thread: route directly to session ---
+        owner = _get_session_owner(channel, thread_ts)
+        if owner:
+            logger.info(f"Session route: user={user} → {owner['session']} in thread={thread_ts}")
+            await _route_to_session(client, channel, thread_ts, owner, user_message)
+            return
+
+        # --- Dog-owned thread: route to Haiku ---
         logger.info(f"Thread follow-up from user={user} in channel={channel} thread={thread_ts}")
 
-        # Build context from full thread
+        # Immediate ack
+        try:
+            await client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text=random.choice(DOG_ACK_MESSAGES),
+            )
+        except Exception:
+            pass
+
         history = await _build_thread_context(client, channel, thread_ts, bot_user_id)
         if history and history[-1]["role"] == "user":
             history = history[:-1]
 
-        routing = {"adapter": "slack", "channel": channel, "thread_ts": thread_ts}
+        routing = {"adapter": "slack", "chat_id": channel, "thread_ts": thread_ts}
         try:
             result = get_response(user_message, conversation_history=list(history), routing=routing, user_content=user_content)
         except Exception as e:
@@ -344,8 +548,6 @@ def create_app():
         await _post_result(client, channel, thread_ts, result)
 
     return app
-
-
 
 
 def run():

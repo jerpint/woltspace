@@ -378,8 +378,17 @@ async def post_notify(request: Request):
     if not message:
         return JSONResponse({"error": "message required"}, status_code=400)
     session = body.get("session", "")
+    # Explicit adapter routing — caller says where to send
+    explicit = {}
+    if body.get("adapter"):
+        explicit["adapter"] = body["adapter"]
+        if body["adapter"] == "slack":
+            explicit["channel"] = body.get("channel", "")
+            explicit["thread_ts"] = body.get("thread_ts")
+        elif body["adapter"] == "telegram":
+            explicit["chat_id"] = body.get("chat_id", "")
     try:
-        result = await send_notification(session, message)
+        result = await send_notification(session, message, explicit=explicit or None)
         print(f"[notify] → {result.get('adapter')} | {message[:80]}")
         bot_log("notify_sent", {"session": session, **result, "message": message})
         return {"ok": True, **result}

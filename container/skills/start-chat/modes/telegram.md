@@ -6,7 +6,13 @@ Think of it like messaging a dev colleague on Telegram: you do the work here, th
 
 ## Notifications
 
-Use `notify "your message"` to send messages.
+Use `notify "your message"` to send messages. When the prepended message context includes a Telegram chat ID, use the explicit form:
+
+```bash
+notify --telegram CHAT_ID "your message"
+```
+
+This ensures your reply lands in the right chat. The prepended context will tell you exactly which flags to use.
 
 **When you start**: one-liner ack. "on it — reviewing the loop" or "got it, digging in."
 

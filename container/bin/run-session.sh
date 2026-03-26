@@ -37,8 +37,27 @@ $SESSION_REG update "$SESSION_NAME" "title=$TITLE" > /dev/null 2>&1 || true
 ADAPTER=$($SESSION_REG get-field "$SESSION_NAME" adapter 2>/dev/null || echo "lodge")
 WOLT_NAME=$($SESSION_REG get-field "$SESSION_NAME" wolt 2>/dev/null || echo "wolt")
 
-# Build the full prompt: user's task + /start-chat for session context
-FULL_PROMPT="$PROMPT /start-chat $ADAPTER $WOLT_NAME"
+# Build adapter-specific context so the wolt knows how to communicate from the start
+ADAPTER_CONTEXT=""
+if [ "$ADAPTER" = "slack" ]; then
+    CHANNEL=$($SESSION_REG get-field "$SESSION_NAME" chat_id 2>/dev/null || echo "")
+    THREAD_TS=$($SESSION_REG get-field "$SESSION_NAME" thread_ts 2>/dev/null || echo "")
+    if [ -n "$CHANNEL" ] && [ -n "$THREAD_TS" ]; then
+        ADAPTER_CONTEXT="
+This session was started from Slack. Send messages with: notify --slack $CHANNEL $THREAD_TS \"your message\"
+Session link: $($SESSION_REG get-field "$SESSION_NAME" session_url 2>/dev/null || echo "")"
+    fi
+elif [ "$ADAPTER" = "telegram" ]; then
+    CHAT_ID=$($SESSION_REG get-field "$SESSION_NAME" chat_id 2>/dev/null || echo "")
+    if [ -n "$CHAT_ID" ]; then
+        ADAPTER_CONTEXT="
+This session was started from Telegram. Send messages with: notify --telegram $CHAT_ID \"your message\"
+Session link: $($SESSION_REG get-field "$SESSION_NAME" session_url 2>/dev/null || echo "")"
+    fi
+fi
+
+# Build the full prompt: user's task + adapter context + /start-chat for session context
+FULL_PROMPT="$PROMPT${ADAPTER_CONTEXT} /start-chat $ADAPTER $WOLT_NAME"
 
 # Run claude — capture exit code
 EXIT_CODE=0

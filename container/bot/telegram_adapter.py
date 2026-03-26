@@ -214,12 +214,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = update.message.text or ""
         human_name = "human"
         # Send to session with context about where it came from
+        chat_id = update.effective_chat.id
         den_msg = (
-            f"[telegram message from {human_name}]: {text}\n"
-            f"Reply back to them with: notify \"your message\""
+            f"[telegram message from {human_name}, chat_id={chat_id}]: {text}\n"
+            f"Reply back to them with: notify --telegram {chat_id} \"your message\""
         )
         result = message_session(den_session, den_msg)
-        chat_id = update.effective_chat.id
         _bot_log("den_reply", {"session": den_session, "text": text[:200], "result": result})
         if result.get("ok"):
             _append_message(chat_id, {
@@ -326,9 +326,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     den_session = _is_den_reply(update)
     if den_session:
         human_name = "human"
+        voice_chat_id = update.effective_chat.id
         den_msg = (
-            f"[telegram voice from {human_name}]: {text}\n"
-            f"Reply back to them with: notify \"your message\""
+            f"[telegram voice from {human_name}, chat_id={voice_chat_id}]: {text}\n"
+            f"Reply back to them with: notify --telegram {voice_chat_id} \"your message\""
         )
         result = message_session(den_session, den_msg)
         _bot_log("den_reply_voice", {"session": den_session, "text": text[:200], "result": result})
