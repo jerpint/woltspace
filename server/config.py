@@ -25,8 +25,8 @@ SPACE_DIR = WOLTS_DIR / ".space"
 SPACE_PLATFORM_DIR = SPACE_DIR / "platform"
 SPACE_LOGS_DIR = SPACE_DIR / "logs"
 
-# Session registry — per-wolt; legacy dir kept for reference only
-SESSION_REGISTRY_DIR = WOLTS_DIR / WOLT_NAME / ".state" / "sessions"
+# Session registry — global, one file per session
+SESSION_REGISTRY_DIR = WOLTS_DIR / ".state" / "registry"
 
 PORT = int(os.environ.get("PORT", "7777"))
 TUI_PORT = int(os.environ.get("TUI_PORT", "3001"))
