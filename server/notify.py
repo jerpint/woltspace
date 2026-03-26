@@ -8,7 +8,7 @@ import httpx
 from .config import (
     STATE_DIR,
     SPACE_PLATFORM_DIR,
-    SESSION_REGISTRY_DIR,
+    WOLTS_DIR,
     DEN_REPLY_FOOTER,
     get_env,
 )
@@ -16,13 +16,18 @@ from .state import sanitize_session
 
 
 def read_session_registry(session: str) -> dict | None:
-    f = SESSION_REGISTRY_DIR / f"{sanitize_session(session)}.json"
-    if not f.exists():
-        return None
-    try:
-        return json.loads(f.read_text())
-    except Exception:
-        return None
+    """Find a session file by scanning all per-wolt .state/sessions/ dirs."""
+    safe = sanitize_session(session)
+    for entry in WOLTS_DIR.iterdir():
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        f = entry / ".state" / "sessions" / f"{safe}.json"
+        if f.exists():
+            try:
+                return json.loads(f.read_text())
+            except Exception:
+                return None
+    return None
 
 
 def append_chat_history(adapter: str, chat_id: str, content: str):
@@ -102,7 +107,7 @@ async def _send_slack(message: str, routing: dict) -> dict:
     token = get_env("SLACK_BOT_TOKEN")
     if not token:
         raise RuntimeError("SLACK_BOT_TOKEN not set")
-    channel = routing.get("channel") or get_env("SLACK_NOTIFY_CHANNEL")
+    channel = routing.get("chat_id") or get_env("SLACK_NOTIFY_CHANNEL")
     if not channel:
         raise RuntimeError("no slack channel in routing and SLACK_NOTIFY_CHANNEL not set")
     await slack_send(token, channel, routing.get("thread_ts"), message)

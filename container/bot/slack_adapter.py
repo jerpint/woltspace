@@ -449,7 +449,7 @@ def create_app():
         if history and history[-1]["role"] == "user":
             history = history[:-1]
 
-        routing = {"adapter": "slack", "channel": channel, "thread_ts": thread_ts}
+        routing = {"adapter": "slack", "chat_id": channel, "thread_ts": thread_ts}
         try:
             result = get_response(user_message, conversation_history=list(history), routing=routing, user_content=user_content)
         except Exception as e:
@@ -528,7 +528,7 @@ def create_app():
         if history and history[-1]["role"] == "user":
             history = history[:-1]
 
-        routing = {"adapter": "slack", "channel": channel, "thread_ts": thread_ts}
+        routing = {"adapter": "slack", "chat_id": channel, "thread_ts": thread_ts}
         try:
             result = get_response(user_message, conversation_history=list(history), routing=routing, user_content=user_content)
         except Exception as e:
