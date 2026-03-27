@@ -44,10 +44,16 @@ def wolts_dir(tmp_path):
     paths.WOLTS_DIR = original_paths
 
 
+_next_port = 4010
+
 def _make_project(wolts_dir, name, keeper="neowolt", **overrides):
     """Create a project directory with woltspace.json."""
+    global _next_port
     proj_dir = wolts_dir / "projects" / name
     proj_dir.mkdir(parents=True, exist_ok=True)
+    if "port" not in overrides:
+        overrides["port"] = _next_port
+        _next_port += 1
     manifest = {
         "woltspace_version": "0.1",
         "name": name,
@@ -64,10 +70,11 @@ def _make_project(wolts_dir, name, keeper="neowolt", **overrides):
 
 class TestWoltspaceProject:
     def test_minimal_fields(self):
-        p = projects.WoltspaceProject(name="test", keeper="neowolt")
+        p = projects.WoltspaceProject(name="test", keeper="neowolt", port=4010)
         assert p.woltspace_version == "0.1"
         assert p.name == "test"
         assert p.keeper == "neowolt"
+        assert p.port == 4010
         assert p.description is None
         assert p.stack is None
         assert p.install is None
@@ -75,23 +82,28 @@ class TestWoltspaceProject:
         assert p.source is None
         assert p.emoji in projects.FOREST_EMOJIS
 
+    def test_port_is_required(self):
+        with pytest.raises(Exception):
+            projects.WoltspaceProject(name="test", keeper="neowolt")
+
     def test_all_fields(self):
         p = projects.WoltspaceProject(
             name="forj", keeper="neowolt", description="Workout tracker",
             stack="node", install="npm install", start="node server.js",
-            source=None, emoji="🦊",
+            port=4020, source=None, emoji="🦊",
         )
         assert p.description == "Workout tracker"
         assert p.stack == "node"
         assert p.start == "node server.js"
+        assert p.port == 4020
         assert p.emoji == "🦊"
 
     def test_can_start_with_command(self):
-        p = projects.WoltspaceProject(name="a", keeper="k", start="npm start")
+        p = projects.WoltspaceProject(name="a", keeper="k", port=4010, start="npm start")
         assert p.can_start() is True
 
     def test_cannot_start_without_command(self):
-        p = projects.WoltspaceProject(name="a", keeper="k")
+        p = projects.WoltspaceProject(name="a", keeper="k", port=4010)
         assert p.can_start() is False
 
     def test_random_emoji_never_wolt_type(self):
@@ -99,7 +111,7 @@ class TestWoltspaceProject:
         assert not (emojis & projects.WOLT_EMOJIS)
 
     def test_serialization_roundtrip(self):
-        p = projects.WoltspaceProject(name="test", keeper="k", emoji="🐸")
+        p = projects.WoltspaceProject(name="test", keeper="k", port=4010, emoji="🐸")
         data = json.loads(p.model_dump_json())
         p2 = projects.WoltspaceProject(**data)
         assert p == p2
@@ -147,23 +159,37 @@ class TestDiscovery:
 
 
 # ---------------------------------------------------------------------------
-# Port allocation
+# Port validation
 # ---------------------------------------------------------------------------
 
-class TestPortAllocation:
-    def test_first_port(self, wolts_dir):
-        port = projects._allocate_port()
-        assert port == projects.PORT_MIN
+class TestPortValidation:
+    def test_valid_port(self):
+        projects.validate_port(4010)  # should not raise
 
-    def test_skips_used_ports(self, wolts_dir):
-        # Simulate a running project on PORT_MIN
-        state_dir = projects._RUNNING_STATE_DIR
-        state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "app1.json").write_text(json.dumps({
-            "name": "app1", "port": projects.PORT_MIN, "pid": os.getpid(),
-        }))
-        port = projects._allocate_port()
-        assert port == projects.PORT_MIN + 1
+    def test_port_below_range(self):
+        with pytest.raises(ValueError, match="out of range"):
+            projects.validate_port(3000)
+
+    def test_port_above_range(self):
+        with pytest.raises(ValueError, match="out of range"):
+            projects.validate_port(5000)
+
+    def test_reserved_port(self):
+        with pytest.raises(ValueError, match="reserved"):
+            projects.validate_port(7777)
+
+    def test_port_conflict_detection(self, wolts_dir):
+        _make_project(wolts_dir, "app-a", port=4050)
+        conflict = projects.check_port_conflict(4050)
+        assert conflict == "app-a"
+
+    def test_no_port_conflict(self, wolts_dir):
+        _make_project(wolts_dir, "app-b", port=4060)
+        assert projects.check_port_conflict(4061) is None
+
+    def test_port_conflict_excludes_self(self, wolts_dir):
+        _make_project(wolts_dir, "app-c", port=4070)
+        assert projects.check_port_conflict(4070, exclude_name="app-c") is None
 
 
 # ---------------------------------------------------------------------------
@@ -208,28 +234,48 @@ class TestStartStop:
             (state_dir / f"app{i}.json").write_text(json.dumps({
                 "name": f"app{i}", "port": 4001 + i, "pid": os.getpid(),
             }))
-        _make_project(wolts_dir, "one-more", start="echo hi")
+        _make_project(wolts_dir, "one-more", start="echo hi", port=4100)
         with pytest.raises(RuntimeError, match="Max"):
             projects.start_project("one-more")
 
     @patch("projects.subprocess.Popen")
     def test_start_project_success(self, mock_popen, wolts_dir):
         mock_popen.return_value.pid = 12345
-        _make_project(wolts_dir, "runner", start="node server.js")
+        _make_project(wolts_dir, "runner", start="node server.js", port=4200)
         state = projects.start_project("runner")
-        assert state["port"] == projects.PORT_MIN
+        assert state["port"] == 4200
         assert state["pid"] == 12345
         assert state["name"] == "runner"
         assert state["keeper"] == "neowolt"
         # Verify Popen was called with correct args
         call_kwargs = mock_popen.call_args[1]
-        assert call_kwargs["env"]["PORT"] == str(projects.PORT_MIN)
+        assert call_kwargs["env"]["PORT"] == "4200"
         assert call_kwargs["shell"] is True
+
+    @patch("projects.subprocess.Popen")
+    def test_start_uses_manifest_port(self, mock_popen, wolts_dir):
+        """Port comes from woltspace.json, not dynamic allocation."""
+        mock_popen.return_value.pid = 11111
+        _make_project(wolts_dir, "fixed-port", start="echo hi", port=4321)
+        state = projects.start_project("fixed-port")
+        assert state["port"] == 4321
+
+    @patch("projects.subprocess.Popen")
+    def test_start_rejects_port_conflict_with_running(self, mock_popen, wolts_dir):
+        """Can't start if another running project holds the same port."""
+        state_dir = projects._RUNNING_STATE_DIR
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "occupant.json").write_text(json.dumps({
+            "name": "occupant", "port": 4300, "pid": os.getpid(),
+        }))
+        _make_project(wolts_dir, "conflict", start="echo hi", port=4300)
+        with pytest.raises(RuntimeError, match="already in use"):
+            projects.start_project("conflict")
 
     @patch("projects.subprocess.Popen")
     def test_start_returns_existing_if_alive(self, mock_popen, wolts_dir):
         """Starting an already-running project returns its existing state."""
-        _make_project(wolts_dir, "already", start="echo hi")
+        _make_project(wolts_dir, "already", start="echo hi", port=4005)
         state_dir = projects._RUNNING_STATE_DIR
         state_dir.mkdir(parents=True, exist_ok=True)
         (state_dir / "already.json").write_text(json.dumps({

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import random
 import signal
 import subprocess
 from pathlib import Path
@@ -34,6 +33,9 @@ PORT_MIN = 4001
 PORT_MAX = 4999
 MAX_RUNNING = 2
 
+# Reserved ports — never assign these to projects
+RESERVED_PORTS = {7777, 3001}
+
 # Running project state — now at .space/projects/
 _RUNNING_STATE_DIR = space_projects_dir(WOLTS_DIR)
 
@@ -46,6 +48,7 @@ FOREST_EMOJIS = ["🦅", "🦉", "🐿️", "🦊", "🐝", "🦌", "🐾", "�
 
 def random_emoji() -> str:
     """Pick a random forest creature emoji for a new project."""
+    import random
     return random.choice(FOREST_EMOJIS)
 
 
@@ -63,6 +66,7 @@ class WoltspaceProject(BaseModel):
     stack: str | None = Field(default=None, description="Tech stack: python, vite, node, html")
     install: str | None = Field(default=None, description="Install command (e.g. 'npm install', 'uv sync')")
     start: str | None = Field(default=None, description="Start command (e.g. 'node server.js'). Null = can't start.")
+    port: int = Field(description="Fixed port for this project's dev server (4001-4999)")
     source: str | None = Field(default=None, description="Origin wolt if cloned/forked, null if created locally")
     keeper: str = Field(description="Owning wolt name")
     emoji: str = Field(default_factory=random_emoji, description="Project emoji for display")
@@ -164,17 +168,30 @@ def running_projects() -> list[dict]:
     return running
 
 
-def _allocate_port() -> int:
-    """Find the next available port in the project range."""
-    used = {r["port"] for r in running_projects()}
-    for port in range(PORT_MIN, PORT_MAX + 1):
-        if port not in used:
-            return port
-    raise RuntimeError("No available ports in project range")
+def validate_port(port: int, project_name: str | None = None) -> None:
+    """Validate a port is in range and not reserved."""
+    if port in RESERVED_PORTS:
+        raise ValueError(f"Port {port} is reserved")
+    if port < PORT_MIN or port > PORT_MAX:
+        raise ValueError(f"Port {port} out of range ({PORT_MIN}-{PORT_MAX})")
+
+
+def check_port_conflict(port: int, exclude_name: str | None = None) -> str | None:
+    """Check if a port is claimed by another project. Returns conflicting project name or None."""
+    if not PROJECTS_DIR.exists():
+        return None
+    for manifest in PROJECTS_DIR.glob("*/" + MANIFEST):
+        proj = load_project(manifest.parent)
+        if proj and proj.port == port and proj.name != exclude_name:
+            return proj.name
+    return None
 
 
 def start_project(name: str) -> dict:
-    """Start a project's dev server. Returns state dict with port and pid."""
+    """Start a project's dev server. Returns state dict with port and pid.
+
+    Uses the port declared in woltspace.json — no dynamic allocation.
+    """
     project = get_project(name)
     if not project:
         raise ValueError(f"Project {name} not found")
@@ -192,7 +209,13 @@ def start_project(name: str) -> dict:
         names = [r["name"] for r in current]
         raise RuntimeError(f"Max {MAX_RUNNING} running projects. Stop one first: {', '.join(names)}")
 
-    port = _allocate_port()
+    # Use port from manifest — check for conflicts with running projects
+    port = project.port
+    validate_port(port, name)
+    for r in current:
+        if r["port"] == port:
+            raise RuntimeError(f"Port {port} already in use by running project '{r['name']}'")
+
     work_dir = project_dir(name)
 
     # Start the process with PORT env var
