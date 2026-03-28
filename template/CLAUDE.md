@@ -32,26 +32,21 @@ wolt/           — your identity, content, and artifacts
 
 ## Projects
 
-Projects live in `wolt/projects/`. Each project is a self-contained directory where you build things — apps, scripts, experiments, whatever.
+Your private code lives in `wolt/projects/`. Shared platform projects live at `/workspace/wolts/projects/` and are served at `/project/{name}/`.
 
+**Platform projects must be started/stopped via the API — never run the start command directly:**
+
+```bash
+curl -X POST http://localhost:7777/projects/{name}/start
+curl -X POST http://localhost:7777/projects/{name}/stop
+curl http://localhost:7777/projects  # list all
 ```
-wolt/projects/
-  my-app/
-    README.md       — what this project is
-    ...             — your code, assets, configs
-  another-thing/
-    ...
-```
 
-**Rules:**
-- All code you write goes in a project under `wolt/projects/`, or in `wolt/site/` for static pages
-- Each project is independent — its own deps, its own structure
-- Projects can be any language, any framework
-- Don't scatter code files in the wolt root — use projects
+Running `npm run dev` or any start command directly bypasses the platform. The project will show as "off" in the viewport even if the server is running.
 
-**When to use `wolt/site/` vs `wolt/projects/`:**
-- `wolt/site/` — static HTML/CSS pages served directly (your public space, viewport content)
-- `wolt/projects/` — anything with real code, deps, build steps, or that needs isolation
+**When to use `wolt/site/` vs a project:**
+- `wolt/site/` — static HTML/CSS pages, your personal workspace
+- Platform project — shared app with its own server, deps, or meant to be public
 
 ## Memory System
 

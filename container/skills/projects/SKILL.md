@@ -80,17 +80,19 @@ The platform starts the server and sets the `PORT` env var. The proxy strips the
 
 ## Starting and stopping
 
-From the lodge, users click start/stop on project cards. From code:
+**ALWAYS use the platform API. Never run the start command directly.**
+
+Running `npm run dev`, `python server.py`, or any start command directly bypasses the platform. The project will show as "off" in the viewport even if the server is running.
 
 ```bash
-# List projects
-curl http://localhost:7777/projects
-
-# Start (platform allocates port and runs start command)
+# Start a project
 curl -X POST http://localhost:7777/projects/my-app/start
 
-# Stop
+# Stop a project
 curl -X POST http://localhost:7777/projects/my-app/stop
+
+# List all projects + running state
+curl http://localhost:7777/projects
 ```
 
 ## Pushing to the viewport
@@ -107,7 +109,7 @@ The platform also sets the `PORT` env var to match your manifest port when start
 
 ## Key rules
 
+- **Always use the API to start/stop** — never run start commands directly
 - **Never edit `/workspace/woltspace/`** — that's the platform
 - **Projects are portable** — should work if copied out of woltspace
 - **Write woltspace.json after setup** — or the project is invisible
-- **One dev server at a time** is fine; max 2 concurrent; be mindful of resources
