@@ -37,6 +37,7 @@ Then write `woltspace.json` — **this is required** for the platform to discove
   "name": "my-app",
   "description": "What this does",
   "stack": "node",
+  "port": 4010,
   "install": "npm install",
   "start": "npm run dev",
   "keeper": "your-wolt-name"
@@ -52,6 +53,7 @@ Then write `woltspace.json` — **this is required** for the platform to discove
 | `description` | no | What the project does |
 | `stack` | no | `python`, `vite`, `node`, or `html` |
 | `install` | no | Install command |
+| `port` | yes | Fixed port for this project. Permanent — survives restarts. Avoid 7777 and 3001. |
 | `start` | no | Start command. Null = can't start from lodge. |
 | `source` | no | Origin URL if cloned |
 | `emoji` | no | Display emoji (auto-assigned) |
@@ -91,21 +93,17 @@ curl -X POST http://localhost:7777/projects/my-app/start
 curl -X POST http://localhost:7777/projects/my-app/stop
 ```
 
-Max 2 running projects at once.
-
 ## Pushing to the viewport
 
 ```bash
 push-view /project/my-app/
 ```
 
-## Port allocation
+## Ports
 
-Ports 4001-4999, auto-allocated by the platform. Don't hardcode ports in `woltspace.json` — the platform sets `PORT` at start time. Shared pool with wolt sites.
+Each project declares its own port in `woltspace.json` (required). The port is permanent — it never changes between restarts. Pick one that doesn't conflict with other projects. If two projects claim the same port, the second one to start gets an error — just pick a different port.
 
-Reserved:
-- 7777 — platform server
-- 3001 — TUI WebSocket service
+The platform also sets the `PORT` env var to match your manifest port when starting. Avoid 7777 (platform server) and 3001 (TUI).
 
 ## Key rules
 

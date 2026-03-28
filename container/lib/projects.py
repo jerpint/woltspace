@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import random
 import signal
 import subprocess
 from pathlib import Path
@@ -29,11 +28,6 @@ VALID_STACKS = {"python", "vite", "node", "html"}
 
 MANIFEST = "woltspace.json"
 
-# Port range for project dev servers
-PORT_MIN = 4001
-PORT_MAX = 4999
-MAX_RUNNING = 2
-
 # Running project state — now at .space/projects/
 _RUNNING_STATE_DIR = space_projects_dir(WOLTS_DIR)
 
@@ -46,6 +40,7 @@ FOREST_EMOJIS = ["🦅", "🦉", "🐿️", "🦊", "🐝", "🦌", "🐾", "�
 
 def random_emoji() -> str:
     """Pick a random forest creature emoji for a new project."""
+    import random
     return random.choice(FOREST_EMOJIS)
 
 
@@ -63,6 +58,7 @@ class WoltspaceProject(BaseModel):
     stack: str | None = Field(default=None, description="Tech stack: python, vite, node, html")
     install: str | None = Field(default=None, description="Install command (e.g. 'npm install', 'uv sync')")
     start: str | None = Field(default=None, description="Start command (e.g. 'node server.js'). Null = can't start.")
+    port: int = Field(description="Fixed port for this project's dev server")
     source: str | None = Field(default=None, description="Origin wolt if cloned/forked, null if created locally")
     keeper: str = Field(description="Owning wolt name")
     emoji: str = Field(default_factory=random_emoji, description="Project emoji for display")
@@ -164,17 +160,11 @@ def running_projects() -> list[dict]:
     return running
 
 
-def _allocate_port() -> int:
-    """Find the next available port in the project range."""
-    used = {r["port"] for r in running_projects()}
-    for port in range(PORT_MIN, PORT_MAX + 1):
-        if port not in used:
-            return port
-    raise RuntimeError("No available ports in project range")
-
-
 def start_project(name: str) -> dict:
-    """Start a project's dev server. Returns state dict with port and pid."""
+    """Start a project's dev server. Returns state dict with port and pid.
+
+    Uses the port declared in woltspace.json — no dynamic allocation.
+    """
     project = get_project(name)
     if not project:
         raise ValueError(f"Project {name} not found")
@@ -186,13 +176,12 @@ def start_project(name: str) -> dict:
     if existing and _is_pid_alive(existing.get("pid", 0)):
         return existing
 
-    # Check concurrency limit
-    current = running_projects()
-    if len(current) >= MAX_RUNNING:
-        names = [r["name"] for r in current]
-        raise RuntimeError(f"Max {MAX_RUNNING} running projects. Stop one first: {', '.join(names)}")
+    # Use port from manifest — check for conflicts with running projects
+    port = project.port
+    for r in running_projects():
+        if r["port"] == port:
+            raise RuntimeError(f"Port {port} already in use by running project '{r['name']}'")
 
-    port = _allocate_port()
     work_dir = project_dir(name)
 
     # Start the process with PORT env var
