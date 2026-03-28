@@ -5,6 +5,23 @@ set -e
 WOLTSPACE_DIR="/workspace/woltspace"  # mount point inside the container
 WOLTS_DIR="${WOLTS_DIR:-/workspace/wolts}"
 
+# ── Dependencies (install only when changed) ──
+chmod +x "$WOLTSPACE_DIR/container/bin/"* 2>/dev/null || true
+chmod +x "$WOLTSPACE_DIR/container/entrypoint.sh" 2>/dev/null || true
+
+DEPS_HASH=$(md5sum "$WOLTSPACE_DIR/package.json" "$WOLTSPACE_DIR/package-lock.json" "$WOLTSPACE_DIR/server/pyproject.toml" "$WOLTSPACE_DIR/container/bot/pyproject.toml" 2>/dev/null | md5sum | cut -c1-8)
+CACHED_HASH=$(cat "$WOLTSPACE_DIR/.deps-hash" 2>/dev/null || echo "")
+if [ "$DEPS_HASH" != "$CACHED_HASH" ]; then
+  echo "deps changed — installing..."
+  (cd "$WOLTSPACE_DIR" && npm install && npm install ws node-pty) || echo "warning: npm install failed"
+  (cd "$WOLTSPACE_DIR" && uv sync --project server) || echo "warning: uv sync server failed"
+  (cd "$WOLTSPACE_DIR/container" && uv sync --project bot) || echo "warning: uv sync bot failed"
+  echo "$DEPS_HASH" > "$WOLTSPACE_DIR/.deps-hash"
+  echo "deps installed"
+else
+  echo "deps up to date"
+fi
+
 # ── Python setup (config, identity, JSON files, env resolution) ──
 ENV_FILE=$(mktemp /tmp/entrypoint-env.XXXXXX)
 python3 "$WOLTSPACE_DIR/container/entrypoint_setup.py" --env-file "$ENV_FILE"

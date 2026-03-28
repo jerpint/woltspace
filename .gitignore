@@ -3,3 +3,5 @@ node_modules
 .DS_Store
 __pycache__/
 uv.lock
+.venv/
+.deps-hash

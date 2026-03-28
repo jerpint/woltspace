@@ -5,19 +5,17 @@
 #   woltspace init                    — first-time setup (or reconnect existing wolts)
 #   woltspace start                   — start, restart, or resume container
 #   woltspace stop                    — stop and remove container
-#   woltspace rebuild                 — rebuild image + restart
+#   woltspace update [version]        — update platform to latest (or specific) version
+#   woltspace rebuild                 — rebuild tools image (rare)
 #   woltspace shell                   — enter running container
 #   woltspace chat                    — open claude in container
 #   woltspace logs                    — stream container logs
 #   woltspace backup [tag]            — snapshot container + wolts (tag defaults to datetime)
-#   woltspace backup [tag] --bundle  — same, but zipped into one portable file
-#
-# Flags:
-#   --branch <name>   — build image from a specific branch (default: main)
-#   --local           — build image from local repo instead of git clone
+#   woltspace backup [tag] --bundle   — same, but zipped into one portable file
 #
 # All state lives under ~/.woltspace/wolts (overridable via WOLTS_DIR).
-# The container is disposable — ~/wolts is the backup.
+# Platform source is mounted from the repo (where this script lives).
+# The container is disposable — wolts/ is the backup.
 
 set -e
 
@@ -39,41 +37,15 @@ else
 fi
 cmd="${1:-start}"
 
-# Parse flags: --local, --branch <name>
-# WOLTSPACE_LOCAL=true is equivalent to --local (sticky dev mode)
-LOCAL_BUILD="${WOLTSPACE_LOCAL:-false}"
-BUILD_BRANCH="main"
-BUILD_VERSION=""
-BUILD_LATEST=false
+# Parse flags
 NO_CACHE=false
-_next=""
 for arg in "$@"; do
-  if [ -n "$_next" ]; then
-    if [ "$_next" = "branch" ]; then BUILD_BRANCH="$arg";
-    elif [ "$_next" = "version" ]; then BUILD_VERSION="$arg"; fi
-    _next=""
-  elif [ "$arg" = "--local" ]; then
-    LOCAL_BUILD=true
-  elif [ "$arg" = "--branch" ]; then
-    _next=branch
-  elif [ "$arg" = "--version" ]; then
-    _next=version
-  elif [ "$arg" = "--latest" ]; then
-    BUILD_LATEST=true
-  elif [ "$arg" = "--nightly" ]; then
-    BUILD_VERSION="HEAD"
-  elif [ "$arg" = "--no-cache" ]; then
+  if [ "$arg" = "--no-cache" ]; then
     NO_CACHE=true
   fi
 done
 
 # --- Colors ---
-# _D = yellow/orange (technical info, status)
-# _L = green (lore, personality)
-# _C = cyan (URLs, prompts)
-# _G = green (success checkmarks)
-# _B = bold
-# _R = reset
 _D=$'\033[0;33m'; _L=$'\033[0;32m'; _C=$'\033[0;36m'
 _G=$'\033[0;32m'; _B=$'\033[1m'; _R=$'\033[0m'
 
@@ -83,33 +55,11 @@ _build_image() {
   local cache_flag=""
   [ "$NO_CACHE" = true ] && cache_flag="--no-cache"
 
-  if [ "$LOCAL_BUILD" = true ]; then
-    echo "  ${_D}🪵 building image from local source${_R}"
-    echo "  ${_L}   felling fresh timber...${_R}"
-    echo ""
-    docker build -t woltspace $cache_flag \
-      --build-arg USE_LOCAL=true \
-      -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR"
-  else
-    local version_arg=""
-    if [ "${CURRENT_VERSION:-}" = "HEAD" ]; then
-      echo "  ${_D}🪵 building image (nightly — main branch tip)${_R}"
-      version_arg="--build-arg WOLTSPACE_VERSION=HEAD"
-    elif [ -n "${CURRENT_VERSION:-}" ]; then
-      echo "  ${_D}🪵 building image (version: $CURRENT_VERSION)${_R}"
-      version_arg="--build-arg WOLTSPACE_VERSION=$CURRENT_VERSION"
-    elif [ "$BUILD_BRANCH" != "main" ]; then
-      echo "  ${_D}🪵 building image (branch: $BUILD_BRANCH)${_R}"
-    else
-      echo "  ${_D}🪵 building image (latest release)${_R}"
-    fi
-    echo "  ${_L}   felling fresh timber...${_R}"
-    echo ""
-    docker build -t woltspace $cache_flag $version_arg \
-      --build-arg WOLTSPACE_BRANCH="$BUILD_BRANCH" \
-      --build-arg CACHE_BUST="$(date +%s)" \
-      -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR/container"
-  fi
+  echo "  ${_D}🪵 building tools image${_R}"
+  echo "  ${_L}   felling fresh timber...${_R}"
+  echo ""
+  docker build -t woltspace $cache_flag \
+    -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR/container"
 }
 
 _start_container() {
@@ -129,6 +79,7 @@ _start_container() {
     --env-file "$WOLTS_DIR/.env" \
     -v "$WOLTS_DIR:/workspace/wolts:rw" \
     -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
+    -v "$WOLTSPACE_DIR:/workspace/woltspace:rw" \
     -p "${WOLTSPACE_PORT:-7777}":7777 \
     $extra_args \
     woltspace > /dev/null
@@ -194,6 +145,36 @@ _list_wolt_names() {
   done | sort
 }
 
+_current_version() {
+  # Version pin in wolts dir, then git tag, then "unknown"
+  if [ -f "$WOLTS_DIR/.version" ]; then
+    cat "$WOLTS_DIR/.version"
+  elif [ -d "$WOLTSPACE_DIR/.git" ]; then
+    (cd "$WOLTSPACE_DIR" && git describe --tags --exact-match 2>/dev/null \
+      || git describe --tags --abbrev=0 2>/dev/null \
+      || git rev-parse --short HEAD 2>/dev/null \
+      || echo "unknown")
+  else
+    echo "unknown"
+  fi
+}
+
+_write_version_pin() {
+  # Write current version to wolts/.version
+  local version
+  if [ -d "$WOLTSPACE_DIR/.git" ]; then
+    version=$(cd "$WOLTSPACE_DIR" && git describe --tags --exact-match 2>/dev/null \
+      || git describe --tags --abbrev=0 2>/dev/null \
+      || git rev-parse --short HEAD 2>/dev/null \
+      || echo "local")
+  else
+    version="local"
+  fi
+  mkdir -p "$WOLTS_DIR"
+  echo "$version" > "$WOLTS_DIR/.version"
+  echo "$version"
+}
+
 # --- PATH setup (idempotent) ---
 
 _setup_path() {
@@ -245,6 +226,7 @@ if [ "$cmd" = "init" ]; then
     _list_wolt_names | while read -r w; do echo "    🪵 $w"; done
     echo ""
     _build_image
+    _write_version_pin > /dev/null
     _start_container
     _show_url
     exit 0
@@ -311,7 +293,6 @@ if [ "$cmd" = "init" ]; then
   if [[ "$_tunnel" == [Yy] ]]; then
     echo ""
     echo "  ${_G}✓${_R} public access enabled"
-    # Set tunnel enabled explicitly
     sed -i '' 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=true/' "$WOLTS_DIR/.env" 2>/dev/null || \
     sed -i 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=true/' "$WOLTS_DIR/.env"
   else
@@ -324,6 +305,9 @@ if [ "$cmd" = "init" ]; then
 
   # Build image
   _build_image
+
+  # Write version pin
+  _write_version_pin > /dev/null
 
   # Auth — run Claude login in a throwaway container if not already authenticated
   if [ ! -f "$WOLTS_DIR/.claude/.credentials.json" ] && [ "${WOLTSPACE_NONINTERACTIVE:-}" != "true" ]; then
@@ -346,7 +330,6 @@ if [ "$cmd" = "init" ]; then
     chown 1000:1000 "$WOLTS_DIR/.claude" 2>/dev/null \
       || docker run --rm -v "$WOLTS_DIR/.claude:/fix" node:22-slim chown -R 1000:1000 /fix 2>/dev/null \
       || true
-    # Write a temporary CLAUDE.md so Claude knows what's happening
     cat > "$WOLTS_DIR/.claude/CLAUDE.md" << 'LOGINMD'
 # Woltspace Login
 
@@ -438,6 +421,86 @@ case "$cmd" in
   logs)
     docker logs -f "$CONTAINER_NAME"
     ;;
+  update)
+    # woltspace update [version]    — update to latest tag or specific version
+    # woltspace update --nightly    — use main branch tip
+    TARGET="${2:-}"
+
+    if [ ! -d "$WOLTSPACE_DIR/.git" ]; then
+      echo "  ${_D}error: $WOLTSPACE_DIR is not a git repo — can't update${_R}"
+      echo "  ${_D}re-install with: curl -fsSL https://woltspace.com/install.sh | bash${_R}"
+      exit 1
+    fi
+
+    echo ""
+    echo "  ${_D}🔄 checking for updates...${_R}"
+    CURRENT=$(_current_version)
+    echo "  current: ${_C}$CURRENT${_R}"
+
+    # Fetch latest
+    (cd "$WOLTSPACE_DIR" && git fetch origin --tags --quiet)
+
+    if [ "$TARGET" = "--nightly" ]; then
+      echo "  ${_D}switching to main branch tip (nightly)${_R}"
+      (cd "$WOLTSPACE_DIR" && git checkout main --quiet && git pull origin main --quiet)
+      echo "HEAD" > "$WOLTS_DIR/.version"
+      echo "  ${_G}✓${_R} now on main branch tip"
+    elif [ -n "$TARGET" ]; then
+      echo "  ${_D}checking out $TARGET...${_R}"
+      (cd "$WOLTSPACE_DIR" && git checkout "$TARGET" --quiet) || {
+        echo "  ${_D}error: version $TARGET not found${_R}"
+        exit 1
+      }
+      echo "$TARGET" > "$WOLTS_DIR/.version"
+      echo "  ${_G}✓${_R} now on $TARGET"
+    else
+      # Default: latest tag
+      LATEST_TAG=$(cd "$WOLTSPACE_DIR" && git tag --sort=-v:refname | head -1)
+      if [ -z "$LATEST_TAG" ]; then
+        echo "  ${_D}no tags found — pulling main${_R}"
+        (cd "$WOLTSPACE_DIR" && git checkout main --quiet && git pull origin main --quiet)
+        _write_version_pin > /dev/null
+      elif [ "$LATEST_TAG" = "$CURRENT" ]; then
+        echo "  ${_G}✓${_R} already on latest: $LATEST_TAG"
+        echo ""
+        exit 0
+      else
+        echo "  ${_D}updating to $LATEST_TAG...${_R}"
+        (cd "$WOLTSPACE_DIR" && git checkout "$LATEST_TAG" --quiet)
+        echo "$LATEST_TAG" > "$WOLTS_DIR/.version"
+        echo "  ${_G}✓${_R} updated to $LATEST_TAG"
+      fi
+    fi
+
+    # Show changelog if available
+    if [ -f "$WOLTSPACE_DIR/CHANGELOG.md" ]; then
+      echo ""
+      echo "  ${_D}changelog: $WOLTSPACE_DIR/CHANGELOG.md${_R}"
+    fi
+
+    # Check for migration script
+    NEW_VERSION=$(_current_version)
+    if [ -f "$WOLTSPACE_DIR/migrations/${NEW_VERSION}.sh" ]; then
+      echo ""
+      echo "  ${_D}running migration for $NEW_VERSION...${_R}"
+      bash "$WOLTSPACE_DIR/migrations/${NEW_VERSION}.sh"
+      echo "  ${_G}✓${_R} migration complete"
+    fi
+
+    # Restart container if running
+    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+      echo ""
+      echo "  ${_D}restarting container...${_R}"
+      docker rm -f "$CONTAINER_NAME" > /dev/null
+      rm -f "$WOLTS_DIR/.space/platform/tunnel-url" "$WOLTS_DIR/.state/tunnel-url"
+      _start_container
+      _show_url
+    else
+      echo ""
+      echo "  ${_D}container not running — run 'woltspace start' when ready${_R}"
+    fi
+    echo ""
+    ;;
   backup)
     # Parse: woltspace backup [tag] [--bundle]
     BUNDLE=false
@@ -480,14 +543,11 @@ case "$cmd" in
       echo "  ${_D}bundling into portable zip...${_R}"
 
       TMPDIR=$(mktemp -d)
-      # Export docker image if we have one
       if [ "$HAS_CONTAINER" = true ]; then
         echo "  ${_D}exporting image (this may take a minute)...${_R}"
         docker save "woltspace-backup:$TAG" > "$TMPDIR/image.tar"
       fi
-      # Copy wolts into bundle staging dir
       rsync -a "$BACKUP_DIR/" "$TMPDIR/wolts/"
-      # Write restore script
       echo "$TAG" > "$TMPDIR/.tag"
       cat > "$TMPDIR/restore.sh" << 'RESTORE'
 #!/bin/bash
@@ -507,7 +567,6 @@ echo "    woltspace-backup:$TAG"
 RESTORE
       chmod +x "$TMPDIR/restore.sh"
 
-      # Zip it
       (cd "$TMPDIR" && zip -qr "$BUNDLE_FILE" .)
       rm -rf "$TMPDIR"
 
@@ -529,31 +588,8 @@ RESTORE
     echo ""
     ;;
   rebuild)
-    # Resolve version: --version > --latest > current container version
-    CURRENT_VERSION=""
-    if [ -n "$BUILD_VERSION" ]; then
-      CURRENT_VERSION="$BUILD_VERSION"
-    elif [ "$BUILD_LATEST" = true ]; then
-      CURRENT_VERSION=""  # empty = Dockerfile picks latest tag
-    elif [ "$LOCAL_BUILD" != true ] && [ "$BUILD_BRANCH" = "main" ]; then
-      CURRENT_VERSION=$(docker exec "$CONTAINER_NAME" cat /workspace/woltspace/.version 2>/dev/null || echo "")
-    fi
-    if [ "$LOCAL_BUILD" = true ]; then
-      echo "  ${_D}🪵 rebuilding from local — $WOLTSPACE_DIR${_R}"
-      echo "  ${_L}   felling local timber...${_R}"
-    elif [ "${CURRENT_VERSION:-}" = "HEAD" ]; then
-      echo "  ${_D}🪵 rebuilding from main branch tip (nightly)${_R}"
-      echo "  ${_L}   living on the edge...${_R}"
-    elif [ -n "${CURRENT_VERSION:-}" ]; then
-      echo "  ${_D}🪵 rebuilding at $CURRENT_VERSION${_R}"
-      echo "  ${_L}   same version, fresh timber${_R}"
-    elif [ "$BUILD_BRANCH" != "main" ]; then
-      echo "  ${_D}🪵 rebuilding from branch $BUILD_BRANCH${_R}"
-      echo "  ${_L}   felling branch timber...${_R}"
-    else
-      echo "  ${_D}🪵 rebuilding to latest release${_R}"
-      echo "  ${_L}   upgrading the lodge...${_R}"
-    fi
+    echo "  ${_D}🪵 rebuilding tools image${_R}"
+    echo "  ${_L}   felling fresh timber...${_R}"
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
     rm -f "$WOLTS_DIR/.space/platform/tunnel-url" "$WOLTS_DIR/.state/tunnel-url"
     _build_image
@@ -562,11 +598,6 @@ RESTORE
     ;;
   start)
     printf "\n  %b🦫%b  %b\n\n" "${_L}" "${_R}" "${_B}${_G}woltspace${_R}"
-    if [ "$LOCAL_BUILD" = true ]; then
-      echo "  ${_D}🪵 local build — $WOLTSPACE_DIR${_R}"
-      echo "  ${_L}   gnawing on local timber${_R}"
-      echo ""
-    fi
 
     if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
       echo "  ${_D}🦫 container running${_R}"
@@ -586,9 +617,13 @@ RESTORE
       _show_url
     fi
     ;;
+  version)
+    echo "  $(_current_version)"
+    ;;
   *)
-    echo "usage: woltspace <init|start|stop|rebuild|backup|shell|chat|logs>"
-    echo "       woltspace rebuild [--latest|--version X|--nightly|--branch X|--no-cache]"
+    echo "usage: woltspace <init|start|stop|update|rebuild|backup|shell|chat|logs|version>"
+    echo "       woltspace update [version|--nightly]"
+    echo "       woltspace rebuild [--no-cache]"
     echo "       woltspace backup [tag] [--bundle]"
     exit 1
     ;;
