@@ -44,16 +44,10 @@ def wolts_dir(tmp_path):
     paths.WOLTS_DIR = original_paths
 
 
-_next_port = 4010
-
 def _make_project(wolts_dir, name, keeper="neowolt", **overrides):
     """Create a project directory with woltspace.json."""
-    global _next_port
     proj_dir = wolts_dir / "projects" / name
     proj_dir.mkdir(parents=True, exist_ok=True)
-    if "port" not in overrides:
-        overrides["port"] = _next_port
-        _next_port += 1
     manifest = {
         "woltspace_version": "0.1",
         "name": name,
@@ -126,8 +120,8 @@ class TestDiscovery:
         assert projects.discover_projects() == []
 
     def test_discover_finds_projects(self, wolts_dir):
-        _make_project(wolts_dir, "forj", keeper="neowolt", stack="node")
-        _make_project(wolts_dir, "mockup", keeper="uxwolt", stack="html")
+        _make_project(wolts_dir, "forj", keeper="neowolt", stack="node", port=4010)
+        _make_project(wolts_dir, "mockup", keeper="uxwolt", stack="html", port=4011)
         found = projects.discover_projects()
         assert len(found) == 2
         names = {p.name for p in found}
@@ -145,7 +139,7 @@ class TestDiscovery:
         assert projects.discover_projects() == []
 
     def test_get_project(self, wolts_dir):
-        _make_project(wolts_dir, "forj", description="workout app")
+        _make_project(wolts_dir, "forj", description="workout app", port=4010)
         p = projects.get_project("forj")
         assert p is not None
         assert p.description == "workout app"
@@ -187,7 +181,7 @@ class TestStartStop:
             projects.start_project("nonexistent")
 
     def test_start_no_start_command(self, wolts_dir):
-        _make_project(wolts_dir, "static-only")
+        _make_project(wolts_dir, "static-only", port=4010)
         with pytest.raises(ValueError, match="no start command"):
             projects.start_project("static-only")
 
