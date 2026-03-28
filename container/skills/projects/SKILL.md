@@ -93,8 +93,6 @@ curl -X POST http://localhost:7777/projects/my-app/start
 curl -X POST http://localhost:7777/projects/my-app/stop
 ```
 
-Max 2 running projects at once.
-
 ## Pushing to the viewport
 
 ```bash

@@ -185,19 +185,6 @@ class TestStartStop:
         with pytest.raises(ValueError, match="no start command"):
             projects.start_project("static-only")
 
-    def test_start_respects_max_running(self, wolts_dir):
-        """Can't exceed MAX_RUNNING concurrent projects."""
-        state_dir = projects._RUNNING_STATE_DIR
-        state_dir.mkdir(parents=True, exist_ok=True)
-        # Fake 2 running projects (using current PID so they appear alive)
-        for i in range(projects.MAX_RUNNING):
-            (state_dir / f"app{i}.json").write_text(json.dumps({
-                "name": f"app{i}", "port": 4001 + i, "pid": os.getpid(),
-            }))
-        _make_project(wolts_dir, "one-more", start="echo hi", port=4100)
-        with pytest.raises(RuntimeError, match="Max"):
-            projects.start_project("one-more")
-
     @patch("projects.subprocess.Popen")
     def test_start_project_success(self, mock_popen, wolts_dir):
         mock_popen.return_value.pid = 12345

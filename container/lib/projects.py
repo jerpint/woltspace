@@ -28,8 +28,6 @@ VALID_STACKS = {"python", "vite", "node", "html"}
 
 MANIFEST = "woltspace.json"
 
-MAX_RUNNING = 2
-
 # Running project state — now at .space/projects/
 _RUNNING_STATE_DIR = space_projects_dir(WOLTS_DIR)
 
@@ -178,15 +176,9 @@ def start_project(name: str) -> dict:
     if existing and _is_pid_alive(existing.get("pid", 0)):
         return existing
 
-    # Check concurrency limit
-    current = running_projects()
-    if len(current) >= MAX_RUNNING:
-        names = [r["name"] for r in current]
-        raise RuntimeError(f"Max {MAX_RUNNING} running projects. Stop one first: {', '.join(names)}")
-
     # Use port from manifest — check for conflicts with running projects
     port = project.port
-    for r in current:
+    for r in running_projects():
         if r["port"] == port:
             raise RuntimeError(f"Port {port} already in use by running project '{r['name']}'")
 
