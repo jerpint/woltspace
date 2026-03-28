@@ -2,7 +2,7 @@
 Wolt site management — each wolt gets a livereload-powered static site.
 
 Per-wolt state model: site state lives at wolts/{wolt}/.state/site.json.
-Uses the same port pool as projects (4001-4999).
+Sites use ports 6001-6999. Projects use 4000-5999 (fixed in woltspace.json).
 
 Usage:
     from sites import start_site, stop_site, running_sites, site_dir
@@ -17,13 +17,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from paths import wolt_site_state_file, space_projects_dir
+from paths import wolt_site_state_file
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 
-# Port range 4001-4999, shared with projects
-PORT_MIN = 4001
-PORT_MAX = 4999
+# Site ports: 6001-6999 (separate from project ports 4000-5999)
+PORT_MIN = 6001
+PORT_MAX = 6999
 
 
 def site_dir(wolt_name: str) -> Path:
@@ -67,9 +67,8 @@ def _is_port_alive(port: int) -> bool:
 
 
 def _used_ports() -> set[int]:
-    """Collect all ports used by sites AND projects."""
+    """Collect all ports used by sites."""
     used = set()
-    # Sites — scan per-wolt state
     for wolt_dir in WOLTS_DIR.iterdir():
         if not wolt_dir.is_dir() or wolt_dir.name.startswith("."):
             continue
@@ -77,18 +76,6 @@ def _used_ports() -> set[int]:
         if site_state.exists():
             try:
                 state = json.loads(site_state.read_text())
-                if state.get("port"):
-                    used.add(state["port"])
-            except (json.JSONDecodeError, OSError):
-                continue
-    # Projects — check .space/projects/
-    projects_dir = space_projects_dir(WOLTS_DIR)
-    if projects_dir.exists():
-        for f in projects_dir.iterdir():
-            if not f.name.endswith(".json"):
-                continue
-            try:
-                state = json.loads(f.read_text())
                 if state.get("port"):
                     used.add(state["port"])
             except (json.JSONDecodeError, OSError):

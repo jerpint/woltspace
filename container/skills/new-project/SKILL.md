@@ -81,7 +81,7 @@ This is **required** — the platform only discovers projects that have `woltspa
 | `description` | no | What the project does |
 | `stack` | no | Tech stack: `python`, `vite`, `node`, `html` |
 | `install` | no | Install command (e.g. `npm install`, `uv sync`) |
-| `port` | yes | Fixed port for this project. Pick one, it's yours permanently. Avoid 7777 (platform) and 3001 (TUI). |
+| `port` | yes | Fixed port for this project (use 4000-5999 range). Pick one, it's yours permanently. Avoid 7777 (platform) and 3001 (TUI). Sites use 6000+ so no collisions. |
 | `start` | no | Start command. **Null = project can't be started from the lodge.** |
 | `source` | no | Origin URL if cloned/forked |
 | `emoji` | no | Display emoji (auto-assigned if omitted) |
