@@ -159,40 +159,6 @@ class TestDiscovery:
 
 
 # ---------------------------------------------------------------------------
-# Port validation
-# ---------------------------------------------------------------------------
-
-class TestPortValidation:
-    def test_valid_port(self):
-        projects.validate_port(4010)  # should not raise
-
-    def test_port_below_range(self):
-        with pytest.raises(ValueError, match="out of range"):
-            projects.validate_port(3000)
-
-    def test_port_above_range(self):
-        with pytest.raises(ValueError, match="out of range"):
-            projects.validate_port(5000)
-
-    def test_reserved_port(self):
-        with pytest.raises(ValueError, match="reserved"):
-            projects.validate_port(7777)
-
-    def test_port_conflict_detection(self, wolts_dir):
-        _make_project(wolts_dir, "app-a", port=4050)
-        conflict = projects.check_port_conflict(4050)
-        assert conflict == "app-a"
-
-    def test_no_port_conflict(self, wolts_dir):
-        _make_project(wolts_dir, "app-b", port=4060)
-        assert projects.check_port_conflict(4061) is None
-
-    def test_port_conflict_excludes_self(self, wolts_dir):
-        _make_project(wolts_dir, "app-c", port=4070)
-        assert projects.check_port_conflict(4070, exclude_name="app-c") is None
-
-
-# ---------------------------------------------------------------------------
 # Running state
 # ---------------------------------------------------------------------------
 

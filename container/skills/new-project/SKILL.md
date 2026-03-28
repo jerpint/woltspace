@@ -81,7 +81,7 @@ This is **required** — the platform only discovers projects that have `woltspa
 | `description` | no | What the project does |
 | `stack` | no | Tech stack: `python`, `vite`, `node`, `html` |
 | `install` | no | Install command (e.g. `npm install`, `uv sync`) |
-| `port` | yes | Fixed port for this project (4001-4999). Pick one, it's yours permanently. |
+| `port` | yes | Fixed port for this project. Pick one, it's yours permanently. Avoid 7777 (platform) and 3001 (TUI). |
 | `start` | no | Start command. **Null = project can't be started from the lodge.** |
 | `source` | no | Origin URL if cloned/forked |
 | `emoji` | no | Display emoji (auto-assigned if omitted) |
@@ -90,7 +90,7 @@ This is **required** — the platform only discovers projects that have `woltspa
 
 ## 5. Configure for serving
 
-Your port is declared in `woltspace.json` and is permanent — it never changes. Pick a port in the 4001-4999 range. Check existing projects to avoid conflicts (`ls /workspace/wolts/projects/*/woltspace.json` and look at their ports).
+Your port is declared in `woltspace.json` and is permanent — it never changes. Check existing projects to avoid conflicts (`ls /workspace/wolts/projects/*/woltspace.json` and look at their ports). Avoid 7777 and 3001.
 
 - **Static builds:** set the base path to `/project/{name}/` (Vite: `base`, Astro: `base`, Next: `basePath`)
 - **Dev servers:** use your declared port directly in the start command, or read the `PORT` env var (the platform sets it to match your manifest port)
