@@ -50,7 +50,7 @@ class TestSiteState:
         state_file = tmp_wolts / "testwolt" / ".state" / "site.json"
         state_file.parent.mkdir(parents=True, exist_ok=True)
         state_file.write_text(json.dumps({
-            "wolt": "testwolt", "port": 4001, "pid": 999999, "dir": "/fake",
+            "wolt": "testwolt", "port": 6001, "pid": 999999, "dir": "/fake",
         }))
         # PID 999999 is almost certainly dead
         assert sites.get_site_state("testwolt") is None
@@ -61,23 +61,20 @@ class TestSiteState:
 class TestPortAllocation:
     def test_first_port(self, tmp_wolts):
         port = sites._allocate_port()
-        assert port == 4001
+        assert port == 6001
 
     def test_skips_used_site_ports(self, tmp_wolts):
         """Port allocator checks per-wolt site state."""
         state_file = tmp_wolts / "testwolt" / ".state" / "site.json"
         state_file.parent.mkdir(parents=True, exist_ok=True)
-        state_file.write_text(json.dumps({"wolt": "testwolt", "port": 4001}))
+        state_file.write_text(json.dumps({"wolt": "testwolt", "port": 6001}))
         port = sites._allocate_port()
-        assert port == 4002
+        assert port == 6002
 
-    def test_skips_used_project_ports(self, tmp_wolts):
-        """Port allocator also checks .space/projects/ state."""
-        proj_state = tmp_wolts / ".space" / "projects"
-        proj_state.mkdir(parents=True)
-        (proj_state / "myproject.json").write_text(json.dumps({"port": 4001}))
+    def test_no_collision_with_project_range(self, tmp_wolts):
+        """Site ports (6001+) don't overlap with project ports (4000-5999)."""
         port = sites._allocate_port()
-        assert port == 4002
+        assert port >= 6001
 
 
 class TestStartStop:
@@ -86,7 +83,7 @@ class TestStartStop:
         mock_popen.return_value.pid = 12345
         state = sites.start_site("testwolt")
         assert state["wolt"] == "testwolt"
-        assert state["port"] == 4001
+        assert state["port"] == 6001
         assert "pid" not in state
         mock_popen.assert_called_once()
 

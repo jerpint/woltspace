@@ -101,9 +101,9 @@ push-view /project/my-app/
 
 ## Ports
 
-Each project declares its own port in `woltspace.json` (required). The port is permanent — it never changes between restarts. Pick one that doesn't conflict with other projects. If two projects claim the same port, the second one to start gets an error — just pick a different port.
+Each project declares its own port in `woltspace.json` (required). Use the **4000-5999** range for projects. The port is permanent — it never changes between restarts. Pick one that doesn't conflict with other projects. If two projects claim the same port, the second one to start gets an error — just pick a different port.
 
-The platform also sets the `PORT` env var to match your manifest port when starting. Avoid 7777 (platform server) and 3001 (TUI).
+Wolt sites auto-allocate in the **6000+** range, so no collisions. The platform also sets the `PORT` env var to match your manifest port when starting. Avoid 7777 (platform server) and 3001 (TUI).
 
 ## Key rules
 
