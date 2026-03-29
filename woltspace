@@ -3,15 +3,17 @@
 #
 # Usage:
 #   woltspace init                    — first-time setup (or reconnect existing wolts)
-#   woltspace start                   — start, restart, or resume container
-#   woltspace stop                    — stop and remove container
+#   woltspace start                   — start or resume container
+#   woltspace stop                    — stop container (resumable with start)
+#   woltspace restart                 — stop + start
 #   woltspace update [version]        — update platform to latest (or specific) version
-#   woltspace rebuild                 — rebuild tools image (rare)
+#   woltspace rebuild [--no-cache]    — rebuild tools image + start fresh
+#   woltspace status                  — show version, container, wolts, tunnel
 #   woltspace shell                   — enter running container
 #   woltspace chat                    — open claude in container
 #   woltspace logs                    — stream container logs
-#   woltspace backup [tag]            — snapshot container + wolts (tag defaults to datetime)
-#   woltspace backup [tag] --bundle   — same, but zipped into one portable file
+#   woltspace backup [tag] [--bundle] — snapshot container + wolts
+#   woltspace version                 — show current version
 #
 # All state lives under ~/.woltspace/wolts (overridable via WOLTS_DIR).
 # Platform source is mounted from the repo (where this script lives).
@@ -388,19 +390,32 @@ fi
 case "$cmd" in
   stop)
     if [ "$2" = "--all" ]; then
-      containers=$(docker ps -a --format '{{.Names}}' | grep '^woltspace' || true)
+      containers=$(docker ps --format '{{.Names}}' | grep '^woltspace' || true)
       if [ -z "$containers" ]; then
         echo "  no wolts running."
       else
-        echo "$containers" | xargs docker rm -f > /dev/null
-        echo "  🪵 downed: $(echo "$containers" | tr '\n' ' ')"
+        echo "$containers" | xargs docker stop > /dev/null
+        echo "  🪵 stopped: $(echo "$containers" | tr '\n' ' ')"
       fi
     else
-      docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
-      rm -f "$WOLTS_DIR/.space/platform/tunnel-url" "$WOLTS_DIR/.state/tunnel-url"
+      docker stop "$CONTAINER_NAME" 2>/dev/null || true
       echo "  ${_D}🌙 container stopped${_R}"
       echo "  ${_L}   lodge closed for the night${_R}"
+      echo "  ${_D}   run 'woltspace start' to resume${_R}"
     fi
+    ;;
+  restart)
+    echo "  ${_D}🔄 restarting...${_R}"
+    docker stop "$CONTAINER_NAME" 2>/dev/null || true
+    rm -f "$WOLTS_DIR/.space/platform/tunnel-url" "$WOLTS_DIR/.state/tunnel-url"
+    docker start "$CONTAINER_NAME" > /dev/null 2>&1 || {
+      # Container was removed or doesn't exist — start fresh
+      if ! docker image inspect woltspace &>/dev/null; then
+        _build_image
+      fi
+      _start_container
+    }
+    _show_url
     ;;
   shell)
     docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" || {
@@ -617,14 +632,61 @@ RESTORE
       _show_url
     fi
     ;;
+  status)
+    printf "\n  %b🦫%b  %b\n\n" "${_L}" "${_R}" "${_B}${_G}woltspace${_R}"
+
+    # Version
+    echo "  ${_D}version:${_R}   $(_current_version)"
+
+    # Container state
+    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+      echo "  ${_D}container:${_R} ${_G}running${_R}"
+    elif docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+      echo "  ${_D}container:${_R} stopped"
+    else
+      echo "  ${_D}container:${_R} not created"
+    fi
+
+    # Wolts
+    WOLT_COUNT=$(_count_wolts)
+    echo "  ${_D}wolts:${_R}     $WOLT_COUNT"
+    if [ "$WOLT_COUNT" -gt 0 ]; then
+      _list_wolt_names | while read -r w; do echo "             🪵 $w"; done
+    fi
+
+    # Tunnel
+    TUNNEL_FILE="$WOLTS_DIR/.space/platform/tunnel-url"
+    [ ! -f "$TUNNEL_FILE" ] && TUNNEL_FILE="$WOLTS_DIR/.state/tunnel-url"
+    if [ -f "$TUNNEL_FILE" ] && [ -n "$(cat "$TUNNEL_FILE" 2>/dev/null)" ]; then
+      echo "  ${_D}tunnel:${_R}    ${_C}$(cat "$TUNNEL_FILE")${_R}"
+    else
+      echo "  ${_D}tunnel:${_R}    off"
+    fi
+
+    # Paths
+    echo "  ${_D}source:${_R}    $WOLTSPACE_DIR"
+    echo "  ${_D}data:${_R}      $WOLTS_DIR"
+    echo ""
+    ;;
   version)
     echo "  $(_current_version)"
     ;;
   *)
-    echo "usage: woltspace <init|start|stop|update|rebuild|backup|shell|chat|logs|version>"
-    echo "       woltspace update [version|--nightly]"
-    echo "       woltspace rebuild [--no-cache]"
-    echo "       woltspace backup [tag] [--bundle]"
+    echo "usage: woltspace <command>"
+    echo ""
+    echo "commands:"
+    echo "  init                 first-time setup"
+    echo "  start                start or resume container"
+    echo "  stop                 stop container (resumable)"
+    echo "  restart              stop + start"
+    echo "  update [version]     update platform (latest tag, or specific version)"
+    echo "  rebuild [--no-cache] rebuild tools image + start fresh"
+    echo "  status               show version, container, wolts, tunnel"
+    echo "  shell                enter running container"
+    echo "  chat                 open claude in container"
+    echo "  logs                 stream container logs"
+    echo "  backup [tag]         snapshot (add --bundle for portable zip)"
+    echo "  version              show current version"
     exit 1
     ;;
 esac

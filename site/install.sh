@@ -5,29 +5,29 @@ set -e
 command -v docker >/dev/null || { echo "error: docker required — https://docs.docker.com/get-docker/"; exit 1; }
 command -v git >/dev/null || { echo "error: git required"; exit 1; }
 
-REPO_DIR="${HOME}/.woltspace/repo"
+WOLTSPACE_DIR="${HOME}/.woltspace/woltspace"
 
-if [ -d "$REPO_DIR/.git" ]; then
+if [ -d "$WOLTSPACE_DIR/.git" ]; then
   echo "  woltspace already installed — pulling latest..."
-  git -C "$REPO_DIR" fetch --quiet --tags
-  git -C "$REPO_DIR" merge --ff-only FETCH_HEAD || {
+  git -C "$WOLTSPACE_DIR" fetch --quiet --tags
+  git -C "$WOLTSPACE_DIR" merge --ff-only FETCH_HEAD || {
     echo "  warning: local changes detected — skipping pull. Run 'woltspace update' after install."
   }
-elif [ -d "$REPO_DIR" ]; then
-  echo "error: $REPO_DIR exists but isn't a git repo — remove it manually and re-run"
+elif [ -d "$WOLTSPACE_DIR" ]; then
+  echo "error: $WOLTSPACE_DIR exists but isn't a git repo — remove it manually and re-run"
   exit 1
 else
   mkdir -p "${HOME}/.woltspace"
-  git clone https://github.com/jerpint/woltspace "$REPO_DIR"
+  git clone https://github.com/jerpint/woltspace "$WOLTSPACE_DIR"
 fi
 
 # Checkout latest tag
-LATEST_TAG=$(cd "$REPO_DIR" && git tag --sort=-v:refname | head -1)
+LATEST_TAG=$(cd "$WOLTSPACE_DIR" && git tag --sort=-v:refname | head -1)
 if [ -n "$LATEST_TAG" ]; then
-  (cd "$REPO_DIR" && git checkout "$LATEST_TAG" --quiet)
+  (cd "$WOLTSPACE_DIR" && git checkout "$LATEST_TAG" --quiet)
   echo "  version: $LATEST_TAG"
 fi
 
 export WOLTS_DIR="${WOLTS_DIR:-$HOME/.woltspace/wolts}"
 
-"$REPO_DIR/woltspace" init
+"$WOLTSPACE_DIR/woltspace" init
