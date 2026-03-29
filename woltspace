@@ -11,6 +11,7 @@
 #   woltspace logs                    — stream container logs
 #   woltspace backup [tag]            — snapshot container + wolts (tag defaults to datetime)
 #   woltspace backup [tag] --bundle  — same, but zipped into one portable file
+#   woltspace update                  — check for updates and apply (spawns Claude)
 #
 # Flags:
 #   --branch <name>   — build image from a specific branch (default: main)
@@ -586,8 +587,24 @@ RESTORE
       _show_url
     fi
     ;;
+  update)
+    if ! command -v claude &>/dev/null; then
+      echo ""
+      echo "  ${_D}🪵 woltspace update requires Claude Code CLI${_R}"
+      echo "  ${_L}   install it: npm install -g @anthropic-ai/claude-code${_R}"
+      echo ""
+      exit 1
+    fi
+    echo ""
+    printf "  %b🦫%b  %b\n\n" "${_L}" "${_R}" "${_B}${_G}woltspace update${_R}"
+    echo "  ${_L}   waking up the beaver...${_R}"
+    echo ""
+    cd "$WOLTSPACE_DIR"
+    claude --allowedTools "Bash,Read,Glob,Grep,Write,Edit,AskUserQuestion" \
+      -p "/update"
+    ;;
   *)
-    echo "usage: woltspace <init|start|stop|rebuild|backup|shell|chat|logs>"
+    echo "usage: woltspace <init|start|stop|rebuild|backup|shell|chat|logs|update>"
     echo "       woltspace rebuild [--latest|--version X|--nightly|--branch X|--no-cache]"
     echo "       woltspace backup [tag] [--bundle]"
     exit 1
