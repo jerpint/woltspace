@@ -597,11 +597,10 @@ RESTORE
     fi
     echo ""
     printf "  %b🦫%b  %b\n\n" "${_L}" "${_R}" "${_B}${_G}woltspace update${_R}"
-    echo "  ${_L}   waking up the beaver...${_R}"
+    echo "  ${_L}   updateWolt will walk you through the update${_R}"
     echo ""
     cd "$WOLTSPACE_DIR"
-    claude --allowedTools "Bash,Read,Glob,Grep,Write,Edit,AskUserQuestion" \
-      -p "/update"
+    claude "/woltspace-update"
     ;;
   *)
     echo "usage: woltspace <init|start|stop|rebuild|backup|shell|chat|logs|update>"
