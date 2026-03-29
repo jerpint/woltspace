@@ -325,51 +325,85 @@ if [ "$cmd" = "init" ]; then
   # Build image
   _build_image
 
-  # Auth — run Claude login in a throwaway container if not already authenticated
-  if [ ! -f "$WOLTS_DIR/.claude/.credentials.json" ] && [ "${WOLTSPACE_NONINTERACTIVE:-}" != "true" ]; then
-    echo ""
-    echo "  ${_D}🔑 almost there — log in to Claude Code${_R}"
-    echo ""
-    echo "  ${_L}  this will open a Claude Code session.${_R}"
-    echo "  ${_L}  type /login, follow the prompts, then /exit when done.${_R}"
-    echo "  ${_L}  you'll need a claude.ai account (free or pro).${_R}"
-    echo ""
-    echo -n "  ${_C}ready? [Y/n] (press enter for yes)${_R} "
-    read -r _auth </dev/tty
-    _auth="${_auth:-Y}"
-    if [[ "$_auth" != [Yy] ]]; then
-      echo ""
-      echo "  ${_D}skipped — you can log in later from inside the container${_R}"
-    else
-    echo ""
-    mkdir -p "$WOLTS_DIR/.claude"
-    chown 1000:1000 "$WOLTS_DIR/.claude" 2>/dev/null \
-      || docker run --rm -v "$WOLTS_DIR/.claude:/fix" node:22-slim chown -R 1000:1000 /fix 2>/dev/null \
-      || true
-    # Write a temporary CLAUDE.md so Claude knows what's happening
-    cat > "$WOLTS_DIR/.claude/CLAUDE.md" << 'LOGINMD'
-# Woltspace Login
+  # Auth — authenticate Claude Code
+  _has_auth=false
+  grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' "$WOLTS_DIR/.env" 2>/dev/null && _has_auth=true
+  grep -q '^ANTHROPIC_API_KEY=' "$WOLTS_DIR/.env" 2>/dev/null && _has_auth=true
+  [ -f "$WOLTS_DIR/.claude/.credentials.json" ] && _has_auth=true
 
-The user just logged in to Claude Code for the first time as part of woltspace setup.
+  if [ "$_has_auth" = false ] && [ "${WOLTSPACE_NONINTERACTIVE:-}" != "true" ]; then
+    echo ""
+    echo "  ${_D}🔑 almost there — authenticate Claude Code${_R}"
+    echo ""
+    echo "  ${_L}  your wolts need Claude to think.${_R}"
+    echo "  ${_L}  pick how you'd like to authenticate:${_R}"
+    echo ""
+    echo "  ${_C}  [1]${_R} Claude Pro/Max/Team account ${_L}(recommended)${_R}"
+    echo "  ${_C}  [2]${_R} Anthropic API key"
+    echo "  ${_C}  [3]${_R} Skip for now"
+    echo ""
+    echo -n "  ${_C}choose [1/2/3]: ${_R}"
+    read -r _auth_choice </dev/tty
+    _auth_choice="${_auth_choice:-1}"
 
-Say: "welcome to woltspace! you're all set. type /exit or press ctrl+c to continue setup."
-
-Keep it to one or two lines. Don't do anything else.
-LOGINMD
-    docker run --rm -it \
-      -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
-      -e BROWSER= -e DISPLAY= \
-      --entrypoint claude \
-      woltspace || true
-    rm -f "$WOLTS_DIR/.claude/CLAUDE.md"
-    if [ -f "$WOLTS_DIR/.claude/.credentials.json" ]; then
-      echo ""
-      echo "  ${_G}✓${_R} logged in — $NAME can use Claude Code from day one"
-    else
-      echo ""
-      echo "  ${_D}skipped — you can log in later from inside the container${_R}"
-    fi
-    fi
+    case "$_auth_choice" in
+      1)
+        # OAuth via claude setup-token
+        if ! command -v claude &>/dev/null; then
+          echo ""
+          echo "  ${_D}claude CLI not found — needed for setup-token${_R}"
+          echo "  ${_L}  install it: https://docs.anthropic.com/en/docs/claude-code/overview${_R}"
+          echo ""
+          echo "  ${_D}falling back to API key option...${_R}"
+          echo ""
+          echo -n "  ${_C}paste your Anthropic API key (sk-ant-...): ${_R}"
+          read -r _api_key </dev/tty
+          if [ -n "$_api_key" ]; then
+            echo "ANTHROPIC_API_KEY=$_api_key" >> "$WOLTS_DIR/.env"
+            echo ""
+            echo "  ${_G}✓${_R} API key saved"
+          else
+            echo ""
+            echo "  ${_D}skipped — add auth to .env later${_R}"
+          fi
+        else
+          echo ""
+          echo "  ${_L}  this will open your browser to sign in.${_R}"
+          echo "  ${_L}  once done, the token is saved automatically.${_R}"
+          echo ""
+          _token=$(claude setup-token 2>/dev/null) || true
+          if [ -n "$_token" ]; then
+            echo "CLAUDE_CODE_OAUTH_TOKEN=$_token" >> "$WOLTS_DIR/.env"
+            echo ""
+            echo "  ${_G}✓${_R} authenticated — $NAME can use Claude Code from day one"
+          else
+            echo ""
+            echo "  ${_D}setup-token didn't return a token — you may need to log in manually${_R}"
+            echo "  ${_L}  run 'woltspace shell' then 'claude auth login' inside the container${_R}"
+          fi
+        fi
+        ;;
+      2)
+        # Direct API key
+        echo ""
+        echo -n "  ${_C}paste your Anthropic API key (sk-ant-...): ${_R}"
+        read -r _api_key </dev/tty
+        if [ -n "$_api_key" ]; then
+          echo "ANTHROPIC_API_KEY=$_api_key" >> "$WOLTS_DIR/.env"
+          echo ""
+          echo "  ${_G}✓${_R} API key saved — $NAME can use Claude Code from day one"
+        else
+          echo ""
+          echo "  ${_D}no key entered — add ANTHROPIC_API_KEY to .env later${_R}"
+        fi
+        ;;
+      *)
+        echo ""
+        echo "  ${_D}skipped — add auth to .env later:${_R}"
+        echo "  ${_L}  CLAUDE_CODE_OAUTH_TOKEN=... (from 'claude setup-token')${_R}"
+        echo "  ${_L}  or ANTHROPIC_API_KEY=sk-ant-...${_R}"
+        ;;
+    esac
   fi
   echo ""
 
