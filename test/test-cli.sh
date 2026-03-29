@@ -1,12 +1,10 @@
 #!/bin/bash
 # Smoke test for the woltspace CLI
-# Runs a full cycle: init → start → stop → rebuild → start → stop
+# Runs a full cycle: init → start → stop → start (resume) → restart → status → rebuild → backup
 #
 # Usage:
-#   bash test/test-cli.sh                    # test main branch (what users get)
-#   bash test/test-cli.sh --local              # test local code
-#   bash test/test-cli.sh --branch X           # test a specific branch
-#   bash test/test-cli.sh --local --no-cache   # clean build (simulates new user, slower)
+#   bash test/test-cli.sh               # test with current repo
+#   bash test/test-cli.sh --no-cache    # clean build (simulates new user, slower)
 #
 # Uses a temp WOLTS_DIR so your real wolts are untouched.
 
@@ -14,7 +12,6 @@ set -e
 
 WOLTSPACE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 export WOLTS_DIR="/tmp/test-woltspace-cli/wolts"
-unset WOLTSPACE_LOCAL
 export WOLTSPACE_CONTAINER="woltspace-test"
 export WOLTSPACE_PORT=7778
 export WOLTSPACE_NONINTERACTIVE=true
@@ -42,14 +39,8 @@ echo "  ════════════════════════
 echo "  🦫 WOLTSPACE CLI SMOKE TEST"
 echo "  ════════════════════════════════════════"
 echo "  ${_D}WOLTS_DIR=$WOLTS_DIR${_N}"
+echo "  ${_D}WOLTSPACE_DIR=$WOLTSPACE_DIR${_N}"
 echo "  ${_D}container: $CONTAINER_NAME${_N}"
-if echo "$BUILD_FLAGS" | grep -q "\-\-local"; then
-  echo "  ${_D}source: local repo${_N}"
-elif echo "$BUILD_FLAGS" | grep -q "\-\-branch"; then
-  echo "  ${_D}source: branch $(echo "$BUILD_FLAGS" | sed 's/.*--branch //')${_N}"
-else
-  echo "  ${_D}source: branch main (default)${_N}"
-fi
 echo ""
 
 # Clean slate
@@ -69,12 +60,25 @@ step "checking results..."
 docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" && pass "container running" || fail "container not running"
 
 step "waiting for server..."
-sleep 3
+sleep 5
 STATUS=$(docker exec "$CONTAINER_NAME" curl -s -o /dev/null -w "%{http_code}" http://localhost:7777/ 2>/dev/null || echo "000")
 [ "$STATUS" = "200" ] && pass "server responds (200)" || fail "server not responding ($STATUS)"
 
 step "checking wolt scaffolding..."
 docker exec "$CONTAINER_NAME" test -f /workspace/wolts/testwolt/wolt/wolt.json && pass "wolt scaffolded" || fail "wolt not scaffolded"
+
+step "checking repo is mounted..."
+docker exec "$CONTAINER_NAME" test -f /workspace/woltspace/woltspace && pass "repo mounted in container" || fail "repo not mounted"
+
+# ── version ──
+echo ""
+echo "  --- version ---"
+step "checking version command..."
+VERSION=$("$WOLTSPACE_DIR/woltspace" version 2>/dev/null | tr -d ' ')
+[ -n "$VERSION" ] && pass "version command works: $VERSION" || fail "version command returned empty"
+
+step "checking version pin..."
+[ -f "$WOLTS_DIR/.version" ] && pass "version pin exists: $(cat "$WOLTS_DIR/.version")" || fail "version pin not created"
 
 # ── stop ──
 echo ""
@@ -82,7 +86,8 @@ echo "  --- stop ---"
 step "stopping container..."
 "$WOLTSPACE_DIR/woltspace" stop 2>&1
 
-! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" && pass "container stopped" || fail "container still running"
+! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" && pass "container not running" || fail "container still running"
+docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" && pass "container still exists (not removed)" || fail "container was removed (should only stop)"
 
 # ── start (resume stopped container) ──
 echo ""
@@ -97,22 +102,27 @@ sleep 3
 STATUS=$(docker exec "$CONTAINER_NAME" curl -s -o /dev/null -w "%{http_code}" http://localhost:7777/ 2>/dev/null || echo "000")
 [ "$STATUS" = "200" ] && pass "server responds after resume (200)" || fail "server not responding after resume ($STATUS)"
 
-# ── stop again ──
-step "stopping for rebuild test..."
-"$WOLTSPACE_DIR/woltspace" stop 2>/dev/null
-
-# ── rebuild ──
+# ── restart ──
 echo ""
-echo "  --- rebuild ---"
-step "rebuilding image + starting container..."
-"$WOLTSPACE_DIR/woltspace" rebuild $BUILD_FLAGS 2>&1
+echo "  --- restart ---"
+step "restarting container..."
+"$WOLTSPACE_DIR/woltspace" restart 2>&1
 
-docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" && pass "container running after rebuild" || fail "container not running after rebuild"
+docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" && pass "container running after restart" || fail "container not running after restart"
 
 step "waiting for server..."
 sleep 3
 STATUS=$(docker exec "$CONTAINER_NAME" curl -s -o /dev/null -w "%{http_code}" http://localhost:7777/ 2>/dev/null || echo "000")
-[ "$STATUS" = "200" ] && pass "server responds after rebuild (200)" || fail "server not responding after rebuild ($STATUS)"
+[ "$STATUS" = "200" ] && pass "server responds after restart (200)" || fail "server not responding after restart ($STATUS)"
+
+# ── status ──
+echo ""
+echo "  --- status ---"
+step "checking status command..."
+STATUS_OUTPUT=$("$WOLTSPACE_DIR/woltspace" status 2>&1)
+echo "$STATUS_OUTPUT" | grep -q "running" && pass "status shows container running" || fail "status doesn't show running"
+echo "$STATUS_OUTPUT" | grep -q "testwolt" && pass "status shows wolt name" || fail "status doesn't show wolt name"
+echo "$STATUS_OUTPUT" | grep -q "version" && pass "status shows version" || fail "status doesn't show version"
 
 # ── reconcile (stale sessions cleaned on boot) ──
 echo ""
@@ -124,12 +134,24 @@ docker exec "$CONTAINER_NAME" bash -c '
 '
 
 step "restarting to trigger reconcile..."
-"$WOLTSPACE_DIR/woltspace" stop 2>/dev/null
-"$WOLTSPACE_DIR/woltspace" start 2>&1
+"$WOLTSPACE_DIR/woltspace" restart 2>&1
 
 sleep 3
 FAKE_STATUS=$(docker exec "$CONTAINER_NAME" cat /workspace/wolts/testwolt/.state/sessions/fake-session.json 2>/dev/null | grep -o '"status": *"[^"]*"' | head -1)
 [[ "$FAKE_STATUS" == *"orphaned"* ]] || [[ "$FAKE_STATUS" == *"reaped"* ]] && pass "stale session reconciled on boot" || fail "stale session not reconciled ($FAKE_STATUS)"
+
+# ── rebuild ──
+echo ""
+echo "  --- rebuild ---"
+step "rebuilding image + starting container..."
+"$WOLTSPACE_DIR/woltspace" rebuild $BUILD_FLAGS 2>&1
+
+docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" && pass "container running after rebuild" || fail "container not running after rebuild"
+
+step "waiting for server..."
+sleep 5
+STATUS=$(docker exec "$CONTAINER_NAME" curl -s -o /dev/null -w "%{http_code}" http://localhost:7777/ 2>/dev/null || echo "000")
+[ "$STATUS" = "200" ] && pass "server responds after rebuild (200)" || fail "server not responding after rebuild ($STATUS)"
 
 # ── backup ──
 echo ""
@@ -158,32 +180,6 @@ docker rmi woltspace-backup:test-bundle 2>/dev/null || true
 rm -rf /tmp/test-woltspace-cli/wolts-backup-test-snapshot
 rm -rf /tmp/test-woltspace-cli/wolts-backup-test-bundle
 rm -f /tmp/test-woltspace-cli/woltspace-backup-test-bundle.zip
-
-# ── version stamp ──
-echo ""
-echo "  --- version ---"
-step "checking version stamp..."
-VERSION=$(docker exec "$CONTAINER_NAME" cat /workspace/woltspace/.version 2>/dev/null || echo "")
-[ -n "$VERSION" ] && [ "$VERSION" != "" ] && pass "version stamped: $VERSION" || fail "no version stamp found"
-
-step "checking version is a release tag (not a commit hash)..."
-if echo "$VERSION" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+'; then
-  pass "version is a semver tag: $VERSION"
-else
-  fail "version is not a semver tag: $VERSION (expected vX.Y.Z — build may be using branch tip instead of latest release)"
-fi
-
-step "checking version matches latest remote tag..."
-if echo "$BUILD_FLAGS" | grep -q "\-\-local"; then
-  pass "local build — skipping remote tag comparison (version: $VERSION)"
-else
-  LATEST_REMOTE_TAG=$(git ls-remote --tags https://github.com/jerpint/woltspace.git 2>/dev/null | grep -v '\^{}' | awk '{print $2}' | sed 's|refs/tags/||' | sort -V | tail -1)
-  if [ -n "$LATEST_REMOTE_TAG" ]; then
-    [ "$VERSION" = "$LATEST_REMOTE_TAG" ] && pass "version matches latest remote tag ($LATEST_REMOTE_TAG)" || fail "version mismatch: container=$VERSION, latest remote tag=$LATEST_REMOTE_TAG"
-  else
-    pass "no remote tags found — skipping comparison (expected for fresh repos)"
-  fi
-fi
 
 # ── init with existing wolts (idempotent) ──
 echo ""
