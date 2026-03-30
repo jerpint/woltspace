@@ -447,6 +447,13 @@ def start_session(
         check=True,
     )
 
+    # Pipe all terminal output to a log file for post-crash debugging.
+    log_path = registry._sessions_dir(wolt) / f"{name}.log"
+    subprocess.run(
+        ["tmux", "pipe-pane", "-t", name, f"cat >> {shlex.quote(str(log_path))}"],
+        check=False,
+    )
+
     result = {"name": name, "url": session_url or None, "wolt": wolt}
     if project:
         result["project"] = project
