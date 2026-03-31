@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.0 (2026-03-31)
+
+- **Skill inheritance** — all platform skills renamed to `woltspace-*` prefix (e.g. `start-chat` → `woltspace-start-chat`). Wolt-owned skills are never touched. (#173)
+- **Boot sync covers all wolts** — `sync_all_wolt_skills()` replaces `copy_skills()`. Every wolt with `.claude/skills/` gets fresh platform skills on every boot.
+- **CLAUDE.md platform section** — auto-managed block at the top of every wolt's CLAUDE.md with platform rules, regenerated on boot. Wolt content below the markers is preserved.
+- **`/woltspace-update` re-syncs** — after pulling, skills and CLAUDE.md are synced immediately without needing a restart.
+- Removed `music` and `digest` from platform (wolts own their evolved copies).
+- Legacy skills (`update-2026-03-13`, `migrate-to-projects`) moved to `legacy/` and no longer synced.
+
+**Migration:** Old unprefixed platform skills must be removed from each wolt's `.claude/skills/`. See `docs/migrations/v0.4.0.md` for the blueprint — `/woltspace-update` handles it automatically.
+
 ## v0.3.0 (2026-03-24)
 
 - **Wolt-centric state model** — runtime state moved from a single shared `.state/` dump to per-wolt `wolts/{wolt}/.state/` directories. Global platform state lives at `wolts/.space/`. (#228)
