@@ -45,14 +45,33 @@ def resolve_wolt_dir(wolts_dir: Path, wolt_name: str) -> Path:
     return Path(os.environ.get("WOLT_DIR", "/workspace/wolt"))
 
 
-def copy_skills(woltspace_dir: Path, wolt_dir: Path):
-    """Platform defaults first, then wolt overrides win."""
-    dest = HOME / ".claude" / "skills"
-    dest.mkdir(parents=True, exist_ok=True)
+def sync_all_wolt_skills(woltspace_dir: Path, wolts_dir: Path):
+    """Sync woltspace-* platform skills to every wolt's .claude/skills/.
 
-    for src in [woltspace_dir / "container" / "skills", wolt_dir / ".claude" / "skills"]:
-        if src.is_dir():
-            shutil.copytree(src, dest, dirs_exist_ok=True)
+    Only touches woltspace-* prefixed skills — wolt-owned skills (no prefix)
+    are never modified. The legacy/ folder is never copied.
+    """
+    platform_skills = woltspace_dir / "container" / "skills"
+    if not platform_skills.is_dir():
+        return
+
+    for wolt in sorted(wolts_dir.iterdir()):
+        if not wolt.is_dir() or wolt.name.startswith("."):
+            continue
+        skills_dir = wolt / ".claude" / "skills"
+        if not skills_dir.exists():
+            # Skip wolts without .claude/skills/ (non-rodents, etc.)
+            continue
+
+        # Remove old platform skills
+        for d in skills_dir.glob("woltspace-*"):
+            if d.is_dir():
+                shutil.rmtree(d)
+
+        # Copy fresh platform skills
+        for d in platform_skills.glob("woltspace-*"):
+            if d.is_dir():
+                shutil.copytree(d, skills_dir / d.name)
 
 
 def write_bashrc(wolt_dir: Path, wolt_name: str):
@@ -214,6 +233,50 @@ def reconcile_sessions(wolts_dir: Path, woltspace_dir: Path):
         print(f"session reconcile skipped: {e}", file=sys.stderr)
 
 
+PLATFORM_SECTION_START = "<!-- WOLTSPACE:BEGIN — auto-managed, do not edit -->"
+PLATFORM_SECTION_END = "<!-- WOLTSPACE:END -->"
+
+
+def sync_claude_md_platform_section(wolts_dir: Path, woltspace_dir: Path):
+    """Regenerate the platform section at the top of every wolt's CLAUDE.md.
+
+    Preserves everything after the WOLTSPACE:END marker (the wolt's own content).
+    If no markers exist, prepends the platform section to the existing content.
+    """
+    # Import the canonical platform section from wolts.py
+    lib_dir = str(woltspace_dir / "container" / "lib")
+    if lib_dir not in sys.path:
+        sys.path.insert(0, lib_dir)
+    try:
+        from wolts import _platform_claude_md_section
+        platform_block = _platform_claude_md_section()
+    except ImportError:
+        return  # wolts.py not available yet (first-ever boot)
+
+    for wolt in sorted(wolts_dir.iterdir()):
+        if not wolt.is_dir() or wolt.name.startswith("."):
+            continue
+        claude_md = wolt / "CLAUDE.md"
+        if not claude_md.exists():
+            continue
+
+        content = claude_md.read_text()
+
+        if PLATFORM_SECTION_START in content and PLATFORM_SECTION_END in content:
+            # Replace existing platform section
+            before = content[:content.index(PLATFORM_SECTION_START)]
+            after = content[content.index(PLATFORM_SECTION_END) + len(PLATFORM_SECTION_END):]
+            # Strip leading newlines from after to avoid double-spacing
+            after = after.lstrip("\n")
+            new_content = before + platform_block + "\n" + after
+        else:
+            # No markers — prepend platform section
+            new_content = platform_block + "\n" + content
+
+        if new_content != content:
+            claude_md.write_text(new_content)
+
+
 def symlink_node_modules(woltspace_dir: Path):
     target = Path("/workspace/node_modules")
     if target.is_symlink() or target.exists():
@@ -245,7 +308,8 @@ def main():
     dev_mode = (woltspace_dir / ".git").is_dir()
 
     # Config & identity
-    copy_skills(woltspace_dir, wolt_dir)
+    sync_all_wolt_skills(woltspace_dir, wolts_dir)
+    sync_claude_md_platform_section(wolts_dir, woltspace_dir)
     write_bashrc(wolt_dir, wolt_name)
     write_trust_config(wolts_dir)
     write_settings_json(woltspace_dir)

@@ -56,8 +56,8 @@ Session link: $($SESSION_REG get-field "$SESSION_NAME" session_url 2>/dev/null |
     fi
 fi
 
-# Build the full prompt: user's task + adapter context + /start-chat for session context
-FULL_PROMPT="$PROMPT${ADAPTER_CONTEXT} /start-chat $ADAPTER $WOLT_NAME"
+# Build the full prompt: user's task + adapter context + /woltspace-start-chat for session context
+FULL_PROMPT="$PROMPT${ADAPTER_CONTEXT} /woltspace-start-chat $ADAPTER $WOLT_NAME"
 
 # Run claude — capture exit code
 EXIT_CODE=0
