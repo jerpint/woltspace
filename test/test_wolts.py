@@ -6,6 +6,7 @@ in container/lib/wolts.py.
 Usage: uv run pytest test/test_wolts.py -v
 """
 
+import importlib.util
 import json
 import os
 import sys
@@ -17,6 +18,8 @@ import pytest
 # Add container and lib to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+
+ENTRYPOINT_SETUP = Path(__file__).resolve().parent.parent / "container" / "entrypoint_setup.py"
 
 
 # ---------------------------------------------------------------------------
@@ -457,3 +460,176 @@ class TestStartSession:
             result = start_session(wolt="mywolt", project="myapp")
             assert result["project"] == "myapp"
             assert (tmp_path / "mywolt" / "wolt" / "projects" / "myapp").is_dir()
+
+
+# ---------------------------------------------------------------------------
+# Skill sync tests (entrypoint_setup.py)
+# ---------------------------------------------------------------------------
+
+def _load_entrypoint():
+    spec = importlib.util.spec_from_file_location("entrypoint_setup", ENTRYPOINT_SETUP)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestSyncAllWoltSkills:
+    """Unit: sync_all_wolt_skills copies woltspace-* skills to all wolts."""
+
+    def test_syncs_woltspace_skills_to_all_wolts(self, tmp_path):
+        mod = _load_entrypoint()
+        woltspace = tmp_path / "woltspace"
+        skills_src = woltspace / "container" / "skills"
+
+        # Create two platform skills and one non-platform
+        (skills_src / "woltspace-notify").mkdir(parents=True)
+        (skills_src / "woltspace-notify" / "SKILL.md").write_text("notify skill")
+        (skills_src / "woltspace-viewport").mkdir()
+        (skills_src / "woltspace-viewport" / "SKILL.md").write_text("viewport skill")
+        (skills_src / "legacy").mkdir()  # should NOT be copied
+
+        # Create two wolts with .claude/skills/
+        wolts = tmp_path / "wolts"
+        for name in ["alpha", "beta"]:
+            (wolts / name / ".claude" / "skills").mkdir(parents=True)
+
+        mod.sync_all_wolt_skills(woltspace, wolts)
+
+        for name in ["alpha", "beta"]:
+            assert (wolts / name / ".claude" / "skills" / "woltspace-notify" / "SKILL.md").exists()
+            assert (wolts / name / ".claude" / "skills" / "woltspace-viewport" / "SKILL.md").exists()
+            assert not (wolts / name / ".claude" / "skills" / "legacy").exists()
+
+    def test_preserves_wolt_owned_skills(self, tmp_path):
+        mod = _load_entrypoint()
+        woltspace = tmp_path / "woltspace"
+        (woltspace / "container" / "skills" / "woltspace-notify").mkdir(parents=True)
+        (woltspace / "container" / "skills" / "woltspace-notify" / "SKILL.md").write_text("x")
+
+        wolts = tmp_path / "wolts"
+        skills_dir = wolts / "alpha" / ".claude" / "skills"
+        (skills_dir / "my-custom-skill").mkdir(parents=True)
+        (skills_dir / "my-custom-skill" / "SKILL.md").write_text("mine")
+
+        mod.sync_all_wolt_skills(woltspace, wolts)
+
+        # Wolt's own skill is untouched
+        assert (skills_dir / "my-custom-skill" / "SKILL.md").read_text() == "mine"
+        # Platform skill was synced
+        assert (skills_dir / "woltspace-notify" / "SKILL.md").exists()
+
+    def test_replaces_stale_platform_skills(self, tmp_path):
+        mod = _load_entrypoint()
+        woltspace = tmp_path / "woltspace"
+        (woltspace / "container" / "skills" / "woltspace-notify").mkdir(parents=True)
+        (woltspace / "container" / "skills" / "woltspace-notify" / "SKILL.md").write_text("v2")
+
+        wolts = tmp_path / "wolts"
+        skills_dir = wolts / "alpha" / ".claude" / "skills"
+        (skills_dir / "woltspace-notify").mkdir(parents=True)
+        (skills_dir / "woltspace-notify" / "SKILL.md").write_text("v1")
+
+        mod.sync_all_wolt_skills(woltspace, wolts)
+
+        assert (skills_dir / "woltspace-notify" / "SKILL.md").read_text() == "v2"
+
+    def test_skips_wolts_without_skills_dir(self, tmp_path):
+        mod = _load_entrypoint()
+        woltspace = tmp_path / "woltspace"
+        (woltspace / "container" / "skills" / "woltspace-notify").mkdir(parents=True)
+        (woltspace / "container" / "skills" / "woltspace-notify" / "SKILL.md").write_text("x")
+
+        wolts = tmp_path / "wolts"
+        (wolts / "no-claude-dir").mkdir(parents=True)  # no .claude/skills/
+
+        # Should not raise
+        mod.sync_all_wolt_skills(woltspace, wolts)
+
+
+class TestSyncClaudeMdPlatformSection:
+    """Unit: sync_claude_md_platform_section manages the platform block in CLAUDE.md."""
+
+    def test_prepends_to_existing_claude_md(self, tmp_path):
+        mod = _load_entrypoint()
+        wolts = tmp_path / "wolts"
+        wolt = wolts / "alpha"
+        wolt.mkdir(parents=True)
+        (wolt / "CLAUDE.md").write_text("# Alpha\n\nMy wolt stuff.\n")
+
+        woltspace = tmp_path / "woltspace"
+        # Make wolts.py importable
+        lib = woltspace / "container" / "lib"
+        lib.mkdir(parents=True)
+        import shutil
+        shutil.copy2(Path(__file__).resolve().parent.parent / "container" / "lib" / "wolts.py", lib / "wolts.py")
+
+        mod.sync_claude_md_platform_section(wolts, woltspace)
+
+        content = (wolt / "CLAUDE.md").read_text()
+        assert "<!-- WOLTSPACE:BEGIN" in content
+        assert "<!-- WOLTSPACE:END -->" in content
+        assert "# Alpha" in content
+        assert "My wolt stuff." in content
+        # Platform section comes first
+        assert content.index("WOLTSPACE:BEGIN") < content.index("# Alpha")
+
+    def test_replaces_existing_platform_section(self, tmp_path):
+        mod = _load_entrypoint()
+        wolts = tmp_path / "wolts"
+        wolt = wolts / "alpha"
+        wolt.mkdir(parents=True)
+        (wolt / "CLAUDE.md").write_text(
+            "<!-- WOLTSPACE:BEGIN — auto-managed, do not edit -->\nOLD STUFF\n<!-- WOLTSPACE:END -->\n\n# Alpha\n"
+        )
+
+        woltspace = tmp_path / "woltspace"
+        lib = woltspace / "container" / "lib"
+        lib.mkdir(parents=True)
+        import shutil
+        shutil.copy2(Path(__file__).resolve().parent.parent / "container" / "lib" / "wolts.py", lib / "wolts.py")
+
+        mod.sync_claude_md_platform_section(wolts, woltspace)
+
+        content = (wolt / "CLAUDE.md").read_text()
+        assert "OLD STUFF" not in content
+        assert "DO NOT edit files outside" in content
+        assert "# Alpha" in content
+
+    def test_skips_wolts_without_claude_md(self, tmp_path):
+        mod = _load_entrypoint()
+        wolts = tmp_path / "wolts"
+        (wolts / "alpha").mkdir(parents=True)
+        # No CLAUDE.md — should not raise
+
+        woltspace = tmp_path / "woltspace"
+        lib = woltspace / "container" / "lib"
+        lib.mkdir(parents=True)
+        import shutil
+        shutil.copy2(Path(__file__).resolve().parent.parent / "container" / "lib" / "wolts.py", lib / "wolts.py")
+
+        mod.sync_claude_md_platform_section(wolts, woltspace)
+        assert not (wolts / "alpha" / "CLAUDE.md").exists()
+
+
+class TestSetupWoltSkillsOnly:
+    """Unit: setup_wolt_claude_config only copies woltspace-* skills."""
+
+    def test_only_copies_woltspace_prefixed_skills(self, tmp_path):
+        from wolts import setup_wolt_claude_config
+
+        woltspace = tmp_path / "woltspace"
+        skills_src = woltspace / "container" / "skills"
+        (skills_src / "woltspace-notify").mkdir(parents=True)
+        (skills_src / "woltspace-notify" / "SKILL.md").write_text("notify")
+        (skills_src / "legacy" / "old-skill").mkdir(parents=True)
+        (skills_src / "legacy" / "old-skill" / "SKILL.md").write_text("old")
+
+        wolt_dir = tmp_path / "mywolt"
+        wolt_dir.mkdir()
+
+        with patch("wolts.WOLTS_DIR", tmp_path), patch("wolts.WOLTSPACE_DIR", woltspace):
+            setup_wolt_claude_config(wolt_dir, "mywolt")
+
+        skills_dir = wolt_dir / ".claude" / "skills"
+        assert (skills_dir / "woltspace-notify" / "SKILL.md").exists()
+        assert not (skills_dir / "legacy").exists()

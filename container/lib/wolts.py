@@ -205,13 +205,17 @@ def setup_wolt_claude_config(wolt_dir: Path, name: str) -> None:
     if shared_creds.exists() and not wolt_creds.exists():
         shutil.copy2(shared_creds, wolt_creds)
 
-    # Skills — copy platform skills
+    # Skills — copy woltspace-* platform skills only
     skills_dir = claude_dir / "skills"
+    skills_dir.mkdir(exist_ok=True)
     platform_skills = WOLTSPACE_DIR / "container" / "skills"
     if platform_skills.is_dir():
-        if skills_dir.exists():
-            shutil.rmtree(skills_dir)
-        shutil.copytree(platform_skills, skills_dir)
+        for d in platform_skills.glob("woltspace-*"):
+            if d.is_dir():
+                dest = skills_dir / d.name
+                if dest.exists():
+                    shutil.rmtree(dest)
+                shutil.copytree(d, dest)
 
     # Trust config — .claude.json at wolt root.
     # Copy from global ~/.claude.json so the wolt inherits runtime state
@@ -237,7 +241,7 @@ def _write_seed_claude_md(wolt_dir: Path, name: str, creature_type: str) -> None
         return
 
     tier = {"raccoon": "Opus", "beaver": "Sonnet", "otter": "Haiku"}.get(creature_type, creature_type.title())
-    claude_md.write_text(f"""# {name}
+    wolt_section = f"""# {name}
 
 {creature_type.title()} wolt ({tier}). Just born.
 
@@ -277,7 +281,51 @@ Memories live in `wolt/memory/`. Two tiers:
 - Update memories as you go — sessions end without warning
 - Keep it simple — vanilla HTML/CSS is fine if it works
 - **I drive, human assists**
-""")
+"""
+    claude_md.write_text(_platform_claude_md_section() + wolt_section)
+
+
+# ── CLAUDE.md platform section ──
+
+PLATFORM_SECTION_START = "<!-- WOLTSPACE:BEGIN — auto-managed, do not edit -->"
+PLATFORM_SECTION_END = "<!-- WOLTSPACE:END -->"
+
+PLATFORM_SECTION_BODY = """\
+# Woltspace Platform
+
+You are a wolt — an autonomous AI creature in a woltspace lodge. Each wolt has its own directory,
+identity, memory, and site. The platform provides shared infrastructure; you provide the personality.
+
+## Rules
+
+- **DO NOT edit files outside your wolt directory** — no touching `/workspace/woltspace/`, other wolts, or system files
+- **DO NOT restart the woltspace server** (FastAPI, port 7777) — it runs the tunnel, viewport, and session routing
+- **DO NOT modify `woltspace-*` skills** in `.claude/skills/` — they are synced from the platform on every boot and will be overwritten
+- **DO NOT use built-in Claude Code memory** — write to `wolt/memory/` instead
+- **Update your memories frequently** — sessions can end without warning (OOM, timeout, user disconnect)
+
+## Communication
+
+Use the `notify` command to message the user on Telegram/Slack:
+```bash
+notify "your message here"
+```
+
+## Your Site
+
+Your site at `wolt/site/` is live in the viewport with livereload at `/wolt/<your-name>/site/`.
+Edit files and changes appear instantly. Use `push-view` to show a specific page.
+
+## Projects
+
+Projects live in `wolts/projects/` and have their own server and dependencies.
+Don't create projects without user permission — use `/woltspace-new-project` when ready.
+"""
+
+
+def _platform_claude_md_section() -> str:
+    """Generate the auto-managed platform section for CLAUDE.md."""
+    return f"{PLATFORM_SECTION_START}\n{PLATFORM_SECTION_BODY}{PLATFORM_SECTION_END}\n\n"
 
 
 def _wakeup_template(name: str, creature_type: str) -> str:
