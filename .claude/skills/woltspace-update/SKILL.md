@@ -71,7 +71,8 @@ If a newer tag exists, show:
    ```bash
    git show ${LATEST}:CHANGELOG.md 2>/dev/null
    ```
-4. Any breaking changes, new env vars, or action items
+4. If the changelog references a migration guide (e.g. `docs/migrations/v0.4.0.md`), read it from the incoming version and include its steps in your report. Migration steps run on the host against `$WOLTS_DIR` — execute them after backup (Step 5a) but before rebuild (Step 5c).
+5. Any breaking changes, new env vars, or action items
 
 **Determine the bump type** (for backup decision in Step 5):
 ```bash
