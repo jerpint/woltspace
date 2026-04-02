@@ -921,9 +921,284 @@
     animation: shimmer 1.5s infinite;
     border-radius: 6px;
   }
+
+  /* ── BACKGROUND SCENE (pixel art critters) ── */
+  .bg-scene {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    overflow: hidden;
+  }
+  #bg-nature {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    pointer-events: none;
+  }
+  @keyframes river-scroll {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(60px); }
+  }
+  .bg-river-shimmer {
+    position: absolute;
+    bottom: 0;
+    left: -60px;
+    width: calc(100% + 120px);
+    height: 40px;
+    background: repeating-linear-gradient(90deg,
+      transparent 0px, transparent 10px,
+      rgba(144,212,232,0.18) 10px, rgba(144,212,232,0.18) 15px
+    );
+    animation: river-scroll 1.4s linear infinite;
+    pointer-events: none;
+  }
+
+  /* Sprite animations */
+  .sprite-2frame { position:relative; display:inline-block; }
+  .sprite-2frame > .frm-a { position:relative; display:block; }
+  .sprite-2frame > .frm-b { position:absolute; top:0; left:0; }
+  @keyframes frm-a-on { 0%,49.9%{opacity:1} 50%,100%{opacity:0} }
+  @keyframes frm-b-on { 0%,49.9%{opacity:0} 50%,100%{opacity:1} }
+  .frm-a { animation: frm-a-on 0.38s steps(1,end) infinite; }
+  .frm-b { animation: frm-b-on 0.38s steps(1,end) infinite; }
+
+  @keyframes swim-across {
+    0%    { transform: translateX(-240px); }
+    49%   { transform: translateX(calc(100vw + 240px)); }
+    49.1% { transform: translateX(calc(100vw + 240px)) scaleX(-1); }
+    98%   { transform: translateX(-240px) scaleX(-1); }
+    98.1% { transform: translateX(-240px); }
+    100%  { transform: translateX(-240px); }
+  }
+  @keyframes walk-bob {
+    0%, 100% { transform: translateY(0px); }
+    50%       { transform: translateY(-10px); }
+  }
+  @keyframes raccoon-wander {
+    0%    { transform: translateX(12vw); }
+    44%   { transform: translateX(62vw); }
+    44.1% { transform: translateX(62vw) scaleX(-1); }
+    88%   { transform: translateX(12vw) scaleX(-1); }
+    88.1% { transform: translateX(12vw); }
+    100%  { transform: translateX(12vw); }
+  }
+  @keyframes beaver-side-bob {
+    0%, 100% { transform: translateY(0px); }
+    50%       { transform: translateY(-14px); }
+  }
+  @keyframes log-bob {
+    0%, 100% { transform: translateY(0px) rotate(-2deg); }
+    50%       { transform: translateY(-9px) rotate(3deg); }
+  }
+  @keyframes leaf-fall {
+    0%   { transform: translate(0, 0) rotate(0deg); opacity: 0; }
+    6%   { opacity: 0.8; }
+    94%  { opacity: 0.8; }
+    100% { transform: translate(80px, 60vh) rotate(480deg); opacity: 0; }
+  }
+  @keyframes leaf-fall-2 {
+    0%   { transform: translate(0, 0) rotate(30deg); opacity: 0; }
+    6%   { opacity: 0.7; }
+    94%  { opacity: 0.7; }
+    100% { transform: translate(-60px, 60vh) rotate(-380deg); opacity: 0; }
+  }
+  @keyframes ripple-out {
+    0%   { transform: translate(-50%,-50%) scale(0.1); opacity: 0.5; }
+    100% { transform: translate(-50%,-50%) scale(1); opacity: 0; }
+  }
+  @keyframes peek-up {
+    0%   { transform: translateY(120%); }
+    18%  { transform: translateY(-4%); }
+    82%  { transform: translateY(-4%); }
+    100% { transform: translateY(120%); }
+  }
+  @keyframes float-up-fade {
+    0%   { transform: translateY(0); opacity: 1; }
+    100% { transform: translateY(-90px); opacity: 0; }
+  }
+  @keyframes fish-jump {
+    0%   { transform: translateY(0) rotate(0deg); opacity: 0; }
+    10%  { opacity: 1; }
+    40%  { transform: translateY(-110px) rotate(-28deg); opacity: 1; }
+    80%  { transform: translateY(12px) rotate(50deg); opacity: 0.4; }
+    100% { transform: translateY(0) rotate(0deg); opacity: 0; }
+  }
+  @keyframes cloud-drift {
+    0%   { transform: translateX(calc(100vw + 400px)); }
+    100% { transform: translateX(-400px); }
+  }
+
+  .bg-beaver-main {
+    position: absolute;
+    bottom: 55px; left: 0;
+    animation: swim-across 78s linear infinite;
+  }
+  .bg-beaver-main .sprite-2frame { animation: walk-bob 0.38s ease-in-out infinite; }
+  .bg-beaver-2 {
+    position: absolute;
+    bottom: 68px; right: 260px;
+    animation: beaver-side-bob 3.6s ease-in-out infinite;
+  }
+  .bg-raccoon {
+    position: absolute;
+    bottom: 55px;
+    animation: raccoon-wander 50s linear 6s infinite;
+  }
+  .bg-raccoon .sprite-2frame { animation: walk-bob 0.42s ease-in-out infinite; }
+  .bg-log {
+    position: absolute;
+    bottom: 42px; right: 190px;
+    animation: log-bob 4.2s ease-in-out infinite;
+  }
+  .bg-ripple-container {
+    position: absolute;
+    bottom: 28px; right: 60px;
+    width: 90px; height: 50px;
+  }
+  .bg-ripple {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 70px; height: 36px;
+    border: 2px solid rgba(74,139,168,0.4);
+    border-radius: 50%;
+    animation: ripple-out 3.2s ease-out infinite;
+  }
+  .bg-ripple:nth-child(2) { animation-delay: 1.1s; }
+  .bg-ripple:nth-child(3) { animation-delay: 2.2s; }
+  .bg-leaf {
+    position: absolute;
+    top: 48%; right: 28%;
+    animation: leaf-fall 14s ease-in 0s infinite;
+    opacity: 0;
+  }
+  .bg-leaf-2 {
+    position: absolute;
+    top: 52%; right: 55%;
+    animation: leaf-fall-2 19s ease-in 5s infinite;
+    opacity: 0;
+  }
+  .bg-peek {
+    position: absolute;
+    bottom: 0;
+    display: none;
+  }
+  .bg-peek.active {
+    display: block;
+    animation: peek-up 5s ease-in-out forwards;
+  }
+  .bg-emoji-float {
+    position: absolute;
+    font-size: 22px;
+    animation: float-up-fade 3.2s ease-out forwards;
+    pointer-events: none;
+  }
+  .bg-fish {
+    position: absolute;
+    bottom: 8px;
+    display: none;
+  }
+  .bg-fish.active {
+    display: block;
+    animation: fish-jump 2.5s ease-in-out forwards;
+  }
+  .bg-cloud {
+    position: absolute;
+    pointer-events: none;
+    animation: cloud-drift linear infinite;
+    opacity: 0.88;
+  }
+
+  /* Make main content float above the scene */
+  .sidebar { z-index: 2; }
+  .main { z-index: 1; position: relative; }
+
+  /* ── HOME VIEW ── */
+  .home-view {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 0 40px;
+    text-align: center;
+    min-height: 0;
+  }
+  .home-greeting {
+    font-family: var(--font-display);
+    font-size: 48px;
+    font-weight: 300;
+    letter-spacing: -0.03em;
+    color: var(--ink);
+    line-height: 1.1;
+    margin-bottom: 16px;
+    text-shadow: 0 2px 12px rgba(237,232,222,0.6);
+  }
+  .home-tagline {
+    font-family: var(--font-body);
+    font-size: 17px;
+    color: var(--ink-2);
+    max-width: 420px;
+    line-height: 1.6;
+    margin-bottom: 32px;
+    text-shadow: 0 1px 8px rgba(237,232,222,0.5);
+  }
+  .home-quote {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-3);
+    letter-spacing: 0.04em;
+    max-width: 480px;
+    line-height: 1.6;
+    padding: 14px 20px;
+    background: rgba(245,241,232,0.7);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    backdrop-filter: blur(4px);
+    transition: opacity 0.4s ease;
+  }
 </style>
 </head>
 <body>
+
+<!-- ── BACKGROUND SCENE ── -->
+<div class="bg-scene" id="bg-scene">
+  <div id="bg-nature"></div>
+  <div class="bg-river-shimmer"></div>
+  <div id="cl-1" class="bg-cloud" style="top:38%; animation-duration:150s; animation-delay:0s"></div>
+  <div id="cl-2" class="bg-cloud" style="top:52%; animation-duration:115s; animation-delay:-42s"></div>
+  <div id="cl-3" class="bg-cloud" style="top:42%; animation-duration:185s; animation-delay:-92s"></div>
+  <div id="cl-4" class="bg-cloud" style="top:56%; animation-duration:135s; animation-delay:-68s"></div>
+  <div id="cl-5" class="bg-cloud" style="top:46%; animation-duration:165s; animation-delay:-125s"></div>
+  <div id="cl-6" class="bg-cloud" style="top:49%; animation-duration:200s; animation-delay:-28s"></div>
+  <div class="bg-beaver-main" id="bg-beaver-main">
+    <div class="sprite-2frame">
+      <div class="frm-a" id="sp-bv-main-a"></div>
+      <div class="frm-b" id="sp-bv-main-b"></div>
+    </div>
+  </div>
+  <div class="bg-beaver-2" id="bg-beaver-2">
+    <div id="sp-bv-side"></div>
+  </div>
+  <div class="bg-raccoon" id="bg-raccoon">
+    <div class="sprite-2frame">
+      <div class="frm-a" id="sp-rc-a"></div>
+      <div class="frm-b" id="sp-rc-b"></div>
+    </div>
+  </div>
+  <div class="bg-log" id="bg-log">
+    <div id="sp-log"></div>
+  </div>
+  <div class="bg-ripple-container">
+    <div class="bg-ripple"></div>
+    <div class="bg-ripple"></div>
+    <div class="bg-ripple"></div>
+  </div>
+  <div class="bg-leaf"><div id="sp-leaf-g"></div></div>
+  <div class="bg-leaf-2"><div id="sp-leaf-r"></div></div>
+  <div class="bg-peek" id="bg-peek"><div id="sp-peek"></div></div>
+  <div class="bg-fish" id="bg-fish"><div id="sp-fish"></div></div>
+</div>
 
 <button class="hamburger" onclick="toggleSidebar()">☰</button>
 
@@ -937,7 +1212,11 @@
   </div>
 
   <div class="sidebar-nav">
-    <div class="sidebar-nav-item active" id="nav-projects" onclick="showView('projects')">
+    <div class="sidebar-nav-item active" id="nav-home" onclick="showView('home')">
+      <span class="sidebar-nav-icon">🏠</span>
+      <span class="sidebar-nav-label">Home</span>
+    </div>
+    <div class="sidebar-nav-item" id="nav-projects" onclick="showView('projects')">
       <span class="sidebar-nav-icon">🪓</span>
       <span class="sidebar-nav-label">Projects</span>
     </div>
@@ -993,8 +1272,17 @@
     <button class="onboard-banner-btn" onclick="openOnboard()">onboard →</button>
   </div>
 
+  <!-- ── HOME VIEW ── -->
+  <div id="home-view" class="view active">
+    <div class="home-view">
+      <div class="home-greeting" id="home-greeting">the lodge</div>
+      <div class="home-tagline">where wolts live and things get built.</div>
+      <div class="home-quote" id="home-quote"></div>
+    </div>
+  </div>
+
   <!-- ── PROJECTS VIEW ── -->
-  <div id="projects-view" class="view active">
+  <div id="projects-view" class="view">
     <div class="main-header">
       <div>
         <div class="main-title">Projects</div>
@@ -1102,7 +1390,7 @@
   let allProjects = [];
   let allSessions = [];
   let projectFilter = 'all';
-  let currentView = 'projects';
+  let currentView = 'home';
 
   // ── Helpers ──
   function timeAgo(ts) {
@@ -1493,6 +1781,460 @@
   loadSessions();
   setInterval(loadSessions, 5000);
   setInterval(loadProjects, 10000);
+
+  // ── Home quotes ──
+  const LODGE_QUOTES = [
+    'a beaver never ships on Friday.',
+    'the forest remembers what the terminal forgets.',
+    'every great project starts with a gnaw.',
+    'otters move fast. raccoons think twice. beavers build.',
+    'if it works in the viewport, it works.',
+    'state is temporary. memory is forever.',
+    'the best code is the code you didn\'t write.',
+    'wolts don\'t sleep — they just lose context.',
+    'the river runs whether you push or not.',
+    'a good lodge has thick walls and fast livereload.',
+    'trees grow from the root, not the branch.',
+    'one commit at a time.',
+    'the pack runs together.',
+    'downstream of every bug is a lesson.',
+    'a raccoon\'s taste is a beaver\'s blueprint.',
+  ];
+
+  function rotateQuote() {
+    const el = document.getElementById('home-quote');
+    if (!el) return;
+    el.style.opacity = '0';
+    setTimeout(() => {
+      el.textContent = '» ' + LODGE_QUOTES[Math.floor(Math.random() * LODGE_QUOTES.length)];
+      el.style.opacity = '1';
+    }, 400);
+  }
+  rotateQuote();
+  setInterval(rotateQuote, 8000);
+
+  // ── Time-based greeting ──
+  (function() {
+    const h = new Date().getHours();
+    const el = document.getElementById('home-greeting');
+    if (h < 6) el.textContent = 'the lodge never sleeps.';
+    else if (h < 12) el.textContent = 'good morning.';
+    else if (h < 18) el.textContent = 'the lodge';
+    else el.textContent = 'evening in the lodge.';
+  })();
+
+  // ── PIXEL SPRITE RENDERER ──
+  (function() {
+    var PX = 8;
+    var PAL = {
+      bv: {
+        O:'#1A0803', B:'#3D1A08', m:'#7A3E18', M:'#5A2C10',
+        l:'#C87A40', L:'#E09A58', w:'#F0E8C0', W:'#FFF8E0',
+        k:'#0A0A0A', K:'#484848', r:'#9B4040', T:'#2A1005',
+        t:'#5A3A18', g:'#8B6030', p:'#2A0E05',
+      },
+      rc: {
+        O:'#101010', B:'#2A2A2A', g:'#808080', G:'#B8B8B8',
+        M:'#484848', s:'#686868', w:'#F0F0F0', k:'#0A0A0A',
+        D:'#505050', S:'#989898', p:'#202020',
+      },
+      lg: { O:'#1A0803', B:'#3D1A08', L:'#7B5A36', l:'#9B7850', h:'#C8A870' },
+      lf: { O:'#1A3A15', B:'#2D5A27', L:'#5A9A48', l:'#3A7A30' },
+      lr: { O:'#5A1A05', B:'#8B3010', L:'#E07840', l:'#C4531E' },
+      fs: {
+        O:'#0A2020', B:'#1A4040', f:'#3A7A9A', F:'#5AAAC8',
+        H:'#80CCE0', k:'#0A0A0A', s:'#287A9A',
+      },
+      pk: {
+        O:'#1A0803', B:'#3D1A08', m:'#7A3E18', M:'#5A2C10',
+        l:'#C87A40', L:'#E09A58', w:'#F0E8C0', W:'#FFFFFF',
+        k:'#0A0A0A', K:'#484848', p:'#2A0E05', r:'#9B4040',
+        e:'#FFFFF0',
+      },
+    };
+    var MAPS = {
+      bvA: [
+        '.....OOOOOOO....................',
+        '...OOmMMmmmOO...................',
+        '..OmMKOkKMmmO...................',
+        '..OmmKOKKmmmmmOOOOOOO..........',
+        '..OmmrrmmmmmmmOtTtTtTO..........',
+        '.OmMmlllwwwlllmmOtgTgTO.........',
+        '.OmlllllwwwwwlllOTgTgTO.........',
+        '.OmMllllwwwwllllO.OTTTOO........',
+        '..OmmMlllllllmmmO...............',
+        '...OmmmmmmmmmmmmO...............',
+        '....OOOOOOOOOOOOO...............',
+        '...pp.............pp............',
+        '...pO.............pO............',
+      ],
+      bvB: [
+        '.....OOOOOOO....................',
+        '...OOmMMmmmOO...................',
+        '..OmMKOkKMmmO...................',
+        '..OmmKOKKmmmmmOOOOOOO..........',
+        '..OmmrrmmmmmmmOtTtTtTO..........',
+        '.OmMmlllwwwlllmmOtgTgTO.........',
+        '.OmlllllwwwwwlllOTgTgTO.........',
+        '.OmMllllwwwwllllO.OTTTOO........',
+        '..OmmMlllllllmmmO...............',
+        '...OmmmmmmmmmmmmO...............',
+        '....OOOOOOOOOOOOO...............',
+        '....pp...........pp.............',
+        '....pO...........pO.............',
+      ],
+      rcA: [
+        '.....OOOOOOO..........',
+        '....OBgsMsggO.........',
+        '...OBgBkBgBkBgO.......',
+        '...OgkkkkkkkkgO.DSSSD.',
+        '...OggBBBBBBggO.SDSDS.',
+        '..OgggggGGGGgggO.DSDSD',
+        '..OgGGGwwwwwGGGgO.....',
+        '..OgGGGwwwwwGGGgO.....',
+        '..OggggGGGGgggggO.....',
+        '...OBgggggggggBO......',
+        '....OOOOOOOOOOO.......',
+        '...pp.......pp........',
+        '...pO.......pO........',
+      ],
+      rcB: [
+        '.....OOOOOOO..........',
+        '....OBgsMsggO.........',
+        '...OBgBkBgBkBgO.......',
+        '...OgkkkkkkkkgO.DSSSD.',
+        '...OggBBBBBBggO.SDSDS.',
+        '..OgggggGGGGgggO.DSDSD',
+        '..OgGGGwwwwwGGGgO.....',
+        '..OgGGGwwwwwGGGgO.....',
+        '..OggggGGGGgggggO.....',
+        '...OBgggggggggBO......',
+        '....OOOOOOOOOOO.......',
+        '....pp.....pp.........',
+        '....pO.....pO.........',
+      ],
+      log: [
+        'OOOOOOOOOOOOOOOOOOOOOO',
+        'OlLhLlLhLlLhLlLhLlLhO',
+        'OlllllllllllllllllllO',
+        'OBllBllBllBllBllBllBO',
+        'OlllllllllllllllllllO',
+        'OlLhLlLhLlLhLlLhLlLhO',
+        'OOOOOOOOOOOOOOOOOOOOOO',
+      ],
+      leafG: [
+        '....O.....',
+        '...OlO....',
+        '..OlLBO...',
+        '.OlLLBBO..',
+        'OlLLLBBO..',
+        '.OlLLBO...',
+        '..OlLBO...',
+        '...OlO....',
+        '....O.....',
+      ],
+      leafR: [
+        '....O.....',
+        '...OlO....',
+        '..OlLBO...',
+        '.OlLLBBO..',
+        'OlLLLBBO..',
+        '.OlLLBO...',
+        '..OlLBO...',
+        '...OlO....',
+        '....O.....',
+      ],
+      fish: [
+        '..........OOOOOOO......',
+        '.........OBFFHFFBsO....',
+        '........OBFHFFkFFFBO...',
+        '......OOBFFFFHFFFFfBO..',
+        '.....OBBfFFFHFFFFFfBO..',
+        '....OBffFFFFFFFFFFBO...',
+        '.....OBfFFFFFFFFBO.....',
+        '......OBBBBBBBBBO......',
+        '.......OBO...OBO.......',
+        '.......OO.....OO.......',
+      ],
+      peek: [
+        '.......OOOOOOOOOO.......',
+        '......OmMMmmmmMMO.......',
+        '.....OmmMKkKMmmMmO......',
+        '.....OmmKOkOKmmmmO......',
+        '.....OmmmKKKmmmmmO......',
+        '.....OmmmOOOmmrrmO......',
+        '.....OmmmlllwwmmmO......',
+        '.....OmmmmwwewwmmO......',
+        '......OmMmmmmMmO........',
+        '.......OOOOOOOO.........',
+        '....pOO.......OOp.......',
+        '....ppp.......ppp.......',
+      ],
+    };
+
+    function renderSprite(map, pal, px) {
+      var rows = map.length;
+      var cols = Math.max.apply(null, map.map(function(r){return r.length;}));
+      var rects = [];
+      for (var r = 0; r < rows; r++) {
+        for (var c = 0; c < map[r].length; c++) {
+          var fill = pal[map[r][c]];
+          if (!fill) continue;
+          rects.push('<rect x="'+(c*px)+'" y="'+(r*px)+'" width="'+px+'" height="'+px+'" fill="'+fill+'"/>');
+        }
+      }
+      var w = cols*px, h = rows*px;
+      return '<svg width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" xmlns="http://www.w3.org/2000/svg" style="image-rendering:pixelated;display:block" shape-rendering="crispEdges">'+rects.join('')+'</svg>';
+    }
+
+    function inject(id, mapKey, palKey, px) {
+      var el = document.getElementById(id);
+      if (el) el.innerHTML = renderSprite(MAPS[mapKey], PAL[palKey], px || PX);
+    }
+
+    inject('sp-bv-main-a', 'bvA', 'bv', 6);
+    inject('sp-bv-main-b', 'bvB', 'bv', 6);
+    inject('sp-bv-side',   'bvA', 'bv', 5);
+    inject('sp-rc-a',      'rcA', 'rc', 6);
+    inject('sp-rc-b',      'rcB', 'rc', 6);
+    inject('sp-log',       'log', 'lg', 5);
+    inject('sp-leaf-g',    'leafG', 'lf', 5);
+    inject('sp-leaf-r',    'leafR', 'lr', 5);
+    inject('sp-fish',      'fish', 'fs', 5);
+    inject('sp-peek',      'peek', 'pk', 6);
+
+    document.querySelectorAll('.sprite-2frame').forEach(function(el) {
+      var svg = el.querySelector('svg');
+      if (svg) {
+        el.style.width  = svg.getAttribute('width')  + 'px';
+        el.style.height = svg.getAttribute('height') + 'px';
+      }
+    });
+  })();
+
+  // ── LANDSCAPE SCENE GENERATOR ──
+  (function() {
+    var S = 5;
+    var W = Math.ceil(window.innerWidth / S) + 6;
+    var H  = 48;
+    var BANK  = 34;
+    var RIVER = 40;
+
+    var C = {
+      fa:'#8AA6BA', fb:'#6A8698',
+      sn:'#F0F4F8', sb:'#C8D8E8',
+      na:'#3E5A32', nb:'#293E20',
+      ta:'#3A7030', tb:'#2A5225', tc:'#1A3A18', tt:'#4A2810',
+      ga:'#72B855', gb:'#4A8838', gc:'#2A5A1A',
+      ea:'#5A4020', eb:'#3A2810',
+      ra:'#90D4E8', rb:'#4AAAC8', rc:'#2A7AAA', rd:'#1A5888',
+      ba:'#3A7030', bb:'#224A1A',
+    };
+
+    function dot(x, y, c) {
+      return '<rect x="'+(x*S)+'" y="'+(y*S)+'" width="'+S+'" height="'+S+'" fill="'+c+'"/>';
+    }
+
+    var fp = [], np = [];
+    for (var x = 0; x < W; x++) {
+      fp[x] = Math.round(7 + 5*Math.sin(x*0.05+0.3) + 3*Math.sin(x*0.12+1.7) + 1.5*Math.sin(x*0.04+0.9));
+      np[x] = Math.round(6 + 6*Math.sin(x*0.08+1.0) + 3.5*Math.sin(x*0.16+0.5) + 1.5*Math.sin(x*0.22+2.4));
+    }
+
+    var out = [];
+
+    for (var x = 0; x < W; x++) {
+      var ft = BANK - 16 - fp[x];
+      var snowLine = ft + 3;
+      for (var y = Math.max(ft, 0); y < BANK; y++) {
+        var col;
+        if (y <= snowLine) {
+          col = y === ft ? C.sn : (y === snowLine ? C.sb : C.sn);
+        } else {
+          col = y === ft ? C.fb : C.fa;
+        }
+        out.push(dot(x, y, col));
+      }
+    }
+
+    for (var x = 0; x < W; x++) {
+      var nt = BANK - 2 - np[x];
+      for (var y = Math.max(nt, 1); y < BANK; y++)
+        out.push(dot(x, y, y === nt ? C.nb : C.na));
+    }
+
+    for (var x = 0; x < W; x++) {
+      out.push(dot(x, BANK,   C.ga));
+      out.push(dot(x, BANK+1, C.gb));
+      out.push(dot(x, BANK+2, C.gc));
+      out.push(dot(x, BANK+3, C.ea));
+      for (var y = BANK+4; y < RIVER; y++) out.push(dot(x, y, C.eb));
+    }
+
+    for (var x = 0; x < W; x++) {
+      out.push(dot(x, RIVER, C.ba));
+      var sh = ((x*3+2) % 9 < 2) ? C.ra : (x % 5 === 0 ? C.rb : C.rc);
+      out.push(dot(x, RIVER+1, sh));
+      out.push(dot(x, RIVER+2, C.rc));
+      out.push(dot(x, RIVER+3, C.rd));
+      for (var y = RIVER+4; y < H; y++) out.push(dot(x, y, C.rd));
+    }
+
+    function tree(cx, baseY, h) {
+      for (var dy = 0; dy < h; dy++) {
+        var hw = Math.floor((dy + 1) * 0.55);
+        var tc = dy < 2 ? C.ta : (dy < h - 2 ? C.tb : C.tc);
+        for (var dx = -hw; dx <= hw; dx++) {
+          var tx = cx + dx;
+          if (tx >= 0 && tx < W) out.push(dot(tx, baseY - h + 1 + dy, tc));
+        }
+      }
+      if (cx >= 0 && cx < W) { out.push(dot(cx, baseY+1, C.tt)); out.push(dot(cx, baseY+2, C.tt)); }
+    }
+
+    var tx = 3;
+    while (tx < W - 3) {
+      var nt2 = BANK - 2 - np[tx];
+      if (nt2 < BANK - 7) {
+        tree(tx, nt2 + Math.floor(np[tx] * 0.55), 5 + ((tx*7) % 4));
+      }
+      tx += 7 + ((tx*13 + 5) % 5);
+    }
+
+    var el = document.getElementById('bg-nature');
+    if (el) el.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="'+(W*S)+'" height="'+(H*S)+'" style="image-rendering:pixelated;display:block" shape-rendering="crispEdges">'+out.join('')+'</svg>';
+  })();
+
+  // ── CLOUDS ──
+  (function() {
+    var CP = { O:'#8898A8', w:'#E0E8EE', W:'#F8FCFF', s:'#BCC8D0' };
+    var SHAPES = {
+      lg: [
+        '......OOOO...OOOO.......',
+        '.....OwwWwOOOwwWwO......',
+        '....OwWWWWwOwWWWWwO.....',
+        '...OOwWWWWWwwWWWWWwOO...',
+        '..OwwWWWWWWWWWWWWWWwO...',
+        '..OwWWWWWWWWWWWWWWWWwO..',
+        '..OwWWWWWWWWWWWWWWWWwO..',
+        '..OwWWWWWWWWWWWWWWWWwO..',
+        '..OwwWWWWWWWWWWWWWWwwO..',
+        '..OssssssssssssssssssO..',
+        '...OOOOOOOOOOOOOOOOOO...',
+      ],
+      md: [
+        '....OOO...OOO......',
+        '...OwWwOOOwWwO.....',
+        '..OwWWWwOwWWWwO....',
+        '.OOwWWWWwwWWWWwOO..',
+        '.OwwWWWWWWWWWWWwO..',
+        '.OwWWWWWWWWWWWWwO..',
+        '.OwWWWWWWWWWWWWwO..',
+        '.OwwWWWWWWWWWWwwO..',
+        '.OssssssssssssssO..',
+        '..OOOOOOOOOOOOOO...',
+      ],
+      sm: [
+        '...OOO..OOO....',
+        '..OwWwOOwWwO...',
+        '.OwWWWwwWWWwO..',
+        '.OwwWWWWWWwwO..',
+        '.OwWWWWWWWWwO..',
+        '.OwwWWWWWWwwO..',
+        '.OssssssssssO..',
+        '..OOOOOOOOOO...',
+      ],
+    };
+
+    function renderCloud(map, px) {
+      var cols = Math.max.apply(null, map.map(function(r){return r.length;}));
+      var rects = [];
+      for (var r = 0; r < map.length; r++) {
+        for (var c = 0; c < map[r].length; c++) {
+          var fill = CP[map[r][c]];
+          if (!fill) continue;
+          rects.push('<rect x="'+(c*px)+'" y="'+(r*px)+'" width="'+px+'" height="'+px+'" fill="'+fill+'"/>');
+        }
+      }
+      var w = cols*px, h = map.length*px;
+      return '<svg width="'+w+'" height="'+h+'" xmlns="http://www.w3.org/2000/svg" style="image-rendering:pixelated;display:block" shape-rendering="crispEdges">'+rects.join('')+'</svg>';
+    }
+
+    [
+      { id:'cl-1', shape:'lg', px:7 },
+      { id:'cl-2', shape:'md', px:6 },
+      { id:'cl-3', shape:'sm', px:6 },
+      { id:'cl-4', shape:'lg', px:6 },
+      { id:'cl-5', shape:'md', px:5 },
+      { id:'cl-6', shape:'sm', px:5 },
+    ].forEach(function(c) {
+      var el = document.getElementById(c.id);
+      if (el) el.innerHTML = renderCloud(SHAPES[c.shape], c.px);
+    });
+  })();
+
+  // ── BACKGROUND WACKINESS ENGINE ──
+  (function() {
+    var WACKY_EMOJIS = ['🐟','🍂','💦','🌿','🪵','🦆','🐸','🍄','🌊','🪨','🌰','🐛'];
+
+    function spawnFloatingEmoji() {
+      var scene = document.getElementById('bg-scene');
+      if (!scene || scene.style.display === 'none') return;
+      var el = document.createElement('div');
+      el.className = 'bg-emoji-float';
+      el.textContent = WACKY_EMOJIS[Math.floor(Math.random() * WACKY_EMOJIS.length)];
+      el.style.left   = (8 + Math.random() * 84) + '%';
+      el.style.bottom = (8 + Math.random() * 35) + '%';
+      el.style.fontSize = (14 + Math.random() * 18) + 'px';
+      el.style.opacity  = '0.7';
+      scene.appendChild(el);
+      setTimeout(function(){el.remove();}, 3500);
+    }
+
+    function triggerPeek() {
+      var peek = document.getElementById('bg-peek');
+      if (!peek || peek.classList.contains('active')) return;
+      peek.style.left = (15 + Math.random() * 55) + '%';
+      peek.classList.add('active');
+      setTimeout(function(){peek.classList.remove('active');}, 5500);
+    }
+
+    function triggerFishJump() {
+      var fish = document.getElementById('bg-fish');
+      if (!fish || fish.classList.contains('active')) return;
+      fish.style.right = (80 + Math.random() * 200) + 'px';
+      fish.classList.add('active');
+      setTimeout(function(){fish.classList.remove('active');}, 2800);
+    }
+
+    function triggerLogSpin() {
+      var log = document.getElementById('bg-log');
+      if (!log) return;
+      log.style.transition = 'transform 0.7s cubic-bezier(.68,-0.55,.27,1.55)';
+      log.style.transform  = 'rotate(180deg) translateY(-10px)';
+      setTimeout(function(){log.style.transform = '';}, 800);
+    }
+
+    function triggerBeaverFrenzy() {
+      var b2 = document.getElementById('bg-beaver-2');
+      if (!b2) return;
+      b2.style.animation = 'none';
+      void b2.offsetWidth;
+      b2.style.animation = 'beaver-side-bob 0.45s ease-in-out 8, beaver-side-bob 3.6s ease-in-out infinite';
+    }
+
+    var events = [triggerPeek, triggerFishJump, spawnFloatingEmoji, spawnFloatingEmoji, triggerLogSpin, triggerBeaverFrenzy, triggerPeek];
+
+    function scheduleNext() {
+      var delay = 7000 + Math.random() * 20000;
+      setTimeout(function() {
+        events[Math.floor(Math.random() * events.length)]();
+        scheduleNext();
+      }, delay);
+    }
+
+    setTimeout(scheduleNext, 4000);
+  })();
 
   console.log('%c🦫', 'font-size:3rem');
   console.log('%cwoltspace — the lodge', 'color:#C98B2A;font-family:monospace');
