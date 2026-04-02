@@ -131,6 +131,21 @@
   .sidebar-nav-item:hover .sidebar-nav-label,
   .sidebar-nav-item.active .sidebar-nav-label { color: rgba(255,255,255,0.92); }
 
+  /* ── Nav badge ── */
+  .nav-badge {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    background: #5BC87A;
+    color: #fff;
+    border-radius: 10px;
+    padding: 1px 7px;
+    line-height: 1.6;
+    display: none;
+  }
+  .nav-badge.visible { display: inline-block; }
+
   /* ── Sidebar team section ── */
   .sidebar-section { padding: 20px 24px 12px; }
   .sidebar-section-label {
@@ -203,6 +218,64 @@
     font-family: var(--font-mono);
     font-size: 10px;
     color: rgba(255,255,255,0.35);
+  }
+  /* ── Wolt card actions ── */
+  .wolt-card-actions {
+    display: none;
+    gap: 4px;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+  .wolt-card:hover .wolt-card-actions { display: flex; }
+  .wolt-action-btn {
+    width: 26px; height: 26px;
+    border-radius: 5px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.07);
+    color: rgba(255,255,255,0.5);
+    font-size: 13px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+    text-decoration: none;
+  }
+  .wolt-action-btn:hover { background: rgba(255,255,255,0.14); color: rgba(255,255,255,0.85); }
+
+  /* ── Wolt tooltip ── */
+  .wolt-card { position: relative; }
+  .wolt-tooltip {
+    display: none;
+    position: absolute;
+    left: 100%;
+    top: 0;
+    margin-left: 10px;
+    width: 220px;
+    background: #2a2018;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px;
+    padding: 10px 12px;
+    z-index: 20;
+    pointer-events: none;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+  .wolt-card:hover .wolt-tooltip { display: block; }
+  .wolt-tooltip-name {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.9);
+    margin-bottom: 4px;
+  }
+  .wolt-tooltip-role {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 6px;
+  }
+  .wolt-tooltip-desc {
+    font-size: 12px;
+    color: rgba(255,255,255,0.4);
+    line-height: 1.5;
   }
 
   /* ── Creatures toggle ── */
@@ -379,11 +452,24 @@
     border-radius: 12px;
     overflow: hidden;
     transition: border-color 0.15s, box-shadow 0.15s;
+    cursor: pointer;
   }
   .project-card:hover {
     border-color: var(--border-2);
     box-shadow: 0 2px 8px rgba(0,0,0,0.06);
   }
+  .project-source-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--ink-3);
+    text-decoration: none;
+    padding: 2px 0;
+    transition: color 0.15s;
+  }
+  .project-source-link:hover { color: var(--ink-2); }
   .project-card-body { padding: 20px; }
   .project-card-top {
     display: flex;
@@ -858,6 +944,7 @@
     <div class="sidebar-nav-item" id="nav-sessions" onclick="showView('sessions')">
       <span class="sidebar-nav-icon">🌿</span>
       <span class="sidebar-nav-label">Sessions</span>
+      <span class="nav-badge" id="sessions-badge"></span>
     </div>
   </div>
 
@@ -1080,18 +1167,31 @@
 
     container.innerHTML = chatWolts.map(w => {
       const emoji = WOLT_EMOJI[w.type] || '🦫';
-      const isRunning = woltsWithSessions.has(w.dir || w.name);
+      const name = w.name || w.dir;
+      const isRunning = woltsWithSessions.has(w.dir || name);
       const statusClass = isRunning ? 'running' : '';
       const isRodent = RODENT_TYPES.has(w.type);
-      return `<div class="wolt-card" onclick="${isRodent ? `startSession('${w.name || w.dir}')` : ''}">
+      const role = w.role || '';
+      const desc = w.description || '';
+      const tooltip = (role || desc) ? `
+        <div class="wolt-tooltip">
+          <div class="wolt-tooltip-name">${emoji} ${name}</div>
+          ${role ? `<div class="wolt-tooltip-role">${role}</div>` : ''}
+          ${desc ? `<div class="wolt-tooltip-desc">${desc}</div>` : ''}
+        </div>` : '';
+      return `<div class="wolt-card" onclick="${isRodent ? `startSession('${name}')` : ''}">
         <div class="wolt-avatar">
           ${emoji}
           <div class="wolt-status-dot ${statusClass}"></div>
         </div>
         <div class="wolt-info">
-          <div class="wolt-name">${w.name || w.dir}</div>
+          <div class="wolt-name">${name}</div>
           <div class="wolt-type">${w.type}</div>
         </div>
+        <div class="wolt-card-actions">
+          <a class="wolt-action-btn" href="/wolt/${name}/site/" target="_blank" onclick="event.stopPropagation()" title="Open site">↗</a>
+        </div>
+        ${tooltip}
       </div>`;
     }).join('');
   }
@@ -1138,8 +1238,9 @@
       const keeperWolt = allWolts.find(w => (w.name || w.dir) === keeper);
       const keeperEmoji = keeperWolt ? (WOLT_EMOJI[keeperWolt.type] || '🦫') : '📦';
       const stackTags = p.stack ? `<span class="stack-tag">${p.stack}</span>` : '';
+      const sourceLink = p.source ? `<a class="project-source-link" href="${p.source}" target="_blank" onclick="event.stopPropagation()">⎋ ${p.source.replace('https://github.com/', '')}</a>` : '';
 
-      return `<div class="project-card">
+      return `<div class="project-card" onclick="window.open('${p.url}','_blank')">
         <div class="project-card-body">
           <div class="project-card-top">
             <span class="project-emoji">${emoji}</span>
@@ -1148,7 +1249,7 @@
               ${status}
             </div>
           </div>
-          <a class="project-name-link" href="${p.url}" target="_blank">${p.name}</a>
+          <div class="project-name-link">${p.name}</div>
           ${stackTags ? `<div class="project-stack">${stackTags}</div>` : ''}
           <div class="project-desc">${desc}</div>
           <div class="project-card-footer">
@@ -1156,11 +1257,11 @@
               <div class="project-wolt-avatar">${keeperEmoji}</div>
               <div>
                 <div class="project-wolt-name">${keeper}</div>
-                <div class="project-wolt-assign">keeper</div>
+                <div class="project-wolt-assign">${sourceLink || 'keeper'}</div>
               </div>
             </div>
             <div class="project-actions">
-              ${canToggle ? `<button class="action-btn ${p.running ? 'stop' : 'start'}" title="${p.running ? 'Stop' : 'Start'}" onclick="toggleProject('${p.name}', ${p.running})">${p.running ? '■' : '▶'}</button>` : ''}
+              ${canToggle ? `<button class="action-btn ${p.running ? 'stop' : 'start'}" title="${p.running ? 'Stop' : 'Start'}" onclick="event.stopPropagation();toggleProject('${p.name}', ${p.running})">${p.running ? '■' : '▶'}</button>` : ''}
             </div>
           </div>
         </div>
@@ -1200,6 +1301,14 @@
     const running = allSessions.filter(s => s.name !== 'main' && s.status === 'running');
     document.getElementById('sessions-subtitle').textContent =
       `${running.length} running · ${allSessions.length} total`;
+    // Update nav badge
+    const badge = document.getElementById('sessions-badge');
+    if (running.length > 0) {
+      badge.textContent = running.length;
+      badge.classList.add('visible');
+    } else {
+      badge.classList.remove('visible');
+    }
 
     // Build filter tabs
     const woltNames = [...new Set(allSessions.map(s => s.wolt).filter(Boolean))];
