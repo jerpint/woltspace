@@ -477,7 +477,7 @@ async def session_new_create(request: Request):
         # Step 2: Start a session — full isolation, site auto-start, viewport
         result = start_session(
             wolt=wolt_name,
-            prompt="/create-wolt",
+            prompt="/woltspace-create-wolt",
             routing={"adapter": "lodge"},
         )
         print(f"[sessions/create] spawned {result['name']} for {wolt_name}")

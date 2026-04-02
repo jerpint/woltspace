@@ -171,7 +171,7 @@ def scaffold_wolt(wolt_name: str, wolts_dir: Path, woltspace_dir: Path) -> Path:
     if not (wolt_dir / ".git").is_dir():
         subprocess.run(["git", "init", "-q", str(wolt_dir)], check=False)
 
-    # Signal first-run so entrypoint launches /create-wolt instead of normal greeting
+    # Signal first-run so entrypoint launches /woltspace-create-wolt instead of normal greeting
     first_run = HOME / ".claude" / ".first-run"
     first_run.parent.mkdir(parents=True, exist_ok=True)
     first_run.touch()
