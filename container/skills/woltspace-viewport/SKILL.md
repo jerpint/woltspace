@@ -25,10 +25,16 @@ The server runs on **port 7777**. You never need to curl it directly — `push-v
 
 ## Live reload
 
-Sites have automatic live reload. When you edit files in `wolt/site/`, the viewport updates immediately — no need to call `push-view` again after the initial push. Just edit and save.
+Sites have automatic live reload. When you edit files in `wolt/site/`, the **current page** refreshes automatically — no need to call `push-view` again after the initial push.
+
+**Important:** Livereload only refreshes the page already showing in the viewport. To show a **different** page (e.g. you created a new HTML file), you **must** call `push-view` again with the new path. Livereload won't switch pages for you.
 
 ## Tips
 
+- **Use URL paths, not filesystem paths:**
+  - ✅ `push-view /wolt/<name>/site/my-page.html`
+  - ❌ `push-view /workspace/wolts/<name>/wolt/site/my-page.html`
+  - (push-view will auto-translate filesystem paths, but use URL paths for clarity)
 - The viewport only shows content served by localhost:7777. External URLs won't work (iframe CORS).
 - Each session's viewport is independent. Pushing to one doesn't affect others.
 - **Always use `push-view`** — never manually curl to `/current`.

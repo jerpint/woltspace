@@ -6,6 +6,15 @@
 
 URL="${1:?usage: push-view /path}"
 
+# Auto-translate filesystem paths to URL paths.
+# /workspace/wolts/<name>/wolt/site/foo.html → /wolt/<name>/site/foo.html
+if [[ "$URL" == /workspace/wolts/*/wolt/site/* ]]; then
+  WOLT_NAME=$(echo "$URL" | sed 's|^/workspace/wolts/\([^/]*\)/wolt/site/.*|\1|')
+  FILE_PATH=$(echo "$URL" | sed 's|^/workspace/wolts/[^/]*/wolt/site/||')
+  URL="/wolt/${WOLT_NAME}/site/${FILE_PATH}"
+  echo "[push-view] translated filesystem path → ${URL}" >&2
+fi
+
 # Detect session: env var first (set by run-session.sh), then tmux, then main
 SESSION="${WOLT_SESSION:-}"
 if [ -z "$SESSION" ]; then
