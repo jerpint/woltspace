@@ -160,6 +160,63 @@ async def cors_middleware(request: Request, call_next):
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
 
+@app.middleware("http")
+async def subdomain_proxy(request: Request, call_next):
+    """Proxy subdomain requests to project ports.
+
+    blog.localhost:7777 → proxy to localhost:{blog's port}
+    Any *.localhost or *.localhost:PORT hostname triggers this.
+    """
+    host = (request.headers.get("host") or "").split(":")[0]
+    if host.endswith(".localhost") and host != "localhost":
+        project_name = host.removesuffix(".localhost")
+        try:
+            from projects import running_projects
+            running = {r["name"]: r for r in running_projects()}
+            run_state = running.get(project_name)
+            if not run_state:
+                return HTMLResponse(
+                    f"<h1>Project '{project_name}' is not running</h1>",
+                    status_code=503,
+                )
+            port = run_state["port"]
+            # Build the upstream URL preserving path and query string
+            path = request.url.path
+            qs = f"?{request.url.query}" if request.url.query else ""
+            upstream = f"http://localhost:{port}{path}{qs}"
+            async with httpx.AsyncClient() as client:
+                # Forward the request
+                headers = dict(request.headers)
+                headers["host"] = f"localhost:{port}"
+                body = await request.body()
+                resp = await client.request(
+                    method=request.method,
+                    url=upstream,
+                    headers=headers,
+                    content=body,
+                    follow_redirects=False,
+                )
+                # Pass through the response
+                excluded = {"transfer-encoding", "content-encoding", "content-length"}
+                resp_headers = {
+                    k: v for k, v in resp.headers.items()
+                    if k.lower() not in excluded
+                }
+                return Response(
+                    content=resp.content,
+                    status_code=resp.status_code,
+                    headers=resp_headers,
+                )
+        except httpx.ConnectError:
+            return HTMLResponse(
+                f"<h1>Cannot reach project '{project_name}' on port {port}</h1>",
+                status_code=502,
+            )
+        except Exception as e:
+            return HTMLResponse(f"<h1>Proxy error: {e}</h1>", status_code=502)
+    return await call_next(request)
+
+
 @app.options("/{path:path}")
 async def options_handler():
     return Response(status_code=204)

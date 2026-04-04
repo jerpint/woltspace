@@ -473,8 +473,15 @@ def start_session(
         result["creature"] = creature
         result["model"] = model
 
-    # Auto-start wolt site for non-project sessions.
-    if not project:
+    # Set viewport: project subdomain URL if project session, otherwise wolt site.
+    if project:
+        try:
+            project_url = f"http://{project}.localhost:7777/"
+            registry.set_viewport(name, project_url, wolt=wolt)
+            result["viewport_url"] = project_url
+        except Exception as e:
+            print(f"[sessions] failed to set project viewport for {project}: {e}")
+    else:
         try:
             site_state = start_site(wolt)
             site_url = f"/wolt/{wolt}/site/"

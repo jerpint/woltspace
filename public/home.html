@@ -1530,7 +1530,9 @@
       const stackTags = p.stack ? `<span class="stack-tag">${p.stack}</span>` : '';
       const sourceLink = p.source ? `<a class="project-source-link" href="${p.source}" target="_blank" onclick="event.stopPropagation()">⎋ ${p.source.replace('https://github.com/', '')}</a>` : '';
 
-      return `<div class="project-card" onclick="window.open('${p.url}','_blank')">
+      const projectUrl = 'http://' + p.name + '.localhost:7777/';
+
+      return `<div class="project-card" onclick="${p.running ? `window.open('${projectUrl}','_blank')` : ''}">
         <div class="project-card-body">
           <div class="project-card-top">
             <span class="project-emoji">${emoji}</span>
@@ -1551,7 +1553,7 @@
               </div>
             </div>
             <div class="project-actions">
-              ${p.running ? `<button class="action-btn ${p.sharing ? 'shared' : 'share'}" title="${p.sharing ? 'Unshare' : 'Share'}" onclick="event.stopPropagation();toggleShare('${p.name}', ${p.sharing})">${p.sharing ? '🌐' : '🔒'}</button>` : ''}
+              ${canToggle ? `<button class="action-btn gnaw" title="gnaw — open with keeper" onclick="event.stopPropagation();openProject('${p.name}','${keeper}')">gnaw →</button>` : ''}
               ${canToggle ? `<button class="action-btn ${p.running ? 'stop' : 'start'}" title="${p.running ? 'Stop' : 'Start'}" onclick="event.stopPropagation();toggleProject('${p.name}', ${p.running})">${p.running ? '■' : '▶'}</button>` : ''}
             </div>
           </div>
@@ -1708,6 +1710,17 @@
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ wolt: woltName }),
+    }).then(r => r.json()).then(data => {
+      if (data.name) window.open('/tui?session=' + encodeURIComponent(data.name), '_blank');
+    }).catch(() => {});
+  }
+
+  // ── Open project (split view with keeper) ──
+  function openProject(projectName, keeper) {
+    fetch('/sessions/new/lodge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wolt: keeper, project: projectName }),
     }).then(r => r.json()).then(data => {
       if (data.name) window.open('/tui?session=' + encodeURIComponent(data.name), '_blank');
     }).catch(() => {});
