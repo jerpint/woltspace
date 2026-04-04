@@ -305,10 +305,10 @@ def share_project(name: str) -> dict:
             start_new_session=True,
         )
 
-    # Poll log for tunnel URL (up to 30s)
+    # Poll log for tunnel URL (up to 15s, checking every 0.5s)
     tunnel_url = ""
     for _ in range(30):
-        time.sleep(1)
+        time.sleep(0.5)
         try:
             with open(log_file) as f:
                 content = f.read()

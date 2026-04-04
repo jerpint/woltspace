@@ -418,8 +418,13 @@
       }
     }
 
-    // Build a direct port URL from the current host and a given port
+    // Are we on localhost? Direct port URLs only work locally.
+    const isLocal = ['localhost', '127.0.0.1', '0.0.0.0'].includes(location.hostname);
+
+    // Build a direct port URL — only works on localhost.
+    // When remote (tunnel), returns null so callers can fall back.
     function directPortUrl(port, subPath) {
+      if (!isLocal) return null;
       return location.protocol + '//' + location.hostname + ':' + port + (subPath || '/');
     }
 
@@ -436,9 +441,9 @@
         ).then(r => r.json());
 
         if (!isRunning && result.port) {
-          // Project just started — load direct port URL
-          const url = directPortUrl(result.port);
-          preview.src = url;
+          // Project just started — load direct port URL (localhost) or fallback path
+          const direct = directPortUrl(result.port);
+          preview.src = direct || '/project/' + currentProjectName + '/';
           // Update session so pollCurrent doesn't fight us
           setCurrent('/project/' + currentProjectName + '/', result.port);
           if (currentViewportMeta) currentViewportMeta.port = result.port;
@@ -454,10 +459,19 @@
     };
 
     function loadView(url, title, pushToStack = true) {
-      // When viewport_port != 7777, iframe loads the project port directly
+      // When viewport_port != 7777, try direct port URL (localhost only).
+      // When remote, check for project tunnel_url, else fall back to /project/ path
+      // (which does a 302 redirect to the direct port when running).
       const meta = currentViewportMeta;
       if (meta && meta.port && meta.port !== 7777 && url && url.startsWith('/project/')) {
-        preview.src = directPortUrl(meta.port);
+        const direct = directPortUrl(meta.port);
+        if (direct) {
+          preview.src = direct;
+        } else if (meta.tunnel_url) {
+          preview.src = meta.tunnel_url;
+        } else {
+          preview.src = url; // /project/{name}/ — server does 302 redirect
+        }
       } else {
         preview.src = url;
       }

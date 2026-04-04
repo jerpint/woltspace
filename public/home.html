@@ -1577,14 +1577,24 @@
 
   async function toggleShare(name, isSharing) {
     const action = isSharing ? 'unshare' : 'share';
+    // Find the button and show loading state
+    const btn = document.querySelector(`.action-btn.${isSharing ? 'shared' : 'share'}`);
+    if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
     try {
       const res = await fetch(`/projects/${name}/${action}`, { method: 'POST' });
       const data = await res.json();
       if (data.tunnel_url) {
         await navigator.clipboard.writeText(data.tunnel_url).catch(() => {});
+        // Brief visual confirmation
+        if (btn) { btn.textContent = '✅'; }
+        await new Promise(r => setTimeout(r, 1200));
       }
       await loadProjects();
-    } catch {}
+    } catch {
+      if (btn) { btn.textContent = '❌'; }
+      await new Promise(r => setTimeout(r, 1000));
+      await loadProjects();
+    }
   }
 
   // ── Load sessions ──

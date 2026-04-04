@@ -62,6 +62,20 @@ def get_current_meta(session: str = "main") -> dict:
         "port": data.get("viewport_port", 7777),
         "updated": data.get("viewport_updated", 0),
     }
+    # If viewing a project, include its tunnel_url for remote access
+    vp_url = meta["url"] or ""
+    if meta["port"] != 7777 or vp_url.startswith("/project/"):
+        import re
+        proj_match = re.match(r"^/project/([^/]+)", vp_url)
+        if proj_match:
+            try:
+                from projects import running_projects
+                running = {r["name"]: r for r in running_projects()}
+                run_state = running.get(proj_match.group(1))
+                if run_state and run_state.get("tunnel_url"):
+                    meta["tunnel_url"] = run_state["tunnel_url"]
+            except Exception:
+                pass
     # Check for pending redirect and clear it atomically
     redirect = reg.clear_redirect(name)
     if redirect:

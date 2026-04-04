@@ -667,7 +667,7 @@ async def list_projects_api():
         entry["port"] = run_state["port"] if run_state else None
         entry["url"] = f"/project/{p.name}/"
         entry["tunnel_url"] = run_state.get("tunnel_url") if run_state else None
-        entry["sharing"] = run_state.get("tunnel_pid") is not None if run_state else False
+        entry["sharing"] = bool(run_state.get("tunnel_pid") and run_state.get("tunnel_url")) if run_state else False
         result.append(entry)
     return result
 
@@ -685,7 +685,7 @@ async def project_detail(name: str):
     entry["port"] = run_state["port"] if run_state else None
     entry["url"] = f"/project/{name}/"
     entry["tunnel_url"] = run_state.get("tunnel_url") if run_state else None
-    entry["sharing"] = run_state.get("tunnel_pid") is not None if run_state else False
+    entry["sharing"] = bool(run_state.get("tunnel_pid") and run_state.get("tunnel_url")) if run_state else False
     return entry
 
 
@@ -715,8 +715,10 @@ async def project_stop(name: str):
 @app.post("/projects/{name}/share")
 async def project_share(name: str):
     """Start a cloudflared tunnel to the project port and return the public URL."""
+    import asyncio
     try:
-        result = share_project(name)
+        # share_project blocks (polls cloudflared log up to 30s) — run in thread
+        result = await asyncio.to_thread(share_project, name)
         print(f"[projects] shared {name} at {result['tunnel_url']}")
         return result
     except ValueError as e:
