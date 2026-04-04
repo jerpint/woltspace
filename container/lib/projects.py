@@ -223,3 +223,95 @@ def stop_project(name: str) -> bool:
                 pass
     _clear_state(name)
     return True
+
+
+# --- Sharing (cloudflared tunnels) ---
+
+
+def share_project(name: str) -> dict:
+    """Start a cloudflared tunnel to the project port.
+
+    Stores tunnel_pid and tunnel_url in .space/projects/{name}.json.
+    Returns dict with tunnel_url and pid.
+    Raises ValueError if project is not running.
+    Raises RuntimeError if tunnel fails to start.
+    """
+    import re
+    import tempfile
+    import time
+
+    state = _read_state(name)
+    if not state:
+        raise ValueError(f"Project {name} is not running")
+
+    port = state["port"]
+
+    # Return existing tunnel if still alive
+    tunnel_pid = state.get("tunnel_pid")
+    if tunnel_pid and _is_pid_alive(tunnel_pid):
+        return {
+            "tunnel_url": state.get("tunnel_url", ""),
+            "pid": tunnel_pid,
+        }
+
+    # Start cloudflared tunnel
+    log_file = tempfile.mktemp(suffix="-cloudflared.log")
+    with open(log_file, "w") as lf:
+        proc = subprocess.Popen(
+            ["cloudflared", "tunnel", "--url", f"http://localhost:{port}"],
+            stdout=lf,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    # Poll log for tunnel URL (up to 30s)
+    tunnel_url = ""
+    for _ in range(30):
+        time.sleep(1)
+        try:
+            with open(log_file) as f:
+                content = f.read()
+            m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", content)
+            if m:
+                tunnel_url = m.group(0)
+                break
+        except Exception:
+            pass
+
+    if not tunnel_url:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        raise RuntimeError("cloudflared tunnel failed to start — is cloudflared installed?")
+
+    state["tunnel_pid"] = proc.pid
+    state["tunnel_url"] = tunnel_url
+    _write_state(name, state)
+
+    return {"tunnel_url": tunnel_url, "pid": proc.pid}
+
+
+def unshare_project(name: str) -> bool:
+    """Stop the cloudflared tunnel for a project.
+
+    Returns True if a tunnel was running and stopped.
+    """
+    state = _read_state(name)
+    if not state:
+        return False
+
+    tunnel_pid = state.get("tunnel_pid")
+    if not tunnel_pid:
+        return False
+
+    if _is_pid_alive(tunnel_pid):
+        try:
+            os.kill(tunnel_pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+    state["tunnel_pid"] = None
+    state["tunnel_url"] = None
+    _write_state(name, state)
+    return True

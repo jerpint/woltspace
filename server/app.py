@@ -54,8 +54,10 @@ from projects import (
     get_project,
     project_dir,
     running_projects,
+    share_project,
     start_project,
     stop_project,
+    unshare_project,
 )
 from sites import get_site_state, running_sites, site_dir, start_site, stop_site
 from .state import (
@@ -705,6 +707,29 @@ async def project_stop(name: str):
     return JSONResponse({"error": f"{name} is not running"}, status_code=404)
 
 
+@app.post("/projects/{name}/share")
+async def project_share(name: str):
+    """Start a cloudflared tunnel to the project port and return the public URL."""
+    try:
+        result = share_project(name)
+        print(f"[projects] shared {name} at {result['tunnel_url']}")
+        return result
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
+
+
+@app.post("/projects/{name}/unshare")
+async def project_unshare(name: str):
+    """Stop the cloudflared tunnel for a project."""
+    was_sharing = unshare_project(name)
+    if was_sharing:
+        print(f"[projects] unshared {name}")
+        return {"ok": True, "name": name}
+    return JSONResponse({"error": f"{name} has no active tunnel"}, status_code=404)
+
+
 # --- Wolt Sites ---
 # Each wolt has a persistent site at wolt/site/. Served via livereload.
 # Sites auto-start when a session begins outside a project context.
@@ -860,7 +885,12 @@ async def site_livereload_ws(wolt_name: str, ws: WebSocket):
 @app.get("/project/{proj_name}/{path:path}")
 @app.get("/project/{proj_name}")
 async def serve_project(proj_name: str, request: Request, path: str = ""):
-    """Serve a project — proxy to running dev server, static from dist/, or direct files."""
+    """Serve a project — static fallback only (dist/ or root files when not running).
+
+    When a project is running, the viewport iframe connects directly to the
+    project port (no proxy). Accessing /project/{name}/ while it's running
+    redirects to the direct port URL so the browser lands on the right origin.
+    """
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", proj_name):
         return JSONResponse({"error": "invalid project name"}, status_code=400)
     pdir = project_dir(proj_name)
@@ -869,29 +899,16 @@ async def serve_project(proj_name: str, request: Request, path: str = ""):
 
     sub_path = "/" + path if path else "/"
 
-    # Strategy 1: proxy to running dev server (managed by start_project)
+    # When running, redirect to the direct project port — no proxy
     running = {r["name"]: r for r in running_projects()}
     run_state = running.get(proj_name)
     if run_state:
         port = run_state["port"]
-        target = f"http://localhost:{port}{sub_path}"
-        if request.url.query:
-            target += f"?{request.url.query}"
-        async with httpx.AsyncClient() as client:
-            try:
-                resp = await client.request(
-                    request.method, target,
-                    headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
-                    content=await request.body(),
-                )
-                headers = dict(resp.headers)
-                headers.pop("x-frame-options", None)
-                headers.pop("content-security-policy", None)
-                return Response(resp.content, status_code=resp.status_code, headers=headers)
-            except httpx.ConnectError:
-                return PlainTextResponse(f'Project "{proj_name}" not responding on port {port}', status_code=502)
+        qs = f"?{request.url.query}" if request.url.query else ""
+        direct = f"{request.url.scheme}://{request.url.hostname}:{port}{sub_path}{qs}"
+        return RedirectResponse(direct, status_code=302)
 
-    # Strategy 2: static from dist/
+    # Static fallback: serve from dist/ when not running
     dist_dir = pdir / "dist"
     if dist_dir.exists():
         candidates = [dist_dir / path, dist_dir / path / "index.html"]
@@ -905,7 +922,7 @@ async def serve_project(proj_name: str, request: Request, path: str = ""):
                 return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
         return PlainTextResponse("Not found in project", status_code=404)
 
-    # Strategy 3: serve static files directly from project root (simple HTML projects)
+    # Static fallback: serve files directly from project root (simple HTML projects)
     candidates = [pdir / path, pdir / path / "index.html"]
     if not path:
         candidates = [pdir / "index.html"]
@@ -918,7 +935,7 @@ async def serve_project(proj_name: str, request: Request, path: str = ""):
             mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
             return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
 
-    # Strategy 4: off-state placeholder — project exists but has no servable content
+    # Off-state placeholder — project exists but has no servable content
     project = get_project(proj_name)
     return HTMLResponse(_project_placeholder(proj_name, project))
 
