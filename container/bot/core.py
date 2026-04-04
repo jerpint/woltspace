@@ -25,6 +25,7 @@ from sessions import (
     SESSION_NOUNS,
     build_session_command,
     get_tunnel_url,
+    resume_session,
     session_name as _session_name,
     start_session,
 )
@@ -548,7 +549,11 @@ def _session_has_claude(session_name: str) -> bool | None:
 
 
 def message_session(session_name: str, text: str) -> dict:
-    """Send a message to a session. If Claude has exited, restart it with --continue."""
+    """Send a message to a session. If Claude has exited, resume it.
+
+    Delegates resume logic to sessions.resume_session() — session name IS
+    the Claude session ID, so --resume just uses the name directly.
+    """
     safe = "".join(c for c in session_name if c.isalnum() or c in "-_")
     if not safe:
         return {"error": "invalid session name"}
@@ -556,41 +561,14 @@ def message_session(session_name: str, text: str) -> dict:
     tunnel_url = get_tunnel_url()
     session_url = f"{tunnel_url}/tui?session={safe}" if tunnel_url else None
 
-    # Check if tmux session exists and whether Claude is running
-    claude_alive = _session_has_claude(safe)
-    if claude_alive is None:
-        return {"ok": False, "error": f"session {safe} not found — it may have been killed or expired", "session": safe, "url": session_url}
-
-    # If Claude is still running, send keys directly
-    if claude_alive:
-        try:
-            subprocess.run(["tmux", "send-keys", "-t", safe, "-l", text], check=True)
-            subprocess.run(["tmux", "send-keys", "-t", safe, "", "Enter"], check=True)
-            _bot_log("message_sent", {"session": safe, "text": text[:200]})
-            return {"ok": True, "session": safe, "url": session_url, "status": "delivered", "detail": "Claude is running, message sent directly"}
-        except subprocess.CalledProcessError as e:
-            return {"ok": False, "error": f"tmux send-keys failed: {e}", "session": safe, "url": session_url}
-
-    # Claude exited — restart with --resume (specific session ID) or --continue (fallback)
-    _bot_log("session_revive", {"session": safe, "text": text[:200]})
     try:
-        # Try to get the Claude session UUID from the registry so we resume the right conversation
-        reg_data = registry.get(safe, check_alive=False)
-        claude_session_id = reg_data.get("claude_session_id") if reg_data else None
-        if claude_session_id:
-            resume_flag = f"--resume {shlex.quote(claude_session_id)}"
-        else:
-            # Fallback for sessions started before this fix
-            resume_flag = "--continue"
-        _bot_log("session_revive_method", {"session": safe, "claude_session_id": claude_session_id or "none", "method": "resume" if claude_session_id else "continue"})
-        session_dir = reg_data.get("dir", "") if reg_data else ""
-        cd_prefix = f"cd {shlex.quote(session_dir)} && " if session_dir else ""
-        resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(safe)} && /workspace/woltspace/container/bin/wclaude --dangerously-skip-permissions {resume_flag} {shlex.quote(text)}"
-        subprocess.run(["tmux", "send-keys", "-t", safe, "-l", resume_cmd], check=True)
-        subprocess.run(["tmux", "send-keys", "-t", safe, "", "Enter"], check=True)
-        return {"ok": True, "session": safe, "url": session_url, "status": "revived", "detail": f"Claude had exited — restarted with {'--resume ' + claude_session_id if claude_session_id else '--continue'} and delivered message"}
+        result = resume_session(safe, text)
+        _bot_log("message_sent", {"session": safe, "text": text[:200], "status": result.get("status")})
+        return {"ok": True, "session": safe, "url": session_url, **result}
+    except ValueError as e:
+        return {"ok": False, "error": str(e), "session": safe, "url": session_url}
     except subprocess.CalledProcessError as e:
-        return {"ok": False, "error": f"session revive failed: {e}", "session": safe, "url": session_url}
+        return {"ok": False, "error": f"resume failed: {e}", "session": safe, "url": session_url}
 
 
 def kill_session(name: str) -> bool:

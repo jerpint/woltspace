@@ -17,9 +17,8 @@ SESSION_REG="$SCRIPT_DIR/session-reg"
 cd "$WORK_DIR"
 export WOLT_SESSION="$SESSION_NAME"
 
-# Generate a stable Claude session ID so we can --resume the right conversation later
-CLAUDE_SESSION_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
-$SESSION_REG update "$SESSION_NAME" "claude_session_id=$CLAUDE_SESSION_ID" > /dev/null 2>&1 || true
+# Claude session ID = tmux session name. Resume becomes trivial.
+CLAUDE_SESSION_ID="$SESSION_NAME"
 
 # Generate a short descriptive title from the prompt (first line, ~60 chars, clean)
 TITLE=$(python3 -c "

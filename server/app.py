@@ -47,7 +47,7 @@ from .sparks import get_spark_with_chain, list_sparks
 # Session spawning — shared with bot
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
-from sessions import start_session
+from sessions import start_session, resume_session
 from projects import (
     WoltspaceProject,
     discover_projects,
@@ -432,6 +432,24 @@ async def session_message(session_id: str, request: Request):
         subprocess.run(["tmux", "send-keys", "-t", safe, "Enter"], check=True)
         print(f"[message] → {safe}: {text[:80]}")
         return {"ok": True, "session": safe}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# --- Session resume ---
+
+@app.post("/sessions/{name}/resume")
+async def session_resume(name: str, request: Request):
+    """Resume a stopped/orphaned session by name."""
+    safe = sanitize_session(name)
+    body = await request.json()
+    prompt = body.get("prompt", "")
+    try:
+        result = resume_session(safe, prompt)
+        print(f"[sessions/resume] {safe} → {result.get('status')}")
+        return result
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
