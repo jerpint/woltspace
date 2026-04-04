@@ -578,6 +578,8 @@
   .action-btn:hover { border-color: var(--border-2); color: var(--ink); }
   .action-btn.stop { color: var(--terra); }
   .action-btn.start { color: var(--green); }
+  .action-btn.shared { color: var(--green); }
+  .action-btn.share { color: var(--ink-3); }
 
   /* ── New project card ── */
   .project-card-new {
@@ -1549,6 +1551,7 @@
               </div>
             </div>
             <div class="project-actions">
+              ${p.running ? `<button class="action-btn ${p.sharing ? 'shared' : 'share'}" title="${p.sharing ? 'Unshare' : 'Share'}" onclick="event.stopPropagation();toggleShare('${p.name}', ${p.sharing})">${p.sharing ? '🌐' : '🔒'}</button>` : ''}
               ${canToggle ? `<button class="action-btn ${p.running ? 'stop' : 'start'}" title="${p.running ? 'Stop' : 'Start'}" onclick="event.stopPropagation();toggleProject('${p.name}', ${p.running})">${p.running ? '■' : '▶'}</button>` : ''}
             </div>
           </div>
@@ -1568,6 +1571,18 @@
     const action = isRunning ? 'stop' : 'start';
     try {
       await fetch(`/projects/${name}/${action}`, { method: 'POST' });
+      await loadProjects();
+    } catch {}
+  }
+
+  async function toggleShare(name, isSharing) {
+    const action = isSharing ? 'unshare' : 'share';
+    try {
+      const res = await fetch(`/projects/${name}/${action}`, { method: 'POST' });
+      const data = await res.json();
+      if (data.tunnel_url) {
+        await navigator.clipboard.writeText(data.tunnel_url).catch(() => {});
+      }
       await loadProjects();
     } catch {}
   }

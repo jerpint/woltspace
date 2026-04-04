@@ -666,6 +666,8 @@ async def list_projects_api():
         entry["running"] = run_state is not None
         entry["port"] = run_state["port"] if run_state else None
         entry["url"] = f"/project/{p.name}/"
+        entry["tunnel_url"] = run_state.get("tunnel_url") if run_state else None
+        entry["sharing"] = run_state.get("tunnel_pid") is not None if run_state else False
         result.append(entry)
     return result
 
@@ -682,6 +684,8 @@ async def project_detail(name: str):
     entry["running"] = run_state is not None
     entry["port"] = run_state["port"] if run_state else None
     entry["url"] = f"/project/{name}/"
+    entry["tunnel_url"] = run_state.get("tunnel_url") if run_state else None
+    entry["sharing"] = run_state.get("tunnel_pid") is not None if run_state else False
     return entry
 
 
