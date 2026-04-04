@@ -39,8 +39,9 @@ Then write `woltspace.json` — **this is required** for the platform to discove
   "stack": "node",
   "port": 4010,
   "install": "npm install",
-  "start": "npm run dev",
-  "keeper": "your-wolt-name"
+  "start": "npm run dev --port $PORT --host 0.0.0.0",
+  "keeper": "your-wolt-name",
+  "public": false
 }
 ```
 
@@ -54,29 +55,22 @@ Then write `woltspace.json` — **this is required** for the platform to discove
 | `stack` | no | `python`, `vite`, `node`, or `html` |
 | `install` | no | Install command |
 | `port` | yes | Fixed port for this project. Permanent — survives restarts. Avoid 7777 and 3001. |
-| `start` | no | Start command. Null = can't start from lodge. |
+| `start` | no | Start command. Use `$PORT` — the platform expands it. Add `--host 0.0.0.0` for network access. Null = can't start from lodge. |
 | `source` | no | Origin URL if cloned |
 | `emoji` | no | Display emoji (auto-assigned) |
+| `public` | no | If `true`, a cloudflared tunnel starts automatically with the project. Default: `false`. |
 
 **Important:** Only `woltspace.json` is recognized. Not `project.json`, not `app.json`.
 
 ## Serving a project
 
-Three modes, auto-detected:
+### Running dev server (primary mode)
 
-### 1. Static files (simplest)
+The platform starts the server and sets the `PORT` env var. The viewport iframe loads the project's port **directly** — no proxy. This means internal links, WebSockets, and SSE all work naturally.
 
-Put HTML/CSS/JS in the project directory. Served at `/project/{name}/`. No config needed.
+### Static files (fallback)
 
-### 2. Built static (Vite, Astro, etc.)
-
-Build to `dist/` and set the framework base path to `/project/{name}/`:
-- Vite: `base: '/project/my-app/'` in `vite.config.js`
-- Astro: `base: '/project/my-app/'` in `astro.config.mjs`
-
-### 3. Dev server (any language/framework)
-
-The platform starts the server and sets the `PORT` env var. The proxy strips the `/project/{name}` prefix — your server sees clean paths.
+If the project isn't running, static files in `dist/` or the project root are served at `/project/{name}/`.
 
 ## Starting and stopping
 
@@ -101,11 +95,34 @@ curl http://localhost:7777/projects
 push-view /project/my-app/
 ```
 
+The viewport will load the project at its direct port (e.g. `localhost:4010`). No proxy involved.
+
 ## Ports
 
 Each project declares its own port in `woltspace.json` (required). Use the **4000-5999** range for projects. The port is permanent — it never changes between restarts. Pick one that doesn't conflict with other projects. If two projects claim the same port, the second one to start gets an error — just pick a different port.
 
 Wolt sites auto-allocate in the **6000+** range, so no collisions. The platform also sets the `PORT` env var to match your manifest port when starting. Avoid 7777 (platform server) and 3001 (TUI).
+
+## Sharing (public access)
+
+Projects are private by default — only accessible locally. To share:
+
+```bash
+# Share a running project (starts a cloudflared tunnel)
+curl -X POST http://localhost:7777/projects/my-app/share
+
+# Unshare (kills the tunnel)
+curl -X POST http://localhost:7777/projects/my-app/unshare
+
+# Panic button — unshare ALL projects
+curl -X POST http://localhost:7777/projects/unshare-all
+```
+
+Or set `"public": true` in `woltspace.json` — the tunnel starts automatically when the project starts.
+
+**How it works:** `cloudflared` creates a tunnel to the project's port with `--http-host-header localhost` (rewrites the Host header so Vite/Next.js/Astro allowedHosts checks pass — no project config changes needed). The tunnel URL is stored in the project's running state.
+
+**Kill switch:** Set `WOLTSPACE_SHARING_ENABLED=0` to disable all sharing. The API will reject share requests and `public: true` is ignored.
 
 ## Key rules
 
@@ -113,3 +130,5 @@ Wolt sites auto-allocate in the **6000+** range, so no collisions. The platform 
 - **Never edit `/workspace/woltspace/`** — that's the platform
 - **Projects are portable** — should work if copied out of woltspace
 - **Write woltspace.json after setup** — or the project is invisible
+- **Use `$PORT` in start commands** — the platform expands it to your manifest port
+- **Add `--host 0.0.0.0`** — required for the dev server to accept tunnel traffic
