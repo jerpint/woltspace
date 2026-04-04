@@ -1729,7 +1729,11 @@
     fetch('/sessions/new/lodge', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ wolt: keeper, project: projectName }),
+      body: JSON.stringify({
+        wolt: keeper,
+        project: projectName,
+        prompt: `You're working on the "${projectName}" project. The viewport is showing the project at ${projectName}.localhost:7777/, not your personal site.`,
+      }),
     }).then(r => r.json()).then(data => {
       if (data.name) window.open('/tui?session=' + encodeURIComponent(data.name), '_blank');
     }).catch(() => {});
