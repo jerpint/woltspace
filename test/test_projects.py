@@ -604,6 +604,47 @@ class TestUnitShareProject:
         assert result["tunnel_url"] == "https://already-live.trycloudflare.com"
         assert result["pid"] == 11111
 
+    def test_share_blocked_when_sharing_disabled(self, tmp_path, monkeypatch):
+        """share_project raises RuntimeError when SHARING_ENABLED is False."""
+        import projects as proj_mod
+        monkeypatch.setattr(proj_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setattr(proj_mod, "SHARING_ENABLED", False)
+
+        proj_mod._write_state("my-proj", {"name": "my-proj", "port": 4500, "pid": 99})
+
+        with pytest.raises(RuntimeError, match="Sharing is disabled"):
+            proj_mod.share_project("my-proj")
+
+    def test_unshare_all_stops_all_tunnels(self, tmp_path, monkeypatch):
+        """unshare_all_projects kills all tunnel processes."""
+        import projects as proj_mod
+        monkeypatch.setattr(proj_mod, "_RUNNING_STATE_DIR", tmp_path)
+
+        killed_pids = []
+        def mock_kill(pid):
+            killed_pids.append(pid)
+        monkeypatch.setattr(proj_mod, "_is_pid_alive", lambda pid: True)
+        monkeypatch.setattr(os, "kill", lambda pid, sig: killed_pids.append(pid))
+        # Also mock _set_public to avoid filesystem writes
+        monkeypatch.setattr(proj_mod, "_set_public", lambda name, public: None)
+
+        proj_mod._write_state("proj-a", {
+            "name": "proj-a", "port": 4500, "pid": 10,
+            "tunnel_pid": 111, "tunnel_url": "https://a.trycloudflare.com",
+        })
+        proj_mod._write_state("proj-b", {
+            "name": "proj-b", "port": 4501, "pid": 20,
+            "tunnel_pid": 222, "tunnel_url": "https://b.trycloudflare.com",
+        })
+        proj_mod._write_state("proj-c", {
+            "name": "proj-c", "port": 4502, "pid": 30,
+        })  # No tunnel
+
+        unshared = proj_mod.unshare_all_projects()
+        assert set(unshared) == {"proj-a", "proj-b"}
+        assert 111 in killed_pids
+        assert 222 in killed_pids
+
 
 # ---------------------------------------------------------------------------
 # Integration: share/unshare endpoints

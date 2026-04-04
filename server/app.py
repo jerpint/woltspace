@@ -57,6 +57,7 @@ from projects import (
     share_project,
     start_project,
     stop_project,
+    unshare_all_projects,
     unshare_project,
 )
 from sites import get_site_state, running_sites, site_dir, start_site, stop_site
@@ -728,6 +729,14 @@ async def project_unshare(name: str):
         print(f"[projects] unshared {name}")
         return {"ok": True, "name": name}
     return JSONResponse({"error": f"{name} has no active tunnel"}, status_code=404)
+
+
+@app.post("/projects/unshare-all")
+async def project_unshare_all():
+    """Panic button — stop ALL project tunnels."""
+    unshared = unshare_all_projects()
+    print(f"[projects] unshare-all: stopped {len(unshared)} tunnels: {unshared}")
+    return {"ok": True, "unshared": unshared}
 
 
 # --- Wolt Sites ---
