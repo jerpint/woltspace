@@ -544,6 +544,16 @@
     align-items: center;
     gap: 8px;
   }
+  .keeper-btn {
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    margin: -4px -8px;
+    transition: background 0.15s;
+  }
+  .keeper-btn:hover {
+    background: var(--green-light);
+  }
   .project-wolt-avatar {
     width: 28px; height: 28px;
     border-radius: 6px;
@@ -1545,7 +1555,7 @@
           ${stackTags ? `<div class="project-stack">${stackTags}</div>` : ''}
           <div class="project-desc">${desc}</div>
           <div class="project-card-footer">
-            <div class="project-wolt">
+            <div class="project-wolt keeper-btn" title="open with ${keeper}" onclick="event.stopPropagation();openProject('${p.name}','${keeper}')">
               <div class="project-wolt-avatar">${keeperEmoji}</div>
               <div>
                 <div class="project-wolt-name">${keeper}</div>
@@ -1553,7 +1563,6 @@
               </div>
             </div>
             <div class="project-actions">
-              ${canToggle ? `<button class="action-btn gnaw" title="gnaw — open with keeper" onclick="event.stopPropagation();openProject('${p.name}','${keeper}')">gnaw →</button>` : ''}
               ${canToggle ? `<button class="action-btn ${p.running ? 'stop' : 'start'}" title="${p.running ? 'Stop' : 'Start'}" onclick="event.stopPropagation();toggleProject('${p.name}', ${p.running})">${p.running ? '■' : '▶'}</button>` : ''}
             </div>
           </div>
