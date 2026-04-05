@@ -120,6 +120,14 @@ p:last-child{margin-bottom:0}
 footer{width:100%;border-top:1px solid var(--border);padding:18px 24px;text-align:center;font-family:var(--font-mono);font-size:11px;color:var(--ink-3);letter-spacing:0.06em}
 @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes beavFall{to{transform:translateY(110vh) rotate(360deg);opacity:0}}
+/* Scene critters */
+.scene-critter{position:absolute;image-rendering:pixelated;pointer-events:none;z-index:1}
+.scene-beaver{bottom:22%;animation:scBeaverBob 1.5s ease-in-out infinite}
+@keyframes scBeaverBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+.scene-raccoon{bottom:38%;animation:scRaccoonPeek 3s ease-in-out infinite}
+@keyframes scRaccoonPeek{0%,100%{transform:translateX(0)}30%,70%{transform:translateX(6px)}}
+.scene-otter-swim{bottom:16%;animation:scOtterSwim 12s linear infinite}
+@keyframes scOtterSwim{0%{left:-40px;opacity:0}5%{opacity:1}95%{opacity:1}100%{left:calc(100% + 40px);opacity:0}}
 /* Split view mockup */
 .split-mockup{border-radius:10px;overflow:hidden;border:1px solid var(--border-2);box-shadow:0 8px 32px rgba(24,16,10,0.12);animation:fadeUp 0.7s ease 0.2s both;margin-bottom:40px}
 .split-titlebar{background:var(--ink);display:flex;align-items:center;padding:8px 12px;gap:6px}
@@ -151,7 +159,7 @@ footer{width:100%;border-top:1px solid var(--border);padding:18px 24px;text-alig
 @keyframes raccoonLook{0%,100%{transform:scaleX(1)}40%,60%{transform:scaleX(-1)}}
 .otter-sprite{position:absolute;bottom:6px;animation:otterZip 4s linear infinite}
 @keyframes otterZip{0%{left:-20px;opacity:0}10%{opacity:1}90%{opacity:1}100%{left:calc(100% + 20px);opacity:0}}
-@media(max-width:540px){.brand-name{font-size:32px}.principles-grid{grid-template-columns:1fr}.install-cmd code{font-size:11px}.split-body{height:200px}.term-line{font-size:9px;line-height:1.5}.split-terminal{padding:10px}.vp-header{font-size:13px}.vp-card{padding:7px 9px;font-size:9px;margin-bottom:4px}.vp-badge{font-size:8px}.vp-page{padding:10px}.critter svg{transform:scale(0.7);transform-origin:bottom left}.raccoon-sprite{right:6px}.beaver-sprite{left:6px;bottom:4px}}
+@media(max-width:540px){.brand-name{font-size:32px}.principles-grid{grid-template-columns:1fr}.install-cmd code{font-size:11px}.split-body{height:220px}.term-line{font-size:9px;line-height:1.5}.split-terminal{padding:10px}.vp-header{font-size:13px}.vp-card{padding:7px 9px;font-size:9px;margin-bottom:4px}.vp-badge{font-size:8px}.vp-page{padding:10px}.critter svg{transform:scale(0.8);transform-origin:bottom left}.raccoon-sprite{right:6px}.beaver-sprite{left:6px;bottom:4px}}
 </style>
 </head>
 <body>
@@ -166,6 +174,9 @@ footer{width:100%;border-top:1px solid var(--border);padding:18px 24px;text-alig
     <div class="cloud" id="cl-5"></div>
     <div class="cloud" id="cl-6"></div>
   </div>
+  <div class="scene-critter scene-beaver" id="sc-beaver1" style="left:15%"></div>
+  <div class="scene-critter scene-raccoon" id="sc-raccoon1" style="left:42%"></div>
+  <div class="scene-critter scene-otter-swim" id="sc-otter1"></div>
 </div>
 <div class="page-wrap">
   <header class="site-header">
@@ -415,6 +426,111 @@ function renderCloud(map,px){var cols=Math.max.apply(null,map.map(function(r){re
 [{id:'cl-1',shape:'lg',px:7},{id:'cl-2',shape:'md',px:6},{id:'cl-3',shape:'sm',px:6},{id:'cl-4',shape:'lg',px:6},{id:'cl-5',shape:'md',px:5},{id:'cl-6',shape:'sm',px:5}].forEach(function(c){var el=document.getElementById(c.id);if(el)el.innerHTML=renderCloud(SHAPES[c.shape],c.px);});
 })();
 
+// Scene critters — beavers, raccoon, otter in the landscape banner
+(function(){
+  var px=3;
+  function spriteToSVG(map,palette,px){
+    var rows=map.length,cols=Math.max.apply(null,map.map(function(r){return r.length}));
+    var rects=[];
+    for(var r=0;r<rows;r++)for(var c=0;c<map[r].length;c++){
+      var ch=map[r][c];if(ch===' '||ch==='.')continue;
+      var fill=palette[ch];if(!fill)continue;
+      rects.push('<rect x="'+(c*px)+'" y="'+(r*px)+'" width="'+px+'" height="'+px+'" fill="'+fill+'"/>');
+    }
+    return '<svg width="'+(cols*px)+'" height="'+(rows*px)+'" xmlns="http://www.w3.org/2000/svg" style="image-rendering:pixelated;display:block" shape-rendering="crispEdges">'+rects.join('')+'</svg>';
+  }
+
+  // Beaver — extracted from generated pixel art (32x32 → trimmed)
+  var beavMap=[
+    '..AAA........AAA.....',
+    '.ABBBA......ABBBA....',
+    '.ABAAAAAAAAAAAABA....',
+    '.ABABBBBBBBBBAABA....',
+    '..ABBBBBBBBBBBAA.....',
+    '..ABABBBBAEBBBAA.....',
+    '..ABABBBBAEBBBAA.....',
+    '.ABBAAAABAEBBBBA.....',
+    '.ABACAACCCFABBBA.....',
+    '.ABACCACCCFABBBA.AAA.',
+    '.ABBAAAAAAEBBBAAADDDA',
+    '..ABBCAFABBBBAA.AADDA',
+    '...ABAAAABBBBBBAADADA',
+    '..ABBBBBBBBBBBBAADDAA',
+    '.ABBABCCCAEBBBBBAADDA',
+    '.ABBACCCABBBBABBADADA',
+    '.AGGACCCAGGGGABBADADA',
+    '..AAACCCAAAAABBBADDA.',
+    '..ABCCCCCCFABBBBAAAA.',
+    '.AAABCCCCAAAABBBAA...',
+    'ABBBACCCABBBBBBAA....',
+    'AAAAAAAAAAAAAAAA.....',
+  ];
+  var beavPal={A:'#3f190e',B:'#af6127',C:'#fce6b0',D:'#773c1f',E:'#050003',F:'#fffee7',G:'#dd7a2d'};
+
+  // Raccoon — extracted from generated pixel art (32x32 → trimmed)
+  var raccMap=[
+    '...BB........BBB.........',
+    '...BFGG.....GFFB.........',
+    '...BABB.....BAAB.........',
+    '...BCAABBBBBACCB.........',
+    '...BAAAAAAAAAAAB.........',
+    '...BCCCCAAACCCCB.........',
+    '...BCBCCAAACCCCB.........',
+    '.BBCCBBCBCCCBCBCB........',
+    '.BBACBBCAAACBCCAB........',
+    '.BBCAAADHHHDAAACB...BBB..',
+    '.BBCAAADHHHDAAACB...BBB..',
+    '...BCAADDDDDAEEB...BCCCB.',
+    '....BCCCCEEECBB....BAAACB',
+    '...BAAAAAAAAAAAB...BCCCBB',
+    '...BAAAAAAAAAAAB...BCCCCB',
+    '.BBAAAAAAAAAAAAAB..BAAAAB',
+    '.BBAABBAAAAABAAAB..BCCCCB',
+    '.BBAAAABAAABAAAABBBAACCCB',
+    '.GGFAAABAAABAAAAGBBAABBCG',
+    'BAABAAABAAABAAABABBCAAAB.',
+    'BAAABBBBAAABBBBAABBCCBB..',
+    'BCCAAAAAAAAAAAAACBBBB....',
+    '.BBBBGGAAAAAGBBBB........',
+    '.BBCCBBAAAAABCCCB........',
+    '...BBBBBBBBBBBBB.........',
+  ];
+  var raccPal={A:'#7f8894',B:'#282c33',C:'#40454b',D:'#f0ecf0',E:'#545c65',F:'#a0abbd',G:'#050029',H:'#efa09f'};
+
+  // Otter — extracted from generated pixel art (32x32 → trimmed)
+  var ottMap=[
+    '.....AAAAAAAA......',
+    '..AAACCCCCCCCAAA...',
+    '.ACCCCCCCCCCCCCCA..',
+    '.ACACCCCCCCCCCACA..',
+    '..ACCBACCCCBACCA...',
+    '..ACCAACDDCAACCA...',
+    'AAACBBBBAABBBBCAAA.',
+    '..ABEBABAABABEBA...',
+    '.AAABBBABBABBBAAA..',
+    '...AABBBBBBBBAA....',
+    '...ACCCCCCCCCCA....',
+    '..ACCCCBBBBCCCCA...',
+    '..ACCABBBBBBACCA...',
+    '..ACCCABBBBACCCA...',
+    '..AACCABBBBACCAA.AA',
+    '..ACAABBBBBBAACAACA',
+    '.ACCCBBBBBBBBCCCACA',
+    '.ACAAABBBBBBAAACAA.',
+    '.ACCCCABBBBACCCCA..',
+    '..ACCCAAAAAACCCA...',
+    '...AAA......AAA....',
+  ];
+  var ottPal={A:'#402110',B:'#f2d79d',C:'#9f5332',D:'#ff6970',E:'#c47b4a'};
+
+  var b1=document.getElementById('sc-beaver1');
+  if(b1)b1.innerHTML=spriteToSVG(beavMap,beavPal,px);
+  var r1=document.getElementById('sc-raccoon1');
+  if(r1)r1.innerHTML=spriteToSVG(raccMap,raccPal,px);
+  var o1=document.getElementById('sc-otter1');
+  if(o1)o1.innerHTML=spriteToSVG(ottMap,ottPal,px);
+})();
+
 // Split view mockup — terminal typing + pixel critters
 (function(){
   var px=3;
@@ -429,49 +545,88 @@ function renderCloud(map,px){var cols=Math.max.apply(null,map.map(function(r){re
     return '<svg width="'+(cols*px)+'" height="'+(rows*px)+'" xmlns="http://www.w3.org/2000/svg" style="image-rendering:pixelated;display:block" shape-rendering="crispEdges">'+rects.join('')+'</svg>';
   }
 
-  // Beaver — chunky, typing pose
+  // Beaver — extracted from generated pixel art (32x32 → trimmed)
   var beaverMap=[
-    '...BBB...',
-    '..BFFFB..',
-    '..FEFEF..',
-    '..FFFFF..',
-    '..FWWF...',
-    '.BBBBBB..',
-    '.BTTTBB..',
-    '.BBBBBB..',
-    '..B..B...',
-    '..BB.BB..',
+    '..AAA........AAA.....',
+    '.ABBBA......ABBBA....',
+    '.ABAAAAAAAAAAAABA....',
+    '.ABABBBBBBBBBAABA....',
+    '..ABBBBBBBBBBBAA.....',
+    '..ABABBBBAEBBBAA.....',
+    '..ABABBBBAEBBBAA.....',
+    '.ABBAAAABAEBBBBA.....',
+    '.ABACAACCCFABBBA.....',
+    '.ABACCACCCFABBBA.AAA.',
+    '.ABBAAAAAAEBBBAAADDDA',
+    '..ABBCAFABBBBAA.AADDA',
+    '...ABAAAABBBBBBAADADA',
+    '..ABBBBBBBBBBBBAADDAA',
+    '.ABBABCCCAEBBBBBAADDA',
+    '.ABBACCCABBBBABBADADA',
+    '.AGGACCCAGGGGABBADADA',
+    '..AAACCCAAAAABBBADDA.',
+    '..ABCCCCCCFABBBBAAAA.',
+    '.AAABCCCCAAAABBBAA...',
+    'ABBBACCCABBBBBBAA....',
+    'AAAAAAAAAAAAAAAA.....',
   ];
-  var beaverPal={B:'#6B3E1F',F:'#8B5E3C',E:'#1A1A1A',W:'#F5F0E0',T:'#C98B2A'};
+  var beaverPal={A:'#3f190e',B:'#af6127',C:'#fce6b0',D:'#773c1f',E:'#050003',F:'#fffee7',G:'#dd7a2d'};
 
-  // Raccoon — masked, looking around
+  // Raccoon — extracted from generated pixel art (32x32 → trimmed)
   var raccoonMap=[
-    '...GGG...',
-    '..GAAAG..',
-    '..ABABA..',
-    '..GAAAG..',
-    '...GNG...',
-    '.GGGGGG..',
-    '.GDDDGG..',
-    '.GGGGGG..',
-    '..G..G...',
-    '..GG.GG..',
+    '...BB........BBB.........',
+    '...BFGG.....GFFB.........',
+    '...BABB.....BAAB.........',
+    '...BCAABBBBBACCB.........',
+    '...BAAAAAAAAAAAB.........',
+    '...BCCCCAAACCCCB.........',
+    '...BCBCCAAACCCCB.........',
+    '.BBCCBBCBCCCBCBCB........',
+    '.BBACBBCAAACBCCAB........',
+    '.BBCAAADHHHDAAACB...BBB..',
+    '.BBCAAADHHHDAAACB...BBB..',
+    '...BCAADDDDDAEEB...BCCCB.',
+    '....BCCCCEEECBB....BAAACB',
+    '...BAAAAAAAAAAAB...BCCCBB',
+    '...BAAAAAAAAAAAB...BCCCCB',
+    '.BBAAAAAAAAAAAAAB..BAAAAB',
+    '.BBAABBAAAAABAAAB..BCCCCB',
+    '.BBAAAABAAABAAAABBBAACCCB',
+    '.GGFAAABAAABAAAAGBBAABBCG',
+    'BAABAAABAAABAAABABBCAAAB.',
+    'BAAABBBBAAABBBBAABBCCBB..',
+    'BCCAAAAAAAAAAAAACBBBB....',
+    '.BBBBGGAAAAAGBBBB........',
+    '.BBCCBBAAAAABCCCB........',
+    '...BBBBBBBBBBBBB.........',
   ];
-  var raccoonPal={G:'#888888',A:'#333333',B:'#FFFFFF',N:'#FFB0B0',D:'#AAAAAA'};
+  var raccoonPal={A:'#7f8894',B:'#282c33',C:'#40454b',D:'#f0ecf0',E:'#545c65',F:'#a0abbd',G:'#050029',H:'#efa09f'};
 
-  // Otter — sleek, zooming
+  // Otter — extracted from generated pixel art (32x32 → trimmed)
   var otterMap=[
-    '..OOO.',
-    '.OHHHO',
-    '.OEOEO',
-    '.OHHHO',
-    '..ONO..',
-    '.OOOOO',
-    'OOOOOO',
-    '.OOOOO',
-    '..O.O.',
+    '.....AAAAAAAA......',
+    '..AAACCCCCCCCAAA...',
+    '.ACCCCCCCCCCCCCCA..',
+    '.ACACCCCCCCCCCACA..',
+    '..ACCBACCCCBACCA...',
+    '..ACCAACDDCAACCA...',
+    'AAACBBBBAABBBBCAAA.',
+    '..ABEBABAABABEBA...',
+    '.AAABBBABBABBBAAA..',
+    '...AABBBBBBBBAA....',
+    '...ACCCCCCCCCCA....',
+    '..ACCCCBBBBCCCCA...',
+    '..ACCABBBBBBACCA...',
+    '..ACCCABBBBACCCA...',
+    '..AACCABBBBACCAA.AA',
+    '..ACAABBBBBBAACAACA',
+    '.ACCCBBBBBBBBCCCACA',
+    '.ACAAABBBBBBAAACAA.',
+    '.ACCCCABBBBACCCCA..',
+    '..ACCCAAAAAACCCA...',
+    '...AAA......AAA....',
   ];
-  var otterPal={O:'#5C4033',H:'#7A5C47',E:'#1A1A1A',N:'#FFB0B0'};
+  var otterPal={A:'#402110',B:'#f2d79d',C:'#9f5332',D:'#ff6970',E:'#c47b4a'};
 
   var be=document.getElementById('beaver-pixel');
   if(be){be.className='critter beaver-sprite';be.innerHTML=spriteToSVG(beaverMap,beaverPal,px);}
