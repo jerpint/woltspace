@@ -15,6 +15,7 @@ Usage:
 import json
 import os
 import random
+import re
 import shlex
 import subprocess
 import time
@@ -27,6 +28,8 @@ from paths import (
     space_dir,
 )
 from sites import start_site
+
+_UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 RUN_SESSION_SCRIPT = Path("/workspace/woltspace/container/bin/run-session.sh")
@@ -199,7 +202,6 @@ class SessionRegistry:
         bypassing the FastAPI proxy. If port is not explicitly given, the
         running project's port is looked up automatically.
         """
-        import re
         if port == 7777:
             proj_match = re.match(r"^/project/([^/]+)", url)
             if proj_match:
@@ -542,9 +544,7 @@ def resume_session(name: str, prompt: str = "") -> dict:
 
     # Build --resume flag using the stored UUID (claude_session_id), not the session name.
     # Validate it's a real UUID — legacy sessions may have non-UUID values.
-    import re
-    _uuid_re = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
-    resume_flag = f"--resume {shlex.quote(claude_session_id)}" if claude_session_id and _uuid_re.match(claude_session_id) else ""
+    resume_flag = f"--resume {shlex.quote(claude_session_id)}" if claude_session_id and _UUID_RE.match(claude_session_id) else ""
 
     if tmux_alive and not claude_running:
         # Tmux alive but claude exited — restart claude with --resume inside the pane
@@ -592,6 +592,60 @@ def stop_session(name: str) -> dict:
 
     registry.update(name, wolt=wolt, status="stopped", finished_at=int(time.time()))
     return {"name": name, "status": "stopped", "was_alive": tmux_alive}
+
+
+def archive_session(name: str) -> dict:
+    """Archive a session — stop it if running, mark as archived.
+
+    Returns dict with archive info.
+    Raises ValueError if session not found in registry.
+    """
+    registry = SessionRegistry()
+    data = registry.get(name, check_alive=False)
+    if data is None:
+        raise ValueError(f"session '{name}' not found in registry")
+
+    wolt = data.get("wolt", "")
+
+    # Stop tmux if still alive
+    if _tmux_alive(name):
+        try:
+            subprocess.run(
+                ["tmux", "kill-session", "-t", name],
+                capture_output=True, check=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+
+    registry.update(name, wolt=wolt, status="archived", finished_at=data.get("finished_at") or int(time.time()))
+    return {"name": name, "status": "archived", "wolt": wolt}
+
+
+def delete_session(name: str) -> dict:
+    """Delete a session — stop it if running, remove the session file.
+
+    Returns dict with delete info.
+    Raises ValueError if session not found in registry.
+    """
+    registry = SessionRegistry()
+    data = registry.get(name, check_alive=False)
+    if data is None:
+        raise ValueError(f"session '{name}' not found in registry")
+
+    wolt = data.get("wolt", "")
+
+    # Stop tmux if still alive
+    if _tmux_alive(name):
+        try:
+            subprocess.run(
+                ["tmux", "kill-session", "-t", name],
+                capture_output=True, check=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+
+    registry.delete(name, wolt=wolt)
+    return {"name": name, "status": "deleted", "wolt": wolt}
 
 
 def _session_has_claude_process(name: str) -> bool:
