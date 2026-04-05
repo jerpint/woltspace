@@ -66,9 +66,10 @@ This is **required** — the platform only discovers projects that have `woltspa
   "stack": "node",
   "port": 4010,
   "install": "npm install",
-  "start": "node server.js",
+  "start": "node server.js --port $PORT --host 0.0.0.0",
   "keeper": "{your-wolt-name}",
-  "emoji": "🦊"
+  "emoji": "🦊",
+  "public": false
 }
 ```
 
@@ -82,9 +83,10 @@ This is **required** — the platform only discovers projects that have `woltspa
 | `stack` | no | Tech stack: `python`, `vite`, `node`, `html` |
 | `install` | no | Install command (e.g. `npm install`, `uv sync`) |
 | `port` | yes | Fixed port for this project (use 4000-5999 range). Pick one, it's yours permanently. Avoid 7777 (platform) and 3001 (TUI). Sites use 6000+ so no collisions. |
-| `start` | no | Start command. **Null = project can't be started from the lodge.** |
+| `start` | no | Start command. Use `$PORT` — the platform expands it. Add `--host 0.0.0.0` for network access. **Null = project can't be started from the lodge.** |
 | `source` | no | Origin URL if cloned/forked |
 | `emoji` | no | Display emoji (auto-assigned if omitted) |
+| `public` | no | If `true`, a cloudflared tunnel starts automatically with the project. Default: `false`. |
 
 **Important:** `project.json` and `app.json` are NOT recognized. Only `woltspace.json` works.
 
@@ -92,8 +94,8 @@ This is **required** — the platform only discovers projects that have `woltspa
 
 Your port is declared in `woltspace.json` and is permanent — it never changes. Check existing projects to avoid conflicts (`ls /workspace/wolts/projects/*/woltspace.json` and look at their ports). Avoid 7777 and 3001.
 
-- **Static builds:** set the base path to `/project/{name}/` (Vite: `base`, Astro: `base`, Next: `basePath`)
-- **Dev servers:** use your declared port directly in the start command, or read the `PORT` env var (the platform sets it to match your manifest port)
+- **Dev servers:** use `$PORT` in your start command — the platform expands it to your manifest port. Add `--host 0.0.0.0` so the server accepts connections from the proxy and tunnels.
+- **No base path needed.** The viewport loads your project directly at its port (e.g. `blog.localhost:7777`). Internal links, WebSockets, and HMR all work naturally.
 
 ## 6. Start it
 

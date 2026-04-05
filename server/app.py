@@ -20,6 +20,7 @@ from fastapi.responses import (
     PlainTextResponse,
     RedirectResponse,
     Response,
+    StreamingResponse,
 )
 
 from . import tools as tool_registry
@@ -54,8 +55,11 @@ from projects import (
     get_project,
     project_dir,
     running_projects,
+    share_project,
     start_project,
     stop_project,
+    unshare_all_projects,
+    unshare_project,
 )
 from sites import get_site_state, running_sites, site_dir, start_site, stop_site
 from .state import (
@@ -156,6 +160,72 @@ async def cors_middleware(request: Request, call_next):
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, DELETE"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
+
+@app.middleware("http")
+async def subdomain_proxy(request: Request, call_next):
+    """Proxy subdomain requests to project ports.
+
+    blog.localhost:7777 → proxy to localhost:{blog's port}
+    Any *.localhost or *.localhost:PORT hostname triggers this.
+    """
+    host = (request.headers.get("host") or "").split(":")[0]
+    if host.endswith(".localhost") and host != "localhost":
+        project_name = host.removesuffix(".localhost")
+        try:
+            from projects import running_projects
+            running = {r["name"]: r for r in running_projects()}
+            run_state = running.get(project_name)
+            if not run_state:
+                return HTMLResponse(
+                    f"<h1>Project '{project_name}' is not running</h1>",
+                    status_code=503,
+                )
+            port = run_state["port"]
+            # Build the upstream URL preserving path and query string
+            path = request.url.path
+            qs = f"?{request.url.query}" if request.url.query else ""
+            upstream = f"http://localhost:{port}{path}{qs}"
+            # Use a streaming proxy so SSE/chunked responses (like Vite HMR)
+            # flow through without buffering the entire response first.
+            client = httpx.AsyncClient()
+            headers = dict(request.headers)
+            headers["host"] = f"localhost:{port}"
+            body = await request.body()
+            req = client.build_request(
+                method=request.method,
+                url=upstream,
+                headers=headers,
+                content=body,
+            )
+            resp = await client.send(req, stream=True, follow_redirects=False)
+            excluded = {"transfer-encoding", "content-encoding", "content-length"}
+            resp_headers = {
+                k: v for k, v in resp.headers.items()
+                if k.lower() not in excluded
+            }
+
+            async def stream_body():
+                try:
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
+                finally:
+                    await resp.aclose()
+                    await client.aclose()
+
+            return StreamingResponse(
+                content=stream_body(),
+                status_code=resp.status_code,
+                headers=resp_headers,
+            )
+        except httpx.ConnectError:
+            return HTMLResponse(
+                f"<h1>Cannot reach project '{project_name}' on port {port}</h1>",
+                status_code=502,
+            )
+        except Exception as e:
+            return HTMLResponse(f"<h1>Proxy error: {e}</h1>", status_code=502)
+    return await call_next(request)
+
 
 @app.options("/{path:path}")
 async def options_handler():
@@ -663,6 +733,8 @@ async def list_projects_api():
         entry["running"] = run_state is not None
         entry["port"] = run_state["port"] if run_state else None
         entry["url"] = f"/project/{p.name}/"
+        entry["tunnel_url"] = run_state.get("tunnel_url") if run_state else None
+        entry["sharing"] = bool(run_state.get("tunnel_pid") and run_state.get("tunnel_url")) if run_state else False
         result.append(entry)
     return result
 
@@ -679,6 +751,8 @@ async def project_detail(name: str):
     entry["running"] = run_state is not None
     entry["port"] = run_state["port"] if run_state else None
     entry["url"] = f"/project/{name}/"
+    entry["tunnel_url"] = run_state.get("tunnel_url") if run_state else None
+    entry["sharing"] = bool(run_state.get("tunnel_pid") and run_state.get("tunnel_url")) if run_state else False
     return entry
 
 
@@ -703,6 +777,39 @@ async def project_stop(name: str):
         print(f"[projects] stopped {name}")
         return {"ok": True, "name": name}
     return JSONResponse({"error": f"{name} is not running"}, status_code=404)
+
+
+@app.post("/projects/{name}/share")
+async def project_share(name: str):
+    """Start a cloudflared tunnel to the project port and return the public URL."""
+    import asyncio
+    try:
+        # share_project blocks (polls cloudflared log up to 30s) — run in thread
+        result = await asyncio.to_thread(share_project, name)
+        print(f"[projects] shared {name} at {result['tunnel_url']}")
+        return result
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
+
+
+@app.post("/projects/{name}/unshare")
+async def project_unshare(name: str):
+    """Stop the cloudflared tunnel for a project."""
+    was_sharing = unshare_project(name)
+    if was_sharing:
+        print(f"[projects] unshared {name}")
+        return {"ok": True, "name": name}
+    return JSONResponse({"error": f"{name} has no active tunnel"}, status_code=404)
+
+
+@app.post("/projects/unshare-all")
+async def project_unshare_all():
+    """Panic button — stop ALL project tunnels."""
+    unshared = unshare_all_projects()
+    print(f"[projects] unshare-all: stopped {len(unshared)} tunnels: {unshared}")
+    return {"ok": True, "unshared": unshared}
 
 
 # --- Wolt Sites ---
@@ -860,7 +967,12 @@ async def site_livereload_ws(wolt_name: str, ws: WebSocket):
 @app.get("/project/{proj_name}/{path:path}")
 @app.get("/project/{proj_name}")
 async def serve_project(proj_name: str, request: Request, path: str = ""):
-    """Serve a project — proxy to running dev server, static from dist/, or direct files."""
+    """Serve a project — static fallback only (dist/ or root files when not running).
+
+    When a project is running, the viewport iframe connects directly to the
+    project port (no proxy). Accessing /project/{name}/ while it's running
+    redirects to the direct port URL so the browser lands on the right origin.
+    """
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", proj_name):
         return JSONResponse({"error": "invalid project name"}, status_code=400)
     pdir = project_dir(proj_name)
@@ -869,29 +981,16 @@ async def serve_project(proj_name: str, request: Request, path: str = ""):
 
     sub_path = "/" + path if path else "/"
 
-    # Strategy 1: proxy to running dev server (managed by start_project)
+    # When running, redirect to the direct project port — no proxy
     running = {r["name"]: r for r in running_projects()}
     run_state = running.get(proj_name)
     if run_state:
         port = run_state["port"]
-        target = f"http://localhost:{port}{sub_path}"
-        if request.url.query:
-            target += f"?{request.url.query}"
-        async with httpx.AsyncClient() as client:
-            try:
-                resp = await client.request(
-                    request.method, target,
-                    headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
-                    content=await request.body(),
-                )
-                headers = dict(resp.headers)
-                headers.pop("x-frame-options", None)
-                headers.pop("content-security-policy", None)
-                return Response(resp.content, status_code=resp.status_code, headers=headers)
-            except httpx.ConnectError:
-                return PlainTextResponse(f'Project "{proj_name}" not responding on port {port}', status_code=502)
+        qs = f"?{request.url.query}" if request.url.query else ""
+        direct = f"{request.url.scheme}://{request.url.hostname}:{port}{sub_path}{qs}"
+        return RedirectResponse(direct, status_code=302)
 
-    # Strategy 2: static from dist/
+    # Static fallback: serve from dist/ when not running
     dist_dir = pdir / "dist"
     if dist_dir.exists():
         candidates = [dist_dir / path, dist_dir / path / "index.html"]
@@ -905,7 +1004,7 @@ async def serve_project(proj_name: str, request: Request, path: str = ""):
                 return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
         return PlainTextResponse("Not found in project", status_code=404)
 
-    # Strategy 3: serve static files directly from project root (simple HTML projects)
+    # Static fallback: serve files directly from project root (simple HTML projects)
     candidates = [pdir / path, pdir / path / "index.html"]
     if not path:
         candidates = [pdir / "index.html"]
@@ -918,7 +1017,7 @@ async def serve_project(proj_name: str, request: Request, path: str = ""):
             mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
             return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
 
-    # Strategy 4: off-state placeholder — project exists but has no servable content
+    # Off-state placeholder — project exists but has no servable content
     project = get_project(proj_name)
     return HTMLResponse(_project_placeholder(proj_name, project))
 
@@ -1108,6 +1207,65 @@ async def tui_proxy(ws: WebSocket):
     except Exception as e:
         try:
             await ws.send_text(f"\r\n[tui] connection failed: {e}\r\n")
+            await ws.close()
+        except Exception:
+            pass
+
+
+@app.websocket("/{path:path}")
+async def subdomain_ws_proxy(ws: WebSocket, path: str):
+    """Proxy WebSocket connections for subdomain projects (e.g. Vite HMR).
+
+    blog.localhost:7777/any/path → ws://localhost:{port}/any/path
+    """
+    import asyncio
+    import websockets
+
+    host = (ws.headers.get("host") or "").split(":")[0]
+    if not (host.endswith(".localhost") and host != "localhost"):
+        await ws.close(code=1008)
+        return
+
+    project_name = host.removesuffix(".localhost")
+    from projects import running_projects
+    running = {r["name"]: r for r in running_projects()}
+    run_state = running.get(project_name)
+    if not run_state:
+        await ws.close(code=1008)
+        return
+
+    port = run_state["port"]
+    # Preserve subprotocols (Vite uses "vite-ping" for keep-alive checks)
+    subprotocols = ws.headers.get("sec-websocket-protocol", "").split(", ")
+    subprotocols = [s for s in subprotocols if s]
+    qs = f"?{ws.query_params}" if ws.query_params else ""
+    upstream_url = f"ws://localhost:{port}/{path}{qs}"
+
+    await ws.accept(subprotocol=subprotocols[0] if subprotocols else None)
+    try:
+        async with websockets.connect(
+            upstream_url,
+            subprotocols=subprotocols or None,
+            additional_headers={"host": f"localhost:{port}"},
+        ) as upstream:
+            async def client_to_upstream():
+                try:
+                    while True:
+                        data = await ws.receive_text()
+                        await upstream.send(data)
+                except WebSocketDisconnect:
+                    pass
+
+            async def upstream_to_client():
+                try:
+                    async for msg in upstream:
+                        await ws.send_text(msg)
+                except Exception:
+                    pass
+
+            await asyncio.gather(client_to_upstream(), upstream_to_client())
+    except Exception:
+        try:
             await ws.close()
         except Exception:
             pass

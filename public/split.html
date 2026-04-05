@@ -322,6 +322,7 @@
     let viewStack = [];   // [{url, title, t}]
     let stackIdx  = -1;
     let histOpen  = false;
+    let currentViewportMeta = null; // latest metadata from /current/meta
 
     function timeAgo(ts) {
       const s = Math.floor((Date.now() - ts) / 1000);
@@ -358,14 +359,12 @@
     const projectBar = document.getElementById('project-bar');
     let currentProjectName = null;
 
+    // Detect project/site from viewport metadata rather than URL path matching.
+    // When viewport_port != 7777, look up the project by port from /projects list.
     async function updateProjectBar(url) {
-      // Check for project URL
-      const projectMatch = url.match(/^\/project\/([^/]+)/);
       // Check for wolt site URL
       const siteMatch = url.match(/^\/wolt\/([^/]+)\/site/);
-
       if (siteMatch) {
-        // Wolt site — show wolt name, no start/stop
         const woltName = siteMatch[1];
         document.getElementById('p-emoji').textContent = '🦝';
         document.getElementById('p-name').textContent = woltName;
@@ -376,15 +375,30 @@
         return;
       }
 
-      if (!projectMatch) {
+      // Resolve project name — prefer metadata port lookup over URL path matching
+      let projectName = null;
+      const meta = currentViewportMeta;
+      if (meta && meta.port && meta.port !== 7777) {
+        try {
+          const projects = await fetch('/projects').then(r => r.json());
+          const proj = projects.find(p => p.port === meta.port);
+          if (proj) projectName = proj.name;
+        } catch {}
+      }
+      if (!projectName) {
+        const projectMatch = url.match(/^\/project\/([^/]+)/);
+        if (projectMatch) projectName = projectMatch[1];
+      }
+
+      if (!projectName) {
         projectBar.classList.remove('visible');
         currentProjectName = null;
         return;
       }
-      const name = projectMatch[1];
-      currentProjectName = name;
+
+      currentProjectName = projectName;
       try {
-        const p = await fetch('/projects/' + name).then(r => r.json());
+        const p = await fetch('/projects/' + projectName).then(r => r.json());
         document.getElementById('p-emoji').textContent = p.emoji || '📦';
         document.getElementById('p-name').textContent = p.name;
         const dot = document.getElementById('p-dot');
@@ -404,6 +418,16 @@
       }
     }
 
+    // Are we on localhost? Direct port URLs only work locally.
+    const isLocal = ['localhost', '127.0.0.1', '0.0.0.0'].includes(location.hostname);
+
+    // Build a direct port URL — only works on localhost.
+    // When remote (tunnel), returns null so callers can fall back.
+    function directPortUrl(port, subPath) {
+      if (!isLocal) return null;
+      return location.protocol + '//' + location.hostname + ':' + port + (subPath || '/');
+    }
+
     window.toggleCurrentProject = async () => {
       if (!currentProjectName) return;
       const btn = document.getElementById('p-toggle');
@@ -411,15 +435,46 @@
       btn.disabled = true;
       btn.textContent = '...';
       try {
-        await fetch('/projects/' + currentProjectName + '/' + (isRunning ? 'stop' : 'start'), { method: 'POST' });
-        preview.src = preview.src; // reload iframe
+        const result = await fetch(
+          '/projects/' + currentProjectName + '/' + (isRunning ? 'stop' : 'start'),
+          { method: 'POST' }
+        ).then(r => r.json());
+
+        if (!isRunning && result.port) {
+          // Project just started — load direct port URL (localhost) or fallback path
+          const direct = directPortUrl(result.port);
+          preview.src = direct || '/project/' + currentProjectName + '/';
+          // Update session so pollCurrent doesn't fight us
+          setCurrent('/project/' + currentProjectName + '/', result.port);
+          if (currentViewportMeta) currentViewportMeta.port = result.port;
+        } else {
+          // Project stopped — show static fallback
+          preview.src = '/project/' + currentProjectName + '/';
+          setCurrent('/project/' + currentProjectName + '/');
+          if (currentViewportMeta) currentViewportMeta.port = 7777;
+        }
         await updateProjectBar('/project/' + currentProjectName + '/');
       } catch {}
       btn.disabled = false;
     };
 
     function loadView(url, title, pushToStack = true) {
-      preview.src = url;
+      // When viewport_port != 7777, try direct port URL (localhost only).
+      // When remote, check for project tunnel_url, else fall back to /project/ path
+      // (which does a 302 redirect to the direct port when running).
+      const meta = currentViewportMeta;
+      if (meta && meta.port && meta.port !== 7777 && url && url.startsWith('/project/')) {
+        const direct = directPortUrl(meta.port);
+        if (direct) {
+          preview.src = direct;
+        } else if (meta.tunnel_url) {
+          preview.src = meta.tunnel_url;
+        } else {
+          preview.src = url; // /project/{name}/ — server does 302 redirect
+        }
+      } else {
+        preview.src = url;
+      }
       lastUrl = url;
       if (pushToStack) {
         viewStack.splice(stackIdx + 1);
@@ -432,11 +487,13 @@
     }
 
     // Tell server what we're viewing so the poll doesn't fight us
-    function setCurrent(url) {
+    function setCurrent(url, port) {
+      const body = { url };
+      if (port != null) body.port = port;
       fetch('/current?session=' + encodeURIComponent(session), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify(body),
       }).catch(() => {});
     }
 
@@ -445,6 +502,8 @@
         stackIdx--;
         const e = viewStack[stackIdx];
         lastUrl = e.url;
+        // Clear port meta so we don't apply stale direct-port logic
+        currentViewportMeta = null;
         preview.src = e.url;
         setCurrent(e.url);
         updateBackBtn();
@@ -510,6 +569,7 @@
           return;
         }
         if (data.url && data.url !== lastUrl) {
+          currentViewportMeta = data;
           const title = data.url.split('/').pop().replace('.html','').replace(/-/g,' ') || data.url;
           loadView(data.url, title);
         }

@@ -191,7 +191,26 @@ class SessionRegistry:
         return data
 
     def set_viewport(self, name: str, url: str, *, wolt: str = None, port: int = 7777) -> dict | None:
-        """Update the viewport URL for a session."""
+        """Update the viewport URL for a session.
+
+        For project URLs (/project/{name}/...), viewport_port is the primary
+        field — split.html uses it to connect directly to the project port,
+        bypassing the FastAPI proxy. If port is not explicitly given, the
+        running project's port is looked up automatically.
+        """
+        import re
+        if port == 7777:
+            proj_match = re.match(r"^/project/([^/]+)", url)
+            if proj_match:
+                try:
+                    from projects import running_projects
+                    proj_name = proj_match.group(1)
+                    running = {r["name"]: r for r in running_projects()}
+                    if proj_name in running:
+                        port = running[proj_name]["port"]
+                except Exception:
+                    pass
+
         return self.update(
             name,
             wolt=wolt,
@@ -454,8 +473,15 @@ def start_session(
         result["creature"] = creature
         result["model"] = model
 
-    # Auto-start wolt site for non-project sessions.
-    if not project:
+    # Set viewport: project subdomain URL if project session, otherwise wolt site.
+    if project:
+        try:
+            project_url = f"http://{project}.localhost:7777/"
+            registry.set_viewport(name, project_url, wolt=wolt)
+            result["viewport_url"] = project_url
+        except Exception as e:
+            print(f"[sessions] failed to set project viewport for {project}: {e}")
+    else:
         try:
             site_state = start_site(wolt)
             site_url = f"/wolt/{wolt}/site/"

@@ -535,3 +535,165 @@ class TestE2EProjectLifecycle:
             if test_proj.exists():
                 import shutil
                 shutil.rmtree(test_proj)
+
+
+# ---------------------------------------------------------------------------
+# Unit: share_project / unshare_project
+# ---------------------------------------------------------------------------
+
+class TestUnitShareProject:
+    """Unit tests for share_project() and unshare_project()."""
+
+    def test_share_raises_if_not_running(self, tmp_path, monkeypatch):
+        """share_project raises ValueError when project has no running state."""
+        import projects as proj_mod
+        monkeypatch.setattr(proj_mod, "_RUNNING_STATE_DIR", tmp_path)
+        with pytest.raises(ValueError, match="not running"):
+            proj_mod.share_project("phantom-project")
+
+    def test_unshare_returns_false_if_no_state(self, tmp_path, monkeypatch):
+        """unshare_project returns False when project has no state file."""
+        import projects as proj_mod
+        monkeypatch.setattr(proj_mod, "_RUNNING_STATE_DIR", tmp_path)
+        assert proj_mod.unshare_project("phantom-project") is False
+
+    def test_unshare_returns_false_if_no_tunnel(self, tmp_path, monkeypatch):
+        """unshare_project returns False when state exists but no tunnel_pid."""
+        import projects as proj_mod
+        monkeypatch.setattr(proj_mod, "_RUNNING_STATE_DIR", tmp_path)
+        proj_mod._write_state("my-proj", {"name": "my-proj", "port": 4500, "pid": 99})
+        assert proj_mod.unshare_project("my-proj") is False
+
+    def test_unshare_clears_tunnel_fields(self, tmp_path, monkeypatch):
+        """unshare_project clears tunnel_pid and tunnel_url in state."""
+        import projects as proj_mod
+        monkeypatch.setattr(proj_mod, "_RUNNING_STATE_DIR", tmp_path)
+        # _is_pid_alive returns False — tunnel process already gone
+        monkeypatch.setattr(proj_mod, "_is_pid_alive", lambda pid: False)
+
+        proj_mod._write_state("my-proj", {
+            "name": "my-proj",
+            "port": 4500,
+            "pid": 99,
+            "tunnel_pid": 11111,
+            "tunnel_url": "https://test.trycloudflare.com",
+        })
+
+        result = proj_mod.unshare_project("my-proj")
+        assert result is True
+
+        state = proj_mod._read_state("my-proj")
+        assert state["tunnel_pid"] is None
+        assert state["tunnel_url"] is None
+
+    def test_share_returns_existing_tunnel_if_alive(self, tmp_path, monkeypatch):
+        """share_project returns existing tunnel info if tunnel process is alive."""
+        import projects as proj_mod
+        monkeypatch.setattr(proj_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setattr(proj_mod, "_is_pid_alive", lambda pid: True)
+
+        proj_mod._write_state("my-proj", {
+            "name": "my-proj",
+            "port": 4500,
+            "pid": 99,
+            "tunnel_pid": 11111,
+            "tunnel_url": "https://already-live.trycloudflare.com",
+        })
+
+        result = proj_mod.share_project("my-proj")
+        assert result["tunnel_url"] == "https://already-live.trycloudflare.com"
+        assert result["pid"] == 11111
+
+    def test_share_blocked_when_sharing_disabled(self, tmp_path, monkeypatch):
+        """share_project raises RuntimeError when SHARING_ENABLED is False."""
+        import projects as proj_mod
+        monkeypatch.setattr(proj_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setattr(proj_mod, "SHARING_ENABLED", False)
+
+        proj_mod._write_state("my-proj", {"name": "my-proj", "port": 4500, "pid": 99})
+
+        with pytest.raises(RuntimeError, match="Sharing is disabled"):
+            proj_mod.share_project("my-proj")
+
+    def test_unshare_all_stops_all_tunnels(self, tmp_path, monkeypatch):
+        """unshare_all_projects kills all tunnel processes."""
+        import projects as proj_mod
+        monkeypatch.setattr(proj_mod, "_RUNNING_STATE_DIR", tmp_path)
+
+        killed_pids = []
+        def mock_kill(pid):
+            killed_pids.append(pid)
+        monkeypatch.setattr(proj_mod, "_is_pid_alive", lambda pid: True)
+        monkeypatch.setattr(os, "kill", lambda pid, sig: killed_pids.append(pid))
+        # Also mock _set_public to avoid filesystem writes
+        monkeypatch.setattr(proj_mod, "_set_public", lambda name, public: None)
+
+        proj_mod._write_state("proj-a", {
+            "name": "proj-a", "port": 4500, "pid": 10,
+            "tunnel_pid": 111, "tunnel_url": "https://a.trycloudflare.com",
+        })
+        proj_mod._write_state("proj-b", {
+            "name": "proj-b", "port": 4501, "pid": 20,
+            "tunnel_pid": 222, "tunnel_url": "https://b.trycloudflare.com",
+        })
+        proj_mod._write_state("proj-c", {
+            "name": "proj-c", "port": 4502, "pid": 30,
+        })  # No tunnel
+
+        unshared = proj_mod.unshare_all_projects()
+        assert set(unshared) == {"proj-a", "proj-b"}
+        assert 111 in killed_pids
+        assert 222 in killed_pids
+
+
+# ---------------------------------------------------------------------------
+# Integration: share/unshare endpoints
+# ---------------------------------------------------------------------------
+
+@requires_server
+class TestIntegrationShareEndpoints:
+    """Test /projects/{name}/share and /projects/{name}/unshare endpoints."""
+
+    def test_share_nonexistent_project_returns_error(self, server_post):
+        """Sharing a project that has no running state returns an error."""
+        result = server_post("/projects/definitely-does-not-exist-xyz/share", {})
+        assert "error" in result
+
+    def test_unshare_nonexistent_project_returns_error(self, server_post):
+        """Unsharing a project with no tunnel returns an error."""
+        result = server_post("/projects/definitely-does-not-exist-xyz/unshare", {})
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Unit: set_viewport auto-detects project port
+# ---------------------------------------------------------------------------
+
+class TestUnitSetViewportProjectPort:
+    """set_viewport() auto-detects project port for /project/ URLs."""
+
+    def test_set_viewport_nonproject_url_unchanged(self, tmp_registry):
+        """Non-project URLs keep port=7777."""
+        reg = tmp_registry
+        reg.create("sess-vp", wolt="neowolt")
+        reg.set_viewport("sess-vp", "/wolt/neowolt/site/index.html", wolt="neowolt")
+        data = reg.get("sess-vp", check_alive=False)
+        assert data["viewport_port"] == 7777
+
+    def test_set_viewport_project_url_no_running_project(self, tmp_registry):
+        """Project URL with no running project keeps port=7777."""
+        reg = tmp_registry
+        reg.create("sess-vp2", wolt="neowolt")
+        # No running state for "my-app" — port stays 7777
+        reg.set_viewport("sess-vp2", "/project/my-app/", wolt="neowolt")
+        data = reg.get("sess-vp2", check_alive=False)
+        assert data["viewport_url"] == "/project/my-app/"
+        assert data["viewport_port"] == 7777
+
+    def test_set_viewport_explicit_port_respected(self, tmp_registry):
+        """Explicit port= is always used, no auto-detection."""
+        reg = tmp_registry
+        reg.create("sess-vp3", wolt="neowolt")
+        reg.set_viewport("sess-vp3", "/project/my-app/", wolt="neowolt", port=4500)
+        data = reg.get("sess-vp3", check_alive=False)
+        assert data["viewport_port"] == 4500
