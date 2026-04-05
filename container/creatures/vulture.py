@@ -141,44 +141,52 @@ def reap(dry_run: bool = False) -> dict:
     Single reaper pass. Returns stats dict:
       { "registry_reaped": [...], "tmux_killed": [...], "errors": [...] }
     """
-    reg = SessionRegistry()
+    reg = SessionRegistry(WOLTS_DIR)
     now = int(time.time())
     live_tmux = _tmux_sessions()
     stats = {"registry_reaped": [], "tmux_killed": [], "errors": []}
 
     # --- Pass 1: Registry reconciliation ---
-    # Find "running" registry entries whose tmux session is dead
-    for path in reg.dir.glob("*.json"):
-        if path.suffix == ".tmp":
+    # Find "running" registry entries whose tmux session is dead.
+    # Iterate all wolts' .state/sessions/ dirs (per-wolt model).
+    for wolt_entry in sorted(WOLTS_DIR.iterdir()) if WOLTS_DIR.exists() else []:
+        if not wolt_entry.is_dir() or wolt_entry.name.startswith("."):
             continue
-        try:
-            data = json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError):
+        sessions_dir = wolt_entry / ".state" / "sessions"
+        if not sessions_dir.exists():
             continue
+        for path in sessions_dir.glob("*.json"):
+            if path.name.endswith(".tmp"):
+                continue
+            try:
+                data = json.loads(path.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
 
-        name = data.get("name", path.stem)
-        status = data.get("status", "")
-        created_at = data.get("created_at", 0)
+            name = data.get("name", path.stem)
+            status = data.get("status", "")
+            created_at = data.get("created_at", 0)
+            wolt_name = data.get("wolt", wolt_entry.name)
 
-        # Only reap sessions marked as running
-        if status != "running":
-            continue
+            # Only reap sessions marked as running
+            if status != "running":
+                continue
 
-        # Grace period — don't reap sessions that just started
-        if now - created_at < GRACE_PERIOD_SECONDS:
-            continue
+            # Grace period — don't reap sessions that just started
+            if now - created_at < GRACE_PERIOD_SECONDS:
+                continue
 
-        # If tmux session is gone, mark as reaped
-        if name not in live_tmux:
-            if dry_run:
-                log(f"[dry-run] would reap registry: {name}")
-            else:
-                data["status"] = "reaped"
-                data["finished_at"] = now
-                data["last_activity"] = now
-                reg._write(name, data)
-                log(f"🦅 reaped registry: {name}")
-            stats["registry_reaped"].append(name)
+            # If tmux session is gone, mark as reaped
+            if name not in live_tmux:
+                if dry_run:
+                    log(f"[dry-run] would reap registry: {name}")
+                else:
+                    data["status"] = "reaped"
+                    data["finished_at"] = now
+                    data["last_activity"] = now
+                    reg._write(wolt_name, name, data)
+                    log(f"🦅 reaped registry: {name}")
+                stats["registry_reaped"].append(name)
 
     # --- Pass 2: Zombie tmux sessions ---
     # Kill tmux sessions that exist but have no claude process and no registry
@@ -191,11 +199,10 @@ def reap(dry_run: bool = False) -> dict:
         if _session_has_claude(session_name):
             continue
 
-        # Check registry — if it's marked running, the claude might have
-        # just exited. The registry pass above would have caught it if
-        # tmux was gone, but here tmux is alive with no claude inside.
-        reg_data = reg._read(session_name)
+        # Check registry — look up which wolt owns this session
+        reg_data = reg.get(session_name, check_alive=False)
         if reg_data and reg_data.get("status") == "running":
+            wolt_name = reg_data.get("wolt", "")
             # Claude exited but tmux lingers — mark reaped and kill tmux
             if dry_run:
                 log(f"[dry-run] would kill zombie tmux + reap: {session_name}")
@@ -203,7 +210,8 @@ def reap(dry_run: bool = False) -> dict:
                 reg_data["status"] = "reaped"
                 reg_data["finished_at"] = now
                 reg_data["last_activity"] = now
-                reg._write(session_name, reg_data)
+                if wolt_name:
+                    reg._write(wolt_name, session_name, reg_data)
                 _kill_tmux_session(session_name)
                 log(f"🦅 killed zombie tmux + reaped: {session_name}")
             stats["tmux_killed"].append(session_name)
