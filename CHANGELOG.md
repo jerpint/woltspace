@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.4.4 (2026-04-05)
+
+- **Session resume** — `resume_session()` handles 3 paths: claude running (send keys), claude exited (restart with `--resume` in pane), tmux dead (respawn with `--resume`). (#241)
+- **Stop/resume lifecycle** — `POST /sessions/{name}/stop` and `POST /sessions/{name}/resume` endpoints. Lodge UI shows always-visible stop/play buttons on session rows.
+- **Auto-resume in TUI** — opening a dead session in split.html automatically resumes it instead of showing a blank terminal.
+- **tui-service fix** — stops creating bare tmux shells for non-main sessions. Fixes "wclaude: command not found" on resumed sessions.
+- **UUID session IDs** — `run-session.sh` generates a UUID for `--session-id` (Claude Code requirement) and stores it in the registry. `--name` flag gives sessions a human-readable name.
+- **Running-only filter** — lodge sessions view has a "Running only" toggle to filter to live sessions.
+- **Vulture fixed** for per-wolt `.state/sessions/` model (was broken since state refactor).
+
+## v0.4.3 (2026-04-05)
+
+- **Streaming subdomain proxy** — replaced buffered `httpx.request()` with `client.send(stream=True)` + `StreamingResponse`. Fixes SSE and chunked responses for projects served via `*.localhost:7777`.
+- **WebSocket proxy** — catch-all WS route for `*.localhost` subdomains, proxies to project port. Passes subprotocols through (Vite HMR `"vite-ping"`). Fixes live reload for Vite/Astro projects.
+
+## v0.4.2 (2026-04-03)
+
+- **Lodge redesign** — sidebar dashboard with wolt roster, project grid, sessions view grouped by wolt. Pixel art forest scene with procedural landscape, animated clouds, and river. (#255)
+- Time-based greeting + rotating quotes on home view.
+- Session count badge on nav.
+- Wolt card tooltips (role + description) and site links.
+
+## v0.4.1 (2026-04-02)
+
+- **Fix stale skill names** from `woltspace-*` rename — `create-wolt` and `telegram` references in `app.py`, `onboard.html`, `entrypoint_setup.py`. (#256)
+
 ## v0.4.0 (2026-03-31)
 
 - **Skill inheritance** — all platform skills renamed to `woltspace-*` prefix (e.g. `start-chat` → `woltspace-start-chat`). Wolt-owned skills are never touched. (#173)

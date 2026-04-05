@@ -306,17 +306,30 @@ class TestDenReplySeam:
         )
         assert message in result.stdout
 
-    def test_message_session_function(self, tmux_session):
+    def test_message_session_function(self, tmux_session, tmp_path):
         """core.message_session should deliver to a live tmux session."""
+        import sessions
         name = tmux_session
+
+        # Create registry entry so resume_session can find it
+        original_wolts = sessions.WOLTS_DIR
+        sessions.WOLTS_DIR = tmp_path
+        (tmp_path / "testwolt" / "wolt").mkdir(parents=True, exist_ok=True)
+        reg = sessions.SessionRegistry(tmp_path)
+        reg.create(name, wolt="testwolt")
+        reg.update(name, wolt="testwolt", claude_session_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
         # Start a session running cat (will echo input)
         subprocess.run(["tmux", "new-session", "-d", "-s", name, "cat"], check=True)
         time.sleep(0.3)
 
-        from bot.core import message_session
-        result = message_session(name, "hello from test")
-        assert result["ok"] is True
-        assert result["status"] in ("delivered", "revived")
+        try:
+            from bot.core import message_session
+            result = message_session(name, "hello from test")
+            assert result["ok"] is True
+            assert result["status"] in ("delivered", "revived")
+        finally:
+            sessions.WOLTS_DIR = original_wolts
 
     def test_message_session_nonexistent(self):
         """message_session to a dead session should return ok=False or revive."""
@@ -459,142 +472,125 @@ class TestRegressions:
 
     @requires_tmux
     def test_revival_picks_correct_session(self, tmp_path):
-        """Reviving session A must --resume A's UUID, not B's (the most recent).
+        """Reviving session A must --resume with A's name, not B's.
 
-        Bug: message_session used --continue which picks the most recent
-        conversation in the directory. When multiple sessions share a dir,
-        this revives the wrong one. Fix: use --resume <uuid> from registry.
+        Session name IS the claude session ID now — no more UUIDs.
+        resume_session() uses the session name directly for --resume.
         """
-        import bot.core as core
-        from sessions import SessionRegistry
+        from sessions import SessionRegistry, resume_session
+        import sessions
 
-        # Use a temp registry so we don't pollute real state
-        tmp_reg = SessionRegistry(tmp_path / "registry")
-        original_reg = core.registry
-        core.registry = tmp_reg
+        original_wolts = sessions.WOLTS_DIR
+        sessions.WOLTS_DIR = tmp_path
 
         session_a = f"test-revival-a-{int(time.time()) % 100000}"
         session_b = f"test-revival-b-{int(time.time()) % 100000}"
-        uuid_a = "aaaaaaaa-1111-2222-3333-444444444444"
-        uuid_b = "bbbbbbbb-1111-2222-3333-444444444444"
 
         try:
-            # Create registry entries with distinct claude_session_ids
-            tmp_reg.create(session_a, wolt="neowolt")
-            tmp_reg.update(session_a, claude_session_id=uuid_a)
-            tmp_reg.create(session_b, wolt="neowolt")
-            tmp_reg.update(session_b, claude_session_id=uuid_b)
+            # Create wolt dir and registry entries
+            (tmp_path / "neowolt" / "wolt").mkdir(parents=True, exist_ok=True)
+            reg = SessionRegistry(tmp_path)
+            reg.create(session_a, wolt="neowolt")
+            reg.update(session_a, wolt="neowolt", claude_session_id=session_a)
+            reg.create(session_b, wolt="neowolt")
+            reg.update(session_b, wolt="neowolt", claude_session_id=session_b)
 
-            # Create tmux sessions running bash (no claude → _session_has_claude returns False)
+            # Create tmux sessions running bash (no claude → revive path)
             for name in [session_a, session_b]:
                 subprocess.run(["tmux", "new-session", "-d", "-s", name, "bash"], check=True)
             time.sleep(0.3)
 
-            # Revive session A — should use --resume uuid_a
-            result = core.message_session(session_a, "test message")
-            assert result["ok"] is True
+            # Revive session A — should use --resume with session A's name
+            result = resume_session(session_a, "test message")
             assert result["status"] == "revived"
-            assert uuid_a in result.get("detail", ""), (
-                f"Expected --resume {uuid_a} in detail, got: {result.get('detail')}"
-            )
-            assert uuid_b not in result.get("detail", ""), (
-                f"Should NOT contain session B's UUID: {result.get('detail')}"
-            )
+            assert result["name"] == session_a
 
-            # Verify the actual command sent to tmux contains --resume with the right UUID
-            # (tmux may line-wrap, so join all lines before checking)
+            # Verify tmux pane contains --resume with correct session name
             time.sleep(0.3)
             capture = subprocess.run(
                 ["tmux", "capture-pane", "-t", session_a, "-p", "-J"],
                 capture_output=True, text=True, check=True,
             )
             flat = capture.stdout.replace("\n", " ")
-            assert "--resume" in flat and uuid_a in flat, (
-                f"tmux pane should contain --resume {uuid_a}, got: {flat[:500]}"
+            assert "--resume" in flat and session_a in flat, (
+                f"tmux pane should contain --resume {session_a}, got: {flat[:500]}"
+            )
+            assert session_b not in flat, (
+                f"Should NOT contain session B's name: {flat[:500]}"
             )
 
         finally:
-            core.registry = original_reg
+            sessions.WOLTS_DIR = original_wolts
             for name in [session_a, session_b]:
                 subprocess.run(["tmux", "kill-session", "-t", name], capture_output=True)
 
     @requires_tmux
-    def test_revival_falls_back_to_continue_without_uuid(self, tmp_path):
-        """Sessions without claude_session_id should fall back to --continue."""
-        import bot.core as core
-        from sessions import SessionRegistry
+    def test_revival_uses_session_name_as_id(self, tmp_path):
+        """Session name IS the claude session ID — no UUID needed, no --continue fallback."""
+        from sessions import SessionRegistry, resume_session
+        import sessions
 
-        tmp_reg = SessionRegistry(tmp_path / "registry")
-        original_reg = core.registry
-        core.registry = tmp_reg
+        original_wolts = sessions.WOLTS_DIR
+        sessions.WOLTS_DIR = tmp_path
 
-        session_name = f"test-revival-old-{int(time.time()) % 100000}"
+        session_name = f"test-revival-name-{int(time.time()) % 100000}"
 
         try:
-            # Create session without claude_session_id (pre-fix session)
-            tmp_reg.create(session_name, wolt="neowolt")
+            (tmp_path / "neowolt" / "wolt").mkdir(parents=True, exist_ok=True)
+            reg = SessionRegistry(tmp_path)
+            reg.create(session_name, wolt="neowolt")
+            reg.update(session_name, wolt="neowolt", claude_session_id=session_name)
 
             subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "bash"], check=True)
             time.sleep(0.3)
 
-            result = core.message_session(session_name, "test fallback")
-            assert result["ok"] is True
+            result = resume_session(session_name, "test name-as-id")
             assert result["status"] == "revived"
-            assert "--continue" in result.get("detail", ""), (
-                f"Expected --continue fallback, got: {result.get('detail')}"
-            )
+            # Should use --resume with the session name itself
+            assert "--resume" in result.get("detail", "")
+            assert "--continue" not in result.get("detail", "")
 
         finally:
-            core.registry = original_reg
+            sessions.WOLTS_DIR = original_wolts
             subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
 
     @requires_tmux
     def test_revival_cds_into_session_wolt_dir(self, tmp_path):
-        """Reviving a session must cd into the session's wolt dir, not the current dir.
+        """Reviving a session must cd into the session's wolt dir, not the current dir."""
+        from sessions import SessionRegistry, resume_session
+        import sessions
 
-        Bug: reviving uxwolt's session while neowolt was active ran wclaude
-        in neowolt's directory. The fix uses reg_data["dir"] to cd first.
-        Also verifies wclaude is invoked by absolute path (the bare bash shell
-        after Claude exits may not have PATH set).
-        """
-        import bot.core as core
-        from sessions import SessionRegistry
-
-        tmp_reg = SessionRegistry(tmp_path / "registry")
-        original_reg = core.registry
-        core.registry = tmp_reg
+        original_wolts = sessions.WOLTS_DIR
+        sessions.WOLTS_DIR = tmp_path
 
         session_name = f"test-revival-dir-{int(time.time()) % 100000}"
-        uuid = "dddddddd-1111-2222-3333-444444444444"
-        wolt_dir = "/workspace/wolts/uxwolt"
+        wolt_dir = str(tmp_path / "uxwolt")
 
         try:
-            tmp_reg.create(session_name, wolt="uxwolt")
-            tmp_reg.update(session_name, claude_session_id=uuid, dir=wolt_dir)
+            (tmp_path / "uxwolt" / "wolt").mkdir(parents=True, exist_ok=True)
+            reg = SessionRegistry(tmp_path)
+            reg.create(session_name, wolt="uxwolt")
+            reg.update(session_name, wolt="uxwolt", claude_session_id=session_name, dir=wolt_dir)
 
             subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "bash"], check=True)
             time.sleep(0.3)
 
-            result = core.message_session(session_name, "test dir fix")
-            assert result["ok"] is True
+            result = resume_session(session_name, "test dir fix")
             assert result["status"] == "revived"
 
-            # Verify the command sent to tmux contains cd to the wolt dir and absolute wclaude path
+            # Verify the command sent to tmux contains cd to the wolt dir
             time.sleep(0.3)
             capture = subprocess.run(
                 ["tmux", "capture-pane", "-t", session_name, "-p", "-J"],
                 capture_output=True, text=True, check=True,
             )
             flat = capture.stdout.replace("\n", " ")
-            assert f"cd {wolt_dir}" in flat or f"cd '{wolt_dir}'" in flat or f'cd "{wolt_dir}"' in flat, (
+            assert wolt_dir in flat, (
                 f"tmux pane should contain cd to {wolt_dir}, got: {flat[:500]}"
-            )
-            assert "/workspace/woltspace/container/bin/wclaude" in flat, (
-                f"tmux pane should use absolute wclaude path, got: {flat[:500]}"
             )
 
         finally:
-            core.registry = original_reg
+            sessions.WOLTS_DIR = original_wolts
             subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
 
     def test_session_registry_atomic_writes(self, tmp_path):

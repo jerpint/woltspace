@@ -15,6 +15,7 @@ Usage:
 import json
 import os
 import random
+import re
 import shlex
 import subprocess
 import time
@@ -28,8 +29,11 @@ from paths import (
 )
 from sites import start_site
 
+_UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 RUN_SESSION_SCRIPT = Path("/workspace/woltspace/container/bin/run-session.sh")
+WCLAUDE = "/workspace/woltspace/container/bin/wclaude"
 
 
 class SessionRegistry:
@@ -198,7 +202,6 @@ class SessionRegistry:
         bypassing the FastAPI proxy. If port is not explicitly given, the
         running project's port is looked up automatically.
         """
-        import re
         if port == 7777:
             proj_match = re.match(r"^/project/([^/]+)", url)
             if proj_match:
@@ -493,6 +496,179 @@ def start_session(
             print(f"[sites] failed to auto-start for {wolt}: {e}")
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Session resume — shared entry point for bot + API
+# ---------------------------------------------------------------------------
+
+def resume_session(name: str, prompt: str = "") -> dict:
+    """Resume an existing Claude Code session.
+
+    Logic:
+      1. Look up session in registry (scan all wolts).
+      2. If tmux is alive and claude is running → send keys directly.
+      3. If tmux is alive but claude exited → start wclaude --resume in the pane.
+      4. If tmux is dead → create a new tmux session with wclaude --resume.
+      5. Update status back to "running" on success.
+
+    Returns dict with resume info.
+    Raises ValueError if session not found in registry.
+    """
+    registry = SessionRegistry()
+    data = registry.get(name, check_alive=False)
+    if data is None:
+        raise ValueError(f"session '{name}' not found in registry")
+
+    wolt = data.get("wolt", "")
+    session_dir = data.get("dir", "")
+    claude_session_id = data.get("claude_session_id", "")
+    tunnel_url = get_tunnel_url()
+    session_url = f"{tunnel_url}/tui?session={name}" if tunnel_url else ""
+
+    tmux_alive = _tmux_alive(name)
+    claude_running = False
+
+    if tmux_alive:
+        claude_running = _session_has_claude_process(name)
+
+    safe_prompt = shlex.quote(prompt) if prompt else ""
+
+    if tmux_alive and claude_running:
+        # Claude is running — send the prompt as keystrokes
+        if prompt:
+            subprocess.run(["tmux", "send-keys", "-t", name, "-l", prompt], check=True)
+            subprocess.run(["tmux", "send-keys", "-t", name, "", "Enter"], check=True)
+        registry.update(name, wolt=wolt, status="running")
+        return {"name": name, "url": session_url, "status": "delivered", "detail": "claude running, message sent"}
+
+    # Build --resume flag using the stored UUID (claude_session_id), not the session name.
+    # Validate it's a real UUID — legacy sessions may have non-UUID values.
+    resume_flag = f"--resume {shlex.quote(claude_session_id)}" if claude_session_id and _UUID_RE.match(claude_session_id) else ""
+
+    if tmux_alive and not claude_running:
+        # Tmux alive but claude exited — restart claude with --resume inside the pane
+        cd_prefix = f"cd {shlex.quote(session_dir)} && " if session_dir else ""
+        resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} && {WCLAUDE} --dangerously-skip-permissions {resume_flag} {safe_prompt}"
+        subprocess.run(["tmux", "send-keys", "-t", name, "-l", resume_cmd], check=True)
+        subprocess.run(["tmux", "send-keys", "-t", name, "", "Enter"], check=True)
+        registry.update(name, wolt=wolt, status="running")
+        return {"name": name, "url": session_url, "status": "revived", "detail": "claude exited, restarted with --resume in existing tmux"}
+
+    # Tmux is dead — create a fresh tmux session with wclaude --resume
+    work_dir = session_dir or str(WOLTS_DIR / wolt) if wolt else "/workspace"
+    cd_prefix = f"cd {shlex.quote(work_dir)} && " if work_dir else ""
+    resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} && {WCLAUDE} --dangerously-skip-permissions {resume_flag} {safe_prompt}"
+    subprocess.run(
+        ["tmux", "new-session", "-d", "-s", name, "-c", work_dir or "/workspace", resume_cmd],
+        check=True,
+    )
+    registry.update(name, wolt=wolt, status="running")
+    return {"name": name, "url": session_url, "status": "respawned", "detail": "tmux was dead, created new tmux with --resume"}
+
+
+def stop_session(name: str) -> dict:
+    """Stop a running session — kill tmux, mark as stopped.
+
+    Returns dict with stop info.
+    Raises ValueError if session not found in registry.
+    """
+    registry = SessionRegistry()
+    data = registry.get(name, check_alive=False)
+    if data is None:
+        raise ValueError(f"session '{name}' not found in registry")
+
+    wolt = data.get("wolt", "")
+    tmux_alive = _tmux_alive(name)
+
+    if tmux_alive:
+        try:
+            subprocess.run(
+                ["tmux", "kill-session", "-t", name],
+                capture_output=True, check=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+
+    registry.update(name, wolt=wolt, status="stopped", finished_at=int(time.time()))
+    return {"name": name, "status": "stopped", "was_alive": tmux_alive}
+
+
+def archive_session(name: str) -> dict:
+    """Archive a session — stop it if running, mark as archived.
+
+    Returns dict with archive info.
+    Raises ValueError if session not found in registry.
+    """
+    registry = SessionRegistry()
+    data = registry.get(name, check_alive=False)
+    if data is None:
+        raise ValueError(f"session '{name}' not found in registry")
+
+    wolt = data.get("wolt", "")
+
+    # Stop tmux if still alive
+    if _tmux_alive(name):
+        try:
+            subprocess.run(
+                ["tmux", "kill-session", "-t", name],
+                capture_output=True, check=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+
+    registry.update(name, wolt=wolt, status="archived", finished_at=data.get("finished_at") or int(time.time()))
+    return {"name": name, "status": "archived", "wolt": wolt}
+
+
+def delete_session(name: str) -> dict:
+    """Delete a session — stop it if running, remove the session file.
+
+    Returns dict with delete info.
+    Raises ValueError if session not found in registry.
+    """
+    registry = SessionRegistry()
+    data = registry.get(name, check_alive=False)
+    if data is None:
+        raise ValueError(f"session '{name}' not found in registry")
+
+    wolt = data.get("wolt", "")
+
+    # Stop tmux if still alive
+    if _tmux_alive(name):
+        try:
+            subprocess.run(
+                ["tmux", "kill-session", "-t", name],
+                capture_output=True, check=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+
+    registry.delete(name, wolt=wolt)
+    return {"name": name, "status": "deleted", "wolt": wolt}
+
+
+def _session_has_claude_process(name: str) -> bool:
+    """Check if a tmux session has a claude process running in its pane."""
+    try:
+        result = subprocess.run(
+            ["tmux", "list-panes", "-t", name, "-F", "#{pane_pid}"],
+            capture_output=True, text=True, check=True,
+        )
+        pane_pid = result.stdout.strip()
+        if not pane_pid:
+            return False
+        ps_result = subprocess.run(
+            ["ps", "--ppid", pane_pid, "-o", "comm=", "--no-headers"],
+            capture_output=True, text=True,
+        )
+        for child in ps_result.stdout.strip().split("\n"):
+            child = child.strip()
+            if child in ("claude", "run-session.sh", "run-session"):
+                return True
+        return False
+    except subprocess.CalledProcessError:
+        return False
 
 
 # --- CLI interface (used by session-reg bash wrapper) ---

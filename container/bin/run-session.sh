@@ -17,7 +17,8 @@ SESSION_REG="$SCRIPT_DIR/session-reg"
 cd "$WORK_DIR"
 export WOLT_SESSION="$SESSION_NAME"
 
-# Generate a stable Claude session ID so we can --resume the right conversation later
+# Generate a UUID for Claude's session ID (--session-id requires a valid UUID).
+# Store it in the registry so resume_session() can use --resume with the UUID.
 CLAUDE_SESSION_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
 $SESSION_REG update "$SESSION_NAME" "claude_session_id=$CLAUDE_SESSION_ID" > /dev/null 2>&1 || true
 
@@ -65,7 +66,7 @@ MODEL_FLAG=""
 if [ -n "$MODEL" ]; then
     MODEL_FLAG="--model $MODEL"
 fi
-wclaude --dangerously-skip-permissions --session-id "$CLAUDE_SESSION_ID" $MODEL_FLAG "$FULL_PROMPT" || EXIT_CODE=$?
+wclaude --dangerously-skip-permissions --session-id "$CLAUDE_SESSION_ID" --name "$SESSION_NAME" $MODEL_FLAG "$FULL_PROMPT" || EXIT_CODE=$?
 
 # Update registry with final status
 $SESSION_REG finish "$SESSION_NAME" "$EXIT_CODE" > /dev/null 2>&1 || true
