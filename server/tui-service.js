@@ -24,7 +24,14 @@ function ensureTmuxSession(name = 'main') {
   try {
     execSync(`tmux has-session -t ${safe} 2>/dev/null`);
   } catch {
-    execSync(`tmux new-session -d -s ${safe} -c ${WOLT_DIR}`);
+    if (safe === 'main') {
+      // Only auto-create the main session — other sessions are managed by
+      // start_session/resume_session via the API. Creating bare shells here
+      // races with auto-resume and produces shells with wrong working dir.
+      execSync(`tmux new-session -d -s ${safe} -c ${WOLT_DIR}`);
+    } else {
+      return null;
+    }
   }
   return safe;
 }
@@ -44,6 +51,13 @@ const wss = new WebSocketServer({ server });
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const sessionName = ensureTmuxSession(url.searchParams.get('session') || 'main');
+  if (!sessionName) {
+    console.log(`[tui] no tmux session for ${url.searchParams.get('session')} — waiting for resume`);
+    // Session doesn't exist yet. Close the WS — split.html will auto-resume
+    // and reconnect once the tmux session is created.
+    ws.close();
+    return;
+  }
   console.log(`[tui] client → ${sessionName}`);
 
   const shell = pty.spawn('tmux', ['attach', '-t', sessionName], {
