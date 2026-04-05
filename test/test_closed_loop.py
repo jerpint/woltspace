@@ -317,7 +317,7 @@ class TestDenReplySeam:
         (tmp_path / "testwolt" / "wolt").mkdir(parents=True, exist_ok=True)
         reg = sessions.SessionRegistry(tmp_path)
         reg.create(name, wolt="testwolt")
-        reg.update(name, wolt="testwolt", claude_session_id=name)
+        reg.update(name, wolt="testwolt", claude_session_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
         # Start a session running cat (will echo input)
         subprocess.run(["tmux", "new-session", "-d", "-s", name, "cat"], check=True)

@@ -460,9 +460,6 @@ def start_session(
         session_url=session_url,
     )
 
-    # Claude session ID = session name — resume is just wclaude --resume SESSION_NAME
-    registry.update(name, wolt=wolt, claude_session_id=name)
-
     cmd = build_session_command(name, str(target_dir), prompt, model=model)
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", name, "-c", str(target_dir), cmd],
@@ -522,6 +519,7 @@ def resume_session(name: str, prompt: str = "") -> dict:
 
     wolt = data.get("wolt", "")
     session_dir = data.get("dir", "")
+    claude_session_id = data.get("claude_session_id", "")
     tunnel_url = get_tunnel_url()
     session_url = f"{tunnel_url}/tui?session={name}" if tunnel_url else ""
 
@@ -541,10 +539,13 @@ def resume_session(name: str, prompt: str = "") -> dict:
         registry.update(name, wolt=wolt, status="running")
         return {"name": name, "url": session_url, "status": "delivered", "detail": "claude running, message sent"}
 
+    # Build --resume flag using the stored UUID (claude_session_id), not the session name
+    resume_flag = f"--resume {shlex.quote(claude_session_id)}" if claude_session_id else ""
+
     if tmux_alive and not claude_running:
         # Tmux alive but claude exited — restart claude with --resume inside the pane
         cd_prefix = f"cd {shlex.quote(session_dir)} && " if session_dir else ""
-        resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} && wclaude --dangerously-skip-permissions --resume {shlex.quote(name)} {safe_prompt}"
+        resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} && wclaude --dangerously-skip-permissions {resume_flag} {safe_prompt}"
         subprocess.run(["tmux", "send-keys", "-t", name, "-l", resume_cmd], check=True)
         subprocess.run(["tmux", "send-keys", "-t", name, "", "Enter"], check=True)
         registry.update(name, wolt=wolt, status="running")
@@ -553,7 +554,7 @@ def resume_session(name: str, prompt: str = "") -> dict:
     # Tmux is dead — create a fresh tmux session with wclaude --resume
     work_dir = session_dir or str(WOLTS_DIR / wolt) if wolt else "/workspace"
     cd_prefix = f"cd {shlex.quote(work_dir)} && " if work_dir else ""
-    resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} && wclaude --dangerously-skip-permissions --resume {shlex.quote(name)} {safe_prompt}"
+    resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} && wclaude --dangerously-skip-permissions {resume_flag} {safe_prompt}"
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", name, "-c", work_dir or "/workspace", resume_cmd],
         check=True,

@@ -32,7 +32,7 @@ def wolt_env(tmp_path, monkeypatch):
     wolt_dir = tmp_path / "testwolt" / "wolt"
     wolt_dir.mkdir(parents=True)
 
-    # Create a session in registry
+    # Create a session in registry with a UUID for claude_session_id
     reg = sessions.SessionRegistry(tmp_path)
     reg.create(
         "testwolt-chompy-dam-abc123",
@@ -40,6 +40,8 @@ def wolt_env(tmp_path, monkeypatch):
         creature="raccoon",
         dir=str(tmp_path / "testwolt"),
     )
+    reg.update("testwolt-chompy-dam-abc123", wolt="testwolt",
+               claude_session_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890")
     return tmp_path
 
 
@@ -97,11 +99,11 @@ class TestResumeSessionClaudeExited:
         # Should have sent resume command via send-keys
         send_calls = [c for c in mock_run.call_args_list if "send-keys" in str(c)]
         assert len(send_calls) == 2
-        # The command should include --resume with the session name
+        # The command should include --resume with the UUID
         cmd_call = send_calls[0]
         cmd_str = str(cmd_call)
         assert "--resume" in cmd_str
-        assert "testwolt-chompy-dam-abc123" in cmd_str
+        assert "a1b2c3d4-e5f6-7890-abcd-ef1234567890" in cmd_str
 
 
 class TestResumeSessionTmuxDead:
@@ -120,7 +122,7 @@ class TestResumeSessionTmuxDead:
         assert len(new_session_calls) == 1
         cmd_str = str(new_session_calls[0])
         assert "--resume" in cmd_str
-        assert "testwolt-chompy-dam-abc123" in cmd_str
+        assert "a1b2c3d4-e5f6-7890-abcd-ef1234567890" in cmd_str
 
     @patch("sessions.subprocess.run")
     @patch("sessions._tmux_alive", return_value=False)
@@ -146,8 +148,8 @@ class TestResumeSessionNotFound:
             resume_session("nonexistent-session-abc123", "hello")
 
 
-class TestStartSessionSetsClaudeSessionId:
-    """start_session() should set claude_session_id = session name."""
+class TestStartSessionNoClaudeSessionId:
+    """start_session() should NOT set claude_session_id — run-session.sh generates a UUID."""
 
     @pytest.fixture(autouse=True)
     def setup_wolt(self, tmp_path, monkeypatch):
@@ -172,11 +174,12 @@ class TestStartSessionSetsClaudeSessionId:
 
     @patch("sessions.subprocess.run")
     @patch("sites.subprocess.Popen")
-    def test_claude_session_id_equals_session_name(self, mock_popen, mock_run):
+    def test_start_session_does_not_set_claude_session_id(self, mock_popen, mock_run):
         from sessions import start_session, SessionRegistry
         mock_popen.return_value.pid = 12345
         result = start_session(wolt="testwolt", prompt="hello")
 
         reg = SessionRegistry(self.wolts_dir)
         data = reg.get(result["name"], check_alive=False)
-        assert data["claude_session_id"] == result["name"]
+        # claude_session_id is not set by start_session — run-session.sh does it
+        assert "claude_session_id" not in data or not data.get("claude_session_id")
