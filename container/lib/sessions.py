@@ -30,6 +30,7 @@ from sites import start_site
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 RUN_SESSION_SCRIPT = Path("/workspace/woltspace/container/bin/run-session.sh")
+WCLAUDE = "/workspace/woltspace/container/bin/wclaude"
 
 
 class SessionRegistry:
@@ -539,13 +540,16 @@ def resume_session(name: str, prompt: str = "") -> dict:
         registry.update(name, wolt=wolt, status="running")
         return {"name": name, "url": session_url, "status": "delivered", "detail": "claude running, message sent"}
 
-    # Build --resume flag using the stored UUID (claude_session_id), not the session name
-    resume_flag = f"--resume {shlex.quote(claude_session_id)}" if claude_session_id else ""
+    # Build --resume flag using the stored UUID (claude_session_id), not the session name.
+    # Validate it's a real UUID — legacy sessions may have non-UUID values.
+    import re
+    _uuid_re = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+    resume_flag = f"--resume {shlex.quote(claude_session_id)}" if claude_session_id and _uuid_re.match(claude_session_id) else ""
 
     if tmux_alive and not claude_running:
         # Tmux alive but claude exited — restart claude with --resume inside the pane
         cd_prefix = f"cd {shlex.quote(session_dir)} && " if session_dir else ""
-        resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} && wclaude --dangerously-skip-permissions {resume_flag} {safe_prompt}"
+        resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} && {WCLAUDE} --dangerously-skip-permissions {resume_flag} {safe_prompt}"
         subprocess.run(["tmux", "send-keys", "-t", name, "-l", resume_cmd], check=True)
         subprocess.run(["tmux", "send-keys", "-t", name, "", "Enter"], check=True)
         registry.update(name, wolt=wolt, status="running")
@@ -554,7 +558,7 @@ def resume_session(name: str, prompt: str = "") -> dict:
     # Tmux is dead — create a fresh tmux session with wclaude --resume
     work_dir = session_dir or str(WOLTS_DIR / wolt) if wolt else "/workspace"
     cd_prefix = f"cd {shlex.quote(work_dir)} && " if work_dir else ""
-    resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} && wclaude --dangerously-skip-permissions {resume_flag} {safe_prompt}"
+    resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} && {WCLAUDE} --dangerously-skip-permissions {resume_flag} {safe_prompt}"
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", name, "-c", work_dir or "/workspace", resume_cmd],
         check=True,
