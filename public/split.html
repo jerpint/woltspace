@@ -310,7 +310,42 @@
         for (let i = 0; i < lines; i++) ws.send(seq);
       }, { passive: true });
     }
-    connectTUI();
+    // Auto-resume dead sessions before connecting TUI
+    async function ensureSessionAlive() {
+      if (session === 'main') { connectTUI(); return; }
+      try {
+        const res = await fetch('/sessions');
+        const sessions = await res.json();
+        const s = sessions.find(x => x.name === session);
+        if (s && s.status === 'running' && s.alive) {
+          connectTUI();
+        } else if (s) {
+          statusEl.textContent = 'resuming session...';
+          statusEl.style.color = '#c17f3a';
+          const r = await fetch('/sessions/' + encodeURIComponent(session) + '/resume', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: '' }),
+          });
+          const result = await r.json();
+          if (result.error) {
+            statusEl.textContent = 'resume failed';
+            statusEl.style.color = '#f66';
+          } else {
+            // Give tmux a moment to start
+            await new Promise(ok => setTimeout(ok, 1500));
+            connectTUI();
+          }
+        } else {
+          statusEl.textContent = 'session not found';
+          statusEl.style.color = '#f66';
+        }
+      } catch {
+        // Fallback: just try connecting
+        connectTUI();
+      }
+    }
+    ensureSessionAlive();
 
     // ── Right pane: views + history ───────────────────────────────────────────
     const btnBack  = document.getElementById('btn-back');

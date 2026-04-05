@@ -563,6 +563,33 @@ def resume_session(name: str, prompt: str = "") -> dict:
     return {"name": name, "url": session_url, "status": "respawned", "detail": "tmux was dead, created new tmux with --resume"}
 
 
+def stop_session(name: str) -> dict:
+    """Stop a running session — kill tmux, mark as stopped.
+
+    Returns dict with stop info.
+    Raises ValueError if session not found in registry.
+    """
+    registry = SessionRegistry()
+    data = registry.get(name, check_alive=False)
+    if data is None:
+        raise ValueError(f"session '{name}' not found in registry")
+
+    wolt = data.get("wolt", "")
+    tmux_alive = _tmux_alive(name)
+
+    if tmux_alive:
+        try:
+            subprocess.run(
+                ["tmux", "kill-session", "-t", name],
+                capture_output=True, check=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+
+    registry.update(name, wolt=wolt, status="stopped", finished_at=int(time.time()))
+    return {"name": name, "status": "stopped", "was_alive": tmux_alive}
+
+
 def _session_has_claude_process(name: str) -> bool:
     """Check if a tmux session has a claude process running in its pane."""
     try:

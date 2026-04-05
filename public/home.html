@@ -719,6 +719,21 @@
     color: var(--ink-3);
     flex-shrink: 0;
   }
+  .session-action {
+    flex-shrink: 0;
+    width: 22px; height: 22px;
+    border: none; border-radius: 4px;
+    cursor: pointer;
+    font-size: 10px;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .session-row:hover .session-action { opacity: 1; }
+  .session-action-stop { background: rgba(200,60,60,0.15); color: #c44; }
+  .session-action-stop:hover { background: rgba(200,60,60,0.3); }
+  .session-action-resume { background: rgba(58,102,68,0.15); color: var(--green); }
+  .session-action-resume:hover { background: rgba(58,102,68,0.3); }
 
   /* ── Empty state ── */
   .empty-state {
@@ -1691,13 +1706,18 @@
       const rows = sessions.map(s => {
         const time = s.last_activity ? timeAgo(s.last_activity) : (s.created_at ? timeAgo(s.created_at) : '');
         const label = s.title || s.name;
-        const dotClass = s.status === 'running' ? 'running' : 'stopped';
+        const isAlive = s.status === 'running' && s.alive !== false;
+        const dotClass = isAlive ? 'running' : 'stopped';
+        const actionBtn = isAlive
+          ? `<button class="session-action session-action-stop" onclick="event.preventDefault();event.stopPropagation();stopSession('${s.name}')" title="Stop">&#9632;</button>`
+          : `<button class="session-action session-action-resume" onclick="event.preventDefault();event.stopPropagation();resumeSession('${s.name}')" title="Resume">&#9654;</button>`;
         return `<a class="session-row" href="/tui?session=${encodeURIComponent(s.name)}">
           <div class="session-dot ${dotClass}"></div>
           <div class="session-info">
             <div class="session-title">${label}</div>
           </div>
           <span class="session-meta">${time}</span>
+          ${actionBtn}
         </a>`;
       }).join('');
 
@@ -1711,6 +1731,24 @@
         <div>${rows}</div>
       </div>`;
     }).join('');
+  }
+
+  // ── Session actions (stop / resume) ──
+  async function stopSession(name) {
+    try {
+      await fetch('/sessions/' + encodeURIComponent(name) + '/stop', { method: 'POST' });
+      await loadSessions();
+    } catch {}
+  }
+  async function resumeSession(name) {
+    try {
+      await fetch('/sessions/' + encodeURIComponent(name) + '/resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: '' }),
+      });
+      await loadSessions();
+    } catch {}
   }
 
   // ── Start session (gnaw) ──

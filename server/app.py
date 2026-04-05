@@ -48,7 +48,7 @@ from .sparks import get_spark_with_chain, list_sparks
 # Session spawning — shared with bot
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
-from sessions import resume_session, start_session
+from sessions import resume_session, start_session, stop_session
 from projects import (
     WoltspaceProject,
     discover_projects,
@@ -823,6 +823,20 @@ async def session_resume(name: str, request: Request):
     try:
         result = resume_session(safe, prompt)
         print(f"[sessions/resume] {safe} → {result.get('status')}")
+        return result
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/sessions/{name}/stop")
+async def session_stop(name: str):
+    """Stop a running session — kill tmux, mark as stopped."""
+    safe = "".join(c for c in name if c.isalnum() or c in "-_")
+    try:
+        result = stop_session(safe)
+        print(f"[sessions/stop] {safe} → stopped (was_alive={result.get('was_alive')})")
         return result
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
