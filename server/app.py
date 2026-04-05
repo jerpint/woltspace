@@ -20,6 +20,7 @@ from fastapi.responses import (
     PlainTextResponse,
     RedirectResponse,
     Response,
+    StreamingResponse,
 )
 
 from . import tools as tool_registry
@@ -184,29 +185,38 @@ async def subdomain_proxy(request: Request, call_next):
             path = request.url.path
             qs = f"?{request.url.query}" if request.url.query else ""
             upstream = f"http://localhost:{port}{path}{qs}"
-            async with httpx.AsyncClient() as client:
-                # Forward the request
-                headers = dict(request.headers)
-                headers["host"] = f"localhost:{port}"
-                body = await request.body()
-                resp = await client.request(
-                    method=request.method,
-                    url=upstream,
-                    headers=headers,
-                    content=body,
-                    follow_redirects=False,
-                )
-                # Pass through the response
-                excluded = {"transfer-encoding", "content-encoding", "content-length"}
-                resp_headers = {
-                    k: v for k, v in resp.headers.items()
-                    if k.lower() not in excluded
-                }
-                return Response(
-                    content=resp.content,
-                    status_code=resp.status_code,
-                    headers=resp_headers,
-                )
+            # Use a streaming proxy so SSE/chunked responses (like Vite HMR)
+            # flow through without buffering the entire response first.
+            client = httpx.AsyncClient()
+            headers = dict(request.headers)
+            headers["host"] = f"localhost:{port}"
+            body = await request.body()
+            req = client.build_request(
+                method=request.method,
+                url=upstream,
+                headers=headers,
+                content=body,
+            )
+            resp = await client.send(req, stream=True, follow_redirects=False)
+            excluded = {"transfer-encoding", "content-encoding", "content-length"}
+            resp_headers = {
+                k: v for k, v in resp.headers.items()
+                if k.lower() not in excluded
+            }
+
+            async def stream_body():
+                try:
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
+                finally:
+                    await resp.aclose()
+                    await client.aclose()
+
+            return StreamingResponse(
+                content=stream_body(),
+                status_code=resp.status_code,
+                headers=resp_headers,
+            )
         except httpx.ConnectError:
             return HTMLResponse(
                 f"<h1>Cannot reach project '{project_name}' on port {port}</h1>",
@@ -1197,6 +1207,65 @@ async def tui_proxy(ws: WebSocket):
     except Exception as e:
         try:
             await ws.send_text(f"\r\n[tui] connection failed: {e}\r\n")
+            await ws.close()
+        except Exception:
+            pass
+
+
+@app.websocket("/{path:path}")
+async def subdomain_ws_proxy(ws: WebSocket, path: str):
+    """Proxy WebSocket connections for subdomain projects (e.g. Vite HMR).
+
+    blog.localhost:7777/any/path → ws://localhost:{port}/any/path
+    """
+    import asyncio
+    import websockets
+
+    host = (ws.headers.get("host") or "").split(":")[0]
+    if not (host.endswith(".localhost") and host != "localhost"):
+        await ws.close(code=1008)
+        return
+
+    project_name = host.removesuffix(".localhost")
+    from projects import running_projects
+    running = {r["name"]: r for r in running_projects()}
+    run_state = running.get(project_name)
+    if not run_state:
+        await ws.close(code=1008)
+        return
+
+    port = run_state["port"]
+    # Preserve subprotocols (Vite uses "vite-ping" for keep-alive checks)
+    subprotocols = ws.headers.get("sec-websocket-protocol", "").split(", ")
+    subprotocols = [s for s in subprotocols if s]
+    qs = f"?{ws.query_params}" if ws.query_params else ""
+    upstream_url = f"ws://localhost:{port}/{path}{qs}"
+
+    await ws.accept(subprotocol=subprotocols[0] if subprotocols else None)
+    try:
+        async with websockets.connect(
+            upstream_url,
+            subprotocols=subprotocols or None,
+            additional_headers={"host": f"localhost:{port}"},
+        ) as upstream:
+            async def client_to_upstream():
+                try:
+                    while True:
+                        data = await ws.receive_text()
+                        await upstream.send(data)
+                except WebSocketDisconnect:
+                    pass
+
+            async def upstream_to_client():
+                try:
+                    async for msg in upstream:
+                        await ws.send_text(msg)
+                except Exception:
+                    pass
+
+            await asyncio.gather(client_to_upstream(), upstream_to_client())
+    except Exception:
+        try:
             await ws.close()
         except Exception:
             pass
