@@ -120,7 +120,38 @@ p:last-child{margin-bottom:0}
 footer{width:100%;border-top:1px solid var(--border);padding:18px 24px;text-align:center;font-family:var(--font-mono);font-size:11px;color:var(--ink-3);letter-spacing:0.06em}
 @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes beavFall{to{transform:translateY(110vh) rotate(360deg);opacity:0}}
-@media(max-width:540px){.brand-name{font-size:32px}.principles-grid{grid-template-columns:1fr}.install-cmd code{font-size:11px}}
+/* Split view mockup */
+.split-mockup{border-radius:10px;overflow:hidden;border:1px solid var(--border-2);box-shadow:0 8px 32px rgba(24,16,10,0.12);animation:fadeUp 0.7s ease 0.2s both;margin-bottom:40px}
+.split-titlebar{background:var(--ink);display:flex;align-items:center;padding:8px 12px;gap:6px}
+.split-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.split-dot.r{background:#f55}.split-dot.y{background:#fb3}.split-dot.g{background:#3d3}
+.split-titlebar-text{flex:1;text-align:center;font-family:var(--font-mono);font-size:10px;color:rgba(255,255,255,0.35);letter-spacing:0.06em}
+.split-body{display:flex;height:260px;background:var(--ink)}
+.split-terminal{flex:1;padding:14px;overflow:hidden;position:relative;border-right:1px solid rgba(255,255,255,0.08)}
+.split-viewport{flex:1;background:var(--surface);position:relative;overflow:hidden}
+.term-line{font-family:var(--font-mono);font-size:11px;line-height:1.7;white-space:nowrap;opacity:0;animation:termType 0.3s ease forwards}
+.term-prompt{color:#6a9}
+.term-cmd{color:rgba(255,255,255,0.85)}
+.term-output{color:rgba(255,255,255,0.45)}
+.term-cursor{display:inline-block;width:7px;height:13px;background:rgba(255,255,255,0.7);animation:blink 1s step-end infinite;vertical-align:text-bottom}
+@keyframes termType{to{opacity:1}}
+@keyframes blink{50%{opacity:0}}
+/* Viewport mockup content */
+.vp-page{padding:16px;height:100%;display:flex;flex-direction:column}
+.vp-header{font-family:var(--font-display);font-size:16px;color:var(--ink);margin-bottom:8px}
+.vp-card{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:6px;font-size:11px;color:var(--ink-2);line-height:1.5}
+.vp-badge{display:inline-block;font-family:var(--font-mono);font-size:9px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;padding:2px 6px;border-radius:3px;margin-right:4px}
+.vp-badge.live{background:rgba(58,102,68,0.15);color:var(--green)}
+.vp-badge.build{background:rgba(201,139,42,0.15);color:var(--amber)}
+/* Pixel critters in the mockup */
+.critter{position:absolute;image-rendering:pixelated;pointer-events:none}
+.beaver-sprite{bottom:8px;left:12px;animation:beaverWork 1.2s ease-in-out infinite}
+@keyframes beaverWork{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+.raccoon-sprite{bottom:10px;right:14px;animation:raccoonLook 2.5s ease-in-out infinite}
+@keyframes raccoonLook{0%,100%{transform:scaleX(1)}40%,60%{transform:scaleX(-1)}}
+.otter-sprite{position:absolute;bottom:6px;animation:otterZip 4s linear infinite}
+@keyframes otterZip{0%{left:-20px;opacity:0}10%{opacity:1}90%{opacity:1}100%{left:calc(100% + 20px);opacity:0}}
+@media(max-width:540px){.brand-name{font-size:32px}.principles-grid{grid-template-columns:1fr}.install-cmd code{font-size:11px}.split-body{height:200px}.term-line{font-size:9px;line-height:1.5}.split-terminal{padding:10px}.vp-header{font-size:13px}.vp-card{padding:7px 9px;font-size:9px;margin-bottom:4px}.vp-badge{font-size:8px}.vp-page{padding:10px}.critter svg{transform:scale(0.7);transform-origin:bottom left}.raccoon-sprite{right:6px}.beaver-sprite{left:6px;bottom:4px}}
 </style>
 </head>
 <body>
@@ -205,6 +236,30 @@ footer{width:100%;border-top:1px solid var(--border);padding:18px 24px;text-alig
     <p class="github-line" style="margin-top:14px">View source on <a class="github-link" href="https://github.com/jerpint/woltspace">GitHub</a></p>
   </div>
   <div class="section-divider"></div>
+
+  <!-- Split view mockup -->
+  <div class="split-mockup">
+    <div class="split-titlebar">
+      <div class="split-dot r"></div><div class="split-dot y"></div><div class="split-dot g"></div>
+      <div class="split-titlebar-text">woltspace / the lodge</div>
+    </div>
+    <div class="split-body">
+      <div class="split-terminal" id="mock-terminal">
+        <div id="beaver-pixel"></div>
+      </div>
+      <div class="split-viewport">
+        <div class="vp-page">
+          <div class="vp-header">🦫 my-wolt</div>
+          <div class="vp-card"><span class="vp-badge live">live</span> Site updated just now</div>
+          <div class="vp-card"><span class="vp-badge build">building</span> blog project on port 4001</div>
+          <div class="vp-card" style="font-size:10px;color:var(--ink-3)">memory: 3 files &middot; sessions: 12 &middot; uptime: 4d</div>
+        </div>
+        <div id="raccoon-pixel"></div>
+        <div id="otter-pixel"></div>
+      </div>
+    </div>
+  </div>
+
   <section>
     <div class="section-label">The builders</div>
     <ul class="feature-list">
@@ -358,6 +413,106 @@ md:['....OOO...OOO......','...OwWwOOOwWwO.....','..OwWWWwOwWWWwO....', '.OOwWWWW
 sm:['...OOO..OOO....','..OwWwOOwWwO...','.OwWWWwwWWWwO..','.OwwWWWWWWwwO..','.OwWWWWWWWWwO..','.OwwWWWWWWwwO..','.OssssssssssO..','..OOOOOOOOOO...']};
 function renderCloud(map,px){var cols=Math.max.apply(null,map.map(function(r){return r.length;})),rects=[];for(var r=0;r<map.length;r++)for(var c=0;c<map[r].length;c++){var fill=CP[map[r][c]];if(!fill)continue;rects.push('<rect x="'+(c*px)+'" y="'+(r*px)+'" width="'+px+'" height="'+px+'" fill="'+fill+'"/>');}return'<svg width="'+(cols*px)+'" height="'+(map.length*px)+'" xmlns="http://www.w3.org/2000/svg" style="image-rendering:pixelated;display:block" shape-rendering="crispEdges">'+rects.join('')+'</svg>';}
 [{id:'cl-1',shape:'lg',px:7},{id:'cl-2',shape:'md',px:6},{id:'cl-3',shape:'sm',px:6},{id:'cl-4',shape:'lg',px:6},{id:'cl-5',shape:'md',px:5},{id:'cl-6',shape:'sm',px:5}].forEach(function(c){var el=document.getElementById(c.id);if(el)el.innerHTML=renderCloud(SHAPES[c.shape],c.px);});
+})();
+
+// Split view mockup — terminal typing + pixel critters
+(function(){
+  var px=3;
+  function spriteToSVG(map,palette,px){
+    var rows=map.length,cols=Math.max.apply(null,map.map(function(r){return r.length}));
+    var rects=[];
+    for(var r=0;r<rows;r++)for(var c=0;c<map[r].length;c++){
+      var ch=map[r][c];if(ch===' '||ch==='.')continue;
+      var fill=palette[ch];if(!fill)continue;
+      rects.push('<rect x="'+(c*px)+'" y="'+(r*px)+'" width="'+px+'" height="'+px+'" fill="'+fill+'"/>');
+    }
+    return '<svg width="'+(cols*px)+'" height="'+(rows*px)+'" xmlns="http://www.w3.org/2000/svg" style="image-rendering:pixelated;display:block" shape-rendering="crispEdges">'+rects.join('')+'</svg>';
+  }
+
+  // Beaver — chunky, typing pose
+  var beaverMap=[
+    '...BBB...',
+    '..BFFFB..',
+    '..FEFEF..',
+    '..FFFFF..',
+    '..FWWF...',
+    '.BBBBBB..',
+    '.BTTTBB..',
+    '.BBBBBB..',
+    '..B..B...',
+    '..BB.BB..',
+  ];
+  var beaverPal={B:'#6B3E1F',F:'#8B5E3C',E:'#1A1A1A',W:'#F5F0E0',T:'#C98B2A'};
+
+  // Raccoon — masked, looking around
+  var raccoonMap=[
+    '...GGG...',
+    '..GAAAG..',
+    '..ABABA..',
+    '..GAAAG..',
+    '...GNG...',
+    '.GGGGGG..',
+    '.GDDDGG..',
+    '.GGGGGG..',
+    '..G..G...',
+    '..GG.GG..',
+  ];
+  var raccoonPal={G:'#888888',A:'#333333',B:'#FFFFFF',N:'#FFB0B0',D:'#AAAAAA'};
+
+  // Otter — sleek, zooming
+  var otterMap=[
+    '..OOO.',
+    '.OHHHO',
+    '.OEOEO',
+    '.OHHHO',
+    '..ONO..',
+    '.OOOOO',
+    'OOOOOO',
+    '.OOOOO',
+    '..O.O.',
+  ];
+  var otterPal={O:'#5C4033',H:'#7A5C47',E:'#1A1A1A',N:'#FFB0B0'};
+
+  var be=document.getElementById('beaver-pixel');
+  if(be){be.className='critter beaver-sprite';be.innerHTML=spriteToSVG(beaverMap,beaverPal,px);}
+  var ra=document.getElementById('raccoon-pixel');
+  if(ra){ra.className='critter raccoon-sprite';ra.innerHTML=spriteToSVG(raccoonMap,raccoonPal,px);}
+  var ot=document.getElementById('otter-pixel');
+  if(ot){ot.className='critter otter-sprite';ot.innerHTML=spriteToSVG(otterMap,otterPal,px);}
+
+  // Terminal typing animation
+  var lines=[
+    {p:'$ ',c:'woltspace start',d:0},
+    {o:'🦫 starting container...',d:800},
+    {o:'✓ tunnel: https://abc-xyz.trycloudflare.com',d:1600},
+    {o:'',d:2200},
+    {p:'$ ',c:'# beaver is gnawing...',d:2800},
+    {o:'',d:3400},
+    {p:'🦫 ',c:'site updated, 3 files changed',d:4000},
+    {p:'🦫 ',c:'pushed to viewport ✓',d:4800},
+    {o:'',d:5400},
+    {p:'$ ',c:'',cursor:true,d:6000},
+  ];
+  var term=document.getElementById('mock-terminal');
+  if(term){
+    lines.forEach(function(l){
+      setTimeout(function(){
+        var div=document.createElement('div');
+        div.className='term-line';
+        div.style.animationDelay='0s';
+        var html='';
+        if(l.p)html+='<span class="term-prompt">'+l.p+'</span>';
+        if(l.c!==undefined)html+='<span class="term-cmd">'+l.c+'</span>';
+        if(l.o!==undefined)html+='<span class="term-output">'+l.o+'</span>';
+        if(l.cursor)html+='<span class="term-cursor"></span>';
+        div.innerHTML=html;
+        // Insert before the beaver sprite
+        var beaver=term.querySelector('.critter');
+        if(beaver)term.insertBefore(div,beaver);
+        else term.appendChild(div);
+      },l.d);
+    });
+  }
 })();
 </script>
 </body>
