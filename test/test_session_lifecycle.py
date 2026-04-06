@@ -236,6 +236,27 @@ class TestStartSessionSiteAutoStart:
         assert result.get("wolt") == "testwolt"
         assert "site_url" not in result
 
+    @patch("sessions.subprocess.run")
+    @patch("sites.subprocess.Popen")
+    def test_prompt_passed_verbatim_to_tmux(self, mock_popen, mock_run, tmp_path):
+        """start_session() should pass the prompt to run-session.sh without appending start-chat.
+
+        run-session.sh is responsible for appending /woltspace-start-chat — Python must not duplicate it.
+        """
+        mock_popen.return_value.pid = 12345
+        self.sessions.start_session(
+            wolt="testwolt",
+            prompt="hello world",
+            routing={"adapter": "lodge"},
+        )
+        # Find the tmux new-session call
+        tmux_cmd = mock_run.call_args[0][0]
+        # The last arg is the shell command: run-session.sh <name> <dir> <prompt>
+        shell_cmd = tmux_cmd[-1]
+        # Prompt should appear exactly once, not duplicated or with start-chat appended
+        assert "hello world" in shell_cmd
+        assert "/woltspace-start-chat" not in shell_cmd
+
 
 # ---------------------------------------------------------------------------
 # Tmux session management (requires tmux)
