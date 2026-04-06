@@ -58,7 +58,12 @@ Session link: $($SESSION_REG get-field "$SESSION_NAME" session_url 2>/dev/null |
 fi
 
 # Build the full prompt: user's task + adapter context + /woltspace-start-chat for session context
-FULL_PROMPT="$PROMPT${ADAPTER_CONTEXT} /woltspace-start-chat $ADAPTER $WOLT_NAME"
+# Skip start-chat if the prompt already invokes a woltspace skill (e.g. /woltspace-create-wolt)
+if echo "$PROMPT" | grep -q '/woltspace-'; then
+    FULL_PROMPT="$PROMPT${ADAPTER_CONTEXT}"
+else
+    FULL_PROMPT="$PROMPT${ADAPTER_CONTEXT} /woltspace-start-chat $ADAPTER $WOLT_NAME"
+fi
 
 # Run claude — capture exit code
 EXIT_CODE=0
