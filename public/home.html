@@ -1814,7 +1814,7 @@
     fetch('/sessions/new/lodge', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ wolt: woltName, prompt: '/woltspace-start-chat lodge ' + woltName }),
+      body: JSON.stringify({ wolt: woltName }),
     }).then(r => r.json()).then(data => {
       if (data.name) window.open('/tui?session=' + encodeURIComponent(data.name), '_blank');
     }).catch(() => {});
