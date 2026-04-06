@@ -649,7 +649,12 @@ def delete_session(name: str) -> dict:
 
 
 def _session_has_claude_process(name: str) -> bool:
-    """Check if a tmux session has a claude process running in its pane."""
+    """Check if a tmux session has a claude process running anywhere in its process tree.
+
+    Walks the full subtree from the pane's root PID — not just direct children.
+    The actual tree is: pane(bash) → bash(run-session.sh) → bash(wclaude) → claude
+    so checking only direct children always misses claude.
+    """
     try:
         result = subprocess.run(
             ["tmux", "list-panes", "-t", name, "-F", "#{pane_pid}"],
@@ -658,16 +663,34 @@ def _session_has_claude_process(name: str) -> bool:
         pane_pid = result.stdout.strip()
         if not pane_pid:
             return False
+
+        # Build full process table: pid → (ppid, comm)
         ps_result = subprocess.run(
-            ["ps", "--ppid", pane_pid, "-o", "comm=", "--no-headers"],
+            ["ps", "--no-headers", "-eo", "pid,ppid,comm"],
             capture_output=True, text=True,
         )
-        for child in ps_result.stdout.strip().split("\n"):
-            child = child.strip()
-            if child in ("claude", "run-session.sh", "run-session"):
+        children: dict[str, list[str]] = {}
+        comms: dict[str, str] = {}
+        for line in ps_result.stdout.strip().split("\n"):
+            parts = line.split()
+            if len(parts) >= 3:
+                pid, ppid, comm = parts[0], parts[1], parts[2]
+                children.setdefault(ppid, []).append(pid)
+                comms[pid] = comm
+
+        # BFS from pane_pid — return True if any descendant is 'claude'
+        queue = [pane_pid]
+        seen: set[str] = set()
+        while queue:
+            cur = queue.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            if comms.get(cur) == "claude":
                 return True
+            queue.extend(children.get(cur, []))
         return False
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, Exception):
         return False
 
 
