@@ -35,7 +35,6 @@ _WOLT_NAME = os.environ.get("WOLT_NAME", WOLT_DIR.name)
 _WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", str(WOLT_DIR.parent)))
 STATE_DIR = wolt_state_dir(_WOLT_NAME, _WOLTS_DIR)
 CHAT_DIR = wolt_chat_dir(_WOLT_NAME, _WOLTS_DIR)
-UPLOADS_DIR = wolt_uploads_dir(_WOLT_NAME, _WOLTS_DIR)
 
 
 def _dog_name() -> str:
@@ -457,17 +456,24 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _send_result(update, result)
 
 
+def _get_uploads_dir() -> Path:
+    """Resolve uploads dir from current WOLT_NAME (respects switch_wolt)."""
+    wolt = os.environ.get("WOLT_NAME", _WOLT_NAME)
+    return wolt_uploads_dir(wolt, _WOLTS_DIR)
+
+
 def _save_upload(file_name: str, data: bytes) -> Path:
-    """Save uploaded file to the wolt's uploads directory. Returns the saved path."""
-    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-    dest = UPLOADS_DIR / file_name
+    """Save uploaded file to the active wolt's uploads directory. Returns the saved path."""
+    uploads = _get_uploads_dir()
+    uploads.mkdir(parents=True, exist_ok=True)
+    dest = uploads / file_name
     # Avoid overwriting — append counter if file exists
     if dest.exists():
         stem = dest.stem
         suffix = dest.suffix
         counter = 1
         while dest.exists():
-            dest = UPLOADS_DIR / f"{stem}_{counter}{suffix}"
+            dest = uploads / f"{stem}_{counter}{suffix}"
             counter += 1
     dest.write_bytes(data)
     return dest
