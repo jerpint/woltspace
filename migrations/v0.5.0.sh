@@ -9,12 +9,22 @@
 # Also renames .space/projects/ to .space/apps/ (running state).
 #
 # This script is idempotent — safe to run multiple times.
+#
+# Usage: bash migrations/v0.5.0.sh [WOLTS_DIR]
+#   Default: ~/.woltspace/wolts (host path — pass /workspace/wolts if running inside container)
 
 set -euo pipefail
 
-WOLTS_DIR="${WOLTS_DIR:-/workspace/wolts}"
+WOLTS_DIR="${1:-$HOME/.woltspace/wolts}"
+
+if [ ! -d "$WOLTS_DIR" ]; then
+  echo "error: wolts directory not found: $WOLTS_DIR"
+  echo "usage: $0 [WOLTS_DIR]  (default: ~/.woltspace/wolts)"
+  exit 1
+fi
 
 echo "=== v0.5.0 migration: projects → apps ==="
+echo "wolts dir: $WOLTS_DIR"
 
 # 1. Rename wolts/projects/ → wolts/apps/
 if [ -d "$WOLTS_DIR/projects" ] && [ ! -d "$WOLTS_DIR/apps" ]; then
