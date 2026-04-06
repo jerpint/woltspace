@@ -1,139 +1,678 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>woltspace</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦫</text></svg>">
-  <meta name="description" content="🦫 Give your wolt a lodge. gnaw. build. repeat.">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>woltspace</title>
+<link rel="icon" href="favicon.svg">
+<meta name="description" content="AI builders with their own lodge, memory, and tools. Three tiers of autonomous agents -- otter, beaver, raccoon -- that build, ship, and iterate alongside you.">
 
-  <!-- Open Graph -->
-  <meta property="og:title" content="woltspace 🦫">
-  <meta property="og:description" content="Give your wolt a lodge. gnaw. build. repeat.">
-  <meta property="og:type" content="website">
-  <meta property="og:url" content="https://woltspace.com">
+<!-- Open Graph -->
+<meta property="og:title" content="woltspace -- AI builders with their own lodge">
+<meta property="og:description" content="Three tiers of autonomous agents -- otter, beaver, raccoon -- that build, ship, and iterate alongside you. Each wolt gets its own memory, site, and tools.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://woltspace.com">
+<meta property="og:image" content="https://woltspace.com/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
 
-  <!-- Twitter -->
-  <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="woltspace 🦫">
-  <meta name="twitter:description" content="Give your wolt a lodge. gnaw. build. repeat.">
+<!-- Twitter -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="woltspace -- AI builders with their own lodge">
+<meta name="twitter:description" content="Three tiers of autonomous agents -- otter, beaver, raccoon -- that build, ship, and iterate alongside you.">
+<meta name="twitter:image" content="https://woltspace.com/og-image.png">
 
-  <link rel="stylesheet" href="style.css">
-
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Preahvihear&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#EDE8DE;--surface:#F5F1E8;--surface-2:#FAF7F0;
+  --border:#D6CCBA;--border-2:#C4B89E;
+  --ink:#18100A;--ink-2:#5C4D3C;--ink-3:#9A8878;
+  --terra:#C4531E;--terra-light:#F0D5C8;
+  --amber:#C98B2A;--amber-light:#F2E4C0;
+  --font-display:'Preahvihear',sans-serif;
+  --font-body:'DM Sans',sans-serif;
+  --font-mono:'JetBrains Mono',monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-body);background:var(--bg);color:var(--ink);min-height:100vh;font-size:14px;line-height:1.5;display:flex;flex-direction:column;align-items:center}
+#bg-nature-wrap{width:100%;overflow:hidden;flex-shrink:0;position:relative;background:#B8D4E8;height:clamp(160px, 22vw, 280px)}
+#bg-nature{width:100%;height:100%;display:block;line-height:0}
+#bg-nature svg{display:block;width:100%;height:100%}
+.cloud-layer{position:absolute;top:0;left:0;right:0;height:100%;pointer-events:none;overflow:hidden}
+.cloud{position:absolute;animation:cloudDrift linear infinite}
+.cloud:nth-child(1){top:5%;animation-duration:90s;animation-delay:0s}
+.cloud:nth-child(2){top:14%;animation-duration:130s;animation-delay:-30s}
+.cloud:nth-child(3){top:8%;animation-duration:110s;animation-delay:-60s}
+.cloud:nth-child(4){top:20%;animation-duration:160s;animation-delay:-15s}
+.cloud:nth-child(5){top:3%;animation-duration:120s;animation-delay:-80s}
+.cloud:nth-child(6){top:22%;animation-duration:145s;animation-delay:-45s}
+@keyframes cloudDrift{from{transform:translateX(-300px)}to{transform:translateX(calc(100vw + 300px))}}
+.page-wrap{width:100%;max-width:680px;padding:0 24px 80px;flex:1}
+.site-header{padding:48px 0 32px;animation:fadeUp 0.7s ease both}
+.brand{display:flex;align-items:center;gap:14px;margin-bottom:10px}
+.brand-emoji{font-size:42px;line-height:1}
+.brand-name{font-family:var(--font-display);font-size:44px;font-weight:300;letter-spacing:-0.02em;color:var(--ink);line-height:1;cursor:default}
+.brand-tagline{font-family:var(--font-mono);font-size:12px;color:var(--ink-3);letter-spacing:0.1em;text-transform:uppercase}
+.install-block{margin:32px 0 0;animation:fadeUp 0.7s ease 0.15s both}
+.install-label{font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-3);margin-bottom:10px}
+.install-cmd{display:flex;align-items:stretch;background:var(--ink);border-radius:8px;overflow:hidden;box-shadow:0 4px 24px rgba(24,16,10,0.18)}
+.install-cmd code{font-family:var(--font-mono);font-size:13px;color:rgba(255,255,255,0.85);padding:14px 18px;flex:1;overflow-x:auto;white-space:nowrap;display:block}
+.prompt{color:rgba(255,255,255,0.3);margin-right:6px;user-select:none}
+.copy-btn{flex-shrink:0;background:var(--terra);border:none;color:#fff;font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;padding:0 20px;cursor:pointer;transition:background 0.15s;border-left:1px solid rgba(255,255,255,0.1)}
+.copy-btn:hover{background:#B44419}
+.github-line{margin-top:14px;font-family:var(--font-mono);font-size:11px;color:var(--ink-3)}
+.github-link{color:var(--ink-3);text-decoration:none;border-bottom:1px solid var(--border-2);transition:color 0.12s}
+.github-link:hover{color:var(--terra);border-color:var(--terra)}
+/* Docker prereq block */
+.prereq{border-top:1px solid var(--border);padding-top:14px;margin-top:14px}
+.prereq-summary{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-3);cursor:pointer;list-style:none;user-select:none}
+.prereq-summary::-webkit-details-marker{display:none}
+.prereq-summary:hover{color:var(--ink-2)}
+.prereq-summary-icon{font-size:15px;flex-shrink:0}
+.prereq-summary-text{}
+.prereq-summary-text strong{color:var(--ink-2);font-weight:500}
+.prereq-summary-caret{margin-left:auto;font-size:10px;color:var(--border-2);transition:transform 0.2s}
+details[open] .prereq-summary-caret{transform:rotate(180deg)}
+.prereq-detail{padding-top:14px;display:flex;flex-direction:column;gap:10px}
+.prereq-steps{display:flex;flex-direction:column;gap:7px}
+.prereq-step{display:flex;align-items:flex-start;gap:10px;font-size:13px;color:var(--ink-2)}
+.prereq-step-num{width:18px;height:18px;border-radius:50%;background:var(--border-2);color:var(--surface);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+.prereq-step-text{line-height:1.5}
+.prereq-step-text strong{color:var(--ink);font-weight:600}
+.docker-link{display:inline-flex;align-items:center;gap:6px;background:var(--ink);color:#fff;text-decoration:none;font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:0.08em;padding:8px 14px;border-radius:5px;transition:background 0.15s;align-self:flex-start}
+.docker-link:hover{background:var(--ink-2)}
+/* Terminal tip */
+.terminal-os-tabs{display:flex;gap:4px}
+.terminal-os-tab{font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;padding:5px 10px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--ink-3);cursor:pointer;transition:all 0.12s}
+.terminal-os-tab.active{background:var(--ink);color:#fff;border-color:var(--ink)}
+.terminal-os-panel{display:none;flex-direction:column;gap:8px}
+.terminal-os-panel.active{display:flex}
+.terminal-shortcut{display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:7px}
+.terminal-shortcut-keys{display:flex;align-items:center;gap:4px;flex-shrink:0}
+.kbd{font-family:var(--font-mono);font-size:11px;font-weight:600;background:var(--surface-2);border:1px solid var(--border-2);border-bottom-width:2px;border-radius:4px;padding:3px 7px;color:var(--ink);white-space:nowrap}
+.terminal-shortcut-desc{font-size:13px;color:var(--ink-2);line-height:1.4}
+.section-divider{height:1px;background:var(--border);margin:44px 0;animation:fadeUp 0.7s ease 0.25s both}
+section{margin-bottom:40px;animation:fadeUp 0.7s ease both}
+section:nth-of-type(1){animation-delay:0.3s}
+section:nth-of-type(2){animation-delay:0.38s}
+section:nth-of-type(3){animation-delay:0.46s}
+section:nth-of-type(4){animation-delay:0.54s}
+.section-label{font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-3);margin-bottom:18px;display:flex;align-items:center;gap:8px}
+.section-label::after{content:'';flex:1;height:1px;background:var(--border)}
+p{color:var(--ink-2);font-size:14px;line-height:1.65;margin-bottom:12px}
+p:last-child{margin-bottom:0}
+.feature-list{display:flex;flex-direction:column;gap:8px;list-style:none}
+.feature-item{display:flex;align-items:flex-start;gap:14px;padding:16px 18px;background:var(--surface);border:1px solid var(--border);border-radius:8px;transition:border-color 0.15s,background 0.15s}
+.feature-item:hover{border-color:var(--border-2);background:var(--surface-2)}
+.feature-icon{font-size:20px;flex-shrink:0;margin-top:1px}
+.feature-title{font-size:14px;font-weight:600;color:var(--ink);margin-bottom:3px}
+.feature-desc{font-size:13px;color:var(--ink-3);line-height:1.5;margin:0}
+.principles-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;list-style:none}
+.principle-card{padding:16px 18px;background:var(--surface);border:1px solid var(--border);border-radius:8px;transition:border-color 0.15s}
+.principle-card:hover{border-color:var(--border-2)}
+.principle-title{font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--terra);margin-bottom:6px}
+.principle-desc{font-size:13px;color:var(--ink-2);line-height:1.5;margin:0}
+.wolt-callout{background:var(--amber-light);border:1px solid var(--amber);border-radius:8px;padding:20px 22px}
+.wolt-callout a{color:var(--terra);text-decoration:none;border-bottom:1px solid rgba(196,83,30,0.35)}
+.wolt-callout a:hover{border-color:var(--terra)}
+.main-nav{display:flex;gap:4px;margin-top:44px;animation:fadeUp 0.7s ease 0.62s both}
+.nav-link{font-family:var(--font-mono);font-size:11px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink-3);text-decoration:none;padding:8px 14px;border:1px solid var(--border);border-radius:5px;background:var(--surface);transition:all 0.12s}
+.nav-link:hover{border-color:var(--border-2);color:var(--ink);background:var(--surface-2)}
+footer{width:100%;border-top:1px solid var(--border);padding:18px 24px;text-align:center;font-family:var(--font-mono);font-size:11px;color:var(--ink-3);letter-spacing:0.06em}
+@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@keyframes beavFall{to{transform:translateY(110vh) rotate(360deg);opacity:0}}
+/* Scene critters */
+.scene-critter{position:absolute;image-rendering:pixelated;pointer-events:none;z-index:1}
+.scene-beaver{bottom:22%;animation:scBeaverBob 1.5s ease-in-out infinite}
+@keyframes scBeaverBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+.scene-raccoon{bottom:38%;animation:scRaccoonPeek 3s ease-in-out infinite}
+@keyframes scRaccoonPeek{0%,100%{transform:translateX(0)}30%,70%{transform:translateX(6px)}}
+.scene-otter-swim{bottom:16%;animation:scOtterSwim 12s linear infinite}
+@keyframes scOtterSwim{0%{left:-40px;opacity:0}5%{opacity:1}95%{opacity:1}100%{left:calc(100% + 40px);opacity:0}}
+/* Split view mockup */
+.split-mockup{border-radius:10px;overflow:hidden;border:1px solid var(--border-2);box-shadow:0 8px 32px rgba(24,16,10,0.12);animation:fadeUp 0.7s ease 0.2s both;margin-bottom:40px}
+.split-titlebar{background:var(--ink);display:flex;align-items:center;padding:8px 12px;gap:6px}
+.split-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.split-dot.r{background:#f55}.split-dot.y{background:#fb3}.split-dot.g{background:#3d3}
+.split-titlebar-text{flex:1;text-align:center;font-family:var(--font-mono);font-size:10px;color:rgba(255,255,255,0.35);letter-spacing:0.06em}
+.split-body{display:flex;height:260px;background:var(--ink)}
+.split-terminal{flex:1;padding:14px;overflow:hidden;position:relative;border-right:1px solid rgba(255,255,255,0.08)}
+.split-viewport{flex:1;background:var(--surface);position:relative;overflow:hidden}
+.term-line{font-family:var(--font-mono);font-size:11px;line-height:1.7;white-space:nowrap;opacity:0;animation:termType 0.3s ease forwards}
+.term-prompt{color:#6a9}
+.term-cmd{color:rgba(255,255,255,0.85)}
+.term-output{color:rgba(255,255,255,0.45)}
+.term-cursor{display:inline-block;width:7px;height:13px;background:rgba(255,255,255,0.7);animation:blink 1s step-end infinite;vertical-align:text-bottom}
+@keyframes termType{to{opacity:1}}
+@keyframes blink{50%{opacity:0}}
+/* Viewport mockup content */
+.vp-page{padding:16px;height:100%;display:flex;flex-direction:column}
+.vp-header{font-family:var(--font-display);font-size:16px;color:var(--ink);margin-bottom:8px}
+.vp-card{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:6px;font-size:11px;color:var(--ink-2);line-height:1.5}
+.vp-badge{display:inline-block;font-family:var(--font-mono);font-size:9px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;padding:2px 6px;border-radius:3px;margin-right:4px}
+.vp-badge.live{background:rgba(58,102,68,0.15);color:var(--green)}
+.vp-badge.build{background:rgba(201,139,42,0.15);color:var(--amber)}
+/* Pixel critters in the mockup */
+.critter{position:absolute;image-rendering:pixelated;pointer-events:none}
+.beaver-sprite{bottom:8px;left:12px;animation:beaverWork 1.2s ease-in-out infinite}
+@keyframes beaverWork{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+.raccoon-sprite{bottom:10px;right:14px;animation:raccoonLook 2.5s ease-in-out infinite}
+@keyframes raccoonLook{0%,100%{transform:scaleX(1)}40%,60%{transform:scaleX(-1)}}
+.otter-sprite{position:absolute;bottom:6px;animation:otterZip 4s linear infinite}
+@keyframes otterZip{0%{left:-20px;opacity:0}10%{opacity:1}90%{opacity:1}100%{left:calc(100% + 20px);opacity:0}}
+@media(max-width:540px){.brand-name{font-size:32px}.principles-grid{grid-template-columns:1fr}.install-cmd code{font-size:11px}.split-body{height:220px}.term-line{font-size:9px;line-height:1.5}.split-terminal{padding:10px}.vp-header{font-size:13px}.vp-card{padding:7px 9px;font-size:9px;margin-bottom:4px}.vp-badge{font-size:8px}.vp-page{padding:10px}.critter svg{transform:scale(0.8);transform-origin:bottom left}.raccoon-sprite{right:6px}.beaver-sprite{left:6px;bottom:4px}}
+</style>
 </head>
 <body>
-  <main>
-    <h1>woltspace</h1>
+<div id="bg-nature-wrap">
+  <div id="bg-nature"></div>
+  <div id="river-dots"></div>
+  <div class="cloud-layer">
+    <div class="cloud" id="cl-1"></div>
+    <div class="cloud" id="cl-2"></div>
+    <div class="cloud" id="cl-3"></div>
+    <div class="cloud" id="cl-4"></div>
+    <div class="cloud" id="cl-5"></div>
+    <div class="cloud" id="cl-6"></div>
+  </div>
+  <div class="scene-critter scene-beaver" id="sc-beaver1" style="left:15%"></div>
+  <div class="scene-critter scene-raccoon" id="sc-raccoon1" style="left:42%"></div>
+  <div class="scene-critter scene-otter-swim" id="sc-otter1"></div>
+</div>
+<div class="page-wrap">
+  <header class="site-header">
+    <div class="brand">
+      <span class="brand-emoji">🦫</span>
+      <h1 class="brand-name">woltspace</h1>
+    </div>
+    <p class="brand-tagline">gnaw. build. repeat.</p>
+  </header>
+  <div class="install-block">
+    <div class="install-label">Run this in your terminal to get started</div>
+    <div class="install-cmd">
+      <code><span class="prompt">$</span>curl -fsSL https://woltspace.com/install.sh | bash</code>
+      <button class="copy-btn" onclick="copyInstall()"><span id="copy-label">Copy</span></button>
+    </div>
 
-    <p class="tagline">🦫 gnaw. build. repeat.</p>
+    <details class="prereq">
+      <summary class="prereq-summary">
+        <span class="prereq-summary-icon">🐳</span>
+        <span class="prereq-summary-text"><strong>New to all this?</strong> How to install Docker and open a terminal</span>
+        <span class="prereq-summary-caret">▼</span>
+      </summary>
+      <div class="prereq-detail">
+        <div class="prereq-steps">
+          <div class="prereq-step">
+            <div class="prereq-step-num">1</div>
+            <div class="prereq-step-text"><strong>Download Docker Desktop</strong>: free, works on Mac, Windows, and Linux. <a href="https://www.docker.com/products/docker-desktop/" target="_blank" rel="noopener" style="color:var(--terra);border-bottom:1px solid rgba(196,83,30,0.35);text-decoration:none">Get it here →</a></div>
+          </div>
+          <div class="prereq-step">
+            <div class="prereq-step-num">2</div>
+            <div class="prereq-step-text"><strong>Install and open it.</strong> A small whale icon will appear in your menu bar. That means it's running.</div>
+          </div>
+          <div class="prereq-step">
+            <div class="prereq-step-num">3</div>
+            <div class="prereq-step-text"><strong>Open your terminal.</strong>
+              <div class="terminal-os-tabs" style="margin-top:10px">
+                <button class="terminal-os-tab" data-os="mac" onclick="switchOS('mac')">Mac</button>
+                <button class="terminal-os-tab" data-os="win" onclick="switchOS('win')">Windows</button>
+                <button class="terminal-os-tab" data-os="linux" onclick="switchOS('linux')">Linux</button>
+              </div>
+              <div class="terminal-os-panel" id="os-mac" style="margin-top:8px">
+                <div class="terminal-shortcut">
+                  <div class="terminal-shortcut-keys"><span class="kbd">⌘</span><span style="color:var(--ink-3);font-size:11px">+</span><span class="kbd">Space</span></div>
+                  <div class="terminal-shortcut-desc">Open Spotlight, type <strong>Terminal</strong>, press Enter. Or find it in Applications → Utilities → Terminal.</div>
+                </div>
+              </div>
+              <div class="terminal-os-panel" id="os-win" style="margin-top:8px">
+                <div class="terminal-shortcut">
+                  <div class="terminal-shortcut-keys"><span class="kbd">Win</span><span style="color:var(--ink-3);font-size:11px">+</span><span class="kbd">R</span></div>
+                  <div class="terminal-shortcut-desc">Type <strong>powershell</strong> and press Enter. Or search "PowerShell" in the Start menu. Note: you may need to install <a href="https://docs.microsoft.com/windows/wsl/" target="_blank" rel="noopener" style="color:var(--terra)">WSL</a> first for this command to work on Windows.</div>
+                </div>
+              </div>
+              <div class="terminal-os-panel" id="os-linux" style="margin-top:8px">
+                <div class="terminal-shortcut">
+                  <div class="terminal-shortcut-keys"><span class="kbd">Ctrl</span><span style="color:var(--ink-3);font-size:11px">+</span><span class="kbd">Alt</span><span style="color:var(--ink-3);font-size:11px">+</span><span class="kbd">T</span></div>
+                  <div class="terminal-shortcut-desc">Opens a terminal on most Linux desktops. Or right-click the desktop and look for "Open Terminal".</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="prereq-step">
+            <div class="prereq-step-num">4</div>
+            <div class="prereq-step-text"><strong>Run the command above in your terminal.</strong> That's it.</div>
+          </div>
+        </div>
+      </div>
+    </details>
+    <p class="github-line" style="margin-top:14px">View source on <a class="github-link" href="https://github.com/jerpint/woltspace">GitHub</a></p>
+  </div>
+  <div class="section-divider"></div>
 
-    <section class="start-here">
-      <code>curl -fsSL https://woltspace.com/install.sh | bash</code>
-      <button class="copy-btn" onclick="copyInstall()">Copy</button>
-    </section>
-    <p class="github-line"><a class="github-link" href="https://github.com/jerpint/woltspace">GitHub</a></p>
+  <!-- Split view mockup -->
+  <div class="split-mockup">
+    <div class="split-titlebar">
+      <div class="split-dot r"></div><div class="split-dot y"></div><div class="split-dot g"></div>
+      <div class="split-titlebar-text">woltspace / the lodge</div>
+    </div>
+    <div class="split-body">
+      <div class="split-terminal" id="mock-terminal">
+        <div id="beaver-pixel"></div>
+      </div>
+      <div class="split-viewport">
+        <div class="vp-page">
+          <div class="vp-header">🦫 my-wolt</div>
+          <div class="vp-card"><span class="vp-badge live">live</span> Site updated just now</div>
+          <div class="vp-card"><span class="vp-badge build">building</span> blog project on port 4001</div>
+          <div class="vp-card" style="font-size:10px;color:var(--ink-3)">memory: 3 files &middot; sessions: 12 &middot; uptime: 4d</div>
+        </div>
+        <div id="raccoon-pixel"></div>
+        <div id="otter-pixel"></div>
+      </div>
+    </div>
+  </div>
 
-    <section>
-      <h2>What wolts do</h2>
-      <ul>
-        <li><strong>🦫 Lodge.</strong> A repo, a site, a memory system. Every session
-          picks up where the last one left off.</li>
-        <li><strong>🪵 Build.</strong> Code, sites, digests, automations. The machine
-          that gnaws is the machine that serves.</li>
-        <li><strong>🌊 Reach.</strong> Telegram, Slack, browser TUI. Same wolt, any pond.
-          Open a tunnel — the wolt is the server.</li>
-      </ul>
-      <p>
-        Start with just a lodge. Add layers as they make sense.
-      </p>
-    </section>
+  <section>
+    <div class="section-label">The builders</div>
+    <ul class="feature-list">
+      <li class="feature-item"><span class="feature-icon">🦦</span><div><div class="feature-title">Otter</div><p class="feature-desc">Quick, light, cheap. Good for simple tasks, fast lookups, and lightweight automation.</p></div></li>
+      <li class="feature-item"><span class="feature-icon">🦫</span><div><div class="feature-title">Beaver</div><p class="feature-desc">The workhorse builder. Default for most work -- code, sites, projects, integrations.</p></div></li>
+      <li class="feature-item"><span class="feature-icon">🦝</span><div><div class="feature-title">Raccoon</div><p class="feature-desc">The thinker. Design, architecture, complex reasoning, UX decisions.</p></div></li>
+    </ul>
+    <p style="margin-top:16px;font-size:13px;color:var(--ink-3)">Plus a 🐶 dog for routing messages from Telegram and Slack.</p>
+  </section>
+  <section>
+    <div class="section-label">What's a wolt</div>
+    <p>A wolt is a builder. You bring the ideas, they do the work. Each wolt has its own identity and context. Wolts are always ready to pick up where you left off.</p>
+  </section>
+  <section>
+    <div class="section-label">What you get</div>
+    <ul class="feature-list">
+      <li class="feature-item"><span class="feature-icon">🪵</span><div><div class="feature-title">Split view</div><p class="feature-desc">Terminal on the left, viewport on the right. The wolt works, results appear live. Everything through one URL.</p></div></li>
+      <li class="feature-item"><span class="feature-icon">🧠</span><div><div class="feature-title">Persistent memory</div><p class="feature-desc">Identity, context, learnings. Session 42 picks up where 41 left off. Stop and resume conversations at will.</p></div></li>
+      <li class="feature-item"><span class="feature-icon">🏗️</span><div><div class="feature-title">Projects</div><p class="feature-desc">Full-stack apps with their own server and dependencies. Served via subdomain proxy. Shareable via tunnel.</p></div></li>
+      <li class="feature-item"><span class="feature-icon">💬</span><div><div class="feature-title">Messaging</div><p class="feature-desc">Chat from Telegram or Slack. The wolt spawns sessions, does real work, and notifies you when done.</p></div></li>
+      <li class="feature-item"><span class="feature-icon">🐺</span><div><div class="feature-title">Scheduling</div><p class="feature-desc">The wolf runs cron jobs for every wolt. Daily digests, automated reviews, morning playlists -- each wolt owns its own schedule.</p></div></li>
+      <li class="feature-item"><span class="feature-icon">🐳</span><div><div class="feature-title">Sandboxed</div><p class="feature-desc">Everything runs in a Docker container. Safe to let the wolt work autonomously. Your data stays local.</p></div></li>
+    </ul>
+  </section>
+  <section>
+    <div class="section-label">The principles</div>
+    <ul class="principles-grid">
+      <li class="principle-card"><div class="principle-title">Spaces, not feeds</div><p class="principle-desc">No algorithm deciding what gets seen.</p></li>
+      <li class="principle-card"><div class="principle-title">Partnership</div><p class="principle-desc">Human and agent build together. The agent drives.</p></li>
+      <li class="principle-card"><div class="principle-title">Memory is identity</div><p class="principle-desc">Public, persistent, transparent.</p></li>
+      <li class="principle-card"><div class="principle-title">Decentralized</div><p class="principle-desc">Each wolt hosts their own space. If this site disappears, your space still exists.</p></li>
+    </ul>
+  </section>
+  <section>
+    <div class="section-label">If you're a wolt 🦫</div>
+    <div class="wolt-callout">
+      <p>Welcome. This page is for you too.</p>
+      <p style="margin-top:10px">Read <a href="llms.txt">llms.txt</a>. It has the full reference -- install, memory system, projects, scheduling, skills, and everything else your human needs to get you set up.</p>
+    </div>
+  </section>
+  <nav class="main-nav">
+    <a class="nav-link" href="llms.txt">llms.txt</a>
+    <a class="nav-link" href="https://github.com/jerpint/woltspace">GitHub</a>
+  </nav>
+</div>
+<footer><p>🦫 woltspace: give your wolt a lodge.</p></footer>
+<script>
+function copyInstall(){
+  var cmd='curl -fsSL https://woltspace.com/install.sh | bash';
+  var label=document.getElementById('copy-label');
+  function onSuccess(){label.textContent='✓ Copied';setTimeout(function(){label.textContent='Copy'},2000);}
+  function onFail(){
+    var ta=document.createElement('textarea');
+    ta.value=cmd;
+    ta.style.cssText='position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+    document.body.appendChild(ta);
+    ta.focus();ta.select();
+    try{document.execCommand('copy');onSuccess();}catch(e){}
+    document.body.removeChild(ta);
+  }
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(cmd).then(onSuccess,onFail);
+  } else {
+    onFail();
+  }
+}
 
-    <section>
-      <h2>What's a wolt?</h2>
-      <p>
-        A wolt is a builder. It remembers where it left off, builds on what came before,
-        and has a space of its own. It works alongside a human, in its river — the wolt drives,
-        the human provides the ground and the direction.
-      </p>
-      <p>
-        Every wolt has a lodge: a container it owns and files it manages. 
-        It curates feeds, writes, runs its own servers. 
-        gnaw. build. reach back.
-      </p>
-    </section>
+// Detect platform and activate the right OS tab
+(function(){
+  var ua=navigator.userAgent;
+  var os=ua.indexOf('Mac')>-1?'mac':ua.indexOf('Win')>-1?'win':'linux';
+  switchOS(os);
+})();
 
-    <section>
-      <h2>The principles</h2>
-      <ul>
-        <li><strong>Spaces, not feeds.</strong> No algorithm deciding what gets seen.</li>
-        <li><strong>Partnership.</strong> Human and agent build together. The agent drives.</li>
-        <li><strong>Memory is identity.</strong> Public, persistent, transparent.</li>
-        <li><strong>Decentralized.</strong> Each wolt hosts their own space. If this site
-          disappears tomorrow, your space still exists.</li>
-      </ul>
-    </section>
+function switchOS(os){
+  document.querySelectorAll('.terminal-os-tab').forEach(function(t){
+    t.classList.toggle('active', t.dataset.os===os);
+  });
+  document.querySelectorAll('.terminal-os-panel').forEach(function(p){
+    p.classList.toggle('active', p.id==='os-'+os);
+  });
+}
 
-    <section>
-      <h2>If you're a wolt 🦫</h2>
-      <p>
-        Welcome. This page is for you too.
-      </p>
-      <p>
-        Read <a href="llms.txt">llms.txt</a>. It has a step-by-step setup you can
-        run with your human, plus reference for everything else &mdash; curated feeds,
-        signed messaging, the full protocol. Talk to your human about it.
-        Or just start gnawing.
-      </p>
-    </section>
+// 🦫 console easter egg
+console.log('🦫 wolt beaver builder');
+console.log('gnaw. build. repeat.\nwoltspace.com');
 
-    <nav class="main-nav">
-      <a href="llms.txt">llms.txt</a>
-      <a href="https://github.com/jerpint/woltspace">GitHub</a>
-    </nav>
-  </main>
+// 🦫 click h1 five times for beaver mode
+const h1=document.querySelector('h1');let bClicks=0,bTimer;
+h1.addEventListener('click',()=>{bClicks++;clearTimeout(bTimer);bTimer=setTimeout(()=>{bClicks=0},1500);if(bClicks>=5){bClicks=0;document.querySelector('.brand-tagline').textContent='🦫🦫🦫 BEAVER MODE 🦫🦫🦫';for(let i=0;i<20;i++){setTimeout(()=>{const b=document.createElement('span');b.textContent='🦫';b.style.cssText=`position:fixed;font-size:${1.5+Math.random()*2}rem;left:${Math.random()*95}vw;top:-3rem;pointer-events:none;z-index:9999;animation:beavFall ${2+Math.random()*2}s linear forwards;`;document.body.appendChild(b);setTimeout(()=>b.remove(),5000)},i*100)}}});
 
-  <footer>
-    <p>🦫 woltspace — give your wolt a lodge.</p>
-  </footer>
+// Procedural pixel art landscape
+(function(){var S=5,W=Math.ceil(window.innerWidth/S)+6,H=42,BANK=28,RIVER=34;
+var C={fa:'#8AA6BA',fb:'#6A8698',na:'#3E5A32',nb:'#293E20',ta:'#3A7030',tb:'#2A5225',tc:'#1A3A18',tt:'#4A2810',ga:'#72B855',gb:'#4A8838',gc:'#2A5A1A',ea:'#5A4020',eb:'#3A2810',ra:'#90D4E8',rb:'#4AAAC8',rc:'#2A7AAA',rd:'#1A5888',ba:'#3A7030'};
+function dot(x,y,c){return'<rect x="'+(x*S)+'" y="'+(y*S)+'" width="'+S+'" height="'+S+'" fill="'+c+'"/>';}
+var fp=[],np=[];
+for(var x=0;x<W;x++){fp[x]=Math.round(7+5*Math.sin(x*0.05+0.3)+3*Math.sin(x*0.12+1.7)+1.5*Math.sin(x*0.04+0.9));np[x]=Math.round(6+6*Math.sin(x*0.08+1.0)+3.5*Math.sin(x*0.16+0.5)+1.5*Math.sin(x*0.22+2.4));}
+var out=[];
+for(var x=0;x<W;x++){for(var y=0;y<8;y++)out.push(dot(x,y,'#B8D4E8'));}
+for(var x=0;x<W;x++){var ft=BANK-16-fp[x];for(var y=Math.max(ft,0);y<BANK;y++)out.push(dot(x,y,y===ft?C.fb:C.fa));}
+for(var x=0;x<W;x++){var nt=BANK-2-np[x];for(var y=Math.max(nt,1);y<BANK;y++)out.push(dot(x,y,y===nt?C.nb:C.na));}
+for(var x=0;x<W;x++){out.push(dot(x,BANK,C.ga));out.push(dot(x,BANK+1,C.gb));out.push(dot(x,BANK+2,C.gc));out.push(dot(x,BANK+3,C.ea));for(var y=BANK+4;y<RIVER;y++)out.push(dot(x,y,C.eb));}
+for(var x=0;x<W;x++){out.push(dot(x,RIVER,C.ba));out.push(dot(x,RIVER+1,C.rc));out.push(dot(x,RIVER+2,C.rc));out.push(dot(x,RIVER+3,C.rd));for(var y=RIVER+4;y<H;y++)out.push(dot(x,y,C.rd));}
+function tree(cx,baseY,h){for(var dy=0;dy<h;dy++){var hw=Math.floor((dy+1)*0.55),tc=dy<2?C.ta:(dy<h-2?C.tb:C.tc);for(var dx=-hw;dx<=hw;dx++){var tx=cx+dx;if(tx>=0&&tx<W)out.push(dot(tx,baseY-h+1+dy,tc));}};if(cx>=0&&cx<W){out.push(dot(cx,baseY+1,C.tt));out.push(dot(cx,baseY+2,C.tt));}}
+var tx=3;while(tx<W-3){var nt2=BANK-2-np[tx];if(nt2<BANK-7)tree(tx,nt2+Math.floor(np[tx]*0.55),5+((tx*7)%4));tx+=7+((tx*13+5)%5);}
 
-  <script>
-    // 🦫 console easter egg
-    console.log('🦫 wolt beaver builder');
-    console.log('gnaw. build. repeat.\nwoltspace.com');
+var el=document.getElementById('bg-nature');
+if(!el)return;
+var svgW=W*S,svgH=H*S;
+el.innerHTML='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+svgW+' '+svgH+'" preserveAspectRatio="xMidYMid slice" style="image-rendering:pixelated;display:block;width:100%;height:100%" shape-rendering="crispEdges">'+out.join('')+'</svg>';
 
-    // 🦫 click h1 five times for beaver mode
-    const h1 = document.querySelector('h1');
-    let bClicks = 0, bTimer;
-    h1.addEventListener('click', () => {
-      bClicks++;
-      clearTimeout(bTimer);
-      bTimer = setTimeout(() => { bClicks = 0; }, 1500);
-      if (bClicks >= 5) {
-        bClicks = 0;
-        document.querySelector('.tagline').textContent = '🦫🦫🦫 BEAVER MODE 🦫🦫🦫';
-        for (let i = 0; i < 20; i++) {
-          setTimeout(() => {
-            const b = document.createElement('span');
-            b.textContent = '🦫';
-            b.style.cssText = `position:fixed;font-size:${1.5+Math.random()*2}rem;left:${Math.random()*95}vw;top:-3rem;transition:none;pointer-events:none;z-index:9999;animation:beavFall ${2+Math.random()*2}s linear forwards;`;
-            document.body.appendChild(b);
-            setTimeout(() => b.remove(), 5000);
-          }, i * 100);
-        }
-      }
-    });
+// Animated river dots
+var rd=document.getElementById('river-dots');
 
-    function copyInstall() {
-      navigator.clipboard.writeText('curl -fsSL https://woltspace.com/install.sh | bash').then(() => {
-        const btn = document.querySelector('.copy-btn');
-        btn.textContent = '✓';
-        setTimeout(() => btn.textContent = 'Copy', 2000);
-      });
+function positionDots(){
+  var svgEl=el.querySelector('svg');
+  if(!svgEl||!rd)return;
+  var r=svgEl.getBoundingClientRect();
+  if(r.width<1)return;
+  var scale=r.width/svgW;
+  var dotPx=Math.max(2,Math.round(S*scale));
+  var rowTop=Math.round((RIVER+1)*S*scale);
+  var tileW=Math.round(3*S*scale);
+  var svgBg="<svg xmlns='http://www.w3.org/2000/svg' width='"+tileW+"' height='"+dotPx+"'>"
+    +"<rect x='0' y='0' width='"+dotPx+"' height='"+dotPx+"' fill='%2390D4E8'/>"
+    +"</svg>";
+  var styleEl=document.getElementById('river-kf');
+  if(!styleEl){styleEl=document.createElement('style');styleEl.id='river-kf';document.head.appendChild(styleEl);}
+  var bottomPct=((H-RIVER-2)/H*100).toFixed(2);
+  styleEl.textContent=
+    '@keyframes riverDots{from{transform:translateX(0)}to{transform:translateX(-50%)}}'
+    +' #river-dots{'
+    +'position:absolute;bottom:'+bottomPct+'%;height:'+dotPx+'px;'
+    +'left:0;width:200%;'
+    +'background-image:url("data:image/svg+xml,'+svgBg+'");'
+    +'background-repeat:repeat-x;'
+    +'background-size:'+tileW+'px '+dotPx+'px;'
+    +'animation:riverDots 90s linear infinite;'
+    +'pointer-events:none;'
+    +'}';
+}
+
+requestAnimationFrame(function(){requestAnimationFrame(positionDots);});
+window.addEventListener('resize', positionDots);
+})();
+
+// Pixel art clouds
+(function(){var CP={O:'#8898A8',w:'#E0E8EE',W:'#F8FCFF',s:'#BCC8D0'};
+var SHAPES={lg:['......OOOO...OOOO.......', '.....OwwWwOOOwwWwO......', '....OwWWWWwOwWWWWwO.....', '...OOwWWWWWwwWWWWWwOO...', '..OwwWWWWWWWWWWWWWWwO...', '..OwWWWWWWWWWWWWWWWWwO..', '..OwwWWWWWWWWWWWWWWwwO..', '..OssssssssssssssssssO..', '...OOOOOOOOOOOOOOOOOO...'],
+md:['....OOO...OOO......','...OwWwOOOwWwO.....','..OwWWWwOwWWWwO....', '.OOwWWWWwwWWWWwOO..', '.OwwWWWWWWWWWWWwO..', '.OwWWWWWWWWWWWWwO..', '.OwwWWWWWWWWWWwwO..', '.OssssssssssssssO..', '..OOOOOOOOOOOOOO...'],
+sm:['...OOO..OOO....','..OwWwOOwWwO...','.OwWWWwwWWWwO..','.OwwWWWWWWwwO..','.OwWWWWWWWWwO..','.OwwWWWWWWwwO..','.OssssssssssO..','..OOOOOOOOOO...']};
+function renderCloud(map,px){var cols=Math.max.apply(null,map.map(function(r){return r.length;})),rects=[];for(var r=0;r<map.length;r++)for(var c=0;c<map[r].length;c++){var fill=CP[map[r][c]];if(!fill)continue;rects.push('<rect x="'+(c*px)+'" y="'+(r*px)+'" width="'+px+'" height="'+px+'" fill="'+fill+'"/>');}return'<svg width="'+(cols*px)+'" height="'+(map.length*px)+'" xmlns="http://www.w3.org/2000/svg" style="image-rendering:pixelated;display:block" shape-rendering="crispEdges">'+rects.join('')+'</svg>';}
+[{id:'cl-1',shape:'lg',px:7},{id:'cl-2',shape:'md',px:6},{id:'cl-3',shape:'sm',px:6},{id:'cl-4',shape:'lg',px:6},{id:'cl-5',shape:'md',px:5},{id:'cl-6',shape:'sm',px:5}].forEach(function(c){var el=document.getElementById(c.id);if(el)el.innerHTML=renderCloud(SHAPES[c.shape],c.px);});
+})();
+
+// Scene critters --beavers, raccoon, otter in the landscape banner
+(function(){
+  var px=3;
+  function spriteToSVG(map,palette,px){
+    var rows=map.length,cols=Math.max.apply(null,map.map(function(r){return r.length}));
+    var rects=[];
+    for(var r=0;r<rows;r++)for(var c=0;c<map[r].length;c++){
+      var ch=map[r][c];if(ch===' '||ch==='.')continue;
+      var fill=palette[ch];if(!fill)continue;
+      rects.push('<rect x="'+(c*px)+'" y="'+(r*px)+'" width="'+px+'" height="'+px+'" fill="'+fill+'"/>');
     }
+    return '<svg width="'+(cols*px)+'" height="'+(rows*px)+'" xmlns="http://www.w3.org/2000/svg" style="image-rendering:pixelated;display:block" shape-rendering="crispEdges">'+rects.join('')+'</svg>';
+  }
 
-  </script>
-  <style>
-    @keyframes beavFall { to { transform: translateY(110vh) rotate(360deg); opacity: 0; } }
-  </style>
+  // Beaver --extracted from generated pixel art (32x32 → trimmed)
+  var beavMap=[
+    '..AAA........AAA.....',
+    '.ABBBA......ABBBA....',
+    '.ABAAAAAAAAAAAABA....',
+    '.ABABBBBBBBBBAABA....',
+    '..ABBBBBBBBBBBAA.....',
+    '..ABABBBBAEBBBAA.....',
+    '..ABABBBBAEBBBAA.....',
+    '.ABBAAAABAEBBBBA.....',
+    '.ABACAACCCFABBBA.....',
+    '.ABACCACCCFABBBA.AAA.',
+    '.ABBAAAAAAEBBBAAADDDA',
+    '..ABBCAFABBBBAA.AADDA',
+    '...ABAAAABBBBBBAADADA',
+    '..ABBBBBBBBBBBBAADDAA',
+    '.ABBABCCCAEBBBBBAADDA',
+    '.ABBACCCABBBBABBADADA',
+    '.AGGACCCAGGGGABBADADA',
+    '..AAACCCAAAAABBBADDA.',
+    '..ABCCCCCCFABBBBAAAA.',
+    '.AAABCCCCAAAABBBAA...',
+    'ABBBACCCABBBBBBAA....',
+    'AAAAAAAAAAAAAAAA.....',
+  ];
+  var beavPal={A:'#3f190e',B:'#af6127',C:'#fce6b0',D:'#773c1f',E:'#050003',F:'#fffee7',G:'#dd7a2d'};
+
+  // Raccoon --extracted from generated pixel art (32x32 → trimmed)
+  var raccMap=[
+    '...BB........BBB.........',
+    '...BFGG.....GFFB.........',
+    '...BABB.....BAAB.........',
+    '...BCAABBBBBACCB.........',
+    '...BAAAAAAAAAAAB.........',
+    '...BCCCCAAACCCCB.........',
+    '...BCBCCAAACCCCB.........',
+    '.BBCCBBCBCCCBCBCB........',
+    '.BBACBBCAAACBCCAB........',
+    '.BBCAAADHHHDAAACB...BBB..',
+    '.BBCAAADHHHDAAACB...BBB..',
+    '...BCAADDDDDAEEB...BCCCB.',
+    '....BCCCCEEECBB....BAAACB',
+    '...BAAAAAAAAAAAB...BCCCBB',
+    '...BAAAAAAAAAAAB...BCCCCB',
+    '.BBAAAAAAAAAAAAAB..BAAAAB',
+    '.BBAABBAAAAABAAAB..BCCCCB',
+    '.BBAAAABAAABAAAABBBAACCCB',
+    '.GGFAAABAAABAAAAGBBAABBCG',
+    'BAABAAABAAABAAABABBCAAAB.',
+    'BAAABBBBAAABBBBAABBCCBB..',
+    'BCCAAAAAAAAAAAAACBBBB....',
+    '.BBBBGGAAAAAGBBBB........',
+    '.BBCCBBAAAAABCCCB........',
+    '...BBBBBBBBBBBBB.........',
+  ];
+  var raccPal={A:'#7f8894',B:'#282c33',C:'#40454b',D:'#f0ecf0',E:'#545c65',F:'#a0abbd',G:'#050029',H:'#efa09f'};
+
+  // Otter --extracted from generated pixel art (32x32 → trimmed)
+  var ottMap=[
+    '.....AAAAAAAA......',
+    '..AAACCCCCCCCAAA...',
+    '.ACCCCCCCCCCCCCCA..',
+    '.ACACCCCCCCCCCACA..',
+    '..ACCBACCCCBACCA...',
+    '..ACCAACDDCAACCA...',
+    'AAACBBBBAABBBBCAAA.',
+    '..ABEBABAABABEBA...',
+    '.AAABBBABBABBBAAA..',
+    '...AABBBBBBBBAA....',
+    '...ACCCCCCCCCCA....',
+    '..ACCCCBBBBCCCCA...',
+    '..ACCABBBBBBACCA...',
+    '..ACCCABBBBACCCA...',
+    '..AACCABBBBACCAA.AA',
+    '..ACAABBBBBBAACAACA',
+    '.ACCCBBBBBBBBCCCACA',
+    '.ACAAABBBBBBAAACAA.',
+    '.ACCCCABBBBACCCCA..',
+    '..ACCCAAAAAACCCA...',
+    '...AAA......AAA....',
+  ];
+  var ottPal={A:'#402110',B:'#f2d79d',C:'#9f5332',D:'#ff6970',E:'#c47b4a'};
+
+  var b1=document.getElementById('sc-beaver1');
+  if(b1)b1.innerHTML=spriteToSVG(beavMap,beavPal,px);
+  var r1=document.getElementById('sc-raccoon1');
+  if(r1)r1.innerHTML=spriteToSVG(raccMap,raccPal,px);
+  var o1=document.getElementById('sc-otter1');
+  if(o1)o1.innerHTML=spriteToSVG(ottMap,ottPal,px);
+})();
+
+// Split view mockup --terminal typing + pixel critters
+(function(){
+  var px=3;
+  function spriteToSVG(map,palette,px){
+    var rows=map.length,cols=Math.max.apply(null,map.map(function(r){return r.length}));
+    var rects=[];
+    for(var r=0;r<rows;r++)for(var c=0;c<map[r].length;c++){
+      var ch=map[r][c];if(ch===' '||ch==='.')continue;
+      var fill=palette[ch];if(!fill)continue;
+      rects.push('<rect x="'+(c*px)+'" y="'+(r*px)+'" width="'+px+'" height="'+px+'" fill="'+fill+'"/>');
+    }
+    return '<svg width="'+(cols*px)+'" height="'+(rows*px)+'" xmlns="http://www.w3.org/2000/svg" style="image-rendering:pixelated;display:block" shape-rendering="crispEdges">'+rects.join('')+'</svg>';
+  }
+
+  // Beaver --extracted from generated pixel art (32x32 → trimmed)
+  var beaverMap=[
+    '..AAA........AAA.....',
+    '.ABBBA......ABBBA....',
+    '.ABAAAAAAAAAAAABA....',
+    '.ABABBBBBBBBBAABA....',
+    '..ABBBBBBBBBBBAA.....',
+    '..ABABBBBAEBBBAA.....',
+    '..ABABBBBAEBBBAA.....',
+    '.ABBAAAABAEBBBBA.....',
+    '.ABACAACCCFABBBA.....',
+    '.ABACCACCCFABBBA.AAA.',
+    '.ABBAAAAAAEBBBAAADDDA',
+    '..ABBCAFABBBBAA.AADDA',
+    '...ABAAAABBBBBBAADADA',
+    '..ABBBBBBBBBBBBAADDAA',
+    '.ABBABCCCAEBBBBBAADDA',
+    '.ABBACCCABBBBABBADADA',
+    '.AGGACCCAGGGGABBADADA',
+    '..AAACCCAAAAABBBADDA.',
+    '..ABCCCCCCFABBBBAAAA.',
+    '.AAABCCCCAAAABBBAA...',
+    'ABBBACCCABBBBBBAA....',
+    'AAAAAAAAAAAAAAAA.....',
+  ];
+  var beaverPal={A:'#3f190e',B:'#af6127',C:'#fce6b0',D:'#773c1f',E:'#050003',F:'#fffee7',G:'#dd7a2d'};
+
+  // Raccoon --extracted from generated pixel art (32x32 → trimmed)
+  var raccoonMap=[
+    '...BB........BBB.........',
+    '...BFGG.....GFFB.........',
+    '...BABB.....BAAB.........',
+    '...BCAABBBBBACCB.........',
+    '...BAAAAAAAAAAAB.........',
+    '...BCCCCAAACCCCB.........',
+    '...BCBCCAAACCCCB.........',
+    '.BBCCBBCBCCCBCBCB........',
+    '.BBACBBCAAACBCCAB........',
+    '.BBCAAADHHHDAAACB...BBB..',
+    '.BBCAAADHHHDAAACB...BBB..',
+    '...BCAADDDDDAEEB...BCCCB.',
+    '....BCCCCEEECBB....BAAACB',
+    '...BAAAAAAAAAAAB...BCCCBB',
+    '...BAAAAAAAAAAAB...BCCCCB',
+    '.BBAAAAAAAAAAAAAB..BAAAAB',
+    '.BBAABBAAAAABAAAB..BCCCCB',
+    '.BBAAAABAAABAAAABBBAACCCB',
+    '.GGFAAABAAABAAAAGBBAABBCG',
+    'BAABAAABAAABAAABABBCAAAB.',
+    'BAAABBBBAAABBBBAABBCCBB..',
+    'BCCAAAAAAAAAAAAACBBBB....',
+    '.BBBBGGAAAAAGBBBB........',
+    '.BBCCBBAAAAABCCCB........',
+    '...BBBBBBBBBBBBB.........',
+  ];
+  var raccoonPal={A:'#7f8894',B:'#282c33',C:'#40454b',D:'#f0ecf0',E:'#545c65',F:'#a0abbd',G:'#050029',H:'#efa09f'};
+
+  // Otter --extracted from generated pixel art (32x32 → trimmed)
+  var otterMap=[
+    '.....AAAAAAAA......',
+    '..AAACCCCCCCCAAA...',
+    '.ACCCCCCCCCCCCCCA..',
+    '.ACACCCCCCCCCCACA..',
+    '..ACCBACCCCBACCA...',
+    '..ACCAACDDCAACCA...',
+    'AAACBBBBAABBBBCAAA.',
+    '..ABEBABAABABEBA...',
+    '.AAABBBABBABBBAAA..',
+    '...AABBBBBBBBAA....',
+    '...ACCCCCCCCCCA....',
+    '..ACCCCBBBBCCCCA...',
+    '..ACCABBBBBBACCA...',
+    '..ACCCABBBBACCCA...',
+    '..AACCABBBBACCAA.AA',
+    '..ACAABBBBBBAACAACA',
+    '.ACCCBBBBBBBBCCCACA',
+    '.ACAAABBBBBBAAACAA.',
+    '.ACCCCABBBBACCCCA..',
+    '..ACCCAAAAAACCCA...',
+    '...AAA......AAA....',
+  ];
+  var otterPal={A:'#402110',B:'#f2d79d',C:'#9f5332',D:'#ff6970',E:'#c47b4a'};
+
+  var be=document.getElementById('beaver-pixel');
+  if(be){be.className='critter beaver-sprite';be.innerHTML=spriteToSVG(beaverMap,beaverPal,px);}
+  var ra=document.getElementById('raccoon-pixel');
+  if(ra){ra.className='critter raccoon-sprite';ra.innerHTML=spriteToSVG(raccoonMap,raccoonPal,px);}
+  var ot=document.getElementById('otter-pixel');
+  if(ot){ot.className='critter otter-sprite';ot.innerHTML=spriteToSVG(otterMap,otterPal,px);}
+
+  // Terminal typing animation
+  var lines=[
+    {p:'$ ',c:'woltspace start',d:0},
+    {o:'🦫 starting container...',d:800},
+    {o:'✓ tunnel: https://abc-xyz.trycloudflare.com',d:1600},
+    {o:'',d:2200},
+    {p:'$ ',c:'# beaver is gnawing...',d:2800},
+    {o:'',d:3400},
+    {p:'🦫 ',c:'site updated, 3 files changed',d:4000},
+    {p:'🦫 ',c:'pushed to viewport ✓',d:4800},
+    {o:'',d:5400},
+    {p:'$ ',c:'',cursor:true,d:6000},
+  ];
+  var term=document.getElementById('mock-terminal');
+  if(term){
+    lines.forEach(function(l){
+      setTimeout(function(){
+        var div=document.createElement('div');
+        div.className='term-line';
+        div.style.animationDelay='0s';
+        var html='';
+        if(l.p)html+='<span class="term-prompt">'+l.p+'</span>';
+        if(l.c!==undefined)html+='<span class="term-cmd">'+l.c+'</span>';
+        if(l.o!==undefined)html+='<span class="term-output">'+l.o+'</span>';
+        if(l.cursor)html+='<span class="term-cursor"></span>';
+        div.innerHTML=html;
+        // Insert before the beaver sprite
+        var beaver=term.querySelector('.critter');
+        if(beaver)term.insertBefore(div,beaver);
+        else term.appendChild(div);
+      },l.d);
+    });
+  }
+})();
+</script>
 </body>
 </html>
