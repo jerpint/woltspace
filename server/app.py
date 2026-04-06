@@ -642,10 +642,12 @@ async def session_new_slack(request: Request):
 # --- Sessions list ---
 
 @app.get("/sessions")
-async def list_sessions():
+async def list_sessions(include_archived: bool = False):
     from sessions import SessionRegistry
     reg = SessionRegistry(WOLTS_DIR)
     sessions = reg.list()
+    if not include_archived:
+        sessions = [s for s in sessions if s.get("status") != "archived"]
     sessions.sort(key=lambda s: (0 if s.get("status") == "running" else 1, -(s.get("created_at") or 0)))
     return sessions
 
@@ -837,6 +839,36 @@ async def session_stop(name: str):
     try:
         result = stop_session(safe)
         print(f"[sessions/stop] {safe} → stopped (was_alive={result.get('was_alive')})")
+        return result
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/sessions/{name}/archive")
+async def session_archive(name: str):
+    """Archive a session — stop if running, mark as archived."""
+    from sessions import archive_session
+    safe = "".join(c for c in name if c.isalnum() or c in "-_")
+    try:
+        result = archive_session(safe)
+        print(f"[sessions/archive] {safe} → archived")
+        return result
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.delete("/sessions/{name}")
+async def session_delete(name: str):
+    """Delete a session — stop if running, remove session file."""
+    from sessions import delete_session
+    safe = "".join(c for c in name if c.isalnum() or c in "-_")
+    try:
+        result = delete_session(safe)
+        print(f"[sessions/delete] {safe} → deleted")
         return result
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
