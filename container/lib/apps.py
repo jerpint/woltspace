@@ -185,6 +185,13 @@ def start_app(name: str) -> dict:
 
     work_dir = app_dir(name)
 
+    # Auto-install if node_modules is missing and install command is defined
+    # Covers first-start after a container rebuild (node_modules cleared in entrypoint)
+    if app.install and app.stack in ("node", "vite"):
+        nm = work_dir / "node_modules"
+        if not nm.exists():
+            subprocess.run(app.install, shell=True, cwd=str(work_dir), check=True)
+
     # Start the process with PORT env var
     env = {**os.environ, "PORT": str(port)}
     proc = subprocess.Popen(
