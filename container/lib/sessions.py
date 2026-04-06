@@ -437,6 +437,7 @@ def _wait_for_claude(name: str, timeout: float = 20.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         if _session_has_claude_process(name):
+            time.sleep(2)  # process exists but TUI needs time to initialize
             return True
         time.sleep(0.5)
     return False
