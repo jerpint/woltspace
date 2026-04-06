@@ -771,7 +771,7 @@ def _session_has_claude_process(name: str) -> bool:
                 return True
             queue.extend(children.get(cur, []))
         return False
-    except (subprocess.CalledProcessError, Exception):
+    except Exception:
         return False
 
 
