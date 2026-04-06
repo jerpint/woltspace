@@ -21,7 +21,7 @@ from paths import wolt_site_state_file
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 
-# Site ports: 6001-6999 (separate from project ports 4000-5999)
+# Site ports: 6001-6999 (separate from app ports 4000-5999)
 PORT_MIN = 6001
 PORT_MAX = 6999
 

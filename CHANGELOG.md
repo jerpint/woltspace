@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.5.0 (2026-04-06)
+
+- **Project → App rename** — "projects" are now "apps" across the platform. Directory `wolts/projects/` → `wolts/apps/`, API routes `/projects` → `/apps`, skills `woltspace-projects` → `woltspace-apps` and `woltspace-new-project` → `woltspace-new-app`, bot tool `list_projects` → `list_apps`. The `woltspace.json` manifest schema is unchanged. See `docs/migrations/v0.5.0.md` for migration steps.
+
 ## v0.4.4 (2026-04-05)
 
 - **Session resume** — `resume_session()` handles 3 paths: claude running (send keys), claude exited (restart with `--resume` in pane), tmux dead (respawn with `--resume`). (#241)

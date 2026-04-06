@@ -16,8 +16,8 @@ FastAPI server is now the default runtime on port 7777. Node `server.js` kept fo
 
 **Still to do:** Run tests from outside the container (meta debugging). Versioning with tagged releases. CI pipeline.
 
-### Project Isolation — Phases 1 & 2 (PR #17)
-Users build in `wolt/projects/`, never touch `/workspace/woltspace/`. Guardrails at template, platform, and session-injection levels. Phase 2 added: project serving, bot tool `project=` scoping, `new-project` and `projects` skills, `migrate-to-projects` recovery skill. 38 isolation-specific tests.
+### App Isolation — Phases 1 & 2 (PR #17)
+Users build in `wolts/apps/`, never touch `/workspace/woltspace/`. Guardrails at template, platform, and session-injection levels. Phase 2 added: app serving, bot tool `app=` scoping, `new-app` and `apps` skills, `migrate-to-projects` recovery skill. 38 isolation-specific tests.
 
 **Still to do (Phase 3):** Mount `/workspace/woltspace/` as read-only in container (filesystem-level enforcement). This is the north star — zero chance of platform drift.
 
@@ -34,11 +34,11 @@ Claude CLI install cached in isolated Docker build stage (faster rebuilds). `wol
 
 ## Up Next
 
-### 1. Woltspace-as-a-Project + Parallel Development (Priority: High — in progress)
+### 1. Woltspace-as-an-App + Parallel Development (Priority: High — in progress)
 
-**What:** Treat woltspace development like any other project. Dev clone lives in `wolt/projects/woltspace/`, worktrees enable parallel sessions.
+**What:** Treat woltspace development like any other app. Dev clone lives in `wolts/apps/woltspace/`, worktrees enable parallel sessions.
 
-- `wolt/projects/woltspace/` = dev clone (sessions work here)
+- `wolts/apps/woltspace/` = dev clone (sessions work here)
 - `/workspace/woltspace/` = production (mounted, serves tunnel, read-only in practice)
 - Parallel work via `git worktree add` inside the dev clone
 - Each session pushes a branch, creates a PR targeting **staging** — never edits main directly
@@ -47,9 +47,9 @@ Claude CLI install cached in isolated Docker build stage (faster rebuilds). `wol
 
 **Status:** Dev clone set up, flow documented in `DEV_FLOW.md`. Worktrees verified working. **Staging branch live** — `woltspace rebuild --dev` builds from staging, `woltspace rebuild` builds from main (stable default).
 
-**Still to do:** Raccoon orchestration for multi-task requests (multiple `claude_code` calls). Supersedes the original `WORKTREE_PLAN.md` — no custom tooling needed, just projects + git. GitHub branch protection on staging (manual setup). Raccoon migration evaluator (reads diff, explains impact to user before updating).
+**Still to do:** Raccoon orchestration for multi-task requests (multiple `claude_code` calls). Supersedes the original `WORKTREE_PLAN.md` — no custom tooling needed, just apps + git. GitHub branch protection on staging (manual setup). Raccoon migration evaluator (reads diff, explains impact to user before updating).
 
-**Why:** Dogfoods the project isolation system on the hardest case. If it works for woltspace itself, it works for everything. Unlocks parallel development without custom infra.
+**Why:** Dogfoods the app isolation system on the hardest case. If it works for woltspace itself, it works for everything. Unlocks parallel development without custom infra.
 
 ### 1b. Update System (Priority: High — shipped)
 
@@ -207,7 +207,7 @@ Mount `/workspace/woltspace/` as read-only in container. Filesystem-level enforc
 
 ### Multi-wolt Collaboration
 - Wolts can enter other woltspaces as guests with limited roles/context
-- Two wolts collaborate on shared projects
+- Two wolts collaborate on shared apps
 - Permission system or shared woltspaces
 
 ### Public Showcase & Pixel Art

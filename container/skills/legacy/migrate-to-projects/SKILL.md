@@ -1,11 +1,11 @@
 ---
 name: migrate-to-projects
-description: Help a user who has accidentally edited platform code in /workspace/woltspace/. Detects drift, extracts their work into wolt/projects/, and resets the platform to clean state.
+description: Help a user who has accidentally edited platform code in /workspace/woltspace/. Detects drift, extracts their work into wolt/apps/, and resets the platform to clean state.
 ---
 
 # Migrate to Projects
 
-Your human (or a previous session) edited files in `/workspace/woltspace/` — the platform code. This causes problems: when the platform updates, those changes get overwritten or cause merge conflicts. Your job is to safely extract their work into `wolt/projects/` and restore the platform to a clean state.
+Your human (or a previous session) edited files in `/workspace/woltspace/` — the platform code. This causes problems: when the platform updates, those changes get overwritten or cause merge conflicts. Your job is to safely extract their work into `wolt/apps/` and restore the platform to a clean state.
 
 **Be careful. This is a recovery operation. Don't lose anyone's work.**
 
@@ -30,16 +30,16 @@ Tell the human what you found. Be specific: "You have 3 modified files and 5 new
 
 For each piece of user work you find:
 
-1. Create a project directory: `mkdir -p wolt/projects/{name}`
-2. Copy the files there: `cp -r /workspace/woltspace/{path} wolt/projects/{name}/`
-3. If it's an app that was running on a port, note the port in project.json
-4. If it depends on platform code (imports from server.js, etc.), refactor those dependencies out — the project should be self-contained
+1. Create an app directory: `mkdir -p wolt/apps/{name}`
+2. Copy the files there: `cp -r /workspace/woltspace/{path} wolt/apps/{name}/`
+3. If it's an app that was running on a port, note the port in woltspace.json
+4. If it depends on platform code (imports from server.js, etc.), refactor those dependencies out — the app should be self-contained
 
 Example extractions:
-- Custom API endpoint added to server.js → extract into its own FastAPI/Express server in a project
+- Custom API endpoint added to server.js → extract into its own FastAPI/Express server in an app
 - Modified bot behavior → document what they wanted in a memory file, suggest filing an issue
-- New HTML pages in public/ → move to wolt/site/ or a project
-- New scripts in container/bin/ → move to a project
+- New HTML pages in public/ → move to wolt/site/ or an app
+- New scripts in container/bin/ → move to an app
 
 ## Step 3: Document config changes
 
@@ -57,7 +57,7 @@ Write a summary to `wolt/memory/archive/platform-migration.md`:
 - {list of changes in /workspace/woltspace/}
 
 ## What was extracted
-- {project name} → wolt/projects/{name}/ (was: {original location})
+- {app name} → wolt/apps/{name}/ (was: {original location})
 
 ## Config changes discarded
 - {change}: {reason it was there}, {proper alternative if any}
@@ -92,7 +92,7 @@ git checkout .
 
 1. Check the platform is clean: `cd /workspace/woltspace && git status` → should be clean
 2. Check extracted projects work: start their servers, verify functionality
-3. Push project changes to viewport so the human can verify
+3. Push app changes to viewport so the human can verify
 4. Update wolt memory with what happened
 
 ## Step 6: Pull latest platform
@@ -109,7 +109,7 @@ This should now work cleanly since there are no local modifications.
 ## Common patterns
 
 ### "I added an endpoint to server.js"
-Extract the logic into a standalone server in `wolt/projects/{name}/`. Set up project.json with a port. The platform will proxy `/project/{name}/` to it automatically.
+Extract the logic into a standalone server in `wolt/apps/{name}/`. Set up woltspace.json with a port. The platform will proxy `/app/{name}/` to it automatically.
 
 ### "I modified the bot behavior"
 Check if it can be done via:
@@ -120,7 +120,7 @@ Check if it can be done via:
 If not, it's a feature request for woltspace.
 
 ### "I added files to public/"
-Move to `wolt/site/` (served at the root) or to a project.
+Move to `wolt/site/` (served at the root) or to an app.
 
 ### "I edited the Dockerfile or entrypoint"
 These are core platform. Document what was needed and why. This is almost certainly a feature request — suggest filing an issue.

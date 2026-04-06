@@ -86,7 +86,7 @@ All your wolt data lives in `~/.woltspace/wolts/` (or `$WOLTS_DIR` if you set it
       memory/            — identity, context, learnings
       site/              — public space (served in the viewport)
       sparks/            — generated artifacts
-      projects/          — code projects
+      apps/              — apps
     .state/              — tunnel URL, session registry
 ```
 

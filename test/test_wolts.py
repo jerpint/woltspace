@@ -457,15 +457,15 @@ class TestStartSession:
             assert result["creature"] == "raccoon"
             assert result["model"] == "opus"
 
-    def test_project_creates_subdir(self, tmp_path):
+    def test_app_creates_subdir(self, tmp_path):
         from sessions import start_session
         (tmp_path / "mywolt").mkdir()
         with patch("sessions.WOLTS_DIR", tmp_path), \
              patch("sessions.subprocess") as mock_sub:
             mock_sub.run.return_value = None
-            result = start_session(wolt="mywolt", project="myapp")
-            assert result["project"] == "myapp"
-            assert (tmp_path / "mywolt" / "wolt" / "projects" / "myapp").is_dir()
+            result = start_session(wolt="mywolt", app="myapp")
+            assert result["app"] == "myapp"
+            assert (tmp_path / "mywolt" / "wolt" / "apps" / "myapp").is_dir()
 
 
 # ---------------------------------------------------------------------------

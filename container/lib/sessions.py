@@ -92,7 +92,7 @@ class SessionRegistry:
         creature: str = "",
         model: str = "",
         dir: str = "",
-        project: str = "",
+        app: str = "",
         title: str = "",
         prompt: str = "",
         adapter: str = "",
@@ -110,7 +110,7 @@ class SessionRegistry:
             "wolt": wolt,
             "creature": creature,
             "model": model,
-            "project": project,
+            "app": app,
             "status": "running",
             "created_at": now,
             "finished_at": None,
@@ -198,20 +198,20 @@ class SessionRegistry:
     def set_viewport(self, name: str, url: str, *, wolt: str = None, port: int = 7777) -> dict | None:
         """Update the viewport URL for a session.
 
-        For project URLs (/project/{name}/...), viewport_port is the primary
-        field — split.html uses it to connect directly to the project port,
+        For app URLs (/app/{name}/...), viewport_port is the primary
+        field — split.html uses it to connect directly to the app port,
         bypassing the FastAPI proxy. If port is not explicitly given, the
-        running project's port is looked up automatically.
+        running app's port is looked up automatically.
         """
         if port == 7777:
-            proj_match = re.match(r"^/project/([^/]+)", url)
-            if proj_match:
+            app_match = re.match(r"^/app/([^/]+)", url)
+            if app_match:
                 try:
-                    from projects import running_projects
-                    proj_name = proj_match.group(1)
-                    running = {r["name"]: r for r in running_projects()}
-                    if proj_name in running:
-                        port = running[proj_name]["port"]
+                    from apps import running_apps
+                    app_name = app_match.group(1)
+                    running = {r["name"]: r for r in running_apps()}
+                    if app_name in running:
+                        port = running[app_name]["port"]
                 except Exception:
                     pass
 
@@ -452,7 +452,7 @@ def start_session(
     prompt: str = "",
     creature: str = "",
     routing: dict = None,
-    project: str = "",
+    app: str = "",
 ) -> dict:
     """Start a Claude Code session for a specific wolt.
 
@@ -460,9 +460,9 @@ def start_session(
     prompt: opening message for the session.
     creature: optional "raccoon"/"beaver"/"otter" to pick the model.
     routing: adapter routing info (adapter, chat_id, etc.) for notifications.
-    project: optional project name — session runs in wolt/projects/{name}/.
+    app: optional app name — session runs in wolt/apps/{name}/.
 
-    Returns dict with session info: name, url, wolt, and optionally project/creature/model.
+    Returns dict with session info: name, url, wolt, and optionally app/creature/model.
     Raises ValueError if the wolt directory doesn't exist.
     """
     target_dir = WOLTS_DIR / wolt
@@ -480,10 +480,10 @@ def start_session(
         except (json.JSONDecodeError, OSError):
             pass
 
-    if project:
-        project_dir = target_dir / "wolt" / "projects" / project
-        project_dir.mkdir(parents=True, exist_ok=True)
-        target_dir = project_dir
+    if app:
+        apps_work_dir = target_dir / "wolt" / "apps" / app
+        apps_work_dir.mkdir(parents=True, exist_ok=True)
+        target_dir = apps_work_dir
 
     name = session_name(wolt)
     model = CREATURE_MODELS.get(creature) if creature else None
@@ -498,7 +498,7 @@ def start_session(
         creature=creature or "",
         model=model or "",
         dir=str(target_dir),
-        project=project or "",
+        app=app or "",
         prompt=prompt,
         adapter=(routing or {}).get("adapter", ""),
         chat_id=str((routing or {}).get("chat_id", "")),
@@ -549,20 +549,20 @@ def start_session(
         subprocess.run(["tmux", "send-keys", "-t", name, "", "Enter"], check=True)
 
     result = {"name": name, "url": session_url or None, "wolt": wolt}
-    if project:
-        result["project"] = project
+    if app:
+        result["app"] = app
     if creature:
         result["creature"] = creature
         result["model"] = model
 
-    # Set viewport: project subdomain URL if project session, otherwise wolt site.
-    if project:
+    # Set viewport: app subdomain URL if app session, otherwise wolt site.
+    if app:
         try:
-            project_url = f"http://{project}.localhost:7777/"
-            registry.set_viewport(name, project_url, wolt=wolt)
-            result["viewport_url"] = project_url
+            app_url = f"http://{app}.localhost:7777/"
+            registry.set_viewport(name, app_url, wolt=wolt)
+            result["viewport_url"] = app_url
         except Exception as e:
-            print(f"[sessions] failed to set project viewport for {project}: {e}")
+            print(f"[sessions] failed to set app viewport for {app}: {e}")
     else:
         try:
             site_state = start_site(wolt)

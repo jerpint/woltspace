@@ -11,7 +11,6 @@ WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", str(WOLT_DIR.parent)))
 WOLT_NAME = os.environ.get("WOLT_NAME", "wolt")
 
 SITE_DIR = WOLT_DIR / "wolt" / "site"
-PROJECTS_DIR = WOLT_DIR / "wolt" / "projects"
 APPS_DIR = WOLT_DIR / "wolt" / "apps"
 SPARKS_DIR = WOLT_DIR / "wolt" / "sparks"
 PUBLIC_DIR = WOLTSPACE_DIR / "public"

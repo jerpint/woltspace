@@ -29,7 +29,7 @@ from .config import (
     DEN_REPLY_FOOTER,
     MIME_TYPES,
     PORT,
-    PROJECTS_DIR,
+    APPS_DIR,
     PUBLIC_DIR,
     SHARES_DIR,
     SITE_DIR,
@@ -49,17 +49,17 @@ from .sparks import get_spark_with_chain, list_sparks
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 from sessions import resume_session, start_session, stop_session
-from projects import (
-    WoltspaceProject,
-    discover_projects,
-    get_project,
-    project_dir,
-    running_projects,
-    share_project,
-    start_project,
-    stop_project,
-    unshare_all_projects,
-    unshare_project,
+from apps import (
+    WoltspaceApp,
+    discover_apps,
+    get_app,
+    app_dir,
+    running_apps,
+    share_app,
+    start_app,
+    stop_app,
+    unshare_all_apps,
+    unshare_app,
 )
 from sites import get_site_state, running_sites, site_dir, start_site, stop_site
 from .state import (
@@ -163,21 +163,21 @@ async def cors_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def subdomain_proxy(request: Request, call_next):
-    """Proxy subdomain requests to project ports.
+    """Proxy subdomain requests to app ports.
 
     blog.localhost:7777 → proxy to localhost:{blog's port}
     Any *.localhost or *.localhost:PORT hostname triggers this.
     """
     host = (request.headers.get("host") or "").split(":")[0]
     if host.endswith(".localhost") and host != "localhost":
-        project_name = host.removesuffix(".localhost")
+        app_name = host.removesuffix(".localhost")
         try:
-            from projects import running_projects
-            running = {r["name"]: r for r in running_projects()}
-            run_state = running.get(project_name)
+            from apps import running_apps
+            running = {r["name"]: r for r in running_apps()}
+            run_state = running.get(app_name)
             if not run_state:
                 return HTMLResponse(
-                    f"<h1>Project '{project_name}' is not running</h1>",
+                    f"<h1>App '{app_name}' is not running</h1>",
                     status_code=503,
                 )
             port = run_state["port"]
@@ -219,7 +219,7 @@ async def subdomain_proxy(request: Request, call_next):
             )
         except httpx.ConnectError:
             return HTMLResponse(
-                f"<h1>Cannot reach project '{project_name}' on port {port}</h1>",
+                f"<h1>Cannot reach app '{app_name}' on port {port}</h1>",
                 status_code=502,
             )
         except Exception as e:
@@ -238,8 +238,8 @@ def _shell_quote(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
 
 
-def _project_not_found(name: str) -> str:
-    """Styled 404 page for a project that doesn't exist."""
+def _app_not_found(name: str) -> str:
+    """Styled 404 page for an app that doesn't exist."""
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -269,20 +269,20 @@ def _project_not_found(name: str) -> str:
 <div class="card">
   <div class="emoji">🌲</div>
   <h1>{name}</h1>
-  <p class="desc">This project doesn't exist yet.</p>
+  <p class="desc">This app doesn't exist yet.</p>
   <p class="hint">Ask your wolt to create it, or check the name.</p>
 </div>
 </body>
 </html>"""
 
 
-def _project_placeholder(name: str, project: "WoltspaceProject | None" = None) -> str:
-    """Styled placeholder page for a project that has no servable content."""
-    emoji = project.emoji if project else "📦"
-    desc = project.description if project and project.description else "No description yet"
-    keeper = project.keeper if project else "unknown"
-    start_cmd = project.start if project and project.start else None
-    status = "Press start to start your project" if start_cmd else "No start command configured"
+def _app_placeholder(name: str, app_obj: "WoltspaceApp | None" = None) -> str:
+    """Styled placeholder page for an app that has no servable content."""
+    emoji = app_obj.emoji if app_obj else "📦"
+    desc = app_obj.description if app_obj and app_obj.description else "No description yet"
+    keeper = app_obj.keeper if app_obj else "unknown"
+    start_cmd = app_obj.start if app_obj and app_obj.start else None
+    status = "Press start to start your app" if start_cmd else "No start command configured"
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -570,7 +570,7 @@ async def session_new_lodge(request: Request):
             wolt=wolt,
             prompt=body.get("prompt", ""),
             creature=body.get("creature", ""),
-            project=body.get("project", ""),
+            app=body.get("app", ""),
             routing={"adapter": "lodge"},
         )
         # Site auto-start + viewport URL handled by start_session()
@@ -594,7 +594,7 @@ async def session_new_telegram(request: Request):
             wolt=wolt,
             prompt=body.get("prompt", ""),
             creature=body.get("creature", ""),
-            project=body.get("project", ""),
+            app=body.get("app", ""),
             routing={
                 "adapter": "telegram",
                 "chat_id": body.get("chat_id", ""),
@@ -622,7 +622,7 @@ async def session_new_slack(request: Request):
             wolt=wolt,
             prompt=body.get("prompt", ""),
             creature=body.get("creature", ""),
-            project=body.get("project", ""),
+            app=body.get("app", ""),
             routing={
                 "adapter": "slack",
                 "chat_id": body.get("channel", ""),
@@ -712,56 +712,51 @@ async def list_wolts():
     return wolts
 
 
-# --- Apps (deprecated — use /projects/ and /project/) ---
-# Legacy /app/ routes removed. Apps are now projects with woltspace.json.
-# Existing apps in wolt/apps/ need migration to wolts/projects/.
+# --- Apps ---
+# Centralized app management. Uses woltspace.json manifests.
+# App names are globally unique. Keeper (owning wolt) is in woltspace.json.
 
-
-# --- Projects ---
-# Centralized project management. Uses woltspace.json manifests.
-# Project names are globally unique. Keeper (owning wolt) is in woltspace.json.
-
-@app.get("/projects")
-async def list_projects_api():
-    """List all projects that have woltspace.json."""
-    projects = discover_projects()
-    running = {r["name"]: r for r in running_projects()}
+@app.get("/apps")
+async def list_apps_api():
+    """List all apps that have woltspace.json."""
+    apps = discover_apps()
+    running = {r["name"]: r for r in running_apps()}
     result = []
-    for p in projects:
-        entry = p.model_dump()
-        run_state = running.get(p.name)
+    for a in apps:
+        entry = a.model_dump()
+        run_state = running.get(a.name)
         entry["running"] = run_state is not None
         entry["port"] = run_state["port"] if run_state else None
-        entry["url"] = f"/project/{p.name}/"
+        entry["url"] = f"/app/{a.name}/"
         entry["tunnel_url"] = run_state.get("tunnel_url") if run_state else None
         entry["sharing"] = bool(run_state.get("tunnel_pid") and run_state.get("tunnel_url")) if run_state else False
         result.append(entry)
     return result
 
 
-@app.get("/projects/{name}")
-async def project_detail(name: str):
-    """Get a single project's manifest and running state."""
-    project = get_project(name)
-    if not project:
-        return JSONResponse({"error": f"project {name} not found"}, status_code=404)
-    running = {r["name"]: r for r in running_projects()}
-    entry = project.model_dump()
+@app.get("/apps/{name}")
+async def app_detail(name: str):
+    """Get a single app's manifest and running state."""
+    app_obj = get_app(name)
+    if not app_obj:
+        return JSONResponse({"error": f"app {name} not found"}, status_code=404)
+    running = {r["name"]: r for r in running_apps()}
+    entry = app_obj.model_dump()
     run_state = running.get(name)
     entry["running"] = run_state is not None
     entry["port"] = run_state["port"] if run_state else None
-    entry["url"] = f"/project/{name}/"
+    entry["url"] = f"/app/{name}/"
     entry["tunnel_url"] = run_state.get("tunnel_url") if run_state else None
     entry["sharing"] = bool(run_state.get("tunnel_pid") and run_state.get("tunnel_url")) if run_state else False
     return entry
 
 
-@app.post("/projects/{name}/start")
-async def project_start(name: str):
-    """Start a project's dev server."""
+@app.post("/apps/{name}/start")
+async def app_start(name: str):
+    """Start an app's dev server."""
     try:
-        state = start_project(name)
-        print(f"[projects] started {name} on port {state['port']}")
+        state = start_app(name)
+        print(f"[apps] started {name} on port {state['port']}")
         return state
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
@@ -769,24 +764,24 @@ async def project_start(name: str):
         return JSONResponse({"error": str(e)}, status_code=409)
 
 
-@app.post("/projects/{name}/stop")
-async def project_stop(name: str):
-    """Stop a running project."""
-    was_running = stop_project(name)
+@app.post("/apps/{name}/stop")
+async def app_stop(name: str):
+    """Stop a running app."""
+    was_running = stop_app(name)
     if was_running:
-        print(f"[projects] stopped {name}")
+        print(f"[apps] stopped {name}")
         return {"ok": True, "name": name}
     return JSONResponse({"error": f"{name} is not running"}, status_code=404)
 
 
-@app.post("/projects/{name}/share")
-async def project_share(name: str):
-    """Start a cloudflared tunnel to the project port and return the public URL."""
+@app.post("/apps/{name}/share")
+async def app_share(name: str):
+    """Start a cloudflared tunnel to the app port and return the public URL."""
     import asyncio
     try:
-        # share_project blocks (polls cloudflared log up to 30s) — run in thread
-        result = await asyncio.to_thread(share_project, name)
-        print(f"[projects] shared {name} at {result['tunnel_url']}")
+        # share_app blocks (polls cloudflared log up to 30s) — run in thread
+        result = await asyncio.to_thread(share_app, name)
+        print(f"[apps] shared {name} at {result['tunnel_url']}")
         return result
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
@@ -794,21 +789,21 @@ async def project_share(name: str):
         return JSONResponse({"error": str(e)}, status_code=503)
 
 
-@app.post("/projects/{name}/unshare")
-async def project_unshare(name: str):
-    """Stop the cloudflared tunnel for a project."""
-    was_sharing = unshare_project(name)
+@app.post("/apps/{name}/unshare")
+async def app_unshare(name: str):
+    """Stop the cloudflared tunnel for an app."""
+    was_sharing = unshare_app(name)
     if was_sharing:
-        print(f"[projects] unshared {name}")
+        print(f"[apps] unshared {name}")
         return {"ok": True, "name": name}
     return JSONResponse({"error": f"{name} has no active tunnel"}, status_code=404)
 
 
-@app.post("/projects/unshare-all")
-async def project_unshare_all():
-    """Panic button — stop ALL project tunnels."""
-    unshared = unshare_all_projects()
-    print(f"[projects] unshare-all: stopped {len(unshared)} tunnels: {unshared}")
+@app.post("/apps/unshare-all")
+async def app_unshare_all():
+    """Panic button — stop ALL app tunnels."""
+    unshared = unshare_all_apps()
+    print(f"[apps] unshare-all: stopped {len(unshared)} tunnels: {unshared}")
     return {"ok": True, "unshared": unshared}
 
 
@@ -846,7 +841,7 @@ async def session_stop(name: str):
 
 # --- Wolt Sites ---
 # Each wolt has a persistent site at wolt/site/. Served via livereload.
-# Sites auto-start when a session begins outside a project context.
+# Sites auto-start when a session begins outside an app context.
 
 @app.get("/sites")
 async def list_sites_api():
@@ -996,26 +991,26 @@ async def site_livereload_ws(wolt_name: str, ws: WebSocket):
         pass
 
 
-@app.get("/project/{proj_name}/{path:path}")
-@app.get("/project/{proj_name}")
-async def serve_project(proj_name: str, request: Request, path: str = ""):
-    """Serve a project — static fallback only (dist/ or root files when not running).
+@app.get("/app/{app_name}/{path:path}")
+@app.get("/app/{app_name}")
+async def serve_app(app_name: str, request: Request, path: str = ""):
+    """Serve an app — static fallback only (dist/ or root files when not running).
 
-    When a project is running, the viewport iframe connects directly to the
-    project port (no proxy). Accessing /project/{name}/ while it's running
+    When an app is running, the viewport iframe connects directly to the
+    app port (no proxy). Accessing /app/{name}/ while it's running
     redirects to the direct port URL so the browser lands on the right origin.
     """
-    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", proj_name):
-        return JSONResponse({"error": "invalid project name"}, status_code=400)
-    pdir = project_dir(proj_name)
-    if not pdir.exists():
-        return HTMLResponse(_project_not_found(proj_name), status_code=404)
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", app_name):
+        return JSONResponse({"error": "invalid app name"}, status_code=400)
+    adir = app_dir(app_name)
+    if not adir.exists():
+        return HTMLResponse(_app_not_found(app_name), status_code=404)
 
     sub_path = "/" + path if path else "/"
 
-    # When running, redirect to the direct project port — no proxy
-    running = {r["name"]: r for r in running_projects()}
-    run_state = running.get(proj_name)
+    # When running, redirect to the direct app port — no proxy
+    running = {r["name"]: r for r in running_apps()}
+    run_state = running.get(app_name)
     if run_state:
         port = run_state["port"]
         qs = f"?{request.url.query}" if request.url.query else ""
@@ -1023,7 +1018,7 @@ async def serve_project(proj_name: str, request: Request, path: str = ""):
         return RedirectResponse(direct, status_code=302)
 
     # Static fallback: serve from dist/ when not running
-    dist_dir = pdir / "dist"
+    dist_dir = adir / "dist"
     if dist_dir.exists():
         candidates = [dist_dir / path, dist_dir / path / "index.html"]
         for candidate in candidates:
@@ -1034,24 +1029,24 @@ async def serve_project(proj_name: str, request: Request, path: str = ""):
                 ext = resolved.suffix
                 mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
                 return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
-        return PlainTextResponse("Not found in project", status_code=404)
+        return PlainTextResponse("Not found in app", status_code=404)
 
-    # Static fallback: serve files directly from project root (simple HTML projects)
-    candidates = [pdir / path, pdir / path / "index.html"]
+    # Static fallback: serve files directly from app root (simple HTML apps)
+    candidates = [adir / path, adir / path / "index.html"]
     if not path:
-        candidates = [pdir / "index.html"]
+        candidates = [adir / "index.html"]
     for candidate in candidates:
         resolved = candidate.resolve()
-        if not str(resolved).startswith(str(pdir.resolve())):
+        if not str(resolved).startswith(str(adir.resolve())):
             continue
         if resolved.exists() and resolved.is_file():
             ext = resolved.suffix
             mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
             return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
 
-    # Off-state placeholder — project exists but has no servable content
-    project = get_project(proj_name)
-    return HTMLResponse(_project_placeholder(proj_name, project))
+    # Off-state placeholder — app exists but has no servable content
+    app_obj = get_app(app_name)
+    return HTMLResponse(_app_placeholder(app_name, app_obj))
 
 
 # --- Shares ---
@@ -1246,7 +1241,7 @@ async def tui_proxy(ws: WebSocket):
 
 @app.websocket("/{path:path}")
 async def subdomain_ws_proxy(ws: WebSocket, path: str):
-    """Proxy WebSocket connections for subdomain projects (e.g. Vite HMR).
+    """Proxy WebSocket connections for subdomain apps (e.g. Vite HMR).
 
     blog.localhost:7777/any/path → ws://localhost:{port}/any/path
     """
@@ -1258,10 +1253,10 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
         await ws.close(code=1008)
         return
 
-    project_name = host.removesuffix(".localhost")
-    from projects import running_projects
-    running = {r["name"]: r for r in running_projects()}
-    run_state = running.get(project_name)
+    app_name = host.removesuffix(".localhost")
+    from apps import running_apps
+    running = {r["name"]: r for r in running_apps()}
+    run_state = running.get(app_name)
     if not run_state:
         await ws.close(code=1008)
         return

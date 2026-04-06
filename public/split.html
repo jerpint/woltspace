@@ -40,8 +40,8 @@
     #topbar .status { color: var(--muted); font-size: 0.65rem; }
     #topbar .actions { display: flex; gap: 0.4rem; }
 
-    /* project bar — shown when right pane is viewing a project */
-    #project-bar {
+    /* app bar — shown when right pane is viewing an app */
+    #app-bar {
       display: none;
       align-items: center;
       gap: 0.4rem;
@@ -49,22 +49,22 @@
       padding-left: 0.6rem;
       margin-left: 0.2rem;
     }
-    #project-bar.visible { display: flex; }
-    #project-bar .p-emoji { font-size: 0.9rem; }
-    #project-bar .p-name { font-size: 0.75rem; font-weight: 600; color: var(--cream); }
-    #project-bar .p-dot { width: 6px; height: 6px; border-radius: 50%; }
-    #project-bar .p-dot.on  { background: var(--leaf); box-shadow: 0 0 5px var(--leaf); }
-    #project-bar .p-dot.off { background: var(--dim); }
-    #project-bar .p-toggle {
+    #app-bar.visible { display: flex; }
+    #app-bar .p-emoji { font-size: 0.9rem; }
+    #app-bar .p-name { font-size: 0.75rem; font-weight: 600; color: var(--cream); }
+    #app-bar .p-dot { width: 6px; height: 6px; border-radius: 50%; }
+    #app-bar .p-dot.on  { background: var(--leaf); box-shadow: 0 0 5px var(--leaf); }
+    #app-bar .p-dot.off { background: var(--dim); }
+    #app-bar .p-toggle {
       font-family: inherit; font-size: 0.65rem; font-weight: 600;
       padding: 0.2rem 0.5rem; border-radius: 4px; cursor: pointer;
       transition: background 0.15s, border-color 0.15s, color 0.15s;
       background: transparent;
     }
-    #project-bar .p-toggle.start { border: 1px solid var(--fern); color: var(--leaf); }
-    #project-bar .p-toggle.start:hover { background: var(--moss); color: var(--cream); }
-    #project-bar .p-toggle.stop  { border: 1px solid var(--wood); color: var(--muted); }
-    #project-bar .p-toggle.stop:hover  { border-color: #c0392b; color: #e74c3c; }
+    #app-bar .p-toggle.start { border: 1px solid var(--fern); color: var(--leaf); }
+    #app-bar .p-toggle.start:hover { background: var(--moss); color: var(--cream); }
+    #app-bar .p-toggle.stop  { border: 1px solid var(--wood); color: var(--muted); }
+    #app-bar .p-toggle.stop:hover  { border-color: #c0392b; color: #e74c3c; }
     #topbar .actions button {
       font-family: inherit; font-size: 0.72rem;
       padding: 0.25rem 0.6rem; background: var(--log);
@@ -192,11 +192,11 @@
       <a class="title" href="/" id="session-name" style="text-decoration:none">🦫 woltspace</a>
       <span class="status" id="tui-status">connecting...</span>
     </div>
-    <div id="project-bar">
+    <div id="app-bar">
       <span class="p-emoji" id="p-emoji"></span>
       <span class="p-name" id="p-name"></span>
       <span class="p-dot" id="p-dot"></span>
-      <button class="p-toggle" id="p-toggle" onclick="toggleCurrentProject()"></button>
+      <button class="p-toggle" id="p-toggle" onclick="toggleCurrentApp()"></button>
     </div>
     <div class="actions">
       <button id="btn-back"    onclick="goBack()"            title="Back" disabled>◁</button>
@@ -390,13 +390,13 @@
       btnBack.disabled = stackIdx <= 0;
     }
 
-    // ── Project bar ───────────────────────────────────────────────────────────
-    const projectBar = document.getElementById('project-bar');
-    let currentProjectName = null;
+    // ── App bar ──────────────────────────────────────────────────────────────
+    const appBar = document.getElementById('app-bar');
+    let currentAppName = null;
 
-    // Detect project/site from viewport metadata rather than URL path matching.
-    // When viewport_port != 7777, look up the project by port from /projects list.
-    async function updateProjectBar(url) {
+    // Detect app/site from viewport metadata rather than URL path matching.
+    // When viewport_port != 7777, look up the app by port from /apps list.
+    async function updateAppBar(url) {
       // Check for wolt site URL
       const siteMatch = url.match(/^\/wolt\/([^/]+)\/site/);
       if (siteMatch) {
@@ -405,35 +405,35 @@
         document.getElementById('p-name').textContent = woltName;
         document.getElementById('p-dot').className = 'p-dot on';
         document.getElementById('p-toggle').style.display = 'none';
-        currentProjectName = null;
-        projectBar.classList.add('visible');
+        currentAppName = null;
+        appBar.classList.add('visible');
         return;
       }
 
-      // Resolve project name — prefer metadata port lookup over URL path matching
-      let projectName = null;
+      // Resolve app name — prefer metadata port lookup over URL path matching
+      let appName = null;
       const meta = currentViewportMeta;
       if (meta && meta.port && meta.port !== 7777) {
         try {
-          const projects = await fetch('/projects').then(r => r.json());
-          const proj = projects.find(p => p.port === meta.port);
-          if (proj) projectName = proj.name;
+          const apps = await fetch('/apps').then(r => r.json());
+          const app = apps.find(a => a.port === meta.port);
+          if (app) appName = app.name;
         } catch {}
       }
-      if (!projectName) {
-        const projectMatch = url.match(/^\/project\/([^/]+)/);
-        if (projectMatch) projectName = projectMatch[1];
+      if (!appName) {
+        const appMatch = url.match(/^\/app\/([^/]+)/);
+        if (appMatch) appName = appMatch[1];
       }
 
-      if (!projectName) {
-        projectBar.classList.remove('visible');
-        currentProjectName = null;
+      if (!appName) {
+        appBar.classList.remove('visible');
+        currentAppName = null;
         return;
       }
 
-      currentProjectName = projectName;
+      currentAppName = appName;
       try {
-        const p = await fetch('/projects/' + projectName).then(r => r.json());
+        const p = await fetch('/apps/' + appName).then(r => r.json());
         document.getElementById('p-emoji').textContent = p.emoji || '📦';
         document.getElementById('p-name').textContent = p.name;
         const dot = document.getElementById('p-dot');
@@ -446,10 +446,10 @@
         } else {
           btn.style.display = 'none';
         }
-        projectBar.classList.add('visible');
+        appBar.classList.add('visible');
       } catch {
-        projectBar.classList.remove('visible');
-        currentProjectName = null;
+        appBar.classList.remove('visible');
+        currentAppName = null;
       }
     }
 
@@ -463,49 +463,49 @@
       return location.protocol + '//' + location.hostname + ':' + port + (subPath || '/');
     }
 
-    window.toggleCurrentProject = async () => {
-      if (!currentProjectName) return;
+    window.toggleCurrentApp = async () => {
+      if (!currentAppName) return;
       const btn = document.getElementById('p-toggle');
       const isRunning = btn.classList.contains('stop');
       btn.disabled = true;
       btn.textContent = '...';
       try {
         const result = await fetch(
-          '/projects/' + currentProjectName + '/' + (isRunning ? 'stop' : 'start'),
+          '/apps/' + currentAppName + '/' + (isRunning ? 'stop' : 'start'),
           { method: 'POST' }
         ).then(r => r.json());
 
         if (!isRunning && result.port) {
-          // Project just started — load direct port URL (localhost) or fallback path
+          // App just started — load direct port URL (localhost) or fallback path
           const direct = directPortUrl(result.port);
-          preview.src = direct || '/project/' + currentProjectName + '/';
+          preview.src = direct || '/app/' + currentAppName + '/';
           // Update session so pollCurrent doesn't fight us
-          setCurrent('/project/' + currentProjectName + '/', result.port);
+          setCurrent('/app/' + currentAppName + '/', result.port);
           if (currentViewportMeta) currentViewportMeta.port = result.port;
         } else {
-          // Project stopped — show static fallback
-          preview.src = '/project/' + currentProjectName + '/';
-          setCurrent('/project/' + currentProjectName + '/');
+          // App stopped — show static fallback
+          preview.src = '/app/' + currentAppName + '/';
+          setCurrent('/app/' + currentAppName + '/');
           if (currentViewportMeta) currentViewportMeta.port = 7777;
         }
-        await updateProjectBar('/project/' + currentProjectName + '/');
+        await updateAppBar('/app/' + currentAppName + '/');
       } catch {}
       btn.disabled = false;
     };
 
     function loadView(url, title, pushToStack = true) {
       // When viewport_port != 7777, try direct port URL (localhost only).
-      // When remote, check for project tunnel_url, else fall back to /project/ path
+      // When remote, check for app tunnel_url, else fall back to /app/ path
       // (which does a 302 redirect to the direct port when running).
       const meta = currentViewportMeta;
-      if (meta && meta.port && meta.port !== 7777 && url && url.startsWith('/project/')) {
+      if (meta && meta.port && meta.port !== 7777 && url && url.startsWith('/app/')) {
         const direct = directPortUrl(meta.port);
         if (direct) {
           preview.src = direct;
         } else if (meta.tunnel_url) {
           preview.src = meta.tunnel_url;
         } else {
-          preview.src = url; // /project/{name}/ — server does 302 redirect
+          preview.src = url; // /app/{name}/ — server does 302 redirect
         }
       } else {
         preview.src = url;
@@ -518,7 +518,7 @@
       }
       updateBackBtn();
       renderHist();
-      updateProjectBar(url);
+      updateAppBar(url);
     }
 
     // Tell server what we're viewing so the poll doesn't fight us

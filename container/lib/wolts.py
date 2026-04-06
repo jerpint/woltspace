@@ -226,10 +226,10 @@ def setup_wolt_claude_config(wolt_dir: Path, name: str) -> None:
         global_config = Path.home() / ".claude.json"
         trust_data = json.loads(global_config.read_text()) if global_config.exists() else {}
         trust = {"hasTrustDialogAccepted": True, "hasCompletedProjectOnboarding": True}
-        projects = trust_data.get("projects", {})
-        projects[str(wolt_dir)] = trust
-        projects[str(wolt_dir / "wolt")] = trust
-        trust_data["projects"] = projects
+        trusted_dirs = trust_data.get("projects", {})
+        trusted_dirs[str(wolt_dir)] = trust
+        trusted_dirs[str(wolt_dir / "wolt")] = trust
+        trust_data["projects"] = trusted_dirs
         trust_data["autoUpdates"] = False
         trust_config.write_text(json.dumps(trust_data, indent=2) + "\n")
 
@@ -316,10 +316,10 @@ notify "your message here"
 Your site at `wolt/site/` is live in the viewport with livereload at `/wolt/<your-name>/site/`.
 Edit files and changes appear instantly. Use `push-view` to show a specific page.
 
-## Projects
+## Apps
 
-Projects live in `wolts/projects/` and have their own server and dependencies.
-Don't create projects without user permission — use `/woltspace-new-project` when ready.
+Apps live in `wolts/apps/` and have their own server and dependencies.
+Don't create apps without user permission — use `/woltspace-new-app` when ready.
 """
 
 

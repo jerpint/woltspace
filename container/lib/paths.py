@@ -3,7 +3,7 @@ Central path helpers for the wolt-centric state model.
 
 Two scopes:
   - Per-wolt: wolts/{wolt}/.state/  (sessions, site, wolf, chat)
-  - Global:   wolts/.space/         (platform, projects, logs)
+  - Global:   wolts/.space/         (platform, apps, logs)
 
 Usage:
     from paths import wolt_state_dir, wolt_sessions_dir, space_dir
@@ -70,9 +70,13 @@ def space_platform_dir(wolts_dir: Path = None) -> Path:
     return space_dir(wolts_dir) / "platform"
 
 
-def space_projects_dir(wolts_dir: Path = None) -> Path:
-    """Project running state: wolts/.space/projects/"""
-    return space_dir(wolts_dir) / "projects"
+def space_apps_dir(wolts_dir: Path = None) -> Path:
+    """App running state: wolts/.space/apps/"""
+    return space_dir(wolts_dir) / "apps"
+
+
+# Backwards compat alias
+space_projects_dir = space_apps_dir
 
 
 def space_logs_dir(wolts_dir: Path = None) -> Path:
