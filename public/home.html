@@ -1045,12 +1045,6 @@
     94%  { opacity: 0.8; }
     100% { transform: translate(80px, 60vh) rotate(480deg); opacity: 0; }
   }
-  @keyframes leaf-fall-2 {
-    0%   { transform: translate(0, 0) rotate(30deg); opacity: 0; }
-    6%   { opacity: 0.7; }
-    94%  { opacity: 0.7; }
-    100% { transform: translate(-60px, 60vh) rotate(-380deg); opacity: 0; }
-  }
   @keyframes ripple-out {
     0%   { transform: translate(-50%,-50%) scale(0.1); opacity: 0.5; }
     100% { transform: translate(-50%,-50%) scale(1); opacity: 0; }
@@ -1120,12 +1114,7 @@
     animation: leaf-fall 14s ease-in 0s infinite;
     opacity: 0;
   }
-  .bg-leaf-2 {
-    position: absolute;
-    top: 52%; right: 55%;
-    animation: leaf-fall-2 19s ease-in 5s infinite;
-    opacity: 0;
-  }
+  /* bg-leaf-2 removed — only green leaf kept */
   .bg-peek {
     position: absolute;
     bottom: 0;
@@ -1243,7 +1232,7 @@
     <div class="bg-ripple"></div>
   </div>
   <div class="bg-leaf"><div id="sp-leaf-g"></div></div>
-  <div class="bg-leaf-2"><div id="sp-leaf-r"></div></div>
+  <!-- red leaf removed per feedback, keeping only green -->
   <div class="bg-peek" id="bg-peek"><div id="sp-peek"></div></div>
   <div class="bg-fish" id="bg-fish"><div id="sp-fish"></div></div>
 </div>
@@ -2000,12 +1989,13 @@
         A:'#7f8894',B:'#282c33',C:'#40454b',D:'#f0ecf0',
         E:'#545c65',F:'#a0abbd',G:'#050029',H:'#efa09f',
       },
-      lg: { O:'#1A0803', B:'#3D1A08', L:'#7B5A36', l:'#9B7850', h:'#C8A870' },
-      lf: { O:'#1A3A15', B:'#2D5A27', L:'#5A9A48', l:'#3A7A30' },
-      lr: { O:'#5A1A05', B:'#8B3010', L:'#E07840', l:'#C4531E' },
+      lg: { A:'#894f22',B:'#5a3614',C:'#ffca4e',D:'#d09023',E:'#291a09',F:'#327a00',G:'#ffed66' },
+      lf: { A:'#19d024',B:'#009728' },
+      lr: { A:'#e25111',B:'#a83f1a',C:'#f0620a',D:'#88230f',E:'#5cfd40',F:'#db460f',G:'#621d0f' },
       fs: {
-        O:'#0A2020', B:'#1A4040', f:'#3A7A9A', F:'#5AAAC8',
-        H:'#80CCE0', k:'#0A0A0A', s:'#287A9A',
+        A:'#04273c',B:'#63888b',C:'#ff6f61',D:'#0096d7',E:'#b1c4bb',
+        F:'#fcfcf4',G:'#295a69',H:'#000219',I:'#86a4a1',J:'#d5d5c9',
+        K:'#007efb',L:'#0075bf',
       },
       pk: {
         A:'#402110',B:'#f2d79d',C:'#9f5332',D:'#ff6970',E:'#c47b4a',
@@ -2115,47 +2105,62 @@
         '....BBBBBBBBBBBBB........',
       ],
       log: [
-        'OOOOOOOOOOOOOOOOOOOOOO',
-        'OlLhLlLhLlLhLlLhLlLhO',
-        'OlllllllllllllllllllO',
-        'OBllBllBllBllBllBllBO',
-        'OlllllllllllllllllllO',
-        'OlLhLlLhLlLhLlLhLlLhO',
-        'OOOOOOOOOOOOOOOOOOOOOO',
+        '..EEE............FEEEEE.',
+        '.EAABE......F..FFBAACCCE',
+        'EAABBBFFFF..EF.EBAACCDDG',
+        'AAABBBAABBBBAAAABBBDCDCD',
+        'BBBAAAABBAAAAABBBBBDCCDG',
+        'BBBBBBBBBAABBBBAABBDCDDC',
+        'EBBBBBBBBBBBBBBBBBBCCDDC',
+        '.EEEEEEEEEEEBEBBEBEEDDDE',
       ],
       leafG: [
-        '....O.....',
-        '...OlO....',
-        '..OlLBO...',
-        '.OlLLBBO..',
-        'OlLLLBBO..',
-        '.OlLLBO...',
-        '..OlLBO...',
-        '...OlO....',
-        '....O.....',
+        '..........B',
+        '.........AB',
+        '....AAAAAAB',
+        '...AAAAABAB',
+        '..AABABBAAB',
+        '..AABBAAAAB',
+        '..AABABBABB',
+        '..AABABBABB',
+        '..ABAAAAAB.',
+        '..BAAAAAB..',
+        'BBBBBBBB...',
+        'BB.........',
       ],
       leafR: [
-        '....O.....',
-        '...OlO....',
-        '..OlLBO...',
-        '.OlLLBBO..',
-        'OlLLLBBO..',
-        '.OlLLBO...',
-        '..OlLBO...',
-        '...OlO....',
-        '....O.....',
+        '......A...',
+        '.B..CCC...',
+        '.CC.CCB...',
+        'BBCCCBBB..',
+        'CCBCBCB...',
+        '.CBBBBBBDE',
+        'FBBDDDDDD.',
+        '.BBBBBDD..',
+        '.BG.DD....',
+        '.D...D....',
       ],
       fish: [
-        '..........OOOOOOO......',
-        '.........OBFFHFFBsO....',
-        '........OBFHFFkFFFBO...',
-        '......OOBFFFFHFFFFfBO..',
-        '.....OBBfFFFHFFFFFfBO..',
-        '....OBffFFFFFFFFFFBO...',
-        '.....OBfFFFFFFFFBO.....',
-        '......OBBBBBBBBBO......',
-        '.......OBO...OBO.......',
-        '.......OO.....OO.......',
+        '........AABBBBA',
+        '.......ABBBEAFA',
+        '..AAAAAGBGEEAAA',
+        '..BBBAGBEACEEFA',
+        '..AGABBEBCACCH.',
+        '..AAAGEECCIAA..',
+        '...AGEEBCEJEA..',
+        '...ABEBCJJBJA..',
+        '..AGECCEBAAA...',
+        '..ABECEEH......',
+        '..ABEEEG.......',
+        '...AEA.A.......',
+        '.D.AEA.....D...',
+        '.D.AGGA...DD...',
+        '....ABBA..D....',
+        'DK..ABAA....DD.',
+        'DD..AA....D.L..',
+        '..D..A...DD....',
+        '..DDDDDDLDDD...',
+        '....DLLDLDD....',
       ],
       peek: [
         '.....AAAAAAAA......',
@@ -2198,10 +2203,10 @@
     inject('sp-bv-side',   'bvA', 'bv', 3);
     inject('sp-rc-a',      'rcA', 'rc', 3);
     inject('sp-rc-b',      'rcB', 'rc', 3);
-    inject('sp-log',       'log', 'lg', 5);
-    inject('sp-leaf-g',    'leafG', 'lf', 5);
-    inject('sp-leaf-r',    'leafR', 'lr', 5);
-    inject('sp-fish',      'fish', 'fs', 5);
+    inject('sp-log',       'log', 'lg', 4);
+    inject('sp-leaf-g',    'leafG', 'lf', 4);
+    // red leaf removed
+    inject('sp-fish',      'fish', 'fs', 3);
     inject('sp-peek',      'peek', 'pk', 4);
 
     document.querySelectorAll('.sprite-2frame').forEach(function(el) {
