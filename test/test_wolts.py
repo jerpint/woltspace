@@ -430,22 +430,16 @@ class TestStartSession:
         # Create a valid wolt dir
         (tmp_path / "mywolt").mkdir()
         with patch("sessions.WOLTS_DIR", tmp_path), \
-             patch("sessions.subprocess") as mock_sub, \
-             patch("sessions._wait_for_claude", return_value=True):
+             patch("sessions.subprocess") as mock_sub:
             mock_sub.run.return_value = None
             result = start_session(wolt="mywolt", prompt="hey")
             assert result["wolt"] == "mywolt"
             assert result["name"].startswith("mywolt-")
-            # Find the tmux new-session call (not send-keys)
-            new_session_call = None
-            for call in mock_sub.run.call_args_list:
-                cmd = call[0][0]
-                if "new-session" in cmd:
-                    new_session_call = cmd
-                    break
-            assert new_session_call is not None, "tmux new-session not called"
-            c_idx = new_session_call.index("-c")
-            assert str(tmp_path / "mywolt") == new_session_call[c_idx + 1]
+            # Verify tmux was called with the right working dir
+            call_args = mock_sub.run.call_args
+            tmux_cmd = call_args[0][0]
+            c_idx = tmux_cmd.index("-c")
+            assert str(tmp_path / "mywolt") == tmux_cmd[c_idx + 1]
 
     def test_creature_sets_model(self, tmp_path):
         from sessions import start_session

@@ -160,10 +160,9 @@ class TestStartSessionSiteAutoStart:
             "name": "testwolt", "type": "raccoon",
         }))
 
-    @patch("sessions._wait_for_claude", return_value=True)
     @patch("sessions.subprocess.run")
     @patch("sites.subprocess.Popen")
-    def test_start_session_returns_site_url(self, mock_popen, mock_run, mock_wait, tmp_path):
+    def test_start_session_returns_site_url(self, mock_popen, mock_run, tmp_path):
         """Non-project session should include site_url in result."""
         mock_popen.return_value.pid = 12345
         result = self.sessions.start_session(
@@ -174,10 +173,9 @@ class TestStartSessionSiteAutoStart:
         assert result.get("site_url") == "/wolt/testwolt/site/"
         assert result.get("site_port") == 6001
 
-    @patch("sessions._wait_for_claude", return_value=True)
     @patch("sessions.subprocess.run")
     @patch("sites.subprocess.Popen")
-    def test_start_session_with_project_no_site(self, mock_popen, mock_run, mock_wait, tmp_path):
+    def test_start_session_with_project_no_site(self, mock_popen, mock_run, tmp_path):
         """Project sessions should NOT auto-start a site."""
         mock_popen.return_value.pid = 12345
         result = self.sessions.start_session(
@@ -188,10 +186,9 @@ class TestStartSessionSiteAutoStart:
         )
         assert "site_url" not in result
 
-    @patch("sessions._wait_for_claude", return_value=True)
     @patch("sessions.subprocess.run")
     @patch("sites.subprocess.Popen")
-    def test_site_started_for_all_adapters(self, mock_popen, mock_run, mock_wait, tmp_path):
+    def test_site_started_for_all_adapters(self, mock_popen, mock_run, tmp_path):
         """Site auto-start works for lodge, telegram, and slack."""
         mock_popen.return_value.pid = 12345
         for adapter in ["lodge", "telegram", "slack"]:
@@ -208,10 +205,9 @@ class TestStartSessionSiteAutoStart:
             )
             assert result.get("site_url") == "/wolt/testwolt/site/", f"failed for {adapter}"
 
-    @patch("sessions._wait_for_claude", return_value=True)
     @patch("sessions.subprocess.run")
     @patch("sites.subprocess.Popen")
-    def test_viewport_url_stored_in_session(self, mock_popen, mock_run, mock_wait, tmp_path):
+    def test_viewport_url_stored_in_session(self, mock_popen, mock_run, tmp_path):
         """start_session() should store viewport URL in the session JSON."""
         mock_popen.return_value.pid = 12345
         result = self.sessions.start_session(
@@ -227,10 +223,9 @@ class TestStartSessionSiteAutoStart:
         assert data["viewport_url"] == "/wolt/testwolt/site/"
         assert data["viewport_port"] == 7777
 
-    @patch("sessions._wait_for_claude", return_value=True)
     @patch("sessions.subprocess.run")
     @patch("sessions.start_site", side_effect=RuntimeError("no ports"))
-    def test_site_failure_does_not_block_session(self, mock_start_site, mock_run, mock_wait, tmp_path):
+    def test_site_failure_does_not_block_session(self, mock_start_site, mock_run, tmp_path):
         """If site auto-start fails, session should still be created."""
         result = self.sessions.start_session(
             wolt="testwolt",
