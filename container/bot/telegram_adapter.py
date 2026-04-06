@@ -22,7 +22,7 @@ from bot.core import get_response, transcribe_audio, list_sessions, kill_session
 from wolts import get_active_creature
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
-from paths import wolt_state_dir, wolt_chat_dir
+from paths import wolt_state_dir, wolt_chat_dir, wolt_uploads_dir
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -35,6 +35,7 @@ _WOLT_NAME = os.environ.get("WOLT_NAME", WOLT_DIR.name)
 _WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", str(WOLT_DIR.parent)))
 STATE_DIR = wolt_state_dir(_WOLT_NAME, _WOLTS_DIR)
 CHAT_DIR = wolt_chat_dir(_WOLT_NAME, _WOLTS_DIR)
+UPLOADS_DIR = wolt_uploads_dir(_WOLT_NAME, _WOLTS_DIR)
 
 
 def _dog_name() -> str:
@@ -318,6 +319,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Couldn't transcribe that voice message.")
         return
     finally:
+        # Save audio to uploads, then clean up temp file
+        try:
+            audio_name = f"voice_{voice.file_unique_id}.ogg"
+            _save_upload(audio_name, Path(tmp_path).read_bytes())
+        except Exception:
+            pass  # don't fail if save fails — transcription already succeeded
         Path(tmp_path).unlink(missing_ok=True)
 
     logger.info(f"Transcribed: {text[:100]}")
@@ -407,8 +414,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Couldn't download that image.")
         return
 
+    # Save image to disk
+    ext = mime_type.split("/")[-1] if "/" in mime_type else "jpg"
+    if ext == "jpeg":
+        ext = "jpg"
+    file_name = f"photo_{photo.file_unique_id}.{ext}"
+    saved_path = _save_upload(file_name, image_bytes)
+    logger.info(f"Saved photo: {saved_path} ({mime_type}, {len(image_bytes)} bytes)")
+
     chat_id = update.effective_chat.id
-    user_message = f"[image] {caption}" if caption else "[image]"
+    user_message = f"[image] saved at {saved_path}"
+    if caption:
+        user_message += f" — {caption}"
     user_content = _photo_content(image_bytes, mime_type, caption)
 
     chat_histories[chat_id] = _load_history(chat_id)
@@ -427,6 +444,104 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Store text-only in history — no point persisting base64 blobs
+    history.append({"role": "user", "content": user_message})
+    for msg in result["history_messages"]:
+        history.append(msg)
+    _append_history(chat_id, "user", user_message)
+    for msg in result["history_messages"]:
+        _append_message(chat_id, msg)
+
+    if len(history) > MAX_HISTORY * 2:
+        chat_histories[chat_id] = history[-MAX_HISTORY * 2:]
+
+    await _send_result(update, result)
+
+
+def _save_upload(file_name: str, data: bytes) -> Path:
+    """Save uploaded file to the wolt's uploads directory. Returns the saved path."""
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    dest = UPLOADS_DIR / file_name
+    # Avoid overwriting — append counter if file exists
+    if dest.exists():
+        stem = dest.stem
+        suffix = dest.suffix
+        counter = 1
+        while dest.exists():
+            dest = UPLOADS_DIR / f"{stem}_{counter}{suffix}"
+            counter += 1
+    dest.write_bytes(data)
+    return dest
+
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle incoming documents/files — download to disk and pass path to wolt."""
+    user_id = update.effective_user.id if update.effective_user else None
+    logger.info(f"Document from user_id={user_id}")
+    if not is_allowed(update):
+        return
+
+    doc = update.message.document
+    if not doc:
+        return
+
+    file_name = doc.file_name or f"file_{doc.file_unique_id}"
+    mime_type = doc.mime_type or "application/octet-stream"
+    caption = update.message.caption or ""
+
+    try:
+        file = await context.bot.get_file(doc.file_id)
+        file_bytes = bytes(await file.download_as_bytearray())
+    except Exception as e:
+        logger.error(f"Document download failed: {e}")
+        await update.message.reply_text("Couldn't download that file.")
+        return
+
+    saved_path = _save_upload(file_name, file_bytes)
+    logger.info(f"Saved document: {saved_path} ({mime_type}, {len(file_bytes)} bytes)")
+
+    chat_id = update.effective_chat.id
+    user_message = (
+        f"[file received] {file_name} ({mime_type}, {len(file_bytes)} bytes) "
+        f"saved at {saved_path}"
+    )
+    if caption:
+        user_message += f"\nCaption: {caption}"
+
+    # Den reply — route file info directly to session
+    den_session = _is_den_reply(update)
+    if den_session:
+        human_name = "human"
+        den_msg = (
+            f"[telegram file from {human_name}, chat_id={chat_id}]: {user_message}\n"
+            f"Reply back to them with: notify --telegram {chat_id} \"your message\""
+        )
+        result = message_session(den_session, den_msg)
+        _bot_log("den_reply_file", {"session": den_session, "file": file_name, "path": str(saved_path), "result": result})
+        if result.get("ok"):
+            session_link = result.get("url") or den_session
+            if result.get("status") == "revived":
+                await update.message.reply_text(f"🪵 session had exited — revived and delivered\n{session_link}")
+            else:
+                await update.message.reply_text(f"🪵 sent\n{session_link}")
+        else:
+            error = result.get("error", "unknown error")
+            await update.message.reply_text(f"couldn't deliver: {error}")
+        return
+
+    chat_histories[chat_id] = _load_history(chat_id)
+    history = chat_histories[chat_id]
+
+    routing = {"adapter": "telegram", "chat_id": chat_id}
+
+    await _dog_ack(update)
+
+    try:
+        result = get_response(user_message, conversation_history=list(history), routing=routing)
+    except Exception as e:
+        logger.error(f"Error getting response for document: {e}")
+        await update.message.reply_text("Something broke on my end. Try again in a sec.")
+        return
+
     history.append({"role": "user", "content": user_message})
     for msg in result["history_messages"]:
         history.append(msg)
@@ -519,6 +634,7 @@ def run():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
+    app.add_handler(MessageHandler(filters.Document.ALL & ~filters.Document.IMAGE, handle_document))
 
     wolt_name = os.environ.get("WOLT_NAME", "wolt")
     logger.info(f"{wolt_name} telegram bot starting...")
