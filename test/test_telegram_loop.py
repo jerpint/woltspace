@@ -155,6 +155,134 @@ class TestAllowedUsers:
         ALLOWED_USERS.clear()
 
 
+class TestReplyRetry:
+    """Test _reply() retry logic on TimedOut."""
+
+    @pytest.mark.asyncio
+    async def test_retry_on_timeout(self):
+        """_reply retries once after TimedOut and succeeds."""
+        from telegram.error import TimedOut
+        from bot.telegram_adapter import _reply
+
+        update = MagicMock()
+        update.message.reply_text = AsyncMock(
+            side_effect=[TimedOut("timed out"), MagicMock()]
+        )
+        await _reply(update, "hello")
+        assert update.message.reply_text.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_success_no_retry(self):
+        """_reply doesn't retry when reply_text succeeds."""
+        from bot.telegram_adapter import _reply
+
+        update = MagicMock()
+        update.message.reply_text = AsyncMock(return_value=MagicMock())
+        await _reply(update, "hello")
+        assert update.message.reply_text.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_non_timeout_error_bubbles(self):
+        """_reply doesn't retry on non-TimedOut errors."""
+        from bot.telegram_adapter import _reply
+
+        update = MagicMock()
+        update.message.reply_text = AsyncMock(side_effect=RuntimeError("boom"))
+        with pytest.raises(RuntimeError, match="boom"):
+            await _reply(update, "hello")
+        assert update.message.reply_text.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_double_timeout_raises(self):
+        """_reply raises if both attempts time out."""
+        from telegram.error import TimedOut
+        from bot.telegram_adapter import _reply
+
+        update = MagicMock()
+        update.message.reply_text = AsyncMock(
+            side_effect=[TimedOut("first"), TimedOut("second")]
+        )
+        with pytest.raises(TimedOut):
+            await _reply(update, "hello")
+        assert update.message.reply_text.call_count == 2
+
+
+class TestSessionsAliveFilter:
+    """Test /sessions only returns alive sessions."""
+
+    @pytest.mark.asyncio
+    async def test_sessions_filters_dead(self):
+        """handle_sessions only shows alive sessions."""
+        from bot.telegram_adapter import handle_sessions
+
+        sessions = [
+            {"name": "wolt-a-1", "alive": True},
+            {"name": "wolt-b-2", "alive": False},
+            {"name": "wolt-c-3", "alive": True},
+        ]
+        update = MagicMock()
+        update.effective_user.id = 99
+        update.message.reply_text = AsyncMock()
+        context = MagicMock()
+
+        with patch("bot.telegram_adapter.is_allowed", return_value=True), \
+             patch("bot.telegram_adapter.list_sessions", return_value=sessions), \
+             patch("bot.telegram_adapter.get_tunnel_url", return_value=None):
+            await handle_sessions(update, context)
+
+        reply_text = update.message.reply_text.call_args[0][0]
+        assert "wolt-a-1" in reply_text
+        assert "wolt-c-3" in reply_text
+        assert "wolt-b-2" not in reply_text
+
+    @pytest.mark.asyncio
+    async def test_sessions_all_dead(self):
+        """handle_sessions says 'no active sessions' when all are dead."""
+        from bot.telegram_adapter import handle_sessions
+
+        sessions = [
+            {"name": "wolt-a-1", "alive": False},
+        ]
+        update = MagicMock()
+        update.effective_user.id = 99
+        update.message.reply_text = AsyncMock()
+        context = MagicMock()
+
+        with patch("bot.telegram_adapter.is_allowed", return_value=True), \
+             patch("bot.telegram_adapter.list_sessions", return_value=sessions), \
+             patch("bot.telegram_adapter.get_tunnel_url", return_value=None):
+            await handle_sessions(update, context)
+
+        reply_text = update.message.reply_text.call_args[0][0]
+        assert "No active sessions" in reply_text
+
+
+class TestErrorHandler:
+    """Test global error handler behavior."""
+
+    @pytest.mark.asyncio
+    async def test_timeout_swallowed(self):
+        """TimedOut errors are logged but not re-raised."""
+        from telegram.error import TimedOut
+        from bot.telegram_adapter import _error_handler
+
+        context = MagicMock()
+        context.error = TimedOut("timed out")
+        # Should not raise
+        await _error_handler(None, context)
+
+    @pytest.mark.asyncio
+    async def test_other_errors_logged(self):
+        """Non-TimedOut errors are logged with exc_info."""
+        from bot.telegram_adapter import _error_handler
+
+        context = MagicMock()
+        context.error = RuntimeError("unexpected")
+        with patch("bot.telegram_adapter.logger") as mock_logger:
+            await _error_handler(None, context)
+            mock_logger.error.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
 # Tier 2: Server integration — notify round-trip
 # ---------------------------------------------------------------------------
