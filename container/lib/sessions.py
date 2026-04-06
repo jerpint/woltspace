@@ -19,6 +19,7 @@ import re
 import shlex
 import subprocess
 import time
+import uuid as _uuid_mod
 from pathlib import Path
 
 from paths import (
@@ -391,11 +392,54 @@ def get_tunnel_url(wolts_dir: Path = None) -> str:
 
 
 def build_session_command(name: str, work_dir: str, prompt: str, model: str = None) -> str:
-    """Build the shell command that tmux will execute."""
+    """Build the shell command that tmux will execute. Kept for backwards compat."""
     cmd = f"{RUN_SESSION_SCRIPT} {shlex.quote(name)} {shlex.quote(work_dir)} {shlex.quote(prompt)}"
     if model:
         cmd += f" {shlex.quote(model)}"
     return cmd
+
+
+def _build_initial_prompt(
+    prompt: str,
+    *,
+    adapter: str,
+    wolt_name: str,
+    chat_id: str,
+    thread_ts: str,
+    session_url: str,
+) -> str:
+    """Build the full initial prompt: user message + adapter context + start-chat skill."""
+    adapter_context = ""
+    if adapter == "slack" and chat_id and thread_ts:
+        adapter_context = (
+            f"\nThis session was started from Slack. "
+            f"Send messages with: notify --slack {chat_id} {thread_ts} \"your message\"\n"
+            f"Session link: {session_url}"
+        )
+    elif adapter == "telegram" and chat_id:
+        adapter_context = (
+            f"\nThis session was started from Telegram. "
+            f"Send messages with: notify --telegram {chat_id} \"your message\"\n"
+            f"Session link: {session_url}"
+        )
+    return f"{prompt}{adapter_context} /woltspace-start-chat {adapter} {wolt_name}"
+
+
+def _extract_title(prompt: str) -> str:
+    """Extract a short session title from the opening prompt."""
+    first_line = prompt.split("\n")[0].split(".")[0].strip()
+    clean = re.sub(r"[^\w\s-]", "", first_line).strip()
+    return clean[:60].lower()
+
+
+def _wait_for_claude(name: str, timeout: float = 20.0) -> bool:
+    """Poll until a claude process appears in the session's process tree."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _session_has_claude_process(name):
+            return True
+        time.sleep(0.5)
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -463,11 +507,46 @@ def start_session(
         session_url=session_url,
     )
 
-    cmd = build_session_command(name, str(target_dir), prompt, model=model)
+    # Generate a UUID for this Claude session (needed for --resume fallback)
+    claude_session_id = str(_uuid_mod.uuid4())
+    registry.update(name, claude_session_id=claude_session_id)
+
+    # Extract a title from the opening prompt and store it
+    if prompt:
+        registry.update(name, title=_extract_title(prompt))
+
+    # Start claude in persistent interactive mode — stays alive between messages.
+    # Messages are delivered via tmux send-keys (no shell command injection).
+    routing = routing or {}
+    model_flag = f"--model {shlex.quote(model)}" if model else ""
+    wclaude_cmd = (
+        f"export WOLT_SESSION={shlex.quote(name)} && "
+        f"{WCLAUDE} --dangerously-skip-permissions "
+        f"--session-id {shlex.quote(claude_session_id)} "
+        f"--name {shlex.quote(name)} "
+        f"{model_flag}"
+    ).strip()
+
     subprocess.run(
-        ["tmux", "new-session", "-d", "-s", name, "-c", str(target_dir), cmd],
+        ["tmux", "new-session", "-d", "-s", name, "-c", str(target_dir), wclaude_cmd],
         check=True,
     )
+
+    # Wait for claude to initialize, then deliver the opening prompt via send-keys.
+    # This is the clean path: text goes directly into claude's TUI input.
+    if prompt and _wait_for_claude(name, timeout=20):
+        full_prompt = _build_initial_prompt(
+            prompt,
+            adapter=routing.get("adapter", ""),
+            wolt_name=wolt,
+            chat_id=str(routing.get("chat_id", "")),
+            thread_ts=str(routing.get("thread_ts", "")),
+            session_url=session_url,
+        )
+        # Flatten newlines — a bare newline submits the TUI input early
+        flat_prompt = full_prompt.replace("\n", " ")
+        subprocess.run(["tmux", "send-keys", "-t", name, "-l", flat_prompt], check=True)
+        subprocess.run(["tmux", "send-keys", "-t", name, "", "Enter"], check=True)
 
     result = {"name": name, "url": session_url or None, "wolt": wolt}
     if project:
@@ -535,9 +614,11 @@ def resume_session(name: str, prompt: str = "") -> dict:
     safe_prompt = shlex.quote(prompt) if prompt else ""
 
     if tmux_alive and claude_running:
-        # Claude is running — send the prompt as keystrokes
+        # Claude is running — send the prompt directly to the TUI as keystrokes.
+        # Flatten newlines: a bare \n would submit the input early in claude's TUI.
         if prompt:
-            subprocess.run(["tmux", "send-keys", "-t", name, "-l", prompt], check=True)
+            flat_prompt = prompt.replace("\n", " ")
+            subprocess.run(["tmux", "send-keys", "-t", name, "-l", flat_prompt], check=True)
             subprocess.run(["tmux", "send-keys", "-t", name, "", "Enter"], check=True)
         registry.update(name, wolt=wolt, status="running")
         return {"name": name, "url": session_url, "status": "delivered", "detail": "claude running, message sent"}
@@ -649,7 +730,12 @@ def delete_session(name: str) -> dict:
 
 
 def _session_has_claude_process(name: str) -> bool:
-    """Check if a tmux session has a claude process running in its pane."""
+    """Check if a tmux session has a claude process running anywhere in its process tree.
+
+    Walks the full subtree from the pane's root PID — not just direct children.
+    The actual tree is: pane(bash) → bash(run-session.sh) → bash(wclaude) → claude
+    so checking only direct children always misses claude.
+    """
     try:
         result = subprocess.run(
             ["tmux", "list-panes", "-t", name, "-F", "#{pane_pid}"],
@@ -658,16 +744,34 @@ def _session_has_claude_process(name: str) -> bool:
         pane_pid = result.stdout.strip()
         if not pane_pid:
             return False
+
+        # Build full process table: pid → (ppid, comm)
         ps_result = subprocess.run(
-            ["ps", "--ppid", pane_pid, "-o", "comm=", "--no-headers"],
+            ["ps", "--no-headers", "-eo", "pid,ppid,comm"],
             capture_output=True, text=True,
         )
-        for child in ps_result.stdout.strip().split("\n"):
-            child = child.strip()
-            if child in ("claude", "run-session.sh", "run-session"):
+        children: dict[str, list[str]] = {}
+        comms: dict[str, str] = {}
+        for line in ps_result.stdout.strip().split("\n"):
+            parts = line.split()
+            if len(parts) >= 3:
+                pid, ppid, comm = parts[0], parts[1], parts[2]
+                children.setdefault(ppid, []).append(pid)
+                comms[pid] = comm
+
+        # BFS from pane_pid — return True if any descendant is 'claude'
+        queue = [pane_pid]
+        seen: set[str] = set()
+        while queue:
+            cur = queue.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            if comms.get(cur) == "claude":
                 return True
+            queue.extend(children.get(cur, []))
         return False
-    except subprocess.CalledProcessError:
+    except Exception:
         return False
 
 

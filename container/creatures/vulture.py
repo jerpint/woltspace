@@ -105,22 +105,47 @@ def _tmux_sessions() -> set[str]:
 
 
 def _session_has_claude(session_name: str) -> bool:
-    """Check if a tmux session has a claude process running inside it."""
+    """Check if a tmux session has a claude process anywhere in its process tree.
+
+    Walks the full subtree — not just direct children. The actual tree is:
+    pane(bash) → bash(wclaude) → claude, so checking only direct children
+    always misses claude and causes the vulture to kill live sessions.
+    """
     try:
-        # Get the pane PID, then check if claude is among its descendants
         pane_pid = subprocess.run(
             ["tmux", "display-message", "-t", session_name, "-p", "#{pane_pid}"],
             capture_output=True, text=True, check=True,
         ).stdout.strip()
         if not pane_pid:
             return False
-        # Check process tree for claude
-        ps_out = subprocess.run(
-            ["ps", "--ppid", pane_pid, "-o", "comm="],
+
+        # Build full process table: pid → (ppid, comm)
+        ps_result = subprocess.run(
+            ["ps", "--no-headers", "-eo", "pid,ppid,comm"],
             capture_output=True, text=True,
-        ).stdout
-        return "claude" in ps_out
-    except (subprocess.CalledProcessError, FileNotFoundError):
+        )
+        children: dict[str, list[str]] = {}
+        comms: dict[str, str] = {}
+        for line in ps_result.stdout.strip().split("\n"):
+            parts = line.split()
+            if len(parts) >= 3:
+                pid, ppid, comm = parts[0], parts[1], parts[2]
+                children.setdefault(ppid, []).append(pid)
+                comms[pid] = comm
+
+        # BFS from pane_pid — return True if any descendant is 'claude'
+        queue = [pane_pid]
+        seen: set[str] = set()
+        while queue:
+            cur = queue.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            if comms.get(cur) == "claude":
+                return True
+            queue.extend(children.get(cur, []))
+        return False
+    except (subprocess.CalledProcessError, FileNotFoundError, Exception):
         return False
 
 

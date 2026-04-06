@@ -172,14 +172,17 @@ class TestStartSessionNoClaudeSessionId:
         }))
         self.wolts_dir = tmp_path
 
+    @patch("sessions._wait_for_claude", return_value=True)
     @patch("sessions.subprocess.run")
     @patch("sites.subprocess.Popen")
-    def test_start_session_does_not_set_claude_session_id(self, mock_popen, mock_run):
+    def test_start_session_sets_claude_session_id(self, mock_popen, mock_run, mock_wait):
         from sessions import start_session, SessionRegistry
+        import re
         mock_popen.return_value.pid = 12345
         result = start_session(wolt="testwolt", prompt="hello")
 
         reg = SessionRegistry(self.wolts_dir)
         data = reg.get(result["name"], check_alive=False)
-        # claude_session_id is not set by start_session — run-session.sh does it
-        assert "claude_session_id" not in data or not data.get("claude_session_id")
+        # start_session now generates the UUID directly (no longer delegated to run-session.sh)
+        uuid_re = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+        assert uuid_re.match(data.get("claude_session_id", ""))
