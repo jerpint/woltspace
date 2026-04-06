@@ -1012,12 +1012,12 @@
   .frm-b { animation: frm-b-on 0.38s steps(1,end) infinite; }
 
   @keyframes swim-across {
-    0%    { transform: translateX(-240px); }
-    49%   { transform: translateX(calc(100vw + 240px)); }
-    49.1% { transform: translateX(calc(100vw + 240px)) scaleX(-1); }
-    98%   { transform: translateX(-240px) scaleX(-1); }
-    98.1% { transform: translateX(-240px); }
-    100%  { transform: translateX(-240px); }
+    0%    { transform: translateX(55vw) scaleX(-1); }
+    44%   { transform: translateX(5vw) scaleX(-1); }
+    44.1% { transform: translateX(5vw); }
+    88%   { transform: translateX(55vw); }
+    88.1% { transform: translateX(55vw) scaleX(-1); }
+    100%  { transform: translateX(55vw) scaleX(-1); }
   }
   @keyframes walk-bob {
     0%, 100% { transform: translateY(0px); }
@@ -1044,12 +1044,6 @@
     6%   { opacity: 0.8; }
     94%  { opacity: 0.8; }
     100% { transform: translate(80px, 60vh) rotate(480deg); opacity: 0; }
-  }
-  @keyframes leaf-fall-2 {
-    0%   { transform: translate(0, 0) rotate(30deg); opacity: 0; }
-    6%   { opacity: 0.7; }
-    94%  { opacity: 0.7; }
-    100% { transform: translate(-60px, 60vh) rotate(-380deg); opacity: 0; }
   }
   @keyframes ripple-out {
     0%   { transform: translate(-50%,-50%) scale(0.1); opacity: 0.5; }
@@ -1079,10 +1073,10 @@
 
   .bg-beaver-main {
     position: absolute;
-    bottom: 55px; left: 0;
-    animation: swim-across 78s linear infinite;
+    bottom: 62px; left: 0;
+    animation: swim-across 65s linear infinite;
   }
-  .bg-beaver-main .sprite-2frame { animation: walk-bob 0.38s ease-in-out infinite; }
+  .bg-beaver-main .sprite-2frame { animation: walk-bob 0.45s ease-in-out infinite; }
   .bg-beaver-2 {
     position: absolute;
     bottom: 68px; right: 260px;
@@ -1090,10 +1084,10 @@
   }
   .bg-raccoon {
     position: absolute;
-    bottom: 55px;
-    animation: raccoon-wander 50s linear 6s infinite;
+    bottom: 50px;
+    animation: raccoon-wander 55s linear 0s infinite;
   }
-  .bg-raccoon .sprite-2frame { animation: walk-bob 0.42s ease-in-out infinite; }
+  .bg-raccoon .sprite-2frame { animation: walk-bob 0.5s ease-in-out infinite; }
   .bg-log {
     position: absolute;
     bottom: 42px; right: 190px;
@@ -1120,12 +1114,7 @@
     animation: leaf-fall 14s ease-in 0s infinite;
     opacity: 0;
   }
-  .bg-leaf-2 {
-    position: absolute;
-    top: 52%; right: 55%;
-    animation: leaf-fall-2 19s ease-in 5s infinite;
-    opacity: 0;
-  }
+  /* bg-leaf-2 removed — only green leaf kept */
   .bg-peek {
     position: absolute;
     bottom: 0;
@@ -1225,7 +1214,7 @@
       <div class="frm-b" id="sp-bv-main-b"></div>
     </div>
   </div>
-  <div class="bg-beaver-2" id="bg-beaver-2">
+  <div class="bg-beaver-2" id="bg-beaver-2" style="display:none">
     <div id="sp-bv-side"></div>
   </div>
   <div class="bg-raccoon" id="bg-raccoon">
@@ -1243,7 +1232,7 @@
     <div class="bg-ripple"></div>
   </div>
   <div class="bg-leaf"><div id="sp-leaf-g"></div></div>
-  <div class="bg-leaf-2"><div id="sp-leaf-r"></div></div>
+  <!-- red leaf removed per feedback, keeping only green -->
   <div class="bg-peek" id="bg-peek"><div id="sp-peek"></div></div>
   <div class="bg-fish" id="bg-fish"><div id="sp-fish"></div></div>
 </div>
@@ -1433,6 +1422,37 @@
     wolf: '🐺', dog: '🐶', eagle: '🦅',
   };
   const RODENT_TYPES = new Set(['raccoon', 'beaver', 'otter', 'rodent']);
+
+  // Pixel art sprite maps for rodent wolts
+  const WOLT_SPRITES = {
+    beaver: {
+      map: ['..AAA........AAA.....', '.ABBBA......ABBBA....', '.ABAAAAAAAAAAAABA....', '.ABABBBBBBBBBAABA....', '..ABBBBBBBBBBBAA.....', '..ABABBBBAEBBBAA.....', '..ABABBBBAEBBBAA.....', '.ABBAAAABAEBBBBA.....', '.ABACAACCCFABBBA.....', '.ABACCACCCFABBBA.AAA.', '.ABBAAAAAAEBBBAAADDDA', '..ABBCAFABBBBAA.AADDA', '...ABAAAABBBBBBAADADA', '..ABBBBBBBBBBBBAADDAA', '.ABBABCCCAEBBBBBAADDA', '.ABBACCCABBBBABBADADA', '.AGGACCCAGGGGABBADADA', '..AAACCCAAAAABBBADDA.', '..ABCCCCCCFABBBBAAAA.', '.AAABCCCCAAAABBBAA...', 'ABBBACCCABBBBBBAA....', 'AAAAAAAAAAAAAAAA.....'],
+      pal: {A:'#3f190e',B:'#af6127',C:'#fce6b0',D:'#773c1f',E:'#050003',F:'#fffee7',G:'#dd7a2d'}
+    },
+    otter: {
+      map: ['.....AAAAAAAA......', '..AAACCCCCCCCAAA...', '.ACCCCCCCCCCCCCCA..', '.ACACCCCCCCCCCACA..', '..ACCBACCCCBACCA...', '..ACCAACDDCAACCA...', 'AAACBBBBAABBBBCAAA.', '..ABEBABAABABEBA...', '.AAABBBABBABBBAAA..', '...AABBBBBBBBAA....', '...ACCCCCCCCCCA....', '..ACCCCBBBBCCCCA...', '..ACCABBBBBBACCA...', '..ACCCABBBBACCCA...', '..AACCABBBBACCAA.AA', '..ACAABBBBBBAACAACA', '.ACCCBBBBBBBBCCCACA', '.ACAAABBBBBBAAACAA.', '.ACCCCABBBBACCCCA..', '..ACCCAAAAAACCCA...', '...AAA......AAA....'],
+      pal: {A:'#402110',B:'#f2d79d',C:'#9f5332',D:'#ff6970',E:'#c47b4a'}
+    },
+    raccoon: {
+      map: ['...BB........BBB.........', '...BFGG.....GFFB.........', '...BABB.....BAAB.........', '...BCAABBBBBACCB.........', '...BAAAAAAAAAAAB.........', '...BCCCCAAACCCCB.........', '...BCBCCAAACCCCB.........', '.BBCCBBCBCCCBCBCB........', '.BBACBBCAAACBCCAB........', '.BBCAAADHHHDAAACB...BBB..', '.BBCAAADHHHDAAACB...BBB..', '...BCAADDDDDAEEB...BCCCB.', '....BCCCCEEECBB....BAAACB', '...BAAAAAAAAAAAB...BCCCBB', '...BAAAAAAAAAAAB...BCCCCB', '.BBAAAAAAAAAAAAAB..BAAAAB', '.BBAABBAAAAABAAAB..BCCCCB', '.BBAAAABAAABAAAABBBAACCCB', '.GGFAAABAAABAAAAGBBAABBCG', 'BAABAAABAAABAAABABBCAAAB.', 'BAAABBBBAAABBBBAABBCCBB..', 'BCCAAAAAAAAAAAAACBBBB....', '.BBBBGGAAAAAGBBBB........', '.BBCCBBAAAAABCCCB........', '...BBBBBBBBBBBBB.........'],
+      pal: {A:'#7f8894',B:'#282c33',C:'#40454b',D:'#f0ecf0',E:'#545c65',F:'#a0abbd',G:'#050029',H:'#efa09f'}
+    }
+  };
+  WOLT_SPRITES.rodent = WOLT_SPRITES.raccoon;
+
+  function woltSpriteAvatar(type, size) {
+    const s = WOLT_SPRITES[type];
+    if (!s) return null;
+    const rows = s.map.length, cols = Math.max(...s.map.map(r => r.length));
+    const px = size / Math.max(rows, cols);
+    let rects = '';
+    for (let r = 0; r < rows; r++) for (let c = 0; c < s.map[r].length; c++) {
+      const ch = s.map[r][c]; if (ch === '.' || ch === ' ') continue;
+      const fill = s.pal[ch]; if (!fill) continue;
+      rects += `<rect x="${(c*px).toFixed(1)}" y="${(r*px).toFixed(1)}" width="${px.toFixed(1)}" height="${px.toFixed(1)}" fill="${fill}"/>`;
+    }
+    return `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg" style="image-rendering:pixelated;display:block" shape-rendering="crispEdges">${rects}</svg>`;
+  }
   const WOLT_TYPES = new Set(['raccoon', 'beaver', 'otter', 'rodent', 'dog']);
 
   let allWolts = [];
@@ -1516,9 +1536,10 @@
           ${role ? `<div class="wolt-tooltip-role">${role}</div>` : ''}
           ${desc ? `<div class="wolt-tooltip-desc">${desc}</div>` : ''}
         </div>` : '';
+      const spriteHtml = woltSpriteAvatar(w.type, 36);
       return `<div class="wolt-card" onclick="${isRodent ? `startSession('${name}')` : ''}">
         <div class="wolt-avatar">
-          ${emoji}
+          ${spriteHtml || emoji}
           <div class="wolt-status-dot ${statusClass}"></div>
         </div>
         <div class="wolt-info">
@@ -1574,6 +1595,7 @@
       const keeper = p.keeper || 'unassigned';
       const keeperWolt = allWolts.find(w => (w.name || w.dir) === keeper);
       const keeperEmoji = keeperWolt ? (WOLT_EMOJI[keeperWolt.type] || '🦫') : '📦';
+      const keeperSprite = keeperWolt ? woltSpriteAvatar(keeperWolt.type, 24) : null;
       const stackTags = p.stack ? `<span class="stack-tag">${p.stack}</span>` : '';
       const sourceLink = p.source ? `<a class="project-source-link" href="${p.source}" target="_blank" onclick="event.stopPropagation()">⎋ ${p.source.replace('https://github.com/', '')}</a>` : '';
 
@@ -1593,7 +1615,7 @@
           <div class="project-desc">${desc}</div>
           <div class="project-card-footer">
             <div class="project-wolt keeper-btn" title="open with ${keeper}" onclick="event.stopPropagation();openProject('${p.name}','${keeper}')">
-              <div class="project-wolt-avatar">${keeperEmoji}</div>
+              <div class="project-wolt-avatar">${keeperSprite || keeperEmoji}</div>
               <div>
                 <div class="project-wolt-name">${keeper}</div>
                 <div class="project-wolt-assign">${sourceLink || 'keeper'}</div>
@@ -1726,6 +1748,7 @@
     container.innerHTML = Object.entries(groups).map(([wolt, sessions]) => {
       const woltData = allWolts.find(w => (w.name || w.dir) === wolt);
       const emoji = woltData ? (WOLT_EMOJI[woltData.type] || '🦫') : '🦫';
+      const sessionSprite = woltData ? woltSpriteAvatar(woltData.type, 20) : null;
       const rows = sessions.map(s => {
         const time = s.last_activity ? timeAgo(s.last_activity) : (s.created_at ? timeAgo(s.created_at) : '');
         const label = s.title || s.name;
@@ -1750,7 +1773,7 @@
 
       return `<div class="sessions-group">
         <div class="sessions-group-header" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'':'none';this.querySelector('.sessions-group-chevron').classList.toggle('collapsed')">
-          <span class="sessions-group-emoji">${emoji}</span>
+          <span class="sessions-group-emoji">${sessionSprite || emoji}</span>
           <span class="sessions-group-name">${wolt}</span>
           <span class="sessions-group-count">${sessions.length}</span>
           <span class="sessions-group-chevron">▾</span>
@@ -1900,6 +1923,13 @@
     if (!d.has_oauth) document.getElementById('onboard-banner').style.display = '';
   }).catch(() => {});
 
+  // Replace type card emoji with pixel art sprites
+  document.querySelectorAll('.type-card').forEach(card => {
+    const type = card.dataset.type;
+    const sprite = woltSpriteAvatar(type, 40);
+    if (sprite) card.querySelector('.type-card-emoji').innerHTML = sprite;
+  });
+
   loadWolts();
   loadProjects();
   loadSessions();
@@ -1952,147 +1982,199 @@
     var PX = 8;
     var PAL = {
       bv: {
-        O:'#1A0803', B:'#3D1A08', m:'#7A3E18', M:'#5A2C10',
-        l:'#C87A40', L:'#E09A58', w:'#F0E8C0', W:'#FFF8E0',
-        k:'#0A0A0A', K:'#484848', r:'#9B4040', T:'#2A1005',
-        t:'#5A3A18', g:'#8B6030', p:'#2A0E05',
+        A:'#3f190e',B:'#af6127',C:'#fce6b0',D:'#773c1f',
+        E:'#050003',F:'#fffee7',G:'#dd7a2d',
       },
       rc: {
-        O:'#101010', B:'#2A2A2A', g:'#808080', G:'#B8B8B8',
-        M:'#484848', s:'#686868', w:'#F0F0F0', k:'#0A0A0A',
-        D:'#505050', S:'#989898', p:'#202020',
+        A:'#7f8894',B:'#282c33',C:'#40454b',D:'#f0ecf0',
+        E:'#545c65',F:'#a0abbd',G:'#050029',H:'#efa09f',
       },
-      lg: { O:'#1A0803', B:'#3D1A08', L:'#7B5A36', l:'#9B7850', h:'#C8A870' },
-      lf: { O:'#1A3A15', B:'#2D5A27', L:'#5A9A48', l:'#3A7A30' },
-      lr: { O:'#5A1A05', B:'#8B3010', L:'#E07840', l:'#C4531E' },
+      lg: { A:'#894f22',B:'#5a3614',C:'#ffca4e',D:'#d09023',E:'#291a09',F:'#327a00',G:'#ffed66' },
+      lf: { A:'#19d024',B:'#009728' },
+      lr: { A:'#e25111',B:'#a83f1a',C:'#f0620a',D:'#88230f',E:'#5cfd40',F:'#db460f',G:'#621d0f' },
       fs: {
-        O:'#0A2020', B:'#1A4040', f:'#3A7A9A', F:'#5AAAC8',
-        H:'#80CCE0', k:'#0A0A0A', s:'#287A9A',
+        A:'#04273c',B:'#63888b',C:'#ff6f61',D:'#0096d7',E:'#b1c4bb',
+        F:'#fcfcf4',G:'#295a69',H:'#000219',I:'#86a4a1',J:'#d5d5c9',
+        K:'#007efb',L:'#0075bf',
       },
       pk: {
-        O:'#1A0803', B:'#3D1A08', m:'#7A3E18', M:'#5A2C10',
-        l:'#C87A40', L:'#E09A58', w:'#F0E8C0', W:'#FFFFFF',
-        k:'#0A0A0A', K:'#484848', p:'#2A0E05', r:'#9B4040',
-        e:'#FFFFF0',
+        A:'#402110',B:'#f2d79d',C:'#9f5332',D:'#ff6970',E:'#c47b4a',
       },
     };
     var MAPS = {
       bvA: [
-        '.....OOOOOOO....................',
-        '...OOmMMmmmOO...................',
-        '..OmMKOkKMmmO...................',
-        '..OmmKOKKmmmmmOOOOOOO..........',
-        '..OmmrrmmmmmmmOtTtTtTO..........',
-        '.OmMmlllwwwlllmmOtgTgTO.........',
-        '.OmlllllwwwwwlllOTgTgTO.........',
-        '.OmMllllwwwwllllO.OTTTOO........',
-        '..OmmMlllllllmmmO...............',
-        '...OmmmmmmmmmmmmO...............',
-        '....OOOOOOOOOOOOO...............',
-        '...pp.............pp............',
-        '...pO.............pO............',
+        '..AAA........AAA.....',
+        '.ABBBA......ABBBA....',
+        '.ABAAAAAAAAAAAABA....',
+        '.ABABBBBBBBBBAABA....',
+        '..ABBBBBBBBBBBAA.....',
+        '..ABABBBBAEBBBAA.....',
+        '..ABABBBBAEBBBAA.....',
+        '.ABBAAAABAEBBBBA.....',
+        '.ABACAACCCFABBBA.....',
+        '.ABACCACCCFABBBA.AAA.',
+        '.ABBAAAAAAEBBBAAADDDA',
+        '..ABBCAFABBBBAA.AADDA',
+        '...ABAAAABBBBBBAADADA',
+        '..ABBBBBBBBBBBBAADDAA',
+        '.ABBABCCCAEBBBBBAADDA',
+        '.ABBACCCABBBBABBADADA',
+        '.AGGACCCAGGGGABBADADA',
+        '..AAACCCAAAAABBBADDA.',
+        '..ABCCCCCCFABBBBAAAA.',
+        '.AAABCCCCAAAABBBAA...',
+        'ABBBACCCABBBBBBAA....',
+        'AAAAAAAAAAAAAAAA.....',
       ],
       bvB: [
-        '.....OOOOOOO....................',
-        '...OOmMMmmmOO...................',
-        '..OmMKOkKMmmO...................',
-        '..OmmKOKKmmmmmOOOOOOO..........',
-        '..OmmrrmmmmmmmOtTtTtTO..........',
-        '.OmMmlllwwwlllmmOtgTgTO.........',
-        '.OmlllllwwwwwlllOTgTgTO.........',
-        '.OmMllllwwwwllllO.OTTTOO........',
-        '..OmmMlllllllmmmO...............',
-        '...OmmmmmmmmmmmmO...............',
-        '....OOOOOOOOOOOOO...............',
-        '....pp...........pp.............',
-        '....pO...........pO.............',
+        '..AAA........AAA.....',
+        '.ABBBA......ABBBA....',
+        '.ABAAAAAAAAAAAABA....',
+        '.ABABBBBBBBBBAABA....',
+        '..ABBBBBBBBBBBAA.....',
+        '..ABABBBBAEBBBAA.....',
+        '..ABABBBBAEBBBAA.....',
+        '.ABBAAAABAEBBBBA.....',
+        '.ABACAACCCFABBBA.....',
+        '.ABACCACCCFABBBA.AAA.',
+        '.ABBAAAAAAEBBBAAADDDA',
+        '..ABBCAFABBBBAA.AADDA',
+        '...ABAAAABBBBBBAADADA',
+        '..ABBBBBBBBBBBBAADDAA',
+        '.ABBABCCCAEBBBBBAADDA',
+        '.ABBACCCABBBBABBADADA',
+        '.AGGACCCAGGGGABBADADA',
+        '..AAACCCAAAAABBBADDA.',
+        '..ABCCCCCCFABBBBAAAA.',
+        '.AAABCCCCAAAABBBAA...',
+        '.ABBBACCCABBBBBBAA...',
+        '.AAAAAAAAAAAAAAAA....',
       ],
       rcA: [
-        '.....OOOOOOO..........',
-        '....OBgsMsggO.........',
-        '...OBgBkBgBkBgO.......',
-        '...OgkkkkkkkkgO.DSSSD.',
-        '...OggBBBBBBggO.SDSDS.',
-        '..OgggggGGGGgggO.DSDSD',
-        '..OgGGGwwwwwGGGgO.....',
-        '..OgGGGwwwwwGGGgO.....',
-        '..OggggGGGGgggggO.....',
-        '...OBgggggggggBO......',
-        '....OOOOOOOOOOO.......',
-        '...pp.......pp........',
-        '...pO.......pO........',
+        '...BB........BBB.........',
+        '...BFGG.....GFFB.........',
+        '...BABB.....BAAB.........',
+        '...BCAABBBBBACCB.........',
+        '...BAAAAAAAAAAAB.........',
+        '...BCCCCAAACCCCB.........',
+        '...BCBCCAAACCCCB.........',
+        '.BBCCBBCBCCCBCBCB........',
+        '.BBACBBCAAACBCCAB........',
+        '.BBCAAADHHHDAAACB...BBB..',
+        '.BBCAAADHHHDAAACB...BBB..',
+        '...BCAADDDDDAEEB...BCCCB.',
+        '....BCCCCEEECBB....BAAACB',
+        '...BAAAAAAAAAAAB...BCCCBB',
+        '...BAAAAAAAAAAAB...BCCCCB',
+        '.BBAAAAAAAAAAAAAB..BAAAAB',
+        '.BBAABBAAAAABAAAB..BCCCCB',
+        '.BBAAAABAAABAAAABBBAACCCB',
+        '.GGFAAABAAABAAAAGBBAABBCG',
+        'BAABAAABAAABAAABABBCAAAB.',
+        'BAAABBBBAAABBBBAABBCCBB..',
+        'BCCAAAAAAAAAAAAACBBBB....',
+        '.BBBBGGAAAAAGBBBB........',
+        '.BBCCBBAAAAABCCCB........',
+        '...BBBBBBBBBBBBB.........',
       ],
       rcB: [
-        '.....OOOOOOO..........',
-        '....OBgsMsggO.........',
-        '...OBgBkBgBkBgO.......',
-        '...OgkkkkkkkkgO.DSSSD.',
-        '...OggBBBBBBggO.SDSDS.',
-        '..OgggggGGGGgggO.DSDSD',
-        '..OgGGGwwwwwGGGgO.....',
-        '..OgGGGwwwwwGGGgO.....',
-        '..OggggGGGGgggggO.....',
-        '...OBgggggggggBO......',
-        '....OOOOOOOOOOO.......',
-        '....pp.....pp.........',
-        '....pO.....pO.........',
+        '...BB........BBB.........',
+        '...BFGG.....GFFB.........',
+        '...BABB.....BAAB.........',
+        '...BCAABBBBBACCB.........',
+        '...BAAAAAAAAAAAB.........',
+        '...BCCCCAAACCCCB.........',
+        '...BCBCCAAACCCCB.........',
+        '.BBCCBBCBCCCBCBCB........',
+        '.BBACBBCAAACBCCAB........',
+        '.BBCAAADHHHDAAACB...BBB..',
+        '.BBCAAADHHHDAAACB...BBB..',
+        '...BCAADDDDDAEEB...BCCCB.',
+        '....BCCCCEEECBB....BAAACB',
+        '...BAAAAAAAAAAAB...BCCCBB',
+        '...BAAAAAAAAAAAB...BCCCCB',
+        '.BBAAAAAAAAAAAAAB..BAAAAB',
+        '.BBAABBAAAAABAAAB..BCCCCB',
+        '.BBAAAABAAABAAAABBBAACCCB',
+        '.GGFAAABAAABAAAAGBBAABBCG',
+        '.BAABAAABAAABAAABABBCAAAB',
+        '.BAAABBBBAAABBBBAABBCCBB.',
+        '.BCCAAAAAAAAAAAAACBBBB...',
+        '..BBBBGGAAAAAGBBBB.......',
+        '..BBCCBBAAAAABCCCB.......',
+        '....BBBBBBBBBBBBB........',
       ],
       log: [
-        'OOOOOOOOOOOOOOOOOOOOOO',
-        'OlLhLlLhLlLhLlLhLlLhO',
-        'OlllllllllllllllllllO',
-        'OBllBllBllBllBllBllBO',
-        'OlllllllllllllllllllO',
-        'OlLhLlLhLlLhLlLhLlLhO',
-        'OOOOOOOOOOOOOOOOOOOOOO',
+        '..EEE............FEEEEE.',
+        '.EAABE......F..FFBAACCCE',
+        'EAABBBFFFF..EF.EBAACCDDG',
+        'AAABBBAABBBBAAAABBBDCDCD',
+        'BBBAAAABBAAAAABBBBBDCCDG',
+        'BBBBBBBBBAABBBBAABBDCDDC',
+        'EBBBBBBBBBBBBBBBBBBCCDDC',
+        '.EEEEEEEEEEEBEBBEBEEDDDE',
       ],
       leafG: [
-        '....O.....',
-        '...OlO....',
-        '..OlLBO...',
-        '.OlLLBBO..',
-        'OlLLLBBO..',
-        '.OlLLBO...',
-        '..OlLBO...',
-        '...OlO....',
-        '....O.....',
+        '..........B',
+        '.........AB',
+        '....AAAAAAB',
+        '...AAAAABAB',
+        '..AABABBAAB',
+        '..AABBAAAAB',
+        '..AABABBABB',
+        '..AABABBABB',
+        '..ABAAAAAB.',
+        '..BAAAAAB..',
+        'BBBBBBBB...',
+        'BB.........',
       ],
       leafR: [
-        '....O.....',
-        '...OlO....',
-        '..OlLBO...',
-        '.OlLLBBO..',
-        'OlLLLBBO..',
-        '.OlLLBO...',
-        '..OlLBO...',
-        '...OlO....',
-        '....O.....',
+        '......A...',
+        '.B..CCC...',
+        '.CC.CCB...',
+        'BBCCCBBB..',
+        'CCBCBCB...',
+        '.CBBBBBBDE',
+        'FBBDDDDDD.',
+        '.BBBBBDD..',
+        '.BG.DD....',
+        '.D...D....',
       ],
       fish: [
-        '..........OOOOOOO......',
-        '.........OBFFHFFBsO....',
-        '........OBFHFFkFFFBO...',
-        '......OOBFFFFHFFFFfBO..',
-        '.....OBBfFFFHFFFFFfBO..',
-        '....OBffFFFFFFFFFFBO...',
-        '.....OBfFFFFFFFFBO.....',
-        '......OBBBBBBBBBO......',
-        '.......OBO...OBO.......',
-        '.......OO.....OO.......',
+        '........AABBBBA',
+        '.......ABBBEAFA',
+        '..AAAAAGBGEEAAA',
+        '..BBBAGBEACEEFA',
+        '..AGABBEBCACCH.',
+        '..AAAGEECCIAA..',
+        '...AGEEBCEJEA..',
+        '...ABEBCJJBJA..',
+        '..AGECCEBAAA...',
+        '..ABECEEH......',
+        '..ABEEEG.......',
+        '...AEA.A.......',
+        '.D.AEA.....D...',
+        '.D.AGGA...DD...',
+        '....ABBA..D....',
+        'DK..ABAA....DD.',
+        'DD..AA....D.L..',
+        '..D..A...DD....',
+        '..DDDDDDLDDD...',
+        '....DLLDLDD....',
       ],
       peek: [
-        '.......OOOOOOOOOO.......',
-        '......OmMMmmmmMMO.......',
-        '.....OmmMKkKMmmMmO......',
-        '.....OmmKOkOKmmmmO......',
-        '.....OmmmKKKmmmmmO......',
-        '.....OmmmOOOmmrrmO......',
-        '.....OmmmlllwwmmmO......',
-        '.....OmmmmwwewwmmO......',
-        '......OmMmmmmMmO........',
-        '.......OOOOOOOO.........',
-        '....pOO.......OOp.......',
-        '....ppp.......ppp.......',
+        '.....AAAAAAAA......',
+        '..AAACCCCCCCCAAA...',
+        '.ACCCCCCCCCCCCCCA..',
+        '.ACACCCCCCCCCCACA..',
+        '..ACCBACCCCBACCA...',
+        '..ACCAACDDCAACCA...',
+        'AAACBBBBAABBBBCAAA.',
+        '..ABEBABAABABEBA...',
+        '.AAABBBABBABBBAAA..',
+        '...AABBBBBBBBAA....',
+        '...ACCCCCCCCCCA....',
+        '..ACCCCBBBBCCCCA...',
       ],
     };
 
@@ -2116,16 +2198,16 @@
       if (el) el.innerHTML = renderSprite(MAPS[mapKey], PAL[palKey], px || PX);
     }
 
-    inject('sp-bv-main-a', 'bvA', 'bv', 6);
-    inject('sp-bv-main-b', 'bvB', 'bv', 6);
-    inject('sp-bv-side',   'bvA', 'bv', 5);
-    inject('sp-rc-a',      'rcA', 'rc', 6);
-    inject('sp-rc-b',      'rcB', 'rc', 6);
-    inject('sp-log',       'log', 'lg', 5);
-    inject('sp-leaf-g',    'leafG', 'lf', 5);
-    inject('sp-leaf-r',    'leafR', 'lr', 5);
-    inject('sp-fish',      'fish', 'fs', 5);
-    inject('sp-peek',      'peek', 'pk', 6);
+    inject('sp-bv-main-a', 'bvA', 'bv', 4);
+    inject('sp-bv-main-b', 'bvB', 'bv', 4);
+    inject('sp-bv-side',   'bvA', 'bv', 3);
+    inject('sp-rc-a',      'rcA', 'rc', 3);
+    inject('sp-rc-b',      'rcB', 'rc', 3);
+    inject('sp-log',       'log', 'lg', 4);
+    inject('sp-leaf-g',    'leafG', 'lf', 4);
+    // red leaf removed
+    inject('sp-fish',      'fish', 'fs', 3);
+    inject('sp-peek',      'peek', 'pk', 4);
 
     document.querySelectorAll('.sprite-2frame').forEach(function(el) {
       var svg = el.querySelector('svg');
@@ -2347,17 +2429,19 @@
       b2.style.animation = 'beaver-side-bob 0.45s ease-in-out 8, beaver-side-bob 3.6s ease-in-out infinite';
     }
 
-    var events = [triggerPeek, triggerFishJump, spawnFloatingEmoji, spawnFloatingEmoji, triggerLogSpin, triggerBeaverFrenzy, triggerPeek];
+    var events = [triggerPeek, triggerPeek, triggerPeek, triggerFishJump, spawnFloatingEmoji, spawnFloatingEmoji, triggerLogSpin];
 
     function scheduleNext() {
-      var delay = 7000 + Math.random() * 20000;
+      var delay = 7000 + Math.random() * 18000;
       setTimeout(function() {
         events[Math.floor(Math.random() * events.length)]();
         scheduleNext();
       }, delay);
     }
 
-    setTimeout(scheduleNext, 4000);
+    // Otter peeks early!
+    setTimeout(triggerPeek, 3000);
+    setTimeout(scheduleNext, 8000);
   })();
 
   console.log('%c🦫', 'font-size:3rem');
