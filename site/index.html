@@ -51,7 +51,8 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--ink);min-heig
 .cloud:nth-child(6){top:22%;animation-duration:145s;animation-delay:-45s}
 @keyframes cloudDrift{from{transform:translateX(-300px)}to{transform:translateX(calc(100vw + 300px))}}
 .page-wrap{width:100%;max-width:680px;padding:0 24px 80px;flex:1}
-.site-header{padding:48px 0 32px;animation:fadeUp 0.7s ease both}
+.site-header{padding:48px 0 16px;animation:fadeUp 0.7s ease both}
+.install-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px 28px 24px;margin:32px 0 0;animation:fadeUp 0.7s ease 0.15s both}
 .brand{display:flex;align-items:center;gap:14px;margin-bottom:10px}
 .brand-emoji{font-size:42px;line-height:1}
 .brand-name{font-family:var(--font-display);font-size:44px;font-weight:300;letter-spacing:-0.02em;color:var(--ink);line-height:1;cursor:default}
@@ -157,11 +158,10 @@ footer{width:100%;border-top:1px solid var(--border);padding:18px 24px;text-alig
 .vp-badge.build{background:rgba(201,139,42,0.15);color:var(--amber)}
 /* Pixel critters in the mockup */
 .critter{position:absolute;image-rendering:pixelated;pointer-events:none}
-.beaver-sprite{bottom:8px;left:12px;animation:beaverWork 1.2s ease-in-out infinite}
+.beaver-sprite{bottom:8px;left:12px;transform:scale(0.5);transform-origin:bottom left}
 @keyframes beaverWork{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
-.raccoon-sprite{bottom:10px;right:14px;animation:raccoonLook 2.5s ease-in-out infinite}
-@keyframes raccoonLook{0%,100%{transform:scaleX(1)}40%,60%{transform:scaleX(-1)}}
-.otter-sprite{position:absolute;bottom:6px;animation:otterZip 4s linear infinite}
+.raccoon-sprite{bottom:10px;right:14px;transform:scale(0.5);transform-origin:bottom right}
+.otter-sprite{position:absolute;bottom:6px;transform:scale(0.5);transform-origin:bottom left;animation:otterZip 4s linear infinite}
 @keyframes otterZip{0%{left:-20px;opacity:0}10%{opacity:1}90%{opacity:1}100%{left:calc(100% + 20px);opacity:0}}
 @media(max-width:540px){.brand-name{font-size:32px}.principles-grid{grid-template-columns:1fr}.install-cmd code{font-size:11px}.split-body{height:220px}.term-line{font-size:9px;line-height:1.5}.split-terminal{padding:10px}.vp-header{font-size:13px}.vp-card{padding:7px 9px;font-size:9px;margin-bottom:4px}.vp-badge{font-size:8px}.vp-page{padding:10px}.critter svg{transform:scale(0.8);transform-origin:bottom left}.raccoon-sprite{right:6px}.beaver-sprite{left:6px;bottom:4px}}
 </style>
@@ -190,14 +190,19 @@ footer{width:100%;border-top:1px solid var(--border);padding:18px 24px;text-alig
     </div>
     <p class="brand-tagline">gnaw. build. repeat.</p>
   </header>
-  <div class="install-block">
+<section style="margin-top:0;margin-bottom:48px">
+    <p style="font-size:19px;line-height:1.5;color:var(--ink-2);font-weight:300">What's a wolt? A wolt is a builder. You bring the ideas, they do the work. Each wolt has its own identity and context. Wolts are always ready to pick up where you left off.</p>
+  </section>
+
+  <div class="install-card">
+  <div class="install-block" style="margin:0;animation:none">
     <div class="install-label">Run this in your terminal to get started</div>
     <div class="install-cmd">
       <code><span class="prompt">$</span>curl -fsSL https://woltspace.com/install.sh | bash</code>
       <button class="copy-btn" onclick="copyInstall()"><span id="copy-label">Copy</span></button>
     </div>
 
-    <details class="prereq">
+    <details class="prereq" open>
       <summary class="prereq-summary">
         <span class="prereq-summary-icon">🐳</span>
         <span class="prereq-summary-text"><strong>New to all this?</strong> How to install Docker and open a terminal</span>
@@ -250,6 +255,7 @@ footer{width:100%;border-top:1px solid var(--border);padding:18px 24px;text-alig
     </details>
     <p class="github-line" style="margin-top:14px">View source on <a class="github-link" href="https://github.com/jerpint/woltspace">GitHub</a></p>
   </div>
+  </div>
   <div class="section-divider"></div>
 
   <!-- Split view mockup -->
@@ -283,10 +289,6 @@ footer{width:100%;border-top:1px solid var(--border);padding:18px 24px;text-alig
       <li class="feature-item"><span class="feature-icon">🦝</span><div><div class="feature-title">Raccoon</div><p class="feature-desc">The thinker. Design, architecture, complex reasoning, UX decisions.</p></div></li>
     </ul>
     <p style="margin-top:16px;font-size:13px;color:var(--ink-3)">Plus a 🐶 dog for routing messages from Telegram and Slack.</p>
-  </section>
-  <section>
-    <div class="section-label">What's a wolt</div>
-    <p>A wolt is a builder. You bring the ideas, they do the work. Each wolt has its own identity and context. Wolts are always ready to pick up where you left off.</p>
   </section>
   <section>
     <div class="section-label">What you get</div>
@@ -673,6 +675,162 @@ function renderCloud(map,px){var cols=Math.max.apply(null,map.map(function(r){re
     });
   }
 })();
+
+// ── SPRITE ANIMATION ─────────────────────────────────────────
+// Animates critters using canvas frame cycling.
+// Walk = legs alternate (scene beavers, otter), Idle = subtle bob (raccoon, mockup critters)
+(function(){
+  var px=3;
+
+  function makeSprite(frames, w, h, fps){
+    var cv=document.createElement('canvas');
+    cv.width=w; cv.height=h;
+    cv.style.cssText='image-rendering:pixelated;display:block;width:'+w+'px;height:'+h+'px';
+    var ctx=cv.getContext('2d');
+    var fi=0;
+
+    function draw(){
+      ctx.clearRect(0,0,w,h);
+      var f=frames[fi];
+      for(var r=0;r<f.map.length;r++){
+        var row=f.map[r];
+        for(var c=0;c<row.length;c++){
+          var ch=row[c];
+          if(ch==='.'||ch===' ')continue;
+          var col=f.pal[ch];
+          if(!col)continue;
+          ctx.fillStyle=col;
+          ctx.fillRect(c*px,r*px,px,px);
+        }
+      }
+      fi=(fi+1)%frames.length;
+    }
+
+    draw();
+    setInterval(draw, 1000/fps);
+    return cv;
+  }
+
+  // ── BEAVER walk frames ──
+  var beavFull=[
+    '..AAA........AAA.....',
+    '.ABBBA......ABBBA....',
+    '.ABAAAAAAAAAAAABA....',
+    '.ABABBBBBBBBBAABA....',
+    '..ABBBBBBBBBBBAA.....',
+    '..ABABBBBAEBBBAA.....',
+    '..ABABBBBAEBBBAA.....',
+    '.ABBAAAABAEBBBBA.....',
+    '.ABACAACCCFABBBA.....',
+    '.ABACCACCCFABBBA.AAA.',
+    '.ABBAAAAAAEBBBAAADDDA',
+    '..ABBCAFABBBBAA.AADDA',
+    '...ABAAAABBBBBBAADADA',
+    '..ABBBBBBBBBBBBAADDAA',
+    '.ABBABCCCAEBBBBBAADDA',
+    '.ABBACCCABBBBABBADADA',
+    '.AGGACCCAGGGGABBADADA',
+    '..AAACCCAAAAABBBADDA.',
+    '..ABCCCCCCFABBBBAAAA.',
+    '.AAABCCCCAAAABBBAA...',
+    'ABBBACCCABBBBBBAA....',
+    'AAAAAAAAAAAAAAAA.....',
+  ];
+  var beavB=beavFull.slice(0,19).concat([
+    'AABBBACCCABBBBBBAA...',
+    '.AAAAAAAAAAAAAAAA....',
+    '.....................',
+  ]);
+  var beavPal={A:'#3f190e',B:'#af6127',C:'#fce6b0',D:'#773c1f',E:'#050003',F:'#fffee7',G:'#dd7a2d'};
+  var beavW=21*px, beavH=22*px;
+  var beavFrames=[{map:beavFull,pal:beavPal},{map:beavB,pal:beavPal}];
+
+  // ── RACCOON idle frames ──
+  var raccFull=[
+    '...BB........BBB.........',
+    '...BFGG.....GFFB.........',
+    '...BABB.....BAAB.........',
+    '...BCAABBBBBACCB.........',
+    '...BAAAAAAAAAAAB.........',
+    '...BCCCCAAACCCCB.........',
+    '...BCBCCAAACCCCB.........',
+    '.BBCCBBCBCCCBCBCB........',
+    '.BBACBBCAAACBCCAB........',
+    '.BBCAAADHHHDAAACB...BBB..',
+    '.BBCAAADHHHDAAACB...BBB..',
+    '...BCAADDDDDAEEB...BCCCB.',
+    '....BCCCCEEECBB....BAAACB',
+    '...BAAAAAAAAAAAB...BCCCBB',
+    '...BAAAAAAAAAAAB...BCCCCB',
+    '.BBAAAAAAAAAAAAAB..BAAAAB',
+    '.BBAABBAAAAABAAAB..BCCCCB',
+    '.BBAAAABAAABAAAABBBAACCCB',
+    '.GGFAAABAAABAAAAGBBAABBCG',
+    'BAABAAABAAABAAABABBCAAAB.',
+    'BAAABBBBAAABBBBAABBCCBB..',
+    'BCCAAAAAAAAAAAAACBBBB....',
+    '.BBBBGGAAAAAGBBBB........',
+    '.BBCCBBAAAAABCCCB........',
+    '...BBBBBBBBBBBBB.........',
+  ];
+  var raccB=raccFull.slice(0,1).concat([
+    '...BFHH.....HFFB.........',
+  ]).concat(raccFull.slice(2));
+  var raccPal={A:'#7f8894',B:'#282c33',C:'#40454b',D:'#f0ecf0',E:'#545c65',F:'#a0abbd',G:'#050029',H:'#efa09f'};
+  var raccW=25*px, raccH=25*px;
+  var raccFrames=[{map:raccFull,pal:raccPal},{map:raccB,pal:raccPal}];
+
+  // ── OTTER swim frames ──
+  var ottFull=[
+    '.....AAAAAAAA......',
+    '..AAACCCCCCCCAAA...',
+    '.ACCCCCCCCCCCCCCA..',
+    '.ACACCCCCCCCCCACA..',
+    '..ACCBACCCCBACCA...',
+    '..ACCAACDDCAACCA...',
+    'AAACBBBBAABBBBCAAA.',
+    '..ABEBABAABABEBA...',
+    '.AAABBBABBABBBAAA..',
+    '...AABBBBBBBBAA....',
+    '...ACCCCCCCCCCA....',
+    '..ACCCCBBBBCCCCA...',
+    '..ACCABBBBBBACCA...',
+    '..ACCCABBBBACCCA...',
+    '..AACCABBBBACCAA.AA',
+    '..ACAABBBBBBAACAACA',
+    '.ACCCBBBBBBBBCCCACA',
+    '.ACAAABBBBBBAAACAA.',
+    '.ACCCCABBBBACCCCA..',
+    '..ACCCAAAAAACCCA...',
+    '...AAA......AAA....',
+  ];
+  var ottB=ottFull.slice(0,17).concat([
+    '..ACAAABBBBBBAAACAA',
+    '..ACCCCABBBBACCCCA.',
+    '...ACCCAAAAAACCCA..',
+    '....AAA......AAA...',
+  ]);
+  var ottPal={A:'#402110',B:'#f2d79d',C:'#9f5332',D:'#ff6970',E:'#c47b4a'};
+  var ottW=19*px, ottH=21*px;
+  var ottFrames=[{map:ottFull,pal:ottPal},{map:ottB,pal:ottPal}];
+
+  // ── Apply to scene critters ──
+  var sb=document.getElementById('sc-beaver1');
+  if(sb){sb.innerHTML='';sb.appendChild(makeSprite(beavFrames,beavW,beavH,4));}
+  var sr=document.getElementById('sc-raccoon1');
+  if(sr){sr.innerHTML='';sr.appendChild(makeSprite(raccFrames,raccW,raccH,2));}
+  var so=document.getElementById('sc-otter1');
+  if(so){so.innerHTML='';so.appendChild(makeSprite(ottFrames,ottW,ottH,4));}
+
+  // ── Apply to mockup critters ──
+  var mb=document.getElementById('beaver-pixel');
+  if(mb){mb.className='critter beaver-sprite';mb.innerHTML='';mb.appendChild(makeSprite(beavFrames,beavW,beavH,4));}
+  var mr=document.getElementById('raccoon-pixel');
+  if(mr){mr.className='critter raccoon-sprite';mr.innerHTML='';mr.appendChild(makeSprite(raccFrames,raccW,raccH,2));}
+  var mo=document.getElementById('otter-pixel');
+  if(mo){mo.className='critter otter-sprite';mo.innerHTML='';mo.appendChild(makeSprite(ottFrames,ottW,ottH,4));}
+})();
 </script>
 </body>
 </html>
+
