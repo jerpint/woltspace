@@ -68,6 +68,117 @@ class TestDenReplyDetection:
         assert self._extract_session(msg) == "first-abc123"
 
 
+class TestReplyToRouting:
+    """Test reply-to session parsing and wolt extraction from adapter code."""
+
+    def test_parse_session_from_full_url(self):
+        from bot.telegram_adapter import _parse_session_from_reply
+        msg = (
+            "🦦 nunu: here's your playlist!\n\n"
+            "---\n"
+            "↩️ reply to this message to talk to this session directly\n"
+            "https://abc.trycloudflare.com/tui?session=nunu-swift-marsh-a1b2c3"
+        )
+        assert _parse_session_from_reply(msg) == "nunu-swift-marsh-a1b2c3"
+
+    def test_parse_session_no_footer(self):
+        from bot.telegram_adapter import _parse_session_from_reply
+        assert _parse_session_from_reply("just a regular message") is None
+
+    def test_parse_session_footer_no_url(self):
+        from bot.telegram_adapter import _parse_session_from_reply
+        msg = "some text\n↩️ reply to this message to talk to this session directly"
+        assert _parse_session_from_reply(msg) is None
+
+    def test_parse_session_fallback_format(self):
+        from bot.telegram_adapter import _parse_session_from_reply
+        msg = (
+            "🦫 neowolt: done\n\n"
+            "---\n"
+            "↩️ reply to this message to talk to this session directly\n"
+            "session=neowolt-chompy-dam-a3f1e2"
+        )
+        assert _parse_session_from_reply(msg) == "neowolt-chompy-dam-a3f1e2"
+
+    def test_wolt_from_session_name(self):
+        from bot.telegram_adapter import _wolt_from_session_name
+        assert _wolt_from_session_name("nunu-swift-marsh-a1b2c3") == "nunu"
+        assert _wolt_from_session_name("uxwolt-scrappy-log-02e806") == "uxwolt"
+        assert _wolt_from_session_name("neowolt-chompy-dam-a3f1e2") == "neowolt"
+
+    def test_wolt_from_session_name_empty(self):
+        from bot.telegram_adapter import _wolt_from_session_name
+        assert _wolt_from_session_name("") is None
+        assert _wolt_from_session_name(None) is None
+
+    def test_wolt_from_session_name_unexpected_format(self):
+        from bot.telegram_adapter import _wolt_from_session_name
+        # Not enough segments
+        assert _wolt_from_session_name("just-two") is None
+
+    @pytest.mark.asyncio
+    async def test_reply_routes_to_correct_session(self):
+        """Replying to a wolt message routes to that wolt's session."""
+        from bot.telegram_adapter import handle_message
+
+        reply_msg_text = (
+            "🦦 nunu: here's your playlist!\n\n"
+            "---\n"
+            "↩️ reply to this message to talk to this session directly\n"
+            "https://abc.trycloudflare.com/tui?session=nunu-swift-marsh-a1b2c3"
+        )
+
+        update = MagicMock()
+        update.effective_user.id = 12345
+        update.effective_chat.id = 99999
+        update.effective_chat.type = "private"
+        update.message.text = "love this track"
+        update.message.reply_to_message = MagicMock()
+        update.message.reply_to_message.text = reply_msg_text
+        update.message.reply_text = AsyncMock()
+
+        context = MagicMock()
+        context.bot.username = "testbot"
+
+        with patch("bot.telegram_adapter.is_allowed", return_value=True), \
+             patch("bot.telegram_adapter._is_session_alive", return_value=True), \
+             patch("bot.telegram_adapter._route_to_session", new_callable=AsyncMock, return_value=True) as mock_route:
+            await handle_message(update, context)
+            mock_route.assert_called_once()
+            # Verify it routed to nunu's session, not the active wolt
+            call_args = mock_route.call_args
+            assert call_args[0][1] == "nunu-swift-marsh-a1b2c3"  # session name
+            assert call_args[0][2] == "nunu"  # wolt name
+            # Verify reply context is included
+            assert "[replying to:" in call_args[0][3]
+
+    @pytest.mark.asyncio
+    async def test_reply_without_footer_falls_through(self):
+        """Replying to a message without footer uses regular routing."""
+        from bot.telegram_adapter import handle_message
+
+        update = MagicMock()
+        update.effective_user.id = 12345
+        update.effective_chat.id = 99999
+        update.effective_chat.type = "private"
+        update.message.text = "hey"
+        update.message.reply_to_message = MagicMock()
+        update.message.reply_to_message.text = "some random message without footer"
+        update.message.reply_text = AsyncMock()
+
+        context = MagicMock()
+        context.bot.username = "testbot"
+
+        with patch("bot.telegram_adapter.is_allowed", return_value=True), \
+             patch("bot.telegram_adapter._load_chat_state", return_value={"active_wolt": "uxwolt", "active_session": "uxwolt-test-123-abc"}), \
+             patch("bot.telegram_adapter._is_session_alive", return_value=True), \
+             patch("bot.telegram_adapter._route_to_session", new_callable=AsyncMock, return_value=True) as mock_route:
+            await handle_message(update, context)
+            # Should route to active wolt (uxwolt), not try reply routing
+            call_args = mock_route.call_args
+            assert call_args[0][1] == "uxwolt-test-123-abc"
+
+
 class TestResponseFormatting:
     """Test how bot responses are formatted for Telegram."""
 

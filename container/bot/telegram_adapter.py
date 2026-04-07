@@ -31,6 +31,7 @@ from bot.core import (
     kill_session, get_tunnel_url, list_wolts, _bot_log, build_ack_text,
     _sanitize_history, start_claude_session,
 )
+from urllib.parse import urlparse, parse_qs
 from wolts import get_active_creature
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
@@ -325,6 +326,54 @@ async def _route_to_session(update: Update, session_name: str, wolt: str, text: 
 # Bot mention detection
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Reply-to routing — parse session from notify footer
+# ---------------------------------------------------------------------------
+
+# Footer format from notify.py:
+#   ---
+#   ↩️ reply to this message to talk to this session directly
+#   {tunnel_url}/tui?session={session_name}
+_REPLY_FOOTER_MARKER = "↩️ reply to this message to talk to this session directly"
+
+
+def _parse_session_from_reply(reply_text: str) -> str | None:
+    """Extract session name from a notify message's footer URL."""
+    if not reply_text or _REPLY_FOOTER_MARKER not in reply_text:
+        return None
+    # The session URL is on the line after the footer marker
+    lines = reply_text.split("\n")
+    for i, line in enumerate(lines):
+        if _REPLY_FOOTER_MARKER in line:
+            # Next line should be the session URL
+            if i + 1 < len(lines):
+                url_line = lines[i + 1].strip()
+                # Parse ?session=NAME from the URL
+                try:
+                    parsed = urlparse(url_line)
+                    qs = parse_qs(parsed.query)
+                    if "session" in qs:
+                        return qs["session"][0]
+                except Exception:
+                    pass
+                # Fallback: might be just "session=NAME" without full URL
+                if url_line.startswith("session="):
+                    return url_line.split("=", 1)[1]
+    return None
+
+
+def _wolt_from_session_name(session_name: str) -> str | None:
+    """Extract wolt name from session name (e.g. 'nunu-swift-marsh-abc123' -> 'nunu')."""
+    if not session_name:
+        return None
+    # Session names are {wolt}-{word}-{word}-{hex}
+    # Wolt name is everything before the last 3 segments
+    parts = session_name.rsplit("-", 3)
+    if len(parts) == 4:
+        return parts[0]
+    return None
+
+
 def _is_dog_mention(text: str, bot_username: str) -> bool:
     """Check if the message explicitly @mentions the bot (i.e. asking for dog)."""
     if not bot_username:
@@ -388,6 +437,42 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_message = _strip_mention(text, bot_username)
         await _handle_dog(update, context, chat_id, user_message)
         return
+
+    # --- Reply-to routing: check if replying to a specific wolt's message ---
+    reply_to = update.message.reply_to_message
+    if reply_to and reply_to.text:
+        reply_session = _parse_session_from_reply(reply_to.text)
+        if reply_session:
+            reply_wolt = _wolt_from_session_name(reply_session)
+            if reply_wolt:
+                # Build message with reply context
+                # Strip the footer from the quoted text
+                quoted = reply_to.text
+                footer_idx = quoted.find("\n---\n" + _REPLY_FOOTER_MARKER)
+                if footer_idx > 0:
+                    quoted = quoted[:footer_idx]
+                reply_text = f"[replying to: {quoted[:200]}]\n{text}" if quoted.strip() else text
+
+                if _is_session_alive(reply_session):
+                    success = await _route_to_session(update, reply_session, reply_wolt, reply_text, chat_id)
+                    if success:
+                        return
+                # Session dead — spawn new one for that wolt
+                try:
+                    session = _spawn_session(reply_wolt, chat_id)
+                    state = _load_chat_state(chat_id)
+                    state["active_wolt"] = reply_wolt
+                    state["active_session"] = session["name"]
+                    _save_chat_state(chat_id, state)
+                    tunnel_url = get_tunnel_url()
+                    session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
+                    await _reply(update, f"🪵 session expired — new one for {reply_wolt}\n{session_link}")
+                    await _route_to_session(update, session["name"], reply_wolt, reply_text, chat_id)
+                except Exception as e:
+                    logger.error(f"Failed to spawn session for {reply_wolt}: {e}")
+                    await _reply(update, f"couldn't start session for {reply_wolt}: {e}")
+                return
+            # else: couldn't parse wolt from session name — fall through to regular path
 
     # --- Load chat state ---
     state = _load_chat_state(chat_id)
@@ -513,12 +598,45 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Transcribed: {text[:100]}")
 
     # Route transcribed text through the same logic as handle_message
-    # Synthesize the message text and route it
+    voice_message = f"[voice message] {text}"
+
+    # --- Reply-to routing: check if replying to a specific wolt's message ---
+    reply_to = update.message.reply_to_message
+    if reply_to and reply_to.text:
+        reply_session = _parse_session_from_reply(reply_to.text)
+        if reply_session:
+            reply_wolt = _wolt_from_session_name(reply_session)
+            if reply_wolt:
+                quoted = reply_to.text
+                footer_idx = quoted.find("\n---\n" + _REPLY_FOOTER_MARKER)
+                if footer_idx > 0:
+                    quoted = quoted[:footer_idx]
+                reply_text = f"[replying to: {quoted[:200]}]\n{voice_message}" if quoted.strip() else voice_message
+
+                if _is_session_alive(reply_session):
+                    success = await _route_to_session(update, reply_session, reply_wolt, reply_text, chat_id)
+                    if success:
+                        return
+                # Session dead — spawn new one for that wolt
+                try:
+                    session = _spawn_session(reply_wolt, chat_id)
+                    state = _load_chat_state(chat_id)
+                    state["active_wolt"] = reply_wolt
+                    state["active_session"] = session["name"]
+                    _save_chat_state(chat_id, state)
+                    tunnel_url = get_tunnel_url()
+                    session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
+                    await _reply(update, f"🪵 session expired — new one for {reply_wolt}\n{session_link}")
+                    await _route_to_session(update, session["name"], reply_wolt, reply_text, chat_id)
+                except Exception as e:
+                    logger.error(f"Failed to spawn session for {reply_wolt}: {e}")
+                    await _reply(update, f"couldn't start session for {reply_wolt}: {e}")
+                return
+
+    # --- Regular routing ---
     state = _load_chat_state(chat_id)
     active_wolt = state.get("active_wolt")
     active_session = state.get("active_session")
-
-    voice_message = f"[voice message] {text}"
 
     if active_wolt and active_session and _is_session_alive(active_session):
         await _route_to_session(update, active_session, active_wolt, voice_message, chat_id)
