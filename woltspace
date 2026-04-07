@@ -381,7 +381,6 @@ LOGINMD
 
   printf "  %b$NAME is gnawing.%b open the link above to say hello.\n" "${_B}" "${_R}"
   echo ""
-  [ "${_RELOAD_SHELL:-}" = "1" ] && exec "$SHELL" -l
   exit 0
 fi
 
