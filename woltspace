@@ -223,9 +223,7 @@ _setup_path() {
       echo "# <<< woltspace <<<" >> "$_shell_rc"
       export PATH="$WOLTSPACE_DIR:$PATH"
       echo "  ${_D}done — added to $_shell_rc${_R}"
-      echo ""
-      echo "  ${_D}to use woltspace in this terminal, run:${_R}"
-      echo "    source $_shell_rc"
+      _RELOAD_SHELL=1
     fi
     echo ""
   fi
@@ -251,6 +249,7 @@ if [ "$cmd" = "init" ]; then
     _build_image
     _start_container
     _show_url
+    [ "${_RELOAD_SHELL:-}" = "1" ] && exec "$SHELL" -l
     exit 0
   fi
 
@@ -383,6 +382,7 @@ LOGINMD
 
   printf "  %b$NAME is gnawing.%b open the link above to say hello.\n" "${_B}" "${_R}"
   echo ""
+  [ "${_RELOAD_SHELL:-}" = "1" ] && exec "$SHELL" -l
   exit 0
 fi
 
