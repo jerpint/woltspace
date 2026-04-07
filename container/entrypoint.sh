@@ -46,7 +46,7 @@ SERVER_PID=$!
 sleep 2
 
 # Tunnel
-mkdir -p "$WOLTS_DIR/.space/platform" "$WOLT_DIR/.state"
+mkdir -p "$WOLTS_DIR/.space/platform" "$WOLTS_DIR/.state" "$WOLT_DIR/.state"
 rm -f "$WOLTS_DIR/.space/platform/tunnel-url" "$WOLTS_DIR/.state/tunnel-url" "$WOLT_DIR/.state/tunnel-url"
 if [ "${WOLTSPACE_PUBLIC_TUNNEL:-true}" = "true" ]; then
   echo "opening tunnel..."

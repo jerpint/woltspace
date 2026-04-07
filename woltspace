@@ -223,6 +223,7 @@ _setup_path() {
       echo "# <<< woltspace <<<" >> "$_shell_rc"
       export PATH="$WOLTSPACE_DIR:$PATH"
       echo "  ${_D}done — added to $_shell_rc${_R}"
+      echo "  ${_D}run ${_R}${_C}source $_shell_rc${_R}${_D} to activate in this terminal${_R}"
     fi
     echo ""
   fi
