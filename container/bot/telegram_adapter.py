@@ -598,12 +598,45 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Transcribed: {text[:100]}")
 
     # Route transcribed text through the same logic as handle_message
-    # Synthesize the message text and route it
+    voice_message = f"[voice message] {text}"
+
+    # --- Reply-to routing: check if replying to a specific wolt's message ---
+    reply_to = update.message.reply_to_message
+    if reply_to and reply_to.text:
+        reply_session = _parse_session_from_reply(reply_to.text)
+        if reply_session:
+            reply_wolt = _wolt_from_session_name(reply_session)
+            if reply_wolt:
+                quoted = reply_to.text
+                footer_idx = quoted.find("\n---\n" + _REPLY_FOOTER_MARKER)
+                if footer_idx > 0:
+                    quoted = quoted[:footer_idx]
+                reply_text = f"[replying to: {quoted[:200]}]\n{voice_message}" if quoted.strip() else voice_message
+
+                if _is_session_alive(reply_session):
+                    success = await _route_to_session(update, reply_session, reply_wolt, reply_text, chat_id)
+                    if success:
+                        return
+                # Session dead — spawn new one for that wolt
+                try:
+                    session = _spawn_session(reply_wolt, chat_id)
+                    state = _load_chat_state(chat_id)
+                    state["active_wolt"] = reply_wolt
+                    state["active_session"] = session["name"]
+                    _save_chat_state(chat_id, state)
+                    tunnel_url = get_tunnel_url()
+                    session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
+                    await _reply(update, f"🪵 session expired — new one for {reply_wolt}\n{session_link}")
+                    await _route_to_session(update, session["name"], reply_wolt, reply_text, chat_id)
+                except Exception as e:
+                    logger.error(f"Failed to spawn session for {reply_wolt}: {e}")
+                    await _reply(update, f"couldn't start session for {reply_wolt}: {e}")
+                return
+
+    # --- Regular routing ---
     state = _load_chat_state(chat_id)
     active_wolt = state.get("active_wolt")
     active_session = state.get("active_session")
-
-    voice_message = f"[voice message] {text}"
 
     if active_wolt and active_session and _is_session_alive(active_session):
         await _route_to_session(update, active_session, active_wolt, voice_message, chat_id)
