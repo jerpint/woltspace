@@ -1,12 +1,12 @@
 """
-Woltspace project schema — defines the woltspace.json manifest.
+Woltspace app schema — defines the woltspace.json manifest.
 
 Usage:
-    from projects import WoltspaceProject, load_project, discover_projects
-    from projects import project_dir, start_project, stop_project, running_projects
+    from apps import WoltspaceApp, load_app, discover_apps
+    from apps import app_dir, start_app, stop_app, running_apps
 
-    project = load_project("/workspace/wolts/projects/forj")
-    all_projects = discover_projects()
+    app = load_app("/workspace/wolts/apps/forj")
+    all_apps = discover_apps()
 """
 
 from __future__ import annotations
@@ -19,88 +19,100 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from paths import space_projects_dir
+from paths import space_apps_dir
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
-PROJECTS_DIR = WOLTS_DIR / "projects"
+APPS_DIR = WOLTS_DIR / "apps"
+LEGACY_PROJECTS_DIR = WOLTS_DIR / "projects"  # deprecated — still discovered for backwards compat
 
 VALID_STACKS = {"python", "vite", "node", "html"}
 
 MANIFEST = "woltspace.json"
 
-# Running project state — now at .space/projects/
-_RUNNING_STATE_DIR = space_projects_dir(WOLTS_DIR)
+# Running app state — now at .space/apps/
+_RUNNING_STATE_DIR = space_apps_dir(WOLTS_DIR)
 
 # Wolt type emojis — reserved, never used as random defaults
 WOLT_EMOJIS = {"🦫", "🦝", "🦦", "🐺", "🐶", "🕷️", "🐻", "🐼"}
 
-# Forest creatures — used as random defaults for new projects
+# Forest creatures — used as random defaults for new apps
 FOREST_EMOJIS = ["🦅", "🦉", "🐿️", "🦊", "🐝", "🦌", "🐾", "🐸", "🦋", "🐛", "🪲", "🐞"]
 
 
 def random_emoji() -> str:
-    """Pick a random forest creature emoji for a new project."""
+    """Pick a random forest creature emoji for a new app."""
     import random
     return random.choice(FOREST_EMOJIS)
 
 
-class WoltspaceProject(BaseModel):
+class WoltspaceApp(BaseModel):
     """v0.1 woltspace.json schema.
 
-    Every project lives in wolts/projects/<name>/woltspace.json.
-    Project names are globally unique. Keeper tracks ownership.
-    Null fields = explicit todos. Can't start a project with start=None.
+    Every app lives in wolts/apps/<name>/woltspace.json.
+    App names are globally unique. Keeper tracks ownership.
+    Null fields = explicit todos. Can't start an app with start=None.
     """
 
     woltspace_version: str = Field(default="0.1", description="Schema version")
-    name: str = Field(description="Project name (globally unique, matches directory name)")
-    description: str | None = Field(default=None, description="What the project does")
+    name: str = Field(description="App name (globally unique, matches directory name)")
+    description: str | None = Field(default=None, description="What the app does")
     stack: str | None = Field(default=None, description="Tech stack: python, vite, node, html")
     install: str | None = Field(default=None, description="Install command (e.g. 'npm install', 'uv sync')")
     start: str | None = Field(default=None, description="Start command (e.g. 'node server.js'). Null = can't start.")
-    port: int = Field(description="Fixed port for this project's dev server")
+    port: int = Field(description="Fixed port for this app's dev server")
     source: str | None = Field(default=None, description="Origin wolt if cloned/forked, null if created locally")
     keeper: str = Field(description="Owning wolt name")
-    emoji: str = Field(default_factory=random_emoji, description="Project emoji for display")
-    public: bool = Field(default=False, description="Whether this project should be publicly shared via tunnel")
+    emoji: str = Field(default_factory=random_emoji, description="App emoji for display")
+    public: bool = Field(default=False, description="Whether this app should be publicly shared via tunnel")
 
     def can_start(self) -> bool:
-        """Project can only start if it has a start command."""
+        """App can only start if it has a start command."""
         return self.start is not None
 
 
-def load_project(proj_dir: str | Path) -> WoltspaceProject | None:
-    """Load a woltspace.json from a project directory. Returns None if missing or invalid."""
-    manifest = Path(proj_dir) / MANIFEST
+def load_app(app_path: str | Path) -> WoltspaceApp | None:
+    """Load a woltspace.json from an app directory. Returns None if missing or invalid."""
+    manifest = Path(app_path) / MANIFEST
     if not manifest.exists():
         return None
     try:
         data = json.loads(manifest.read_text())
-        return WoltspaceProject(**data)
+        return WoltspaceApp(**data)
     except (json.JSONDecodeError, Exception):
         return None
 
 
-def discover_projects() -> list[WoltspaceProject]:
-    """Scan wolts/projects/ for all projects with woltspace.json manifests."""
-    projects = []
-    if not PROJECTS_DIR.exists():
-        return projects
-    for manifest in sorted(PROJECTS_DIR.glob("*/" + MANIFEST)):
-        project = load_project(manifest.parent)
-        if project:
-            projects.append(project)
-    return projects
+def discover_apps() -> list[WoltspaceApp]:
+    """Scan wolts/apps/ and wolts/projects/ (legacy) for all apps with woltspace.json manifests."""
+    apps = []
+    seen_names: set[str] = set()
+    # Primary: wolts/apps/
+    for search_dir in (APPS_DIR, LEGACY_PROJECTS_DIR):
+        if not search_dir.exists():
+            continue
+        for manifest in sorted(search_dir.glob("*/" + MANIFEST)):
+            app = load_app(manifest.parent)
+            if app and app.name not in seen_names:
+                seen_names.add(app.name)
+                apps.append(app)
+    return apps
 
 
-def project_dir(name: str) -> Path:
-    """Get the directory for a project. Lives at wolts/projects/<name>/."""
-    return PROJECTS_DIR / name
+def app_dir(name: str) -> Path:
+    """Get the directory for an app. Checks wolts/apps/ first, falls back to wolts/projects/."""
+    primary = APPS_DIR / name
+    if primary.exists():
+        return primary
+    legacy = LEGACY_PROJECTS_DIR / name
+    if legacy.exists():
+        return legacy
+    # Default to the new location for new apps
+    return primary
 
 
-def get_project(name: str) -> WoltspaceProject | None:
-    """Load a specific project by name."""
-    return load_project(project_dir(name))
+def get_app(name: str) -> WoltspaceApp | None:
+    """Load a specific app by name."""
+    return load_app(app_dir(name))
 
 
 # --- Running state ---
@@ -139,8 +151,8 @@ def _is_pid_alive(pid: int) -> bool:
         return False
 
 
-def running_projects() -> list[dict]:
-    """List all currently running projects with their state."""
+def running_apps() -> list[dict]:
+    """List all currently running apps with their state."""
     running = []
     if not _RUNNING_STATE_DIR.exists():
         return running
@@ -161,34 +173,41 @@ def running_projects() -> list[dict]:
     return running
 
 
-def start_project(name: str) -> dict:
-    """Start a project's dev server. Returns state dict with port and pid.
+def start_app(name: str) -> dict:
+    """Start an app's dev server. Returns state dict with port and pid.
 
     Uses the port declared in woltspace.json — no dynamic allocation.
     """
-    project = get_project(name)
-    if not project:
-        raise ValueError(f"Project {name} not found")
-    if not project.can_start():
-        raise ValueError(f"Project {name} has no start command")
+    app = get_app(name)
+    if not app:
+        raise ValueError(f"App {name} not found")
+    if not app.can_start():
+        raise ValueError(f"App {name} has no start command")
 
     # Check if already running
     existing = _read_state(name)
     if existing and _is_pid_alive(existing.get("pid", 0)):
         return existing
 
-    # Use port from manifest — check for conflicts with running projects
-    port = project.port
-    for r in running_projects():
+    # Use port from manifest — check for conflicts with running apps
+    port = app.port
+    for r in running_apps():
         if r["port"] == port:
-            raise RuntimeError(f"Port {port} already in use by running project '{r['name']}'")
+            raise RuntimeError(f"Port {port} already in use by running app '{r['name']}'")
 
-    work_dir = project_dir(name)
+    work_dir = app_dir(name)
+
+    # Auto-install if node_modules is missing and install command is defined
+    # Covers first-start after a container rebuild (node_modules cleared in entrypoint)
+    if app.install and app.stack in ("node", "vite"):
+        nm = work_dir / "node_modules"
+        if not nm.exists():
+            subprocess.run(app.install, shell=True, cwd=str(work_dir), check=True)
 
     # Start the process with PORT env var
     env = {**os.environ, "PORT": str(port)}
     proc = subprocess.Popen(
-        project.start,
+        app.start,
         shell=True,
         cwd=str(work_dir),
         env=env,
@@ -199,27 +218,27 @@ def start_project(name: str) -> dict:
 
     state = {
         "name": name,
-        "keeper": project.keeper,
+        "keeper": app.keeper,
         "port": port,
         "pid": proc.pid,
-        "start_command": project.start,
+        "start_command": app.start,
     }
     _write_state(name, state)
 
     # Auto-share if public=true and sharing is enabled
-    if project.public and SHARING_ENABLED:
+    if app.public and SHARING_ENABLED:
         try:
-            share_result = share_project(name)
+            share_result = share_app(name)
             state["tunnel_url"] = share_result.get("tunnel_url")
             state["tunnel_pid"] = share_result.get("pid")
         except Exception:
-            pass  # Non-fatal — project starts even if tunnel fails
+            pass  # Non-fatal — app starts even if tunnel fails
 
     return state
 
 
-def stop_project(name: str) -> bool:
-    """Stop a running project. Also kills any active tunnel. Returns True if it was running."""
+def stop_app(name: str) -> bool:
+    """Stop a running app. Also kills any active tunnel. Returns True if it was running."""
     state = _read_state(name)
     if not state:
         return False
@@ -230,7 +249,7 @@ def stop_project(name: str) -> bool:
             os.kill(tunnel_pid, signal.SIGTERM)
         except OSError:
             pass
-    # Kill the project process
+    # Kill the app process
     pid = state.get("pid")
     if pid and _is_pid_alive(pid):
         try:
@@ -257,16 +276,16 @@ def _check_sharing_enabled():
         raise RuntimeError("Sharing is disabled (WOLTSPACE_SHARING_ENABLED=0)")
 
 
-def share_project(name: str) -> dict:
-    """Start a cloudflared tunnel to the project port.
+def share_app(name: str) -> dict:
+    """Start a cloudflared tunnel to the app port.
 
     Uses --http-host-header localhost so Vite 6+ allowedHosts checks pass
-    without any project config changes.
+    without any app config changes.
 
-    Stores tunnel_pid and tunnel_url in .space/projects/{name}.json.
+    Stores tunnel_pid and tunnel_url in .space/apps/{name}.json.
     Also sets public=true in woltspace.json.
     Returns dict with tunnel_url and pid.
-    Raises ValueError if project is not running.
+    Raises ValueError if app is not running.
     Raises RuntimeError if sharing is disabled or tunnel fails.
     """
     import re
@@ -277,7 +296,7 @@ def share_project(name: str) -> dict:
 
     state = _read_state(name)
     if not state:
-        raise ValueError(f"Project {name} is not running")
+        raise ValueError(f"App {name} is not running")
 
     port = state["port"]
 
@@ -336,8 +355,8 @@ def share_project(name: str) -> dict:
     return {"tunnel_url": tunnel_url, "pid": proc.pid}
 
 
-def unshare_project(name: str) -> bool:
-    """Stop the cloudflared tunnel for a project.
+def unshare_app(name: str) -> bool:
+    """Stop the cloudflared tunnel for an app.
 
     Sets public=false in woltspace.json.
     Returns True if a tunnel was running and stopped.
@@ -365,10 +384,10 @@ def unshare_project(name: str) -> bool:
     return stopped or tunnel_pid is not None
 
 
-def unshare_all_projects() -> list[str]:
-    """Panic button — stop ALL cloudflared tunnels across all projects.
+def unshare_all_apps() -> list[str]:
+    """Panic button — stop ALL cloudflared tunnels across all apps.
 
-    Returns list of project names that were unshared.
+    Returns list of app names that were unshared.
     """
     unshared = []
     if not _RUNNING_STATE_DIR.exists():
@@ -396,8 +415,8 @@ def unshare_all_projects() -> list[str]:
 
 
 def _set_public(name: str, public: bool) -> None:
-    """Update the public field in a project's woltspace.json."""
-    manifest = project_dir(name) / MANIFEST
+    """Update the public field in an app's woltspace.json."""
+    manifest = app_dir(name) / MANIFEST
     if not manifest.exists():
         return
     try:

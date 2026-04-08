@@ -62,16 +62,16 @@ def get_current_meta(session: str = "main") -> dict:
         "port": data.get("viewport_port", 7777),
         "updated": data.get("viewport_updated", 0),
     }
-    # If viewing a project, include its tunnel_url for remote access
+    # If viewing an app, include its tunnel_url for remote access
     vp_url = meta["url"] or ""
-    if meta["port"] != 7777 or vp_url.startswith("/project/"):
+    if meta["port"] != 7777 or vp_url.startswith("/app/"):
         import re
-        proj_match = re.match(r"^/project/([^/]+)", vp_url)
-        if proj_match:
+        app_match = re.match(r"^/app/([^/]+)", vp_url)
+        if app_match:
             try:
-                from projects import running_projects
-                running = {r["name"]: r for r in running_projects()}
-                run_state = running.get(proj_match.group(1))
+                from apps import running_apps
+                running = {r["name"]: r for r in running_apps()}
+                run_state = running.get(app_match.group(1))
                 if run_state and run_state.get("tunnel_url"):
                     meta["tunnel_url"] = run_state["tunnel_url"]
             except Exception:

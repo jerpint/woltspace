@@ -11,7 +11,7 @@ The human chats with the wolt via Telegram. The wolt can spin up Claude Code ses
 
 **This repo is the platform** — the Docker image, server, bot brain, and CLI that makes wolts run. Individual wolt data lives separately (under `~/.woltspace/wolts/{name}/`).
 
-> **⚠️ Platform code is immutable from wolt sessions.** Wolts must NEVER edit files in `/workspace/woltspace/`. All wolt work happens inside their own directory (`/workspace/wolts/{name}/`). Code projects go in `wolt/projects/`. If a wolt needs new platform functionality, the human files an issue — wolts don't patch the platform.
+> **⚠️ Platform code is immutable from wolt sessions.** Wolts must NEVER edit files in `/workspace/woltspace/`. All wolt work happens inside their own directory (`/workspace/wolts/{name}/`). Apps go in `wolts/apps/`. If a wolt needs new platform functionality, the human files an issue — wolts don't patch the platform.
 
 ---
 
@@ -131,7 +131,7 @@ Python server running on port 7777 inside the container.
 - Manages per-session viewport URLs (`/current`)
 - Serves static files: `public/` (platform UI) → `wolt/site/` → `wolt/sparks/`
 - Proxies tool registrations at `/tools`
-- Serves apps at `/app/:name/` (static from `dist/` or proxy to port — see `apps` skill)
+- Serves apps at `/app/:name/` (static from `dist/` or proxy to port — see `woltspace-apps` skill)
 - Live reload via SSE at `/livereload`
 
 ### `server/tui-service.js` (Node.js)
@@ -140,7 +140,7 @@ TUI WebSocket service on port 3001. The only remaining Node service — handles 
 ### `container/bot/core.py` (Python)
 The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routing.
 - Builds system prompt from wolt memory files
-- Defines tools: `claude_code`, `new_session`, `get_tunnel_url`, `check_session`, `get_recent_sessions`, `list_sessions`, `find_session`, `kill_session`, `send_message`, `read_memory`, `list_wolts`, `list_projects`, `generate_image`, `switch_wolt`, `check_update`, `wolf_schedules`, `fire_wolf`
+- Defines tools: `claude_code`, `new_session`, `get_tunnel_url`, `check_session`, `get_recent_sessions`, `list_sessions`, `find_session`, `kill_session`, `send_message`, `read_memory`, `list_wolts`, `list_apps`, `generate_image`, `switch_wolt`, `check_update`, `wolf_schedules`, `fire_wolf`
 - When `claude_code` is called: spawns a tmux session running `run-session.sh` → Claude Code CLI
 - Session metadata (status, routing, creature, viewport) stored in the **session registry** — see `container/lib/sessions.py`
 
@@ -148,7 +148,7 @@ The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routi
 Thin Telegram layer over core. Persists chat history to `.state/chat/{chat_id}.jsonl`. Group chat support (responds when @mentioned).
 
 ### `container/skills/`
-Discovery files Claude Code reads from `~/.claude/skills/`. Platform skills use `woltspace-` prefix and are synced to all wolts on boot. Current platform skills: `woltspace-start-chat`, `woltspace-create-wolt`, `woltspace-notify`, `woltspace-viewport`, `woltspace-projects`, `woltspace-new-project`, `woltspace-wolf`, `woltspace-update`, `woltspace-session-summary`, `woltspace-worktui`, `woltspace-organize-context`, `woltspace-setup-telegram`, `woltspace-setup-github`.
+Discovery files Claude Code reads from `~/.claude/skills/`. Platform skills use `woltspace-` prefix and are synced to all wolts on boot. Current platform skills: `woltspace-start-chat`, `woltspace-create-wolt`, `woltspace-notify`, `woltspace-viewport`, `woltspace-apps`, `woltspace-new-app`, `woltspace-wolf`, `woltspace-update`, `woltspace-session-summary`, `woltspace-worktui`, `woltspace-organize-context`, `woltspace-setup-telegram`, `woltspace-setup-github`.
 
 ### `container/cron/digest.mjs`
 Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select via `claude -p` → render HTML. Writes to `wolt/sparks/`. Optional Spotify playlist curation.
@@ -224,7 +224,7 @@ Source: `~/worktui/` (cloned from `jerpint/worktui` during image build). Shell w
 **The right-hand pane of the split view is the viewport. Use it. Always push what you build.**
 
 The `/viewport` skill explains everything, but the short version:
-1. Write your HTML/app to `wolt/site/` (or build an app under `wolt/apps/`)
+1. Write your HTML/app to `wolt/site/` (or build an app under `wolts/apps/`)
 2. Run `push-view /your-page.html` — this updates the right pane live
 3. The human sees it immediately in their browser
 
@@ -245,7 +245,6 @@ Use `/viewport` for full details: URL paths, app serving, live-reload behavior.
       learnings.md     — active patterns (first 40 lines)
       index.md         — memory index for discoverability
       archive/         — grows forever, searched on demand
-    projects/          — isolated code projects (apps, scripts, experiments)
     apps/              — full-stack apps (each has app.json, served at /app/:name/)
     site/              — static HTML/CSS public space
     sparks/            — generated artifacts

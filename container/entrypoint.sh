@@ -17,6 +17,13 @@ export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
 tmux new-session -d -s main -c "$WOLT_DIR" 2>/dev/null || true
 if [ -f /home/node/.claude/.first-run ]; then
   rm /home/node/.claude/.first-run
+  # Fresh container — clear node_modules for all apps so installs run clean
+  # Prevents binary/native dep corruption across container rebuilds (e.g. Node version changes)
+  echo "fresh container: clearing node_modules in all apps..."
+  find "$WOLTS_DIR/apps" "$WOLTS_DIR/projects" -maxdepth 2 -name "node_modules" -type d 2>/dev/null | while read -r nm; do
+    echo "  removing $nm"
+    rm -rf "$nm"
+  done
   # Pre-load viewport with wakeup page — user sees it instantly while wolt boots
   mkdir -p "$WOLT_DIR/.state"
   python3 -c "

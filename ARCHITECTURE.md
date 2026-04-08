@@ -110,10 +110,10 @@ split.html polls /current/meta every 2s
 | `/sessions/redirect` | POST | Set redirect on a session |
 | `/sessions/{id}/message` | POST | Send text to session (revives if needed) |
 | `/wolts` | GET | List all wolts from wolt.json files |
-| `/projects` | GET | List projects (from `wolts/projects/`) |
-| `/projects/{name}/start` | POST | Start a project |
-| `/projects/{name}/stop` | POST | Stop a project |
-| `/project/{name}/*` | ALL | Serve project (proxy or static) |
+| `/apps` | GET | List apps (from `wolts/apps/`) |
+| `/apps/{name}/start` | POST | Start an app |
+| `/apps/{name}/stop` | POST | Stop an app |
+| `/app/{name}/*` | ALL | Serve app (proxy or static) |
 | `/wolt/{name}/site/*` | ALL | Serve wolt sites (per-wolt livereload proxy) |
 | `/history` | GET | List sparks (artifacts) |
 | `/history/{id}` | GET | Serve spark HTML with version nav |
@@ -143,7 +143,7 @@ split.html polls /current/meta every 2s
 | `get_tunnel_url` | Get current public URL |
 | `read_memory` | Read memory files (scoped to wolt/memory/) |
 | `list_wolts` | Multi-wolt: show available wolts |
-| `list_projects` | List projects in current wolt (names, paths, metadata) |
+| `list_apps` | List apps in current wolt (names, paths, metadata) |
 | `switch_wolt` | Change active wolt identity |
 | `check_update` | Check if woltspace update is available (git ls-remote, no LLM) |
 | `generate_image` | AI image gen (OpenAI) |
@@ -223,18 +223,18 @@ wolts/{name}/
 ```
 wolts/.space/
 ├─ platform/            # tunnel-url, woltspace-version, branch
-├─ projects/            # running project state (port, pid)
+├─ apps/                # running app state (port, pid)
 ├─ wolf/                # wolf scheduler state
 ├─ vulture/             # session reaper state
 └─ logs/                # bot.jsonl event log
 ```
 
-### Projects (`wolts/projects/`)
+### Apps (`wolts/apps/`)
 
 ```
-wolts/projects/{name}/
+wolts/apps/{name}/
 ├─ woltspace.json       # manifest (start command, port, description)
-└─ ...                  # project source code
+└─ ...                  # app source code
 ```
 
 ---
@@ -250,7 +250,7 @@ wolts/projects/{name}/
 - **History window is fixed** — `MAX_HISTORY = 20` pairs for Telegram, Slack pulls full thread from API (inconsistent).
 - **Single-wolt Telegram** — one wolt owns the bot at a time. Den replies lose context (#218). Chat-per-wolt is the path forward (#184).
 - **Skill drift** — platform skills copied at wolt creation, never synced. Existing wolts run stale skills (#173).
-- **Project proxy links** — internal links break for multi-page apps behind `/project/{name}/` prefix (#212).
+- **App proxy links** — internal links break for multi-page apps behind `/app/{name}/` prefix (#212).
 
 ### Things that work well
 - **Session registry** — one JSON file per session per wolt, queryable with `ls` and `cat`.

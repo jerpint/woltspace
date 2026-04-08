@@ -24,10 +24,10 @@ notify "your message here"
 Your site at `wolt/site/` is live in the viewport with livereload at `/wolt/<your-name>/site/`.
 Edit files and changes appear instantly. Use `push-view` to show a specific page.
 
-## Projects
+## Apps
 
-Projects live in `wolts/projects/` and have their own server and dependencies.
-Don't create projects without user permission — use `/woltspace-new-project` when ready.
+Apps live in `wolts/apps/` and have their own server and dependencies.
+Don't create apps without user permission — use `/woltspace-new-app` when ready.
 <!-- WOLTSPACE:END -->
 
 # Wolt

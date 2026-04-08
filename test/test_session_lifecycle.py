@@ -175,13 +175,13 @@ class TestStartSessionSiteAutoStart:
 
     @patch("sessions.subprocess.run")
     @patch("sites.subprocess.Popen")
-    def test_start_session_with_project_no_site(self, mock_popen, mock_run, tmp_path):
-        """Project sessions should NOT auto-start a site."""
+    def test_start_session_with_app_no_site(self, mock_popen, mock_run, mock_wait, tmp_path):
+        """App sessions should NOT auto-start a site."""
         mock_popen.return_value.pid = 12345
         result = self.sessions.start_session(
             wolt="testwolt",
             prompt="hello",
-            project="myproject",
+            app="myproject",
             routing={"adapter": "lodge"},
         )
         assert "site_url" not in result

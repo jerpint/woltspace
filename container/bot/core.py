@@ -225,22 +225,22 @@ CRITICAL: If a task requires claude_code, call claude_code. Don't narrate what y
 - **wolf_jobs** — show recent wolf job log (what fired, when, success/failure)
 - **send_message** — send a message to a running session
 - **list_sessions** / **check_session** — see what's running or check on a session
-- **list_projects** — see what projects exist in the current wolt
+- **list_apps** — see what apps exist in the current wolt
 - **read_memory** — read a specific memory file when you need details
 - **get_recent_sessions** — read session summaries (what was built, links)
 - **get_tunnel_url** — get the public URL for the split view
 - **open_issue** — file a GitHub issue on woltspace (beavers pick these up asynchronously)
 
-## Projects
-Projects live in `wolt/projects/`. They're isolated workspaces for building things.
+## Apps
+Apps live in `wolts/apps/`. They're isolated workspaces for building things.
 
-**When someone asks to build something** (app, tool, script, experiment): use `claude_code` with the `project` parameter set. Pick a short, descriptive name. The session runs scoped to that project directory.
+**When someone asks to build something** (app, tool, script, experiment): use `claude_code` with the `app` parameter set. Pick a short, descriptive name. The session runs scoped to that app directory.
 
-**When someone asks to work on an existing project** ("fix my dashboard", "update the todo app"): call `list_projects` first to find it, then `claude_code` with `project` set to the matching name.
+**When someone asks to work on an existing app** ("fix my dashboard", "update the todo app"): call `list_apps` first to find it, then `claude_code` with `app` set to the matching name.
 
-**When someone just wants to chat or do wolt-level work** (update memories, check on things, site changes): no project needed — run the session at the wolt root as usual.
+**When someone just wants to chat or do wolt-level work** (update memories, check on things, site changes): no app needed — run the session at the wolt root as usual.
 
-The key question: does this request belong to a specific project? If yes, scope it. If not, don't.
+The key question: does this request belong to a specific app? If yes, scope it. If not, don't.
 
 ## Communication Protocol
 Messages wrapped in <system>...</system> tags are from Claude Code sessions (the "den"). They were sent directly to the user — you didn't say them. Don't repeat them. When asked about results, use that context to answer in your own words.
@@ -340,7 +340,7 @@ def _call_server(method: str, path: str, body: dict | None = None) -> dict:
 # CREATURE_MODELS — imported from sessions
 
 
-def start_claude_session(prompt: str, wolt: str = None, creature: str = None, routing: dict = None, project: str = None) -> dict:
+def start_claude_session(prompt: str, wolt: str = None, creature: str = None, routing: dict = None, app: str = None) -> dict:
     """Start an interactive Claude Code session. Delegates to sessions.start_session.
 
     Wraps the shared start_session() with bot-specific logging and
@@ -352,20 +352,20 @@ def start_claude_session(prompt: str, wolt: str = None, creature: str = None, ro
         prompt=prompt,
         creature=creature or "",
         routing=routing,
-        project=project or "",
+        app=app or "",
     )
     _bot_log("session_start", {
         "session": result["name"], "wolt": target_wolt,
-        "project": project, "dir": str(WOLTS_DIR / target_wolt),
+        "app": app, "dir": str(WOLTS_DIR / target_wolt),
         "creature": creature, "model": result.get("model"),
         "prompt": prompt[:500],
     })
     return result
 
 
-def new_session(prompt: str, from_session: str = None, wolt: str = None, creature: str = None, routing: dict = None, project: str = None) -> dict:
+def new_session(prompt: str, from_session: str = None, wolt: str = None, creature: str = None, routing: dict = None, app: str = None) -> dict:
     """Start a fresh Claude Code session and redirect the current viewport to it."""
-    session = start_claude_session(prompt, wolt=wolt, creature=creature, routing=routing, project=project)
+    session = start_claude_session(prompt, wolt=wolt, creature=creature, routing=routing, app=app)
 
     # Determine which viewport to redirect
     redirect_from = from_session
@@ -590,7 +590,7 @@ def kill_session(name: str) -> bool:
 
 def _tool_claude_code(args: dict, routing: dict | None) -> str:
     try:
-        session = start_claude_session(args["prompt"], wolt=args.get("wolt"), creature=args.get("creature"), routing=routing, project=args.get("project"))
+        session = start_claude_session(args["prompt"], wolt=args.get("wolt"), creature=args.get("creature"), routing=routing, app=args.get("app"))
         return json.dumps(session)
     except ValueError as e:
         wolt = args.get("wolt", "")
@@ -615,7 +615,7 @@ def _tool_new_session(args: dict, routing: dict | None) -> str:
             wolt=args.get("wolt"),
             creature=args.get("creature"),
             routing=routing,
-            project=args.get("project"),
+            app=args.get("app"),
         )
         return json.dumps(session)
     except ValueError as e:
@@ -689,23 +689,30 @@ def _tool_generate_image(args: dict, routing: dict | None) -> str:
         return json.dumps({"error": str(e)})
 
 
-def _tool_list_projects(args: dict, routing: dict | None) -> str:
-    projects_dir = WOLT_DIR / "wolt" / "projects"
-    projects = []
-    if projects_dir.exists():
-        for entry in sorted(projects_dir.iterdir()):
+def _tool_list_apps(args: dict, routing: dict | None) -> str:
+    apps = []
+    seen_names: set[str] = set()
+    # Check both apps/ (primary) and projects/ (legacy, deprecated)
+    for dir_name in ("apps", "projects"):
+        search_dir = WOLTS_DIR / dir_name
+        if not search_dir.exists():
+            continue
+        for entry in sorted(search_dir.iterdir()):
             if not entry.is_dir() or entry.name.startswith("."):
                 continue
-            proj = {"name": entry.name, "path": str(entry)}
-            proj_json = entry / "project.json"
-            if proj_json.exists():
+            if entry.name in seen_names:
+                continue
+            seen_names.add(entry.name)
+            app = {"name": entry.name, "path": str(entry)}
+            app_json = entry / "app.json"
+            if app_json.exists():
                 try:
-                    config = json.loads(proj_json.read_text())
-                    proj.update(config)
+                    config = json.loads(app_json.read_text())
+                    app.update(config)
                 except Exception:
                     pass
-            projects.append(proj)
-    return json.dumps({"projects": projects, "count": len(projects)})
+            apps.append(app)
+    return json.dumps({"apps": apps, "count": len(apps)})
 
 
 def _tool_switch_wolt(args: dict, routing: dict | None) -> str:
@@ -884,7 +891,7 @@ TOOL_HANDLERS: dict[str, callable] = {
     "read_memory": _tool_read_memory,
     "list_wolts": _tool_list_wolts,
     "generate_image": _tool_generate_image,
-    "list_projects": _tool_list_projects,
+    "list_apps": _tool_list_apps,
     "switch_wolt": _tool_switch_wolt,
     "new_session": _tool_new_session,
     "wolf_schedules": _tool_wolf_schedules,
@@ -916,9 +923,9 @@ TOOLS = [
                         "type": "string",
                         "description": "Which wolt to run the session as. Use the wolt's name from the colony list. Model tier is derived automatically from the wolt's type.",
                     },
-                    "project": {
+                    "app": {
                         "type": "string",
-                        "description": "Project name to scope the session to. Session will run in wolt/projects/{name}/. The directory is created if it doesn't exist. Use this to keep work isolated from the wolt root.",
+                        "description": "App name to scope the session to. Session will run in wolts/apps/{name}/. The directory is created if it doesn't exist. Use this to keep work isolated from the wolt root.",
                     },
                 },
                 "required": ["prompt"],
@@ -945,9 +952,9 @@ TOOLS = [
                         "type": "string",
                         "description": "Which wolt to run the session as. Use the wolt's name from the colony list. Model tier is derived automatically from the wolt's type.",
                     },
-                    "project": {
+                    "app": {
                         "type": "string",
-                        "description": "Project name to scope the session to. Session runs in wolt/projects/{name}/.",
+                        "description": "App name to scope the session to. Session runs in wolts/apps/{name}/.",
                     },
                 },
                 "required": ["prompt"],
@@ -1121,8 +1128,8 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "list_projects",
-            "description": "List all projects in the current wolt. Returns project names, paths, and any metadata from project.json. Use this to see what projects exist before routing a session to one.",
+            "name": "list_apps",
+            "description": "List all apps. Returns app names, paths, and any metadata from app.json. Use this to see what apps exist before routing a session to one.",
             "parameters": {"type": "object", "properties": {}},
         },
     },
