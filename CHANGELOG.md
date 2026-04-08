@@ -1,8 +1,8 @@
 # Changelog
 
-## v0.5.0 (2026-04-06)
+## v0.4.12
 
-- **Project → App rename** — "projects" are now "apps" across the platform. Directory `wolts/projects/` → `wolts/apps/`, API routes `/projects` → `/apps`, skills `woltspace-projects` → `woltspace-apps` and `woltspace-new-project` → `woltspace-new-app`, bot tool `list_projects` → `list_apps`. The `woltspace.json` manifest schema is unchanged. See `docs/migrations/v0.5.0.md` for migration steps.
+- **Projects → Apps rename** — "projects" are now "apps" across the platform. API routes `/projects` → `/apps`, skills `woltspace-projects` → `woltspace-apps`, bot tool `list_projects` → `list_apps`. New apps are created under `wolts/apps/`. **Backwards compatible:** existing apps in `wolts/projects/` are still discovered and served. Optional migration script at `migrations/v0.5.0.sh`. The `woltspace.json` manifest schema is unchanged.
 
 ## v0.4.4 (2026-04-05)
 
