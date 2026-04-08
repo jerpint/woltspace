@@ -690,12 +690,19 @@ def _tool_generate_image(args: dict, routing: dict | None) -> str:
 
 
 def _tool_list_apps(args: dict, routing: dict | None) -> str:
-    apps_dir = WOLTS_DIR / "apps"
     apps = []
-    if apps_dir.exists():
-        for entry in sorted(apps_dir.iterdir()):
+    seen_names: set[str] = set()
+    # Check both apps/ (primary) and projects/ (legacy, deprecated)
+    for dir_name in ("apps", "projects"):
+        search_dir = WOLTS_DIR / dir_name
+        if not search_dir.exists():
+            continue
+        for entry in sorted(search_dir.iterdir()):
             if not entry.is_dir() or entry.name.startswith("."):
                 continue
+            if entry.name in seen_names:
+                continue
+            seen_names.add(entry.name)
             app = {"name": entry.name, "path": str(entry)}
             app_json = entry / "app.json"
             if app_json.exists():

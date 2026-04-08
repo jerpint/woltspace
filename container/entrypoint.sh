@@ -20,7 +20,7 @@ if [ -f /home/node/.claude/.first-run ]; then
   # Fresh container — clear node_modules for all apps so installs run clean
   # Prevents binary/native dep corruption across container rebuilds (e.g. Node version changes)
   echo "fresh container: clearing node_modules in all apps..."
-  find "$WOLTS_DIR/apps" -maxdepth 2 -name "node_modules" -type d 2>/dev/null | while read -r nm; do
+  find "$WOLTS_DIR/apps" "$WOLTS_DIR/projects" -maxdepth 2 -name "node_modules" -type d 2>/dev/null | while read -r nm; do
     echo "  removing $nm"
     rm -rf "$nm"
   done

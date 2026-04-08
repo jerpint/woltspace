@@ -23,6 +23,7 @@ from paths import space_apps_dir
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 APPS_DIR = WOLTS_DIR / "apps"
+LEGACY_PROJECTS_DIR = WOLTS_DIR / "projects"  # deprecated — still discovered for backwards compat
 
 VALID_STACKS = {"python", "vite", "node", "html"}
 
@@ -82,20 +83,31 @@ def load_app(app_path: str | Path) -> WoltspaceApp | None:
 
 
 def discover_apps() -> list[WoltspaceApp]:
-    """Scan wolts/apps/ for all apps with woltspace.json manifests."""
+    """Scan wolts/apps/ and wolts/projects/ (legacy) for all apps with woltspace.json manifests."""
     apps = []
-    if not APPS_DIR.exists():
-        return apps
-    for manifest in sorted(APPS_DIR.glob("*/" + MANIFEST)):
-        app = load_app(manifest.parent)
-        if app:
-            apps.append(app)
+    seen_names: set[str] = set()
+    # Primary: wolts/apps/
+    for search_dir in (APPS_DIR, LEGACY_PROJECTS_DIR):
+        if not search_dir.exists():
+            continue
+        for manifest in sorted(search_dir.glob("*/" + MANIFEST)):
+            app = load_app(manifest.parent)
+            if app and app.name not in seen_names:
+                seen_names.add(app.name)
+                apps.append(app)
     return apps
 
 
 def app_dir(name: str) -> Path:
-    """Get the directory for an app. Lives at wolts/apps/<name>/."""
-    return APPS_DIR / name
+    """Get the directory for an app. Checks wolts/apps/ first, falls back to wolts/projects/."""
+    primary = APPS_DIR / name
+    if primary.exists():
+        return primary
+    legacy = LEGACY_PROJECTS_DIR / name
+    if legacy.exists():
+        return legacy
+    # Default to the new location for new apps
+    return primary
 
 
 def get_app(name: str) -> WoltspaceApp | None:
