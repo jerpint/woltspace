@@ -875,7 +875,7 @@ async def handle_setwolt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /new [wolt-name] — start a fresh session."""
+    """Handle /new [wolt-name] — spawn a fresh session immediately."""
     if not is_allowed(update):
         return
     chat_id = update.effective_chat.id
@@ -883,7 +883,7 @@ async def handle_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
 
     if args:
-        # /new <wolt-name> — set wolt and clear session
+        # /new <wolt-name> — set wolt and spawn
         name = args[0]
         wolt_dir = _WOLTS_DIR / name / "wolt"
         if not wolt_dir.is_dir():
@@ -895,10 +895,17 @@ async def handle_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _reply(update, "No active wolt. Use /wolt <name> first.")
         return
 
-    state["active_session"] = None
-    _save_chat_state(chat_id, state)
     wolt = state["active_wolt"]
-    await _reply(update, f"Ready for a fresh session with {wolt}. Send a message to start.")
+    try:
+        session = _spawn_session(wolt, chat_id)
+        state["active_session"] = session["name"]
+        _save_chat_state(chat_id, state)
+        tunnel_url = get_tunnel_url()
+        session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
+        await _reply(update, f"🪵 new session for {wolt}\n{session_link}")
+    except Exception as e:
+        logger.error(f"Failed to spawn session for {wolt}: {e}")
+        await _reply(update, f"couldn't start session for {wolt}: {e}")
 
 
 async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
