@@ -51,6 +51,11 @@ def wolt_chat_dir(wolt: str, wolts_dir: Path = None) -> Path:
     return wolt_state_dir(wolt, wolts_dir) / "chat"
 
 
+def wolt_uploads_dir(wolt: str, wolts_dir: Path = None) -> Path:
+    """Per-wolt file uploads: wolts/{wolt}/.state/uploads/"""
+    return wolt_state_dir(wolt, wolts_dir) / "uploads"
+
+
 def wolt_sessions_log(wolt: str, wolts_dir: Path = None) -> Path:
     """Per-wolt session summaries: wolts/{wolt}/.state/sessions.jsonl"""
     return wolt_state_dir(wolt, wolts_dir) / "sessions.jsonl"
