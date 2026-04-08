@@ -874,6 +874,64 @@ async def handle_setwolt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _reply(update, f"Set {name} as the active wolt for this chat. Next message will start a session.")
 
 
+async def handle_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /new [wolt-name] — start a fresh session."""
+    if not is_allowed(update):
+        return
+    chat_id = update.effective_chat.id
+    state = _load_chat_state(chat_id)
+    args = context.args
+
+    if args:
+        # /new <wolt-name> — set wolt and clear session
+        name = args[0]
+        wolt_dir = _WOLTS_DIR / name / "wolt"
+        if not wolt_dir.is_dir():
+            await _reply(update, f"No wolt named '{name}' found.")
+            return
+        state["active_wolt"] = name
+
+    if not state.get("active_wolt"):
+        await _reply(update, "No active wolt. Use /wolt <name> first.")
+        return
+
+    state["active_session"] = None
+    _save_chat_state(chat_id, state)
+    wolt = state["active_wolt"]
+    await _reply(update, f"Ready for a fresh session with {wolt}. Send a message to start.")
+
+
+async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /help — show available commands."""
+    if not is_allowed(update):
+        return
+    chat_id = update.effective_chat.id
+    state = _load_chat_state(chat_id)
+    active_wolt = state.get("active_wolt", "none")
+    active_session = state.get("active_session", "none")
+
+    text = (
+        "📋 Commands:\n"
+        "\n"
+        "/new — start a fresh session with the active wolt\n"
+        "/new <name> — start a fresh session with a specific wolt\n"
+        "/wolt — show active wolt and available wolts\n"
+        "/wolt <name> — switch active wolt\n"
+        "/sessions — list active sessions with links\n"
+        "/kill <session> — kill a session\n"
+        "/help — this message\n"
+        "\n"
+        "💬 Messaging:\n"
+        "• Send a message → goes to active session (or starts one)\n"
+        "• Reply to a wolt's message → routes to that wolt\n"
+        "• @dog → ask the dog for help\n"
+        "\n"
+        f"Active wolt: {active_wolt}\n"
+        f"Active session: {active_session}"
+    )
+    await _reply(update, text)
+
+
 # ---------------------------------------------------------------------------
 # Error handler
 # ---------------------------------------------------------------------------
@@ -902,6 +960,8 @@ def run():
     app.add_handler(CommandHandler("sessions", handle_sessions))
     app.add_handler(CommandHandler("kill", handle_kill))
     app.add_handler(CommandHandler("wolt", handle_setwolt))
+    app.add_handler(CommandHandler("new", handle_new))
+    app.add_handler(CommandHandler("help", handle_help))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
