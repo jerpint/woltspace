@@ -908,6 +908,36 @@ async def handle_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _reply(update, f"couldn't start session for {wolt}: {e}")
 
 
+async def handle_apps(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /apps — list all apps with status and public links."""
+    if not is_allowed(update):
+        return
+    try:
+        import httpx
+        async with httpx.AsyncClient() as client:
+            resp = await client.get("http://localhost:7777/apps", timeout=5)
+            resp.raise_for_status()
+            apps = resp.json()
+    except Exception as e:
+        await _reply(update, f"couldn't fetch apps: {e}")
+        return
+
+    if not apps:
+        await _reply(update, "No apps found.")
+        return
+
+    lines = ["📦 Apps:\n"]
+    for a in apps:
+        status = "🟢 running" if a.get("running") else "⚪ stopped"
+        line = f"• {a.get('emoji', '📦')} {a['name']} — {status}"
+        if a.get("description"):
+            line += f"\n  {a['description']}"
+        if a.get("tunnel_url"):
+            line += f"\n  🔗 {a['tunnel_url']}"
+        lines.append(line)
+    await _reply(update, "\n".join(lines))
+
+
 async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help — show available commands."""
     if not is_allowed(update):
@@ -926,6 +956,7 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/wolt <name> — switch active wolt\n"
         "/sessions — list active sessions with links\n"
         "/kill <session> — kill a session\n"
+        "/apps — list all apps with status and public links\n"
         "/help — this message\n"
         "\n"
         "💬 Messaging:\n"
@@ -968,6 +999,7 @@ def run():
     app.add_handler(CommandHandler("kill", handle_kill))
     app.add_handler(CommandHandler("wolt", handle_setwolt))
     app.add_handler(CommandHandler("new", handle_new))
+    app.add_handler(CommandHandler("apps", handle_apps))
     app.add_handler(CommandHandler("help", handle_help))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
