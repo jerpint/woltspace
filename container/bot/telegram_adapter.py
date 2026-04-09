@@ -111,11 +111,13 @@ def load_allowed_users():
         uid = uid.strip()
         if uid.isdigit():
             ALLOWED_USERS.add(int(uid))
+    if not ALLOWED_USERS:
+        logger.warning("TELEGRAM_ALLOWED_USERS is empty — bot will reject all messages. Set it to a comma-separated list of Telegram user IDs.")
 
 
 def is_allowed(update: Update) -> bool:
     if not ALLOWED_USERS:
-        return True
+        return False
     user_id = update.effective_user.id if update.effective_user else None
     return user_id in ALLOWED_USERS
 

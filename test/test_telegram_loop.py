@@ -238,14 +238,14 @@ class TestToolCallLogging:
 class TestAllowedUsers:
     """Test user allowlist logic."""
 
-    def test_no_allowlist_means_open(self):
+    def test_no_allowlist_means_deny_all(self):
         from bot.telegram_adapter import ALLOWED_USERS
-        # When empty, all users should be allowed
+        # When empty, all users should be denied (secure default)
         ALLOWED_USERS.clear()
         mock_update = MagicMock()
         mock_update.effective_user.id = 99999
         from bot.telegram_adapter import is_allowed
-        assert is_allowed(mock_update) is True
+        assert is_allowed(mock_update) is False
 
     def test_allowlist_blocks_unknown(self):
         from bot.telegram_adapter import ALLOWED_USERS, is_allowed
