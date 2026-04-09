@@ -193,9 +193,9 @@ async def _send_result(update: Update, result: dict):
 
 
 def is_allowed(update: Update) -> bool:
-    """Check if the user is whitelisted. No whitelist = open access."""
+    """Check if the user is whitelisted. No whitelist = deny all."""
     if not ALLOWED_USERS:
-        return True
+        return False
     user_id = update.effective_user.id if update.effective_user else None
     return user_id in ALLOWED_USERS
 
