@@ -42,6 +42,7 @@ from .config import (
     get_env,
     load_dotenv,
 )
+from . import tunnel as tunnel_mgr
 from .notify import send_notification
 from .sparks import get_spark_with_chain, list_sparks
 
@@ -138,12 +139,15 @@ async def lifespan(app: FastAPI):
     tool_registry.restore()
     _start_file_watcher()
     _start_tool_gc()
+    await tunnel_mgr.start_tunnel()
     print(f"""
   woltspace server (python) · http://localhost:{PORT}
   wolt: {WOLT_NAME}
   tui proxy → localhost:{TUI_PORT}
+  tunnel: {tunnel_mgr.get_tunnel_url() or 'disabled'}
     """)
     yield
+    await tunnel_mgr.stop_tunnel()
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
