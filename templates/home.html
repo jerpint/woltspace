@@ -1,0 +1,122 @@
+{% extends 'base.html' %}
+
+{% block title %}woltspace - the lodge{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="/static/home.css">
+{% endblock %}
+
+{% block before_sidebar %}
+<!-- ── BACKGROUND SCENE ── -->
+<div class="bg-scene" id="bg-scene">
+  <div id="bg-nature"></div>
+  <div class="bg-river-shimmer"></div>
+  <div id="cl-1" class="bg-cloud" style="top:38%; animation-duration:150s; animation-delay:0s"></div>
+  <div id="cl-2" class="bg-cloud" style="top:52%; animation-duration:115s; animation-delay:-42s"></div>
+  <div id="cl-3" class="bg-cloud" style="top:42%; animation-duration:185s; animation-delay:-92s"></div>
+  <div id="cl-4" class="bg-cloud" style="top:56%; animation-duration:135s; animation-delay:-68s"></div>
+  <div id="cl-5" class="bg-cloud" style="top:46%; animation-duration:165s; animation-delay:-125s"></div>
+  <div id="cl-6" class="bg-cloud" style="top:49%; animation-duration:200s; animation-delay:-28s"></div>
+  <div class="bg-beaver-main" id="bg-beaver-main">
+    <div class="sprite-2frame">
+      <div class="frm-a" id="sp-bv-main-a"></div>
+      <div class="frm-b" id="sp-bv-main-b"></div>
+    </div>
+  </div>
+  <div class="bg-beaver-2" id="bg-beaver-2" style="display:none">
+    <div id="sp-bv-side"></div>
+  </div>
+  <div class="bg-raccoon" id="bg-raccoon">
+    <div class="sprite-2frame">
+      <div class="frm-a" id="sp-rc-a"></div>
+      <div class="frm-b" id="sp-rc-b"></div>
+    </div>
+  </div>
+  <div class="bg-log" id="bg-log">
+    <div id="sp-log"></div>
+  </div>
+  <div class="bg-ripple-container">
+    <div class="bg-ripple"></div>
+    <div class="bg-ripple"></div>
+    <div class="bg-ripple"></div>
+  </div>
+  <div class="bg-leaf"><div id="sp-leaf-g"></div></div>
+  <div class="bg-peek" id="bg-peek"><div id="sp-peek"></div></div>
+  <div class="bg-fish" id="bg-fish"><div id="sp-fish"></div></div>
+</div>
+{% endblock %}
+
+{% block content %}
+  <!-- ── HOME VIEW ── -->
+  <div id="home-view" class="view active">
+    <div class="home-view">
+      <div class="home-greeting" id="home-greeting">the lodge</div>
+      <div class="home-tagline">where wolts live and things get built.</div>
+      <div class="home-quote" id="home-quote"></div>
+    </div>
+  </div>
+
+  <!-- ── APPS VIEW ── -->
+  <div id="apps-view" class="view">
+    <div class="main-header">
+      <div>
+        <div class="main-title">Apps</div>
+        <div class="main-subtitle" id="apps-subtitle">loading...</div>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-ghost" onclick="loadApps()">⟳ refresh</button>
+      </div>
+    </div>
+
+    <div class="filter-strip" id="app-filters">
+      <button class="filter-chip active" onclick="filterApps('all', this)">All</button>
+      <button class="filter-chip" onclick="filterApps('running', this)">Running</button>
+      <button class="filter-chip" onclick="filterApps('stopped', this)">Stopped</button>
+    </div>
+
+    <div class="app-grid" id="app-grid">
+      <div class="empty-state">
+        <div class="empty-state-icon">📦</div>
+        <div class="empty-state-text">loading apps...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SESSIONS VIEW ── -->
+  <div id="sessions-view" class="view">
+    <div class="main-header">
+      <div>
+        <div class="main-title">Sessions</div>
+        <div class="main-subtitle" id="sessions-subtitle">loading...</div>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-ghost" onclick="loadSessions()">&#10227; refresh</button>
+      </div>
+    </div>
+
+    <div class="sessions-filter-tabs" id="sessions-filter-tabs"></div>
+
+    <div class="sessions-toolbar">
+      <div class="sessions-search-wrap">
+        <svg class="sessions-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        <input id="sessions-search" class="sessions-search" type="text" placeholder="Search sessions..." oninput="filterSessions()">
+      </div>
+      <select id="sessions-sort" class="sessions-sort" onchange="filterSessions()">
+        <option value="recent">Most recent</option>
+        <option value="name">Name</option>
+      </select>
+      <button id="sessions-toggle-running" class="sessions-toggle-running" onclick="toggleRunningOnly()">Running only</button>
+    </div>
+
+    <div id="sessions-list" class="sessions-list">
+      <div class="empty-state">
+        <div class="empty-state-icon">🌿</div>
+        <div class="empty-state-text">loading sessions...</div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/home-scene.js"></script>
+{% endblock %}

@@ -22,6 +22,8 @@ from fastapi.responses import (
     Response,
     StreamingResponse,
 )
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 from . import tools as tool_registry
 from .config import (
@@ -39,6 +41,7 @@ from .config import (
     WOLT_DIR,
     WOLT_NAME,
     WOLTS_DIR,
+    WOLTSPACE_DIR,
     get_env,
     load_dotenv,
 )
@@ -147,6 +150,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
+
+# --- Templates & Static ---
+
+TEMPLATES_DIR = WOLTSPACE_DIR / "templates"
+STATIC_DIR = PUBLIC_DIR / "static"
+
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+# Mount static files (CSS/JS shared across pages)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 # --- Middleware: CORS ---
@@ -1301,9 +1314,11 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
 # --- Pages (HTML) ---
 
 @app.get("/tui")
-async def tui_page():
-    resp = await _serve_platform_file("split.html")
-    return resp or PlainTextResponse("split.html not found", status_code=500)
+async def tui_page(request: Request):
+    return templates.TemplateResponse("tui.html", {
+        "request": request,
+        "cache_bust": int(time.time()),
+    })
 
 
 # jerpint: this one will be important to nail we might review onboarding flow
@@ -1317,12 +1332,13 @@ async def onboard_page():
 
 @app.get("/{path:path}")
 async def catch_all(path: str, request: Request):
-    # Root → home.html or site index
+    # Root → home template (Jinja2)
     if path == "" or path == "/":
-        resp = await _serve_platform_file("home.html")
-        if resp:
-            return resp
-        return await _serve_static("/index.html", request) or PlainTextResponse("Not found", status_code=404)
+        return templates.TemplateResponse("home.html", {
+            "request": request,
+            "active_nav": "home",
+            "cache_bust": int(time.time()),
+        })
 
     # Try wolt site first, then platform public dir
     resp = await _serve_static(f"/{path}", request)

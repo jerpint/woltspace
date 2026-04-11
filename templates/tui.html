@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>woltspace</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦫</text></svg>">
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#18100A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="/static/icon-192.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Preahvihear&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<style>
+  :root {
+    --bg:         #EDE8DE;
+    --surface:    #F5F1E8;
+    --surface-2:  #FAF7F0;
+    --border:     #D6CCBA;
+    --border-2:   #C4B89E;
+    --ink:        #18100A;
+    --ink-2:      #5C4D3C;
+    --ink-3:      #9A8878;
+    --terra:      #C4531E;
+    --green:      #3A6644;
+    --green-light:#C8DECE;
+    --amber:      #C98B2A;
+
+    --font-display: 'Preahvihear', sans-serif;
+    --font-body:    'DM Sans', sans-serif;
+    --font-mono:    'JetBrains Mono', monospace;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100dvh; overflow: hidden; background: var(--bg); }
+  body { display: flex; flex-direction: column; font-family: var(--font-body); }
+
+  /* ── Topbar ── */
+  #topbar {
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+    padding: 0 16px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+
+  .tb-back {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    text-decoration: none;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 10px 5px 7px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ink-2);
+    cursor: pointer;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .tb-back:hover { background: var(--bg); border-color: var(--border-2); color: var(--ink); }
+  .tb-back svg { flex-shrink: 0; }
+
+  .tb-wolt {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .tb-wolt-avatar {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  .tb-wolt-name {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tb-status {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 12px;
+    flex-shrink: 0;
+    text-transform: uppercase;
+  }
+  .tb-status-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .tb-status.connected { background: var(--green-light); color: var(--green); }
+  .tb-status.connecting { background: #F2E4C0; color: var(--amber); }
+  .tb-status.disconnected { background: #F0D5C8; color: var(--terra); }
+
+  /* app bar — shown when right pane is viewing an app */
+  #app-bar {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    border-left: 1px solid var(--border);
+    padding-left: 12px;
+    margin-left: 4px;
+  }
+  #app-bar.visible { display: flex; }
+  #app-bar .p-emoji { font-size: 14px; }
+  #app-bar .p-name {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+  #app-bar .p-dot { width: 6px; height: 6px; border-radius: 50%; }
+  #app-bar .p-dot.on  { background: var(--green); box-shadow: 0 0 4px rgba(58,102,68,0.4); }
+  #app-bar .p-dot.off { background: var(--border-2); }
+  #app-bar .p-toggle {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    padding: 4px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: transparent;
+    text-transform: uppercase;
+  }
+  #app-bar .p-toggle.start { border: 1px solid var(--green); color: var(--green); }
+  #app-bar .p-toggle.start:hover { background: var(--green-light); }
+  #app-bar .p-toggle.stop  { border: 1px solid var(--border); color: var(--ink-3); }
+  #app-bar .p-toggle.stop:hover  { border-color: var(--terra); color: var(--terra); }
+
+  .tb-spacer { flex: 1; }
+
+  .tb-actions {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .tb-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    padding: 5px 11px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--ink-3);
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .tb-btn:hover { background: var(--bg); border-color: var(--border-2); color: var(--ink-2); }
+  .tb-btn:disabled { opacity: 0.3; cursor: default; }
+  .tb-btn.active { background: var(--ink); border-color: var(--ink); color: var(--surface-2); }
+  #btn-share.copied { background: var(--green); border-color: var(--green); color: #fff; }
+
+  .tb-divider { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
+
+  /* ── Split layout ── */
+  #split {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+  #left {
+    width: 50%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: width 0.2s ease;
+    background: #1a1612;
+  }
+  #right {
+    width: 50%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: width 0.2s ease;
+    position: relative;
+  }
+  #split.left-full  #left  { width: 100%; }
+  #split.left-full  #right { width: 0; overflow: hidden; }
+  #split.right-full #left  { width: 0; overflow: hidden; }
+  #split.right-full #right { width: 100%; }
+
+  #terminal { flex: 1; overflow: hidden; }
+  .xterm { height: 100%; }
+
+  #drag-handle {
+    width: 4px;
+    flex-shrink: 0;
+    background: var(--border);
+    cursor: col-resize;
+    position: relative;
+    touch-action: none;
+    z-index: 10;
+    transition: background 0.15s;
+  }
+  #drag-handle:hover, #drag-handle.dragging { background: var(--terra); }
+  #drag-handle::before { content: ''; position: absolute; inset: 0 -6px; }
+
+  #preview { flex: 1; border: none; background: var(--bg); display: block; }
+
+  /* ── History panel ── */
+  #hist-panel {
+    position: absolute; top: 0; right: 0; bottom: 0; width: 240px;
+    background: var(--surface-2);
+    border-left: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    z-index: 50; transform: translateX(100%);
+    transition: transform 0.2s ease;
+  }
+  #hist-panel.open { transform: translateX(0); }
+  #hist-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+    flex-shrink: 0;
+  }
+  #hist-header span {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-3);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  #hist-header button {
+    background: none; border: none; color: var(--ink-3); cursor: pointer;
+    font-size: 14px; padding: 2px; line-height: 1;
+    transition: color 0.15s;
+  }
+  #hist-header button:hover { color: var(--ink); }
+  #hist-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+  #hist-list::-webkit-scrollbar { width: 4px; }
+  #hist-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .hist-item {
+    padding: 10px 16px;
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  .hist-item:hover { background: var(--bg); }
+  .hist-item.current { background: var(--green-light); }
+  .hist-title {
+    display: block;
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .hist-time {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--ink-3);
+    margin-top: 2px;
+  }
+
+  /* ── Mobile ── */
+  @media (max-width: 768px) {
+    #drag-handle { display: none; }
+    #split #left  { width: 100%; }
+    #split #right { width: 0; overflow: hidden; }
+    #split.right-full #left  { width: 0 !important; overflow: hidden; }
+    #split.right-full #right { width: 100% !important; }
+
+    #topbar {
+      flex-wrap: wrap;
+      height: auto;
+      padding: 8px 12px;
+      gap: 8px;
+    }
+    .tb-back { padding: 6px 8px; }
+    .tb-wolt-name { max-width: 100px; }
+    .tb-actions {
+      width: 100%;
+      flex-wrap: wrap;
+    }
+    .tb-btn {
+      flex: 1;
+      justify-content: center;
+      padding: 8px 6px;
+      font-size: 10px;
+    }
+    .tb-divider { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <a class="tb-back" href="/" title="Back to lodge">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5m0 0l7 7m-7-7l7-7"/></svg>
+    lodge
+  </a>
+
+  <div class="tb-wolt">
+    <div class="tb-wolt-avatar" id="wolt-avatar">🦫</div>
+    <span class="tb-wolt-name" id="session-name">woltspace</span>
+  </div>
+
+  <div class="tb-status connecting" id="tui-status">
+    <div class="tb-status-dot"></div>
+    <span id="tui-status-text">connecting</span>
+  </div>
+
+  <div id="app-bar">
+    <span class="p-emoji" id="p-emoji"></span>
+    <span class="p-name" id="p-name"></span>
+    <span class="p-dot" id="p-dot"></span>
+    <button class="p-toggle" id="p-toggle" onclick="toggleCurrentApp()"></button>
+  </div>
+
+  <div class="tb-spacer"></div>
+
+  <div class="tb-actions">
+    <button class="tb-btn" id="btn-back" onclick="goBack()" title="Back" disabled>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5m0 0l7 7m-7-7l7-7"/></svg>
+    </button>
+    <button class="tb-btn" id="btn-share" onclick="copyPublicLink()" title="Copy public link">share</button>
+    <div class="tb-divider"></div>
+    <button class="tb-btn" id="btn-term" onclick="toggleFull('left')" title="Fullscreen terminal">terminal</button>
+    <button class="tb-btn" id="btn-preview" onclick="toggleFull('right')" title="Fullscreen view">view</button>
+  </div>
+</div>
+
+<div id="split">
+  <div id="left">
+    <div id="terminal"></div>
+  </div>
+  <div id="drag-handle"></div>
+  <div id="right">
+    <iframe id="preview" src="/placeholder.html"></iframe>
+    <div id="hist-panel">
+      <div id="hist-header">
+        <span>views</span>
+        <button onclick="toggleHist()">&#10005;</button>
+      </div>
+      <div id="hist-list"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import { Terminal }      from 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm';
+  import { FitAddon }      from 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm';
+  import { WebLinksAddon } from 'https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/+esm';
+
+  // ── Session ──
+  const session = new URLSearchParams(location.search).get('session') || 'main';
+  const nameEl = document.getElementById('session-name');
+  nameEl.textContent = session === 'main' ? nameEl.textContent : session;
+  document.title = session === 'main' ? document.title : `${session} · tui`;
+
+  // Try to get wolt info for the avatar
+  const woltName = session.split('-').slice(0, -3).join('-') || session;
+  fetch('/wolts').then(r => r.json()).then(wolts => {
+    const WOLT_EMOJI = { beaver: '🦫', otter: '🦦', raccoon: '🦝', wolf: '🐺', dog: '🐶' };
+    const w = wolts.find(w => (w.name || w.dir) === woltName);
+    if (w) {
+      document.getElementById('wolt-avatar').textContent = WOLT_EMOJI[w.type] || '🦫';
+    }
+  }).catch(() => {});
+
+  const preview = document.getElementById('preview');
+
+  // ── Terminal ──
+  const statusEl = document.getElementById('tui-status');
+  const statusText = document.getElementById('tui-status-text');
+  const term = new Terminal({
+    cursorBlink: true, fontSize: 13,
+    fontFamily: "'JetBrains Mono','SF Mono','Fira Code','Consolas',monospace",
+    theme: {
+      background: '#1a1612',
+      foreground: '#E8E0D4',
+      cursor: '#C98B2A',
+      cursorAccent: '#1a1612',
+      selectionBackground: 'rgba(58,102,68,0.35)',
+      selectionForeground: '#F5F1E8',
+      black:   '#1a1612',
+      red:     '#C4531E',
+      green:   '#5e9e70',
+      yellow:  '#C98B2A',
+      blue:    '#4a8fa8',
+      magenta: '#b07aab',
+      cyan:    '#5e9e70',
+      white:   '#E8E0D4',
+      brightBlack:   '#5C4D3C',
+      brightRed:     '#e06840',
+      brightGreen:   '#7bbf8a',
+      brightYellow:  '#d4a96a',
+      brightBlue:    '#6bb5cc',
+      brightMagenta: '#c99ac2',
+      brightCyan:    '#7bbf8a',
+      brightWhite:   '#FAF7F0',
+    },
+  });
+
+  const fitAddon = new FitAddon();
+  term.loadAddon(fitAddon);
+  term.loadAddon(new WebLinksAddon());
+  term.open(document.getElementById('terminal'));
+  fitAddon.fit();
+
+  // Mobile autocorrect
+  const xtermTextarea = document.querySelector('.xterm-helper-textarea');
+  if (xtermTextarea) {
+    xtermTextarea.setAttribute('autocorrect', 'on');
+    xtermTextarea.setAttribute('autocapitalize', 'sentences');
+    xtermTextarea.setAttribute('spellcheck', 'true');
+  }
+
+  // ── Status updates ──
+  function setStatus(state, text) {
+    statusEl.className = 'tb-status ' + state;
+    statusText.textContent = text;
+  }
+
+  // ── WebSocket ──
+  let ws = null;
+  function connectTUI() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(proto + '//' + location.host + '/tui?session=' + encodeURIComponent(session));
+    ws.onopen = () => {
+      setStatus('connected', 'connected');
+      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    };
+    ws.onmessage = (e) => term.write(e.data);
+    ws.onclose = () => {
+      setStatus('disconnected', 'reconnecting');
+      setTimeout(connectTUI, 2000);
+    };
+    ws.onerror = () => ws.close();
+  }
+
+  term.onData(d => ws?.readyState === WebSocket.OPEN && ws.send(d));
+  term.onResize(({ cols, rows }) => {
+    if (ws?.readyState === WebSocket.OPEN)
+      ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+  });
+
+  window.addEventListener('resize', () => fitAddon.fit());
+  new ResizeObserver(() => fitAddon.fit()).observe(document.getElementById('terminal'));
+  setTimeout(() => fitAddon.fit(), 100);
+
+  // Touch scroll → mouse wheel escape sequences for tmux
+  if ('ontouchstart' in window) {
+    let lastTouchY = 0;
+    const termEl = document.getElementById('terminal');
+    termEl.addEventListener('touchstart', e => {
+      lastTouchY = e.touches[0].clientY;
+    }, { passive: true });
+    termEl.addEventListener('touchmove', e => {
+      const dy = lastTouchY - e.touches[0].clientY;
+      lastTouchY = e.touches[0].clientY;
+      const lines = Math.round(Math.abs(dy) / 25);
+      if (lines === 0 || ws?.readyState !== WebSocket.OPEN) return;
+      const seq = dy > 0 ? '\x1b[<65;1;1M' : '\x1b[<64;1;1M';
+      for (let i = 0; i < lines; i++) ws.send(seq);
+    }, { passive: true });
+  }
+
+  // Auto-resume dead sessions
+  async function ensureSessionAlive() {
+    if (session === 'main') { connectTUI(); return; }
+    try {
+      const res = await fetch('/sessions');
+      const sessions = await res.json();
+      const s = sessions.find(x => x.name === session);
+      if (s && s.status === 'running' && s.alive) {
+        connectTUI();
+      } else if (s) {
+        setStatus('connecting', 'resuming');
+        const r = await fetch('/sessions/' + encodeURIComponent(session) + '/resume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: '' }),
+        });
+        const result = await r.json();
+        if (result.error) {
+          setStatus('disconnected', 'resume failed');
+        } else {
+          await new Promise(ok => setTimeout(ok, 1500));
+          connectTUI();
+        }
+      } else {
+        setStatus('disconnected', 'not found');
+      }
+    } catch {
+      connectTUI();
+    }
+  }
+  ensureSessionAlive();
+
+  // ── Right pane: views + history ──
+  const btnBack   = document.getElementById('btn-back');
+  const histPanel = document.getElementById('hist-panel');
+  const histList  = document.getElementById('hist-list');
+
+  let lastUrl   = null;
+  let viewStack = [];
+  let stackIdx  = -1;
+  let histOpen  = false;
+  let currentViewportMeta = null;
+
+  function timeAgo(ts) {
+    const s = Math.floor((Date.now() - ts) / 1000);
+    if (s < 60)    return 'just now';
+    if (s < 3600)  return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+
+  let allSparks = [];
+
+  function renderHist() {
+    histList.innerHTML = allSparks.map(s => {
+      const isCurrent = lastUrl === '/history/' + s.id;
+      return `<div class="hist-item${isCurrent ? ' current' : ''}" onclick="loadSpark('${s.id}', '${(s.title||'').replace(/'/g,"\\'")}')">
+        <span class="hist-title">${s.title}</span>
+        <span class="hist-time">${timeAgo(new Date(s.timestamp).getTime())}</span>
+      </div>`;
+    }).join('');
+  }
+
+  window.loadSpark = (id, title) => {
+    const url = '/history/' + id;
+    loadView(url, title);
+    setCurrent(url);
+  };
+
+  function updateBackBtn() {
+    btnBack.disabled = stackIdx <= 0;
+  }
+
+  // ── App bar ──
+  const appBar = document.getElementById('app-bar');
+  let currentAppName = null;
+
+  async function updateAppBar(url) {
+    const siteMatch = url.match(/^\/wolt\/([^/]+)\/site/);
+    if (siteMatch) {
+      const wName = siteMatch[1];
+      document.getElementById('p-emoji').textContent = '🦝';
+      document.getElementById('p-name').textContent = wName;
+      document.getElementById('p-dot').className = 'p-dot on';
+      document.getElementById('p-toggle').style.display = 'none';
+      currentAppName = null;
+      appBar.classList.add('visible');
+      return;
+    }
+
+    let appName = null;
+    const meta = currentViewportMeta;
+    if (meta && meta.port && meta.port !== 7777) {
+      try {
+        const apps = await fetch('/apps').then(r => r.json());
+        const app = apps.find(a => a.port === meta.port);
+        if (app) appName = app.name;
+      } catch {}
+    }
+    if (!appName) {
+      const appMatch = url.match(/^\/app\/([^/]+)/);
+      if (appMatch) appName = appMatch[1];
+    }
+
+    if (!appName) {
+      appBar.classList.remove('visible');
+      currentAppName = null;
+      return;
+    }
+
+    currentAppName = appName;
+    try {
+      const p = await fetch('/apps/' + appName).then(r => r.json());
+      document.getElementById('p-emoji').textContent = p.emoji || '📦';
+      document.getElementById('p-name').textContent = p.name;
+      const dot = document.getElementById('p-dot');
+      dot.className = 'p-dot ' + (p.running ? 'on' : 'off');
+      const btn = document.getElementById('p-toggle');
+      if (p.start) {
+        btn.textContent = p.running ? 'stop' : 'start';
+        btn.className = 'p-toggle ' + (p.running ? 'stop' : 'start');
+        btn.style.display = '';
+      } else {
+        btn.style.display = 'none';
+      }
+      appBar.classList.add('visible');
+    } catch {
+      appBar.classList.remove('visible');
+      currentAppName = null;
+    }
+  }
+
+  const isLocal = ['localhost', '127.0.0.1', '0.0.0.0'].includes(location.hostname);
+
+  function directPortUrl(port, subPath) {
+    if (!isLocal) return null;
+    return location.protocol + '//' + location.hostname + ':' + port + (subPath || '/');
+  }
+
+  window.toggleCurrentApp = async () => {
+    if (!currentAppName) return;
+    const btn = document.getElementById('p-toggle');
+    const isRunning = btn.classList.contains('stop');
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {
+      const result = await fetch(
+        '/apps/' + currentAppName + '/' + (isRunning ? 'stop' : 'start'),
+        { method: 'POST' }
+      ).then(r => r.json());
+
+      if (!isRunning && result.port) {
+        const direct = directPortUrl(result.port);
+        preview.src = direct || '/app/' + currentAppName + '/';
+        setCurrent('/app/' + currentAppName + '/', result.port);
+        if (currentViewportMeta) currentViewportMeta.port = result.port;
+      } else {
+        preview.src = '/app/' + currentAppName + '/';
+        setCurrent('/app/' + currentAppName + '/');
+        if (currentViewportMeta) currentViewportMeta.port = 7777;
+      }
+      await updateAppBar('/app/' + currentAppName + '/');
+    } catch {}
+    btn.disabled = false;
+  };
+
+  function loadView(url, title, pushToStack = true) {
+    const meta = currentViewportMeta;
+    if (meta && meta.port && meta.port !== 7777 && url && url.startsWith('/app/')) {
+      const direct = directPortUrl(meta.port);
+      if (direct) {
+        preview.src = direct;
+      } else if (meta.tunnel_url) {
+        preview.src = meta.tunnel_url;
+      } else {
+        preview.src = url;
+      }
+    } else {
+      preview.src = url;
+    }
+    lastUrl = url;
+    if (pushToStack) {
+      viewStack.splice(stackIdx + 1);
+      viewStack.push({ url, title, t: Date.now() });
+      stackIdx = viewStack.length - 1;
+    }
+    updateBackBtn();
+    renderHist();
+    updateAppBar(url);
+  }
+
+  function setCurrent(url, port) {
+    const body = { url };
+    if (port != null) body.port = port;
+    fetch('/current?session=' + encodeURIComponent(session), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).catch(() => {});
+  }
+
+  window.goBack = () => {
+    if (stackIdx > 0) {
+      stackIdx--;
+      const e = viewStack[stackIdx];
+      lastUrl = e.url;
+      currentViewportMeta = null;
+      preview.src = e.url;
+      setCurrent(e.url);
+      updateBackBtn();
+      renderHist();
+    }
+  };
+
+  window.jumpTo = (i) => {
+    if (i >= 0 && i < viewStack.length) {
+      stackIdx = i;
+      const e = viewStack[i];
+      lastUrl = e.url;
+      preview.src = e.url;
+      setCurrent(e.url);
+      updateBackBtn();
+      renderHist();
+    }
+  };
+
+  window.toggleHist = () => {
+    histOpen = !histOpen;
+    histPanel.classList.toggle('open', histOpen);
+    if (histOpen) renderHist();
+  };
+
+  window.copyPublicLink = async () => {
+    const btn = document.getElementById('btn-share');
+    btn.textContent = '...';
+    btn.disabled = true;
+    try {
+      const res = await fetch('/shares', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session }),
+      });
+      const data = await res.json();
+      if (!data.token) throw new Error(data.error || 'no token');
+      const link = location.origin + data.url;
+      await navigator.clipboard.writeText(link).catch(() => window.open(link, '_blank'));
+      btn.disabled = false;
+      btn.textContent = 'copied';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = 'share'; btn.classList.remove('copied'); }, 3000);
+    } catch (err) {
+      console.error('[share]', err);
+      btn.textContent = 'share';
+      btn.disabled = false;
+    }
+  };
+
+  // Load sparks for history panel
+  fetch('/history').then(r => r.json()).then(sparks => {
+    allSparks = sparks;
+    renderHist();
+  }).catch(() => {});
+
+  async function pollCurrent() {
+    try {
+      const data = await fetch('/current/meta?session=' + encodeURIComponent(session)).then(r => r.json());
+      if (data.redirect) {
+        location.replace('/tui?session=' + encodeURIComponent(data.redirect));
+        return;
+      }
+      if (data.url && data.url !== lastUrl) {
+        currentViewportMeta = data;
+        const title = data.url.split('/').pop().replace('.html','').replace(/-/g,' ') || data.url;
+        loadView(data.url, title);
+      }
+    } catch {}
+  }
+  pollCurrent();
+  setInterval(pollCurrent, 2000);
+
+  // ── Drag to resize ──
+  const leftPane   = document.getElementById('left');
+  const rightPane  = document.getElementById('right');
+  const dragHandle = document.getElementById('drag-handle');
+  let dragging = false;
+
+  dragHandle.addEventListener('pointerdown', e => {
+    if (split.classList.contains('left-full') || split.classList.contains('right-full')) return;
+    dragging = true;
+    dragHandle.setPointerCapture(e.pointerId);
+    dragHandle.classList.add('dragging');
+    leftPane.style.transition  = 'none';
+    rightPane.style.transition = 'none';
+    e.preventDefault();
+  });
+
+  dragHandle.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const rect  = split.getBoundingClientRect();
+    const ratio = Math.max(0.15, Math.min(0.85, (e.clientX - rect.left) / rect.width));
+    leftPane.style.width  = (ratio * 100).toFixed(1) + '%';
+    rightPane.style.width = ((1 - ratio) * 100).toFixed(1) + '%';
+    fitAddon.fit();
+  });
+
+  dragHandle.addEventListener('pointerup', () => {
+    if (!dragging) return;
+    dragging = false;
+    dragHandle.classList.remove('dragging');
+    leftPane.style.transition  = '';
+    rightPane.style.transition = '';
+    fitAddon.fit();
+  });
+
+  // ── Fullscreen toggle ──
+  const split      = document.getElementById('split');
+  const btnTerm    = document.getElementById('btn-term');
+  const btnPreview = document.getElementById('btn-preview');
+
+  window.toggleFull = (side) => {
+    leftPane.style.width  = '';
+    rightPane.style.width = '';
+    const cls   = side === 'left' ? 'left-full' : 'right-full';
+    const other = side === 'left' ? 'right-full' : 'left-full';
+    if (window.innerWidth <= 768) {
+      if (side === 'right') split.classList.add('right-full');
+      else split.classList.remove('right-full');
+    } else {
+      if (split.classList.contains(cls)) {
+        split.classList.remove(cls);
+        btnTerm.textContent    = 'terminal';
+        btnPreview.textContent = 'view';
+      } else {
+        split.classList.remove(other);
+        split.classList.add(cls);
+        btnTerm.textContent    = side === 'left'  ? 'split' : 'terminal';
+        btnPreview.textContent = side === 'right' ? 'split' : 'view';
+      }
+    }
+    setTimeout(() => fitAddon.fit(), 250);
+  };
+
+  // View mode from URL
+  if (new URLSearchParams(location.search).get('view') === 'session')
+    toggleFull('right');
+
+  // PWA
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
+</script>
+</body>
+</html>
