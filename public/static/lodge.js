@@ -91,11 +91,8 @@ function renderSidebarWolts() {
       <div class="wolt-info">
         <div class="wolt-name">${name}</div>
         <div class="wolt-type">${w.type}</div>
+        ${tooltip}
       </div>
-      <div class="wolt-card-actions">
-        <a class="wolt-action-btn" href="/wolt/${name}/site/" target="_blank" onclick="event.stopPropagation()" title="Open site">↗</a>
-      </div>
-      ${tooltip}
     </div>`;
   }).join('');
 }

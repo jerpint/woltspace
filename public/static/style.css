@@ -211,62 +211,25 @@ body {
   font-size: 10px;
   color: rgba(255,255,255,0.35);
 }
-/* ── Wolt card actions ── */
-.wolt-card-actions {
-  display: none;
-  gap: 4px;
-  margin-left: auto;
-  flex-shrink: 0;
-}
-.wolt-card:hover .wolt-card-actions { display: flex; }
-.wolt-action-btn {
-  width: 26px; height: 26px;
-  border-radius: 5px;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(255,255,255,0.07);
-  color: rgba(255,255,255,0.5);
-  font-size: 13px;
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: all 0.15s;
-  text-decoration: none;
-}
-.wolt-action-btn:hover { background: rgba(255,255,255,0.14); color: rgba(255,255,255,0.85); }
 
-/* ── Wolt tooltip ── */
-.wolt-tooltip {
-  display: none;
-  position: absolute;
-  left: 100%;
-  top: 0;
-  margin-left: 10px;
-  width: 220px;
-  background: #2a2018;
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 8px;
-  padding: 10px 12px;
-  z-index: 20;
-  pointer-events: none;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-}
+/* ── Wolt tooltip (inline expansion on hover) ── */
+.wolt-tooltip { display: none; }
 .wolt-card:hover .wolt-tooltip { display: block; }
-.wolt-tooltip-name {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(255,255,255,0.9);
-  margin-bottom: 4px;
-}
+.wolt-tooltip-name { display: none; }
 .wolt-tooltip-role {
   font-family: var(--font-mono);
-  font-size: 11px;
-  color: rgba(255,255,255,0.5);
-  margin-bottom: 6px;
+  font-size: 10px;
+  color: rgba(255,255,255,0.4);
+  margin-top: 3px;
+  letter-spacing: 0.04em;
 }
 .wolt-tooltip-desc {
-  font-size: 12px;
-  color: rgba(255,255,255,0.4);
-  line-height: 1.5;
+  font-family: var(--font-body);
+  font-size: 11px;
+  color: rgba(255,255,255,0.3);
+  line-height: 1.4;
+  margin-top: 2px;
+  white-space: normal;
 }
 
 /* ── Creatures toggle ── */
