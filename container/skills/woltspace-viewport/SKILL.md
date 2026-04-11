@@ -27,6 +27,16 @@ The server runs on **port 7777**. You never need to curl it directly — `push-v
 
 Sites have automatic live reload. When you edit files in `wolt/site/`, the viewport updates immediately — no need to call `push-view` again after the initial push. Just edit and save.
 
+## App URLs
+
+To push an app to the viewport, use the subdomain pattern:
+
+```bash
+push-view http://my-app.localhost:7777/
+```
+
+The format is `http://<app-name>.localhost:7777/`. Do **not** use `/app/<name>/` — that path triggers a 302 redirect to the app's bare port, which breaks through the Cloudflare tunnel.
+
 ## Tips
 
 - The viewport only shows content served by localhost:7777. External URLs won't work (iframe CORS).
