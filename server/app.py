@@ -22,6 +22,8 @@ from fastapi.responses import (
     Response,
     StreamingResponse,
 )
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 from . import tools as tool_registry
 from .config import (
@@ -39,6 +41,7 @@ from .config import (
     WOLT_DIR,
     WOLT_NAME,
     WOLTS_DIR,
+    WOLTSPACE_DIR,
     get_env,
     load_dotenv,
 )
@@ -147,6 +150,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
+
+# --- Templates & Static ---
+
+TEMPLATES_DIR = WOLTSPACE_DIR / "templates"
+STATIC_DIR = PUBLIC_DIR / "static"
+
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+# Mount static files (CSS/JS shared across pages)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 # --- Middleware: CORS ---
@@ -1317,8 +1330,13 @@ async def onboard_page():
 
 @app.get("/{path:path}")
 async def catch_all(path: str, request: Request):
-    # Root → home.html or site index
+    # Root → home template (Jinja2) with fallback to legacy home.html
     if path == "" or path == "/":
+        if TEMPLATES_DIR.exists() and (TEMPLATES_DIR / "home.html").exists():
+            return templates.TemplateResponse("home.html", {
+                "request": request,
+                "active_nav": "home",
+            })
         resp = await _serve_platform_file("home.html")
         if resp:
             return resp

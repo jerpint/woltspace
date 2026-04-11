@@ -1,0 +1,221 @@
+/* ── Home page specific styles ── */
+
+/* ── BACKGROUND SCENE (pixel art critters) ── */
+.bg-scene {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+#bg-nature {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  pointer-events: none;
+}
+@keyframes river-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(60px); }
+}
+.bg-river-shimmer {
+  position: absolute;
+  bottom: 0;
+  left: -60px;
+  width: calc(100% + 120px);
+  height: 40px;
+  background: repeating-linear-gradient(90deg,
+    transparent 0px, transparent 10px,
+    rgba(144,212,232,0.18) 10px, rgba(144,212,232,0.18) 15px
+  );
+  animation: river-scroll 1.4s linear infinite;
+  pointer-events: none;
+}
+
+/* Sprite animations */
+.sprite-2frame { position:relative; display:inline-block; }
+.sprite-2frame > .frm-a { position:relative; display:block; }
+.sprite-2frame > .frm-b { position:absolute; top:0; left:0; }
+@keyframes frm-a-on { 0%,49.9%{opacity:1} 50%,100%{opacity:0} }
+@keyframes frm-b-on { 0%,49.9%{opacity:0} 50%,100%{opacity:1} }
+.frm-a { animation: frm-a-on 0.38s steps(1,end) infinite; }
+.frm-b { animation: frm-b-on 0.38s steps(1,end) infinite; }
+
+@keyframes swim-across {
+  0%    { transform: translateX(55vw) scaleX(-1); }
+  44%   { transform: translateX(5vw) scaleX(-1); }
+  44.1% { transform: translateX(5vw); }
+  88%   { transform: translateX(55vw); }
+  88.1% { transform: translateX(55vw) scaleX(-1); }
+  100%  { transform: translateX(55vw) scaleX(-1); }
+}
+@keyframes walk-bob {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-10px); }
+}
+@keyframes raccoon-wander {
+  0%    { transform: translateX(12vw); }
+  44%   { transform: translateX(62vw); }
+  44.1% { transform: translateX(62vw) scaleX(-1); }
+  88%   { transform: translateX(12vw) scaleX(-1); }
+  88.1% { transform: translateX(12vw); }
+  100%  { transform: translateX(12vw); }
+}
+@keyframes beaver-side-bob {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-14px); }
+}
+@keyframes log-bob {
+  0%, 100% { transform: translateY(0px) rotate(-2deg); }
+  50%       { transform: translateY(-9px) rotate(3deg); }
+}
+@keyframes leaf-fall {
+  0%   { transform: translate(0, 0) rotate(0deg); opacity: 0; }
+  6%   { opacity: 0.8; }
+  94%  { opacity: 0.8; }
+  100% { transform: translate(80px, 60vh) rotate(480deg); opacity: 0; }
+}
+@keyframes ripple-out {
+  0%   { transform: translate(-50%,-50%) scale(0.1); opacity: 0.5; }
+  100% { transform: translate(-50%,-50%) scale(1); opacity: 0; }
+}
+@keyframes peek-up {
+  0%   { transform: translateY(120%); }
+  18%  { transform: translateY(-4%); }
+  82%  { transform: translateY(-4%); }
+  100% { transform: translateY(120%); }
+}
+@keyframes float-up-fade {
+  0%   { transform: translateY(0); opacity: 1; }
+  100% { transform: translateY(-90px); opacity: 0; }
+}
+@keyframes fish-jump {
+  0%   { transform: translateY(0) rotate(0deg); opacity: 0; }
+  10%  { opacity: 1; }
+  40%  { transform: translateY(-110px) rotate(-28deg); opacity: 1; }
+  80%  { transform: translateY(12px) rotate(50deg); opacity: 0.4; }
+  100% { transform: translateY(0) rotate(0deg); opacity: 0; }
+}
+@keyframes cloud-drift {
+  0%   { transform: translateX(calc(100vw + 400px)); }
+  100% { transform: translateX(-400px); }
+}
+
+.bg-beaver-main {
+  position: absolute;
+  bottom: 62px; left: 0;
+  animation: swim-across 65s linear infinite;
+}
+.bg-beaver-main .sprite-2frame { animation: walk-bob 0.45s ease-in-out infinite; }
+.bg-beaver-2 {
+  position: absolute;
+  bottom: 68px; right: 260px;
+  animation: beaver-side-bob 3.6s ease-in-out infinite;
+}
+.bg-raccoon {
+  position: absolute;
+  bottom: 50px;
+  animation: raccoon-wander 55s linear 0s infinite;
+}
+.bg-raccoon .sprite-2frame { animation: walk-bob 0.5s ease-in-out infinite; }
+.bg-log {
+  position: absolute;
+  bottom: 42px; right: 190px;
+  animation: log-bob 4.2s ease-in-out infinite;
+}
+.bg-ripple-container {
+  position: absolute;
+  bottom: 28px; right: 60px;
+  width: 90px; height: 50px;
+}
+.bg-ripple {
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 70px; height: 36px;
+  border: 2px solid rgba(74,139,168,0.4);
+  border-radius: 50%;
+  animation: ripple-out 3.2s ease-out infinite;
+}
+.bg-ripple:nth-child(2) { animation-delay: 1.1s; }
+.bg-ripple:nth-child(3) { animation-delay: 2.2s; }
+.bg-leaf {
+  position: absolute;
+  top: 48%; right: 28%;
+  animation: leaf-fall 14s ease-in 0s infinite;
+  opacity: 0;
+}
+.bg-peek {
+  position: absolute;
+  bottom: 0;
+  display: none;
+}
+.bg-peek.active {
+  display: block;
+  animation: peek-up 5s ease-in-out forwards;
+}
+.bg-emoji-float {
+  position: absolute;
+  font-size: 22px;
+  animation: float-up-fade 3.2s ease-out forwards;
+  pointer-events: none;
+}
+.bg-fish {
+  position: absolute;
+  bottom: 8px;
+  display: none;
+}
+.bg-fish.active {
+  display: block;
+  animation: fish-jump 2.5s ease-in-out forwards;
+}
+.bg-cloud {
+  position: absolute;
+  pointer-events: none;
+  animation: cloud-drift linear infinite;
+  opacity: 0.88;
+}
+
+/* ── HOME VIEW ── */
+.home-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 40px;
+  text-align: center;
+  min-height: 0;
+}
+.home-greeting {
+  font-family: var(--font-display);
+  font-size: 48px;
+  font-weight: 300;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+  line-height: 1.1;
+  margin-bottom: 16px;
+  text-shadow: 0 2px 12px rgba(237,232,222,0.6);
+}
+.home-tagline {
+  font-family: var(--font-body);
+  font-size: 17px;
+  color: var(--ink-2);
+  max-width: 420px;
+  line-height: 1.6;
+  margin-bottom: 32px;
+  text-shadow: 0 1px 8px rgba(237,232,222,0.5);
+}
+.home-quote {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+  max-width: 480px;
+  line-height: 1.6;
+  padding: 14px 20px;
+  background: rgba(245,241,232,0.7);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+  transition: opacity 0.4s ease;
+}
