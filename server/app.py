@@ -1314,7 +1314,12 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
 # --- Pages (HTML) ---
 
 @app.get("/tui")
-async def tui_page():
+async def tui_page(request: Request):
+    if TEMPLATES_DIR.exists() and (TEMPLATES_DIR / "tui.html").exists():
+        return templates.TemplateResponse("tui.html", {
+            "request": request,
+            "cache_bust": int(time.time()),
+        })
     resp = await _serve_platform_file("split.html")
     return resp or PlainTextResponse("split.html not found", status_code=500)
 
