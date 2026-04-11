@@ -1315,13 +1315,10 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
 
 @app.get("/tui")
 async def tui_page(request: Request):
-    if TEMPLATES_DIR.exists() and (TEMPLATES_DIR / "tui.html").exists():
-        return templates.TemplateResponse("tui.html", {
-            "request": request,
-            "cache_bust": int(time.time()),
-        })
-    resp = await _serve_platform_file("split.html")
-    return resp or PlainTextResponse("split.html not found", status_code=500)
+    return templates.TemplateResponse("tui.html", {
+        "request": request,
+        "cache_bust": int(time.time()),
+    })
 
 
 # jerpint: this one will be important to nail we might review onboarding flow
@@ -1335,18 +1332,13 @@ async def onboard_page():
 
 @app.get("/{path:path}")
 async def catch_all(path: str, request: Request):
-    # Root → home template (Jinja2) with fallback to legacy home.html
+    # Root → home template (Jinja2)
     if path == "" or path == "/":
-        if TEMPLATES_DIR.exists() and (TEMPLATES_DIR / "home.html").exists():
-            return templates.TemplateResponse("home.html", {
-                "request": request,
-                "active_nav": "home",
-                "cache_bust": int(time.time()),
-            })
-        resp = await _serve_platform_file("home.html")
-        if resp:
-            return resp
-        return await _serve_static("/index.html", request) or PlainTextResponse("Not found", status_code=404)
+        return templates.TemplateResponse("home.html", {
+            "request": request,
+            "active_nav": "home",
+            "cache_bust": int(time.time()),
+        })
 
     # Try wolt site first, then platform public dir
     resp = await _serve_static(f"/{path}", request)
