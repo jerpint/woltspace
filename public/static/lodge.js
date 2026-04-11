@@ -495,3 +495,7 @@ setInterval(loadApps, 10000);
 
 console.log('%c🦫', 'font-size:3rem');
 console.log('%cwoltspace — the lodge', 'color:#C98B2A;font-family:monospace');
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
