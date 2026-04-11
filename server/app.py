@@ -1336,6 +1336,7 @@ async def catch_all(path: str, request: Request):
             return templates.TemplateResponse("home.html", {
                 "request": request,
                 "active_nav": "home",
+                "cache_bust": int(time.time()),
             })
         resp = await _serve_platform_file("home.html")
         if resp:

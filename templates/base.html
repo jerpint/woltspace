@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Preahvihear&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css?v={{ cache_bust }}">
 {% block head %}{% endblock %}
 </head>
 <body>
@@ -30,8 +30,8 @@
 
 {% include 'partials/create-modal.html' %}
 
-<script src="/static/sprites.js"></script>
-<script src="/static/lodge.js"></script>
+<script src="/static/sprites.js?v={{ cache_bust }}"></script>
+<script src="/static/lodge.js?v={{ cache_bust }}"></script>
 {% block scripts %}{% endblock %}
 
 </body>

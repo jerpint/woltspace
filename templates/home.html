@@ -89,12 +89,18 @@
         <div class="main-title">Sessions</div>
         <div class="main-subtitle" id="sessions-subtitle">loading...</div>
       </div>
+      <div class="header-actions">
+        <button class="btn btn-ghost" onclick="loadSessions()">&#10227; refresh</button>
+      </div>
     </div>
 
     <div class="sessions-filter-tabs" id="sessions-filter-tabs"></div>
 
     <div class="sessions-toolbar">
-      <input id="sessions-search" class="sessions-search" type="text" placeholder="Search sessions..." oninput="filterSessions()">
+      <div class="sessions-search-wrap">
+        <svg class="sessions-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        <input id="sessions-search" class="sessions-search" type="text" placeholder="Search sessions..." oninput="filterSessions()">
+      </div>
       <select id="sessions-sort" class="sessions-sort" onchange="filterSessions()">
         <option value="recent">Most recent</option>
         <option value="name">Name</option>
@@ -102,7 +108,7 @@
       <button id="sessions-toggle-running" class="sessions-toggle-running" onclick="toggleRunningOnly()">Running only</button>
     </div>
 
-    <div id="sessions-list">
+    <div id="sessions-list" class="sessions-list">
       <div class="empty-state">
         <div class="empty-state-icon">🌿</div>
         <div class="empty-state-text">loading sessions...</div>

@@ -290,38 +290,54 @@ function filterSessions() {
     const woltData = allWolts.find(w => (w.name || w.dir) === wolt);
     const emoji = woltData ? (WOLT_EMOJI[woltData.type] || '🦫') : '🦫';
     const sessionSprite = woltData ? woltSpriteAvatar(woltData.type, 20) : null;
+    const runCount = sessions.filter(s => s.status === 'running' && s.alive !== false).length;
+    const metaText = runCount > 0
+      ? `${runCount} running · ${sessions.length} total`
+      : `${sessions.length} session${sessions.length !== 1 ? 's' : ''}`;
     const rows = sessions.map(s => {
       const time = s.last_activity ? timeAgo(s.last_activity) : (s.created_at ? timeAgo(s.created_at) : '');
       const label = s.title || s.name;
       const isAlive = s.status === 'running' && s.alive !== false;
       const dotClass = isAlive ? 'running' : 'stopped';
+      const preview = s.prompt
+        ? s.prompt.replace(/^\/\S+\s*/, '').slice(0, 80)
+        : (s.title ? s.name : '');
 
       const actionBtn = isAlive
         ? `<button class="session-action session-action-stop" onclick="event.preventDefault();event.stopPropagation();stopSession('${s.name}')" title="Stop">&#9632;</button>`
         : `<button class="session-action session-action-resume" onclick="event.preventDefault();event.stopPropagation();resumeSession('${s.name}')" title="Resume">&#9654;</button>`;
 
-      const nameLine = s.title ? `<div class="session-name">${s.name}</div>` : '';
       return `<a class="session-row" href="/tui?session=${encodeURIComponent(s.name)}">
         <div class="session-dot ${dotClass}"></div>
-        <div class="session-info">
+        <div class="session-body">
           <div class="session-title">${label}</div>
-          ${nameLine}
+          ${preview ? `<div class="session-preview">${preview}</div>` : ''}
         </div>
-        <span class="session-meta">${time}</span>
+        <div class="session-date">${time}</div>
         <div class="session-actions">${actionBtn}</div>
       </a>`;
     }).join('');
 
     return `<div class="sessions-group">
-      <div class="sessions-group-header" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'':'none';this.querySelector('.sessions-group-chevron').classList.toggle('collapsed')">
-        <span class="sessions-group-emoji">${sessionSprite || emoji}</span>
+      <div class="sessions-group-header" onclick="toggleSessionGroup(this)">
+        <div class="sessions-group-avatar">${sessionSprite || emoji}</div>
         <span class="sessions-group-name">${wolt}</span>
-        <span class="sessions-group-count">${sessions.length}</span>
-        <span class="sessions-group-chevron">▾</span>
+        <span class="sessions-group-meta">${metaText}</span>
+        <span class="sessions-group-chevron">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </span>
       </div>
-      <div>${rows}</div>
+      <div class="sessions-group-body">
+        <div class="sessions-group-inner">${rows}</div>
+      </div>
     </div>`;
   }).join('');
+}
+
+// ── Session group toggle ──
+function toggleSessionGroup(header) {
+  header.querySelector('.sessions-group-chevron').classList.toggle('collapsed');
+  header.nextElementSibling.classList.toggle('collapsed');
 }
 
 // ── Session actions ──
