@@ -92,10 +92,12 @@ curl http://localhost:7777/apps
 ## Pushing to the viewport
 
 ```bash
-push-view /app/my-app/
+push-view http://my-app.localhost:7777/
 ```
 
-The viewport will load the app at its direct port (e.g. `localhost:4010`). No proxy involved.
+Use the **subdomain pattern** `http://<app-name>.localhost:7777/` to push an app to the viewport.
+
+> **Why not `/app/my-app/`?** The `/app/` path triggers a 302 redirect to the app's bare port (e.g. `localhost:4010`). This works locally but breaks through the Cloudflare tunnel, since the redirect target isn't reachable from the outside. The subdomain pattern avoids the redirect entirely.
 
 ## Ports
 
