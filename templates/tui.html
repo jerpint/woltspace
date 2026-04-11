@@ -372,6 +372,7 @@
   </div>
 </div>
 
+<script src="/static/sprites.js"></script>
 <script type="module">
   import { Terminal }      from 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm';
   import { FitAddon }      from 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm';
@@ -386,7 +387,6 @@
   // Try to get wolt info for the avatar
   const woltName = session.split('-').slice(0, -3).join('-') || session;
   fetch('/wolts').then(r => r.json()).then(wolts => {
-    const WOLT_EMOJI = { beaver: '🦫', otter: '🦦', raccoon: '🦝', wolf: '🐺', dog: '🐶' };
     const w = wolts.find(w => (w.name || w.dir) === woltName);
     if (w) {
       document.getElementById('wolt-avatar').textContent = WOLT_EMOJI[w.type] || '🦫';
