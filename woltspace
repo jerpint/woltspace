@@ -164,7 +164,7 @@ _show_url() {
     echo -n "  ${_L}   opening a path to the outside${_R}"
     for i in $(seq 1 30); do
       if [ -f "$TUNNEL_STATE" ]; then
-        TUNNEL_URL=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('url',''))" < "$TUNNEL_STATE" 2>/dev/null)
+        TUNNEL_URL=$(grep -o '"url":"[^"]*"' "$TUNNEL_STATE" 2>/dev/null | sed 's/"url":"\(.*\)"/\1/')
         [ -n "$TUNNEL_URL" ] && break
       fi
       echo -n "."; sleep 1

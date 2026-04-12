@@ -61,7 +61,7 @@ if [ "${WOLTSPACE_PUBLIC_TUNNEL:-true}" = "true" ]; then
   echo "waiting for tunnel..."
   for i in $(seq 1 45); do
     if [ -f "$TUNNEL_STATE_FILE" ]; then
-      URL=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('url',''))" < "$TUNNEL_STATE_FILE" 2>/dev/null)
+      URL=$(grep -o '"url":"[^"]*"' "$TUNNEL_STATE_FILE" 2>/dev/null | sed 's/"url":"\(.*\)"/\1/')
       [ -n "$URL" ] && echo "tunnel ready: $URL" && break
     fi
     sleep 1
