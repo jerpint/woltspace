@@ -17,7 +17,21 @@ export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
 export LANG=C.UTF-8
 tmux -u new-session -d -s main -c "$WOLT_DIR" 2>/dev/null || true
 tmux set -g mouse on
-if [ -f /home/node/.claude/.first-run ]; then
+HAS_AUTH=false
+[ -f /home/node/.claude/.credentials.json ] && HAS_AUTH=true
+
+if [ -z "$WOLT_NAME" ] || [ "$HAS_AUTH" = "false" ]; then
+  # No wolt or no auth — onboard mode: bare Claude for /login, viewport shows onboard page
+  echo "onboard mode: has_auth=$HAS_AUTH wolt_name=${WOLT_NAME:-<none>}"
+  mkdir -p "$WOLTS_DIR/.state"
+  python3 -c "
+import json, time
+data = json.dumps({'url': '/onboard', 'port': 7777, 'updated': int(time.time() * 1000)})
+open('$WOLTS_DIR/.state/current-url-main.json', 'w').write(data)
+print('[viewport:main] → /onboard')
+"
+  tmux send-keys -t main "claude" Enter
+elif [ -f /home/node/.claude/.first-run ]; then
   rm /home/node/.claude/.first-run
   # Fresh container — clear node_modules for all apps so installs run clean
   # Prevents binary/native dep corruption across container rebuilds (e.g. Node version changes)

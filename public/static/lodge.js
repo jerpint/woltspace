@@ -459,11 +459,8 @@ async function submitCreateWolt() {
 
 // ── Onboard ──
 async function openOnboard() {
-  await fetch('/current?session=main', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url: '/onboard' }),
-  }).catch(() => {});
+  // The entrypoint already started a bare Claude session in 'main' with
+  // the onboard page as viewport when no auth is detected. Just go there.
   location.href = '/tui';
 }
 

@@ -35,7 +35,7 @@ def resolve_wolt_name(wolts_dir: Path) -> str:
     for d in sorted(wolts_dir.iterdir()):
         if d.is_dir() and not d.name.startswith(".") and (d / "wolt").is_dir():
             return d.name
-    return "wolt"
+    return ""
 
 
 def resolve_wolt_dir(wolts_dir: Path, wolt_name: str) -> Path:
@@ -302,19 +302,26 @@ def main():
     wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
     wolt_name = resolve_wolt_name(wolts_dir)
 
-    # Scaffold wolt if it doesn't exist (first boot with new name)
-    scaffold_wolt(wolt_name, wolts_dir, woltspace_dir)
-    wolt_dir = resolve_wolt_dir(wolts_dir, wolt_name)
+    if wolt_name:
+        # Scaffold wolt if it doesn't exist (first boot with new name)
+        scaffold_wolt(wolt_name, wolts_dir, woltspace_dir)
+        wolt_dir = resolve_wolt_dir(wolts_dir, wolt_name)
+    else:
+        # No wolts yet — user will create one from the lodge after auth
+        wolt_dir = wolts_dir
+        print("no wolts found — starting in onboard mode")
+
     dev_mode = (woltspace_dir / ".git").is_dir()
 
     # Config & identity
     sync_all_wolt_skills(woltspace_dir, wolts_dir)
     sync_claude_md_platform_section(wolts_dir, woltspace_dir)
-    write_bashrc(wolt_dir, wolt_name)
+    if wolt_name:
+        write_bashrc(wolt_dir, wolt_name)
+        configure_git(wolt_name)
+        seed_wolf_json(wolt_dir, woltspace_dir)
     write_trust_config(wolts_dir)
     write_settings_json(woltspace_dir)
-    configure_git(wolt_name)
-    seed_wolf_json(wolt_dir, woltspace_dir)
     symlink_node_modules(woltspace_dir)
 
     # Clean up stale sessions from previous boot
