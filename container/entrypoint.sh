@@ -24,7 +24,7 @@ if [ -z "$WOLT_NAME" ] || [ "$HAS_AUTH" = "false" ]; then
   # No wolt or no auth — onboard mode: bare Claude for /login
   # Viewport falls back to /onboard via server when no session is registered
   echo "onboard mode: has_auth=$HAS_AUTH wolt_name=${WOLT_NAME:-<none>}"
-  tmux send-keys -t main "wclaude" Enter
+  tmux send-keys -t main "wclaude /login" Enter
 elif [ -f /home/node/.claude/.first-run ]; then
   rm /home/node/.claude/.first-run
   # Fresh container — clear node_modules for all apps so installs run clean

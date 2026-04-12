@@ -438,6 +438,38 @@ async def post_session_redirect(request: Request):
     return {"ok": True}
 
 
+def _extract_login_url() -> str:
+    """Capture tmux main pane and extract the OAuth login URL.
+
+    The URL wraps across multiple lines in the terminal, so we find the
+    starting line and concatenate continuation lines until we hit a blank
+    or non-URL line.
+    """
+    try:
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-t", "main", "-p", "-S", "-200"],
+            capture_output=True, text=True, timeout=5,
+        )
+        lines = result.stdout.splitlines()
+        url = ""
+        capturing = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("https://claude.com/"):
+                url = stripped
+                capturing = True
+            elif capturing:
+                # URL continuation lines contain path/query chars, no spaces
+                if stripped and " " not in stripped and ("%" in stripped or "&" in stripped or "=" in stripped):
+                    url += stripped
+                else:
+                    capturing = False
+        return url
+    except Exception:
+        pass
+    return ""
+
+
 @app.get("/onboard-status")
 async def onboard_status():
     env = load_dotenv()
@@ -447,6 +479,7 @@ async def onboard_status():
         "has_oauth": Path("/home/node/.claude/.credentials.json").exists(),
         "has_llm_key": bool(env.get("ANTHROPIC_API_KEY") or env.get("OPENROUTER_API_KEY")),
         "has_telegram": env.get("ENABLE_TELEGRAM_BOT") == "true" and bool(env.get("TELEGRAM_BOT_TOKEN")),
+        "login_url": _extract_login_url(),
     }
 
 

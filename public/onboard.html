@@ -248,6 +248,35 @@
     }
     .lodge-btn:hover { background: #2e5438; }
 
+    /* ── Login link area ── */
+    .login-actions {
+      display: flex;
+      gap: 0.5rem;
+      margin: 0.65rem 0;
+      flex-wrap: wrap;
+    }
+    .copy-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      background: var(--surface);
+      color: var(--ink-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.65rem 1rem;
+      font-family: var(--font-body);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .copy-btn:hover { border-color: var(--ink-3); }
+    .copy-btn.copied {
+      background: var(--green-light);
+      border-color: var(--green);
+      color: var(--green);
+    }
+
     /* ── Status pill ── */
     .status-pill {
       display: inline-flex;
@@ -312,20 +341,25 @@
           <div class="step-title" id="title-login">connect your claude account</div>
         </div>
         <div class="step-body" id="body-login">
-          <p>In the terminal on the left, type:</p>
-          <div class="cmd-block">
-            <span class="cmd-prompt">&gt;</span>
-            <span class="cmd-text">/login</span>
-            <span class="cmd-cursor"></span>
+          <p id="login-waiting-msg">Waiting for login link...</p>
+          <div id="login-link-box" style="display: none;">
+            <p style="margin-bottom: 0.5rem;">Sign in with your Claude account:</p>
+            <div class="login-actions">
+              <a id="login-link" href="#" target="_blank" class="lodge-btn" style="background: var(--amber);">
+                open login page &rarr;
+              </a>
+              <button id="copy-btn" class="copy-btn" onclick="copyLoginUrl()">
+                copy link
+              </button>
+            </div>
           </div>
-          <p>A link will appear - click it to sign in with your Claude account.</p>
           <div class="step-hint">
             Free or Pro, either works. This is a one-time setup.
           </div>
           <div style="margin-top: 0.75rem;">
-            <span class="status-pill checking">
+            <span class="status-pill checking" id="login-pill">
               <span class="status-dot"></span>
-              <span>waiting for login</span>
+              <span id="login-pill-text">waiting for login link</span>
             </span>
           </div>
         </div>
@@ -368,12 +402,41 @@
     if (sprite) document.getElementById('header-critter').innerHTML = sprite;
     if (spriteSmall) document.getElementById('success-critter').innerHTML = spriteSmall;
 
-    // Poll for auth status
+    // Copy login URL to clipboard
+    let currentLoginUrl = '';
+    function copyLoginUrl() {
+      if (!currentLoginUrl) return;
+      navigator.clipboard.writeText(currentLoginUrl).then(() => {
+        const btn = document.getElementById('copy-btn');
+        btn.textContent = 'copied!';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = 'copy link';
+          btn.classList.remove('copied');
+        }, 2000);
+      });
+    }
+
+    // Poll for auth status + login URL
     let authed = false;
+    let linkShown = false;
 
     async function poll() {
       try {
         const d = await fetch('/onboard-status').then(r => r.json());
+
+        // Show login link as soon as we capture it from the tmux pane
+        if (d.login_url && !linkShown && !authed) {
+          linkShown = true;
+          currentLoginUrl = d.login_url;
+          document.getElementById('login-waiting-msg').style.display = 'none';
+          const linkBox = document.getElementById('login-link-box');
+          const linkEl = document.getElementById('login-link');
+          linkEl.href = d.login_url;
+          linkBox.style.display = 'block';
+          document.getElementById('login-pill-text').textContent = 'waiting for login';
+        }
+
         if (d.has_oauth && !authed) {
           authed = true;
 
@@ -384,7 +447,7 @@
           document.getElementById('num-login').textContent = '\u2713';
           document.getElementById('title-login').textContent = 'claude connected';
           document.getElementById('body-login').innerHTML =
-            '<p style="color: var(--green);">authenticated - you\'re all set.</p>';
+            '<p style="color: var(--green);">authenticated \u2014 you\'re all set.</p>';
 
           // Step 2 active
           document.getElementById('arrow-1').classList.add('done');
