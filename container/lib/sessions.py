@@ -344,6 +344,32 @@ def _tmux_alive(name: str) -> bool:
         return False
 
 
+_TMUX_TIMEOUT = 10  # seconds — safety net so a stuck tmux call never freezes the bot
+
+
+def _tmux_paste(target: str, text: str):
+    """Paste text into a tmux pane and press Enter.
+
+    Uses set-buffer + paste-buffer instead of send-keys -l.
+    send-keys -l sends each character as an individual keystroke which
+    blocks on long messages (the pane input buffer backs up). Buffer
+    paste delivers the entire text atomically — same as a clipboard
+    paste from a human.
+    """
+    subprocess.run(
+        ["tmux", "set-buffer", text],
+        check=True, timeout=_TMUX_TIMEOUT,
+    )
+    subprocess.run(
+        ["tmux", "paste-buffer", "-t", target],
+        check=True, timeout=_TMUX_TIMEOUT,
+    )
+    subprocess.run(
+        ["tmux", "send-keys", "-t", target, "", "Enter"],
+        check=True, timeout=_TMUX_TIMEOUT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Session naming
 # ---------------------------------------------------------------------------
@@ -533,12 +559,11 @@ def resume_session(name: str, prompt: str = "") -> dict:
     safe_prompt = shlex.quote(prompt) if prompt else ""
 
     if tmux_alive and claude_running:
-        # Claude is running — send the prompt directly to the TUI as keystrokes.
+        # Claude is running — paste the prompt into the TUI as a single buffer paste.
         # Flatten newlines: a bare \n would submit the input early in claude's TUI.
         if prompt:
             flat_prompt = prompt.replace("\n", " ")
-            subprocess.run(["tmux", "send-keys", "-t", name, "-l", flat_prompt], check=True)
-            subprocess.run(["tmux", "send-keys", "-t", name, "", "Enter"], check=True)
+            _tmux_paste(name, flat_prompt)
         registry.update(name, wolt=wolt, status="running")
         return {"name": name, "url": session_url, "status": "delivered", "detail": "claude running, message sent"}
 
@@ -554,8 +579,7 @@ def resume_session(name: str, prompt: str = "") -> dict:
         # Tmux alive but claude exited — restart claude with --resume inside the pane
         cd_prefix = f"cd {shlex.quote(session_dir)} && " if session_dir else ""
         resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} && {WCLAUDE} --dangerously-skip-permissions {model_flag} {resume_flag} {safe_prompt}"
-        subprocess.run(["tmux", "send-keys", "-t", name, "-l", resume_cmd], check=True)
-        subprocess.run(["tmux", "send-keys", "-t", name, "", "Enter"], check=True)
+        _tmux_paste(name, resume_cmd)
         registry.update(name, wolt=wolt, status="running")
         return {"name": name, "url": session_url, "status": "revived", "detail": "claude exited, restarted with --resume in existing tmux"}
 
@@ -565,7 +589,7 @@ def resume_session(name: str, prompt: str = "") -> dict:
     resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} && {WCLAUDE} --dangerously-skip-permissions {model_flag} {resume_flag} {safe_prompt}"
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", name, "-c", work_dir or "/workspace", resume_cmd],
-        check=True,
+        check=True, timeout=15,
     )
     registry.update(name, wolt=wolt, status="running")
     return {"name": name, "url": session_url, "status": "respawned", "detail": "tmux was dead, created new tmux with --resume"}
