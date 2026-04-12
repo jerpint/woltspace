@@ -1224,7 +1224,7 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
 
 @app.get("/tui")
 async def tui_page(request: Request):
-    return templates.TemplateResponse("tui.html", {
+    return templates.TemplateResponse("tui.html", context={
         "request": request,
         "cache_bust": int(time.time()),
     })
@@ -1243,7 +1243,7 @@ async def onboard_page():
 async def catch_all(path: str, request: Request):
     # Root → home template (Jinja2)
     if path == "" or path == "/":
-        return templates.TemplateResponse("home.html", {
+        return templates.TemplateResponse("home.html", context={
             "request": request,
             "active_nav": "home",
             "cache_bust": int(time.time()),
