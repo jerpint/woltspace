@@ -117,43 +117,6 @@
   .tb-status.connecting { background: #F2E4C0; color: var(--amber); }
   .tb-status.disconnected { background: #F0D5C8; color: var(--terra); }
 
-  /* app bar — shown when right pane is viewing an app */
-  #app-bar {
-    display: none;
-    align-items: center;
-    gap: 8px;
-    border-left: 1px solid var(--border);
-    padding-left: 12px;
-    margin-left: 4px;
-  }
-  #app-bar.visible { display: flex; }
-  #app-bar .p-emoji { font-size: 14px; }
-  #app-bar .p-name {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--ink);
-  }
-  #app-bar .p-dot { width: 6px; height: 6px; border-radius: 50%; }
-  #app-bar .p-dot.on  { background: var(--green); box-shadow: 0 0 4px rgba(58,102,68,0.4); }
-  #app-bar .p-dot.off { background: var(--border-2); }
-  #app-bar .p-toggle {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    padding: 4px 10px;
-    border-radius: 5px;
-    cursor: pointer;
-    transition: all 0.15s;
-    background: transparent;
-    text-transform: uppercase;
-  }
-  #app-bar .p-toggle.start { border: 1px solid var(--green); color: var(--green); }
-  #app-bar .p-toggle.start:hover { background: var(--green-light); }
-  #app-bar .p-toggle.stop  { border: 1px solid var(--border); color: var(--ink-3); }
-  #app-bar .p-toggle.stop:hover  { border-color: var(--terra); color: var(--terra); }
-
   .tb-spacer { flex: 1; }
 
   .tb-actions {
@@ -335,13 +298,6 @@
     <span id="tui-status-text">connecting</span>
   </div>
 
-  <div id="app-bar">
-    <span class="p-emoji" id="p-emoji"></span>
-    <span class="p-name" id="p-name"></span>
-    <span class="p-dot" id="p-dot"></span>
-    <button class="p-toggle" id="p-toggle" onclick="toggleCurrentApp()"></button>
-  </div>
-
   <div class="tb-spacer"></div>
 
   <div class="tb-actions">
@@ -372,6 +328,7 @@
   </div>
 </div>
 
+<script src="/static/sprites.js"></script>
 <script type="module">
   import { Terminal }      from 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm';
   import { FitAddon }      from 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm';
@@ -386,7 +343,6 @@
   // Try to get wolt info for the avatar
   const woltName = session.split('-').slice(0, -3).join('-') || session;
   fetch('/wolts').then(r => r.json()).then(wolts => {
-    const WOLT_EMOJI = { beaver: '🦫', otter: '🦦', raccoon: '🦝', wolf: '🐺', dog: '🐶' };
     const w = wolts.find(w => (w.name || w.dir) === woltName);
     if (w) {
       document.getElementById('wolt-avatar').textContent = WOLT_EMOJI[w.type] || '🦫';
@@ -564,98 +520,12 @@
     btnBack.disabled = stackIdx <= 0;
   }
 
-  // ── App bar ──
-  const appBar = document.getElementById('app-bar');
-  let currentAppName = null;
-
-  async function updateAppBar(url) {
-    const siteMatch = url.match(/^\/wolt\/([^/]+)\/site/);
-    if (siteMatch) {
-      const wName = siteMatch[1];
-      document.getElementById('p-emoji').textContent = '🦝';
-      document.getElementById('p-name').textContent = wName;
-      document.getElementById('p-dot').className = 'p-dot on';
-      document.getElementById('p-toggle').style.display = 'none';
-      currentAppName = null;
-      appBar.classList.add('visible');
-      return;
-    }
-
-    let appName = null;
-    const meta = currentViewportMeta;
-    if (meta && meta.port && meta.port !== 7777) {
-      try {
-        const apps = await fetch('/apps').then(r => r.json());
-        const app = apps.find(a => a.port === meta.port);
-        if (app) appName = app.name;
-      } catch {}
-    }
-    if (!appName) {
-      const appMatch = url.match(/^\/app\/([^/]+)/);
-      if (appMatch) appName = appMatch[1];
-    }
-
-    if (!appName) {
-      appBar.classList.remove('visible');
-      currentAppName = null;
-      return;
-    }
-
-    currentAppName = appName;
-    try {
-      const p = await fetch('/apps/' + appName).then(r => r.json());
-      document.getElementById('p-emoji').textContent = p.emoji || '📦';
-      document.getElementById('p-name').textContent = p.name;
-      const dot = document.getElementById('p-dot');
-      dot.className = 'p-dot ' + (p.running ? 'on' : 'off');
-      const btn = document.getElementById('p-toggle');
-      if (p.start) {
-        btn.textContent = p.running ? 'stop' : 'start';
-        btn.className = 'p-toggle ' + (p.running ? 'stop' : 'start');
-        btn.style.display = '';
-      } else {
-        btn.style.display = 'none';
-      }
-      appBar.classList.add('visible');
-    } catch {
-      appBar.classList.remove('visible');
-      currentAppName = null;
-    }
-  }
-
   const isLocal = ['localhost', '127.0.0.1', '0.0.0.0'].includes(location.hostname);
 
   function directPortUrl(port, subPath) {
     if (!isLocal) return null;
     return location.protocol + '//' + location.hostname + ':' + port + (subPath || '/');
   }
-
-  window.toggleCurrentApp = async () => {
-    if (!currentAppName) return;
-    const btn = document.getElementById('p-toggle');
-    const isRunning = btn.classList.contains('stop');
-    btn.disabled = true;
-    btn.textContent = '...';
-    try {
-      const result = await fetch(
-        '/apps/' + currentAppName + '/' + (isRunning ? 'stop' : 'start'),
-        { method: 'POST' }
-      ).then(r => r.json());
-
-      if (!isRunning && result.port) {
-        const direct = directPortUrl(result.port);
-        preview.src = direct || '/app/' + currentAppName + '/';
-        setCurrent('/app/' + currentAppName + '/', result.port);
-        if (currentViewportMeta) currentViewportMeta.port = result.port;
-      } else {
-        preview.src = '/app/' + currentAppName + '/';
-        setCurrent('/app/' + currentAppName + '/');
-        if (currentViewportMeta) currentViewportMeta.port = 7777;
-      }
-      await updateAppBar('/app/' + currentAppName + '/');
-    } catch {}
-    btn.disabled = false;
-  };
 
   function loadView(url, title, pushToStack = true) {
     const meta = currentViewportMeta;
@@ -679,7 +549,6 @@
     }
     updateBackBtn();
     renderHist();
-    updateAppBar(url);
   }
 
   function setCurrent(url, port) {
