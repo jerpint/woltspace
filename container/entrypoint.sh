@@ -10,7 +10,7 @@ ENV_FILE=$(mktemp /tmp/entrypoint-env.XXXXXX)
 python3 "$WOLTSPACE_DIR/container/entrypoint_setup.py" --env-file "$ENV_FILE"
 source "$ENV_FILE"
 rm -f "$ENV_FILE"
-export WOLT_NAME WOLT_DIR DEV_MODE WOLF_CONFIG PYTHONPATH PATH
+export WOLT_NAME WOLT_DIR WOLTS_DIR DEV_MODE WOLF_CONFIG PYTHONPATH PATH
 export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
 
 # ── tmux ──
@@ -63,7 +63,8 @@ SERVER_PID=$!
 sleep 2
 
 # Tunnel — managed by FastAPI server, just wait for the URL and print it
-mkdir -p "$WOLTS_DIR/.space/platform" "$WOLTS_DIR/.state" "$WOLT_DIR/.state"
+# Lodge scaffold handles .space/platform — just ensure per-wolt state dir
+[ -n "$WOLT_NAME" ] && mkdir -p "$WOLT_DIR/.state"
 TUNNEL_STATE_FILE="$WOLTS_DIR/.space/platform/tunnel.json"
 if [ "${WOLTSPACE_PUBLIC_TUNNEL:-true}" = "true" ]; then
   echo "waiting for tunnel..."

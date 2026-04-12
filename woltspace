@@ -120,6 +120,13 @@ _start_container() {
   local extra_args=""
   [ -n "$wolt_name" ] && extra_args="-e WOLT_NAME=$wolt_name"
 
+  # Dev mode: mount local repo so code edits are live without rebuild
+  local dev_mount=""
+  if [ "$LOCAL_BUILD" = "true" ]; then
+    dev_mount="-v $WOLTSPACE_DIR:/workspace/woltspace:rw"
+    echo "  ${_L}   dev mount: $WOLTSPACE_DIR → /workspace/woltspace${_R}"
+  fi
+
   mkdir -p "$WOLTS_DIR/.claude"
   # Ensure writable by container's node user (1000) — handles root-owned dirs from Docker
   chown 1000:1000 "$WOLTS_DIR/.claude" 2>/dev/null \
@@ -130,6 +137,7 @@ _start_container() {
     --env-file "$WOLTS_DIR/.env" \
     -v "$WOLTS_DIR:/workspace/wolts:rw" \
     -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
+    $dev_mount \
     -p "${WOLTSPACE_PORT:-7777}":7777 \
     $extra_args \
     woltspace > /dev/null
@@ -337,16 +345,22 @@ if [ ! -d "$WOLTS_DIR" ] || [ "$(_count_wolts)" -eq 0 ]; then
   if [ "$cmd" = "start" ]; then
     exec "$0" init
   fi
-  echo ""
-  echo "  🦫 no wolts found at $WOLTS_DIR"
-  echo ""
-  echo "  ${_D}if your wolts live elsewhere:${_R}"
-  echo "    WOLTS_DIR=/path/to/wolts woltspace start"
-  echo ""
-  echo "  ${_D}or start a new lodge:${_R}"
-  echo "    woltspace init"
-  echo ""
-  exit 1
+  # Allow container-management commands even with no wolts (onboarding)
+  case "$cmd" in
+    logs|shell|stop|chat) ;;  # fall through to subcommands
+    *)
+      echo ""
+      echo "  🦫 no wolts found at $WOLTS_DIR"
+      echo ""
+      echo "  ${_D}if your wolts live elsewhere:${_R}"
+      echo "    WOLTS_DIR=/path/to/wolts woltspace start"
+      echo ""
+      echo "  ${_D}or start a new lodge:${_R}"
+      echo "    woltspace init"
+      echo ""
+      exit 1
+      ;;
+  esac
 fi
 
 # --- Subcommands ---

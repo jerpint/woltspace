@@ -137,6 +137,24 @@ def configure_git(wolt_name: str):
     subprocess.run(["git", "config", "--global", "--add", "safe.directory", "*"], check=True)
 
 
+def scaffold_lodge(wolts_dir: Path):
+    """Ensure lodge-level infrastructure exists. Idempotent — safe to call every boot."""
+    # Global state dirs
+    (wolts_dir / ".space" / "platform").mkdir(parents=True, exist_ok=True)
+    (wolts_dir / ".space" / "logs").mkdir(parents=True, exist_ok=True)
+
+    # Session registry (lodge-level, shared across wolts)
+    (wolts_dir / ".state" / "registry").mkdir(parents=True, exist_ok=True)
+
+    # woltspace.json — multi-wolt config
+    config_file = wolts_dir / "woltspace.json"
+    if not config_file.exists():
+        config_file.write_text(json.dumps({
+            "telegram": {"model": "claude-haiku-4-5", "active_wolt": ""},
+            "claude": {"default_wolt": ""},
+        }, indent=2) + "\n")
+
+
 def scaffold_wolt(wolt_name: str, wolts_dir: Path, woltspace_dir: Path) -> Path:
     """Create wolt directory from template if it doesn't exist. Returns wolt_dir."""
     wolt_dir = wolts_dir / wolt_name
@@ -159,13 +177,15 @@ def scaffold_wolt(wolt_name: str, wolts_dir: Path, woltspace_dir: Path) -> Path:
         "description": "",
     }, indent=2) + "\n")
 
-    # Write woltspace.json if missing
+    # Update woltspace.json with this wolt as active (lodge scaffold ensures file exists)
     config_file = wolts_dir / "woltspace.json"
-    if not config_file.exists():
-        config_file.write_text(json.dumps({
-            "telegram": {"model": "claude-haiku-4-5", "active_wolt": wolt_name},
-            "claude": {"default_wolt": wolt_name},
-        }, indent=2) + "\n")
+    try:
+        config = json.loads(config_file.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        config = {}
+    config.setdefault("telegram", {})["active_wolt"] = wolt_name
+    config.setdefault("claude", {})["default_wolt"] = wolt_name
+    config_file.write_text(json.dumps(config, indent=2) + "\n")
 
     # Init git repo
     if not (wolt_dir / ".git").is_dir():
@@ -300,6 +320,10 @@ def main():
 
     woltspace_dir = WOLTSPACE_DIR
     wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+
+    # Lodge infrastructure — always, regardless of whether any wolts exist
+    scaffold_lodge(wolts_dir)
+
     wolt_name = resolve_wolt_name(wolts_dir)
 
     if wolt_name:
@@ -336,6 +360,7 @@ def main():
     write_env_file(Path(args.env_file), {
         "WOLT_NAME": wolt_name,
         "WOLT_DIR": str(wolt_dir),
+        "WOLTS_DIR": str(wolts_dir),
         "DEV_MODE": "true" if dev_mode else "false",
         "WOLF_CONFIG": wolf_config,
         "TELEGRAM_BOT_DIR": tg_dir,
