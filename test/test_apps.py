@@ -327,6 +327,7 @@ class TestIntegrationAppServing:
             "name": "test-serve-app",
             "description": "A test app",
             "keeper": "neowolt",
+            "port": 4900,
         }))
         yield
         import shutil
@@ -374,6 +375,7 @@ class TestIntegrationAppWithManifest:
             "description": "A test app with manifest",
             "stack": "html",
             "keeper": "neowolt",
+            "port": 4901,
         }))
         yield
         import shutil
@@ -409,6 +411,7 @@ class TestIntegrationAppWithDist:
             "name": "test-dist-app",
             "description": "A dist app",
             "keeper": "neowolt",
+            "port": 4902,
         }))
         yield
         import shutil
@@ -444,6 +447,7 @@ class TestIntegrationAppSecurity:
         (self.app_dir / "woltspace.json").write_text(json.dumps({
             "name": "test-security-app",
             "keeper": "neowolt",
+            "port": 4904,
         }))
         yield
         import shutil
@@ -482,6 +486,7 @@ class TestE2EAppLifecycle:
             "name": "e2e-test-app",
             "description": "E2E test app",
             "keeper": "neowolt",
+            "port": 4903,
         }))
         yield
         import shutil

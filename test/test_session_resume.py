@@ -51,15 +51,15 @@ class TestResumeSessionClaudeRunning:
     @patch("sessions.subprocess.run")
     @patch("sessions._session_has_claude_process", return_value=True)
     @patch("sessions._tmux_alive", return_value=True)
-    def test_sends_keys_when_claude_running(self, mock_alive, mock_claude, mock_run, wolt_env):
+    def test_pastes_when_claude_running(self, mock_alive, mock_claude, mock_run, wolt_env):
         from sessions import resume_session
         result = resume_session("testwolt-chompy-dam-abc123", "fix the bug")
 
         assert result["status"] == "delivered"
         assert result["name"] == "testwolt-chompy-dam-abc123"
-        # Should have sent keys (two calls: send-keys -l, send-keys Enter)
-        send_calls = [c for c in mock_run.call_args_list if "send-keys" in str(c)]
-        assert len(send_calls) == 2
+        # Should have used set-buffer + paste-buffer (two calls)
+        buf_calls = [c for c in mock_run.call_args_list if "set-buffer" in str(c) or "paste-buffer" in str(c)]
+        assert len(buf_calls) == 2
 
     @patch("sessions.subprocess.run")
     @patch("sessions._session_has_claude_process", return_value=True)
@@ -69,9 +69,9 @@ class TestResumeSessionClaudeRunning:
         result = resume_session("testwolt-chompy-dam-abc123", "")
 
         assert result["status"] == "delivered"
-        # No send-keys calls when prompt is empty
-        send_calls = [c for c in mock_run.call_args_list if "send-keys" in str(c)]
-        assert len(send_calls) == 0
+        # No tmux buffer calls when prompt is empty
+        buf_calls = [c for c in mock_run.call_args_list if "set-buffer" in str(c) or "paste-buffer" in str(c)]
+        assert len(buf_calls) == 0
 
     @patch("sessions.subprocess.run")
     @patch("sessions._session_has_claude_process", return_value=True)
@@ -96,12 +96,12 @@ class TestResumeSessionClaudeExited:
         result = resume_session("testwolt-chompy-dam-abc123", "continue working")
 
         assert result["status"] == "revived"
-        # Should have sent resume command via send-keys
-        send_calls = [c for c in mock_run.call_args_list if "send-keys" in str(c)]
-        assert len(send_calls) == 2
-        # The command should include --resume with the UUID
-        cmd_call = send_calls[0]
-        cmd_str = str(cmd_call)
+        # Should have used set-buffer + paste-buffer (two calls)
+        buf_calls = [c for c in mock_run.call_args_list if "set-buffer" in str(c) or "paste-buffer" in str(c)]
+        assert len(buf_calls) == 2
+        # The set-buffer call should include --resume with the UUID
+        set_call = [c for c in mock_run.call_args_list if "set-buffer" in str(c)][0]
+        cmd_str = str(set_call)
         assert "--resume" in cmd_str
         assert "a1b2c3d4-e5f6-7890-abcd-ef1234567890" in cmd_str
 

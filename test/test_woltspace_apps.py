@@ -31,15 +31,18 @@ def wolts_dir(tmp_path):
     import paths
     original = apps.WOLTS_DIR
     original_apps = apps.APPS_DIR
+    original_legacy = apps.LEGACY_PROJECTS_DIR
     original_state = apps._RUNNING_STATE_DIR
     original_paths = paths.WOLTS_DIR
     apps.WOLTS_DIR = tmp_path
     apps.APPS_DIR = tmp_path / "apps"
+    apps.LEGACY_PROJECTS_DIR = tmp_path / "projects"
     apps._RUNNING_STATE_DIR = tmp_path / ".space" / "apps"
     paths.WOLTS_DIR = tmp_path
     yield tmp_path
     apps.WOLTS_DIR = original
     apps.APPS_DIR = original_apps
+    apps.LEGACY_PROJECTS_DIR = original_legacy
     apps._RUNNING_STATE_DIR = original_state
     paths.WOLTS_DIR = original_paths
 
