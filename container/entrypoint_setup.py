@@ -318,8 +318,9 @@ def main():
     sync_claude_md_platform_section(wolts_dir, woltspace_dir)
     if wolt_name:
         write_bashrc(wolt_dir, wolt_name)
-        configure_git(wolt_name)
         seed_wolf_json(wolt_dir, woltspace_dir)
+    # Always configure git — new wolts created later via the lodge need it
+    configure_git(wolt_name or "wolt")
     write_trust_config(wolts_dir)
     write_settings_json(woltspace_dir)
     symlink_node_modules(woltspace_dir)
