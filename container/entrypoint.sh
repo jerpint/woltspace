@@ -21,15 +21,9 @@ HAS_AUTH=false
 [ -f /home/node/.claude/.credentials.json ] && HAS_AUTH=true
 
 if [ -z "$WOLT_NAME" ] || [ "$HAS_AUTH" = "false" ]; then
-  # No wolt or no auth — onboard mode: bare Claude for /login, viewport shows onboard page
+  # No wolt or no auth — onboard mode: bare Claude for /login
+  # Viewport falls back to /onboard via server when no session is registered
   echo "onboard mode: has_auth=$HAS_AUTH wolt_name=${WOLT_NAME:-<none>}"
-  mkdir -p "$WOLTS_DIR/.state"
-  python3 -c "
-import json, time
-data = json.dumps({'url': '/onboard', 'port': 7777, 'updated': int(time.time() * 1000)})
-open('$WOLTS_DIR/.state/current-url-main.json', 'w').write(data)
-print('[viewport:main] → /onboard')
-"
   tmux send-keys -t main "claude" Enter
 elif [ -f /home/node/.claude/.first-run ]; then
   rm /home/node/.claude/.first-run
