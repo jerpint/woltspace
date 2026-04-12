@@ -153,10 +153,10 @@ def routed_test_session(test_chat_id):
 @pytest.fixture
 def tunnel_url():
     """Read the current tunnel URL."""
-    for path in [
-        Path("/workspace/wolts/.space/platform/tunnel-url"),
-        Path("/workspace/wolts/.state/tunnel-url"),  # backwards compat
-    ]:
-        if path.exists():
-            return path.read_text().strip().rstrip("/")
-    return None
+    import json
+    try:
+        state = json.loads(Path("/workspace/wolts/.space/platform/tunnel.json").read_text())
+        url = state.get("url", "").strip().rstrip("/")
+        return url if url else None
+    except Exception:
+        return None

@@ -24,7 +24,7 @@ from pathlib import Path
 from paths import (
     WOLTS_DIR as _PATHS_WOLTS_DIR,
     wolt_sessions_dir,
-    tunnel_url_file,
+    tunnel_state_file,
     space_dir,
 )
 from sites import start_site
@@ -379,15 +379,13 @@ def session_name(prefix: str) -> str:
 
 
 def get_tunnel_url(wolts_dir: Path = None) -> str:
-    """Read the tunnel URL from .space/platform/tunnel-url."""
-    f = tunnel_url_file(wolts_dir)
-    if f.exists():
-        return f.read_text().strip().rstrip("/")
-    # Backwards compat: check old location
-    old = (wolts_dir or WOLTS_DIR) / ".state" / "tunnel-url"
-    if old.exists():
-        return old.read_text().strip().rstrip("/")
-    return ""
+    """Read the tunnel URL from .space/platform/tunnel.json."""
+    try:
+        import json
+        state = json.loads(tunnel_state_file(wolts_dir).read_text())
+        return state.get("url", "").strip().rstrip("/")
+    except Exception:
+        return ""
 
 
 def build_session_command(name: str, work_dir: str, prompt: str, model: str = None) -> str:

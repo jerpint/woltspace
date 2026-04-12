@@ -56,17 +56,17 @@ sleep 2
 
 # Tunnel — managed by FastAPI server, just wait for the URL and print it
 mkdir -p "$WOLTS_DIR/.space/platform" "$WOLTS_DIR/.state" "$WOLT_DIR/.state"
-TUNNEL_URL_FILE="$WOLTS_DIR/.space/platform/tunnel-url"
+TUNNEL_STATE_FILE="$WOLTS_DIR/.space/platform/tunnel.json"
 if [ "${WOLTSPACE_PUBLIC_TUNNEL:-true}" = "true" ]; then
   echo "waiting for tunnel..."
   for i in $(seq 1 45); do
-    if [ -f "$TUNNEL_URL_FILE" ]; then
-      echo "tunnel ready: $(cat "$TUNNEL_URL_FILE")"
-      break
+    if [ -f "$TUNNEL_STATE_FILE" ]; then
+      URL=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('url',''))" < "$TUNNEL_STATE_FILE" 2>/dev/null)
+      [ -n "$URL" ] && echo "tunnel ready: $URL" && break
     fi
     sleep 1
   done
-  if [ ! -f "$TUNNEL_URL_FILE" ]; then
+  if [ ! -f "$TUNNEL_STATE_FILE" ]; then
     echo "warning: tunnel URL not available yet (server will keep trying)"
   fi
 else

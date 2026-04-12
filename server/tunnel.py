@@ -9,9 +9,7 @@ from .config import SPACE_PLATFORM_DIR, WOLTS_DIR
 
 log = logging.getLogger("woltspace.tunnel")
 
-TUNNEL_URL_FILE = SPACE_PLATFORM_DIR / "tunnel-url"
 TUNNEL_STATE_FILE = SPACE_PLATFORM_DIR / "tunnel.json"
-LEGACY_TUNNEL_FILE = WOLTS_DIR / ".state" / "tunnel-url"
 
 _tunnel_url: str = ""
 
@@ -53,9 +51,6 @@ def start_tunnel():
         return
 
     SPACE_PLATFORM_DIR.mkdir(parents=True, exist_ok=True)
-    TUNNEL_URL_FILE.unlink(missing_ok=True)
-    LEGACY_TUNNEL_FILE.parent.mkdir(parents=True, exist_ok=True)
-    LEGACY_TUNNEL_FILE.unlink(missing_ok=True)
 
     # Kill any orphaned tunnel from a previous server run
     old_state = _read_state()
@@ -67,8 +62,6 @@ def start_tunnel():
         result = start_cloudflared(port=7777, host_header=None)
         _tunnel_url = result["url"]
 
-        TUNNEL_URL_FILE.write_text(_tunnel_url)
-        LEGACY_TUNNEL_FILE.write_text(_tunnel_url)
         _write_state({"pid": result["pid"], "url": _tunnel_url})
         log.info(f"tunnel ready: {_tunnel_url}")
     except RuntimeError as e:
@@ -86,5 +79,4 @@ def stop_tunnel():
     if pid:
         stop_cloudflared(pid)
 
-    TUNNEL_URL_FILE.unlink(missing_ok=True)
     TUNNEL_STATE_FILE.unlink(missing_ok=True)
