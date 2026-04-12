@@ -145,9 +145,6 @@
   .tb-btn:hover { background: var(--bg); border-color: var(--border-2); color: var(--ink-2); }
   .tb-btn:disabled { opacity: 0.3; cursor: default; }
   .tb-btn.active { background: var(--ink); border-color: var(--ink); color: var(--surface-2); }
-  #btn-share.copied { background: var(--green); border-color: var(--green); color: #fff; }
-
-  .tb-divider { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
 
   /* ── Split layout ── */
   #split {
@@ -276,7 +273,7 @@
       padding: 8px 6px;
       font-size: 10px;
     }
-    .tb-divider { display: none; }
+
   }
 </style>
 </head>
@@ -301,11 +298,6 @@
   <div class="tb-spacer"></div>
 
   <div class="tb-actions">
-    <button class="tb-btn" id="btn-back" onclick="goBack()" title="Back" disabled>
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5m0 0l7 7m-7-7l7-7"/></svg>
-    </button>
-    <button class="tb-btn" id="btn-share" onclick="copyPublicLink()" title="Copy public link">share</button>
-    <div class="tb-divider"></div>
     <button class="tb-btn" id="btn-term" onclick="toggleFull('left')" title="Fullscreen terminal">terminal</button>
     <button class="tb-btn" id="btn-preview" onclick="toggleFull('right')" title="Fullscreen view">view</button>
   </div>
@@ -480,13 +472,10 @@
   ensureSessionAlive();
 
   // ── Right pane: views + history ──
-  const btnBack   = document.getElementById('btn-back');
   const histPanel = document.getElementById('hist-panel');
   const histList  = document.getElementById('hist-list');
 
   let lastUrl   = null;
-  let viewStack = [];
-  let stackIdx  = -1;
   let histOpen  = false;
   let currentViewportMeta = null;
 
@@ -516,10 +505,6 @@
     setCurrent(url);
   };
 
-  function updateBackBtn() {
-    btnBack.disabled = stackIdx <= 0;
-  }
-
   const isLocal = ['localhost', '127.0.0.1', '0.0.0.0'].includes(location.hostname);
 
   function directPortUrl(port, subPath) {
@@ -542,12 +527,6 @@
       preview.src = url;
     }
     lastUrl = url;
-    if (pushToStack) {
-      viewStack.splice(stackIdx + 1);
-      viewStack.push({ url, title, t: Date.now() });
-      stackIdx = viewStack.length - 1;
-    }
-    updateBackBtn();
     renderHist();
   }
 
@@ -561,60 +540,10 @@
     }).catch(() => {});
   }
 
-  window.goBack = () => {
-    if (stackIdx > 0) {
-      stackIdx--;
-      const e = viewStack[stackIdx];
-      lastUrl = e.url;
-      currentViewportMeta = null;
-      preview.src = e.url;
-      setCurrent(e.url);
-      updateBackBtn();
-      renderHist();
-    }
-  };
-
-  window.jumpTo = (i) => {
-    if (i >= 0 && i < viewStack.length) {
-      stackIdx = i;
-      const e = viewStack[i];
-      lastUrl = e.url;
-      preview.src = e.url;
-      setCurrent(e.url);
-      updateBackBtn();
-      renderHist();
-    }
-  };
-
   window.toggleHist = () => {
     histOpen = !histOpen;
     histPanel.classList.toggle('open', histOpen);
     if (histOpen) renderHist();
-  };
-
-  window.copyPublicLink = async () => {
-    const btn = document.getElementById('btn-share');
-    btn.textContent = '...';
-    btn.disabled = true;
-    try {
-      const res = await fetch('/shares', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session }),
-      });
-      const data = await res.json();
-      if (!data.token) throw new Error(data.error || 'no token');
-      const link = location.origin + data.url;
-      await navigator.clipboard.writeText(link).catch(() => window.open(link, '_blank'));
-      btn.disabled = false;
-      btn.textContent = 'copied';
-      btn.classList.add('copied');
-      setTimeout(() => { btn.textContent = 'share'; btn.classList.remove('copied'); }, 3000);
-    } catch (err) {
-      console.error('[share]', err);
-      btn.textContent = 'share';
-      btn.disabled = false;
-    }
   };
 
   // Load sparks for history panel
