@@ -53,20 +53,30 @@ tmux capture-pane -t SESSION_NAME -p -S -20 | tail -10
 
 ### Step 3: Send the spec
 
+Use atomic paste-buffer delivery. From Python (recommended):
+
+```python
+import subprocess
+text = "Your full task description here, all on one line."
+# Flatten newlines, add trailing \n for Enter
+flat = text.replace("\n", " ") + "\n"
+subprocess.run(["tmux", "set-buffer", flat], timeout=10)
+subprocess.run(["tmux", "paste-buffer", "-t", SESSION_NAME], timeout=10)
+```
+
+From shell:
+
 ```bash
-tmux send-keys -t SESSION_NAME "Your full task description here. Include:
-1. What to build (clear spec)
-2. Files to change (with descriptions)
-3. Dev workflow (clone URL, branch name, test commands)
-4. Constraints (don't edit production, commit often)" Enter
+# Use printf to get a real trailing newline (shell $'...' or printf)
+printf '%s\n' "Your full task description here." | tmux load-buffer -
+tmux paste-buffer -t SESSION_NAME
 ```
 
 **Important:** Send one message with everything. Multi-message dispatch risks the wolt
 starting after the first message before seeing the full spec.
 
-**Important:** The text may paste but not submit. Always verify with `tmux capture-pane`
-that the wolt started working (not still showing `[Pasted text #1 +N lines]`).
-If stuck, send an extra `tmux send-keys -t SESSION_NAME Enter`.
+**Note:** The `_tmux_paste()` helper in `container/lib/sessions.py` implements this
+pattern with a 10-second timeout, used by the bot for Telegram message delivery.
 
 ### Step 4: Monitor progress
 
@@ -84,7 +94,8 @@ git -C /workspace/wolts/projects/CLONE_DIR/ log --oneline -5
 ### Step 5: Course-correct if needed
 
 ```bash
-tmux send-keys -t SESSION_NAME "Correction: also update X because Y" Enter
+printf '%s\n' "Correction: also update X because Y" | tmux load-buffer -
+tmux paste-buffer -t SESSION_NAME
 ```
 
 ### Step 6: Review and push
@@ -97,7 +108,8 @@ git -C /workspace/wolts/projects/CLONE_DIR/ diff HEAD~1
 
 Tell them to push:
 ```bash
-tmux send-keys -t SESSION_NAME "Looks good. Push it. Use gh-app-token for auth. Push to BRANCH on jerpint/woltspace. Clean up the remote URL after." Enter
+printf '%s\n' "Looks good. Push it. Use gh-app-token for auth. Push to BRANCH on jerpint/woltspace. Clean up the remote URL after." | tmux load-buffer -
+tmux paste-buffer -t SESSION_NAME
 ```
 
 ### Step 7: Create the PR
@@ -136,10 +148,13 @@ DEV WORKFLOW:
 
 **Wolt stuck at login screen:** Stale credentials. Kill the session, copy fresh creds, respawn.
 
-**Message pasted but not submitted:** Send `tmux send-keys -t SESSION Enter` to submit.
-
 **Wolt ignores the spec:** It may have been in the middle of its own boot flow. Wait for the
 `❯` prompt before sending.
+
+**Worker refuses dispatch:** Workers may reject tasks from other AI agents if they involve
+pushing to shared repos. This is a known IWCL friction point — workers can't verify the
+human authorization chain. Workaround: have the orchestrator do the push, or have the
+human confirm directly in the worker's session.
 
 **OOM kills:** Too many opus processes. Check `ps aux | grep claude | wc -l`. Kill idle sessions
 before spawning new ones.
