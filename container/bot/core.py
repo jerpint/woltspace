@@ -287,6 +287,7 @@ CREATURE_EMOJIS = {
     "raccoon": "🦝",
     "beaver": "🦫",
     "otter": "🦦",
+    "rodent": "🦝",  # legacy type — treated as raccoon
     # Planned creatures — not yet active as session types
     "dog": "🐶",
     "wolf": "🐺",
