@@ -277,6 +277,24 @@ def _is_session_alive(session_name: str) -> bool:
         return False
 
 
+async def _notify_switch(update: Update, old_state: dict, new_wolt: str, new_session: str):
+    """Send a brief message if active wolt or session changed."""
+    old_wolt = old_state.get("active_wolt")
+    old_session = old_state.get("active_session")
+    if new_wolt != old_wolt:
+        emoji = CREATURE_EMOJIS.get("raccoon", "🐾")  # fallback, wolt.json lookup below
+        wolt_json = _WOLTS_DIR / new_wolt / "wolt" / "wolt.json"
+        if wolt_json.exists():
+            try:
+                data = json.loads(wolt_json.read_text())
+                emoji = CREATURE_EMOJIS.get(data.get("type", ""), "🐾")
+            except (json.JSONDecodeError, OSError):
+                pass
+        await _reply(update, f"↪️ switched to {emoji} {new_wolt} ({new_session})")
+    elif new_session != old_session:
+        await _reply(update, f"↪️ new session for {new_wolt} ({new_session})")
+
+
 def _spawn_session(wolt: str, chat_id: int, prompt: str = "") -> dict:
     """Spawn a new Claude Code session for a wolt, return session info."""
     routing = {"adapter": "telegram", "chat_id": chat_id}
@@ -466,12 +484,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_text = f"[replying to: {quoted[:200]}]\n{text}" if quoted.strip() else text
 
                 # Try routing directly — message_session handles revive internally
+                prev_state = _load_chat_state(chat_id)
                 success = await _route_to_session(update, reply_session, reply_wolt, reply_text, chat_id)
                 if success:
-                    state = _load_chat_state(chat_id)
-                    state["active_wolt"] = reply_wolt
-                    state["active_session"] = reply_session
-                    _save_chat_state(chat_id, state)
+                    new_state = dict(prev_state)
+                    new_state["active_wolt"] = reply_wolt
+                    new_state["active_session"] = reply_session
+                    _save_chat_state(chat_id, new_state)
+                    await _notify_switch(update, prev_state, reply_wolt, reply_session)
                     return
                 # Route failed (session truly gone) — spawn new one for that wolt
                 try:
@@ -630,20 +650,22 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_text = f"[replying to: {quoted[:200]}]\n{voice_message}" if quoted.strip() else voice_message
 
                 # Try routing directly — message_session handles revive internally
+                prev_state = _load_chat_state(chat_id)
                 success = await _route_to_session(update, reply_session, reply_wolt, reply_text, chat_id)
                 if success:
-                    state = _load_chat_state(chat_id)
-                    state["active_wolt"] = reply_wolt
-                    state["active_session"] = reply_session
-                    _save_chat_state(chat_id, state)
+                    new_state = dict(prev_state)
+                    new_state["active_wolt"] = reply_wolt
+                    new_state["active_session"] = reply_session
+                    _save_chat_state(chat_id, new_state)
+                    await _notify_switch(update, prev_state, reply_wolt, reply_session)
                     return
                 # Route failed (session truly gone) — spawn new one for that wolt
                 try:
                     session = _spawn_session(reply_wolt, chat_id)
-                    state = _load_chat_state(chat_id)
-                    state["active_wolt"] = reply_wolt
-                    state["active_session"] = session["name"]
-                    _save_chat_state(chat_id, state)
+                    new_state = dict(prev_state)
+                    new_state["active_wolt"] = reply_wolt
+                    new_state["active_session"] = session["name"]
+                    _save_chat_state(chat_id, new_state)
                     tunnel_url = get_tunnel_url()
                     session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
                     await _reply(update, f"🪵 session expired — new one for {reply_wolt}\n{session_link}")
