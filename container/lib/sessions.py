@@ -355,17 +355,17 @@ def _tmux_paste(target: str, text: str):
     blocks on long messages (the pane input buffer backs up). Buffer
     paste delivers the entire text atomically — same as a clipboard
     paste from a human.
+
+    A trailing newline is included in the buffer so paste-buffer
+    converts it to a carriage return (Enter) as part of the same
+    atomic paste — no separate send-keys needed.
     """
     subprocess.run(
-        ["tmux", "set-buffer", text],
+        ["tmux", "set-buffer", text + "\n"],
         check=True, timeout=_TMUX_TIMEOUT,
     )
     subprocess.run(
         ["tmux", "paste-buffer", "-t", target],
-        check=True, timeout=_TMUX_TIMEOUT,
-    )
-    subprocess.run(
-        ["tmux", "send-keys", "-t", target, "", "Enter"],
         check=True, timeout=_TMUX_TIMEOUT,
     )
 
