@@ -276,21 +276,20 @@ if [ "$cmd" = "init" ]; then
     printf "  %b\n\n" "${_D}\"how much wolt could a wolt chuck chuck\n   if a wolt chuck could chuck wolt?\"${_R}"
 
     printf "  %bhere's what happens next:%b\n" "${_D}" "${_R}"
-    printf "  %b  1. build a sandboxed docker container (a few minutes)%b\n" "${_D}" "${_R}"
+    printf "  %b  1. build a sandboxed docker container%b\n" "${_D}" "${_R}"
     printf "  %b  2. open the lodge and log in to Claude Code%b\n" "${_D}" "${_R}"
     printf "  %b  3. create your first wolt%b\n" "${_D}" "${_R}"
     echo ""
     printf "  %byour wolts will persist at %b%s%b\n" "${_D}" "${_R}${_C}" "$WOLTS_DIR" "${_R}"
     echo ""
-    echo -n "  ${_C}continue? [Y/n] (press enter for yes)${_R} "
-    read -r CONFIRM </dev/tty
-    CONFIRM="${CONFIRM:-Y}"
-    if [[ "$CONFIRM" != [Yy] ]]; then
-      echo "  🦫 aborting. no wood was gnawed."
-      exit 0
-    fi
+    echo "  ${_D}enable public access?${_R}"
+    echo "  ${_L}  creates a temporary link so you can reach woltspace from anywhere.${_R}"
+    echo "  ${_L}  the link changes on every restart. only share with people you trust.${_R}"
+    echo ""
+    echo -n "  ${_C}enable public link? [Y/n]${_R} "
+    read -r _tunnel </dev/tty
+    _tunnel="${_tunnel:-Y}"
   fi
-  echo ""
 
   # Create wolts dir + .env from template
   mkdir -p "$WOLTS_DIR"
@@ -301,25 +300,6 @@ if [ "$cmd" = "init" ]; then
   chown 1000:1000 "$WOLTS_DIR/.claude" 2>/dev/null \
     || docker run --rm -v "$WOLTS_DIR/.claude:/fix" node:22-slim chown -R 1000:1000 /fix 2>/dev/null \
     || true
-
-  # Tunnel opt-in
-  if [ "${WOLTSPACE_NONINTERACTIVE:-}" = "true" ]; then
-    _tunnel="n"
-  else
-    echo "  ${_D}enable public access?${_R}"
-    echo ""
-    echo "  ${_L}  create a temporary link so you can reach your woltspace from${_R}"
-    echo "  ${_L}  anywhere — phone, other devices, etc.${_R}"
-    echo "  ${_L}  the link changes every time you restart woltspace.${_R}"
-    echo ""
-    echo "  ${_D}  this is an experimental feature.${_R}"
-    echo "  ${_D}  only share this link with people you trust.${_R}"
-    echo "  ${_D}  see: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/${_R}"
-    echo ""
-    echo -n "  ${_C}enable? [Y/n] (press enter for yes)${_R} "
-    read -r _tunnel </dev/tty
-    _tunnel="${_tunnel:-Y}"
-  fi
   if [[ "$_tunnel" == [Yy] ]]; then
     echo ""
     echo "  ${_G}✓${_R} public access enabled"
