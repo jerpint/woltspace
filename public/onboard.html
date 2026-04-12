@@ -271,6 +271,14 @@
       transition: all 0.2s;
     }
     .copy-btn:hover { border-color: var(--ink-3); }
+    #login-url-block:hover {
+      outline: 2px solid var(--amber);
+      outline-offset: -2px;
+    }
+    #login-url-block:hover #login-url-text {
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
     .copy-btn.copied {
       background: var(--green-light);
       border-color: var(--green);
@@ -344,6 +352,9 @@
           <p id="login-waiting-msg">Waiting for login link...</p>
           <div id="login-link-box" style="display: none;">
             <p style="margin-bottom: 0.5rem;">Sign in with your Claude account:</p>
+            <a id="login-url-block" href="#" target="_blank" class="cmd-block" style="cursor: pointer; flex-direction: column; align-items: stretch; gap: 0.4rem; padding: 1rem; text-decoration: none; transition: outline 0.2s;">
+              <div id="login-url-text" style="color: #C8DECE; word-break: break-all; font-size: 11px; line-height: 1.6; user-select: all;"></div>
+            </a>
             <div class="login-actions">
               <a id="login-link" href="#" target="_blank" class="lodge-btn" style="background: var(--amber);">
                 open login page &rarr;
@@ -433,6 +444,8 @@
           const linkBox = document.getElementById('login-link-box');
           const linkEl = document.getElementById('login-link');
           linkEl.href = d.login_url;
+          document.getElementById('login-url-text').textContent = d.login_url;
+          document.getElementById('login-url-block').href = d.login_url;
           linkBox.style.display = 'block';
           document.getElementById('login-pill-text').textContent = 'waiting for login';
         }
