@@ -20,6 +20,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from paths import space_apps_dir
+from tunnel import start_cloudflared, stop_cloudflared
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 APPS_DIR = WOLTS_DIR / "apps"
@@ -244,11 +245,8 @@ def stop_app(name: str) -> bool:
         return False
     # Kill tunnel first if running
     tunnel_pid = state.get("tunnel_pid")
-    if tunnel_pid and _is_pid_alive(tunnel_pid):
-        try:
-            os.kill(tunnel_pid, signal.SIGTERM)
-        except OSError:
-            pass
+    if tunnel_pid:
+        stop_cloudflared(tunnel_pid)
     # Kill the app process
     pid = state.get("pid")
     if pid and _is_pid_alive(pid):
@@ -288,10 +286,6 @@ def share_app(name: str) -> dict:
     Raises ValueError if app is not running.
     Raises RuntimeError if sharing is disabled or tunnel fails.
     """
-    import re
-    import tempfile
-    import time
-
     _check_sharing_enabled()
 
     state = _read_state(name)
@@ -308,51 +302,16 @@ def share_app(name: str) -> dict:
             "pid": tunnel_pid,
         }
 
-    # Start cloudflared tunnel with host header rewrite
-    # --http-host-header localhost: rewrites Host header so dev servers
-    # (Vite 6+, Next.js, etc.) see "localhost" and pass their allowedHosts check.
-    log_file = tempfile.mktemp(suffix="-cloudflared.log")
-    with open(log_file, "w") as lf:
-        proc = subprocess.Popen(
-            [
-                "cloudflared", "tunnel",
-                "--url", f"http://localhost:{port}",
-                "--http-host-header", "localhost",
-            ],
-            stdout=lf,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
+    result = start_cloudflared(port=port, host_header="localhost")
 
-    # Poll log for tunnel URL (up to 15s, checking every 0.5s)
-    tunnel_url = ""
-    for _ in range(30):
-        time.sleep(0.5)
-        try:
-            with open(log_file) as f:
-                content = f.read()
-            m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", content)
-            if m:
-                tunnel_url = m.group(0)
-                break
-        except Exception:
-            pass
-
-    if not tunnel_url:
-        try:
-            proc.terminate()
-        except Exception:
-            pass
-        raise RuntimeError("cloudflared tunnel failed to start — is cloudflared installed?")
-
-    state["tunnel_pid"] = proc.pid
-    state["tunnel_url"] = tunnel_url
+    state["tunnel_pid"] = result["pid"]
+    state["tunnel_url"] = result["url"]
     _write_state(name, state)
 
     # Persist public=true in woltspace.json
     _set_public(name, True)
 
-    return {"tunnel_url": tunnel_url, "pid": proc.pid}
+    return {"tunnel_url": result["url"], "pid": result["pid"]}
 
 
 def unshare_app(name: str) -> bool:
@@ -366,13 +325,7 @@ def unshare_app(name: str) -> bool:
         return False
 
     tunnel_pid = state.get("tunnel_pid")
-    stopped = False
-    if tunnel_pid and _is_pid_alive(tunnel_pid):
-        try:
-            os.kill(tunnel_pid, signal.SIGTERM)
-        except OSError:
-            pass
-        stopped = True
+    stopped = stop_cloudflared(tunnel_pid) if tunnel_pid else False
 
     state["tunnel_pid"] = None
     state["tunnel_url"] = None
@@ -399,11 +352,7 @@ def unshare_all_apps() -> list[str]:
             state = json.loads(f.read_text())
             name = state.get("name", f.stem)
             tunnel_pid = state.get("tunnel_pid")
-            if tunnel_pid and _is_pid_alive(tunnel_pid):
-                try:
-                    os.kill(tunnel_pid, signal.SIGTERM)
-                except OSError:
-                    pass
+            if tunnel_pid and stop_cloudflared(tunnel_pid):
                 state["tunnel_pid"] = None
                 state["tunnel_url"] = None
                 _write_state(name, state)

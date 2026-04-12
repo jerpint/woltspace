@@ -54,24 +54,21 @@ SERVER_PID=$!
 
 sleep 2
 
-# Tunnel
+# Tunnel — managed by FastAPI server, just wait for the URL and print it
 mkdir -p "$WOLTS_DIR/.space/platform" "$WOLTS_DIR/.state" "$WOLT_DIR/.state"
-rm -f "$WOLTS_DIR/.space/platform/tunnel-url" "$WOLTS_DIR/.state/tunnel-url" "$WOLT_DIR/.state/tunnel-url"
+TUNNEL_STATE_FILE="$WOLTS_DIR/.space/platform/tunnel.json"
 if [ "${WOLTSPACE_PUBLIC_TUNNEL:-true}" = "true" ]; then
-  echo "opening tunnel..."
-  TUNNEL_LOG="$WOLTS_DIR/.space/platform/tunnel.log"
-  cloudflared tunnel --url http://localhost:7777 > "$TUNNEL_LOG" 2>&1 &
-  disown
-  for i in $(seq 1 30); do
-    URL=$(grep -o 'https://[^ ]*trycloudflare.com' "$TUNNEL_LOG" 2>/dev/null | head -1)
-    if [ -n "$URL" ]; then
-      echo "$URL" > "$WOLTS_DIR/.space/platform/tunnel-url"
-      echo "$URL" > "$WOLTS_DIR/.state/tunnel-url"  # backwards compat: host CLI reads this
-      echo "tunnel ready: $URL"
-      break
+  echo "waiting for tunnel..."
+  for i in $(seq 1 45); do
+    if [ -f "$TUNNEL_STATE_FILE" ]; then
+      URL=$(grep -o '"url": *"[^"]*"' "$TUNNEL_STATE_FILE" 2>/dev/null | sed 's/"url": *"\(.*\)"/\1/')
+      [ -n "$URL" ] && echo "tunnel ready: $URL" && break
     fi
     sleep 1
   done
+  if [ ! -f "$TUNNEL_STATE_FILE" ]; then
+    echo "warning: tunnel URL not available yet (server will keep trying)"
+  fi
 else
   echo "tunnel disabled — access via http://localhost:7777"
 fi

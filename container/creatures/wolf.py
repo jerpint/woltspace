@@ -31,13 +31,15 @@ WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 
 
 def _get_tunnel_url() -> Optional[str]:
-    """Read tunnel URL from .space/platform/tunnel-url."""
-    from lib.paths import tunnel_url_file
-    tunnel_file = tunnel_url_file()
-    if tunnel_file.exists():
-        url = tunnel_file.read_text().strip()
+    """Read tunnel URL from .space/platform/tunnel.json."""
+    try:
+        import json
+        from lib.paths import tunnel_state_file
+        state = json.loads(tunnel_state_file().read_text())
+        url = state.get("url", "").strip()
         return url if url else None
-    return None
+    except Exception:
+        return None
 
 
 # ── Cron expression parser (minimal, no deps) ──────────────────────

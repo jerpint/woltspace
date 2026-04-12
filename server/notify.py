@@ -90,9 +90,10 @@ async def _send_telegram(session: str, message: str, chat_id: str) -> dict:
         raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
 
     tunnel_url = ""
-    tunnel_file = SPACE_PLATFORM_DIR / "tunnel-url"
     try:
-        tunnel_url = tunnel_file.read_text().strip()
+        import json
+        state = json.loads((SPACE_PLATFORM_DIR / "tunnel.json").read_text())
+        tunnel_url = state.get("url", "").strip()
     except Exception:
         pass
 

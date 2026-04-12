@@ -93,9 +93,9 @@ def space_logs_dir(wolts_dir: Path = None) -> Path:
 # Specific files
 # ---------------------------------------------------------------------------
 
-def tunnel_url_file(wolts_dir: Path = None) -> Path:
-    """Tunnel URL file: wolts/.space/platform/tunnel-url"""
-    return space_platform_dir(wolts_dir) / "tunnel-url"
+def tunnel_state_file(wolts_dir: Path = None) -> Path:
+    """Tunnel state file: wolts/.space/platform/tunnel.json"""
+    return space_platform_dir(wolts_dir) / "tunnel.json"
 
 
 def platform_version_file(wolts_dir: Path = None) -> Path:
