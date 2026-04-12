@@ -63,6 +63,8 @@ def start_tunnel():
         _tunnel_url = result["url"]
 
         _write_state({"pid": result["pid"], "url": _tunnel_url})
+        # Also write plain text for host CLI backwards compat
+        (SPACE_PLATFORM_DIR / "tunnel-url").write_text(_tunnel_url)
         log.info(f"tunnel ready: {_tunnel_url}")
     except RuntimeError as e:
         log.error(f"tunnel failed: {e}")
@@ -80,3 +82,4 @@ def stop_tunnel():
         stop_cloudflared(pid)
 
     TUNNEL_STATE_FILE.unlink(missing_ok=True)
+    (SPACE_PLATFORM_DIR / "tunnel-url").unlink(missing_ok=True)
