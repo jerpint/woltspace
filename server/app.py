@@ -33,7 +33,6 @@ from .config import (
     PORT,
     APPS_DIR,
     PUBLIC_DIR,
-    SHARES_DIR,
     SITE_DIR,
     SPARKS_DIR,
     STATE_DIR,
@@ -1060,100 +1059,6 @@ async def serve_app(app_name: str, request: Request, path: str = ""):
     # Off-state placeholder — app exists but has no servable content
     app_obj = get_app(app_name)
     return HTMLResponse(_app_placeholder(app_name, app_obj))
-
-
-# --- Shares ---
-
-@app.post("/shares")
-async def create_share(request: Request):
-    body = await request.json()
-    target_session = sanitize_session(body.get("session", "main"))
-    session_file = current_url_file(target_session)
-    session_data = json.loads(session_file.read_text()) if session_file.exists() else {}
-    port = session_data.get("port", 7777)
-    token = target_session
-    SHARES_DIR.mkdir(parents=True, exist_ok=True)
-    (SHARES_DIR / f"{token}.json").write_text(json.dumps({
-        "session": target_session, "port": port,
-        "label": body.get("label"), "created": int(time.time() * 1000), "wolt": WOLT_NAME,
-    }))
-    print(f"[shares] created {token} → port {port}")
-    return JSONResponse({"token": token, "url": f"/public/{token}", "session": target_session, "port": port}, status_code=201)
-
-
-@app.get("/shares")
-async def list_shares():
-    SHARES_DIR.mkdir(parents=True, exist_ok=True)
-    shares = []
-    for f in SHARES_DIR.iterdir():
-        if not f.name.endswith(".json"):
-            continue
-        try:
-            token = f.stem
-            data = json.loads(f.read_text())
-            # Liveness check
-            import socket
-            alive = False
-            try:
-                s = socket.create_connection(("localhost", data["port"]), timeout=0.5)
-                s.close()
-                alive = True
-            except Exception:
-                pass
-            shares.append({"token": token, **data, "alive": alive})
-        except Exception:
-            pass
-    return shares
-
-
-# jerpint: what are these tokens? who issues them? isnt public just public?
-@app.delete("/shares/{token}")
-async def delete_share(token: str):
-    share_file = SHARES_DIR / f"{token}.json"
-    if not share_file.exists():
-        return JSONResponse({"error": "share not found"}, status_code=404)
-    share_file.unlink()
-    print(f"[shares] revoked token {token}")
-    return {"ok": True, "token": token}
-
-
-@app.get("/public/{token}/{path:path}")
-@app.get("/public/{token}")
-async def public_proxy(token: str, request: Request, path: str = ""):
-    share_file = SHARES_DIR / f"{token}.json"
-    if not share_file.exists():
-        return PlainTextResponse("Share link not found or revoked.", status_code=404)
-    try:
-        share_data = json.loads(share_file.read_text())
-    except Exception:
-        return PlainTextResponse("invalid share config", status_code=500)
-
-    port = share_data["port"]
-    share_session = share_data.get("session", "main")
-
-    # No subpath → redirect to session's current viewport
-    if not path:
-        session_file = current_url_file(sanitize_session(share_session))
-        session_data = json.loads(session_file.read_text()) if session_file.exists() else {}
-        viewport = session_data.get("url", "/")
-        return RedirectResponse(f"/public/{token}{viewport}", status_code=302)
-
-    target = f"http://localhost:{port}/{path}"
-    if request.url.query:
-        target += f"?{request.url.query}"
-    async with httpx.AsyncClient() as client:
-        try:
-            resp = await client.request(
-                request.method, target,
-                headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
-                content=await request.body(),
-            )
-            headers = dict(resp.headers)
-            headers.pop("x-frame-options", None)
-            headers.pop("content-security-policy", None)
-            return Response(resp.content, status_code=resp.status_code, headers=headers)
-        except httpx.ConnectError:
-            return PlainTextResponse(f"Service not running on port {port}.", status_code=502)
 
 
 # --- Tools ---
