@@ -290,9 +290,9 @@ async def _notify_switch(update: Update, old_state: dict, new_wolt: str, new_ses
                 emoji = CREATURE_EMOJIS.get(data.get("type", ""), "🐾")
             except (json.JSONDecodeError, OSError):
                 pass
-        await _reply(update, f"↪️ switched to {emoji} {new_wolt} ({new_session})")
+        await _reply(update, f"🪵 now talking to {emoji} {new_wolt} ({new_session})")
     elif new_session != old_session:
-        await _reply(update, f"↪️ new session for {new_wolt} ({new_session})")
+        await _reply(update, f"🪵 now talking to {emoji} {new_wolt} ({new_session})")
 
 
 def _spawn_session(wolt: str, chat_id: int, prompt: str = "") -> dict:
