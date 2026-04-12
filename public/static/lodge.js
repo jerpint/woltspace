@@ -48,6 +48,9 @@ async function loadWolts() {
   } catch {
     document.getElementById('sidebar-wolts').innerHTML = '';
   }
+  // Show "create your first wolt" CTA when no wolts exist
+  const cta = document.getElementById('home-create-cta');
+  if (cta) cta.style.display = allWolts.length === 0 ? '' : 'none';
 }
 
 function renderSidebarWolts() {
@@ -459,11 +462,8 @@ async function submitCreateWolt() {
 
 // ── Onboard ──
 async function openOnboard() {
-  await fetch('/current?session=main', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url: '/onboard' }),
-  }).catch(() => {});
+  // The entrypoint already started a bare Claude session in 'main' with
+  // the onboard page as viewport when no auth is detected. Just go there.
   location.href = '/tui';
 }
 
@@ -487,6 +487,7 @@ document.querySelectorAll('.type-card').forEach(card => {
 loadWolts();
 loadApps();
 loadSessions();
+
 setInterval(loadSessions, 5000);
 setInterval(loadApps, 10000);
 

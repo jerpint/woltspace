@@ -6,6 +6,12 @@
 
 set -euo pipefail
 
+# Log session startup for debugging — capture errors if the session dies instantly
+SESSION_LOG="/workspace/wolts/.space/logs/session-boot.log"
+mkdir -p "$(dirname "$SESSION_LOG")"
+exec 2> >(tee -a "$SESSION_LOG" >&2)
+echo "[$(date -Iseconds)] starting session: $1 in $2" >> "$SESSION_LOG"
+
 SESSION_NAME="$1"
 WORK_DIR="$2"
 PROMPT="$3"

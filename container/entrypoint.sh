@@ -10,14 +10,22 @@ ENV_FILE=$(mktemp /tmp/entrypoint-env.XXXXXX)
 python3 "$WOLTSPACE_DIR/container/entrypoint_setup.py" --env-file "$ENV_FILE"
 source "$ENV_FILE"
 rm -f "$ENV_FILE"
-export WOLT_NAME WOLT_DIR DEV_MODE WOLF_CONFIG PYTHONPATH PATH
+export WOLT_NAME WOLT_DIR WOLTS_DIR DEV_MODE WOLF_CONFIG PYTHONPATH PATH
 export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
 
 # ── tmux ──
 export LANG=C.UTF-8
 tmux -u new-session -d -s main -c "$WOLT_DIR" 2>/dev/null || true
 tmux set -g mouse on
-if [ -f /home/node/.claude/.first-run ]; then
+HAS_AUTH=false
+[ -f /home/node/.claude/.credentials.json ] && HAS_AUTH=true
+
+if [ -z "$WOLT_NAME" ] || [ "$HAS_AUTH" = "false" ]; then
+  # No wolt or no auth — onboard mode: bare Claude for /login
+  # Viewport falls back to /onboard via server when no session is registered
+  echo "onboard mode: has_auth=$HAS_AUTH wolt_name=${WOLT_NAME:-<none>}"
+  tmux send-keys -t main "wclaude /login" Enter
+elif [ -f /home/node/.claude/.first-run ]; then
   rm /home/node/.claude/.first-run
   # Fresh container — clear node_modules for all apps so installs run clean
   # Prevents binary/native dep corruption across container rebuilds (e.g. Node version changes)
@@ -55,7 +63,8 @@ SERVER_PID=$!
 sleep 2
 
 # Tunnel — managed by FastAPI server, just wait for the URL and print it
-mkdir -p "$WOLTS_DIR/.space/platform" "$WOLTS_DIR/.state" "$WOLT_DIR/.state"
+# Lodge scaffold handles .space/platform — just ensure per-wolt state dir
+[ -n "$WOLT_NAME" ] && mkdir -p "$WOLT_DIR/.state"
 TUNNEL_STATE_FILE="$WOLTS_DIR/.space/platform/tunnel.json"
 if [ "${WOLTSPACE_PUBLIC_TUNNEL:-true}" = "true" ]; then
   echo "waiting for tunnel..."

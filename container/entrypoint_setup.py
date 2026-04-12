@@ -35,7 +35,7 @@ def resolve_wolt_name(wolts_dir: Path) -> str:
     for d in sorted(wolts_dir.iterdir()):
         if d.is_dir() and not d.name.startswith(".") and (d / "wolt").is_dir():
             return d.name
-    return "wolt"
+    return ""
 
 
 def resolve_wolt_dir(wolts_dir: Path, wolt_name: str) -> Path:
@@ -105,6 +105,8 @@ def write_trust_config(wolts_dir: Path):
 
     trust = {"hasTrustDialogAccepted": True, "hasCompletedProjectOnboarding": True}
     projects = config.get("projects", {})
+    # Trust the wolts dir itself (needed for onboard mode before any wolts exist)
+    projects[str(wolts_dir)] = trust
     for d in sorted(wolts_dir.iterdir()):
         if d.is_dir() and not d.name.startswith("."):
             projects[str(d)] = trust
@@ -137,6 +139,32 @@ def configure_git(wolt_name: str):
     subprocess.run(["git", "config", "--global", "--add", "safe.directory", "*"], check=True)
 
 
+def scaffold_lodge(wolts_dir: Path):
+    """Ensure lodge-level infrastructure exists. Idempotent — safe to call every boot."""
+    # Global state dirs
+    (wolts_dir / ".space" / "platform").mkdir(parents=True, exist_ok=True)
+    (wolts_dir / ".space" / "logs").mkdir(parents=True, exist_ok=True)
+
+    # Session registry (lodge-level, shared across wolts)
+    (wolts_dir / ".state" / "registry").mkdir(parents=True, exist_ok=True)
+
+    # woltspace.json — multi-wolt config
+    config_file = wolts_dir / "woltspace.json"
+    if not config_file.exists():
+        config_file.write_text(json.dumps({
+            "telegram": {"model": "claude-haiku-4-5", "active_wolt": ""},
+            "claude": {"default_wolt": ""},
+        }, indent=2) + "\n")
+
+    # Ensure container/bin is on PATH for all shells (docker exec, tmux, etc.)
+    bashrc = HOME / ".bashrc"
+    bin_path = f'export PATH="{WOLTSPACE_DIR}/container/bin:$PATH"'
+    existing = bashrc.read_text() if bashrc.exists() else ""
+    if bin_path not in existing:
+        with open(bashrc, "a") as f:
+            f.write(f"\n{bin_path}\n")
+
+
 def scaffold_wolt(wolt_name: str, wolts_dir: Path, woltspace_dir: Path) -> Path:
     """Create wolt directory from template if it doesn't exist. Returns wolt_dir."""
     wolt_dir = wolts_dir / wolt_name
@@ -159,13 +187,15 @@ def scaffold_wolt(wolt_name: str, wolts_dir: Path, woltspace_dir: Path) -> Path:
         "description": "",
     }, indent=2) + "\n")
 
-    # Write woltspace.json if missing
+    # Update woltspace.json with this wolt as active (lodge scaffold ensures file exists)
     config_file = wolts_dir / "woltspace.json"
-    if not config_file.exists():
-        config_file.write_text(json.dumps({
-            "telegram": {"model": "claude-haiku-4-5", "active_wolt": wolt_name},
-            "claude": {"default_wolt": wolt_name},
-        }, indent=2) + "\n")
+    try:
+        config = json.loads(config_file.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        config = {}
+    config.setdefault("telegram", {})["active_wolt"] = wolt_name
+    config.setdefault("claude", {})["default_wolt"] = wolt_name
+    config_file.write_text(json.dumps(config, indent=2) + "\n")
 
     # Init git repo
     if not (wolt_dir / ".git").is_dir():
@@ -300,21 +330,33 @@ def main():
 
     woltspace_dir = WOLTSPACE_DIR
     wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+
+    # Lodge infrastructure — always, regardless of whether any wolts exist
+    scaffold_lodge(wolts_dir)
+
     wolt_name = resolve_wolt_name(wolts_dir)
 
-    # Scaffold wolt if it doesn't exist (first boot with new name)
-    scaffold_wolt(wolt_name, wolts_dir, woltspace_dir)
-    wolt_dir = resolve_wolt_dir(wolts_dir, wolt_name)
+    if wolt_name:
+        # Scaffold wolt if it doesn't exist (first boot with new name)
+        scaffold_wolt(wolt_name, wolts_dir, woltspace_dir)
+        wolt_dir = resolve_wolt_dir(wolts_dir, wolt_name)
+    else:
+        # No wolts yet — user will create one from the lodge after auth
+        wolt_dir = wolts_dir
+        print("no wolts found — starting in onboard mode")
+
     dev_mode = (woltspace_dir / ".git").is_dir()
 
     # Config & identity
     sync_all_wolt_skills(woltspace_dir, wolts_dir)
     sync_claude_md_platform_section(wolts_dir, woltspace_dir)
-    write_bashrc(wolt_dir, wolt_name)
+    if wolt_name:
+        write_bashrc(wolt_dir, wolt_name)
+        seed_wolf_json(wolt_dir, woltspace_dir)
+    # Always configure git — new wolts created later via the lodge need it
+    configure_git(wolt_name or "wolt")
     write_trust_config(wolts_dir)
     write_settings_json(woltspace_dir)
-    configure_git(wolt_name)
-    seed_wolf_json(wolt_dir, woltspace_dir)
     symlink_node_modules(woltspace_dir)
 
     # Clean up stale sessions from previous boot
@@ -328,6 +370,7 @@ def main():
     write_env_file(Path(args.env_file), {
         "WOLT_NAME": wolt_name,
         "WOLT_DIR": str(wolt_dir),
+        "WOLTS_DIR": str(wolts_dir),
         "DEV_MODE": "true" if dev_mode else "false",
         "WOLF_CONFIG": wolf_config,
         "TELEGRAM_BOT_DIR": tg_dir,

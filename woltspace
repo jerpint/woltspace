@@ -120,6 +120,13 @@ _start_container() {
   local extra_args=""
   [ -n "$wolt_name" ] && extra_args="-e WOLT_NAME=$wolt_name"
 
+  # Dev mode: mount local repo so code edits are live without rebuild
+  local dev_mount=""
+  if [ "$LOCAL_BUILD" = "true" ]; then
+    dev_mount="-v $WOLTSPACE_DIR:/workspace/woltspace:rw"
+    echo "  ${_L}   dev mount: $WOLTSPACE_DIR → /workspace/woltspace${_R}"
+  fi
+
   mkdir -p "$WOLTS_DIR/.claude"
   # Ensure writable by container's node user (1000) — handles root-owned dirs from Docker
   chown 1000:1000 "$WOLTS_DIR/.claude" 2>/dev/null \
@@ -130,6 +137,7 @@ _start_container() {
     --env-file "$WOLTS_DIR/.env" \
     -v "$WOLTS_DIR:/workspace/wolts:rw" \
     -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
+    $dev_mount \
     -p "${WOLTSPACE_PORT:-7777}":7777 \
     $extra_args \
     woltspace > /dev/null
@@ -238,77 +246,60 @@ if [ "$cmd" = "init" ]; then
 
   _setup_path
 
-  # Detect existing wolts
-  if [ -d "$WOLTS_DIR" ] && [ "$(_count_wolts)" -gt 0 ]; then
+  # Detect existing lodge (wolts or just scaffold from prior init)
+  if [ -d "$WOLTS_DIR" ] && { [ "$(_count_wolts)" -gt 0 ] || [ -f "$WOLTS_DIR/.env" ]; }; then
     printf "\n  %b🦫%b  %b\n\n" "${_L}" "${_R}" "${_B}${_G}woltspace${_R}"
-    echo "  ${_D}🐘 found existing wolts:${_R}"
-    echo "  ${_L}   the lodge remembers${_R}"
-    _list_wolt_names | while read -r w; do echo "    🪵 $w"; done
+    if [ "$(_count_wolts)" -gt 0 ]; then
+      echo "  ${_D}🐘 found existing wolts:${_R}"
+      echo "  ${_L}   the lodge remembers${_R}"
+      _list_wolt_names | while read -r w; do echo "    🪵 $w"; done
+    else
+      echo "  ${_D}🏕️ lodge exists, no wolts yet${_R}"
+      echo "  ${_L}   resuming onboarding${_R}"
+    fi
     echo ""
-    _build_image
+    if ! docker image inspect woltspace &>/dev/null; then
+      _build_image
+    fi
     _start_container
     _show_url
     exit 0
   fi
 
-  # Fresh install — splash + name prompt
+  # Fresh install
   if [ "${WOLTSPACE_NONINTERACTIVE:-}" = "true" ]; then
-    NAME="${WOLTSPACE_WOLT_NAME:-wolt}"
-    echo "  non-interactive: creating wolt '$NAME'"
+    NAME="${WOLTSPACE_WOLT_NAME:-}"
+    [ -n "$NAME" ] && echo "  non-interactive: creating wolt '$NAME'"
   else
     clear
     printf "\n  %b🦫%b  %b\n\n" "${_L}" "${_R}" "${_B}${_G}woltspace${_R}"
     printf "  %b\n\n" "${_D}\"how much wolt could a wolt chuck chuck\n   if a wolt chuck could chuck wolt?\"${_R}"
 
-    echo -n "  name your wolt: "
-    read NAME </dev/tty
-    if [ -z "$NAME" ]; then
-      echo "error: name is required"
-      exit 1
-    fi
-
-    echo ""
-    printf "  %b%s%b is ready to start gnawing. 🦫🪵🌲\n" "${_B}${_L}" "$NAME" "${_R}"
-    echo ""
     printf "  %bhere's what happens next:%b\n" "${_D}" "${_R}"
-    printf "  %b  1. build a sandboxed docker container (a few minutes)%b\n" "${_D}" "${_R}"
-    printf "  %b  2. log in to Claude Code (requires a claude.ai account)%b\n" "${_D}" "${_R}"
-    printf "  %b  3. $NAME wakes up 🦫%b\n" "${_D}" "${_R}"
+    printf "  %b  1. build a sandboxed docker container%b\n" "${_D}" "${_R}"
+    printf "  %b  2. open the lodge and log in to Claude Code%b\n" "${_D}" "${_R}"
+    printf "  %b  3. create your first wolt%b\n" "${_D}" "${_R}"
     echo ""
     printf "  %byour wolts will persist at %b%s%b\n" "${_D}" "${_R}${_C}" "$WOLTS_DIR" "${_R}"
     echo ""
-    echo -n "  ${_C}continue? [Y/n] (press enter for yes)${_R} "
-    read -r CONFIRM </dev/tty
-    CONFIRM="${CONFIRM:-Y}"
-    if [[ "$CONFIRM" != [Yy] ]]; then
-      echo "  🦫 aborting. no wood was gnawed."
-      exit 0
-    fi
+    echo "  ${_D}enable public access?${_R}"
+    echo "  ${_L}  creates a temporary link so you can reach woltspace from anywhere.${_R}"
+    echo "  ${_L}  the link changes on every restart. only share with people you trust.${_R}"
+    echo ""
+    echo -n "  ${_C}enable public link? [Y/n]${_R} "
+    read -r _tunnel </dev/tty
+    _tunnel="${_tunnel:-Y}"
   fi
-  echo ""
 
   # Create wolts dir + .env from template
   mkdir -p "$WOLTS_DIR"
   [ ! -f "$WOLTS_DIR/.env" ] && cp "$WOLTSPACE_DIR/.env.example" "$WOLTS_DIR/.env"
 
-  # Tunnel opt-in
-  if [ "${WOLTSPACE_NONINTERACTIVE:-}" = "true" ]; then
-    _tunnel="n"
-  else
-    echo "  ${_D}enable public access?${_R}"
-    echo ""
-    echo "  ${_L}  create a temporary link so you can reach your woltspace from${_R}"
-    echo "  ${_L}  anywhere — phone, other devices, etc.${_R}"
-    echo "  ${_L}  the link changes every time you restart woltspace.${_R}"
-    echo ""
-    echo "  ${_D}  ⚠️  this is an experimental feature.${_R}"
-    echo "  ${_D}  only share this link with people you trust.${_R}"
-    echo "  ${_D}  see: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/${_R}"
-    echo ""
-    echo -n "  ${_C}enable? [Y/n] (press enter for yes)${_R} "
-    read -r _tunnel </dev/tty
-    _tunnel="${_tunnel:-Y}"
-  fi
+  # Ensure .claude dir exists for auth persistence
+  mkdir -p "$WOLTS_DIR/.claude"
+  chown 1000:1000 "$WOLTS_DIR/.claude" 2>/dev/null \
+    || docker run --rm -v "$WOLTS_DIR/.claude:/fix" node:22-slim chown -R 1000:1000 /fix 2>/dev/null \
+    || true
   if [[ "$_tunnel" == [Yy] ]]; then
     echo ""
     echo "  ${_G}✓${_R} public access enabled"
@@ -326,59 +317,11 @@ if [ "$cmd" = "init" ]; then
   # Build image
   _build_image
 
-  # Auth — run Claude login in a throwaway container if not already authenticated
-  if [ ! -f "$WOLTS_DIR/.claude/.credentials.json" ] && [ "${WOLTSPACE_NONINTERACTIVE:-}" != "true" ]; then
-    echo ""
-    echo "  ${_D}🔑 almost there — log in to Claude Code${_R}"
-    echo ""
-    echo "  ${_L}  this will open a Claude Code session.${_R}"
-    echo "  ${_L}  type /login, follow the prompts, then /exit when done.${_R}"
-    echo "  ${_L}  you'll need a claude.ai account (free or pro).${_R}"
-    echo ""
-    echo -n "  ${_C}ready? [Y/n] (press enter for yes)${_R} "
-    read -r _auth </dev/tty
-    _auth="${_auth:-Y}"
-    if [[ "$_auth" != [Yy] ]]; then
-      echo ""
-      echo "  ${_D}skipped — you can log in later from inside the container${_R}"
-    else
-    echo ""
-    mkdir -p "$WOLTS_DIR/.claude"
-    chown 1000:1000 "$WOLTS_DIR/.claude" 2>/dev/null \
-      || docker run --rm -v "$WOLTS_DIR/.claude:/fix" node:22-slim chown -R 1000:1000 /fix 2>/dev/null \
-      || true
-    # Write a temporary CLAUDE.md so Claude knows what's happening
-    cat > "$WOLTS_DIR/.claude/CLAUDE.md" << 'LOGINMD'
-# Woltspace Login
-
-The user just logged in to Claude Code for the first time as part of woltspace setup.
-
-Say: "welcome to woltspace! you're all set. type /exit or press ctrl+c to continue setup."
-
-Keep it to one or two lines. Don't do anything else.
-LOGINMD
-    docker run --rm -it \
-      -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
-      -e BROWSER= -e DISPLAY= \
-      --entrypoint claude \
-      woltspace || true
-    rm -f "$WOLTS_DIR/.claude/CLAUDE.md"
-    if [ -f "$WOLTS_DIR/.claude/.credentials.json" ]; then
-      echo ""
-      echo "  ${_G}✓${_R} logged in — $NAME can use Claude Code from day one"
-    else
-      echo ""
-      echo "  ${_D}skipped — you can log in later from inside the container${_R}"
-    fi
-    fi
-  fi
-  echo ""
-
-  # Start container
-  _start_container "$NAME"
+  # Start container — no wolt name needed, auth + creation happen in the lodge
+  _start_container ${NAME:+"$NAME"}
   _show_url
 
-  printf "  %b$NAME is gnawing.%b open the link above to say hello.\n" "${_B}" "${_R}"
+  echo "  ${_L}open the lodge to log in and create your first wolt.${_R}"
   echo ""
   exit 0
 fi
@@ -386,19 +329,26 @@ fi
 # --- Validate ---
 
 if [ ! -d "$WOLTS_DIR" ] || [ "$(_count_wolts)" -eq 0 ]; then
+  # start behaves like init when no wolts exist (onboarding creates wolts in the lodge)
   if [ "$cmd" = "start" ]; then
     exec "$0" init
   fi
-  echo ""
-  echo "  🦫 no wolts found at $WOLTS_DIR"
-  echo ""
-  echo "  ${_D}if your wolts live elsewhere:${_R}"
-  echo "    WOLTS_DIR=/path/to/wolts woltspace start"
-  echo ""
-  echo "  ${_D}or start a new lodge:${_R}"
-  echo "    woltspace init"
-  echo ""
-  exit 1
+  # Allow container-management commands even with no wolts (onboarding)
+  case "$cmd" in
+    logs|shell|stop|chat) ;;  # fall through to subcommands
+    *)
+      echo ""
+      echo "  🦫 no wolts found at $WOLTS_DIR"
+      echo ""
+      echo "  ${_D}if your wolts live elsewhere:${_R}"
+      echo "    WOLTS_DIR=/path/to/wolts woltspace start"
+      echo ""
+      echo "  ${_D}or start a new lodge:${_R}"
+      echo "    woltspace init"
+      echo ""
+      exit 1
+      ;;
+  esac
 fi
 
 # --- Subcommands ---

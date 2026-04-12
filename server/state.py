@@ -35,11 +35,19 @@ def sanitize_session(name: str) -> str:
 # Viewport — stored in session JSON, not in separate files
 # ---------------------------------------------------------------------------
 
+def _is_onboarding() -> bool:
+    """True when Claude Code hasn't been authenticated yet."""
+    return not Path("/home/node/.claude/.credentials.json").exists()
+
+
 def get_current_url(session: str = "main") -> str | None:
     reg = SessionRegistry(WOLTS_DIR)
     data = reg.get(sanitize_session(session), check_alive=False)
     if data:
         return data.get("viewport_url") or None
+    # No session found — show onboard page if not authenticated
+    if _is_onboarding():
+        return "/onboard"
     return None
 
 
@@ -56,6 +64,8 @@ def get_current_meta(session: str = "main") -> dict:
     name = sanitize_session(session)
     data = reg.get(name, check_alive=False)
     if not data:
+        if _is_onboarding():
+            return {"url": "/onboard", "updated": 0}
         return {"url": None, "updated": 0}
     meta = {
         "url": data.get("viewport_url") or None,

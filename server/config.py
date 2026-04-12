@@ -8,7 +8,7 @@ from pathlib import Path
 WOLTSPACE_DIR = Path(__file__).resolve().parent.parent  # /workspace/woltspace
 WOLT_DIR = Path(os.environ.get("WOLT_DIR", str(WOLTSPACE_DIR)))
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", str(WOLT_DIR.parent)))
-WOLT_NAME = os.environ.get("WOLT_NAME", "wolt")
+WOLT_NAME = os.environ.get("WOLT_NAME", "")
 
 SITE_DIR = WOLT_DIR / "wolt" / "site"
 APPS_DIR = WOLT_DIR / "wolt" / "apps"
@@ -16,16 +16,19 @@ SPARKS_DIR = WOLT_DIR / "wolt" / "sparks"
 PUBLIC_DIR = WOLTSPACE_DIR / "public"
 
 # Per-wolt state: wolts/{wolt}/.state/
-STATE_DIR = WOLTS_DIR / WOLT_NAME / ".state"
+# When no wolt exists yet (onboarding), use global .space/ for state
+if WOLT_NAME:
+    STATE_DIR = WOLTS_DIR / WOLT_NAME / ".state"
+    SESSION_REGISTRY_DIR = STATE_DIR / "sessions"
+else:
+    STATE_DIR = WOLTS_DIR / ".space" / "platform"
+    SESSION_REGISTRY_DIR = STATE_DIR / "sessions"
 SHARES_DIR = STATE_DIR / "shares"
 
 # Global state: wolts/.space/
 SPACE_DIR = WOLTS_DIR / ".space"
 SPACE_PLATFORM_DIR = SPACE_DIR / "platform"
 SPACE_LOGS_DIR = SPACE_DIR / "logs"
-
-# Session registry — per-wolt; legacy dir kept for reference only
-SESSION_REGISTRY_DIR = WOLTS_DIR / WOLT_NAME / ".state" / "sessions"
 
 PORT = int(os.environ.get("PORT", "7777"))
 TUI_PORT = int(os.environ.get("TUI_PORT", "3001"))

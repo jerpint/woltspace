@@ -14,6 +14,7 @@ Usage:
 import json
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
@@ -160,6 +161,10 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "", descript
             _wakeup_template(name, creature_type)
         )
 
+    # Init git repo (needed for Claude Code project context and wolt git operations)
+    if not (wolt_dir / ".git").is_dir():
+        subprocess.run(["git", "init", "-q", str(wolt_dir)], check=False)
+
     # Set up per-wolt .claude/ config (isolation)
     setup_wolt_claude_config(wolt_dir, name)
 
@@ -220,7 +225,7 @@ def setup_wolt_claude_config(wolt_dir: Path, name: str) -> None:
     # Trust config — .claude.json at wolt root.
     # Copy from global ~/.claude.json so the wolt inherits runtime state
     # (firstStartTime, userID, etc.) that Claude needs to skip onboarding.
-    # Then merge in per-wolt trust entries.
+    # Then merge in per-wolt trust entries and ensure headless flags are set.
     trust_config = wolt_dir / ".claude.json"
     if not trust_config.exists():
         global_config = Path.home() / ".claude.json"
@@ -231,6 +236,9 @@ def setup_wolt_claude_config(wolt_dir: Path, name: str) -> None:
         trusted_dirs[str(wolt_dir / "wolt")] = trust
         trust_data["projects"] = trusted_dirs
         trust_data["autoUpdates"] = False
+        # Ensure headless operation — bare claude during onboard may reset these
+        trust_data["hasCompletedOnboarding"] = True
+        trust_data["bypassPermissionsAccepted"] = True
         trust_config.write_text(json.dumps(trust_data, indent=2) + "\n")
 
 
