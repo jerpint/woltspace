@@ -16,6 +16,7 @@ export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
 # ── tmux ──
 export LANG=C.UTF-8
 tmux -u new-session -d -s main -c "$WOLT_DIR" 2>/dev/null || true
+tmux set -g mouse on
 if [ -f /home/node/.claude/.first-run ]; then
   rm /home/node/.claude/.first-run
   # Fresh container — clear node_modules for all apps so installs run clean
