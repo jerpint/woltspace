@@ -10,4 +10,5 @@ dependencies = [
     "watchfiles",
     "python-dotenv",
     "livereload",
+    "jinja2",
 ]

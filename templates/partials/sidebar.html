@@ -1,0 +1,60 @@
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-name">
+      <span class="brand-emoji">🦫</span>
+      Woltspace
+    </div>
+  </div>
+
+  <div class="sidebar-nav">
+    <div class="sidebar-nav-item{% if active_nav == 'home' %} active{% endif %}" id="nav-home" onclick="showView('home')">
+      <span class="sidebar-nav-icon">🏠</span>
+      <span class="sidebar-nav-label">Home</span>
+    </div>
+    <div class="sidebar-nav-item{% if active_nav == 'apps' %} active{% endif %}" id="nav-apps" onclick="showView('apps')">
+      <span class="sidebar-nav-icon">🪓</span>
+      <span class="sidebar-nav-label">Apps</span>
+    </div>
+    <div class="sidebar-nav-item{% if active_nav == 'sessions' %} active{% endif %}" id="nav-sessions" onclick="showView('sessions')">
+      <span class="sidebar-nav-icon">🌿</span>
+      <span class="sidebar-nav-label">Sessions</span>
+      <span class="nav-badge" id="sessions-badge"></span>
+    </div>
+  </div>
+
+  <div class="sidebar-scroll">
+  <div class="sidebar-section" id="sidebar-team-section">
+    <div class="sidebar-section-label">
+      Team <span id="sidebar-team-count" style="color:rgba(255,255,255,0.4)"></span>
+      <a href="#" onclick="openCreateWolt(event)">+ add wolt</a>
+    </div>
+    <div id="sidebar-wolts"></div>
+  </div>
+  </div>
+
+  <div class="sidebar-bottom">
+    <div class="creatures-toggle" onclick="toggleCreatures()">
+      <span class="creatures-toggle-label">⚙ System Creatures</span>
+      <span class="creatures-chevron" id="creatures-chevron">▾</span>
+    </div>
+    <div class="creatures-list" id="creatures-list">
+      <div class="creatures-list-inner">
+        <div class="creature-row">
+          <span>🐺</span>
+          <span class="creature-name">wolf</span>
+          <span class="creature-desc">scheduler</span>
+        </div>
+        <div class="creature-row">
+          <span>🦅</span>
+          <span class="creature-name">eagle</span>
+          <span class="creature-desc">reaper</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar-footer">
+      <a href="/tui">terminal</a>
+      <a href="#" onclick="openOnboard();return false">onboard</a>
+    </div>
+  </div>
+</aside>

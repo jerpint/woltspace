@@ -1,0 +1,39 @@
+<div class="modal-backdrop" id="create-modal" onclick="if(event.target===this)closeCreateWolt()">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">New wolt</div>
+      <button class="modal-close" onclick="closeCreateWolt()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-field">
+        <label class="modal-label">Name</label>
+        <input type="text" class="modal-input" id="create-name" placeholder="e.g. chip, luna, fang..." maxlength="20" autocomplete="off" spellcheck="false" oninput="updateCreatePreview()">
+      </div>
+      <div class="modal-field">
+        <label class="modal-label">Type</label>
+        <div class="type-grid">
+          <div class="type-card" data-type="otter" onclick="pickType(this)">
+            <div class="type-card-emoji">🦦</div>
+            <div class="type-card-name">otter</div>
+            <div class="type-card-hint">quick - haiku</div>
+          </div>
+          <div class="type-card" data-type="beaver" onclick="pickType(this)">
+            <div class="type-card-emoji">🦫</div>
+            <div class="type-card-name">beaver</div>
+            <div class="type-card-hint">builder - sonnet</div>
+          </div>
+          <div class="type-card" data-type="raccoon" onclick="pickType(this)">
+            <div class="type-card-emoji">🦝</div>
+            <div class="type-card-name">raccoon</div>
+            <div class="type-card-hint">thinker - opus</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-error" id="create-error"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeCreateWolt()">Cancel</button>
+      <button class="btn btn-primary" id="create-submit" onclick="submitCreateWolt()" disabled>Create</button>
+    </div>
+  </div>
+</div>

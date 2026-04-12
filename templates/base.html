@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}woltspace{% endblock %}</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦫</text></svg>">
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#18100A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="/static/icon-192.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Preahvihear&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css?v={{ cache_bust }}">
+{% block head %}{% endblock %}
+</head>
+<body>
+
+{% block before_sidebar %}{% endblock %}
+
+<button class="hamburger" onclick="toggleSidebar()">☰</button>
+
+{% include 'partials/sidebar.html' %}
+
+<main class="main">
+  <div id="onboard-banner" class="onboard-banner" style="display:none">
+    <span class="onboard-banner-text">Claude Code isn't authenticated yet.</span>
+    <button class="onboard-banner-btn" onclick="openOnboard()">onboard →</button>
+  </div>
+
+  {% block content %}{% endblock %}
+</main>
+
+{% include 'partials/create-modal.html' %}
+
+<script src="/static/sprites.js?v={{ cache_bust }}"></script>
+<script src="/static/lodge.js?v={{ cache_bust }}"></script>
+{% block scripts %}{% endblock %}
+
+</body>
+</html>
