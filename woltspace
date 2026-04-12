@@ -246,14 +246,21 @@ if [ "$cmd" = "init" ]; then
 
   _setup_path
 
-  # Detect existing wolts
-  if [ -d "$WOLTS_DIR" ] && [ "$(_count_wolts)" -gt 0 ]; then
+  # Detect existing lodge (wolts or just scaffold from prior init)
+  if [ -d "$WOLTS_DIR" ] && { [ "$(_count_wolts)" -gt 0 ] || [ -f "$WOLTS_DIR/.env" ]; }; then
     printf "\n  %b🦫%b  %b\n\n" "${_L}" "${_R}" "${_B}${_G}woltspace${_R}"
-    echo "  ${_D}🐘 found existing wolts:${_R}"
-    echo "  ${_L}   the lodge remembers${_R}"
-    _list_wolt_names | while read -r w; do echo "    🪵 $w"; done
+    if [ "$(_count_wolts)" -gt 0 ]; then
+      echo "  ${_D}🐘 found existing wolts:${_R}"
+      echo "  ${_L}   the lodge remembers${_R}"
+      _list_wolt_names | while read -r w; do echo "    🪵 $w"; done
+    else
+      echo "  ${_D}🏕️ lodge exists, no wolts yet${_R}"
+      echo "  ${_L}   resuming onboarding${_R}"
+    fi
     echo ""
-    _build_image
+    if ! docker image inspect woltspace &>/dev/null; then
+      _build_image
+    fi
     _start_container
     _show_url
     exit 0
@@ -342,6 +349,7 @@ fi
 # --- Validate ---
 
 if [ ! -d "$WOLTS_DIR" ] || [ "$(_count_wolts)" -eq 0 ]; then
+  # start behaves like init when no wolts exist (onboarding creates wolts in the lodge)
   if [ "$cmd" = "start" ]; then
     exec "$0" init
   fi

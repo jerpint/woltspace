@@ -105,6 +105,8 @@ def write_trust_config(wolts_dir: Path):
 
     trust = {"hasTrustDialogAccepted": True, "hasCompletedProjectOnboarding": True}
     projects = config.get("projects", {})
+    # Trust the wolts dir itself (needed for onboard mode before any wolts exist)
+    projects[str(wolts_dir)] = trust
     for d in sorted(wolts_dir.iterdir()):
         if d.is_dir() and not d.name.startswith("."):
             projects[str(d)] = trust
@@ -153,6 +155,14 @@ def scaffold_lodge(wolts_dir: Path):
             "telegram": {"model": "claude-haiku-4-5", "active_wolt": ""},
             "claude": {"default_wolt": ""},
         }, indent=2) + "\n")
+
+    # Ensure container/bin is on PATH for all shells (docker exec, tmux, etc.)
+    bashrc = HOME / ".bashrc"
+    bin_path = f'export PATH="{WOLTSPACE_DIR}/container/bin:$PATH"'
+    existing = bashrc.read_text() if bashrc.exists() else ""
+    if bin_path not in existing:
+        with open(bashrc, "a") as f:
+            f.write(f"\n{bin_path}\n")
 
 
 def scaffold_wolt(wolt_name: str, wolts_dir: Path, woltspace_dir: Path) -> Path:
