@@ -219,3 +219,31 @@
   backdrop-filter: blur(4px);
   transition: opacity 0.4s ease;
 }
+
+/* ── Create wolt CTA (shown when no wolts exist) ── */
+.home-create-cta {
+  margin-top: 32px;
+  animation: fadeUp 0.5s ease;
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.home-create-btn {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 400;
+  color: white;
+  background: var(--green, #3A6644);
+  border: none;
+  border-radius: 10px;
+  padding: 14px 28px;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.15s;
+  box-shadow: 0 2px 12px rgba(58, 102, 68, 0.25);
+}
+.home-create-btn:hover {
+  background: #2e5438;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(58, 102, 68, 0.3);
+}

@@ -3,7 +3,7 @@
 {% block title %}woltspace - the lodge{% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="/static/home.css">
+<link rel="stylesheet" href="/static/home.css?v={{ cache_bust }}">
 {% endblock %}
 
 {% block before_sidebar %}
@@ -53,6 +53,9 @@
       <div class="home-greeting" id="home-greeting">the lodge</div>
       <div class="home-tagline">where wolts live and things get built.</div>
       <div class="home-quote" id="home-quote"></div>
+      <div id="home-create-cta" class="home-create-cta" style="display:none">
+        <button class="home-create-btn" onclick="openCreateWolt()">create your first wolt</button>
+      </div>
     </div>
   </div>
 

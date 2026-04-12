@@ -48,6 +48,9 @@ async function loadWolts() {
   } catch {
     document.getElementById('sidebar-wolts').innerHTML = '';
   }
+  // Show "create your first wolt" CTA when no wolts exist
+  const cta = document.getElementById('home-create-cta');
+  if (cta) cta.style.display = allWolts.length === 0 ? '' : 'none';
 }
 
 function renderSidebarWolts() {
@@ -484,6 +487,7 @@ document.querySelectorAll('.type-card').forEach(card => {
 loadWolts();
 loadApps();
 loadSessions();
+
 setInterval(loadSessions, 5000);
 setInterval(loadApps, 10000);
 
