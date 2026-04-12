@@ -3,190 +3,402 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>woltspace · setup</title>
+  <title>woltspace - welcome</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦫</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Preahvihear&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --bark:   #2a1f14;
-      --log:    #3d2b1a;
-      --wood:   #5c3d24;
-      --amber:  #c17f3a;
-      --straw:  #d4a96a;
-      --cream:  #f0dfc0;
-      --moss:   #4a7c59;
-      --fern:   #5e9e70;
-      --leaf:   #7bbf8a;
-      --muted:  #8a7060;
-      --dim:    #5a4535;
+      --bg:         #EDE8DE;
+      --surface:    #F5F1E8;
+      --surface-2:  #FAF7F0;
+      --border:     #D6CCBA;
+      --border-2:   #C4B89E;
+      --ink:        #18100A;
+      --ink-2:      #5C4D3C;
+      --ink-3:      #9A8878;
+      --terra:      #C4531E;
+      --terra-light:#F0D5C8;
+      --amber:      #C98B2A;
+      --amber-light:#F2E4C0;
+      --green:      #3A6644;
+      --green-light:#C8DECE;
+      --cream:      #FAF7F0;
+      --font-display: 'Preahvihear', sans-serif;
+      --font-body:    'DM Sans', sans-serif;
+      --font-mono:    'JetBrains Mono', monospace;
     }
 
-    html, body {
-      min-height: 100dvh;
-      background: var(--bark);
-      color: var(--cream);
-      font-family: 'SF Mono','Fira Code','Cascadia Code','Consolas',monospace;
-    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
+      font-family: var(--font-body);
+      background: var(--bg);
+      color: var(--ink);
+      min-height: 100vh;
       display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 2.5rem 1.5rem 3rem;
+      justify-content: center;
+      padding: 3rem 1.5rem;
+      line-height: 1.5;
+      font-size: 14px;
     }
 
+    .page {
+      max-width: 440px;
+      width: 100%;
+    }
+
+    /* ── Header ── */
     .header {
       text-align: center;
-      margin-bottom: 2rem;
+      margin-bottom: 2.5rem;
     }
-    .header h1 { font-size: 1.3rem; color: var(--fern); font-weight: 700; margin-bottom: 0.3rem; }
-    .header h1 span { color: var(--leaf); }
-    .header p { font-size: 0.72rem; color: var(--muted); }
-
-    hr.divider {
-      width: 100%; max-width: 480px;
-      border: none; border-top: 1px solid var(--log);
-      margin: 0 0 2rem;
-    }
-
-    .card {
-      width: 100%; max-width: 480px;
-      background: var(--log);
-      border: 1px solid var(--wood);
-      border-radius: 8px;
-      padding: 1.25rem 1.25rem;
+    .header-critter {
+      display: inline-block;
       margin-bottom: 0.75rem;
-      transition: border-color 0.2s;
+      animation: bob 3s ease-in-out infinite;
     }
-    .card.done { border-color: var(--moss); }
-
-    .card-title {
-      display: flex; align-items: center; gap: 0.6rem;
-      margin-bottom: 0.75rem;
+    @keyframes bob {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-6px); }
     }
-    .card-title h2 { font-size: 0.85rem; font-weight: 600; color: var(--cream); flex: 1; }
-    .badge {
-      font-size: 0.6rem; padding: 0.12rem 0.45rem;
-      border-radius: 10px; border: 1px solid var(--wood); color: var(--muted);
+    .header h1 {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 400;
+      color: var(--ink);
+      margin-bottom: 0.35rem;
     }
-    .badge.done { border-color: var(--moss); color: var(--leaf); }
-    .badge.waiting { border-color: var(--amber); color: var(--straw); }
-
-    .card p {
-      font-size: 0.72rem; color: var(--muted); line-height: 1.7;
-      margin-bottom: 0.5rem;
-    }
-    .card p:last-child { margin-bottom: 0; }
-
-    code {
-      background: var(--bark); border: 1px solid var(--wood);
-      border-radius: 3px; padding: 0.1rem 0.35rem;
-      font-family: inherit; color: var(--straw); font-size: 0.68rem;
+    .header p {
+      font-size: 13px;
+      color: var(--ink-3);
     }
 
-    .cmd {
-      display: block;
-      background: var(--bark); border: 1px solid var(--wood);
-      border-radius: 4px; padding: 0.5rem 0.75rem;
-      color: var(--leaf); font-size: 0.75rem;
-      margin: 0.5rem 0; letter-spacing: 0.02em;
-    }
-    .cmd::before { content: '$ '; color: var(--dim); }
-
-    .hint {
-      font-size: 0.65rem; color: var(--dim); margin-top: 0.6rem;
+    /* ── Steps ── */
+    .steps {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
     }
 
-    .next-steps {
-      width: 100%; max-width: 480px;
-      margin-top: 0.25rem;
+    .step {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem;
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
     }
-    .next-steps h3 {
-      font-size: 0.65rem; color: var(--dim);
-      text-transform: uppercase; letter-spacing: 0.1em;
+    .step.active {
+      border-color: var(--amber);
+      box-shadow: 0 0 0 1px var(--amber), 0 2px 12px rgba(201, 139, 42, 0.1);
+    }
+    .step.done {
+      border-color: var(--green);
+      background: var(--green-light);
+    }
+    .step.waiting {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+
+    .step-header {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
       margin-bottom: 0.6rem;
     }
-    .next-step {
-      display: flex; align-items: baseline; gap: 0.6rem;
-      font-size: 0.72rem; color: var(--muted);
-      padding: 0.35rem 0;
-      border-bottom: 1px solid var(--log);
+    .step-number {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 500;
+      flex-shrink: 0;
+      background: var(--border);
+      color: var(--ink-2);
+      transition: all 0.3s ease;
     }
-    .next-step:last-child { border-bottom: none; }
-    .next-step code { flex-shrink: 0; }
+    .step.active .step-number {
+      background: var(--amber);
+      color: white;
+    }
+    .step.done .step-number {
+      background: var(--green);
+      color: white;
+    }
+    .step-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .step.done .step-title {
+      color: var(--green);
+    }
 
-    .footer {
-      margin-top: 2.5rem; font-size: 0.62rem;
-      color: var(--dim); text-align: center;
+    .step-body {
+      margin-left: 42px;
+      font-size: 13px;
+      color: var(--ink-2);
     }
-    .footer a { color: var(--muted); text-decoration: none; }
-    .footer a:hover { color: var(--amber); }
+
+    .cmd-block {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: var(--ink);
+      border-radius: 6px;
+      padding: 0.6rem 0.85rem;
+      margin: 0.65rem 0;
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+    .cmd-prompt {
+      color: var(--ink-3);
+      user-select: none;
+    }
+    .cmd-text {
+      color: #C8DECE;
+    }
+    .cmd-cursor {
+      display: inline-block;
+      width: 7px;
+      height: 15px;
+      background: var(--amber);
+      border-radius: 1px;
+      animation: blink 1s step-end infinite;
+      margin-left: 2px;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
+    .step-hint {
+      font-size: 12px;
+      color: var(--ink-3);
+      margin-top: 0.5rem;
+      line-height: 1.6;
+    }
+
+    /* ── Arrow between steps ── */
+    .step-arrow {
+      text-align: center;
+      color: var(--border-2);
+      font-size: 18px;
+      line-height: 1;
+    }
+    .step-arrow.done { color: var(--green); }
+
+    /* ── Success state ── */
+    .success-msg {
+      display: none;
+      text-align: center;
+      padding: 1.5rem;
+      animation: fadeUp 0.4s ease;
+    }
+    .success-msg.show { display: block; }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .success-critter {
+      display: inline-block;
+      margin-bottom: 0.5rem;
+      animation: celebrate 0.5s ease;
+    }
+    @keyframes celebrate {
+      0% { transform: scale(0.5) rotate(-10deg); }
+      50% { transform: scale(1.2) rotate(5deg); }
+      100% { transform: scale(1) rotate(0deg); }
+    }
+    .success-msg h2 {
+      font-family: var(--font-display);
+      font-size: 18px;
+      font-weight: 400;
+      color: var(--green);
+      margin-bottom: 0.35rem;
+    }
+    .success-msg p {
+      font-size: 13px;
+      color: var(--ink-2);
+      margin-bottom: 1rem;
+    }
+    .lodge-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: var(--green);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 0.65rem 1.25rem;
+      font-family: var(--font-body);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.2s;
+    }
+    .lodge-btn:hover { background: #2e5438; }
+
+    /* ── Status pill ── */
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      padding: 3px 10px;
+      border-radius: 20px;
+      margin-top: 0.5rem;
+    }
+    .status-pill.checking {
+      background: var(--amber-light);
+      color: var(--amber);
+    }
+    .status-pill.connected {
+      background: var(--green-light);
+      color: var(--green);
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 1; }
+    }
+    .status-pill.connected .status-dot { animation: none; opacity: 1; }
+
+    /* ── Footer ── */
+    .footer {
+      text-align: center;
+      margin-top: 2.5rem;
+      font-size: 12px;
+      color: var(--ink-3);
+    }
+    .footer a {
+      color: var(--ink-2);
+      text-decoration: none;
+    }
+    .footer a:hover { color: var(--terra); }
   </style>
 </head>
 <body>
+  <div class="page">
 
-  <div class="header">
-    <h1>🦫 wolt<span>space</span></h1>
-    <p>let's get you set up</p>
+    <!-- Header -->
+    <div class="header">
+      <div class="header-critter" id="header-critter"></div>
+      <h1>welcome to woltspace</h1>
+      <p>one quick thing before your wolt can think</p>
+    </div>
+
+    <!-- Step 1: Login -->
+    <div class="steps">
+      <div class="step active" id="step-login">
+        <div class="step-header">
+          <div class="step-number" id="num-login">1</div>
+          <div class="step-title" id="title-login">connect your claude account</div>
+        </div>
+        <div class="step-body" id="body-login">
+          <p>In the terminal on the left, type:</p>
+          <div class="cmd-block">
+            <span class="cmd-prompt">&gt;</span>
+            <span class="cmd-text">/login</span>
+            <span class="cmd-cursor"></span>
+          </div>
+          <p>A link will appear - click it to sign in with your Claude account.</p>
+          <div class="step-hint">
+            Free or Pro, either works. This is a one-time setup.
+          </div>
+          <div style="margin-top: 0.75rem;">
+            <span class="status-pill checking">
+              <span class="status-dot"></span>
+              <span>waiting for login</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-arrow" id="arrow-1">&#8595;</div>
+
+      <div class="step waiting" id="step-lodge">
+        <div class="step-header">
+          <div class="step-number">2</div>
+          <div class="step-title">head back to the lodge</div>
+        </div>
+        <div class="step-body">
+          <p>Create your first wolt - pick a name, choose a creature type, and start building together.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Success (hidden until auth) -->
+    <div class="success-msg" id="success">
+      <div class="success-critter" id="success-critter"></div>
+      <h2>you're in!</h2>
+      <p>Claude is connected. Time to meet your wolt.</p>
+      <a href="/" class="lodge-btn">
+        back to the lodge &rarr;
+      </a>
+    </div>
+
+    <div class="footer">
+      <p>credentials persist across restarts &middot; <a href="https://github.com/jerpint/woltspace">github</a></p>
+    </div>
+
   </div>
 
-  <hr class="divider">
-
-  <!-- Step 1: authenticate -->
-  <div class="card" id="card-auth">
-    <div class="card-title">
-      <h2>authenticate claude code</h2>
-      <span class="badge waiting" id="badge-auth">needed</span>
-    </div>
-    <div id="body-auth">
-      <p>In the terminal on the left, run:</p>
-      <code class="cmd">/login</code>
-      <p>Follow the login link that appears. Once authenticated, come back here.</p>
-      <p class="hint">This is a one-time setup — your credentials persist across restarts.</p>
-    </div>
-  </div>
-
-  <!-- Step 2: next steps -->
-  <div class="next-steps" id="next-steps">
-    <h3 id="next-title">after authentication</h3>
-    <div class="next-step">
-      <code>/woltspace-create-wolt</code>
-      <span>introduce yourself to your wolt</span>
-    </div>
-    <div class="next-step">
-      <code>/woltspace-setup-telegram</code>
-      <span>connect a Telegram bot to chat with your wolt</span>
-    </div>
-  </div>
-
-  <div class="footer">
-    <a href="/">← home</a>
-  </div>
-
+  <script src="/static/sprites.js"></script>
   <script>
+    // Render pixel art beaver
+    const sprite = woltSpriteAvatar('beaver', 80);
+    const spriteSmall = woltSpriteAvatar('beaver', 48);
+    if (sprite) document.getElementById('header-critter').innerHTML = sprite;
+    if (spriteSmall) document.getElementById('success-critter').innerHTML = spriteSmall;
+
+    // Poll for auth status
+    let authed = false;
+
     async function poll() {
       try {
         const d = await fetch('/onboard-status').then(r => r.json());
-        const authed = d.has_oauth;
+        if (d.has_oauth && !authed) {
+          authed = true;
 
-        document.getElementById('card-auth').classList.toggle('done', authed);
-        const badge = document.getElementById('badge-auth');
-        badge.className = 'badge ' + (authed ? 'done' : 'waiting');
-        badge.textContent = authed ? 'done' : 'needed';
+          // Step 1 done
+          const step = document.getElementById('step-login');
+          step.classList.remove('active');
+          step.classList.add('done');
+          document.getElementById('num-login').textContent = '\u2713';
+          document.getElementById('title-login').textContent = 'claude connected';
+          document.getElementById('body-login').innerHTML =
+            '<p style="color: var(--green);">authenticated - you\'re all set.</p>';
 
-        document.getElementById('next-steps').style.opacity = authed ? '1' : '0.4';
-        if (authed) {
-          document.getElementById('body-auth').innerHTML =
-            '<p style="color:var(--leaf)">Claude Code is authenticated ✓</p>';
-          document.getElementById('next-title').textContent = "after authentication";
+          // Step 2 active
+          document.getElementById('arrow-1').classList.add('done');
+          document.getElementById('step-lodge').classList.remove('waiting');
+          document.getElementById('step-lodge').classList.add('active');
+
+          // Show success
+          document.getElementById('success').classList.add('show');
         }
       } catch {}
     }
 
     poll();
-    setInterval(poll, 3000);
+    setInterval(poll, 2000);
   </script>
-
 </body>
 </html>
