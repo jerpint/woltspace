@@ -359,13 +359,18 @@ def _tmux_paste(target: str, text: str):
     A trailing newline is included in the buffer so paste-buffer
     converts it to a carriage return (Enter) as part of the same
     atomic paste — no separate send-keys needed.
+
+    Uses a named buffer (the target session name) so concurrent pastes
+    to different sessions don't clobber each other.  The -d flag on
+    paste-buffer deletes the named buffer after pasting.
     """
+    buf_name = f"paste-{target}"
     subprocess.run(
-        ["tmux", "set-buffer", text + "\n"],
+        ["tmux", "set-buffer", "-b", buf_name, text + "\n"],
         check=True, timeout=_TMUX_TIMEOUT,
     )
     subprocess.run(
-        ["tmux", "paste-buffer", "-t", target],
+        ["tmux", "paste-buffer", "-b", buf_name, "-d", "-t", target],
         check=True, timeout=_TMUX_TIMEOUT,
     )
 
@@ -589,7 +594,7 @@ def resume_session(name: str, prompt: str = "") -> dict:
     resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} WOLT_NAME={shlex.quote(wolt)} && {WCLAUDE} --dangerously-skip-permissions {model_flag} {resume_flag} {safe_prompt}"
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", name, "-c", work_dir or "/workspace", resume_cmd],
-        check=True, timeout=15,
+        check=True, timeout=_TMUX_TIMEOUT,
     )
     registry.update(name, wolt=wolt, status="running")
     return {"name": name, "url": session_url, "status": "respawned", "detail": "tmux was dead, created new tmux with --resume"}
