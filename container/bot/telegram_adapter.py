@@ -257,15 +257,23 @@ async def _send_result(update: Update, result: dict):
 # ---------------------------------------------------------------------------
 
 def _is_session_alive(session_name: str) -> bool:
-    """Check if a session is still alive in tmux."""
+    """Check if a session is still alive in tmux. Diagnostic only — not used for routing."""
     import subprocess
     try:
-        subprocess.run(
+        result = subprocess.run(
             ["tmux", "has-session", "-t", session_name],
-            check=True, capture_output=True,
+            capture_output=True,
         )
-        return True
-    except subprocess.CalledProcessError:
+        alive = result.returncode == 0
+        if not alive:
+            _bot_log("session_alive_check_false", {
+                "session": session_name,
+                "returncode": result.returncode,
+                "stderr": result.stderr.decode(errors="replace"),
+            })
+        return alive
+    except Exception as e:
+        _bot_log("session_alive_check_error", {"session": session_name, "error": str(e)})
         return False
 
 
@@ -414,6 +422,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     text = update.message.text or ""
     bot_username = context.bot.username or ""
+    has_reply = bool(update.message.reply_to_message)
+    _bot_log("message_received", {"chat_id": chat_id, "text": text[:100], "has_reply": has_reply})
 
     # In group chats, only respond when @mentioned or replied to
     chat_type = update.effective_chat.type
@@ -455,11 +465,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     quoted = quoted[:footer_idx]
                 reply_text = f"[replying to: {quoted[:200]}]\n{text}" if quoted.strip() else text
 
-                if _is_session_alive(reply_session):
-                    success = await _route_to_session(update, reply_session, reply_wolt, reply_text, chat_id)
-                    if success:
-                        return
-                # Session dead — spawn new one for that wolt
+                # Try routing directly — message_session handles revive internally
+                success = await _route_to_session(update, reply_session, reply_wolt, reply_text, chat_id)
+                if success:
+                    state = _load_chat_state(chat_id)
+                    state["active_wolt"] = reply_wolt
+                    state["active_session"] = reply_session
+                    _save_chat_state(chat_id, state)
+                    return
+                # Route failed (session truly gone) — spawn new one for that wolt
                 try:
                     session = _spawn_session(reply_wolt, chat_id)
                     state = _load_chat_state(chat_id)
@@ -488,11 +502,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # --- Has active wolt + session: route to session ---
     if active_session:
-        if _is_session_alive(active_session):
-            success = await _route_to_session(update, active_session, active_wolt, text, chat_id)
-            if success:
-                return
-        # Session is dead — respawn
+        # Route directly — message_session handles revive (Claude exited, tmux dead, etc.)
+        success = await _route_to_session(update, active_session, active_wolt, text, chat_id)
+        if success:
+            return
+        # message_session failed (session not in registry) — spawn new
         await _reply(update, f"🪵 session expired — spawning new one for {active_wolt}")
         try:
             session = _spawn_session(active_wolt, chat_id)
@@ -615,11 +629,15 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     quoted = quoted[:footer_idx]
                 reply_text = f"[replying to: {quoted[:200]}]\n{voice_message}" if quoted.strip() else voice_message
 
-                if _is_session_alive(reply_session):
-                    success = await _route_to_session(update, reply_session, reply_wolt, reply_text, chat_id)
-                    if success:
-                        return
-                # Session dead — spawn new one for that wolt
+                # Try routing directly — message_session handles revive internally
+                success = await _route_to_session(update, reply_session, reply_wolt, reply_text, chat_id)
+                if success:
+                    state = _load_chat_state(chat_id)
+                    state["active_wolt"] = reply_wolt
+                    state["active_session"] = reply_session
+                    _save_chat_state(chat_id, state)
+                    return
+                # Route failed (session truly gone) — spawn new one for that wolt
                 try:
                     session = _spawn_session(reply_wolt, chat_id)
                     state = _load_chat_state(chat_id)
@@ -640,10 +658,21 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active_wolt = state.get("active_wolt")
     active_session = state.get("active_session")
 
-    if active_wolt and active_session and _is_session_alive(active_session):
-        await _route_to_session(update, active_session, active_wolt, voice_message, chat_id)
+    if active_wolt and active_session:
+        success = await _route_to_session(update, active_session, active_wolt, voice_message, chat_id)
+        if not success:
+            try:
+                session = _spawn_session(active_wolt, chat_id)
+                state["active_session"] = session["name"]
+                _save_chat_state(chat_id, state)
+                tunnel_url = get_tunnel_url()
+                session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
+                await _reply(update, f"🪵 new session for {active_wolt}\n{session_link}")
+                await _route_to_session(update, session["name"], active_wolt, voice_message, chat_id)
+            except Exception as e:
+                await _reply(update, f"couldn't start session: {e}")
     elif active_wolt:
-        # Session dead or missing — spawn new one
+        # No active session — spawn one
         try:
             session = _spawn_session(active_wolt, chat_id)
             state["active_session"] = session["name"]
@@ -702,10 +731,21 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if caption:
         file_msg += f"\nCaption: {caption}"
 
-    if active_wolt and active_session and _is_session_alive(active_session):
-        await _route_to_session(update, active_session, active_wolt, file_msg, chat_id)
+    if active_wolt and active_session:
+        success = await _route_to_session(update, active_session, active_wolt, file_msg, chat_id)
+        if not success:
+            try:
+                session = _spawn_session(active_wolt, chat_id)
+                state["active_session"] = session["name"]
+                _save_chat_state(chat_id, state)
+                tunnel_url = get_tunnel_url()
+                session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
+                await _reply(update, f"🪵 new session for {active_wolt}\n{session_link}")
+                await _route_to_session(update, session["name"], active_wolt, file_msg, chat_id)
+            except Exception as e:
+                await _reply(update, f"couldn't start session: {e}")
     elif active_wolt:
-        # Spawn session, send file info
+        # No active session — spawn one
         try:
             session = _spawn_session(active_wolt, chat_id)
             state["active_session"] = session["name"]
@@ -772,9 +812,21 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if caption:
         file_msg += f"\nCaption: {caption}"
 
-    if active_wolt and active_session and _is_session_alive(active_session):
-        await _route_to_session(update, active_session, active_wolt, file_msg, chat_id)
+    if active_wolt and active_session:
+        success = await _route_to_session(update, active_session, active_wolt, file_msg, chat_id)
+        if not success:
+            try:
+                session = _spawn_session(active_wolt, chat_id)
+                state["active_session"] = session["name"]
+                _save_chat_state(chat_id, state)
+                tunnel_url = get_tunnel_url()
+                session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
+                await _reply(update, f"🪵 new session for {active_wolt}\n{session_link}")
+                await _route_to_session(update, session["name"], active_wolt, file_msg, chat_id)
+            except Exception as e:
+                await _reply(update, f"couldn't start session: {e}")
     elif active_wolt:
+        # No active session — spawn one
         try:
             session = _spawn_session(active_wolt, chat_id)
             state["active_session"] = session["name"]
