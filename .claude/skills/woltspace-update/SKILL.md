@@ -32,37 +32,31 @@ The wolts directory is at `$WOLTS_DIR` (default: `~/.woltspace/wolts`). Read it 
 
 **Updates are tag-based.** We only update to tagged releases (e.g. `v0.3.2` → `v0.4.0`). Unreleased commits on main are not offered as updates.
 
-## Step 1: Check current version
+## Steps 1–2: Preflight (keep it small)
 
-```bash
-# Current version from the running container
-CURRENT=$(docker exec woltspace cat /workspace/woltspace/.version 2>/dev/null || echo "unknown")
+**Guiding principle:** start with the smallest, least scary set of commands that tells you if an update is needed. Escalate only if the first pass is inconclusive. The human is approving each shell call — four one-liners read as obviously safe; one fat script does not.
 
-# Or from git if container isn't running
-if [ "$CURRENT" = "unknown" ]; then
-  CURRENT=$(git describe --tags --exact-match 2>/dev/null || git describe --tags --abbrev=0 2>/dev/null || git rev-parse --short HEAD)
-fi
+Run these as **separate Bash calls in parallel**, each with a short human description so each approval prompt is a tiny, focused thing:
 
-# Fetch tags from remote (--force handles retagged releases)
-git fetch origin --tags --force --quiet
+1. **Deployed version** — `docker exec woltspace sh -c 'cat /workspace/woltspace/.version 2>/dev/null || (cd /workspace/woltspace && git describe --tags --abbrev=0 2>/dev/null) || echo unknown'`
+2. **Latest release tag** — `git fetch origin --tags --quiet && git tag --sort=-v:refname | head -1`
+3. **Container state** — `docker ps --filter name=woltspace --format '{{.Names}} {{.Status}}'`
+4. **Local changes** — `git status --short`
 
-# Latest release tag
-LATEST=$(git tag --sort=-v:refname | head -1)
-```
+That's the whole preflight. If `CURRENT == LATEST`, you're done — jump to Step 3's "up to date" path, no more calls.
 
-## Step 2: Check container state
+**Why the version call has fallbacks:** `.version` is stamped at image build time, but on older images or `--local` dev builds the file may be missing. The inline fallback (try `.version`, else `git describe` inside the container, else `"unknown"`) keeps the preflight silent and robust — no follow-up calls needed in the common cases.
 
-```bash
-# Is the container running?
-CONTAINER_RUNNING=$(docker ps --filter name=woltspace --format '{{.Names}}' 2>/dev/null)
+**Handling `unknown` or weird values:**
+- `unknown` → container has no `.version` AND no git metadata. Report that you couldn't determine the deployed version and ask the user if they want to rebuild anyway (treat the latest tag as a safe upgrade target).
+- Non-tag value (e.g. a SHA or `"local"`) → dev build or off-tag image. Don't compare with `==` to a tag — tell the user what you see and let them decide if an update makes sense.
 
-# If running, check for active sessions
-if [ -n "$CONTAINER_RUNNING" ]; then
-  ACTIVE_SESSIONS=$(docker exec woltspace session-reg list 2>/dev/null || true)
-fi
-```
+**Escalate only when needed:**
+- Container isn't running → skip the version call entirely; treat host as source of truth via `git describe --tags --abbrev=0`
+- An update is available AND the container is running → then list active sessions with `docker exec woltspace session-reg list` (no point before — if there's no update, session count doesn't matter)
+- Retagged release suspected (rare) → re-run fetch with `--force`
 
-Include this in your report:
+Include in your report:
 - **Container running** with active sessions → warn: "You have active sessions. Updating will interrupt them."
 - **Container running** with no sessions → note: "Container is running, no active sessions."
 - **Container not running** → note: "Container isn't running — safe to update."
