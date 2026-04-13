@@ -505,6 +505,26 @@ RESTORE
       echo "  ${_D}🪵 rebuilding to latest release${_R}"
       echo "  ${_L}   upgrading the lodge...${_R}"
     fi
+    # Sync host repo to match the version being built — keeps the CLI
+    # script in lockstep with the container. Without this, _show_url()
+    # and other host-side logic can drift from the container's code.
+    if [ "$LOCAL_BUILD" != true ] && [ -d "$WOLTSPACE_DIR/.git" ]; then
+      _sync_target=""
+      if [ -n "${CURRENT_VERSION:-}" ] && [ "$CURRENT_VERSION" != "HEAD" ]; then
+        _sync_target="$CURRENT_VERSION"
+      elif [ "$BUILD_BRANCH" != "main" ]; then
+        _sync_target="origin/$BUILD_BRANCH"
+      else
+        _sync_target="origin/main"
+      fi
+      if [ -n "$_sync_target" ]; then
+        echo "  ${_D}syncing host CLI to $_sync_target${_R}"
+        git -C "$WOLTSPACE_DIR" fetch origin --tags --force --quiet 2>/dev/null || true
+        git -C "$WOLTSPACE_DIR" checkout "$_sync_target" --quiet 2>/dev/null || {
+          echo "  ${_D}⚠ couldn't sync host repo — CLI may be stale${_R}"
+        }
+      fi
+    fi
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
     rm -f "$WOLTS_DIR/.space/platform/tunnel.json"
     _build_image

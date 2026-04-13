@@ -131,11 +131,12 @@ fi
 ### 5c: Rebuild with the new version
 
 ```bash
-# Rebuild the image at the target version — no need to change the local checkout
+# Rebuild the image at the target version
+# This also syncs the host repo so the CLI stays in lockstep with the container
 woltspace rebuild --version "${LATEST}"
 ```
 
-**Always rebuild.** The image clones the repo at build time — there's no live-reload from the host. `--version` tells rebuild which tag to build, without touching the user's branch.
+**Always rebuild.** The image clones the repo at build time — there's no live-reload from the host. `--version` tells rebuild which tag to build. The rebuild command automatically syncs the host repo to the target version, keeping the `woltspace` CLI script in lockstep with the container.
 
 ## Step 6: Verify
 
