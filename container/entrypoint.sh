@@ -44,10 +44,10 @@ data = json.dumps({'url': url, 'port': 7777, 'updated': int(time.time() * 1000)}
 open(f'{state_dir}/current-url-main.json', 'w').write(data)
 print(f'[viewport:main] → {url}')
 " "$WOLT_NAME" "$WOLT_DIR/.state"
-  tmux send-keys -t main "export WOLT_SESSION=main && wclaude --dangerously-skip-permissions /woltspace-create-wolt" Enter
+  tmux send-keys -t main "export WOLT_SESSION=main && wclaude /woltspace-create-wolt" Enter
 else
   # TODO: replace with a /wake skill — check for recent sessions, offer resume or fresh start
-  tmux send-keys -t main "wclaude --dangerously-skip-permissions \"hey ${WOLT_NAME}\"" Enter
+  tmux send-keys -t main "wclaude \"hey ${WOLT_NAME}\"" Enter
 fi
 
 # ── Services ──

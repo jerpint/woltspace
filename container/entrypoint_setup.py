@@ -82,10 +82,10 @@ def write_bashrc(wolt_dir: Path, wolt_name: str):
             f"wolt() {{\n"
             f'  cd {wolt_dir}\n'
             f'  if [[ "$1" == "--resume" ]]; then\n'
-            f"    wclaude --dangerously-skip-permissions --resume\n"
+            f"    wclaude --resume\n"
             f"  else\n"
             # TODO: replace with a /wake skill instead of hardcoded greeting
-            f'    wclaude --dangerously-skip-permissions "hey {wolt_name}" "$@"\n'
+            f'    wclaude "hey {wolt_name}" "$@"\n'
             f"  fi\n"
             f"}}\n"
         )

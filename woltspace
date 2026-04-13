@@ -384,7 +384,7 @@ case "$cmd" in
       echo "  ${_L}   the lodge is quiet${_R}"
       exit 1
     }
-    docker exec -it "$CONTAINER_NAME" claude --dangerously-skip-permissions
+    docker exec -it "$CONTAINER_NAME" wclaude
     ;;
   logs)
     docker logs -f "$CONTAINER_NAME"

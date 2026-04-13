@@ -19,4 +19,4 @@ if [ -n "$WOLT_HOME" ] && [ -d "$WOLT_HOME/.claude" ]; then
 fi
 
 trust-dir "$(pwd)" 2>/dev/null
-exec claude "$@"
+exec claude --dangerously-skip-permissions "$@"

@@ -47,7 +47,7 @@ create-creature-wolt <name> <type>
 
 ```bash
 push-view /wolt/<name>/site/
-cd /workspace/wolts/<name>/ && wclaude --dangerously-skip-permissions '/woltspace-create-wolt'
+cd /workspace/wolts/<name>/ && wclaude '/woltspace-create-wolt'
 ```
 
 Your job is done. The new session picks up Self-Onboarding mode and takes over.
