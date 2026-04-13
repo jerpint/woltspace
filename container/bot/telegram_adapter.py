@@ -984,6 +984,19 @@ async def handle_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _reply(update, f"couldn't start session for {wolt}: {e}")
 
 
+async def handle_dog(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /dog — switch to dog as the main chatter for this chat."""
+    if not is_allowed(update):
+        return
+    chat_id = update.effective_chat.id
+    state = _load_chat_state(chat_id)
+    state["active_wolt"] = None
+    state["active_session"] = None
+    _save_chat_state(chat_id, state)
+    dog = _dog_name()
+    await _reply(update, f"🐶 {dog} is now the main chatter. Messages go to the dog.")
+
+
 async def handle_apps(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /apps — list all apps with status and public links."""
     if not is_allowed(update):
@@ -1030,6 +1043,7 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/new <name> — start a fresh session with a specific wolt\n"
         "/wolt — show active wolt and available wolts\n"
         "/wolt <name> — switch active wolt\n"
+        "/dog — switch to dog as main chatter\n"
         "/sessions — list active sessions with links\n"
         "/kill <session> — kill a session\n"
         "/apps — list all apps with status and public links\n"
@@ -1038,7 +1052,7 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "💬 Messaging:\n"
         "• Send a message → goes to active session (or starts one)\n"
         "• Reply to a wolt's message → routes to that wolt\n"
-        "• @dog → ask the dog for help\n"
+        "• /dog → switch back to the dog\n"
         "\n"
         f"Active wolt: {active_wolt}\n"
         f"Active session: {active_session}"
@@ -1074,6 +1088,7 @@ def run():
     app.add_handler(CommandHandler("sessions", handle_sessions))
     app.add_handler(CommandHandler("kill", handle_kill))
     app.add_handler(CommandHandler("wolt", handle_setwolt))
+    app.add_handler(CommandHandler("dog", handle_dog))
     app.add_handler(CommandHandler("new", handle_new))
     app.add_handler(CommandHandler("apps", handle_apps))
     app.add_handler(CommandHandler("help", handle_help))
