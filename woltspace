@@ -508,21 +508,30 @@ RESTORE
     # Sync host repo to match the version being built — keeps the CLI
     # script in lockstep with the container. Without this, _show_url()
     # and other host-side logic can drift from the container's code.
-    if [ "$LOCAL_BUILD" != true ] && [ -d "$WOLTSPACE_DIR/.git" ]; then
-      _sync_target=""
-      if [ -n "${CURRENT_VERSION:-}" ] && [ "$CURRENT_VERSION" != "HEAD" ]; then
-        _sync_target="$CURRENT_VERSION"
-      elif [ "$BUILD_BRANCH" != "main" ]; then
-        _sync_target="origin/$BUILD_BRANCH"
-      else
-        _sync_target="origin/main"
-      fi
-      if [ -n "$_sync_target" ]; then
-        echo "  ${_D}syncing host CLI to $_sync_target${_R}"
+    #
+    # Only runs when --version is explicit: that's the one case where the
+    # user is deliberately moving to a specific version. Plain 'rebuild'
+    # or branch builds leave the host repo alone — it's the source of truth.
+    if [ -n "$BUILD_VERSION" ] && [ "$LOCAL_BUILD" != true ] && [ -d "$WOLTSPACE_DIR/.git" ]; then
+      _current_ref=$(git -C "$WOLTSPACE_DIR" describe --tags --exact-match 2>/dev/null \
+                     || git -C "$WOLTSPACE_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null \
+                     || echo "")
+      if [ "$_current_ref" != "$BUILD_VERSION" ]; then
+        # Refuse to move a dirty working tree — silent drift is worse than a clear abort.
+        if ! git -C "$WOLTSPACE_DIR" diff --quiet HEAD 2>/dev/null \
+           || [ -n "$(git -C "$WOLTSPACE_DIR" status --porcelain 2>/dev/null)" ]; then
+          echo "  ${_D}✗ host repo has uncommitted changes at $WOLTSPACE_DIR${_R}"
+          echo "  ${_L}   commit or stash them, then retry.${_R}"
+          echo "  ${_L}   (the CLI must move with the image — aborting before drift.)${_R}"
+          exit 1
+        fi
+        echo "  ${_D}syncing host CLI to $BUILD_VERSION${_R}"
         git -C "$WOLTSPACE_DIR" fetch origin --tags --force --quiet 2>/dev/null || true
-        git -C "$WOLTSPACE_DIR" checkout "$_sync_target" --quiet 2>/dev/null || {
-          echo "  ${_D}⚠ couldn't sync host repo — CLI may be stale${_R}"
-        }
+        if ! git -C "$WOLTSPACE_DIR" checkout "$BUILD_VERSION" --quiet 2>/dev/null; then
+          echo "  ${_D}✗ couldn't check out $BUILD_VERSION in $WOLTSPACE_DIR${_R}"
+          echo "  ${_L}   resolve manually, then retry.${_R}"
+          exit 1
+        fi
       fi
     fi
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true

@@ -136,7 +136,9 @@ fi
 woltspace rebuild --version "${LATEST}"
 ```
 
-**Always rebuild.** The image clones the repo at build time — there's no live-reload from the host. `--version` tells rebuild which tag to build. The rebuild command automatically syncs the host repo to the target version, keeping the `woltspace` CLI script in lockstep with the container.
+**Always rebuild.** The image clones the repo at build time — there's no live-reload from the host. `--version` tells rebuild which tag to build. When `--version` is passed, rebuild also syncs the host repo to that tag so the `woltspace` CLI script stays in lockstep with the container.
+
+**If the host repo is dirty**, rebuild will abort before touching anything — check Step 1's dirty-tree rule and resolve (commit or stash) before retrying.
 
 ## Step 6: Verify
 
