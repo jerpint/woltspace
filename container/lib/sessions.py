@@ -583,7 +583,7 @@ def resume_session(name: str, prompt: str = "") -> dict:
     if tmux_alive and not claude_running:
         # Tmux alive but claude exited — restart claude with --resume inside the pane
         cd_prefix = f"cd {shlex.quote(session_dir)} && " if session_dir else ""
-        resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} WOLT_NAME={shlex.quote(wolt)} && {WCLAUDE} --dangerously-skip-permissions {model_flag} {resume_flag} {safe_prompt}"
+        resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} WOLT_NAME={shlex.quote(wolt)} && {WCLAUDE} {model_flag} {resume_flag} {safe_prompt}"
         _tmux_paste(name, resume_cmd)
         registry.update(name, wolt=wolt, status="running")
         return {"name": name, "url": session_url, "status": "revived", "detail": "claude exited, restarted with --resume in existing tmux"}
@@ -591,7 +591,7 @@ def resume_session(name: str, prompt: str = "") -> dict:
     # Tmux is dead — create a fresh tmux session with wclaude --resume
     work_dir = session_dir or str(WOLTS_DIR / wolt) if wolt else "/workspace"
     cd_prefix = f"cd {shlex.quote(work_dir)} && " if work_dir else ""
-    resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} WOLT_NAME={shlex.quote(wolt)} && {WCLAUDE} --dangerously-skip-permissions {model_flag} {resume_flag} {safe_prompt}"
+    resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} WOLT_NAME={shlex.quote(wolt)} && {WCLAUDE} {model_flag} {resume_flag} {safe_prompt}"
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", name, "-c", work_dir or "/workspace", resume_cmd],
         check=True, timeout=_TMUX_TIMEOUT,

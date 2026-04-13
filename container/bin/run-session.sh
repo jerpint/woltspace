@@ -77,7 +77,7 @@ MODEL_FLAG=""
 if [ -n "$MODEL" ]; then
     MODEL_FLAG="--model $MODEL"
 fi
-wclaude --dangerously-skip-permissions --session-id "$CLAUDE_SESSION_ID" --name "$SESSION_NAME" $MODEL_FLAG "$FULL_PROMPT" || EXIT_CODE=$?
+wclaude --session-id "$CLAUDE_SESSION_ID" --name "$SESSION_NAME" $MODEL_FLAG "$FULL_PROMPT" || EXIT_CODE=$?
 
 # Update registry with final status
 $SESSION_REG finish "$SESSION_NAME" "$EXIT_CODE" > /dev/null 2>&1 || true
