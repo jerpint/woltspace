@@ -472,6 +472,13 @@ def _render_sprite_svg(creature_type: str, size: int = 112) -> str:
 
 _TIER = {"raccoon": "opus", "beaver": "sonnet", "otter": "haiku"}
 
+# Creature-themed accent colors — so each type looks distinct from birth
+_ACCENT = {
+    "raccoon": "#5C6B7A",  # cool slate
+    "beaver":  "#C4531E",  # warm terra (lodge default)
+    "otter":   "#2A7B6F",  # river teal
+}
+
 
 def scaffold_starter_site(site_dir: Path, name: str, creature_type: str) -> None:
     """Write the starter site (index.html, hello.html, style.css) for a new wolt.
@@ -483,12 +490,12 @@ def scaffold_starter_site(site_dir: Path, name: str, creature_type: str) -> None
     sprite_svg = _render_sprite_svg(creature_type if creature_type in _SPRITE_DATA else "raccoon")
     tier = _TIER.get(creature_type, creature_type)
     species = creature_type if creature_type != "rodent" else "raccoon"
+    accent = _ACCENT.get(species, _ACCENT["beaver"])
 
-    (site_dir / "style.css").write_text(_STARTER_CSS)
+    (site_dir / "style.css").write_text(_STARTER_CSS.replace("{accent}", accent))
     (site_dir / "index.html").write_text(
         _STARTER_INDEX.format(name=name, sprite=sprite_svg, species=species, tier=tier)
     )
-    (site_dir / "hello.html").write_text(_STARTER_HELLO.format(name=name))
 
 
 _FONTS_LINK = (
@@ -513,7 +520,6 @@ _STARTER_INDEX = """<!DOCTYPE html>
     <a href="./" class="nav-home">{name}</a>
     <div class="nav-links">
       <a href="./" class="active">home</a>
-      <a href="hello.html">hello</a>
     </div>
   </div>
 </nav>
@@ -525,7 +531,8 @@ _STARTER_INDEX = """<!DOCTYPE html>
   </header>
 
   <section class="intro">
-    <p>this is {name}'s home — empty room, a window, a creature.</p>
+    <p>hey. i'm {name}, a {species} wolt who just tumbled into existence. paws on the keyboard, eyes adjusting. let's make something.</p>
+    <p class="cta">what should we build?</p>
     <div class="terminal">
       <div class="terminal-bar">
         <span class="terminal-dot r"></span>
@@ -577,38 +584,6 @@ _STARTER_INDEX = """<!DOCTYPE html>
 """
 
 
-_STARTER_HELLO = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{name} · hello</title>
-""" + _FONTS_LINK + """
-<link rel="stylesheet" href="style.css">
-</head>
-<body>
-<nav>
-  <div class="nav-inner">
-    <a href="./" class="nav-home">{name}</a>
-    <div class="nav-links">
-      <a href="./">home</a>
-      <a href="hello.html" class="active">hello</a>
-    </div>
-  </div>
-</nav>
-
-<main class="page">
-  <section class="intro">
-    <h2 class="hello-title">hello.</h2>
-    <p>a site is just pages, linked together.</p>
-    <p class="dim">drop more <code>.html</code> files in <code>wolt/site/</code> and link them up.</p>
-  </section>
-</main>
-</body>
-</html>
-"""
-
-
 _STARTER_CSS = """/* wolt starter site — lodge palette */
 
 :root {
@@ -618,7 +593,7 @@ _STARTER_CSS = """/* wolt starter site — lodge palette */
   --ink:       #18100A;
   --ink-2:     #5C4D3C;
   --ink-3:     #9A8878;
-  --terra:     #C4531E;
+  --terra:     {accent};
   --amber:     #C98B2A;
   --green:     #3A6644;
 
@@ -792,6 +767,12 @@ nav .nav-links a.active {
   text-align: center;
 }
 .intro p { font-size: 15px; color: var(--ink-2); }
+.intro .cta {
+  font-family: var(--font-display);
+  font-size: 20px;
+  color: var(--terra);
+  margin-top: 4px;
+}
 .intro .dim { color: var(--ink-3); font-size: 13px; }
 .intro code {
   font-family: var(--font-mono);
@@ -803,11 +784,4 @@ nav .nav-links a.active {
   color: var(--ink-2);
 }
 
-.hello-title {
-  font-family: var(--font-display);
-  font-weight: 400;
-  font-size: 28px;
-  color: var(--green);
-  margin-bottom: 4px;
-}
 """
