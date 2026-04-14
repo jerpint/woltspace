@@ -2,228 +2,148 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>woltspace</title>
+<link href="https://fonts.googleapis.com/css2?family=Preahvihear&family=DM+Sans:wght@300;400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-
+  * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    background: #2a1f14;
-    color: #f0dfc0;
-    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-    height: 100vh;
+    font-family: 'DM Sans', sans-serif;
+    background: #EDE8DE;
+    color: #18100A;
+    min-height: 100vh;
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    overflow: hidden;
   }
-
-  /* scanline overlay */
-  body::after {
-    content: '';
-    position: fixed;
-    inset: 0;
-    background: repeating-linear-gradient(
-      0deg,
-      transparent,
-      transparent 2px,
-      rgba(0,0,0,0.03) 2px,
-      rgba(0,0,0,0.03) 4px
-    );
-    pointer-events: none;
-    z-index: 10;
-  }
-
   .center {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 2rem;
+    gap: 18px;
+    text-align: center;
   }
-
-  /* beaver with glow pulse */
-  .beaver {
-    font-size: 3.2rem;
+  .brand {
+    font-family: 'Preahvihear', sans-serif;
+    font-size: 36px;
+    color: #18100A;
+    letter-spacing: -0.01em;
+  }
+  .brand-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .sigil {
+    font-size: 1.8rem;
     line-height: 1;
-    filter: drop-shadow(0 0 12px rgba(193, 127, 58, 0.4));
-    animation: beaverBreathe 2.4s ease-in-out infinite;
-    user-select: none;
+    transition: opacity 0.3s ease;
   }
-
-  @keyframes beaverBreathe {
-    0%, 100% {
-      transform: scale(1);
-      filter: drop-shadow(0 0 8px rgba(193, 127, 58, 0.3));
-    }
-    50% {
-      transform: scale(1.08);
-      filter: drop-shadow(0 0 20px rgba(193, 127, 58, 0.7));
-    }
-  }
-
-  /* main label */
-  .label {
-    font-size: 0.82rem;
-    color: #7bbf8a;
-    letter-spacing: 0.12em;
-    text-transform: lowercase;
-    display: flex;
-    align-items: center;
-    gap: 0;
-  }
-
-  .label-text {
-    opacity: 0;
-    animation: fadeInText 0.6s ease forwards 0.3s;
-  }
-
-  @keyframes fadeInText {
-    to { opacity: 1; }
-  }
-
-  .dots {
-    display: inline-flex;
-  }
-
-  .dots span {
-    opacity: 0;
-    animation: dotBlink 1.4s ease-in-out infinite;
-  }
-  .dots span:nth-child(1) { animation-delay: 0s; }
-  .dots span:nth-child(2) { animation-delay: 0.2s; }
-  .dots span:nth-child(3) { animation-delay: 0.4s; }
-
-  @keyframes dotBlink {
-    0%, 60%, 100% { opacity: 0; }
-    30% { opacity: 1; }
-  }
-
-  /* activity log */
-  .log {
+  .terminal {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: #d4c5a8;
     width: 240px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+    background: #1a130c;
+    border: 1px solid #2a1f14;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(24,16,10,0.08);
+    overflow: hidden;
+    text-align: left;
+    margin-top: 4px;
   }
-
-  .log-line {
-    font-size: 0.64rem;
-    color: #5a4535;
+  .terminal-bar {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    opacity: 0;
-    transform: translateY(4px);
-    animation: lineIn 0.3s ease forwards;
+    gap: 6px;
+    padding: 6px 10px;
+    background: #211810;
+    border-bottom: 1px solid #2a1f14;
+  }
+  .terminal-dot { width: 8px; height: 8px; border-radius: 50%; background: #3a2a1c; }
+  .terminal-dot.r { background: #c4531e; }
+  .terminal-dot.y { background: #c98b2a; }
+  .terminal-dot.g { background: #3a6644; }
+  .terminal-body {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 12px;
     white-space: nowrap;
     overflow: hidden;
   }
-
-  .log-line::before {
-    content: '▸';
-    color: #3d2b1a;
-    flex-shrink: 0;
+  .spinner {
+    color: #5BC87A;
+    font-size: 14px;
+    width: 12px;
+    display: inline-block;
   }
-
-  .log-line.active {
-    color: #8a7060;
-  }
-
-  .log-line.active::before {
-    color: #7bbf8a;
-    animation: arrowPulse 0.8s ease-in-out infinite;
-  }
-
-  @keyframes arrowPulse {
-    0%, 100% { opacity: 0.4; }
-    50% { opacity: 1; }
-  }
-
-  @keyframes lineIn {
-    to { opacity: 1; transform: translateY(0); }
-  }
-
-  /* progress bar */
-  .progress {
-    width: 200px;
-    height: 2px;
-    background: #3d2b1a;
-    border-radius: 2px;
+  .status {
+    transition: opacity 0.32s ease;
+    flex: 1;
     overflow: hidden;
-    margin-top: 0.5rem;
-  }
-
-  .progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #5c3d24, #c17f3a, #5c3d24);
-    background-size: 200% 100%;
-    animation: progressShimmer 1.8s ease-in-out infinite;
-    border-radius: 2px;
-    width: 60%;
-  }
-
-  @keyframes progressShimmer {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
+    text-overflow: ellipsis;
   }
 </style>
 </head>
 <body>
-
 <div class="center">
-  <div class="beaver">🦫</div>
-
-  <div class="label">
-    <span class="label-text">the wolt is building</span>
-    <span class="dots">
-      <span>.</span><span>.</span><span>.</span>
-    </span>
+  <div class="brand-row">
+    <span class="sigil" id="sigil">🦫</span>
+    <span class="brand">woltspace</span>
   </div>
-
-  <div class="progress">
-    <div class="progress-fill"></div>
+  <div class="terminal">
+    <div class="terminal-bar">
+      <span class="terminal-dot r"></span>
+      <span class="terminal-dot y"></span>
+      <span class="terminal-dot g"></span>
+    </div>
+    <div class="terminal-body">
+      <span class="spinner" id="spinner">⠋</span>
+      <span class="status" id="status">the lodge is quiet</span>
+    </div>
   </div>
-
-  <div class="log" id="log"></div>
 </div>
 
 <script>
-  const lines = [
-    { t: 400,  text: 'booting memory',         active: false },
-    { t: 900,  text: 'loading identity',        active: false },
-    { t: 1500, text: 'reading context',         active: false },
-    { t: 2200, text: 'connecting to claude',    active: true  },
+  var creatures = ['🦫','🦝','🦦','🐺','🐶','🌲','🪵','🍂'];
+  var sigilEl = document.getElementById('sigil');
+  var c = 0;
+  setInterval(function() {
+    sigilEl.style.opacity = '0';
+    setTimeout(function() {
+      c = (c + 1) % creatures.length;
+      sigilEl.textContent = creatures[c];
+      sigilEl.style.opacity = '1';
+    }, 250);
+  }, 2600);
+
+  var phrases = [
+    'the lodge is quiet',
+    'fire still warm',
+    'wood creaks',
+    'waiting for footsteps',
+    'wind through the pines',
+    'river hums outside',
   ];
+  var statusEl = document.getElementById('status');
+  var p = 0;
+  setInterval(function() {
+    statusEl.style.opacity = '0';
+    setTimeout(function() {
+      p = (p + 1) % phrases.length;
+      statusEl.textContent = phrases[p];
+      statusEl.style.opacity = '1';
+    }, 320);
+  }, 3200);
 
-  const logEl = document.getElementById('log');
-
-  lines.forEach(({ t, text, active }) => {
-    setTimeout(() => {
-      const el = document.createElement('div');
-      el.className = 'log-line' + (active ? ' active' : '');
-      el.textContent = text;
-      logEl.appendChild(el);
-      // keep max 4 lines
-      while (logEl.children.length > 4) logEl.removeChild(logEl.firstChild);
-    }, t);
-  });
-
-  // cycle the active line to keep it feeling alive
-  let activeIdx = 0;
-  const actives = [
-    'connecting to claude',
-    'warming up tools',
-    'ready soon',
-    'standing by',
-  ];
-
-  setInterval(() => {
-    const active = logEl.querySelector('.active');
-    if (active) {
-      activeIdx = (activeIdx + 1) % actives.length;
-      active.textContent = actives[activeIdx];
-    }
-  }, 2800);
+  var frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+  var spinEl = document.getElementById('spinner');
+  var f = 0;
+  setInterval(function() {
+    f = (f + 1) % frames.length;
+    spinEl.textContent = frames[f];
+  }, 90);
 </script>
-
 </body>
 </html>

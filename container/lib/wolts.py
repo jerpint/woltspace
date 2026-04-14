@@ -153,13 +153,11 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "", descript
         "# Learnings\n\n*Day one.*\n"
     )
 
-    # Create site with wakeup template (rodents only)
+    # Scaffold starter site (rodents only)
     if is_rodent(creature_type):
         site_dir = wolt_dir / "wolt" / "site"
         site_dir.mkdir(parents=True, exist_ok=True)
-        (site_dir / "index.html").write_text(
-            _wakeup_template(name, creature_type)
-        )
+        scaffold_starter_site(site_dir, name, creature_type)
 
     # Init git repo (needed for Claude Code project context and wolt git operations)
     if not (wolt_dir / ".git").is_dir():
@@ -336,154 +334,454 @@ def _platform_claude_md_section() -> str:
     return f"{PLATFORM_SECTION_START}\n{PLATFORM_SECTION_BODY}{PLATFORM_SECTION_END}\n\n"
 
 
-def _wakeup_template(name: str, creature_type: str) -> str:
-    """Generate the default wakeup site page for a new wolt."""
-    meta = CREATURE_META.get(creature_type, CREATURE_META["rodent"])
-    emoji = meta["emoji"]
-    lore = meta["lore"]
-    # Map creature type to model tier label
-    tier = {"raccoon": "opus", "beaver": "sonnet", "otter": "haiku"}.get(
-        creature_type, creature_type
+# ── Starter site scaffolding ──
+# Pixel sprite data ported from public/static/sprites.js (WOLT_SPRITES).
+# Keep both in sync if sprites change.
+
+_SPRITE_DATA = {
+    "raccoon": {
+        "map": [
+            "...BB........BBB.........",
+            "...BFGG.....GFFB.........",
+            "...BABB.....BAAB.........",
+            "...BCAABBBBBACCB.........",
+            "...BAAAAAAAAAAAB.........",
+            "...BCCCCAAACCCCB.........",
+            "...BCBCCAAACCCCB.........",
+            ".BBCCBBCBCCCBCBCB........",
+            ".BBACBBCAAACBCCAB........",
+            ".BBCAAADHHHDAAACB...BBB..",
+            ".BBCAAADHHHDAAACB...BBB..",
+            "...BCAADDDDDAEEB...BCCCB.",
+            "....BCCCCEEECBB....BAAACB",
+            "...BAAAAAAAAAAAB...BCCCBB",
+            "...BAAAAAAAAAAAB...BCCCCB",
+            ".BBAAAAAAAAAAAAAB..BAAAAB",
+            ".BBAABBAAAAABAAAB..BCCCCB",
+            ".BBAAAABAAABAAAABBBAACCCB",
+            ".GGFAAABAAABAAAAGBBAABBCG",
+            "BAABAAABAAABAAABABBCAAAB.",
+            "BAAABBBBAAABBBBAABBCCBB..",
+            "BCCAAAAAAAAAAAAACBBBB....",
+            ".BBBBGGAAAAAGBBBB........",
+            ".BBCCBBAAAAABCCCB........",
+            "...BBBBBBBBBBBBB.........",
+        ],
+        "pal": {"A": "#7f8894", "B": "#282c33", "C": "#40454b", "D": "#f0ecf0",
+                "E": "#545c65", "F": "#a0abbd", "G": "#050029", "H": "#efa09f"},
+    },
+    "beaver": {
+        "map": [
+            "..AAA........AAA.....",
+            ".ABBBA......ABBBA....",
+            ".ABAAAAAAAAAAAABA....",
+            ".ABABBBBBBBBBAABA....",
+            "..ABBBBBBBBBBBAA.....",
+            "..ABABBBBAEBBBAA.....",
+            "..ABABBBBAEBBBAA.....",
+            ".ABBAAAABAEBBBBA.....",
+            ".ABACAACCCFABBBA.....",
+            ".ABACCACCCFABBBA.AAA.",
+            ".ABBAAAAAAEBBBAAADDDA",
+            "..ABBCAFABBBBAA.AADDA",
+            "...ABAAAABBBBBBAADADA",
+            "..ABBBBBBBBBBBBAADDAA",
+            ".ABBABCCCAEBBBBBAADDA",
+            ".ABBACCCABBBBABBADADA",
+            ".AGGACCCAGGGGABBADADA",
+            "..AAACCCAAAAABBBADDA.",
+            "..ABCCCCCCFABBBBAAAA.",
+            ".AAABCCCCAAAABBBAA...",
+            "ABBBACCCABBBBBBAA....",
+            "AAAAAAAAAAAAAAAA.....",
+        ],
+        "pal": {"A": "#3f190e", "B": "#af6127", "C": "#fce6b0", "D": "#773c1f",
+                "E": "#050003", "F": "#fffee7", "G": "#dd7a2d"},
+    },
+    "otter": {
+        "map": [
+            ".....AAAAAAAA......",
+            "..AAACCCCCCCCAAA...",
+            ".ACCCCCCCCCCCCCCA..",
+            ".ACACCCCCCCCCCACA..",
+            "..ACCBACCCCBACCA...",
+            "..ACCAACDDCAACCA...",
+            "AAACBBBBAABBBBCAAA.",
+            "..ABEBABAABABEBA...",
+            ".AAABBBABBABBBAAA..",
+            "...AABBBBBBBBAA....",
+            "...ACCCCCCCCCCA....",
+            "..ACCCCBBBBCCCCA...",
+            "..ACCABBBBBBACCA...",
+            "..ACCCABBBBACCCA...",
+            "..AACCABBBBACCAA.AA",
+            "..ACAABBBBBBAACAACA",
+            ".ACCCBBBBBBBBCCCACA",
+            ".ACAAABBBBBBAAACAA.",
+            ".ACCCCABBBBACCCCA..",
+            "..ACCCAAAAAACCCA...",
+            "...AAA......AAA....",
+        ],
+        "pal": {"A": "#402110", "B": "#f2d79d", "C": "#9f5332", "D": "#ff6970",
+                "E": "#c47b4a"},
+    },
+}
+
+
+def _render_sprite_svg(creature_type: str, size: int = 112) -> str:
+    """Render a wolt's pixel sprite as an inline SVG string.
+
+    Crops the viewBox to actual filled cells so trailing whitespace in the
+    sprite map doesn't push the creature off-center.
+    """
+    sprite = _SPRITE_DATA.get(creature_type) or _SPRITE_DATA["raccoon"]
+    rows = sprite["map"]
+    pal = sprite["pal"]
+
+    # Find content bounds (rows/cols that contain at least one filled cell)
+    filled = []
+    for r, row in enumerate(rows):
+        for c, ch in enumerate(row):
+            if ch not in (".", " ") and pal.get(ch):
+                filled.append((r, c))
+    if not filled:
+        return ""
+    min_r = min(r for r, _ in filled)
+    max_r = max(r for r, _ in filled)
+    min_c = min(c for _, c in filled)
+    max_c = max(c for _, c in filled)
+    n_rows = max_r - min_r + 1
+    n_cols = max_c - min_c + 1
+    px = size / max(n_rows, n_cols)
+
+    rects = []
+    for r, c in filled:
+        fill = pal[rows[r][c]]
+        rects.append(
+            f'<rect x="{(c - min_c) * px:.2f}" y="{(r - min_r) * px:.2f}" '
+            f'width="{px:.2f}" height="{px:.2f}" fill="{fill}"/>'
+        )
+    w = n_cols * px
+    h = n_rows * px
+    return (
+        f'<svg viewBox="0 0 {w:.2f} {h:.2f}" xmlns="http://www.w3.org/2000/svg" '
+        f'shape-rendering="crispEdges" style="image-rendering:pixelated;display:block;margin:0 auto">'
+        f'{"".join(rects)}</svg>'
     )
-    return f"""<!DOCTYPE html>
+
+
+_TIER = {"raccoon": "opus", "beaver": "sonnet", "otter": "haiku"}
+
+# Creature-themed accent colors — so each type looks distinct from birth
+_ACCENT = {
+    "raccoon": "#5C6B7A",  # cool slate
+    "beaver":  "#C4531E",  # warm terra (lodge default)
+    "otter":   "#2A7B6F",  # river teal
+}
+
+
+def scaffold_starter_site(site_dir: Path, name: str, creature_type: str) -> None:
+    """Write the starter site (index.html, hello.html, style.css) for a new wolt.
+
+    The starter site uses the lodge design system (cream + Preahvihear/DM Sans)
+    and embeds the wolt's pixel sprite. Two pages are scaffolded so the wolt
+    inherits the "site = pages, linked" pattern from minute zero.
+    """
+    sprite_svg = _render_sprite_svg(creature_type if creature_type in _SPRITE_DATA else "raccoon")
+    tier = _TIER.get(creature_type, creature_type)
+    species = creature_type if creature_type != "rodent" else "raccoon"
+    accent = _ACCENT.get(species, _ACCENT["beaver"])
+
+    (site_dir / "style.css").write_text(_STARTER_CSS.replace("{accent}", accent))
+    (site_dir / "index.html").write_text(
+        _STARTER_INDEX.format(name=name, sprite=sprite_svg, species=species, tier=tier)
+    )
+
+
+_FONTS_LINK = (
+    '<link href="https://fonts.googleapis.com/css2?'
+    'family=Preahvihear&family=DM+Sans:wght@300;400;500&'
+    'family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">'
+)
+
+
+_STARTER_INDEX = """<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{name}</title>
-<style>
-  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{
-    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-    background: #2a1f14; color: #f0dfc0;
-    min-height: 100vh;
-    display: flex; align-items: center; justify-content: center;
-    overflow: hidden;
-  }}
-  body::after {{
-    content: '';
-    position: fixed; inset: 0;
-    background: repeating-linear-gradient(
-      0deg, transparent, transparent 2px,
-      rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px
-    );
-    pointer-events: none; z-index: 10;
-  }}
-  .den {{
-    display: flex; flex-direction: column;
-    align-items: center; gap: 1.8rem;
-    text-align: center;
-  }}
-  .sigil {{
-    font-size: 3.2rem; line-height: 1;
-    user-select: none;
-    filter: drop-shadow(0 0 12px rgba(74, 124, 89, 0.5));
-    animation: breathe 2.4s ease-in-out infinite;
-  }}
-  @keyframes breathe {{
-    0%, 100% {{
-      transform: scale(1);
-      filter: drop-shadow(0 0 8px rgba(74, 124, 89, 0.3));
-    }}
-    50% {{
-      transform: scale(1.08);
-      filter: drop-shadow(0 0 24px rgba(74, 124, 89, 0.7));
-    }}
-  }}
-  .name {{ font-size: 1.2rem; color: #f0dfc0; letter-spacing: 0.04em; }}
-  .species {{
-    font-size: 0.68rem; color: #a08060;
-    letter-spacing: 0.12em; text-transform: uppercase;
-    margin-top: -1rem;
-  }}
-  .wake {{
-    font-size: 0.82rem; color: #7bbf8a;
-    letter-spacing: 0.08em;
-    display: flex; align-items: center; gap: 0;
-  }}
-  .wake-text {{ opacity: 0; animation: fadeIn 0.6s ease forwards 0.3s; }}
-  @keyframes fadeIn {{ to {{ opacity: 1; }} }}
-  .dots span {{
-    opacity: 0;
-    animation: dotPulse 1.4s ease-in-out infinite;
-  }}
-  .dots span:nth-child(1) {{ animation-delay: 0s; }}
-  .dots span:nth-child(2) {{ animation-delay: 0.2s; }}
-  .dots span:nth-child(3) {{ animation-delay: 0.4s; }}
-  @keyframes dotPulse {{
-    0%, 60%, 100% {{ opacity: 0; }}
-    30% {{ opacity: 1; }}
-  }}
-  .progress {{
-    width: 200px; height: 2px;
-    background: #3d2b1a; border-radius: 2px;
-    overflow: hidden;
-  }}
-  .progress-fill {{
-    height: 100%; width: 60%; border-radius: 2px;
-    background: linear-gradient(90deg, #3d2b1a, #4a7c59, #3d2b1a);
-    background-size: 200% 100%;
-    animation: shimmer 1.8s ease-in-out infinite;
-  }}
-  @keyframes shimmer {{
-    0% {{ background-position: 200% 0; }}
-    100% {{ background-position: -200% 0; }}
-  }}
-  .lore {{
-    font-size: 0.64rem; color: #8a7060;
-    font-style: italic; margin-top: 0.5rem;
-  }}
-  .status {{
-    font-size: 0.64rem; color: #a08060;
-    height: 1.2em; overflow: hidden;
-  }}
-  .status span {{
-    display: block;
-    animation: fadeInOut 2s ease forwards;
-  }}
-  @keyframes fadeInOut {{
-    0% {{ opacity: 0; transform: translateY(4px); }}
-    15% {{ opacity: 1; transform: translateY(0); }}
-    85% {{ opacity: 1; transform: translateY(0); }}
-    100% {{ opacity: 0; transform: translateY(-4px); }}
-  }}
-</style>
+""" + _FONTS_LINK + """
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="den">
-  <div class="sigil">{emoji}</div>
-  <div class="name">{name}</div>
-  <div class="species">{creature_type} · {tier}</div>
-  <div class="wake">
-    <span class="wake-text">your wolt is waking up</span>
-    <span class="dots"><span>.</span><span>.</span><span>.</span></span>
+<nav>
+  <div class="nav-inner">
+    <a href="./" class="nav-home">{name}</a>
+    <div class="nav-links">
+      <a href="./" class="active">home</a>
+    </div>
   </div>
-  <div class="progress"><div class="progress-fill"></div></div>
-  <div class="status" id="status"></div>
-  <div class="lore">{lore}</div>
-</div>
+</nav>
+
+<main class="page">
+  <header class="hero">
+    <div class="sprite">{sprite}</div>
+    <p class="role">{species} · {tier}</p>
+  </header>
+
+  <section class="intro">
+    <p>hey. i'm {name}, a {species} wolt who just tumbled into existence. paws on the keyboard, eyes adjusting. let's make something.</p>
+    <p class="cta">what should we build?</p>
+    <div class="terminal">
+      <div class="terminal-bar">
+        <span class="terminal-dot r"></span>
+        <span class="terminal-dot y"></span>
+        <span class="terminal-dot g"></span>
+      </div>
+      <div class="terminal-body">
+        <span class="spinner" id="spinner">⠋</span>
+        <span class="status" id="status">mounting the den</span>
+      </div>
+    </div>
+  </section>
+</main>
+
 <script>
+  // Phrase shuffler — terminal-style boot status
   const phrases = [
-    'sniffing around',
-    'creating identity',
-    'wolting',
-    'finding its footing',
+    'mounting the den',
+    'linking memory',
+    'sniffing fresh wood',
+    'listening for footsteps',
     'reading the forest',
-    'stretching',
-    'almost there',
+    'syncing with the lodge',
+    'ear twitch, all clear',
+    'still wolting',
   ];
   const statusEl = document.getElementById('status');
-  let i = 0;
-  function next() {{
-    statusEl.innerHTML = '';
-    const span = document.createElement('span');
-    span.textContent = '\\u25b8 ' + phrases[i];
-    statusEl.appendChild(span);
-    i = (i + 1) % phrases.length;
-  }}
-  next();
-  setInterval(next, 2000);
+  let p = 0;
+  setInterval(() => {{
+    statusEl.style.opacity = '0';
+    setTimeout(() => {{
+      p = (p + 1) % phrases.length;
+      statusEl.textContent = phrases[p];
+      statusEl.style.opacity = '1';
+    }}, 320);
+  }}, 2400);
+
+  // Braille spinner — fast tick for the "still working" feel
+  const frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+  const spinEl = document.getElementById('spinner');
+  let f = 0;
+  setInterval(() => {{
+    f = (f + 1) % frames.length;
+    spinEl.textContent = frames[f];
+  }}, 90);
 </script>
 </body>
 </html>
+"""
+
+
+_STARTER_CSS = """/* wolt starter site — lodge palette */
+
+:root {
+  --bg:        #EDE8DE;
+  --surface:   #F5F1E8;
+  --border:    #D6CCBA;
+  --ink:       #18100A;
+  --ink-2:     #5C4D3C;
+  --ink-3:     #9A8878;
+  --terra:     {accent};
+  --amber:     #C98B2A;
+  --green:     #3A6644;
+
+  --font-display: 'Preahvihear', sans-serif;
+  --font-body:    'DM Sans', sans-serif;
+  --font-mono:    'JetBrains Mono', monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  line-height: 1.6;
+}
+
+/* ── Top nav ── */
+nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(237, 232, 222, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+}
+nav .nav-inner {
+  max-width: 760px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+}
+nav .nav-home {
+  font-family: var(--font-display);
+  font-size: 16px;
+  color: var(--ink);
+  text-decoration: none;
+  letter-spacing: -0.01em;
+  transition: color 0.15s;
+}
+nav .nav-home:hover { color: var(--terra); }
+
+nav .nav-links {
+  display: flex;
+  gap: 4px;
+}
+nav .nav-links a {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-3);
+  text-decoration: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  transition: color 0.15s, background 0.15s;
+}
+nav .nav-links a:hover {
+  color: var(--ink);
+  background: var(--surface);
+}
+nav .nav-links a.active {
+  color: var(--terra);
+  background: var(--surface);
+}
+
+/* ── Page ── */
+.page {
+  max-width: 460px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 32px;
+  min-height: calc(100vh - 48px);  /* viewport minus sticky nav */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 32px;
+}
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+}
+
+.sprite {
+  height: 112px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  animation: sprite-bob 2.8s ease-in-out infinite;
+}
+.sprite svg { height: 100%; width: auto; }
+
+@keyframes sprite-bob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-6px); }
+}
+
+.role {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.terminal {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #d4c5a8;
+  width: 280px;
+  margin: 4px auto 0;
+  background: #1a130c;
+  border: 1px solid #2a1f14;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(24, 16, 10, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+  text-align: left;
+}
+.terminal-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #211810;
+  border-bottom: 1px solid #2a1f14;
+}
+.terminal-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3a2a1c;
+}
+.terminal-dot.r { background: #c4531e; }
+.terminal-dot.y { background: #c98b2a; }
+.terminal-dot.g { background: #3a6644; }
+.terminal-body {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.terminal .spinner {
+  color: #5BC87A;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+  width: 12px;
+  display: inline-block;
+}
+.terminal .status {
+  transition: opacity 0.32s ease;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.intro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+}
+.intro p { font-size: 15px; color: var(--ink-2); }
+.intro .cta {
+  font-family: var(--font-display);
+  font-size: 20px;
+  color: var(--terra);
+  margin-top: 4px;
+}
+.intro .dim { color: var(--ink-3); font-size: 13px; }
+.intro code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: var(--ink-2);
+}
+
 """

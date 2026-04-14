@@ -178,7 +178,7 @@ def stop_site(wolt_name: str) -> bool:
 
 
 def _write_default_index(wolt_name: str, sdir: Path) -> None:
-    """Write a wakeup template index.html for a new wolt site."""
-    from wolts import _wakeup_template, _get_wolt_type
+    """Scaffold the starter site for a wolt that doesn't have one yet."""
+    from wolts import scaffold_starter_site, _get_wolt_type
     creature_type = _get_wolt_type(wolt_name)
-    (sdir / "index.html").write_text(_wakeup_template(wolt_name, creature_type))
+    scaffold_starter_site(sdir, wolt_name, creature_type)

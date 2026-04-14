@@ -1269,6 +1269,16 @@ async def onboard_page():
     return resp or PlainTextResponse("onboard.html not found", status_code=500)
 
 
+@app.get("/placeholder.html")
+async def placeholder_page():
+    """Idle viewport — shown when no session is active.
+
+    Dedicated route so wolt site dirs can't shadow the platform file.
+    """
+    resp = await _serve_platform_file("placeholder.html")
+    return resp or PlainTextResponse("placeholder.html not found", status_code=500)
+
+
 # --- Catch-all: static files ---
 
 @app.get("/{path:path}")
