@@ -130,6 +130,12 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "", descript
     (wolt_dir / "wolt" / "memory" / "archive").mkdir(parents=True)
     (wolt_dir / ".state").mkdir(parents=True)
 
+    # Assign a permanent site port for rodents
+    site_port = None
+    if is_rodent(creature_type):
+        from sites import _allocate_port
+        site_port = _allocate_port()
+
     # Write wolt.json
     wolt_json = {
         "name": name,
@@ -138,6 +144,8 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "", descript
         "capabilities": [],
         "description": description,
     }
+    if site_port:
+        wolt_json["site_port"] = site_port
     (wolt_dir / "wolt" / "wolt.json").write_text(json.dumps(wolt_json, indent=2) + "\n")
 
     # Write minimal identity.md

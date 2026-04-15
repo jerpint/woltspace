@@ -63,11 +63,11 @@ class TestPortAllocation:
         port = sites._allocate_port()
         assert port == 6001
 
-    def test_skips_used_site_ports(self, tmp_wolts):
-        """Port allocator checks per-wolt site state."""
-        state_file = tmp_wolts / "testwolt" / ".state" / "site.json"
-        state_file.parent.mkdir(parents=True, exist_ok=True)
-        state_file.write_text(json.dumps({"wolt": "testwolt", "port": 6001}))
+    def test_skips_assigned_ports(self, tmp_wolts):
+        """Port allocator checks wolt.json for permanently assigned ports."""
+        wolt_json = tmp_wolts / "testwolt" / "wolt" / "wolt.json"
+        wolt_json.parent.mkdir(parents=True, exist_ok=True)
+        wolt_json.write_text(json.dumps({"name": "testwolt", "site_port": 6001}))
         port = sites._allocate_port()
         assert port == 6002
 
@@ -75,6 +75,23 @@ class TestPortAllocation:
         """Site ports (6001+) don't overlap with project ports (4000-5999)."""
         port = sites._allocate_port()
         assert port >= 6001
+
+    def test_get_or_assign_reads_existing(self, tmp_wolts):
+        """Returns existing site_port from wolt.json."""
+        wolt_json = tmp_wolts / "testwolt" / "wolt" / "wolt.json"
+        wolt_json.write_text(json.dumps({"name": "testwolt", "site_port": 6042}))
+        port = sites._get_or_assign_port("testwolt")
+        assert port == 6042
+
+    def test_get_or_assign_persists_new(self, tmp_wolts):
+        """Assigns and persists a port for wolts without one."""
+        wolt_json = tmp_wolts / "testwolt" / "wolt" / "wolt.json"
+        wolt_json.write_text(json.dumps({"name": "testwolt", "type": "raccoon"}))
+        port = sites._get_or_assign_port("testwolt")
+        assert port == 6001
+        # Verify it was persisted
+        data = json.loads(wolt_json.read_text())
+        assert data["site_port"] == 6001
 
 
 class TestStartStop:
