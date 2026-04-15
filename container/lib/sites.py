@@ -1,8 +1,9 @@
 """
 Wolt site management — each wolt gets a livereload-powered static site.
 
-Per-wolt state model: site state lives at wolts/{wolt}/.state/site.json.
-Sites use ports 6001-6999. Projects use 4000-5999 (fixed in woltspace.json).
+Each wolt gets a permanent site port (6001-6999) stored in wolt.json.
+Ports are assigned at wolt creation; existing wolts without a port get one
+on first start_site() call. Runtime state lives at wolts/{wolt}/.state/site.json.
 
 Usage:
     from sites import start_site, stop_site, running_sites, site_dir
@@ -66,18 +67,18 @@ def _is_port_alive(port: int) -> bool:
         return False
 
 
-def _used_ports() -> set[int]:
-    """Collect all ports used by sites."""
+def _assigned_ports() -> set[int]:
+    """Collect all permanently assigned site ports from wolt.json files."""
     used = set()
     for wolt_dir in WOLTS_DIR.iterdir():
         if not wolt_dir.is_dir() or wolt_dir.name.startswith("."):
             continue
-        site_state = wolt_dir / ".state" / "site.json"
-        if site_state.exists():
+        wolt_json = wolt_dir / "wolt" / "wolt.json"
+        if wolt_json.exists():
             try:
-                state = json.loads(site_state.read_text())
-                if state.get("port"):
-                    used.add(state["port"])
+                data = json.loads(wolt_json.read_text())
+                if data.get("site_port"):
+                    used.add(data["site_port"])
             except (json.JSONDecodeError, OSError):
                 continue
     return used
@@ -85,11 +86,39 @@ def _used_ports() -> set[int]:
 
 def _allocate_port() -> int:
     """Find the next available port in the shared range."""
-    used = _used_ports()
+    used = _assigned_ports()
     for port in range(PORT_MIN, PORT_MAX + 1):
         if port not in used:
             return port
     raise RuntimeError("No available ports in range")
+
+
+def _get_or_assign_port(wolt_name: str) -> int:
+    """Get a wolt's permanent site port, assigning one if needed.
+
+    Reads site_port from wolt.json. If missing (pre-existing wolt),
+    allocates a port and writes it back for future use.
+    """
+    wolt_json = WOLTS_DIR / wolt_name / "wolt" / "wolt.json"
+    if wolt_json.exists():
+        try:
+            data = json.loads(wolt_json.read_text())
+            if data.get("site_port"):
+                return data["site_port"]
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # No port assigned — allocate one and persist it
+    port = _allocate_port()
+    if wolt_json.exists():
+        try:
+            data = json.loads(wolt_json.read_text())
+            data["site_port"] = port
+            wolt_json.write_text(json.dumps(data, indent=2) + "\n")
+            print(f"[sites] assigned permanent port {port} to {wolt_name}")
+        except (json.JSONDecodeError, OSError):
+            pass
+    return port
 
 
 def running_sites() -> list[dict]:
@@ -145,7 +174,7 @@ def start_site(wolt_name: str) -> dict:
     if not (sdir / "index.html").exists():
         _write_default_index(wolt_name, sdir)
 
-    port = _allocate_port()
+    port = _get_or_assign_port(wolt_name)
 
     proc = subprocess.Popen(
         [
