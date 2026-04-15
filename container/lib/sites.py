@@ -87,7 +87,7 @@ def _allocate_port() -> int:
     """Find the next available port in the shared range."""
     used = _used_ports()
     for port in range(PORT_MIN, PORT_MAX + 1):
-        if port not in used:
+        if port not in used and not _is_port_alive(port):
             return port
     raise RuntimeError("No available ports in range")
 
@@ -158,6 +158,16 @@ def start_site(wolt_name: str) -> dict:
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
+
+    # Wait briefly for the process to bind the port
+    import time
+    for _ in range(10):
+        time.sleep(0.3)
+        if proc.poll() is not None:
+            print(f"[sites] WARNING: livereload for {wolt_name} exited immediately on port {port}")
+            break
+        if _is_port_alive(port):
+            break
 
     state = {
         "wolt": wolt_name,

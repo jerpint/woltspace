@@ -171,7 +171,7 @@ class TestStartSessionSiteAutoStart:
             routing={"adapter": "telegram", "chat_id": "123"},
         )
         assert result.get("site_url") == "/wolt/testwolt/site/"
-        assert result.get("site_port") == 6001
+        assert 6001 <= result.get("site_port") <= 6999
 
     @patch("sessions.subprocess.run")
     @patch("sites.subprocess.Popen")

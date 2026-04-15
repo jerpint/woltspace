@@ -59,11 +59,13 @@ class TestSiteState:
 
 
 class TestPortAllocation:
-    def test_first_port(self, tmp_wolts):
+    @patch("sites._is_port_alive", return_value=False)
+    def test_first_port(self, mock_alive, tmp_wolts):
         port = sites._allocate_port()
         assert port == 6001
 
-    def test_skips_used_site_ports(self, tmp_wolts):
+    @patch("sites._is_port_alive", return_value=False)
+    def test_skips_used_site_ports(self, mock_alive, tmp_wolts):
         """Port allocator checks per-wolt site state."""
         state_file = tmp_wolts / "testwolt" / ".state" / "site.json"
         state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -71,15 +73,24 @@ class TestPortAllocation:
         port = sites._allocate_port()
         assert port == 6002
 
-    def test_no_collision_with_project_range(self, tmp_wolts):
+    @patch("sites._is_port_alive", return_value=False)
+    def test_skips_occupied_ports(self, mock_alive, tmp_wolts):
+        """Port allocator skips ports with orphaned processes."""
+        mock_alive.side_effect = lambda p: p == 6001
+        port = sites._allocate_port()
+        assert port == 6002
+
+    @patch("sites._is_port_alive", return_value=False)
+    def test_no_collision_with_project_range(self, mock_alive, tmp_wolts):
         """Site ports (6001+) don't overlap with project ports (4000-5999)."""
         port = sites._allocate_port()
         assert port >= 6001
 
 
 class TestStartStop:
+    @patch("sites._is_port_alive", return_value=False)
     @patch("sites.subprocess.Popen")
-    def test_start_creates_process(self, mock_popen, tmp_wolts):
+    def test_start_creates_process(self, mock_popen, mock_alive, tmp_wolts):
         mock_popen.return_value.pid = 12345
         state = sites.start_site("testwolt")
         assert state["wolt"] == "testwolt"
