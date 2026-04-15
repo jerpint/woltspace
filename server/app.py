@@ -974,6 +974,7 @@ async def serve_wolt_site(wolt_name: str, request: Request, path: str = ""):
             headers = dict(resp.headers)
             headers.pop("x-frame-options", None)
             headers.pop("content-security-policy", None)
+            headers["cache-control"] = "no-cache, no-store, must-revalidate"
             content = resp.content
             ct = headers.get("content-type", "")
             if "text/html" in ct:
