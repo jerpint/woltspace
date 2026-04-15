@@ -54,6 +54,7 @@ _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "
 from sessions import resume_session, start_session, stop_session
 from apps import (
     WoltspaceApp,
+    apps_restore,
     discover_apps,
     get_app,
     app_dir,
@@ -139,6 +140,7 @@ def _start_tool_gc():
 async def lifespan(app: FastAPI):
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     tool_registry.restore()
+    apps_restore()
     _start_file_watcher()
     _start_tool_gc()
     tunnel_mgr.start_tunnel()
