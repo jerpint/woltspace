@@ -77,6 +77,40 @@ def stop_cloudflared(pid: int) -> bool:
         return False
 
 
+def start_named_tunnel(token: str, host_header: str | None = None) -> dict:
+    """Start a named cloudflared tunnel with a pre-configured token.
+
+    Args:
+        token: tunnel token from Cloudflare
+        host_header: value for --http-host-header (None to skip)
+
+    Returns:
+        {"pid": int, "log_file": str}
+
+    Raises:
+        RuntimeError: if tunnel fails to start
+    """
+    log_file = tempfile.mktemp(suffix="-cloudflared.log")
+    cmd = ["cloudflared", "tunnel", "run", "--token", token]
+    if host_header:
+        cmd += ["--http-host-header", host_header]
+
+    with open(log_file, "w") as lf:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=lf,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    # Give it a moment — check it didn't crash immediately
+    time.sleep(2)
+    if proc.poll() is not None:
+        raise RuntimeError(f"cloudflared exited with code {proc.returncode}")
+
+    return {"pid": proc.pid, "log_file": log_file}
+
+
 def _is_pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)

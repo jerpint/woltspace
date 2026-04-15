@@ -44,7 +44,7 @@ def start_tunnel():
     """Start the lodge tunnel. Called once at server boot."""
     global _tunnel_url
     _import_lib()
-    from tunnel import start_cloudflared, stop_cloudflared
+    from tunnel import start_cloudflared, start_named_tunnel, stop_cloudflared
 
     if os.environ.get("WOLTSPACE_PUBLIC_TUNNEL", "true").lower() != "true":
         log.info("tunnel disabled")
@@ -58,12 +58,22 @@ def start_tunnel():
     if old_pid:
         stop_cloudflared(old_pid)
 
-    try:
-        result = start_cloudflared(port=7777, host_header=None)
-        _tunnel_url = result["url"]
+    tunnel_token = os.environ.get("CLOUDFLARE_TUNNEL_TOKEN")
+    tunnel_url = os.environ.get("CLOUDFLARE_TUNNEL_URL")
 
-        _write_state({"pid": result["pid"], "url": _tunnel_url})
-        log.info(f"tunnel ready: {_tunnel_url}")
+    try:
+        if tunnel_token and tunnel_url:
+            # Named tunnel — permanent URL, pre-configured on Cloudflare
+            result = start_named_tunnel(token=tunnel_token, host_header=None)
+            _tunnel_url = tunnel_url
+            _write_state({"pid": result["pid"], "url": _tunnel_url, "type": "named"})
+            log.info(f"named tunnel ready: {_tunnel_url}")
+        else:
+            # Quick tunnel — random URL, zero config
+            result = start_cloudflared(port=7777, host_header=None)
+            _tunnel_url = result["url"]
+            _write_state({"pid": result["pid"], "url": _tunnel_url, "type": "quick"})
+            log.info(f"quick tunnel ready: {_tunnel_url}")
     except RuntimeError as e:
         log.error(f"tunnel failed: {e}")
         _write_state({})
