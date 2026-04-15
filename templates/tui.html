@@ -514,6 +514,8 @@
 
   function loadView(url, title, pushToStack = true) {
     const meta = currentViewportMeta;
+    // Cache-bust to avoid stale iframe content after port reassignment
+    const bust = (u) => u + (u.includes('?') ? '&' : '?') + '_t=' + Date.now();
     if (meta && meta.port && meta.port !== 7777 && url && url.startsWith('/app/')) {
       const direct = directPortUrl(meta.port);
       if (direct) {
@@ -521,10 +523,10 @@
       } else if (meta.tunnel_url) {
         preview.src = meta.tunnel_url;
       } else {
-        preview.src = url;
+        preview.src = bust(url);
       }
     } else {
-      preview.src = url;
+      preview.src = bust(url);
     }
     lastUrl = url;
     renderHist();
