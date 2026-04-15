@@ -163,15 +163,31 @@ class TestRunningState:
     def test_no_running_apps(self, wolts_dir):
         assert apps.running_apps() == []
 
-    def test_stale_state_cleaned(self, wolts_dir):
-        """State files with dead PIDs get cleaned up."""
+    def test_stale_state_not_listed_but_preserved(self, wolts_dir):
+        """Under the intent model, dead-PID state files persist (user wants app on)
+        but aren't reported as running. Boot-time apps_restore() respawns them.
+        """
         state_dir = apps._RUNNING_STATE_DIR
         state_dir.mkdir(parents=True, exist_ok=True)
         (state_dir / "dead.json").write_text(json.dumps({
             "name": "dead", "port": 4001, "pid": 999999,
         }))
         assert apps.running_apps() == []
-        assert not (state_dir / "dead.json").exists()
+        assert (state_dir / "dead.json").exists()
+
+    def test_intended_apps_includes_stale(self, wolts_dir):
+        """intended_apps() returns both running and stale-intent apps with alive flag."""
+        state_dir = apps._RUNNING_STATE_DIR
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "dead.json").write_text(json.dumps({
+            "name": "dead", "port": 4001, "pid": 999999,
+        }))
+        (state_dir / "alive.json").write_text(json.dumps({
+            "name": "alive", "port": 4002, "pid": os.getpid(),
+        }))
+        result = {s["name"]: s for s in apps.intended_apps()}
+        assert result["dead"]["alive"] is False
+        assert result["alive"]["alive"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -250,3 +266,67 @@ class TestStartStop:
         assert result is True
         mock_killpg.assert_called_once_with(999, signal.SIGTERM)
         assert not (state_dir / "app.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# apps_restore (boot-time autorestore)
+# ---------------------------------------------------------------------------
+
+class TestAppsRestore:
+    def test_restore_empty(self, wolts_dir):
+        """No state files — nothing to restore."""
+        assert apps.apps_restore() == []
+
+    def test_restore_survived_app(self, wolts_dir):
+        """App whose PID is still alive is left alone (no respawn)."""
+        _make_app(wolts_dir, "surviving", start="echo hi", port=4100)
+        state_dir = apps._RUNNING_STATE_DIR
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "surviving.json").write_text(json.dumps({
+            "name": "surviving", "port": 4100, "pid": os.getpid(),
+        }))
+        with patch("apps.subprocess.Popen") as mock_popen:
+            actions = apps.apps_restore()
+        mock_popen.assert_not_called()
+        assert actions == [{"name": "surviving", "action": "survived", "pid": os.getpid()}]
+
+    @patch("apps.subprocess.Popen")
+    def test_restore_respawns_dead_app(self, mock_popen, wolts_dir):
+        """App with dead PID gets respawned via start_app()."""
+        mock_popen.return_value.pid = 22222
+        _make_app(wolts_dir, "crashed", start="node server.js", port=4101)
+        state_dir = apps._RUNNING_STATE_DIR
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "crashed.json").write_text(json.dumps({
+            "name": "crashed", "port": 4101, "pid": 999999,  # dead
+        }))
+        actions = apps.apps_restore()
+        mock_popen.assert_called_once()
+        assert len(actions) == 1
+        assert actions[0]["name"] == "crashed"
+        assert actions[0]["action"] == "restored"
+        assert actions[0]["pid"] == 22222
+
+    def test_restore_cleans_orphan_state(self, wolts_dir):
+        """State file for an app whose manifest was deleted gets removed."""
+        state_dir = apps._RUNNING_STATE_DIR
+        state_dir.mkdir(parents=True, exist_ok=True)
+        orphan = state_dir / "ghost.json"
+        orphan.write_text(json.dumps({"name": "ghost", "port": 4102, "pid": 999999}))
+        actions = apps.apps_restore()
+        assert not orphan.exists()
+        assert actions == [{"name": "ghost", "action": "orphan-cleaned"}]
+
+    @patch("apps.subprocess.Popen")
+    def test_restore_records_failure(self, mock_popen, wolts_dir):
+        """If respawn fails, record the error and keep going."""
+        mock_popen.side_effect = RuntimeError("boom")
+        _make_app(wolts_dir, "cursed", start="node server.js", port=4103)
+        state_dir = apps._RUNNING_STATE_DIR
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "cursed.json").write_text(json.dumps({
+            "name": "cursed", "port": 4103, "pid": 999999,
+        }))
+        actions = apps.apps_restore()
+        assert actions[0]["action"] == "restore-failed"
+        assert "boom" in actions[0]["error"]

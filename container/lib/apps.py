@@ -153,7 +153,16 @@ def _is_pid_alive(pid: int) -> bool:
 
 
 def running_apps() -> list[dict]:
-    """List all currently running apps with their state."""
+    """List all currently running apps with their state.
+
+    State file semantics (intent model):
+    - file present + PID alive = running
+    - file present + PID dead  = wanted but down (apps_restore will respawn at next boot)
+    - no file                  = explicitly off
+
+    We do NOT delete stale files here. Deletion only happens on explicit stop_app()
+    or when the manifest is gone (cleaned up by apps_restore).
+    """
     running = []
     if not _RUNNING_STATE_DIR.exists():
         return running
@@ -162,16 +171,35 @@ def running_apps() -> list[dict]:
             continue
         try:
             state = json.loads(f.read_text())
-            pid = state.get("pid")
-            if pid and _is_pid_alive(pid):
-                state["alive"] = True
-                running.append(state)
-            else:
-                # Stale state — process died
-                f.unlink()
         except (json.JSONDecodeError, OSError):
             continue
+        pid = state.get("pid")
+        if pid and _is_pid_alive(pid):
+            state["alive"] = True
+            running.append(state)
     return running
+
+
+def intended_apps() -> list[dict]:
+    """List all apps the user has expressed intent to run (state file present).
+
+    Returns state dicts with an added `alive` bool indicating actual running status.
+    Used by apps_restore() and by callers that want to show stale-intent apps.
+    """
+    intended = []
+    if not _RUNNING_STATE_DIR.exists():
+        return intended
+    for f in sorted(_RUNNING_STATE_DIR.iterdir()):
+        if not f.name.endswith(".json"):
+            continue
+        try:
+            state = json.loads(f.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        pid = state.get("pid")
+        state["alive"] = bool(pid and _is_pid_alive(pid))
+        intended.append(state)
+    return intended
 
 
 def start_app(name: str) -> dict:
@@ -236,6 +264,55 @@ def start_app(name: str) -> dict:
             pass  # Non-fatal — app starts even if tunnel fails
 
     return state
+
+
+def apps_restore() -> list[dict]:
+    """Restore apps on container boot.
+
+    For each state file in .space/apps/:
+    - Manifest missing  → orphan, delete state file
+    - PID alive         → leave it (survived the restart)
+    - PID dead          → respawn via start_app()
+
+    Returns a summary list of actions for logging.
+    """
+    actions = []
+    if not _RUNNING_STATE_DIR.exists():
+        return actions
+    for f in sorted(_RUNNING_STATE_DIR.iterdir()):
+        if not f.name.endswith(".json"):
+            continue
+        name = f.stem
+        try:
+            state = json.loads(f.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        # Manifest gone — app was removed while container was down
+        if get_app(name) is None:
+            try:
+                f.unlink()
+                actions.append({"name": name, "action": "orphan-cleaned"})
+                print(f"[apps] orphan {name} cleaned (no manifest)")
+            except OSError:
+                pass
+            continue
+
+        pid = state.get("pid")
+        if pid and _is_pid_alive(pid):
+            actions.append({"name": name, "action": "survived", "pid": pid})
+            print(f"[apps] {name} survived (pid {pid})")
+            continue
+
+        # Dead PID — respawn
+        try:
+            new_state = start_app(name)
+            actions.append({"name": name, "action": "restored", "pid": new_state["pid"]})
+            print(f"[apps] restored {name} on port {new_state['port']} (new pid {new_state['pid']})")
+        except Exception as e:
+            actions.append({"name": name, "action": "restore-failed", "error": str(e)})
+            print(f"[apps] restore failed for {name}: {e}")
+    return actions
 
 
 def stop_app(name: str) -> bool:
