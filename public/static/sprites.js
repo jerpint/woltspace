@@ -27,15 +27,28 @@ WOLT_SPRITES.rodent = WOLT_SPRITES.raccoon;
 function woltSpriteAvatar(type, size) {
   const s = WOLT_SPRITES[type];
   if (!s) return null;
-  const rows = s.map.length, cols = Math.max(...s.map.map(r => r.length));
-  const px = size / Math.max(rows, cols);
-  let rects = '';
-  for (let r = 0; r < rows; r++) for (let c = 0; c < s.map[r].length; c++) {
-    const ch = s.map[r][c]; if (ch === '.' || ch === ' ') continue;
-    const fill = s.pal[ch]; if (!fill) continue;
-    rects += `<rect x="${(c*px).toFixed(1)}" y="${(r*px).toFixed(1)}" width="${px.toFixed(1)}" height="${px.toFixed(1)}" fill="${fill}"/>`;
+  const map = s.map;
+  // Compute the tight content bbox so non-square sprites don't get one-sided
+  // padding inside a square SVG — the parent (flex/text-align) centers the
+  // content-sized SVG and any empty space is symmetric.
+  let minR = Infinity, maxR = -1, minC = Infinity, maxC = -1;
+  for (let r = 0; r < map.length; r++) for (let c = 0; c < map[r].length; c++) {
+    const ch = map[r][c];
+    if (ch === '.' || ch === ' ' || !s.pal[ch]) continue;
+    if (r < minR) minR = r; if (r > maxR) maxR = r;
+    if (c < minC) minC = c; if (c > maxC) maxC = c;
   }
-  return `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg" style="image-rendering:pixelated;display:block" shape-rendering="crispEdges">${rects}</svg>`;
+  if (maxR < 0) return null;
+  const bw = maxC - minC + 1, bh = maxR - minR + 1;
+  const px = size / Math.max(bw, bh);
+  const w = bw * px, h = bh * px;
+  let rects = '';
+  for (let r = minR; r <= maxR; r++) for (let c = minC; c <= Math.min(maxC, map[r].length - 1); c++) {
+    const ch = map[r][c]; if (ch === '.' || ch === ' ') continue;
+    const fill = s.pal[ch]; if (!fill) continue;
+    rects += `<rect x="${((c - minC) * px).toFixed(2)}" y="${((r - minR) * px).toFixed(2)}" width="${px.toFixed(2)}" height="${px.toFixed(2)}" fill="${fill}"/>`;
+  }
+  return `<svg width="${w.toFixed(1)}" height="${h.toFixed(1)}" xmlns="http://www.w3.org/2000/svg" style="image-rendering:pixelated;display:block;margin:0 auto" shape-rendering="crispEdges">${rects}</svg>`;
 }
 
 // Background scene sprite data (used by home page)
