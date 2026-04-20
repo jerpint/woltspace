@@ -51,13 +51,10 @@ RUN curl -fsSL https://bun.sh/install | bash && mv /root/.bun/bin/bun /usr/local
 
 # Create workspace + ssh dirs
 RUN mkdir -p /workspace/wolts /home/node/.ssh \
-    && chmod 700 /home/node/.ssh \
-    && chown -R node:node /workspace /home/node
-
-USER node
+    && chmod 700 /home/node/.ssh
 
 # Copy everything the Claude installer created (binary, launcher, shell integration)
-COPY --chown=node:node --from=claude /home/node/ /home/node/
+COPY --from=claude /home/node/ /home/node/
 ENV PATH="/home/node/.local/bin:${PATH}"
 
 # Install worktui (worktree + Claude session manager)
@@ -106,7 +103,7 @@ RUN if [ "$USE_LOCAL" = "false" ]; then \
     fi
 
 # Copy local source (only meaningful when --local)
-COPY --chown=node:node . /tmp/local-src/
+COPY . /tmp/local-src/
 RUN if [ "$USE_LOCAL" = "true" ]; then \
       cp -r /tmp/local-src/. /workspace/woltspace/; \
     fi; rm -rf /tmp/local-src
@@ -123,18 +120,14 @@ WORKDIR /workspace/woltspace
 RUN npm install && npm install ws node-pty
 
 # Make bin scripts executable + add to PATH
-RUN chmod +x container/bin/*
+RUN chmod +x container/bin/* container/entrypoint.sh container/start.sh
 ENV PATH="/workspace/woltspace/container/bin:${PATH}"
-RUN chmod +x container/entrypoint.sh
 
 # Install Python deps
 RUN cd container && uv sync --project bot
 RUN uv sync --project server
 
 WORKDIR /workspace
-
-# Entrypoint runs as root to fix UID, then drops to node via gosu
-USER root
 
 EXPOSE 7777
 
