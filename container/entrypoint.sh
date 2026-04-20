@@ -2,6 +2,23 @@
 # Entrypoint: run Python setup, start services.
 set -e
 
+# ── UID/GID fixup ──
+# When running as root (default), match the container's node user to the host
+# user's UID/GID so mounted volumes have correct ownership. Then drop to node.
+if [ "$(id -u)" = "0" ]; then
+  HOST_UID="${HOST_UID:-1000}"
+  HOST_GID="${HOST_GID:-1000}"
+  if [ "$HOST_UID" != "1000" ] || [ "$HOST_GID" != "1000" ]; then
+    echo "fixing UID: node 1000:1000 → $HOST_UID:$HOST_GID"
+    groupmod -o -g "$HOST_GID" node
+    usermod -o -u "$HOST_UID" -g "$HOST_GID" node
+    chown -R node:node /home/node
+    # Fix platform dir ownership so uv/node/git work at runtime
+    chown -R node:node /workspace/woltspace
+  fi
+  exec gosu node "$0" "$@"
+fi
+
 WOLTSPACE_DIR="/workspace/woltspace"  # mount point inside the container
 WOLTS_DIR="${WOLTS_DIR:-/workspace/wolts}"
 
