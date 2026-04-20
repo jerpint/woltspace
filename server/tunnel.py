@@ -12,6 +12,8 @@ log = logging.getLogger("woltspace.tunnel")
 TUNNEL_STATE_FILE = SPACE_PLATFORM_DIR / "tunnel.json"
 
 _tunnel_url: str = ""
+_tunnel_domain: str = ""   # e.g. "woltspace.com" — parent domain for app subdomains
+_tunnel_hostname: str = ""  # e.g. "jerpint.woltspace.com" — the lodge itself
 
 # Lazy import helper — container/lib is on sys.path at runtime
 _lib_imported = False
@@ -27,6 +29,33 @@ def _import_lib():
 
 def get_tunnel_url() -> str:
     return _tunnel_url
+
+
+def get_tunnel_domain() -> str:
+    """Parent domain for wildcard app subdomains (e.g. 'woltspace.com')."""
+    return _tunnel_domain
+
+
+def get_tunnel_hostname() -> str:
+    """Lodge hostname (e.g. 'jerpint.woltspace.com') — excluded from app routing."""
+    return _tunnel_hostname
+
+
+def _parse_tunnel_domain(url: str):
+    """Extract parent domain from tunnel URL for wildcard subdomain routing.
+
+    "https://jerpint.woltspace.com" → hostname="jerpint.woltspace.com", domain="woltspace.com"
+    """
+    global _tunnel_domain, _tunnel_hostname
+    if not url:
+        return
+    from urllib.parse import urlparse
+    hostname = urlparse(url).hostname or ""
+    _tunnel_hostname = hostname
+    parts = hostname.split(".", 1)
+    if len(parts) == 2:
+        _tunnel_domain = parts[1]
+        log.info(f"subdomain routing: *.{_tunnel_domain} (lodge: {_tunnel_hostname})")
 
 
 def _read_state() -> dict:
@@ -60,6 +89,9 @@ def start_tunnel():
 
     tunnel_token = os.environ.get("CLOUDFLARE_TUNNEL_TOKEN")
     tunnel_url = os.environ.get("CLOUDFLARE_TUNNEL_URL")
+
+    # Parse domain for wildcard subdomain routing
+    _parse_tunnel_domain(tunnel_url or "")
 
     try:
         if tunnel_token and tunnel_url:

@@ -351,11 +351,28 @@ def _check_sharing_enabled():
         raise RuntimeError("Sharing is disabled (WOLTSPACE_SHARING_ENABLED=0)")
 
 
-def share_app(name: str) -> dict:
-    """Start a cloudflared tunnel to the app port.
+def _get_subdomain_url(app_name: str) -> str | None:
+    """Return the wildcard subdomain URL for an app, or None if not available."""
+    tunnel_url = os.environ.get("CLOUDFLARE_TUNNEL_URL", "")
+    if not tunnel_url:
+        return None
+    from urllib.parse import urlparse
+    parsed = urlparse(tunnel_url)
+    hostname = parsed.hostname or ""
+    parts = hostname.split(".", 1)
+    if len(parts) != 2:
+        return None
+    return f"{parsed.scheme}://{app_name}.{parts[1]}"
 
-    Uses --http-host-header localhost so Vite 6+ allowedHosts checks pass
-    without any app config changes.
+
+def share_app(name: str) -> dict:
+    """Share an app publicly.
+
+    With a named tunnel + custom domain: returns the subdomain URL
+    (e.g. corework.woltspace.com) — no per-app tunnel needed.
+
+    Without a custom domain: falls back to a per-app quick tunnel
+    with --http-host-header localhost for Vite 6+ compatibility.
 
     Stores tunnel_pid and tunnel_url in .space/apps/{name}.json.
     Also sets public=true in woltspace.json.
@@ -369,6 +386,16 @@ def share_app(name: str) -> dict:
     if not state:
         raise ValueError(f"App {name} is not running")
 
+    # Subdomain routing: stable URL, no per-app tunnel needed
+    subdomain_url = _get_subdomain_url(name)
+    if subdomain_url:
+        state["tunnel_url"] = subdomain_url
+        state["tunnel_pid"] = None
+        _write_state(name, state)
+        _set_public(name, True)
+        return {"tunnel_url": subdomain_url, "pid": None}
+
+    # Fallback: per-app quick tunnel
     port = state["port"]
 
     # Return existing tunnel if still alive

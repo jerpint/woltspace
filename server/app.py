@@ -179,16 +179,33 @@ async def cors_middleware(request: Request, call_next):
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
 
+def _extract_app_subdomain(host_header: str) -> str | None:
+    """Extract app name from subdomain hostname, or None if not an app subdomain.
+
+    Matches: corework.localhost, corework.woltspace.com
+    Excludes: localhost, jerpint.woltspace.com (the lodge itself)
+    """
+    host = host_header.split(":")[0]
+    if host.endswith(".localhost") and host != "localhost":
+        return host.removesuffix(".localhost")
+    td = tunnel_mgr.get_tunnel_domain()
+    th = tunnel_mgr.get_tunnel_hostname()
+    if td and host.endswith(f".{td}") and host != th:
+        return host.removesuffix(f".{td}")
+    return None
+
+
 @app.middleware("http")
 async def subdomain_proxy(request: Request, call_next):
     """Proxy subdomain requests to app ports.
 
     blog.localhost:7777 → proxy to localhost:{blog's port}
-    Any *.localhost or *.localhost:PORT hostname triggers this.
+    corework.woltspace.com → proxy to localhost:{corework's port}
+    Any *.localhost or *.{tunnel_domain} hostname triggers this.
     """
-    host = (request.headers.get("host") or "").split(":")[0]
-    if host.endswith(".localhost") and host != "localhost":
-        app_name = host.removesuffix(".localhost")
+    host = request.headers.get("host") or ""
+    app_name = _extract_app_subdomain(host)
+    if app_name:
         try:
             from apps import running_apps
             running = {r["name"]: r for r in running_apps()}
@@ -1065,6 +1082,14 @@ async def serve_app(app_name: str, request: Request, path: str = ""):
     if run_state:
         port = run_state["port"]
         qs = f"?{request.url.query}" if request.url.query else ""
+        # Subdomain routing: redirect to app.domain (works through tunnel)
+        td = tunnel_mgr.get_tunnel_domain()
+        hostname = request.url.hostname or ""
+        is_local = hostname == "localhost" or hostname.endswith(".localhost")
+        if td and not is_local:
+            subdomain = f"{request.url.scheme}://{app_name}.{td}{sub_path}{qs}"
+            return RedirectResponse(subdomain, status_code=302)
+        # Local: redirect to direct port (works on localhost)
         direct = f"{request.url.scheme}://{request.url.hostname}:{port}{sub_path}{qs}"
         return RedirectResponse(direct, status_code=302)
 
@@ -1201,16 +1226,16 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
     """Proxy WebSocket connections for subdomain apps (e.g. Vite HMR).
 
     blog.localhost:7777/any/path → ws://localhost:{port}/any/path
+    corework.woltspace.com/any/path → ws://localhost:{port}/any/path
     """
     import asyncio
     import websockets
 
-    host = (ws.headers.get("host") or "").split(":")[0]
-    if not (host.endswith(".localhost") and host != "localhost"):
+    host = ws.headers.get("host") or ""
+    app_name = _extract_app_subdomain(host)
+    if not app_name:
         await ws.close(code=1008)
         return
-
-    app_name = host.removesuffix(".localhost")
     from apps import running_apps
     running = {r["name"]: r for r in running_apps()}
     run_state = running.get(app_name)

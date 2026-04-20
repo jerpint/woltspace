@@ -592,10 +592,11 @@ class TestUnitShareApp:
         assert state["tunnel_url"] is None
 
     def test_share_returns_existing_tunnel_if_alive(self, tmp_path, monkeypatch):
-        """share_app returns existing tunnel info if tunnel process is alive."""
+        """share_app returns existing quick tunnel info if tunnel process is alive."""
         import apps as apps_mod
         monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
         monkeypatch.setattr(apps_mod, "_is_pid_alive", lambda pid: True)
+        monkeypatch.delenv("CLOUDFLARE_TUNNEL_URL", raising=False)
 
         apps_mod._write_state("my-proj", {
             "name": "my-proj",
@@ -608,6 +609,43 @@ class TestUnitShareApp:
         result = apps_mod.share_app("my-proj")
         assert result["tunnel_url"] == "https://already-live.trycloudflare.com"
         assert result["pid"] == 11111
+
+    def test_share_uses_subdomain_when_tunnel_url_set(self, tmp_path, monkeypatch):
+        """share_app returns subdomain URL when CLOUDFLARE_TUNNEL_URL is set."""
+        import apps as apps_mod
+        monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setenv("CLOUDFLARE_TUNNEL_URL", "https://jerpint.woltspace.com")
+
+        apps_mod._write_state("my-proj", {
+            "name": "my-proj",
+            "port": 4500,
+            "pid": 99,
+        })
+
+        result = apps_mod.share_app("my-proj")
+        assert result["tunnel_url"] == "https://my-proj.woltspace.com"
+        assert result["pid"] is None
+
+    def test_share_falls_back_to_quick_tunnel(self, tmp_path, monkeypatch):
+        """share_app uses quick tunnel when CLOUDFLARE_TUNNEL_URL is not set."""
+        import apps as apps_mod
+        monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.delenv("CLOUDFLARE_TUNNEL_URL", raising=False)
+        monkeypatch.setattr(apps_mod, "_is_pid_alive", lambda pid: False)
+        monkeypatch.setattr(apps_mod, "start_cloudflared", lambda port, host_header: {
+            "url": "https://random.trycloudflare.com",
+            "pid": 9999,
+        })
+
+        apps_mod._write_state("my-proj", {
+            "name": "my-proj",
+            "port": 4500,
+            "pid": 99,
+        })
+
+        result = apps_mod.share_app("my-proj")
+        assert "trycloudflare.com" in result["tunnel_url"]
+        assert result["pid"] == 9999
 
     def test_share_blocked_when_sharing_disabled(self, tmp_path, monkeypatch):
         """share_app raises RuntimeError when SHARING_ENABLED is False."""
