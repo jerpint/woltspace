@@ -8,14 +8,9 @@ set -e
 if [ "$(id -u)" = "0" ]; then
   HOST_UID="${HOST_UID:-1000}"
   HOST_GID="${HOST_GID:-1000}"
-  if [ "$HOST_UID" != "1000" ] || [ "$HOST_GID" != "1000" ]; then
-    echo "fixing UID: node 1000:1000 → $HOST_UID:$HOST_GID"
-    groupmod -o -g "$HOST_GID" node
-    usermod -o -u "$HOST_UID" -g "$HOST_GID" node
-    chown -R node:node /home/node
-    # Fix platform dir ownership so uv/node/git work at runtime
-    chown -R node:node /workspace/woltspace
-  fi
+  groupmod -o -g "$HOST_GID" node
+  usermod -o -u "$HOST_UID" -g "$HOST_GID" node
+  chown -R node:node /home/node /workspace/woltspace
   exec gosu node "$0" "$@"
 fi
 
