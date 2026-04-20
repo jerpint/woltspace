@@ -184,7 +184,75 @@ curl -s -X POST \
 
 More users or identity providers (GitHub, Google) can be added later from **Cloudflare Zero Trust → Access → Applications**.
 
-## Step 6: Test
+## Step 6: Enable app subdomains (optional)
+
+If the user wants public apps to be served at `{app-name}.{domain}` (e.g. `corework.woltspace.com`), set up wildcard subdomain routing. This is a one-time addition to the named tunnel.
+
+**Add wildcard DNS:**
+
+```bash
+curl -s -X POST \
+  "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data "{
+    \"type\": \"CNAME\",
+    \"name\": \"*\",
+    \"content\": \"$TUNNEL_ID.cfargotunnel.com\",
+    \"proxied\": true
+  }"
+```
+
+**Add wildcard ingress rule.** This replaces the full tunnel config — include ALL existing rules plus the wildcard. The wildcard must come AFTER specific hostnames (first match wins):
+
+```bash
+curl -s -X PUT \
+  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID/configurations" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data "{
+    \"config\": {
+      \"ingress\": [
+        {\"hostname\": \"<subdomain>.<domain>\", \"service\": \"http://localhost:7777\"},
+        {\"hostname\": \"*.<domain>\", \"service\": \"http://localhost:7777\"},
+        {\"service\": \"http_status:404\"}
+      ]
+    }
+  }"
+```
+
+**Add wildcard Access policy** (recommended — without this, app subdomains are open to anyone):
+
+```bash
+APP_RESULT=$(curl -s -X POST \
+  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data "{
+    \"name\": \"woltspace-apps\",
+    \"domain\": \"*.<domain>\",
+    \"type\": \"self_hosted\",
+    \"session_duration\": \"24h\"
+  }")
+
+APP_ID=$(echo "$APP_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['id'])")
+
+curl -s -X POST \
+  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps/$APP_ID/policies" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data "{
+    \"name\": \"allow-owner\",
+    \"decision\": \"allow\",
+    \"include\": [{\"email\": {\"email\": \"<user-email>\"}}]
+  }"
+```
+
+The auth cookie is scoped to `.{domain}`, so logging in once (at the lodge or any app) covers all subdomains. After this, any app with `"public": true` in `woltspace.json` is automatically accessible at `{app-name}.{domain}`.
+
+See `docs/wildcard-subdomain-setup.md` for full details and troubleshooting.
+
+## Step 7: Test the tunnel
 
 Start the named tunnel manually to verify:
 
@@ -201,7 +269,7 @@ Tell the human to visit the URL in their browser. If Access is configured, they'
 
 On next container restart, the server will use the named tunnel automatically.
 
-## Step 7: Verify rollback works
+## Step 8: Verify rollback works
 
 Explain to the human how to revert:
 

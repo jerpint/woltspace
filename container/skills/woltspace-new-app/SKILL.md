@@ -86,7 +86,7 @@ This is **required** — the platform only discovers apps that have `woltspace.j
 | `start` | no | Start command. Use `$PORT` — the platform expands it. Add `--host 0.0.0.0` for network access. **Null = app can't be started from the lodge.** |
 | `source` | no | Origin URL if cloned/forked |
 | `emoji` | no | Display emoji (auto-assigned if omitted) |
-| `public` | no | If `true`, a cloudflared tunnel starts automatically with the app. Default: `false`. |
+| `public` | no | If `true`, the app is shared publicly when started. With a named tunnel: served at `{name}.{domain}` (e.g. `corework.woltspace.com`). Without: a random quick tunnel URL. Default: `false`. |
 
 **Important:** `project.json` and `app.json` are NOT recognized. Only `woltspace.json` works.
 

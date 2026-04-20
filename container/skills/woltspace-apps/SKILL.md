@@ -58,7 +58,7 @@ Then write `woltspace.json` — **this is required** for the platform to discove
 | `start` | no | Start command. Use `$PORT` — the platform expands it. Add `--host 0.0.0.0` for network access. Null = can't start from lodge. |
 | `source` | no | Origin URL if cloned |
 | `emoji` | no | Display emoji (auto-assigned) |
-| `public` | no | If `true`, a cloudflared tunnel starts automatically with the app. Default: `false`. |
+| `public` | no | If `true`, the app is shared publicly when started. With a named tunnel: served at `{name}.{domain}` (e.g. `corework.woltspace.com`). Without: a random quick tunnel URL. Default: `false`. |
 
 **Important:** Only `woltspace.json` is recognized. Not `project.json`, not `app.json`.
 
@@ -107,22 +107,32 @@ Wolt sites auto-allocate in the **6000+** range, so no collisions. The platform 
 
 ## Sharing (public access)
 
-Apps are private by default — only accessible locally. To share:
+Apps are private by default — only accessible locally. Set `"public": true` in `woltspace.json` to share, or use the API:
 
 ```bash
-# Share a running app (starts a cloudflared tunnel)
+# Share a running app
 curl -X POST http://localhost:7777/apps/my-app/share
 
-# Unshare (kills the tunnel)
+# Unshare
 curl -X POST http://localhost:7777/apps/my-app/unshare
 
 # Panic button — unshare ALL apps
 curl -X POST http://localhost:7777/apps/unshare-all
 ```
 
-Or set `"public": true` in `woltspace.json` — the tunnel starts automatically when the app starts.
+### How sharing works
 
-**How it works:** `cloudflared` creates a tunnel to the app's port with `--http-host-header localhost` (rewrites the Host header so Vite/Next.js/Astro allowedHosts checks pass — no app config changes needed). The tunnel URL is stored in the app's running state.
+There are two modes, selected automatically:
+
+**Subdomain routing (named tunnel):** If the lodge has a named tunnel (`CLOUDFLARE_TUNNEL_URL` is set), public apps are served at `{app-name}.{domain}` — e.g. `corework.woltspace.com`. No per-app tunnel is spawned. The server's subdomain proxy middleware routes requests to the app's port. URLs are stable, auth-protected by Cloudflare Access, and work automatically for any app.
+
+**Quick tunnels (fallback):** If there's no named tunnel, a per-app `cloudflared` tunnel starts with a random `trycloudflare.com` URL. Uses `--http-host-header localhost` so Vite/Next.js/Astro allowedHosts checks pass. URLs are random and change on restart.
+
+The mode is automatic — wolts don't need to know or care which is active.
+
+### Setup for subdomain routing
+
+Requires a one-time Cloudflare setup after the named tunnel is configured: wildcard DNS, tunnel ingress rule, and Access policy. See `docs/wildcard-subdomain-setup.md` for step-by-step instructions, or use the `/woltspace-setup-tunnel` skill which covers this.
 
 **Kill switch:** Set `WOLTSPACE_SHARING_ENABLED=0` to disable all sharing. The API will reject share requests and `public: true` is ignored.
 
