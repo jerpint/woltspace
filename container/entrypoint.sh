@@ -9,6 +9,7 @@ HOST_GID="${HOST_GID:-1000}"
 
 groupmod -o -g "$HOST_GID" node
 usermod -o -u "$HOST_UID" -g "$HOST_GID" node
+chown node:node /workspace
 chown -R node:node /home/node /workspace/woltspace
 
 exec gosu node /workspace/woltspace/container/start.sh
