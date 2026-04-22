@@ -128,13 +128,11 @@ _start_container() {
   fi
 
   mkdir -p "$WOLTS_DIR/.claude"
-  # Ensure writable by container's node user (1000) — handles root-owned dirs from Docker
-  chown 1000:1000 "$WOLTS_DIR/.claude" 2>/dev/null \
-    || docker run --rm -v "$WOLTS_DIR/.claude:/fix" node:22-slim chown -R 1000:1000 /fix 2>/dev/null \
-    || true
   docker run -d \
     --name "$CONTAINER_NAME" \
     --env-file "$WOLTS_DIR/.env" \
+    -e HOST_UID=$(id -u) \
+    -e HOST_GID=$(id -g) \
     -v "$WOLTS_DIR:/workspace/wolts:rw" \
     -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
     $dev_mount \
@@ -295,11 +293,8 @@ if [ "$cmd" = "init" ]; then
   mkdir -p "$WOLTS_DIR"
   [ ! -f "$WOLTS_DIR/.env" ] && cp "$WOLTSPACE_DIR/.env.example" "$WOLTS_DIR/.env"
 
-  # Ensure .claude dir exists for auth persistence
+  # Ensure .claude dir exists for auth persistence (entrypoint handles ownership)
   mkdir -p "$WOLTS_DIR/.claude"
-  chown 1000:1000 "$WOLTS_DIR/.claude" 2>/dev/null \
-    || docker run --rm -v "$WOLTS_DIR/.claude:/fix" node:22-slim chown -R 1000:1000 /fix 2>/dev/null \
-    || true
   if [[ "$_tunnel" == [Yy] ]]; then
     echo ""
     echo "  ${_G}✓${_R} public access enabled"
