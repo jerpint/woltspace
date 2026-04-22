@@ -356,9 +356,11 @@ def _tmux_paste(target: str, text: str):
     paste delivers the entire text atomically — same as a clipboard
     paste from a human.
 
-    A trailing newline is included in the buffer so paste-buffer
-    converts it to a carriage return (Enter) as part of the same
-    atomic paste — no separate send-keys needed.
+    Enter is sent as a separate send-keys call after the paste. Claude
+    Code's TUI has paste-aware input: a \\n inside a paste is treated
+    as a literal newline (for multi-line input) rather than submit.
+    A standalone Enter keystroke arriving after the paste completes
+    is the canonical "submit" signal.
 
     Uses a named buffer (the target session name) so concurrent pastes
     to different sessions don't clobber each other.  The -d flag on
@@ -366,11 +368,15 @@ def _tmux_paste(target: str, text: str):
     """
     buf_name = f"paste-{target}"
     subprocess.run(
-        ["tmux", "set-buffer", "-b", buf_name, text + "\n"],
+        ["tmux", "set-buffer", "-b", buf_name, text],
         check=True, timeout=_TMUX_TIMEOUT,
     )
     subprocess.run(
         ["tmux", "paste-buffer", "-b", buf_name, "-d", "-t", target],
+        check=True, timeout=_TMUX_TIMEOUT,
+    )
+    subprocess.run(
+        ["tmux", "send-keys", "-t", target, "Enter"],
         check=True, timeout=_TMUX_TIMEOUT,
     )
 
