@@ -362,11 +362,22 @@ def _tmux_paste(target: str, text: str):
     A standalone Enter keystroke arriving after the paste completes
     is the canonical "submit" signal.
 
+    Exits copy-mode on the target pane first. With `mouse on`, scrolling
+    up in a pane auto-enters copy-mode — paste-buffer to a copy-mode
+    pane visibly inserts the text but it never reaches the underlying
+    process, and the Enter keystroke is consumed as a copy-mode command.
+    `send-keys -X cancel` is a no-op when the pane isn't in a mode,
+    errors harmlessly which we ignore via check=False.
+
     Uses a named buffer (the target session name) so concurrent pastes
     to different sessions don't clobber each other.  The -d flag on
     paste-buffer deletes the named buffer after pasting.
     """
     buf_name = f"paste-{target}"
+    subprocess.run(
+        ["tmux", "send-keys", "-t", target, "-X", "cancel"],
+        check=False, timeout=_TMUX_TIMEOUT,
+    )
     subprocess.run(
         ["tmux", "set-buffer", "-b", buf_name, text],
         check=True, timeout=_TMUX_TIMEOUT,
