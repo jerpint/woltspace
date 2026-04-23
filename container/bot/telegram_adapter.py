@@ -20,10 +20,10 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from telegram import Update, BotCommand, MenuButtonCommands
+from telegram import Update, BotCommand, MenuButtonCommands, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
 from telegram.error import TimedOut
-from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, CallbackQueryHandler, filters, ContextTypes
 import re
 import sys
 from bot.core import (
@@ -915,39 +915,96 @@ async def handle_kill(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _reply(update, f"Couldn't kill {name}.")
 
 
+WOLT_TYPE_EMOJI = {
+    "raccoon": "🦝",
+    "beaver": "🦫",
+    "otter": "🦦",
+    "wolf": "🐺",
+    "dog": "🐶",
+}
+
+
+def _wolt_picker_keyboard(wolts: list, active: str | None) -> InlineKeyboardMarkup:
+    """Build a grid of wolt-select buttons. Two per row."""
+    rows, row = [], []
+    for w in wolts:
+        name = w.get("name") or Path(w.get("dir", "")).name
+        if not name:
+            continue
+        emoji = WOLT_TYPE_EMOJI.get(w.get("type", ""), "🦫")
+        marker = " •" if name == active else ""
+        row.append(InlineKeyboardButton(
+            f"{emoji} {name}{marker}",
+            callback_data=f"wolt:{name}",
+        ))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(rows)
+
+
+def _set_active_wolt(chat_id: int, name: str) -> None:
+    state = _load_chat_state(chat_id)
+    state["active_wolt"] = name
+    state["active_session"] = None  # will spawn on next message
+    _save_chat_state(chat_id, state)
+
+
 async def handle_setwolt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /wolt <name> — set the active wolt for this chat."""
+    """Handle /wolt [name] — show picker or set the active wolt for this chat."""
     if not is_allowed(update):
         return
     args = context.args
     chat_id = update.effective_chat.id
 
-    if not args:
-        # Show current state + available wolts
-        state = _load_chat_state(chat_id)
-        active = state.get("active_wolt", "none")
-        session = state.get("active_session", "none")
-        wolts = list_wolts()
-        lines = [f"active wolt: {active}", f"active session: {session}", "", "available:"]
-        for w in wolts:
-            marker = " ←" if w == active else ""
-            lines.append(f"  • {w}{marker}")
-        lines.append("\n/wolt <name> to set active wolt")
-        await _reply(update, "\n".join(lines))
-        return
-
-    name = args[0]
-    # Verify wolt exists
-    wolt_dir = _WOLTS_DIR / name / "wolt"
-    if not wolt_dir.is_dir():
-        await _reply(update, f"No wolt named '{name}' found.")
+    if args:
+        name = args[0]
+        wolt_dir = _WOLTS_DIR / name / "wolt"
+        if not wolt_dir.is_dir():
+            await _reply(update, f"no wolt named '{name}' found.")
+            return
+        _set_active_wolt(chat_id, name)
+        await _reply(update, f"active wolt set to {name}. next message starts a session.")
         return
 
     state = _load_chat_state(chat_id)
-    state["active_wolt"] = name
-    state["active_session"] = None  # will spawn on next message
-    _save_chat_state(chat_id, state)
-    await _reply(update, f"Set {name} as the active wolt for this chat. Next message will start a session.")
+    active = state.get("active_wolt")
+    wolts = list_wolts()
+    if not wolts:
+        await _reply(update, "no wolts found. run /woltspace-create-wolt in the lodge first.")
+        return
+
+    header = f"active wolt: {active or 'none'}\ntap a wolt to switch:"
+    await _reply(update, header, reply_markup=_wolt_picker_keyboard(wolts, active))
+
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Dispatch callback_query events from inline keyboards."""
+    if not is_allowed(update):
+        return
+    query = update.callback_query
+    data = query.data or ""
+    chat_id = query.message.chat.id if query.message else update.effective_chat.id
+
+    if data.startswith("wolt:"):
+        name = data.split(":", 1)[1]
+        wolt_dir = _WOLTS_DIR / name / "wolt"
+        if not wolt_dir.is_dir():
+            await query.answer("that wolt no longer exists", show_alert=True)
+            return
+        _set_active_wolt(chat_id, name)
+        await query.answer(f"switched to {name}")
+        wolts = list_wolts()
+        header = f"active wolt: {name}\ntap a wolt to switch:"
+        try:
+            await query.edit_message_text(header, reply_markup=_wolt_picker_keyboard(wolts, name))
+        except Exception:
+            pass
+        return
+
+    await query.answer()
 
 
 async def handle_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1098,6 +1155,7 @@ def run():
     app.add_handler(CommandHandler("new", handle_new))
     app.add_handler(CommandHandler("apps", handle_apps))
     app.add_handler(CommandHandler("help", handle_help))
+    app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
