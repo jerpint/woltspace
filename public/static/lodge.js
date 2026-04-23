@@ -296,12 +296,9 @@ function filterSessions() {
       : `${sessions.length} session${sessions.length !== 1 ? 's' : ''}`;
     const rows = sessions.map(s => {
       const time = s.last_activity ? timeAgo(s.last_activity) : (s.created_at ? timeAgo(s.created_at) : '');
-      const label = s.title || s.name;
+      const label = s.name;
       const isAlive = s.status === 'running' && s.alive !== false;
       const dotClass = isAlive ? 'running' : 'stopped';
-      const preview = s.prompt
-        ? s.prompt.replace(/^\/\S+\s*/, '').slice(0, 80)
-        : (s.title ? s.name : '');
 
       const actionBtn = isAlive
         ? `<button class="session-action session-action-stop" onclick="event.preventDefault();event.stopPropagation();stopSession('${s.name}')" title="Stop">&#9632;</button>`
@@ -311,7 +308,6 @@ function filterSessions() {
         <div class="session-dot ${dotClass}"></div>
         <div class="session-body">
           <div class="session-title">${label}</div>
-          ${preview ? `<div class="session-preview">${preview}</div>` : ''}
         </div>
         <div class="session-date">${time}</div>
         <div class="session-actions">${actionBtn}</div>
@@ -487,9 +483,6 @@ document.querySelectorAll('.type-card').forEach(card => {
 loadWolts();
 loadApps();
 loadSessions();
-
-setInterval(loadSessions, 5000);
-setInterval(loadApps, 10000);
 
 console.log('%c🦫', 'font-size:3rem');
 console.log('%cwoltspace — the lodge', 'color:#C98B2A;font-family:monospace');
