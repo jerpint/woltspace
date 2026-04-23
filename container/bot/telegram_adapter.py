@@ -20,10 +20,10 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from telegram import Update, BotCommand, MenuButtonCommands
+from telegram import Update, BotCommand, MenuButtonCommands, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
 from telegram.error import TimedOut
-from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, CallbackQueryHandler, filters, ContextTypes
 import re
 import sys
 from bot.core import (
@@ -915,39 +915,128 @@ async def handle_kill(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _reply(update, f"Couldn't kill {name}.")
 
 
+WOLT_TYPE_EMOJI = {
+    "raccoon": "🦝",
+    "beaver": "🦫",
+    "otter": "🦦",
+    "rodent": "🦫",
+    "wolf": "🐺",
+    "dog": "🐶",
+}
+
+RODENT_WOLT_TYPES = {"raccoon", "beaver", "otter", "rodent"}
+
+
+def _is_wolt(w: dict) -> bool:
+    """Wolves and dogs are singletons, not chat targets — exclude them from pickers."""
+    return w.get("type", "") in RODENT_WOLT_TYPES
+
+
+def _wolt_picker_keyboard(wolts: list, active: str | None) -> InlineKeyboardMarkup | None:
+    """Build a grid of wolt-select buttons, excluding the active wolt. Two per row."""
+    rows, row = [], []
+    for w in wolts:
+        name = w.get("name") or Path(w.get("dir", "")).name
+        if not name or name == active:
+            continue
+        emoji = WOLT_TYPE_EMOJI.get(w.get("type", ""), "🦫")
+        row.append(InlineKeyboardButton(
+            f"{emoji} {name}",
+            callback_data=f"wolt:{name}",
+        ))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(rows) if rows else None
+
+
+def _wolt_picker_header(wolts: list, active: str | None) -> str:
+    """Header text that highlights the active wolt with its creature emoji."""
+    if active:
+        active_type = next(
+            (w.get("type", "") for w in wolts
+             if (w.get("name") or Path(w.get("dir", "")).name) == active),
+            "",
+        )
+        emoji = WOLT_TYPE_EMOJI.get(active_type, "🦫")
+        line = f"active: {emoji} *{active}*"
+    else:
+        line = "active: none"
+    others = [w for w in wolts if (w.get("name") or Path(w.get("dir", "")).name) != active]
+    if others:
+        return f"{line}\n\ntap to switch"
+    return f"{line}\n\nno other wolts yet."
+
+
+def _set_active_wolt(chat_id: int, name: str) -> None:
+    state = _load_chat_state(chat_id)
+    state["active_wolt"] = name
+    state["active_session"] = None  # will spawn on next message
+    _save_chat_state(chat_id, state)
+
+
 async def handle_setwolt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /wolt <name> — set the active wolt for this chat."""
+    """Handle /wolt [name] — show picker or set the active wolt for this chat."""
     if not is_allowed(update):
         return
     args = context.args
     chat_id = update.effective_chat.id
 
-    if not args:
-        # Show current state + available wolts
-        state = _load_chat_state(chat_id)
-        active = state.get("active_wolt", "none")
-        session = state.get("active_session", "none")
-        wolts = list_wolts()
-        lines = [f"active wolt: {active}", f"active session: {session}", "", "available:"]
-        for w in wolts:
-            marker = " ←" if w == active else ""
-            lines.append(f"  • {w}{marker}")
-        lines.append("\n/wolt <name> to set active wolt")
-        await _reply(update, "\n".join(lines))
-        return
-
-    name = args[0]
-    # Verify wolt exists
-    wolt_dir = _WOLTS_DIR / name / "wolt"
-    if not wolt_dir.is_dir():
-        await _reply(update, f"No wolt named '{name}' found.")
+    if args:
+        name = args[0]
+        wolt_dir = _WOLTS_DIR / name / "wolt"
+        if not wolt_dir.is_dir():
+            await _reply(update, f"no wolt named '{name}' found.")
+            return
+        _set_active_wolt(chat_id, name)
+        await _reply(update, f"active wolt set to {name}. next message starts a session.")
         return
 
     state = _load_chat_state(chat_id)
-    state["active_wolt"] = name
-    state["active_session"] = None  # will spawn on next message
-    _save_chat_state(chat_id, state)
-    await _reply(update, f"Set {name} as the active wolt for this chat. Next message will start a session.")
+    active = state.get("active_wolt")
+    wolts = [w for w in list_wolts() if _is_wolt(w)]
+    if not wolts:
+        await _reply(update, "no wolts found. run /woltspace-create-wolt in the lodge first.")
+        return
+
+    await _reply(
+        update,
+        _wolt_picker_header(wolts, active),
+        parse_mode="Markdown",
+        reply_markup=_wolt_picker_keyboard(wolts, active),
+    )
+
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Dispatch callback_query events from inline keyboards."""
+    if not is_allowed(update):
+        return
+    query = update.callback_query
+    data = query.data or ""
+    chat_id = query.message.chat.id if query.message else update.effective_chat.id
+
+    if data.startswith("wolt:"):
+        name = data.split(":", 1)[1]
+        wolt_dir = _WOLTS_DIR / name / "wolt"
+        if not wolt_dir.is_dir():
+            await query.answer("that wolt no longer exists", show_alert=True)
+            return
+        _set_active_wolt(chat_id, name)
+        await query.answer(f"switched to {name}")
+        wolts = [w for w in list_wolts() if _is_wolt(w)]
+        try:
+            await query.edit_message_text(
+                _wolt_picker_header(wolts, name),
+                parse_mode="Markdown",
+                reply_markup=_wolt_picker_keyboard(wolts, name),
+            )
+        except Exception:
+            pass
+        return
+
+    await query.answer()
 
 
 async def handle_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1098,6 +1187,7 @@ def run():
     app.add_handler(CommandHandler("new", handle_new))
     app.add_handler(CommandHandler("apps", handle_apps))
     app.add_handler(CommandHandler("help", handle_help))
+    app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
