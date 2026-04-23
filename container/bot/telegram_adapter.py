@@ -1063,6 +1063,42 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data or ""
     chat_id = query.message.chat.id if query.message else update.effective_chat.id
 
+    if data.startswith("astart:"):
+        name = data.split(":", 1)[1]
+        ok = await _app_action(name, "start")
+        await query.answer(f"{'started' if ok else 'failed to start'} {name}", show_alert=not ok)
+        await _refresh_apps_message(query)
+        return
+
+    if data.startswith("astop:"):
+        name = data.split(":", 1)[1]
+        await query.answer()
+        confirm = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✓ stop", callback_data=f"astop-confirm:{name}"),
+            InlineKeyboardButton("cancel", callback_data="astop-cancel"),
+        ]])
+        try:
+            await query.edit_message_text(
+                f"stop app `{name}`?",
+                parse_mode="Markdown",
+                reply_markup=confirm,
+            )
+        except Exception:
+            pass
+        return
+
+    if data.startswith("astop-confirm:"):
+        name = data.split(":", 1)[1]
+        ok = await _app_action(name, "stop")
+        await query.answer(f"{'stopped' if ok else 'failed to stop'} {name}", show_alert=not ok)
+        await _refresh_apps_message(query)
+        return
+
+    if data == "astop-cancel":
+        await query.answer()
+        await _refresh_apps_message(query)
+        return
+
     if data.startswith("sstop:"):
         name = data.split(":", 1)[1]
         await query.answer()
@@ -1171,34 +1207,82 @@ async def handle_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _reply(update, f"couldn't start session for {wolt}: {e}")
 
 
+async def _fetch_apps() -> list[dict]:
+    import httpx
+    async with httpx.AsyncClient() as client:
+        resp = await client.get("http://localhost:7777/apps", timeout=5)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def _apps_picker_message(apps: list) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Build header + keyboard for /apps. Running first, alpha within group."""
+    if not apps:
+        return "no apps yet.", None
+
+    apps_sorted = sorted(apps, key=lambda a: (not a.get("running"), a.get("name", "")))
+    running = sum(1 for a in apps if a.get("running"))
+
+    rows = []
+    for a in apps_sorted:
+        name = a.get("name", "?")
+        emoji = a.get("emoji") or "📦"
+        is_running = bool(a.get("running"))
+        tunnel = a.get("tunnel_url")
+
+        label = f"{emoji} {name}" if is_running else f"{emoji} {name} (off)"
+        if is_running and tunnel:
+            primary = InlineKeyboardButton(label, url=tunnel)
+        else:
+            primary = InlineKeyboardButton(label, callback_data=f"noop:{name}")
+
+        toggle = (
+            InlineKeyboardButton("⏹", callback_data=f"astop:{name}")
+            if is_running else
+            InlineKeyboardButton("▶", callback_data=f"astart:{name}")
+        )
+        rows.append([primary, toggle])
+
+    total = len(apps)
+    header = f"*{total} app{'s' if total != 1 else ''}* · {running} running"
+    return header, InlineKeyboardMarkup(rows)
+
+
 async def handle_apps(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /apps — list all apps with status and public links."""
+    """Handle /apps — inline keyboard with open / start / stop per app."""
     if not is_allowed(update):
         return
     try:
-        import httpx
-        async with httpx.AsyncClient() as client:
-            resp = await client.get("http://localhost:7777/apps", timeout=5)
-            resp.raise_for_status()
-            apps = resp.json()
+        apps = await _fetch_apps()
     except Exception as e:
         await _reply(update, f"couldn't fetch apps: {e}")
         return
+    text, markup = _apps_picker_message(apps)
+    await _reply(update, text, parse_mode="Markdown", reply_markup=markup)
 
-    if not apps:
-        await _reply(update, "No apps found.")
+
+async def _refresh_apps_message(query):
+    try:
+        apps = await _fetch_apps()
+    except Exception as e:
+        await query.edit_message_text(f"couldn't refresh apps: {e}")
         return
+    text, markup = _apps_picker_message(apps)
+    try:
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        pass
 
-    lines = ["📦 Apps:\n"]
-    for a in apps:
-        status = "🟢 running" if a.get("running") else "⚪ stopped"
-        line = f"• {a.get('emoji', '📦')} {a['name']} — {status}"
-        if a.get("description"):
-            line += f"\n  {a['description']}"
-        if a.get("tunnel_url"):
-            line += f"\n  🔗 {a['tunnel_url']}"
-        lines.append(line)
-    await _reply(update, "\n".join(lines))
+
+async def _app_action(name: str, action: str) -> bool:
+    """POST /apps/{name}/{start|stop} via the local server."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(f"http://localhost:7777/apps/{name}/{action}", timeout=15)
+            return resp.status_code < 400
+        except Exception:
+            return False
 
 
 async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
