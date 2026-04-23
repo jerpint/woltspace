@@ -20,7 +20,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from telegram import Update
+from telegram import Update, BotCommand, MenuButtonCommands
 from telegram.constants import ChatAction
 from telegram.error import TimedOut
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
@@ -1063,6 +1063,27 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 # Run
 # ---------------------------------------------------------------------------
 
+BOT_COMMANDS = [
+    BotCommand("sessions", "list active sessions"),
+    BotCommand("wolt", "switch or show the active wolt"),
+    BotCommand("new", "start a fresh session"),
+    BotCommand("apps", "list apps with public links"),
+    BotCommand("kill", "stop a session by slug"),
+    BotCommand("help", "show commands and messaging cheatsheet"),
+    BotCommand("start", "onboard and show current state"),
+]
+
+
+async def _register_commands(app):
+    """Publish the slash-command menu so Telegram's '/' autocomplete is populated."""
+    try:
+        await app.bot.set_my_commands(BOT_COMMANDS)
+        await app.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        logger.info(f"registered {len(BOT_COMMANDS)} bot commands + commands menu button")
+    except Exception as e:
+        logger.warning(f"failed to register bot commands: {e}")
+
+
 def run():
     """Start the Telegram bot (v2 — chat-per-wolt model)."""
     load_allowed_users()
@@ -1090,6 +1111,7 @@ def run():
 
     async def _run():
         async with app:
+            await _register_commands(app)
             await app.start()
             await app.updater.start_polling()
             await asyncio.Event().wait()
