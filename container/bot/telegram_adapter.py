@@ -958,7 +958,7 @@ def _wolt_picker_header(wolts: list, active: str | None) -> str:
         line = "active: none"
     others = [w for w in wolts if (w.get("name") or Path(w.get("dir", "")).name) != active]
     if others:
-        return f"{line}\n\nswitch to:"
+        return f"{line}\n\ntap to switch"
     return f"{line}\n\nno other wolts yet."
 
 
