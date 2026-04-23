@@ -337,7 +337,7 @@ function toggleSessionGroup(header) {
 }
 
 // ── Session actions ──
-let runningOnly = false;
+let runningOnly = true;
 
 async function stopSession(name) {
   try {
