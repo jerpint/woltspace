@@ -924,17 +924,16 @@ WOLT_TYPE_EMOJI = {
 }
 
 
-def _wolt_picker_keyboard(wolts: list, active: str | None) -> InlineKeyboardMarkup:
-    """Build a grid of wolt-select buttons. Two per row."""
+def _wolt_picker_keyboard(wolts: list, active: str | None) -> InlineKeyboardMarkup | None:
+    """Build a grid of wolt-select buttons, excluding the active wolt. Two per row."""
     rows, row = [], []
     for w in wolts:
         name = w.get("name") or Path(w.get("dir", "")).name
-        if not name:
+        if not name or name == active:
             continue
         emoji = WOLT_TYPE_EMOJI.get(w.get("type", ""), "🦫")
-        marker = " •" if name == active else ""
         row.append(InlineKeyboardButton(
-            f"{emoji} {name}{marker}",
+            f"{emoji} {name}",
             callback_data=f"wolt:{name}",
         ))
         if len(row) == 2:
@@ -942,7 +941,25 @@ def _wolt_picker_keyboard(wolts: list, active: str | None) -> InlineKeyboardMark
             row = []
     if row:
         rows.append(row)
-    return InlineKeyboardMarkup(rows)
+    return InlineKeyboardMarkup(rows) if rows else None
+
+
+def _wolt_picker_header(wolts: list, active: str | None) -> str:
+    """Header text that highlights the active wolt with its creature emoji."""
+    if active:
+        active_type = next(
+            (w.get("type", "") for w in wolts
+             if (w.get("name") or Path(w.get("dir", "")).name) == active),
+            "",
+        )
+        emoji = WOLT_TYPE_EMOJI.get(active_type, "🦫")
+        line = f"active: {emoji} *{active}*"
+    else:
+        line = "active: none"
+    others = [w for w in wolts if (w.get("name") or Path(w.get("dir", "")).name) != active]
+    if others:
+        return f"{line}\n\nswitch to:"
+    return f"{line}\n\nno other wolts yet."
 
 
 def _set_active_wolt(chat_id: int, name: str) -> None:
@@ -976,8 +993,12 @@ async def handle_setwolt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _reply(update, "no wolts found. run /woltspace-create-wolt in the lodge first.")
         return
 
-    header = f"active wolt: {active or 'none'}\ntap a wolt to switch:"
-    await _reply(update, header, reply_markup=_wolt_picker_keyboard(wolts, active))
+    await _reply(
+        update,
+        _wolt_picker_header(wolts, active),
+        parse_mode="Markdown",
+        reply_markup=_wolt_picker_keyboard(wolts, active),
+    )
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -997,9 +1018,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _set_active_wolt(chat_id, name)
         await query.answer(f"switched to {name}")
         wolts = list_wolts()
-        header = f"active wolt: {name}\ntap a wolt to switch:"
         try:
-            await query.edit_message_text(header, reply_markup=_wolt_picker_keyboard(wolts, name))
+            await query.edit_message_text(
+                _wolt_picker_header(wolts, name),
+                parse_mode="Markdown",
+                reply_markup=_wolt_picker_keyboard(wolts, name),
+            )
         except Exception:
             pass
         return
