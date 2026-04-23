@@ -916,10 +916,18 @@ def _sessions_picker_message(sessions: list, tunnel_url: str | None) -> tuple[st
     total = len(alive)
     header = (
         f"*{total} active session{'s' if total != 1 else ''}*\n"
-        f"{summary}\n\n"
-        f"tap name → open · ⏹ → stop"
+        f"{summary}"
     )
     return header, InlineKeyboardMarkup(rows)
+
+
+def _session_emoji(session_name: str) -> str:
+    wolt = _wolt_of(session_name)
+    types_by_wolt = {
+        (w.get("name") or Path(w.get("dir", "")).name): w.get("type", "")
+        for w in list_wolts()
+    }
+    return WOLT_TYPE_EMOJI.get(types_by_wolt.get(wolt, ""), "🦫")
 
 
 async def handle_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1064,7 +1072,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]])
         try:
             await query.edit_message_text(
-                f"stop `{name}`?",
+                f"stop {_session_emoji(name)} `{name}`?",
                 parse_mode="Markdown",
                 reply_markup=confirm,
             )
