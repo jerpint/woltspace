@@ -919,9 +919,17 @@ WOLT_TYPE_EMOJI = {
     "raccoon": "🦝",
     "beaver": "🦫",
     "otter": "🦦",
+    "rodent": "🦫",
     "wolf": "🐺",
     "dog": "🐶",
 }
+
+RODENT_WOLT_TYPES = {"raccoon", "beaver", "otter", "rodent"}
+
+
+def _is_wolt(w: dict) -> bool:
+    """Wolves and dogs are singletons, not chat targets — exclude them from pickers."""
+    return w.get("type", "") in RODENT_WOLT_TYPES
 
 
 def _wolt_picker_keyboard(wolts: list, active: str | None) -> InlineKeyboardMarkup | None:
@@ -988,7 +996,7 @@ async def handle_setwolt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     state = _load_chat_state(chat_id)
     active = state.get("active_wolt")
-    wolts = list_wolts()
+    wolts = [w for w in list_wolts() if _is_wolt(w)]
     if not wolts:
         await _reply(update, "no wolts found. run /woltspace-create-wolt in the lodge first.")
         return
@@ -1017,7 +1025,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         _set_active_wolt(chat_id, name)
         await query.answer(f"switched to {name}")
-        wolts = list_wolts()
+        wolts = [w for w in list_wolts() if _is_wolt(w)]
         try:
             await query.edit_message_text(
                 _wolt_picker_header(wolts, name),
