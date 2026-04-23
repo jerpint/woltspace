@@ -398,6 +398,7 @@ def list_sessions() -> list[dict]:
             "title": s.get("title", ""),
             "status": s.get("status", "unknown"),
             "started": s.get("created_at"),
+            "last_activity": s.get("last_activity") or s.get("created_at"),
             "alive": s.get("alive", False),
         }
         if tunnel_url:

@@ -881,21 +881,25 @@ def _wolt_of(session_name: str) -> str:
 
 
 def _sessions_picker_message(sessions: list, tunnel_url: str | None) -> tuple[str, InlineKeyboardMarkup | None]:
-    """Build header + keyboard for the /sessions picker."""
+    """Build header + keyboard for the /sessions picker. Most recently active first."""
     alive = [s for s in sessions if s.get("alive")]
     if not alive:
         return "no active sessions.", None
+
+    alive.sort(key=lambda s: s.get("last_activity") or s.get("started") or 0, reverse=True)
 
     types_by_wolt = {
         (w.get("name") or Path(w.get("dir", "")).name): w.get("type", "")
         for w in list_wolts()
     }
 
+    wolt_counts: dict[str, int] = {}
     rows = []
     for s in alive:
         name = s["name"]
         wolt = _wolt_of(name)
         emoji = WOLT_TYPE_EMOJI.get(types_by_wolt.get(wolt, ""), "🦫")
+        wolt_counts[wolt] = wolt_counts.get(wolt, 0) + 1
         url = f"{tunnel_url}/tui?session={name}" if tunnel_url else None
         open_btn = (
             InlineKeyboardButton(f"{emoji} {name}", url=url)
@@ -905,7 +909,16 @@ def _sessions_picker_message(sessions: list, tunnel_url: str | None) -> tuple[st
         stop_btn = InlineKeyboardButton("⏹", callback_data=f"sstop:{name}")
         rows.append([open_btn, stop_btn])
 
-    header = f"*{len(alive)} active session{'s' if len(alive) != 1 else ''}*\n\ntap name → open · ⏹ → stop"
+    summary = " · ".join(
+        f"{WOLT_TYPE_EMOJI.get(types_by_wolt.get(w, ''), '🦫')} {w} ({c})"
+        for w, c in sorted(wolt_counts.items(), key=lambda kv: -kv[1])
+    )
+    total = len(alive)
+    header = (
+        f"*{total} active session{'s' if total != 1 else ''}*\n"
+        f"{summary}\n\n"
+        f"tap name → open · ⏹ → stop"
+    )
     return header, InlineKeyboardMarkup(rows)
 
 
