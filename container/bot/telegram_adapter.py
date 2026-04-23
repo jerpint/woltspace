@@ -874,21 +874,67 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _reply(update, f"Hey. I'm {_dog_name()}. Talk to me and I'll connect you to a wolt.")
 
 
+def _wolt_of(session_name: str) -> str:
+    """Extract the wolt name from a session slug: {wolt}-{word}-{word}-{hex}."""
+    parts = session_name.rsplit("-", 3)
+    return parts[0] if len(parts) == 4 else session_name
+
+
+def _sessions_picker_message(sessions: list, tunnel_url: str | None) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Build header + keyboard for the /sessions picker. Most recently active first."""
+    alive = [s for s in sessions if s.get("alive")]
+    if not alive:
+        return "no active sessions.", None
+
+    alive.sort(key=lambda s: s.get("last_activity") or s.get("started") or 0, reverse=True)
+
+    types_by_wolt = {
+        (w.get("name") or Path(w.get("dir", "")).name): w.get("type", "")
+        for w in list_wolts()
+    }
+
+    wolt_counts: dict[str, int] = {}
+    rows = []
+    for s in alive:
+        name = s["name"]
+        wolt = _wolt_of(name)
+        emoji = WOLT_TYPE_EMOJI.get(types_by_wolt.get(wolt, ""), "🦫")
+        wolt_counts[wolt] = wolt_counts.get(wolt, 0) + 1
+        url = f"{tunnel_url}/tui?session={name}" if tunnel_url else None
+        open_btn = (
+            InlineKeyboardButton(f"{emoji} {name}", url=url)
+            if url else
+            InlineKeyboardButton(f"{emoji} {name}", callback_data=f"noop:{name}")
+        )
+        stop_btn = InlineKeyboardButton("⏹", callback_data=f"sstop:{name}")
+        rows.append([open_btn, stop_btn])
+
+    summary = " · ".join(
+        f"{WOLT_TYPE_EMOJI.get(types_by_wolt.get(w, ''), '🦫')} {w} ({c})"
+        for w, c in sorted(wolt_counts.items(), key=lambda kv: -kv[1])
+    )
+    total = len(alive)
+    header = (
+        f"*{total} active session{'s' if total != 1 else ''}*\n"
+        f"{summary}"
+    )
+    return header, InlineKeyboardMarkup(rows)
+
+
+def _session_emoji(session_name: str) -> str:
+    wolt = _wolt_of(session_name)
+    types_by_wolt = {
+        (w.get("name") or Path(w.get("dir", "")).name): w.get("type", "")
+        for w in list_wolts()
+    }
+    return WOLT_TYPE_EMOJI.get(types_by_wolt.get(wolt, ""), "🦫")
+
+
 async def handle_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
         return
-    sessions = list_sessions()
-    alive = [s for s in sessions if s.get("alive")]
-    if not alive:
-        await _reply(update, "No active sessions.")
-        return
-    tunnel_url = get_tunnel_url()
-    lines = []
-    for s in alive:
-        wolt = s["name"].rsplit("-", 2)[0] if "-" in s["name"] else s["name"]
-        link = f"{tunnel_url}/tui?session={s['name']}" if tunnel_url else s["name"]
-        lines.append(f"• {s['name']}\n  {link}")
-    await _reply(update, "\n\n".join(lines))
+    text, markup = _sessions_picker_message(list_sessions(), get_tunnel_url())
+    await _reply(update, text, parse_mode="Markdown", reply_markup=markup)
 
 
 async def handle_kill(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1016,6 +1062,58 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data or ""
     chat_id = query.message.chat.id if query.message else update.effective_chat.id
+
+    if data.startswith("sstop:"):
+        name = data.split(":", 1)[1]
+        await query.answer()
+        confirm = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✓ stop", callback_data=f"sstop-confirm:{name}"),
+            InlineKeyboardButton("cancel", callback_data="sstop-cancel"),
+        ]])
+        try:
+            await query.edit_message_text(
+                f"stop {_session_emoji(name)} `{name}`?",
+                parse_mode="Markdown",
+                reply_markup=confirm,
+            )
+        except Exception:
+            pass
+        return
+
+    if data.startswith("sstop-confirm:"):
+        name = data.split(":", 1)[1]
+        if kill_session(name):
+            await query.answer(f"stopped {name}")
+            if CHATS_DIR.exists():
+                for f in CHATS_DIR.glob("*.json"):
+                    try:
+                        state = json.loads(f.read_text())
+                        if state.get("active_session") == name:
+                            state["active_session"] = None
+                            f.write_text(json.dumps(state, indent=2))
+                    except (json.JSONDecodeError, OSError):
+                        pass
+        else:
+            await query.answer("failed — session may already be gone", show_alert=True)
+        text, markup = _sessions_picker_message(list_sessions(), get_tunnel_url())
+        try:
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        except Exception:
+            pass
+        return
+
+    if data == "sstop-cancel":
+        await query.answer()
+        text, markup = _sessions_picker_message(list_sessions(), get_tunnel_url())
+        try:
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        except Exception:
+            pass
+        return
+
+    if data.startswith("noop:"):
+        await query.answer()
+        return
 
     if data.startswith("wolt:"):
         name = data.split(":", 1)[1]
