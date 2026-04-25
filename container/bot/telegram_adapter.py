@@ -796,6 +796,74 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _send_result(update, result)
 
 
+async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle video/animation/video_note — save to disk and route to session."""
+    user_id = update.effective_user.id if update.effective_user else None
+    logger.info(f"Video from user_id={user_id}")
+    if not is_allowed(update):
+        return
+
+    msg = update.message
+    media = msg.video or msg.animation or msg.video_note
+    if not media:
+        return
+
+    mime_type = getattr(media, "mime_type", None) or "video/mp4"
+    ext = mime_type.split("/")[-1] if "/" in mime_type else "mp4"
+    file_name = getattr(media, "file_name", None) or f"video_{media.file_unique_id}.{ext}"
+    caption = msg.caption or ""
+
+    try:
+        file = await context.bot.get_file(media.file_id)
+        file_bytes = bytes(await file.download_as_bytearray())
+    except Exception as e:
+        logger.error(f"Video download failed: {e}")
+        await _reply(update, "Couldn't download that video.")
+        return
+
+    saved_path = _save_upload(file_name, file_bytes)
+    logger.info(f"Saved video: {saved_path} ({mime_type}, {len(file_bytes)} bytes)")
+
+    chat_id = update.effective_chat.id
+    state = _load_chat_state(chat_id)
+    active_wolt = state.get("active_wolt")
+    active_session = state.get("active_session")
+
+    file_msg = (
+        f"[video received] {file_name} ({mime_type}, {len(file_bytes)} bytes) "
+        f"saved at {saved_path}"
+    )
+    if caption:
+        file_msg += f"\nCaption: {caption}"
+
+    if active_wolt and active_session:
+        success = await _route_to_session(update, active_session, active_wolt, file_msg, chat_id)
+        if not success:
+            try:
+                session = _spawn_session(active_wolt, chat_id)
+                state["active_session"] = session["name"]
+                _save_chat_state(chat_id, state)
+                tunnel_url = get_tunnel_url()
+                session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
+                await _reply(update, f"🪵 new session for {active_wolt}\n{session_link}")
+                await _route_to_session(update, session["name"], active_wolt, file_msg, chat_id)
+            except Exception as e:
+                await _reply(update, f"couldn't start session: {e}")
+    elif active_wolt:
+        try:
+            session = _spawn_session(active_wolt, chat_id)
+            state["active_session"] = session["name"]
+            _save_chat_state(chat_id, state)
+            tunnel_url = get_tunnel_url()
+            session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
+            await _reply(update, f"🪵 new session for {active_wolt}\n{session_link}")
+            await _route_to_session(update, session["name"], active_wolt, file_msg, chat_id)
+        except Exception as e:
+            await _reply(update, f"couldn't start session: {e}")
+    else:
+        await _reply(update, "no active wolt — set one with /wolt first.")
+
+
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle non-image documents — download to disk and route to session."""
     user_id = update.effective_user.id if update.effective_user else None
@@ -1373,7 +1441,8 @@ def run():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
-    app.add_handler(MessageHandler(filters.Document.ALL & ~filters.Document.IMAGE, handle_document))
+    app.add_handler(MessageHandler(filters.VIDEO | filters.ANIMATION | filters.VIDEO_NOTE | filters.Document.VIDEO, handle_video))
+    app.add_handler(MessageHandler(filters.Document.ALL & ~filters.Document.IMAGE & ~filters.Document.VIDEO, handle_document))
 
     wolt_name = os.environ.get("WOLT_NAME", "wolt")
     logger.info(f"{wolt_name} telegram v2 bot starting (chat-per-wolt model)...")
