@@ -233,7 +233,10 @@ async def subdomain_proxy(request: Request, call_next):
                 content=body,
             )
             resp = await client.send(req, stream=True, follow_redirects=False)
-            excluded = {"transfer-encoding", "content-encoding", "content-length"}
+            # Preserve content-length so 206 Partial Content (video Range requests)
+            # validate correctly in browsers. transfer-encoding/content-encoding
+            # are hop-by-hop and re-added by StreamingResponse.
+            excluded = {"transfer-encoding", "content-encoding"}
             resp_headers = {
                 k: v for k, v in resp.headers.items()
                 if k.lower() not in excluded
