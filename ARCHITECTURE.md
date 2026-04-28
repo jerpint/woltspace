@@ -1,8 +1,12 @@
 # Woltspace Architecture
 
-> A platform for autonomous AI agents ("wolts") that live in Docker containers with persistent identity, memory, and the ability to build real things. Humans interact via Telegram/Slack; the wolt works in Claude Code sessions, pushes output to a split-view browser UI.
+> A platform for autonomous AI agents ("wolts") that live in Docker containers with persistent identity, memory, and the ability to build real things. Humans interact via Telegram/Slack or a browser; the wolt works in Claude Code sessions and pushes output to a split-view UI.
 
-## The Three Layers
+This is the canonical reference for how the platform is shaped. It describes services, how they fit together, and where to read for more — not specific issue numbers, line counts, or release-bound details. Those live in git, GitHub, and `CHANGELOG.md`.
+
+---
+
+## The three layers
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -14,261 +18,225 @@
 ┌────────────────────▼────────────────────────────┐
 │            ORCHESTRATION LAYER                    │
 │     Bot core (Haiku via litellm)                 │
-│     13 tools · agent loop · session spawning     │
-│     Session registry · memory loading            │
+│     Agent loop · tool registry · memory loading  │
 └────────────────────┬────────────────────────────┘
                      │
 ┌────────────────────▼────────────────────────────┐
 │            EXECUTION LAYER                        │
-│     FastAPI server (port 7777)                   │
-│     tmux sessions running Claude Code            │
+│     FastAPI server · tmux + Claude Code          │
 │     Split-view browser UI · Cloudflare tunnel    │
 └─────────────────────────────────────────────────┘
 ```
 
----
-
-## Core Files
-
-| File | Lines | What it does |
-|------|-------|-------------|
-| `server/app.py` | ~800 | FastAPI server (port 7777). All endpoints: TUI, viewport, notify, apps, tools, sessions |
-| `container/bot/core.py` | ~1100 | The brain. Haiku agent loop, 13 tools, session spawning, memory loading |
-| `container/bot/telegram_adapter.py` | ~490 | Telegram handler: text, voice, photos, den replies, history |
-| `container/bot/slack_adapter.py` | ~360 | Slack handler: Socket Mode, thread-based, @mention routing |
-| `container/lib/sessions.py` | ~400 | Session registry: one JSON file per wolt at `wolts/{wolt}/.state/sessions/` |
-| `container/bot/image_gen.py` | ~130 | Image generation wrapper (OpenAI gpt-image-1) |
-| `container/bin/run-session.sh` | ~80 | Session wrapper: injects notify context, runs claude CLI, updates registry on exit |
-| `container/entrypoint.sh` | ~240 | Container init: skills, hooks, git, tmux, server, tunnel, bots |
-| `container/Dockerfile` | ~93 | Image: node:22-slim + claude CLI + python deps + cloudflared |
-| `public/split.html` | ~490 | Browser UI: xterm.js terminal (left) + iframe viewport (right) |
+- **Communication** — adapters in `container/bot/` translate platform-specific events (Telegram updates, Slack events) into the shared message shape the bot core expects.
+- **Orchestration** — `container/bot/core.py` is the brain. Haiku drives an agent loop with a registry of tools (spawn a Claude session, check status, send messages, list wolts, schedule a wolf, etc.). The full set of tools lives in `TOOL_HANDLERS` and `TOOLS` in `core.py`; treat that as canonical.
+- **Execution** — the FastAPI server in `server/app.py` is the central authority. It serves the lodge UI, brokers viewport state, runs the subdomain proxy, manages tunnels, and exposes everything via HTTP/WebSocket. tmux sessions running Claude Code are spawned and tracked through the session registry.
 
 ---
 
-## How Messages Flow
+## Repo layout
 
-### Telegram/Slack → Claude Code session
+```
+server/                     FastAPI server, port 7777
+  app.py                      All HTTP/WebSocket routes; subdomain proxy middleware
+  config.py                   Paths, env, MIME types — one place for constants
+  state.py                    Viewport state + views history
+  tunnel.py                   Lodge tunnel lifecycle (quick or named)
+  notify.py                   Outbound Telegram/Slack notifications
+  tools.py                    Tool process registry (spawn + proxy)
+  sparks.py                   Spark/digest storage
+  tui-service.js              Node pty + WebSocket — the only Node piece left
+
+container/
+  Dockerfile                  Image: node:22-slim + claude CLI + python deps + cloudflared
+  entrypoint.sh               Root wrapper — fixes UID/GID to host, drops to node user via gosu
+  start.sh                    Boots tmux + Claude, FastAPI, tunnel, bots, watcher
+  entrypoint_setup.py         Resolves config + identity + env before start.sh
+
+  bot/                        Orchestration layer
+    core.py                     Agent loop, tool registry, memory loading
+    telegram_adapter.py         Telegram handler (text, voice, photos, den replies, history, pickers)
+    slack_adapter.py            Slack handler (Socket Mode, threads, @mention routing)
+    image_gen.py                AI image gen wrapper
+
+  lib/                        Shared building blocks (importable by server/ and bot/)
+    sessions.py                 SessionRegistry + start_session — one source of truth
+    apps.py                     App schema + discovery + start/stop + port allocation
+    wolts.py                    Wolt discovery + creature types + create_creature_wolt
+    sites.py                    Per-wolt static sites + livereload + permanent ports
+    tunnel.py                   Cloudflared helpers (quick + named)
+    paths.py                    Per-wolt and global path helpers — start here when locating state
+
+  bin/                        Scripts on PATH inside the container
+    notify, push-view           Wolt-facing helpers (notify the user, set the viewport)
+    wclaude, run-session.sh     Session entry — wraps `claude` with notify hooks + identity
+    gh-app-token                Mints short-lived GitHub App installation tokens
+    version-check               Compares stamped version to upstream releases
+
+  hooks/                      Claude Code hooks (notify.sh, session-done.sh, run-session.sh)
+  cron/                       Scheduled scripts (e.g. check-update.sh)
+  creatures/                  Per-creature behavior modules (wolf, dog, vulture, …)
+  skills/                     Platform skills exported into every wolt
+
+templates/                  Jinja2 — base.html, home.html (lodge), tui.html (split view)
+public/                     Static assets — onboard.html, favicon, sw.js, static/ (CSS/JS/sprites)
+test/                       Pytest suite (run with `uv run --extra test pytest test/`)
+migrations/                 Per-version migration scripts (see VERSIONING.md)
+```
+
+---
+
+## How a message becomes work
+
+### Inbound: human → wolt
 
 ```
 User sends "build me a homepage"
-  → telegram_adapter.handle_message()
-  → core.get_response()                    # Haiku agent loop
-  → Haiku picks tool: claude_code
+  → telegram_adapter.handle_message()              (or slack_adapter)
+  → core.get_response()                            Haiku agent loop
+  → Haiku picks a tool: claude_code
   → core.start_claude_session()
-      ├─ registry.create()                 # wolts/{wolt}/.state/sessions/{name}.json
-      ├─ tmux new-session                  # spawns run-session.sh
+      ├─ registry.create()                         wolts/{wolt}/.state/sessions/{name}.json
+      ├─ tmux new-session                          spawns run-session.sh
       └─ returns {name, url, creature}
-  → adapter sends ack to Telegram
+  → adapter sends ack to Telegram/Slack
 ```
 
-### Claude Code → notification → user reply → back to session
+The agent loop is multi-turn — Haiku can chain tool calls. Tools live in `core.py`'s `TOOL_HANDLERS` dict; their JSON schemas (the contract Haiku sees) live in the `TOOLS` list right below.
+
+### Notify back: Claude → user
 
 ```
 Claude in session calls: notify "done, check it out"
-  → hooks/notify.sh                        # Claude Code Notification hook
-  → POST /notify to FastAPI
-  → server reads session routing info
-  → sends to Telegram/Slack with footer:
-      "↩️ reply to this message..."
-      "https://tunnel/tui?session=NAME"
+  → hooks/notify.sh                                Claude Code Notification hook
+  → POST /notify on FastAPI
+  → server reads session routing from registry
+  → adapter sends to Telegram/Slack with footer:
+        "↩ reply to this message…"
+        "https://tunnel/tui?session=NAME"
+```
 
-User replies in Telegram
-  → adapter detects reply-to-notify
-  → extracts session name from URL in footer
+### Reply: user → existing session
+
+```
+User replies in Telegram to a 🦫 message
+  → adapter detects reply-to-notify (footer present)
+  → extracts session name from URL in the footer
   → core.message_session(name, text)
-      ├─ if Claude running: tmux send-keys
-      └─ if exited: revive with claude --continue
+      ├─ if Claude is running:   tmux paste-buffer + Enter
+      └─ if exited:              revive via `claude --continue`
 ```
 
-### Viewport updates (what shows in the browser)
+The "den reply" path bypasses Haiku — the user's message goes straight to the running Claude session. Reply routing is what lets long conversations stay coherent without polling Haiku in between.
+
+### Viewport updates
 
 ```
-Claude Code pushes a view
+Claude pushes a view
   → POST /current?session=X {url: "/index.html"}
   → server writes viewport_url into session JSON
 
-split.html polls /current/meta every 2s
+split view polls /current/meta
   → iframe loads the new URL
   → server injects livereload script into HTML
   → file changes trigger instant reload via /livereload WebSocket
 ```
 
----
-
-## FastAPI Endpoints (server/app.py)
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/` | GET | Home page — the lodge (public/home.html) |
-| `/tui` | GET+WS | Split-view terminal (xterm.js ↔ tmux via tui-service.js) |
-| `/onboard` | GET | Auth wizard (public/onboard.html) |
-| `/current?session=X` | GET/POST | Viewport URL control per session |
-| `/current/meta?session=X` | GET | Viewport metadata + redirect (reads session JSON) |
-| `/notify` | POST | Send message to originating Telegram/Slack chat |
-| `/sessions` | GET | List all sessions (scans per-wolt `.state/sessions/`) |
-| `/sessions/new/{adapter}` | POST | Spawn session — lodge, telegram, slack, or create |
-| `/sessions/redirect` | POST | Set redirect on a session |
-| `/sessions/{id}/message` | POST | Send text to session (revives if needed) |
-| `/wolts` | GET | List all wolts from wolt.json files |
-| `/apps` | GET | List apps (from `wolts/apps/`) |
-| `/apps/{name}/start` | POST | Start an app |
-| `/apps/{name}/stop` | POST | Stop an app |
-| `/app/{name}/*` | ALL | Serve app (proxy or static) |
-| `/wolt/{name}/site/*` | ALL | Serve wolt sites (per-wolt livereload proxy) |
-| `/history` | GET | List sparks (artifacts) |
-| `/history/{id}` | GET | Serve spark HTML with version nav |
-| `/tools` | GET | List running tool proxies |
-| `/tools/spawn` | POST | Start a tool process |
-| `/tools/{name}/*` | ALL+WS | Proxy HTTP/WS to tool port |
-| `/shares` | GET/POST/DELETE | Public share link management |
-| `/public/{token}/*` | GET | No-auth proxy via share token |
-| `/memory/read` | POST | Read wolt memory files |
-| `/views/history` | GET | Recent viewport changes |
-| `/livereload` | WS | File-change broadcast for live reload |
+The session JSON is the source of truth for what's in the viewport — no separate "current viewport" file.
 
 ---
 
-## core.py Tools (what Haiku can call)
+## Sessions
 
-| Tool | Purpose |
-|------|---------|
-| `claude_code` | Spawn a Claude Code session (beaver=sonnet, raccoon=opus) |
-| `new_session` | Spawn + redirect viewport to new session |
-| `check_session` | Poll session status + last output |
-| `send_message` | Send text to running session (revives if exited) |
-| `list_sessions` | All sessions from registry |
-| `find_session` | Search sessions by title/prompt |
-| `get_recent_sessions` | Read completed sessions from JSONL |
-| `kill_session` | Kill a tmux session |
-| `get_tunnel_url` | Get current public URL |
-| `read_memory` | Read memory files (scoped to wolt/memory/) |
-| `list_wolts` | Multi-wolt: show available wolts |
-| `list_apps` | List apps in current wolt (names, paths, metadata) |
-| `switch_wolt` | Change active wolt identity |
-| `check_update` | Check if woltspace update is available (git ls-remote, no LLM) |
-| `generate_image` | AI image gen (OpenAI) |
+A session is a Claude Code conversation with identity (which wolt, which creature, which model) and routing (where to send notifications).
+
+- **Registry** — one JSON file per session at `wolts/{wolt}/.state/sessions/{name}.json`. Filesystem is the database; `ls` and `cat` are valid queries.
+- **Naming** — `{wolt}-{adjective}-{noun}-{6hex}` (e.g. `neowolt-chompy-dam-a3f1e2`).
+- **Creatures** — `otter` (haiku), `beaver` (sonnet), `raccoon` (opus). The creature picks the model; the role of the session is otherwise the same.
+- **Multi-adapter routing** — `routing` is an array, so a session can be started on Slack, picked up in the browser, and notified on Telegram.
+- **Lifecycle** — `CREATED → RUNNING → COMPLETED/FAILED`, with `ORPHANED` if tmux dies without firing the exit hook. `registry.reconcile()` checks tmux liveness and marks dead sessions; the vulture creature reaps stale tmux sessions on a schedule.
+- **Resume** — `claude --resume {uuid}` via the stored `claude_session_id`. See `container/lib/sessions.py` for the canonical resume command builder.
+
+All session machinery lives in `container/lib/sessions.py`. `start_session()` is the single entry point — every code path that creates a session goes through it.
 
 ---
 
-## Session Lifecycle
+## Sites and apps
 
-```
-CREATED → RUNNING → COMPLETED / FAILED
-                  ↘ ORPHANED (tmux died without exit handler)
-```
+Two execution surfaces, one server.
 
-- **Registry**: one JSON file per session at `wolts/{wolt}/.state/sessions/{name}.json`
-- **Viewport URL**: stored in session JSON (`viewport_url` field) — no separate files
-- **Redirects**: stored in session JSON (`redirect_to` field) — atomically cleared on read
-- **Multi-adapter routing**: `routing` is an array — start on Slack, pick up in browser, get notified on Telegram
-- **Naming**: `{wolt}-{adj}-{noun}-{6hex}` (e.g. `neowolt-chompy-dam-a3f1e2`)
-- **Creature system**: otter (🦦 haiku), beaver (🦫 sonnet), or raccoon (🦝 opus) — controls which Claude model runs
-- **Reconciliation**: `registry.reconcile()` checks tmux, marks dead sessions orphaned
-- **Cleanup**: vulture reaps dead tmux sessions (state at `wolts/.space/vulture/`)
+- **Sites** (`wolts/{wolt}/site/`) — lightweight per-wolt workspace. Static HTML/CSS/JS served by the FastAPI server itself, with livereload baked in via an injected client. Each wolt gets a permanent port stored in its `wolt.json`. Code: `container/lib/sites.py`, served at `/wolt/{name}/site/`.
+- **Apps** (`wolts/apps/{name}/`) — full programs with their own server, deps, and `woltspace.json` manifest. The server starts/stops them; their ports are tracked in `.space/apps/`. Apps that set `public: true` get a Cloudflare tunnel automatically and survive container restarts via apps autorestore. Code: `container/lib/apps.py`.
+
+### Subdomain proxy
+
+`server/app.py` has an HTTP middleware (`subdomain_proxy`) that routes `*.localhost` and `*.{tunnel_domain}` requests to the right app port. `corework.woltspace.com` → look up the running app named `corework` → proxy to its localhost port. This avoids path-prefix headaches for multi-page apps and is what makes per-app public URLs cheap.
+
+The proxy streams responses (so SSE / Vite HMR / video Range requests work) and preserves `Content-Length` for partial-content responses. WebSockets get the same treatment via a catch-all WS route.
 
 ---
 
-## Container Startup (entrypoint.sh)
+## Tunnels
 
-```
-1. Install dev deps (if volume-mounted)
-2. Resolve WOLT_DIR from WOLTS_DIR/WOLT_NAME
-3. Copy skills: platform defaults + wolt overrides → ~/.claude/skills/
-4. Seed default wolf.json if active wolt doesn't have one (update checker)
-5. SSH/git config (deploy key if present)
-6. Write OAuth credentials
-7. Install Claude Code hooks (notify + session-done)
-8. Start tmux main session → auto-launch Claude
-9. Start TUI pty service (port 3001)
-10. Start FastAPI server (port 7777)
-11. Start cloudflared tunnel → write URL to .space/platform/tunnel-url
-12. Start Telegram bot (optional, watchfiles reload)
-13. Start Slack bot (optional, watchfiles reload)
-14. Start wolf scheduler (if wolf.json exists)
-15. Symlink node_modules for ESM resolution
-16. wait -n (exit if ANY critical process dies)
-```
+Two flavors, both in `container/lib/tunnel.py`:
+
+- **Quick tunnel** — `cloudflared tunnel --url http://localhost:7777`. Random `*.trycloudflare.com` URL, parsed from cloudflared's logs. No account needed. Default for new installs.
+- **Named tunnel** — `cloudflared tunnel run --token $TOKEN`. Permanent URL on a domain you control, configured via Cloudflare's API. Set `CLOUDFLARE_TUNNEL_TOKEN` + `CLOUDFLARE_TUNNEL_URL` in `.env`. `WOLTSPACE_PUBLIC_TUNNEL=false` disables tunneling entirely.
+
+Selection is config-driven; `server/tunnel.py` picks the right path at startup. The same module also tracks `tunnel_domain` and `tunnel_hostname` so the subdomain proxy knows which host is the lodge and which are app subdomains.
 
 ---
 
-## File Layout
+## Onboarding
 
-### Per wolt (`wolts/{name}/`)
+A new install with no wolt and no auth boots into "onboard mode": the server falls back to `public/onboard.html`, the tmux main session runs bare `claude /login`, and there is no active wolt. Once the user authenticates and creates a wolt (lodge UI or `/woltspace-create-wolt`), normal mode kicks in: viewport defaults to the new wolt's site, Claude relaunches under that wolt's identity, and the bot adapters can start.
 
-```
-wolts/{name}/
-├─ wolt/
-│  ├─ memory/           # identity, context, learnings (boot files)
-│  │  └─ archive/       # grows forever, searched on demand
-│  ├─ site/             # static HTML/CSS, per-wolt livereload
-│  ├─ sparks/           # generated artifacts (digest, etc.)
-│  ├─ drafts/           # writing and drafts
-│  └─ images/           # AI-generated images
-├─ .claude/
-│  ├─ skills/           # wolt-specific skill overrides
-│  ├─ settings.json     # hooks config
-│  └─ .credentials.json # OAuth token
-├─ .state/
-│  ├─ sessions/         # one JSON per session (viewport_url, routing, status)
-│  ├─ site.json         # livereload port, pid, dir
-│  ├─ wolf/             # cron execution state
-│  └─ sessions.jsonl    # append-only session log
-├─ .env                 # secrets (gitignored)
-├─ CLAUDE.md            # wolt-specific instructions
-└─ wolt.json            # manifest (name, type, role, description)
-```
-
-### Global (`wolts/.space/`)
-
-```
-wolts/.space/
-├─ platform/            # tunnel-url, woltspace-version, branch
-├─ apps/                # running app state (port, pid)
-├─ wolf/                # wolf scheduler state
-├─ vulture/             # session reaper state
-└─ logs/                # bot.jsonl event log
-```
-
-### Apps (`wolts/apps/`)
-
-```
-wolts/apps/{name}/
-├─ woltspace.json       # manifest (start command, port, description)
-└─ ...                  # app source code
-```
+The onboard fallback lives in `server/state.py` and the boot branching in `container/start.sh`.
 
 ---
 
-## Known Issues & Future Optimization Notes
+## State model
 
-### Complexity hotspots
-- **core.py (~1100 lines)** — agent loop + all 13 tool implementations in one file. Tool functions could be extracted.
+```
+wolts/                                     mounted into the container
+├─ {wolt}/                                 per wolt
+│   ├─ wolt/                               wolt-owned content (memory, site, drafts, …)
+│   │   ├─ memory/                         identity.md, context.md, learnings.md (+ archive/)
+│   │   ├─ site/                           the wolt's static site
+│   │   ├─ sparks/                         generated artifacts
+│   │   └─ drafts/                         writing
+│   ├─ .claude/                            skills, hooks, OAuth credentials
+│   ├─ .state/                             runtime state
+│   │   ├─ sessions/                       one JSON per session
+│   │   ├─ site.json                       livereload port + pid
+│   │   └─ wolf/                           cron execution state
+│   ├─ .env                                wolt secrets
+│   ├─ CLAUDE.md                           wolt-specific instructions
+│   └─ wolt.json                           manifest (name, type, role, site_port, …)
+│
+├─ apps/{name}/                            shipped apps
+│   ├─ woltspace.json                      manifest (start, port, public, …)
+│   └─ …                                   app source
+│
+└─ .space/                                 global state (no single wolt owns it)
+    ├─ platform/                           tunnel.json, version, branch
+    ├─ apps/                               running app port + pid files
+    ├─ wolf/                               wolf scheduler
+    ├─ vulture/                            session reaper
+    └─ logs/                               bot.jsonl event log
+```
 
-### Architecture concerns
-- **Session lifecycle is implicit** — no state machine, relies on tmux existence checks. Reconciliation is reactive, not proactive.
-- **`_send_ack` only handles Telegram** — Slack users get no "🦫 on it" ack when sessions spawn.
-- **History window is fixed** — `MAX_HISTORY = 20` pairs for Telegram, Slack pulls full thread from API (inconsistent).
-- **Single-wolt Telegram** — one wolt owns the bot at a time. Den replies lose context (#218). Chat-per-wolt is the path forward (#184).
-- **Skill drift** — platform skills copied at wolt creation, never synced. Existing wolts run stale skills (#173).
-- **App proxy links** — internal links break for multi-page apps behind `/app/{name}/` prefix (#212).
-
-### Things that work well
-- **Session registry** — one JSON file per session per wolt, queryable with `ls` and `cat`.
-- **Den reply routing** — footer embeds session URL, adapter extracts it, message goes directly to tmux.
-- **Per-wolt livereload** — file watcher + WebSocket broadcast + injected script = instant updates. Scoped per wolt.
-- **Creature system** — simple model selection via metaphor (otter/beaver/raccoon).
-- **Skills** — platform defaults baked in, wolt overrides win. Clean layering.
-- **Filesystem as database** — paths are queries, files are records, dirs are indexes, cleanup is `rm`.
-
-### Potential optimizations
-- [ ] Extract tool implementations from core.py into separate files
-- [ ] Add session TTL / auto-cleanup for orphaned session files
-- [ ] Add Slack ack messages for session spawns
-- [ ] Consider event-driven viewport updates (SSE/WS) instead of 2s polling
-- [ ] Session state machine with explicit transitions
-- [ ] Chat-per-wolt Telegram architecture (#184)
-- [ ] Skill inheritance — platform skills vs local overrides (#173)
+The split between `wolts/{wolt}/` (owned by one wolt) and `wolts/.space/` (cross-wolt) is the core of the state model. `container/lib/paths.py` is the canonical map — start there if you're not sure where to read or write.
 
 ---
 
-*Last updated 2026-03-24. This is a living document — add notes as you go.*
+## Conventions
+
+- **Single entry points** — `start_session()` for sessions, `start_app()` for apps, `start_site()` for sites. Don't reimplement; import.
+- **Filesystem as database** — paths are queries, files are records, dirs are indexes. Cleanup is `rm`.
+- **FastAPI is the central authority** — it owns reads, writes, and policy. Adapters ask the server, not the filesystem.
+- **`WOLT_DIR` is for code, not state** — runtime state always goes through `.state/` or `.space/`.
+- **`/workspace/woltspace/` is baked into the image, not mounted** — only `/workspace/wolts/` is mounted at runtime. Container-lifecycle changes (Dockerfile, entrypoint, baked deps) require `woltspace rebuild`; everything else is hot-editable in dev mode.
+- **Skills layer** — platform defaults in `container/skills/`, wolt-specific overrides in `wolts/{wolt}/.claude/skills/`. Wolt overrides win.
+
+For tests, see `test/` (`uv run --extra test pytest test/`). For release process, see `VERSIONING.md`. For history, see `CHANGELOG.md` and `git log`.
