@@ -401,13 +401,13 @@ case "$cmd" in
       esac
     done
     if [ -n "$SESSION_SLUG" ]; then
-      if ! docker exec "$CONTAINER_NAME" tmux has-session -t "$SESSION_SLUG" 2>/dev/null; then
+      if ! docker exec -u node "$CONTAINER_NAME" tmux has-session -t "$SESSION_SLUG" 2>/dev/null; then
         echo "  ${_D}🦝 no live session named '$SESSION_SLUG'${_R}"
-        echo "  ${_L}   list live sessions:${_R} docker exec $CONTAINER_NAME tmux ls"
+        echo "  ${_L}   list live sessions:${_R} docker exec -u node $CONTAINER_NAME tmux ls"
         exit 1
       fi
       echo "  ${_D}🐾 attaching to $SESSION_SLUG — press C-b d to detach${_R}"
-      docker exec -it "$CONTAINER_NAME" tmux attach -t "$SESSION_SLUG"
+      docker exec -it -u node "$CONTAINER_NAME" tmux attach -t "$SESSION_SLUG"
     else
       docker exec -it "$CONTAINER_NAME" claude --dangerously-skip-permissions
     fi
