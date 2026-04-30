@@ -8,6 +8,7 @@
 #   woltspace rebuild                 — rebuild image + restart
 #   woltspace shell                   — enter running container
 #   woltspace chat                    — open claude in container
+#   woltspace chat --session <slug>   — attach to a live wolt session in your terminal
 #   woltspace logs                    — stream container logs
 #   woltspace backup [tag]            — snapshot container + wolts (tag defaults to datetime)
 #   woltspace backup [tag] --bundle  — same, but zipped into one portable file
@@ -379,7 +380,37 @@ case "$cmd" in
       echo "  ${_L}   the lodge is quiet${_R}"
       exit 1
     }
-    docker exec -it "$CONTAINER_NAME" claude --dangerously-skip-permissions
+    # Parse: woltspace chat [--session <slug>]
+    SESSION_SLUG=""
+    shift  # drop 'chat'
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --session)
+          SESSION_SLUG="$2"
+          shift 2
+          ;;
+        --session=*)
+          SESSION_SLUG="${1#--session=}"
+          shift
+          ;;
+        *)
+          echo "  ${_D}unknown arg: $1${_R}"
+          echo "  usage: woltspace chat [--session <slug>]"
+          exit 1
+          ;;
+      esac
+    done
+    if [ -n "$SESSION_SLUG" ]; then
+      if ! docker exec -u node "$CONTAINER_NAME" tmux has-session -t "$SESSION_SLUG" 2>/dev/null; then
+        echo "  ${_D}🦝 no live session named '$SESSION_SLUG'${_R}"
+        echo "  ${_L}   list live sessions:${_R} docker exec -u node $CONTAINER_NAME tmux ls"
+        exit 1
+      fi
+      echo "  ${_D}🐾 attaching to $SESSION_SLUG — press C-b d to detach${_R}"
+      docker exec -it -u node -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 "$CONTAINER_NAME" tmux -u attach -t "$SESSION_SLUG"
+    else
+      docker exec -it "$CONTAINER_NAME" claude --dangerously-skip-permissions
+    fi
     ;;
   logs)
     docker logs -f "$CONTAINER_NAME"
