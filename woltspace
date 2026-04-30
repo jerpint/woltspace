@@ -407,7 +407,7 @@ case "$cmd" in
         exit 1
       fi
       echo "  ${_D}🐾 attaching to $SESSION_SLUG — press C-b d to detach${_R}"
-      docker exec -it -u node "$CONTAINER_NAME" tmux attach -t "$SESSION_SLUG"
+      docker exec -it -u node -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 "$CONTAINER_NAME" tmux -u attach -t "$SESSION_SLUG"
     else
       docker exec -it "$CONTAINER_NAME" claude --dangerously-skip-permissions
     fi
