@@ -5,7 +5,7 @@ Apps can be served at `{app-name}.{your-domain}` (e.g. `corework.woltspace.com`)
 ## Prerequisites
 
 - A Cloudflare account with your domain's DNS managed by Cloudflare
-- A named tunnel already configured (see `woltspace-setup-tunnel` skill)
+- A named tunnel already configured (see `woltspace-cloudflare` skill, sub-doc `setup.md`)
 - Environment variables set in `wolts/.env`:
   - `CLOUDFLARE_API_TOKEN` — API token with DNS:Edit, Tunnel:Edit, Access:Edit permissions
   - `CLOUDFLARE_ACCOUNT_ID` — your Cloudflare account ID

@@ -132,7 +132,7 @@ The mode is automatic — wolts don't need to know or care which is active.
 
 ### Setup for subdomain routing
 
-Requires a one-time Cloudflare setup after the named tunnel is configured: wildcard DNS, tunnel ingress rule, and Access policy. See `docs/wildcard-subdomain-setup.md` for step-by-step instructions, or use the `/woltspace-setup-tunnel` skill which covers this.
+Requires a one-time Cloudflare setup after the named tunnel is configured: wildcard DNS, tunnel ingress rule, and Access policy. See `docs/wildcard-subdomain-setup.md` for step-by-step instructions, or use the `/woltspace-cloudflare` skill which covers this.
 
 **Kill switch:** Set `WOLTSPACE_SHARING_ENABLED=0` to disable all sharing. The API will reject share requests and `public: true` is ignored.
 
