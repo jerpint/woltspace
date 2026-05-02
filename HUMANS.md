@@ -233,6 +233,7 @@ To restore:
 ```bash
 docker stop woltspace && docker rm woltspace
 docker run -d --name woltspace \
+  --restart unless-stopped \
   -v ~/.woltspace/wolts-backup-<tag>:/workspace/wolts:rw \
   -p 7777:7777 \
   woltspace-backup:<tag>

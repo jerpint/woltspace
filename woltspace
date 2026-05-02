@@ -131,6 +131,7 @@ _start_container() {
   mkdir -p "$WOLTS_DIR/.claude"
   docker run -d \
     --name "$CONTAINER_NAME" \
+    --restart unless-stopped \
     --env-file "$WOLTS_DIR/.env" \
     -e HOST_UID=$(id -u) \
     -e HOST_GID=$(id -g) \
@@ -478,6 +479,7 @@ fi
 echo ""
 echo "restore complete. run with:"
 echo "  docker run -d --name woltspace \\"
+echo "    --restart unless-stopped \\"
 echo "    -v $DIR/wolts:/workspace/wolts:rw \\"
 echo "    -p 7777:7777 \\"
 echo "    woltspace-backup:$TAG"
@@ -499,6 +501,7 @@ RESTORE
       echo "    cd woltspace-backup-$TAG && bash restore.sh"
     else
       echo "    docker run -d --name $CONTAINER_NAME \\"
+      echo "      --restart unless-stopped \\"
       echo "      -v $BACKUP_DIR:/workspace/wolts:rw \\"
       echo "      -p ${WOLTSPACE_PORT:-7777}:7777 \\"
       echo "      woltspace-backup:$TAG"
