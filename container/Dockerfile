@@ -116,8 +116,10 @@ RUN cd /workspace/woltspace && \
 
 WORKDIR /workspace/woltspace
 
-# Install node deps
-RUN npm install && npm install ws node-pty
+# Install node deps from the lockfile — reproducible, no drift.
+# Don't switch back to `npm install` here: it can mutate the lockfile and pull
+# versions newer than what dependabot has reviewed for vulnerabilities.
+RUN npm ci
 
 # Make bin scripts executable + add to PATH
 RUN chmod +x container/bin/* container/entrypoint.sh container/start.sh
