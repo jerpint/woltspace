@@ -30,15 +30,10 @@ updates:
       - dependencies
       - python
 
-  # Python — root meta pyproject (superset; kept in sync with server + bot)
-  - package-ecosystem: pip
-    directory: /
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-      - python
+  # Note: root /pyproject.toml is intentionally not scanned. It's used only by
+  # the test runner (`uv run --extra test pytest test/`) and its runtime
+  # dependencies are a hand-maintained superset of the per-service pyprojects.
+  # server/ and container/bot/ are the source of truth for runtime deps.
 
   # Docker — base image (node:22-slim) in the container Dockerfile
   - package-ecosystem: docker
