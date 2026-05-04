@@ -1,16 +1,10 @@
----
-name: woltspace-setup-tunnel
-description: Set up a named Cloudflare Tunnel for a permanent, auth-protected lodge URL.
-user_invocable: true
----
-
 # Named Tunnel Setup
 
 Guide the human through setting up a named Cloudflare Tunnel with Access auth for their lodge. Step by step, one at a time.
 
-By default, woltspace uses free quick tunnels that generate a random URL on every restart. This skill upgrades to a permanent URL on the user's own domain with password protection at Cloudflare's edge.
+By default, woltspace uses free quick tunnels that generate a random URL on every restart. This sub-doc upgrades to a permanent URL on the user's own domain with password protection at Cloudflare's edge.
 
-**This skill is idempotent** — safe to run again. If things are already configured, validate and skip.
+**This is idempotent** — safe to run again. If things are already configured, validate and skip.
 
 ## Step 0: Check existing config
 
@@ -182,7 +176,7 @@ curl -s -X POST \
   }"
 ```
 
-More users or identity providers (GitHub, Google) can be added later from **Cloudflare Zero Trust → Access → Applications**.
+To add more users later, see `add-access.md` (or call `/woltspace-cloudflare` again and pick "add a person"). More identity providers (GitHub, Google) can be added from **Cloudflare Zero Trust → Access → Applications**.
 
 ## Step 6: Enable app subdomains (optional)
 
@@ -285,17 +279,3 @@ Explain to the human how to revert:
 - **Access login page doesn't appear** — Access app might not be created, or domain doesn't match. Check Zero Trust → Access → Applications.
 - **"This site can't be reached" after DNS propagated** — tunnel process might not be running. Check `ps aux | grep cloudflared`.
 - **Local DNS cache** — flush with `sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder` (macOS) or try `dig <subdomain>.<domain> @8.8.8.8` to bypass cache.
-
-## Architecture
-
-```
-Browser → subdomain.domain.com
-       → Cloudflare Edge (Access auth: email OTP)
-       → Cloudflare Tunnel (QUIC, auto-reconnect)
-       → localhost:7777 (FastAPI)
-```
-
-- **Auth at the edge** — unauthorized requests never reach the container
-- **Auto-reconnect** — named tunnels survive network blips, same URL persists across restarts
-- **Free tier** — unlimited tunnels, 50 Access users, no credit card required
-- **Quick tunnels remain the default** — named tunnels only activate when env vars are set
