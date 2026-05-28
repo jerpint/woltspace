@@ -10,6 +10,10 @@
 WOLT_HOME=$(echo "$PWD" | sed -n 's|\(/workspace/wolts/[^/]*\).*|\1|p')
 if [ -n "$WOLT_HOME" ] && [ -d "$WOLT_HOME/.claude" ]; then
     export HOME="$WOLT_HOME"
+    # Claude Code auto-updates into $HOME/.local/bin. With a per-wolt HOME that dir
+    # isn't on PATH, so the image's baked claude runs instead and warns about the
+    # newer native install it can't reach. Put the wolt's own bin first.
+    export PATH="$HOME/.local/bin:$PATH"
     # Self-heal missing credentials (copy from shared seed)
     WOLT_CREDS="$WOLT_HOME/.claude/.credentials.json"
     SHARED_CREDS="/workspace/wolts/.claude/.credentials.json"
