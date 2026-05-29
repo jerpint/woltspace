@@ -65,6 +65,7 @@ class WoltspaceApp(BaseModel):
     keeper: str = Field(description="Owning wolt name")
     emoji: str = Field(default_factory=random_emoji, description="App emoji for display")
     public: bool = Field(default=False, description="Whether this app should be publicly shared via tunnel")
+    autostart: bool = Field(default=False, description="Whether to start this app automatically on container boot")
 
     def can_start(self) -> bool:
         """App can only start if it has a start command."""
@@ -312,6 +313,27 @@ def apps_restore() -> list[dict]:
         except Exception as e:
             actions.append({"name": name, "action": "restore-failed", "error": str(e)})
             print(f"[apps] restore failed for {name}: {e}")
+    return actions
+
+
+def apps_autostart() -> list[dict]:
+    """Start every app whose manifest declares autostart: true.
+
+    Reads manifests via discover_apps() — boot-time intent lives in the manifest,
+    not in runtime state. start_app() is idempotent (returns existing state if the
+    PID is alive), so apps already revived by apps_restore() are a no-op here.
+    """
+    actions = []
+    for app in discover_apps():
+        if not app.autostart or not app.can_start():
+            continue
+        try:
+            state = start_app(app.name)
+            actions.append({"name": app.name, "action": "autostarted", "pid": state["pid"]})
+            print(f"[apps] autostart {app.name} on port {state['port']} (pid {state['pid']})")
+        except Exception as e:
+            actions.append({"name": app.name, "action": "autostart-failed", "error": str(e)})
+            print(f"[apps] autostart failed for {app.name}: {e}")
     return actions
 
 
