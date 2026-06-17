@@ -160,6 +160,48 @@ woltspace init    # creates bob
 
 All wolts share one container. `woltspace.json` tracks which wolt is active. Auth is shared — after the first wolt authenticates, new ones reuse the token.
 
+## Multi-user permissions (optional)
+
+By default a woltspace container is single-tenant — anyone past the tunnel
+sees and controls every wolt. To gate per user (read: collaborators, family,
+small group), set in `~/.woltspace/wolts/.env`:
+
+```bash
+WOLTSPACE_AUTH=cloudflare
+WOLTSPACE_ADMIN_EMAIL=you@example.com
+WOLTSPACE_CF_TEAM_DOMAIN=yourteam.cloudflareaccess.com
+WOLTSPACE_CF_AUD=<application audience tag from CF Zero Trust dashboard>
+```
+
+The server then validates the Cloudflare Access JWT on every request and
+checks the caller's email against `wolts/.space/auth/users.json`:
+
+```json
+{
+  "users": [
+    {"email": "you@example.com",          "wolts": ["*"]},
+    {"email": "collaborator@example.com", "wolts": ["bloggo"]}
+  ]
+}
+```
+
+`wolts: ["*"]` is an admin (sees everything). Otherwise users only see and
+control wolts in their allow-list — apps inherit access from their keeper
+wolt. The admin entry is auto-created on first boot.
+
+**Adding users:** add their email to the Cloudflare Access policy
+(Zero Trust → Access → Applications → your app → policies), then add an
+entry to `users.json` with their allow-list.
+
+**Scope of enforcement:** this is application-layer. The lodge UI shows
+only what the user is allowed to see, and the REST API refuses cross-wolt
+requests. It does *not* stop a session that's already running from reading
+another wolt's files via the shell — all sessions still run as the same OS
+user. That's tracked separately (filesystem isolation, issue #354).
+
+Default mode is `WOLTSPACE_AUTH=none` — single-tenant, today's behavior,
+zero configuration. Skip this whole section if that's what you want.
+
 ## Messaging (Telegram, etc.)
 
 Wolts can talk through messaging apps. Add config to `~/.woltspace/wolts/.env`:

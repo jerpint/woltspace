@@ -45,6 +45,7 @@ from .config import (
     load_dotenv,
 )
 from . import tunnel as tunnel_mgr
+from . import auth as auth_mod
 from .notify import send_notification
 from .sparks import get_spark_with_chain, list_sparks
 
@@ -144,11 +145,13 @@ async def lifespan(app: FastAPI):
     _start_file_watcher()
     _start_tool_gc()
     tunnel_mgr.start_tunnel()
+    auth_mod.bootstrap_admin()
     print(f"""
   woltspace server (python) · http://localhost:{PORT}
   wolt: {WOLT_NAME}
   tui proxy → localhost:{TUI_PORT}
   tunnel: {tunnel_mgr.get_tunnel_url() or 'disabled'}
+  auth:   {auth_mod.auth_mode()}
     """)
     yield
     tunnel_mgr.stop_tunnel()
@@ -178,6 +181,18 @@ async def cors_middleware(request: Request, call_next):
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, DELETE"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """Extract the Cloudflare Access JWT and attach the email to request.state.
+
+    In auth=none mode this is a no-op. In auth=cloudflare mode the email is
+    extracted (None if missing/invalid); route guards then decide what to do
+    with it.
+    """
+    request.state.user_email = auth_mod.extract_email(request)
+    return await call_next(request)
 
 def _extract_app_subdomain(host_header: str) -> str | None:
     """Extract app name from subdomain hostname, or None if not an app subdomain.
@@ -581,6 +596,19 @@ async def session_message(session_id: str, request: Request):
 # All session creation goes through start_session() from container/lib/sessions.py.
 # Each adapter (lodge, telegram, slack) has its own route for adapter-specific params.
 
+def _require_auth_user(request: Request) -> JSONResponse | None:
+    """Used by routes whose action requires the caller to be a known user
+    (creating wolts, list-everything for admin, etc). No-op when auth disabled."""
+    if not auth_mod.is_enabled():
+        return None
+    email = auth_mod.user_email(request)
+    if not email:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if not auth_mod.find_user(email):
+        return auth_mod.pending_approval(email)
+    return None
+
+
 @app.post("/sessions/new/create")
 async def session_new_create(request: Request):
     """Create a new wolt and start its first session.
@@ -592,6 +620,8 @@ async def session_new_create(request: Request):
     The server scaffolds the full wolt directory (including .claude/ isolation)
     before spawning the session. No fallback HOME needed.
     """
+    if (denied := _require_auth_user(request)) is not None:
+        return denied
     body = await request.json()
     wolt_name = (body.get("name") or "").strip().lower()
     wolt_type = (body.get("type") or "").strip().lower()
@@ -636,6 +666,8 @@ async def session_new_lodge(request: Request):
     wolt = body.get("wolt")
     if not wolt:
         return JSONResponse({"error": "wolt required"}, status_code=400)
+    if (denied := auth_mod.require_wolt(request, wolt)) is not None:
+        return denied
     try:
         result = start_session(
             wolt=wolt,
@@ -660,6 +692,8 @@ async def session_new_telegram(request: Request):
     wolt = body.get("wolt")
     if not wolt:
         return JSONResponse({"error": "wolt required"}, status_code=400)
+    if (denied := auth_mod.require_wolt(request, wolt)) is not None:
+        return denied
     try:
         result = start_session(
             wolt=wolt,
@@ -688,6 +722,8 @@ async def session_new_slack(request: Request):
     wolt = body.get("wolt")
     if not wolt:
         return JSONResponse({"error": "wolt required"}, status_code=400)
+    if (denied := auth_mod.require_wolt(request, wolt)) is not None:
+        return denied
     try:
         result = start_session(
             wolt=wolt,
@@ -713,11 +749,14 @@ async def session_new_slack(request: Request):
 # --- Sessions list ---
 
 @app.get("/sessions")
-async def list_sessions():
+async def list_sessions(request: Request):
     from sessions import SessionRegistry
     reg = SessionRegistry(WOLTS_DIR)
     sessions = reg.list()
     sessions.sort(key=lambda s: (0 if s.get("status") == "running" else 1, -(s.get("created_at") or 0)))
+    if auth_mod.is_enabled():
+        email = auth_mod.user_email(request)
+        sessions = [s for s in sessions if auth_mod.can_access_wolt(email, s.get("wolt") or "")]
     return sessions
 
 
@@ -762,7 +801,7 @@ async def history_detail(spark_id: str):
 # --- Wolts ---
 
 @app.get("/wolts")
-async def list_wolts():
+async def list_wolts(request: Request):
     """List all wolts by scanning WOLTS_DIR for wolt/wolt.json files."""
     wolts = []
     if WOLTS_DIR.exists():
@@ -780,6 +819,8 @@ async def list_wolts():
                 })
             except Exception:
                 pass
+    if auth_mod.is_enabled():
+        wolts = auth_mod.visible_wolts(auth_mod.user_email(request), wolts)
     return wolts
 
 
@@ -788,12 +829,15 @@ async def list_wolts():
 # App names are globally unique. Keeper (owning wolt) is in woltspace.json.
 
 @app.get("/apps")
-async def list_apps_api():
+async def list_apps_api(request: Request):
     """List all apps that have woltspace.json."""
     apps = discover_apps()
     running = {r["name"]: r for r in running_apps()}
+    email = auth_mod.user_email(request)
     result = []
     for a in apps:
+        if auth_mod.is_enabled() and not auth_mod.can_access_wolt(email, a.keeper):
+            continue
         entry = a.model_dump()
         run_state = running.get(a.name)
         entry["running"] = run_state is not None
@@ -806,11 +850,13 @@ async def list_apps_api():
 
 
 @app.get("/apps/{name}")
-async def app_detail(name: str):
+async def app_detail(name: str, request: Request):
     """Get a single app's manifest and running state."""
     app_obj = get_app(name)
     if not app_obj:
         return JSONResponse({"error": f"app {name} not found"}, status_code=404)
+    if (denied := auth_mod.require_app(request, name)) is not None:
+        return denied
     running = {r["name"]: r for r in running_apps()}
     entry = app_obj.model_dump()
     run_state = running.get(name)
@@ -823,8 +869,10 @@ async def app_detail(name: str):
 
 
 @app.post("/apps/{name}/start")
-async def app_start(name: str):
+async def app_start(name: str, request: Request):
     """Start an app's dev server."""
+    if (denied := auth_mod.require_app(request, name)) is not None:
+        return denied
     try:
         state = start_app(name)
         print(f"[apps] started {name} on port {state['port']}")
@@ -836,8 +884,10 @@ async def app_start(name: str):
 
 
 @app.post("/apps/{name}/stop")
-async def app_stop(name: str):
+async def app_stop(name: str, request: Request):
     """Stop a running app."""
+    if (denied := auth_mod.require_app(request, name)) is not None:
+        return denied
     was_running = stop_app(name)
     if was_running:
         print(f"[apps] stopped {name}")
@@ -846,8 +896,10 @@ async def app_stop(name: str):
 
 
 @app.post("/apps/{name}/share")
-async def app_share(name: str):
+async def app_share(name: str, request: Request):
     """Start a cloudflared tunnel to the app port and return the public URL."""
+    if (denied := auth_mod.require_app(request, name)) is not None:
+        return denied
     import asyncio
     try:
         # share_app blocks (polls cloudflared log up to 30s) — run in thread
@@ -861,8 +913,10 @@ async def app_share(name: str):
 
 
 @app.post("/apps/{name}/unshare")
-async def app_unshare(name: str):
+async def app_unshare(name: str, request: Request):
     """Stop the cloudflared tunnel for an app."""
+    if (denied := auth_mod.require_app(request, name)) is not None:
+        return denied
     was_sharing = unshare_app(name)
     if was_sharing:
         print(f"[apps] unshared {name}")
@@ -884,6 +938,10 @@ async def app_unshare_all():
 async def session_resume(name: str, request: Request):
     """Resume a stopped/orphaned session by name."""
     safe = "".join(c for c in name if c.isalnum() or c in "-_")
+    if auth_mod.is_enabled():
+        wolt = safe.rsplit("-", 3)[0] if safe.count("-") >= 3 else safe
+        if (denied := auth_mod.require_wolt(request, wolt)) is not None:
+            return denied
     body = await request.json()
     prompt = body.get("prompt", "")
     try:
@@ -897,9 +955,13 @@ async def session_resume(name: str, request: Request):
 
 
 @app.post("/sessions/{name}/stop")
-async def session_stop(name: str):
+async def session_stop(name: str, request: Request):
     """Stop a running session — kill tmux, mark as stopped."""
     safe = "".join(c for c in name if c.isalnum() or c in "-_")
+    if auth_mod.is_enabled():
+        wolt = safe.rsplit("-", 3)[0] if safe.count("-") >= 3 else safe
+        if (denied := auth_mod.require_wolt(request, wolt)) is not None:
+            return denied
     try:
         result = stop_session(safe)
         print(f"[sessions/stop] {safe} → stopped (was_alive={result.get('was_alive')})")
@@ -915,14 +977,20 @@ async def session_stop(name: str):
 # Sites auto-start when a session begins outside an app context.
 
 @app.get("/sites")
-async def list_sites_api():
+async def list_sites_api(request: Request):
     """List all running wolt sites."""
-    return running_sites()
+    sites = running_sites()
+    if auth_mod.is_enabled():
+        email = auth_mod.user_email(request)
+        sites = [s for s in sites if auth_mod.can_access_wolt(email, s.get("wolt") or "")]
+    return sites
 
 
 @app.get("/sites/{wolt_name}")
-async def site_detail(wolt_name: str):
+async def site_detail(wolt_name: str, request: Request):
     """Get a wolt's site state."""
+    if (denied := auth_mod.require_wolt(request, wolt_name)) is not None:
+        return denied
     state = get_site_state(wolt_name)
     sdir = site_dir(wolt_name)
     return {
@@ -935,8 +1003,10 @@ async def site_detail(wolt_name: str):
 
 
 @app.post("/sites/{wolt_name}/start")
-async def site_start(wolt_name: str):
+async def site_start(wolt_name: str, request: Request):
     """Start a wolt's site livereload server."""
+    if (denied := auth_mod.require_wolt(request, wolt_name)) is not None:
+        return denied
     sdir = site_dir(wolt_name)
     wolt_dir = WOLTS_DIR / wolt_name
     if not wolt_dir.exists():
@@ -950,8 +1020,10 @@ async def site_start(wolt_name: str):
 
 
 @app.post("/sites/{wolt_name}/stop")
-async def site_stop(wolt_name: str):
+async def site_stop(wolt_name: str, request: Request):
     """Stop a wolt's site livereload server."""
+    if (denied := auth_mod.require_wolt(request, wolt_name)) is not None:
+        return denied
     was_running = stop_site(wolt_name)
     if was_running:
         print(f"[sites] stopped {wolt_name}")
@@ -965,6 +1037,9 @@ async def serve_wolt_site(wolt_name: str, request: Request, path: str = ""):
     """Serve a wolt's site — proxy to livereload, rewrite reload script."""
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", wolt_name):
         return JSONResponse({"error": "invalid wolt name"}, status_code=400)
+
+    if (denied := auth_mod.require_wolt(request, wolt_name)) is not None:
+        return denied
 
     wolt_dir = WOLTS_DIR / wolt_name
     if not wolt_dir.exists():
