@@ -7,11 +7,9 @@ enforcement requires filesystem-level isolation (issue #354). See HUMANS.md.
 
 Usage:
   access list
-  access add EMAIL [WOLTS...]        — add a new user (optionally with allow-list)
-  access grant EMAIL WOLTS...        — add wolts to an existing user's allow-list
+  access add EMAIL [WOLTS...]        — add a user with an allow-list (use "*" for all wolts)
+  access grant EMAIL WOLTS...        — append wolts to an existing user's allow-list
   access revoke EMAIL WOLTS...       — remove wolts from a user's allow-list
-  access promote EMAIL               — make user admin (wolts=["*"])
-  access demote EMAIL                — remove admin (wolts=[]) — keeps the user
   access remove EMAIL                — delete a user entry entirely
   access check EMAIL WOLT            — does EMAIL have access to WOLT?
 """
@@ -57,9 +55,8 @@ def find(users: list[dict], email: str) -> dict | None:
 
 def fmt_user(u: dict) -> str:
     wolts = u.get("wolts") or []
-    role = "admin" if "*" in wolts else "user"
     allow = "all" if "*" in wolts else (", ".join(wolts) if wolts else "(none)")
-    return f"  {u['email']:<35} {role:<6}  wolts: {allow}"
+    return f"  {u['email']:<35}  wolts: {allow}"
 
 
 # --- Subcommands ---
@@ -67,7 +64,7 @@ def fmt_user(u: dict) -> str:
 def cmd_list(_args: list[str]) -> None:
     users = load()
     if not users:
-        print("(no users — set WOLTSPACE_ADMIN_EMAIL and restart the server to bootstrap)")
+        print("(no users yet — run 'access add EMAIL *' to add the first one)")
         return
     print(f"users ({len(users)}):")
     for u in users:
@@ -81,7 +78,7 @@ def cmd_add(args: list[str]) -> None:
     wolts = list(args[1:])
     users = load()
     if find(users, email):
-        die(f"{email} already exists — use 'grant' to add wolts or 'promote' for admin")
+        die(f"{email} already exists — use 'grant' to add wolts")
     users.append({
         "email": email,
         "wolts": wolts,
@@ -102,7 +99,7 @@ def cmd_grant(args: list[str]) -> None:
         die(f"no such user: {email}. use 'add' to create.")
     allow = u.get("wolts") or []
     if "*" in allow:
-        die(f"{email} is admin already — has access to everything")
+        die(f"{email} already has wildcard access ('*') to everything")
     for w in new_wolts:
         if w not in allow:
             allow.append(w)
@@ -121,40 +118,10 @@ def cmd_revoke(args: list[str]) -> None:
     u = find(users, email)
     if not u:
         die(f"no such user: {email}")
-    allow = u.get("wolts") or []
-    if "*" in allow:
-        die(f"{email} is admin — use 'demote' instead")
-    u["wolts"] = [w for w in allow if w not in remove]
+    u["wolts"] = [w for w in (u.get("wolts") or []) if w not in remove]
     save(users)
     print(f"revoked from {email}: {', '.join(remove)}")
     print(fmt_user(u))
-
-
-def cmd_promote(args: list[str]) -> None:
-    if not args:
-        die("usage: access promote EMAIL")
-    email = args[0].strip().lower()
-    users = load()
-    u = find(users, email)
-    if not u:
-        u = {"email": email, "added_at": int(time.time())}
-        users.append(u)
-    u["wolts"] = ["*"]
-    save(users)
-    print(f"{email} → admin (wolts=['*'])")
-
-
-def cmd_demote(args: list[str]) -> None:
-    if not args:
-        die("usage: access demote EMAIL")
-    email = args[0].strip().lower()
-    users = load()
-    u = find(users, email)
-    if not u:
-        die(f"no such user: {email}")
-    u["wolts"] = []
-    save(users)
-    print(f"{email} → demoted (wolts=[]). add wolts with 'access grant'.")
 
 
 def cmd_remove(args: list[str]) -> None:
@@ -194,8 +161,6 @@ COMMANDS = {
     "add": cmd_add,
     "grant": cmd_grant,
     "revoke": cmd_revoke,
-    "promote": cmd_promote,
-    "demote": cmd_demote,
     "remove": cmd_remove,
     "rm": cmd_remove,
     "check": cmd_check,

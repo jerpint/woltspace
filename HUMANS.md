@@ -163,18 +163,45 @@ All wolts share one container. `woltspace.json` tracks which wolt is active. Aut
 ## Multi-user permissions (optional)
 
 By default a woltspace container is single-tenant — anyone past the tunnel
-sees and controls every wolt. To gate per user (read: collaborators, family,
-small group), set in `~/.woltspace/wolts/.env`:
+sees and controls every wolt. To gate per user (collaborators, family,
+small group), there's an opt-in mode that uses your existing Cloudflare
+Access setup.
 
-```bash
-WOLTSPACE_AUTH=cloudflare
-WOLTSPACE_ADMIN_EMAIL=you@example.com
-WOLTSPACE_CF_TEAM_DOMAIN=yourteam.cloudflareaccess.com
-WOLTSPACE_CF_AUD=<application audience tag from CF Zero Trust dashboard>
-```
+### Setup
 
-The server then validates the Cloudflare Access JWT on every request and
-checks the caller's email against `wolts/.space/auth/users.json`:
+1. **Seed yourself** into `wolts/.space/auth/users.json` so you don't
+   lock yourself out. From inside the container (or via a wolt session
+   using the `woltspace-access` skill):
+   ```bash
+   access add you@example.com '*'
+   ```
+   The `'*'` is a wildcard meaning "every wolt."
+
+2. **Enable auth** in `~/.woltspace/wolts/.env`:
+   ```bash
+   WOLTSPACE_AUTH=cloudflare
+   WOLTSPACE_CF_TEAM_DOMAIN=yourteam.cloudflareaccess.com
+   WOLTSPACE_CF_AUD=<application audience tag from CF Zero Trust>
+   ```
+
+3. **Restart** the server. Visit the lodge — Cloudflare Access asks for
+   email OTP, the JWT lands at the server, the middleware validates it
+   and looks up your email in `users.json`.
+
+### Adding collaborators
+
+Two steps:
+
+1. Add their email to the Cloudflare Access policy
+   (Zero Trust → Access → Applications → policies → emails) so they
+   can reach the tunnel.
+
+2. Add them to `users.json`:
+   ```bash
+   access add bob@example.com bloggo shared-wolt
+   ```
+
+`users.json` looks like:
 
 ```json
 {
@@ -185,18 +212,17 @@ checks the caller's email against `wolts/.space/auth/users.json`:
 }
 ```
 
-`wolts: ["*"]` is an admin (sees everything). Otherwise users only see and
-control wolts in their allow-list — apps inherit access from their keeper
-wolt. The admin entry is auto-created on first boot.
+Users see and control only wolts in their allow-list. Apps inherit
+access from their keeper wolt. A user can also create new wolts via the
+lodge UI — when they do, the new wolt is auto-appended to their own
+allow-list (self-onboarding).
 
-**Adding users:** add their email to the Cloudflare Access policy
-(Zero Trust → Access → Applications → your app → policies), then add an
-entry to `users.json` with their allow-list.
+### Scope of enforcement
 
-**Scope of enforcement:** this is application-layer. The lodge UI shows
-only what the user is allowed to see, and the REST API refuses cross-wolt
-requests. It does *not* stop a session that's already running from reading
-another wolt's files via the shell — all sessions still run as the same OS
+This is application-layer. The lodge UI shows only what the user is
+allowed to see, and the REST API refuses cross-wolt requests. It does
+**not** stop a session that's already running from reading another
+wolt's files via the shell — all sessions still run as the same OS
 user. That's tracked separately (filesystem isolation, issue #354).
 
 Default mode is `WOLTSPACE_AUTH=none` — single-tenant, today's behavior,

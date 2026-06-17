@@ -145,7 +145,6 @@ async def lifespan(app: FastAPI):
     _start_file_watcher()
     _start_tool_gc()
     tunnel_mgr.start_tunnel()
-    auth_mod.bootstrap_admin()
     print(f"""
   woltspace server (python) · http://localhost:{PORT}
   wolt: {WOLT_NAME}
@@ -596,19 +595,6 @@ async def session_message(session_id: str, request: Request):
 # All session creation goes through start_session() from container/lib/sessions.py.
 # Each adapter (lodge, telegram, slack) has its own route for adapter-specific params.
 
-def _require_auth_user(request: Request) -> JSONResponse | None:
-    """Used by routes whose action requires the caller to be a known user
-    (creating wolts, list-everything for admin, etc). No-op when auth disabled."""
-    if not auth_mod.is_enabled():
-        return None
-    email = auth_mod.user_email(request)
-    if not email:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    if not auth_mod.find_user(email):
-        return auth_mod.pending_approval(email)
-    return None
-
-
 @app.post("/sessions/new/create")
 async def session_new_create(request: Request):
     """Create a new wolt and start its first session.
@@ -619,9 +605,18 @@ async def session_new_create(request: Request):
 
     The server scaffolds the full wolt directory (including .claude/ isolation)
     before spawning the session. No fallback HOME needed.
+
+    In cloudflare auth mode: requires an authenticated caller. The new wolt's
+    name is auto-appended to the caller's allow-list so they can see what
+    they just made.
     """
-    if (denied := _require_auth_user(request)) is not None:
-        return denied
+    # auth_mode=cloudflare: caller must have a valid JWT (the middleware
+    # already validated it; if email is None, no JWT was presented).
+    caller_email: str | None = None
+    if auth_mod.is_enabled():
+        caller_email = auth_mod.user_email(request)
+        if not caller_email:
+            return JSONResponse({"error": "not authenticated"}, status_code=401)
     body = await request.json()
     wolt_name = (body.get("name") or "").strip().lower()
     wolt_type = (body.get("type") or "").strip().lower()
@@ -644,6 +639,11 @@ async def session_new_create(request: Request):
         from wolts import create_creature_wolt
         create_creature_wolt(wolt_name, wolt_type)
         print(f"[sessions/create] scaffolded wolt '{wolt_name}' ({wolt_type})")
+
+        # Step 1b: in cloudflare auth mode, grant the creator access to what
+        # they just made (auto-onboards a user with an empty allow-list).
+        if caller_email:
+            auth_mod.grant_wolt(caller_email, wolt_name)
 
         # Step 2: Start a session — full isolation, site auto-start, viewport
         result = start_session(

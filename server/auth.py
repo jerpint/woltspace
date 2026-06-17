@@ -10,13 +10,14 @@ Data model — wolts/.space/auth/users.json:
 
     {
       "users": [
-        {"email": "admin@example.com", "wolts": ["*"]},
-        {"email": "user@example.com",  "wolts": ["bloggo", "shared"]}
+        {"email": "alice@example.com", "wolts": ["*"]},
+        {"email": "bob@example.com",   "wolts": ["bloggo", "shared"]}
       ]
     }
 
-A user with wolts == ["*"] is an admin (sees and controls everything).
-An app is accessible iff its keeper wolt is.
+The wildcard "*" in wolts means "every wolt" — a convenience, not a role.
+This MVP has no admin concept; access is purely allow-list. An app is
+accessible iff its keeper wolt is.
 
 See: github.com/jerpint/woltspace/issues/353
 """
@@ -57,11 +58,6 @@ def _aud_tag() -> str:
     return (os.environ.get("WOLTSPACE_CF_AUD") or "").strip()
 
 
-def _admin_email() -> str:
-    """Bootstrap admin — auto-added to users.json on first sight."""
-    return (os.environ.get("WOLTSPACE_ADMIN_EMAIL") or "").strip().lower()
-
-
 # --- users.json ---
 
 def _users_path() -> Path:
@@ -98,38 +94,43 @@ def find_user(email: str) -> dict[str, Any] | None:
     return None
 
 
-def bootstrap_admin() -> None:
-    """Ensure WOLTSPACE_ADMIN_EMAIL exists in users.json with wolts=['*']."""
-    if not is_enabled():
-        return
-    email = _admin_email()
-    if not email:
-        return
+def add_user(email: str, wolts: list[str] | None = None) -> dict:
+    """Add a user or return the existing entry. Idempotent."""
+    email = email.strip().lower()
     users = load_users()
     for u in users:
         if (u.get("email") or "").lower() == email:
-            # Promote: ensure wildcard
-            if u.get("wolts") != ["*"]:
-                u["wolts"] = ["*"]
-                save_users(users)
-            return
-    users.append({
-        "email": email,
-        "wolts": ["*"],
-        "added_at": int(time.time()),
-        "added_by": "bootstrap",
-    })
+            return u
+    entry = {"email": email, "wolts": wolts or [], "added_at": int(time.time())}
+    users.append(entry)
+    save_users(users)
+    return entry
+
+
+def grant_wolt(email: str, wolt_name: str) -> None:
+    """Append wolt_name to email's allow-list if not already there. Idempotent.
+
+    Creates the user entry if it doesn't exist (used by auto-onboarding on
+    wolt creation)."""
+    email = email.strip().lower()
+    users = load_users()
+    u = None
+    for entry in users:
+        if (entry.get("email") or "").lower() == email:
+            u = entry
+            break
+    if u is None:
+        u = {"email": email, "wolts": [], "added_at": int(time.time())}
+        users.append(u)
+    allow = u.get("wolts") or []
+    if "*" in allow or wolt_name in allow:
+        return
+    allow.append(wolt_name)
+    u["wolts"] = allow
     save_users(users)
 
 
 # --- Permission resolution ---
-
-def is_admin(email: str | None) -> bool:
-    if not email:
-        return False
-    u = find_user(email)
-    return bool(u and "*" in (u.get("wolts") or []))
-
 
 def can_access_wolt(email: str | None, wolt_name: str) -> bool:
     """Auth disabled → True. Otherwise: user must exist and the wolt must be
@@ -167,7 +168,7 @@ def can_access_app(email: str | None, app_name: str) -> bool:
 
 def visible_wolts(email: str | None, all_wolts: list[dict]) -> list[dict]:
     """Filter a list of wolt dicts (with 'dir' or 'name' key) to those the user can see."""
-    if not is_enabled() or is_admin(email):
+    if not is_enabled():
         return all_wolts
     if not email:
         return []

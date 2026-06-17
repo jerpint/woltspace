@@ -75,30 +75,44 @@ class TestUsersFile:
         assert auth_env.load_users() == []
 
 
-class TestBootstrapAdmin:
-    def test_creates_admin_entry(self, auth_env, monkeypatch):
-        monkeypatch.setenv("WOLTSPACE_ADMIN_EMAIL", "boss@example.com")
-        auth_env.bootstrap_admin()
-        u = auth_env.find_user("boss@example.com")
+class TestAddUser:
+    def test_add_new(self, auth_env):
+        auth_env.add_user("alice@x.com", ["foo"])
+        u = auth_env.find_user("alice@x.com")
         assert u is not None
-        assert u["wolts"] == ["*"]
+        assert u["wolts"] == ["foo"]
 
-    def test_promotes_existing_user(self, auth_env, monkeypatch):
-        auth_env.save_users([{"email": "boss@example.com", "wolts": ["foo"]}])
-        monkeypatch.setenv("WOLTSPACE_ADMIN_EMAIL", "boss@example.com")
-        auth_env.bootstrap_admin()
-        u = auth_env.find_user("boss@example.com")
-        assert u["wolts"] == ["*"]
+    def test_add_existing_returns_same(self, auth_env):
+        auth_env.add_user("alice@x.com", ["foo"])
+        auth_env.add_user("alice@x.com", ["bar"])
+        # Existing entry preserved, not overwritten
+        users = auth_env.load_users()
+        assert len(users) == 1
+        assert users[0]["wolts"] == ["foo"]
 
-    def test_noop_when_auth_disabled(self, auth_off, monkeypatch):
-        monkeypatch.setenv("WOLTSPACE_ADMIN_EMAIL", "boss@example.com")
-        auth_off.bootstrap_admin()
-        assert auth_off.load_users() == []
 
-    def test_noop_when_admin_email_unset(self, auth_env, monkeypatch):
-        monkeypatch.delenv("WOLTSPACE_ADMIN_EMAIL", raising=False)
-        auth_env.bootstrap_admin()
-        assert auth_env.load_users() == []
+class TestGrantWolt:
+    def test_grant_creates_entry_if_missing(self, auth_env):
+        auth_env.grant_wolt("alice@x.com", "foo")
+        u = auth_env.find_user("alice@x.com")
+        assert u is not None
+        assert u["wolts"] == ["foo"]
+
+    def test_grant_appends_to_existing(self, auth_env):
+        auth_env.save_users([{"email": "alice@x.com", "wolts": ["foo"]}])
+        auth_env.grant_wolt("alice@x.com", "bar")
+        u = auth_env.find_user("alice@x.com")
+        assert u["wolts"] == ["foo", "bar"]
+
+    def test_grant_is_idempotent(self, auth_env):
+        auth_env.grant_wolt("alice@x.com", "foo")
+        auth_env.grant_wolt("alice@x.com", "foo")
+        assert auth_env.find_user("alice@x.com")["wolts"] == ["foo"]
+
+    def test_grant_noop_on_wildcard(self, auth_env):
+        auth_env.save_users([{"email": "alice@x.com", "wolts": ["*"]}])
+        auth_env.grant_wolt("alice@x.com", "foo")
+        assert auth_env.find_user("alice@x.com")["wolts"] == ["*"]
 
 
 class TestPermissions:
@@ -110,24 +124,22 @@ class TestPermissions:
         assert auth_env.can_access_wolt("unknown@x.com", "foo") is False
         assert auth_env.can_access_wolt(None, "foo") is False
 
-    def test_auth_on_admin_sees_all(self, auth_env):
-        auth_env.save_users([{"email": "admin@x.com", "wolts": ["*"]}])
-        assert auth_env.can_access_wolt("admin@x.com", "anything") is True
-        assert auth_env.is_admin("admin@x.com") is True
+    def test_auth_on_wildcard_sees_all(self, auth_env):
+        auth_env.save_users([{"email": "alice@x.com", "wolts": ["*"]}])
+        assert auth_env.can_access_wolt("alice@x.com", "anything") is True
 
     def test_auth_on_user_scoped_to_allow_list(self, auth_env):
         auth_env.save_users([{"email": "u@x.com", "wolts": ["foo", "bar"]}])
         assert auth_env.can_access_wolt("u@x.com", "foo") is True
         assert auth_env.can_access_wolt("u@x.com", "bar") is True
         assert auth_env.can_access_wolt("u@x.com", "baz") is False
-        assert auth_env.is_admin("u@x.com") is False
 
 
 class TestVisibleWolts:
-    def test_admin_sees_all(self, auth_env):
-        auth_env.save_users([{"email": "admin@x.com", "wolts": ["*"]}])
+    def test_wildcard_sees_all(self, auth_env):
+        auth_env.save_users([{"email": "alice@x.com", "wolts": ["*"]}])
         wolts = [{"dir": "a"}, {"dir": "b"}, {"dir": "c"}]
-        assert auth_env.visible_wolts("admin@x.com", wolts) == wolts
+        assert auth_env.visible_wolts("alice@x.com", wolts) == wolts
 
     def test_user_filtered_to_allow_list(self, auth_env):
         auth_env.save_users([{"email": "u@x.com", "wolts": ["a", "c"]}])
@@ -188,7 +200,7 @@ class TestRequireHelpers:
         assert resp is not None
         assert resp.status_code == 403
 
-    def test_require_wolt_allows_admin(self, auth_env):
+    def test_require_wolt_allows_wildcard(self, auth_env):
         from types import SimpleNamespace
         auth_env.save_users([{"email": "a@x.com", "wolts": ["*"]}])
         req = SimpleNamespace(state=SimpleNamespace(user_email="a@x.com"))
