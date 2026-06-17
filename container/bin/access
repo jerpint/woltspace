@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""Manage woltspace user permissions — edits wolts/.space/auth/users.json.
+
+This is a convenience CLI. It is NOT a security boundary — anyone with shell
+access in the container can write the underlying file directly. Real
+enforcement requires filesystem-level isolation (issue #354). See HUMANS.md.
+
+Usage:
+  access list
+  access add EMAIL [WOLTS...]        — add a new user (optionally with allow-list)
+  access grant EMAIL WOLTS...        — add wolts to an existing user's allow-list
+  access revoke EMAIL WOLTS...       — remove wolts from a user's allow-list
+  access promote EMAIL               — make user admin (wolts=["*"])
+  access demote EMAIL                — remove admin (wolts=[]) — keeps the user
+  access remove EMAIL                — delete a user entry entirely
+  access check EMAIL WOLT            — does EMAIL have access to WOLT?
+"""
+
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+
+WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+USERS_FILE = WOLTS_DIR / ".space" / "auth" / "users.json"
+
+
+def load() -> list[dict]:
+    if not USERS_FILE.exists():
+        return []
+    try:
+        data = json.loads(USERS_FILE.read_text())
+        return data.get("users", []) if isinstance(data, dict) else []
+    except json.JSONDecodeError as e:
+        die(f"users.json is corrupt: {e}")
+
+
+def save(users: list[dict]) -> None:
+    USERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    USERS_FILE.write_text(json.dumps({"users": users}, indent=2) + "\n")
+
+
+def die(msg: str, code: int = 1) -> None:
+    print(f"error: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def find(users: list[dict], email: str) -> dict | None:
+    email = email.lower()
+    for u in users:
+        if (u.get("email") or "").lower() == email:
+            return u
+    return None
+
+
+def fmt_user(u: dict) -> str:
+    wolts = u.get("wolts") or []
+    role = "admin" if "*" in wolts else "user"
+    allow = "all" if "*" in wolts else (", ".join(wolts) if wolts else "(none)")
+    return f"  {u['email']:<35} {role:<6}  wolts: {allow}"
+
+
+# --- Subcommands ---
+
+def cmd_list(_args: list[str]) -> None:
+    users = load()
+    if not users:
+        print("(no users — set WOLTSPACE_ADMIN_EMAIL and restart the server to bootstrap)")
+        return
+    print(f"users ({len(users)}):")
+    for u in users:
+        print(fmt_user(u))
+
+
+def cmd_add(args: list[str]) -> None:
+    if not args:
+        die("usage: access add EMAIL [WOLTS...]")
+    email = args[0].strip().lower()
+    wolts = list(args[1:])
+    users = load()
+    if find(users, email):
+        die(f"{email} already exists — use 'grant' to add wolts or 'promote' for admin")
+    users.append({
+        "email": email,
+        "wolts": wolts,
+        "added_at": int(time.time()),
+    })
+    save(users)
+    print(f"added {email} with wolts: {wolts or '(none)'}")
+
+
+def cmd_grant(args: list[str]) -> None:
+    if len(args) < 2:
+        die("usage: access grant EMAIL WOLTS...")
+    email = args[0].strip().lower()
+    new_wolts = args[1:]
+    users = load()
+    u = find(users, email)
+    if not u:
+        die(f"no such user: {email}. use 'add' to create.")
+    allow = u.get("wolts") or []
+    if "*" in allow:
+        die(f"{email} is admin already — has access to everything")
+    for w in new_wolts:
+        if w not in allow:
+            allow.append(w)
+    u["wolts"] = allow
+    save(users)
+    print(f"granted {email}: {', '.join(new_wolts)}")
+    print(fmt_user(u))
+
+
+def cmd_revoke(args: list[str]) -> None:
+    if len(args) < 2:
+        die("usage: access revoke EMAIL WOLTS...")
+    email = args[0].strip().lower()
+    remove = set(args[1:])
+    users = load()
+    u = find(users, email)
+    if not u:
+        die(f"no such user: {email}")
+    allow = u.get("wolts") or []
+    if "*" in allow:
+        die(f"{email} is admin — use 'demote' instead")
+    u["wolts"] = [w for w in allow if w not in remove]
+    save(users)
+    print(f"revoked from {email}: {', '.join(remove)}")
+    print(fmt_user(u))
+
+
+def cmd_promote(args: list[str]) -> None:
+    if not args:
+        die("usage: access promote EMAIL")
+    email = args[0].strip().lower()
+    users = load()
+    u = find(users, email)
+    if not u:
+        u = {"email": email, "added_at": int(time.time())}
+        users.append(u)
+    u["wolts"] = ["*"]
+    save(users)
+    print(f"{email} → admin (wolts=['*'])")
+
+
+def cmd_demote(args: list[str]) -> None:
+    if not args:
+        die("usage: access demote EMAIL")
+    email = args[0].strip().lower()
+    users = load()
+    u = find(users, email)
+    if not u:
+        die(f"no such user: {email}")
+    u["wolts"] = []
+    save(users)
+    print(f"{email} → demoted (wolts=[]). add wolts with 'access grant'.")
+
+
+def cmd_remove(args: list[str]) -> None:
+    if not args:
+        die("usage: access remove EMAIL")
+    email = args[0].strip().lower()
+    users = load()
+    before = len(users)
+    users = [u for u in users if (u.get("email") or "").lower() != email]
+    if len(users) == before:
+        die(f"no such user: {email}")
+    save(users)
+    print(f"removed {email}")
+
+
+def cmd_check(args: list[str]) -> None:
+    if len(args) < 2:
+        die("usage: access check EMAIL WOLT")
+    email = args[0].strip().lower()
+    wolt = args[1]
+    users = load()
+    u = find(users, email)
+    if not u:
+        print(f"{email} → NOT IN users.json (denied)")
+        sys.exit(2)
+    allow = u.get("wolts") or []
+    if "*" in allow or wolt in allow:
+        print(f"{email} → ALLOWED for {wolt}")
+        sys.exit(0)
+    print(f"{email} → DENIED for {wolt} (allow-list: {allow})")
+    sys.exit(2)
+
+
+COMMANDS = {
+    "list": cmd_list,
+    "ls": cmd_list,
+    "add": cmd_add,
+    "grant": cmd_grant,
+    "revoke": cmd_revoke,
+    "promote": cmd_promote,
+    "demote": cmd_demote,
+    "remove": cmd_remove,
+    "rm": cmd_remove,
+    "check": cmd_check,
+}
+
+
+def main() -> None:
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
+        print(__doc__)
+        sys.exit(0)
+    cmd, *args = sys.argv[1:]
+    fn = COMMANDS.get(cmd)
+    if not fn:
+        die(f"unknown command: {cmd}. try: {', '.join(sorted(set(COMMANDS.keys())))}")
+    fn(args)
+
+
+if __name__ == "__main__":
+    main()
