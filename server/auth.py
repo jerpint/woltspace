@@ -39,9 +39,34 @@ AUTH_HEADER = "Cf-Access-Jwt-Assertion"
 
 # --- Mode + config ---
 
+def _env(key: str) -> str:
+    """Read env var. Falls back to the shared wolts/.env so auth settings
+    can be flipped without restarting the server process."""
+    v = os.environ.get(key)
+    if v:
+        return v
+    # Fallback: parse the shared wolts root .env directly. Auth config lives
+    # here (next to CLOUDFLARE_* etc) and may have been edited after server
+    # boot.
+    try:
+        wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+        env_file = wolts_dir / ".env"
+        if env_file.exists():
+            for line in env_file.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, val = line.partition("=")
+                if k.strip() == key:
+                    return val.strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return ""
+
+
 def auth_mode() -> str:
     """Return 'cloudflare' or 'none' (default)."""
-    return (os.environ.get("WOLTSPACE_AUTH") or "none").strip().lower()
+    return (_env("WOLTSPACE_AUTH") or "none").strip().lower()
 
 
 def is_enabled() -> bool:
@@ -50,12 +75,12 @@ def is_enabled() -> bool:
 
 def _team_domain() -> str:
     """e.g. 'jerpint.cloudflareaccess.com'. Set via env."""
-    return (os.environ.get("WOLTSPACE_CF_TEAM_DOMAIN") or "").strip()
+    return _env("WOLTSPACE_CF_TEAM_DOMAIN").strip()
 
 
 def _aud_tag() -> str:
     """The Application AUD tag for the lodge Access app. Set via env."""
-    return (os.environ.get("WOLTSPACE_CF_AUD") or "").strip()
+    return _env("WOLTSPACE_CF_AUD").strip()
 
 
 # --- users.json ---

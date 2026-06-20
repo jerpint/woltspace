@@ -41,8 +41,11 @@ def auth_off(tmp_path, monkeypatch):
 
 
 class TestAuthMode:
-    def test_default_is_none(self, monkeypatch):
+    def test_default_is_none(self, tmp_path, monkeypatch):
         monkeypatch.delenv("WOLTSPACE_AUTH", raising=False)
+        # Point WOLTS_DIR at an empty tmp so the .env fallback can't see
+        # the real /workspace/wolts/.env where WOLTSPACE_AUTH may be set.
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
         import server.auth as auth
         import importlib
         importlib.reload(auth)
