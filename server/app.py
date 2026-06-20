@@ -189,8 +189,16 @@ async def auth_middleware(request: Request, call_next):
     In auth=none mode this is a no-op. In auth=cloudflare mode the email is
     extracted (None if missing/invalid); route guards then decide what to do
     with it.
+
+    Loopback safety net: in-container localhost callers have no JWT (they
+    didn't traverse the CF edge). Treat them as a trusted "__local__" user
+    with wildcard access so the operator can never lock themselves out via
+    direct localhost access (desktop app, debugging, etc).
     """
-    request.state.user_email = auth_mod.extract_email(request)
+    email = auth_mod.extract_email(request)
+    if not email and auth_mod.is_enabled() and auth_mod.is_loopback(request):
+        email = "__local__"
+    request.state.user_email = email
     return await call_next(request)
 
 def _extract_app_subdomain(host_header: str) -> str | None:
@@ -423,6 +431,41 @@ async def _serve_platform_file(filename: str) -> Response | None:
 # ============================================================
 
 # jerpint: good idea, but eventually should be tied to version of woltspace package not just plaintext
+@app.get("/auth/debug")
+async def auth_debug(request: Request):
+    """Diagnose what the auth middleware sees on this request.
+
+    Only callable from in-container loopback (127.0.0.1). Don't expose externally.
+    """
+    if not auth_mod.is_loopback(request):
+        return JSONResponse({"error": "loopback only"}, status_code=403)
+    return {
+        "auth_mode": auth_mod.auth_mode(),
+        "team_domain": auth_mod._team_domain() or None,
+        "aud_set": bool(auth_mod._aud_tag()),
+        "aud_tail": auth_mod._aud_tag()[-8:] if auth_mod._aud_tag() else None,
+        "request_email": auth_mod.user_email(request),
+        "client_host": request.client.host if request.client else None,
+        "has_jwt_header": bool(
+            request.headers.get(auth_mod.AUTH_HEADER)
+            or request.headers.get(auth_mod.AUTH_HEADER.lower())
+        ),
+        "users_count": len(auth_mod.load_users()),
+        "users_emails": [u.get("email") for u in auth_mod.load_users()],
+        "last_auth_error": auth_mod.last_error() or None,
+        "pyjwt_installed": _pyjwt_available(),
+    }
+
+
+def _pyjwt_available() -> bool:
+    try:
+        import jwt as _jwt  # noqa: F401
+        from jwt.algorithms import RSAAlgorithm  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 @app.get("/version")
 async def version():
     return PlainTextResponse("woltspace-v1")

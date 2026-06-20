@@ -11,4 +11,5 @@ dependencies = [
     "python-dotenv",
     "livereload",
     "jinja2",
+    "PyJWT[crypto]",
 ]

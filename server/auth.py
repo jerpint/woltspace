@@ -159,11 +159,17 @@ def grant_wolt(email: str, wolt_name: str) -> None:
 
 def can_access_wolt(email: str | None, wolt_name: str) -> bool:
     """Auth disabled → True. Otherwise: user must exist and the wolt must be
-    in their list (or they hold the wildcard)."""
+    in their list (or they hold the wildcard).
+
+    The synthetic '__local__' email is granted full access — see is_loopback
+    in the middleware. This is the in-container localhost safety net.
+    """
     if not is_enabled():
         return True
     if not email:
         return False
+    if email == "__local__":
+        return True
     u = find_user(email)
     if not u:
         return False
@@ -197,6 +203,8 @@ def visible_wolts(email: str | None, all_wolts: list[dict]) -> list[dict]:
         return all_wolts
     if not email:
         return []
+    if email == "__local__":
+        return all_wolts
     u = find_user(email)
     if not u:
         return []
@@ -234,6 +242,21 @@ def _fetch_jwks() -> list[dict] | None:
         return _jwks_cache["keys"]  # fall back to stale cache if any
 
 
+_last_error: str = ""
+
+
+def last_error() -> str:
+    """Most recent JWT validation failure (for /auth/debug endpoint)."""
+    return _last_error
+
+
+def _fail(msg: str) -> None:
+    """Record an auth failure loudly — to stderr and to last_error()."""
+    global _last_error
+    _last_error = msg
+    print(f"[auth] {msg}", flush=True)
+
+
 def extract_email(request: Request) -> str | None:
     """Validate the CF Access JWT on the request and return the email claim.
 
@@ -247,23 +270,26 @@ def extract_email(request: Request) -> str | None:
     try:
         import jwt as pyjwt  # PyJWT[crypto]
         from jwt.algorithms import RSAAlgorithm
-    except ImportError:
-        print("[auth] PyJWT not installed — cannot validate JWT")
+    except ImportError as e:
+        _fail(f"PyJWT not installed — cannot validate JWT ({e}). Run 'uv sync --project server' or install PyJWT[crypto].")
         return None
 
     keys = _fetch_jwks()
     if not keys:
+        _fail(f"JWKS empty — team_domain={_team_domain() or '<UNSET>'}")
         return None
 
     aud = _aud_tag()
 
     try:
         unverified = pyjwt.get_unverified_header(token)
-    except Exception:
+    except Exception as e:
+        _fail(f"JWT header parse failed: {e}")
         return None
     kid = unverified.get("kid")
     key_data = next((k for k in keys if k.get("kid") == kid), None)
     if not key_data:
+        _fail(f"JWT kid={kid!r} not in JWKS (have {[k.get('kid') for k in keys]})")
         return None
 
     try:
@@ -276,11 +302,28 @@ def extract_email(request: Request) -> str | None:
             options={"verify_aud": bool(aud)},
         )
     except Exception as e:
-        print(f"[auth] JWT decode failed: {e}")
+        _fail(f"JWT decode failed: {e!r} aud_set={bool(aud)} aud_tail={aud[-8:] if aud else ''}")
         return None
 
     email = (claims.get("email") or "").strip().lower()
     return email or None
+
+
+def is_loopback(request: Request) -> bool:
+    """True if the request originated from in-container loopback.
+
+    In auth=cloudflare mode, in-container localhost callers don't go through
+    Cloudflare Access — they have no JWT. Trust them as a safety net so the
+    operator can never lock themselves out of their own machine.
+
+    Threat model: the OS already protects against unauthorized in-container
+    access. When #354 (filesystem isolation) lands, this assumption gets
+    stronger; for now, it just codifies what was already true.
+    """
+    client = request.client
+    if not client:
+        return False
+    return client.host in ("127.0.0.1", "::1", "localhost")
 
 
 # --- HTTP helpers ---

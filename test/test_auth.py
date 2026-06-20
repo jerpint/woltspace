@@ -160,6 +160,96 @@ class TestVisibleWolts:
         assert auth_off.visible_wolts(None, wolts) == wolts
 
 
+class TestJWTRoundtrip:
+    """End-to-end: self-sign a JWT with a known key, serve it as the
+    'JWKS' response, and verify the middleware decodes the email correctly.
+
+    This catches bugs in the actual decode path that 'garbage in, None out'
+    tests miss — e.g. PyJWT API drift, audience claim shape, kid lookup.
+    """
+
+    def test_valid_jwt_extracts_email(self, auth_env, monkeypatch):
+        try:
+            import jwt as pyjwt
+            from jwt.algorithms import RSAAlgorithm
+        except ImportError:
+            import pytest
+            pytest.skip("PyJWT[crypto] not installed")
+
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.primitives import serialization
+        import json as _json
+
+        # Generate an ephemeral RSA keypair for this test
+        privkey = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        pubkey = privkey.public_key()
+        priv_pem = privkey.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        jwk = _json.loads(RSAAlgorithm.to_jwk(pubkey))
+        jwk["kid"] = "test-kid-1"
+
+        # Pre-seed the JWKS cache so the middleware doesn't hit the network
+        auth_env._jwks_cache["keys"] = [jwk]
+        auth_env._jwks_cache["fetched_at"] = 9_999_999_999
+
+        monkeypatch.setenv("WOLTSPACE_CF_TEAM_DOMAIN", "test.cloudflareaccess.com")
+        monkeypatch.setenv("WOLTSPACE_CF_AUD", "test-aud")
+
+        token = pyjwt.encode(
+            {"email": "alice@x.com", "aud": "test-aud", "iss": "test"},
+            priv_pem,
+            algorithm="RS256",
+            headers={"kid": "test-kid-1"},
+        )
+
+        class FakeReq:
+            headers = {"Cf-Access-Jwt-Assertion": token}
+
+        result = auth_env.extract_email(FakeReq())
+        assert result == "alice@x.com"
+
+    def test_wrong_audience_rejected(self, auth_env, monkeypatch):
+        try:
+            import jwt as pyjwt
+            from jwt.algorithms import RSAAlgorithm
+        except ImportError:
+            import pytest
+            pytest.skip("PyJWT[crypto] not installed")
+
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.primitives import serialization
+        import json as _json
+
+        privkey = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        priv_pem = privkey.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        jwk = _json.loads(RSAAlgorithm.to_jwk(privkey.public_key()))
+        jwk["kid"] = "test-kid-1"
+
+        auth_env._jwks_cache["keys"] = [jwk]
+        auth_env._jwks_cache["fetched_at"] = 9_999_999_999
+        monkeypatch.setenv("WOLTSPACE_CF_TEAM_DOMAIN", "test.cloudflareaccess.com")
+        monkeypatch.setenv("WOLTSPACE_CF_AUD", "expected-aud")
+
+        token = pyjwt.encode(
+            {"email": "alice@x.com", "aud": "WRONG-aud"},
+            priv_pem,
+            algorithm="RS256",
+            headers={"kid": "test-kid-1"},
+        )
+
+        class FakeReq:
+            headers = {"Cf-Access-Jwt-Assertion": token}
+
+        assert auth_env.extract_email(FakeReq()) is None
+
+
 class TestJWTExtraction:
     def test_extract_none_when_auth_disabled(self, auth_off):
         from fastapi import Request
@@ -188,6 +278,30 @@ class TestJWTExtraction:
         class FakeReq:
             headers = {"Cf-Access-Jwt-Assertion": "not.a.real.jwt"}
         assert auth_env.extract_email(FakeReq()) is None
+
+
+class TestLocalLoopback:
+    def test_local_pseudo_user_can_access_anything(self, auth_env):
+        assert auth_env.can_access_wolt("__local__", "any-wolt") is True
+
+    def test_local_pseudo_user_sees_all_wolts(self, auth_env):
+        wolts = [{"dir": "a"}, {"dir": "b"}]
+        assert auth_env.visible_wolts("__local__", wolts) == wolts
+
+    def test_is_loopback_127(self, auth_env):
+        from types import SimpleNamespace
+        req = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+        assert auth_env.is_loopback(req) is True
+
+    def test_is_loopback_external(self, auth_env):
+        from types import SimpleNamespace
+        req = SimpleNamespace(client=SimpleNamespace(host="203.0.113.5"))
+        assert auth_env.is_loopback(req) is False
+
+    def test_is_loopback_no_client(self, auth_env):
+        from types import SimpleNamespace
+        req = SimpleNamespace(client=None)
+        assert auth_env.is_loopback(req) is False
 
 
 class TestRequireHelpers:
