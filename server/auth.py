@@ -372,3 +372,33 @@ def require_app(request: Request, app_name: str) -> JSONResponse | None:
 
 def user_email(request: Request) -> str | None:
     return getattr(request.state, "user_email", None)
+
+
+# --- WebSocket auth ---
+# The @app.middleware("http") hook does NOT run for websocket connections, so
+# request.state.user_email is never populated for them. These helpers re-derive
+# the caller's identity directly from the upgrade request's headers/client
+# (extract_email + is_loopback only touch .headers / .client, which WebSocket
+# objects also expose).
+
+def ws_email(ws) -> str | None:
+    """Resolve the caller email for a websocket upgrade, applying the same
+    loopback safety net as the http middleware."""
+    email = extract_email(ws)
+    if not email and is_enabled() and is_loopback(ws):
+        return "__local__"
+    return email
+
+
+def ws_can_access_wolt(ws, wolt_name: str) -> bool:
+    """True if the websocket caller may access wolt_name (or auth disabled)."""
+    if not is_enabled():
+        return True
+    return can_access_wolt(ws_email(ws), wolt_name)
+
+
+def wolt_from_session(session_name: str) -> str:
+    """Extract the wolt name from a session slug ({wolt}-{adj}-{noun}-{hex})."""
+    if session_name.count("-") >= 3:
+        return session_name.rsplit("-", 3)[0]
+    return session_name

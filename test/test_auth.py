@@ -304,6 +304,38 @@ class TestLocalLoopback:
         assert auth_env.is_loopback(req) is False
 
 
+class TestWebSocketAuth:
+    def test_wolt_from_session(self, auth_env):
+        assert auth_env.wolt_from_session("uxwolt-wild-thicket-14076f") == "uxwolt"
+        assert auth_env.wolt_from_session("neowolt-keen-willow-ea4fff") == "neowolt"
+        assert auth_env.wolt_from_session("main") == "main"
+
+    def test_ws_email_loopback(self, auth_env):
+        from types import SimpleNamespace
+        ws = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
+        assert auth_env.ws_email(ws) == "__local__"
+
+    def test_ws_email_external_no_jwt(self, auth_env):
+        from types import SimpleNamespace
+        ws = SimpleNamespace(headers={}, client=SimpleNamespace(host="203.0.113.5"))
+        assert auth_env.ws_email(ws) is None
+
+    def test_ws_can_access_wolt_loopback(self, auth_env):
+        from types import SimpleNamespace
+        ws = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
+        assert auth_env.ws_can_access_wolt(ws, "any-wolt") is True
+
+    def test_ws_can_access_wolt_external_denied(self, auth_env):
+        from types import SimpleNamespace
+        ws = SimpleNamespace(headers={}, client=SimpleNamespace(host="203.0.113.5"))
+        assert auth_env.ws_can_access_wolt(ws, "any-wolt") is False
+
+    def test_ws_can_access_wolt_disabled(self, auth_off):
+        from types import SimpleNamespace
+        ws = SimpleNamespace(headers={}, client=SimpleNamespace(host="203.0.113.5"))
+        assert auth_off.ws_can_access_wolt(ws, "any-wolt") is True
+
+
 class TestRequireHelpers:
     def test_require_wolt_passes_when_disabled(self, auth_off):
         from types import SimpleNamespace

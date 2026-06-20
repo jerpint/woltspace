@@ -1163,6 +1163,10 @@ async def site_livereload_ws(wolt_name: str, ws: WebSocket):
     """Watch a wolt's site dir for changes and push reload via WebSocket."""
     from watchfiles import awatch
 
+    if auth_mod.is_enabled() and not auth_mod.ws_can_access_wolt(ws, wolt_name):
+        await ws.close(code=1008)
+        return
+
     sdir = WOLTS_DIR / wolt_name / "wolt" / "site"
     if not sdir.exists():
         await ws.close()
@@ -1191,6 +1195,8 @@ async def serve_app(app_name: str, request: Request, path: str = ""):
     """
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", app_name):
         return JSONResponse({"error": "invalid app name"}, status_code=400)
+    if (denied := auth_mod.require_app(request, app_name)) is not None:
+        return denied
     adir = app_dir(app_name)
     if not adir.exists():
         return HTMLResponse(_app_not_found(app_name), status_code=404)
@@ -1314,6 +1320,21 @@ async def tui_proxy(ws: WebSocket):
     import websockets
 
     session = ws.query_params.get("session", "main")
+
+    # Gate terminal attach by the session's wolt. The http auth middleware
+    # doesn't run for websockets, so check here directly. "main" is the
+    # platform shell — loopback only.
+    if auth_mod.is_enabled():
+        if session == "main":
+            if not auth_mod.is_loopback(ws):
+                await ws.close(code=1008)
+                return
+        else:
+            wolt = auth_mod.wolt_from_session(session)
+            if not auth_mod.ws_can_access_wolt(ws, wolt):
+                await ws.close(code=1008)
+                return
+
     await ws.accept()
 
     try:
