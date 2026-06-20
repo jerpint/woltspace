@@ -309,21 +309,52 @@ def extract_email(request: Request) -> str | None:
     return email or None
 
 
+def _trust_local_net() -> bool:
+    """WOLTSPACE_AUTH_TRUST_LOCAL — opt-in to trust private-network callers.
+
+    OFF by default. See is_loopback for the security tradeoff."""
+    return _env("WOLTSPACE_AUTH_TRUST_LOCAL").strip().lower() in ("1", "true", "yes", "on")
+
+
 def is_loopback(request: Request) -> bool:
-    """True if the request originated from in-container loopback.
+    """True if the request should be trusted as a local/in-container caller.
 
-    In auth=cloudflare mode, in-container localhost callers don't go through
-    Cloudflare Access — they have no JWT. Trust them as a safety net so the
-    operator can never lock themselves out of their own machine.
+    In auth=cloudflare mode, callers that didn't traverse the Cloudflare edge
+    have no JWT. We trust certain local sources so the operator (and
+    in-container tools like the notify/access CLIs) aren't locked out.
 
-    Threat model: the OS already protects against unauthorized in-container
-    access. When #354 (filesystem isolation) lands, this assumption gets
-    stronger; for now, it just codifies what was already true.
+    Two tiers:
+
+    - **Loopback (always trusted):** 127.0.0.1 / ::1. These are genuine
+      in-container calls (notify, push-view, access CLI). Safe unconditionally.
+
+    - **Private network (opt-in via WOLTSPACE_AUTH_TRUST_LOCAL):** When the
+      container publishes its port with `-p 7777:7777` (binds 0.0.0.0), the
+      host browser's traffic arrives as the Docker bridge gateway
+      (e.g. 172.17.0.1), NOT 127.0.0.1 — so plain localhost access would
+      otherwise show nothing. Enabling the flag also trusts RFC1918 private
+      addresses, restoring localhost convenience.
+
+      TRADEOFF: with 0.0.0.0 binding, ANY device on the same LAN that can
+      reach the published port also appears as a private address and is
+      indistinguishable from the operator's own browser. So enabling this
+      flag grants unauthenticated full access to anyone on your local
+      network. Only enable it on a trusted network. See HUMANS.md.
     """
     client = request.client
     if not client:
         return False
-    return client.host in ("127.0.0.1", "::1", "localhost")
+    host = client.host
+    if host in ("127.0.0.1", "::1", "localhost"):
+        return True
+    if _trust_local_net():
+        try:
+            import ipaddress
+            ip = ipaddress.ip_address(host)
+            return ip.is_private or ip.is_loopback
+        except ValueError:
+            return False
+    return False
 
 
 # --- HTTP helpers ---

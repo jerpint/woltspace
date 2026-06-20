@@ -51,6 +51,16 @@ Visit the lodge URL. Cloudflare Access prompts for OTP email login. The JWT land
 
 If `WOLTSPACE_AUTH=cloudflare` is set but the user isn't in `users.json`, they get a 403 "access denied" — that's why step 1 matters.
 
+### 5. (Optional) localhost access
+
+With auth on, `localhost:7777` shows no wolts — there's no Cloudflare JWT on direct local requests. To use plain localhost in your browser while auth is on, add:
+
+```bash
+WOLTSPACE_AUTH_TRUST_LOCAL=true
+```
+
+⚠️ This grants unauthenticated full access to anyone on your LAN who can reach the published port (Docker can't distinguish your browser from another device on the network). Only enable on a trusted network. Default OFF. In-container CLIs (notify, access, push-view) always work regardless.
+
 ---
 
 ## Flow 2 — Day-to-day user management

@@ -295,13 +295,40 @@ class TestLocalLoopback:
 
     def test_is_loopback_external(self, auth_env):
         from types import SimpleNamespace
-        req = SimpleNamespace(client=SimpleNamespace(host="203.0.113.5"))
+        req = SimpleNamespace(client=SimpleNamespace(host="8.8.8.8"))
         assert auth_env.is_loopback(req) is False
 
     def test_is_loopback_no_client(self, auth_env):
         from types import SimpleNamespace
         req = SimpleNamespace(client=None)
         assert auth_env.is_loopback(req) is False
+
+    def test_private_net_denied_by_default(self, auth_env, monkeypatch):
+        # Docker bridge gateway — host browser traffic. Denied unless flag set.
+        monkeypatch.delenv("WOLTSPACE_AUTH_TRUST_LOCAL", raising=False)
+        from types import SimpleNamespace
+        req = SimpleNamespace(client=SimpleNamespace(host="172.17.0.1"))
+        assert auth_env.is_loopback(req) is False
+
+    def test_private_net_trusted_when_flag_on(self, auth_env, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_AUTH_TRUST_LOCAL", "true")
+        from types import SimpleNamespace
+        # Docker gateway + other RFC1918 ranges all trusted
+        for host in ("172.17.0.1", "192.168.1.50", "10.0.0.3"):
+            req = SimpleNamespace(client=SimpleNamespace(host=host))
+            assert auth_env.is_loopback(req) is True, host
+
+    def test_public_ip_never_trusted_even_with_flag(self, auth_env, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_AUTH_TRUST_LOCAL", "true")
+        from types import SimpleNamespace
+        req = SimpleNamespace(client=SimpleNamespace(host="8.8.8.8"))
+        assert auth_env.is_loopback(req) is False
+
+    def test_loopback_always_trusted_regardless_of_flag(self, auth_env, monkeypatch):
+        monkeypatch.delenv("WOLTSPACE_AUTH_TRUST_LOCAL", raising=False)
+        from types import SimpleNamespace
+        req = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+        assert auth_env.is_loopback(req) is True
 
 
 class TestWebSocketAuth:

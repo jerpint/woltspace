@@ -217,6 +217,38 @@ access from their keeper wolt. A user can also create new wolts via the
 lodge UI — when they do, the new wolt is auto-appended to their own
 allow-list (self-onboarding).
 
+### Accessing via localhost (WOLTSPACE_AUTH_TRUST_LOCAL)
+
+When auth is on, requests must carry a Cloudflare Access JWT — which only
+exists for traffic that came through the tunnel (`yourname.woltspace.com`).
+Hitting `localhost:7777` directly has **no JWT**, so by default you'll see
+no wolts. That's the secure default: no Cloudflare login = no identity.
+
+In-container tools (the `notify`, `push-view`, `access` CLIs) still work —
+they originate from genuine loopback (127.0.0.1) and are always trusted.
+
+If you want plain `localhost` browser access to work while auth is on, set:
+
+```bash
+WOLTSPACE_AUTH_TRUST_LOCAL=true
+```
+
+This trusts callers on the private network (including your host browser,
+which Docker presents as the bridge gateway address) and grants them full
+wildcard access without a JWT.
+
+> ⚠️ **Only enable this on a network you trust.** The container publishes
+> its port with `-p 7777:7777` (binds `0.0.0.0`), so the port is reachable
+> from your whole LAN — and every such caller appears as the same private
+> address inside the container. There is no way to distinguish your own
+> browser from another device on the network. With this flag on, **anyone
+> who can reach `your-machine-ip:7777` on your LAN gets unauthenticated
+> full access.** Leave it off if your machine is on shared/untrusted wifi;
+> use the tunnel URL instead.
+
+Default is OFF. Remote users always go through the tunnel + Cloudflare
+Access regardless of this setting.
+
 ### Scope of enforcement
 
 This is application-layer. The lodge UI shows only what the user is
