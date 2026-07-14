@@ -49,9 +49,9 @@ class TestResumeSessionClaudeRunning:
     """Path 1: Claude is running in tmux — send keys directly."""
 
     @patch("sessions.subprocess.run")
-    @patch("sessions._session_has_claude_process", return_value=True)
+    @patch("sessions.session_has_agent_process", return_value=True)
     @patch("sessions._tmux_alive", return_value=True)
-    def test_pastes_when_claude_running(self, mock_alive, mock_claude, mock_run, wolt_env):
+    def test_pastes_when_claude_running(self, mock_alive, mock_agent, mock_run, wolt_env):
         from sessions import resume_session
         result = resume_session("testwolt-chompy-dam-abc123", "fix the bug")
 
@@ -62,9 +62,9 @@ class TestResumeSessionClaudeRunning:
         assert len(buf_calls) == 2
 
     @patch("sessions.subprocess.run")
-    @patch("sessions._session_has_claude_process", return_value=True)
+    @patch("sessions.session_has_agent_process", return_value=True)
     @patch("sessions._tmux_alive", return_value=True)
-    def test_no_keys_without_prompt(self, mock_alive, mock_claude, mock_run, wolt_env):
+    def test_no_keys_without_prompt(self, mock_alive, mock_agent, mock_run, wolt_env):
         from sessions import resume_session
         result = resume_session("testwolt-chompy-dam-abc123", "")
 
@@ -74,9 +74,9 @@ class TestResumeSessionClaudeRunning:
         assert len(buf_calls) == 0
 
     @patch("sessions.subprocess.run")
-    @patch("sessions._session_has_claude_process", return_value=True)
+    @patch("sessions.session_has_agent_process", return_value=True)
     @patch("sessions._tmux_alive", return_value=True)
-    def test_updates_status_to_running(self, mock_alive, mock_claude, mock_run, wolt_env):
+    def test_updates_status_to_running(self, mock_alive, mock_agent, mock_run, wolt_env):
         from sessions import resume_session, SessionRegistry
         resume_session("testwolt-chompy-dam-abc123", "hello")
 
@@ -89,9 +89,9 @@ class TestResumeSessionClaudeExited:
     """Path 2: Tmux alive but claude exited — restart with --resume."""
 
     @patch("sessions.subprocess.run")
-    @patch("sessions._session_has_claude_process", return_value=False)
+    @patch("sessions.session_has_agent_process", return_value=False)
     @patch("sessions._tmux_alive", return_value=True)
-    def test_revives_claude_with_resume(self, mock_alive, mock_claude, mock_run, wolt_env):
+    def test_revives_claude_with_resume(self, mock_alive, mock_agent, mock_run, wolt_env):
         from sessions import resume_session
         result = resume_session("testwolt-chompy-dam-abc123", "continue working")
 
@@ -110,9 +110,9 @@ class TestResumeSessionTmuxDead:
     """Path 3: Tmux is dead — create new tmux session with --resume."""
 
     @patch("sessions.subprocess.run")
-    @patch("sessions._session_has_claude_process", return_value=False)
+    @patch("sessions.session_has_agent_process", return_value=False)
     @patch("sessions._tmux_alive", return_value=False)
-    def test_respawns_tmux_with_resume(self, mock_alive, mock_claude, mock_run, wolt_env):
+    def test_respawns_tmux_with_resume(self, mock_alive, mock_agent, mock_run, wolt_env):
         from sessions import resume_session
         result = resume_session("testwolt-chompy-dam-abc123", "pick up where we left off")
 

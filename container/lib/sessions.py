@@ -27,13 +27,20 @@ from paths import (
     tunnel_state_file,
     space_dir,
 )
+from harnesses import (
+    HARNESSES,
+    DEFAULT_HARNESS,
+    resolve_harness,
+    creature_model,
+    build_command,
+    session_has_agent_process,
+)
 from sites import start_site
 
 _UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 RUN_SESSION_SCRIPT = Path("/workspace/woltspace/container/bin/run-session.sh")
-WCLAUDE = "/workspace/woltspace/container/bin/wclaude"
 
 
 class SessionRegistry:
@@ -90,6 +97,7 @@ class SessionRegistry:
         wolt: str = "",
         creature: str = "",
         model: str = "",
+        harness: str = "",
         dir: str = "",
         app: str = "",
         title: str = "",
@@ -109,6 +117,10 @@ class SessionRegistry:
             "wolt": wolt,
             "creature": creature,
             "model": model,
+            # harness the session was born on — fixed for life (resume must use
+            # the same harness; conversation state doesn't transfer). Missing
+            # field on old sessions means claude.
+            "harness": harness or DEFAULT_HARNESS,
             "app": app,
             "status": "running",
             "created_at": now,
@@ -409,13 +421,9 @@ SESSION_NOUNS = [
     "oak", "elm", "pine", "cedar", "maple", "willow", "bog", "ridge", "brook",
 ]
 
-CREATURE_MODELS = {
-    "raccoon": "opus",
-    "beaver": "sonnet",
-    "otter": "haiku",
-    "rodent": "opus",  # legacy type — treated as raccoon
-    "wolf": "sonnet",
-}
+# Backwards-compat alias — creature→model mapping now lives per-harness in
+# harnesses.py. This is the claude mapping (bot/core.py and tests import it).
+CREATURE_MODELS = HARNESSES[DEFAULT_HARNESS]["models"]
 
 
 def session_name(prefix: str) -> str:
@@ -455,14 +463,17 @@ def start_session(
     creature: str = "",
     routing: dict = None,
     app: str = "",
+    harness: str = "",
 ) -> dict:
-    """Start a Claude Code session for a specific wolt.
+    """Start an agent session for a specific wolt.
 
     wolt: required — the target wolt name (e.g. "neowolt", "UXwolt").
     prompt: opening message for the session.
     creature: optional "raccoon"/"beaver"/"otter" to pick the model.
     routing: adapter routing info (adapter, chat_id, etc.) for notifications.
     app: optional app name — session runs in wolt/apps/{name}/.
+    harness: optional harness override (per-session). Falls back to the wolt's
+        wolt.json "harness" field, then the platform default (claude).
 
     Returns dict with session info: name, url, wolt, and optionally app/creature/model.
     Raises ValueError if the wolt directory doesn't exist.
@@ -472,6 +483,7 @@ def start_session(
         raise ValueError(f"wolt '{wolt}' not found at {target_dir}")
 
     # Always derive creature from the wolt's type — never let the caller override this.
+    # The wolt.json may also carry a default harness for new sessions.
     wolt_json_path = target_dir / "wolt" / "wolt.json"
     if wolt_json_path.exists():
         try:
@@ -479,8 +491,11 @@ def start_session(
             wolt_type = wolt_data.get("type", "")
             if wolt_type in CREATURE_MODELS:
                 creature = wolt_type
+            if not harness:
+                harness = wolt_data.get("harness", "")
         except (json.JSONDecodeError, OSError):
             pass
+    harness = resolve_harness(harness)
 
     if app:
         apps_work_dir = target_dir / "wolt" / "apps" / app
@@ -488,7 +503,7 @@ def start_session(
         target_dir = apps_work_dir
 
     name = session_name(wolt)
-    model = CREATURE_MODELS.get(creature) if creature else None
+    model = creature_model(harness, creature)
 
     tunnel_url = get_tunnel_url()
     session_url = f"{tunnel_url}/tui?session={name}" if tunnel_url else ""
@@ -499,6 +514,7 @@ def start_session(
         wolt=wolt,
         creature=creature or "",
         model=model or "",
+        harness=harness,
         dir=str(target_dir),
         app=app or "",
         prompt=prompt,
@@ -515,7 +531,7 @@ def start_session(
         check=True,
     )
 
-    result = {"name": name, "url": session_url or None, "wolt": wolt}
+    result = {"name": name, "url": session_url or None, "wolt": wolt, "harness": harness}
     if app:
         result["app"] = app
     if creature:
@@ -568,19 +584,21 @@ def resume_session(name: str, prompt: str = "") -> dict:
 
     wolt = data.get("wolt", "")
     session_dir = data.get("dir", "")
+    # Resume with the harness the session was born on — old sessions have no
+    # harness field, which resolves to claude.
+    harness = resolve_harness(data.get("harness"))
     claude_session_id = data.get("claude_session_id", "")
     tunnel_url = get_tunnel_url()
     session_url = f"{tunnel_url}/tui?session={name}" if tunnel_url else ""
 
     tmux_alive = _tmux_alive(name)
-    claude_running = False
+    agent_running = False
 
     if tmux_alive:
-        claude_running = _session_has_claude_process(name)
+        # Launching doesn't count here — pasting into a half-booted TUI is lost.
+        agent_running = session_has_agent_process(name, harness, include_launching=False)
 
-    safe_prompt = shlex.quote(prompt) if prompt else ""
-
-    if tmux_alive and claude_running:
+    if tmux_alive and agent_running:
         # Claude is running — paste the prompt into the TUI as a single buffer paste.
         # Flatten newlines: a bare \n would submit the input early in claude's TUI.
         if prompt:
@@ -589,26 +607,28 @@ def resume_session(name: str, prompt: str = "") -> dict:
         registry.update(name, wolt=wolt, status="running")
         return {"name": name, "url": session_url, "status": "delivered", "detail": "claude running, message sent"}
 
-    # Build --resume flag using the stored UUID (claude_session_id), not the session name.
-    # Validate it's a real UUID — legacy sessions may have non-UUID values.
-    resume_flag = f"--resume {shlex.quote(claude_session_id)}" if claude_session_id and _UUID_RE.match(claude_session_id) else ""
+    # Build the resume command from the harness table. Resume id is the stored
+    # UUID (claude_session_id), not the session name. Validate it's a real UUID —
+    # legacy sessions may have non-UUID values.
+    resume_id = claude_session_id if claude_session_id and _UUID_RE.match(claude_session_id) else ""
 
     # Preserve the model from the original session so resumed sessions don't fall back to default.
     model = data.get("model", "")
-    model_flag = f"--model {shlex.quote(model)}" if model else ""
 
-    if tmux_alive and not claude_running:
-        # Tmux alive but claude exited — restart claude with --resume inside the pane
+    agent_cmd = build_command(harness, "resume", resume_id=resume_id, model=model, prompt=prompt)
+
+    if tmux_alive and not agent_running:
+        # Tmux alive but the agent exited — restart it with --resume inside the pane
         cd_prefix = f"cd {shlex.quote(session_dir)} && " if session_dir else ""
-        resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} WOLT_NAME={shlex.quote(wolt)} && {WCLAUDE} --dangerously-skip-permissions {model_flag} {resume_flag} {safe_prompt}"
+        resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} WOLT_NAME={shlex.quote(wolt)} && {agent_cmd}"
         _tmux_paste(name, resume_cmd)
         registry.update(name, wolt=wolt, status="running")
-        return {"name": name, "url": session_url, "status": "revived", "detail": "claude exited, restarted with --resume in existing tmux"}
+        return {"name": name, "url": session_url, "status": "revived", "detail": "agent exited, restarted with --resume in existing tmux"}
 
-    # Tmux is dead — create a fresh tmux session with wclaude --resume
+    # Tmux is dead — create a fresh tmux session resuming the agent
     work_dir = session_dir or str(WOLTS_DIR / wolt) if wolt else "/workspace"
     cd_prefix = f"cd {shlex.quote(work_dir)} && " if work_dir else ""
-    resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} WOLT_NAME={shlex.quote(wolt)} && {WCLAUDE} --dangerously-skip-permissions {model_flag} {resume_flag} {safe_prompt}"
+    resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} WOLT_NAME={shlex.quote(wolt)} && {agent_cmd}"
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", name, "-c", work_dir or "/workspace", resume_cmd],
         check=True, timeout=_TMUX_TIMEOUT,
@@ -696,52 +716,6 @@ def delete_session(name: str) -> dict:
 
     registry.delete(name, wolt=wolt)
     return {"name": name, "status": "deleted", "wolt": wolt}
-
-
-def _session_has_claude_process(name: str) -> bool:
-    """Check if a tmux session has a claude process running anywhere in its process tree.
-
-    Walks the full subtree from the pane's root PID — not just direct children.
-    The actual tree is: pane(bash) → bash(run-session.sh) → bash(wclaude) → claude
-    so checking only direct children always misses claude.
-    """
-    try:
-        result = subprocess.run(
-            ["tmux", "list-panes", "-t", name, "-F", "#{pane_pid}"],
-            capture_output=True, text=True, check=True,
-        )
-        pane_pid = result.stdout.strip()
-        if not pane_pid:
-            return False
-
-        # Build full process table: pid → (ppid, comm)
-        ps_result = subprocess.run(
-            ["ps", "--no-headers", "-eo", "pid,ppid,comm"],
-            capture_output=True, text=True,
-        )
-        children: dict[str, list[str]] = {}
-        comms: dict[str, str] = {}
-        for line in ps_result.stdout.strip().split("\n"):
-            parts = line.split()
-            if len(parts) >= 3:
-                pid, ppid, comm = parts[0], parts[1], parts[2]
-                children.setdefault(ppid, []).append(pid)
-                comms[pid] = comm
-
-        # BFS from pane_pid — return True if any descendant is 'claude'
-        queue = [pane_pid]
-        seen: set[str] = set()
-        while queue:
-            cur = queue.pop()
-            if cur in seen:
-                continue
-            seen.add(cur)
-            if comms.get(cur) == "claude":
-                return True
-            queue.extend(children.get(cur, []))
-        return False
-    except Exception:
-        return False
 
 
 # --- CLI interface (used by session-reg bash wrapper) ---
