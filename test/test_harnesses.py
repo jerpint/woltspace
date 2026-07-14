@@ -176,10 +176,14 @@ class TestSessionHarnessPlumbing:
         reg.update("testwolt-old-dam-abc123", wolt="testwolt",
                    claude_session_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
-        from sessions import resume_session
+        from sessions import prepare_session_command, resume_session
         with patch("sessions.subprocess.run") as mock_run, \
              patch("sessions._tmux_alive", return_value=False):
             result = resume_session("testwolt-old-dam-abc123", "hello")
         assert result["status"] == "respawned"
         cmd_str = str([c for c in mock_run.call_args_list if "new-session" in str(c)][0])
-        assert "wclaude" in cmd_str
+        assert "--resume" in cmd_str  # wrapper delivered in resume mode
+        # The agent-level command falls back to the legacy claude_session_id
+        cmd = prepare_session_command("testwolt-old-dam-abc123", "resume", "hello")
+        assert "wclaude" in cmd
+        assert "--resume a1b2c3d4-e5f6-7890-abcd-ef1234567890" in cmd

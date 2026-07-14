@@ -19,6 +19,7 @@ import re
 import shlex
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
 from paths import (
@@ -32,6 +33,7 @@ from harnesses import (
     DEFAULT_HARNESS,
     resolve_harness,
     creature_model,
+    get_harness,
     build_command,
     session_has_agent_process,
 )
@@ -40,7 +42,9 @@ from sites import start_site
 _UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
-RUN_SESSION_SCRIPT = Path("/workspace/woltspace/container/bin/run-session.sh")
+# Resolved relative to this file so the dev clone drives its own script —
+# a hardcoded production path pairs new sessions.py with old run-session.sh.
+RUN_SESSION_SCRIPT = Path(__file__).resolve().parent.parent / "bin" / "run-session.sh"
 
 
 class SessionRegistry:
@@ -444,12 +448,111 @@ def get_tunnel_url(wolts_dir: Path = None) -> str:
         return ""
 
 
-def build_session_command(name: str, work_dir: str, prompt: str, model: str = None) -> str:
-    """Build the shell command that tmux will execute."""
-    cmd = f"{RUN_SESSION_SCRIPT} {shlex.quote(name)} {shlex.quote(work_dir)} {shlex.quote(prompt)}"
-    if model:
-        cmd += f" {shlex.quote(model)}"
+def build_session_command(name: str, prompt: str = "", *, resume: bool = False) -> str:
+    """Build the run-session.sh invocation that tmux (or a revived pane) executes.
+
+    run-session.sh reads everything else — dir, wolt, model, harness, adapter
+    routing — from the registry, so the session must already exist there.
+    """
+    cmd = f"{RUN_SESSION_SCRIPT} {shlex.quote(name)}"
+    if resume:
+        cmd += " --resume"
+    if prompt:
+        cmd += f" {shlex.quote(prompt)}"
     return cmd
+
+
+def _title_from_prompt(prompt: str) -> str:
+    """Short descriptive title from a prompt (first line, ~60 chars, clean)."""
+    first_line = prompt.split("\n")[0].split(".")[0].strip()
+    clean = re.sub(r"[^\w\s-]", "", first_line).strip()
+    return clean[:60].lower()
+
+
+def _adapter_context(data: dict) -> str:
+    """Adapter-specific context so the wolt knows how to communicate from the start."""
+    adapter = data.get("adapter", "")
+    session_url = data.get("session_url", "")
+    if adapter == "slack":
+        channel = data.get("chat_id", "")
+        thread_ts = data.get("thread_ts", "")
+        if channel and thread_ts:
+            return (
+                f"\nThis session was started from Slack. Send messages with: "
+                f'notify --slack {channel} {thread_ts} "your message"\n'
+                f"Session link: {session_url}"
+            )
+    elif adapter == "telegram":
+        chat_id = data.get("chat_id", "")
+        if chat_id:
+            return (
+                f"\nThis session was started from Telegram. Send messages with: "
+                f'notify --telegram {chat_id} "your message"\n'
+                f"Session link: {session_url}"
+            )
+    return ""
+
+
+def _assemble_spawn_prompt(data: dict, prompt: str, harness: str) -> str:
+    """Full opening prompt: user's task + adapter context + start-chat invocation.
+
+    Skips start-chat if the prompt already invokes a woltspace skill
+    (e.g. create-wolt). The skill invocation syntax comes from the harness
+    table — claude spells it /name, codex $name.
+    """
+    skill_invoke = get_harness(harness)["skill_invoke"]
+    context = _adapter_context(data)
+    if skill_invoke.format(name="woltspace-") in prompt:
+        return f"{prompt}{context}"
+    adapter = data.get("adapter") or "lodge"
+    wolt = data.get("wolt") or "wolt"
+    start_chat = skill_invoke.format(name="woltspace-start-chat")
+    return f"{prompt}{context} {start_chat} {adapter} {wolt}"
+
+
+def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
+    """Build the full agent command for a session — the run-session.sh backend.
+
+    Everything comes from the registry. Spawn also stamps harness_session_id
+    (used later for --resume) and a title derived from the prompt.
+
+    Raises ValueError if the session isn't in the registry.
+    """
+    registry = SessionRegistry()
+    data = registry.get(name, check_alive=False)
+    if data is None:
+        raise ValueError(f"session '{name}' not found in registry")
+
+    harness = resolve_harness(data.get("harness"))
+    wolt = data.get("wolt", "")
+    model = data.get("model", "")
+
+    if mode == "spawn":
+        session_id = str(uuid.uuid4())
+        registry.update(
+            name, wolt=wolt,
+            harness_session_id=session_id,
+            title=_title_from_prompt(prompt),
+        )
+        full_prompt = _assemble_spawn_prompt(data, prompt, harness)
+        return build_command(
+            harness, "spawn",
+            session_id=session_id, session_name=name,
+            model=model, prompt=full_prompt,
+        )
+
+    if mode == "resume":
+        # harness_session_id is the generic field, written by us at spawn.
+        # claude_session_id is the pre-harness spelling — old sessions resume
+        # through the fallback, UUID-validated because some legacy sessions
+        # stored non-UUID values there.
+        resume_id = data.get("harness_session_id") or ""
+        if not resume_id:
+            legacy = data.get("claude_session_id") or ""
+            resume_id = legacy if _UUID_RE.match(legacy) else ""
+        return build_command(harness, "resume", resume_id=resume_id, model=model, prompt=prompt)
+
+    raise ValueError(f"unknown mode: {mode}")
 
 
 # ---------------------------------------------------------------------------
@@ -525,7 +628,7 @@ def start_session(
         session_url=session_url,
     )
 
-    cmd = build_session_command(name, str(target_dir), prompt, model=model)
+    cmd = build_session_command(name, prompt)
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", name, "-c", str(target_dir), cmd],
         check=True,
@@ -569,9 +672,9 @@ def resume_session(name: str, prompt: str = "") -> dict:
 
     Logic:
       1. Look up session in registry (scan all wolts).
-      2. If tmux is alive and claude is running → send keys directly.
-      3. If tmux is alive but claude exited → start wclaude --resume in the pane.
-      4. If tmux is dead → create a new tmux session with wclaude --resume.
+      2. If tmux is alive and the agent is running → paste the prompt directly.
+      3. If tmux is alive but the agent exited → run-session.sh --resume in the pane.
+      4. If tmux is dead → create a new tmux session with run-session.sh --resume.
       5. Update status back to "running" on success.
 
     Returns dict with resume info.
@@ -587,7 +690,6 @@ def resume_session(name: str, prompt: str = "") -> dict:
     # Resume with the harness the session was born on — old sessions have no
     # harness field, which resolves to claude.
     harness = resolve_harness(data.get("harness"))
-    claude_session_id = data.get("claude_session_id", "")
     tunnel_url = get_tunnel_url()
     session_url = f"{tunnel_url}/tui?session={name}" if tunnel_url else ""
 
@@ -607,28 +709,20 @@ def resume_session(name: str, prompt: str = "") -> dict:
         registry.update(name, wolt=wolt, status="running")
         return {"name": name, "url": session_url, "status": "delivered", "detail": "claude running, message sent"}
 
-    # Build the resume command from the harness table. Resume id is the stored
-    # UUID (claude_session_id), not the session name. Validate it's a real UUID —
-    # legacy sessions may have non-UUID values.
-    resume_id = claude_session_id if claude_session_id and _UUID_RE.match(claude_session_id) else ""
-
-    # Preserve the model from the original session so resumed sessions don't fall back to default.
-    model = data.get("model", "")
-
-    agent_cmd = build_command(harness, "resume", resume_id=resume_id, model=model, prompt=prompt)
+    # Both resume paths deliver run-session.sh — the single runtime wrapper.
+    # It reads dir/model/harness from the registry, builds the agent command
+    # via prepare_session_command, and closes out the lifecycle (finish status,
+    # viewport reset) when the agent exits — which raw agent commands skipped.
+    resume_cmd = build_session_command(name, prompt, resume=True)
 
     if tmux_alive and not agent_running:
-        # Tmux alive but the agent exited — restart it with --resume inside the pane
-        cd_prefix = f"cd {shlex.quote(session_dir)} && " if session_dir else ""
-        resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} WOLT_NAME={shlex.quote(wolt)} && {agent_cmd}"
+        # Tmux alive but the agent exited — run the wrapper inside the pane
         _tmux_paste(name, resume_cmd)
         registry.update(name, wolt=wolt, status="running")
         return {"name": name, "url": session_url, "status": "revived", "detail": "agent exited, restarted with --resume in existing tmux"}
 
-    # Tmux is dead — create a fresh tmux session resuming the agent
+    # Tmux is dead — create a fresh tmux session running the wrapper
     work_dir = session_dir or str(WOLTS_DIR / wolt) if wolt else "/workspace"
-    cd_prefix = f"cd {shlex.quote(work_dir)} && " if work_dir else ""
-    resume_cmd = f"{cd_prefix}export WOLT_SESSION={shlex.quote(name)} WOLT_NAME={shlex.quote(wolt)} && {agent_cmd}"
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", name, "-c", work_dir or "/workspace", resume_cmd],
         check=True, timeout=_TMUX_TIMEOUT,
@@ -725,7 +819,7 @@ def cli():
     args = sys.argv[1:]
     if not args:
         print("Usage: session-reg <command> [args]", file=sys.stderr)
-        print("Commands: create, update, finish, get, get-field, list, touch, reconcile", file=sys.stderr)
+        print("Commands: create, update, finish, get, get-field, list, touch, reconcile, prepare", file=sys.stderr)
         sys.exit(1)
 
     reg = SessionRegistry()
@@ -819,6 +913,18 @@ def cli():
             print(f"Marked orphaned: {', '.join(orphaned)}")
         else:
             print("All sessions in sync.")
+
+    elif cmd == "prepare":
+        # session-reg prepare <name> <spawn|resume> [prompt]
+        # Prints the full agent command for run-session.sh to exec.
+        if len(args) < 3:
+            print("Usage: session-reg prepare <name> <spawn|resume> [prompt]", file=sys.stderr)
+            sys.exit(1)
+        try:
+            print(prepare_session_command(args[1], args[2], args[3] if len(args) > 3 else ""))
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            sys.exit(1)
 
     else:
         print(f"Unknown command: {cmd}", file=sys.stderr)

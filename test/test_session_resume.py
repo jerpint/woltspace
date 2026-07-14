@@ -99,11 +99,19 @@ class TestResumeSessionClaudeExited:
         # Should have used set-buffer + paste-buffer (two calls)
         buf_calls = [c for c in mock_run.call_args_list if "set-buffer" in str(c) or "paste-buffer" in str(c)]
         assert len(buf_calls) == 2
-        # The set-buffer call should include --resume with the UUID
+        # The set-buffer call delivers the run-session.sh wrapper in resume mode
         set_call = [c for c in mock_run.call_args_list if "set-buffer" in str(c)][0]
         cmd_str = str(set_call)
+        assert "run-session.sh" in cmd_str
         assert "--resume" in cmd_str
-        assert "a1b2c3d4-e5f6-7890-abcd-ef1234567890" in cmd_str
+        assert "'continue working'" in cmd_str
+
+    def test_prepare_resume_command_uses_stored_uuid(self, wolt_env):
+        """The agent-level --resume UUID comes from prepare_session_command."""
+        from sessions import prepare_session_command
+        cmd = prepare_session_command("testwolt-chompy-dam-abc123", "resume", "continue")
+        assert "--resume a1b2c3d4-e5f6-7890-abcd-ef1234567890" in cmd
+        assert "wclaude" in cmd
 
 
 class TestResumeSessionTmuxDead:
@@ -117,12 +125,12 @@ class TestResumeSessionTmuxDead:
         result = resume_session("testwolt-chompy-dam-abc123", "pick up where we left off")
 
         assert result["status"] == "respawned"
-        # Should have called tmux new-session
+        # Should have called tmux new-session running the wrapper in resume mode
         new_session_calls = [c for c in mock_run.call_args_list if "new-session" in str(c)]
         assert len(new_session_calls) == 1
         cmd_str = str(new_session_calls[0])
+        assert "run-session.sh" in cmd_str
         assert "--resume" in cmd_str
-        assert "a1b2c3d4-e5f6-7890-abcd-ef1234567890" in cmd_str
 
     @patch("sessions.subprocess.run")
     @patch("sessions._tmux_alive", return_value=False)
