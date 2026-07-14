@@ -10,6 +10,11 @@ RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 USER node
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
+# --- Stage: codex ---
+# Same pattern. Update Codex: docker build --no-cache-filter=codex ...
+FROM node:22-slim AS codex
+RUN npm install -g @openai/codex
+
 # --- Stage: main ---
 FROM node:22-slim
 
@@ -56,6 +61,14 @@ RUN mkdir -p /workspace/wolts /home/node/.ssh \
 # Copy everything the Claude installer created (binary, launcher, shell integration)
 COPY --from=claude /home/node/ /home/node/
 ENV PATH="/home/node/.local/bin:${PATH}"
+
+# Copy the Codex CLI (npm global package + bin symlink)
+COPY --from=codex /usr/local/lib/node_modules/@openai/codex /usr/local/lib/node_modules/@openai/codex
+RUN ln -s ../lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex
+# Default CODEX_HOME is the shared seed in the mount — durable across
+# rebuilds, and where `codex login` lands. wcodex overrides this per-wolt
+# at session launch. (Dir is created at boot; mount shadows build-time mkdir.)
+ENV CODEX_HOME=/workspace/wolts/.codex
 
 # Install worktui (worktree + Claude session manager)
 RUN git clone https://github.com/jerpint/worktui.git /home/node/worktui \
@@ -122,6 +135,11 @@ RUN npm install && npm install ws node-pty
 # Make bin scripts executable + add to PATH
 RUN chmod +x container/bin/* container/entrypoint.sh container/start.sh
 ENV PATH="/workspace/woltspace/container/bin:${PATH}"
+# Also add the bins to login-shell PATH. ENV covers processes that inherit it,
+# but a login shell (bash -lc) rebuilds PATH from /etc/profile and drops it —
+# which is how codex runs model commands, so notify/push-view/session-reg were
+# "command not found" inside codex. profile.d fixes every login shell + harness.
+RUN echo 'export PATH="/workspace/woltspace/container/bin:$PATH"' > /etc/profile.d/woltspace-path.sh
 
 # Install Python deps
 RUN cd container && uv sync --project bot

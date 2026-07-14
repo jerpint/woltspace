@@ -1,0 +1,52 @@
+#!/bin/bash
+# Wrapper that sets per-wolt HOME/CODEX_HOME and self-heals codex config
+# before launching Codex CLI. Use this instead of bare `codex` inside the
+# container. Mirrors wclaude.
+#
+# If $PWD is under /workspace/wolts/<name>/, set HOME to that wolt's root dir
+# and CODEX_HOME to <wolt>/.codex. This gives each wolt its own codex config,
+# auth, and session rollouts. Credentials are copied from the shared seed on
+# first run (not symlinked — codex rewrites auth.json on token refresh).
+
+WOLT_HOME=$(echo "$PWD" | sed -n 's|\(/workspace/wolts/[^/]*\).*|\1|p')
+if [ -n "$WOLT_HOME" ] && [ -d "$WOLT_HOME" ]; then
+    export HOME="$WOLT_HOME"
+    export CODEX_HOME="$WOLT_HOME/.codex"
+    # codex errors out if CODEX_HOME doesn't exist
+    mkdir -p "$CODEX_HOME"
+    # Self-heal missing credentials (copy from shared seed)
+    SHARED_AUTH="/workspace/wolts/.codex/auth.json"
+    if [ ! -e "$CODEX_HOME/auth.json" ] && [ -f "$SHARED_AUTH" ]; then
+        cp "$SHARED_AUTH" "$CODEX_HOME/auth.json"
+    fi
+    # codex reads AGENTS.md — point it at the wolt's CLAUDE.md
+    if [ ! -e "$WOLT_HOME/AGENTS.md" ] && [ -f "$WOLT_HOME/CLAUDE.md" ]; then
+        ln -s CLAUDE.md "$WOLT_HOME/AGENTS.md"
+    fi
+    # codex discovers skills in $HOME/.agents/skills — reuse the synced
+    # claude skills (same SKILL.md standard)
+    if [ ! -e "$WOLT_HOME/.agents/skills" ] && [ -d "$WOLT_HOME/.claude/skills" ]; then
+        mkdir -p "$WOLT_HOME/.agents"
+        ln -s ../.claude/skills "$WOLT_HOME/.agents/skills"
+    fi
+    CONFIG_TOML="$CODEX_HOME/config.toml"
+    # Inherit the full session environment for model-run commands. Codex
+    # defaults to a curated env ("core") whose PATH excludes
+    # /workspace/woltspace/container/bin, so the woltspace bins (notify,
+    # push-view, session-reg) are "command not found" inside codex. claude's
+    # bash children already inherit the full env; this restores parity.
+    # Consistent with the bypass flag, which already runs commands unsandboxed.
+    if ! grep -qF "[shell_environment_policy]" "$CONFIG_TOML" 2>/dev/null; then
+        printf '\n[shell_environment_policy]\ninherit = "all"\n' >> "$CONFIG_TOML"
+    fi
+    # Pre-trust the working directory — codex shows a blocking trust dialog
+    # even with --dangerously-bypass-approvals-and-sandbox (verified live,
+    # codex-cli 0.144.4), which would hang headless spawns. This is codex's
+    # trust-dir equivalent; same safety rationale (we're inside the container,
+    # and only wolt dirs get here).
+    if ! grep -qF "[projects.\"$PWD\"]" "$CONFIG_TOML" 2>/dev/null; then
+        printf '\n[projects."%s"]\ntrust_level = "trusted"\n' "$PWD" >> "$CONFIG_TOML"
+    fi
+fi
+
+exec codex "$@"

@@ -99,11 +99,97 @@ class TestBuildCommandClaude:
         assert build_command("winamp", "login") == build_command("claude", "login")
 
 
+class TestBuildCommandCodex:
+    """Verified against codex-cli 0.144 — see wcodex + harness plan."""
+
+    def test_spawn(self):
+        cmd = build_command("codex", "spawn", prompt="hey testwolt")
+        assert "wcodex" in cmd
+        assert "--dangerously-bypass-approvals-and-sandbox" in cmd
+        assert cmd.endswith("'hey testwolt'")
+        # codex can't preset a session id — flag must never appear
+        cmd_with_id = build_command("codex", "spawn", session_id="abc", prompt="x")
+        assert "--session-id" not in cmd_with_id
+
+    def test_spawn_with_model(self):
+        cmd = build_command("codex", "spawn", model="gpt-5-codex", prompt="x")
+        assert "-m gpt-5-codex" in cmd
+
+    def test_resume_with_id(self):
+        cmd = build_command(
+            "codex", "resume",
+            resume_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890", prompt="continue",
+        )
+        assert "resume a1b2c3d4-e5f6-7890-abcd-ef1234567890" in cmd
+        assert "--dangerously-bypass-approvals-and-sandbox" in cmd
+        assert cmd.endswith("continue")
+
+    def test_resume_without_id_falls_back_to_fresh(self):
+        """No stored id → fresh session, never --last (wrong under concurrency)."""
+        cmd = build_command("codex", "resume", prompt="continue")
+        assert " resume" not in cmd
+        assert "--last" not in cmd
+
+    def test_login_uses_device_auth(self):
+        cmd = build_command("codex", "login")
+        assert cmd.endswith("login --device-auth")
+
+    def test_codex_tier_models(self):
+        """Mapped from the live /model picker (2026-07 lineup)."""
+        assert creature_model("codex", "raccoon") == "gpt-5.5"
+        assert creature_model("codex", "beaver") == "gpt-5.6-terra"
+        assert creature_model("codex", "otter") == "gpt-5.6-luna"
+
+
+class TestCodexDiscovery:
+    """Rollout-id discovery from $CODEX_HOME/sessions."""
+
+    ROLLOUT_UUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+    def _write_rollout(self, wolts_dir, wolt, uuid_, cwd="/somewhere", day="2026/07/14"):
+        d = wolts_dir / wolt / ".codex" / "sessions" / day
+        d.mkdir(parents=True, exist_ok=True)
+        f = d / f"rollout-2026-07-14T12-00-00-{uuid_}.jsonl"
+        f.write_text(json.dumps({"cwd": cwd}) + "\n")
+        return f
+
+    def test_finds_new_rollout(self, tmp_path, monkeypatch):
+        from harnesses import _codex_discover_session_id
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        self._write_rollout(tmp_path, "testwolt", self.ROLLOUT_UUID)
+        data = {"wolt": "testwolt", "dir": ""}
+        assert _codex_discover_session_id(data, since=0) == self.ROLLOUT_UUID
+
+    def test_ignores_old_rollouts(self, tmp_path, monkeypatch):
+        import time as _time
+        from harnesses import _codex_discover_session_id
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        self._write_rollout(tmp_path, "testwolt", self.ROLLOUT_UUID)
+        data = {"wolt": "testwolt", "dir": ""}
+        assert _codex_discover_session_id(data, since=_time.time() + 60) is None
+
+    def test_prefers_cwd_match(self, tmp_path, monkeypatch):
+        from harnesses import _codex_discover_session_id
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        other = "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+        self._write_rollout(tmp_path, "testwolt", other, cwd="/other/dir")
+        self._write_rollout(tmp_path, "testwolt", self.ROLLOUT_UUID, cwd="/right/dir")
+        data = {"wolt": "testwolt", "dir": "/right/dir"}
+        assert _codex_discover_session_id(data, since=0) == self.ROLLOUT_UUID
+
+    def test_no_sessions_dir(self, tmp_path, monkeypatch):
+        from harnesses import _codex_discover_session_id
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        data = {"wolt": "testwolt", "dir": ""}
+        assert _codex_discover_session_id(data, since=0) is None
+
+
 class TestTableShape:
     """Every harness entry must carry the keys the platform relies on."""
 
     REQUIRED_KEYS = {"wrapper", "command", "process_names", "models",
-                     "skill_invoke", "instructions_file", "auth_file"}
+                     "skill_invoke", "instructions_file", "auth_file",
+                     "preset_session_id", "discover_session_id", "paste_settle"}
 
     def test_all_entries_complete(self):
         for name, entry in HARNESSES.items():
@@ -164,6 +250,39 @@ class TestSessionHarnessPlumbing:
     def test_unknown_harness_falls_back(self):
         result = self._start(harness="winamp")
         assert result["harness"] == "claude"
+
+    def test_codex_spawn_has_no_preset_id(self):
+        """codex assigns its own session id — spawn must not stamp one."""
+        from sessions import prepare_session_command
+        result = self._start(harness="codex")
+        assert result["harness"] == "codex"
+        cmd = prepare_session_command(result["name"], "spawn", "hello world")
+        assert "wcodex" in cmd
+        assert "--session-id" not in cmd
+        assert not self._session_data(result["name"]).get("harness_session_id")
+
+    def test_codex_discover_stamps_id(self, monkeypatch):
+        """discover_session_id_for finds the rollout and stamps the registry."""
+        import json as _json
+        from sessions import discover_session_id_for
+        monkeypatch.setenv("WOLTS_DIR", str(self.wolts_dir))
+        result = self._start(harness="codex")
+        rollout_uuid = "c3d4e5f6-a7b8-9012-cdef-123456789012"
+        d = self.wolts_dir / "testwolt" / ".codex" / "sessions" / "2026" / "07" / "14"
+        d.mkdir(parents=True)
+        (d / f"rollout-2026-07-14T12-00-00-{rollout_uuid}.jsonl").write_text(
+            _json.dumps({"cwd": ""}) + "\n"
+        )
+        assert discover_session_id_for(result["name"], timeout=5) == rollout_uuid
+        assert self._session_data(result["name"])["harness_session_id"] == rollout_uuid
+
+    def test_claude_discover_returns_preset_id(self):
+        """For preset-id harnesses discover-id is an immediate no-op."""
+        from sessions import discover_session_id_for, prepare_session_command
+        result = self._start()
+        prepare_session_command(result["name"], "spawn", "hello")
+        stamped = self._session_data(result["name"])["harness_session_id"]
+        assert discover_session_id_for(result["name"], timeout=5) == stamped
 
     def test_old_sessions_without_harness_resolve_to_claude(self):
         """Sessions created before the harness field must resume on claude."""
