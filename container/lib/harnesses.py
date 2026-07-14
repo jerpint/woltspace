@@ -114,12 +114,19 @@ def session_has_agent_process(session_name: str, harness: str | None = None,
     The actual tree is: pane(bash) → bash(run-session.sh) → bash(wrapper) → agent,
     so checking only direct children always misses the agent.
 
+    harness=None matches ANY known harness's process names — for callers like
+    the vulture that only see a tmux session and must not kill a live agent
+    just because they can't tell which harness it runs.
+
     include_launching also counts run-session.sh itself as alive — a session
     that is still booting has no agent process yet but must not be reaped.
 
     Returns True/False, or None if the tmux session doesn't exist.
     """
-    process_names = set(get_harness(harness)["process_names"])
+    if harness is None:
+        process_names = set().union(*(e["process_names"] for e in HARNESSES.values()))
+    else:
+        process_names = set(get_harness(harness)["process_names"])
     if include_launching:
         process_names |= LAUNCHING_NAMES
     try:
