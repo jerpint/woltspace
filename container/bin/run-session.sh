@@ -47,6 +47,13 @@ fi
 # (used later for --resume) and a title into the registry.
 CMD=$($SESSION_REG prepare "$SESSION_NAME" "$MODE" "$PROMPT")
 
+# Some harnesses (codex) assign their own session id — poll for it in the
+# background and stamp the registry so resume works. Immediate no-op for
+# harnesses with preset ids (claude).
+if [ "$MODE" = "spawn" ]; then
+    ($SESSION_REG discover-id "$SESSION_NAME" > /dev/null 2>&1 &)
+fi
+
 # Run the agent — capture exit code
 EXIT_CODE=0
 eval "$CMD" || EXIT_CODE=$?

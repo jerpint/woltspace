@@ -18,12 +18,24 @@ to know how a harness spells its flags.
 
 from __future__ import annotations
 
+import json
+import os
+import re
 import shlex
 import subprocess
+from pathlib import Path
 
 DEFAULT_HARNESS = "claude"
 
-WCLAUDE = "/workspace/woltspace/container/bin/wclaude"
+# Wrappers resolved relative to this file so the dev clone drives its own
+# bin/ instead of production's.
+_BIN_DIR = Path(__file__).resolve().parent.parent / "bin"
+WCLAUDE = str(_BIN_DIR / "wclaude")
+WCODEX = str(_BIN_DIR / "wcodex")
+
+_ROLLOUT_UUID_RE = re.compile(
+    r"rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$"
+)
 
 
 def _claude_command(entry: dict, mode: str, *, session_id: str = "",
@@ -52,6 +64,80 @@ def _claude_command(entry: dict, mode: str, *, session_id: str = "",
     return " ".join(shlex.quote(p) for p in parts)
 
 
+def _codex_command(entry: dict, mode: str, *, session_id: str = "",
+                   session_name: str = "", model: str = "", prompt: str = "",
+                   resume_id: str = "") -> str:
+    """Build a Codex CLI command line (verified against codex-cli 0.144).
+
+    Codex can't preset a session id at spawn — run-session.sh discovers the
+    rollout id after launch (see discover_session_id). A resume without a
+    stored id falls back to a fresh session rather than guessing --last,
+    which is wrong under concurrent sessions.
+    """
+    wrapper = entry["wrapper"]
+    if mode == "login":
+        # Device-code flow — no browser callback inside the container
+        return f"{wrapper} login --device-auth"
+    if mode not in ("spawn", "resume"):
+        raise ValueError(f"unknown mode: {mode}")
+
+    parts = [wrapper]
+    if mode == "resume" and resume_id:
+        parts += ["resume", resume_id]
+    # Codex's own help: "Intended solely for running in environments that are
+    # externally sandboxed" — which is exactly the woltspace container.
+    parts.append("--dangerously-bypass-approvals-and-sandbox")
+    if model:
+        parts += ["-m", model]
+    if prompt:
+        parts.append(prompt)
+    return " ".join(shlex.quote(p) for p in parts)
+
+
+def _codex_discover_session_id(data: dict, since: float) -> str | None:
+    """Find the rollout id codex assigned to a just-spawned session.
+
+    Codex writes $CODEX_HOME/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl at
+    session start. Returns the uuid of the newest rollout created after
+    `since`, preferring files whose recorded cwd matches the session dir
+    (disambiguates concurrent sessions of the same wolt in different dirs).
+    """
+    wolt = data.get("wolt", "")
+    if not wolt:
+        return None
+    wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    sessions_dir = wolts_dir / wolt / ".codex" / "sessions"
+    if not sessions_dir.exists():
+        return None
+
+    candidates = []
+    for f in sessions_dir.glob("**/rollout-*.jsonl"):
+        try:
+            if f.stat().st_mtime < since:
+                continue
+        except OSError:
+            continue
+        m = _ROLLOUT_UUID_RE.search(f.name)
+        if m:
+            candidates.append((f.stat().st_mtime, f, m.group(1)))
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+
+    # Prefer a rollout whose recorded cwd matches the session dir
+    session_dir = data.get("dir", "")
+    if session_dir:
+        for _, f, sid in candidates:
+            try:
+                meta = json.loads(f.read_text().split("\n", 1)[0])
+            except (json.JSONDecodeError, OSError, IndexError):
+                continue
+            cwd = meta.get("cwd") or meta.get("payload", {}).get("cwd", "")
+            if cwd == session_dir:
+                return sid
+    return candidates[0][2]
+
+
 HARNESSES = {
     "claude": {
         "wrapper": WCLAUDE,
@@ -70,6 +156,23 @@ HARNESSES = {
         "skill_invoke": "/{name}",
         "instructions_file": "CLAUDE.md",
         "auth_file": ".claude/.credentials.json",
+        # claude accepts --session-id at spawn; codex assigns its own
+        "preset_session_id": True,
+        "discover_session_id": None,
+    },
+    "codex": {
+        "wrapper": WCODEX,
+        "command": _codex_command,
+        "process_names": {"codex"},
+        # Tiers intentionally unmapped until live-tested with a real account —
+        # no model flag means codex's configured default. Wrong guesses here
+        # would crash every session at spawn.
+        "models": {},
+        "skill_invoke": "${name}",
+        "instructions_file": "AGENTS.md",
+        "auth_file": ".codex/auth.json",
+        "preset_session_id": False,
+        "discover_session_id": _codex_discover_session_id,
     },
 }
 
