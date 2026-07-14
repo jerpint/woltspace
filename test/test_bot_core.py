@@ -162,26 +162,27 @@ class TestCommandBuilding:
 
     def test_simple_prompt(self):
         from bot.core import build_session_command
-        cmd = build_session_command("test-1", "/tmp", "hello world")
+        cmd = build_session_command("test-1", "hello world")
         assert "'hello world'" in cmd
 
     def test_shell_metacharacters(self):
         from bot.core import build_session_command
         dangerous = "play gy!be; rm -rf /; $(whoami) `id`"
-        cmd = build_session_command("test-2", "/tmp", dangerous)
+        cmd = build_session_command("test-2", dangerous)
         # Must be in single quotes
         assert "rm -rf" in cmd
         assert "$(whoami)" not in cmd.replace(shlex.quote(dangerous), "")
 
-    def test_model_appended(self):
+    def test_resume_flag(self):
         from bot.core import build_session_command
-        cmd = build_session_command("test-3", "/tmp", "hello", model="opus")
-        assert "opus" in cmd
+        cmd = build_session_command("test-3", "hello there", resume=True)
+        assert "--resume" in cmd
+        assert cmd.index("--resume") < cmd.index("'hello there'")
 
     def test_empty_prompt(self):
         from bot.core import build_session_command
-        cmd = build_session_command("test-4", "/tmp", "")
-        assert "''" in cmd
+        cmd = build_session_command("test-4", "")
+        assert cmd.rstrip().endswith("test-4")
 
 
 # ---------------------------------------------------------------------------

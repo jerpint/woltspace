@@ -97,7 +97,7 @@ class TestRegistryReaping:
 
         with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
              patch("creatures.vulture._tmux_sessions", return_value={"alive-session"}), \
-             patch("creatures.vulture._session_has_claude", return_value=True), \
+             patch("creatures.vulture.session_has_agent_process", return_value=True), \
              patch("creatures.vulture.STATE_DIR", tmp_path / ".space" / "vulture"), \
              patch("creatures.vulture.LAST_RUN_FILE", tmp_path / "last-run"), \
              patch("creatures.vulture.LOG_FILE", tmp_path / "vulture.log"):
@@ -162,7 +162,7 @@ class TestProtectedSessions:
 
         with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
              patch("creatures.vulture._tmux_sessions", return_value={"main"}), \
-             patch("creatures.vulture._session_has_claude", return_value=False), \
+             patch("creatures.vulture.session_has_agent_process", return_value=False), \
              patch("creatures.vulture._kill_tmux_session") as mock_kill, \
              patch("creatures.vulture.STATE_DIR", tmp_path / ".space" / "vulture"), \
              patch("creatures.vulture.LAST_RUN_FILE", tmp_path / "last-run"), \
@@ -187,7 +187,7 @@ class TestZombieTmuxCleanup:
 
         with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
              patch("creatures.vulture._tmux_sessions", return_value={"zombie-session"}), \
-             patch("creatures.vulture._session_has_claude", return_value=False), \
+             patch("creatures.vulture.session_has_agent_process", return_value=False), \
              patch("creatures.vulture._kill_tmux_session", return_value=True) as mock_kill, \
              patch("creatures.vulture.STATE_DIR", tmp_path / ".space" / "vulture"), \
              patch("creatures.vulture.LAST_RUN_FILE", tmp_path / "last-run"), \
@@ -206,7 +206,7 @@ class TestZombieTmuxCleanup:
 
         with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
              patch("creatures.vulture._tmux_sessions", return_value={"leftover-session"}), \
-             patch("creatures.vulture._session_has_claude", return_value=False), \
+             patch("creatures.vulture.session_has_agent_process", return_value=False), \
              patch("creatures.vulture._kill_tmux_session", return_value=True) as mock_kill, \
              patch("creatures.vulture.STATE_DIR", tmp_path / ".space" / "vulture"), \
              patch("creatures.vulture.LAST_RUN_FILE", tmp_path / "last-run"), \
@@ -223,7 +223,7 @@ class TestZombieTmuxCleanup:
 
         with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
              patch("creatures.vulture._tmux_sessions", return_value={"ghost-session"}), \
-             patch("creatures.vulture._session_has_claude", return_value=False), \
+             patch("creatures.vulture.session_has_agent_process", return_value=False), \
              patch("creatures.vulture._kill_tmux_session", return_value=True) as mock_kill, \
              patch("creatures.vulture.STATE_DIR", tmp_path / ".space" / "vulture"), \
              patch("creatures.vulture.LAST_RUN_FILE", tmp_path / "last-run"), \

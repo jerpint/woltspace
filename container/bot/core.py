@@ -517,39 +517,6 @@ def read_memory(path: str) -> dict:
         return {"error": str(e)}
 
 
-def _session_has_claude(session_name: str) -> bool | None:
-    """Check if a tmux session has a claude process running in its pane.
-
-    Returns True if claude is in the process tree, False if only a shell is running,
-    None if the session doesn't exist.
-
-    Uses pane_pid to walk the process tree instead of pane_current_command,
-    which only shows the foreground process (unreliable when Claude runs subprocesses).
-    """
-    try:
-        result = subprocess.run(
-            ["tmux", "list-panes", "-t", session_name, "-F", "#{pane_pid}"],
-            capture_output=True, text=True, check=True,
-        )
-        pane_pid = result.stdout.strip()
-        if not pane_pid:
-            return None
-        # Check all descendants of the pane's shell for a claude process
-        ps_result = subprocess.run(
-            ["ps", "--ppid", pane_pid, "-o", "comm=", "--no-headers"],
-            capture_output=True, text=True,
-        )
-        children = ps_result.stdout.strip().split("\n")
-        # claude or run-session (still launching) means alive
-        for child in children:
-            child = child.strip()
-            if child in ("claude", "run-session.sh", "run-session"):
-                return True
-        return False
-    except subprocess.CalledProcessError:
-        return None
-
-
 def message_session(session_name: str, text: str) -> dict:
     """Send a message to a session. If Claude has exited, resume it.
 

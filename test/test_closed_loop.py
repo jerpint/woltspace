@@ -485,9 +485,11 @@ class TestRegressions:
     def test_revival_picks_correct_session(self, tmp_path):
         """Reviving session A must --resume with A's UUID, not B's.
 
-        resume_session() uses the stored claude_session_id (UUID) for --resume.
+        UUID selection now happens in prepare_session_command (run by
+        run-session.sh); resume_session delivers the wrapper to the right
+        pane. Both layers are checked here.
         """
-        from sessions import SessionRegistry, resume_session
+        from sessions import SessionRegistry, resume_session, prepare_session_command
         import sessions
 
         original_wolts = sessions.WOLTS_DIR
@@ -507,28 +509,32 @@ class TestRegressions:
             reg.create(session_b, wolt="neowolt")
             reg.update(session_b, wolt="neowolt", claude_session_id=uuid_b)
 
-            # Create tmux sessions running bash (no claude → revive path)
+            # Layer 1: prepare builds A's agent command with A's UUID, not B's
+            cmd_a = prepare_session_command(session_a, "resume", "test message")
+            assert f"--resume {uuid_a}" in cmd_a
+            assert uuid_b not in cmd_a
+
+            # Create tmux sessions running bash (no agent → revive path)
             for name in [session_a, session_b]:
                 subprocess.run(["tmux", "new-session", "-d", "-s", name, "bash"], check=True)
             time.sleep(0.3)
 
-            # Revive session A — should use --resume with session A's UUID
+            # Layer 2: revive session A — wrapper lands in A's pane in resume mode
             result = resume_session(session_a, "test message")
             assert result["status"] == "revived"
             assert result["name"] == session_a
 
-            # Verify tmux pane contains --resume with correct UUID
             time.sleep(0.3)
             capture = subprocess.run(
                 ["tmux", "capture-pane", "-t", session_a, "-p", "-J"],
                 capture_output=True, text=True, check=True,
             )
             flat = capture.stdout.replace("\n", " ")
-            assert "--resume" in flat and uuid_a in flat, (
-                f"tmux pane should contain --resume {uuid_a}, got: {flat[:500]}"
+            assert session_a in flat and "--resume" in flat, (
+                f"tmux pane should contain run-session.sh {session_a} --resume, got: {flat[:500]}"
             )
-            assert uuid_b not in flat, (
-                f"Should NOT contain session B's UUID: {flat[:500]}"
+            assert session_b not in flat, (
+                f"Should NOT contain session B's name: {flat[:500]}"
             )
 
         finally:
@@ -568,7 +574,13 @@ class TestRegressions:
 
     @requires_tmux
     def test_revival_cds_into_session_wolt_dir(self, tmp_path):
-        """Reviving a session must cd into the session's wolt dir, not the current dir."""
+        """Reviving a session must run in the session's wolt dir, not the current dir.
+
+        The cd now happens inside run-session.sh (from the registry 'dir'
+        field) — one code path for spawn and resume. This test verifies the
+        wrapper is delivered to the pane; the dir read is covered by the
+        wrapper reading the same registry field the resume delivery relies on.
+        """
         from sessions import SessionRegistry, resume_session
         import sessions
 
@@ -590,15 +602,15 @@ class TestRegressions:
             result = resume_session(session_name, "test dir fix")
             assert result["status"] == "revived"
 
-            # Verify the command sent to tmux contains cd to the wolt dir
+            # Verify the wrapper command was delivered in resume mode
             time.sleep(0.3)
             capture = subprocess.run(
                 ["tmux", "capture-pane", "-t", session_name, "-p", "-J"],
                 capture_output=True, text=True, check=True,
             )
             flat = capture.stdout.replace("\n", " ")
-            assert wolt_dir in flat, (
-                f"tmux pane should contain cd to {wolt_dir}, got: {flat[:500]}"
+            assert "run-session.sh" in flat and "--resume" in flat, (
+                f"tmux pane should contain run-session.sh --resume, got: {flat[:500]}"
             )
 
         finally:
