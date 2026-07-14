@@ -8,6 +8,41 @@ let allSessions = [];
 let appFilter = 'all';
 let currentView = 'home';
 
+// ── Harnesses (agent engines: claude, codex, …) ──
+let harnessList = [];          // [{id,label,emoji,models}]
+let harnessDefault = 'claude'; // lodge default (woltspace.json harness.default)
+
+async function loadHarnesses() {
+  try {
+    const res = await fetch('/harnesses');
+    const data = await res.json();
+    harnessList = data.harnesses || [];
+    harnessDefault = data.default || 'claude';
+  } catch {
+    harnessList = [];
+  }
+}
+
+function harnessInfo(id) {
+  return harnessList.find(h => h.id === id) || { id, label: id, emoji: '' };
+}
+
+// A wolt's effective engine + the concrete model for its tier (creature type).
+function woltHarness(w) {
+  const pinned = !!w.harness;
+  const id = w.harness || harnessDefault;
+  const info = harnessInfo(id);
+  const models = info.models || {};
+  const model = models[w.type] || models.raccoon || '';  // rodent (legacy) → raccoon tier
+  return { id, pinned, model, ...info };
+}
+
+// The model an engine would use for a given tier (for picker rows).
+function modelFor(harnessId, tier) {
+  const m = harnessInfo(harnessId).models || {};
+  return m[tier] || m.raccoon || '';
+}
+
 // ── Helpers ──
 function timeAgo(ts) {
   const s = Math.floor((Date.now() / 1000) - ts);
@@ -77,15 +112,13 @@ function renderSidebarWolts() {
     const isRunning = woltsWithSessions.has(w.dir || name);
     const statusClass = isRunning ? 'running' : '';
     const isRodent = RODENT_TYPES.has(w.type);
-    const role = w.role || '';
-    const desc = w.description || '';
-    const tooltip = (role || desc) ? `
-      <div class="wolt-tooltip">
-        <div class="wolt-tooltip-name">${emoji} ${name}</div>
-        ${role ? `<div class="wolt-tooltip-role">${role}</div>` : ''}
-        ${desc ? `<div class="wolt-tooltip-desc">${desc}</div>` : ''}
-      </div>` : '';
+    const eng = woltHarness(w);
     const spriteHtml = woltSpriteAvatar(w.type, 36);
+    // Engine chip: a small mono tag, hidden at rest and revealed on card hover;
+    // a pinned override stays visible (a deliberate divergence is worth surfacing).
+    const engChip = isRodent
+      ? `<button class="wolt-engine-btn${eng.pinned ? ' pinned' : ''}" title="${eng.label}${eng.model ? ' · ' + eng.model : ''}${eng.pinned ? '' : ' (lodge default)'} — change" aria-label="Change engine for ${name}" onclick="engineChipClick(event, this, '${name}')"><span class="eng-name">${eng.id}</span>${eng.model ? `<span class="eng-model">${eng.model}</span>` : ''}</button>`
+      : '';
     return `<div class="wolt-card" onclick="${isRodent ? `startSession('${name}')` : ''}">
       <div class="wolt-avatar">
         ${spriteHtml || emoji}
@@ -94,10 +127,89 @@ function renderSidebarWolts() {
       <div class="wolt-info">
         <div class="wolt-name">${name}</div>
         <div class="wolt-type">${w.type}</div>
-        ${tooltip}
       </div>
+      ${engChip}
     </div>`;
   }).join('');
+}
+
+// ── Engine picker (per-wolt harness override) ──
+function closeEnginePicker() {
+  const p = document.getElementById('engine-pop');
+  if (p) p.remove();
+  document.removeEventListener('click', closeEnginePicker);
+}
+
+// Dedicated handler so a chip click can never fall through to the card's
+// startSession() (which would spawn a session).
+function engineChipClick(ev, anchorEl, name) {
+  ev.stopPropagation();
+  ev.preventDefault();
+  openEnginePicker(anchorEl, name);
+}
+
+function openEnginePicker(anchorEl, name) {
+  const existing = document.getElementById('engine-pop');
+  closeEnginePicker();
+  if (existing && existing.dataset.wolt === name) return;  // click again to toggle closed
+
+  const w = allWolts.find(x => (x.name || x.dir) === name);
+  if (!w) return;
+  const effective = w.harness || harnessDefault;   // engine this wolt runs now
+
+  const row = (id, label, sub, selected) => `
+    <button class="engine-opt${selected ? ' sel' : ''}" onclick="event.stopPropagation();setWoltHarness('${name}', '${id}')">
+      <span class="engine-radio">${selected ? '●' : '○'}</span>
+      <span class="engine-opt-label">${label}</span>
+      ${sub ? `<span class="engine-opt-sub">${sub}</span>` : ''}
+    </button>`;
+
+  const opts = harnessList
+    .map(h => {
+      const model = modelFor(h.id, w.type);
+      const sub = model + (h.id === harnessDefault ? ' · default' : '');
+      return row(h.id, h.label, sub, h.id === effective);
+    })
+    .join('');
+
+  const pop = document.createElement('div');
+  pop.id = 'engine-pop';
+  pop.className = 'engine-pop';
+  pop.dataset.wolt = name;
+  pop.innerHTML = `
+    <div class="engine-pop-head">Engine</div>
+    ${opts}
+    <div class="engine-pop-note">Applies to the next session — the one running now keeps its engine.</div>`;
+  pop.addEventListener('click', e => e.stopPropagation());
+  document.body.appendChild(pop);
+
+  // Anchor to the chip, right-aligned; flip above if it would overflow the viewport.
+  const r = anchorEl.getBoundingClientRect();
+  let left = Math.min(r.right - pop.offsetWidth, window.innerWidth - pop.offsetWidth - 8);
+  let top = r.bottom + 6;
+  if (top + pop.offsetHeight > window.innerHeight - 8) top = r.top - pop.offsetHeight - 6;
+  pop.style.left = Math.max(8, left) + 'px';
+  pop.style.top = Math.max(8, top) + 'px';
+
+  setTimeout(() => document.addEventListener('click', closeEnginePicker), 0);
+}
+
+async function setWoltHarness(name, harness) {
+  try {
+    const res = await fetch(`/wolts/${encodeURIComponent(name)}/harness`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ harness }),
+    });
+    if (!res.ok) throw new Error('failed');
+    const w = allWolts.find(x => (x.name || x.dir) === name);
+    if (w) { if (harness) w.harness = harness; else delete w.harness; }
+    renderSidebarWolts();
+  } catch {
+    /* leave UI as-is on failure */
+  } finally {
+    closeEnginePicker();
+  }
 }
 
 // ── Load apps ──
@@ -480,7 +592,7 @@ document.querySelectorAll('.type-card').forEach(card => {
   if (sprite) card.querySelector('.type-card-emoji').innerHTML = sprite;
 });
 
-loadWolts();
+loadHarnesses().finally(loadWolts);
 loadApps();
 loadSessions();
 

@@ -142,6 +142,9 @@ HARNESSES = {
     "claude": {
         "wrapper": WCLAUDE,
         "command": _claude_command,
+        # display metadata for pickers/badges (exposed via the API)
+        "label": "Claude Code",
+        "emoji": "🟠",
         # comm names that count as "the agent is running" in a session's process tree
         "process_names": {"claude"},
         # creature tier → model flag value
@@ -165,6 +168,8 @@ HARNESSES = {
     "codex": {
         "wrapper": WCODEX,
         "command": _codex_command,
+        "label": "Codex",
+        "emoji": "⬛",
         "process_names": {"codex"},
         # From the live /model picker (codex-cli 0.144.4, 2026-07):
         # gpt-5.5 "frontier, complex work", gpt-5.6-terra "balanced, everyday"
@@ -208,6 +213,67 @@ def creature_model(harness: str | None, creature: str | None) -> str | None:
     if not creature:
         return None
     return get_harness(harness)["models"].get(creature)
+
+
+# Tier order + labels for pickers (raccoon/beaver/otter are the user-facing
+# tiers; rodent/wolf are internal aliases and stay out of the UI list).
+PICKER_TIERS = [
+    ("raccoon", "thinker"),
+    ("beaver", "builder"),
+    ("otter", "quick"),
+]
+
+
+def harness_metadata() -> list[dict]:
+    """Public, JSON-safe view of the harness table for pickers/badges.
+
+    Only display + model data — no wrappers, functions, or file paths.
+    """
+    out = []
+    for hid, entry in HARNESSES.items():
+        out.append({
+            "id": hid,
+            "label": entry.get("label", hid),
+            "emoji": entry.get("emoji", ""),
+            "models": {tier: entry["models"].get(tier) for tier, _ in PICKER_TIERS},
+        })
+    return out
+
+
+# --- Space-level default (woltspace.json "harness.default") ---------------
+# The lodge default new sessions fall back to when a wolt has no override.
+# Lives in woltspace.json (structured lodge settings), not .env.
+
+def _woltspace_json_path() -> Path:
+    return Path(os.environ.get("WOLTS_DIR", "/workspace/wolts")) / "woltspace.json"
+
+
+def get_default_harness() -> str:
+    """Read the lodge default harness. Falls back to the platform default."""
+    try:
+        cfg = json.loads(_woltspace_json_path().read_text())
+        return resolve_harness(cfg.get("harness", {}).get("default"))
+    except (json.JSONDecodeError, OSError, AttributeError):
+        return DEFAULT_HARNESS
+
+
+def set_default_harness(name: str) -> str:
+    """Set the lodge default harness in woltspace.json. Returns the resolved value.
+
+    Raises ValueError for an unknown harness — the caller (API) surfaces it.
+    """
+    if name not in HARNESSES:
+        raise ValueError(f"unknown harness: {name}")
+    path = _woltspace_json_path()
+    try:
+        cfg = json.loads(path.read_text()) if path.exists() else {}
+    except (json.JSONDecodeError, OSError):
+        cfg = {}
+    cfg.setdefault("harness", {})["default"] = name
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, indent=2) + "\n")
+    tmp.rename(path)
+    return name
 
 
 def build_command(harness: str | None, mode: str, **kwargs) -> str:

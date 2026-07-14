@@ -189,7 +189,8 @@ class TestTableShape:
 
     REQUIRED_KEYS = {"wrapper", "command", "process_names", "models",
                      "skill_invoke", "instructions_file", "auth_file",
-                     "preset_session_id", "discover_session_id", "paste_settle"}
+                     "preset_session_id", "discover_session_id", "paste_settle",
+                     "label", "emoji"}
 
     def test_all_entries_complete(self):
         for name, entry in HARNESSES.items():
@@ -198,6 +199,58 @@ class TestTableShape:
 
     def test_default_exists(self):
         assert DEFAULT_HARNESS in HARNESSES
+
+
+class TestHarnessMetadata:
+    """The JSON-safe view the pickers consume."""
+
+    def test_metadata_shape(self):
+        from harnesses import harness_metadata
+        meta = harness_metadata()
+        ids = {m["id"] for m in meta}
+        assert {"claude", "codex"} <= ids
+        for m in meta:
+            assert m["label"] and m["emoji"]
+            assert set(m["models"]) == {"raccoon", "beaver", "otter"}
+
+    def test_metadata_is_json_safe(self):
+        import json
+        from harnesses import harness_metadata
+        json.dumps(harness_metadata())  # must not raise (no functions/sets)
+
+
+class TestDefaultHarness:
+    """Lodge default read/write against woltspace.json."""
+
+    def test_missing_config_falls_back(self, tmp_path, monkeypatch):
+        from harnesses import get_default_harness
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        assert get_default_harness() == "claude"
+
+    def test_set_and_get_roundtrip(self, tmp_path, monkeypatch):
+        import json
+        from harnesses import get_default_harness, set_default_harness
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        (tmp_path / "woltspace.json").write_text(json.dumps({"telegram": {"x": 1}}))
+        set_default_harness("codex")
+        assert get_default_harness() == "codex"
+        # preserves other keys
+        cfg = json.loads((tmp_path / "woltspace.json").read_text())
+        assert cfg["telegram"] == {"x": 1}
+        assert cfg["harness"]["default"] == "codex"
+
+    def test_set_rejects_unknown(self, tmp_path, monkeypatch):
+        import pytest as _pytest
+        from harnesses import set_default_harness
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        with _pytest.raises(ValueError):
+            set_default_harness("winamp")
+
+    def test_malformed_config_falls_back(self, tmp_path, monkeypatch):
+        from harnesses import get_default_harness
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        (tmp_path / "woltspace.json").write_text("{ not json")
+        assert get_default_harness() == "claude"
 
 
 class TestSessionHarnessPlumbing:
@@ -249,6 +302,23 @@ class TestSessionHarnessPlumbing:
 
     def test_unknown_harness_falls_back(self):
         result = self._start(harness="winamp")
+        assert result["harness"] == "claude"
+
+    def test_lodge_default_applies_when_no_override(self, monkeypatch):
+        """A wolt with no harness field follows the woltspace.json lodge default."""
+        monkeypatch.setenv("WOLTS_DIR", str(self.wolts_dir))
+        (self.wolts_dir / "woltspace.json").write_text(json.dumps({"harness": {"default": "codex"}}))
+        # wolt.json has no harness override
+        result = self._start()
+        assert result["harness"] == "codex"
+        assert self._session_data(result["name"])["harness"] == "codex"
+
+    def test_wolt_override_beats_lodge_default(self, monkeypatch):
+        """A pinned wolt.json harness wins over the lodge default."""
+        monkeypatch.setenv("WOLTS_DIR", str(self.wolts_dir))
+        (self.wolts_dir / "woltspace.json").write_text(json.dumps({"harness": {"default": "codex"}}))
+        self.wolt_json.write_text(json.dumps({"name": "testwolt", "type": "raccoon", "harness": "claude"}))
+        result = self._start()
         assert result["harness"] == "claude"
 
     def test_codex_spawn_has_no_preset_id(self):

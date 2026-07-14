@@ -196,7 +196,7 @@ body {
   background: #5BC87A;
   box-shadow: 0 0 6px rgba(91,200,122,0.5);
 }
-.wolt-info { min-width: 0; }
+.wolt-info { min-width: 0; flex: 1; }
 .wolt-name {
   font-family: var(--font-mono);
   font-size: 13px;
@@ -211,25 +211,86 @@ body {
   font-size: 10px;
   color: rgba(255,255,255,0.35);
 }
+/* Engine chip — hidden at rest, revealed on card hover; a pinned override
+   stays visible because a deliberate divergence is worth surfacing. */
+.wolt-engine-btn {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  padding: 3px 6px;
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: rgba(255,255,255,0.5);
+  cursor: pointer;
+  opacity: 0.5;                 /* always visible, quiet */
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.wolt-engine-btn .eng-model { font-size: 8px; color: rgba(255,255,255,0.4); }
+.wolt-engine-btn.pinned { opacity: 0.8; }  /* deliberate override — a touch bolder */
+.wolt-engine-btn:hover { opacity: 1; background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.9); }
+.wolt-engine-btn:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; opacity: 1; }
 
-/* ── Wolt tooltip (inline expansion on hover) ── */
-.wolt-tooltip { display: none; }
-.wolt-card:hover .wolt-tooltip { display: block; }
-.wolt-tooltip-name { display: none; }
-.wolt-tooltip-role {
+/* ── Engine picker popover ── */
+.engine-pop {
+  position: fixed;
+  z-index: 1000;
+  min-width: 200px;
+  background: #211d17;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px;
+  padding: 5px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+.engine-pop-head {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.3);
+  padding: 8px 10px 6px;
+}
+.engine-opt {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: rgba(255,255,255,0.85);
+  text-align: left;
+}
+.engine-opt:hover { background: rgba(255,255,255,0.07); }
+.engine-radio { width: 12px; flex-shrink: 0; color: rgba(255,255,255,0.3); }
+.engine-opt.sel .engine-radio { color: var(--amber); }
+.engine-opt-label { white-space: nowrap; }
+.engine-opt-sub {
+  margin-left: auto;
   font-family: var(--font-mono);
   font-size: 10px;
-  color: rgba(255,255,255,0.4);
-  margin-top: 3px;
-  letter-spacing: 0.04em;
+  color: rgba(255,255,255,0.35);
 }
-.wolt-tooltip-desc {
+.engine-pop-note {
   font-family: var(--font-body);
   font-size: 11px;
-  color: rgba(255,255,255,0.3);
   line-height: 1.4;
-  margin-top: 2px;
-  white-space: normal;
+  color: rgba(255,255,255,0.38);
+  padding: 7px 10px 5px;
+  margin-top: 3px;
+  border-top: 1px solid rgba(255,255,255,0.07);
 }
 
 /* ── Creatures toggle ── */

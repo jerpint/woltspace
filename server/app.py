@@ -52,6 +52,13 @@ from .sparks import get_spark_with_chain, list_sparks
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 from sessions import resume_session, start_session, stop_session
+from harnesses import (
+    harness_metadata,
+    get_default_harness,
+    set_default_harness,
+    resolve_harness,
+    HARNESSES,
+)
 from apps import (
     WoltspaceApp,
     apps_restore,
@@ -781,6 +788,63 @@ async def list_wolts():
             except Exception:
                 pass
     return wolts
+
+
+# --- Harnesses ---
+# The agent engine a wolt runs on (claude, codex, …). Pickers/badges read
+# /harnesses; the two POSTs set the lodge default and per-wolt overrides.
+
+@app.get("/harnesses")
+async def list_harnesses():
+    """Available engines (id, label, emoji, per-tier models) + the lodge default."""
+    return {"default": get_default_harness(), "harnesses": harness_metadata()}
+
+
+@app.post("/harness/default")
+async def set_harness_default(request: Request):
+    """Set the lodge-wide default engine (woltspace.json harness.default)."""
+    body = await request.json()
+    name = (body.get("harness") or "").strip()
+    if name not in HARNESSES:
+        return JSONResponse({"error": f"unknown harness: {name}"}, status_code=400)
+    set_default_harness(name)
+    return {"ok": True, "default": name}
+
+
+@app.post("/wolts/{name}/harness")
+async def set_wolt_harness(name: str, request: Request):
+    """Pin or clear a wolt's engine override (wolt.json "harness").
+
+    Body {"harness": "codex"} pins; {"harness": null} clears (follow default).
+    """
+    body = await request.json()
+    requested = body.get("harness")
+
+    safe = "".join(c for c in name if c.isalnum() or c in "-_")
+    wolt_json = WOLTS_DIR / safe / "wolt" / "wolt.json"
+    if not wolt_json.exists():
+        return JSONResponse({"error": f"wolt not found: {safe}"}, status_code=404)
+
+    try:
+        cfg = json.loads(wolt_json.read_text())
+    except (json.JSONDecodeError, OSError):
+        return JSONResponse({"error": "wolt.json unreadable"}, status_code=500)
+
+    if requested in (None, ""):
+        cfg.pop("harness", None)          # follow the lodge default
+        effective = get_default_harness()
+        pinned = False
+    elif requested in HARNESSES:
+        cfg["harness"] = requested
+        effective = requested
+        pinned = True
+    else:
+        return JSONResponse({"error": f"unknown harness: {requested}"}, status_code=400)
+
+    tmp = wolt_json.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, indent=2) + "\n")
+    tmp.rename(wolt_json)
+    return {"ok": True, "wolt": safe, "harness": effective, "pinned": pinned}
 
 
 # --- Apps ---
