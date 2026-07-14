@@ -528,12 +528,15 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
     model = data.get("model", "")
 
     if mode == "spawn":
-        session_id = str(uuid.uuid4())
-        registry.update(
-            name, wolt=wolt,
-            harness_session_id=session_id,
-            title=_title_from_prompt(prompt),
-        )
+        # Harnesses that accept a preset session id (claude --session-id) get
+        # one generated and stamped now. Others (codex) assign their own —
+        # run-session.sh discovers it after launch via discover-id.
+        session_id = ""
+        updates = {"title": _title_from_prompt(prompt)}
+        if get_harness(harness).get("preset_session_id"):
+            session_id = str(uuid.uuid4())
+            updates["harness_session_id"] = session_id
+        registry.update(name, wolt=wolt, **updates)
         full_prompt = _assemble_spawn_prompt(data, prompt, harness)
         return build_command(
             harness, "spawn",
@@ -553,6 +556,40 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
         return build_command(harness, "resume", resume_id=resume_id, model=model, prompt=prompt)
 
     raise ValueError(f"unknown mode: {mode}")
+
+
+def discover_session_id_for(name: str, timeout: int = 90) -> str:
+    """Discover and stamp the harness-assigned session id for a session.
+
+    For harnesses with preset ids (claude) this returns the stored id
+    immediately. For others (codex) it polls the harness's discover function
+    until the id shows up on disk, then stamps harness_session_id so resume
+    works. Called by run-session.sh in the background right after spawn.
+    """
+    registry = SessionRegistry()
+    data = registry.get(name, check_alive=False)
+    if data is None:
+        raise ValueError(f"session '{name}' not found in registry")
+
+    existing = data.get("harness_session_id", "")
+    if existing:
+        return existing
+
+    discover = get_harness(resolve_harness(data.get("harness"))).get("discover_session_id")
+    if discover is None:
+        return ""
+
+    # Small slack behind now — the rollout may have been written between
+    # spawn and this poller starting.
+    since = time.time() - 15
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        session_id = discover(data, since)
+        if session_id:
+            registry.update(name, wolt=data.get("wolt", ""), harness_session_id=session_id)
+            return session_id
+        time.sleep(2)
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -922,6 +959,19 @@ def cli():
             sys.exit(1)
         try:
             print(prepare_session_command(args[1], args[2], args[3] if len(args) > 3 else ""))
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            sys.exit(1)
+
+    elif cmd == "discover-id":
+        # session-reg discover-id <name> — poll for the harness-assigned
+        # session id and stamp it (background helper for run-session.sh)
+        if len(args) < 2:
+            print("Usage: session-reg discover-id <name>", file=sys.stderr)
+            sys.exit(1)
+        try:
+            session_id = discover_session_id_for(args[1])
+            print(session_id)
         except ValueError as e:
             print(str(e), file=sys.stderr)
             sys.exit(1)

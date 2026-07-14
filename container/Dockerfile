@@ -10,6 +10,11 @@ RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 USER node
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
+# --- Stage: codex ---
+# Same pattern. Update Codex: docker build --no-cache-filter=codex ...
+FROM node:22-slim AS codex
+RUN npm install -g @openai/codex
+
 # --- Stage: main ---
 FROM node:22-slim
 
@@ -56,6 +61,10 @@ RUN mkdir -p /workspace/wolts /home/node/.ssh \
 # Copy everything the Claude installer created (binary, launcher, shell integration)
 COPY --from=claude /home/node/ /home/node/
 ENV PATH="/home/node/.local/bin:${PATH}"
+
+# Copy the Codex CLI (npm global package + bin symlink)
+COPY --from=codex /usr/local/lib/node_modules/@openai/codex /usr/local/lib/node_modules/@openai/codex
+RUN ln -s ../lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex
 
 # Install worktui (worktree + Claude session manager)
 RUN git clone https://github.com/jerpint/worktui.git /home/node/worktui \
