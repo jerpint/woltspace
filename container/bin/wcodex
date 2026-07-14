@@ -29,6 +29,15 @@ if [ -n "$WOLT_HOME" ] && [ -d "$WOLT_HOME" ]; then
         mkdir -p "$WOLT_HOME/.agents"
         ln -s ../.claude/skills "$WOLT_HOME/.agents/skills"
     fi
+    # Pre-trust the working directory — codex shows a blocking trust dialog
+    # even with --dangerously-bypass-approvals-and-sandbox (verified live,
+    # codex-cli 0.144.4), which would hang headless spawns. This is codex's
+    # trust-dir equivalent; same safety rationale (we're inside the container,
+    # and only wolt dirs get here).
+    CONFIG_TOML="$CODEX_HOME/config.toml"
+    if ! grep -qF "[projects.\"$PWD\"]" "$CONFIG_TOML" 2>/dev/null; then
+        printf '\n[projects."%s"]\ntrust_level = "trusted"\n' "$PWD" >> "$CONFIG_TOML"
+    fi
 fi
 
 exec codex "$@"

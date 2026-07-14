@@ -363,7 +363,7 @@ def _tmux_alive(name: str) -> bool:
 _TMUX_TIMEOUT = 10  # seconds — safety net so a stuck tmux call never freezes the bot
 
 
-def _tmux_paste(target: str, text: str):
+def _tmux_paste(target: str, text: str, settle: float = 0.0):
     """Paste text into a tmux pane and press Enter.
 
     Uses set-buffer + paste-buffer instead of send-keys -l.
@@ -388,6 +388,10 @@ def _tmux_paste(target: str, text: str):
     Uses a named buffer (the target session name) so concurrent pastes
     to different sessions don't clobber each other.  The -d flag on
     paste-buffer deletes the named buffer after pasting.
+
+    settle: seconds to wait between the paste and the Enter keystroke.
+    Codex's TUI folds an immediate Enter into the paste (message stays in
+    the composer) — its harness entry sets paste_settle=0.5. Claude takes 0.
     """
     buf_name = f"paste-{target}"
     subprocess.run(
@@ -402,6 +406,8 @@ def _tmux_paste(target: str, text: str):
         ["tmux", "paste-buffer", "-b", buf_name, "-d", "-t", target],
         check=True, timeout=_TMUX_TIMEOUT,
     )
+    if settle > 0:
+        time.sleep(settle)
     subprocess.run(
         ["tmux", "send-keys", "-t", target, "Enter"],
         check=True, timeout=_TMUX_TIMEOUT,
@@ -738,13 +744,13 @@ def resume_session(name: str, prompt: str = "") -> dict:
         agent_running = session_has_agent_process(name, harness, include_launching=False)
 
     if tmux_alive and agent_running:
-        # Claude is running — paste the prompt into the TUI as a single buffer paste.
-        # Flatten newlines: a bare \n would submit the input early in claude's TUI.
+        # Agent is running — paste the prompt into the TUI as a single buffer paste.
+        # Flatten newlines: a bare \n would submit the input early in the TUI.
         if prompt:
             flat_prompt = prompt.replace("\n", " ")
-            _tmux_paste(name, flat_prompt)
+            _tmux_paste(name, flat_prompt, settle=get_harness(harness).get("paste_settle", 0.0))
         registry.update(name, wolt=wolt, status="running")
-        return {"name": name, "url": session_url, "status": "delivered", "detail": "claude running, message sent"}
+        return {"name": name, "url": session_url, "status": "delivered", "detail": "agent running, message sent"}
 
     # Both resume paths deliver run-session.sh — the single runtime wrapper.
     # It reads dir/model/harness from the registry, builds the agent command
