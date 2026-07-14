@@ -224,11 +224,10 @@ body {
   letter-spacing: 0.02em;
   color: rgba(255,255,255,0.5);
   cursor: pointer;
-  opacity: 0;
+  opacity: 0.5;                 /* always visible, quiet */
   transition: opacity 0.15s, background 0.15s, color 0.15s;
 }
-.wolt-card:hover .wolt-engine-btn { opacity: 0.6; }
-.wolt-engine-btn.pinned { opacity: 0.6; }
+.wolt-engine-btn.pinned { opacity: 0.75; }  /* deliberate override — a touch bolder */
 .wolt-engine-btn:hover { opacity: 1; background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.9); }
 .wolt-engine-btn:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; opacity: 1; }
 
