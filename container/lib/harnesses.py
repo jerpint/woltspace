@@ -159,20 +159,32 @@ HARNESSES = {
         # claude accepts --session-id at spawn; codex assigns its own
         "preset_session_id": True,
         "discover_session_id": None,
+        # claude's TUI accepts paste + immediate Enter (see _tmux_paste)
+        "paste_settle": 0.0,
     },
     "codex": {
         "wrapper": WCODEX,
         "command": _codex_command,
         "process_names": {"codex"},
-        # Tiers intentionally unmapped until live-tested with a real account —
-        # no model flag means codex's configured default. Wrong guesses here
-        # would crash every session at spawn.
-        "models": {},
+        # From the live /model picker (codex-cli 0.144.4, 2026-07):
+        # gpt-5.5 "frontier, complex work", gpt-5.6-terra "balanced, everyday"
+        # (the default), gpt-5.6-luna "fast and affordable".
+        "models": {
+            "raccoon": "gpt-5.5",
+            "beaver": "gpt-5.6-terra",
+            "otter": "gpt-5.6-luna",
+            "rodent": "gpt-5.5",
+            "wolf": "gpt-5.6-terra",
+        },
         "skill_invoke": "${name}",
         "instructions_file": "AGENTS.md",
         "auth_file": ".codex/auth.json",
         "preset_session_id": False,
         "discover_session_id": _codex_discover_session_id,
+        # codex's TUI folds an Enter arriving right after a paste into the
+        # paste (message stays in the composer). Verified live: 0.5s settle
+        # before the Enter keystroke submits reliably.
+        "paste_settle": 0.5,
     },
 }
 

@@ -134,9 +134,11 @@ class TestBuildCommandCodex:
         cmd = build_command("codex", "login")
         assert cmd.endswith("login --device-auth")
 
-    def test_codex_models_unmapped(self):
-        """Tiers stay unmapped until live-tested — no model flag by default."""
-        assert creature_model("codex", "raccoon") is None
+    def test_codex_tier_models(self):
+        """Mapped from the live /model picker (2026-07 lineup)."""
+        assert creature_model("codex", "raccoon") == "gpt-5.5"
+        assert creature_model("codex", "beaver") == "gpt-5.6-terra"
+        assert creature_model("codex", "otter") == "gpt-5.6-luna"
 
 
 class TestCodexDiscovery:
@@ -187,7 +189,7 @@ class TestTableShape:
 
     REQUIRED_KEYS = {"wrapper", "command", "process_names", "models",
                      "skill_invoke", "instructions_file", "auth_file",
-                     "preset_session_id", "discover_session_id"}
+                     "preset_session_id", "discover_session_id", "paste_settle"}
 
     def test_all_entries_complete(self):
         for name, entry in HARNESSES.items():
