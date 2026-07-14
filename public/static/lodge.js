@@ -112,15 +112,7 @@ function renderSidebarWolts() {
     const isRunning = woltsWithSessions.has(w.dir || name);
     const statusClass = isRunning ? 'running' : '';
     const isRodent = RODENT_TYPES.has(w.type);
-    const role = w.role || '';
-    const desc = w.description || '';
     const eng = woltHarness(w);
-    const tooltip = (role || desc) ? `
-      <div class="wolt-tooltip">
-        <div class="wolt-tooltip-name">${emoji} ${name}</div>
-        ${role ? `<div class="wolt-tooltip-role">${role}</div>` : ''}
-        ${desc ? `<div class="wolt-tooltip-desc">${desc}</div>` : ''}
-      </div>` : '';
     const spriteHtml = woltSpriteAvatar(w.type, 36);
     // Engine chip: a small mono tag, hidden at rest and revealed on card hover;
     // a pinned override stays visible (a deliberate divergence is worth surfacing).
@@ -135,7 +127,6 @@ function renderSidebarWolts() {
       <div class="wolt-info">
         <div class="wolt-name">${name}</div>
         <div class="wolt-type">${w.type}</div>
-        ${tooltip}
       </div>
       ${engChip}
     </div>`;

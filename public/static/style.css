@@ -293,37 +293,6 @@ body {
   border-top: 1px solid rgba(255,255,255,0.07);
 }
 
-/* ── Wolt tooltip (floating overlay on hover — must not resize the card) ── */
-.wolt-tooltip {
-  display: none;
-  position: absolute;
-  top: 100%; left: 8px; right: 8px;
-  margin-top: 2px;
-  z-index: 50;
-  background: #211d17;
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 8px;
-  padding: 8px 11px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
-}
-.wolt-card:hover .wolt-tooltip { display: block; }
-.wolt-tooltip-name { display: none; }
-.wolt-tooltip-role {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: rgba(255,255,255,0.4);
-  margin-top: 3px;
-  letter-spacing: 0.04em;
-}
-.wolt-tooltip-desc {
-  font-family: var(--font-body);
-  font-size: 11px;
-  color: rgba(255,255,255,0.3);
-  line-height: 1.4;
-  margin-top: 2px;
-  white-space: normal;
-}
-
 /* ── Creatures toggle ── */
 .creatures-toggle, .connectors-toggle {
   display: flex;
