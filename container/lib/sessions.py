@@ -34,6 +34,7 @@ from harnesses import (
     resolve_harness,
     creature_model,
     get_harness,
+    get_default_harness,
     build_command,
     session_has_agent_process,
 )
@@ -641,6 +642,9 @@ def start_session(
                 harness = wolt_data.get("harness", "")
         except (json.JSONDecodeError, OSError):
             pass
+    # Resolution: explicit arg > wolt.json override > lodge default > "claude".
+    if not harness:
+        harness = get_default_harness()
     harness = resolve_harness(harness)
 
     if app:
