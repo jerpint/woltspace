@@ -8,6 +8,32 @@ let allSessions = [];
 let appFilter = 'all';
 let currentView = 'home';
 
+// ── Harnesses (agent engines: claude, codex, …) ──
+let harnessList = [];          // [{id,label,emoji,models}]
+let harnessDefault = 'claude'; // lodge default (woltspace.json harness.default)
+
+async function loadHarnesses() {
+  try {
+    const res = await fetch('/harnesses');
+    const data = await res.json();
+    harnessList = data.harnesses || [];
+    harnessDefault = data.default || 'claude';
+  } catch {
+    harnessList = [];
+  }
+}
+
+function harnessInfo(id) {
+  return harnessList.find(h => h.id === id) || { id, label: id, emoji: '' };
+}
+
+// A wolt's effective engine + whether it's pinned (overrides the lodge default).
+function woltHarness(w) {
+  const pinned = !!w.harness;
+  const id = w.harness || harnessDefault;
+  return { id, pinned, ...harnessInfo(id) };
+}
+
 // ── Helpers ──
 function timeAgo(ts) {
   const s = Math.floor((Date.now() / 1000) - ts);
@@ -79,11 +105,20 @@ function renderSidebarWolts() {
     const isRodent = RODENT_TYPES.has(w.type);
     const role = w.role || '';
     const desc = w.description || '';
-    const tooltip = (role || desc) ? `
+    const eng = woltHarness(w);
+    // ambient engine badge on the type line; only for rodents (session-running wolts)
+    const engBadge = isRodent && eng.emoji
+      ? ` · <span class="wolt-engine${eng.pinned ? ' pinned' : ''}" title="engine: ${eng.label}${eng.pinned ? ' (pinned)' : ' (lodge default)'} — click to change" onclick="event.stopPropagation();openEnginePicker(event,'${name}')">${eng.emoji}</span>`
+      : '';
+    const engTip = isRodent
+      ? `<div class="wolt-tooltip-role">engine: ${eng.emoji} ${eng.label}${eng.pinned ? '' : ' · lodge default'}</div>`
+      : '';
+    const tooltip = (role || desc || engTip) ? `
       <div class="wolt-tooltip">
         <div class="wolt-tooltip-name">${emoji} ${name}</div>
         ${role ? `<div class="wolt-tooltip-role">${role}</div>` : ''}
         ${desc ? `<div class="wolt-tooltip-desc">${desc}</div>` : ''}
+        ${engTip}
       </div>` : '';
     const spriteHtml = woltSpriteAvatar(w.type, 36);
     return `<div class="wolt-card" onclick="${isRodent ? `startSession('${name}')` : ''}">
@@ -93,11 +128,73 @@ function renderSidebarWolts() {
       </div>
       <div class="wolt-info">
         <div class="wolt-name">${name}</div>
-        <div class="wolt-type">${w.type}</div>
+        <div class="wolt-type">${w.type}${engBadge}</div>
         ${tooltip}
       </div>
     </div>`;
   }).join('');
+}
+
+// ── Engine picker (per-wolt harness override) ──
+function closeEnginePicker() {
+  const p = document.getElementById('engine-pop');
+  if (p) p.remove();
+  document.removeEventListener('click', closeEnginePicker);
+}
+
+function openEnginePicker(ev, name) {
+  closeEnginePicker();
+  const w = allWolts.find(x => (x.name || x.dir) === name);
+  if (!w) return;
+  const pinnedId = w.harness || '';   // '' = following lodge default
+  const def = harnessInfo(harnessDefault);
+
+  const row = (value, emoji, label, sub, selected) => `
+    <div class="engine-opt${selected ? ' sel' : ''}" onclick="event.stopPropagation();setWoltHarness('${name}', ${value === '' ? 'null' : `'${value}'`})">
+      <span class="engine-radio">${selected ? '◉' : '○'}</span>
+      <span class="engine-opt-label">${emoji} ${label}</span>
+      ${sub ? `<span class="engine-opt-sub">${sub}</span>` : ''}
+    </div>`;
+
+  let opts = row('', def.emoji, 'Follow lodge default', def.label, !pinnedId);
+  opts += harnessList.map(h => row(h.id, h.emoji, h.label, '', pinnedId === h.id)).join('');
+
+  const pop = document.createElement('div');
+  pop.id = 'engine-pop';
+  pop.className = 'engine-pop';
+  pop.innerHTML = `
+    <div class="engine-pop-title">Engine · ${name}</div>
+    ${opts}
+    <div class="engine-pop-note">⏭ Applies to your next session — the one running now keeps its engine.</div>`;
+  pop.onclick = e => e.stopPropagation();
+  document.body.appendChild(pop);
+
+  // position near the click, kept on-screen
+  const x = Math.min(ev.clientX, window.innerWidth - pop.offsetWidth - 12);
+  const y = Math.min(ev.clientY + 8, window.innerHeight - pop.offsetHeight - 12);
+  pop.style.left = Math.max(12, x) + 'px';
+  pop.style.top = Math.max(12, y) + 'px';
+
+  setTimeout(() => document.addEventListener('click', closeEnginePicker), 0);
+}
+
+async function setWoltHarness(name, harness) {
+  try {
+    const res = await fetch(`/wolts/${encodeURIComponent(name)}/harness`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ harness }),
+    });
+    if (!res.ok) throw new Error('failed');
+    // reflect the change locally, then re-render the badge
+    const w = allWolts.find(x => (x.name || x.dir) === name);
+    if (w) { if (harness) w.harness = harness; else delete w.harness; }
+    renderSidebarWolts();
+  } catch {
+    /* leave UI as-is on failure */
+  } finally {
+    closeEnginePicker();
+  }
 }
 
 // ── Load apps ──
@@ -480,7 +577,7 @@ document.querySelectorAll('.type-card').forEach(card => {
   if (sprite) card.querySelector('.type-card-emoji').innerHTML = sprite;
 });
 
-loadWolts();
+loadHarnesses().finally(loadWolts);
 loadApps();
 loadSessions();
 

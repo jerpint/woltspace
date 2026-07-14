@@ -211,6 +211,62 @@ body {
   font-size: 10px;
   color: rgba(255,255,255,0.35);
 }
+.wolt-engine {
+  font-size: 9px;
+  opacity: 0.55;               /* inherited from lodge default — quiet */
+  cursor: pointer;
+}
+.wolt-engine.pinned { opacity: 1; }  /* deliberate per-wolt override — bolder */
+.wolt-engine:hover { opacity: 1; }
+
+/* ── Engine picker popover ── */
+.engine-pop {
+  position: fixed;
+  z-index: 1000;
+  min-width: 220px;
+  background: #201d18;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+  font-family: var(--font-body);
+}
+.engine-pop-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(255,255,255,0.4);
+  padding: 6px 9px 8px;
+}
+.engine-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 9px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 13px;
+  color: rgba(255,255,255,0.85);
+}
+.engine-opt:hover { background: rgba(255,255,255,0.07); }
+.engine-opt.sel { background: rgba(201,139,42,0.14); }
+.engine-radio { color: var(--amber); width: 13px; flex-shrink: 0; }
+.engine-opt-label { white-space: nowrap; }
+.engine-opt-sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: rgba(255,255,255,0.35);
+  margin-left: auto;
+}
+.engine-pop-note {
+  font-size: 11px;
+  color: rgba(255,255,255,0.4);
+  line-height: 1.4;
+  padding: 8px 9px 4px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  margin-top: 4px;
+}
 
 /* ── Wolt tooltip (inline expansion on hover) ── */
 .wolt-tooltip { display: none; }
