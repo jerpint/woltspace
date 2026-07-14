@@ -135,6 +135,11 @@ RUN npm install && npm install ws node-pty
 # Make bin scripts executable + add to PATH
 RUN chmod +x container/bin/* container/entrypoint.sh container/start.sh
 ENV PATH="/workspace/woltspace/container/bin:${PATH}"
+# Also add the bins to login-shell PATH. ENV covers processes that inherit it,
+# but a login shell (bash -lc) rebuilds PATH from /etc/profile and drops it —
+# which is how codex runs model commands, so notify/push-view/session-reg were
+# "command not found" inside codex. profile.d fixes every login shell + harness.
+RUN echo 'export PATH="/workspace/woltspace/container/bin:$PATH"' > /etc/profile.d/woltspace-path.sh
 
 # Install Python deps
 RUN cd container && uv sync --project bot
