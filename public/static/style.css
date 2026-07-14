@@ -215,19 +215,26 @@ body {
    stays visible because a deliberate divergence is worth surfacing. */
 .wolt-engine-btn {
   flex-shrink: 0;
-  padding: 2px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  padding: 3px 6px;
   border: none;
   background: transparent;
   border-radius: 5px;
   font-family: var(--font-mono);
   font-size: 9px;
+  line-height: 1.1;
   letter-spacing: 0.02em;
+  white-space: nowrap;
   color: rgba(255,255,255,0.5);
   cursor: pointer;
   opacity: 0.5;                 /* always visible, quiet */
   transition: opacity 0.15s, background 0.15s, color 0.15s;
 }
-.wolt-engine-btn.pinned { opacity: 0.75; }  /* deliberate override — a touch bolder */
+.wolt-engine-btn .eng-model { font-size: 8px; color: rgba(255,255,255,0.4); }
+.wolt-engine-btn.pinned { opacity: 0.8; }  /* deliberate override — a touch bolder */
 .wolt-engine-btn:hover { opacity: 1; background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.9); }
 .wolt-engine-btn:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; opacity: 1; }
 

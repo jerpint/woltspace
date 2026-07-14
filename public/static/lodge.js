@@ -27,11 +27,20 @@ function harnessInfo(id) {
   return harnessList.find(h => h.id === id) || { id, label: id, emoji: '' };
 }
 
-// A wolt's effective engine + whether it's pinned (overrides the lodge default).
+// A wolt's effective engine + the concrete model for its tier (creature type).
 function woltHarness(w) {
   const pinned = !!w.harness;
   const id = w.harness || harnessDefault;
-  return { id, pinned, ...harnessInfo(id) };
+  const info = harnessInfo(id);
+  const models = info.models || {};
+  const model = models[w.type] || models.raccoon || '';  // rodent (legacy) → raccoon tier
+  return { id, pinned, model, ...info };
+}
+
+// The model an engine would use for a given tier (for picker rows).
+function modelFor(harnessId, tier) {
+  const m = harnessInfo(harnessId).models || {};
+  return m[tier] || m.raccoon || '';
 }
 
 // ── Helpers ──
@@ -116,7 +125,7 @@ function renderSidebarWolts() {
     // Engine chip: a small mono tag, hidden at rest and revealed on card hover;
     // a pinned override stays visible (a deliberate divergence is worth surfacing).
     const engChip = isRodent
-      ? `<button class="wolt-engine-btn${eng.pinned ? ' pinned' : ''}" title="Engine: ${eng.label}${eng.pinned ? '' : ' (lodge default)'} — change" aria-label="Change engine for ${name}" onclick="engineChipClick(event, this, '${name}')">${eng.id}</button>`
+      ? `<button class="wolt-engine-btn${eng.pinned ? ' pinned' : ''}" title="${eng.label}${eng.model ? ' · ' + eng.model : ''}${eng.pinned ? '' : ' (lodge default)'} — change" aria-label="Change engine for ${name}" onclick="engineChipClick(event, this, '${name}')"><span class="eng-name">${eng.id}</span>${eng.model ? `<span class="eng-model">${eng.model}</span>` : ''}</button>`
       : '';
     return `<div class="wolt-card" onclick="${isRodent ? `startSession('${name}')` : ''}">
       <div class="wolt-avatar">
@@ -165,7 +174,11 @@ function openEnginePicker(anchorEl, name) {
     </button>`;
 
   const opts = harnessList
-    .map(h => row(h.id, h.label, h.id === harnessDefault ? 'default' : '', h.id === effective))
+    .map(h => {
+      const model = modelFor(h.id, w.type);
+      const sub = model + (h.id === harnessDefault ? ' · default' : '');
+      return row(h.id, h.label, sub, h.id === effective);
+    })
     .join('');
 
   const pop = document.createElement('div');
