@@ -196,7 +196,7 @@ body {
   background: #5BC87A;
   box-shadow: 0 0 6px rgba(91,200,122,0.5);
 }
-.wolt-info { min-width: 0; }
+.wolt-info { min-width: 0; flex: 1; }
 .wolt-name {
   font-family: var(--font-mono);
   font-size: 13px;
@@ -211,61 +211,79 @@ body {
   font-size: 10px;
   color: rgba(255,255,255,0.35);
 }
-.wolt-engine {
-  font-size: 9px;
-  opacity: 0.55;               /* inherited from lodge default — quiet */
+/* Engine chip — hidden at rest, revealed on card hover; a pinned override
+   stays visible because a deliberate divergence is worth surfacing. */
+.wolt-engine-btn {
+  flex-shrink: 0;
+  width: 24px; height: 24px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1;
   cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
 }
-.wolt-engine.pinned { opacity: 1; }  /* deliberate per-wolt override — bolder */
-.wolt-engine:hover { opacity: 1; }
+.wolt-card:hover .wolt-engine-btn { opacity: 0.7; }
+.wolt-engine-btn.pinned { opacity: 0.7; }
+.wolt-engine-btn:hover { opacity: 1; background: rgba(255,255,255,0.1); }
+.wolt-engine-btn:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; opacity: 1; }
 
 /* ── Engine picker popover ── */
 .engine-pop {
   position: fixed;
   z-index: 1000;
-  min-width: 220px;
-  background: #201d18;
-  border: 1px solid rgba(255,255,255,0.12);
+  min-width: 200px;
+  background: #211d17;
+  border: 1px solid rgba(255,255,255,0.1);
   border-radius: 10px;
-  padding: 6px;
-  box-shadow: 0 8px 28px rgba(0,0,0,0.45);
-  font-family: var(--font-body);
+  padding: 5px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
 }
-.engine-pop-title {
+.engine-pop-head {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: rgba(255,255,255,0.4);
-  padding: 6px 9px 8px;
+  color: rgba(255,255,255,0.3);
+  padding: 8px 10px 6px;
 }
 .engine-opt {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 9px;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
   border-radius: 7px;
   cursor: pointer;
+  font-family: var(--font-body);
   font-size: 13px;
   color: rgba(255,255,255,0.85);
+  text-align: left;
 }
 .engine-opt:hover { background: rgba(255,255,255,0.07); }
-.engine-opt.sel { background: rgba(201,139,42,0.14); }
-.engine-radio { color: var(--amber); width: 13px; flex-shrink: 0; }
+.engine-radio { width: 12px; flex-shrink: 0; color: rgba(255,255,255,0.3); }
+.engine-opt.sel .engine-radio { color: var(--amber); }
 .engine-opt-label { white-space: nowrap; }
 .engine-opt-sub {
+  margin-left: auto;
   font-family: var(--font-mono);
   font-size: 10px;
   color: rgba(255,255,255,0.35);
-  margin-left: auto;
 }
 .engine-pop-note {
+  font-family: var(--font-body);
   font-size: 11px;
-  color: rgba(255,255,255,0.4);
   line-height: 1.4;
-  padding: 8px 9px 4px;
-  border-top: 1px solid rgba(255,255,255,0.08);
-  margin-top: 4px;
+  color: rgba(255,255,255,0.38);
+  padding: 7px 10px 5px;
+  margin-top: 3px;
+  border-top: 1px solid rgba(255,255,255,0.07);
 }
 
 /* ── Wolt tooltip (inline expansion on hover) ── */

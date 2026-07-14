@@ -106,21 +106,18 @@ function renderSidebarWolts() {
     const role = w.role || '';
     const desc = w.description || '';
     const eng = woltHarness(w);
-    // ambient engine badge on the type line; only for rodents (session-running wolts)
-    const engBadge = isRodent && eng.emoji
-      ? ` · <span class="wolt-engine${eng.pinned ? ' pinned' : ''}" title="engine: ${eng.label}${eng.pinned ? ' (pinned)' : ' (lodge default)'} — click to change" onclick="event.stopPropagation();openEnginePicker(event,'${name}')">${eng.emoji}</span>`
-      : '';
-    const engTip = isRodent
-      ? `<div class="wolt-tooltip-role">engine: ${eng.emoji} ${eng.label}${eng.pinned ? '' : ' · lodge default'}</div>`
-      : '';
-    const tooltip = (role || desc || engTip) ? `
+    const tooltip = (role || desc) ? `
       <div class="wolt-tooltip">
         <div class="wolt-tooltip-name">${emoji} ${name}</div>
         ${role ? `<div class="wolt-tooltip-role">${role}</div>` : ''}
         ${desc ? `<div class="wolt-tooltip-desc">${desc}</div>` : ''}
-        ${engTip}
       </div>` : '';
     const spriteHtml = woltSpriteAvatar(w.type, 36);
+    // Engine chip: hidden at rest, revealed on card hover; a pinned override
+    // stays visible (a deliberate divergence from the lodge default is worth surfacing).
+    const engChip = isRodent && eng.emoji
+      ? `<button class="wolt-engine-btn${eng.pinned ? ' pinned' : ''}" title="Engine: ${eng.label}${eng.pinned ? '' : ' (lodge default)'} — change" aria-label="Change engine for ${name}" onclick="engineChipClick(event, this, '${name}')">${eng.emoji}</button>`
+      : '';
     return `<div class="wolt-card" onclick="${isRodent ? `startSession('${name}')` : ''}">
       <div class="wolt-avatar">
         ${spriteHtml || emoji}
@@ -128,9 +125,10 @@ function renderSidebarWolts() {
       </div>
       <div class="wolt-info">
         <div class="wolt-name">${name}</div>
-        <div class="wolt-type">${w.type}${engBadge}</div>
+        <div class="wolt-type">${w.type}</div>
         ${tooltip}
       </div>
+      ${engChip}
     </div>`;
   }).join('');
 }
@@ -142,38 +140,52 @@ function closeEnginePicker() {
   document.removeEventListener('click', closeEnginePicker);
 }
 
-function openEnginePicker(ev, name) {
+// Dedicated handler so a chip click can never fall through to the card's
+// startSession() (which would spawn a session).
+function engineChipClick(ev, anchorEl, name) {
+  ev.stopPropagation();
+  ev.preventDefault();
+  openEnginePicker(anchorEl, name);
+}
+
+function openEnginePicker(anchorEl, name) {
+  const existing = document.getElementById('engine-pop');
   closeEnginePicker();
+  if (existing && existing.dataset.wolt === name) return;  // click again to toggle closed
+
   const w = allWolts.find(x => (x.name || x.dir) === name);
   if (!w) return;
   const pinnedId = w.harness || '';   // '' = following lodge default
   const def = harnessInfo(harnessDefault);
 
   const row = (value, emoji, label, sub, selected) => `
-    <div class="engine-opt${selected ? ' sel' : ''}" onclick="event.stopPropagation();setWoltHarness('${name}', ${value === '' ? 'null' : `'${value}'`})">
-      <span class="engine-radio">${selected ? '◉' : '○'}</span>
+    <button class="engine-opt${selected ? ' sel' : ''}" onclick="event.stopPropagation();setWoltHarness('${name}', ${value === '' ? 'null' : `'${value}'`})">
+      <span class="engine-radio">${selected ? '●' : '○'}</span>
       <span class="engine-opt-label">${emoji} ${label}</span>
       ${sub ? `<span class="engine-opt-sub">${sub}</span>` : ''}
-    </div>`;
+    </button>`;
 
-  let opts = row('', def.emoji, 'Follow lodge default', def.label, !pinnedId);
+  let opts = row('', def.emoji, 'Lodge default', def.label, !pinnedId);
   opts += harnessList.map(h => row(h.id, h.emoji, h.label, '', pinnedId === h.id)).join('');
 
   const pop = document.createElement('div');
   pop.id = 'engine-pop';
   pop.className = 'engine-pop';
+  pop.dataset.wolt = name;
   pop.innerHTML = `
-    <div class="engine-pop-title">Engine · ${name}</div>
+    <div class="engine-pop-head">Engine</div>
     ${opts}
-    <div class="engine-pop-note">⏭ Applies to your next session — the one running now keeps its engine.</div>`;
-  pop.onclick = e => e.stopPropagation();
+    <div class="engine-pop-note">Applies to the next session — the one running now keeps its engine.</div>`;
+  pop.addEventListener('click', e => e.stopPropagation());
   document.body.appendChild(pop);
 
-  // position near the click, kept on-screen
-  const x = Math.min(ev.clientX, window.innerWidth - pop.offsetWidth - 12);
-  const y = Math.min(ev.clientY + 8, window.innerHeight - pop.offsetHeight - 12);
-  pop.style.left = Math.max(12, x) + 'px';
-  pop.style.top = Math.max(12, y) + 'px';
+  // Anchor to the chip, right-aligned; flip above if it would overflow the viewport.
+  const r = anchorEl.getBoundingClientRect();
+  let left = Math.min(r.right - pop.offsetWidth, window.innerWidth - pop.offsetWidth - 8);
+  let top = r.bottom + 6;
+  if (top + pop.offsetHeight > window.innerHeight - 8) top = r.top - pop.offsetHeight - 6;
+  pop.style.left = Math.max(8, left) + 'px';
+  pop.style.top = Math.max(8, top) + 'px';
 
   setTimeout(() => document.addEventListener('click', closeEnginePicker), 0);
 }
@@ -186,7 +198,6 @@ async function setWoltHarness(name, harness) {
       body: JSON.stringify({ harness }),
     });
     if (!res.ok) throw new Error('failed');
-    // reflect the change locally, then re-render the badge
     const w = allWolts.find(x => (x.name || x.dir) === name);
     if (w) { if (harness) w.harness = harness; else delete w.harness; }
     renderSidebarWolts();
