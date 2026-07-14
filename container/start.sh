@@ -13,6 +13,10 @@ rm -f "$ENV_FILE"
 export WOLT_NAME WOLT_DIR WOLTS_DIR DEV_MODE WOLF_CONFIG PYTHONPATH PATH
 export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
 
+# Codex seed home — codex errors if CODEX_HOME doesn't exist, and the wolts
+# mount shadows any build-time mkdir. Harmless if codex is never used.
+mkdir -p "${CODEX_HOME:-$WOLTS_DIR/.codex}"
+
 # ── tmux ──
 export LANG=C.UTF-8
 tmux -u new-session -d -s main -c "$WOLT_DIR" 2>/dev/null || true

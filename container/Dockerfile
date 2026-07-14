@@ -65,6 +65,10 @@ ENV PATH="/home/node/.local/bin:${PATH}"
 # Copy the Codex CLI (npm global package + bin symlink)
 COPY --from=codex /usr/local/lib/node_modules/@openai/codex /usr/local/lib/node_modules/@openai/codex
 RUN ln -s ../lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex
+# Default CODEX_HOME is the shared seed in the mount — durable across
+# rebuilds, and where `codex login` lands. wcodex overrides this per-wolt
+# at session launch. (Dir is created at boot; mount shadows build-time mkdir.)
+ENV CODEX_HOME=/workspace/wolts/.codex
 
 # Install worktui (worktree + Claude session manager)
 RUN git clone https://github.com/jerpint/worktui.git /home/node/worktui \
