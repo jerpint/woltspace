@@ -215,20 +215,21 @@ body {
    stays visible because a deliberate divergence is worth surfacing. */
 .wolt-engine-btn {
   flex-shrink: 0;
-  width: 24px; height: 24px;
+  padding: 2px 6px;
   border: none;
   background: transparent;
-  border-radius: 6px;
-  font-size: 12px;
-  line-height: 1;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  color: rgba(255,255,255,0.5);
   cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
   opacity: 0;
-  transition: opacity 0.15s, background 0.15s;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
 }
-.wolt-card:hover .wolt-engine-btn { opacity: 0.7; }
-.wolt-engine-btn.pinned { opacity: 0.7; }
-.wolt-engine-btn:hover { opacity: 1; background: rgba(255,255,255,0.1); }
+.wolt-card:hover .wolt-engine-btn { opacity: 0.6; }
+.wolt-engine-btn.pinned { opacity: 0.6; }
+.wolt-engine-btn:hover { opacity: 1; background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.9); }
 .wolt-engine-btn:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; opacity: 1; }
 
 /* ── Engine picker popover ── */
@@ -286,8 +287,19 @@ body {
   border-top: 1px solid rgba(255,255,255,0.07);
 }
 
-/* ── Wolt tooltip (inline expansion on hover) ── */
-.wolt-tooltip { display: none; }
+/* ── Wolt tooltip (floating overlay on hover — must not resize the card) ── */
+.wolt-tooltip {
+  display: none;
+  position: absolute;
+  top: 100%; left: 8px; right: 8px;
+  margin-top: 2px;
+  z-index: 50;
+  background: #211d17;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  padding: 8px 11px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+}
 .wolt-card:hover .wolt-tooltip { display: block; }
 .wolt-tooltip-name { display: none; }
 .wolt-tooltip-role {

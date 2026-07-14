@@ -113,10 +113,10 @@ function renderSidebarWolts() {
         ${desc ? `<div class="wolt-tooltip-desc">${desc}</div>` : ''}
       </div>` : '';
     const spriteHtml = woltSpriteAvatar(w.type, 36);
-    // Engine chip: hidden at rest, revealed on card hover; a pinned override
-    // stays visible (a deliberate divergence from the lodge default is worth surfacing).
-    const engChip = isRodent && eng.emoji
-      ? `<button class="wolt-engine-btn${eng.pinned ? ' pinned' : ''}" title="Engine: ${eng.label}${eng.pinned ? '' : ' (lodge default)'} — change" aria-label="Change engine for ${name}" onclick="engineChipClick(event, this, '${name}')">${eng.emoji}</button>`
+    // Engine chip: a small mono tag, hidden at rest and revealed on card hover;
+    // a pinned override stays visible (a deliberate divergence is worth surfacing).
+    const engChip = isRodent
+      ? `<button class="wolt-engine-btn${eng.pinned ? ' pinned' : ''}" title="Engine: ${eng.label}${eng.pinned ? '' : ' (lodge default)'} — change" aria-label="Change engine for ${name}" onclick="engineChipClick(event, this, '${name}')">${eng.id}</button>`
       : '';
     return `<div class="wolt-card" onclick="${isRodent ? `startSession('${name}')` : ''}">
       <div class="wolt-avatar">
@@ -155,18 +155,18 @@ function openEnginePicker(anchorEl, name) {
 
   const w = allWolts.find(x => (x.name || x.dir) === name);
   if (!w) return;
-  const pinnedId = w.harness || '';   // '' = following lodge default
-  const def = harnessInfo(harnessDefault);
+  const effective = w.harness || harnessDefault;   // engine this wolt runs now
 
-  const row = (value, emoji, label, sub, selected) => `
-    <button class="engine-opt${selected ? ' sel' : ''}" onclick="event.stopPropagation();setWoltHarness('${name}', ${value === '' ? 'null' : `'${value}'`})">
+  const row = (id, label, sub, selected) => `
+    <button class="engine-opt${selected ? ' sel' : ''}" onclick="event.stopPropagation();setWoltHarness('${name}', '${id}')">
       <span class="engine-radio">${selected ? '●' : '○'}</span>
-      <span class="engine-opt-label">${emoji} ${label}</span>
+      <span class="engine-opt-label">${label}</span>
       ${sub ? `<span class="engine-opt-sub">${sub}</span>` : ''}
     </button>`;
 
-  let opts = row('', def.emoji, 'Lodge default', def.label, !pinnedId);
-  opts += harnessList.map(h => row(h.id, h.emoji, h.label, '', pinnedId === h.id)).join('');
+  const opts = harnessList
+    .map(h => row(h.id, h.label, h.id === harnessDefault ? 'default' : '', h.id === effective))
+    .join('');
 
   const pop = document.createElement('div');
   pop.id = 'engine-pop';
