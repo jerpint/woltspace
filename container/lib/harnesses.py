@@ -147,7 +147,7 @@ HARNESSES = {
         "emoji": "🟠",
         # comm names that count as "the agent is running" in a session's process tree
         "process_names": {"claude"},
-        # creature tier → model flag value
+        # creature tier → default model flag value (the seed; woltspace.json may override)
         "models": {
             "raccoon": "opus",
             "beaver": "sonnet",
@@ -155,6 +155,15 @@ HARNESSES = {
             "rodent": "opus",  # legacy type — treated as raccoon
             "wolf": "sonnet",
         },
+        # every model a wolt may be pinned to on this harness (Free binding: any
+        # model pickable for any tier). Seed list — woltspace.json can add/remove.
+        "model_catalog": [
+            {"id": "opus", "label": "Opus 4.8"},
+            {"id": "sonnet", "label": "Sonnet 5"},
+            {"id": "haiku", "label": "Haiku 4.5"},
+            # `claude --model fable` alias verified live (2026-07-16)
+            {"id": "fable", "label": "Fable 5"},
+        ],
         # how a skill is invoked inside a prompt
         "skill_invoke": "/{name}",
         "instructions_file": "CLAUDE.md",
@@ -181,6 +190,13 @@ HARNESSES = {
             "rodent": "gpt-5.5",
             "wolf": "gpt-5.6-terra",
         },
+        "model_catalog": [
+            {"id": "gpt-5.5", "label": "GPT-5.5"},
+            {"id": "gpt-5.6-terra", "label": "GPT-5.6 Terra"},
+            {"id": "gpt-5.6-luna", "label": "GPT-5.6 Luna"},
+            # VERIFY live: exact id for "Sol" from codex's /model picker
+            {"id": "gpt-5.6-sol", "label": "GPT-5.6 Sol"},
+        ],
         "skill_invoke": "${name}",
         "instructions_file": "AGENTS.md",
         "auth_file": ".codex/auth.json",
@@ -208,11 +224,77 @@ def get_harness(name: str | None) -> dict:
     return HARNESSES[resolve_harness(name)]
 
 
-def creature_model(harness: str | None, creature: str | None) -> str | None:
-    """Map a creature tier to this harness's model flag value."""
-    if not creature:
+def _model_overlay(harness: str | None) -> dict:
+    """woltspace.json's per-harness model overrides, or {} if unset/malformed.
+
+    Shape: woltspace.json -> "harness" -> "models" -> "<harness>" ->
+        {"catalog": [<id> | {"id":..,"label":..}, ...], "tiers": {<tier>: <model>}}
+    Everything is optional; a missing/broken file just yields the built-in seed.
+    """
+    try:
+        cfg = json.loads(_woltspace_json_path().read_text())
+        models = cfg.get("harness", {}).get("models", {})
+        return models.get(resolve_harness(harness), {}) or {}
+    except (json.JSONDecodeError, OSError, AttributeError):
+        return {}
+
+
+def model_catalog(harness: str | None) -> list[dict]:
+    """Selectable models for a harness as [{"id","label"}]: the built-in seed,
+    replaced by woltspace.json's "catalog" when present. The catalog list IS the
+    lever — add or hide a model by editing that one list, no code. Overlay entries
+    may be bare id strings or {"id","label"} objects; labels fall back to the
+    seed's (then to the id) so a user adding a model need only list its id.
+    """
+    seed = get_harness(harness).get("model_catalog", [])
+    ov_catalog = _model_overlay(harness).get("catalog")
+    if ov_catalog is None:
+        return [dict(m) for m in seed]
+    label_by_id = {m["id"]: m.get("label", m["id"]) for m in seed}
+    out = []
+    for item in ov_catalog:
+        if isinstance(item, dict) and item.get("id"):
+            out.append({"id": item["id"],
+                        "label": item.get("label") or label_by_id.get(item["id"], item["id"])})
+        elif isinstance(item, str):
+            out.append({"id": item, "label": label_by_id.get(item, item)})
+    return out
+
+
+def is_valid_model(harness: str | None, model: str | None) -> bool:
+    """True if `model` is in this harness's (merged) selectable catalog."""
+    if not model:
+        return False
+    return any(m["id"] == model for m in model_catalog(harness))
+
+
+def tier_default_model(harness: str | None, tier: str | None) -> str | None:
+    """The default model for a tier on this harness: woltspace.json's "tiers"
+    override if present, else the built-in seed."""
+    if not tier:
         return None
-    return get_harness(harness)["models"].get(creature)
+    overlay_tiers = _model_overlay(harness).get("tiers", {})
+    if tier in overlay_tiers:
+        return overlay_tiers[tier]
+    return get_harness(harness)["models"].get(tier)
+
+
+def creature_model(harness: str | None, creature: str | None) -> str | None:
+    """Map a creature tier to this harness's default model flag value."""
+    return tier_default_model(harness, creature)
+
+
+def resolve_model(harness: str | None, creature: str | None,
+                  pinned: str | None = None) -> str | None:
+    """The model a session actually spawns with.
+
+    A pinned model wins ONLY if it's valid for the resolved harness — a pin is
+    harness-scoped ("opus" means nothing to codex), so switching engines drops a
+    now-invalid pin back to the tier default. No invalid model reaches spawn.
+    """
+    if pinned and is_valid_model(harness, pinned):
+        return pinned
+    return creature_model(harness, creature)
 
 
 # Tier order + labels for pickers (raccoon/beaver/otter are the user-facing
@@ -235,7 +317,10 @@ def harness_metadata() -> list[dict]:
             "id": hid,
             "label": entry.get("label", hid),
             "emoji": entry.get("emoji", ""),
-            "models": {tier: entry["models"].get(tier) for tier, _ in PICKER_TIERS},
+            # per-tier default model (merged view — reflects woltspace.json overrides)
+            "models": {tier: tier_default_model(hid, tier) for tier, _ in PICKER_TIERS},
+            # full selectable list for the model picker (merged view)
+            "catalog": model_catalog(hid),
         })
     return out
 

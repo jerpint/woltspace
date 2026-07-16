@@ -33,6 +33,7 @@ from harnesses import (
     DEFAULT_HARNESS,
     resolve_harness,
     creature_model,
+    resolve_model,
     get_harness,
     get_default_harness,
     build_command,
@@ -632,6 +633,7 @@ def start_session(
     # Always derive creature from the wolt's type — never let the caller override this.
     # The wolt.json may also carry a default harness for new sessions.
     wolt_json_path = target_dir / "wolt" / "wolt.json"
+    pinned_model = ""
     if wolt_json_path.exists():
         try:
             wolt_data = json.loads(wolt_json_path.read_text())
@@ -640,6 +642,8 @@ def start_session(
                 creature = wolt_type
             if not harness:
                 harness = wolt_data.get("harness", "")
+            # per-wolt model pin (validated against the resolved harness below)
+            pinned_model = wolt_data.get("model", "") or ""
         except (json.JSONDecodeError, OSError):
             pass
     # Resolution: explicit arg > wolt.json override > lodge default > "claude".
@@ -653,7 +657,8 @@ def start_session(
         target_dir = apps_work_dir
 
     name = session_name(wolt)
-    model = creature_model(harness, creature)
+    # pin wins if valid for the resolved harness, else the tier default (see resolve_model)
+    model = resolve_model(harness, creature, pinned_model)
 
     tunnel_url = get_tunnel_url()
     session_url = f"{tunnel_url}/tui?session={name}" if tunnel_url else ""
