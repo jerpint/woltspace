@@ -429,29 +429,6 @@ class TestModelCatalog:
         (tmp_path / "woltspace.json").write_text("{ not json")
         assert {m["id"] for m in model_catalog("claude")} >= {"opus", "fable"}
 
-    def test_disable_hides_a_model(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
-        (tmp_path / "woltspace.json").write_text(json.dumps(
-            {"harness": {"models": {"claude": {"disable": ["fable"]}}}}))
-        ids = {m["id"] for m in model_catalog("claude")}
-        assert "fable" not in ids           # toggled off
-        assert {"opus", "sonnet", "haiku"} <= ids  # rest of the seed intact
-
-    def test_disable_applies_over_overlay_catalog(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
-        (tmp_path / "woltspace.json").write_text(json.dumps(
-            {"harness": {"models": {"claude": {
-                "catalog": ["opus", "fable"], "disable": ["fable"]}}}}))
-        assert [m["id"] for m in model_catalog("claude")] == ["opus"]
-
-    def test_disabled_model_pin_falls_back(self, tmp_path, monkeypatch):
-        # turning a model off can't strand a wolt pinned to it
-        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
-        (tmp_path / "woltspace.json").write_text(json.dumps(
-            {"harness": {"models": {"claude": {"disable": ["fable"]}}}}))
-        assert not is_valid_model("claude", "fable")
-        assert resolve_model("claude", "raccoon", "fable") == "opus"  # tier default
-
 
 class TestTierDefaultModel:
     """Per-tier default: seed unless woltspace.json overrides it."""

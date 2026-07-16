@@ -241,32 +241,24 @@ def _model_overlay(harness: str | None) -> dict:
 
 def model_catalog(harness: str | None) -> list[dict]:
     """Selectable models for a harness as [{"id","label"}]: the built-in seed,
-    replaced by woltspace.json's "catalog" when present, minus anything in the
-    overlay's "disable" list. Overlay catalog entries may be bare id strings or
-    {"id","label"} objects; labels fall back to the seed's (then to the id) so a
-    user adding a model need only list its id.
-
-    "disable" is the easy off-switch: one id to hide a model (e.g. "fable" when
-    it stops being free) without re-listing the whole catalog. A wolt pinned to a
-    disabled model gracefully falls back to its tier default at spawn — turning a
-    model off can never strand a wolt on it.
+    replaced by woltspace.json's "catalog" when present. The catalog list IS the
+    lever — add or hide a model by editing that one list, no code. Overlay entries
+    may be bare id strings or {"id","label"} objects; labels fall back to the
+    seed's (then to the id) so a user adding a model need only list its id.
     """
     seed = get_harness(harness).get("model_catalog", [])
-    overlay = _model_overlay(harness)
-    disabled = set(overlay.get("disable", []) or [])
-    ov_catalog = overlay.get("catalog")
+    ov_catalog = _model_overlay(harness).get("catalog")
     if ov_catalog is None:
-        items = [dict(m) for m in seed]
-    else:
-        label_by_id = {m["id"]: m.get("label", m["id"]) for m in seed}
-        items = []
-        for item in ov_catalog:
-            if isinstance(item, dict) and item.get("id"):
-                items.append({"id": item["id"],
-                              "label": item.get("label") or label_by_id.get(item["id"], item["id"])})
-            elif isinstance(item, str):
-                items.append({"id": item, "label": label_by_id.get(item, item)})
-    return [m for m in items if m["id"] not in disabled]
+        return [dict(m) for m in seed]
+    label_by_id = {m["id"]: m.get("label", m["id"]) for m in seed}
+    out = []
+    for item in ov_catalog:
+        if isinstance(item, dict) and item.get("id"):
+            out.append({"id": item["id"],
+                        "label": item.get("label") or label_by_id.get(item["id"], item["id"])})
+        elif isinstance(item, str):
+            out.append({"id": item, "label": label_by_id.get(item, item)})
+    return out
 
 
 def is_valid_model(harness: str | None, model: str | None) -> bool:

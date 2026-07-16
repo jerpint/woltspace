@@ -27,14 +27,19 @@ function harnessInfo(id) {
   return harnessList.find(h => h.id === id) || { id, label: id, emoji: '' };
 }
 
-// A wolt's effective engine + the concrete model for its tier (creature type).
+// A wolt's effective engine + the concrete model it will spawn with.
 function woltHarness(w) {
   const pinned = !!w.harness;
   const id = w.harness || harnessDefault;
   const info = harnessInfo(id);
   const models = info.models || {};
-  const model = models[w.type] || models.raccoon || '';  // rodent (legacy) → raccoon tier
-  return { id, pinned, model, ...info };
+  const tierDefault = models[w.type] || models.raccoon || '';  // rodent (legacy) → raccoon tier
+  // per-wolt model pin wins IF valid for this engine (mirrors backend resolve_model:
+  // a pin is harness-scoped, so an invalid one falls back to the tier default)
+  const catalog = info.catalog || [];
+  const modelPinned = !!w.model && catalog.some(c => c.id === w.model);
+  const model = modelPinned ? w.model : tierDefault;
+  return { id, pinned, model, modelPinned, ...info };
 }
 
 // The model an engine would use for a given tier (for picker rows).
