@@ -47,7 +47,7 @@ cloudflared tunnel (optional public URL, no account needed)
 
 ### The Animals
 
-Every wolt has a fixed **creature type** (`"type"` in `wolt.json`). The type determines the model, tempo, and role. A wolt's type is permanent.
+Every wolt has a fixed **creature type** (`"type"` in `wolt.json`). The type determines the *default* model, tempo, and role. A wolt's type is permanent — but its engine and model can be switched (see **Engine & model** below).
 
 **Rodents** (default) — general-purpose builders. Unlimited per workspace. Skill levels within the family:
 - **🦫 Beaver — Sonnet** — the builder. Industrious, shapes the environment, makes things that last. Den sessions run as beavers — this is where real work happens.
@@ -76,6 +76,24 @@ woltspace
   dens            — temporary work sessions (where beaverwolts/raccoonwolts/otterwolts/wolfwolts build)
   pond            — the visible surface (viewport)
 ```
+
+---
+
+## Engine & model
+
+A wolt's creature type sets its *default* model, but the **engine** (harness) and **model**
+are resolved per session and can be switched — the change applies to the wolt's *next*
+session (both are frozen at spawn):
+
+- **Engine** — `wolt.json "harness"` (e.g. `claude`, `codex`). Omit to follow the lodge default.
+- **Model** — `wolt.json "model"` pins a specific model. Omit to use the tier's default.
+
+A wolt can switch itself or a user's wolt — it's just a config edit. Valid ids come from
+`GET /harnesses` (per engine: default models per tier + full selectable catalog). A pin is
+engine-scoped, so an invalid one falls back to the tier default rather than breaking a spawn.
+The catalog is data (`harnesses.py` seed, overridable in `woltspace.json` without code).
+
+Full guide: `docs/switching-models.md`.
 
 ---
 
