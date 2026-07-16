@@ -506,7 +506,7 @@ def _assemble_spawn_prompt(data: dict, prompt: str, harness: str) -> str:
 
     Skips start-chat if the prompt already invokes a woltspace skill
     (e.g. create-wolt). The skill invocation syntax comes from the harness
-    table — claude spells it /name, codex $name.
+    table — claude spells it /name, codex @name.
     """
     skill_invoke = get_harness(harness)["skill_invoke"]
     context = _adapter_context(data)
