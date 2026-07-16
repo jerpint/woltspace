@@ -197,7 +197,10 @@ HARNESSES = {
             # VERIFY live: exact id for "Sol" from codex's /model picker
             {"id": "gpt-5.6-sol", "label": "GPT-5.6 Sol"},
         ],
-        "skill_invoke": "${name}",
+        # codex's native skill mention (the mentions_v2 feature) — resolves a
+        # discovered skill for real. `$name` only worked by the model choosing to
+        # read the SKILL.md itself; `@` is the reliable trigger. Verified live 2026-07-16.
+        "skill_invoke": "@{name}",
         "instructions_file": "AGENTS.md",
         "auth_file": ".codex/auth.json",
         "preset_session_id": False,
