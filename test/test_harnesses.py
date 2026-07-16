@@ -17,7 +17,11 @@ from harnesses import (
     HARNESSES,
     build_command,
     creature_model,
+    is_valid_model,
+    model_catalog,
     resolve_harness,
+    resolve_model,
+    tier_default_model,
 )
 
 
@@ -188,9 +192,9 @@ class TestTableShape:
     """Every harness entry must carry the keys the platform relies on."""
 
     REQUIRED_KEYS = {"wrapper", "command", "process_names", "models",
-                     "skill_invoke", "instructions_file", "auth_file",
-                     "preset_session_id", "discover_session_id", "paste_settle",
-                     "label", "emoji"}
+                     "model_catalog", "skill_invoke", "instructions_file",
+                     "auth_file", "preset_session_id", "discover_session_id",
+                     "paste_settle", "label", "emoji"}
 
     def test_all_entries_complete(self):
         for name, entry in HARNESSES.items():
@@ -212,6 +216,8 @@ class TestHarnessMetadata:
         for m in meta:
             assert m["label"] and m["emoji"]
             assert set(m["models"]) == {"raccoon", "beaver", "otter"}
+            # every entry carries a selectable model catalog of {id,label}
+            assert m["catalog"] and all(c["id"] and c["label"] for c in m["catalog"])
 
     def test_metadata_is_json_safe(self):
         import json
@@ -376,3 +382,112 @@ class TestSessionHarnessPlumbing:
         cmd = prepare_session_command("testwolt-old-dam-abc123", "resume", "hello")
         assert "wclaude" in cmd
         assert "--resume a1b2c3d4-e5f6-7890-abcd-ef1234567890" in cmd
+
+
+class TestModelCatalog:
+    """Selectable model list: built-in seed, overridable via woltspace.json."""
+
+    def test_seed_includes_new_models(self):
+        claude_ids = {m["id"] for m in model_catalog("claude")}
+        assert {"opus", "sonnet", "haiku", "fable"} <= claude_ids
+        codex_ids = {m["id"] for m in model_catalog("codex")}
+        assert {"gpt-5.5", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol"} <= codex_ids
+
+    def test_entries_have_id_and_label(self):
+        for c in model_catalog("claude"):
+            assert c["id"] and c["label"]
+
+    def test_unknown_harness_uses_default_catalog(self):
+        # resolve_harness folds unknown -> claude
+        assert model_catalog("winamp") == model_catalog("claude")
+
+    def test_overlay_replaces_catalog_string_ids(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        (tmp_path / "woltspace.json").write_text(json.dumps(
+            {"harness": {"models": {"claude": {"catalog": ["opus", "fable"]}}}}))
+        ids = [m["id"] for m in model_catalog("claude")]
+        assert ids == ["opus", "fable"]  # haiku/sonnet dropped by overlay
+        # label still resolved from the seed
+        labels = {m["id"]: m["label"] for m in model_catalog("claude")}
+        assert labels["opus"] == "Opus 4.8"
+
+    def test_overlay_can_add_new_model_by_id(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        (tmp_path / "woltspace.json").write_text(json.dumps(
+            {"harness": {"models": {"claude": {"catalog": ["opus", "brand-new"]}}}}))
+        cat = {m["id"]: m["label"] for m in model_catalog("claude")}
+        assert cat["brand-new"] == "brand-new"  # label falls back to id
+
+    def test_overlay_object_entries(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        (tmp_path / "woltspace.json").write_text(json.dumps(
+            {"harness": {"models": {"claude": {"catalog": [{"id": "x", "label": "Fancy X"}]}}}}))
+        assert model_catalog("claude") == [{"id": "x", "label": "Fancy X"}]
+
+    def test_malformed_config_yields_seed(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        (tmp_path / "woltspace.json").write_text("{ not json")
+        assert {m["id"] for m in model_catalog("claude")} >= {"opus", "fable"}
+
+
+class TestTierDefaultModel:
+    """Per-tier default: seed unless woltspace.json overrides it."""
+
+    def test_seed_defaults(self):
+        assert tier_default_model("claude", "raccoon") == "opus"
+        assert tier_default_model("claude", "otter") == "haiku"
+        assert tier_default_model("codex", "beaver") == "gpt-5.6-terra"
+
+    def test_no_tier_is_none(self):
+        assert tier_default_model("claude", "") is None
+        assert tier_default_model("claude", None) is None
+
+    def test_overlay_overrides_tier(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        (tmp_path / "woltspace.json").write_text(json.dumps(
+            {"harness": {"models": {"claude": {"tiers": {"otter": "fable"}}}}}))
+        assert tier_default_model("claude", "otter") == "fable"
+        # untouched tiers keep the seed
+        assert tier_default_model("claude", "raccoon") == "opus"
+
+    def test_creature_model_routes_through_default(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        (tmp_path / "woltspace.json").write_text(json.dumps(
+            {"harness": {"models": {"claude": {"tiers": {"raccoon": "fable"}}}}}))
+        assert creature_model("claude", "raccoon") == "fable"
+
+
+class TestIsValidModel:
+    def test_seed_membership(self):
+        assert is_valid_model("claude", "fable")
+        assert is_valid_model("codex", "gpt-5.6-sol")
+
+    def test_cross_harness_is_invalid(self):
+        assert not is_valid_model("codex", "opus")
+        assert not is_valid_model("claude", "gpt-5.5")
+
+    def test_empty_is_invalid(self):
+        assert not is_valid_model("claude", "")
+        assert not is_valid_model("claude", None)
+
+
+class TestResolveModel:
+    """Spawn-time resolution: pin wins iff valid for the resolved harness."""
+
+    def test_no_pin_uses_tier_default(self):
+        assert resolve_model("claude", "raccoon", None) == "opus"
+        assert resolve_model("claude", "raccoon", "") == "opus"
+
+    def test_valid_pin_wins(self):
+        assert resolve_model("claude", "raccoon", "fable") == "fable"
+
+    def test_pin_invalid_for_harness_falls_back(self):
+        # "opus" is meaningless to codex -> codex raccoon default
+        assert resolve_model("codex", "raccoon", "opus") == "gpt-5.5"
+
+    def test_unknown_pin_falls_back(self):
+        assert resolve_model("claude", "otter", "nonsense") == "haiku"
+
+    def test_pin_can_diverge_from_tier(self):
+        # Free binding: a raccoon may run a non-thinker model
+        assert resolve_model("claude", "raccoon", "haiku") == "haiku"
