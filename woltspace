@@ -14,6 +14,10 @@
 #   woltspace backup [tag] --bundle  — same, but zipped into one portable file
 #   woltspace update                  — check for updates and apply (spawns Claude)
 #
+# Control commands (forwarded to the running lodge — same as inside a wolt):
+#   woltspace session list [--alive]           — list sessions
+#   woltspace session send <wolt|session> "…"  — message a wolt/session
+#
 # Flags:
 #   --branch <name>   — build image from a specific branch (default: main)
 #   --local           — build image from local repo instead of git clone
@@ -350,6 +354,24 @@ fi
 # --- Subcommands ---
 
 case "$cmd" in
+  session|wolt|app|harness)
+    # Control plane — forward to the in-container `woltspace` client, which
+    # talks to the localhost API. Lifecycle verbs below stay host-side (docker);
+    # control lives in the API. This is what makes `woltspace session send ...`
+    # (and friends) work identically on the host and inside a wolt.
+    #
+    # We exec by full path because container/bin is on wolts' login-shell PATH
+    # (profile.d), not the non-login PATH a plain `docker exec` command gets.
+    # WOLT_NAME defaults the sender identity to the host user (override with
+    # --from); the in-container client reads it for message attribution.
+    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+      echo "  ${_D}💤 container not running — run 'woltspace start'${_R}"
+      echo "  ${_L}   control commands need the lodge up${_R}"
+      exit 1
+    fi
+    exec docker exec -e "WOLT_NAME=${HUMAN_NAME:-$(whoami)}" "$CONTAINER_NAME" \
+      /workspace/woltspace/container/bin/woltspace "$@"
+    ;;
   stop)
     if [ "$2" = "--all" ]; then
       containers=$(docker ps -a --format '{{.Names}}' | grep '^woltspace' || true)
