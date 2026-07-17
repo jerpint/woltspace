@@ -417,6 +417,80 @@ def _tmux_paste(target: str, text: str, settle: float = 0.0):
 
 
 # ---------------------------------------------------------------------------
+# IWCL — Inter-Wolt Communication. Deliver a message into a running session,
+# with attribution. The one primitive behind the wolt-to-wolt relay: a wolt
+# posts into another wolt's session and the reply comes back into its own.
+# Every message carries the sender's wolt name + session id so the receiver
+# can reply to the right session. Same contract the telegram bot uses
+# (prepended context), just wolt-to-wolt. Delivery is harness-aware (reuses
+# _tmux_paste + paste_settle).
+# ---------------------------------------------------------------------------
+
+def format_attributed_message(text: str, from_wolt: str = "",
+                              from_session: str = "") -> str:
+    """Wrap a message with sender attribution + a reply instruction.
+
+    Unattributed (no from_wolt) returns the text unchanged — e.g. a plain
+    system nudge. With a sender, the receiver sees who sent it and, when a
+    session id is known, exactly how to reply.
+    """
+    if not from_wolt:
+        return text
+    header = f"[message from {from_wolt}"
+    if from_session:
+        header += f", session={from_session}"
+    header += "]"
+    reply = (
+        f'\nReply with: woltspace session send {from_session} "your reply"'
+        if from_session else ""
+    )
+    return f"{header}\n{text}{reply}"
+
+
+def resolve_active_session(wolt: str, registry=None) -> str | None:
+    """Return the wolt's most-recently-active LIVE session name, or None.
+
+    Addressing by wolt name resolves to the session a human/wolt would expect
+    to reach — the one that's been active most recently.
+    """
+    reg = registry or SessionRegistry()
+    alive = reg.list(alive_only=True, wolt=wolt)
+    if not alive:
+        return None
+    alive.sort(
+        key=lambda s: (s.get("last_activity") or 0, s.get("created_at") or 0),
+        reverse=True,
+    )
+    return alive[0]["name"]
+
+
+def deliver_message(session_id: str, text: str, from_wolt: str = "",
+                    from_session: str = "", registry=None) -> dict:
+    """Deliver a message into a running session, with optional attribution.
+
+    Returns {"status": ..., "session": session_id} where status is:
+      delivered   — pasted into a live session
+      session-dead — session exists in the registry but tmux/agent is gone
+      no-session   — no such session
+
+    Delivery is harness-aware: it reuses _tmux_paste with the target harness's
+    paste_settle (codex needs a settle before Enter; claude takes 0).
+    """
+    reg = registry or SessionRegistry()
+    data = reg.get(session_id)
+    if data is None:
+        return {"status": "no-session", "session": session_id}
+    if not data.get("alive"):
+        return {"status": "session-dead", "session": session_id}
+    harness = resolve_harness(data.get("harness"))
+    settle = get_harness(harness).get("paste_settle", 0.0)
+    body = format_attributed_message(text, from_wolt, from_session)
+    _tmux_paste(session_id, body, settle=settle)
+    reg.touch(session_id)
+    return {"status": "delivered", "session": session_id, "harness": harness}
+
+
+# ---------------------------------------------------------------------------
 # Session naming
 # ---------------------------------------------------------------------------
 

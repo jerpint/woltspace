@@ -51,7 +51,10 @@ from .sparks import get_spark_with_chain, list_sparks
 # Session spawning — shared with bot
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
-from sessions import resume_session, start_session, stop_session
+from sessions import (
+    resume_session, start_session, stop_session,
+    deliver_message, resolve_active_session,
+)
 from harnesses import (
     harness_metadata,
     get_default_harness,
@@ -570,18 +573,60 @@ async def memory_read(request: Request):
 
 @app.post("/sessions/{session_id}/message")
 async def session_message(session_id: str, request: Request):
+    """Deliver a message into a running session.
+
+    Body: {"text": "...", "from_wolt"?: "...", "from_session"?: "..."}.
+    When from_wolt is given, the message is prepended with sender attribution
+    + a reply instruction (the wolt-to-wolt relay contract). Delivery is
+    harness-aware (paste-buffer + per-harness settle) via deliver_message.
+    """
     safe = sanitize_session(session_id)
     body = await request.json()
     text = body.get("text")
     if not text:
         return JSONResponse({"error": "text required"}, status_code=400)
-    try:
-        subprocess.run(["tmux", "send-keys", "-t", safe, "-l", text], check=True)
-        subprocess.run(["tmux", "send-keys", "-t", safe, "Enter"], check=True)
+    result = deliver_message(
+        safe, text,
+        from_wolt=body.get("from_wolt", "") or "",
+        from_session=body.get("from_session", "") or "",
+    )
+    status = result.get("status")
+    if status == "delivered":
         print(f"[message] → {safe}: {text[:80]}")
-        return {"ok": True, "session": safe}
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return {"ok": True, **result}
+    code = 404 if status == "no-session" else 409  # 409 = session-dead
+    return JSONResponse({"ok": False, **result}, status_code=code)
+
+
+@app.post("/wolts/{name}/message")
+async def wolt_message(name: str, request: Request):
+    """Message a wolt by NAME — resolves to its most-recently-active live session.
+
+    Same body as /sessions/{id}/message. 404 if the wolt has no live session.
+    This is the ergonomic entry point: senders address `codexw`, not a slug.
+    """
+    safe_wolt = "".join(c for c in name if c.isalnum() or c in "-_")
+    session_id = resolve_active_session(safe_wolt)
+    if not session_id:
+        return JSONResponse(
+            {"ok": False, "status": "no-session", "wolt": safe_wolt,
+             "error": f"no live session for wolt '{safe_wolt}'"},
+            status_code=404,
+        )
+    body = await request.json()
+    text = body.get("text")
+    if not text:
+        return JSONResponse({"error": "text required"}, status_code=400)
+    result = deliver_message(
+        session_id, text,
+        from_wolt=body.get("from_wolt", "") or "",
+        from_session=body.get("from_session", "") or "",
+    )
+    result["wolt"] = safe_wolt
+    if result.get("status") == "delivered":
+        print(f"[message] → {safe_wolt} ({session_id}): {text[:80]}")
+        return {"ok": True, **result}
+    return JSONResponse({"ok": False, **result}, status_code=409)
 
 
 # --- Session spawning ---
