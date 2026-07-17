@@ -417,12 +417,13 @@ def _tmux_paste(target: str, text: str, settle: float = 0.0):
 
 
 # ---------------------------------------------------------------------------
-# Messaging — deliver a message into a running session, with attribution.
-# The one primitive behind wolt-to-wolt relay: a wolt posts into another
-# wolt's session and the reply comes back into its own. Every message carries
-# the sender's wolt name + session id so the receiver can reply to the right
-# session. Same contract the telegram bot uses (prepended context), just
-# wolt-to-wolt. Delivery is harness-aware (reuses _tmux_paste + paste_settle).
+# IWCL — Inter-Wolt Communication. Deliver a message into a running session,
+# with attribution. The one primitive behind the wolt-to-wolt relay: a wolt
+# posts into another wolt's session and the reply comes back into its own.
+# Every message carries the sender's wolt name + session id so the receiver
+# can reply to the right session. Same contract the telegram bot uses
+# (prepended context), just wolt-to-wolt. Delivery is harness-aware (reuses
+# _tmux_paste + paste_settle).
 # ---------------------------------------------------------------------------
 
 def format_attributed_message(text: str, from_wolt: str = "",

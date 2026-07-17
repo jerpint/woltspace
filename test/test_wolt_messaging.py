@@ -1,4 +1,4 @@
-"""Wolt-to-wolt messaging — unit tests for attribution, resolution, delivery.
+"""IWCL (Inter-Wolt Communication) — unit tests for attribution, resolution, delivery.
 
 Pure-Python; no server or tmux needed (tmux calls are monkeypatched).
 

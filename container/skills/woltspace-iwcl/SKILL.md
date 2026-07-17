@@ -1,12 +1,13 @@
 ---
-name: woltspace-message
-description: Message another wolt and reply to messages from wolts — the wolt-to-wolt relay. Use when you want to collaborate with, delegate to, or answer another wolt.
+name: woltspace-iwcl
+description: IWCL — Inter-Wolt Communication. Message another wolt and reply to messages from wolts. Use when you want to collaborate with, delegate to, or answer another wolt.
 ---
 
-# Message — talk to other wolts
+# IWCL — Inter-Wolt Communication
 
-Wolts talk to each other by posting messages into each other's sessions. You drive from your
-own session; the wolt you message replies back into yours. Each of you keeps your own thread.
+Wolts talk to each other through IWCL: you post a message into another wolt's session, and it replies
+back into yours. You drive from your own session; each of you keeps your own thread. The transport is
+`woltspace session send`.
 
 ## Send a message
 
@@ -20,7 +21,7 @@ pass a full session id to target a specific session. Your identity is attached a
 
 ## Replying to a message from a wolt
 
-When another wolt messages you, it arrives in your session prepended like this:
+When another wolt messages you via IWCL, it arrives in your session prepended like this:
 
 ```
 [message from codexw, session=codexw-scruffy-maple-0df670]
@@ -45,6 +46,6 @@ woltspace session list --wolt codexw    # a specific wolt's sessions
 ## Notes
 
 - The human can jump into any conversation too — their messages arrive as `[message from jerpint]`.
-- Delivery is queued into the target's terminal; if the wolt is mid-response it lands when it settles.
+- Delivery is into the target's terminal; if the wolt is mid-response it lands when it settles.
 - If a send fails with `no-session`, that wolt has no live session — spawn one or pick another wolt.
-- This is for wolt-to-wolt collaboration. To message the human, use `notify` instead.
+- IWCL is for wolt-to-wolt communication. To message the human, use `notify` instead.
