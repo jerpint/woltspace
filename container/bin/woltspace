@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""woltspace — in-container control CLI (thin client over the localhost API).
+
+This is the CONTROL plane. Lifecycle (start/stop/rebuild/backup) lives in the
+host `woltspace` bash launcher — those need docker and only run on the host.
+Everything here is just HTTP to the API, so it works identically inside the
+container and (later) from anywhere that can reach the API.
+
+Grammar: `woltspace <noun> <verb> [args] [--flags]` (docker/git style).
+
+Phase 1 nouns:
+  session list [--wolt X] [--alive] [--json]
+  session send <wolt|session> "message" [--from <wolt>]
+
+A wolt self-identifies as the sender via $WOLT_NAME / $WOLT_SESSION (exported
+into every wolt session). A human posts with --from (e.g. --from jerpint).
+"""
+import argparse
+import json
+import os
+import re
+import sys
+import urllib.request
+import urllib.error
+
+API = os.environ.get("WOLTSPACE_API", "http://localhost:7777")
+# Session slugs end in "-<6 hex>" (see SESSION_NOUNS naming). Anything else is
+# treated as a wolt name and resolved to that wolt's active session by the API.
+_SESSION_RE = re.compile(r"-[0-9a-f]{6}$")
+
+
+def _req(method, path, body=None):
+    url = f"{API}{path}"
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return r.status, json.loads(r.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode() or "{}")
+        except Exception:
+            return e.code, {"error": str(e)}
+    except urllib.error.URLError as e:
+        print(f"cannot reach woltspace API at {API}: {e.reason}", file=sys.stderr)
+        sys.exit(2)
+
+
+def cmd_session_list(args):
+    _, sessions = _req("GET", "/sessions")
+    if isinstance(sessions, dict):
+        sessions = sessions.get("sessions", [])
+    if args.wolt:
+        sessions = [s for s in sessions if s.get("wolt") == args.wolt]
+    if args.alive:
+        sessions = [s for s in sessions if s.get("alive")]
+    if args.json:
+        print(json.dumps(sessions, indent=2))
+        return
+    if not sessions:
+        print("no sessions.")
+        return
+    print(f"{'SESSION':<34} {'WOLT':<12} {'HARNESS':<8} {'MODEL':<14} ALIVE")
+    for s in sessions:
+        print(f"{s.get('name',''):<34} {s.get('wolt',''):<12} "
+              f"{s.get('harness',''):<8} {s.get('model',''):<14} "
+              f"{'●' if s.get('alive') else '·'}")
+
+
+def cmd_session_send(args):
+    from_wolt = args.from_ or os.environ.get("WOLT_NAME", "")
+    from_session = os.environ.get("WOLT_SESSION", "") if not args.from_ else "human"
+    payload = {"text": args.message, "from_wolt": from_wolt, "from_session": from_session}
+    target = args.target
+    if _SESSION_RE.search(target):
+        path = f"/sessions/{target}/message"
+    else:
+        path = f"/wolts/{target}/message"
+    status, result = _req("POST", path, payload)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    elif result.get("ok"):
+        dest = result.get("session", target)
+        print(f"delivered → {dest}" + (f" ({result['harness']})" if result.get("harness") else ""))
+    else:
+        print(f"not delivered ({result.get('status', status)}): "
+              f"{result.get('error', '')}".rstrip(), file=sys.stderr)
+        sys.exit(1)
+
+
+LIFECYCLE = {"start", "stop", "rebuild", "backup", "shell", "chat", "logs", "init", "update"}
+
+
+def main():
+    p = argparse.ArgumentParser(prog="woltspace", description="woltspace control CLI")
+    sub = p.add_subparsers(dest="noun")
+
+    sess = sub.add_parser("session", help="sessions (conversations)")
+    ssub = sess.add_subparsers(dest="verb")
+
+    sl = ssub.add_parser("list", help="list sessions")
+    sl.add_argument("--wolt", help="filter by wolt")
+    sl.add_argument("--alive", action="store_true", help="only live sessions")
+    sl.add_argument("--json", action="store_true", help="raw JSON output")
+    sl.set_defaults(func=cmd_session_list)
+
+    ss = ssub.add_parser("send", help="message a wolt or session")
+    ss.add_argument("target", help="wolt name (resolves to active session) or a session id")
+    ss.add_argument("message", help="the message text")
+    ss.add_argument("--from", dest="from_", default="",
+                    help="sender identity (default: $WOLT_NAME); use e.g. --from jerpint as a human")
+    ss.add_argument("--json", action="store_true", help="raw JSON output")
+    ss.set_defaults(func=cmd_session_send)
+
+    argv = sys.argv[1:]
+    # Friendly hint: lifecycle verbs belong to the host launcher, not in-container.
+    if argv and argv[0] in LIFECYCLE:
+        print(f"'{argv[0]}' is a host lifecycle command — run it on the host "
+              f"where docker lives, not inside the container.", file=sys.stderr)
+        sys.exit(2)
+
+    args = p.parse_args(argv)
+    if not getattr(args, "func", None):
+        p.print_help()
+        sys.exit(1)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
