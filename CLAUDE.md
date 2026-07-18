@@ -166,7 +166,7 @@ The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routi
 Thin Telegram layer over core. Persists chat history to `.state/chat/{chat_id}.jsonl`. Group chat support (responds when @mentioned).
 
 ### `container/skills/`
-Discovery files Claude Code reads from `~/.claude/skills/`. Platform skills use `woltspace-` prefix and are synced to all wolts on boot. Current platform skills: `woltspace-start-chat`, `woltspace-create-wolt`, `woltspace-notify`, `woltspace-viewport`, `woltspace-apps`, `woltspace-new-app`, `woltspace-wolf`, `woltspace-update`, `woltspace-session-summary`, `woltspace-worktui`, `woltspace-organize-context`, `woltspace-setup-telegram`, `woltspace-setup-github`.
+Discovery files Claude Code reads from `~/.claude/skills/`. Platform skills use `woltspace-` prefix and are synced to all wolts on boot. Current platform skills: `woltspace-start-chat`, `woltspace-create-wolt`, `woltspace-notify`, `woltspace-viewport`, `woltspace-apps`, `woltspace-new-app`, `woltspace-wolf`, `woltspace-update`, `woltspace-session-summary`, `woltspace-worktui` (derived at boot from worktui's own bundled skill — see `derive_worktui_skill` in `entrypoint_setup.py`, not hand-maintained), `woltspace-organize-context`, `woltspace-setup-telegram`, `woltspace-setup-github`.
 
 ### `container/cron/digest.mjs`
 Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select via `claude -p` → render HTML. Writes to `wolt/sparks/`. Optional Spotify playlist curation.

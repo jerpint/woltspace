@@ -45,6 +45,50 @@ def resolve_wolt_dir(wolts_dir: Path, wolt_name: str) -> Path:
     return Path(os.environ.get("WOLT_DIR", "/workspace/wolt"))
 
 
+WORKTUI_SKILL_NOTES = """
+## Woltspace notes
+
+- Worktrees live at `WORKTUI_DIR=/workspace/wolts/.worktui` (in the mount — they survive
+  container rebuilds).
+- `wt` is already available — it's sourced into login shells from `~/worktui/wt.sh` at boot.
+- Beyond the orchestration verbs above, `wt` also manages worktrees directly
+  (create/list/delete/clean/pr, ...) — run `wt --help` for the full command reference,
+  or `wt` with no arguments for the interactive TUI.
+"""
+
+
+def derive_worktui_skill(woltspace_dir: Path, worktui_dir: Path = HOME / "worktui"):
+    """Regenerate the woltspace-worktui skill from worktui's own bundled skill.
+
+    worktui (cloned into the image at ~/worktui) ships its own skill at
+    skills/worktui/ — deriving from it at boot means the synced skill always
+    matches the installed wt version instead of a hand-maintained copy that
+    drifts. The frontmatter name is rewritten to the woltspace- prefix so the
+    sync machinery owns it, and woltspace-specific notes are appended.
+
+    No-op if worktui isn't installed — a skill for a missing binary is worse
+    than no skill.
+    """
+    bundled = worktui_dir / "skills" / "worktui" / "SKILL.md"
+    dest_dir = woltspace_dir / "container" / "skills" / "woltspace-worktui"
+    if not bundled.is_file():
+        return
+
+    text = bundled.read_text()
+    if text.startswith("---"):
+        head, _, body = text[3:].partition("---")
+        head = "\n".join(
+            "name: woltspace-worktui" if line.strip().startswith("name:") else line
+            for line in head.splitlines()
+        )
+        text = f"---{head}\n---{body}"
+
+    if dest_dir.exists():
+        shutil.rmtree(dest_dir)
+    dest_dir.mkdir(parents=True)
+    (dest_dir / "SKILL.md").write_text(text.rstrip("\n") + "\n" + WORKTUI_SKILL_NOTES)
+
+
 def sync_all_wolt_skills(woltspace_dir: Path, wolts_dir: Path):
     """Sync woltspace-* platform skills to every wolt's .claude/skills/.
 
@@ -348,6 +392,7 @@ def main():
     dev_mode = (woltspace_dir / ".git").is_dir()
 
     # Config & identity
+    derive_worktui_skill(woltspace_dir)
     sync_all_wolt_skills(woltspace_dir, wolts_dir)
     sync_claude_md_platform_section(wolts_dir, woltspace_dir)
     if wolt_name:

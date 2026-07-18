@@ -546,6 +546,73 @@ class TestSyncAllWoltSkills:
         mod.sync_all_wolt_skills(woltspace, wolts)
 
 
+class TestDeriveWorktuiSkill:
+    """Unit: derive_worktui_skill regenerates the skill from worktui's bundled copy."""
+
+    BUNDLED = "---\nname: worktui\ndescription: Orchestrate sessions.\n---\n\n# worktui\n\nwt spawn / wt send / wt read / wt kill\n"
+
+    def _make_worktui(self, tmp_path):
+        worktui = tmp_path / "worktui"
+        skill = worktui / "skills" / "worktui"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text(self.BUNDLED)
+        return worktui
+
+    def test_derives_from_bundled_skill(self, tmp_path):
+        mod = _load_entrypoint()
+        woltspace = tmp_path / "woltspace"
+        worktui = self._make_worktui(tmp_path)
+
+        mod.derive_worktui_skill(woltspace, worktui)
+
+        derived = (woltspace / "container" / "skills" / "woltspace-worktui" / "SKILL.md").read_text()
+        # Frontmatter name rewritten to the platform prefix, rest kept
+        assert "name: woltspace-worktui" in derived
+        assert "name: worktui\n" not in derived
+        assert "description: Orchestrate sessions." in derived
+        assert "wt spawn / wt send / wt read / wt kill" in derived
+        # Woltspace-specific notes appended
+        assert "WORKTUI_DIR=/workspace/wolts/.worktui" in derived
+
+    def test_noop_when_worktui_missing(self, tmp_path):
+        mod = _load_entrypoint()
+        woltspace = tmp_path / "woltspace"
+
+        mod.derive_worktui_skill(woltspace, tmp_path / "nope")
+
+        assert not (woltspace / "container" / "skills" / "woltspace-worktui").exists()
+
+    def test_replaces_stale_derived_copy(self, tmp_path):
+        mod = _load_entrypoint()
+        woltspace = tmp_path / "woltspace"
+        stale = woltspace / "container" / "skills" / "woltspace-worktui"
+        stale.mkdir(parents=True)
+        (stale / "SKILL.md").write_text("old hand-written copy")
+        (stale / "extra.md").write_text("leftover")
+        worktui = self._make_worktui(tmp_path)
+
+        mod.derive_worktui_skill(woltspace, worktui)
+
+        derived_dir = woltspace / "container" / "skills" / "woltspace-worktui"
+        assert "wt spawn" in (derived_dir / "SKILL.md").read_text()
+        assert not (derived_dir / "extra.md").exists()
+
+    def test_derived_skill_syncs_to_wolts(self, tmp_path):
+        """End-to-end: derive + sync gives wolts worktui's CURRENT skill."""
+        mod = _load_entrypoint()
+        woltspace = tmp_path / "woltspace"
+        worktui = self._make_worktui(tmp_path)
+        wolts = tmp_path / "wolts"
+        (wolts / "alpha" / ".claude" / "skills").mkdir(parents=True)
+
+        mod.derive_worktui_skill(woltspace, worktui)
+        mod.sync_all_wolt_skills(woltspace, wolts)
+
+        synced = (wolts / "alpha" / ".claude" / "skills" / "woltspace-worktui" / "SKILL.md").read_text()
+        assert "wt spawn / wt send / wt read / wt kill" in synced
+        assert "name: woltspace-worktui" in synced
+
+
 class TestSyncClaudeMdPlatformSection:
     """Unit: sync_claude_md_platform_section manages the platform block in CLAUDE.md."""
 
