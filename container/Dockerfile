@@ -162,6 +162,11 @@ ENV PATH="/workspace/woltspace/container/bin:${PATH}"
 # "command not found" inside codex. profile.d fixes every login shell + harness.
 RUN echo 'export PATH="/workspace/woltspace/container/bin:$PATH"' > /etc/profile.d/woltspace-path.sh
 
+# Baked tmux defaults, read by every server regardless of per-wolt HOME.
+# Users overlay /workspace/wolts/tmux.conf.local (in the mount — survives
+# rebuilds, oh-my-tmux style). Symlinked so the repo file is the live source.
+RUN ln -sf /workspace/woltspace/container/config/tmux.conf /etc/tmux.conf
+
 # Install Python deps
 RUN cd container && uv sync --project bot
 RUN uv sync --project server
