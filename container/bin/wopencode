@@ -61,6 +61,7 @@ if [ -n "$WOLT_HOME" ] && [ -d "$WOLT_HOME" ]; then
         cat > "$CONFIG_JSON" <<'EOF'
 {
   "$schema": "https://opencode.ai/config.json",
+  "snapshot": false,
   "permission": {
     "edit": "allow",
     "bash": "allow",
@@ -68,6 +69,15 @@ if [ -n "$WOLT_HOME" ] && [ -d "$WOLT_HOME" ]; then
   }
 }
 EOF
+    fi
+    # snapshot:false is CRITICAL here. opencode's git snapshot tracks the CWD,
+    # and since HOME is the wolt dir, that includes opencode's own data dir
+    # ($HOME/.local/share/opencode) — self-referential, so the snapshot repo
+    # balloons (seen: 1.4GB) and its `git gc` blocks the session on boot. wolts
+    # don't need opencode's checkpoints — woltspace has its own git/memory.
+    # Belt-and-suspenders: also ensure it's set on a pre-existing config.
+    if [ -e "$CONFIG_JSON" ] && ! grep -q '"snapshot"' "$CONFIG_JSON" 2>/dev/null; then
+        python3 -c "import json,sys; p='$CONFIG_JSON'; d=json.load(open(p)); d['snapshot']=False; json.dump(d,open(p,'w'),indent=2)" 2>/dev/null || true
     fi
 fi
 
