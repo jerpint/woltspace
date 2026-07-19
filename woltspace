@@ -372,6 +372,30 @@ case "$cmd" in
     exec docker exec -e "WOLT_NAME=${HUMAN_NAME:-$(whoami)}" "$CONTAINER_NAME" \
       /workspace/woltspace/container/bin/woltspace "$@"
     ;;
+  tui)
+    # Terminal cockpit — runs HOST-SIDE (talks to the API on localhost:7777,
+    # attaches via docker exec). Needs node >= 18 or bun on the host.
+    TUI_DIR="$WOLTSPACE_DIR/tui"
+    if [ ! -d "$TUI_DIR" ]; then
+      echo "  ${_D}tui/ not found in $WOLTSPACE_DIR${_R}"
+      exit 1
+    fi
+    if [ ! -d "$TUI_DIR/node_modules" ]; then
+      echo "  ${_D}🪵 first run — gathering twigs (installing tui deps)…${_R}"
+      if command -v bun >/dev/null 2>&1; then (cd "$TUI_DIR" && bun install --silent)
+      elif command -v npm >/dev/null 2>&1; then (cd "$TUI_DIR" && npm install --silent --no-fund --no-audit)
+      else
+        echo "  ${_D}need bun or node+npm on the host to run the tui${_R}"
+        exit 1
+      fi
+    fi
+    if command -v node >/dev/null 2>&1; then exec node "$TUI_DIR/src/main.js"
+    elif command -v bun >/dev/null 2>&1; then exec bun run "$TUI_DIR/src/main.js"
+    else
+      echo "  ${_D}need node >= 18 or bun on the host to run the tui${_R}"
+      exit 1
+    fi
+    ;;
   stop)
     if [ "$2" = "--all" ]; then
       containers=$(docker ps -a --format '{{.Names}}' | grep '^woltspace' || true)
