@@ -206,7 +206,7 @@ export default function App({ onAction }) {
   });
 
   // --- rendering ----------------------------------------------------------
-  const rowBudget = () => Math.max(4, (process.stdout.rows || 24) - 9);
+  const rowBudget = () => Math.max(4, (process.stdout.rows || 24) - 10);
   const budget = rowBudget();
   const top = Math.max(0, Math.min(cursor - Math.floor(budget / 2), view.length - budget));
   const visible = view.slice(top, top + budget);
@@ -266,8 +266,10 @@ export default function App({ onAction }) {
       });
       lines.push(h(Text, { key: 'sh', color: color.dim }, '   j/k pick · enter wake · esc cancel'));
     } else {
-      lines.push(h(Text, { key: 'k', color: color.dim },
-        'j/k move  enter attach  o new  s send  x stop  r refresh  / filter  a all  q quit'));
+      lines.push(h(Text, { key: 'k1', color: color.dim },
+        'j/k move  enter attach (F12 comes back)  o new  s send  x stop'));
+      lines.push(h(Text, { key: 'k2', color: color.dim },
+        'r refresh  / find  n/N match  a all  q quit'));
     }
     if (error) lines.push(h(Text, { key: 'e', color: color.terra }, error));
     else if (flash) lines.push(h(Text, { key: 'f', color: color.green }, flash));

@@ -37,7 +37,21 @@ export function attachCommand(slug) {
        containerName(), 'tmux', '-u', 'attach', '-t', slug];
 }
 
+// One obvious way home: F12 detaches (C-b d works too, for tmux hands).
+// Bound on the tmux server idempotently before each attach; F12 is unused by
+// the session programs, so this is safe to set globally.
+function ensureDetachKey() {
+  const bind = ['tmux', 'bind-key', '-n', 'F12', 'detach-client'];
+  const cmd = inContainer() ? bind : ['docker', 'exec', '-u', 'node', containerName(), ...bind];
+  try {
+    spawnSync(cmd[0], cmd.slice(1), { stdio: 'ignore' });
+  } catch {
+    /* non-fatal - C-b d always works */
+  }
+}
+
 export function attach(slug) {
+  ensureDetachKey();
   const [cmd, ...args] = attachCommand(slug);
   const env = { ...process.env };
   delete env.TMUX; // allow attach from inside another tmux
