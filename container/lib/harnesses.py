@@ -32,10 +32,17 @@ DEFAULT_HARNESS = "claude"
 _BIN_DIR = Path(__file__).resolve().parent.parent / "bin"
 WCLAUDE = str(_BIN_DIR / "wclaude")
 WCODEX = str(_BIN_DIR / "wcodex")
+WOPENCODE = str(_BIN_DIR / "wopencode")
 
 _ROLLOUT_UUID_RE = re.compile(
     r"rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$"
 )
+
+# opencode session files are storage/session/<projectID>/<sessionID>.json,
+# where the id looks like ses_<base62>. UNVERIFIED: the ses_ prefix and the
+# storage layout are from the docs / sst-opencode source (id/id.ts) — confirm
+# the exact filename shape live before trusting it.
+_OPENCODE_SESSION_RE = re.compile(r"(ses_[0-9A-Za-z]+)\.json$")
 
 
 def _claude_command(entry: dict, mode: str, *, session_id: str = "",
@@ -138,6 +145,101 @@ def _codex_discover_session_id(data: dict, since: float) -> str | None:
     return candidates[0][2]
 
 
+def _opencode_command(entry: dict, mode: str, *, session_id: str = "",
+                      session_name: str = "", model: str = "", prompt: str = "",
+                      resume_id: str = "") -> str:
+    """Build an opencode CLI command line.
+
+    UNVERIFIED (needs a live bench with jerpint before trusting):
+      - Flags are from opencode.ai/docs (the TUI root command and `opencode run`
+        share -m/--model, -s/--session, -c/--continue, --prompt). We launch the
+        interactive TUI (attachable in tmux), NOT `opencode run` (headless), so
+        the session behaves like claude/codex: `opencode --model <p/m> --prompt
+        "<text>"`.
+      - opencode can't preset a session id at spawn — like codex, it assigns its
+        own `ses_...` id, so run-session.sh discovers it after launch (see
+        _opencode_discover_session_id). Resume is `--session <id>`.
+      - opencode's default permission mode is "allow all" (no trust/approval
+        dialog like codex), so no bypass flag is needed. If a future version adds
+        an approval gate, add `--agent` or a config preseed in wopencode rather
+        than a flag here. `opencode run` also has `--auto`; the TUI root command
+        may not — do NOT add it unrecognized.
+      - Whether `--prompt` on the TUI auto-submits (vs pre-fills the composer) is
+        unconfirmed. If it only pre-fills, the paste-settle transport still
+        delivers the opening prompt; live-test to be sure.
+    """
+    wrapper = entry["wrapper"]
+    if mode == "login":
+        # `opencode auth login` is interactive (provider picker; Claude Pro/Max
+        # and ChatGPT open a browser — not container-friendly). The seed flow in
+        # wopencode is the real containerizable path; this is the manual fallback.
+        return f"{wrapper} auth login"
+    if mode not in ("spawn", "resume"):
+        raise ValueError(f"unknown mode: {mode}")
+
+    parts = [wrapper]
+    if mode == "resume" and resume_id:
+        parts += ["--session", resume_id]
+    if model:
+        parts += ["--model", model]
+    if prompt:
+        parts += ["--prompt", prompt]
+    return " ".join(shlex.quote(p) for p in parts)
+
+
+def _opencode_discover_session_id(data: dict, since: float) -> str | None:
+    """Find the ses_ id opencode assigned to a just-spawned session.
+
+    opencode writes session state to
+    $XDG_DATA_HOME/opencode/storage/session/<projectID>/<sessionID>.json (default
+    XDG_DATA_HOME is $HOME/.local/share). wopencode sets HOME to the wolt root, so
+    the per-wolt path is <wolt>/.local/share/opencode/storage/session/. Returns
+    the newest ses_ id created after `since`, preferring a file whose recorded
+    directory matches the session dir (disambiguates concurrent sessions).
+
+    UNVERIFIED: the storage path, the ses_ id shape, and the per-session JSON's
+    directory field name are from docs/source, not a live run. Confirm before
+    trusting resume under concurrency.
+    """
+    wolt = data.get("wolt", "")
+    if not wolt:
+        return None
+    wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    storage_dir = (wolts_dir / wolt / ".local" / "share" / "opencode"
+                   / "storage" / "session")
+    if not storage_dir.exists():
+        return None
+
+    candidates = []
+    for f in storage_dir.glob("**/ses_*.json"):
+        try:
+            if f.stat().st_mtime < since:
+                continue
+        except OSError:
+            continue
+        m = _OPENCODE_SESSION_RE.search(f.name)
+        if m:
+            candidates.append((f.stat().st_mtime, f, m.group(1)))
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+
+    # Prefer a session whose recorded directory matches the session dir.
+    # UNVERIFIED: field name — opencode session JSON has been seen to carry a
+    # "directory" (and/or "cwd") key; try both, fall back to newest.
+    session_dir = data.get("dir", "")
+    if session_dir:
+        for _, f, sid in candidates:
+            try:
+                meta = json.loads(f.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+            cwd = meta.get("directory") or meta.get("cwd", "")
+            if cwd == session_dir:
+                return sid
+    return candidates[0][2]
+
+
 HARNESSES = {
     "claude": {
         "wrapper": WCLAUDE,
@@ -208,6 +310,49 @@ HARNESSES = {
         # codex's TUI folds an Enter arriving right after a paste into the
         # paste (message stays in the composer). Verified live: 0.5s settle
         # before the Enter keystroke submits reliably.
+        "paste_settle": 0.5,
+    },
+    "opencode": {
+        "wrapper": WOPENCODE,
+        "command": _opencode_command,
+        "label": "opencode",
+        "emoji": "🟦",
+        "process_names": {"opencode"},
+        # UNVERIFIED: model identifiers. opencode uses provider/model strings
+        # from its models.dev catalog. Defaulting to the Anthropic provider so
+        # the existing Claude Max subscription authorizes it (opencode supports
+        # Claude Pro/Max OAuth). The exact ids drift — confirm the live set with
+        # `opencode models` and edit these. Swapping provider (openrouter/*,
+        # openai/*, opencode/* Zen, etc.) is a one-line change per tier.
+        "models": {
+            "raccoon": "anthropic/claude-opus-4-8",     # frontier / thinker
+            "beaver": "anthropic/claude-sonnet-4-5",     # balanced / builder
+            "otter": "anthropic/claude-haiku-4-5",       # fast / quick
+            "rodent": "anthropic/claude-opus-4-8",       # legacy — treated as raccoon
+            "wolf": "anthropic/claude-sonnet-4-5",
+        },
+        # Selectable models for the picker (new-main integration). UNVERIFIED ids
+        # — same caveat as `models` above; edit after a live `opencode models`.
+        "model_catalog": [
+            {"id": "anthropic/claude-opus-4-8", "label": "Claude Opus 4.8"},
+            {"id": "anthropic/claude-sonnet-4-5", "label": "Claude Sonnet 4.5"},
+            {"id": "anthropic/claude-haiku-4-5", "label": "Claude Haiku 4.5"},
+        ],
+        # opencode mirrors Claude Code conventions (it even reads ~/.claude/skills
+        # and CLAUDE.md). UNVERIFIED: whether a /skill mention in the opening
+        # --prompt triggers the skill headlessly (same open question codex had).
+        "skill_invoke": "/{name}",
+        # opencode reads AGENTS.md as primary, CLAUDE.md as a documented
+        # fallback. wopencode symlinks AGENTS.md -> CLAUDE.md for parity with
+        # codex; the fallback means it would work even without the symlink.
+        "instructions_file": "AGENTS.md",
+        # auth.json lives under the data dir, not the config dir.
+        "auth_file": ".local/share/opencode/auth.json",
+        # opencode assigns its own ses_ id — discover after launch, like codex.
+        "preset_session_id": False,
+        "discover_session_id": _opencode_discover_session_id,
+        # UNVERIFIED: opencode TUI paste/submit semantics. Start at codex's
+        # proven 0.5s settle; live-bench and drop to 0.0 if it submits cleanly.
         "paste_settle": 0.5,
     },
 }

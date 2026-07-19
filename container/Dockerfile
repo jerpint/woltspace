@@ -15,6 +15,18 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 FROM node:22-slim AS codex
 RUN npm install -g @openai/codex
 
+# --- Stage: opencode ---
+# Same pattern. Update opencode: docker build --no-cache-filter=opencode ...
+# UNVERIFIED: npm package name `opencode-ai` (the bare `opencode` name is taken
+# by an unrelated package — confirmed via opencode.ai/docs install guide). Unlike
+# codex (pure JS), opencode-ai pulls a prebuilt native binary via a per-platform
+# optional dependency at install time, so we install into an isolated --prefix
+# and copy the whole tree (binary + relative bin symlink) rather than cherry-
+# picking one package dir. Alternative if npm proves unreliable in-image:
+# `curl -fsSL https://opencode.ai/install | bash` (self-contained binary).
+FROM node:22-slim AS opencode
+RUN npm install -g --prefix /opt/opencode opencode-ai
+
 # --- Stage: main ---
 FROM node:22-slim
 
@@ -69,6 +81,15 @@ RUN ln -s ../lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex
 # rebuilds, and where `codex login` lands. wcodex overrides this per-wolt
 # at session launch. (Dir is created at boot; mount shadows build-time mkdir.)
 ENV CODEX_HOME=/workspace/wolts/.codex
+
+# Copy the opencode install (native binary + relative bin symlink) as one tree.
+COPY --from=opencode /opt/opencode /opt/opencode
+ENV PATH="/opt/opencode/bin:${PATH}"
+# No global XDG/data ENV: wopencode sets HOME + XDG_DATA_HOME/XDG_CONFIG_HOME
+# per-wolt at launch. The shared auth seed lives at
+# /workspace/wolts/.local/share/opencode/auth.json (in the mount, durable across
+# rebuilds; created by `opencode auth login` or copied in). wopencode self-heals
+# a per-wolt copy from it, mirroring the codex/claude seed pattern.
 
 # Install worktui (worktree + Claude session manager)
 RUN git clone https://github.com/jerpint/worktui.git /home/node/worktui \
