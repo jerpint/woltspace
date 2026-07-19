@@ -50,23 +50,19 @@ export const detachLabel = () =>
     .replace(/Left$/, '←')
     .replace(/Right$/, '→');
 
-const RETIRED_DEFAULTS = ['F12', 'C-\\'];
-
 function tmuxCmd(args) {
   return inContainer() ? ['tmux', ...args] : ['docker', 'exec', '-u', 'node', containerName(), 'tmux', ...args];
 }
 
+// Bind ONLY the current detach key - never unbind others. Users bind their own
+// root keys in tmux.conf.local (e.g. vim-tmux-navigator's C-h/j/k/l/C-\), and
+// a hardcoded "retired defaults" unbind list would silently eat them.
 function ensureDetachKey() {
-  for (const args of [
-    ...RETIRED_DEFAULTS.filter((k) => k !== detachKey()).map((k) => ['unbind-key', '-n', k]),
-    ['bind-key', '-n', detachKey(), 'detach-client'],
-  ]) {
-    const cmd = tmuxCmd(args);
-    try {
-      spawnSync(cmd[0], cmd.slice(1), { stdio: 'ignore' });
-    } catch {
-      /* non-fatal - C-b d always works */
-    }
+  const cmd = tmuxCmd(['bind-key', '-n', detachKey(), 'detach-client']);
+  try {
+    spawnSync(cmd[0], cmd.slice(1), { stdio: 'ignore' });
+  } catch {
+    /* non-fatal - C-b d always works */
   }
 }
 
