@@ -115,6 +115,16 @@ def main():
     ss.set_defaults(func=cmd_session_send)
 
     argv = sys.argv[1:]
+    # tui: exec the terminal cockpit (same app the host launcher runs; it
+    # auto-detects in-container mode - native tmux attach, localhost API).
+    if argv and argv[0] == "tui":
+        tui = "/workspace/woltspace/tui/src/main.js"
+        if not os.path.exists(tui):
+            print("tui not found in this image - needs a rebuild that includes tui/",
+                  file=sys.stderr)
+            sys.exit(1)
+        os.execvp("node", ["node", tui])
+
     # Friendly hint: lifecycle verbs belong to the host launcher, not in-container.
     if argv and argv[0] in LIFECYCLE:
         print(f"'{argv[0]}' is a host lifecycle command — run it on the host "
