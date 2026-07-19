@@ -1,0 +1,92 @@
+#!/bin/bash
+# Wrapper that sets per-wolt HOME + XDG dirs and self-heals opencode config
+# before launching opencode. Use this instead of bare `opencode` inside the
+# container. Mirrors wcodex / wclaude.
+#
+# If $PWD is under /workspace/wolts/<name>/, set HOME to that wolt's root dir and
+# point opencode's XDG dirs at that wolt. This gives each wolt its own opencode
+# config, auth, and session storage.
+#
+# opencode's on-disk layout (from opencode.ai/docs, UNVERIFIED against a live
+# run — bench before trusting):
+#   config:   $XDG_CONFIG_HOME/opencode/opencode.json   (or OPENCODE_CONFIG_DIR)
+#   data:     $XDG_DATA_HOME/opencode/                  (default ~/.local/share)
+#   auth:     $XDG_DATA_HOME/opencode/auth.json
+#   sessions: $XDG_DATA_HOME/opencode/storage/session/<projectID>/<sessionID>.json
+# Setting HOME alone would redirect all of these (XDG defaults derive from HOME),
+# but we set XDG_DATA_HOME/XDG_CONFIG_HOME explicitly so isolation doesn't depend
+# on how opencode resolves defaults.
+
+WOLT_HOME=$(echo "$PWD" | sed -n 's|\(/workspace/wolts/[^/]*\).*|\1|p')
+if [ -n "$WOLT_HOME" ] && [ -d "$WOLT_HOME" ]; then
+    export HOME="$WOLT_HOME"
+    export XDG_DATA_HOME="$WOLT_HOME/.local/share"
+    export XDG_CONFIG_HOME="$WOLT_HOME/.config"
+    # opencode may self-update into $HOME/.local/bin (or ~/.opencode/bin). With a
+    # per-wolt HOME that dir isn't on PATH, so the image's baked opencode runs and
+    # warns about the newer install it can't reach. Put the wolt's own bin first.
+    export PATH="$HOME/.local/bin:$PATH"
+
+    OPENCODE_DATA="$XDG_DATA_HOME/opencode"
+    OPENCODE_CONFIG="$XDG_CONFIG_HOME/opencode"
+    mkdir -p "$OPENCODE_DATA" "$OPENCODE_CONFIG"
+
+    # Self-heal missing credentials (copy from shared seed — NOT a symlink:
+    # opencode rewrites auth.json on OAuth token refresh, which breaks symlinks,
+    # same lesson as claude/codex).
+    SHARED_AUTH="/workspace/wolts/.local/share/opencode/auth.json"
+    if [ ! -e "$OPENCODE_DATA/auth.json" ] && [ -f "$SHARED_AUTH" ]; then
+        cp "$SHARED_AUTH" "$OPENCODE_DATA/auth.json"
+    fi
+
+    # opencode reads AGENTS.md as primary and CLAUDE.md as a documented fallback.
+    # Point AGENTS.md at the wolt's CLAUDE.md (shared with codex; the fallback
+    # means opencode would still read CLAUDE.md even without this).
+    if [ ! -e "$WOLT_HOME/AGENTS.md" ] && [ -f "$WOLT_HOME/CLAUDE.md" ]; then
+        ln -s CLAUDE.md "$WOLT_HOME/AGENTS.md"
+    fi
+
+    # Skills: opencode reads $HOME/.claude/skills natively (Claude Code compat).
+    # With the per-wolt HOME above that resolves to <wolt>/.claude/skills, which
+    # the platform already syncs every boot — so skills work for free, no symlink
+    # needed. (Toggle env: OPENCODE_DISABLE_CLAUDE_CODE_SKILLS — leave unset.)
+
+    # Preseed a minimal config. opencode's default permission mode already allows
+    # all operations (no trust/approval dialog like codex), so a headless spawn
+    # won't block today. We still write explicit allow-all as belt-and-suspenders
+    # against a future default change — same rationale as wcodex's trust preseed.
+    # UNVERIFIED: the exact permission keys/values (from opencode.ai/docs/config).
+    CONFIG_JSON="$OPENCODE_CONFIG/opencode.json"
+    if [ ! -e "$CONFIG_JSON" ]; then
+        cat > "$CONFIG_JSON" <<'EOF'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "snapshot": false,
+  "permission": {
+    "edit": "allow",
+    "bash": "allow",
+    "webfetch": "allow"
+  }
+}
+EOF
+    fi
+    # snapshot:false is CRITICAL here. opencode's git snapshot tracks the CWD,
+    # and since HOME is the wolt dir, that includes opencode's own data dir
+    # ($HOME/.local/share/opencode) — self-referential, so the snapshot repo
+    # balloons (seen: 1.4GB) and its `git gc` blocks the session on boot. wolts
+    # don't need opencode's checkpoints — woltspace has its own git/memory.
+    # Belt-and-suspenders: also ensure it's set on a pre-existing config.
+    if [ -e "$CONFIG_JSON" ] && ! grep -q '"snapshot"' "$CONFIG_JSON" 2>/dev/null; then
+        python3 -c "import json,sys; p='$CONFIG_JSON'; d=json.load(open(p)); d['snapshot']=False; json.dump(d,open(p,'w'),indent=2)" 2>/dev/null || true
+    fi
+fi
+
+# NOTE on login-shell PATH: if opencode runs model bash commands via `bash -lc`
+# (as codex does), the login shell rebuilds PATH from /etc/profile and would drop
+# the woltspace bins. The Dockerfile's /etc/profile.d/woltspace-path.sh already
+# restores /workspace/woltspace/container/bin on every login shell, so notify /
+# push-view / session-reg stay reachable. UNVERIFIED that opencode uses a login
+# shell — confirm live; if it uses a curated env instead, add the opencode config
+# equivalent here.
+
+exec opencode "$@"

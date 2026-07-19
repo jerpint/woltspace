@@ -32,6 +32,7 @@ DEFAULT_HARNESS = "claude"
 _BIN_DIR = Path(__file__).resolve().parent.parent / "bin"
 WCLAUDE = str(_BIN_DIR / "wclaude")
 WCODEX = str(_BIN_DIR / "wcodex")
+WOPENCODE = str(_BIN_DIR / "wopencode")
 
 _ROLLOUT_UUID_RE = re.compile(
     r"rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$"
@@ -138,6 +139,111 @@ def _codex_discover_session_id(data: dict, since: float) -> str | None:
     return candidates[0][2]
 
 
+def _opencode_command(entry: dict, mode: str, *, session_id: str = "",
+                      session_name: str = "", model: str = "", prompt: str = "",
+                      resume_id: str = "") -> str:
+    """Build an opencode CLI command line (verified against opencode 1.18.3).
+
+      - The interactive TUI (root command, attachable in tmux) accepts -m/--model
+        (format provider/model), -s/--session, -c/--continue, and --prompt — so a
+        session behaves like claude/codex: `opencode --model <p/m> --prompt
+        "<text>"`. --prompt auto-submits the opening message (verified live).
+      - opencode can't preset a session id at spawn — like codex, it assigns its
+        own `ses_...` id, so run-session.sh discovers it after launch (see
+        _opencode_discover_session_id). Resume is `--session <id>` (verified:
+        restores the full conversation thread).
+      - `--auto` auto-approves permissions (the root command's YOLO flag, the
+        opencode equivalent of claude's --dangerously-skip-permissions and
+        codex's --dangerously-bypass...). VERIFIED live: without it opencode 1.18.3
+        DOES prompt (e.g. to access the platform skills dir on boot), so it is
+        NOT allow-all by default — every session launches with --auto so wolts
+        run unattended like every other harness.
+    """
+    wrapper = entry["wrapper"]
+    if mode == "login":
+        # `opencode auth login` is interactive (provider picker; Claude Pro/Max
+        # and ChatGPT open a browser — not container-friendly). The seed flow in
+        # wopencode is the real containerizable path; this is the manual fallback.
+        return f"{wrapper} auth login"
+    if mode not in ("spawn", "resume"):
+        raise ValueError(f"unknown mode: {mode}")
+
+    # --auto = full permissions, no approval prompts (unattended, like all wolts)
+    parts = [wrapper, "--auto"]
+    if mode == "resume" and resume_id:
+        parts += ["--session", resume_id]
+    if model:
+        parts += ["--model", model]
+    if prompt:
+        parts += ["--prompt", prompt]
+    return " ".join(shlex.quote(p) for p in parts)
+
+
+def _opencode_discover_session_id(data: dict, since: float) -> str | None:
+    """Find the ses_ id opencode assigned to a just-spawned session.
+
+    Verified live against opencode 1.18.3: sessions live in a SQLite db
+    (<wolt>/.local/share/opencode/opencode.db), NOT in per-session JSON files —
+    so we ask opencode itself via `session list --format json`, run with the
+    wolt's HOME/XDG (mirroring wopencode) so it reads that wolt's db. Each entry
+    is {id: "ses_...", created/updated: <ms epoch>, directory: <cwd>, ...}.
+    Returns the id of the newest session created at/after `since` whose recorded
+    directory matches the session dir (disambiguates concurrent sessions),
+    falling back to newest-in-dir, then newest overall.
+    """
+    wolt = data.get("wolt", "")
+    if not wolt:
+        return None
+    wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    wolt_home = wolts_dir / wolt
+    if not (wolt_home / ".local" / "share" / "opencode").exists():
+        return None
+
+    env = dict(os.environ)
+    env["HOME"] = str(wolt_home)
+    env["XDG_DATA_HOME"] = str(wolt_home / ".local" / "share")
+    env["XDG_CONFIG_HOME"] = str(wolt_home / ".config")
+    # `session list` is project-scoped by cwd (opencode derives the project from
+    # the working dir), so run it FROM the session's dir or it returns nothing.
+    run_cwd = data.get("dir") or str(wolt_home)
+    try:
+        proc = subprocess.run(
+            ["opencode", "session", "list", "--format", "json"],
+            env=env, cwd=run_cwd, capture_output=True, text=True, timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    try:
+        sessions = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+
+    def _ts(s):  # created/updated are ms epoch
+        return s.get("created") or s.get("updated") or 0
+
+    valid = [s for s in sessions
+             if isinstance(s, dict) and str(s.get("id", "")).startswith("ses_")]
+    valid.sort(key=_ts, reverse=True)
+    if not valid:
+        return None
+
+    # Only consider sessions created at/after `since` — never return a stale
+    # session from a previous run while THIS spawn's session hasn't landed yet
+    # (the poller keeps trying until it does). `valid` is newest-first.
+    since_ms = since * 1000
+    after = [s for s in valid if _ts(s) >= since_ms]
+    if not after:
+        return None
+    session_dir = data.get("dir", "")
+    if session_dir:
+        dir_match = [s for s in after if s.get("directory") == session_dir]
+        if dir_match:
+            return dir_match[0]["id"]
+    return after[0]["id"]
+
+
 HARNESSES = {
     "claude": {
         "wrapper": WCLAUDE,
@@ -210,6 +316,58 @@ HARNESSES = {
         # before the Enter keystroke submits reliably.
         "paste_settle": 0.5,
     },
+    "opencode": {
+        "wrapper": WOPENCODE,
+        "command": _opencode_command,
+        "label": "opencode",
+        "emoji": "🟦",
+        "process_names": {"opencode"},
+        # opencode is a multi-provider engine with hundreds of models across
+        # providers — a curated whitelist can't keep up, so model pins are
+        # FREEFORM: any "provider/model" string is accepted and the catalog below
+        # is just starter suggestions. (claude/codex stay catalog-gated.)
+        "freeform_model": True,
+        # Model ids are provider/model strings from opencode's models.dev catalog
+        # (`opencode session`/`opencode models` list them). Defaulting to the
+        # OpenAI provider — VERIFIED live end-to-end (opencode 1.18.3, spawn +
+        # resume + skills) using OPENAI_API_KEY from the environment, which the
+        # container passes through to sessions. Swapping provider is a one-line
+        # change per tier: anthropic/* (needs Claude Max OAuth — untested here),
+        # openrouter/<vendor>/<model> (one key, 341 models — needs a valid key),
+        # opencode/* (Zen), etc.
+        "models": {
+            "raccoon": "openai/gpt-4o",        # frontier / thinker
+            "beaver": "openai/gpt-4o",           # balanced / builder
+            "otter": "openai/gpt-4o-mini",       # fast / quick
+            "rodent": "openai/gpt-4o",           # legacy — treated as raccoon
+            "wolf": "openai/gpt-4o-mini",
+        },
+        # Selectable models for the picker (new-main integration).
+        "model_catalog": [
+            {"id": "openai/gpt-4o", "label": "GPT-4o"},
+            {"id": "openai/gpt-4o-mini", "label": "GPT-4o mini"},
+            {"id": "openai/gpt-4.1", "label": "GPT-4.1"},
+        ],
+        # opencode mirrors Claude Code conventions (reads ~/.claude/skills and
+        # CLAUDE.md). VERIFIED live: a /skill mention in the opening --prompt
+        # triggers the skill natively (fresh wolt ran /woltspace-start-chat, read
+        # its memory, on boot).
+        "skill_invoke": "/{name}",
+        # opencode reads AGENTS.md as primary, CLAUDE.md as a documented
+        # fallback. wopencode symlinks AGENTS.md -> CLAUDE.md for parity with
+        # codex; the fallback means it would work even without the symlink.
+        "instructions_file": "AGENTS.md",
+        # auth.json lives under the data dir, not the config dir.
+        "auth_file": ".local/share/opencode/auth.json",
+        # opencode assigns its own ses_ id — discover after launch, like codex.
+        "preset_session_id": False,
+        "discover_session_id": _opencode_discover_session_id,
+        # opencode TUI paste/submit: --prompt on the root command auto-submits
+        # (verified live — the opening prompt ran without a manual Enter). Kept at
+        # codex's proven 0.5s settle for the resume-delivery paste path; can drop
+        # to 0.0 if live IWCL delivery proves it submits cleanly.
+        "paste_settle": 0.5,
+    },
 }
 
 # comm names that mean "still launching" — the wrapper chain before the agent
@@ -265,9 +423,16 @@ def model_catalog(harness: str | None) -> list[dict]:
 
 
 def is_valid_model(harness: str | None, model: str | None) -> bool:
-    """True if `model` is in this harness's (merged) selectable catalog."""
+    """True if `model` is usable for this harness.
+
+    Freeform harnesses (freeform_model=True, e.g. opencode) accept ANY non-empty
+    provider/model string — their catalog is suggestions, not a whitelist.
+    Catalog-gated harnesses (claude, codex) require catalog membership.
+    """
     if not model:
         return False
+    if get_harness(harness).get("freeform_model"):
+        return True
     return any(m["id"] == model for m in model_catalog(harness))
 
 
@@ -294,6 +459,8 @@ def resolve_model(harness: str | None, creature: str | None,
     A pinned model wins ONLY if it's valid for the resolved harness — a pin is
     harness-scoped ("opus" means nothing to codex), so switching engines drops a
     now-invalid pin back to the tier default. No invalid model reaches spawn.
+    For freeform harnesses (opencode) any non-empty pin is valid, so a
+    user-typed "provider/model" is honored as-is.
     """
     if pinned and is_valid_model(harness, pinned):
         return pinned
