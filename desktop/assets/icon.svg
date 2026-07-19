@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Woltspace lodge mark">
+  <defs>
+    <linearGradient id="forest" x1="64" y1="48" x2="448" y2="464" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#356F58"/>
+      <stop offset="1" stop-color="#173C31"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="160" y1="150" x2="356" y2="352" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F4DB83"/>
+      <stop offset="1" stop-color="#D5A746"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#forest)"/>
+  <path d="M95 371c45-31 94-45 147-42 57 3 103 29 175 22" fill="none" stroke="#77AE96" stroke-width="20" stroke-linecap="round" opacity=".6"/>
+  <path d="M108 414c51-25 102-33 153-23 42 8 84 26 143 14" fill="none" stroke="#A6CCB7" stroke-width="13" stroke-linecap="round" opacity=".42"/>
+  <path d="M132 235 256 128l124 107-25 29-99-84-99 84-25-29Z" fill="url(#gold)"/>
+  <path d="M164 238h184v119c-31 1-59-5-87-13-34-10-65-15-97-8V238Z" fill="#F0D478"/>
+  <path d="M207 224h42l29 77 31-77h42l-57 121h-34l-29-67-27 55-40 3 43-112Z" fill="#214A3B"/>
+  <rect x="286" y="295" width="39" height="62" rx="8" fill="#356F58"/>
+  <circle cx="306" cy="324" r="4" fill="#F4DB83"/>
+  <path d="M104 176c24-35 50-55 80-72" fill="none" stroke="#6E9E87" stroke-width="12" stroke-linecap="round" opacity=".45"/>
+  <circle cx="399" cy="132" r="29" fill="#F4DB83" opacity=".9"/>
+</svg>
