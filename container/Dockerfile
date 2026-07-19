@@ -153,6 +153,9 @@ WORKDIR /workspace/woltspace
 # Install node deps
 RUN npm install && npm install ws node-pty
 
+# tui deps (bun already in the image for worktui)
+RUN cd tui && bun install
+
 # Make bin scripts executable + add to PATH
 RUN chmod +x container/bin/* container/entrypoint.sh container/start.sh
 ENV PATH="/workspace/woltspace/container/bin:${PATH}"
