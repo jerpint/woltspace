@@ -41,7 +41,9 @@ export function attachCommand(slug) {
 // before each attach (C-b d always works too, for tmux hands). It is nothing
 // more than `tmux bind-key -n <key> detach-client`. Override with
 // WOLTSPACE_TUI_DETACH (any tmux key name: 'C-]', 'F9', ...).
-export const detachKey = () => process.env.WOLTSPACE_TUI_DETACH || 'C-Left';
+// Default C-\: single-key, not swallowed by macOS (ctrl-arrows are Mission
+// Control shortcuts by default and never reach the terminal).
+export const detachKey = () => process.env.WOLTSPACE_TUI_DETACH || 'C-\\';
 
 export const detachLabel = () =>
   detachKey()

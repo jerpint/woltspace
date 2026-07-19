@@ -22,7 +22,7 @@ node src/main.js       # node >= 18 or bun, host or in-container
 | --- | --- |
 | `j/k` `gg/G` `ctrl-d/u` | move / jump top-bottom / half-page |
 | `enter` | attach to the session's real tmux |
-| `ctrl-←` (or `C-b d`) | detach from an attached session — back to the list. Rebind with `WOLTSPACE_TUI_DETACH` (any tmux key name: `C-]`, `F9`, …). macOS note: ctrl-← is the default "move left a space" system shortcut — free it in System Settings → Keyboard → Shortcuts → Mission Control, or pick another key |
+| `ctrl-\` (or `C-b d`) | detach from an attached session — back to the list. Rebind with `WOLTSPACE_TUI_DETACH` (any tmux key name: `C-]`, `F9`, …). Avoid ctrl-arrows — macOS Mission Control swallows them by default |
 | `o` | wake a wolt — new session (vim: *open*) |
 | `s` | send an attributed message into the selected session |
 | `x` | stop the selected session (`y/N` confirm) |

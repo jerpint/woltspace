@@ -5,7 +5,7 @@ import os from 'node:os';
 import { Box, Text, useApp, useInput } from 'ink';
 import * as api from '../api.js';
 import { detachLabel } from '../attach.js';
-import { color, creatureGlyph, adapterTag, lore, age, clock } from '../theme.js';
+import { color, creatureGlyph, lore, age, clock } from '../theme.js';
 
 const h = React.createElement;
 
@@ -228,7 +228,6 @@ export default function App({ onAction }) {
         color: match ? color.amber : undefined,
       }, s.name.padEnd(slugWidth + 2)),
       h(Text, { color: color.amber, dimColor: !sel }, engineLabel(s).padEnd(engineWidth + 2)),
-      h(Text, { color: color.dim }, (adapterTag[s.adapter] || '--') + '  '),
       h(Text, { color: color.dim }, age(s.last_activity).padStart(4)),
     );
   });
