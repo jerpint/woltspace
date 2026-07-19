@@ -38,12 +38,6 @@ _ROLLOUT_UUID_RE = re.compile(
     r"rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$"
 )
 
-# opencode session files are storage/session/<projectID>/<sessionID>.json,
-# where the id looks like ses_<base62>. UNVERIFIED: the ses_ prefix and the
-# storage layout are from the docs / sst-opencode source (id/id.ts) — confirm
-# the exact filename shape live before trusting it.
-_OPENCODE_SESSION_RE = re.compile(r"(ses_[0-9A-Za-z]+)\.json$")
-
 
 def _claude_command(entry: dict, mode: str, *, session_id: str = "",
                     session_name: str = "", model: str = "", prompt: str = "",
@@ -148,25 +142,20 @@ def _codex_discover_session_id(data: dict, since: float) -> str | None:
 def _opencode_command(entry: dict, mode: str, *, session_id: str = "",
                       session_name: str = "", model: str = "", prompt: str = "",
                       resume_id: str = "") -> str:
-    """Build an opencode CLI command line.
+    """Build an opencode CLI command line (verified against opencode 1.18.3).
 
-    UNVERIFIED (needs a live bench with jerpint before trusting):
-      - Flags are from opencode.ai/docs (the TUI root command and `opencode run`
-        share -m/--model, -s/--session, -c/--continue, --prompt). We launch the
-        interactive TUI (attachable in tmux), NOT `opencode run` (headless), so
-        the session behaves like claude/codex: `opencode --model <p/m> --prompt
-        "<text>"`.
+      - The interactive TUI (root command, attachable in tmux) accepts -m/--model
+        (format provider/model), -s/--session, -c/--continue, and --prompt — so a
+        session behaves like claude/codex: `opencode --model <p/m> --prompt
+        "<text>"`. --prompt auto-submits the opening message (verified live).
       - opencode can't preset a session id at spawn — like codex, it assigns its
         own `ses_...` id, so run-session.sh discovers it after launch (see
-        _opencode_discover_session_id). Resume is `--session <id>`.
+        _opencode_discover_session_id). Resume is `--session <id>` (verified:
+        restores the full conversation thread).
       - opencode's default permission mode is "allow all" (no trust/approval
         dialog like codex), so no bypass flag is needed. If a future version adds
         an approval gate, add `--agent` or a config preseed in wopencode rather
-        than a flag here. `opencode run` also has `--auto`; the TUI root command
-        may not — do NOT add it unrecognized.
-      - Whether `--prompt` on the TUI auto-submits (vs pre-fills the composer) is
-        unconfirmed. If it only pre-fills, the paste-settle transport still
-        delivers the opening prompt; live-test to be sure.
+        than a flag here — do NOT add `--auto` (it's a `run` flag).
     """
     wrapper = entry["wrapper"]
     if mode == "login":
@@ -190,54 +179,66 @@ def _opencode_command(entry: dict, mode: str, *, session_id: str = "",
 def _opencode_discover_session_id(data: dict, since: float) -> str | None:
     """Find the ses_ id opencode assigned to a just-spawned session.
 
-    opencode writes session state to
-    $XDG_DATA_HOME/opencode/storage/session/<projectID>/<sessionID>.json (default
-    XDG_DATA_HOME is $HOME/.local/share). wopencode sets HOME to the wolt root, so
-    the per-wolt path is <wolt>/.local/share/opencode/storage/session/. Returns
-    the newest ses_ id created after `since`, preferring a file whose recorded
-    directory matches the session dir (disambiguates concurrent sessions).
-
-    UNVERIFIED: the storage path, the ses_ id shape, and the per-session JSON's
-    directory field name are from docs/source, not a live run. Confirm before
-    trusting resume under concurrency.
+    Verified live against opencode 1.18.3: sessions live in a SQLite db
+    (<wolt>/.local/share/opencode/opencode.db), NOT in per-session JSON files —
+    so we ask opencode itself via `session list --format json`, run with the
+    wolt's HOME/XDG (mirroring wopencode) so it reads that wolt's db. Each entry
+    is {id: "ses_...", created/updated: <ms epoch>, directory: <cwd>, ...}.
+    Returns the id of the newest session created at/after `since` whose recorded
+    directory matches the session dir (disambiguates concurrent sessions),
+    falling back to newest-in-dir, then newest overall.
     """
     wolt = data.get("wolt", "")
     if not wolt:
         return None
     wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
-    storage_dir = (wolts_dir / wolt / ".local" / "share" / "opencode"
-                   / "storage" / "session")
-    if not storage_dir.exists():
+    wolt_home = wolts_dir / wolt
+    if not (wolt_home / ".local" / "share" / "opencode").exists():
         return None
 
-    candidates = []
-    for f in storage_dir.glob("**/ses_*.json"):
-        try:
-            if f.stat().st_mtime < since:
-                continue
-        except OSError:
-            continue
-        m = _OPENCODE_SESSION_RE.search(f.name)
-        if m:
-            candidates.append((f.stat().st_mtime, f, m.group(1)))
-    if not candidates:
+    env = dict(os.environ)
+    env["HOME"] = str(wolt_home)
+    env["XDG_DATA_HOME"] = str(wolt_home / ".local" / "share")
+    env["XDG_CONFIG_HOME"] = str(wolt_home / ".config")
+    # `session list` is project-scoped by cwd (opencode derives the project from
+    # the working dir), so run it FROM the session's dir or it returns nothing.
+    run_cwd = data.get("dir") or str(wolt_home)
+    try:
+        proc = subprocess.run(
+            ["opencode", "session", "list", "--format", "json"],
+            env=env, cwd=run_cwd, capture_output=True, text=True, timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
         return None
-    candidates.sort(reverse=True)
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    try:
+        sessions = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
 
-    # Prefer a session whose recorded directory matches the session dir.
-    # UNVERIFIED: field name — opencode session JSON has been seen to carry a
-    # "directory" (and/or "cwd") key; try both, fall back to newest.
+    def _ts(s):  # created/updated are ms epoch
+        return s.get("created") or s.get("updated") or 0
+
+    valid = [s for s in sessions
+             if isinstance(s, dict) and str(s.get("id", "")).startswith("ses_")]
+    valid.sort(key=_ts, reverse=True)
+    if not valid:
+        return None
+
+    # Only consider sessions created at/after `since` — never return a stale
+    # session from a previous run while THIS spawn's session hasn't landed yet
+    # (the poller keeps trying until it does). `valid` is newest-first.
+    since_ms = since * 1000
+    after = [s for s in valid if _ts(s) >= since_ms]
+    if not after:
+        return None
     session_dir = data.get("dir", "")
     if session_dir:
-        for _, f, sid in candidates:
-            try:
-                meta = json.loads(f.read_text())
-            except (json.JSONDecodeError, OSError):
-                continue
-            cwd = meta.get("directory") or meta.get("cwd", "")
-            if cwd == session_dir:
-                return sid
-    return candidates[0][2]
+        dir_match = [s for s in after if s.get("directory") == session_dir]
+        if dir_match:
+            return dir_match[0]["id"]
+    return after[0]["id"]
 
 
 HARNESSES = {
@@ -318,29 +319,31 @@ HARNESSES = {
         "label": "opencode",
         "emoji": "🟦",
         "process_names": {"opencode"},
-        # UNVERIFIED: model identifiers. opencode uses provider/model strings
-        # from its models.dev catalog. Defaulting to the Anthropic provider so
-        # the existing Claude Max subscription authorizes it (opencode supports
-        # Claude Pro/Max OAuth). The exact ids drift — confirm the live set with
-        # `opencode models` and edit these. Swapping provider (openrouter/*,
-        # openai/*, opencode/* Zen, etc.) is a one-line change per tier.
+        # Model ids are provider/model strings from opencode's models.dev catalog
+        # (`opencode session`/`opencode models` list them). Defaulting to the
+        # OpenAI provider — VERIFIED live end-to-end (opencode 1.18.3, spawn +
+        # resume + skills) using OPENAI_API_KEY from the environment, which the
+        # container passes through to sessions. Swapping provider is a one-line
+        # change per tier: anthropic/* (needs Claude Max OAuth — untested here),
+        # openrouter/<vendor>/<model> (one key, 341 models — needs a valid key),
+        # opencode/* (Zen), etc.
         "models": {
-            "raccoon": "anthropic/claude-opus-4-8",     # frontier / thinker
-            "beaver": "anthropic/claude-sonnet-4-5",     # balanced / builder
-            "otter": "anthropic/claude-haiku-4-5",       # fast / quick
-            "rodent": "anthropic/claude-opus-4-8",       # legacy — treated as raccoon
-            "wolf": "anthropic/claude-sonnet-4-5",
+            "raccoon": "openai/gpt-4o",        # frontier / thinker
+            "beaver": "openai/gpt-4o",           # balanced / builder
+            "otter": "openai/gpt-4o-mini",       # fast / quick
+            "rodent": "openai/gpt-4o",           # legacy — treated as raccoon
+            "wolf": "openai/gpt-4o-mini",
         },
-        # Selectable models for the picker (new-main integration). UNVERIFIED ids
-        # — same caveat as `models` above; edit after a live `opencode models`.
+        # Selectable models for the picker (new-main integration).
         "model_catalog": [
-            {"id": "anthropic/claude-opus-4-8", "label": "Claude Opus 4.8"},
-            {"id": "anthropic/claude-sonnet-4-5", "label": "Claude Sonnet 4.5"},
-            {"id": "anthropic/claude-haiku-4-5", "label": "Claude Haiku 4.5"},
+            {"id": "openai/gpt-4o", "label": "GPT-4o"},
+            {"id": "openai/gpt-4o-mini", "label": "GPT-4o mini"},
+            {"id": "openai/gpt-4.1", "label": "GPT-4.1"},
         ],
-        # opencode mirrors Claude Code conventions (it even reads ~/.claude/skills
-        # and CLAUDE.md). UNVERIFIED: whether a /skill mention in the opening
-        # --prompt triggers the skill headlessly (same open question codex had).
+        # opencode mirrors Claude Code conventions (reads ~/.claude/skills and
+        # CLAUDE.md). VERIFIED live: a /skill mention in the opening --prompt
+        # triggers the skill natively (fresh wolt ran /woltspace-start-chat, read
+        # its memory, on boot).
         "skill_invoke": "/{name}",
         # opencode reads AGENTS.md as primary, CLAUDE.md as a documented
         # fallback. wopencode symlinks AGENTS.md -> CLAUDE.md for parity with
@@ -351,8 +354,10 @@ HARNESSES = {
         # opencode assigns its own ses_ id — discover after launch, like codex.
         "preset_session_id": False,
         "discover_session_id": _opencode_discover_session_id,
-        # UNVERIFIED: opencode TUI paste/submit semantics. Start at codex's
-        # proven 0.5s settle; live-bench and drop to 0.0 if it submits cleanly.
+        # opencode TUI paste/submit: --prompt on the root command auto-submits
+        # (verified live — the opening prompt ran without a manual Enter). Kept at
+        # codex's proven 0.5s settle for the resume-delivery paste path; can drop
+        # to 0.0 if live IWCL delivery proves it submits cleanly.
         "paste_settle": 0.5,
     },
 }
