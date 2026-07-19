@@ -81,6 +81,7 @@ All your wolt data lives in `~/.woltspace/wolts/` (or `$WOLTS_DIR` if you set it
 ~/.woltspace/wolts/
   .env                   — shared secrets for all wolts
   woltspace.json         — which wolt is active
+  tmux.conf.local        — your tmux overrides (optional, sourced last)
   your-wolt/
     wolt/
       memory/            — identity, context, learnings
@@ -91,6 +92,15 @@ All your wolt data lives in `~/.woltspace/wolts/` (or `$WOLTS_DIR` if you set it
 ```
 
 This is your backup. `~/.woltspace/wolts/` is the **entire app state** — the container is disposable.
+
+### Bring your own tmux
+
+Sessions run in tmux inside the container. Woltspace ships gentle defaults
+(truecolor, a forest status line, prefix stays `C-b`) at `/etc/tmux.conf`, and
+sources `~/.woltspace/wolts/tmux.conf.local` last — so your file wins. Drop any
+tmux config there (remap the prefix to `C-a`, paste your oh-my-tmux `.local`,
+restyle the status line) and it survives rebuilds. Applies when a tmux server
+starts; for a running lodge, `woltspace shell` then `tmux source-file /etc/tmux.conf`.
 
 ## Public tunnel
 
