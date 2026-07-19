@@ -319,6 +319,11 @@ HARNESSES = {
         "label": "opencode",
         "emoji": "🟦",
         "process_names": {"opencode"},
+        # opencode is a multi-provider engine with hundreds of models across
+        # providers — a curated whitelist can't keep up, so model pins are
+        # FREEFORM: any "provider/model" string is accepted and the catalog below
+        # is just starter suggestions. (claude/codex stay catalog-gated.)
+        "freeform_model": True,
         # Model ids are provider/model strings from opencode's models.dev catalog
         # (`opencode session`/`opencode models` list them). Defaulting to the
         # OpenAI provider — VERIFIED live end-to-end (opencode 1.18.3, spawn +
@@ -415,9 +420,16 @@ def model_catalog(harness: str | None) -> list[dict]:
 
 
 def is_valid_model(harness: str | None, model: str | None) -> bool:
-    """True if `model` is in this harness's (merged) selectable catalog."""
+    """True if `model` is usable for this harness.
+
+    Freeform harnesses (freeform_model=True, e.g. opencode) accept ANY non-empty
+    provider/model string — their catalog is suggestions, not a whitelist.
+    Catalog-gated harnesses (claude, codex) require catalog membership.
+    """
     if not model:
         return False
+    if get_harness(harness).get("freeform_model"):
+        return True
     return any(m["id"] == model for m in model_catalog(harness))
 
 
@@ -444,6 +456,8 @@ def resolve_model(harness: str | None, creature: str | None,
     A pinned model wins ONLY if it's valid for the resolved harness — a pin is
     harness-scoped ("opus" means nothing to codex), so switching engines drops a
     now-invalid pin back to the tier default. No invalid model reaches spawn.
+    For freeform harnesses (opencode) any non-empty pin is valid, so a
+    user-typed "provider/model" is honored as-is.
     """
     if pinned and is_valid_model(harness, pinned):
         return pinned

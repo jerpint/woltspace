@@ -470,6 +470,15 @@ class TestIsValidModel:
         assert not is_valid_model("claude", "")
         assert not is_valid_model("claude", None)
 
+    def test_freeform_harness_accepts_any_nonempty(self):
+        # opencode is freeform: any provider/model string is valid, catalog is
+        # just suggestions.
+        assert is_valid_model("opencode", "openrouter/qwen/qwen-2.5-72b-instruct")
+        assert is_valid_model("opencode", "anything/goes")
+        # ...but empty is still invalid even for freeform harnesses
+        assert not is_valid_model("opencode", "")
+        assert not is_valid_model("opencode", None)
+
 
 class TestResolveModel:
     """Spawn-time resolution: pin wins iff valid for the resolved harness."""
@@ -491,3 +500,12 @@ class TestResolveModel:
     def test_pin_can_diverge_from_tier(self):
         # Free binding: a raccoon may run a non-thinker model
         assert resolve_model("claude", "raccoon", "haiku") == "haiku"
+
+    def test_freeform_harness_honors_arbitrary_pin(self):
+        # opencode (freeform) honors a user-typed provider/model verbatim
+        assert resolve_model("opencode", "raccoon",
+                             "openrouter/qwen/qwen-2.5-72b-instruct") == \
+            "openrouter/qwen/qwen-2.5-72b-instruct"
+
+    def test_freeform_no_pin_still_uses_tier_default(self):
+        assert resolve_model("opencode", "raccoon", None) == "openai/gpt-4o"
