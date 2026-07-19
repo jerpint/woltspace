@@ -119,7 +119,7 @@ export default function App({ onAction }) {
         }
       } else if (key.backspace || key.delete) {
         setVal(val.slice(0, -1));
-      } else if (ch && !key.ctrl && !key.meta) {
+      } else if (ch && !key.ctrl && !key.meta && !key.tab) {
         setVal(val + ch);
       }
       return;
@@ -140,9 +140,10 @@ export default function App({ onAction }) {
       if (ch === 'j' || key.downArrow) return setSpawnCursor((c) => Math.min(wolts.length - 1, c + 1));
       if (ch === 'k' || key.upArrow) return setSpawnCursor((c) => Math.max(0, c - 1));
       if (key.return && wolts[spawnCursor]) {
-        const wolt = wolts[spawnCursor].name;
-        setMode('normal');
-        act(() => api.spawnSession(wolt), (r) => lore.spawned(r?.name || wolt));
+        // Spawn happens in the render loop so we can drop straight into the
+        // new session's pane instead of bouncing back to the list.
+        onAction?.({ type: 'spawn', wolt: wolts[spawnCursor].name });
+        exit();
       }
       return;
     }
@@ -178,13 +179,12 @@ export default function App({ onAction }) {
     else if (ch === '/') {
       setQuery('');
       setMode('search');
-    } else if (ch === 'n') jumpMatch(1);
-    else if (ch === 'N') jumpMatch(-1);
+    } else if (key.tab) jumpMatch(key.shift ? -1 : 1);
     else if (ch === 'r') refetch(selected?.name);
     else if (ch === 'a') {
       setShowAll((v) => !v);
       setCursor(0);
-    } else if (ch === 'o') {
+    } else if (ch === 'n') {
       if (wolts.length) {
         setSpawnCursor(0);
         setMode('spawn');
@@ -200,8 +200,10 @@ export default function App({ onAction }) {
       setMode('send');
     } else if (ch === 'x' && selected?.alive) {
       setMode('confirm');
-    } else if (key.return && selected?.alive) {
-      onAction?.({ type: 'attach', slug: selected.name });
+    } else if (key.return && selected) {
+      // Alive → straight into the pane. Offline → rouse it first (the server
+      // rebuilds tmux + restarts the agent with its harness's resume flavor).
+      onAction?.({ type: selected.alive ? 'attach' : 'resume', slug: selected.name });
       exit();
     }
   });
@@ -267,9 +269,9 @@ export default function App({ onAction }) {
       lines.push(h(Text, { key: 'sh', color: color.dim }, '   j/k pick · enter wake · esc cancel'));
     } else {
       lines.push(h(Text, { key: 'k1', color: color.dim },
-        `j/k move  enter attach (${detachLabel()} comes back)  o new  s send  x stop`));
+        `j/k move  enter attach${selected && !selected.alive ? ' (wakes it)' : ''} (${detachLabel()} comes back)  n new  s send  x stop`));
       lines.push(h(Text, { key: 'k2', color: color.dim },
-        'r refresh  / find  n/N match  a all  q quit'));
+        'r refresh  / find  tab/shift-tab match  a all  q quit'));
     }
     if (error) lines.push(h(Text, { key: 'e', color: color.terra }, error));
     else if (flash) lines.push(h(Text, { key: 'f', color: color.green }, flash));
