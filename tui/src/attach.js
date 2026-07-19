@@ -27,9 +27,14 @@ export function containerName() {
 }
 
 export function attachCommand(slug) {
+  // -u + a UTF-8 locale: without LANG in the docker-exec'd process, the tmux
+  // client decides the terminal can't render wide glyphs and strips them.
+  // Mirrors the proven `woltspace chat --session` invocation.
   return inContainer()
-    ? ['tmux', 'attach', '-t', slug]
-    : ['docker', 'exec', '-it', '-u', 'node', containerName(), 'tmux', 'attach', '-t', slug];
+    ? ['tmux', '-u', 'attach', '-t', slug]
+    : ['docker', 'exec', '-it', '-u', 'node',
+       '-e', 'LANG=C.UTF-8', '-e', 'LC_ALL=C.UTF-8',
+       containerName(), 'tmux', '-u', 'attach', '-t', slug];
 }
 
 export function attach(slug) {
