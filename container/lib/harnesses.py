@@ -152,10 +152,12 @@ def _opencode_command(entry: dict, mode: str, *, session_id: str = "",
         own `ses_...` id, so run-session.sh discovers it after launch (see
         _opencode_discover_session_id). Resume is `--session <id>` (verified:
         restores the full conversation thread).
-      - opencode's default permission mode is "allow all" (no trust/approval
-        dialog like codex), so no bypass flag is needed. If a future version adds
-        an approval gate, add `--agent` or a config preseed in wopencode rather
-        than a flag here — do NOT add `--auto` (it's a `run` flag).
+      - `--auto` auto-approves permissions (the root command's YOLO flag, the
+        opencode equivalent of claude's --dangerously-skip-permissions and
+        codex's --dangerously-bypass...). VERIFIED live: without it opencode 1.18.3
+        DOES prompt (e.g. to access the platform skills dir on boot), so it is
+        NOT allow-all by default — every session launches with --auto so wolts
+        run unattended like every other harness.
     """
     wrapper = entry["wrapper"]
     if mode == "login":
@@ -166,7 +168,8 @@ def _opencode_command(entry: dict, mode: str, *, session_id: str = "",
     if mode not in ("spawn", "resume"):
         raise ValueError(f"unknown mode: {mode}")
 
-    parts = [wrapper]
+    # --auto = full permissions, no approval prompts (unattended, like all wolts)
+    parts = [wrapper, "--auto"]
     if mode == "resume" and resume_id:
         parts += ["--session", resume_id]
     if model:

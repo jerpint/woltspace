@@ -145,6 +145,28 @@ class TestBuildCommandCodex:
         assert creature_model("codex", "otter") == "gpt-5.6-luna"
 
 
+class TestBuildCommandOpencode:
+    """Verified against opencode 1.18.3."""
+
+    def test_spawn_has_auto_and_model_and_prompt(self):
+        cmd = build_command("opencode", "spawn", model="openai/gpt-4o", prompt="hey")
+        assert "wopencode" in cmd
+        # --auto = full permissions, no approval prompts (like all other wolts)
+        assert "--auto" in cmd
+        assert "--model openai/gpt-4o" in cmd
+        assert cmd.endswith("--prompt hey")
+        # opencode can't preset a session id at spawn
+        assert "--session" not in build_command("opencode", "spawn", session_id="x")
+
+    def test_resume_uses_session_flag_and_auto(self):
+        cmd = build_command("opencode", "resume", resume_id="ses_abc", model="openai/gpt-4o")
+        assert "--auto" in cmd
+        assert "--session ses_abc" in cmd
+
+    def test_login_is_auth_login(self):
+        assert build_command("opencode", "login").endswith("auth login")
+
+
 class TestCodexDiscovery:
     """Rollout-id discovery from $CODEX_HOME/sessions."""
 
