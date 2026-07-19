@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import os from 'node:os';
 import { Box, Text, useApp, useInput } from 'ink';
 import * as api from '../api.js';
+import { detachLabel } from '../attach.js';
 import { color, creatureGlyph, adapterTag, lore, age, clock } from '../theme.js';
 
 const h = React.createElement;
@@ -267,7 +268,7 @@ export default function App({ onAction }) {
       lines.push(h(Text, { key: 'sh', color: color.dim }, '   j/k pick · enter wake · esc cancel'));
     } else {
       lines.push(h(Text, { key: 'k1', color: color.dim },
-        'j/k move  enter attach (F12 comes back)  o new  s send  x stop'));
+        `j/k move  enter attach (${detachLabel()} comes back)  o new  s send  x stop`));
       lines.push(h(Text, { key: 'k2', color: color.dim },
         'r refresh  / find  n/N match  a all  q quit'));
     }

@@ -37,16 +37,31 @@ export function attachCommand(slug) {
        containerName(), 'tmux', '-u', 'attach', '-t', slug];
 }
 
-// One obvious way home: F12 detaches (C-b d works too, for tmux hands).
-// Bound on the tmux server idempotently before each attach; F12 is unused by
-// the session programs, so this is safe to set globally.
+// One obvious way home: a detach key bound on the tmux server idempotently
+// before each attach (C-b d always works too, for tmux hands). Default C-\ -
+// the classic "escape the inner terminal" key (nvim terminal-mode lineage),
+// untouched by the session programs. Override with WOLTSPACE_TUI_DETACH
+// (any tmux key name: 'C-]', 'F9', ...).
+export const detachKey = () => process.env.WOLTSPACE_TUI_DETACH || 'C-\\';
+
+export const detachLabel = () =>
+  detachKey().replace(/^C-/, 'ctrl-').replace(/^M-/, 'alt-');
+
+function tmuxCmd(args) {
+  return inContainer() ? ['tmux', ...args] : ['docker', 'exec', '-u', 'node', containerName(), 'tmux', ...args];
+}
+
 function ensureDetachKey() {
-  const bind = ['tmux', 'bind-key', '-n', 'F12', 'detach-client'];
-  const cmd = inContainer() ? bind : ['docker', 'exec', '-u', 'node', containerName(), ...bind];
-  try {
-    spawnSync(cmd[0], cmd.slice(1), { stdio: 'ignore' });
-  } catch {
-    /* non-fatal - C-b d always works */
+  for (const args of [
+    ['unbind-key', '-n', 'F12'], // retired earlier default
+    ['bind-key', '-n', detachKey(), 'detach-client'],
+  ]) {
+    const cmd = tmuxCmd(args);
+    try {
+      spawnSync(cmd[0], cmd.slice(1), { stdio: 'ignore' });
+    } catch {
+      /* non-fatal - C-b d always works */
+    }
   }
 }
 
