@@ -8,6 +8,18 @@ use std::{
 use thiserror::Error;
 
 pub const CONTAINER_NAME: &str = "woltspace";
+// FOLLOW-UP (distribution): this image name is not yet reconciled with the bash
+// CLI, which builds/inspects the image as bare `woltspace` (see `woltspace`
+// script) — and `woltspace/woltspace:latest` isn't published to any registry.
+// Consequences until this is fixed:
+//   - Existing users work fine: we only pull/run when the `woltspace` container
+//     is MISSING; if their CLI already made a `woltspace` container we just
+//     attach to it and the image name never matters.
+//   - Net-new users (no container) hit `docker pull woltspace/woltspace:latest`,
+//     which fails because it's unpublished; a local `woltspace` image won't be
+//     used either, due to this name mismatch.
+// To unblock net-new installs: publish the image to a registry (Docker Hub /
+// GHCR), version-tag it, and make the CLI and this constant agree on the name.
 pub const DEFAULT_IMAGE: &str = "woltspace/woltspace:latest";
 const DOCKER_APP_CLI: &str = "/Applications/Docker.app/Contents/Resources/bin/docker";
 
