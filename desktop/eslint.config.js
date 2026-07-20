@@ -8,7 +8,11 @@ export default [
     languageOptions: {
       ecmaVersion: 2024,
       sourceType: "module",
-      globals: { document: "readonly", window: "readonly", navigator: "readonly", Notification: "readonly", fetch: "readonly", setTimeout: "readonly", URL: "readonly" }
+      globals: { document: "readonly", window: "readonly", navigator: "readonly", Notification: "readonly", fetch: "readonly", setTimeout: "readonly", clearTimeout: "readonly", URL: "readonly" }
     }
+  },
+  {
+    files: ["*.config.js"],
+    languageOptions: { globals: { process: "readonly" } }
   }
 ];

@@ -2,6 +2,7 @@ import "./style.css";
 import { createMockAdapter, createTauriAdapter, isTauri } from "./adapters.js";
 import { DesktopController, lodgeRouteFromDeepLink } from "./controller.js";
 import { requestAndSendDemo } from "./notifications.js";
+import { mountPixelScene } from "./scene.js";
 
 const adapter = isTauri() ? createTauriAdapter() : createMockAdapter();
 const controller = new DesktopController(adapter);
@@ -9,10 +10,8 @@ let pendingRoute = controller.lodgeUrl;
 const app = document.querySelector("#app");
 
 app.innerHTML = `
-  <div class="mist mist-one"></div><div class="mist mist-two"></div>
   <section class="shell" aria-live="polite">
     <div class="brand"><span class="mark">W</span><span>woltspace</span><span class="preview">${isTauri() ? "desktop" : "browser preview"}</span></div>
-    <div class="scene" aria-hidden="true"><div class="moon"></div><div class="pine p1"></div><div class="pine p2"></div><div class="pine p3"></div><div class="water"></div><div class="lodge">⌂<i></i></div></div>
     <div class="card">
       <div class="eyebrow">DESKTOP LODGE</div>
       <h1 id="title">Opening the lodge</h1>
@@ -23,6 +22,8 @@ app.innerHTML = `
     </div>
     <footer><span><b></b> Local only · 127.0.0.1:7777</span><button id="notify">Try a notification</button><button id="reveal">Show data folder</button></footer>
   </section>`;
+
+mountPixelScene(app);
 
 const title = document.querySelector("#title");
 const detail = document.querySelector("#detail");
