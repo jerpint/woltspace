@@ -72,8 +72,8 @@ impl EngineController<SystemRunner> {
 
 impl<R: CommandRunner> EngineController<R> {
     pub fn new(runner: R, data_dir: PathBuf, image: String) -> Self {
-        let home = data_dir.parent().and_then(Path::parent).unwrap_or(Path::new(""));
-        Self::with_candidates(runner, data_dir, image, docker_candidates(home))
+        let candidates = docker_candidates(data_dir.parent().and_then(Path::parent).unwrap_or(Path::new("")));
+        Self::with_candidates(runner, data_dir, image, candidates)
     }
 
     pub fn with_candidates(runner: R, data_dir: PathBuf, image: String, docker_candidates: Vec<PathBuf>) -> Self {
