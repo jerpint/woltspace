@@ -7,19 +7,23 @@
   </div>
 
   <div class="sidebar-nav">
-    <div class="sidebar-nav-item{% if active_nav == 'home' %} active{% endif %}" id="nav-home" onclick="showView('home')">
+    <a class="sidebar-nav-item{% if active_nav == 'home' %} active{% endif %}" id="nav-home" href="/" onclick="showView('home');return false">
       <span class="sidebar-nav-icon">🏠</span>
       <span class="sidebar-nav-label">Home</span>
-    </div>
-    <div class="sidebar-nav-item{% if active_nav == 'apps' %} active{% endif %}" id="nav-apps" onclick="showView('apps')">
+    </a>
+    <a class="sidebar-nav-item{% if active_nav == 'apps' %} active{% endif %}" id="nav-apps" href="/?view=apps" onclick="showView('apps');return false">
       <span class="sidebar-nav-icon">🪓</span>
       <span class="sidebar-nav-label">Apps</span>
-    </div>
-    <div class="sidebar-nav-item{% if active_nav == 'sessions' %} active{% endif %}" id="nav-sessions" onclick="showView('sessions')">
+    </a>
+    <a class="sidebar-nav-item{% if active_nav == 'sessions' %} active{% endif %}" id="nav-sessions" href="/?view=sessions" onclick="showView('sessions');return false">
       <span class="sidebar-nav-icon">🌿</span>
       <span class="sidebar-nav-label">Sessions</span>
       <span class="nav-badge" id="sessions-badge"></span>
-    </div>
+    </a>
+    <a class="sidebar-nav-item{% if active_nav == 'settings' %} active{% endif %}" id="nav-settings" href="/settings">
+      <span class="sidebar-nav-icon">⚙</span>
+      <span class="sidebar-nav-label">Settings</span>
+    </a>
   </div>
 
   <div class="sidebar-scroll">
