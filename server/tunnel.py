@@ -18,6 +18,31 @@ _tunnel_hostname: str = ""  # e.g. "jerpint.woltspace.com" — the lodge itself
 # Lazy import helper — container/lib is on sys.path at runtime
 _lib_imported = False
 
+EXPOSURE_MODES = {"off", "temporary", "authenticated"}
+
+
+def get_exposure_mode(env: dict | None = None) -> str:
+    """Resolve the configured exposure mode.
+
+    WOLTSPACE_EXPOSURE is the canonical setting. The legacy boolean remains
+    supported so existing lodges keep their current behavior after upgrading.
+    Fresh installs fail closed to ``off``.
+    """
+    values = env if env is not None else os.environ
+    configured = values.get("WOLTSPACE_EXPOSURE", "").strip().lower()
+    if configured:
+        if configured not in EXPOSURE_MODES:
+            log.error("invalid WOLTSPACE_EXPOSURE=%r; exposure disabled", configured)
+            return "off"
+        return configured
+
+    legacy = values.get("WOLTSPACE_PUBLIC_TUNNEL", "").strip().lower()
+    if legacy == "true":
+        if values.get("CLOUDFLARE_TUNNEL_TOKEN") and values.get("CLOUDFLARE_TUNNEL_URL"):
+            return "authenticated"
+        return "temporary"
+    return "off"
+
 
 def _import_lib():
     global _lib_imported
@@ -75,8 +100,9 @@ def start_tunnel():
     _import_lib()
     from tunnel import start_cloudflared, start_named_tunnel, stop_cloudflared
 
-    if os.environ.get("WOLTSPACE_PUBLIC_TUNNEL", "true").lower() != "true":
-        log.info("tunnel disabled")
+    mode = get_exposure_mode()
+    if mode == "off":
+        log.info("exposure disabled")
         return
 
     SPACE_PLATFORM_DIR.mkdir(parents=True, exist_ok=True)
@@ -94,17 +120,24 @@ def start_tunnel():
     _parse_tunnel_domain(tunnel_url or "")
 
     try:
-        if tunnel_token and tunnel_url:
+        if mode == "authenticated":
+            if not tunnel_token or not tunnel_url:
+                log.error(
+                    "authenticated exposure requires CLOUDFLARE_TUNNEL_TOKEN "
+                    "and CLOUDFLARE_TUNNEL_URL; exposure disabled"
+                )
+                _write_state({"mode": mode, "status": "misconfigured"})
+                return
             # Named tunnel — permanent URL, pre-configured on Cloudflare
             result = start_named_tunnel(token=tunnel_token, host_header=None)
             _tunnel_url = tunnel_url
-            _write_state({"pid": result["pid"], "url": _tunnel_url, "type": "named"})
+            _write_state({"pid": result["pid"], "url": _tunnel_url, "type": "named", "mode": mode})
             log.info(f"named tunnel ready: {_tunnel_url}")
         else:
             # Quick tunnel — random URL, zero config
             result = start_cloudflared(port=7777, host_header=None)
             _tunnel_url = result["url"]
-            _write_state({"pid": result["pid"], "url": _tunnel_url, "type": "quick"})
+            _write_state({"pid": result["pid"], "url": _tunnel_url, "type": "quick", "mode": mode})
             log.info(f"quick tunnel ready: {_tunnel_url}")
     except RuntimeError as e:
         log.error(f"tunnel failed: {e}")

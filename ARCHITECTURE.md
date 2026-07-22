@@ -176,14 +176,26 @@ The proxy streams responses (so SSE / Vite HMR / video Range requests work) and 
 
 ---
 
-## Tunnels
+## Exposure modes
 
-Two flavors, both in `container/lib/tunnel.py`:
+Remote exposure is explicit and defaults to off. The host CLI manages it with
+`woltspace exposure <status|off|temporary|authenticated>`, backed by
+`WOLTSPACE_EXPOSURE`:
 
-- **Quick tunnel** — `cloudflared tunnel --url http://localhost:7777`. Random `*.trycloudflare.com` URL, parsed from cloudflared's logs. No account needed. Default for new installs.
-- **Named tunnel** — `cloudflared tunnel run --token $TOKEN`. Permanent URL on a domain you control, configured via Cloudflare's API. Set `CLOUDFLARE_TUNNEL_TOKEN` + `CLOUDFLARE_TUNNEL_URL` in `.env`. `WOLTSPACE_PUBLIC_TUNNEL=false` disables tunneling entirely.
+- **`off`** — no tunnel. Docker publishes the lodge on `127.0.0.1` by default.
+- **`temporary`** — `cloudflared tunnel --url http://localhost:7777`. This creates a random public `*.trycloudflare.com` URL with no authentication; anyone with the URL can connect.
+- **`authenticated`** — `cloudflared tunnel run --token $TOKEN`. This uses a permanent hostname and requires `CLOUDFLARE_TUNNEL_TOKEN` plus `CLOUDFLARE_TUNNEL_URL`. Cloudflare Access is configured and enforced in Cloudflare; Woltspace reminds the operator to verify that policy rather than treating a named tunnel alone as authentication.
 
-Selection is config-driven; `server/tunnel.py` picks the right path at startup. The same module also tracks `tunnel_domain` and `tunnel_hostname` so the subdomain proxy knows which host is the lodge and which are app subdomains.
+`WOLTSPACE_PUBLIC_TUNNEL` remains supported for backward compatibility: `false`
+maps to `off`; `true` maps to `temporary`, or `authenticated` when both named
+tunnel values are present. New configurations should use `WOLTSPACE_EXPOSURE`.
+
+Selection is config-driven; `server/tunnel.py` picks the right path at startup.
+Cloudflare is currently the only provider. The mode is provider-neutral so a
+future provider can implement the same start, stop, status, and authentication
+validation lifecycle without changing the user-facing model. The tunnel module
+also tracks `tunnel_domain` and `tunnel_hostname` so the subdomain proxy knows
+which host is the lodge and which are app subdomains.
 
 ---
 

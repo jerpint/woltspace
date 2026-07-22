@@ -70,7 +70,19 @@ sleep 2
 # Lodge scaffold handles .space/platform — just ensure per-wolt state dir
 [ -n "$WOLT_NAME" ] && mkdir -p "$WOLT_DIR/.state"
 TUNNEL_STATE_FILE="$WOLTS_DIR/.space/platform/tunnel.json"
-if [ "${WOLTSPACE_PUBLIC_TUNNEL:-true}" = "true" ]; then
+EXPOSURE_MODE="${WOLTSPACE_EXPOSURE:-}"
+if [ -z "$EXPOSURE_MODE" ]; then
+  if [ "${WOLTSPACE_PUBLIC_TUNNEL:-false}" = "true" ]; then
+    if [ -n "${CLOUDFLARE_TUNNEL_TOKEN:-}" ] && [ -n "${CLOUDFLARE_TUNNEL_URL:-}" ]; then
+      EXPOSURE_MODE="authenticated"
+    else
+      EXPOSURE_MODE="temporary"
+    fi
+  else
+    EXPOSURE_MODE="off"
+  fi
+fi
+if [ "$EXPOSURE_MODE" != "off" ]; then
   echo "waiting for tunnel..."
   for i in $(seq 1 45); do
     if [ -f "$TUNNEL_STATE_FILE" ]; then
@@ -83,7 +95,7 @@ if [ "${WOLTSPACE_PUBLIC_TUNNEL:-true}" = "true" ]; then
     echo "warning: tunnel URL not available yet (server will keep trying)"
   fi
 else
-  echo "tunnel disabled — access via http://localhost:7777"
+  echo "exposure disabled — access via http://localhost:7777"
 fi
 
 # Telegram bot
