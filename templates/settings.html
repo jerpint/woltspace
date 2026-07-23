@@ -1,0 +1,85 @@
+{% extends 'base.html' %}
+{% from 'components/ui.html' import page_header, panel, choice_card, select_field, empty_state, tab_link %}
+
+{% block title %}Settings · Woltspace{% endblock %}
+
+{% block content %}
+<div class="ds-page settings-page" data-settings-root data-default-harness="{{ harness_default }}">
+  {% call page_header('Lodge controls', 'Settings', 'Shape how the lodge behaves without reaching for a config file.') %}
+    <span class="ds-save-state" data-global-state role="status" aria-live="polite">
+      <span class="ds-save-dot"></span><span data-global-message>Changes save here</span>
+    </span>
+  {% endcall %}
+
+  <div class="settings-layout">
+    <nav class="settings-index" aria-label="Settings sections">
+      <p class="settings-index-label">Configuration</p>
+      {{ tab_link('#agent-engines', 'Agent engines', 'defaults + overrides', active=true) }}
+      {{ tab_link('', 'Notifications', 'coming down the trail', disabled=true) }}
+      {{ tab_link('', 'Desktop', 'after the Mac build', disabled=true) }}
+    </nav>
+
+    <div class="settings-content" id="agent-engines">
+      {% call panel('Lodge default', 'Every wolt follows this engine unless it has an override.', 'applies to new sessions') %}
+        <fieldset class="ds-choice-group" data-default-form data-saved-value="{{ harness_default }}">
+          <legend class="sr-only">Default agent engine</legend>
+          {% for harness in harnesses %}
+            {{ choice_card(
+              'default-harness',
+              harness.id,
+              harness.label,
+              'The standard engine for wolts without a pin.',
+              harness.models.raccoon,
+              harness.id == harness_default,
+              harness.emoji
+            ) }}
+          {% endfor %}
+        </fieldset>
+      {% endcall %}
+
+      <div class="ds-callout" role="note">
+        <span class="ds-callout-icon" aria-hidden="true">🌿</span>
+        <div><strong>A quiet handoff</strong><p>Engine changes affect the next den you open. Sessions already running keep the engine they started with.</p></div>
+      </div>
+
+      {% call panel('Wolt overrides', 'Pin a particular wolt, or let it wander with the lodge default.', (wolts|length ~ ' wolts')) %}
+        {% if wolts %}
+          <div class="ds-field-list">
+            {% for wolt in wolts %}
+              {% set wolt_name = wolt.name or wolt.dir %}
+              {% set wolt_type = wolt.type or 'rodent' %}
+              {% set selected = wolt.harness or '' %}
+              {% set effective = selected or harness_default %}
+              {% set field_id = 'wolt-harness-' ~ loop.index %}
+              {% call select_field(field_id, wolt_name, wolt_type ~ ' · ' ~ ('pinned override' if selected else 'follows lodge')) %}
+                <div class="ds-select-stack" data-wolt-row data-wolt="{{ wolt.dir or wolt_name }}" data-saved-value="{{ selected }}">
+                  <select class="ds-select" id="{{ field_id }}" aria-describedby="{{ field_id }}-help" data-wolt-select>
+                    <option value=""{% if not selected %} selected{% endif %}>Follow lodge default</option>
+                    {% for harness in harnesses %}
+                      <option value="{{ harness.id }}"{% if selected == harness.id %} selected{% endif %}>{{ harness.label }}</option>
+                    {% endfor %}
+                  </select>
+                  <span class="ds-pill ds-pill-subtle" data-wolt-status data-following="{{ 'true' if not selected else 'false' }}">
+                    {{ 'Follows lodge' if not selected else 'Pinned' }} · {{ effective }}
+                  </span>
+                </div>
+              {% endcall %}
+            {% endfor %}
+          </div>
+        {% else %}
+          {{ empty_state('🪵', 'No wolts to configure yet', 'Create a wolt and it will settle in here.') }}
+        {% endif %}
+      {% endcall %}
+    </div>
+  </div>
+</div>
+
+<div class="ds-toast" data-toast role="status" aria-live="polite" aria-atomic="true">
+  <span class="ds-toast-icon" data-toast-icon>✓</span>
+  <span data-toast-message>Saved</span>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="/static/settings.js?v={{ cache_bust }}"></script>
+{% endblock %}

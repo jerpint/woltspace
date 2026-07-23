@@ -1,0 +1,90 @@
+{% macro page_header(eyebrow, title, description) -%}
+<header class="ds-page-header">
+  <div>
+    <p class="ds-eyebrow">{{ eyebrow }}</p>
+    <h1 class="ds-page-title">{{ title }}</h1>
+    <p class="ds-page-description">{{ description }}</p>
+  </div>
+  {% if caller is defined %}<div class="ds-page-actions">{{ caller() }}</div>{% endif %}
+</header>
+{%- endmacro %}
+
+{% macro panel(title, description='', badge='') -%}
+<section class="ds-panel">
+  <header class="ds-panel-header">
+    <div>
+      <h2 class="ds-panel-title">{{ title }}</h2>
+      {% if description %}<p class="ds-panel-description">{{ description }}</p>{% endif %}
+    </div>
+    {% if badge %}<span class="ds-pill">{{ badge }}</span>{% endif %}
+  </header>
+  <div class="ds-panel-body">{{ caller() }}</div>
+</section>
+{%- endmacro %}
+
+{% macro choice_card(name, value, title, description, meta='', checked=false, emoji='') -%}
+<label class="ds-choice-card">
+  <input class="ds-choice-input" type="radio" name="{{ name }}" value="{{ value }}"{% if checked %} checked{% endif %}>
+  <span class="ds-choice-indicator" aria-hidden="true"></span>
+  {% if emoji %}<span class="ds-choice-emoji" aria-hidden="true">{{ emoji }}</span>{% endif %}
+  <span class="ds-choice-copy">
+    <span class="ds-choice-title">{{ title }}</span>
+    <span class="ds-choice-description">{{ description }}</span>
+  </span>
+  {% if meta %}<span class="ds-choice-meta">{{ meta }}</span>{% endif %}
+</label>
+{%- endmacro %}
+
+{% macro select_field(id, label, description='') -%}
+<div class="ds-field">
+  <div class="ds-field-copy">
+    <label class="ds-label" for="{{ id }}">{{ label }}</label>
+    {% if description %}<p class="ds-help" id="{{ id }}-help">{{ description }}</p>{% endif %}
+  </div>
+  <div class="ds-field-control">{{ caller() }}</div>
+</div>
+{%- endmacro %}
+
+{% macro empty_state(icon, title, description) -%}
+<div class="ds-empty">
+  <span class="ds-empty-icon" aria-hidden="true">{{ icon }}</span>
+  <strong>{{ title }}</strong>
+  <p>{{ description }}</p>
+</div>
+{%- endmacro %}
+
+{% macro tab_link(href, label, meta='', active=false, disabled=false) -%}
+{% if disabled %}
+<span class="ds-tab disabled" aria-disabled="true">
+{% else %}
+<a class="ds-tab{% if active %} active{% endif %}" href="{{ href }}"{% if active %} aria-current="page"{% endif %}>
+{% endif %}
+  <span>{{ label }}</span>{% if meta %}<small>{{ meta }}</small>{% endif %}
+{% if disabled %}</span>{% else %}</a>{% endif %}
+{%- endmacro %}
+
+{% macro toggle(id, label, description='', checked=false, disabled=false) -%}
+<label class="ds-toggle" for="{{ id }}">
+  <span class="ds-toggle-copy">
+    <span class="ds-label">{{ label }}</span>
+    {% if description %}<span class="ds-help">{{ description }}</span>{% endif %}
+  </span>
+  <input id="{{ id }}" type="checkbox"{% if checked %} checked{% endif %}{% if disabled %} disabled{% endif %}>
+  <span class="ds-toggle-track" aria-hidden="true"><span></span></span>
+</label>
+{%- endmacro %}
+
+{% macro dialog(id, title, description='', close_handler='') -%}
+<div class="modal-backdrop ds-dialog-backdrop" id="{{ id }}"{% if close_handler %} onclick="if(event.target===this){{ close_handler }}"{% endif %}>
+  <section class="modal ds-dialog" role="dialog" aria-modal="true" aria-labelledby="{{ id }}-title"{% if description %} aria-describedby="{{ id }}-description"{% endif %}>
+    <header class="modal-header ds-dialog-header">
+      <div>
+        <h2 class="modal-title" id="{{ id }}-title">{{ title }}</h2>
+        {% if description %}<p class="ds-dialog-description" id="{{ id }}-description">{{ description }}</p>{% endif %}
+      </div>
+      {% if close_handler %}<button type="button" class="modal-close" onclick="{{ close_handler }}" aria-label="Close {{ title }}">&times;</button>{% endif %}
+    </header>
+    {{ caller() }}
+  </section>
+</div>
+{%- endmacro %}

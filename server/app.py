@@ -813,9 +813,8 @@ async def history_detail(spark_id: str):
 
 # --- Wolts ---
 
-@app.get("/wolts")
-async def list_wolts():
-    """List all wolts by scanning WOLTS_DIR for wolt/wolt.json files."""
+def _configured_wolts() -> list[dict]:
+    """List wolts from disk for both API and server-rendered screens."""
     wolts = []
     if WOLTS_DIR.exists():
         for entry in sorted(WOLTS_DIR.iterdir()):
@@ -833,6 +832,12 @@ async def list_wolts():
             except Exception:
                 pass
     return wolts
+
+
+@app.get("/wolts")
+async def list_wolts():
+    """List all wolts by scanning WOLTS_DIR for wolt/wolt.json files."""
+    return _configured_wolts()
 
 
 # --- Harnesses ---
@@ -1398,6 +1403,23 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
 async def tui_page(request: Request):
     return templates.TemplateResponse(request, "tui.html", context={
         "cache_bust": int(time.time()),
+    })
+
+
+@app.get("/settings")
+async def settings_page(request: Request):
+    """Shared configuration surface for the lodge and desktop shell."""
+    configurable_types = {"raccoon", "rodent", "beaver", "otter"}
+    wolts = [
+        wolt for wolt in _configured_wolts()
+        if wolt.get("type", "rodent") in configurable_types
+    ]
+    return templates.TemplateResponse(request, "settings.html", context={
+        "active_nav": "settings",
+        "cache_bust": int(time.time()),
+        "harness_default": get_default_harness(),
+        "harnesses": harness_metadata(),
+        "wolts": wolts,
     })
 
 

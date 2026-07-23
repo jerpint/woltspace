@@ -59,11 +59,17 @@ function timeAgo(ts) {
 
 // ── View switching ──
 function showView(name) {
+  const target = document.getElementById(name + '-view');
+  if (!target) {
+    window.location.href = name === 'home' ? '/' : '/?view=' + encodeURIComponent(name);
+    return;
+  }
   currentView = name;
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  document.getElementById(name + '-view').classList.add('active');
+  target.classList.add('active');
   document.querySelectorAll('.sidebar-nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('nav-' + name).classList.add('active');
+  history.replaceState(null, '', name === 'home' ? '/' : '/?view=' + encodeURIComponent(name));
   closeSidebar();
 }
 
@@ -598,8 +604,11 @@ document.querySelectorAll('.type-card').forEach(card => {
 });
 
 loadHarnesses().finally(loadWolts);
-loadApps();
-loadSessions();
+if (document.getElementById('app-grid')) loadApps();
+if (document.getElementById('sessions-list')) loadSessions();
+
+const requestedView = new URLSearchParams(window.location.search).get('view');
+if (requestedView && ['home', 'apps', 'sessions'].includes(requestedView)) showView(requestedView);
 
 console.log('%c🦫', 'font-size:3rem');
 console.log('%cwoltspace — the lodge', 'color:#C98B2A;font-family:monospace');
