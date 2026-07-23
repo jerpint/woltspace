@@ -1,6 +1,6 @@
 // ── Lodge Core JS ──
 // Shared logic for sidebar, sessions, apps, wolts, modals.
-// Requires sprites.js to be loaded first.
+// Requires sprites.js and navigation.js to be loaded first.
 
 let allWolts = [];
 let allApps = [];
@@ -266,11 +266,18 @@ function renderApps() {
     const keeperEmoji = keeperWolt ? (WOLT_EMOJI[keeperWolt.type] || '🦫') : '📦';
     const keeperSprite = keeperWolt ? woltSpriteAvatar(keeperWolt.type, 24) : null;
     const stackTags = p.stack ? `<span class="stack-tag">${p.stack}</span>` : '';
-    const sourceLink = p.source ? `<a class="app-source-link" href="${p.source}" target="_blank" onclick="event.stopPropagation()">⎋ ${p.source.replace('https://github.com/', '')}</a>` : '';
+    const sourceLink = p.source ? `<a class="app-source-link" href="${p.source}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">⎋ ${p.source.replace('https://github.com/', '')}</a>` : '';
 
-    const appUrl = 'http://' + p.name + '.localhost:7777/';
+    // The API owns app routing. Its relative /app/:name URL works against the
+    // local Docker origin and can redirect through a configured tunnel.
+    const appUrl = WoltspaceNavigation.appDestination(p);
+    const appUrlData = encodeURIComponent(appUrl);
+    const appUrlHref = appUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    const cardNavigation = p.running
+      ? `role="link" tabindex="0" data-app-url="${appUrlData}" onclick="openAppCard(this)" onkeydown="openAppCardKey(event, this)"`
+      : '';
 
-    return `<div class="app-card" onclick="${p.running ? `window.open('${appUrl}','_blank')` : ''}">
+    return `<div class="app-card" ${cardNavigation}>
       <div class="app-card-body">
         <div class="app-card-top">
           <span class="app-emoji">${emoji}</span>
@@ -279,7 +286,9 @@ function renderApps() {
             ${status}
           </div>
         </div>
-        <div class="app-name-link">${p.name}</div>
+        ${p.running
+          ? `<a class="app-name-link" href="${appUrlHref}" onclick="event.stopPropagation()">${p.name}</a>`
+          : `<div class="app-name-link">${p.name}</div>`}
         ${stackTags ? `<div class="app-stack">${stackTags}</div>` : ''}
         <div class="app-desc">${desc}</div>
         <div class="app-card-footer">
@@ -297,6 +306,16 @@ function renderApps() {
       </div>
     </div>`;
   }).join('');
+}
+
+function openAppCard(card) {
+  WoltspaceNavigation.internal(decodeURIComponent(card.dataset.appUrl || ''));
+}
+
+function openAppCardKey(event, card) {
+  if (event.target !== card || !['Enter', ' '].includes(event.key)) return;
+  event.preventDefault();
+  openAppCard(card);
 }
 
 function filterApps(filter, el) {
@@ -492,7 +511,7 @@ function startSession(woltName) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ wolt: woltName }),
   }).then(r => r.json()).then(data => {
-    if (data.name) window.open('/tui?session=' + encodeURIComponent(data.name), '_blank');
+    if (data.name) WoltspaceNavigation.internal('/tui?session=' + encodeURIComponent(data.name));
   }).catch(() => {});
 }
 
@@ -504,10 +523,10 @@ function openApp(appName, keeper) {
     body: JSON.stringify({
       wolt: keeper,
       app: appName,
-      prompt: `You're working on the "${appName}" app. The viewport is showing the app at ${appName}.localhost:7777/, not your personal site.`,
+      prompt: `You're working on the "${appName}" app. The viewport is showing /app/${appName}/, not your personal site.`,
     }),
   }).then(r => r.json()).then(data => {
-    if (data.name) window.open('/tui?session=' + encodeURIComponent(data.name), '_blank');
+    if (data.name) WoltspaceNavigation.internal('/tui?session=' + encodeURIComponent(data.name));
   }).catch(() => {});
 }
 
@@ -569,7 +588,7 @@ async function submitCreateWolt() {
       return;
     }
     closeCreateWolt();
-    if (data.name) window.open('/tui?session=' + encodeURIComponent(data.name), '_blank');
+    if (data.name) WoltspaceNavigation.internal('/tui?session=' + encodeURIComponent(data.name));
     loadWolts();
   } catch (e) {
     error.textContent = 'network error — try again';

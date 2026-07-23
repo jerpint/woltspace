@@ -165,6 +165,10 @@ All session machinery lives in `container/lib/sessions.py`. `start_session()` is
 
 Two execution surfaces, one server.
 
+The lodge UI is also shared across the browser, installed PWA/mobile, and the
+macOS native shell. See [Client surfaces and navigation](docs/client-surfaces.md)
+for the cross-client ownership and navigation contract.
+
 - **Sites** (`wolts/{wolt}/site/`) — lightweight per-wolt workspace. Static HTML/CSS/JS served by the FastAPI server itself, with livereload baked in via an injected client. Each wolt gets a permanent port stored in its `wolt.json`. Code: `container/lib/sites.py`, served at `/wolt/{name}/site/`.
 - **Apps** (`wolts/apps/{name}/`) — full programs with their own server, deps, and `woltspace.json` manifest. The server starts/stops them; their ports are tracked in `.space/apps/`. Apps that set `public: true` get a Cloudflare tunnel automatically and survive container restarts via apps autorestore. Code: `container/lib/apps.py`.
 
