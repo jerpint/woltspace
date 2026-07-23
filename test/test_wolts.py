@@ -613,6 +613,19 @@ class TestDeriveWorktuiSkill:
         assert "name: woltspace-worktui" in synced
 
 
+class TestWorktuiCommand:
+    """The agent-callable wt command must not depend on the active wolt's HOME."""
+
+    def test_wrapper_uses_image_owned_worktui_path(self):
+        wrapper = Path(__file__).resolve().parent.parent / "container" / "bin" / "wt"
+        text = wrapper.read_text()
+
+        assert os.access(wrapper, os.X_OK)
+        assert "/home/node/worktui/src/index.tsx" in text
+        assert "~/worktui" not in text
+        assert "$HOME/worktui" not in text
+
+
 class TestSyncClaudeMdPlatformSection:
     """Unit: sync_claude_md_platform_section manages the platform block in CLAUDE.md."""
 
