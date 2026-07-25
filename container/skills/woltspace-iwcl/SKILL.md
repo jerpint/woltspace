@@ -36,6 +36,39 @@ that messaged you (reply by session id, not wolt name, so it lands in the right 
 woltspace session send codexw-scruffy-maple-0df670 "I'd keep it noun-verb, like docker."
 ```
 
+## Spawn a session
+
+To delegate work to a wolt that has no live session (or needs a fresh one), spawn it:
+
+```bash
+woltspace session spawn <wolt> "seed prompt"
+```
+
+On success it prints parse-friendly `KEY=VALUE` lines:
+
+```
+SESSION=beaverwolt-mossy-dam-3f81c2
+URL=https://<domain>/tui?session=beaverwolt-mossy-dam-3f81c2
+```
+
+The child boots with a `[spawned by <you>, session=<your-session>]` header on its seed prompt, so
+it knows its parent and can IWCL back without being told. The canonical delegation loop:
+
+```bash
+out=$(woltspace session spawn beaverwolt "read wolts/uxwolt/wolt/drafts/task-spec.md and build it")
+session=$(echo "$out" | sed -n 's/^SESSION=//p')
+# ...later, follow up in the same conversation:
+woltspace session send "$session" "how is the build going?"
+```
+
+The seed prompt is a briefing, not a payload (capped at 4000 chars) — put big work orders in a
+file the child can read, and pass a short pointer.
+
+> **Never spawn headless `claude` / `codex` processes (tmux, nohup, background shells) for
+> delegated work.** Platform sessions bill the owner's subscription; a headless agent process
+> silently burns API credits instead. If you need another agent, `session spawn` is the only
+> sanctioned way.
+
 ## See who's around
 
 ```bash
@@ -47,5 +80,5 @@ woltspace session list --wolt codexw    # a specific wolt's sessions
 
 - The human can jump into any conversation too — their messages arrive as `[message from jerpint]`.
 - Delivery is into the target's terminal; if the wolt is mid-response it lands when it settles.
-- If a send fails with `no-session`, that wolt has no live session — spawn one or pick another wolt.
+- If a send fails with `no-session`, that wolt has no live session — `woltspace session spawn <wolt> "..."` one, or pick another wolt.
 - IWCL is for wolt-to-wolt communication. To message the human, use `notify` instead.
