@@ -11,6 +11,7 @@ Grammar: `woltspace <noun> <verb> [args] [--flags]` (docker/git style).
 Phase 1 nouns:
   session list [--wolt X] [--alive] [--json]
   session send <wolt|session> "message" [--from <wolt>]
+  session spawn <wolt> ["seed prompt"] [--from <wolt>]
 
 A wolt self-identifies as the sender via $WOLT_NAME / $WOLT_SESSION (exported
 into every wolt session). A human posts with --from (e.g. --from jerpint).
@@ -90,6 +91,44 @@ def cmd_session_send(args):
         sys.exit(1)
 
 
+# A seed prompt is a briefing, not a payload — big work orders belong in files
+# the child session reads. Keeps the tmux paste path snappy and the intent clear.
+MAX_SPAWN_PROMPT = 4000
+
+
+def cmd_session_spawn(args):
+    if len(args.prompt) > MAX_SPAWN_PROMPT:
+        print(f"seed prompt too large ({len(args.prompt)} chars, max {MAX_SPAWN_PROMPT}). "
+              f"Put the work order in a file the new session can read and pass a short pointer.",
+              file=sys.stderr)
+        sys.exit(1)
+    from_wolt = args.from_ or os.environ.get("WOLT_NAME", "")
+    # A human spawner (--from) has no session to reply into — omit it so the
+    # child doesn't get a bogus `session send <name>` reply line.
+    from_session = "" if args.from_ else os.environ.get("WOLT_SESSION", "")
+    payload = {"wolt": args.wolt, "prompt": args.prompt,
+               "from_wolt": from_wolt, "from_session": from_session}
+    status, result = _req("POST", "/sessions/new/lodge", payload)
+    if args.json:
+        print(json.dumps(result, indent=2))
+        if status != 200 or not result.get("name"):
+            sys.exit(1)
+        return
+    if status == 200 and result.get("name"):
+        print(f"SESSION={result['name']}")
+        print(f"URL={result.get('url', '')}")
+        return
+    detail = result.get("detail") or result.get("error") or f"HTTP {status}"
+    print(f"spawn failed: {detail}", file=sys.stderr)
+    if status == 404:
+        _, wolts = _req("GET", "/wolts")
+        names = sorted(w.get("name", "") for w in wolts if w.get("name")) \
+            if isinstance(wolts, list) else []
+        if names:
+            print("valid wolts: " + ", ".join(names), file=sys.stderr)
+    sys.exit(1)
+
+
 LIFECYCLE = {"start", "stop", "rebuild", "backup", "shell", "chat", "logs", "init", "update"}
 
 
@@ -113,6 +152,15 @@ def main():
                     help="sender identity (default: $WOLT_NAME); use e.g. --from jerpint as a human")
     ss.add_argument("--json", action="store_true", help="raw JSON output")
     ss.set_defaults(func=cmd_session_send)
+
+    sp = ssub.add_parser("spawn", help="spawn a new session for a wolt")
+    sp.add_argument("wolt", help="wolt name to spawn a session for")
+    sp.add_argument("prompt", nargs="?", default="",
+                    help="seed prompt for the new session (a briefing, not a payload)")
+    sp.add_argument("--from", dest="from_", default="",
+                    help="spawner identity (default: $WOLT_NAME); use e.g. --from jerpint as a human")
+    sp.add_argument("--json", action="store_true", help="raw JSON output")
+    sp.set_defaults(func=cmd_session_spawn)
 
     argv = sys.argv[1:]
     # tui: exec the terminal cockpit (same app the host launcher runs; it

@@ -17,6 +17,7 @@
 # Control commands (forwarded to the running lodge — same as inside a wolt):
 #   woltspace session list [--alive]           — list sessions
 #   woltspace session send <wolt|session> "…"  — message a wolt/session
+#   woltspace session spawn <wolt> ["…"]       — spawn a new session for a wolt
 #
 # Flags:
 #   --branch <name>   — build image from a specific branch (default: main)

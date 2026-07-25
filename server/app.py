@@ -53,7 +53,7 @@ import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 from sessions import (
     resume_session, start_session, stop_session,
-    deliver_message, resolve_active_session,
+    deliver_message, resolve_active_session, format_spawned_prompt,
 )
 from harnesses import (
     harness_metadata,
@@ -683,15 +683,26 @@ async def session_new_create(request: Request):
 
 @app.post("/sessions/new/lodge")
 async def session_new_lodge(request: Request):
-    """Start a session from the lodge (home page gnaw button)."""
+    """Start a session from the lodge (home page gnaw button).
+
+    Also the transport for `woltspace session spawn`: an optional
+    from_wolt/from_session pair attributes the spawner, and the seed prompt
+    gets a `[spawned by ...]` header so the child knows its parent and how to
+    IWCL back. Absent (lodge UI, wolf scheduler), the prompt passes verbatim.
+    """
     body = await request.json()
     wolt = body.get("wolt")
     if not wolt:
         return JSONResponse({"error": "wolt required"}, status_code=400)
+    prompt = format_spawned_prompt(
+        body.get("prompt", ""),
+        from_wolt=body.get("from_wolt", "") or "",
+        from_session=body.get("from_session", "") or "",
+    )
     try:
         result = start_session(
             wolt=wolt,
-            prompt=body.get("prompt", ""),
+            prompt=prompt,
             creature=body.get("creature", ""),
             app=body.get("app", ""),
             routing={"adapter": "lodge"},
