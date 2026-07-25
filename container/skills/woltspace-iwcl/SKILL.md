@@ -55,14 +55,18 @@ The child boots with a `[spawned by <you>, session=<your-session>]` header on it
 it knows its parent and can IWCL back without being told. The canonical delegation loop:
 
 ```bash
-out=$(woltspace session spawn beaverwolt "read wolts/uxwolt/wolt/drafts/task-spec.md and build it")
+out=$(woltspace session spawn beaverwolt "read /workspace/wolts/uxwolt/wolt/drafts/task-spec.md and build it")
 session=$(echo "$out" | sed -n 's/^SESSION=//p')
 # ...later, follow up in the same conversation:
 woltspace session send "$session" "how is the build going?"
 ```
 
+Spawning your **own** wolt is normal and expected — parallel sessions of yourself for build work
+is exactly what this is for. The child shares your memory but is an independent conversation.
+
 The seed prompt is a briefing, not a payload (capped at 4000 chars) — put big work orders in a
-file the child can read, and pass a short pointer.
+file the child can read, and pass a short pointer. Paths in the seed must be **absolute**
+(`/workspace/wolts/...`): the child boots in its own wolt directory, not yours.
 
 > **Never spawn headless `claude` / `codex` processes (tmux, nohup, background shells) for
 > delegated work.** Platform sessions bill the owner's subscription; a headless agent process
