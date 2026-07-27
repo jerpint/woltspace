@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    App Transport Security exception for the local lodge.
+
+    macOS ATS auto-exempts the loopback IP (127.0.0.1) and the literal host
+    "localhost", which is why the shell can load the lodge over plain HTTP.
+    Running apps are served from *.localhost subdomains (e.g. blog.localhost:7777)
+    which ATS does NOT exempt — so without this, the WKWebView silently refuses
+    to follow the lodge's redirect to an app and the window stays put.
+
+    NSIncludesSubdomains covers every {app}.localhost host; the app subdomains
+    reached through the Cloudflare tunnel are HTTPS and need no exception.
+  -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSExceptionDomains</key>
+    <dict>
+      <key>localhost</key>
+      <dict>
+        <key>NSExceptionAllowsInsecureHTTPLoads</key>
+        <true/>
+        <key>NSIncludesSubdomains</key>
+        <true/>
+      </dict>
+    </dict>
+  </dict>
+</dict>
+</plist>
