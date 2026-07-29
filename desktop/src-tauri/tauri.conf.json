@@ -10,7 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "label": "main", "title": "Woltspace", "width": 1040, "height": 700, "minWidth": 720, "minHeight": 520, "center": true, "visible": true }],
+    "windows": [{ "label": "main", "create": false, "title": "Woltspace", "width": 1040, "height": 700, "minWidth": 720, "minHeight": 520, "center": true, "visible": true }],
     "security": { "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:7777; img-src 'self' data:; style-src 'self' 'unsafe-inline'" }
   },
   "bundle": {
