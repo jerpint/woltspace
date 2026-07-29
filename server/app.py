@@ -824,9 +824,8 @@ async def history_detail(spark_id: str):
 
 # --- Wolts ---
 
-@app.get("/wolts")
-async def list_wolts():
-    """List all wolts by scanning WOLTS_DIR for wolt/wolt.json files."""
+def _configured_wolts() -> list[dict]:
+    """List wolts from disk for both API and server-rendered screens."""
     wolts = []
     if WOLTS_DIR.exists():
         for entry in sorted(WOLTS_DIR.iterdir()):
@@ -844,6 +843,12 @@ async def list_wolts():
             except Exception:
                 pass
     return wolts
+
+
+@app.get("/wolts")
+async def list_wolts():
+    """List all wolts by scanning WOLTS_DIR for wolt/wolt.json files."""
+    return _configured_wolts()
 
 
 # --- Harnesses ---
@@ -1199,22 +1204,30 @@ async def serve_app(app_name: str, request: Request, path: str = ""):
 
     sub_path = "/" + path if path else "/"
 
-    # When running, redirect to the direct app port — no proxy
+    # When running, redirect to the app's own origin at root. The
+    # subdomain_proxy middleware forwards that host to the app's in-container
+    # port, so the app always sees itself at the root of its own hostname —
+    # identical behavior in a browser, the PWA, the desktop shell, and through
+    # the tunnel. We never redirect to the raw app port: it isn't published to
+    # the host (only 7777 is), so a direct-port redirect is a dead end for
+    # every client except a same-host browser that happens to expose the port.
     running = {r["name"]: r for r in running_apps()}
     run_state = running.get(app_name)
     if run_state:
-        port = run_state["port"]
         qs = f"?{request.url.query}" if request.url.query else ""
-        # Subdomain routing: redirect to app.domain (works through tunnel)
         td = tunnel_mgr.get_tunnel_domain()
         hostname = request.url.hostname or ""
-        is_local = hostname == "localhost" or hostname.endswith(".localhost")
+        is_local = hostname in ("localhost", "127.0.0.1") or hostname.endswith(".localhost")
         if td and not is_local:
-            subdomain = f"{request.url.scheme}://{app_name}.{td}{sub_path}{qs}"
-            return RedirectResponse(subdomain, status_code=302)
-        # Local: redirect to direct port (works on localhost)
-        direct = f"{request.url.scheme}://{request.url.hostname}:{port}{sub_path}{qs}"
-        return RedirectResponse(direct, status_code=302)
+            # Public/tunnel access → app subdomain on the tunnel domain.
+            target = f"{request.url.scheme}://{app_name}.{td}{sub_path}{qs}"
+        else:
+            # Local access (localhost, 127.0.0.1, or the desktop shell) → app
+            # subdomain on .localhost, preserving the lodge's port. *.localhost
+            # resolves to loopback, so WebKit/Chromium reach it without DNS.
+            port_part = f":{request.url.port}" if request.url.port else ""
+            target = f"{request.url.scheme}://{app_name}.localhost{port_part}{sub_path}{qs}"
+        return RedirectResponse(target, status_code=302)
 
     # Static fallback: serve from dist/ when not running
     dist_dir = adir / "dist"
@@ -1409,6 +1422,23 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
 async def tui_page(request: Request):
     return templates.TemplateResponse(request, "tui.html", context={
         "cache_bust": int(time.time()),
+    })
+
+
+@app.get("/settings")
+async def settings_page(request: Request):
+    """Shared configuration surface for the lodge and desktop shell."""
+    configurable_types = {"raccoon", "rodent", "beaver", "otter"}
+    wolts = [
+        wolt for wolt in _configured_wolts()
+        if wolt.get("type", "rodent") in configurable_types
+    ]
+    return templates.TemplateResponse(request, "settings.html", context={
+        "active_nav": "settings",
+        "cache_bust": int(time.time()),
+        "harness_default": get_default_harness(),
+        "harnesses": harness_metadata(),
+        "wolts": wolts,
     })
 
 
