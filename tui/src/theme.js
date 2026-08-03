@@ -28,6 +28,8 @@ export const lore = {
   stopConfirm: (slug) => `send ${slug} to sleep? (y/N)`,
   stopped: (slug) => `${slug} is asleep`,
   spawned: (slug) => `${slug} scampers into the lodge`,
+  waking: (name) => `waking ${name}…`,
+  wakeFailed: (name, why) => `${name} won't stir: ${why}`,
   sent: (slug) => `message tucked into ${slug}'s burrow`,
   spawnTitle: 'wake a wolt',
   sendTitle: (slug) => `message → ${slug}`,

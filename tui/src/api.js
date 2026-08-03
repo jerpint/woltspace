@@ -32,6 +32,9 @@ export const listSessions = () => req('/sessions');
 export const listWolts = () => req('/wolts');
 export const spawnSession = (wolt) => post('/sessions/new/lodge', { wolt });
 export const stopSession = (name) => post(`/sessions/${encodeURIComponent(name)}/stop`);
+// Harness-aware on the server side: rebuilds tmux if needed and restarts the
+// agent with its own resume flavor (claude --resume / codex resume / opencode --session).
+export const resumeSession = (name) => post(`/sessions/${encodeURIComponent(name)}/resume`);
 
 // Human-attributed message: from_wolt names the sender, empty from_session
 // means "no reply-by-session-id line" (the human isn't a session).
