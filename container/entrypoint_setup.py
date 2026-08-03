@@ -50,7 +50,8 @@ WORKTUI_SKILL_NOTES = """
 
 - Worktrees live at `WORKTUI_DIR=/workspace/wolts/.worktui` (in the mount — they survive
   container rebuilds).
-- `wt` is already available — it's sourced into login shells from `~/worktui/wt.sh` at boot.
+- `wt` is available on `PATH` in interactive and non-interactive agent shells. Interactive
+  shells also source `/home/node/worktui/wt.sh` for directory-switching convenience.
 - Beyond the orchestration verbs above, `wt` also manages worktrees directly
   (create/list/delete/clean/pr, ...) — run `wt --help` for the full command reference,
   or `wt` with no arguments for the interactive TUI.

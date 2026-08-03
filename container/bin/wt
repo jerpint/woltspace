@@ -1,0 +1,18 @@
+#!/bin/bash
+# Worktui command entry point for non-interactive shells and agent tools.
+#
+# Interactive shells may source /home/node/worktui/wt.sh for its directory
+# switching convenience. Agent shells cannot rely on that function: their
+# HOME points at the active wolt and non-interactive bash skips the relevant
+# .bashrc lines. The installed Worktui path is image-owned and stable.
+
+set -e
+
+WORKTUI_ENTRYPOINT="/home/node/worktui/src/index.tsx"
+
+if [ ! -x "$WORKTUI_ENTRYPOINT" ]; then
+    echo "wt: Worktui is not installed at $WORKTUI_ENTRYPOINT" >&2
+    exit 127
+fi
+
+exec "$WORKTUI_ENTRYPOINT" "$@"

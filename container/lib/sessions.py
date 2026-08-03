@@ -447,6 +447,30 @@ def format_attributed_message(text: str, from_wolt: str = "",
     return f"{header}\n{text}{reply}"
 
 
+def format_spawned_prompt(text: str, from_wolt: str = "",
+                          from_session: str = "") -> str:
+    """Wrap a spawned session's seed prompt with spawner attribution.
+
+    The spawn counterpart of format_attributed_message: the child session
+    learns who created it and, when the spawner has a session, exactly how to
+    IWCL back — which is what makes spawn + send compose into delegation.
+    Unattributed (no from_wolt) returns the text unchanged — e.g. a lodge UI
+    or wolf scheduler spawn.
+    """
+    if not from_wolt:
+        return text
+    header = f"[spawned by {from_wolt}"
+    if from_session:
+        header += f", session={from_session}"
+    header += "]"
+    reply = (
+        f'\nReply with: woltspace session send {from_session} "your reply"'
+        if from_session else ""
+    )
+    body = f"\n{text}" if text else ""
+    return f"{header}{body}{reply}"
+
+
 def resolve_active_session(wolt: str, registry=None) -> str | None:
     """Return the wolt's most-recently-active LIVE session name, or None.
 
