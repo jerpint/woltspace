@@ -39,6 +39,7 @@ Finder-launched apps resolve Docker from Docker Desktop, `~/.docker/bin`, Intel/
 ## Desktop behavior
 
 - Closing the main window hides it; click the tray icon to restore it, or choose Quit from its menu.
+- External HTTP and HTTPS links open in the system default browser instead of creating an embedded WebView window.
 - “Try a notification” requests native permission and sends a demonstration alert when granted.
 - `woltspace://session/<session-name>` opens the corresponding existing `/tui?session=…` route on launch.
 - “Show data folder” reveals only `~/.woltspace/wolts`.
