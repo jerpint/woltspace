@@ -63,6 +63,7 @@ from harnesses import (
     set_tier_harness,
     set_tier_model,
     tier_default_model,
+    is_valid_model,
     resolve_harness,
     HARNESSES,
     PICKER_TIERS,
@@ -891,12 +892,27 @@ async def set_harness_tier(request: Request):
     if tier not in {t for t, _ in PICKER_TIERS}:
         return JSONResponse({"error": f"unknown tier: {tier}"}, status_code=400)
 
+    # Validate the whole request before writing anything — a bad model must
+    # not leave a half-applied engine change behind.
+    requested_harness = body.get("harness")
+    if "harness" in body and requested_harness and (
+            not isinstance(requested_harness, str) or requested_harness not in HARNESSES):
+        return JSONResponse({"error": f"unknown harness: {requested_harness}"}, status_code=400)
+    if "harness" in body:
+        prospective = requested_harness or get_default_harness()
+    else:
+        prospective = get_tier_harness(tier) or get_default_harness()
+    model = body.get("model")
+    if "model" in body and model and (
+            not isinstance(model, str) or not is_valid_model(prospective, model)):
+        return JSONResponse({"error": f"unknown model for {prospective}: {model}"}, status_code=400)
+
     try:
         if "harness" in body:
-            set_tier_harness(tier, body.get("harness"))
+            set_tier_harness(tier, requested_harness)
         effective = get_tier_harness(tier) or get_default_harness()
         if "model" in body:
-            set_tier_model(effective, tier, body.get("model"))
+            set_tier_model(effective, tier, model)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 

@@ -122,9 +122,27 @@ def test_tier_endpoint_rejects_bad_input(tmp_path, monkeypatch):
                                        json={"tier": "otter", "harness": "winamp"}))
     bad_model = asyncio.run(_request("POST", "/harness/tiers",
                                      json={"tier": "otter", "model": "gpt-5.5"}))  # not a claude model
+    list_harness = asyncio.run(_request("POST", "/harness/tiers",
+                                        json={"tier": "otter", "harness": ["claude"]}))
+    list_model = asyncio.run(_request("POST", "/harness/tiers",
+                                      json={"tier": "otter", "harness": "opencode",
+                                            "model": ["ollama/qwen3"]}))
     assert bad_tier.status_code == 400
     assert bad_harness.status_code == 400
     assert bad_model.status_code == 400
+    assert list_harness.status_code == 400
+    assert list_model.status_code == 400
+
+
+def test_tier_endpoint_rejects_combined_body_atomically(tmp_path, monkeypatch):
+    """A bad model must not leave a half-applied engine change behind."""
+    monkeypatch.setattr(app_module, "WOLTS_DIR", tmp_path)
+    monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+
+    response = asyncio.run(_request("POST", "/harness/tiers",
+                                    json={"tier": "otter", "harness": "codex", "model": "opus"}))
+    assert response.status_code == 400
+    assert not (tmp_path / "woltspace.json").exists()  # nothing was written
 
 
 def test_configured_wolts_skips_broken_entries(tmp_path, monkeypatch):

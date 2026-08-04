@@ -88,6 +88,9 @@ if (root) {
         const data = await save('/harness/tiers', { tier, ...body });
         row.dataset.savedHarness = data.pinned ? data.harness : '';
         row.dataset.savedModel = data.model || '';
+        // keep the page-load map fresh so lodge-default flips show current models
+        const engineMeta = harnessById.get(data.harness);
+        if (engineMeta?.models) engineMeta.models[tier] = data.model;
         fillTierModels(modelSelect, data.harness, data.model);
         status.textContent = `${data.pinned ? 'Pinned' : 'Follows lodge'} · ${data.harness} · ${data.model}`;
         setGlobalState('saved', `${tier} default saved`);

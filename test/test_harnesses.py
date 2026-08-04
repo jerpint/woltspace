@@ -342,6 +342,25 @@ class TestTierHarness:
         with _pytest.raises(ValueError):
             set_tier_model("claude", "otter", "gpt-5.5")  # codex model on claude
 
+    def test_set_tier_model_rejects_non_string(self, tmp_path, monkeypatch):
+        """Freeform engines accept any string — but never a non-string
+        (a stored list would crash shlex.quote at spawn)."""
+        import pytest as _pytest
+        from harnesses import set_tier_model
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        with _pytest.raises(ValueError):
+            set_tier_model("opencode", "otter", ["ollama/qwen3"])
+
+    def test_legacy_aliases_follow_ui_tiers(self, tmp_path, monkeypatch):
+        """rodent follows the raccoon entry, wolf follows beaver."""
+        import json
+        from harnesses import get_tier_harness
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        (tmp_path / "woltspace.json").write_text(json.dumps(
+            {"harness": {"tiers": {"raccoon": "codex", "beaver": "opencode"}}}))
+        assert get_tier_harness("rodent") == "codex"
+        assert get_tier_harness("wolf") == "opencode"
+
 
 class TestSessionHarnessPlumbing:
     """harness flows: param > wolt.json default > platform default; stored for life."""
@@ -438,6 +457,15 @@ class TestSessionHarnessPlumbing:
             {"name": "testwolt", "type": "raccoon", "harness": "claude"}))
         result = self._start()
         assert result["harness"] == "claude"
+
+    def test_legacy_rodent_follows_raccoon_tier(self, monkeypatch):
+        """A legacy rodent wolt follows the raccoon tier entry."""
+        monkeypatch.setenv("WOLTS_DIR", str(self.wolts_dir))
+        (self.wolts_dir / "woltspace.json").write_text(json.dumps(
+            {"harness": {"tiers": {"raccoon": "codex"}}}))
+        self.wolt_json.write_text(json.dumps({"name": "testwolt", "type": "rodent"}))
+        result = self._start()
+        assert result["harness"] == "codex"
 
     def test_codex_spawn_has_no_preset_id(self):
         """codex assigns its own session id — spawn must not stamp one."""

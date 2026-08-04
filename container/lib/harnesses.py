@@ -478,6 +478,10 @@ PICKER_TIERS = [
 # Every creature type that resolves to a model tier (UI tiers + legacy aliases).
 KNOWN_TIERS = frozenset({"raccoon", "beaver", "otter", "rodent", "wolf"})
 
+# Legacy aliases → the UI tier whose defaults they follow ("rodent" is the
+# raccoon-era name; wolf runs the builder tier).
+TIER_ALIASES = {"rodent": "raccoon", "wolf": "beaver"}
+
 
 def harness_metadata() -> list[dict]:
     """Public, JSON-safe view of the harness table for pickers/badges.
@@ -554,11 +558,12 @@ def get_tier_harness(tier: str | None) -> str | None:
     """The engine a tier defaults to (woltspace.json harness.tiers), or None."""
     if not tier:
         return None
+    tier = TIER_ALIASES.get(tier, tier)
     try:
         name = _read_woltspace_json().get("harness", {}).get("tiers", {}).get(tier)
     except AttributeError:
         return None
-    return name if name in HARNESSES else None
+    return name if isinstance(name, str) and name in HARNESSES else None
 
 
 def set_tier_harness(tier: str, name: str | None) -> str | None:
@@ -571,7 +576,7 @@ def set_tier_harness(tier: str, name: str | None) -> str | None:
     if not name:
         tiers.pop(tier, None)
         name = None
-    elif name in HARNESSES:
+    elif isinstance(name, str) and name in HARNESSES:
         tiers[tier] = name
     else:
         raise ValueError(f"unknown harness: {name}")
@@ -586,7 +591,7 @@ def set_tier_model(harness: str, tier: str, model: str | None) -> None:
     Raises ValueError for a model the engine doesn't accept.
     """
     harness = resolve_harness(harness)
-    if model and not is_valid_model(harness, model):
+    if model and (not isinstance(model, str) or not is_valid_model(harness, model)):
         raise ValueError(f"unknown model for {harness}: {model}")
     cfg = _read_woltspace_json()
     tiers = (cfg.setdefault("harness", {}).setdefault("models", {})
