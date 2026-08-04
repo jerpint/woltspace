@@ -1062,16 +1062,23 @@ async def site_detail(wolt_name: str):
     }
 
 
-@app.get("/wolt/{wolt_name}/site/{path:path}")
-@app.get("/wolt/{wolt_name}/site")
-async def serve_wolt_site(wolt_name: str, path: str = ""):
+@app.api_route("/wolt/{wolt_name}/site/{path:path}", methods=["GET", "HEAD"])
+@app.api_route("/wolt/{wolt_name}/site", methods=["GET", "HEAD"])
+async def serve_wolt_site(wolt_name: str, request: Request, path: str = ""):
     """Serve a wolt's site directly from disk, injecting the livereload script."""
-    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", wolt_name):
+    if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_-]*", wolt_name):
         return JSONResponse({"error": "invalid wolt name"}, status_code=400)
 
     wolt_dir = WOLTS_DIR / wolt_name
     if not wolt_dir.exists():
-        return PlainTextResponse(f"Wolt {wolt_name} not found", status_code=404)
+        # Self-refresh: the viewport can load this URL before the wolt dir
+        # exists (first-boot race) — recover without a manual refresh.
+        return HTMLResponse(
+            f"<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head>"
+            f"<body>Wolt {wolt_name} not found"
+            f"<script>setTimeout(()=>location.reload(), 2000)</script></body></html>",
+            status_code=404,
+        )
 
     sdir = ensure_site(wolt_name)
 
@@ -1083,6 +1090,10 @@ async def serve_wolt_site(wolt_name: str, path: str = ""):
         return PlainTextResponse("Not found", status_code=404)
 
     if target.is_dir():
+        # Canonicalize directory URLs to a trailing slash so relative
+        # links inside index.html resolve against the directory.
+        if not request.url.path.endswith("/"):
+            return RedirectResponse(request.url.path + "/", status_code=308)
         target = target / "index.html"
     if not target.is_file():
         return PlainTextResponse("Not found", status_code=404)
@@ -1105,7 +1116,9 @@ async def serve_wolt_site(wolt_name: str, path: str = ""):
         return HTMLResponse(
             text, headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
         )
-    return FileResponse(target)
+    return FileResponse(
+        target, headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+    )
 
 
 @app.websocket("/wolt/{wolt_name}/site/livereload")

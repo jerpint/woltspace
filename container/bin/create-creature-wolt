@@ -18,7 +18,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 
 from wolts import create_creature_wolt, get_active_creature, is_rodent, SINGLETON_TYPES
-from sites import start_site
+from sites import ensure_site
 
 
 def _notify(message: str) -> None:
@@ -49,19 +49,19 @@ def main():
         demoted = result["demoted"]
         print(f"created {args.type}-wolt '{args.name}' at {wolt_dir}")
 
-        # Auto-start the site for rodent wolts so the wakeup page is live immediately
+        # Make sure the site exists for rodent wolts so the viewport is live immediately
         if is_rodent(args.type):
             try:
-                site_state = start_site(args.name)
+                ensure_site(args.name)
                 site_url = f"/wolt/{args.name}/site/"
-                print(f"site started on port {site_state['port']} → {site_url}")
+                print(f"site live at {site_url}")
                 # Push to viewport if we're in a session
                 subprocess.run(
                     ["push-view", site_url],
                     timeout=5, capture_output=True,
                 )
             except Exception as e:
-                print(f"warning: could not auto-start site: {e}")
+                print(f"warning: could not scaffold site: {e}")
 
         if demoted:
             msg = f"🔄 {demoted} was demoted from {args.type} to rodent — {args.name} is now the active {args.type}"

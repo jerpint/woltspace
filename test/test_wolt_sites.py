@@ -88,11 +88,30 @@ class TestServeSite:
         assert "text/css" in resp.headers["content-type"]
         assert "livereload" not in resp.text
 
+    def test_directory_redirects_to_trailing_slash(self, client):
+        """Relative links inside sub/index.html need the canonical dir URL."""
+        (sites.site_dir("testwolt") / "sub" / "index.html").write_text("<h1>sub index</h1>")
+        resp = client.get("/wolt/testwolt/site/sub", follow_redirects=False)
+        assert resp.status_code == 308
+        assert resp.headers["location"] == "/wolt/testwolt/site/sub/"
+
+    def test_asset_not_cached(self, client):
+        """Livereload's location.reload() must refetch edited assets."""
+        resp = client.get("/wolt/testwolt/site/style.css")
+        assert "no-cache" in resp.headers["cache-control"]
+
+    def test_head_request(self, client):
+        resp = client.head("/wolt/testwolt/site/style.css")
+        assert resp.status_code == 200
+
     def test_missing_file_404(self, client):
         assert client.get("/wolt/testwolt/site/nope.html").status_code == 404
 
-    def test_unknown_wolt_404(self, client):
-        assert client.get("/wolt/ghost/site/").status_code == 404
+    def test_unknown_wolt_404_self_refreshes(self, client):
+        """Viewport can load the URL before the wolt dir exists (boot race)."""
+        resp = client.get("/wolt/ghost/site/")
+        assert resp.status_code == 404
+        assert "location.reload" in resp.text
 
     def test_scaffolds_on_first_request(self, client, tmp_wolts):
         wolt = tmp_wolts / "freshwolt" / "wolt"
