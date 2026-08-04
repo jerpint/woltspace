@@ -254,10 +254,10 @@ def _write_seed_claude_md(wolt_dir: Path, name: str, creature_type: str) -> None
     if claude_md.exists():
         return
 
-    tier = {"raccoon": "Opus", "beaver": "Sonnet", "otter": "Haiku"}.get(creature_type, creature_type.title())
+    role = _ROLE.get(creature_type, creature_type)
     wolt_section = f"""# {name}
 
-{creature_type.title()} wolt ({tier}). Just born.
+{creature_type.title()} wolt ({role}). Just born.
 
 ## Project Structure
 
@@ -478,7 +478,9 @@ def _render_sprite_svg(creature_type: str, size: int = 112) -> str:
     )
 
 
-_TIER = {"raccoon": "opus", "beaver": "sonnet", "otter": "haiku"}
+# A tier is a role, not a model — which engine/model a tier runs is lodge
+# config (harnesses.py), never identity copy.
+_ROLE = {"raccoon": "thinker", "beaver": "builder", "otter": "quick", "rodent": "thinker"}
 
 # Creature-themed accent colors — so each type looks distinct from birth
 _ACCENT = {
@@ -496,13 +498,13 @@ def scaffold_starter_site(site_dir: Path, name: str, creature_type: str) -> None
     inherits the "site = pages, linked" pattern from minute zero.
     """
     sprite_svg = _render_sprite_svg(creature_type if creature_type in _SPRITE_DATA else "raccoon")
-    tier = _TIER.get(creature_type, creature_type)
+    role = _ROLE.get(creature_type, creature_type)
     species = creature_type if creature_type != "rodent" else "raccoon"
     accent = _ACCENT.get(species, _ACCENT["beaver"])
 
     (site_dir / "style.css").write_text(_STARTER_CSS.replace("{accent}", accent))
     (site_dir / "index.html").write_text(
-        _STARTER_INDEX.format(name=name, sprite=sprite_svg, species=species, tier=tier)
+        _STARTER_INDEX.format(name=name, sprite=sprite_svg, species=species, role=role)
     )
 
 
@@ -535,7 +537,7 @@ _STARTER_INDEX = """<!DOCTYPE html>
 <main class="page">
   <header class="hero">
     <div class="sprite">{sprite}</div>
-    <p class="role">{species} · {tier}</p>
+    <p class="role">{species} · {role}</p>
   </header>
 
   <section class="intro">

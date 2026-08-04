@@ -281,6 +281,68 @@ class TestDefaultHarness:
         assert get_default_harness() == "claude"
 
 
+class TestTierHarness:
+    """Per-tier engine defaults (woltspace.json harness.tiers)."""
+
+    def test_missing_config_is_none(self, tmp_path, monkeypatch):
+        from harnesses import get_tier_harness
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        assert get_tier_harness("raccoon") is None
+        assert get_tier_harness(None) is None
+
+    def test_set_and_get_roundtrip(self, tmp_path, monkeypatch):
+        import json
+        from harnesses import get_tier_harness, set_tier_harness
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        (tmp_path / "woltspace.json").write_text(json.dumps({"harness": {"default": "claude"}}))
+        set_tier_harness("otter", "codex")
+        assert get_tier_harness("otter") == "codex"
+        # other tiers untouched, default preserved
+        assert get_tier_harness("raccoon") is None
+        cfg = json.loads((tmp_path / "woltspace.json").read_text())
+        assert cfg["harness"]["default"] == "claude"
+
+    def test_clear_with_none(self, tmp_path, monkeypatch):
+        from harnesses import get_tier_harness, set_tier_harness
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        set_tier_harness("otter", "codex")
+        set_tier_harness("otter", None)
+        assert get_tier_harness("otter") is None
+
+    def test_set_rejects_unknown(self, tmp_path, monkeypatch):
+        import pytest as _pytest
+        from harnesses import set_tier_harness
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        with _pytest.raises(ValueError):
+            set_tier_harness("otter", "winamp")
+
+    def test_unknown_stored_harness_ignored(self, tmp_path, monkeypatch):
+        import json
+        from harnesses import get_tier_harness
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        (tmp_path / "woltspace.json").write_text(
+            json.dumps({"harness": {"tiers": {"otter": "winamp"}}}))
+        assert get_tier_harness("otter") is None
+
+    def test_set_tier_model_roundtrip(self, tmp_path, monkeypatch):
+        from harnesses import set_tier_model, tier_default_model
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        assert tier_default_model("claude", "otter") == "haiku"
+        set_tier_model("claude", "otter", "fable")
+        assert tier_default_model("claude", "otter") == "fable"
+        # engine-scoped: codex otter unchanged
+        assert tier_default_model("codex", "otter") == "gpt-5.6-luna"
+        set_tier_model("claude", "otter", None)
+        assert tier_default_model("claude", "otter") == "haiku"
+
+    def test_set_tier_model_rejects_invalid(self, tmp_path, monkeypatch):
+        import pytest as _pytest
+        from harnesses import set_tier_model
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        with _pytest.raises(ValueError):
+            set_tier_model("claude", "otter", "gpt-5.5")  # codex model on claude
+
+
 class TestSessionHarnessPlumbing:
     """harness flows: param > wolt.json default > platform default; stored for life."""
 
@@ -346,6 +408,34 @@ class TestSessionHarnessPlumbing:
         monkeypatch.setenv("WOLTS_DIR", str(self.wolts_dir))
         (self.wolts_dir / "woltspace.json").write_text(json.dumps({"harness": {"default": "codex"}}))
         self.wolt_json.write_text(json.dumps({"name": "testwolt", "type": "raccoon", "harness": "claude"}))
+        result = self._start()
+        assert result["harness"] == "claude"
+
+    def test_tier_default_applies(self, monkeypatch):
+        """An unpinned wolt follows its tier's engine (harness.tiers)."""
+        monkeypatch.setenv("WOLTS_DIR", str(self.wolts_dir))
+        (self.wolts_dir / "woltspace.json").write_text(json.dumps(
+            {"harness": {"default": "claude", "tiers": {"raccoon": "codex"}}}))
+        result = self._start()
+        assert result["harness"] == "codex"
+        # and the model follows the tier engine, not the lodge default's
+        assert result["model"] == "gpt-5.5"
+
+    def test_tier_default_only_hits_its_tier(self, monkeypatch):
+        """A raccoon tier entry must not move a beaver wolt."""
+        monkeypatch.setenv("WOLTS_DIR", str(self.wolts_dir))
+        (self.wolts_dir / "woltspace.json").write_text(json.dumps(
+            {"harness": {"default": "claude", "tiers": {"raccoon": "codex"}}}))
+        self.wolt_json.write_text(json.dumps({"name": "testwolt", "type": "beaver"}))
+        result = self._start()
+        assert result["harness"] == "claude"
+
+    def test_wolt_pin_beats_tier_default(self, monkeypatch):
+        monkeypatch.setenv("WOLTS_DIR", str(self.wolts_dir))
+        (self.wolts_dir / "woltspace.json").write_text(json.dumps(
+            {"harness": {"tiers": {"raccoon": "codex"}}}))
+        self.wolt_json.write_text(json.dumps(
+            {"name": "testwolt", "type": "raccoon", "harness": "claude"}))
         result = self._start()
         assert result["harness"] == "claude"
 

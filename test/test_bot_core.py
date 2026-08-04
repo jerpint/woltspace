@@ -108,14 +108,14 @@ class TestCreatureRouting:
         assert CREATURE_EMOJIS["beaver"] == "🦫"
 
     def test_creature_models(self):
-        from bot.core import CREATURE_MODELS
-        assert CREATURE_MODELS["raccoon"] == "opus"
-        assert CREATURE_MODELS["beaver"] == "sonnet"
+        from harnesses import creature_model
+        assert creature_model("claude", "raccoon") == "opus"
+        assert creature_model("claude", "beaver") == "sonnet"
 
     def test_creature_model_lookup(self):
-        """Unknown creature should return None from dict lookup."""
-        from bot.core import CREATURE_MODELS
-        assert CREATURE_MODELS.get("unknown") is None
+        """Unknown creature should resolve to no model."""
+        from harnesses import creature_model
+        assert creature_model("claude", "unknown") is None
 
     def test_creature_emoji_default(self):
         """Unknown creature should fall back to beaver emoji."""
@@ -123,9 +123,9 @@ class TestCreatureRouting:
         assert CREATURE_EMOJIS.get("unknown", "🦫") == "🦫"
 
     def test_otter_is_haiku(self):
-        """Otter should map to haiku model."""
-        from bot.core import CREATURE_MODELS
-        assert CREATURE_MODELS["otter"] == "haiku"
+        """Otter should map to haiku model on claude."""
+        from harnesses import creature_model
+        assert creature_model("claude", "otter") == "haiku"
 
     def test_otter_emoji(self):
         from bot.core import CREATURE_EMOJIS
@@ -147,9 +147,10 @@ class TestCreatureRouting:
                 assert "creature" not in props, f"creature should not be in {name} schema — it's auto-derived from wolt type"
 
     def test_all_session_creatures_have_emoji(self):
-        """Every creature in CREATURE_MODELS should have an emoji."""
-        from bot.core import CREATURE_MODELS, CREATURE_EMOJIS
-        for creature in CREATURE_MODELS:
+        """Every known tier should have an emoji."""
+        from bot.core import CREATURE_EMOJIS
+        from harnesses import KNOWN_TIERS
+        for creature in KNOWN_TIERS:
             assert creature in CREATURE_EMOJIS, f"{creature} missing from CREATURE_EMOJIS"
 
 

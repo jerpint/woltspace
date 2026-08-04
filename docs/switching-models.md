@@ -27,6 +27,24 @@ Edit the wolt's `wolt/wolt.json`:
 The change takes effect on the wolt's **next** session. A wolt can do this to itself, or
 do it on a user's behalf — it's just a config edit.
 
+## Tier defaults — pointing a whole tier at an engine
+
+A tier is a role (raccoon = thinker, beaver = builder, otter = quick), not a model. Each
+tier can follow its own engine lodge-wide, so raccoons can run one provider while otters
+run another — no per-wolt edits. Set it on the **settings page** (Tier defaults card), or
+in `woltspace.json`:
+
+```jsonc
+"harness": {
+  "default": "claude",                    // fallback for tiers with no entry
+  "tiers": { "raccoon": "codex" }         // every unpinned raccoon follows codex
+}
+```
+
+Resolution for a session: **wolt.json `harness` pin > `harness.tiers[tier]` >
+`harness.default`**. The tier's model then comes from the resolved engine's tier defaults
+(overridable per engine, see the overlay below).
+
 ## Which ids are valid?
 
 Never hardcode a model list — it drifts. Ask the platform:

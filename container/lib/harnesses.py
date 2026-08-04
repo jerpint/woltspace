@@ -475,6 +475,9 @@ PICKER_TIERS = [
     ("otter", "quick"),
 ]
 
+# Every creature type that resolves to a model tier (UI tiers + legacy aliases).
+KNOWN_TIERS = frozenset({"raccoon", "beaver", "otter", "rodent", "wolf"})
+
 
 def harness_metadata() -> list[dict]:
     """Public, JSON-safe view of the harness table for pickers/badges.
@@ -512,6 +515,21 @@ def get_default_harness() -> str:
         return DEFAULT_HARNESS
 
 
+def _read_woltspace_json() -> dict:
+    path = _woltspace_json_path()
+    try:
+        return json.loads(path.read_text()) if path.exists() else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _write_woltspace_json(cfg: dict) -> None:
+    path = _woltspace_json_path()
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, indent=2) + "\n")
+    tmp.rename(path)
+
+
 def set_default_harness(name: str) -> str:
     """Set the lodge default harness in woltspace.json. Returns the resolved value.
 
@@ -519,16 +537,65 @@ def set_default_harness(name: str) -> str:
     """
     if name not in HARNESSES:
         raise ValueError(f"unknown harness: {name}")
-    path = _woltspace_json_path()
-    try:
-        cfg = json.loads(path.read_text()) if path.exists() else {}
-    except (json.JSONDecodeError, OSError):
-        cfg = {}
+    cfg = _read_woltspace_json()
     cfg.setdefault("harness", {})["default"] = name
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(cfg, indent=2) + "\n")
-    tmp.rename(path)
+    _write_woltspace_json(cfg)
     return name
+
+
+# --- Per-tier defaults (woltspace.json "harness.tiers") --------------------
+# A tier is a role, not a model. Each tier may follow its own engine — a
+# raccoon on codex can orchestrate beavers on claude while otters run a local
+# model. Session resolution: wolt.json "harness" pin > harness.tiers[tier] >
+# harness.default. The tier's model comes from that engine's tier defaults
+# (tier_default_model), which harness.models.<engine>.tiers may override.
+
+def get_tier_harness(tier: str | None) -> str | None:
+    """The engine a tier defaults to (woltspace.json harness.tiers), or None."""
+    if not tier:
+        return None
+    try:
+        name = _read_woltspace_json().get("harness", {}).get("tiers", {}).get(tier)
+    except AttributeError:
+        return None
+    return name if name in HARNESSES else None
+
+
+def set_tier_harness(tier: str, name: str | None) -> str | None:
+    """Set (or clear, with None/"") a tier's default engine in woltspace.json.
+
+    Raises ValueError for an unknown harness — the caller (API) surfaces it.
+    """
+    cfg = _read_woltspace_json()
+    tiers = cfg.setdefault("harness", {}).setdefault("tiers", {})
+    if not name:
+        tiers.pop(tier, None)
+        name = None
+    elif name in HARNESSES:
+        tiers[tier] = name
+    else:
+        raise ValueError(f"unknown harness: {name}")
+    _write_woltspace_json(cfg)
+    return name
+
+
+def set_tier_model(harness: str, tier: str, model: str | None) -> None:
+    """Set (or clear, with None/"") a tier's default model for one engine
+    (woltspace.json harness.models.<engine>.tiers).
+
+    Raises ValueError for a model the engine doesn't accept.
+    """
+    harness = resolve_harness(harness)
+    if model and not is_valid_model(harness, model):
+        raise ValueError(f"unknown model for {harness}: {model}")
+    cfg = _read_woltspace_json()
+    tiers = (cfg.setdefault("harness", {}).setdefault("models", {})
+                .setdefault(harness, {}).setdefault("tiers", {}))
+    if model:
+        tiers[tier] = model
+    else:
+        tiers.pop(tier, None)
+    _write_woltspace_json(cfg)
 
 
 def build_command(harness: str | None, mode: str, **kwargs) -> str:

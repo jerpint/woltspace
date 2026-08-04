@@ -31,11 +31,12 @@ from paths import (
 from harnesses import (
     HARNESSES,
     DEFAULT_HARNESS,
+    KNOWN_TIERS,
     resolve_harness,
-    creature_model,
     resolve_model,
     get_harness,
     get_default_harness,
+    get_tier_harness,
     build_command,
     session_has_agent_process,
 )
@@ -531,11 +532,6 @@ SESSION_NOUNS = [
     "oak", "elm", "pine", "cedar", "maple", "willow", "bog", "ridge", "brook",
 ]
 
-# Backwards-compat alias — creature→model mapping now lives per-harness in
-# harnesses.py. This is the claude mapping (bot/core.py and tests import it).
-CREATURE_MODELS = HARNESSES[DEFAULT_HARNESS]["models"]
-
-
 def session_name(prefix: str) -> str:
     """Generate a session name: prefix-adjective-noun-6hex."""
     adj = random.choice(SESSION_ADJECTIVES)
@@ -736,7 +732,7 @@ def start_session(
         try:
             wolt_data = json.loads(wolt_json_path.read_text())
             wolt_type = wolt_data.get("type", "")
-            if wolt_type in CREATURE_MODELS:
+            if wolt_type in KNOWN_TIERS:
                 creature = wolt_type
             if not harness:
                 harness = wolt_data.get("harness", "")
@@ -744,9 +740,10 @@ def start_session(
             pinned_model = wolt_data.get("model", "") or ""
         except (json.JSONDecodeError, OSError):
             pass
-    # Resolution: explicit arg > wolt.json override > lodge default > "claude".
+    # Resolution: explicit arg > wolt.json override > tier default > lodge
+    # default > "claude".
     if not harness:
-        harness = get_default_harness()
+        harness = get_tier_harness(creature) or get_default_harness()
     harness = resolve_harness(harness)
 
     if app:
