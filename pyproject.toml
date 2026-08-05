@@ -10,7 +10,6 @@ dependencies = [
     "httpx",
     "watchfiles",
     "python-dotenv",
-    "livereload",
     # bot deps
     "litellm",
     "openai",

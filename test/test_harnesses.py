@@ -389,8 +389,7 @@ class TestSessionHarnessPlumbing:
 
     def _start(self, **kwargs):
         from sessions import start_session
-        with patch("sessions.subprocess.run"), patch("sites.subprocess.Popen") as mock_popen:
-            mock_popen.return_value.pid = 12345
+        with patch("sessions.subprocess.run"):
             return start_session(wolt="testwolt", prompt="hello", **kwargs)
 
     def _session_data(self, name):

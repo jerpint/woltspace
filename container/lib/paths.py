@@ -31,11 +31,6 @@ def wolt_sessions_dir(wolt: str, wolts_dir: Path = None) -> Path:
     return wolt_state_dir(wolt, wolts_dir) / "sessions"
 
 
-def wolt_site_state_file(wolt: str, wolts_dir: Path = None) -> Path:
-    """Per-wolt site state: wolts/{wolt}/.state/site.json"""
-    return wolt_state_dir(wolt, wolts_dir) / "site.json"
-
-
 def wolt_wolf_state_dir(wolt: str, wolts_dir: Path = None) -> Path:
     """Per-wolt wolf/cron state: wolts/{wolt}/.state/wolf/"""
     return wolt_state_dir(wolt, wolts_dir) / "wolf"

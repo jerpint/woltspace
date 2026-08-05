@@ -38,7 +38,7 @@ elif [ -f /home/node/.claude/.first-run ]; then
     echo "  removing $nm"
     rm -rf "$nm"
   done
-  # Pre-load viewport with wakeup page — user sees it instantly while wolt boots
+  # Pre-load viewport with the wolt site URL — starter site is scaffolded at creation
   mkdir -p "$WOLT_DIR/.state"
   python3 -c "
 import json, time, sys
