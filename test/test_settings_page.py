@@ -84,7 +84,7 @@ def test_settings_page_renders_tier_defaults(tmp_path, monkeypatch):
     # pinned tier shows its engine + that engine's tier model
     assert "Pinned · codex · gpt-5.6-luna" in body
     # unpinned tiers follow the lodge default
-    assert "Follows lodge · claude · opus" in body
+    assert "Follows lodge · claude · claude-opus-5" in body
     # catalogs embedded for the cascading selects
     assert "data-harness-data" in body
 

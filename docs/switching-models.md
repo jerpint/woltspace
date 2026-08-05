@@ -75,8 +75,8 @@ The selectable models live as data, not code:
   ```jsonc
   "harness": {
     "models": {
-      "claude": { "catalog": ["opus", "sonnet", "haiku", "fable"],  // add / hide models
-                  "tiers":   { "otter": "fable" } }                 // override a tier default
+      "claude": { "catalog": ["claude-opus-5", "claude-sonnet-5"],       // add / hide models
+                  "tiers":   { "otter": "claude-fable-5" } }            // override a tier default
     }
   }
   ```

@@ -107,13 +107,15 @@ class TestCreatureRouting:
         assert CREATURE_EMOJIS["raccoon"] == "🦝"
         assert CREATURE_EMOJIS["beaver"] == "🦫"
 
-    def test_creature_models(self):
+    def test_creature_models(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
         from harnesses import creature_model
-        assert creature_model("claude", "raccoon") == "opus"
-        assert creature_model("claude", "beaver") == "sonnet"
+        assert creature_model("claude", "raccoon") == "claude-opus-5"
+        assert creature_model("claude", "beaver") == "claude-sonnet-5"
 
-    def test_creature_model_lookup(self):
+    def test_creature_model_lookup(self, tmp_path, monkeypatch):
         """Unknown creature should resolve to no model."""
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
         from harnesses import creature_model
         assert creature_model("claude", "unknown") is None
 
@@ -122,10 +124,11 @@ class TestCreatureRouting:
         from bot.core import CREATURE_EMOJIS
         assert CREATURE_EMOJIS.get("unknown", "🦫") == "🦫"
 
-    def test_otter_is_haiku(self):
+    def test_otter_is_haiku(self, tmp_path, monkeypatch):
         """Otter should map to haiku model on claude."""
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
         from harnesses import creature_model
-        assert creature_model("claude", "otter") == "haiku"
+        assert creature_model("claude", "otter") == "claude-haiku-4-5"
 
     def test_otter_emoji(self):
         from bot.core import CREATURE_EMOJIS

@@ -441,7 +441,8 @@ class TestStartSession:
             c_idx = tmux_cmd.index("-c")
             assert str(tmp_path / "mywolt") == tmux_cmd[c_idx + 1]
 
-    def test_creature_sets_model(self, tmp_path):
+    def test_creature_sets_model(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
         from sessions import start_session
         (tmp_path / "mywolt").mkdir()
         with patch("sessions.WOLTS_DIR", tmp_path), \
@@ -449,7 +450,7 @@ class TestStartSession:
             mock_sub.run.return_value = None
             result = start_session(wolt="mywolt", creature="raccoon")
             assert result["creature"] == "raccoon"
-            assert result["model"] == "opus"
+            assert result["model"] == "claude-opus-5"
 
     def test_app_creates_subdir(self, tmp_path):
         from sessions import start_session

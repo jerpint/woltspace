@@ -38,11 +38,16 @@ class TestResolveHarness:
 
 
 class TestCreatureModel:
+    @pytest.fixture(autouse=True)
+    def isolate_config(self, tmp_path, monkeypatch):
+        # keep the real woltspace.json overlay out of seed assertions
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+
     def test_claude_tiers(self):
-        assert creature_model("claude", "raccoon") == "opus"
-        assert creature_model("claude", "beaver") == "sonnet"
-        assert creature_model("claude", "otter") == "haiku"
-        assert creature_model("claude", "wolf") == "sonnet"
+        assert creature_model("claude", "raccoon") == "claude-opus-5"
+        assert creature_model("claude", "beaver") == "claude-sonnet-5"
+        assert creature_model("claude", "otter") == "claude-haiku-4-5"
+        assert creature_model("claude", "wolf") == "claude-sonnet-5"
 
     def test_no_creature_is_none(self):
         assert creature_model("claude", "") is None
@@ -327,13 +332,13 @@ class TestTierHarness:
     def test_set_tier_model_roundtrip(self, tmp_path, monkeypatch):
         from harnesses import set_tier_model, tier_default_model
         monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
-        assert tier_default_model("claude", "otter") == "haiku"
-        set_tier_model("claude", "otter", "fable")
-        assert tier_default_model("claude", "otter") == "fable"
+        assert tier_default_model("claude", "otter") == "claude-haiku-4-5"
+        set_tier_model("claude", "otter", "claude-fable-5")
+        assert tier_default_model("claude", "otter") == "claude-fable-5"
         # engine-scoped: codex otter unchanged
         assert tier_default_model("codex", "otter") == "gpt-5.6-luna"
         set_tier_model("claude", "otter", None)
-        assert tier_default_model("claude", "otter") == "haiku"
+        assert tier_default_model("claude", "otter") == "claude-haiku-4-5"
 
     def test_set_tier_model_rejects_invalid(self, tmp_path, monkeypatch):
         import pytest as _pytest
@@ -529,7 +534,7 @@ class TestModelCatalog:
 
     def test_seed_includes_new_models(self):
         claude_ids = {m["id"] for m in model_catalog("claude")}
-        assert {"opus", "sonnet", "haiku", "fable"} <= claude_ids
+        assert {"claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "claude-fable-5"} <= claude_ids
         codex_ids = {m["id"] for m in model_catalog("codex")}
         assert {"gpt-5.5", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol"} <= codex_ids
 
@@ -544,17 +549,17 @@ class TestModelCatalog:
     def test_overlay_replaces_catalog_string_ids(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
         (tmp_path / "woltspace.json").write_text(json.dumps(
-            {"harness": {"models": {"claude": {"catalog": ["opus", "fable"]}}}}))
+            {"harness": {"models": {"claude": {"catalog": ["claude-opus-5", "claude-fable-5"]}}}}))
         ids = [m["id"] for m in model_catalog("claude")]
-        assert ids == ["opus", "fable"]  # haiku/sonnet dropped by overlay
+        assert ids == ["claude-opus-5", "claude-fable-5"]  # others dropped by overlay
         # label still resolved from the seed
         labels = {m["id"]: m["label"] for m in model_catalog("claude")}
-        assert labels["opus"] == "Opus 4.8"
+        assert labels["claude-opus-5"] == "Opus 5"
 
     def test_overlay_can_add_new_model_by_id(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
         (tmp_path / "woltspace.json").write_text(json.dumps(
-            {"harness": {"models": {"claude": {"catalog": ["opus", "brand-new"]}}}}))
+            {"harness": {"models": {"claude": {"catalog": ["claude-opus-5", "brand-new"]}}}}))
         cat = {m["id"]: m["label"] for m in model_catalog("claude")}
         assert cat["brand-new"] == "brand-new"  # label falls back to id
 
@@ -567,15 +572,16 @@ class TestModelCatalog:
     def test_malformed_config_yields_seed(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
         (tmp_path / "woltspace.json").write_text("{ not json")
-        assert {m["id"] for m in model_catalog("claude")} >= {"opus", "fable"}
+        assert {m["id"] for m in model_catalog("claude")} >= {"claude-opus-5", "claude-fable-5"}
 
 
 class TestTierDefaultModel:
     """Per-tier default: seed unless woltspace.json overrides it."""
 
-    def test_seed_defaults(self):
-        assert tier_default_model("claude", "raccoon") == "opus"
-        assert tier_default_model("claude", "otter") == "haiku"
+    def test_seed_defaults(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        assert tier_default_model("claude", "raccoon") == "claude-opus-5"
+        assert tier_default_model("claude", "otter") == "claude-haiku-4-5"
         assert tier_default_model("codex", "beaver") == "gpt-5.6-terra"
 
     def test_no_tier_is_none(self):
@@ -585,21 +591,21 @@ class TestTierDefaultModel:
     def test_overlay_overrides_tier(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
         (tmp_path / "woltspace.json").write_text(json.dumps(
-            {"harness": {"models": {"claude": {"tiers": {"otter": "fable"}}}}}))
-        assert tier_default_model("claude", "otter") == "fable"
+            {"harness": {"models": {"claude": {"tiers": {"otter": "claude-fable-5"}}}}}))
+        assert tier_default_model("claude", "otter") == "claude-fable-5"
         # untouched tiers keep the seed
-        assert tier_default_model("claude", "raccoon") == "opus"
+        assert tier_default_model("claude", "raccoon") == "claude-opus-5"
 
     def test_creature_model_routes_through_default(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
         (tmp_path / "woltspace.json").write_text(json.dumps(
-            {"harness": {"models": {"claude": {"tiers": {"raccoon": "fable"}}}}}))
-        assert creature_model("claude", "raccoon") == "fable"
+            {"harness": {"models": {"claude": {"tiers": {"raccoon": "claude-fable-5"}}}}}))
+        assert creature_model("claude", "raccoon") == "claude-fable-5"
 
 
 class TestIsValidModel:
     def test_seed_membership(self):
-        assert is_valid_model("claude", "fable")
+        assert is_valid_model("claude", "claude-fable-5")
         assert is_valid_model("codex", "gpt-5.6-sol")
 
     def test_cross_harness_is_invalid(self):
@@ -623,23 +629,27 @@ class TestIsValidModel:
 class TestResolveModel:
     """Spawn-time resolution: pin wins iff valid for the resolved harness."""
 
+    @pytest.fixture(autouse=True)
+    def isolate_config(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+
     def test_no_pin_uses_tier_default(self):
-        assert resolve_model("claude", "raccoon", None) == "opus"
-        assert resolve_model("claude", "raccoon", "") == "opus"
+        assert resolve_model("claude", "raccoon", None) == "claude-opus-5"
+        assert resolve_model("claude", "raccoon", "") == "claude-opus-5"
 
     def test_valid_pin_wins(self):
-        assert resolve_model("claude", "raccoon", "fable") == "fable"
+        assert resolve_model("claude", "raccoon", "claude-fable-5") == "claude-fable-5"
 
     def test_pin_invalid_for_harness_falls_back(self):
         # "opus" is meaningless to codex -> codex raccoon default
         assert resolve_model("codex", "raccoon", "opus") == "gpt-5.5"
 
     def test_unknown_pin_falls_back(self):
-        assert resolve_model("claude", "otter", "nonsense") == "haiku"
+        assert resolve_model("claude", "otter", "nonsense") == "claude-haiku-4-5"
 
     def test_pin_can_diverge_from_tier(self):
         # Free binding: a raccoon may run a non-thinker model
-        assert resolve_model("claude", "raccoon", "haiku") == "haiku"
+        assert resolve_model("claude", "raccoon", "claude-haiku-4-5") == "claude-haiku-4-5"
 
     def test_freeform_harness_honors_arbitrary_pin(self):
         # opencode (freeform) honors a user-typed provider/model verbatim

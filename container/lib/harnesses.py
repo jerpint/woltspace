@@ -253,22 +253,27 @@ HARNESSES = {
         "emoji": "🟠",
         # comm names that count as "the agent is running" in a session's process tree
         "process_names": {"claude"},
-        # creature tier → default model flag value (the seed; woltspace.json may override)
+        # creature tier → default model flag value (the seed; woltspace.json may
+        # override). ALWAYS real model ids, never CLI aliases: an alias like
+        # "sonnet" resolves to whatever the installed claude CLI decides (hit
+        # live 2026-08-05: "sonnet" served sonnet 4.6 while the catalog label
+        # claimed Sonnet 5). Explicit id = what you pick is what spawns.
         "models": {
-            "raccoon": "opus",
-            "beaver": "sonnet",
-            "otter": "haiku",
-            "rodent": "opus",  # legacy type — treated as raccoon
-            "wolf": "sonnet",
+            "raccoon": "claude-opus-5",
+            "beaver": "claude-sonnet-5",
+            "otter": "claude-haiku-4-5",
+            "rodent": "claude-opus-5",  # legacy type — treated as raccoon
+            "wolf": "claude-sonnet-5",
         },
         # every model a wolt may be pinned to on this harness (Free binding: any
         # model pickable for any tier). Seed list — woltspace.json can add/remove.
+        # All ids bench-verified spawning the exact model (2026-08-05).
         "model_catalog": [
-            {"id": "opus", "label": "Opus 4.8"},
-            {"id": "sonnet", "label": "Sonnet 5"},
-            {"id": "haiku", "label": "Haiku 4.5"},
-            # `claude --model fable` alias verified live (2026-07-16)
-            {"id": "fable", "label": "Fable 5"},
+            {"id": "claude-fable-5", "label": "Fable 5"},
+            {"id": "claude-opus-5", "label": "Opus 5"},
+            {"id": "claude-sonnet-5", "label": "Sonnet 5"},
+            {"id": "claude-sonnet-4-6", "label": "Sonnet 4.6"},
+            {"id": "claude-haiku-4-5", "label": "Haiku 4.5"},
         ],
         # how a skill is invoked inside a prompt
         "skill_invoke": "/{name}",
