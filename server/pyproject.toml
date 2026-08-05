@@ -9,6 +9,5 @@ dependencies = [
     "httpx",
     "watchfiles",
     "python-dotenv",
-    "livereload",
     "jinja2",
 ]

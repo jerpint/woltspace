@@ -63,7 +63,7 @@ container/
     sessions.py                 SessionRegistry + start_session — one source of truth
     apps.py                     App schema + discovery + start/stop + port allocation
     wolts.py                    Wolt discovery + creature types + create_creature_wolt
-    sites.py                    Per-wolt static sites + livereload + permanent ports
+    sites.py                    Per-wolt static site paths + starter-site scaffolding
     tunnel.py                   Cloudflared helpers (quick + named)
     paths.py                    Per-wolt and global path helpers — start here when locating state
 
@@ -169,7 +169,7 @@ The lodge UI is also shared across the browser, installed PWA/mobile, and the
 macOS native shell. See [Client surfaces and navigation](docs/client-surfaces.md)
 for the cross-client ownership and navigation contract.
 
-- **Sites** (`wolts/{wolt}/site/`) — lightweight per-wolt workspace. Static HTML/CSS/JS served by the FastAPI server itself, with livereload baked in via an injected client. Each wolt gets a permanent port stored in its `wolt.json`. Code: `container/lib/sites.py`, served at `/wolt/{name}/site/`.
+- **Sites** (`wolts/{wolt}/site/`) — lightweight per-wolt workspace. Static HTML/CSS/JS served directly from disk by the FastAPI server, with livereload baked in via an injected client wired to a server-side file watcher. No per-site process or port. Code: `container/lib/sites.py`, served at `/wolt/{name}/site/`.
 - **Apps** (`wolts/apps/{name}/`) — full programs with their own server, deps, and `woltspace.json` manifest. The server starts/stops them; their ports are tracked in `.space/apps/`. Apps that set `public: true` get a Cloudflare tunnel automatically and survive container restarts via apps autorestore. Code: `container/lib/apps.py`.
 
 ### Subdomain proxy
@@ -212,11 +212,10 @@ wolts/                                     mounted into the container
 │   ├─ .claude/                            skills, hooks, OAuth credentials
 │   ├─ .state/                             runtime state
 │   │   ├─ sessions/                       one JSON per session
-│   │   ├─ site.json                       livereload port + pid
 │   │   └─ wolf/                           cron execution state
 │   ├─ .env                                wolt secrets
 │   ├─ CLAUDE.md                           wolt-specific instructions
-│   └─ wolt.json                           manifest (name, type, role, site_port, …)
+│   └─ wolt.json                           manifest (name, type, role, …)
 │
 ├─ apps/{name}/                            shipped apps
 │   ├─ woltspace.json                      manifest (start, port, public, …)
@@ -236,7 +235,7 @@ The split between `wolts/{wolt}/` (owned by one wolt) and `wolts/.space/` (cross
 
 ## Conventions
 
-- **Single entry points** — `start_session()` for sessions, `start_app()` for apps, `start_site()` for sites. Don't reimplement; import.
+- **Single entry points** — `start_session()` for sessions, `start_app()` for apps, `ensure_site()` for sites. Don't reimplement; import.
 - **Filesystem as database** — paths are queries, files are records, dirs are indexes. Cleanup is `rm`.
 - **FastAPI is the central authority** — it owns reads, writes, and policy. Adapters ask the server, not the filesystem.
 - **`WOLT_DIR` is for code, not state** — runtime state always goes through `.state/` or `.space/`.
