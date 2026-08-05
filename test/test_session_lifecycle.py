@@ -161,23 +161,18 @@ class TestStartSessionSiteAutoStart:
         }))
 
     @patch("sessions.subprocess.run")
-    @patch("sites.subprocess.Popen")
-    def test_start_session_returns_site_url(self, mock_popen, mock_run, tmp_path):
+    def test_start_session_returns_site_url(self, mock_run, tmp_path):
         """Non-project session should include site_url in result."""
-        mock_popen.return_value.pid = 12345
         result = self.sessions.start_session(
             wolt="testwolt",
             prompt="hello",
             routing={"adapter": "telegram", "chat_id": "123"},
         )
         assert result.get("site_url") == "/wolt/testwolt/site/"
-        assert result.get("site_port") == 6001
 
     @patch("sessions.subprocess.run")
-    @patch("sites.subprocess.Popen")
-    def test_start_session_with_app_no_site(self, mock_popen, mock_run, tmp_path):
-        """App sessions should NOT auto-start a site."""
-        mock_popen.return_value.pid = 12345
+    def test_start_session_with_app_no_site(self, mock_run, tmp_path):
+        """App sessions should NOT get a site viewport."""
         result = self.sessions.start_session(
             wolt="testwolt",
             prompt="hello",
@@ -187,17 +182,9 @@ class TestStartSessionSiteAutoStart:
         assert "site_url" not in result
 
     @patch("sessions.subprocess.run")
-    @patch("sites.subprocess.Popen")
-    def test_site_started_for_all_adapters(self, mock_popen, mock_run, tmp_path):
-        """Site auto-start works for lodge, telegram, and slack."""
-        mock_popen.return_value.pid = 12345
+    def test_site_started_for_all_adapters(self, mock_run, tmp_path):
+        """Site viewport works for lodge, telegram, and slack."""
         for adapter in ["lodge", "telegram", "slack"]:
-            # Reset site state between runs
-            state_dir = tmp_path / ".state" / "sites"
-            if state_dir.exists():
-                for f in state_dir.iterdir():
-                    f.unlink()
-            mock_popen.return_value.pid = 12345 + hash(adapter) % 1000
             result = self.sessions.start_session(
                 wolt="testwolt",
                 prompt="hello",
@@ -206,10 +193,8 @@ class TestStartSessionSiteAutoStart:
             assert result.get("site_url") == "/wolt/testwolt/site/", f"failed for {adapter}"
 
     @patch("sessions.subprocess.run")
-    @patch("sites.subprocess.Popen")
-    def test_viewport_url_stored_in_session(self, mock_popen, mock_run, tmp_path):
+    def test_viewport_url_stored_in_session(self, mock_run, tmp_path):
         """start_session() should store viewport URL in the session JSON."""
-        mock_popen.return_value.pid = 12345
         result = self.sessions.start_session(
             wolt="testwolt",
             prompt="hello",
@@ -224,8 +209,8 @@ class TestStartSessionSiteAutoStart:
         assert data["viewport_port"] == 7777
 
     @patch("sessions.subprocess.run")
-    @patch("sessions.start_site", side_effect=RuntimeError("no ports"))
-    def test_site_failure_does_not_block_session(self, mock_start_site, mock_run, tmp_path):
+    @patch("sessions.ensure_site", side_effect=OSError("disk full"))
+    def test_site_failure_does_not_block_session(self, mock_ensure_site, mock_run, tmp_path):
         """If site auto-start fails, session should still be created."""
         result = self.sessions.start_session(
             wolt="testwolt",
@@ -237,13 +222,11 @@ class TestStartSessionSiteAutoStart:
         assert "site_url" not in result
 
     @patch("sessions.subprocess.run")
-    @patch("sites.subprocess.Popen")
-    def test_prompt_passed_verbatim_to_tmux(self, mock_popen, mock_run, tmp_path):
+    def test_prompt_passed_verbatim_to_tmux(self, mock_run, tmp_path):
         """start_session() should pass the prompt to run-session.sh without appending start-chat.
 
         run-session.sh is responsible for appending /woltspace-start-chat — Python must not duplicate it.
         """
-        mock_popen.return_value.pid = 12345
         self.sessions.start_session(
             wolt="testwolt",
             prompt="hello world",

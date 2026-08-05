@@ -40,7 +40,7 @@ from harnesses import (
     build_command,
     session_has_agent_process,
 )
-from sites import start_site
+from sites import ensure_site
 
 _UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
@@ -798,14 +798,13 @@ def start_session(
             print(f"[sessions] failed to set app viewport for {app}: {e}")
     else:
         try:
-            site_state = start_site(wolt)
+            ensure_site(wolt)
             site_url = f"/wolt/{wolt}/site/"
             result["site_url"] = site_url
-            result["site_port"] = site_state["port"]
             # Store viewport URL in the session JSON itself.
             registry.set_viewport(name, site_url, wolt=wolt)
         except Exception as e:
-            print(f"[sites] failed to auto-start for {wolt}: {e}")
+            print(f"[sites] failed to ensure site for {wolt}: {e}")
 
     return result
 

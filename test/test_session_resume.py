@@ -181,10 +181,8 @@ class TestStartSessionNoClaudeSessionId:
         self.wolts_dir = tmp_path
 
     @patch("sessions.subprocess.run")
-    @patch("sites.subprocess.Popen")
-    def test_start_session_does_not_set_claude_session_id(self, mock_popen, mock_run):
+    def test_start_session_does_not_set_claude_session_id(self, mock_run):
         from sessions import start_session, SessionRegistry
-        mock_popen.return_value.pid = 12345
         result = start_session(wolt="testwolt", prompt="hello")
 
         reg = SessionRegistry(self.wolts_dir)
