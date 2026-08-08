@@ -416,6 +416,22 @@ def _tmux_paste(target: str, text: str, settle: float = 0.0):
     )
 
 
+def _guard_paste_text(harness: str | None, text: str) -> str:
+    """Flatten newlines and defuse harness-specific paste quirks.
+
+    Every paste into a live TUI goes through here so the quirks are handled
+    in one place, not re-derived per call site. Currently:
+      - flatten \\n → space (a bare newline submits the composer early).
+      - opencode: a message starting with "/" opens the command palette and
+        never submits (leading_slash_opens_palette). A leading space makes the
+        composer treat it as a literal message (benched live 2026-08-08).
+    """
+    t = text.replace("\n", " ")
+    if get_harness(harness).get("leading_slash_opens_palette") and t.startswith("/"):
+        t = " " + t
+    return t
+
+
 # ---------------------------------------------------------------------------
 # IWCL — Inter-Wolt Communication. Deliver a message into a running session,
 # with attribution. The one primitive behind the wolt-to-wolt relay: a wolt
@@ -509,7 +525,7 @@ def deliver_message(session_id: str, text: str, from_wolt: str = "",
     harness = resolve_harness(data.get("harness"))
     settle = get_harness(harness).get("paste_settle", 0.0)
     body = format_attributed_message(text, from_wolt, from_session)
-    _tmux_paste(session_id, body, settle=settle)
+    _tmux_paste(session_id, _guard_paste_text(harness, body), settle=settle)
     reg.touch(session_id)
     return {"status": "delivered", "session": session_id, "harness": harness}
 
@@ -667,7 +683,14 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
         # Same CLI-prompt constraint as spawn — stamp for paste delivery.
         if get_harness(harness).get("prompt_via_paste"):
             if prompt:
-                registry.update(name, wolt=wolt, pending_boot_prompt=prompt)
+                # A boot prompt may already be pending (the agent died before
+                # deliver_boot_prompt could fire, e.g. an OOM-kill at boot).
+                # The bot resumes such a session WITH the user's next message
+                # (bot/core.py, app.py resume) — merge so the start-chat
+                # invocation + adapter routing context aren't clobbered.
+                pending = (data.get("pending_boot_prompt") or "").strip()
+                merged = f"{pending} {prompt}".strip() if pending else prompt
+                registry.update(name, wolt=wolt, pending_boot_prompt=merged)
             prompt = ""
         return build_command(harness, "resume", resume_id=resume_id, model=model, prompt=prompt)
 
@@ -718,10 +741,19 @@ def deliver_boot_prompt(name: str, timeout: int = 90) -> bool:
     never submits. A tmux paste after the TUI has painted does neither (both
     benched live on opencode 1.18.3) — same delivery as resume/IWCL.
 
-    prepare_session_command stamps pending_boot_prompt; this polls the pane
-    for the harness's tui_ready_marker, pastes, and clears the stamp. If the
-    TUI never paints (agent died at boot) the stamp is left in place so a
-    later --resume respawn delivers it. Immediate no-op when nothing is
+    prepare_session_command stamps pending_boot_prompt; this waits for the
+    pane to be ready, then pastes and clears the stamp. Readiness = the
+    harness's tui_ready_marker appears AFTER having been absent at least once.
+    The absent-first requirement matters on the revive path (tmux pane alive,
+    agent exited): run-session.sh --resume runs in the SAME pane, which may
+    still show the dead TUI's last frame — including the marker in its footer.
+    Waiting for the marker to clear (the pane repaints when the new agent
+    launches) before accepting it prevents pasting into a frozen stale frame.
+    A fresh/dead-tmux spawn starts on a blank pane, so absent-first is
+    satisfied immediately and costs nothing.
+
+    If the TUI never paints (agent died at boot) the stamp is left in place so
+    a later --resume respawn delivers it. Immediate no-op when nothing is
     pending — run-session.sh backgrounds this for every spawn/resume.
 
     Returns True when the prompt was delivered.
@@ -731,15 +763,16 @@ def deliver_boot_prompt(name: str, timeout: int = 90) -> bool:
     if data is None:
         raise ValueError(f"session '{name}' not found in registry")
 
-    prompt = data.get("pending_boot_prompt") or ""
-    if not prompt.strip():
+    if not (data.get("pending_boot_prompt") or "").strip():
         return False
 
-    entry = get_harness(resolve_harness(data.get("harness")))
+    harness = resolve_harness(data.get("harness"))
+    entry = get_harness(harness)
     marker = entry.get("tui_ready_marker") or ""
 
     deadline = time.time() + timeout
     ready = False
+    seen_absent = not marker  # no marker configured → don't gate on absence
     while time.time() < deadline:
         try:
             pane = subprocess.run(
@@ -748,7 +781,10 @@ def deliver_boot_prompt(name: str, timeout: int = 90) -> bool:
             ).stdout
         except (subprocess.SubprocessError, OSError):
             pane = ""
-        if marker and marker in pane:
+        present = bool(marker) and marker in pane
+        if not present:
+            seen_absent = True
+        elif seen_absent:
             ready = True
             break
         time.sleep(1)
@@ -758,19 +794,22 @@ def deliver_boot_prompt(name: str, timeout: int = 90) -> bool:
     # One beat between first paint and the paste — the marker appears with
     # the TUI's first render and the composer is accepting input right after.
     time.sleep(1)
-    # Flatten newlines like the resume path: a bare \n inside the paste would
-    # become a literal newline, but the prompt is a one-shot boot message.
-    text = prompt.replace("\n", " ")
-    # opencode's TUI opens its command palette when a message starts with "/"
-    # (create-wolt boots as a bare "/woltspace-create-wolt"), and the skill
-    # isn't a registered opencode command → "No matching items", never submits.
-    # A leading space makes the composer treat it as a literal message (benched
-    # live 2026-08-08) and the model then follows the skill. Harmless for other
-    # prompts. Gated on the harness so only opencode is touched.
-    if entry.get("leading_slash_opens_palette") and text.startswith("/"):
-        text = " " + text
-    _tmux_paste(name, text, settle=entry.get("paste_settle", 0.0))
-    registry.update(name, wolt=data.get("wolt", ""), pending_boot_prompt="")
+
+    # Claim the stamp: re-read and clear BEFORE pasting so a second concurrent
+    # poller (a stale revive-path poller still looping) sees it gone and bails
+    # rather than double-pasting. Restore it if the paste raises.
+    claim = registry.get(name, check_alive=False) or {}
+    prompt = (claim.get("pending_boot_prompt") or "").strip()
+    if not prompt:
+        return False
+    wolt = data.get("wolt", "")
+    registry.update(name, wolt=wolt, pending_boot_prompt="")
+    try:
+        _tmux_paste(name, _guard_paste_text(harness, prompt),
+                    settle=entry.get("paste_settle", 0.0))
+    except Exception:
+        registry.update(name, wolt=wolt, pending_boot_prompt=prompt)
+        raise
     return True
 
 
@@ -929,8 +968,8 @@ def resume_session(name: str, prompt: str = "") -> dict:
         # Agent is running — paste the prompt into the TUI as a single buffer paste.
         # Flatten newlines: a bare \n would submit the input early in the TUI.
         if prompt:
-            flat_prompt = prompt.replace("\n", " ")
-            _tmux_paste(name, flat_prompt, settle=get_harness(harness).get("paste_settle", 0.0))
+            _tmux_paste(name, _guard_paste_text(harness, prompt),
+                        settle=get_harness(harness).get("paste_settle", 0.0))
         registry.update(name, wolt=wolt, status="running")
         return {"name": name, "url": session_url, "status": "delivered", "detail": "agent running, message sent"}
 

@@ -492,10 +492,12 @@ class TestBootPromptViaPaste:
         monkeypatch.setattr(sessions, "_tmux_paste",
                             lambda target, text, settle=0.0: pasted.append((target, text, settle)))
 
+        # First capture: marker absent (blank pane) → satisfies absent-first.
+        # Second: marker present → ready.
+        panes = iter(["", "┃ Ask anything...\n tab agents  ctrl+p commands"])
+
         def fake_run(cmd, **kwargs):
-            class R:
-                stdout = "┃ Ask anything...\n tab agents  ctrl+p commands"
-            return R()
+            return type("R", (), {"stdout": next(panes, "ctrl+p commands")})()
         monkeypatch.setattr(sessions.subprocess, "run", fake_run)
         monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
 
@@ -505,6 +507,71 @@ class TestBootPromptViaPaste:
         assert self._session_data(name)["pending_boot_prompt"] == ""
         # Second call is a no-op — the stamp is gone
         assert deliver_boot_prompt(name, timeout=5) is False
+
+    def test_deliver_ignores_stale_marker_until_pane_repaints(self, monkeypatch):
+        """Revive path: the dead TUI's frozen frame still shows the marker.
+        deliver must wait for it to clear (repaint) before accepting it."""
+        import sessions
+        from sessions import deliver_boot_prompt, prepare_session_command
+        result = self._start()
+        name = result["name"]
+        prepare_session_command(name, "spawn", "hello world")
+
+        pasted = []
+        monkeypatch.setattr(sessions, "_tmux_paste",
+                            lambda target, text, settle=0.0: pasted.append(text))
+        # Marker present on the FIRST capture (stale frame). If deliver
+        # accepted it, it would paste into the frozen pane. It must wait for a
+        # capture without the marker (repaint) then one with it again.
+        panes = iter([
+            "old frame\n ctrl+p commands",   # stale — must be rejected
+            "booting...",                     # repaint, marker gone
+            "fresh TUI\n ctrl+p commands",   # real ready
+        ])
+        monkeypatch.setattr(sessions.subprocess, "run",
+                            lambda *a, **k: type("R", (), {"stdout": next(panes, "ctrl+p commands")})())
+        monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
+
+        assert deliver_boot_prompt(name, timeout=5) is True
+        assert pasted == ["hello world /woltspace-start-chat lodge testwolt"]
+
+    def test_concurrent_deliver_does_not_double_paste(self, monkeypatch):
+        """A second poller that runs after the stamp is claimed must bail."""
+        import sessions
+        from sessions import deliver_boot_prompt, prepare_session_command
+        result = self._start()
+        name = result["name"]
+        prepare_session_command(name, "spawn", "hello world")
+
+        pasted = []
+        monkeypatch.setattr(sessions, "_tmux_paste",
+                            lambda target, text, settle=0.0: pasted.append(text))
+        panes = iter(["", "ctrl+p commands"])
+        monkeypatch.setattr(sessions.subprocess, "run",
+                            lambda *a, **k: type("R", (), {"stdout": next(panes, "ctrl+p commands")})())
+        monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
+
+        assert deliver_boot_prompt(name, timeout=5) is True
+        # A second poller (marker present from the start) finds the stamp gone
+        panes2 = iter(["ctrl+p commands"])
+        monkeypatch.setattr(sessions.subprocess, "run",
+                            lambda *a, **k: type("R", (), {"stdout": next(panes2, "ctrl+p commands")})())
+        assert deliver_boot_prompt(name, timeout=5) is False
+        assert pasted == ["hello world /woltspace-start-chat lodge testwolt"]  # only once
+
+    def test_resume_with_prompt_merges_preserved_stamp(self):
+        """A boot prompt stranded by a boot-time crash must not be clobbered
+        when the bot resumes the session with the user's next message."""
+        from sessions import prepare_session_command, SessionRegistry
+        result = self._start()
+        name = result["name"]
+        # Simulate a boot prompt that deliver_boot_prompt never got to send
+        prepare_session_command(name, "spawn", "/woltspace-create-wolt")
+        assert self._session_data(name)["pending_boot_prompt"] == "/woltspace-create-wolt"
+        # Bot resumes with the user's message
+        prepare_session_command(name, "resume", "hey are you there")
+        assert self._session_data(name)["pending_boot_prompt"] == \
+            "/woltspace-create-wolt hey are you there"
 
     def test_deliver_no_space_guard_for_non_slash_prompt(self, monkeypatch):
         """A normal prompt is pasted verbatim — the guard only touches "/"."""
@@ -517,8 +584,9 @@ class TestBootPromptViaPaste:
         pasted = []
         monkeypatch.setattr(sessions, "_tmux_paste",
                             lambda target, text, settle=0.0: pasted.append(text))
+        panes = iter(["", "ctrl+p commands"])
         monkeypatch.setattr(sessions.subprocess, "run",
-                            lambda *a, **k: type("R", (), {"stdout": "ctrl+p commands"})())
+                            lambda *a, **k: type("R", (), {"stdout": next(panes, "ctrl+p commands")})())
         monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
 
         assert deliver_boot_prompt(name, timeout=5) is True
@@ -532,16 +600,15 @@ class TestBootPromptViaPaste:
         name = result["name"]
         prepare_session_command(name, "spawn", "hello")
 
-        def fake_run(cmd, **kwargs):
-            class R:
-                stdout = ""
-            return R()
-        monkeypatch.setattr(sessions.subprocess, "run", fake_run)
+        # Marker never appears (agent died at boot) — exercise the real poll
+        # loop with a short timeout, not the pre-expired-deadline shortcut.
+        monkeypatch.setattr(sessions.subprocess, "run",
+                            lambda *a, **k: type("R", (), {"stdout": "booting, no tui yet"})())
         monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
         monkeypatch.setattr(sessions, "_tmux_paste",
                             lambda *a, **k: pytest.fail("must not paste before TUI paints"))
 
-        assert deliver_boot_prompt(name, timeout=0) is False
+        assert deliver_boot_prompt(name, timeout=2) is False
         # Stamp survives (full assembled prompt — start-chat appended)
         assert self._session_data(name)["pending_boot_prompt"] == "hello /woltspace-start-chat lodge testwolt"
 

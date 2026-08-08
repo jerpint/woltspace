@@ -58,8 +58,9 @@ fi
 # races model resolution and a leading "/" strands in the command palette)
 # get it pasted in once the TUI paints. `prepare` above stamped it as
 # pending_boot_prompt — immediate no-op for everyone else. Both modes:
-# a dead-tmux resume delivers its prompt this way too.
-($SESSION_REG deliver-prompt "$SESSION_NAME" > /dev/null 2>&1 &)
+# a dead-tmux resume delivers its prompt this way too. Logged (not /dev/null)
+# so a "TUI never painted, prompt still pending" timeout is observable.
+(echo "[$(date -Iseconds)] deliver-prompt $SESSION_NAME: $($SESSION_REG deliver-prompt "$SESSION_NAME" 2>&1)" >> "$SESSION_LOG" 2>&1 &)
 
 # Run the agent — capture exit code
 EXIT_CODE=0
