@@ -417,19 +417,21 @@ def _tmux_paste(target: str, text: str, settle: float = 0.0):
 
 
 def _guard_paste_text(harness: str | None, text: str) -> str:
-    """Flatten newlines and defuse harness-specific paste quirks.
+    """Defuse harness-specific paste quirks. Pure no-op unless the harness
+    opts in via a flag, so shared paste paths (IWCL, resume) are unchanged
+    for claude/codex.
 
-    Every paste into a live TUI goes through here so the quirks are handled
-    in one place, not re-derived per call site. Currently:
-      - flatten \\n → space (a bare newline submits the composer early).
       - opencode: a message starting with "/" opens the command palette and
         never submits (leading_slash_opens_palette). A leading space makes the
         composer treat it as a literal message (benched live 2026-08-08).
+
+    Note: newline flattening is NOT done here — it's applied only at the
+    boot/resume paste sites that need it, so the IWCL path keeps delivering
+    the multi-line attributed message shape intact.
     """
-    t = text.replace("\n", " ")
-    if get_harness(harness).get("leading_slash_opens_palette") and t.startswith("/"):
-        t = " " + t
-    return t
+    if get_harness(harness).get("leading_slash_opens_palette") and text.startswith("/"):
+        return " " + text
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -805,7 +807,8 @@ def deliver_boot_prompt(name: str, timeout: int = 90) -> bool:
     wolt = data.get("wolt", "")
     registry.update(name, wolt=wolt, pending_boot_prompt="")
     try:
-        _tmux_paste(name, _guard_paste_text(harness, prompt),
+        # Flatten newlines (a bare \n would submit early) then guard the slash.
+        _tmux_paste(name, _guard_paste_text(harness, prompt.replace("\n", " ")),
                     settle=entry.get("paste_settle", 0.0))
     except Exception:
         registry.update(name, wolt=wolt, pending_boot_prompt=prompt)
@@ -968,7 +971,7 @@ def resume_session(name: str, prompt: str = "") -> dict:
         # Agent is running — paste the prompt into the TUI as a single buffer paste.
         # Flatten newlines: a bare \n would submit the input early in the TUI.
         if prompt:
-            _tmux_paste(name, _guard_paste_text(harness, prompt),
+            _tmux_paste(name, _guard_paste_text(harness, prompt.replace("\n", " ")),
                         settle=get_harness(harness).get("paste_settle", 0.0))
         registry.update(name, wolt=wolt, status="running")
         return {"name": name, "url": session_url, "status": "delivered", "detail": "agent running, message sent"}
