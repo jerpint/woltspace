@@ -367,8 +367,13 @@ HARNESSES = {
         "prompt_via_paste": True,
         "tui_ready_marker": "ctrl+p commands",
         # A pasted message starting with "/" opens the command palette instead
-        # of submitting; deliver_boot_prompt prepends a space to defuse it.
+        # of submitting; _guard_paste_text prepends a space to defuse it.
         "leading_slash_opens_palette": True,
+        # opencode's TUI drops newlines from a pasted message (joins lines with
+        # no separator → run-on text). Flatten \n → space so a multi-line
+        # message (IWCL attribution) stays readable. claude/codex are
+        # paste-aware and keep pasted newlines, so they leave this unset.
+        "flatten_paste_newlines": True,
         # opencode reads AGENTS.md as primary, CLAUDE.md as a documented
         # fallback. wopencode symlinks AGENTS.md -> CLAUDE.md for parity with
         # codex; the fallback means it would work even without the symlink.

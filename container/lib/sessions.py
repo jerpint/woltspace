@@ -421,17 +421,21 @@ def _guard_paste_text(harness: str | None, text: str) -> str:
     opts in via a flag, so shared paste paths (IWCL, resume) are unchanged
     for claude/codex.
 
-      - opencode: a message starting with "/" opens the command palette and
-        never submits (leading_slash_opens_palette). A leading space makes the
-        composer treat it as a literal message (benched live 2026-08-08).
-
-    Note: newline flattening is NOT done here — it's applied only at the
-    boot/resume paste sites that need it, so the IWCL path keeps delivering
-    the multi-line attributed message shape intact.
+      - flatten_paste_newlines (opencode): opencode's TUI drops newlines from a
+        pasted message entirely — it joins the lines with NO separator, so a
+        multi-line attributed IWCL message renders as jammed-together run-on
+        text ("...session=X]body..."). Flatten \\n → space so word boundaries
+        survive. claude/codex TUIs are paste-aware (a pasted \\n stays a literal
+        newline), so they must NOT flatten — the message renders multi-line.
+      - leading_slash_opens_palette (opencode): a message starting with "/"
+        opens the command palette and never submits. A leading space makes the
+        composer treat it as literal text (benched live 2026-08-08).
     """
-    if get_harness(harness).get("leading_slash_opens_palette") and text.startswith("/"):
-        return " " + text
-    return text
+    entry = get_harness(harness)
+    t = text.replace("\n", " ") if entry.get("flatten_paste_newlines") else text
+    if entry.get("leading_slash_opens_palette") and t.startswith("/"):
+        t = " " + t
+    return t
 
 
 # ---------------------------------------------------------------------------

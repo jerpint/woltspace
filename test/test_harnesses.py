@@ -145,6 +145,31 @@ class TestBuildCommandCodex:
         assert creature_model("codex", "otter") == "gpt-5.6-luna"
 
 
+class TestGuardPasteText:
+    """_guard_paste_text is a pure no-op unless the harness opts in."""
+
+    def test_claude_untouched(self):
+        from sessions import _guard_paste_text
+        multiline = "[message from x, session=y]\nbody\nReply with: ..."
+        # claude is paste-aware: keep newlines, no slash guard
+        assert _guard_paste_text("claude", multiline) == multiline
+        assert _guard_paste_text("claude", "/skill") == "/skill"
+
+    def test_codex_untouched(self):
+        from sessions import _guard_paste_text
+        assert _guard_paste_text("codex", "a\nb") == "a\nb"
+
+    def test_opencode_flattens_and_space_guards(self):
+        from sessions import _guard_paste_text
+        # newlines → spaces so the attributed message doesn't jam together
+        assert _guard_paste_text("opencode", "[from x]\nbody") == "[from x] body"
+        # leading slash gets a space (applied after flatten)
+        assert _guard_paste_text("opencode", "/woltspace-create-wolt") == " /woltspace-create-wolt"
+        # a leading newline flattens to a leading space, which already defuses
+        # the palette — no second space added
+        assert _guard_paste_text("opencode", "\n/skill") == " /skill"
+
+
 class TestBuildCommandOpencode:
     """Verified against opencode 1.18.3."""
 
