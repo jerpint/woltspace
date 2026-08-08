@@ -79,6 +79,25 @@ EOF
     if [ -e "$CONFIG_JSON" ] && ! grep -q '"snapshot"' "$CONFIG_JSON" 2>/dev/null; then
         python3 -c "import json,sys; p='$CONFIG_JSON'; d=json.load(open(p)); d['snapshot']=False; json.dump(d,open(p,'w'),indent=2)" 2>/dev/null || true
     fi
+
+    # Warm the models.dev catalog cache. opencode resolves --model (and the
+    # config "model" pin) ONCE at startup against $HOME/.cache/opencode/
+    # models.json. On a fresh wolt HOME the cache is cold, resolution fails
+    # SILENTLY and the session falls back to the first env-auto-detected
+    # provider — e.g. a tunnel-scoped CLOUDFLARE_API_TOKEN registers Workers
+    # AI, whose default model then 401s. `opencode models` fetches and writes
+    # the cache (~0.7s, benched 1.18.3); with it warm, --model resolves
+    # correctly from first paint.
+    #
+    # Gated on a missing/empty cache so this runs only on a wolt's FIRST spawn
+    # (no prior session to resume, so the brief window where this `opencode`
+    # process looks like a live agent to session_has_agent_process can't
+    # collide with a resume). If the fetch fails (network down) nothing is
+    # written and the next spawn retries — costing up to the timeout each time
+    # until it lands; acceptable for a one-time first-boot step.
+    if [ ! -s "$HOME/.cache/opencode/models.json" ]; then
+        timeout 20 opencode models > /dev/null 2>&1 || true
+    fi
 fi
 
 # NOTE on login-shell PATH: if opencode runs model bash commands via `bash -lc`

@@ -416,6 +416,28 @@ def _tmux_paste(target: str, text: str, settle: float = 0.0):
     )
 
 
+def _guard_paste_text(harness: str | None, text: str) -> str:
+    """Defuse harness-specific paste quirks. Pure no-op unless the harness
+    opts in via a flag, so shared paste paths (IWCL, resume) are unchanged
+    for claude/codex.
+
+      - flatten_paste_newlines (opencode): opencode's TUI drops newlines from a
+        pasted message entirely — it joins the lines with NO separator, so a
+        multi-line attributed IWCL message renders as jammed-together run-on
+        text ("...session=X]body..."). Flatten \\n → space so word boundaries
+        survive. claude/codex TUIs are paste-aware (a pasted \\n stays a literal
+        newline), so they must NOT flatten — the message renders multi-line.
+      - leading_slash_opens_palette (opencode): a message starting with "/"
+        opens the command palette and never submits. A leading space makes the
+        composer treat it as literal text (benched live 2026-08-08).
+    """
+    entry = get_harness(harness)
+    t = text.replace("\n", " ") if entry.get("flatten_paste_newlines") else text
+    if entry.get("leading_slash_opens_palette") and t.startswith("/"):
+        t = " " + t
+    return t
+
+
 # ---------------------------------------------------------------------------
 # IWCL — Inter-Wolt Communication. Deliver a message into a running session,
 # with attribution. The one primitive behind the wolt-to-wolt relay: a wolt
@@ -509,7 +531,7 @@ def deliver_message(session_id: str, text: str, from_wolt: str = "",
     harness = resolve_harness(data.get("harness"))
     settle = get_harness(harness).get("paste_settle", 0.0)
     body = format_attributed_message(text, from_wolt, from_session)
-    _tmux_paste(session_id, body, settle=settle)
+    _tmux_paste(session_id, _guard_paste_text(harness, body), settle=settle)
     reg.touch(session_id)
     return {"status": "delivered", "session": session_id, "harness": harness}
 
@@ -642,8 +664,13 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
         if get_harness(harness).get("preset_session_id"):
             session_id = str(uuid.uuid4())
             updates["harness_session_id"] = session_id
-        registry.update(name, wolt=wolt, **updates)
         full_prompt = _assemble_spawn_prompt(data, prompt, harness)
+        # Harnesses that can't take the boot prompt on the CLI (opencode) get
+        # it stamped here and pasted in by deliver_boot_prompt after launch.
+        if get_harness(harness).get("prompt_via_paste"):
+            updates["pending_boot_prompt"] = full_prompt
+            full_prompt = ""
+        registry.update(name, wolt=wolt, **updates)
         return build_command(
             harness, "spawn",
             session_id=session_id, session_name=name,
@@ -659,6 +686,22 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
         if not resume_id:
             legacy = data.get("claude_session_id") or ""
             resume_id = legacy if _UUID_RE.match(legacy) else ""
+        # Same CLI-prompt constraint as spawn — stamp for paste delivery.
+        if get_harness(harness).get("prompt_via_paste"):
+            if prompt:
+                # A boot prompt may already be pending (the agent died before
+                # deliver_boot_prompt could fire, e.g. an OOM-kill at boot).
+                # The bot resumes such a session WITH the user's next message
+                # (bot/core.py, app.py resume) — merge so the start-chat
+                # invocation + adapter routing context aren't clobbered.
+                # Caveat: the merged prompt has the skill invocation mid-text
+                # ("<pending> <user msg>"), so it delivers as literal context
+                # rather than auto-invoking — acceptable for the rare boot-crash
+                # recovery case; the model still reads and follows it.
+                pending = (data.get("pending_boot_prompt") or "").strip()
+                merged = f"{pending} {prompt}".strip() if pending else prompt
+                registry.update(name, wolt=wolt, pending_boot_prompt=merged)
+            prompt = ""
         return build_command(harness, "resume", resume_id=resume_id, model=model, prompt=prompt)
 
     raise ValueError(f"unknown mode: {mode}")
@@ -696,6 +739,95 @@ def discover_session_id_for(name: str, timeout: int = 90) -> str:
             return session_id
         time.sleep(2)
     return ""
+
+
+def deliver_boot_prompt(name: str, timeout: int = 90) -> bool:
+    """Paste a pending boot prompt into a session's TUI once it has painted.
+
+    Harnesses flagged prompt_via_paste (opencode) can't take the opening
+    prompt on the CLI: the TUI dispatches --prompt before model resolution
+    finishes, so the first message goes to the fallback default model instead
+    of the pin — and a prompt starting with "/" opens the command palette and
+    never submits. A tmux paste after the TUI has painted does neither (both
+    benched live on opencode 1.18.3) — same delivery as resume/IWCL.
+
+    prepare_session_command stamps pending_boot_prompt; this waits for the
+    pane to be ready, then pastes and clears the stamp. Readiness = the
+    harness's tui_ready_marker appears AFTER having been absent at least once.
+    The absent-first requirement matters on the revive path (tmux pane alive,
+    agent exited): run-session.sh --resume runs in the SAME pane, which may
+    still show the dead TUI's last frame — including the marker in its footer.
+    Waiting for the marker to clear (the pane repaints when the new agent
+    launches) before accepting it prevents pasting into a frozen stale frame.
+    A fresh/dead-tmux spawn starts on a blank pane, so absent-first is
+    satisfied immediately and costs nothing.
+
+    If the TUI never paints (agent died at boot) the stamp is left in place so
+    a later --resume respawn delivers it. Immediate no-op when nothing is
+    pending — run-session.sh backgrounds this for every spawn/resume.
+
+    Returns True when the prompt was delivered.
+    """
+    registry = SessionRegistry()
+    data = registry.get(name, check_alive=False)
+    if data is None:
+        raise ValueError(f"session '{name}' not found in registry")
+
+    if not (data.get("pending_boot_prompt") or "").strip():
+        return False
+
+    harness = resolve_harness(data.get("harness"))
+    entry = get_harness(harness)
+    marker = entry.get("tui_ready_marker") or ""
+
+    deadline = time.time() + timeout
+    ready = False
+    seen_absent = False
+    while time.time() < deadline:
+        # No marker configured → we can't detect readiness by content, so fall
+        # back to the fixed settle below (never gate on a marker we don't have,
+        # which would otherwise loop until timeout and strand the prompt).
+        if not marker:
+            ready = True
+            break
+        try:
+            pane = subprocess.run(
+                ["tmux", "capture-pane", "-t", name, "-p"],
+                capture_output=True, text=True, timeout=_TMUX_TIMEOUT,
+            ).stdout
+        except (subprocess.SubprocessError, OSError):
+            pane = ""
+        present = marker in pane
+        if not present:
+            seen_absent = True
+        elif seen_absent:
+            ready = True
+            break
+        time.sleep(1)
+    if not ready:
+        return False
+
+    # One beat between first paint and the paste — the marker appears with
+    # the TUI's first render and the composer is accepting input right after.
+    time.sleep(1)
+
+    # Claim the stamp: re-read and clear BEFORE pasting so a second concurrent
+    # poller (a stale revive-path poller still looping) sees it gone and bails
+    # rather than double-pasting. Restore it if the paste raises.
+    claim = registry.get(name, check_alive=False) or {}
+    prompt = (claim.get("pending_boot_prompt") or "").strip()
+    if not prompt:
+        return False
+    wolt = data.get("wolt", "")
+    registry.update(name, wolt=wolt, pending_boot_prompt="")
+    try:
+        # Flatten newlines (a bare \n would submit early) then guard the slash.
+        _tmux_paste(name, _guard_paste_text(harness, prompt.replace("\n", " ")),
+                    settle=entry.get("paste_settle", 0.0))
+    except Exception:
+        registry.update(name, wolt=wolt, pending_boot_prompt=prompt)
+        raise
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -851,10 +983,15 @@ def resume_session(name: str, prompt: str = "") -> dict:
 
     if tmux_alive and agent_running:
         # Agent is running — paste the prompt into the TUI as a single buffer paste.
-        # Flatten newlines: a bare \n would submit the input early in the TUI.
+        # A resume prompt is a single logical instruction, so we flatten \n here
+        # for EVERY harness (pre-existing behavior): a bare \n can submit the
+        # input early mid-message. This is deliberately different from the IWCL
+        # deliver_message path, which preserves newlines for paste-aware TUIs so
+        # the multi-line attributed message renders intact — hence the flatten
+        # lives at the call site, not in _guard_paste_text.
         if prompt:
-            flat_prompt = prompt.replace("\n", " ")
-            _tmux_paste(name, flat_prompt, settle=get_harness(harness).get("paste_settle", 0.0))
+            _tmux_paste(name, _guard_paste_text(harness, prompt.replace("\n", " ")),
+                        settle=get_harness(harness).get("paste_settle", 0.0))
         registry.update(name, wolt=wolt, status="running")
         return {"name": name, "url": session_url, "status": "delivered", "detail": "agent running, message sent"}
 
@@ -1084,6 +1221,19 @@ def cli():
         try:
             session_id = discover_session_id_for(args[1])
             print(session_id)
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            sys.exit(1)
+
+    elif cmd == "deliver-prompt":
+        # session-reg deliver-prompt <name> — paste the pending boot prompt
+        # once the TUI is ready (background helper for run-session.sh).
+        # No-op for sessions without one (claude/codex take it on the CLI).
+        if len(args) < 2:
+            print("Usage: session-reg deliver-prompt <name>", file=sys.stderr)
+            sys.exit(1)
+        try:
+            print("delivered" if deliver_boot_prompt(args[1]) else "no-op")
         except ValueError as e:
             print(str(e), file=sys.stderr)
             sys.exit(1)
