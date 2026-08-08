@@ -642,8 +642,13 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
         if get_harness(harness).get("preset_session_id"):
             session_id = str(uuid.uuid4())
             updates["harness_session_id"] = session_id
-        registry.update(name, wolt=wolt, **updates)
         full_prompt = _assemble_spawn_prompt(data, prompt, harness)
+        # Harnesses that can't take the boot prompt on the CLI (opencode) get
+        # it stamped here and pasted in by deliver_boot_prompt after launch.
+        if get_harness(harness).get("prompt_via_paste"):
+            updates["pending_boot_prompt"] = full_prompt
+            full_prompt = ""
+        registry.update(name, wolt=wolt, **updates)
         return build_command(
             harness, "spawn",
             session_id=session_id, session_name=name,
@@ -659,6 +664,11 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
         if not resume_id:
             legacy = data.get("claude_session_id") or ""
             resume_id = legacy if _UUID_RE.match(legacy) else ""
+        # Same CLI-prompt constraint as spawn — stamp for paste delivery.
+        if get_harness(harness).get("prompt_via_paste"):
+            if prompt:
+                registry.update(name, wolt=wolt, pending_boot_prompt=prompt)
+            prompt = ""
         return build_command(harness, "resume", resume_id=resume_id, model=model, prompt=prompt)
 
     raise ValueError(f"unknown mode: {mode}")
@@ -696,6 +706,72 @@ def discover_session_id_for(name: str, timeout: int = 90) -> str:
             return session_id
         time.sleep(2)
     return ""
+
+
+def deliver_boot_prompt(name: str, timeout: int = 90) -> bool:
+    """Paste a pending boot prompt into a session's TUI once it has painted.
+
+    Harnesses flagged prompt_via_paste (opencode) can't take the opening
+    prompt on the CLI: the TUI dispatches --prompt before model resolution
+    finishes, so the first message goes to the fallback default model instead
+    of the pin — and a prompt starting with "/" opens the command palette and
+    never submits. A tmux paste after the TUI has painted does neither (both
+    benched live on opencode 1.18.3) — same delivery as resume/IWCL.
+
+    prepare_session_command stamps pending_boot_prompt; this polls the pane
+    for the harness's tui_ready_marker, pastes, and clears the stamp. If the
+    TUI never paints (agent died at boot) the stamp is left in place so a
+    later --resume respawn delivers it. Immediate no-op when nothing is
+    pending — run-session.sh backgrounds this for every spawn/resume.
+
+    Returns True when the prompt was delivered.
+    """
+    registry = SessionRegistry()
+    data = registry.get(name, check_alive=False)
+    if data is None:
+        raise ValueError(f"session '{name}' not found in registry")
+
+    prompt = data.get("pending_boot_prompt") or ""
+    if not prompt.strip():
+        return False
+
+    entry = get_harness(resolve_harness(data.get("harness")))
+    marker = entry.get("tui_ready_marker") or ""
+
+    deadline = time.time() + timeout
+    ready = False
+    while time.time() < deadline:
+        try:
+            pane = subprocess.run(
+                ["tmux", "capture-pane", "-t", name, "-p"],
+                capture_output=True, text=True, timeout=_TMUX_TIMEOUT,
+            ).stdout
+        except (subprocess.SubprocessError, OSError):
+            pane = ""
+        if marker and marker in pane:
+            ready = True
+            break
+        time.sleep(1)
+    if not ready:
+        return False
+
+    # One beat between first paint and the paste — the marker appears with
+    # the TUI's first render and the composer is accepting input right after.
+    time.sleep(1)
+    # Flatten newlines like the resume path: a bare \n inside the paste would
+    # become a literal newline, but the prompt is a one-shot boot message.
+    text = prompt.replace("\n", " ")
+    # opencode's TUI opens its command palette when a message starts with "/"
+    # (create-wolt boots as a bare "/woltspace-create-wolt"), and the skill
+    # isn't a registered opencode command → "No matching items", never submits.
+    # A leading space makes the composer treat it as a literal message (benched
+    # live 2026-08-08) and the model then follows the skill. Harmless for other
+    # prompts. Gated on the harness so only opencode is touched.
+    if entry.get("leading_slash_opens_palette") and text.startswith("/"):
+        text = " " + text
+    _tmux_paste(name, text, settle=entry.get("paste_settle", 0.0))
+    registry.update(name, wolt=data.get("wolt", ""), pending_boot_prompt="")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -1084,6 +1160,19 @@ def cli():
         try:
             session_id = discover_session_id_for(args[1])
             print(session_id)
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            sys.exit(1)
+
+    elif cmd == "deliver-prompt":
+        # session-reg deliver-prompt <name> — paste the pending boot prompt
+        # once the TUI is ready (background helper for run-session.sh).
+        # No-op for sessions without one (claude/codex take it on the CLI).
+        if len(args) < 2:
+            print("Usage: session-reg deliver-prompt <name>", file=sys.stderr)
+            sys.exit(1)
+        try:
+            print("delivered" if deliver_boot_prompt(args[1]) else "no-op")
         except ValueError as e:
             print(str(e), file=sys.stderr)
             sys.exit(1)

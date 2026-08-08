@@ -145,9 +145,14 @@ def _opencode_command(entry: dict, mode: str, *, session_id: str = "",
     """Build an opencode CLI command line (verified against opencode 1.18.3).
 
       - The interactive TUI (root command, attachable in tmux) accepts -m/--model
-        (format provider/model), -s/--session, -c/--continue, and --prompt — so a
-        session behaves like claude/codex: `opencode --model <p/m> --prompt
-        "<text>"`. --prompt auto-submits the opening message (verified live).
+        (format provider/model), -s/--session, -c/--continue, and --prompt.
+        We deliberately do NOT pass --prompt: the TUI dispatches it before model
+        resolution finishes, so the opening message goes to the fallback default
+        model (first env-detected provider) instead of the pin — and a prompt
+        starting with "/" opens the TUI's command palette and never submits
+        (both benched live, 2026-08-08). The boot prompt is instead stamped as
+        pending_boot_prompt by prepare_session_command and pasted in by
+        deliver_boot_prompt once the TUI has painted ("prompt_via_paste" below).
       - opencode can't preset a session id at spawn — like codex, it assigns its
         own `ses_...` id, so run-session.sh discovers it after launch (see
         _opencode_discover_session_id). Resume is `--session <id>` (verified:
@@ -169,13 +174,13 @@ def _opencode_command(entry: dict, mode: str, *, session_id: str = "",
         raise ValueError(f"unknown mode: {mode}")
 
     # --auto = full permissions, no approval prompts (unattended, like all wolts)
+    # No --prompt ever — the boot prompt arrives via deliver_boot_prompt (see
+    # docstring); a CLI prompt would race model resolution and strand on "/".
     parts = [wrapper, "--auto"]
     if mode == "resume" and resume_id:
         parts += ["--session", resume_id]
     if model:
         parts += ["--model", model]
-    if prompt:
-        parts += ["--prompt", prompt]
     return " ".join(shlex.quote(p) for p in parts)
 
 
@@ -349,10 +354,21 @@ HARNESSES = {
             {"id": "openai/gpt-4.1", "label": "GPT-4.1"},
         ],
         # opencode mirrors Claude Code conventions (reads ~/.claude/skills and
-        # CLAUDE.md). VERIFIED live: a /skill mention in the opening --prompt
-        # triggers the skill natively (fresh wolt ran /woltspace-start-chat, read
-        # its memory, on boot).
+        # CLAUDE.md), and a /skill mention triggers the skill natively — but only
+        # when it arrives as a PASTE. Typed/CLI-injected prompts starting with
+        # "/" open the TUI command palette ("No matching items") and never
+        # submit, which is one of the two reasons boot prompts go via paste.
         "skill_invoke": "/{name}",
+        # The TUI can't take the boot prompt on the CLI (see _opencode_command
+        # docstring). prepare_session_command stamps it; deliver_boot_prompt
+        # pastes it once the marker below shows in the pane (the composer hint
+        # bar, painted with the rest of the TUI after model resolution —
+        # re-verify the string when bumping the opencode version).
+        "prompt_via_paste": True,
+        "tui_ready_marker": "ctrl+p commands",
+        # A pasted message starting with "/" opens the command palette instead
+        # of submitting; deliver_boot_prompt prepends a space to defuse it.
+        "leading_slash_opens_palette": True,
         # opencode reads AGENTS.md as primary, CLAUDE.md as a documented
         # fallback. wopencode symlinks AGENTS.md -> CLAUDE.md for parity with
         # codex; the fallback means it would work even without the symlink.

@@ -148,20 +148,25 @@ class TestBuildCommandCodex:
 class TestBuildCommandOpencode:
     """Verified against opencode 1.18.3."""
 
-    def test_spawn_has_auto_and_model_and_prompt(self):
+    def test_spawn_has_auto_and_model_but_never_prompt(self):
+        """The TUI dispatches --prompt before model resolution (wrong model)
+        and a leading "/" strands in its command palette — boot prompts go
+        via deliver_boot_prompt instead, so the command must not carry one."""
         cmd = build_command("opencode", "spawn", model="openai/gpt-4o", prompt="hey")
         assert "wopencode" in cmd
         # --auto = full permissions, no approval prompts (like all other wolts)
         assert "--auto" in cmd
         assert "--model openai/gpt-4o" in cmd
-        assert cmd.endswith("--prompt hey")
+        assert "--prompt" not in cmd
         # opencode can't preset a session id at spawn
         assert "--session" not in build_command("opencode", "spawn", session_id="x")
 
-    def test_resume_uses_session_flag_and_auto(self):
-        cmd = build_command("opencode", "resume", resume_id="ses_abc", model="openai/gpt-4o")
+    def test_resume_uses_session_flag_and_auto_and_no_prompt(self):
+        cmd = build_command("opencode", "resume", resume_id="ses_abc",
+                            model="openai/gpt-4o", prompt="continue")
         assert "--auto" in cmd
         assert "--session ses_abc" in cmd
+        assert "--prompt" not in cmd
 
     def test_login_is_auth_login(self):
         assert build_command("opencode", "login").endswith("auth login")
@@ -403,6 +408,151 @@ class TestSessionHarnessPlumbing:
         cmd = prepare_session_command("testwolt-old-dam-abc123", "resume", "hello")
         assert "wclaude" in cmd
         assert "--resume a1b2c3d4-e5f6-7890-abcd-ef1234567890" in cmd
+
+
+class TestBootPromptViaPaste:
+    """opencode boot prompts: stamped by prepare, pasted by deliver_boot_prompt.
+
+    The opencode TUI dispatches a CLI --prompt before model resolution
+    finishes (first message lands on the fallback provider) and a leading
+    "/" opens its command palette without submitting — so the prompt is
+    stamped as pending_boot_prompt and pasted in after the TUI paints.
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup_wolt(self, tmp_path, monkeypatch):
+        import sessions
+        import sites
+        import paths
+
+        monkeypatch.setattr(sessions, "WOLTS_DIR", tmp_path)
+        monkeypatch.setattr(sessions, "RUN_SESSION_SCRIPT", Path("/bin/true"))
+        monkeypatch.setattr(sites, "WOLTS_DIR", tmp_path)
+        monkeypatch.setattr(paths, "WOLTS_DIR", tmp_path)
+
+        wolt_dir = tmp_path / "testwolt" / "wolt"
+        wolt_dir.mkdir(parents=True)
+        (wolt_dir / "site").mkdir()
+        (wolt_dir / "site" / "index.html").write_text("<h1>test</h1>")
+        (wolt_dir / "wolt.json").write_text(json.dumps({
+            "name": "testwolt", "type": "raccoon", "harness": "opencode",
+        }))
+        self.wolts_dir = tmp_path
+
+    def _start(self, **kwargs):
+        from sessions import start_session
+        with patch("sessions.subprocess.run"):
+            return start_session(wolt="testwolt", prompt="hello", **kwargs)
+
+    def _session_data(self, name):
+        from sessions import SessionRegistry
+        return SessionRegistry(self.wolts_dir).get(name, check_alive=False)
+
+    def test_spawn_stamps_pending_and_omits_prompt(self):
+        from sessions import prepare_session_command
+        result = self._start()
+        cmd = prepare_session_command(result["name"], "spawn", "/woltspace-create-wolt")
+        assert "wopencode" in cmd
+        assert "--prompt" not in cmd
+        # The full assembled prompt (skill invocation intact) is stamped
+        assert self._session_data(result["name"])["pending_boot_prompt"] == "/woltspace-create-wolt"
+
+    def test_resume_stamps_pending_and_omits_prompt(self):
+        from sessions import prepare_session_command
+        result = self._start()
+        cmd = prepare_session_command(result["name"], "resume", "continue please")
+        assert "--prompt" not in cmd
+        assert self._session_data(result["name"])["pending_boot_prompt"] == "continue please"
+
+    def test_resume_without_prompt_stamps_nothing(self):
+        from sessions import prepare_session_command
+        result = self._start()
+        prepare_session_command(result["name"], "resume", "")
+        assert not self._session_data(result["name"]).get("pending_boot_prompt")
+
+    def test_claude_spawn_keeps_cli_prompt(self, monkeypatch):
+        """Only prompt_via_paste harnesses divert — claude is untouched."""
+        from sessions import prepare_session_command
+        (self.wolts_dir / "testwolt" / "wolt" / "wolt.json").write_text(json.dumps({
+            "name": "testwolt", "type": "raccoon", "harness": "claude",
+        }))
+        result = self._start()
+        cmd = prepare_session_command(result["name"], "spawn", "/woltspace-create-wolt")
+        assert "/woltspace-create-wolt" in cmd
+        assert not self._session_data(result["name"]).get("pending_boot_prompt")
+
+    def test_deliver_pastes_once_tui_ready_and_clears_stamp(self, monkeypatch):
+        import sessions
+        from sessions import deliver_boot_prompt, prepare_session_command
+        result = self._start()
+        name = result["name"]
+        prepare_session_command(name, "spawn", "/woltspace-create-wolt")
+
+        pasted = []
+        monkeypatch.setattr(sessions, "_tmux_paste",
+                            lambda target, text, settle=0.0: pasted.append((target, text, settle)))
+
+        def fake_run(cmd, **kwargs):
+            class R:
+                stdout = "┃ Ask anything...\n tab agents  ctrl+p commands"
+            return R()
+        monkeypatch.setattr(sessions.subprocess, "run", fake_run)
+        monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
+
+        assert deliver_boot_prompt(name, timeout=5) is True
+        # Leading slash gets a space guard (opencode palette defuse)
+        assert pasted == [(name, " /woltspace-create-wolt", 0.5)]
+        assert self._session_data(name)["pending_boot_prompt"] == ""
+        # Second call is a no-op — the stamp is gone
+        assert deliver_boot_prompt(name, timeout=5) is False
+
+    def test_deliver_no_space_guard_for_non_slash_prompt(self, monkeypatch):
+        """A normal prompt is pasted verbatim — the guard only touches "/"."""
+        import sessions
+        from sessions import deliver_boot_prompt, prepare_session_command
+        result = self._start()
+        name = result["name"]
+        prepare_session_command(name, "resume", "just chatting")
+
+        pasted = []
+        monkeypatch.setattr(sessions, "_tmux_paste",
+                            lambda target, text, settle=0.0: pasted.append(text))
+        monkeypatch.setattr(sessions.subprocess, "run",
+                            lambda *a, **k: type("R", (), {"stdout": "ctrl+p commands"})())
+        monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
+
+        assert deliver_boot_prompt(name, timeout=5) is True
+        assert pasted == ["just chatting"]
+
+    def test_deliver_leaves_stamp_when_tui_never_paints(self, monkeypatch):
+        """Agent died at boot → keep the stamp so a --resume respawn delivers it."""
+        import sessions
+        from sessions import deliver_boot_prompt, prepare_session_command
+        result = self._start()
+        name = result["name"]
+        prepare_session_command(name, "spawn", "hello")
+
+        def fake_run(cmd, **kwargs):
+            class R:
+                stdout = ""
+            return R()
+        monkeypatch.setattr(sessions.subprocess, "run", fake_run)
+        monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
+        monkeypatch.setattr(sessions, "_tmux_paste",
+                            lambda *a, **k: pytest.fail("must not paste before TUI paints"))
+
+        assert deliver_boot_prompt(name, timeout=0) is False
+        # Stamp survives (full assembled prompt — start-chat appended)
+        assert self._session_data(name)["pending_boot_prompt"] == "hello /woltspace-start-chat lodge testwolt"
+
+    def test_deliver_noop_for_claude_sessions(self):
+        from sessions import deliver_boot_prompt, prepare_session_command
+        (self.wolts_dir / "testwolt" / "wolt" / "wolt.json").write_text(json.dumps({
+            "name": "testwolt", "type": "raccoon", "harness": "claude",
+        }))
+        result = self._start()
+        prepare_session_command(result["name"], "spawn", "hello")
+        assert deliver_boot_prompt(result["name"], timeout=1) is False
 
 
 class TestModelCatalog:
