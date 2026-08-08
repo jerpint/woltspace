@@ -560,6 +560,28 @@ class TestBootPromptViaPaste:
         assert deliver_boot_prompt(name, timeout=5) is True
         assert pasted == ["hello world /woltspace-start-chat lodge testwolt"]
 
+    def test_deliver_without_marker_falls_back_to_settle(self, monkeypatch):
+        """A prompt_via_paste harness with no tui_ready_marker must still
+        deliver (via the fixed settle) rather than loop until timeout."""
+        import sessions
+        from harnesses import HARNESSES
+        from sessions import deliver_boot_prompt, prepare_session_command
+        result = self._start()
+        name = result["name"]
+        prepare_session_command(name, "spawn", "hello world")
+
+        monkeypatch.setitem(HARNESSES["opencode"], "tui_ready_marker", "")
+        pasted = []
+        monkeypatch.setattr(sessions, "_tmux_paste",
+                            lambda target, text, settle=0.0: pasted.append(text))
+        # Pane never shows any marker — with the old code this would strand.
+        monkeypatch.setattr(sessions.subprocess, "run",
+                            lambda *a, **k: type("R", (), {"stdout": "no marker here"})())
+        monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
+
+        assert deliver_boot_prompt(name, timeout=5) is True
+        assert pasted == ["hello world /woltspace-start-chat lodge testwolt"]
+
     def test_concurrent_deliver_does_not_double_paste(self, monkeypatch):
         """A second poller that runs after the stamp is claimed must bail."""
         import sessions

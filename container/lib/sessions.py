@@ -694,6 +694,10 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
                 # The bot resumes such a session WITH the user's next message
                 # (bot/core.py, app.py resume) — merge so the start-chat
                 # invocation + adapter routing context aren't clobbered.
+                # Caveat: the merged prompt has the skill invocation mid-text
+                # ("<pending> <user msg>"), so it delivers as literal context
+                # rather than auto-invoking — acceptable for the rare boot-crash
+                # recovery case; the model still reads and follows it.
                 pending = (data.get("pending_boot_prompt") or "").strip()
                 merged = f"{pending} {prompt}".strip() if pending else prompt
                 registry.update(name, wolt=wolt, pending_boot_prompt=merged)
@@ -778,8 +782,14 @@ def deliver_boot_prompt(name: str, timeout: int = 90) -> bool:
 
     deadline = time.time() + timeout
     ready = False
-    seen_absent = not marker  # no marker configured → don't gate on absence
+    seen_absent = False
     while time.time() < deadline:
+        # No marker configured → we can't detect readiness by content, so fall
+        # back to the fixed settle below (never gate on a marker we don't have,
+        # which would otherwise loop until timeout and strand the prompt).
+        if not marker:
+            ready = True
+            break
         try:
             pane = subprocess.run(
                 ["tmux", "capture-pane", "-t", name, "-p"],
@@ -787,7 +797,7 @@ def deliver_boot_prompt(name: str, timeout: int = 90) -> bool:
             ).stdout
         except (subprocess.SubprocessError, OSError):
             pane = ""
-        present = bool(marker) and marker in pane
+        present = marker in pane
         if not present:
             seen_absent = True
         elif seen_absent:
@@ -973,7 +983,12 @@ def resume_session(name: str, prompt: str = "") -> dict:
 
     if tmux_alive and agent_running:
         # Agent is running — paste the prompt into the TUI as a single buffer paste.
-        # Flatten newlines: a bare \n would submit the input early in the TUI.
+        # A resume prompt is a single logical instruction, so we flatten \n here
+        # for EVERY harness (pre-existing behavior): a bare \n can submit the
+        # input early mid-message. This is deliberately different from the IWCL
+        # deliver_message path, which preserves newlines for paste-aware TUIs so
+        # the multi-line attributed message renders intact — hence the flatten
+        # lives at the call site, not in _guard_paste_text.
         if prompt:
             _tmux_paste(name, _guard_paste_text(harness, prompt.replace("\n", " ")),
                         settle=get_harness(harness).get("paste_settle", 0.0))
