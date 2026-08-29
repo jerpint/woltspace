@@ -65,6 +65,10 @@ woltspace start
 | `woltspace shell` | Shell into running container |
 | `woltspace chat` | Open Claude directly in container |
 | `woltspace logs` | Stream container logs |
+| `woltspace exposure status` | Show the effective remote-exposure mode |
+| `woltspace exposure off` | Disable remote exposure (the default) |
+| `woltspace exposure temporary` | Start an unauthenticated Cloudflare Quick Tunnel |
+| `woltspace exposure authenticated` | Use a named tunnel configured with Cloudflare Access |
 
 ### Flags
 
@@ -102,23 +106,37 @@ tmux config there (remap the prefix to `C-a`, paste your oh-my-tmux `.local`,
 restyle the status line) and it survives rebuilds. Applies when a tmux server
 starts; for a running lodge, `woltspace shell` then `tmux source-file /etc/tmux.conf`.
 
-## Public tunnel
+## Remote exposure
 
 During `woltspace init`, you'll be asked:
 
 ```
-enable public link? [Y/n]
+enable public link? [y/N]
 ```
 
-Saying **yes** creates a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/) — an ephemeral public URL so you can access your wolt from anywhere (phone, another machine, etc.). No account needed, URL changes on every restart.
+Remote exposure is **off by default**. Woltspace binds its host port to
+`127.0.0.1`, so the lodge is available only on the machine running Docker.
 
-Saying **no** means `http://localhost:7777` only. You can change this anytime in `~/.woltspace/wolts/.env`:
+Saying **yes** during setup selects `temporary` mode and creates a
+[Cloudflare Quick Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/) — an ephemeral public URL for access from another device. No account is needed and the URL changes on every restart. Quick Tunnels do **not** authenticate visitors; anyone with the URL can reach the lodge.
+
+Manage exposure at any time:
 
 ```bash
-WOLTSPACE_PUBLIC_TUNNEL=true   # or false
+woltspace exposure status
+woltspace exposure off
+woltspace exposure temporary
+woltspace exposure authenticated
 ```
 
-Then `woltspace stop && woltspace start` to apply.
+`authenticated` mode uses a named Cloudflare Tunnel and requires
+`CLOUDFLARE_TUNNEL_TOKEN` and `CLOUDFLARE_TUNNEL_URL` in
+`~/.woltspace/wolts/.env`. A named tunnel is not authentication by itself:
+configure a Cloudflare Access application and allow policy for the hostname
+before enabling this mode. The CLI restarts a running lodge to apply changes.
+
+Cloudflare is currently the only exposure provider. The mode model is kept
+provider-neutral so other providers can be added later.
 
 ## Updates
 
@@ -244,7 +262,7 @@ To restore:
 docker stop woltspace && docker rm woltspace
 docker run -d --name woltspace \
   -v ~/.woltspace/wolts-backup-<tag>:/workspace/wolts:rw \
-  -p 7777:7777 \
+  -p 127.0.0.1:7777:7777 \
   woltspace-backup:<tag>
 ```
 

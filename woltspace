@@ -10,6 +10,7 @@
 #   woltspace chat                    — open claude in container
 #   woltspace chat --session <slug>   — attach to a live wolt session in your terminal
 #   woltspace logs                    — stream container logs
+#   woltspace exposure <mode|status>  — manage remote exposure
 #   woltspace backup [tag]            — snapshot container + wolts (tag defaults to datetime)
 #   woltspace backup [tag] --bundle  — same, but zipped into one portable file
 #   woltspace update                  — check for updates and apply (spawns Claude)
@@ -86,6 +87,58 @@ _G=$'\033[0;32m'; _B=$'\033[1m'; _R=$'\033[0m'
 
 # --- Helpers ---
 
+_env_get() {
+  local key="$1"
+  [ -f "$WOLTS_DIR/.env" ] || return 0
+  sed -n "s/^${key}=//p" "$WOLTS_DIR/.env" | tail -n 1
+}
+
+_env_set() {
+  local key="$1" value="$2" env_file="$WOLTS_DIR/.env" tmp
+  mkdir -p "$WOLTS_DIR"
+  [ -f "$env_file" ] || cp "$WOLTSPACE_DIR/.env.example" "$env_file"
+  tmp=$(mktemp "$WOLTS_DIR/.env.XXXXXX")
+  awk -v key="$key" -v value="$value" '
+    BEGIN { found = 0 }
+    $0 ~ "^" key "=" { if (!found) print key "=" value; found = 1; next }
+    { print }
+    END { if (!found) print key "=" value }
+  ' "$env_file" > "$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$env_file"
+}
+
+_exposure_mode() {
+  local configured legacy
+  configured=$(_env_get WOLTSPACE_EXPOSURE)
+  case "$configured" in
+    off|temporary|authenticated) echo "$configured"; return ;;
+    "") ;;
+    *) echo "off"; return ;;
+  esac
+  legacy=$(_env_get WOLTSPACE_PUBLIC_TUNNEL)
+  if [ "$legacy" = "true" ]; then
+    if [ -n "$(_env_get CLOUDFLARE_TUNNEL_TOKEN)" ] && [ -n "$(_env_get CLOUDFLARE_TUNNEL_URL)" ]; then
+      echo "authenticated"
+    else
+      echo "temporary"
+    fi
+  else
+    echo "off"
+  fi
+}
+
+_restart_for_exposure() {
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
+    echo "  restarting lodge to apply exposure mode..."
+    docker rm -f "$CONTAINER_NAME" > /dev/null
+    rm -f "$WOLTS_DIR/.space/platform/tunnel.json"
+    _start_container
+  else
+    echo "  setting saved — it will apply on the next woltspace start"
+  fi
+}
+
 _build_image() {
   local cache_flag=""
   [ "$NO_CACHE" = true ] && cache_flag="--no-cache"
@@ -142,7 +195,7 @@ _start_container() {
     -v "$WOLTS_DIR:/workspace/wolts:rw" \
     -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
     $dev_mount \
-    -p "${WOLTSPACE_PORT:-7777}":7777 \
+    -p "${WOLTSPACE_BIND_HOST:-127.0.0.1}:${WOLTSPACE_PORT:-7777}:7777" \
     $extra_args \
     woltspace > /dev/null
 
@@ -163,13 +216,10 @@ _show_url() {
   echo "  ${_L}   the lodge is open${_R}"
   echo ""
 
-  # Check if tunnel is enabled
-  local env_file="$WOLTS_DIR/.env"
-  local tunnel_enabled
-  tunnel_enabled=$(grep '^WOLTSPACE_PUBLIC_TUNNEL=' "$env_file" 2>/dev/null | cut -d= -f2-)
-  tunnel_enabled="${tunnel_enabled:-true}"
+  local exposure_mode
+  exposure_mode=$(_exposure_mode)
 
-  if [ "$tunnel_enabled" = "true" ]; then
+  if [ "$exposure_mode" != "off" ]; then
     TUNNEL_URL=""
     TUNNEL_STATE="$WOLTS_DIR/.space/platform/tunnel.json"
     echo "  ${_D}🌲 starting tunnel${_R}"
@@ -183,8 +233,12 @@ _show_url() {
     done
     echo ""
     if [ -n "$TUNNEL_URL" ]; then
-      printf "  public: %b%s%b\n" "${_C}" "$TUNNEL_URL" "${_R}"
-      echo "  ${_D}share carefully — anyone with this link can reach your wolts.${_R}"
+      printf "  %s: %b%s%b\n" "$exposure_mode" "${_C}" "$TUNNEL_URL" "${_R}"
+      if [ "$exposure_mode" = "temporary" ]; then
+        echo "  ${_D}share carefully — anyone with this link can reach your wolts.${_R}"
+      else
+        echo "  ${_D}confirm Cloudflare Access protects this hostname.${_R}"
+      fi
     else
       echo "  ${_D}tunnel still digging — check 'woltspace logs'${_R}"
     fi
@@ -286,13 +340,13 @@ if [ "$cmd" = "init" ]; then
     echo ""
     printf "  %byour wolts will persist at %b%s%b\n" "${_D}" "${_R}${_C}" "$WOLTS_DIR" "${_R}"
     echo ""
-    echo "  ${_D}enable public access?${_R}"
+    echo "  ${_D}enable temporary public access?${_R}"
     echo "  ${_L}  creates a temporary link so you can reach woltspace from anywhere.${_R}"
     echo "  ${_L}  the link changes on every restart. only share with people you trust.${_R}"
     echo ""
-    echo -n "  ${_C}enable public link? [Y/n]${_R} "
+    echo -n "  ${_C}enable public link? [y/N]${_R} "
     read -r _tunnel </dev/tty
-    _tunnel="${_tunnel:-Y}"
+    _tunnel="${_tunnel:-N}"
   fi
 
   # Create wolts dir + .env from template
@@ -304,14 +358,11 @@ if [ "$cmd" = "init" ]; then
   if [[ "$_tunnel" == [Yy] ]]; then
     echo ""
     echo "  ${_G}✓${_R} public access enabled"
-    # Set tunnel enabled explicitly
-    sed -i '' 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=true/' "$WOLTS_DIR/.env" 2>/dev/null || \
-    sed -i 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=true/' "$WOLTS_DIR/.env"
+    _env_set WOLTSPACE_EXPOSURE temporary
   else
     echo ""
     echo "  ${_D}no worries — localhost:7777 only. you can enable it later in .env${_R}"
-    sed -i '' 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=false/' "$WOLTS_DIR/.env" 2>/dev/null || \
-    sed -i 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=false/' "$WOLTS_DIR/.env"
+    _env_set WOLTSPACE_EXPOSURE off
   fi
   echo ""
 
@@ -336,7 +387,7 @@ if [ ! -d "$WOLTS_DIR" ] || [ "$(_count_wolts)" -eq 0 ]; then
   fi
   # Allow container-management commands even with no wolts (onboarding)
   case "$cmd" in
-    logs|shell|stop|chat) ;;  # fall through to subcommands
+    logs|shell|stop|chat|exposure) ;;  # fall through to subcommands
     *)
       echo ""
       echo "  🦫 no wolts found at $WOLTS_DIR"
@@ -355,6 +406,46 @@ fi
 # --- Subcommands ---
 
 case "$cmd" in
+  exposure)
+    action="${2:-status}"
+    case "$action" in
+      status)
+        mode=$(_exposure_mode)
+        echo "exposure: $mode"
+        if [ "$mode" = "authenticated" ]; then
+          if [ -z "$(_env_get CLOUDFLARE_TUNNEL_TOKEN)" ] || [ -z "$(_env_get CLOUDFLARE_TUNNEL_URL)" ]; then
+            echo "status: misconfigured — named tunnel token and URL are required"
+            exit 1
+          fi
+          echo "provider: cloudflare (named tunnel; Access policy is managed in Cloudflare)"
+        elif [ "$mode" = "temporary" ]; then
+          echo "provider: cloudflare (public Quick Tunnel; no authentication)"
+        else
+          echo "provider: none (host access bound to 127.0.0.1 by default)"
+        fi
+        ;;
+      off|temporary)
+        _env_set WOLTSPACE_EXPOSURE "$action"
+        echo "  exposure set to $action"
+        _restart_for_exposure
+        ;;
+      authenticated)
+        if [ -z "$(_env_get CLOUDFLARE_TUNNEL_TOKEN)" ] || [ -z "$(_env_get CLOUDFLARE_TUNNEL_URL)" ]; then
+          echo "error: authenticated mode requires CLOUDFLARE_TUNNEL_TOKEN and CLOUDFLARE_TUNNEL_URL in $WOLTS_DIR/.env"
+          echo "configure a Cloudflare Access policy for that hostname before enabling it"
+          exit 1
+        fi
+        _env_set WOLTSPACE_EXPOSURE authenticated
+        echo "  exposure set to authenticated"
+        echo "  Cloudflare Access is configured externally; verify its policy before sharing the URL"
+        _restart_for_exposure
+        ;;
+      *)
+        echo "usage: woltspace exposure <status|off|temporary|authenticated>"
+        exit 1
+        ;;
+    esac
+    ;;
   session|wolt|app|harness)
     # Control plane — forward to the in-container `woltspace` client, which
     # talks to the localhost API. Lifecycle verbs below stay host-side (docker);
@@ -526,7 +617,7 @@ echo ""
 echo "restore complete. run with:"
 echo "  docker run -d --name woltspace \\"
 echo "    -v $DIR/wolts:/workspace/wolts:rw \\"
-echo "    -p 7777:7777 \\"
+echo "    -p 127.0.0.1:7777:7777 \\"
 echo "    woltspace-backup:$TAG"
 RESTORE
       chmod +x "$TMPDIR/restore.sh"
@@ -547,7 +638,7 @@ RESTORE
     else
       echo "    docker run -d --name $CONTAINER_NAME \\"
       echo "      -v $BACKUP_DIR:/workspace/wolts:rw \\"
-      echo "      -p ${WOLTSPACE_PORT:-7777}:7777 \\"
+      echo "      -p 127.0.0.1:${WOLTSPACE_PORT:-7777}:7777 \\"
       echo "      woltspace-backup:$TAG"
     fi
     echo ""
@@ -626,7 +717,7 @@ RESTORE
     claude "/woltspace-update"
     ;;
   *)
-    echo "usage: woltspace <init|start|stop|rebuild|backup|shell|chat|logs|update>"
+    echo "usage: woltspace <init|start|stop|rebuild|backup|shell|chat|logs|update|exposure>"
     echo "       woltspace rebuild [--latest|--version X|--nightly|--branch X|--no-cache]"
     echo "       woltspace backup [tag] [--bundle]"
     exit 1
