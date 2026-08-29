@@ -177,8 +177,8 @@ def _get_response_with_mock_tools(user_message: str, mock_session_result: dict =
             result = dict(mock_session_result)
             if args.get("creature"):
                 result["creature"] = args["creature"]
-                from bot.core import CREATURE_MODELS
-                result["model"] = CREATURE_MODELS.get(args["creature"], "")
+                from harnesses import creature_model
+                result["model"] = creature_model("claude", args["creature"]) or ""
             return json.dumps(result)
         # For other tools, use real implementation
         return original_execute(name, args, routing)

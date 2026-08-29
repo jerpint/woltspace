@@ -37,9 +37,48 @@
         </fieldset>
       {% endcall %}
 
+      {% call panel('Tier defaults', 'A tier is a role, not a model. Point each tier at its own engine and model - or let it follow the lodge default.', 'seeds new dens') %}
+        <div class="ds-field-list">
+          {% for row in tiers %}
+            <div class="ds-field ds-tier-field" data-tier-row data-tier="{{ row.tier }}" data-saved-harness="{{ row.pinned }}" data-saved-model="{{ row.model }}">
+              <div class="ds-field-copy">
+                <span class="ds-tier-label"><span class="ds-tier-emoji" aria-hidden="true">{{ row.emoji }}</span><span class="ds-label">{{ row.tier }} · {{ row.role }}</span></span>
+                <p class="ds-help">{{ row.blurb }}</p>
+              </div>
+              <div class="ds-field-control">
+                <div class="ds-tier-grid">
+                  <label class="ds-control">
+                    <span class="ds-control-label">engine</span>
+                    <select class="ds-select" data-tier-harness aria-label="{{ row.tier }} engine">
+                      <option value=""{% if not row.pinned %} selected{% endif %}>Follow lodge default</option>
+                      {% for harness in harnesses %}
+                        <option value="{{ harness.id }}"{% if row.pinned == harness.id %} selected{% endif %}>{{ harness.label }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label class="ds-control">
+                    <span class="ds-control-label">model</span>
+                    <select class="ds-select" data-tier-model aria-label="{{ row.tier }} model">
+                      {% for harness in harnesses %}{% if harness.id == row.harness %}
+                        {% for m in harness.catalog %}
+                          <option value="{{ m.id }}"{% if m.id == row.model %} selected{% endif %}>{{ m.label }}</option>
+                        {% endfor %}
+                      {% endif %}{% endfor %}
+                    </select>
+                  </label>
+                  <span class="ds-pill ds-pill-subtle ds-tier-pill" data-tier-status>
+                    {{ 'Pinned' if row.pinned else 'Follows lodge' }} · {{ row.harness }} · {{ row.model }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% endcall %}
+
       <div class="ds-callout" role="note">
         <span class="ds-callout-icon" aria-hidden="true">🌿</span>
-        <div><strong>A quiet handoff</strong><p>Engine changes affect the next den you open. Sessions already running keep the engine they started with.</p></div>
+        <div><strong>Who wins</strong><p>A wolt's own pin beats its tier default, which beats the lodge default. Sessions already running keep the engine they started with - changes apply to the next den.</p></div>
       </div>
 
       {% call panel('Wolt overrides', 'Pin a particular wolt, or let it wander with the lodge default.', (wolts|length ~ ' wolts')) %}
@@ -78,6 +117,9 @@
   <span class="ds-toast-icon" data-toast-icon>✓</span>
   <span data-toast-message>Saved</span>
 </div>
+
+{# per-engine catalogs + merged tier defaults, for the tier card's cascading selects #}
+<script type="application/json" data-harness-data>{{ harnesses|tojson }}</script>
 {% endblock %}
 
 {% block scripts %}

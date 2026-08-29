@@ -59,8 +59,14 @@ from harnesses import (
     harness_metadata,
     get_default_harness,
     set_default_harness,
+    get_tier_harness,
+    set_tier_harness,
+    set_tier_model,
+    tier_default_model,
+    is_valid_model,
     resolve_harness,
     HARNESSES,
+    PICKER_TIERS,
 )
 from apps import (
     WoltspaceApp,
@@ -872,6 +878,53 @@ async def set_harness_default(request: Request):
     return {"ok": True, "default": name}
 
 
+@app.post("/harness/tiers")
+async def set_harness_tier(request: Request):
+    """Set a tier's default engine and/or model (woltspace.json harness.tiers
+    + harness.models.<engine>.tiers).
+
+    Body {"tier": "otter", "harness": "codex"} points the tier at an engine
+    (null/"" clears it — follow the lodge default). Include "model" to also
+    set the tier's model on the effective engine (null clears the override).
+    """
+    body = await request.json()
+    tier = body.get("tier")
+    if tier not in {t for t, _ in PICKER_TIERS}:
+        return JSONResponse({"error": f"unknown tier: {tier}"}, status_code=400)
+
+    # Validate the whole request before writing anything — a bad model must
+    # not leave a half-applied engine change behind.
+    requested_harness = body.get("harness")
+    if "harness" in body and requested_harness and (
+            not isinstance(requested_harness, str) or requested_harness not in HARNESSES):
+        return JSONResponse({"error": f"unknown harness: {requested_harness}"}, status_code=400)
+    if "harness" in body:
+        prospective = requested_harness or get_default_harness()
+    else:
+        prospective = get_tier_harness(tier) or get_default_harness()
+    model = body.get("model")
+    if "model" in body and model and (
+            not isinstance(model, str) or not is_valid_model(prospective, model)):
+        return JSONResponse({"error": f"unknown model for {prospective}: {model}"}, status_code=400)
+
+    try:
+        if "harness" in body:
+            set_tier_harness(tier, requested_harness)
+        effective = get_tier_harness(tier) or get_default_harness()
+        if "model" in body:
+            set_tier_model(effective, tier, model)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+    return {
+        "ok": True,
+        "tier": tier,
+        "pinned": get_tier_harness(tier) is not None,
+        "harness": effective,
+        "model": tier_default_model(effective, tier),
+    }
+
+
 @app.post("/wolts/{name}/harness")
 async def set_wolt_harness(name: str, request: Request):
     """Pin or clear a wolt's engine override (wolt.json "harness").
@@ -1389,11 +1442,28 @@ async def settings_page(request: Request):
         wolt for wolt in _configured_wolts()
         if wolt.get("type", "rodent") in configurable_types
     ]
+    harness_default = get_default_harness()
+    tier_meta = {
+        "raccoon": ("🦝", "judgment work - design, review, orchestrating other wolts"),
+        "beaver": ("🦫", "the workhorse - features, refactors, steady building"),
+        "otter": ("🦦", "fast and light - small tasks, lookups, quick fixes"),
+    }
+    tiers = []
+    for tier, role in PICKER_TIERS:
+        pinned = get_tier_harness(tier)
+        effective = pinned or harness_default
+        emoji, blurb = tier_meta.get(tier, ("🐾", ""))
+        tiers.append({
+            "tier": tier, "role": role, "emoji": emoji, "blurb": blurb,
+            "pinned": pinned or "", "harness": effective,
+            "model": tier_default_model(effective, tier) or "",
+        })
     return templates.TemplateResponse(request, "settings.html", context={
         "active_nav": "settings",
         "cache_bust": int(time.time()),
-        "harness_default": get_default_harness(),
+        "harness_default": harness_default,
         "harnesses": harness_metadata(),
+        "tiers": tiers,
         "wolts": wolts,
     })
 

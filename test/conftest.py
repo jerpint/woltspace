@@ -140,7 +140,7 @@ def routed_test_session(test_chat_id):
         name=name,
         wolt="neowolt",
         creature="beaver",
-        model="sonnet",
+        model="claude-sonnet-5",
         dir="/workspace/wolts/neowolt",
         prompt="test probe session",
         adapter="telegram",

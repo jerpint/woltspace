@@ -20,7 +20,6 @@ from openai import OpenAI
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from sessions import (
     SessionRegistry,
-    CREATURE_MODELS,
     SESSION_ADJECTIVES,
     SESSION_NOUNS,
     build_session_command,
@@ -336,9 +335,6 @@ def _call_server(method: str, path: str, body: dict | None = None) -> dict:
     )
     with urllib.request.urlopen(req, timeout=5) as resp:
         return json.loads(resp.read())
-
-
-# CREATURE_MODELS — imported from sessions
 
 
 def start_claude_session(prompt: str, wolt: str = None, creature: str = None, routing: dict = None, app: str = None) -> dict:
