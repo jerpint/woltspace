@@ -1,0 +1,54 @@
+version: 2
+updates:
+  # Node — root TUI service (ws, node-pty)
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - npm
+
+  # Python — server (FastAPI, uvicorn, jinja2, etc.)
+  - package-ecosystem: pip
+    directory: /server
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - python
+
+  # Python — bot (litellm, telegram, slack, pyjwt)
+  - package-ecosystem: pip
+    directory: /container/bot
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - python
+
+  # Note: root /pyproject.toml is intentionally not scanned. It's used only by
+  # the test runner (`uv run --extra test pytest test/`) and its runtime
+  # dependencies are a hand-maintained superset of the per-service pyprojects.
+  # server/ and container/bot/ are the source of truth for runtime deps.
+
+  # Docker — base image (node:22-slim) in the container Dockerfile
+  - package-ecosystem: docker
+    directory: /container
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - docker
+
+  # GitHub Actions — keep workflow action versions current as workflows land
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - github-actions
