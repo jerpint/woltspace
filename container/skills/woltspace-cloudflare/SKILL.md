@@ -19,6 +19,7 @@ Ask the user which task they need, then read the matching sub-doc and follow it 
 | First-time tunnel + Access setup | `setup.md` | No named tunnel yet, or `CLOUDFLARE_TUNNEL_TOKEN` is unset in `/workspace/wolts/.env`. |
 | Add a person to an existing app | `add-access.md` | Tunnel + Access already configured. Granting an email access to the lodge, the wildcard, or one specific subdomain. |
 | Remove a person from an app | `remove-access.md` | Revoking a previously-granted email. |
+| SSH to the host from anywhere | `ssh.md` | Tunnel + Access already configured. Exposing the host's sshd at `ssh.{domain}` — no open ports, owner-only Access app in front. |
 
 Quick check for which state the user is in:
 
