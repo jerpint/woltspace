@@ -271,21 +271,44 @@ def _get_wolt_emoji(wolt_name: str) -> str:
         return "🐾"
 
 
+def dispatch_script(entry: dict) -> bool:
+    """Run a cron entry's shell command fire-and-forget. Returns True on dispatch."""
+    import subprocess
+    name = entry.get("name", "unnamed")
+    command = entry.get("command", "")
+    if not command:
+        print(f"[wolf] {name}: script action has no command", file=sys.stderr)
+        return False
+    try:
+        subprocess.Popen(["bash", "-c", command], start_new_session=True)
+        print(f"[wolf] dispatched script for {name}: {command[:80]}")
+        return True
+    except Exception as e:
+        print(f"[wolf] script dispatch error for {name}: {e}", file=sys.stderr)
+        return False
+
+
 def fire_cron(entry: dict):
-    """Execute a cron entry — dispatch session, then always notify with link."""
+    """Execute a cron entry — dispatch script or session, then notify."""
     name = entry.get("name", "unnamed")
     owner = entry.get("_owner", "?")
+    action = entry.get("action", "session")
 
-    _log_job(name, "session", event="started", owner=owner)
+    if action == "script":
+        _log_job(name, "script", event="started", owner=owner)
+        ok = dispatch_script(entry)
+        _log_job(name, "script", event="dispatched" if ok else "failed", owner=owner)
+        link = None
+    else:
+        _log_job(name, "session", event="started", owner=owner)
+        link = dispatch_session(entry)
+        _log_job(name, "session", event="dispatched", owner=owner, link=link)
 
-    # Dispatch session for the owning wolt
-    link = dispatch_session(entry)
-
-    _log_job(name, "session", event="dispatched", owner=owner, link=link)
-
-    # Build notification message
-    emoji = _get_wolt_emoji(owner)
+    # Notification (skip for script-action crons unless they have a custom notify)
     custom_msg = entry.get("notify")
+    if action == "script" and not custom_msg:
+        return
+    emoji = _get_wolt_emoji(owner)
     if custom_msg:
         notify_body = f'{emoji} {owner} has been notified: "{custom_msg}"'
     else:
