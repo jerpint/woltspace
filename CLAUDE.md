@@ -113,12 +113,17 @@ Commands:
 Flags:
 - `--local` — build image from local repo (COPY) instead of git clone
 - `--branch <name>` — build image from a specific branch (default: main)
+- `--mount <src:dst>` — bind-mount an extra host dir into the container (repeatable)
 
 Env vars:
 - `WOLTS_DIR` — override wolts directory (default: `~/.woltspace/wolts`)
 - `WOLTSPACE_LOCAL=true` — sticky equivalent of `--local` (for dev workflows)
+- `WOLTSPACE_MOUNTS` — sticky equivalent of `--mount`, comma-separated `src:dst` pairs (read from `$WOLTS_DIR/.env`)
 
-The only mount is `$WOLTS_DIR:/workspace/wolts`. Everything else is baked into the image.
+The only mount is `$WOLTS_DIR:/workspace/wolts` — everything else is baked into the image,
+unless the user adds their own via `--mount` / `WOLTSPACE_MOUNTS`. Extra mounts are validated
+before `docker run`: the source must exist, and the target may not collide with
+`/workspace/wolts`, `/workspace/woltspace`, or `/home/node/.claude`.
 
 ### Docker Image
 

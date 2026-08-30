@@ -22,6 +22,10 @@
 # Flags:
 #   --branch <name>   — build image from a specific branch (default: main)
 #   --local           — build image from local repo instead of git clone
+#   --mount <src:dst> — bind-mount an extra host dir into the container (repeatable)
+#                       e.g. --mount ~/code/my-repo:/workspace/my-repo
+#                       Sticky alternative: set WOLTSPACE_MOUNTS in $WOLTS_DIR/.env
+#                       as a comma-separated list of src:dst pairs.
 #
 # All state lives under ~/.woltspace/wolts (overridable via WOLTS_DIR).
 # The container is disposable — ~/wolts is the backup.
@@ -53,14 +57,18 @@ BUILD_BRANCH="main"
 BUILD_VERSION=""
 BUILD_LATEST=false
 NO_CACHE=false
+EXTRA_MOUNTS=()
 _next=""
 for arg in "$@"; do
   if [ -n "$_next" ]; then
     if [ "$_next" = "branch" ]; then BUILD_BRANCH="$arg";
-    elif [ "$_next" = "version" ]; then BUILD_VERSION="$arg"; fi
+    elif [ "$_next" = "version" ]; then BUILD_VERSION="$arg";
+    elif [ "$_next" = "mount" ]; then EXTRA_MOUNTS+=("$arg"); fi
     _next=""
   elif [ "$arg" = "--local" ]; then
     LOCAL_BUILD=true
+  elif [ "$arg" = "--mount" ]; then
+    _next=mount
   elif [ "$arg" = "--branch" ]; then
     _next=branch
   elif [ "$arg" = "--version" ]; then
@@ -133,6 +141,36 @@ _start_container() {
     echo "  ${_L}   dev mount: $WOLTSPACE_DIR → /workspace/woltspace${_R}"
   fi
 
+  # Extra bind mounts: --mount flags plus WOLTSPACE_MOUNTS from .env (comma-separated).
+  # Each entry is host_src:container_dst. Host paths are expanded and must exist.
+  local mount_args=()
+  local _env_mounts
+  _env_mounts=$(grep '^WOLTSPACE_MOUNTS=' "$WOLTS_DIR/.env" 2>/dev/null | cut -d= -f2- | tr -d '"'"'"'"')
+  local _all=("${EXTRA_MOUNTS[@]}")
+  if [ -n "$_env_mounts" ]; then
+    local _saved_ifs="$IFS"; IFS=','
+    for _m in $_env_mounts; do _all+=("$_m"); done
+    IFS="$_saved_ifs"
+  fi
+  for _m in "${_all[@]}"; do
+    [ -z "$_m" ] && continue
+    local _src="${_m%%:*}" _dst="${_m#*:}"
+    _src="${_src/#\~/$HOME}"
+    if [ "$_src" = "$_dst" ] || [ -z "$_dst" ]; then
+      echo "  ${_D}🧱 bad --mount '$_m' (expected src:dst)${_R}"; exit 1
+    fi
+    if [ ! -d "$_src" ]; then
+      echo "  ${_D}🧱 --mount source not found: $_src${_R}"; exit 1
+    fi
+    _src="$(cd "$_src" && pwd)"
+    case "$_dst" in
+      /workspace/wolts|/workspace/wolts/*|/workspace/woltspace|/workspace/woltspace/*|/home/node/.claude|/home/node/.claude/*)
+        echo "  ${_D}🧱 --mount target '$_dst' collides with a platform mount${_R}"; exit 1 ;;
+    esac
+    mount_args+=(-v "$_src:$_dst:rw")
+    echo "  ${_L}   mount: $_src → $_dst${_R}"
+  done
+
   mkdir -p "$WOLTS_DIR/.claude"
   docker run -d \
     --name "$CONTAINER_NAME" \
@@ -142,6 +180,7 @@ _start_container() {
     -v "$WOLTS_DIR:/workspace/wolts:rw" \
     -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
     $dev_mount \
+    "${mount_args[@]}" \
     -p "${WOLTSPACE_PORT:-7777}":7777 \
     $extra_args \
     woltspace > /dev/null

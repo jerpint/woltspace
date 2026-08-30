@@ -72,6 +72,7 @@ woltspace start
 |------|-------------|
 | `--local` | Build image from local repo instead of git clone |
 | `--branch <name>` | Build image from a specific branch (default: main) |
+| `--mount <src:dst>` | Bind-mount an extra host directory into the container (repeatable) |
 
 ## Where things live
 
@@ -222,6 +223,27 @@ woltspace rebuild --branch staging  # build from a remote branch
 **How `--local` works:** Instead of `git clone` inside the Docker image, the local repo is `COPY`'d in. The image is fully self-contained — no mounts, no hot-reload. Change code → `woltspace rebuild` → see changes.
 
 **How `--branch` works:** The Docker image does `git clone --branch <name>` from GitHub. No local repo needed at all.
+
+### Mounting your own directories
+
+By default the container only sees your wolts directory. To give your wolts access to a
+repo or folder that lives elsewhere on your machine, bind-mount it:
+
+```bash
+woltspace start --mount ~/code/my-repo:/workspace/my-repo
+```
+
+`--mount` is repeatable. To make it stick across a plain `woltspace start`, put it in
+`$WOLTS_DIR/.env` instead:
+
+```bash
+WOLTSPACE_MOUNTS=~/code/my-repo:/workspace/my-repo,~/notes:/workspace/notes
+```
+
+Both forms take `src:dst` pairs, expand `~`, and are mounted read-write. The source
+directory must already exist, and the target can't collide with a platform mount
+(`/workspace/wolts`, `/workspace/woltspace`, `/home/node/.claude`) — `woltspace start`
+fails fast with a clear message if either check doesn't pass.
 
 Both produce the same image structure. The only mount is `~/.woltspace/wolts/`.
 
