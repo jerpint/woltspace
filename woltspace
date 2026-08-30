@@ -22,10 +22,10 @@
 # Flags:
 #   --branch <name>   — build image from a specific branch (default: main)
 #   --local           — build image from local repo instead of git clone
-#   --mount <src:dst> — bind-mount an extra host dir into the container (repeatable)
-#                       e.g. --mount ~/code/my-repo:/workspace/my-repo
+#   --mount <path>    — bind-mount an extra host dir at /mnt/<name> (repeatable)
+#                       e.g. --mount ~/code/my-repo  →  /mnt/my-repo
 #                       Sticky alternative: set WOLTSPACE_MOUNTS in $WOLTS_DIR/.env
-#                       as a comma-separated list of src:dst pairs.
+#                       as a comma-separated list of source paths.
 #
 # All state lives under ~/.woltspace/wolts (overridable via WOLTS_DIR).
 # The container is disposable — ~/wolts is the backup.
@@ -141,8 +141,15 @@ _start_container() {
     echo "  ${_L}   dev mount: $WOLTSPACE_DIR → /workspace/woltspace${_R}"
   fi
 
-  # Extra bind mounts: --mount flags plus WOLTSPACE_MOUNTS from .env (comma-separated).
-  # Each entry is host_src:container_dst. Host paths are expanded and must exist.
+  # Extra bind mounts. Each entry is a host source path — the target is always
+  # /mnt/<basename>, so users never pick a target and can't collide with a
+  # platform mount. /mnt is outside /workspace, so the entrypoint's chown -R
+  # doesn't touch it. Sources come from --mount flags and from WOLTSPACE_MOUNTS
+  # in .env (comma-separated), read the same way WOLTSPACE_PUBLIC_TUNNEL is.
+  #
+  # Deliberately no colon splitting: a trailing :ro mode is the clean extension
+  # if read-only mounts are ever wanted, and that stays open only while a source
+  # is parsed whole.
   local mount_args=()
   local _env_mounts
   _env_mounts=$(grep '^WOLTSPACE_MOUNTS=' "$WOLTS_DIR/.env" 2>/dev/null | cut -d= -f2- | tr -d '"'"'"'"')
@@ -152,23 +159,48 @@ _start_container() {
     for _m in $_env_mounts; do _all+=("$_m"); done
     IFS="$_saved_ifs"
   fi
+
+  local _names=() _srcs=()
   for _m in "${_all[@]}"; do
     [ -z "$_m" ] && continue
-    local _src="${_m%%:*}" _dst="${_m#*:}"
-    _src="${_src/#\~/$HOME}"
-    if [ "$_src" = "$_dst" ] || [ -z "$_dst" ]; then
-      echo "  ${_D}🧱 bad --mount '$_m' (expected src:dst)${_R}"; exit 1
-    fi
+    local _src="${_m/#\~/$HOME}"
     if [ ! -d "$_src" ]; then
-      echo "  ${_D}🧱 --mount source not found: $_src${_R}"; exit 1
+      echo "  ${_D}🧱 --mount source not found: $_src${_R}"
+      exit 1
     fi
+    # Resolve before deriving the name: normalizes a trailing slash, which
+    # ${_src##*/} would turn into an empty name (and /mnt/).
     _src="$(cd "$_src" && pwd)"
-    case "$_dst" in
-      /workspace/wolts|/workspace/wolts/*|/workspace/woltspace|/workspace/woltspace/*|/home/node/.claude|/home/node/.claude/*)
-        echo "  ${_D}🧱 --mount target '$_dst' collides with a platform mount${_R}"; exit 1 ;;
-    esac
-    mount_args+=(-v "$_src:$_dst:rw")
-    echo "  ${_L}   mount: $_src → $_dst${_R}"
+    if [ "$_src" = "/" ]; then
+      echo "  ${_D}🧱 --mount refuses to mount / ${_R}"
+      exit 1
+    fi
+    local _name
+    _name="$(basename "$_src")"
+
+    # Same basename from two different sources both want /mnt/<name>. Docker
+    # refuses the whole container without saying which two clashed, so say it here.
+    local _i=0 _clash="" _dupe=false
+    while [ $_i -lt ${#_names[@]} ]; do
+      if [ "${_names[$_i]}" = "$_name" ]; then
+        if [ "${_srcs[$_i]}" = "$_src" ]; then _dupe=true; else _clash="${_srcs[$_i]}"; fi
+        break
+      fi
+      _i=$((_i + 1))
+    done
+    [ "$_dupe" = true ] && continue   # same dir listed twice (flag + .env) — harmless
+    if [ -n "$_clash" ]; then
+      echo "  ${_D}🧱 two --mount sources share the name '$_name':${_R}"
+      echo "  ${_D}     $_clash${_R}"
+      echo "  ${_D}     $_src${_R}"
+      echo "  ${_L}   both would land at /mnt/$_name — mount a parent dir, or rename one${_R}"
+      exit 1
+    fi
+
+    _names+=("$_name")
+    _srcs+=("$_src")
+    mount_args+=(-v "$_src:/mnt/$_name:rw")
+    echo "  ${_L}   mount: $_src → /mnt/$_name${_R}"
   done
 
   mkdir -p "$WOLTS_DIR/.claude"
@@ -629,6 +661,18 @@ RESTORE
       echo "  ${_D}🪵 local build — $WOLTSPACE_DIR${_R}"
       echo "  ${_L}   gnawing on local timber${_R}"
       echo ""
+    fi
+
+    # Bind mounts are fixed at docker run, and start only creates a container when
+    # none exists — a running one short-circuits below, a stopped one is restarted
+    # with its original spec. Either way --mount would silently do nothing.
+    # Gated on the flag only: WOLTSPACE_MOUNTS applies whenever the container is
+    # created, same as every other .env var.
+    if [ ${#EXTRA_MOUNTS[@]} -gt 0 ] && docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+      echo "  ${_D}🧱 --mount needs a fresh container, and one already exists${_R}"
+      echo "  ${_L}   run: woltspace stop && woltspace start --mount ...${_R}"
+      echo "  ${_L}   (that's a recreate — seconds. no rebuild needed.)${_R}"
+      exit 1
     fi
 
     if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then

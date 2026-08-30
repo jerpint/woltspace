@@ -1,3 +1,39 @@
+### Mounting your own directories
+
+By default the container only sees your wolts directory. To give your wolts access to a
+repo or folder that lives elsewhere on your machine, bind-mount it:
+
+```bash
+woltspace start --mount ~/code/my-repo      # appears at /mnt/my-repo
+```
+
+`--mount` takes a source path. The target is always `/mnt/<name>`, where `<name>` is the
+directory's own name — so `ls /mnt` inside the container shows a wolt everything it can
+reach. The flag is repeatable. To make mounts stick across a plain `woltspace start`, list
+the sources in `$WOLTS_DIR/.env` instead:
+
+```bash
+WOLTSPACE_MOUNTS=~/code/my-repo,~/notes
+```
+
+Paths expand `~` and must already exist. If two sources have the same directory name
+(`~/code/api` and `~/archive/api` both wanting `/mnt/api`), `woltspace start` says which
+two clashed instead of letting docker fail with a bare "duplicate mount point".
+
+**Mounts are read-write.** A wolt can change and delete files in the real directory on your
+machine, not a copy. Mount what you want worked on, and keep it under version control.
+
+**Changing mounts needs a new container.** Bind mounts are fixed when the container is
+created, so `woltspace start --mount ...` on an existing lodge stops and tells you rather
+than silently doing nothing:
+
+```bash
+woltspace stop && woltspace start --mount ~/code/my-repo
+```
+
+That's a container recreate — a few seconds. It is *not* `woltspace rebuild`, which
+rebuilds the whole image and takes minutes for no benefit here.
+
 # 🦫 woltspace
 
 give your wolt space to build.
@@ -72,7 +108,7 @@ woltspace start
 |------|-------------|
 | `--local` | Build image from local repo instead of git clone |
 | `--branch <name>` | Build image from a specific branch (default: main) |
-| `--mount <src:dst>` | Bind-mount an extra host directory into the container (repeatable) |
+| `--mount <path>` | Bind-mount a host directory at `/mnt/<name>` (repeatable) |
 
 ## Where things live
 
