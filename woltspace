@@ -156,7 +156,15 @@ _start_container() {
   local _all=("${EXTRA_MOUNTS[@]}")
   if [ -n "$_env_mounts" ]; then
     local _saved_ifs="$IFS"; IFS=','
-    for _m in $_env_mounts; do _all+=("$_m"); done
+    for _m in $_env_mounts; do
+      # IFS is commas only, so " ~/notes" keeps its leading space — and writing
+      # a list with spaces after the commas is the natural thing to do. Trim both
+      # ends; [:space:] also catches a stray \r from a CRLF .env. An entry that
+      # is all whitespace (a trailing comma) trims to empty and is skipped below.
+      _m="${_m#"${_m%%[![:space:]]*}"}"
+      _m="${_m%"${_m##*[![:space:]]}"}"
+      _all+=("$_m")
+    done
     IFS="$_saved_ifs"
   fi
 

@@ -13,10 +13,11 @@ reach. The flag is repeatable. To make mounts stick across a plain `woltspace st
 the sources in `$WOLTS_DIR/.env` instead:
 
 ```bash
-WOLTSPACE_MOUNTS=~/code/my-repo,~/notes
+WOLTSPACE_MOUNTS=~/code/my-repo, ~/notes
 ```
 
-Paths expand `~` and must already exist. If two sources have the same directory name
+Paths expand `~` and must already exist. Whitespace around the commas is trimmed, so
+you can space the list out for readability. If two sources have the same directory name
 (`~/code/api` and `~/archive/api` both wanting `/mnt/api`), `woltspace start` says which
 two clashed instead of letting docker fail with a bare "duplicate mount point".
 
