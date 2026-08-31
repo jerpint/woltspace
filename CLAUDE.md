@@ -113,12 +113,23 @@ Commands:
 Flags:
 - `--local` — build image from local repo (COPY) instead of git clone
 - `--branch <name>` — build image from a specific branch (default: main)
+- `--mount <path>` — bind-mount a host dir at `/mnt/<name>` (repeatable)
 
 Env vars:
 - `WOLTS_DIR` — override wolts directory (default: `~/.woltspace/wolts`)
 - `WOLTSPACE_LOCAL=true` — sticky equivalent of `--local` (for dev workflows)
+- `WOLTSPACE_MOUNTS` — sticky equivalent of `--mount`, comma-separated source paths (read from `$WOLTS_DIR/.env`)
 
-The only mount is `$WOLTS_DIR:/workspace/wolts`. Everything else is baked into the image.
+The only mount is `$WOLTS_DIR:/workspace/wolts` — everything else is baked into the image,
+unless the user adds their own via `--mount` / `WOLTSPACE_MOUNTS`. Those take a source path
+only and always land at `/mnt/<name>`, read-write, so a user-chosen target can never collide
+with a platform mount. `/mnt` also sits outside `/workspace`, clear of the entrypoint's
+`chown -R`. Sources must exist, and two sources with the same directory name are rejected by
+name before `docker run`.
+
+Bind mounts are fixed at container creation. `woltspace start --mount ...` with a container
+already present exits with instructions (`woltspace stop && woltspace start`) rather than
+silently no-op'ing — a recreate, not a rebuild.
 
 ### Docker Image
 
