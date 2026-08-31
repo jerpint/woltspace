@@ -127,6 +127,71 @@ _build_image() {
   fi
 }
 
+_mount_fail() {
+  local line
+  for line in "$@"; do echo "  ${_D}🧱 $line${_R}" >&2; done
+  exit 1
+}
+
+# Fills the global $mount_args with docker -v flags for the user's extra mounts.
+# (A global, not stdout — capturing would word-split paths containing spaces.)
+#
+# Each entry is a host source path and lands at /mnt/<name>. Users never pick a
+# target, so collisions with /workspace/wolts, /workspace/woltspace and
+# /home/node/.claude are impossible rather than guarded, and `ls /mnt` shows a
+# wolt everything it can reach. /mnt is outside /workspace, clear of the
+# entrypoint's chown -R. Sources come from --mount and from WOLTSPACE_MOUNTS in
+# .env, read the same way WOLTSPACE_PUBLIC_TUNNEL is.
+#
+# Entries are never split on ':' — that keeps a trailing :ro mode available as a
+# clean extension if read-only mounts are ever wanted.
+_build_mount_args() {
+  mount_args=()
+  local entries=("${EXTRA_MOUNTS[@]}") seen=() raw src name prev dup env_list
+  env_list=$(grep '^WOLTSPACE_MOUNTS=' "$WOLTS_DIR/.env" 2>/dev/null | cut -d= -f2- | tr -d '"'"'"'"')
+
+  if [ -n "$env_list" ]; then
+    local saved_ifs="$IFS"; IFS=','
+    # IFS is commas only, so " ~/notes" keeps its leading space. [:space:] also
+    # eats a stray \r from a CRLF .env, and flattens an all-whitespace field
+    # (from a trailing comma) to "" — skipped below.
+    for raw in $env_list; do
+      raw="${raw#"${raw%%[![:space:]]*}"}"
+      entries+=("${raw%"${raw##*[![:space:]]}"}")
+    done
+    IFS="$saved_ifs"
+  fi
+
+  for raw in "${entries[@]}"; do
+    [ -z "$raw" ] && continue
+    # cd+pwd validates and resolves in one step, and normalizes a trailing slash
+    # — which basename would otherwise reduce to an empty name, giving /mnt/.
+    if ! src=$(cd "${raw/#\~/$HOME}" 2>/dev/null && pwd); then
+      _mount_fail "--mount source not found: $raw"
+    fi
+    [ "$src" = / ] && _mount_fail "--mount refuses to mount /"
+    name=$(basename "$src")
+
+    # Two different sources sharing a name both want /mnt/<name>; docker refuses
+    # the container without saying which two clashed, so say it here.
+    dup=""
+    for prev in "${seen[@]}"; do
+      case "$prev" in "$name"::*) dup="${prev#*::}"; break ;; esac
+    done
+    if [ -n "$dup" ]; then
+      [ "$dup" = "$src" ] && continue   # same dir via flag and .env — harmless
+      _mount_fail "two --mount sources share the name '$name':" \
+                  "    $dup" \
+                  "    $src" \
+                  "both would land at /mnt/$name — mount a parent, or rename one"
+    fi
+
+    seen+=("$name::$src")
+    mount_args+=(-v "$src:/mnt/$name:rw")
+    echo "  ${_L}   mount: $src → /mnt/$name${_R}"
+  done
+}
+
 _start_container() {
   local wolt_name="${1:-}"
   docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
@@ -141,75 +206,7 @@ _start_container() {
     echo "  ${_L}   dev mount: $WOLTSPACE_DIR → /workspace/woltspace${_R}"
   fi
 
-  # Extra bind mounts. Each entry is a host source path — the target is always
-  # /mnt/<basename>, so users never pick a target and can't collide with a
-  # platform mount. /mnt is outside /workspace, so the entrypoint's chown -R
-  # doesn't touch it. Sources come from --mount flags and from WOLTSPACE_MOUNTS
-  # in .env (comma-separated), read the same way WOLTSPACE_PUBLIC_TUNNEL is.
-  #
-  # Deliberately no colon splitting: a trailing :ro mode is the clean extension
-  # if read-only mounts are ever wanted, and that stays open only while a source
-  # is parsed whole.
-  local mount_args=()
-  local _env_mounts
-  _env_mounts=$(grep '^WOLTSPACE_MOUNTS=' "$WOLTS_DIR/.env" 2>/dev/null | cut -d= -f2- | tr -d '"'"'"'"')
-  local _all=("${EXTRA_MOUNTS[@]}")
-  if [ -n "$_env_mounts" ]; then
-    local _saved_ifs="$IFS"; IFS=','
-    for _m in $_env_mounts; do
-      # IFS is commas only, so " ~/notes" keeps its leading space — and writing
-      # a list with spaces after the commas is the natural thing to do. Trim both
-      # ends; [:space:] also catches a stray \r from a CRLF .env. An entry that
-      # is all whitespace (a trailing comma) trims to empty and is skipped below.
-      _m="${_m#"${_m%%[![:space:]]*}"}"
-      _m="${_m%"${_m##*[![:space:]]}"}"
-      _all+=("$_m")
-    done
-    IFS="$_saved_ifs"
-  fi
-
-  local _names=() _srcs=()
-  for _m in "${_all[@]}"; do
-    [ -z "$_m" ] && continue
-    local _src="${_m/#\~/$HOME}"
-    if [ ! -d "$_src" ]; then
-      echo "  ${_D}🧱 --mount source not found: $_src${_R}"
-      exit 1
-    fi
-    # Resolve before deriving the name: normalizes a trailing slash, which
-    # ${_src##*/} would turn into an empty name (and /mnt/).
-    _src="$(cd "$_src" && pwd)"
-    if [ "$_src" = "/" ]; then
-      echo "  ${_D}🧱 --mount refuses to mount / ${_R}"
-      exit 1
-    fi
-    local _name
-    _name="$(basename "$_src")"
-
-    # Same basename from two different sources both want /mnt/<name>. Docker
-    # refuses the whole container without saying which two clashed, so say it here.
-    local _i=0 _clash="" _dupe=false
-    while [ $_i -lt ${#_names[@]} ]; do
-      if [ "${_names[$_i]}" = "$_name" ]; then
-        if [ "${_srcs[$_i]}" = "$_src" ]; then _dupe=true; else _clash="${_srcs[$_i]}"; fi
-        break
-      fi
-      _i=$((_i + 1))
-    done
-    [ "$_dupe" = true ] && continue   # same dir listed twice (flag + .env) — harmless
-    if [ -n "$_clash" ]; then
-      echo "  ${_D}🧱 two --mount sources share the name '$_name':${_R}"
-      echo "  ${_D}     $_clash${_R}"
-      echo "  ${_D}     $_src${_R}"
-      echo "  ${_L}   both would land at /mnt/$_name — mount a parent dir, or rename one${_R}"
-      exit 1
-    fi
-
-    _names+=("$_name")
-    _srcs+=("$_src")
-    mount_args+=(-v "$_src:/mnt/$_name:rw")
-    echo "  ${_L}   mount: $_src → /mnt/$_name${_R}"
-  done
+  _build_mount_args
 
   mkdir -p "$WOLTS_DIR/.claude"
   docker run -d \
