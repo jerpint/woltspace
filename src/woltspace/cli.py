@@ -75,9 +75,76 @@ def _serve(args) -> int:
     )):
         return 1
     from .supervisor import Supervisor
+    from .instance import InstanceConflict
 
-    Supervisor(layout, reload=args.reload, log_level=args.log_level).run()
+    supervisor = Supervisor(
+        layout,
+        reload=args.reload,
+        log_level=args.log_level,
+        **({"instance_id": args.instance_id} if args.instance_id else {}),
+    )
+    try:
+        supervisor.run()
+    except InstanceConflict as exc:
+        print(f"serve failed: {exc}")
+        return 1
     return 0
+
+
+def _status(args) -> int:
+    from .instance import inspect_instance
+
+    layout = RuntimeLayout.from_env(isolation=args.isolation)
+    result = inspect_instance(layout)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"state: {result['state']}")
+        print(f"endpoint: {result['endpoint']}")
+        print(f"wolts: {result['wolts_dir']}")
+        owner = result.get("owner") or {}
+        if owner:
+            print(f"owner: pid {owner['pid']} · {owner['instance_id']} · {owner['hostname']}")
+    return 0 if result["state"] in {"healthy", "stopped"} else 1
+
+
+def _start(args) -> int:
+    from .lifecycle import start
+
+    layout = RuntimeLayout.from_env(isolation="host")
+    layout = RuntimeLayout(
+        layout.wolts_dir, layout.install_root,
+        args.host or layout.host, args.port or layout.port, "host",
+    )
+    code, result = start(layout, timeout=args.timeout)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    elif code == 0:
+        print(f"woltspace {result.get('detail', 'running')}: {layout.endpoint}")
+        print(f"wolts: {layout.wolts_dir}")
+        if result.get("log"):
+            print(f"logs: {result['log']}")
+        print("status: woltspace status")
+    else:
+        print(f"start failed: {result.get('error') or result.get('state')}")
+        for check in result.get("checks", []):
+            if check["status"] == "fail":
+                print(f"  {check['name']}: {check['detail']}")
+                if check.get("remedy"):
+                    print(f"  fix: {check['remedy']}")
+    return code
+
+
+def _stop(args) -> int:
+    from .lifecycle import stop
+
+    layout = RuntimeLayout.from_env(isolation="host")
+    code, result = stop(layout, timeout=args.timeout)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(result.get("detail") or f"stop failed: {result.get('error')}")
+    return code
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -103,7 +170,25 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--reload", action="store_true")
     serve.add_argument("--no-doctor", action="store_true")
     serve.add_argument("--log-level", default="info")
+    serve.add_argument("--instance-id", default="", help=argparse.SUPPRESS)
     serve.set_defaults(func=_serve)
+
+    start = sub.add_parser("start", help="start the native control plane")
+    start.add_argument("--host", default="")
+    start.add_argument("--port", type=int, default=0)
+    start.add_argument("--timeout", type=float, default=15.0)
+    start.add_argument("--json", action="store_true")
+    start.set_defaults(func=_start)
+
+    status = sub.add_parser("status", help="inspect native control-plane ownership")
+    status.add_argument("--json", action="store_true")
+    status.add_argument("--isolation", choices=("host", "external"), default="host")
+    status.set_defaults(func=_status)
+
+    stop = sub.add_parser("stop", help="stop only the native control plane")
+    stop.add_argument("--timeout", type=float, default=10.0)
+    stop.add_argument("--json", action="store_true")
+    stop.set_defaults(func=_stop)
     return parser
 
 

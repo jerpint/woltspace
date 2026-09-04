@@ -7,6 +7,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from .layout import RuntimeLayout
+from .instance import DataRootLock
 
 
 @dataclass
@@ -27,22 +28,22 @@ class Supervisor:
     def run(self) -> None:
         self.prepare()
         import uvicorn
+        with DataRootLock(self.layout, self.instance_id):
+            if self.reload:
+                uvicorn.run(
+                    "server.app:app",
+                    host=self.layout.host,
+                    port=self.layout.port,
+                    reload=True,
+                    reload_dirs=[str(self.layout.install_root / "server")],
+                    log_level=self.log_level,
+                )
+                return
 
-        if self.reload:
+            from server.app import app
             uvicorn.run(
-                "server.app:app",
+                app,
                 host=self.layout.host,
                 port=self.layout.port,
-                reload=True,
-                reload_dirs=[str(self.layout.install_root / "server")],
                 log_level=self.log_level,
             )
-            return
-
-        from server.app import app
-        uvicorn.run(
-            app,
-            host=self.layout.host,
-            port=self.layout.port,
-            log_level=self.log_level,
-        )

@@ -176,6 +176,7 @@ async def health():
     return {
         "ok": True,
         "instance_id": os.environ.get("WOLTSPACE_INSTANCE_ID", ""),
+        "pid": os.getpid(),
         "wolts_dir": str(WOLTS_DIR),
         "isolation": os.environ.get("WOLTSPACE_ISOLATION", "external"),
     }
