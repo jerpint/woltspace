@@ -12,6 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 import sessions  # noqa: E402
+from session_runtime import RuntimeHandle  # noqa: E402
 from sessions import (  # noqa: E402
     format_attributed_message,
     format_spawned_prompt,
@@ -120,6 +121,12 @@ class TestDeliverMessage:
     def test_delivered_pastes_attributed_body_with_harness_settle(self, tmp_registry, monkeypatch):
         reg = tmp_registry
         reg.create("codexw-warm-oak-aaaaaa", wolt="codexw", harness="codex")
+        reg.update(
+            "codexw-warm-oak-aaaaaa", wolt="codexw",
+            runtime=RuntimeHandle(
+                "codexw-warm-oak-aaaaaa", "persisted-tmux", "%42"
+            ).to_record(),
+        )
         monkeypatch.setattr(sessions, "_tmux_alive", lambda n: True)
         captured = {}
 
@@ -135,7 +142,8 @@ class TestDeliverMessage:
         )
         assert res["status"] == "delivered"
         assert res["harness"] == "codex"
-        assert captured["target"] == "codexw-warm-oak-aaaaaa"
+        assert captured["target"]["runtime"]["tmux_session_name"] == "persisted-tmux"
+        assert captured["target"]["runtime"]["pane_id"] == "%42"
         # attribution was applied
         assert captured["text"].startswith("[message from uxwolt, session=uxwolt-bushy-fur-224aa5]")
         assert "let's talk" in captured["text"]

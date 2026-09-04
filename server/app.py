@@ -659,8 +659,8 @@ async def session_new_create(request: Request):
       - name: wolt name (required, lowercase alphanumeric + hyphens)
       - type: creature type (required, one of: otter, beaver, raccoon)
 
-    The server scaffolds the full wolt directory (including .claude/ isolation)
-    before spawning the session. No fallback HOME needed.
+    The server scaffolds the full wolt directory before spawning the session.
+    External mode adds per-wolt harness isolation; native mode inherits host auth.
     """
     body = await request.json()
     wolt_name = (body.get("name") or "").strip().lower()
@@ -680,7 +680,7 @@ async def session_new_create(request: Request):
         return JSONResponse({"detail": "type must be otter, beaver, or raccoon"}, status_code=400)
 
     try:
-        # Step 1: Scaffold the wolt (dir, wolt.json, memory, site, .claude/, CLAUDE.md)
+        # Step 1: Scaffold the wolt with environment-appropriate harness config.
         from wolts import create_creature_wolt
         create_creature_wolt(wolt_name, wolt_type)
         print(f"[sessions/create] scaffolded wolt '{wolt_name}' ({wolt_type})")

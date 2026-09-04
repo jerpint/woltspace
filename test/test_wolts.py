@@ -285,6 +285,25 @@ class TestCreateCreatureWolt:
 class TestCredentials:
     """Unit: setup_wolt_claude_config manages credential copies correctly."""
 
+    def test_native_host_writes_no_harness_config_or_credentials(
+        self, tmp_path, monkeypatch
+    ):
+        from wolts import setup_wolt_claude_config
+        shared_claude = tmp_path / ".claude"
+        shared_claude.mkdir()
+        (shared_claude / ".credentials.json").write_text('{"token": "host"}')
+        wolt_dir = tmp_path / "mywolt"
+        wolt_dir.mkdir()
+        monkeypatch.setenv("WOLTSPACE_ISOLATION", "host")
+
+        with patch("wolts.WOLTS_DIR", tmp_path), patch(
+            "wolts.WOLTSPACE_DIR", tmp_path / "woltspace"
+        ):
+            setup_wolt_claude_config(wolt_dir, "mywolt")
+
+        assert not (wolt_dir / ".claude").exists()
+        assert not (wolt_dir / ".claude.json").exists()
+
     def test_copies_shared_credentials(self, tmp_path):
         """Fresh wolt gets a copy (not symlink) of shared creds."""
         from wolts import setup_wolt_claude_config

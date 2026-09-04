@@ -177,14 +177,21 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "", descript
 
 
 def setup_wolt_claude_config(wolt_dir: Path, name: str) -> None:
-    """Set up per-wolt .claude/ directory for config isolation.
+    """Set up per-wolt Claude isolation only in the external/container mode.
 
     Creates:
       - .claude/settings.json — platform defaults (hooks, permissions)
       - .claude/.credentials.json — symlink to shared credentials
       - .claude/skills/ — copy of platform skills
       - .claude.json — trust config for this wolt's directories
+
+    Native sessions inherit the host harness environment and receive wolt
+    context explicitly, so writing or copying harness config into a wolt would
+    be both unnecessary and a credential-leak risk.
     """
+    if os.environ.get("WOLTSPACE_ISOLATION", "external") == "host":
+        return
+
     claude_dir = wolt_dir / ".claude"
     claude_dir.mkdir(exist_ok=True)
 

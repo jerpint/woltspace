@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -37,6 +38,10 @@ class RuntimeLayout:
         return self.state_root / "logs"
 
     @property
+    def runtime_lib(self) -> Path:
+        return self.install_root / "container" / "lib"
+
+    @property
     def endpoint(self) -> str:
         return f"http://{self.host}:{self.port}"
 
@@ -63,6 +68,11 @@ class RuntimeLayout:
 
     def apply_environment(self) -> None:
         """Freeze paths before modules with import-time configuration load."""
+        for path in (self.install_root, self.runtime_lib):
+            resolved = str(path)
+            if resolved in sys.path:
+                sys.path.remove(resolved)
+            sys.path.insert(0, resolved)
         os.environ["WOLTS_DIR"] = str(self.wolts_dir)
         os.environ.setdefault("WOLT_DIR", str(self.wolts_dir))
         os.environ["WOLTSPACE_DIR"] = str(self.install_root)

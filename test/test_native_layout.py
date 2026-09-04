@@ -49,6 +49,7 @@ def test_explicit_layout_is_canonical_and_applies_environment(tmp_path, monkeypa
     assert os.environ["WOLTSPACE_DIR"] == str(root)
     assert os.environ["WOLTSPACE_ISOLATION"] == "external"
     assert os.environ["PORT"] == "8123"
+    assert sys.path[:2] == [str(layout.runtime_lib), str(root)]
 
 
 def test_invalid_isolation_is_rejected():

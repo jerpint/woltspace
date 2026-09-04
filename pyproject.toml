@@ -50,9 +50,10 @@ exclude = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/woltspace", "server"]
+packages = ["src/woltspace"]
 
 [tool.hatch.build.targets.wheel.force-include]
+"server" = "woltspace/_bundle/server"
 "container" = "woltspace/_bundle/container"
 "public" = "woltspace/_bundle/public"
 "template" = "woltspace/_bundle/template"
