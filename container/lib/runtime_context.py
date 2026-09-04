@@ -18,8 +18,12 @@ class RuntimeContext:
     """OS-facing settings shared by runtime implementations."""
 
     tmux_bin: str = "tmux"
+    ps_bin: str = "ps"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "RuntimeContext":
         values = os.environ if env is None else env
-        return cls(tmux_bin=values.get("WOLTSPACE_TMUX_BIN", "tmux"))
+        return cls(
+            tmux_bin=values.get("WOLTSPACE_TMUX_BIN", "tmux"),
+            ps_bin=values.get("WOLTSPACE_PS_BIN", "ps"),
+        )

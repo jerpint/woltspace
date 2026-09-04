@@ -271,7 +271,7 @@ class FakeSessionRuntime:
     def list_session_names(self, include_main: bool = False) -> set[str]:
         return set()
 
-    def agent_panes(self, handle, process_names):
+    def _matching_panes_for_handle(self, handle, process_names):
         panes = self.panes_for_session(handle.tmux_session_name)
         if not panes:
             return None
@@ -281,8 +281,14 @@ class FakeSessionRuntime:
                 panes = scoped
         return [p for p in panes if p.pane_id in self._agents]
 
+    def resolve_process_handle(self, handle, process_names):
+        matched = self._matching_panes_for_handle(handle, process_names)
+        if not matched:
+            return None
+        return handle.at_pane(matched[0].pane_id)
+
     def has_descendant_process(self, handle, process_names):
-        matched = self.agent_panes(handle, process_names)
+        matched = self._matching_panes_for_handle(handle, process_names)
         return None if matched is None else bool(matched)
 
 
@@ -300,6 +306,7 @@ def fake_runtime(monkeypatch):
     import session_runtime
 
     runtime = FakeSessionRuntime(panes=[("%1", "100", True)], agents={"%1"})
+    assert isinstance(runtime, session_runtime.SessionRuntime)
     session_runtime.set_runtime(runtime)
     yield runtime
     session_runtime.set_runtime(None)

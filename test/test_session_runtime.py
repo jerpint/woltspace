@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 
 from runtime_context import RuntimeContext
-from session_runtime import RuntimeHandle, TmuxSessionRuntime
+from session_runtime import RuntimeHandle, SessionRuntime, TmuxSessionRuntime
 
 from conftest import requires_tmux
 
@@ -48,9 +48,14 @@ def context(tmp_path=None, tmux_bin="tmux"):
 
 class TestRuntimeContext:
     def test_from_env_is_injectable(self, tmp_path):
-        ctx = RuntimeContext.from_env({"WOLTSPACE_TMUX_BIN": "tmux-test"})
+        ctx = RuntimeContext.from_env({
+            "WOLTSPACE_TMUX_BIN": "tmux-test",
+            "WOLTSPACE_PS_BIN": "ps-test",
+        })
         assert ctx.tmux_bin == "tmux-test"
+        assert ctx.ps_bin == "ps-test"
         assert RuntimeContext.from_env({}).tmux_bin == "tmux"
+        assert RuntimeContext.from_env({}).ps_bin == "ps"
 
 
 class TestRuntimeHandle:
@@ -67,6 +72,18 @@ class TestRuntimeHandle:
 
 
 class TestTmuxSessionRuntime:
+    def test_implements_the_declared_runtime_contract(self, tmp_path):
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=FakeRunner())
+        assert isinstance(runtime, SessionRuntime)
+
+    def test_process_table_uses_portable_ps_form_from_context(self, tmp_path):
+        runner = FakeRunner(["100 1 claude\n"])
+        ctx = RuntimeContext(tmux_bin="tmux-test", ps_bin="ps-test")
+        runtime = TmuxSessionRuntime(ctx, runner=runner)
+
+        assert runtime._process_table() == ({"1": ["100"]}, {"100": "claude"})
+        assert runner.commands() == [["ps-test", "-axo", "pid=,ppid=,comm="]]
+
     def test_spawn_returns_exact_pane_handle(self, tmp_path):
         runner = FakeRunner(["%17\n"])
         runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
@@ -218,8 +235,9 @@ class TestAgentDetection:
         panes = "s\t%1\t100\t0\ns\t%2\t200\t1\n"
         runtime = self._runtime(tmp_path, panes)
         handle = RuntimeHandle("s", "s")
-        found = runtime.agent_panes(handle, {"claude"})
-        assert [p.pane_id for p in found] == ["%1"]
+        found = runtime.resolve_process_handle(handle, {"claude"})
+        assert found is not None
+        assert found.pane_id == "%1"
         assert runtime.resolve_delivery_pane(handle, {"claude"}).pane_id == "%1"
 
     def test_explicit_pane_is_trusted_without_a_second_lookup(self, tmp_path):
@@ -392,9 +410,9 @@ def test_host_tmux_legacy_multi_window_delivers_to_the_agent_pane(tmp_path):
         panes = runtime.panes_for_session(name)
         assert len(panes) == 2, "both windows must be visible to the -s walk"
 
-        agent = runtime.agent_panes(legacy, {"cat"})
-        assert agent and len(agent) == 1
-        agent_pane = agent[0].pane_id
+        agent = runtime.resolve_process_handle(legacy, {"cat"})
+        assert agent is not None
+        agent_pane = agent.pane_id
 
         marker = f"marker-{uuid.uuid4().hex}"
         runtime.paste(legacy, marker, process_names={"cat"})

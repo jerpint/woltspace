@@ -24,7 +24,7 @@ import re
 import subprocess
 import time
 from dataclasses import asdict, dataclass
-from typing import Callable, Iterable, Protocol
+from typing import Callable, Iterable, Protocol, runtime_checkable
 
 from runtime_context import RuntimeContext
 
@@ -74,6 +74,7 @@ class TmuxPane:
     active: bool
 
 
+@runtime_checkable
 class SessionRuntime(Protocol):
     """Process-control boundary beneath Woltspace's named session registry."""
 
@@ -86,9 +87,9 @@ class SessionRuntime(Protocol):
     def has_descendant_process(
         self, handle: RuntimeHandle, process_names: Iterable[str]
     ) -> bool | None: ...
-    def resolve_delivery_pane(
-        self, handle: RuntimeHandle, process_names: Iterable[str] | None = None
-    ) -> RuntimeHandle: ...
+    def resolve_process_handle(
+        self, handle: RuntimeHandle, process_names: Iterable[str]
+    ) -> RuntimeHandle | None: ...
 
 
 class TmuxSessionRuntime:
@@ -375,7 +376,9 @@ class TmuxSessionRuntime:
         """One ps snapshot as (pid → child pids, pid → comm)."""
         try:
             result = self._run(
-                ["ps", "--no-headers", "-eo", "pid,ppid,comm"],
+                # The field-name '=' form suppresses headers on both GNU ps
+                # (Linux/container) and BSD ps (macOS/native).
+                [self.context.ps_bin, "-axo", "pid=,ppid=,comm="],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -425,7 +428,7 @@ class TmuxSessionRuntime:
                 queue.extend(children.get(pid, []))
         return matched
 
-    def agent_panes(
+    def _matching_panes_for_handle(
         self,
         handle: RuntimeHandle,
         process_names: Iterable[str],
@@ -452,6 +455,23 @@ class TmuxSessionRuntime:
             return None
         return self._panes_running(panes, process_names, table)
 
+    def resolve_process_handle(
+        self,
+        handle: RuntimeHandle,
+        process_names: Iterable[str],
+    ) -> RuntimeHandle | None:
+        """Return a handle addressed where a wanted process was found.
+
+        The contract returns the runtime-neutral handle callers need rather
+        than exposing tmux's pane inventory outside this driver.  None covers
+        both "not found" and "undetermined"; callers that must distinguish
+        uncertainty use `has_descendant_process` instead.
+        """
+        matched = self._matching_panes_for_handle(handle, process_names)
+        if not matched:
+            return None
+        return handle.at_pane(matched[0].pane_id)
+
     def has_descendant_process(
         self,
         handle: RuntimeHandle,
@@ -462,7 +482,7 @@ class TmuxSessionRuntime:
         None means undetermined (session gone, or ps unreadable) — callers
         treat that as "don't act", never as "dead".
         """
-        matched = self.agent_panes(handle, process_names)
+        matched = self._matching_panes_for_handle(handle, process_names)
         if matched is None:
             return None
         return bool(matched)

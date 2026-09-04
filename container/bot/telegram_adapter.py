@@ -267,8 +267,7 @@ def _is_session_alive(session_name: str) -> bool:
     """
     try:
         runtime = get_runtime()
-        panes = runtime.panes_for_session(session_name)
-        alive = bool(panes)
+        alive = runtime.is_alive(RuntimeHandle(session_name, session_name))
         if not alive:
             _bot_log("session_alive_check_false", {
                 "session": session_name,

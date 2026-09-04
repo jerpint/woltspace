@@ -599,11 +599,9 @@ def resolve_agent_handle(session_name: str | dict | RuntimeHandle,
     whichever window the human last clicked on.
     """
     handle = _as_handle(session_name)
-    runtime = get_runtime()
-    panes = runtime.agent_panes(handle, _wanted_processes(harness, include_launching))
-    if not panes:
-        return None
-    return handle.at_pane(panes[0].pane_id)
+    return get_runtime().resolve_process_handle(
+        handle, _wanted_processes(harness, include_launching)
+    )
 
 
 def session_has_agent_process(session_name: str | dict | RuntimeHandle,
