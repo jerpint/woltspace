@@ -113,3 +113,27 @@ def test_lodge_reports_unapproved_auto_as_forbidden(monkeypatch):
     }))
     assert response.status_code == 403
     assert "exact grant" in response.json()["error"]
+
+
+def test_create_wolt_passes_confirmed_target_and_policy(tmp_path, monkeypatch):
+    import wolts
+
+    _, _, repo = _layout(tmp_path, monkeypatch)
+    seen = {}
+    monkeypatch.setattr(wolts, "create_creature_wolt", lambda name, kind: None)
+
+    def fake_start(**kwargs):
+        seen.update(kwargs)
+        return {"name": "newmaple-session", "wolt": "newmaple"}
+
+    monkeypatch.setattr(app_module, "start_session", fake_start)
+    response = asyncio.run(_request("POST", "/sessions/new/create", json={
+        "name": "newmaple",
+        "type": "raccoon",
+        "workdir": str(repo),
+        "execution_policy": "prompt",
+    }))
+    assert response.status_code == 200
+    assert seen["wolt"] == "newmaple"
+    assert seen["workdir"] == str(repo)
+    assert seen["execution_policy"] == "prompt"

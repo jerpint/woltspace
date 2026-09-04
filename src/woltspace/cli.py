@@ -155,6 +155,30 @@ def _stop(args) -> int:
     return code
 
 
+def _tui(args) -> int:
+    from .tui import TuiResolutionError, launch_tui, resolve_tui
+
+    try:
+        resolution = resolve_tui()
+    except TuiResolutionError as exc:
+        print(f"tui failed: {exc}")
+        return 1
+    forwarded = list(args.tui_args)
+    if forwarded[:1] == ["--"]:
+        forwarded = forwarded[1:]
+    if args.dry_run:
+        record = resolution.to_record()
+        if args.json:
+            print(json.dumps(record, indent=2))
+        else:
+            print(f"source: {record['source']}")
+            print(f"package: {record['package']}@{record['version']}")
+            print(f"command: {' '.join(record['command'])}")
+        return 0
+    launch_tui(resolution, forwarded)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="woltspace")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -197,6 +221,12 @@ def build_parser() -> argparse.ArgumentParser:
     stop.add_argument("--timeout", type=float, default=10.0)
     stop.add_argument("--json", action="store_true")
     stop.set_defaults(func=_stop)
+
+    tui = sub.add_parser("tui", help="open the exactly compatible terminal UI")
+    tui.add_argument("--dry-run", action="store_true", help="show resolution without launching")
+    tui.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
+    tui.add_argument("tui_args", nargs=argparse.REMAINDER)
+    tui.set_defaults(func=_tui)
     return parser
 
 

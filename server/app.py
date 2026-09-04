@@ -689,10 +689,14 @@ async def session_new_create(request: Request):
         result = start_session(
             wolt=wolt_name,
             prompt="/woltspace-create-wolt",
+            workdir=body.get("workdir"),
+            execution_policy=body.get("execution_policy"),
             routing={"adapter": "lodge"},
         )
         print(f"[sessions/create] spawned {result['name']} for {wolt_name}")
         return result
+    except PermissionError as e:
+        return JSONResponse({"detail": str(e)}, status_code=403)
     except ValueError as e:
         return JSONResponse({"detail": str(e)}, status_code=409)
     except Exception as e:

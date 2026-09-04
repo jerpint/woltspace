@@ -7,6 +7,7 @@ import * as api from '../api.js';
 import { detachLabel } from '../attach.js';
 import { color, creatureGlyph, lore, age, clock } from '../theme.js';
 import { sessionPolicy, sessionWorkdir, spawnTarget } from '../session-view.js';
+import { createWoltAction, validateWoltName, woltTypes } from '../create-wolt.js';
 
 const h = React.createElement;
 
@@ -25,13 +26,15 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [flash, setFlash] = useState('');
-  const [mode, setMode] = useState('normal'); // normal | search | send | spawn | spawn-confirm | confirm
+  const [mode, setMode] = useState('normal');
   const [cursor, setCursor] = useState(0);
   const [showAll, setShowAll] = useState(false);
   const [query, setQuery] = useState('');
   const [committed, setCommitted] = useState('');
   const [input, setInput] = useState('');
   const [spawnCursor, setSpawnCursor] = useState(0);
+  const [createName, setCreateName] = useState('');
+  const [createTypeCursor, setCreateTypeCursor] = useState(0);
   const pendingG = useRef(false);
 
   const view = sortSessions(sessions).filter((s) => showAll || s.alive);
@@ -98,6 +101,25 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
 
   useInput((ch, key) => {
     // --- text-entry modes -------------------------------------------------
+    if (mode === 'create-name') {
+      if (key.escape) {
+        setCreateName('');
+        setMode('normal');
+      } else if (key.return) {
+        const validation = validateWoltName(createName);
+        if (validation) setError(validation);
+        else {
+          setError('');
+          setMode('create-type');
+        }
+      } else if (key.backspace || key.delete) {
+        setCreateName(createName.slice(0, -1));
+      } else if (ch && !key.ctrl && !key.meta && !key.tab) {
+        setCreateName((createName + ch).toLowerCase());
+      }
+      return;
+    }
+
     if (mode === 'search' || mode === 'send') {
       const [val, setVal] = mode === 'search' ? [query, setQuery] : [input, setInput];
       if (key.escape) {
@@ -149,8 +171,36 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
           wolt: wolts[spawnCursor].name,
           workdir: target.workdir,
           executionPolicy: target.executionPolicy,
+          isolation: capabilities?.isolation,
         });
         exit();
+      }
+      return;
+    }
+
+    if (mode === 'create-confirm') {
+      if (key.escape || ch === 'n') {
+        setMode('create-type');
+      } else if (ch === 'y') {
+        onAction?.(createWoltAction(
+          createName, woltTypes[createTypeCursor], capabilities, launchCwd,
+        ));
+        exit();
+      }
+      return;
+    }
+
+    if (mode === 'create-type') {
+      if (key.escape) return setMode('create-name');
+      if (ch === 'j' || key.downArrow) {
+        return setCreateTypeCursor((c) => Math.min(woltTypes.length - 1, c + 1));
+      }
+      if (ch === 'k' || key.upArrow) {
+        return setCreateTypeCursor((c) => Math.max(0, c - 1));
+      }
+      if (key.return) {
+        if (!capabilities) setError('runtime capabilities are not loaded; press r and retry');
+        else setMode('create-confirm');
       }
       return;
     }
@@ -216,6 +266,11 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
           setMode('spawn');
         }).catch((e) => setError(e.message));
       }
+    } else if (ch === 'c') {
+      setCreateName('');
+      setCreateTypeCursor(0);
+      setError('');
+      setMode('create-name');
     } else if (ch === 's' && selected?.alive) {
       setInput('');
       setMode('send');
@@ -224,7 +279,11 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
     } else if (key.return && selected) {
       // Alive → straight into the pane. Offline → rouse it first (the server
       // rebuilds tmux + restarts the agent with its harness's resume flavor).
-      onAction?.({ type: selected.alive ? 'attach' : 'resume', slug: selected.name });
+      onAction?.({
+        type: selected.alive ? 'attach' : 'resume',
+        slug: selected.name,
+        isolation: capabilities?.isolation,
+      });
       exit();
     }
   });
@@ -299,11 +358,28 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
       lines.push(h(Text, { key: 'sc2' }, `   cwd: ${target.displayWorkdir}`));
       lines.push(h(Text, { key: 'sc3' }, `   policy: ${target.executionPolicy}`));
       lines.push(h(Text, { key: 'sc4', color: color.dim }, '   y confirm · n/esc back'));
+    } else if (mode === 'create-name') {
+      lines.push(h(Text, { key: 'cn1', color: color.amber }, 'name the new wolt'));
+      lines.push(h(Text, { key: 'cn2' }, `   ${createName}▏`));
+      lines.push(h(Text, { key: 'cn3', color: color.dim }, '   enter continue · esc cancel'));
+    } else if (mode === 'create-type') {
+      lines.push(h(Text, { key: 'ct1', color: color.amber }, `choose ${createName}'s creature`));
+      woltTypes.forEach((type, i) => lines.push(h(Text, {
+        key: type, bold: i === createTypeCursor,
+      }, `${i === createTypeCursor ? ' ▸ ' : '   '}${creatureGlyph(type)} ${type}`)));
+      lines.push(h(Text, { key: 'ct2', color: color.dim }, '   j/k pick · enter continue · esc back'));
+    } else if (mode === 'create-confirm') {
+      const target = spawnTarget(capabilities, null, launchCwd);
+      lines.push(h(Text, { key: 'cc1', color: color.amber }, `create ${createName}?`));
+      lines.push(h(Text, { key: 'cc2' }, `   type: ${woltTypes[createTypeCursor]}`));
+      lines.push(h(Text, { key: 'cc3' }, `   cwd: ${target.displayWorkdir}`));
+      lines.push(h(Text, { key: 'cc4' }, `   policy: ${target.executionPolicy}`));
+      lines.push(h(Text, { key: 'cc5', color: color.dim }, '   y confirm · n/esc back'));
     } else {
       lines.push(h(Text, { key: 'k1', color: color.dim },
-        `j/k move  enter attach${selected && !selected.alive ? ' (wakes it)' : ''} (${detachLabel()} comes back)  n new  s send  x stop`));
+        `j/k move  enter attach${selected && !selected.alive ? ' (wakes it)' : ''} (${detachLabel()} comes back)  n session  c wolt`));
       lines.push(h(Text, { key: 'k2', color: color.dim },
-        'r refresh  / find  tab/shift-tab match  a all  q quit'));
+        's send  x stop  r refresh  / find  tab/shift-tab match  a all  q quit'));
     }
     if (error) lines.push(h(Text, { key: 'e', color: color.terra }, error));
     else if (flash) lines.push(h(Text, { key: 'f', color: color.green }, flash));

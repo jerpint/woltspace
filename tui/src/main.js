@@ -15,7 +15,7 @@ async function main() {
   const { render } = await import('ink');
   const { default: App } = await import('./ui/App.js');
   const { attach, inContainer, containerName } = await import('./attach.js');
-  const { BASE, resumeSession, spawnSession } = await import('./api.js');
+  const { BASE, createWolt, resumeSession, spawnSession } = await import('./api.js');
   const { lore } = await import('./theme.js');
   const launchCwd = process.cwd();
   for (;;) {
@@ -40,14 +40,29 @@ async function main() {
         const r = await spawnSession(action.wolt, action.workdir, action.executionPolicy);
         slug = r?.name;
         if (!slug) throw new Error('lodge returned no session name');
+      } else if (action.type === 'create') {
+        console.error(lore.waking(action.name));
+        const r = await createWolt(
+          action.name, action.woltType, action.workdir, action.executionPolicy,
+        );
+        slug = r?.name;
+        if (!slug) throw new Error('lodge returned no session name');
       }
     } catch (e) {
-      console.error(lore.wakeFailed(slug || action.wolt, e.message));
+      console.error(lore.wakeFailed(slug || action.wolt || action.name, e.message));
       continue;
     }
-    const status = attach(slug);
+    let status;
+    try {
+      status = attach(slug, { isolation: action.isolation });
+    } catch (e) {
+      console.error(`attach to ${slug} failed: ${e.message}`);
+      continue;
+    }
     if (status !== 0) {
-      const where = inContainer() ? 'in-container tmux' : `docker exec into '${containerName()}'`;
+      const where = action.isolation === 'host'
+        ? 'native tmux'
+        : inContainer() ? 'in-container tmux' : `docker exec into '${containerName()}'`;
       console.error(`attach to ${slug} exited ${status} (${where}; lodge at ${BASE})`);
     }
     continue; // back to the list, fresh fetch

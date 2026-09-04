@@ -1,8 +1,9 @@
 // Attach to a session's real tmux. The tui suspends, the terminal belongs to
 // tmux until detach (C-b d), then the list re-renders with a fresh fetch.
 //
-// host mode:      docker exec -it -u node <container> tmux attach -t <slug>
-// container mode: tmux attach -t <slug>  (TMUX cleared so nested attach works)
+// native host:    tmux attach -t <slug>
+// container:      tmux attach -t <slug>  (TMUX cleared so nested attach works)
+// external host:  docker exec -it -u node <container> tmux attach -t <slug>
 
 import { existsSync } from 'node:fs';
 import { spawnSync, execSync } from 'node:child_process';
@@ -26,15 +27,17 @@ export function containerName() {
   return 'woltspace';
 }
 
-export function attachCommand(slug) {
+export function attachCommand(slug, options = {}) {
+  const insideContainer = options.insideContainer ?? inContainer();
+  const direct = insideContainer || options.isolation === 'host';
   // -u + a UTF-8 locale: without LANG in the docker-exec'd process, the tmux
   // client decides the terminal can't render wide glyphs and strips them.
   // Mirrors the proven `woltspace chat --session` invocation.
-  return inContainer()
+  return direct
     ? ['tmux', '-u', 'attach', '-t', slug]
     : ['docker', 'exec', '-it', '-u', 'node',
        '-e', 'LANG=C.UTF-8', '-e', 'LC_ALL=C.UTF-8',
-       containerName(), 'tmux', '-u', 'attach', '-t', slug];
+       options.container || containerName(), 'tmux', '-u', 'attach', '-t', slug];
 }
 
 // One obvious way home: a detach key bound on the tmux server idempotently
@@ -52,15 +55,19 @@ export const detachLabel = () =>
     .replace(/Left$/, '←')
     .replace(/Right$/, '→');
 
-function tmuxCmd(args) {
-  return inContainer() ? ['tmux', ...args] : ['docker', 'exec', '-u', 'node', containerName(), 'tmux', ...args];
+function tmuxCmd(args, options = {}) {
+  const insideContainer = options.insideContainer ?? inContainer();
+  const direct = insideContainer || options.isolation === 'host';
+  return direct
+    ? ['tmux', ...args]
+    : ['docker', 'exec', '-u', 'node', options.container || containerName(), 'tmux', ...args];
 }
 
 // Bind ONLY the current detach key - never unbind others. Users bind their own
 // root keys in tmux.conf.local (e.g. vim-tmux-navigator's C-h/j/k/l/C-\), and
 // a hardcoded "retired defaults" unbind list would silently eat them.
-function ensureDetachKey() {
-  const cmd = tmuxCmd(['bind-key', '-n', detachKey(), 'detach-client']);
+function ensureDetachKey(options) {
+  const cmd = tmuxCmd(['bind-key', '-n', detachKey(), 'detach-client'], options);
   try {
     spawnSync(cmd[0], cmd.slice(1), { stdio: 'ignore' });
   } catch {
@@ -68,11 +75,18 @@ function ensureDetachKey() {
   }
 }
 
-export function attach(slug) {
-  ensureDetachKey();
-  const [cmd, ...args] = attachCommand(slug);
+export function attach(slug, options = {}) {
+  ensureDetachKey(options);
+  const [cmd, ...args] = attachCommand(slug, options);
   const env = { ...process.env };
   delete env.TMUX; // allow attach from inside another tmux
   const r = spawnSync(cmd, args, { stdio: 'inherit', env });
+  if (r.error?.code === 'ENOENT') {
+    if (cmd === 'tmux') {
+      throw new Error('tmux is missing; install tmux, then run woltspace doctor');
+    }
+    throw new Error('Docker is missing; install Docker or run the lodge natively');
+  }
+  if (r.error) throw new Error(`attach failed: ${r.error.message}`);
   return r.status ?? 1;
 }

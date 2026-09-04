@@ -9,7 +9,9 @@ async function req(path, opts = {}) {
   try {
     res = await fetch(BASE + path, opts);
   } catch (e) {
-    throw new Error(`lodge unreachable at ${BASE} (${e.cause?.code || e.message})`);
+    throw new Error(
+      `lodge unreachable at ${BASE} (${e.cause?.code || e.message}); run woltspace start, then retry`,
+    );
   }
   let data = null;
   try {
@@ -34,6 +36,13 @@ export const runtimeCapabilities = () => req('/runtime/capabilities');
 export const spawnSession = (wolt, workdir, executionPolicy) =>
   post('/sessions/new/lodge', {
     wolt,
+    ...(workdir ? { workdir } : {}),
+    ...(executionPolicy ? { execution_policy: executionPolicy } : {}),
+  });
+export const createWolt = (name, type, workdir, executionPolicy) =>
+  post('/sessions/new/create', {
+    name,
+    type,
     ...(workdir ? { workdir } : {}),
     ...(executionPolicy ? { execution_policy: executionPolicy } : {}),
   });
