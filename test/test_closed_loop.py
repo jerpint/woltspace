@@ -490,6 +490,7 @@ class TestRegressions:
         pane. Both layers are checked here.
         """
         from sessions import SessionRegistry, resume_session, prepare_session_command
+        from session_runtime import TmuxSessionRuntime
         import sessions
 
         original_wolts = sessions.WOLTS_DIR
@@ -514,9 +515,13 @@ class TestRegressions:
             assert f"--resume {uuid_a}" in cmd_a
             assert uuid_b not in cmd_a
 
-            # Create tmux sessions running bash (no agent → revive path)
+            # Create tmux sessions running bash (no agent -> revive path) and
+            # persist the exact panes they own.
+            runtime = TmuxSessionRuntime()
+            handles = {}
             for name in [session_a, session_b]:
-                subprocess.run(["tmux", "new-session", "-d", "-s", name, "bash"], check=True)
+                handles[name] = runtime.spawn(name, str(tmp_path), "bash")
+                reg.update(name, wolt="neowolt", runtime=handles[name].to_record())
             time.sleep(0.3)
 
             # Layer 2: revive session A — wrapper lands in A's pane in resume mode
@@ -526,7 +531,7 @@ class TestRegressions:
 
             time.sleep(0.3)
             capture = subprocess.run(
-                ["tmux", "capture-pane", "-t", session_a, "-p", "-J"],
+                ["tmux", "capture-pane", "-t", handles[session_a].pane_id, "-p", "-J"],
                 capture_output=True, text=True, check=True,
             )
             flat = capture.stdout.replace("\n", " ")
@@ -546,6 +551,7 @@ class TestRegressions:
     def test_revival_uses_session_name_as_id(self, tmp_path):
         """Session name IS the claude session ID — no UUID needed, no --continue fallback."""
         from sessions import SessionRegistry, resume_session
+        from session_runtime import TmuxSessionRuntime
         import sessions
 
         original_wolts = sessions.WOLTS_DIR
@@ -559,7 +565,9 @@ class TestRegressions:
             reg.create(session_name, wolt="neowolt")
             reg.update(session_name, wolt="neowolt", claude_session_id=session_name)
 
-            subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "bash"], check=True)
+            runtime = TmuxSessionRuntime()
+            handle = runtime.spawn(session_name, str(tmp_path), "bash")
+            reg.update(session_name, wolt="neowolt", runtime=handle.to_record())
             time.sleep(0.3)
 
             result = resume_session(session_name, "test name-as-id")
@@ -582,6 +590,7 @@ class TestRegressions:
         wrapper reading the same registry field the resume delivery relies on.
         """
         from sessions import SessionRegistry, resume_session
+        from session_runtime import TmuxSessionRuntime
         import sessions
 
         original_wolts = sessions.WOLTS_DIR
@@ -596,7 +605,9 @@ class TestRegressions:
             reg.create(session_name, wolt="uxwolt")
             reg.update(session_name, wolt="uxwolt", claude_session_id=session_name, dir=wolt_dir)
 
-            subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "bash"], check=True)
+            runtime = TmuxSessionRuntime()
+            handle = runtime.spawn(session_name, wolt_dir, "bash")
+            reg.update(session_name, wolt="uxwolt", runtime=handle.to_record())
             time.sleep(0.3)
 
             result = resume_session(session_name, "test dir fix")
@@ -605,7 +616,7 @@ class TestRegressions:
             # Verify the wrapper command was delivered in resume mode
             time.sleep(0.3)
             capture = subprocess.run(
-                ["tmux", "capture-pane", "-t", session_name, "-p", "-J"],
+                ["tmux", "capture-pane", "-t", handle.pane_id, "-p", "-J"],
                 capture_output=True, text=True, check=True,
             )
             flat = capture.stdout.replace("\n", " ")

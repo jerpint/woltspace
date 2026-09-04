@@ -112,7 +112,20 @@ class TestTmuxSessionRuntime:
 
         assert runtime.is_alive(stale) is True
         # Pane identity is still available where it actually matters.
-        assert runtime.pane_is_live(stale) is False
+        assert runtime.handle_is_alive(stale) is False
+
+    def test_spawn_in_session_creates_detached_dedicated_window(self, tmp_path):
+        runner = FakeRunner(["%18\n"])
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
+        original = RuntimeHandle("named-session", "named-session", "%17")
+
+        replacement = runtime.spawn_in_session(original, str(tmp_path), "cat")
+
+        assert replacement == original.at_pane("%18")
+        assert runner.commands() == [[
+            "tmux", "new-window", "-d", "-P", "-F", "#{pane_id}",
+            "-t", "=named-session", "-c", str(tmp_path), "cat",
+        ]]
 
     def test_liveness_false_only_when_session_has_no_panes(self, tmp_path):
         runtime = TmuxSessionRuntime(context(tmp_path), runner=FakeRunner([""]))

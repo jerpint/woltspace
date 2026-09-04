@@ -456,6 +456,13 @@ def _tmux_spawn(name: str, cwd: str, command: str) -> RuntimeHandle:
     return _runtime().spawn(name, cwd, command)
 
 
+def _tmux_spawn_in_session(
+    handle: RuntimeHandle, cwd: str, command: str
+) -> RuntimeHandle:
+    """Create a dedicated execution surface inside a surviving session."""
+    return _runtime().spawn_in_session(handle, cwd, command)
+
+
 def _tmux_stop(session: str | dict | RuntimeHandle) -> bool:
     """Stop one exact named tmux session."""
     return _runtime().stop(_runtime_handle(session))
@@ -998,9 +1005,10 @@ def resume_session(name: str, prompt: str = "") -> dict:
     Logic:
       1. Look up session in registry (scan all wolts).
       2. If tmux is alive and the agent is running → paste the prompt directly.
-      3. If tmux is alive but the agent exited → run-session.sh --resume in the pane.
-      4. If tmux is dead → create a new tmux session with run-session.sh --resume.
-      5. Update status back to "running" on success.
+      3. If tmux and the saved pane live but the agent exited → resume in that pane.
+      4. If tmux lives but the saved pane is gone → resume in a fresh window.
+      5. If tmux is dead → create a new tmux session with run-session.sh --resume.
+      6. Update status and the exact runtime handle on success.
 
     Returns dict with resume info.
     Raises ValueError if session not found in registry.
@@ -1012,6 +1020,7 @@ def resume_session(name: str, prompt: str = "") -> dict:
 
     wolt = data.get("wolt", "")
     session_dir = data.get("dir", "")
+    work_dir = session_dir or (str(WOLTS_DIR / wolt) if wolt else "/workspace")
     # Resume with the harness the session was born on — old sessions have no
     # harness field, which resolves to claude.
     harness = resolve_harness(data.get("harness"))
@@ -1042,7 +1051,12 @@ def resume_session(name: str, prompt: str = "") -> dict:
         if prompt:
             _tmux_paste(target, _guard_paste_text(harness, prompt.replace("\n", " ")),
                         settle=get_harness(harness).get("paste_settle", 0.0))
-        registry.update(name, wolt=wolt, status="running")
+        registry.update(
+            name,
+            wolt=wolt,
+            status="running",
+            runtime=target.to_record(),
+        )
         return {"name": name, "url": session_url, "status": "delivered", "detail": "agent running, message sent"}
 
     # Both resume paths deliver run-session.sh — the single runtime wrapper.
@@ -1052,13 +1066,27 @@ def resume_session(name: str, prompt: str = "") -> dict:
     resume_cmd = build_session_command(name, prompt, resume=True)
 
     if tmux_alive and not agent_running:
-        # Tmux alive but the agent exited — run the wrapper inside the pane
-        _tmux_paste(target, resume_cmd)
-        registry.update(name, wolt=wolt, status="running")
-        return {"name": name, "url": session_url, "status": "revived", "detail": "agent exited, restarted with --resume in existing tmux"}
+        if _runtime().handle_is_alive(target):
+            # The exact dedicated pane survived; reuse it rather than creating
+            # a new window on every ordinary agent exit.
+            _tmux_paste(target, resume_cmd)
+            registry.update(name, wolt=wolt, status="running")
+            detail = "agent exited, restarted with --resume in existing pane"
+        else:
+            # The session survived only because unrelated user panes/windows
+            # remain. Never commandeer one: add a detached dedicated window and
+            # persist the exact pane tmux returns.
+            target = _tmux_spawn_in_session(target, work_dir or "/workspace", resume_cmd)
+            registry.update(
+                name,
+                wolt=wolt,
+                status="running",
+                runtime=target.to_record(),
+            )
+            detail = "agent pane was gone, restarted with --resume in a new window"
+        return {"name": name, "url": session_url, "status": "revived", "detail": detail}
 
     # Tmux is dead — create a fresh tmux session running the wrapper
-    work_dir = session_dir or str(WOLTS_DIR / wolt) if wolt else "/workspace"
     handle = _tmux_spawn(name, work_dir or "/workspace", resume_cmd)
     registry.update(name, wolt=wolt, status="running", runtime=handle.to_record())
     return {"name": name, "url": session_url, "status": "respawned", "detail": "tmux was dead, created new tmux with --resume"}

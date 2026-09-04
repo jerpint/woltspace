@@ -79,7 +79,11 @@ class SessionRuntime(Protocol):
     """Process-control boundary beneath Woltspace's named session registry."""
 
     def spawn(self, session_id: str, cwd: str, command: str) -> RuntimeHandle: ...
+    def spawn_in_session(
+        self, handle: RuntimeHandle, cwd: str, command: str
+    ) -> RuntimeHandle: ...
     def is_alive(self, handle: RuntimeHandle) -> bool: ...
+    def handle_is_alive(self, handle: RuntimeHandle) -> bool: ...
     def paste(self, handle: RuntimeHandle, text: str, settle: float = 0.0) -> None: ...
     def capture(self, handle: RuntimeHandle, start: str | None = "-30") -> str: ...
     def stop(self, handle: RuntimeHandle) -> bool: ...
@@ -202,8 +206,8 @@ class TmuxSessionRuntime:
         """
         return bool(self.panes_for_session(handle.tmux_session_name))
 
-    def pane_is_live(self, handle: RuntimeHandle) -> bool:
-        """Whether this handle's exact persisted pane is still present."""
+    def handle_is_alive(self, handle: RuntimeHandle) -> bool:
+        """Whether this handle's exact persisted execution surface exists."""
         if not handle.pane_id:
             return False
         return any(
@@ -301,6 +305,41 @@ class TmuxSessionRuntime:
         stdout = result.stdout if isinstance(result.stdout, str) else ""
         pane_id = stdout.strip() if stdout.strip().startswith("%") else ""
         return RuntimeHandle(session_id, session_id, pane_id)
+
+    def spawn_in_session(
+        self,
+        handle: RuntimeHandle,
+        cwd: str,
+        command: str,
+    ) -> RuntimeHandle:
+        """Create a dedicated window in an existing session.
+
+        Recovery must never paste a restart command into an arbitrary surviving
+        user pane. A detached new window preserves the existing layout while
+        giving the agent a fresh execution surface with an exact returned ID.
+        """
+        result = self._run(
+            [
+                self.tmux,
+                "new-window",
+                "-d",
+                "-P",
+                "-F",
+                "#{pane_id}",
+                "-t",
+                f"={handle.tmux_session_name}",
+                "-c",
+                cwd,
+                command,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=_TMUX_TIMEOUT,
+        )
+        stdout = result.stdout if isinstance(result.stdout, str) else ""
+        pane_id = stdout.strip() if stdout.strip().startswith("%") else ""
+        return handle.at_pane(pane_id)
 
     def paste(
         self,

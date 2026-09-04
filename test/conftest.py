@@ -187,6 +187,7 @@ class FakeSessionRuntime:
         self._panes = list(panes) if panes is not None else []
         self._agents = set(agents)
         self.spawns: list[tuple[str, str, str]] = []   # (session_id, cwd, command)
+        self.in_session_spawns: list[tuple[str, str, str]] = []
         self.pastes: list[tuple[str, str, float]] = []  # (target pane, text, settle)
         self.captures: list[tuple[str, str | None]] = []  # (target pane, start)
         self.stops: list[str] = []                      # tmux session names
@@ -223,6 +224,10 @@ class FakeSessionRuntime:
         self.spawns.append((session_id, cwd, command))
         return RuntimeHandle(session_id, session_id, self._next_pane)
 
+    def spawn_in_session(self, handle, cwd: str, command: str):
+        self.in_session_spawns.append((handle.tmux_session_name, cwd, command))
+        return handle.at_pane(self._next_pane)
+
     def panes_for_session(self, session_name: str):
         return self._pane_objects(session_name) if self._alive else []
 
@@ -230,7 +235,7 @@ class FakeSessionRuntime:
         self.alive_checks.append(handle.tmux_session_name)
         return self._alive
 
-    def pane_is_live(self, handle) -> bool:
+    def handle_is_alive(self, handle) -> bool:
         return bool(handle.pane_id) and any(
             p.pane_id == handle.pane_id for p in self.panes_for_session(handle.tmux_session_name)
         )
