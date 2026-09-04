@@ -45,6 +45,12 @@ from harnesses import (
 from sites import ensure_site
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget, normalize_session_target
+from execution_policy import (
+    AutoGrantStore,
+    ExecutionPolicy,
+    resolve_execution_policy,
+)
+from runtime_context import RuntimeContext
 
 _UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
@@ -125,6 +131,8 @@ class SessionRegistry:
         thread_ts: str = "",
         session_url: str = "",
         target: SessionTarget | None = None,
+        execution_policy: ExecutionPolicy | dict | str | None = None,
+        auto_grant: dict | None = None,
     ) -> dict:
         """Create a new session entry. Returns the full session dict."""
         if not wolt:
@@ -154,6 +162,10 @@ class SessionRegistry:
             "wolt_id": target.wolt_id,
             "workdir": str(target.canonical_workdir),
             "dir": str(target.canonical_workdir),
+            "execution_policy": ExecutionPolicy.from_record(
+                execution_policy
+            ).to_record(),
+            "auto_grant": auto_grant,
             "title": title,
             "prompt": prompt[:500],
             "last_activity": now,
@@ -748,6 +760,7 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
             harness, "spawn",
             session_id=session_id, session_name=name,
             model=model, prompt=full_prompt,
+            execution_policy=data.get("execution_policy"),
         )
 
     if mode == "resume":
@@ -775,7 +788,10 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
                 merged = f"{pending} {prompt}".strip() if pending else prompt
                 registry.update(name, wolt=wolt, pending_boot_prompt=merged)
             prompt = ""
-        return build_command(harness, "resume", resume_id=resume_id, model=model, prompt=prompt)
+        return build_command(
+            harness, "resume", resume_id=resume_id, model=model, prompt=prompt,
+            execution_policy=data.get("execution_policy"),
+        )
 
     raise ValueError(f"unknown mode: {mode}")
 
@@ -917,6 +933,7 @@ def start_session(
     app: str = "",
     harness: str = "",
     workdir: str | Path | None = None,
+    execution_policy: str | None = None,
 ) -> dict:
     """Start an agent session for a specific wolt.
 
@@ -966,6 +983,13 @@ def start_session(
     target = SessionTarget.resolve(
         wolt, workdir, wolts_dir=WOLTS_DIR
     )
+    isolation = RuntimeContext.from_env().isolation
+    policy, grant = resolve_execution_policy(
+        execution_policy,
+        isolation=isolation,
+        target=target,
+        grants=AutoGrantStore(WOLTS_DIR),
+    )
 
     name = session_name(wolt)
     # pin wins if valid for the resolved harness, else the tier default (see resolve_model)
@@ -983,6 +1007,8 @@ def start_session(
         harness=harness,
         dir=str(target.canonical_workdir),
         target=target,
+        execution_policy=policy,
+        auto_grant=grant.to_record() if grant else None,
         app=app or "",
         prompt=prompt,
         adapter=(routing or {}).get("adapter", ""),
@@ -1003,6 +1029,8 @@ def start_session(
         "wolt_id": target.wolt_id,
         "workdir": str(target.canonical_workdir),
         "target": target.to_record(),
+        "execution_policy": policy.to_record(),
+        "auto_grant": grant.to_record() if grant else None,
         "harness": harness,
     }
     if app:

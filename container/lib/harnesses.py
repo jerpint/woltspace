@@ -26,6 +26,7 @@ import subprocess
 from pathlib import Path
 
 from session_runtime import RuntimeHandle, get_runtime
+from execution_policy import policy_mode
 
 DEFAULT_HARNESS = "claude"
 
@@ -43,13 +44,15 @@ _ROLLOUT_UUID_RE = re.compile(
 
 def _claude_command(entry: dict, mode: str, *, session_id: str = "",
                     session_name: str = "", model: str = "", prompt: str = "",
-                    resume_id: str = "") -> str:
+                    resume_id: str = "", execution_policy=None) -> str:
     """Build a Claude Code command line. Mirrors the historical invocations exactly."""
     wrapper = entry["wrapper"]
     if mode == "login":
         return f"{wrapper} /login"
 
-    parts = [wrapper, "--dangerously-skip-permissions"]
+    parts = [wrapper]
+    if policy_mode(execution_policy) == "auto":
+        parts.append("--dangerously-skip-permissions")
     if mode == "spawn":
         if session_id:
             parts += ["--session-id", session_id]
@@ -69,7 +72,7 @@ def _claude_command(entry: dict, mode: str, *, session_id: str = "",
 
 def _codex_command(entry: dict, mode: str, *, session_id: str = "",
                    session_name: str = "", model: str = "", prompt: str = "",
-                   resume_id: str = "") -> str:
+                   resume_id: str = "", execution_policy=None) -> str:
     """Build a Codex CLI command line (verified against codex-cli 0.144).
 
     Codex can't preset a session id at spawn — run-session.sh discovers the
@@ -89,7 +92,8 @@ def _codex_command(entry: dict, mode: str, *, session_id: str = "",
         parts += ["resume", resume_id]
     # Codex's own help: "Intended solely for running in environments that are
     # externally sandboxed" — which is exactly the woltspace container.
-    parts.append("--dangerously-bypass-approvals-and-sandbox")
+    if policy_mode(execution_policy) == "auto":
+        parts.append("--dangerously-bypass-approvals-and-sandbox")
     if model:
         parts += ["-m", model]
     if prompt:
@@ -143,7 +147,7 @@ def _codex_discover_session_id(data: dict, since: float) -> str | None:
 
 def _opencode_command(entry: dict, mode: str, *, session_id: str = "",
                       session_name: str = "", model: str = "", prompt: str = "",
-                      resume_id: str = "") -> str:
+                      resume_id: str = "", execution_policy=None) -> str:
     """Build an opencode CLI command line (verified against opencode 1.18.3).
 
       - The interactive TUI (root command, attachable in tmux) accepts -m/--model
@@ -178,7 +182,9 @@ def _opencode_command(entry: dict, mode: str, *, session_id: str = "",
     # --auto = full permissions, no approval prompts (unattended, like all wolts)
     # No --prompt ever — the boot prompt arrives via deliver_boot_prompt (see
     # docstring); a CLI prompt would race model resolution and strand on "/".
-    parts = [wrapper, "--auto"]
+    parts = [wrapper]
+    if policy_mode(execution_policy) == "auto":
+        parts.append("--auto")
     if mode == "resume" and resume_id:
         parts += ["--session", resume_id]
     if model:

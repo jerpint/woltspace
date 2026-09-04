@@ -19,11 +19,18 @@ class RuntimeContext:
 
     tmux_bin: str = "tmux"
     ps_bin: str = "ps"
+    isolation: str = "external"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "RuntimeContext":
         values = os.environ if env is None else env
+        isolation = values.get("WOLTSPACE_ISOLATION", "external")
+        if isolation not in {"external", "host"}:
+            raise ValueError(
+                "WOLTSPACE_ISOLATION must be 'external' or 'host'"
+            )
         return cls(
             tmux_bin=values.get("WOLTSPACE_TMUX_BIN", "tmux"),
             ps_bin=values.get("WOLTSPACE_PS_BIN", "ps"),
+            isolation=isolation,
         )

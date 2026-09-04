@@ -86,6 +86,10 @@ class TestBuildCommandClaude:
         assert "--resume" not in cmd
         assert "--dangerously-skip-permissions" in cmd
 
+    def test_prompt_policy_keeps_normal_approvals(self):
+        cmd = build_command("claude", "spawn", execution_policy="prompt")
+        assert "--dangerously-skip-permissions" not in cmd
+
     def test_login(self):
         cmd = build_command("claude", "login")
         assert cmd.endswith("wclaude /login")
@@ -137,6 +141,10 @@ class TestBuildCommandCodex:
     def test_login_uses_device_auth(self):
         cmd = build_command("codex", "login")
         assert cmd.endswith("login --device-auth")
+
+    def test_prompt_policy_keeps_normal_sandbox(self):
+        cmd = build_command("codex", "spawn", execution_policy="prompt")
+        assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
 
     def test_codex_tier_models(self):
         """Mapped from the live /model picker (2026-07 lineup)."""
@@ -195,6 +203,10 @@ class TestBuildCommandOpencode:
 
     def test_login_is_auth_login(self):
         assert build_command("opencode", "login").endswith("auth login")
+
+    def test_prompt_policy_omits_auto(self):
+        cmd = build_command("opencode", "spawn", execution_policy="prompt")
+        assert "--auto" not in cmd
 
 
 class TestCodexDiscovery:
