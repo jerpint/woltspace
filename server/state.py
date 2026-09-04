@@ -11,10 +11,11 @@ from .config import (
     BOT_LOG_DIR,
     BOT_LOG_FILE,
     WOLTS_DIR,
+    WOLTSPACE_DIR,
 )
 
 # Import session registry from container/lib
-_lib_path = Path(__file__).resolve().parent.parent / "container" / "lib"
+_lib_path = WOLTSPACE_DIR / "container" / "lib"
 if str(_lib_path) not in sys.path:
     sys.path.insert(0, str(_lib_path))
 
@@ -153,5 +154,4 @@ def bot_log(event: str, data: dict):
             f.write(entry + "\n")
     except Exception:
         pass
-
 

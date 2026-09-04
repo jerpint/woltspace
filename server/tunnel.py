@@ -5,7 +5,7 @@ import logging
 import os
 from pathlib import Path
 
-from .config import SPACE_PLATFORM_DIR, WOLTS_DIR
+from .config import SPACE_PLATFORM_DIR, WOLTS_DIR, WOLTSPACE_DIR
 
 log = logging.getLogger("woltspace.tunnel")
 
@@ -23,7 +23,7 @@ def _import_lib():
     global _lib_imported
     if not _lib_imported:
         import sys
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+        sys.path.insert(0, str(WOLTSPACE_DIR / "container" / "lib"))
         _lib_imported = True
 
 

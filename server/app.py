@@ -50,7 +50,7 @@ from .sparks import get_spark_with_chain, list_sparks
 
 # Session spawning — shared with bot
 import sys as _sys
-_sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+_sys.path.insert(0, str(WOLTSPACE_DIR / "container" / "lib"))
 from sessions import (
     resume_session, start_session, stop_session,
     deliver_message, resolve_active_session, format_spawned_prompt,
