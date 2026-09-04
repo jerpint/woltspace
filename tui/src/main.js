@@ -2,14 +2,21 @@
 // woltspace tui - terminal cockpit for the colony.
 // Runs on node >= 18 or bun; host or in-container (auto-detected).
 
-import React from 'react';
-import { render } from 'ink';
-import App from './ui/App.js';
-import { attach, inContainer, containerName } from './attach.js';
-import { BASE, resumeSession, spawnSession } from './api.js';
-import { lore } from './theme.js';
+import { packageVersion, versionRecord } from './version.js';
+
+const args = process.argv.slice(2);
+if (args.includes('--version')) {
+  console.log(args.includes('--json') ? JSON.stringify(versionRecord()) : packageVersion);
+  process.exit(0);
+}
 
 async function main() {
+  const { default: React } = await import('react');
+  const { render } = await import('ink');
+  const { default: App } = await import('./ui/App.js');
+  const { attach, inContainer, containerName } = await import('./attach.js');
+  const { BASE, resumeSession, spawnSession } = await import('./api.js');
+  const { lore } = await import('./theme.js');
   const launchCwd = process.cwd();
   for (;;) {
     let action = null;

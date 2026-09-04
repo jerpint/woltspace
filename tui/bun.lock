@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "woltspace-tui",
+      "name": "@woltspace/tui",
       "dependencies": {
         "ink": "^5.1.0",
         "react": "^18.3.1",
