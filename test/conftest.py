@@ -172,24 +172,31 @@ class FakeSessionRuntime:
     Sessions go through the session_runtime boundary rather than shelling out
     to tmux directly, so tests stub that boundary instead of `subprocess`.
     Every call is recorded so a test can still assert exactly what was
-    delivered — which pane, which command, which text.
+    delivered — which pane, which command, which text, which capture window.
+
+    panes: the pane inventory this fake reports for any session, as
+    (pane_id, pane_pid, active) tuples. agents: the pane_ids whose process
+    tree should count as carrying an agent.
     """
 
-    def __init__(self, *, alive: bool = True, capture_text: str = "", next_pane: str = "%1"):
+    def __init__(self, *, alive: bool = True, capture_text: str = "",
+                 next_pane: str = "%1", panes=None, agents=()):
         self._alive = alive
         self._capture_text = capture_text
         self._next_pane = next_pane
+        self._panes = list(panes) if panes is not None else []
+        self._agents = set(agents)
         self.spawns: list[tuple[str, str, str]] = []   # (session_id, cwd, command)
-        self.pastes: list[tuple[str, str, float]] = []  # (target pane/session, text, settle)
-        self.captures: list[tuple[str, str]] = []       # (target, start)
+        self.pastes: list[tuple[str, str, float]] = []  # (target pane, text, settle)
+        self.captures: list[tuple[str, str | None]] = []  # (target pane, start)
         self.stops: list[str] = []                      # tmux session names
         self.alive_checks: list[str] = []
 
     # -- helpers -----------------------------------------------------------
-    @staticmethod
-    def _target(handle) -> str:
-        """The exact address a real tmux call would receive for this handle."""
-        return handle.pane_id or handle.tmux_session_name
+    def _pane_objects(self, session_name):
+        from session_runtime import TmuxPane
+        return [TmuxPane(session_name, pane_id, pid, active)
+                for pane_id, pid, active in self._panes]
 
     @property
     def last_spawn(self) -> tuple[str, str, str]:
@@ -201,21 +208,60 @@ class FakeSessionRuntime:
         assert self.pastes, "nothing was pasted"
         return self.pastes[-1]
 
+    @property
+    def last_capture(self) -> tuple[str, str | None]:
+        assert self.captures, "nothing was captured"
+        return self.captures[-1]
+
+    def feed_capture(self, text) -> None:
+        """Set what capture() returns — a string, or a list of successive frames."""
+        self._capture_text = list(text) if isinstance(text, list) else text
+
     # -- SessionRuntime protocol -------------------------------------------
     def spawn(self, session_id: str, cwd: str, command: str):
         from session_runtime import RuntimeHandle
         self.spawns.append((session_id, cwd, command))
         return RuntimeHandle(session_id, session_id, self._next_pane)
 
+    def panes_for_session(self, session_name: str):
+        return self._pane_objects(session_name) if self._alive else []
+
     def is_alive(self, handle) -> bool:
-        self.alive_checks.append(self._target(handle))
+        self.alive_checks.append(handle.tmux_session_name)
         return self._alive
 
-    def paste(self, handle, text: str, settle: float = 0.0) -> None:
-        self.pastes.append((self._target(handle), text, settle))
+    def pane_is_live(self, handle) -> bool:
+        return bool(handle.pane_id) and any(
+            p.pane_id == handle.pane_id for p in self.panes_for_session(handle.tmux_session_name)
+        )
 
-    def capture(self, handle, start: str = "-30") -> str:
-        self.captures.append((self._target(handle), start))
+    def resolve_delivery_pane(self, handle, process_names=None):
+        if handle.pane_id:
+            return handle
+        panes = self.panes_for_session(handle.tmux_session_name)
+        if not panes:
+            return handle.at_pane(handle.tmux_session_name)
+        if len(panes) == 1:
+            return handle.at_pane(panes[0].pane_id)
+        if process_names:
+            for pane in panes:
+                if pane.pane_id in self._agents:
+                    return handle.at_pane(pane.pane_id)
+        return handle.at_pane(handle.tmux_session_name)
+
+    def paste(self, handle, text: str, settle: float = 0.0, *, process_names=None) -> None:
+        target = self.resolve_delivery_pane(handle, process_names)
+        self.pastes.append((target.pane_id, text, settle))
+
+    def capture(self, handle, start: str | None = "-30") -> str:
+        target = self.resolve_delivery_pane(handle)
+        self.captures.append((target.pane_id, start))
+        if isinstance(self._capture_text, list):
+            # A scripted sequence of successive pane contents; the last frame
+            # repeats once the script runs out.
+            if len(self._capture_text) > 1:
+                return self._capture_text.pop(0)
+            return self._capture_text[0] if self._capture_text else ""
         return self._capture_text
 
     def stop(self, handle) -> bool:
@@ -225,14 +271,35 @@ class FakeSessionRuntime:
     def list_session_names(self, include_main: bool = False) -> set[str]:
         return set()
 
+    def agent_panes(self, handle, process_names):
+        panes = self.panes_for_session(handle.tmux_session_name)
+        if not panes:
+            return None
+        if handle.pane_id:
+            scoped = [p for p in panes if p.pane_id == handle.pane_id]
+            if scoped:
+                panes = scoped
+        return [p for p in panes if p.pane_id in self._agents]
+
+    def has_descendant_process(self, handle, process_names):
+        matched = self.agent_panes(handle, process_names)
+        return None if matched is None else bool(matched)
+
 
 @pytest.fixture
 def fake_runtime(monkeypatch):
-    """Patch sessions._runtime to a recording FakeSessionRuntime and return it."""
+    """Install a recording FakeSessionRuntime at the one shared seam.
+
+    Patches session_runtime.set_runtime, so EVERY call site — sessions,
+    harnesses, vulture, server — gets the fake. Patching only one module's
+    accessor would leave a faked paste sitting next to a real tmux process
+    walk in the same call.
+    """
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
-    import sessions
+    import session_runtime
 
-    runtime = FakeSessionRuntime()
-    monkeypatch.setattr(sessions, "_runtime", lambda: runtime)
-    return runtime
+    runtime = FakeSessionRuntime(panes=[("%1", "100", True)], agents={"%1"})
+    session_runtime.set_runtime(runtime)
+    yield runtime
+    session_runtime.set_runtime(None)

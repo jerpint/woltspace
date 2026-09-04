@@ -12,6 +12,7 @@ Usage:
     reg.create("neowolt-chompy-dam-a3f1e2", wolt="neowolt", creature="beaver", ...)
 """
 
+import fcntl
 import json
 import os
 import random
@@ -20,6 +21,7 @@ import shlex
 import subprocess
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 from paths import (
@@ -29,6 +31,7 @@ from paths import (
     space_dir,
 )
 from harnesses import (
+    resolve_agent_handle,
     HARNESSES,
     DEFAULT_HARNESS,
     resolve_harness,
@@ -40,8 +43,7 @@ from harnesses import (
     session_has_agent_process,
 )
 from sites import ensure_site
-from runtime_context import RuntimeContext
-from session_runtime import RuntimeHandle, TmuxSessionRuntime
+from session_runtime import RuntimeHandle, get_runtime
 
 _UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
@@ -167,18 +169,52 @@ class SessionRegistry:
         self._write(wolt, name, data)
         return data
 
+    @contextmanager
+    def _lock(self, wolt: str, name: str):
+        """Serialize one session's read-modify-write across processes.
+
+        start_session writes the runtime handle immediately after spawning,
+        while the spawned run-session.sh has already started and writes
+        harness_session_id via `session-reg prepare` — two processes, same
+        file. Unserialized, whichever reads first wins and the other's field
+        vanishes: a lost runtime handle is cosmetic, a lost harness_session_id
+        breaks --resume. Best-effort — a filesystem without flock just falls
+        through to the old unlocked behavior rather than failing the write.
+        """
+        path = self._path(wolt, name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            handle = open(path.with_suffix(".lock"), "w")
+        except OSError:
+            yield
+            return
+        try:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            except OSError:
+                pass
+            yield
+        finally:
+            handle.close()
+
     def update(self, name: str, *, wolt: str = None, **fields) -> dict | None:
-        """Update fields on an existing session. Returns updated dict or None."""
+        """Update fields on an existing session. Returns updated dict or None.
+
+        Merges into whatever is on disk at write time, under a per-session
+        lock, so concurrent writers touching different fields don't clobber
+        each other.
+        """
         if not wolt:
             wolt = self._find_wolt(name)
         if not wolt:
             return None
-        data = self._read(wolt, name)
-        if data is None:
-            return None
-        data.update(fields)
-        data["last_activity"] = int(time.time())
-        self._write(wolt, name, data)
+        with self._lock(wolt, name):
+            data = self._read(wolt, name)
+            if data is None:
+                return None
+            data.update(fields)
+            data["last_activity"] = int(time.time())
+            self._write(wolt, name, data)
         return data
 
     def touch(self, name: str, *, wolt: str = None) -> bool:
@@ -341,32 +377,40 @@ class SessionRegistry:
 # --- Helpers ---
 
 def _tmux_sessions() -> set[str]:
-    """Compatibility wrapper around the named-session runtime."""
+    """Every live session name, in one call.
+
+    The batched form of _tmux_alive and the same definition — a session is
+    live while it has any pane — so list()/reconcile() and get(check_alive)
+    can never disagree about the same session.
+    """
     return _runtime().list_session_names()
 
 
-def _runtime() -> TmuxSessionRuntime:
-    """Build a runtime with patchable runner/sleeper compatibility for tests."""
-    context = RuntimeContext.from_env(
-        wolts_root=WOLTS_DIR,
-        run_session_script=RUN_SESSION_SCRIPT,
-    )
-    return TmuxSessionRuntime(context, runner=subprocess.run, sleeper=time.sleep)
+def _runtime():
+    """The shared process-control boundary (see session_runtime.get_runtime)."""
+    return get_runtime()
 
 
-def _runtime_handle(session: str | dict) -> RuntimeHandle:
+def _runtime_handle(session: str | dict | RuntimeHandle) -> RuntimeHandle:
+    if isinstance(session, RuntimeHandle):
+        return session
     if isinstance(session, dict):
         return RuntimeHandle.from_record(session)
     data = SessionRegistry(WOLTS_DIR).get(session, check_alive=False)
     return RuntimeHandle.from_record(data or {"name": session})
 
 
-def _tmux_alive(session: str | dict) -> bool:
-    """Check one named session, honoring its persisted pane handle when present."""
+def _tmux_alive(session: str | dict | RuntimeHandle) -> bool:
+    """Whether the session's tmux session exists — one definition, everywhere.
+
+    Session-level, matching list()/reconcile() and the pre-refactor
+    has-session check. Pane identity decides where a message is *delivered*
+    (resolve_delivery_pane), never whether the session counts as alive.
+    """
     return _runtime().is_alive(_runtime_handle(session))
 
 
-def _tmux_paste(target: str, text: str, settle: float = 0.0):
+def _tmux_paste(target: str | dict | RuntimeHandle, text: str, settle: float = 0.0):
     """Paste text into a tmux pane and press Enter.
 
     Uses set-buffer + paste-buffer instead of send-keys -l.
@@ -399,8 +443,11 @@ def _tmux_paste(target: str, text: str, settle: float = 0.0):
     _runtime().paste(_runtime_handle(target), text, settle=settle)
 
 
-def _tmux_capture(target: str, start: str = "-30") -> str:
-    """Capture one named session through its exact persisted runtime handle."""
+def _tmux_capture(target: str | dict | RuntimeHandle, start: str | None = "-30") -> str:
+    """Capture one named session through its exact persisted runtime handle.
+
+    start is the tmux -S history offset; None captures the visible pane only.
+    """
     return _runtime().capture(_runtime_handle(target), start=start)
 
 
@@ -409,7 +456,7 @@ def _tmux_spawn(name: str, cwd: str, command: str) -> RuntimeHandle:
     return _runtime().spawn(name, cwd, command)
 
 
-def _tmux_stop(session: str | dict) -> bool:
+def _tmux_stop(session: str | dict | RuntimeHandle) -> bool:
     """Stop one exact named tmux session."""
     return _runtime().stop(_runtime_handle(session))
 
@@ -789,7 +836,11 @@ def deliver_boot_prompt(name: str, timeout: int = 90) -> bool:
             ready = True
             break
         try:
-            pane = _tmux_capture(name, start="-200")
+            # Visible pane only (no -S). The gate below waits for the marker to
+            # CLEAR when the pane repaints; scrollback keeps a scrolled-off
+            # marker permanently "present", so seen_absent would never flip and
+            # the prompt would be stranded until the timeout.
+            pane = _tmux_capture(name, start=None)
         except (subprocess.SubprocessError, OSError, RuntimeError):
             pane = ""
         present = marker in pane
@@ -969,10 +1020,16 @@ def resume_session(name: str, prompt: str = "") -> dict:
 
     tmux_alive = _tmux_alive(data)
     agent_running = False
+    # Where the agent was actually found. Delivery targets this exact pane, so
+    # a session detected in one window can never be pasted into another.
+    target = _runtime_handle(data)
 
     if tmux_alive:
         # Launching doesn't count here — pasting into a half-booted TUI is lost.
-        agent_running = session_has_agent_process(data, harness, include_launching=False)
+        found = resolve_agent_handle(data, harness, include_launching=False)
+        agent_running = found is not None
+        if found is not None:
+            target = found
 
     if tmux_alive and agent_running:
         # Agent is running — paste the prompt into the TUI as a single buffer paste.
@@ -983,7 +1040,7 @@ def resume_session(name: str, prompt: str = "") -> dict:
         # the multi-line attributed message renders intact — hence the flatten
         # lives at the call site, not in _guard_paste_text.
         if prompt:
-            _tmux_paste(name, _guard_paste_text(harness, prompt.replace("\n", " ")),
+            _tmux_paste(target, _guard_paste_text(harness, prompt.replace("\n", " ")),
                         settle=get_harness(harness).get("paste_settle", 0.0))
         registry.update(name, wolt=wolt, status="running")
         return {"name": name, "url": session_url, "status": "delivered", "detail": "agent running, message sent"}
@@ -996,7 +1053,7 @@ def resume_session(name: str, prompt: str = "") -> dict:
 
     if tmux_alive and not agent_running:
         # Tmux alive but the agent exited — run the wrapper inside the pane
-        _tmux_paste(name, resume_cmd)
+        _tmux_paste(target, resume_cmd)
         registry.update(name, wolt=wolt, status="running")
         return {"name": name, "url": session_url, "status": "revived", "detail": "agent exited, restarted with --resume in existing tmux"}
 
@@ -1019,6 +1076,9 @@ def stop_session(name: str) -> dict:
         raise ValueError(f"session '{name}' not found in registry")
 
     wolt = data.get("wolt", "")
+    # Session-level: kill whenever tmux still holds the session, even if the
+    # persisted pane is long gone. Gating this on the pane would mark the
+    # record stopped while the tmux session ran on, unreachable forever.
     tmux_alive = _tmux_alive(data)
 
     if tmux_alive:

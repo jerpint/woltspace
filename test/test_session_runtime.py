@@ -19,35 +19,38 @@ from conftest import requires_tmux
 
 
 class FakeRunner:
-    def __init__(self, outputs=None):
+    """subprocess.run stand-in. outputs feed stdout call-by-call; a mapping
+    keyed by argv verb answers whichever call actually arrives, which matters
+    once a method makes more than one tmux call."""
+
+    def __init__(self, outputs=None, by_verb=None):
         self.outputs = list(outputs or [])
+        self.by_verb = dict(by_verb or {})
         self.calls = []
 
     def __call__(self, command, **kwargs):
         self.calls.append((command, kwargs))
+        verb = command[1] if len(command) > 1 else command[0]
+        if verb in self.by_verb:
+            return SimpleNamespace(stdout=self.by_verb[verb], returncode=0)
+        if command[0] == "ps" and "ps" in self.by_verb:
+            return SimpleNamespace(stdout=self.by_verb["ps"], returncode=0)
         stdout = self.outputs.pop(0) if self.outputs else ""
         return SimpleNamespace(stdout=stdout, returncode=0)
 
+    def commands(self):
+        return [call[0] for call in self.calls]
 
-def context(tmp_path, tmux_bin="tmux"):
-    return RuntimeContext(
-        install_root=tmp_path,
-        wolts_root=tmp_path / "wolts",
-        run_session_script=tmp_path / "run-session.sh",
-        tmux_bin=tmux_bin,
-    )
+
+def context(tmp_path=None, tmux_bin="tmux"):
+    return RuntimeContext(tmux_bin=tmux_bin)
 
 
 class TestRuntimeContext:
     def test_from_env_is_injectable(self, tmp_path):
-        ctx = RuntimeContext.from_env(
-            {"WOLTS_DIR": str(tmp_path / "data"), "WOLTSPACE_TMUX_BIN": "tmux-test"},
-            install_root=tmp_path / "install",
-        )
-        assert ctx.install_root == tmp_path / "install"
-        assert ctx.wolts_root == tmp_path / "data"
+        ctx = RuntimeContext.from_env({"WOLTSPACE_TMUX_BIN": "tmux-test"})
         assert ctx.tmux_bin == "tmux-test"
-        assert ctx.run_session_script == tmp_path / "install" / "container" / "bin" / "run-session.sh"
+        assert RuntimeContext.from_env({}).tmux_bin == "tmux"
 
 
 class TestRuntimeHandle:
@@ -75,7 +78,7 @@ class TestTmuxSessionRuntime:
         assert command[:6] == ["tmux", "new-session", "-d", "-P", "-F", "#{pane_id}"]
         assert command[-1] == "cat"
 
-    def test_liveness_checks_persisted_pane_in_named_session(self, tmp_path):
+    def test_liveness_is_session_level_across_all_windows(self, tmp_path):
         runner = FakeRunner(["named-session\t%17\t123\t1\nnamed-session\t%18\t456\t0\n"])
         runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
 
@@ -83,11 +86,20 @@ class TestTmuxSessionRuntime:
         command = runner.calls[0][0]
         assert command[1:5] == ["list-panes", "-s", "-t", "=named-session"]
 
-    def test_liveness_rejects_missing_persisted_pane(self, tmp_path):
+    def test_stale_pane_does_not_make_a_live_session_look_dead(self, tmp_path):
+        """The orphan trap: pane-strict liveness leaves a session that the stop
+        paths refuse to kill and the vulture refuses to reap."""
         runner = FakeRunner(["named-session\t%17\t123\t1\n"])
         runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
+        stale = RuntimeHandle("named-session", "named-session", "%99")
 
-        assert runtime.is_alive(RuntimeHandle("named-session", "named-session", "%99")) is False
+        assert runtime.is_alive(stale) is True
+        # Pane identity is still available where it actually matters.
+        assert runtime.pane_is_live(stale) is False
+
+    def test_liveness_false_only_when_session_has_no_panes(self, tmp_path):
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=FakeRunner([""]))
+        assert runtime.is_alive(RuntimeHandle("gone", "gone", "%1")) is False
 
     def test_paste_targets_pane_id_atomically(self, tmp_path):
         runner = FakeRunner()
@@ -103,24 +115,119 @@ class TestTmuxSessionRuntime:
         assert commands[3] == ["tmux", "send-keys", "-t", "%17", "Enter"]
         assert sleeps == [0.5]
 
-    def test_legacy_paste_targets_named_session_without_discovery(self, tmp_path):
-        """A record with no persisted pane targets the bare session name.
-
-        tmux accepts the '=' exact-match prefix for a target-session but
-        rejects it for a target-pane ("can't find pane: =legacy"), so the
-        pre-runtime-handle fallback must pass the name unprefixed — the
-        pre-refactor behavior — and must still not discover panes.
-        """
-        runner = FakeRunner()
+    def test_legacy_paste_resolves_the_only_pane(self, tmp_path):
+        """A record with no persisted pane — i.e. every session already on
+        disk — resolves to a real pane rather than the bare session name."""
+        runner = FakeRunner(by_verb={"list-panes": "legacy\t%3\t123\t1\n"})
         runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
 
         runtime.paste(RuntimeHandle("legacy", "legacy"), "hello")
 
-        commands = [call[0] for call in runner.calls]
-        assert all("list-panes" not in command for command in commands)
-        assert commands[0][3] == "legacy"
-        assert commands[2][-1] == "legacy"
-        assert commands[3] == ["tmux", "send-keys", "-t", "legacy", "Enter"]
+        pastes = [c for c in runner.commands() if "paste-buffer" in c]
+        assert pastes[0][-1] == "%3"
+
+    def test_legacy_paste_falls_back_to_bare_name_never_equals_prefix(self, tmp_path):
+        """With nothing to resolve, address the session by bare name.
+
+        tmux honors the '=' exact-match prefix for a target-session but
+        rejects it for a target-pane ("can't find pane: =legacy"), so the
+        fallback must pass the name unprefixed — the pre-refactor behavior.
+        """
+        runner = FakeRunner(by_verb={"list-panes": ""})
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
+
+        runtime.paste(RuntimeHandle("legacy", "legacy"), "hello")
+
+        commands = runner.commands()
+        cancel = [c for c in commands if "cancel" in c][0]
+        paste = [c for c in commands if "paste-buffer" in c][0]
+        enter = [c for c in commands if c[-1] == "Enter"][0]
+        assert cancel == ["tmux", "send-keys", "-t", "legacy", "-X", "cancel"]
+        assert paste[-1] == "legacy"
+        assert enter == ["tmux", "send-keys", "-t", "legacy", "Enter"]
+
+    def test_legacy_paste_prefers_the_pane_carrying_the_agent(self, tmp_path):
+        """Multi-window legacy session: detection sees every window (-s), so
+        delivery must land in the SAME pane, not the active one."""
+        runner = FakeRunner(by_verb={
+            # window 1's pane is active; the agent lives in window 0's pane.
+            "list-panes": "legacy\t%1\t100\t0\nlegacy\t%2\t200\t1\n",
+            "ps": "100 1 bash\n300 100 claude\n200 1 bash\n",
+        })
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
+
+        runtime.paste(RuntimeHandle("legacy", "legacy"), "hello",
+                      process_names={"claude"})
+
+        pastes = [c for c in runner.commands() if "paste-buffer" in c]
+        assert pastes[0][-1] == "%1"
+
+    def test_capture_omits_history_flag_when_start_is_none(self, tmp_path):
+        """Visible-pane capture. deliver_boot_prompt waits for a marker to
+        CLEAR on repaint; -S would keep a scrolled-off marker forever present
+        and strand the boot prompt until timeout."""
+        runner = FakeRunner(by_verb={"list-panes": "s\t%4\t1\t1\n",
+                                     "capture-pane": "pane text"})
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
+
+        assert runtime.capture(RuntimeHandle("s", "s"), start=None) == "pane text"
+        captures = [c for c in runner.commands() if "capture-pane" in c]
+        assert "-S" not in captures[0]
+        assert captures[0] == ["tmux", "capture-pane", "-t", "%4", "-p"]
+
+        runtime.capture(RuntimeHandle("s", "s", "%4"), start="-200")
+        captures = [c for c in runner.commands() if "capture-pane" in c]
+        assert captures[1][-2:] == ["-S", "-200"]
+
+
+class TestAgentDetection:
+    """has_descendant_process is the vulture's kill decision — cover it."""
+
+    PS = "100 1 bash\n101 100 run-session.sh\n102 101 claude\n200 1 bash\n"
+
+    def _runtime(self, tmp_path, panes, ps=None):
+        return TmuxSessionRuntime(
+            context(tmp_path),
+            runner=FakeRunner(by_verb={"list-panes": panes, "ps": ps or self.PS}),
+        )
+
+    def test_finds_agent_under_the_wrapper_chain(self, tmp_path):
+        runtime = self._runtime(tmp_path, "s\t%1\t100\t1\n")
+        assert runtime.has_descendant_process(RuntimeHandle("s", "s"), {"claude"}) is True
+
+    def test_false_when_no_pane_carries_the_agent(self, tmp_path):
+        runtime = self._runtime(tmp_path, "s\t%2\t200\t1\n")
+        assert runtime.has_descendant_process(RuntimeHandle("s", "s"), {"claude"}) is False
+
+    def test_none_when_session_is_gone(self, tmp_path):
+        runtime = self._runtime(tmp_path, "")
+        assert runtime.has_descendant_process(RuntimeHandle("s", "s"), {"claude"}) is None
+
+    def test_persisted_pane_scopes_the_search(self, tmp_path):
+        runtime = self._runtime(tmp_path, "s\t%1\t100\t1\ns\t%2\t200\t0\n")
+        assert runtime.has_descendant_process(RuntimeHandle("s", "s", "%2"), {"claude"}) is False
+        assert runtime.has_descendant_process(RuntimeHandle("s", "s", "%1"), {"claude"}) is True
+
+    def test_stale_pane_widens_to_the_session_rather_than_going_blind(self, tmp_path):
+        """A vanished pane is not evidence the agent left the session — and
+        answering None here is what made stale-pane sessions unreapable."""
+        runtime = self._runtime(tmp_path, "s\t%1\t100\t1\n")
+        assert runtime.has_descendant_process(RuntimeHandle("s", "s", "%99"), {"claude"}) is True
+
+    def test_detection_and_delivery_agree_on_the_pane(self, tmp_path):
+        panes = "s\t%1\t100\t0\ns\t%2\t200\t1\n"
+        runtime = self._runtime(tmp_path, panes)
+        handle = RuntimeHandle("s", "s")
+        found = runtime.agent_panes(handle, {"claude"})
+        assert [p.pane_id for p in found] == ["%1"]
+        assert runtime.resolve_delivery_pane(handle, {"claude"}).pane_id == "%1"
+
+    def test_explicit_pane_is_trusted_without_a_second_lookup(self, tmp_path):
+        runner = FakeRunner()
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
+        handle = RuntimeHandle("s", "s", "%7")
+        assert runtime.resolve_delivery_pane(handle).pane_id == "%7"
+        assert runner.calls == []
 
     def test_session_names_come_from_server_wide_pane_snapshot(self, tmp_path):
         runner = FakeRunner(["main\t%1\t10\t1\nnamed-a\t%2\t20\t1\nnamed-a\t%3\t30\t0\n"])
@@ -223,3 +330,86 @@ def test_host_tmux_legacy_record_round_trip(tmp_path):
         runtime.stop(legacy)
 
     assert runtime.is_alive(legacy) is False
+
+
+class TestStopWithStalePane:
+    """Finding #2: a stale pane must not make a session unkillable."""
+
+    def test_stop_session_kills_when_only_the_pane_is_gone(self, tmp_path, monkeypatch, fake_runtime):
+        import paths
+        import sessions
+
+        monkeypatch.setattr(sessions, "WOLTS_DIR", tmp_path)
+        monkeypatch.setattr(paths, "WOLTS_DIR", tmp_path)
+        (tmp_path / "testwolt" / "wolt").mkdir(parents=True)
+
+        reg = sessions.SessionRegistry(tmp_path)
+        reg.create("testwolt-stale-pane-aa11", wolt="testwolt")
+        # tmux still has the session, but on a pane this record never sees
+        # again — the shape left behind by a pane that died or was recreated.
+        reg.update("testwolt-stale-pane-aa11", wolt="testwolt",
+                   runtime=RuntimeHandle("testwolt-stale-pane-aa11",
+                                         "testwolt-stale-pane-aa11", "%9999").to_record())
+
+        result = sessions.stop_session("testwolt-stale-pane-aa11")
+
+        assert result["was_alive"] is True
+        assert fake_runtime.stops == ["testwolt-stale-pane-aa11"]
+        assert reg.get("testwolt-stale-pane-aa11", check_alive=False)["status"] == "stopped"
+
+    def test_vulture_can_still_tell_a_stale_pane_session_has_no_agent(self, tmp_path):
+        """The other half: has_descendant_process must not answer None here,
+        or the reaper treats it as alive-on-uncertainty and never reaps."""
+        runner = FakeRunner(by_verb={"list-panes": "s\t%1\t100\t1\n",
+                                     "ps": "100 1 bash\n"})
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
+        stale = RuntimeHandle("s", "s", "%9999")
+        assert runtime.has_descendant_process(stale, {"claude"}) is False
+
+
+@requires_tmux
+def test_host_tmux_legacy_multi_window_delivers_to_the_agent_pane(tmp_path):
+    """Finding #4, end to end on real tmux.
+
+    A legacy record (no persisted pane) whose session has the agent in
+    window 0 while window 1 is active. Detection sees window 0 because the
+    pane walk uses -s; delivery has to land there too. Addressing the bare
+    session name would paste into window 1 — silently, and reported as
+    delivered.
+    """
+    runtime = TmuxSessionRuntime(context(tmp_path))
+    name = f"test-multiwin-{uuid.uuid4().hex[:10]}"
+    legacy = RuntimeHandle.from_record({"name": name})
+    assert legacy.pane_id == ""
+
+    # Window 0 runs `cat` (stands in for the agent); window 1 is created
+    # second, so tmux makes it the session's current window.
+    subprocess.run(["tmux", "new-session", "-d", "-s", name, "cat"], check=True)
+    try:
+        subprocess.run(["tmux", "new-window", "-t", f"={name}", "bash"], check=True)
+        time.sleep(0.3)
+
+        panes = runtime.panes_for_session(name)
+        assert len(panes) == 2, "both windows must be visible to the -s walk"
+
+        agent = runtime.agent_panes(legacy, {"cat"})
+        assert agent and len(agent) == 1
+        agent_pane = agent[0].pane_id
+
+        marker = f"marker-{uuid.uuid4().hex}"
+        runtime.paste(legacy, marker, process_names={"cat"})
+
+        deadline = time.time() + 3
+        landed = ""
+        while time.time() < deadline:
+            landed = runtime.capture(legacy.at_pane(agent_pane), start="-20")
+            if marker in landed:
+                break
+            time.sleep(0.05)
+        assert marker in landed, "prompt did not reach the agent's pane"
+
+        # ...and did NOT land in the active window the human was looking at.
+        other = [p.pane_id for p in panes if p.pane_id != agent_pane][0]
+        assert marker not in runtime.capture(legacy.at_pane(other), start="-20")
+    finally:
+        runtime.stop(legacy)

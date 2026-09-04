@@ -45,11 +45,18 @@ def wolt_env(tmp_path, monkeypatch):
     return tmp_path
 
 
+def _agent_in(pane_id: str):
+    """The handle resolve_agent_handle would return for an agent in pane_id."""
+    from session_runtime import RuntimeHandle
+    return RuntimeHandle("testwolt-chompy-dam-abc123",
+                         "testwolt-chompy-dam-abc123", pane_id)
+
+
 class TestResumeSessionClaudeRunning:
     """Path 1: Claude is running in tmux — send keys directly."""
 
     @patch("sessions.subprocess.run")
-    @patch("sessions.session_has_agent_process", return_value=True)
+    @patch("sessions.resolve_agent_handle", return_value=_agent_in("%7"))
     @patch("sessions._tmux_alive", return_value=True)
     def test_pastes_when_claude_running(self, mock_alive, mock_agent, mock_run, wolt_env):
         from sessions import resume_session
@@ -60,9 +67,13 @@ class TestResumeSessionClaudeRunning:
         # Should have used set-buffer + paste-buffer (two calls)
         buf_calls = [c for c in mock_run.call_args_list if "set-buffer" in str(c) or "paste-buffer" in str(c)]
         assert len(buf_calls) == 2
+        # ...and aimed at the pane the agent was actually found in, not the
+        # session's active pane (which may be a window the human opened).
+        targets = [c.args[0][-1] for c in mock_run.call_args_list if "paste-buffer" in str(c)]
+        assert targets == ["%7"]
 
     @patch("sessions.subprocess.run")
-    @patch("sessions.session_has_agent_process", return_value=True)
+    @patch("sessions.resolve_agent_handle", return_value=_agent_in("%7"))
     @patch("sessions._tmux_alive", return_value=True)
     def test_no_keys_without_prompt(self, mock_alive, mock_agent, mock_run, wolt_env):
         from sessions import resume_session
@@ -74,7 +85,7 @@ class TestResumeSessionClaudeRunning:
         assert len(buf_calls) == 0
 
     @patch("sessions.subprocess.run")
-    @patch("sessions.session_has_agent_process", return_value=True)
+    @patch("sessions.resolve_agent_handle", return_value=_agent_in("%7"))
     @patch("sessions._tmux_alive", return_value=True)
     def test_updates_status_to_running(self, mock_alive, mock_agent, mock_run, wolt_env):
         from sessions import resume_session, SessionRegistry
@@ -89,7 +100,7 @@ class TestResumeSessionClaudeExited:
     """Path 2: Tmux alive but claude exited — restart with --resume."""
 
     @patch("sessions.subprocess.run")
-    @patch("sessions.session_has_agent_process", return_value=False)
+    @patch("sessions.resolve_agent_handle", return_value=None)
     @patch("sessions._tmux_alive", return_value=True)
     def test_revives_claude_with_resume(self, mock_alive, mock_agent, mock_run, wolt_env):
         from sessions import resume_session
@@ -118,7 +129,7 @@ class TestResumeSessionTmuxDead:
     """Path 3: Tmux is dead — create new tmux session with --resume."""
 
     @patch("sessions.subprocess.run")
-    @patch("sessions.session_has_agent_process", return_value=False)
+    @patch("sessions.resolve_agent_handle", return_value=None)
     @patch("sessions._tmux_alive", return_value=False)
     def test_respawns_tmux_with_resume(self, mock_alive, mock_agent, mock_run, wolt_env):
         from sessions import resume_session

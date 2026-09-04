@@ -36,7 +36,7 @@ from wolts import get_active_creature
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from paths import space_dir
-from sessions import _tmux_alive
+from session_runtime import RuntimeHandle, get_runtime
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -258,12 +258,22 @@ async def _send_result(update: Update, result: dict):
 # ---------------------------------------------------------------------------
 
 def _is_session_alive(session_name: str) -> bool:
-    """Check if a session is still alive in tmux. Diagnostic only — not used for routing."""
+    """Check if a session is still alive in tmux. Diagnostic only — not used for routing.
+
+    Goes straight to the runtime with a bare handle rather than through the
+    registry: liveness is session-level, so the persisted pane would not change
+    the answer, and this runs inside an async handler where a per-check scan of
+    every wolt directory is not worth paying for.
+    """
     try:
-        alive = _tmux_alive(session_name)
+        runtime = get_runtime()
+        panes = runtime.panes_for_session(session_name)
+        alive = bool(panes)
         if not alive:
             _bot_log("session_alive_check_false", {
                 "session": session_name,
+                "panes": 0,
+                "live_sessions": sorted(runtime.list_session_names())[:20],
             })
         return alive
     except Exception as e:

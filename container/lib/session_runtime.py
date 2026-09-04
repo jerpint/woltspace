@@ -4,6 +4,18 @@ Woltspace session records are the durable authority.  Tmux is an implementation
 detail beneath them: new sessions persist an exact tmux session and pane handle,
 and later operations use that handle rather than discovering agent processes or
 guessing among panes.
+
+Two questions are asked of a session, and they are deliberately different:
+
+* **Is it alive?** — a session-level question.  A record is live while its tmux
+  session exists at all, which is what `list()`, `reconcile()` and the stop
+  paths have always meant by it.  Answering this pane-strictly would strand a
+  session whose persisted pane went away: too dead to message, too alive to
+  reap.
+* **Where do I deliver?** — a pane-level question, and the reason handles are
+  persisted at all.  `resolve_delivery_pane` answers it, and agent detection
+  walks the same pane set, so a session is never found in one pane and pasted
+  into another.
 """
 
 from __future__ import annotations
@@ -33,6 +45,15 @@ class RuntimeHandle:
     def to_record(self) -> dict:
         return asdict(self)
 
+    def at_pane(self, pane_id: str) -> "RuntimeHandle":
+        """Same session, addressed at a specific pane."""
+        return RuntimeHandle(
+            woltspace_session_id=self.woltspace_session_id,
+            tmux_session_name=self.tmux_session_name,
+            pane_id=pane_id,
+            kind=self.kind,
+        )
+
     @classmethod
     def from_record(cls, session: dict) -> "RuntimeHandle":
         runtime = session.get("runtime") or {}
@@ -59,13 +80,15 @@ class SessionRuntime(Protocol):
     def spawn(self, session_id: str, cwd: str, command: str) -> RuntimeHandle: ...
     def is_alive(self, handle: RuntimeHandle) -> bool: ...
     def paste(self, handle: RuntimeHandle, text: str, settle: float = 0.0) -> None: ...
-    def capture(self, handle: RuntimeHandle, start: str = "-30") -> str: ...
+    def capture(self, handle: RuntimeHandle, start: str | None = "-30") -> str: ...
     def stop(self, handle: RuntimeHandle) -> bool: ...
     def list_session_names(self, include_main: bool = False) -> set[str]: ...
-
-
-class AmbiguousTmuxSession(RuntimeError):
-    """A legacy named session has multiple panes but no persisted pane handle."""
+    def has_descendant_process(
+        self, handle: RuntimeHandle, process_names: Iterable[str]
+    ) -> bool | None: ...
+    def resolve_delivery_pane(
+        self, handle: RuntimeHandle, process_names: Iterable[str] | None = None
+    ) -> RuntimeHandle: ...
 
 
 class TmuxSessionRuntime:
@@ -75,16 +98,29 @@ class TmuxSessionRuntime:
         self,
         context: RuntimeContext | None = None,
         *,
-        runner: Callable = subprocess.run,
-        sleeper: Callable[[float], None] = time.sleep,
+        runner: Callable | None = None,
+        sleeper: Callable[[float], None] | None = None,
     ):
         self.context = context or RuntimeContext.from_env()
-        self._run = runner
-        self._sleep = sleeper
+        self._runner = runner
+        self._sleeper = sleeper
+
+    # Late-bound on purpose: with no explicit runner injected, every call looks
+    # subprocess.run up fresh, so a test that patches the subprocess module is
+    # still honored by a runtime built before the patch.
+    @property
+    def _run(self) -> Callable:
+        return self._runner if self._runner is not None else subprocess.run
+
+    @property
+    def _sleep(self) -> Callable[[float], None]:
+        return self._sleeper if self._sleeper is not None else time.sleep
 
     @property
     def tmux(self) -> str:
         return self.context.tmux_bin
+
+    # -- pane inventory ----------------------------------------------------
 
     def panes_for_session(self, session_name: str) -> list[TmuxPane]:
         """List every pane in one exact named session, across all its windows."""
@@ -151,20 +187,97 @@ class TmuxSessionRuntime:
             names.discard("main")
         return names
 
-    def resolve_handle(self, session_id: str) -> RuntimeHandle | None:
-        """Resolve one legacy named session without guessing among panes."""
-        panes = self.panes_for_session(session_id)
+    # -- liveness ----------------------------------------------------------
+
+    def is_alive(self, handle: RuntimeHandle) -> bool:
+        """Whether the session exists at all — the one liveness definition.
+
+        Deliberately session-level, not pane-level.  `list()`, `reconcile()`
+        and the stop paths have always meant "tmux still has this session",
+        and a stale persisted pane must not make a running session look dead:
+        the stop paths would then skip the kill and leave it running forever,
+        while the vulture would refuse to reap it.  Pane identity governs
+        delivery (`resolve_delivery_pane`), not existence.
+        """
+        return bool(self.panes_for_session(handle.tmux_session_name))
+
+    def pane_is_live(self, handle: RuntimeHandle) -> bool:
+        """Whether this handle's exact persisted pane is still present."""
+        if not handle.pane_id:
+            return False
+        return any(
+            pane.pane_id == handle.pane_id
+            for pane in self.panes_for_session(handle.tmux_session_name)
+        )
+
+    # -- pane resolution ---------------------------------------------------
+
+    def resolve_delivery_pane(
+        self,
+        handle: RuntimeHandle,
+        process_names: Iterable[str] | None = None,
+    ) -> RuntimeHandle:
+        """Resolve the exact pane to talk to for this session.
+
+        Records written before runtime handles carry no pane_id — that is
+        every session already on disk — and a persisted pane can also go away
+        beneath a live session.  Both fall back to inspecting the session's
+        panes rather than addressing it by bare name, because tmux resolves a
+        bare name to the *active* pane of the *current* window: with the human
+        looking at a second window, a paste meant for the agent lands in
+        whatever they last clicked on.
+
+        A handle that already names a pane is used as-is.  Callers get one
+        either from the record written at spawn or from `resolve_agent_handle`,
+        which just walked the panes to find the agent; re-verifying it here
+        would cost a second tmux call and could only lose information.  If such
+        a pane has since died, tmux says so loudly on the paste — far better
+        than silently retargeting the message at some other pane.
+
+        With no pane to go on: the only pane when there is just one, else the
+        pane whose process tree actually carries the agent — the same walk
+        `has_descendant_process` uses, so detection and delivery can never
+        disagree.  Failing that, the bare session name, and tmux picks as it
+        always did.
+        """
+        if handle.pane_id:
+            return handle
+
+        panes = self.panes_for_session(handle.tmux_session_name)
         if not panes:
-            return None
-        if len(panes) != 1:
-            raise AmbiguousTmuxSession(
-                f"session '{session_id}' has {len(panes)} panes and no persisted pane_id"
-            )
-        pane = panes[0]
-        return RuntimeHandle(session_id, pane.session_name, pane.pane_id)
+            # Nothing to resolve. Address the bare name so a dead session
+            # fails exactly as it did pre-refactor.
+            return self._bare(handle)
+        if len(panes) == 1:
+            return handle.at_pane(panes[0].pane_id)
+        if process_names:
+            matched = self._panes_running(panes, process_names)
+            if matched:
+                return handle.at_pane(matched[0].pane_id)
+        return self._bare(handle)
+
+    @staticmethod
+    def _bare(handle: RuntimeHandle) -> RuntimeHandle:
+        """Address the session by bare name — tmux's own active-pane pick.
+
+        The '=' exact-match prefix is deliberately absent: tmux honors it for a
+        target-session (has-session, kill-session) but rejects it for a
+        target-pane (paste-buffer, capture-pane, send-keys) with
+        "can't find pane: =<name>".
+        """
+        return handle.at_pane(handle.tmux_session_name)
+
+    # -- process control ---------------------------------------------------
 
     def spawn(self, session_id: str, cwd: str, command: str) -> RuntimeHandle:
-        """Create one named tmux session and return its exact initial pane."""
+        """Create one named tmux session and return its exact initial pane.
+
+        `new-session -d` returns as soon as tmux has forked, so the timeout is
+        a safety net against a wedged tmux server rather than a normal outcome.
+        If it does fire the caller sees an exception while tmux may already
+        have the session — the registry record is then "running" with no
+        handle, which reconcile()/the vulture resolve on their next pass.
+        """
         result = self._run(
             [
                 self.tmux,
@@ -188,31 +301,15 @@ class TmuxSessionRuntime:
         pane_id = stdout.strip() if stdout.strip().startswith("%") else ""
         return RuntimeHandle(session_id, session_id, pane_id)
 
-    def is_alive(self, handle: RuntimeHandle) -> bool:
-        panes = self.panes_for_session(handle.tmux_session_name)
-        if handle.pane_id:
-            return any(pane.pane_id == handle.pane_id for pane in panes)
-        return bool(panes)
-
-    def _exact_handle(self, handle: RuntimeHandle) -> RuntimeHandle:
-        if handle.pane_id:
-            return handle
-        # Compatibility for pre-runtime-handle records: nothing exact was
-        # persisted, so fall back to the plain session name, which tmux
-        # resolves to that session's active pane — the pre-refactor behavior.
-        # The '=' exact-match prefix is deliberately NOT used here: tmux honors
-        # it for a target-session (has-session, kill-session) but rejects it for
-        # a target-pane (paste-buffer, capture-pane, send-keys) with
-        # "can't find pane: =<name>". New spawns persist a real pane_id and
-        # never take this path.
-        return RuntimeHandle(
-            woltspace_session_id=handle.woltspace_session_id,
-            tmux_session_name=handle.tmux_session_name,
-            pane_id=handle.tmux_session_name,
-        )
-
-    def paste(self, handle: RuntimeHandle, text: str, settle: float = 0.0) -> None:
-        exact = self._exact_handle(handle)
+    def paste(
+        self,
+        handle: RuntimeHandle,
+        text: str,
+        settle: float = 0.0,
+        *,
+        process_names: Iterable[str] | None = None,
+    ) -> None:
+        exact = self.resolve_delivery_pane(handle, process_names)
         target = exact.pane_id
         buffer_id = _SAFE_BUFFER.sub("-", exact.woltspace_session_id)
         buffer_name = f"paste-{buffer_id}"
@@ -239,10 +336,20 @@ class TmuxSessionRuntime:
             timeout=_TMUX_TIMEOUT,
         )
 
-    def capture(self, handle: RuntimeHandle, start: str = "-30") -> str:
-        exact = self._exact_handle(handle)
+    def capture(self, handle: RuntimeHandle, start: str | None = "-30") -> str:
+        """Capture a pane's contents.
+
+        start is the -S history offset; pass None for the visible pane only.
+        That distinction matters: callers watching for a marker to *clear*
+        (deliver_boot_prompt's repaint gate) must not see scrollback, or the
+        marker never disappears and the gate never opens.
+        """
+        exact = self.resolve_delivery_pane(handle)
+        command = [self.tmux, "capture-pane", "-t", exact.pane_id, "-p"]
+        if start is not None:
+            command += ["-S", start]
         result = self._run(
-            [self.tmux, "capture-pane", "-t", exact.pane_id, "-p", "-S", start],
+            command,
             capture_output=True,
             text=True,
             check=True,
@@ -262,20 +369,10 @@ class TmuxSessionRuntime:
         except (subprocess.SubprocessError, OSError):
             return False
 
-    def has_descendant_process(
-        self,
-        handle: RuntimeHandle,
-        process_names: Iterable[str],
-    ) -> bool | None:
-        """Return whether an exact session pane has a matching process descendant."""
-        panes = self.panes_for_session(handle.tmux_session_name)
-        if not panes:
-            return None
-        if handle.pane_id:
-            panes = [pane for pane in panes if pane.pane_id == handle.pane_id]
-            if not panes:
-                return None
+    # -- process inspection ------------------------------------------------
 
+    def _process_table(self) -> tuple[dict[str, list[str]], dict[str, str]] | None:
+        """One ps snapshot as (pid → child pids, pid → comm)."""
         try:
             result = self._run(
                 ["ps", "--no-headers", "-eo", "pid,ppid,comm"],
@@ -296,16 +393,104 @@ class TmuxSessionRuntime:
                 pid, parent, command = parts[0], parts[1], parts[2]
                 children.setdefault(parent, []).append(pid)
                 commands[pid] = command
+        return children, commands
 
+    def _panes_running(
+        self,
+        panes: list[TmuxPane],
+        process_names: Iterable[str],
+        table: tuple[dict[str, list[str]], dict[str, str]] | None = None,
+    ) -> list[TmuxPane]:
+        """Subset of panes whose process tree contains one of process_names."""
+        table = table or self._process_table()
+        if table is None:
+            return []
+        children, commands = table
         wanted = set(process_names)
-        queue = [pane.pane_pid for pane in panes if pane.pane_pid]
-        seen: set[str] = set()
-        while queue:
-            pid = queue.pop()
-            if pid in seen:
+
+        matched = []
+        for pane in panes:
+            if not pane.pane_pid:
                 continue
-            seen.add(pid)
-            if commands.get(pid) in wanted:
-                return True
-            queue.extend(children.get(pid, []))
-        return False
+            queue = [pane.pane_pid]
+            seen: set[str] = set()
+            while queue:
+                pid = queue.pop()
+                if pid in seen:
+                    continue
+                seen.add(pid)
+                if commands.get(pid) in wanted:
+                    matched.append(pane)
+                    break
+                queue.extend(children.get(pid, []))
+        return matched
+
+    def agent_panes(
+        self,
+        handle: RuntimeHandle,
+        process_names: Iterable[str],
+    ) -> list[TmuxPane] | None:
+        """Panes of this session whose process tree carries a wanted process.
+
+        None means "can't tell" — the session is gone, or ps was unreadable.
+        [] means the session exists and no pane carries one.
+
+        Scoped to the persisted pane while that pane lives.  Once it has
+        vanished the whole session is searched instead: a missing pane is not
+        evidence the agent left the session, and searching wide keeps this in
+        step with `resolve_delivery_pane`.
+        """
+        panes = self.panes_for_session(handle.tmux_session_name)
+        if not panes:
+            return None
+        if handle.pane_id:
+            scoped = [pane for pane in panes if pane.pane_id == handle.pane_id]
+            if scoped:
+                panes = scoped
+        table = self._process_table()
+        if table is None:
+            return None
+        return self._panes_running(panes, process_names, table)
+
+    def has_descendant_process(
+        self,
+        handle: RuntimeHandle,
+        process_names: Iterable[str],
+    ) -> bool | None:
+        """Whether any pane of this session carries a wanted process.
+
+        None means undetermined (session gone, or ps unreadable) — callers
+        treat that as "don't act", never as "dead".
+        """
+        matched = self.agent_panes(handle, process_names)
+        if matched is None:
+            return None
+        return bool(matched)
+
+
+# ---------------------------------------------------------------------------
+# Shared factory
+# ---------------------------------------------------------------------------
+#
+# One seam for the whole application.  Every caller goes through this rather
+# than constructing a runtime inline, so a test that substitutes the runtime
+# substitutes it everywhere — otherwise a faked paste sits next to a real tmux
+# process walk in the same call.
+
+_installed: SessionRuntime | None = None
+
+
+def get_runtime() -> SessionRuntime:
+    """The process-control boundary. Substitute it with set_runtime in tests.
+
+    Not cached: building one is free (it holds no connection and looks its
+    runner up per call), and a fresh instance keeps the late-bound subprocess
+    lookup honest for callers that patch the module underneath it.
+    """
+    return _installed if _installed is not None else TmuxSessionRuntime()
+
+
+def set_runtime(runtime: SessionRuntime | None) -> None:
+    """Install a runtime for every call site (None restores the tmux default)."""
+    global _installed
+    _installed = runtime

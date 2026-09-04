@@ -338,8 +338,7 @@ class TestSessionHarnessPlumbing:
 
     def _start(self, **kwargs):
         from sessions import start_session
-        with patch("sessions.subprocess.run"):
-            return start_session(wolt="testwolt", prompt="hello", **kwargs)
+        return start_session(wolt="testwolt", prompt="hello", **kwargs)
 
     def _session_data(self, name):
         from sessions import SessionRegistry
@@ -445,7 +444,7 @@ class TestBootPromptViaPaste:
     """
 
     @pytest.fixture(autouse=True)
-    def setup_wolt(self, tmp_path, monkeypatch):
+    def setup_wolt(self, tmp_path, monkeypatch, fake_runtime):
         import sessions
         import sites
         import paths
@@ -463,11 +462,11 @@ class TestBootPromptViaPaste:
             "name": "testwolt", "type": "raccoon", "harness": "opencode",
         }))
         self.wolts_dir = tmp_path
+        self.runtime = fake_runtime
 
     def _start(self, **kwargs):
         from sessions import start_session
-        with patch("sessions.subprocess.run"):
-            return start_session(wolt="testwolt", prompt="hello", **kwargs)
+        return start_session(wolt="testwolt", prompt="hello", **kwargs)
 
     def _session_data(self, name):
         from sessions import SessionRegistry
@@ -519,16 +518,17 @@ class TestBootPromptViaPaste:
 
         # First capture: marker absent (blank pane) → satisfies absent-first.
         # Second: marker present → ready.
-        panes = iter(["", "┃ Ask anything...\n tab agents  ctrl+p commands"])
-
-        def fake_run(cmd, **kwargs):
-            return type("R", (), {"stdout": next(panes, "ctrl+p commands")})()
-        monkeypatch.setattr(sessions.subprocess, "run", fake_run)
+        self.runtime.feed_capture(["", "┃ Ask anything...\n tab agents  ctrl+p commands"])
         monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
 
         assert deliver_boot_prompt(name, timeout=5) is True
         # Leading slash gets a space guard (opencode palette defuse)
         assert pasted == [(name, " /woltspace-create-wolt", 0.5)]
+        # The readiness gate waits for the marker to CLEAR on repaint, so it
+        # must read the VISIBLE pane — no -S. With scrollback, a marker that
+        # scrolled off screen still reads as present, seen_absent never flips,
+        # and the prompt is stranded until the timeout.
+        assert [start for _, start in self.runtime.captures] == [None, None]
         assert self._session_data(name)["pending_boot_prompt"] == ""
         # Second call is a no-op — the stamp is gone
         assert deliver_boot_prompt(name, timeout=5) is False
@@ -548,17 +548,17 @@ class TestBootPromptViaPaste:
         # Marker present on the FIRST capture (stale frame). If deliver
         # accepted it, it would paste into the frozen pane. It must wait for a
         # capture without the marker (repaint) then one with it again.
-        panes = iter([
+        self.runtime.feed_capture([
             "old frame\n ctrl+p commands",   # stale — must be rejected
             "booting...",                     # repaint, marker gone
             "fresh TUI\n ctrl+p commands",   # real ready
         ])
-        monkeypatch.setattr(sessions.subprocess, "run",
-                            lambda *a, **k: type("R", (), {"stdout": next(panes, "ctrl+p commands")})())
         monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
 
         assert deliver_boot_prompt(name, timeout=5) is True
         assert pasted == ["hello world /woltspace-start-chat lodge testwolt"]
+        # Three visible-pane reads: stale frame, repaint, real marker.
+        assert [start for _, start in self.runtime.captures] == [None, None, None]
 
     def test_deliver_without_marker_falls_back_to_settle(self, monkeypatch):
         """A prompt_via_paste harness with no tui_ready_marker must still
@@ -593,16 +593,12 @@ class TestBootPromptViaPaste:
         pasted = []
         monkeypatch.setattr(sessions, "_tmux_paste",
                             lambda target, text, settle=0.0: pasted.append(text))
-        panes = iter(["", "ctrl+p commands"])
-        monkeypatch.setattr(sessions.subprocess, "run",
-                            lambda *a, **k: type("R", (), {"stdout": next(panes, "ctrl+p commands")})())
+        self.runtime.feed_capture(["", "ctrl+p commands"])
         monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
 
         assert deliver_boot_prompt(name, timeout=5) is True
         # A second poller (marker present from the start) finds the stamp gone
-        panes2 = iter(["ctrl+p commands"])
-        monkeypatch.setattr(sessions.subprocess, "run",
-                            lambda *a, **k: type("R", (), {"stdout": next(panes2, "ctrl+p commands")})())
+        self.runtime.feed_capture("ctrl+p commands")
         assert deliver_boot_prompt(name, timeout=5) is False
         assert pasted == ["hello world /woltspace-start-chat lodge testwolt"]  # only once
 
@@ -631,13 +627,12 @@ class TestBootPromptViaPaste:
         pasted = []
         monkeypatch.setattr(sessions, "_tmux_paste",
                             lambda target, text, settle=0.0: pasted.append(text))
-        panes = iter(["", "ctrl+p commands"])
-        monkeypatch.setattr(sessions.subprocess, "run",
-                            lambda *a, **k: type("R", (), {"stdout": next(panes, "ctrl+p commands")})())
+        self.runtime.feed_capture(["", "ctrl+p commands"])
         monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
 
         assert deliver_boot_prompt(name, timeout=5) is True
         assert pasted == ["just chatting"]
+        assert all(start is None for _, start in self.runtime.captures)
 
     def test_deliver_leaves_stamp_when_tui_never_paints(self, monkeypatch):
         """Agent died at boot → keep the stamp so a --resume respawn delivers it."""
@@ -649,8 +644,7 @@ class TestBootPromptViaPaste:
 
         # Marker never appears (agent died at boot) — exercise the real poll
         # loop with a short timeout, not the pre-expired-deadline shortcut.
-        monkeypatch.setattr(sessions.subprocess, "run",
-                            lambda *a, **k: type("R", (), {"stdout": "booting, no tui yet"})())
+        self.runtime.feed_capture("booting, no tui yet")
         monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
         monkeypatch.setattr(sessions, "_tmux_paste",
                             lambda *a, **k: pytest.fail("must not paste before TUI paints"))

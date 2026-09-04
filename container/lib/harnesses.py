@@ -25,8 +25,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from runtime_context import RuntimeContext
-from session_runtime import RuntimeHandle, TmuxSessionRuntime
+from session_runtime import RuntimeHandle, get_runtime
 
 DEFAULT_HARNESS = "claude"
 
@@ -566,34 +565,68 @@ def build_command(harness: str | None, mode: str, **kwargs) -> str:
     return entry["command"](entry, mode, **kwargs)
 
 
-def session_has_agent_process(session_name: str | dict | RuntimeHandle, harness: str | None = None,
-                              include_launching: bool = True) -> bool | None:
-    """Check if a tmux session has a live agent process anywhere in its tree.
+def _as_handle(session: str | dict | RuntimeHandle) -> RuntimeHandle:
+    """Accept a session name, a registry record, or an already-built handle."""
+    if isinstance(session, RuntimeHandle):
+        return session
+    if isinstance(session, dict):
+        return RuntimeHandle.from_record(session)
+    return RuntimeHandle(session, session)
 
-    Walks the full subtree from the pane's root PID — not just direct children.
-    The actual tree is: pane(bash) → bash(run-session.sh) → bash(wrapper) → agent,
-    so checking only direct children always misses the agent.
 
-    harness=None matches ANY known harness's process names — for callers like
-    the vulture that only see a tmux session and must not kill a live agent
-    just because they can't tell which harness it runs.
-
-    include_launching also counts run-session.sh itself as alive — a session
-    that is still booting has no agent process yet but must not be reaped.
-
-    Returns True/False, or None if the tmux session doesn't exist.
-    """
+def _wanted_processes(harness: str | None, include_launching: bool) -> set[str]:
     if harness is None:
+        # Match ANY known harness — callers like the vulture only see a tmux
+        # session and must not kill a live agent because they can't tell which
+        # harness it runs.
         process_names = set().union(*(e["process_names"] for e in HARNESSES.values()))
     else:
         process_names = set(get_harness(harness)["process_names"])
     if include_launching:
         process_names |= LAUNCHING_NAMES
-    if isinstance(session_name, RuntimeHandle):
-        handle = session_name
-    elif isinstance(session_name, dict):
-        handle = RuntimeHandle.from_record(session_name)
-    else:
-        handle = RuntimeHandle(session_name, session_name)
-    runtime = TmuxSessionRuntime(RuntimeContext.from_env(), runner=subprocess.run)
-    return runtime.has_descendant_process(handle, process_names)
+    return process_names
+
+
+def resolve_agent_handle(session_name: str | dict | RuntimeHandle,
+                         harness: str | None = None,
+                         include_launching: bool = True) -> RuntimeHandle | None:
+    """Locate the pane an agent is actually running in, or None.
+
+    This is the same walk `session_has_agent_process` reports on, but it hands
+    back *where* the agent was found rather than just whether it exists. Resume
+    delivery uses the returned handle so detection and delivery can never
+    resolve different panes — the failure that made a prompt land silently in
+    whichever window the human last clicked on.
+    """
+    handle = _as_handle(session_name)
+    runtime = get_runtime()
+    panes = runtime.agent_panes(handle, _wanted_processes(harness, include_launching))
+    if not panes:
+        return None
+    return handle.at_pane(panes[0].pane_id)
+
+
+def session_has_agent_process(session_name: str | dict | RuntimeHandle,
+                              harness: str | None = None,
+                              include_launching: bool = True) -> bool | None:
+    """Check if a tmux session has a live agent process anywhere in its tree.
+
+    Walks every pane of the session (all windows, not just the current one)
+    and the full subtree from each pane's root PID — not just direct children.
+    The actual tree is: pane(bash) -> bash(run-session.sh) -> bash(wrapper) ->
+    agent, so checking only direct children always misses the agent.
+
+    harness: restrict to one harness's process names; None matches any harness.
+    include_launching: also count the launching shim (run-session.sh, uv, node)
+        so a session that has not finished booting reads as alive.
+
+    Returns True/False, or None when the answer is undetermined — the tmux
+    session does not exist, or the process table could not be read. None is
+    never "dead": the vulture treats anything but False as alive so it can
+    never reap on uncertainty.
+    """
+    handle = _as_handle(session_name)
+    runtime = get_runtime()
+    return runtime.has_descendant_process(
+        handle, _wanted_processes(harness, include_launching)
+    )

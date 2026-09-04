@@ -33,8 +33,7 @@ from pathlib import Path
 from sessions import SessionRegistry
 from harnesses import session_has_agent_process
 from paths import space_vulture_dir
-from runtime_context import RuntimeContext
-from session_runtime import RuntimeHandle, TmuxSessionRuntime
+from session_runtime import RuntimeHandle, get_runtime
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 STATE_DIR = space_vulture_dir(WOLTS_DIR)
@@ -97,20 +96,12 @@ def _trim_log(max_lines: int = 500):
 
 def _tmux_sessions() -> set[str]:
     """Get all live named sessions through the process-control boundary."""
-    runtime = TmuxSessionRuntime(
-        RuntimeContext.from_env(wolts_root=WOLTS_DIR),
-        runner=subprocess.run,
-    )
-    return runtime.list_session_names(include_main=True)
+    return get_runtime().list_session_names(include_main=True)
 
 
 def _kill_tmux_session(session_name: str) -> bool:
     """Stop one exact named session through the process-control boundary."""
-    runtime = TmuxSessionRuntime(
-        RuntimeContext.from_env(wolts_root=WOLTS_DIR),
-        runner=subprocess.run,
-    )
-    return runtime.stop(RuntimeHandle(session_name, session_name))
+    return get_runtime().stop(RuntimeHandle(session_name, session_name))
 
 
 def reap(dry_run: bool = False) -> dict:
