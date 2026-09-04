@@ -173,6 +173,7 @@ RUN ln -sf /workspace/woltspace/container/config/tmux.conf /etc/tmux.conf
 # Install Python deps
 RUN cd container && uv sync --project bot
 RUN uv sync --project server
+RUN uv sync --extra connectors
 
 WORKDIR /workspace
 

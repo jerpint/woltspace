@@ -170,6 +170,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
 
+
+@app.get("/health")
+async def health():
+    return {
+        "ok": True,
+        "instance_id": os.environ.get("WOLTSPACE_INSTANCE_ID", ""),
+        "wolts_dir": str(WOLTS_DIR),
+        "isolation": os.environ.get("WOLTSPACE_ISOLATION", "external"),
+    }
+
 # --- Templates & Static ---
 
 TEMPLATES_DIR = WOLTSPACE_DIR / "templates"

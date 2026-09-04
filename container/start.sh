@@ -12,6 +12,7 @@ source "$ENV_FILE"
 rm -f "$ENV_FILE"
 export WOLT_NAME WOLT_DIR WOLTS_DIR DEV_MODE WOLF_CONFIG PYTHONPATH PATH
 export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
+export WOLTSPACE_ISOLATION=external
 
 # Codex seed home — codex errors if CODEX_HOME doesn't exist, and the wolts
 # mount shadows any build-time mkdir. Harmless if codex is never used.
@@ -60,8 +61,9 @@ fi
 TUI_PORT=3001 WOLT_DIR="$WOLT_DIR" node "$WOLTSPACE_DIR/server/tui-service.js" &
 TUI_PID=$!
 
-# Python server (FastAPI)
-(cd "$WOLTSPACE_DIR" && uv run --project server uvicorn server.app:app --host 0.0.0.0 --port 7777 --reload --reload-dir server --timeout-graceful-shutdown 1) &
+# Python server through the same packaged supervisor used natively.
+(cd "$WOLTSPACE_DIR" && uv run --project "$WOLTSPACE_DIR" woltspace serve \
+  --host 0.0.0.0 --port 7777 --isolation external --reload --no-doctor) &
 SERVER_PID=$!
 
 sleep 2

@@ -44,6 +44,15 @@ def test_runtime_capabilities_distinguish_host_from_external(monkeypatch):
     }
 
 
+def test_health_identifies_the_exact_control_plane(monkeypatch):
+    monkeypatch.setenv("WOLTSPACE_INSTANCE_ID", "instance-abc")
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", "host")
+    response = asyncio.run(_request("GET", "/health"))
+    assert response.status_code == 200
+    assert response.json()["instance_id"] == "instance-abc"
+    assert response.json()["isolation"] == "host"
+
+
 def test_wolt_list_exposes_absolute_home(tmp_path, monkeypatch):
     _, home, _ = _layout(tmp_path, monkeypatch)
     response = asyncio.run(_request("GET", "/wolts"))
