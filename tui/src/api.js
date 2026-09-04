@@ -30,7 +30,13 @@ const post = (path, body) =>
 
 export const listSessions = () => req('/sessions');
 export const listWolts = () => req('/wolts');
-export const spawnSession = (wolt) => post('/sessions/new/lodge', { wolt });
+export const runtimeCapabilities = () => req('/runtime/capabilities');
+export const spawnSession = (wolt, workdir, executionPolicy) =>
+  post('/sessions/new/lodge', {
+    wolt,
+    ...(workdir ? { workdir } : {}),
+    ...(executionPolicy ? { execution_policy: executionPolicy } : {}),
+  });
 export const stopSession = (name) => post(`/sessions/${encodeURIComponent(name)}/stop`);
 // Harness-aware on the server side: rebuilds tmux if needed and restarts the
 // agent with its own resume flavor (claude --resume / codex resume / opencode --session).

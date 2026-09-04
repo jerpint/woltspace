@@ -131,3 +131,40 @@ def test_resume_uses_persisted_canonical_workdir(tmp_path, monkeypatch, fake_run
 
     sessions.resume_session("testwolt-session")
     assert fake_runtime.spawns[-1][1] == str(repo.resolve())
+
+
+def test_boot_prompt_injects_wolt_memory_while_repo_remains_cwd(
+    tmp_path, monkeypatch
+):
+    import paths
+    import sessions
+
+    home = _wolt(tmp_path)
+    memory = home / "wolt" / "memory"
+    memory.mkdir()
+    (memory / "identity.md").write_text("I am Maple, the careful builder.")
+    (memory / "context.md").write_text("Build the native session path.")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    wolts_dir = tmp_path / "wolts"
+    monkeypatch.setattr(sessions, "WOLTS_DIR", wolts_dir)
+    monkeypatch.setattr(paths, "WOLTS_DIR", wolts_dir)
+
+    target = SessionTarget.resolve("testwolt", repo, wolts_dir=wolts_dir)
+    reg = sessions.SessionRegistry(wolts_dir)
+    reg.create(
+        "testwolt-session",
+        wolt="testwolt",
+        target=target,
+        harness="claude",
+        execution_policy="prompt",
+        prompt="Do the work",
+    )
+    command = sessions.prepare_session_command(
+        "testwolt-session", "spawn", "Do the work"
+    )
+
+    assert "I am Maple, the careful builder." in command
+    assert "Build the native session path." in command
+    assert f"Working directory: {repo.resolve()}" in command
+    assert reg.get("testwolt-session", check_alive=False)["workdir"] == str(repo.resolve())

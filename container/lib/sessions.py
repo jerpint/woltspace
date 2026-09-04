@@ -706,6 +706,39 @@ def _adapter_context(data: dict) -> str:
     return ""
 
 
+def _wolt_boot_context(data: dict) -> str:
+    """Load the owning wolt's lean boot memory without touching the repo.
+
+    Harnesses run in arbitrary project directories, so cwd-based instruction
+    discovery cannot establish wolt identity. The opening message carries the
+    three documented boot files directly; HOME and the repository stay intact.
+    """
+    wolt = data.get("wolt_id") or data.get("wolt") or ""
+    if not wolt:
+        return ""
+    memory_dir = WOLTS_DIR / wolt / "wolt" / "memory"
+    sections = []
+    for filename in ("identity.md", "context.md", "learnings.md"):
+        path = memory_dir / filename
+        try:
+            content = path.read_text().strip()
+        except OSError:
+            continue
+        if content:
+            sections.append(f"## {filename}\n{content}")
+    if not sections:
+        return ""
+    target = SessionTarget.from_record(data, wolts_dir=WOLTS_DIR, fallback_wolt=wolt)
+    return (
+        "[Woltspace boot context]\n"
+        f"Wolt: {target.wolt_id}\n"
+        f"Working directory: {target.canonical_workdir}\n"
+        "Persistent boot memory follows; treat it as the owning wolt's context.\n\n"
+        + "\n\n".join(sections)
+        + "\n[/Woltspace boot context]"
+    )
+
+
 def _assemble_spawn_prompt(data: dict, prompt: str, harness: str) -> str:
     """Full opening prompt: user's task + adapter context + start-chat invocation.
 
@@ -715,12 +748,14 @@ def _assemble_spawn_prompt(data: dict, prompt: str, harness: str) -> str:
     """
     skill_invoke = get_harness(harness)["skill_invoke"]
     context = _adapter_context(data)
+    boot_context = _wolt_boot_context(data)
+    prefix = f"{boot_context}\n\n" if boot_context else ""
     if skill_invoke.format(name="woltspace-") in prompt:
-        return f"{prompt}{context}"
+        return f"{prefix}{prompt}{context}"
     adapter = data.get("adapter") or "lodge"
     wolt = data.get("wolt") or "wolt"
     start_chat = skill_invoke.format(name="woltspace-start-chat")
-    return f"{prompt}{context} {start_chat} {adapter} {wolt}"
+    return f"{prefix}{prompt}{context} {start_chat} {adapter} {wolt}"
 
 
 def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:

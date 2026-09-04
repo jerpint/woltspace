@@ -10,9 +10,13 @@ import { BASE, resumeSession, spawnSession } from './api.js';
 import { lore } from './theme.js';
 
 async function main() {
+  const launchCwd = process.cwd();
   for (;;) {
     let action = null;
-    const instance = render(React.createElement(App, { onAction: (a) => { action = a; } }));
+    const instance = render(React.createElement(App, {
+      launchCwd,
+      onAction: (a) => { action = a; },
+    }));
     await instance.waitUntilExit();
     if (!action || action.type === 'quit') break;
 
@@ -26,7 +30,7 @@ async function main() {
         await resumeSession(slug);
       } else if (action.type === 'spawn') {
         console.error(lore.waking(action.wolt));
-        const r = await spawnSession(action.wolt);
+        const r = await spawnSession(action.wolt, action.workdir, action.executionPolicy);
         slug = r?.name;
         if (!slug) throw new Error('lodge returned no session name');
       }

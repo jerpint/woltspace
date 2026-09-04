@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
+
+
+_WOLT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 
 @dataclass(frozen=True)
@@ -29,6 +33,8 @@ class SessionTarget:
         """Validate a new target and resolve symlinks before persistence."""
         if not wolt_id:
             raise ValueError("wolt is required for session creation")
+        if not _WOLT_ID_RE.fullmatch(wolt_id):
+            raise ValueError(f"invalid wolt id: {wolt_id}")
 
         wolt_home = Path(wolts_dir) / wolt_id
         if not wolt_home.is_dir():

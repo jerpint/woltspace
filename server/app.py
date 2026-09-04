@@ -56,6 +56,9 @@ from sessions import (
     deliver_message, resolve_active_session, format_spawned_prompt,
 )
 from session_runtime import RuntimeHandle, get_runtime
+from session_targets import SessionTarget
+from execution_policy import AutoGrantStore, POLICY_VERSION
+from runtime_context import RuntimeContext
 from harnesses import (
     harness_metadata,
     get_default_harness,
@@ -705,11 +708,15 @@ async def session_new_lodge(request: Request):
             prompt=prompt,
             creature=body.get("creature", ""),
             app=body.get("app", ""),
+            workdir=body.get("workdir"),
+            execution_policy=body.get("execution_policy"),
             routing={"adapter": "lodge"},
         )
         # Site auto-start + viewport URL handled by start_session()
         print(f"[sessions/lodge] spawned {result['name']} for {wolt}")
         return result
+    except PermissionError as e:
+        return JSONResponse({"error": str(e)}, status_code=403)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
     except Exception as e:
@@ -729,6 +736,8 @@ async def session_new_telegram(request: Request):
             prompt=body.get("prompt", ""),
             creature=body.get("creature", ""),
             app=body.get("app", ""),
+            workdir=body.get("workdir"),
+            execution_policy=body.get("execution_policy"),
             routing={
                 "adapter": "telegram",
                 "chat_id": body.get("chat_id", ""),
@@ -738,6 +747,8 @@ async def session_new_telegram(request: Request):
         # Site auto-start + viewport URL handled by start_session()
         print(f"[sessions/telegram] spawned {result['name']} for {wolt}")
         return result
+    except PermissionError as e:
+        return JSONResponse({"error": str(e)}, status_code=403)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
     except Exception as e:
@@ -757,6 +768,8 @@ async def session_new_slack(request: Request):
             prompt=body.get("prompt", ""),
             creature=body.get("creature", ""),
             app=body.get("app", ""),
+            workdir=body.get("workdir"),
+            execution_policy=body.get("execution_policy"),
             routing={
                 "adapter": "slack",
                 "chat_id": body.get("channel", ""),
@@ -767,6 +780,8 @@ async def session_new_slack(request: Request):
         # Site auto-start + viewport URL handled by start_session()
         print(f"[sessions/slack] spawned {result['name']} for {wolt}")
         return result
+    except PermissionError as e:
+        return JSONResponse({"error": str(e)}, status_code=403)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
     except Exception as e:
@@ -838,6 +853,7 @@ def _configured_wolts() -> list[dict]:
                 config = json.loads(wolt_json.read_text())
                 wolts.append({
                     "dir": entry.name,
+                    "home": str(entry.resolve()),
                     **config,
                 })
             except Exception:
@@ -906,6 +922,75 @@ async def set_wolt_harness(name: str, request: Request):
     tmp.write_text(json.dumps(cfg, indent=2) + "\n")
     tmp.rename(wolt_json)
     return {"ok": True, "wolt": safe, "harness": effective, "pinned": pinned}
+
+
+# --- Runtime capabilities and repository-scoped Auto consent ---
+
+@app.get("/runtime/capabilities")
+async def runtime_capabilities():
+    context = RuntimeContext.from_env()
+    return {
+        "isolation": context.isolation,
+        "supports_host_workdirs": context.isolation == "host",
+        "default_execution_policy": (
+            "prompt" if context.isolation == "host" else "auto"
+        ),
+        "policy_version": POLICY_VERSION,
+    }
+
+
+def _auto_target(body: dict) -> SessionTarget:
+    return SessionTarget.resolve(
+        str(body.get("wolt_id") or body.get("wolt") or ""),
+        body.get("workdir"),
+        wolts_dir=WOLTS_DIR,
+    )
+
+
+@app.post("/auto-grants/check")
+async def auto_grant_check(request: Request):
+    body = await request.json()
+    try:
+        target = _auto_target(body)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    grant = AutoGrantStore(WOLTS_DIR).find(target)
+    return {
+        "approved": grant is not None,
+        "target": target.to_record(),
+        "grant": grant.to_record() if grant else None,
+    }
+
+
+@app.post("/auto-grants/grant")
+async def auto_grant_create(request: Request):
+    body = await request.json()
+    try:
+        target = _auto_target(body)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    canonical = str(target.canonical_workdir)
+    if body.get("confirm") != canonical:
+        return JSONResponse(
+            {
+                "error": "Auto consent must confirm the exact canonical directory",
+                "canonical_workdir": canonical,
+            },
+            status_code=400,
+        )
+    grant = AutoGrantStore(WOLTS_DIR).grant(target)
+    return {"ok": True, "grant": grant.to_record()}
+
+
+@app.post("/auto-grants/revoke")
+async def auto_grant_revoke(request: Request):
+    body = await request.json()
+    try:
+        target = _auto_target(body)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    revoked = AutoGrantStore(WOLTS_DIR).revoke(target)
+    return {"ok": True, "revoked": revoked, "target": target.to_record()}
 
 
 # --- Apps ---

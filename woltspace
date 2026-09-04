@@ -355,7 +355,7 @@ fi
 # --- Subcommands ---
 
 case "$cmd" in
-  session|wolt|app|harness)
+  session|wolt|app|harness|auto|status)
     # Control plane — forward to the in-container `woltspace` client, which
     # talks to the localhost API. Lifecycle verbs below stay host-side (docker);
     # control lives in the API. This is what makes `woltspace session send ...`

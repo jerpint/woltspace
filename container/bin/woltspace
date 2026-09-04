@@ -49,6 +49,24 @@ def _req(method, path, body=None):
         sys.exit(2)
 
 
+def _print_sessions(sessions, *, as_json=False):
+    if as_json:
+        print(json.dumps(sessions, indent=2))
+        return
+    if not sessions:
+        print("no sessions.")
+        return
+    print(f"{'SESSION':<34} {'WOLT':<12} {'ENGINE':<24} {'POLICY':<8} {'STATE':<9} WORKDIR")
+    for s in sessions:
+        policy = s.get("execution_policy") or {}
+        policy_name = policy.get("mode", "auto") if isinstance(policy, dict) else str(policy)
+        state = "running" if s.get("alive") else s.get("status", "offline")
+        workdir = s.get("workdir") or s.get("dir", "")
+        engine = "/".join(p for p in (s.get("harness", ""), s.get("model", "")) if p)
+        print(f"{s.get('name',''):<34} {s.get('wolt_id') or s.get('wolt',''):<12} "
+              f"{engine:<24} {policy_name:<8} {state:<9} {workdir}")
+
+
 def cmd_session_list(args):
     _, sessions = _req("GET", "/sessions")
     if isinstance(sessions, dict):
@@ -57,17 +75,14 @@ def cmd_session_list(args):
         sessions = [s for s in sessions if s.get("wolt") == args.wolt]
     if args.alive:
         sessions = [s for s in sessions if s.get("alive")]
-    if args.json:
-        print(json.dumps(sessions, indent=2))
-        return
-    if not sessions:
-        print("no sessions.")
-        return
-    print(f"{'SESSION':<34} {'WOLT':<12} {'HARNESS':<8} {'MODEL':<14} ALIVE")
-    for s in sessions:
-        print(f"{s.get('name',''):<34} {s.get('wolt',''):<12} "
-              f"{s.get('harness',''):<8} {s.get('model',''):<14} "
-              f"{'●' if s.get('alive') else '·'}")
+    _print_sessions(sessions, as_json=args.json)
+
+
+def cmd_status(args):
+    _, sessions = _req("GET", "/sessions")
+    if isinstance(sessions, dict):
+        sessions = sessions.get("sessions", [])
+    _print_sessions(sessions, as_json=args.json)
 
 
 def cmd_session_send(args):
@@ -108,6 +123,10 @@ def cmd_session_spawn(args):
     from_session = "" if args.from_ else os.environ.get("WOLT_SESSION", "")
     payload = {"wolt": args.wolt, "prompt": args.prompt,
                "from_wolt": from_wolt, "from_session": from_session}
+    if args.workdir:
+        payload["workdir"] = args.workdir
+    if args.auto:
+        payload["execution_policy"] = "auto"
     status, result = _req("POST", "/sessions/new/lodge", payload)
     if args.json:
         print(json.dumps(result, indent=2))
@@ -127,6 +146,46 @@ def cmd_session_spawn(args):
         if names:
             print("valid wolts: " + ", ".join(names), file=sys.stderr)
     sys.exit(1)
+
+
+def cmd_auto_check(args):
+    _, result = _req("POST", "/auto-grants/check", {
+        "wolt_id": args.wolt, "workdir": args.workdir,
+    })
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        target = result.get("target", {}).get("canonical_workdir", args.workdir)
+        print(f"{'approved' if result.get('approved') else 'not approved'}: {args.wolt} · {target}")
+    if not result.get("approved"):
+        sys.exit(1)
+
+
+def cmd_auto_grant(args):
+    canonical = os.path.realpath(os.path.expanduser(args.workdir))
+    if not args.yes:
+        print(f"refusing to grant Auto without --yes for exact directory: {canonical}", file=sys.stderr)
+        sys.exit(1)
+    status, result = _req("POST", "/auto-grants/grant", {
+        "wolt_id": args.wolt, "workdir": args.workdir, "confirm": canonical,
+    })
+    if status != 200:
+        print(result.get("error", f"HTTP {status}"), file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps(result, indent=2) if args.json else
+          f"Auto approved: {args.wolt} · {result['grant']['canonical_workdir']}")
+
+
+def cmd_auto_revoke(args):
+    status, result = _req("POST", "/auto-grants/revoke", {
+        "wolt_id": args.wolt, "workdir": args.workdir,
+    })
+    if status != 200:
+        print(result.get("error", f"HTTP {status}"), file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps(result, indent=2) if args.json else
+          f"Auto {'revoked' if result.get('revoked') else 'was not granted'}: "
+          f"{args.wolt} · {result['target']['canonical_workdir']}")
 
 
 LIFECYCLE = {"start", "stop", "rebuild", "backup", "shell", "chat", "logs", "init", "update"}
@@ -160,7 +219,28 @@ def main():
     sp.add_argument("--from", dest="from_", default="",
                     help="spawner identity (default: $WOLT_NAME); use e.g. --from jerpint as a human")
     sp.add_argument("--json", action="store_true", help="raw JSON output")
+    sp.add_argument("--workdir", default="",
+                    help="existing working directory (native runtime)")
+    sp.add_argument("--auto", action="store_true",
+                    help="request Auto policy (host requires an exact-path grant)")
     sp.set_defaults(func=cmd_session_spawn)
+
+    status = sub.add_parser("status", help="show sessions with workdir and policy")
+    status.add_argument("--json", action="store_true", help="raw JSON output")
+    status.set_defaults(func=cmd_status)
+
+    auto = sub.add_parser("auto", help="manage repository-scoped Auto consent")
+    asub = auto.add_subparsers(dest="verb")
+    for verb, func in (("check", cmd_auto_check), ("grant", cmd_auto_grant),
+                       ("revoke", cmd_auto_revoke)):
+        ap = asub.add_parser(verb)
+        ap.add_argument("wolt")
+        ap.add_argument("workdir")
+        ap.add_argument("--json", action="store_true")
+        if verb == "grant":
+            ap.add_argument("--yes", action="store_true",
+                            help="confirm Auto for this exact canonical directory")
+        ap.set_defaults(func=func)
 
     argv = sys.argv[1:]
     # tui: exec the terminal cockpit (same app the host launcher runs; it
