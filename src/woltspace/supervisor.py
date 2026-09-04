@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 from .layout import RuntimeLayout
 from .instance import DataRootLock
+from .adoption import adopt_runtime_sessions
 
 
 @dataclass
@@ -29,6 +30,7 @@ class Supervisor:
         self.prepare()
         import uvicorn
         with DataRootLock(self.layout, self.instance_id):
+            adopt_runtime_sessions(self.layout)
             if self.reload:
                 uvicorn.run(
                     "server.app:app",

@@ -84,3 +84,25 @@ def test_external_supervisor_does_not_override_tunnel_default(tmp_path, monkeypa
     monkeypatch.delenv("WOLTSPACE_PUBLIC_TUNNEL", raising=False)
     Supervisor(_layout(tmp_path, isolation="external")).prepare()
     assert "WOLTSPACE_PUBLIC_TUNNEL" not in os.environ
+
+
+def test_supervisor_adopts_registry_before_serving(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    events = []
+    for key in (
+        "WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
+        "WOLTSPACE_INSTANCE_ID", "WOLTSPACE_PUBLIC_TUNNEL", "WOLTSPACE_HOST",
+        "PORT",
+    ):
+        monkeypatch.setenv(key, os.environ.get(key, ""))
+    with (
+        patch(
+            "woltspace.supervisor.adopt_runtime_sessions",
+            side_effect=lambda prepared: events.append(("adopt", prepared)),
+        ),
+        patch("uvicorn.run", side_effect=lambda *a, **kw: events.append(("serve", kw))),
+    ):
+        Supervisor(layout, instance_id="adoption-order", reload=True).run()
+
+    assert events[0] == ("adopt", layout)
+    assert events[1][0] == "serve"

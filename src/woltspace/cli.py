@@ -105,6 +105,14 @@ def _status(args) -> int:
         owner = result.get("owner") or {}
         if owner:
             print(f"owner: pid {owner['pid']} · {owner['instance_id']} · {owner['hostname']}")
+        adoption = (result.get("health") or {}).get("adoption") or {}
+        if adoption:
+            print(
+                "adoption: "
+                f"{len(adoption.get('adopted', []))} live · "
+                f"{len(adoption.get('orphaned', []))} orphaned · "
+                f"{len(adoption.get('unchanged', []))} unchanged"
+            )
     return 0 if result["state"] in {"healthy", "stopped"} else 1
 
 

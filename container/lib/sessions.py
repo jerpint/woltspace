@@ -385,6 +385,92 @@ class SessionRegistry:
                     orphaned.append(data["name"])
         return orphaned
 
+    def adopt_runtime_sessions(self) -> dict:
+        """Reconcile only registered resumable sessions after control-plane boot.
+
+        Registry records are the authority: this deliberately does not enumerate
+        tmux or import unmanaged sessions. Live registered runtimes become running
+        and refresh their exact agent pane when it can be resolved. Missing
+        runtimes become orphaned. Terminal records remain untouched.
+        """
+        report = {
+            "at": int(time.time()),
+            "adopted": [],
+            "orphaned": [],
+            "unchanged": [],
+        }
+        runtime = _runtime()
+        for wolt in self._all_wolts():
+            sessions_dir = self.wolts_dir / wolt / ".state" / "sessions"
+            if not sessions_dir.exists():
+                continue
+            for path in sorted(sessions_dir.glob("*.json")):
+                if path.suffix == ".tmp":
+                    continue
+                try:
+                    data = normalize_session_target(
+                        json.loads(path.read_text()),
+                        wolts_dir=self.wolts_dir,
+                        fallback_wolt=wolt,
+                    )
+                except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+                    report["unchanged"].append({
+                        "session": path.stem,
+                        "wolt": wolt,
+                        "reason": f"unreadable registry record: {type(exc).__name__}",
+                    })
+                    continue
+
+                name = data.get("name") or path.stem
+                previous = data.get("status") or ""
+                if previous not in {"running", "orphaned"}:
+                    report["unchanged"].append({
+                        "session": name,
+                        "wolt": wolt,
+                        "status": previous,
+                        "reason": "terminal record",
+                    })
+                    continue
+
+                handle = RuntimeHandle.from_record(data)
+                if not runtime.is_alive(handle):
+                    if previous != "orphaned":
+                        with self._lock(wolt, name):
+                            current = self._read(wolt, name)
+                            if current is not None:
+                                current["status"] = "orphaned"
+                                self._write(wolt, name, current)
+                    report["orphaned"].append({
+                        "session": name,
+                        "wolt": wolt,
+                        "previous_status": previous,
+                        "runtime": handle.to_record(),
+                    })
+                    continue
+
+                resolved = resolve_agent_handle(
+                    handle,
+                    harness=data.get("harness"),
+                    include_launching=True,
+                )
+                adopted_handle = resolved or handle
+                changed = previous != "running" or adopted_handle != handle
+                if changed:
+                    with self._lock(wolt, name):
+                        current = self._read(wolt, name)
+                        if current is not None:
+                            current["status"] = "running"
+                            current["runtime"] = adopted_handle.to_record()
+                            self._write(wolt, name, current)
+                report["adopted"].append({
+                    "session": name,
+                    "wolt": wolt,
+                    "previous_status": previous,
+                    "runtime": adopted_handle.to_record(),
+                    "handle_refreshed": adopted_handle != handle,
+                })
+        return report
+
     def delete(self, name: str, *, wolt: str = None) -> bool:
         """Remove a session file. Returns True if it existed."""
         if not wolt:
@@ -616,7 +702,7 @@ def deliver_message(session_id: str, text: str, from_wolt: str = "",
     harness = resolve_harness(data.get("harness"))
     settle = get_harness(harness).get("paste_settle", 0.0)
     body = format_attributed_message(text, from_wolt, from_session)
-    _tmux_paste(session_id, _guard_paste_text(harness, body), settle=settle)
+    _tmux_paste(data, _guard_paste_text(harness, body), settle=settle)
     reg.touch(session_id)
     return {"status": "delivered", "session": session_id, "harness": harness}
 
