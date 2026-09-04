@@ -103,7 +103,14 @@ class TestTmuxSessionRuntime:
         assert commands[3] == ["tmux", "send-keys", "-t", "%17", "Enter"]
         assert sleeps == [0.5]
 
-    def test_legacy_paste_uses_exact_named_target_without_discovery(self, tmp_path):
+    def test_legacy_paste_targets_named_session_without_discovery(self, tmp_path):
+        """A record with no persisted pane targets the bare session name.
+
+        tmux accepts the '=' exact-match prefix for a target-session but
+        rejects it for a target-pane ("can't find pane: =legacy"), so the
+        pre-runtime-handle fallback must pass the name unprefixed — the
+        pre-refactor behavior — and must still not discover panes.
+        """
         runner = FakeRunner()
         runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
 
@@ -111,8 +118,9 @@ class TestTmuxSessionRuntime:
 
         commands = [call[0] for call in runner.calls]
         assert all("list-panes" not in command for command in commands)
-        assert commands[0][3] == "=legacy"
-        assert commands[2][-1] == "=legacy"
+        assert commands[0][3] == "legacy"
+        assert commands[2][-1] == "legacy"
+        assert commands[3] == ["tmux", "send-keys", "-t", "legacy", "Enter"]
 
     def test_session_names_come_from_server_wide_pane_snapshot(self, tmp_path):
         runner = FakeRunner(["main\t%1\t10\t1\nnamed-a\t%2\t20\t1\nnamed-a\t%3\t30\t0\n"])
@@ -181,3 +189,37 @@ def test_host_tmux_named_session_round_trip(tmp_path):
             subprocess.run(["tmux", "kill-session", "-t", f"={name}"], capture_output=True)
 
     assert runtime.is_alive(RuntimeHandle(name, name)) is False
+
+
+@requires_tmux
+def test_host_tmux_legacy_record_round_trip(tmp_path):
+    """A session record predating runtime handles must still be reachable.
+
+    Every session in an existing registry has no `runtime` field, so its
+    handle carries no pane_id. Real tmux rejects the '=' exact-match prefix
+    on a target-pane, so that fallback has to address the bare session name
+    or paste/capture break for every session a user already has.
+    """
+    runtime = TmuxSessionRuntime(context(tmp_path))
+    name = f"test-legacy-{uuid.uuid4().hex[:10]}"
+    legacy = RuntimeHandle.from_record({"name": name})
+    assert legacy.pane_id == ""
+
+    subprocess.run(["tmux", "new-session", "-d", "-s", name, "cat"], check=True)
+    try:
+        assert runtime.is_alive(legacy)
+
+        marker = f"marker-{uuid.uuid4().hex}"
+        runtime.paste(legacy, marker)
+        deadline = time.time() + 3
+        captured = ""
+        while time.time() < deadline:
+            captured = runtime.capture(legacy, start="-20")
+            if marker in captured:
+                break
+            time.sleep(0.05)
+        assert marker in captured
+    finally:
+        runtime.stop(legacy)
+
+    assert runtime.is_alive(legacy) is False

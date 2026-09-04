@@ -197,13 +197,18 @@ class TmuxSessionRuntime:
     def _exact_handle(self, handle: RuntimeHandle) -> RuntimeHandle:
         if handle.pane_id:
             return handle
-        # Compatibility for pre-runtime-handle records: retain the exact
-        # named-session target so tmux produces the same failure/behavior as
-        # before. New spawns always persist a pane_id and never use this path.
+        # Compatibility for pre-runtime-handle records: nothing exact was
+        # persisted, so fall back to the plain session name, which tmux
+        # resolves to that session's active pane — the pre-refactor behavior.
+        # The '=' exact-match prefix is deliberately NOT used here: tmux honors
+        # it for a target-session (has-session, kill-session) but rejects it for
+        # a target-pane (paste-buffer, capture-pane, send-keys) with
+        # "can't find pane: =<name>". New spawns persist a real pane_id and
+        # never take this path.
         return RuntimeHandle(
             woltspace_session_id=handle.woltspace_session_id,
             tmux_session_name=handle.tmux_session_name,
-            pane_id=f"={handle.tmux_session_name}",
+            pane_id=handle.tmux_session_name,
         )
 
     def paste(self, handle: RuntimeHandle, text: str, settle: float = 0.0) -> None:

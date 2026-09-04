@@ -160,3 +160,79 @@ def tunnel_url():
         return url if url else None
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Session runtime test double
+# ---------------------------------------------------------------------------
+
+class FakeSessionRuntime:
+    """Recording stand-in for TmuxSessionRuntime.
+
+    Sessions go through the session_runtime boundary rather than shelling out
+    to tmux directly, so tests stub that boundary instead of `subprocess`.
+    Every call is recorded so a test can still assert exactly what was
+    delivered — which pane, which command, which text.
+    """
+
+    def __init__(self, *, alive: bool = True, capture_text: str = "", next_pane: str = "%1"):
+        self._alive = alive
+        self._capture_text = capture_text
+        self._next_pane = next_pane
+        self.spawns: list[tuple[str, str, str]] = []   # (session_id, cwd, command)
+        self.pastes: list[tuple[str, str, float]] = []  # (target pane/session, text, settle)
+        self.captures: list[tuple[str, str]] = []       # (target, start)
+        self.stops: list[str] = []                      # tmux session names
+        self.alive_checks: list[str] = []
+
+    # -- helpers -----------------------------------------------------------
+    @staticmethod
+    def _target(handle) -> str:
+        """The exact address a real tmux call would receive for this handle."""
+        return handle.pane_id or handle.tmux_session_name
+
+    @property
+    def last_spawn(self) -> tuple[str, str, str]:
+        assert self.spawns, "no session was spawned"
+        return self.spawns[-1]
+
+    @property
+    def last_paste(self) -> tuple[str, str, float]:
+        assert self.pastes, "nothing was pasted"
+        return self.pastes[-1]
+
+    # -- SessionRuntime protocol -------------------------------------------
+    def spawn(self, session_id: str, cwd: str, command: str):
+        from session_runtime import RuntimeHandle
+        self.spawns.append((session_id, cwd, command))
+        return RuntimeHandle(session_id, session_id, self._next_pane)
+
+    def is_alive(self, handle) -> bool:
+        self.alive_checks.append(self._target(handle))
+        return self._alive
+
+    def paste(self, handle, text: str, settle: float = 0.0) -> None:
+        self.pastes.append((self._target(handle), text, settle))
+
+    def capture(self, handle, start: str = "-30") -> str:
+        self.captures.append((self._target(handle), start))
+        return self._capture_text
+
+    def stop(self, handle) -> bool:
+        self.stops.append(handle.tmux_session_name)
+        return True
+
+    def list_session_names(self, include_main: bool = False) -> set[str]:
+        return set()
+
+
+@pytest.fixture
+def fake_runtime(monkeypatch):
+    """Patch sessions._runtime to a recording FakeSessionRuntime and return it."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+    import sessions
+
+    runtime = FakeSessionRuntime()
+    monkeypatch.setattr(sessions, "_runtime", lambda: runtime)
+    return runtime

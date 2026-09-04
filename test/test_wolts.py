@@ -425,41 +425,47 @@ class TestStartSession:
             with pytest.raises(ValueError, match="not found"):
                 start_session(wolt="nonexistent", prompt="hey")
 
-    def test_resolves_wolt_dir(self, tmp_path):
+    def test_resolves_wolt_dir(self, tmp_path, fake_runtime):
         from sessions import start_session
         # Create a valid wolt dir
         (tmp_path / "mywolt").mkdir()
-        with patch("sessions.WOLTS_DIR", tmp_path), \
-             patch("sessions.subprocess") as mock_sub:
-            mock_sub.run.return_value = None
+        with patch("sessions.WOLTS_DIR", tmp_path):
             result = start_session(wolt="mywolt", prompt="hey")
             assert result["wolt"] == "mywolt"
             assert result["name"].startswith("mywolt-")
-            # Verify tmux was called with the right working dir
-            call_args = mock_sub.run.call_args
-            tmux_cmd = call_args[0][0]
-            c_idx = tmux_cmd.index("-c")
-            assert str(tmp_path / "mywolt") == tmux_cmd[c_idx + 1]
+            # Verify the session was spawned in the right working dir
+            session_id, cwd, command = fake_runtime.last_spawn
+            assert session_id == result["name"]
+            assert cwd == str(tmp_path / "mywolt")
+            assert command
 
-    def test_creature_sets_model(self, tmp_path):
+    def test_persists_runtime_handle(self, tmp_path, fake_runtime):
+        """The spawned pane is recorded on the session so later ops target it."""
+        from sessions import SessionRegistry, start_session
+        (tmp_path / "mywolt").mkdir()
+        with patch("sessions.WOLTS_DIR", tmp_path):
+            result = start_session(wolt="mywolt", prompt="hey")
+            stored = SessionRegistry(tmp_path).get(result["name"], check_alive=False)
+            assert stored["runtime"]["pane_id"] == "%1"
+            assert stored["runtime"]["tmux_session_name"] == result["name"]
+
+    def test_creature_sets_model(self, tmp_path, fake_runtime):
         from sessions import start_session
         (tmp_path / "mywolt").mkdir()
-        with patch("sessions.WOLTS_DIR", tmp_path), \
-             patch("sessions.subprocess") as mock_sub:
-            mock_sub.run.return_value = None
+        with patch("sessions.WOLTS_DIR", tmp_path):
             result = start_session(wolt="mywolt", creature="raccoon")
             assert result["creature"] == "raccoon"
             assert result["model"] == "opus"
 
-    def test_app_creates_subdir(self, tmp_path):
+    def test_app_creates_subdir(self, tmp_path, fake_runtime):
         from sessions import start_session
         (tmp_path / "mywolt").mkdir()
-        with patch("sessions.WOLTS_DIR", tmp_path), \
-             patch("sessions.subprocess") as mock_sub:
-            mock_sub.run.return_value = None
+        with patch("sessions.WOLTS_DIR", tmp_path):
             result = start_session(wolt="mywolt", app="myapp")
             assert result["app"] == "myapp"
             assert (tmp_path / "mywolt" / "wolt" / "apps" / "myapp").is_dir()
+            # the app session runs inside the app subdir, not the wolt root
+            assert fake_runtime.last_spawn[1] == str(tmp_path / "mywolt" / "wolt" / "apps" / "myapp")
 
 
 # ---------------------------------------------------------------------------
