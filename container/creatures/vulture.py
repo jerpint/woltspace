@@ -33,6 +33,8 @@ from pathlib import Path
 from sessions import SessionRegistry
 from harnesses import session_has_agent_process
 from paths import space_vulture_dir
+from runtime_context import RuntimeContext
+from session_runtime import RuntimeHandle, TmuxSessionRuntime
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 STATE_DIR = space_vulture_dir(WOLTS_DIR)
@@ -94,27 +96,21 @@ def _trim_log(max_lines: int = 500):
 
 
 def _tmux_sessions() -> set[str]:
-    """Get all live tmux session names."""
-    try:
-        raw = subprocess.run(
-            ["tmux", "list-sessions", "-F", "#{session_name}"],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip()
-        return {name for name in raw.split("\n") if name}
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return set()
+    """Get all live named sessions through the process-control boundary."""
+    runtime = TmuxSessionRuntime(
+        RuntimeContext.from_env(wolts_root=WOLTS_DIR),
+        runner=subprocess.run,
+    )
+    return runtime.list_session_names(include_main=True)
 
 
 def _kill_tmux_session(session_name: str) -> bool:
-    """Kill a tmux session. Returns True if successful."""
-    try:
-        subprocess.run(
-            ["tmux", "kill-session", "-t", session_name],
-            capture_output=True, check=True,
-        )
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+    """Stop one exact named session through the process-control boundary."""
+    runtime = TmuxSessionRuntime(
+        RuntimeContext.from_env(wolts_root=WOLTS_DIR),
+        runner=subprocess.run,
+    )
+    return runtime.stop(RuntimeHandle(session_name, session_name))
 
 
 def reap(dry_run: bool = False) -> dict:
@@ -176,14 +172,15 @@ def reap(dry_run: bool = False) -> dict:
         if session_name in PROTECTED_SESSIONS:
             continue
 
+        # Look up the exact persisted handle before inspecting its process tree.
+        reg_data = reg.get(session_name, check_alive=False)
+
         # Check if this session has an active agent process (any harness).
         # None here means "still booting or tmux vanished" — treat as alive,
         # never kill on uncertainty.
-        if session_has_agent_process(session_name) is not False:
+        if session_has_agent_process(reg_data or session_name) is not False:
             continue
 
-        # Check registry — look up which wolt owns this session
-        reg_data = reg.get(session_name, check_alive=False)
         if reg_data and reg_data.get("status") == "running":
             wolt_name = reg_data.get("wolt", "")
             # Claude exited but tmux lingers — mark reaped and kill tmux

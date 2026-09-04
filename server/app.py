@@ -55,6 +55,8 @@ from sessions import (
     resume_session, start_session, stop_session,
     deliver_message, resolve_active_session, format_spawned_prompt,
 )
+from runtime_context import RuntimeContext
+from session_runtime import RuntimeHandle, TmuxSessionRuntime
 from harnesses import (
     harness_metadata,
     get_default_harness,
@@ -478,11 +480,12 @@ def _extract_login_url() -> str:
     or non-URL line.
     """
     try:
-        result = subprocess.run(
-            ["tmux", "capture-pane", "-t", "main", "-p", "-S", "-200"],
-            capture_output=True, text=True, timeout=5,
+        runtime = TmuxSessionRuntime(
+            RuntimeContext.from_env(wolts_root=WOLTS_DIR),
+            runner=subprocess.run,
         )
-        lines = result.stdout.splitlines()
+        pane = runtime.capture(RuntimeHandle("main", "main"), start="-200")
+        lines = pane.splitlines()
         url = ""
         capturing = False
         for line in lines:

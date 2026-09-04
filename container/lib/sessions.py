@@ -40,6 +40,8 @@ from harnesses import (
     session_has_agent_process,
 )
 from sites import ensure_site
+from runtime_context import RuntimeContext
+from session_runtime import RuntimeHandle, TmuxSessionRuntime
 
 _UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
@@ -207,7 +209,7 @@ class SessionRegistry:
         if data is None:
             return None
         if check_alive:
-            data["alive"] = _tmux_alive(name)
+            data["alive"] = _tmux_alive(data)
             if data["status"] == "running" and not data["alive"]:
                 data["status"] = "orphaned"
         return data
@@ -339,30 +341,29 @@ class SessionRegistry:
 # --- Helpers ---
 
 def _tmux_sessions() -> set[str]:
-    """Get set of live tmux session names."""
-    try:
-        raw = subprocess.run(
-            ["tmux", "list-sessions", "-F", "#{session_name}"],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip()
-        return {name for name in raw.split("\n") if name and name != "main"}
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return set()
+    """Compatibility wrapper around the named-session runtime."""
+    return _runtime().list_session_names()
 
 
-def _tmux_alive(name: str) -> bool:
-    """Check if a specific tmux session is alive."""
-    try:
-        subprocess.run(
-            ["tmux", "has-session", "-t", name],
-            capture_output=True, check=True,
-        )
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+def _runtime() -> TmuxSessionRuntime:
+    """Build a runtime with patchable runner/sleeper compatibility for tests."""
+    context = RuntimeContext.from_env(
+        wolts_root=WOLTS_DIR,
+        run_session_script=RUN_SESSION_SCRIPT,
+    )
+    return TmuxSessionRuntime(context, runner=subprocess.run, sleeper=time.sleep)
 
 
-_TMUX_TIMEOUT = 10  # seconds — safety net so a stuck tmux call never freezes the bot
+def _runtime_handle(session: str | dict) -> RuntimeHandle:
+    if isinstance(session, dict):
+        return RuntimeHandle.from_record(session)
+    data = SessionRegistry(WOLTS_DIR).get(session, check_alive=False)
+    return RuntimeHandle.from_record(data or {"name": session})
+
+
+def _tmux_alive(session: str | dict) -> bool:
+    """Check one named session, honoring its persisted pane handle when present."""
+    return _runtime().is_alive(_runtime_handle(session))
 
 
 def _tmux_paste(target: str, text: str, settle: float = 0.0):
@@ -395,25 +396,22 @@ def _tmux_paste(target: str, text: str, settle: float = 0.0):
     Codex's TUI folds an immediate Enter into the paste (message stays in
     the composer) — its harness entry sets paste_settle=0.5. Claude takes 0.
     """
-    buf_name = f"paste-{target}"
-    subprocess.run(
-        ["tmux", "send-keys", "-t", target, "-X", "cancel"],
-        check=False, timeout=_TMUX_TIMEOUT,
-    )
-    subprocess.run(
-        ["tmux", "set-buffer", "-b", buf_name, text],
-        check=True, timeout=_TMUX_TIMEOUT,
-    )
-    subprocess.run(
-        ["tmux", "paste-buffer", "-b", buf_name, "-d", "-t", target],
-        check=True, timeout=_TMUX_TIMEOUT,
-    )
-    if settle > 0:
-        time.sleep(settle)
-    subprocess.run(
-        ["tmux", "send-keys", "-t", target, "Enter"],
-        check=True, timeout=_TMUX_TIMEOUT,
-    )
+    _runtime().paste(_runtime_handle(target), text, settle=settle)
+
+
+def _tmux_capture(target: str, start: str = "-30") -> str:
+    """Capture one named session through its exact persisted runtime handle."""
+    return _runtime().capture(_runtime_handle(target), start=start)
+
+
+def _tmux_spawn(name: str, cwd: str, command: str) -> RuntimeHandle:
+    """Spawn and return the exact handle to persist on the session record."""
+    return _runtime().spawn(name, cwd, command)
+
+
+def _tmux_stop(session: str | dict) -> bool:
+    """Stop one exact named tmux session."""
+    return _runtime().stop(_runtime_handle(session))
 
 
 def _guard_paste_text(harness: str | None, text: str) -> str:
@@ -791,11 +789,8 @@ def deliver_boot_prompt(name: str, timeout: int = 90) -> bool:
             ready = True
             break
         try:
-            pane = subprocess.run(
-                ["tmux", "capture-pane", "-t", name, "-p"],
-                capture_output=True, text=True, timeout=_TMUX_TIMEOUT,
-            ).stdout
-        except (subprocess.SubprocessError, OSError):
+            pane = _tmux_capture(name, start="-200")
+        except (subprocess.SubprocessError, OSError, RuntimeError):
             pane = ""
         present = marker in pane
         if not present:
@@ -911,10 +906,8 @@ def start_session(
     )
 
     cmd = build_session_command(name, prompt)
-    subprocess.run(
-        ["tmux", "new-session", "-d", "-s", name, "-c", str(target_dir), cmd],
-        check=True,
-    )
+    handle = _tmux_spawn(name, str(target_dir), cmd)
+    registry.update(name, wolt=wolt, runtime=handle.to_record())
 
     result = {"name": name, "url": session_url or None, "wolt": wolt, "harness": harness}
     if app:
@@ -974,12 +967,12 @@ def resume_session(name: str, prompt: str = "") -> dict:
     tunnel_url = get_tunnel_url()
     session_url = f"{tunnel_url}/tui?session={name}" if tunnel_url else ""
 
-    tmux_alive = _tmux_alive(name)
+    tmux_alive = _tmux_alive(data)
     agent_running = False
 
     if tmux_alive:
         # Launching doesn't count here — pasting into a half-booted TUI is lost.
-        agent_running = session_has_agent_process(name, harness, include_launching=False)
+        agent_running = session_has_agent_process(data, harness, include_launching=False)
 
     if tmux_alive and agent_running:
         # Agent is running — paste the prompt into the TUI as a single buffer paste.
@@ -1009,11 +1002,8 @@ def resume_session(name: str, prompt: str = "") -> dict:
 
     # Tmux is dead — create a fresh tmux session running the wrapper
     work_dir = session_dir or str(WOLTS_DIR / wolt) if wolt else "/workspace"
-    subprocess.run(
-        ["tmux", "new-session", "-d", "-s", name, "-c", work_dir or "/workspace", resume_cmd],
-        check=True, timeout=_TMUX_TIMEOUT,
-    )
-    registry.update(name, wolt=wolt, status="running")
+    handle = _tmux_spawn(name, work_dir or "/workspace", resume_cmd)
+    registry.update(name, wolt=wolt, status="running", runtime=handle.to_record())
     return {"name": name, "url": session_url, "status": "respawned", "detail": "tmux was dead, created new tmux with --resume"}
 
 
@@ -1029,16 +1019,10 @@ def stop_session(name: str) -> dict:
         raise ValueError(f"session '{name}' not found in registry")
 
     wolt = data.get("wolt", "")
-    tmux_alive = _tmux_alive(name)
+    tmux_alive = _tmux_alive(data)
 
     if tmux_alive:
-        try:
-            subprocess.run(
-                ["tmux", "kill-session", "-t", name],
-                capture_output=True, check=True,
-            )
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
+        _tmux_stop(data)
 
     registry.update(name, wolt=wolt, status="stopped", finished_at=int(time.time()))
     return {"name": name, "status": "stopped", "was_alive": tmux_alive}
@@ -1058,14 +1042,8 @@ def archive_session(name: str) -> dict:
     wolt = data.get("wolt", "")
 
     # Stop tmux if still alive
-    if _tmux_alive(name):
-        try:
-            subprocess.run(
-                ["tmux", "kill-session", "-t", name],
-                capture_output=True, check=True,
-            )
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
+    if _tmux_alive(data):
+        _tmux_stop(data)
 
     registry.update(name, wolt=wolt, status="archived", finished_at=data.get("finished_at") or int(time.time()))
     return {"name": name, "status": "archived", "wolt": wolt}
@@ -1085,14 +1063,8 @@ def delete_session(name: str) -> dict:
     wolt = data.get("wolt", "")
 
     # Stop tmux if still alive
-    if _tmux_alive(name):
-        try:
-            subprocess.run(
-                ["tmux", "kill-session", "-t", name],
-                capture_output=True, check=True,
-            )
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
+    if _tmux_alive(data):
+        _tmux_stop(data)
 
     registry.delete(name, wolt=wolt)
     return {"name": name, "status": "deleted", "wolt": wolt}

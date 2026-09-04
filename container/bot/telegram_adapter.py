@@ -36,6 +36,7 @@ from wolts import get_active_creature
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from paths import space_dir
+from sessions import _tmux_alive
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -258,18 +259,11 @@ async def _send_result(update: Update, result: dict):
 
 def _is_session_alive(session_name: str) -> bool:
     """Check if a session is still alive in tmux. Diagnostic only — not used for routing."""
-    import subprocess
     try:
-        result = subprocess.run(
-            ["tmux", "has-session", "-t", session_name],
-            capture_output=True,
-        )
-        alive = result.returncode == 0
+        alive = _tmux_alive(session_name)
         if not alive:
             _bot_log("session_alive_check_false", {
                 "session": session_name,
-                "returncode": result.returncode,
-                "stderr": result.stderr.decode(errors="replace"),
             })
         return alive
     except Exception as e:

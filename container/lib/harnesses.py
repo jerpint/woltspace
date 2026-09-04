@@ -25,6 +25,9 @@ import shlex
 import subprocess
 from pathlib import Path
 
+from runtime_context import RuntimeContext
+from session_runtime import RuntimeHandle, TmuxSessionRuntime
+
 DEFAULT_HARNESS = "claude"
 
 # Wrappers resolved relative to this file so the dev clone drives its own
@@ -563,7 +566,7 @@ def build_command(harness: str | None, mode: str, **kwargs) -> str:
     return entry["command"](entry, mode, **kwargs)
 
 
-def session_has_agent_process(session_name: str, harness: str | None = None,
+def session_has_agent_process(session_name: str | dict | RuntimeHandle, harness: str | None = None,
                               include_launching: bool = True) -> bool | None:
     """Check if a tmux session has a live agent process anywhere in its tree.
 
@@ -586,42 +589,11 @@ def session_has_agent_process(session_name: str, harness: str | None = None,
         process_names = set(get_harness(harness)["process_names"])
     if include_launching:
         process_names |= LAUNCHING_NAMES
-    try:
-        result = subprocess.run(
-            ["tmux", "list-panes", "-t", session_name, "-F", "#{pane_pid}"],
-            capture_output=True, text=True, check=True,
-        )
-        pane_pids = [p for p in result.stdout.strip().split("\n") if p]
-        if not pane_pids:
-            return None
-
-        # Build full process table: pid → (ppid, comm)
-        ps_result = subprocess.run(
-            ["ps", "--no-headers", "-eo", "pid,ppid,comm"],
-            capture_output=True, text=True,
-        )
-        children: dict[str, list[str]] = {}
-        comms: dict[str, str] = {}
-        for line in ps_result.stdout.strip().split("\n"):
-            parts = line.split()
-            if len(parts) >= 3:
-                pid, ppid, comm = parts[0], parts[1], parts[2]
-                children.setdefault(ppid, []).append(pid)
-                comms[pid] = comm
-
-        # BFS from each pane pid — True if any descendant is an agent process
-        queue = list(pane_pids)
-        seen: set[str] = set()
-        while queue:
-            cur = queue.pop()
-            if cur in seen:
-                continue
-            seen.add(cur)
-            if comms.get(cur) in process_names:
-                return True
-            queue.extend(children.get(cur, []))
-        return False
-    except subprocess.CalledProcessError:
-        return None
-    except Exception:
-        return None
+    if isinstance(session_name, RuntimeHandle):
+        handle = session_name
+    elif isinstance(session_name, dict):
+        handle = RuntimeHandle.from_record(session_name)
+    else:
+        handle = RuntimeHandle(session_name, session_name)
+    runtime = TmuxSessionRuntime(RuntimeContext.from_env(), runner=subprocess.run)
+    return runtime.has_descendant_process(handle, process_names)
