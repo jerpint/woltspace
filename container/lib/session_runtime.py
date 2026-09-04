@@ -20,7 +20,9 @@ Two questions are asked of a session, and they are deliberately different:
 
 from __future__ import annotations
 
+import os
 import re
+import shlex
 import subprocess
 import time
 from dataclasses import asdict, dataclass
@@ -31,6 +33,22 @@ from runtime_context import RuntimeContext
 
 _TMUX_TIMEOUT = 10
 _SAFE_BUFFER = re.compile(r"[^A-Za-z0-9_-]")
+_SESSION_ENV_KEYS = (
+    "HOME",
+    "PATH",
+    "CODEX_HOME",
+    "CLAUDE_CONFIG_DIR",
+    "OPENCODE_CONFIG_DIR",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
+    "XDG_CACHE_HOME",
+    "WOLTS_DIR",
+    "WOLTSPACE_DIR",
+    "WOLTSPACE_ISOLATION",
+    "WOLTSPACE_TMUX_BIN",
+    "WOLTSPACE_PS_BIN",
+)
 
 
 @dataclass(frozen=True)
@@ -274,6 +292,22 @@ class TmuxSessionRuntime:
 
     # -- process control ---------------------------------------------------
 
+    @staticmethod
+    def _launch_command(command: str) -> str:
+        """Carry path/auth locations across a pre-existing tmux server.
+
+        Tmux panes inherit the server environment, which may predate the
+        current Woltspace install or data root. Prefix only non-secret path and
+        runtime variables; harness tokens are intentionally never embedded in
+        a visible tmux start command.
+        """
+        values = [
+            shlex.quote(f"{key}={os.environ[key]}")
+            for key in _SESSION_ENV_KEYS
+            if key in os.environ
+        ]
+        return f"env {' '.join(values)} {command}" if values else command
+
     def spawn(self, session_id: str, cwd: str, command: str) -> RuntimeHandle:
         """Create one named tmux session and return its exact initial pane.
 
@@ -295,7 +329,7 @@ class TmuxSessionRuntime:
                 session_id,
                 "-c",
                 cwd,
-                command,
+                self._launch_command(command),
             ],
             capture_output=True,
             text=True,
@@ -330,7 +364,7 @@ class TmuxSessionRuntime:
                 f"={handle.tmux_session_name}",
                 "-c",
                 cwd,
-                command,
+                self._launch_command(command),
             ],
             capture_output=True,
             text=True,

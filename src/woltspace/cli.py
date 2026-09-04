@@ -168,6 +168,7 @@ def _tui(args) -> int:
         forwarded = forwarded[1:]
     if args.dry_run:
         record = resolution.to_record()
+        record["command"] = [*resolution.command, *forwarded]
         if args.json:
             print(json.dumps(record, indent=2))
         else:

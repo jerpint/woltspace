@@ -93,7 +93,29 @@ class TestTmuxSessionRuntime:
         assert handle == RuntimeHandle("named-session", "named-session", "%17")
         command = runner.calls[0][0]
         assert command[:6] == ["tmux", "new-session", "-d", "-P", "-F", "#{pane_id}"]
-        assert command[-1] == "cat"
+        assert command[-1].endswith(" cat")
+
+    def test_spawn_carries_current_native_paths_across_old_tmux_server(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("WOLTS_DIR", "/native/wolts")
+        monkeypatch.setenv("WOLTSPACE_DIR", "/installed/woltspace")
+        monkeypatch.setenv("WOLTSPACE_ISOLATION", "host")
+        monkeypatch.setenv("HOME", "/real/home")
+        monkeypatch.setenv("PATH", "/native/bin:/usr/bin")
+        runner = FakeRunner(["%17\n"])
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
+
+        runtime.spawn("named-session", str(tmp_path), "run-session")
+
+        launched = runner.calls[0][0][-1]
+        assert launched.startswith("env ")
+        assert "WOLTS_DIR=/native/wolts" in launched
+        assert "WOLTSPACE_DIR=/installed/woltspace" in launched
+        assert "WOLTSPACE_ISOLATION=host" in launched
+        assert "HOME=/real/home" in launched
+        assert "PATH=/native/bin:/usr/bin" in launched
+        assert launched.endswith(" run-session")
 
     def test_liveness_is_session_level_across_all_windows(self, tmp_path):
         runner = FakeRunner(["named-session\t%17\t123\t1\nnamed-session\t%18\t456\t0\n"])
@@ -122,10 +144,12 @@ class TestTmuxSessionRuntime:
         replacement = runtime.spawn_in_session(original, str(tmp_path), "cat")
 
         assert replacement == original.at_pane("%18")
-        assert runner.commands() == [[
+        command = runner.commands()[0]
+        assert command[:-1] == [
             "tmux", "new-window", "-d", "-P", "-F", "#{pane_id}",
-            "-t", "=named-session", "-c", str(tmp_path), "cat",
-        ]]
+            "-t", "=named-session", "-c", str(tmp_path),
+        ]
+        assert command[-1].endswith(" cat")
 
     def test_liveness_false_only_when_session_has_no_panes(self, tmp_path):
         runtime = TmuxSessionRuntime(context(tmp_path), runner=FakeRunner([""]))
