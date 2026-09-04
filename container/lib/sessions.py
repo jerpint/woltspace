@@ -44,6 +44,7 @@ from harnesses import (
 )
 from sites import ensure_site
 from session_runtime import RuntimeHandle, get_runtime
+from session_targets import SessionTarget, normalize_session_target
 
 _UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
@@ -77,7 +78,10 @@ class SessionRegistry:
         if not path.exists():
             return None
         try:
-            return json.loads(path.read_text())
+            data = json.loads(path.read_text())
+            return normalize_session_target(
+                data, wolts_dir=self.wolts_dir, fallback_wolt=wolt
+            )
         except (json.JSONDecodeError, OSError):
             return None
 
@@ -85,7 +89,10 @@ class SessionRegistry:
         path = self._path(wolt, name)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2) + "\n")
+        normalized = normalize_session_target(
+            data, wolts_dir=self.wolts_dir, fallback_wolt=wolt
+        )
+        tmp.write_text(json.dumps(normalized, indent=2) + "\n")
         tmp.rename(path)
 
     def _find_wolt(self, name: str) -> str | None:
@@ -117,11 +124,18 @@ class SessionRegistry:
         user_id: str = "",
         thread_ts: str = "",
         session_url: str = "",
+        target: SessionTarget | None = None,
     ) -> dict:
         """Create a new session entry. Returns the full session dict."""
         if not wolt:
             raise ValueError("wolt is required for session creation")
         now = int(time.time())
+        if target is None:
+            target = SessionTarget.from_record(
+                {"wolt": wolt, "dir": dir},
+                wolts_dir=self.wolts_dir,
+                fallback_wolt=wolt,
+            )
         data = {
             "name": name,
             "wolt": wolt,
@@ -136,7 +150,10 @@ class SessionRegistry:
             "created_at": now,
             "finished_at": None,
             "exit_code": None,
-            "dir": dir,
+            "target": target.to_record(),
+            "wolt_id": target.wolt_id,
+            "workdir": str(target.canonical_workdir),
+            "dir": str(target.canonical_workdir),
             "title": title,
             "prompt": prompt[:500],
             "last_activity": now,
@@ -315,7 +332,11 @@ class SessionRegistry:
                 if path.suffix == ".tmp":
                     continue
                 try:
-                    data = json.loads(path.read_text())
+                    data = normalize_session_target(
+                        json.loads(path.read_text()),
+                        wolts_dir=self.wolts_dir,
+                        fallback_wolt=w,
+                    )
                 except (json.JSONDecodeError, OSError):
                     continue
                 name = data.get("name", path.stem)
@@ -895,6 +916,7 @@ def start_session(
     routing: dict = None,
     app: str = "",
     harness: str = "",
+    workdir: str | Path | None = None,
 ) -> dict:
     """Start an agent session for a specific wolt.
 
@@ -909,13 +931,13 @@ def start_session(
     Returns dict with session info: name, url, wolt, and optionally app/creature/model.
     Raises ValueError if the wolt directory doesn't exist.
     """
-    target_dir = WOLTS_DIR / wolt
-    if not target_dir.is_dir():
-        raise ValueError(f"wolt '{wolt}' not found at {target_dir}")
+    wolt_home = WOLTS_DIR / wolt
+    if not wolt_home.is_dir():
+        raise ValueError(f"wolt '{wolt}' not found at {wolt_home}")
 
     # Always derive creature from the wolt's type — never let the caller override this.
     # The wolt.json may also carry a default harness for new sessions.
-    wolt_json_path = target_dir / "wolt" / "wolt.json"
+    wolt_json_path = wolt_home / "wolt" / "wolt.json"
     pinned_model = ""
     if wolt_json_path.exists():
         try:
@@ -935,9 +957,15 @@ def start_session(
     harness = resolve_harness(harness)
 
     if app:
-        apps_work_dir = target_dir / "wolt" / "apps" / app
+        if workdir is not None:
+            raise ValueError("workdir cannot be combined with an app session")
+        apps_work_dir = wolt_home / "wolt" / "apps" / app
         apps_work_dir.mkdir(parents=True, exist_ok=True)
-        target_dir = apps_work_dir
+        workdir = apps_work_dir
+
+    target = SessionTarget.resolve(
+        wolt, workdir, wolts_dir=WOLTS_DIR
+    )
 
     name = session_name(wolt)
     # pin wins if valid for the resolved harness, else the tier default (see resolve_model)
@@ -953,7 +981,8 @@ def start_session(
         creature=creature or "",
         model=model or "",
         harness=harness,
-        dir=str(target_dir),
+        dir=str(target.canonical_workdir),
+        target=target,
         app=app or "",
         prompt=prompt,
         adapter=(routing or {}).get("adapter", ""),
@@ -964,10 +993,18 @@ def start_session(
     )
 
     cmd = build_session_command(name, prompt)
-    handle = _tmux_spawn(name, str(target_dir), cmd)
+    handle = _tmux_spawn(name, str(target.canonical_workdir), cmd)
     registry.update(name, wolt=wolt, runtime=handle.to_record())
 
-    result = {"name": name, "url": session_url or None, "wolt": wolt, "harness": harness}
+    result = {
+        "name": name,
+        "url": session_url or None,
+        "wolt": wolt,
+        "wolt_id": target.wolt_id,
+        "workdir": str(target.canonical_workdir),
+        "target": target.to_record(),
+        "harness": harness,
+    }
     if app:
         result["app"] = app
     if creature:
@@ -1019,8 +1056,8 @@ def resume_session(name: str, prompt: str = "") -> dict:
         raise ValueError(f"session '{name}' not found in registry")
 
     wolt = data.get("wolt", "")
-    session_dir = data.get("dir", "")
-    work_dir = session_dir or (str(WOLTS_DIR / wolt) if wolt else "/workspace")
+    target = SessionTarget.from_record(data, wolts_dir=WOLTS_DIR, fallback_wolt=wolt)
+    work_dir = str(target.canonical_workdir)
     # Resume with the harness the session was born on — old sessions have no
     # harness field, which resolves to claude.
     harness = resolve_harness(data.get("harness"))
