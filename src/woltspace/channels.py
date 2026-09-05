@@ -5,9 +5,12 @@ an outside channel and this control plane. The supervisor owns its lifetime;
 the connector only has to describe how it starts and why it is (or is not)
 enabled.
 
-There are two connectors: Telegram, which carries chat, and the TUI bridge,
-which carries the browser terminal's keystrokes to tmux. This is a seam, not a
-plugin framework: adding another means adding a class to `CONNECTORS`.
+There are three: Telegram, which carries chat; the TUI bridge, which carries
+the browser terminal's keystrokes to tmux; and the wolf, which carries the
+clock. The last one talks to no outside channel — but it is a long-running
+child with exactly the same lifetime, and one supervisor is better than two.
+This is a seam, not a plugin framework: adding another means adding a class to
+`CONNECTORS`.
 """
 
 from __future__ import annotations
@@ -409,7 +412,100 @@ class TuiBridgeConnector:
         )
 
 
-CONNECTORS: tuple[ChannelConnector, ...] = (TelegramConnector(), TuiBridgeConnector())
+WOLF_MODULE = "creatures.wolf"
+
+
+class WolfConnector:
+    """🐺 The cron scheduler, behind the same seam.
+
+    `container/creatures/wolf.py` reads every wolt's `wolf.json`, fires the
+    schedules that are due, and posts them back to this very control plane.
+    `container/start.sh` launched it by hand, so a colony run natively simply
+    had no scheduler — every cron silently stopped firing. It is a supervised
+    child now: starts with the API, restarts if it dies, shows up in
+    `woltspace status`, and goes down with `woltspace stop`.
+
+    Enabled by default — schedules already written in `wolf.json` are a
+    standing instruction, and a scheduler that needs opting into is a
+    scheduler nobody remembers to turn on. A guest never runs it: two wolves
+    on one data root would fire every cron twice.
+    """
+
+    name = "wolf"
+
+    def plan(
+        self, layout: RuntimeLayout, env: Mapping[str, str] | None = None
+    ) -> ConnectorPlan:
+        values = dict(os.environ if env is None else env)
+        settings = channel_config(layout, self.name, values)
+        path = config_path(layout, values)
+
+        raw = values.get("WOLTSPACE_WOLF")
+        enabled = _truthy(raw) if raw is not None else bool(settings.get("enabled", True))
+        remedy = (
+            f'Set channels.wolf = {{"enabled": true}} in {path} '
+            "(or unset WOLTSPACE_WOLF). Without it no wolt's wolf.json schedules fire."
+        )
+        if not enabled:
+            return ConnectorPlan(self.name, False, "disabled", remedy=remedy)
+        if not _truthy(values.get("WOLTSPACE_ENTRYPOINT", "")):
+            return ConnectorPlan(
+                self.name,
+                False,
+                "not the platform entrypoint; a guest never fires the schedules",
+                remedy="Run the control plane through `woltspace start` to own the schedules.",
+            )
+
+        container = layout.install_root / "container"
+        if not (container / "creatures" / "wolf.py").is_file():
+            return ConnectorPlan(
+                self.name,
+                False,
+                f"no {WOLF_MODULE} under {container}",
+                remedy=(
+                    "Reinstall woltspace so the platform runtime ships beside it, "
+                    "then `woltspace start`."
+                ),
+            )
+
+        # Same interpreter rule as the adapter: the container keeps its uv
+        # project, a native run stays inside the installed environment. Wolf is
+        # stdlib-only either way — this is one mechanism, not a special case.
+        interpreter = _interpreter(str(container), layout.isolation, layout.install_root)
+        child_env = {
+            "WOLTS_DIR": str(layout.wolts_dir),
+            "WOLTSPACE_DIR": str(layout.install_root),
+            "WOLTSPACE_ISOLATION": layout.isolation,
+            "WOLTSPACE_HOST": layout.host,
+            # Wolf builds its own endpoint from this; see `server_url` there.
+            "WOLTSPACE_PORT": str(layout.port),
+            "PYTHONPATH": os.pathsep.join(
+                part
+                for part in (
+                    str(container),
+                    str(layout.runtime_lib),
+                    values.get("PYTHONPATH", ""),
+                )
+                if part
+            ),
+        }
+        return ConnectorPlan(
+            name=self.name,
+            enabled=True,
+            detail=f"cron scheduler on {layout.endpoint} · {WOLF_MODULE} from {container}",
+            command=(*interpreter, "-m", WOLF_MODULE),
+            cwd=str(container),
+            env=child_env,
+            remedy=remedy,
+            # `-m creatures.wolf` as an adjacent pair — a log file *named* after
+            # the module cannot forge it.
+            process_signature=("-m", WOLF_MODULE),
+        )
+
+
+CONNECTORS: tuple[ChannelConnector, ...] = (
+    TelegramConnector(), TuiBridgeConnector(), WolfConnector(),
+)
 
 
 def plan_connectors(

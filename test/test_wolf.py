@@ -100,6 +100,37 @@ class TestCronParser:
 
 
 # ---------------------------------------------------------------------------
+# server_url
+# ---------------------------------------------------------------------------
+
+class TestServerUrl:
+    """Unit: the wolf calls whatever port the platform was started on."""
+
+    def test_defaults_to_the_historical_port(self, monkeypatch):
+        from creatures.wolf import server_url
+        monkeypatch.delenv("WOLTSPACE_PORT", raising=False)
+        monkeypatch.delenv("PORT", raising=False)
+        assert server_url("/sessions/new/lodge") == "http://127.0.0.1:7777/sessions/new/lodge"
+
+    def test_honors_woltspace_port(self, monkeypatch):
+        from creatures.wolf import server_url
+        monkeypatch.setenv("WOLTSPACE_PORT", "8123")
+        assert server_url("/sessions/new/lodge") == "http://127.0.0.1:8123/sessions/new/lodge"
+
+    def test_falls_back_to_port(self, monkeypatch):
+        from creatures.wolf import server_url
+        monkeypatch.delenv("WOLTSPACE_PORT", raising=False)
+        monkeypatch.setenv("PORT", "9001")
+        assert server_url() == "http://127.0.0.1:9001"
+
+    def test_woltspace_port_wins(self, monkeypatch):
+        from creatures.wolf import server_url
+        monkeypatch.setenv("WOLTSPACE_PORT", "8123")
+        monkeypatch.setenv("PORT", "9001")
+        assert server_url() == "http://127.0.0.1:8123"
+
+
+# ---------------------------------------------------------------------------
 # _parse_field
 # ---------------------------------------------------------------------------
 

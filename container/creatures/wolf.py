@@ -29,12 +29,25 @@ from typing import Optional
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 
 
+def server_url(path: str = "") -> str:
+    """The control plane this wolf reports to.
+
+    The port is whatever the platform was started on — the container has
+    always used 7777, but a native `woltspace start --port 8080` is a
+    perfectly ordinary thing to do, and a wolf hardcoded to 7777 would fire
+    every cron into a closed socket. Same precedence as RuntimeLayout:
+    WOLTSPACE_PORT, then PORT, then the historical default. The host stays
+    loopback — the wolf is always a child of the plane it calls.
+    """
+    port = (os.environ.get("WOLTSPACE_PORT") or os.environ.get("PORT") or "7777").strip()
+    return f"http://127.0.0.1:{port}{path}"
+
 
 def _get_tunnel_url() -> Optional[str]:
     """Read tunnel URL from .space/platform/tunnel.json."""
     try:
         import json
-        from lib.paths import tunnel_state_file
+        from paths import tunnel_state_file
         state = json.loads(tunnel_state_file().read_text())
         url = state.get("url", "").strip()
         return url if url else None
@@ -182,7 +195,7 @@ def send_wolf_notify(message: str):
     payload = json.dumps({"message": full_message, "session": ""})
     try:
         result = subprocess.run(
-            ["curl", "-s", "-X", "POST", "http://localhost:7777/notify",
+            ["curl", "-s", "-X", "POST", server_url("/notify"),
              "-H", "Content-Type: application/json",
              "-d", payload],
             capture_output=True, text=True, timeout=10,
@@ -222,7 +235,7 @@ def dispatch_session(entry: dict) -> Optional[str]:
     })
     try:
         result = subprocess.run(
-            ["curl", "-s", "-X", "POST", "http://localhost:7777/sessions/new/lodge",
+            ["curl", "-s", "-X", "POST", server_url("/sessions/new/lodge"),
              "-H", "Content-Type: application/json",
              "-d", payload],
             capture_output=True, text=True, timeout=10,

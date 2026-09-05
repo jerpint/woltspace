@@ -850,12 +850,15 @@ class TestAStrayServeCannotTakeOverALiveDataRoot:
 
         layout = _layout(tmp_path, isolation="external")
         plans = {plan.name: plan for plan in plan_connectors(layout)}
-        assert [plan.enabled for plan in plans.values()] == [False, False]
+        assert [plan.enabled for plan in plans.values()] == [False, False, False]
         assert "ambient environment" in plans["telegram"].detail
         assert plans["telegram"].command == ()
         # The pty bridge is a guest here too: the real instance owns that port.
         assert "not the platform entrypoint" in plans["tui"].detail
         assert plans["tui"].command == ()
+        # And the wolf: two schedulers on one data root fire every cron twice.
+        assert "not the platform entrypoint" in plans["wolf"].detail
+        assert plans["wolf"].command == ()
 
     def test_the_supervisor_plans_no_child_for_a_guest(self, tmp_path):
         layout = _layout(tmp_path, isolation="external")
