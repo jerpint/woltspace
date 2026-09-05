@@ -82,6 +82,10 @@ class ConnectorPlan:
     cwd: str = ""
     env: Mapping[str, str] = field(default_factory=dict)
     remedy: str = ""
+    # A string specific enough to recognise this connector's process later.
+    # The last element of `command` is not it: the dev-reload form ends in
+    # "bot/", which matches any recycled pid whose argv happens to contain it.
+    process_marker: str = ""
 
     def to_record(self) -> dict:
         """Public description. Never includes `env` — that carries the token."""
@@ -92,6 +96,7 @@ class ConnectorPlan:
             "command": list(self.command),
             "cwd": self.cwd or None,
             "remedy": self.remedy or None,
+            "process_marker": self.process_marker or None,
         }
 
 
@@ -230,6 +235,9 @@ class TelegramConnector:
             cwd=bot_dir,
             env=child_env,
             remedy=remedy,
+            # The adapter module is in the argv of both the plain and the
+            # dev-reload form, and is specific to this connector.
+            process_marker=module,
         )
 
 

@@ -69,19 +69,20 @@ def find_token_clash(text: str) -> bool:
     return any(marker in lowered for marker in TOKEN_CLASH_MARKERS)
 
 
-def _matches_connector(pid: int, command: list, *, ps_bin="ps", runner=subprocess.run) -> bool:
-    """Only reap a pid that still looks like the connector we recorded.
+def _matches_connector(pid: int, record: dict, *, ps_bin="ps", runner=subprocess.run) -> bool:
+    """Only reap a pid still running the exact connector we recorded.
 
-    Pids are reused. Without this, a stale record could point at whatever
-    unrelated process inherited the number.
+    Fails closed. `command[-1]` used to serve as the marker, which is wrong for
+    the dev-reload form — that command ends in "bot/", so any recycled pid
+    whose unrelated argv merely contained "bot/" was accepted as ours and
+    killpg'd. The marker is now the adapter module, recorded at plan time; with
+    no marker there is no match and nothing is signalled.
     """
-    if not command:
+    marker = str(record.get("process_marker") or "").strip()
+    if not marker:
         return False
     running = process_command(pid, ps_bin=ps_bin, runner=runner)
-    if not running:
-        return False
-    module = str(command[-1])
-    return module in running or " ".join(str(part) for part in command) == running
+    return bool(running) and marker in running
 
 
 def timeout_for_stillborn() -> float:
@@ -176,7 +177,7 @@ class ChannelSupervisor:
             if not isinstance(pid, int) or pid <= 0 or not pid_alive(pid):
                 continue
             if not _matches_connector(
-                pid, record.get("command") or [], ps_bin=self.ps_bin, runner=self._run
+                pid, record, ps_bin=self.ps_bin, runner=self._run
             ):
                 continue
             try:
@@ -232,9 +233,13 @@ class ChannelSupervisor:
         with self._lock:
             children = list(self._children.items())
             self._children.clear()
-            for name, _child in children:
-                self.states[name].state = "stopped"
-                self.states[name].pid = None
+            # Every state that is not deliberately disabled ends stopped —
+            # including one still "pending" because its spawn had not finished.
+            # Otherwise memory says stopped while connectors.json says pending.
+            for name, state in self.states.items():
+                if state.state != "disabled":
+                    state.state = "stopped"
+                    state.pid = None
         for _name, child in children:
             self._terminate(child, timeout=timeout)
         thread = self._thread

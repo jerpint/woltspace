@@ -66,9 +66,53 @@ def start_cloudflared(port: int, host_header: str | None = "localhost") -> dict:
     return {"url": url, "pid": proc.pid, "log_file": log_file}
 
 
-def stop_cloudflared(pid: int) -> bool:
-    """Stop a cloudflared process by PID. Returns True if it was alive."""
+CLOUDFLARED_NEEDLE = "cloudflared"
+
+
+def process_command(pid: int, *, ps_bin: str | None = None, runner=subprocess.run) -> str:
+    """The full command line of a pid, on Linux and macOS alike.
+
+    `-ww` is load-bearing: without it ps truncates to the terminal width, so a
+    long argv stops matching whenever the window is narrow — or absent.
+    """
+    if pid is None or pid <= 0:
+        return ""
+    binary = ps_bin or os.environ.get("WOLTSPACE_PS_BIN", "ps")
+    try:
+        result = runner(
+            [binary, "-ww", "-o", "command=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return ""
+    stdout = result.stdout if isinstance(result.stdout, str) else ""
+    return stdout.strip()
+
+
+def is_cloudflared(pid: int, *, ps_bin: str | None = None, runner=subprocess.run) -> bool:
+    """Whether `pid` is alive *and* still running cloudflared.
+
+    A pid recorded in state is not evidence that the thing it named is still
+    there. Pids are recycled — hard and fast across a container reboot — so a
+    stale record can point at anything.
+    """
     if not _is_pid_alive(pid):
+        return False
+    command = process_command(pid, ps_bin=ps_bin, runner=runner)
+    return bool(command) and CLOUDFLARED_NEEDLE in command
+
+
+def stop_cloudflared(pid: int, *, ps_bin: str | None = None, runner=subprocess.run) -> bool:
+    """Stop a cloudflared process by PID. Returns True if it was signalled.
+
+    Validates at the point of the kill, not only at whatever decided to call
+    this. A caller acting on stale state would otherwise SIGTERM whichever
+    innocent process inherited the number.
+    """
+    if not is_cloudflared(pid, ps_bin=ps_bin, runner=runner):
         return False
     try:
         os.kill(pid, signal.SIGTERM)

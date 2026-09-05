@@ -90,11 +90,17 @@ def start_tunnel():
 
     SPACE_PLATFORM_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Kill any orphaned tunnel from a previous server run
+    # Kill any orphaned tunnel from a previous server run. `stop_cloudflared`
+    # validates that the pid is still cloudflared before signalling, so a
+    # recycled pid is simply discarded rather than shot: the state file names a
+    # number, which is not evidence that the process it named still exists.
     old_state = _read_state()
     old_pid = old_state.get("pid")
     if old_pid:
-        stop_cloudflared(old_pid)
+        if stop_cloudflared(old_pid):
+            log.info(f"stopped orphaned tunnel (pid {old_pid})")
+        else:
+            log.info(f"discarding stale tunnel state (pid {old_pid} is not cloudflared)")
 
     tunnel_token = os.environ.get("CLOUDFLARE_TUNNEL_TOKEN")
     tunnel_url = os.environ.get("CLOUDFLARE_TUNNEL_URL")

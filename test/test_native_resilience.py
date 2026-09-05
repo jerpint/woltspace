@@ -46,12 +46,24 @@ def _layout(tmp_path, isolation="host", port=18811):
     )
 
 
+# A string that appears in the stand-in child's argv and nowhere else, so the
+# reaper's marker matching is exercised the way the real adapter module is.
+PROBE_MARKER = "woltspace-test-connector"
+
+
 def _sleeper(seconds: int = 60):
-    return (sys.executable, "-c", f"import time; time.sleep({seconds})")
+    return (
+        sys.executable,
+        "-c",
+        f"import time; time.sleep({seconds})  # {PROBE_MARKER}",
+    )
 
 
-def _plan(command=None):
-    return ConnectorPlan("telegram", True, "resilience child", command or _sleeper(), str(ROOT), {})
+def _plan(command=None, marker=PROBE_MARKER):
+    return ConnectorPlan(
+        "telegram", True, "resilience child", command or _sleeper(), str(ROOT), {},
+        process_marker=marker,
+    )
 
 
 def _alive(pid: int) -> bool:
@@ -1031,3 +1043,217 @@ class TestSpawnAndStopDoNotRaceOnState:
         assert block, "the spawn lock block moved; re-check the race"
         assert 'state.state = "running"' in block.group(1)
         assert "self._children[name] = child" in block.group(1)
+
+
+class TestAStaleTunnelPidIsNeverSignalled:
+    """Gate A: the guard called it stale, and then something shot it anyway.
+
+    `shared_data_root_check` classifies a live-but-recycled tunnel pid as stale
+    so a start may proceed — and `start_tunnel` then handed that same pid to
+    `stop_cloudflared`, which only checked that it was alive. The validated
+    evidence standard has to hold at the point that signals, not only at the
+    point that decides.
+    """
+
+    @pytest.fixture
+    def innocent_process(self):
+        """A live pid recorded in tunnel.json that is emphatically not a tunnel."""
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            start_new_session=True,
+        )
+        time.sleep(0.2)
+        try:
+            yield child
+        finally:
+            child.kill()
+            child.wait()
+
+    def _tunnel_lib(self):
+        sys.path.insert(0, str(ROOT / "container" / "lib"))
+        import tunnel as tunnel_lib
+
+        return tunnel_lib
+
+    def test_stop_cloudflared_refuses_a_pid_that_is_not_cloudflared(self, innocent_process):
+        tunnel_lib = self._tunnel_lib()
+        assert tunnel_lib.stop_cloudflared(innocent_process.pid) is False
+        time.sleep(0.2)
+        assert innocent_process.poll() is None, "an innocent process was signalled"
+
+    def test_stop_cloudflared_still_stops_a_real_one(self):
+        tunnel_lib = self._tunnel_lib()
+        runner = fake_ps({4242: "cloudflared tunnel --url http://localhost:7777"})
+        signalled = []
+        original = os.kill
+        try:
+            os.kill = lambda pid, sig: signalled.append((pid, sig)) if sig else None
+            assert tunnel_lib.stop_cloudflared(4242, runner=runner) is True
+        finally:
+            os.kill = original
+        assert signalled and signalled[0][0] == 4242
+
+    def test_a_dead_pid_is_simply_false(self):
+        tunnel_lib = self._tunnel_lib()
+        assert tunnel_lib.stop_cloudflared(999999) is False
+
+    def test_the_guard_and_the_start_path_agree(self, tmp_path, innocent_process):
+        """Composed: guard says stale → start_tunnel must discard, not signal."""
+        from woltspace.doctor import shared_data_root_check
+
+        layout = _layout(tmp_path, isolation="external")
+        layout.platform_state.mkdir(parents=True, exist_ok=True)
+        (layout.platform_state / "tunnel.json").write_text(json.dumps({
+            "pid": innocent_process.pid, "url": "https://stale.example",
+            "instance_id": "a-previous-boot",
+        }))
+
+        # The guard allows the start: this pid is not cloudflared, so the
+        # record is stale rather than evidence of a live control plane.
+        assert shared_data_root_check(layout, as_entrypoint=True) is None
+
+        # …and the start path must therefore not signal it either.
+        tunnel_lib = self._tunnel_lib()
+        assert tunnel_lib.stop_cloudflared(innocent_process.pid) is False
+        time.sleep(0.3)
+        assert innocent_process.poll() is None, (
+            "the guard classified this pid as stale and something killed it anyway"
+        )
+
+    def test_the_kill_point_validates_rather_than_trusting_its_caller(self):
+        source = (ROOT / "container" / "lib" / "tunnel.py").read_text()
+        body = source.split("def stop_cloudflared(")[1].split("\ndef ")[0]
+        assert "is_cloudflared(" in body, (
+            "stop_cloudflared must validate the process itself; callers act on "
+            "stale state by definition"
+        )
+
+
+class TestTheReaperMarkerIsSpecific:
+    """Gate B: "bot/" matched anything, and killpg is not a forgiving verb."""
+
+    def _dev_command(self, tmp_path):
+        from woltspace.channels import TelegramConnector
+
+        layout = _layout(tmp_path, isolation="external")
+        return TelegramConnector().plan(layout, {
+            "WOLTSPACE_ENTRYPOINT": "1",
+            "ENABLE_TELEGRAM_BOT": "true",
+            "TELEGRAM_BOT_TOKEN": "1:t",
+            "TELEGRAM_BOT_DIR": str(ROOT / "container"),
+            "DEV_MODE": "true",
+        })
+
+    def test_the_dev_command_still_ends_in_the_generic_directory(self, tmp_path):
+        """The shape that made command[-1] unusable as a marker."""
+        plan = self._dev_command(tmp_path)
+        assert plan.command[-1] == "bot/"
+
+    def test_but_the_marker_is_the_adapter_module(self, tmp_path):
+        plan = self._dev_command(tmp_path)
+        assert plan.process_marker == "bot.telegram_adapter"
+        assert plan.to_record()["process_marker"] == "bot.telegram_adapter"
+
+    def test_the_real_dev_process_matches(self, tmp_path):
+        from woltspace.channel_supervisor import _matches_connector
+
+        plan = self._dev_command(tmp_path)
+        argv = " ".join(plan.command)
+        assert _matches_connector(
+            4242, plan.to_record(), runner=fake_ps({4242: argv})
+        ) is True
+
+    def test_an_unrelated_recycled_pid_containing_bot_slash_does_not(self, tmp_path):
+        from woltspace.channel_supervisor import _matches_connector
+
+        plan = self._dev_command(tmp_path)
+        for impostor in (
+            "rsync -a /srv/bot/ /backup/bot/",
+            "python -m http.server --directory bot/",
+            "tail -f bot/output.log",
+        ):
+            assert _matches_connector(
+                4242, plan.to_record(), runner=fake_ps({4242: impostor})
+            ) is False, impostor
+
+    def test_a_record_without_a_marker_kills_nothing(self, tmp_path):
+        """Fail closed: no marker, no match, no signal."""
+        from woltspace.channel_supervisor import _matches_connector
+
+        legacy = {"name": "telegram", "pid": 4242, "command": ["python", "-m", "bot/"]}
+        assert _matches_connector(
+            4242, legacy, runner=fake_ps({4242: "anything at all bot/"})
+        ) is False
+
+    def test_the_reaper_leaves_an_impostor_alone_end_to_end(self, tmp_path):
+        """Composed: a recycled pid recorded as ours must survive reap_orphans."""
+        layout = _layout(tmp_path)
+        layout.platform_state.mkdir(parents=True, exist_ok=True)
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)  # /srv/bot/ backup"],
+            start_new_session=True,
+        )
+        time.sleep(0.2)
+        try:
+            (layout.platform_state / "connectors.json").write_text(json.dumps({
+                "connectors": [{
+                    "name": "telegram", "pid": child.pid,
+                    "command": [sys.executable, "-m", "watchfiles", "bot/"],
+                    "process_marker": "bot.telegram_adapter",
+                }],
+            }))
+            supervisor = ChannelSupervisor(layout, [_plan()])
+            assert supervisor.reap_orphans() == []
+            time.sleep(0.3)
+            assert child.poll() is None, "an unrelated process was killpg'd"
+        finally:
+            child.kill()
+            child.wait()
+
+    def test_it_still_reaps_a_genuine_orphan_end_to_end(self, tmp_path):
+        layout = _layout(tmp_path)
+        first = ChannelSupervisor(layout, [_plan()])
+        first.start(watch=False)
+        orphan = read_connector_report(layout)["connectors"][0]["pid"]
+        first._children.clear()
+        assert _alive(orphan)
+
+        second = ChannelSupervisor(layout, [_plan()])
+        try:
+            assert orphan in second.reap_orphans()
+            for _ in range(40):
+                if not _alive(orphan):
+                    break
+                time.sleep(0.05)
+            assert not _alive(orphan)
+        finally:
+            second.stop()
+
+
+class TestNoStateIsLeftPending:
+    """Advisory: memory said stopped while connectors.json still said pending."""
+
+    def test_a_stop_before_any_spawn_publishes_stopped(self, tmp_path):
+        layout = _layout(tmp_path)
+        supervisor = ChannelSupervisor(layout, [_plan()])
+        supervisor.stop()
+        record = read_connector_report(layout)["connectors"][0]
+        assert record["state"] == "stopped"
+        assert record["pid"] is None
+
+    def test_a_disabled_connector_stays_disabled(self, tmp_path):
+        layout = _layout(tmp_path)
+        supervisor = ChannelSupervisor(
+            layout, [ConnectorPlan("telegram", False, "disabled")]
+        )
+        supervisor.start(watch=False)
+        supervisor.stop()
+        assert read_connector_report(layout)["connectors"][0]["state"] == "disabled"
+
+    def test_memory_and_the_report_agree_after_stop(self, tmp_path):
+        layout = _layout(tmp_path)
+        supervisor = ChannelSupervisor(layout, [_plan()])
+        supervisor.start(watch=False)
+        supervisor.stop()
+        record = read_connector_report(layout)["connectors"][0]
+        assert record["state"] == supervisor.states["telegram"].state == "stopped"
