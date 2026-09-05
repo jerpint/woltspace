@@ -57,10 +57,20 @@ class Supervisor:
         connector config is the single place it is resolved, and it stays in
         memory — nothing here writes a credential to disk.
         """
-        plans = [self._refuse_busy_token(plan) for plan in plan_connectors(self.layout)]
+        # Order matters. A connector orphaned by a previous control plane still
+        # holds the token, so asking Telegram first would always hear 409 and
+        # disable the connector — and only *then* reap the orphan, leaving the
+        # channel down with nothing running. Clear our own debris, then ask.
+        planned = plan_connectors(self.layout)
+        reaper = ChannelSupervisor(self.layout, planned)
+        reaped = reaper.reap_orphans()
+        if reaped:
+            print(f"[connectors] reaped {len(reaped)} orphaned connector(s): {reaped}")
+
+        plans = [self._refuse_busy_token(plan) for plan in planned]
         for key, value in connector_secrets(plans).items():
             os.environ.setdefault(key, value)
-        return ChannelSupervisor(self.layout, plans)
+        return ChannelSupervisor(self.layout, plans, already_reaped=True)
 
     def _refuse_busy_token(self, plan: ConnectorPlan) -> ConnectorPlan:
         """Never spawn a poller onto a token someone else already holds.

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import os
-import pathlib
 import signal
 import subprocess
 import threading
@@ -22,6 +21,7 @@ from pathlib import Path
 
 from .channels import ConnectorPlan
 from .layout import RuntimeLayout
+from .processes import pid_alive, process_command
 
 # Bounded restart: at most MAX_RESTARTS crashes inside RESTART_WINDOW seconds.
 MAX_RESTARTS = 5
@@ -69,19 +69,7 @@ def find_token_clash(text: str) -> bool:
     return any(marker in lowered for marker in TOKEN_CLASH_MARKERS)
 
 
-def pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-
-
-def _matches_connector(pid: int, command: list) -> bool:
+def _matches_connector(pid: int, command: list, *, ps_bin="ps", runner=subprocess.run) -> bool:
     """Only reap a pid that still looks like the connector we recorded.
 
     Pids are reused. Without this, a stale record could point at whatever
@@ -89,16 +77,11 @@ def _matches_connector(pid: int, command: list) -> bool:
     """
     if not command:
         return False
-    try:
-        raw = pathlib.Path(f"/proc/{pid}/cmdline").read_bytes()
-    except OSError:
+    running = process_command(pid, ps_bin=ps_bin, runner=runner)
+    if not running:
         return False
-    argv = [part for part in raw.decode("utf-8", "replace").split("\0") if part]
-    if not argv:
-        return False
-    joined = " ".join(argv)
-    module = command[-1]
-    return module in joined or " ".join(str(part) for part in command) == joined
+    module = str(command[-1])
+    return module in running or " ".join(str(part) for part in command) == running
 
 
 def timeout_for_stillborn() -> float:
@@ -155,8 +138,14 @@ class ChannelSupervisor:
         popen=subprocess.Popen,
         sleep=time.sleep,
         clock=time.time,
+        ps_bin: str | None = None,
+        runner=subprocess.run,
+        already_reaped: bool = False,
     ):
         self.layout = layout
+        self._already_reaped = already_reaped
+        self.ps_bin = ps_bin or os.environ.get("WOLTSPACE_PS_BIN", "ps")
+        self._run = runner
         self.max_restarts = max_restarts
         self.restart_window = restart_window
         self.poll_interval = poll_interval
@@ -186,7 +175,9 @@ class ChannelSupervisor:
             pid = record.get("pid")
             if not isinstance(pid, int) or pid <= 0 or not pid_alive(pid):
                 continue
-            if not _matches_connector(pid, record.get("command") or []):
+            if not _matches_connector(
+                pid, record.get("command") or [], ps_bin=self.ps_bin, runner=self._run
+            ):
                 continue
             try:
                 os.killpg(os.getpgid(pid), signal.SIGTERM)
@@ -218,9 +209,10 @@ class ChannelSupervisor:
     def start(self, *, watch: bool = True) -> None:
         """Spawn every enabled connector. `watch=False` leaves ticking to the caller."""
         self.layout.logs_dir.mkdir(parents=True, exist_ok=True)
-        orphans = self.reap_orphans()
-        if orphans:
-            print(f"[connectors] reaped {len(orphans)} orphaned connector(s): {orphans}")
+        if not self._already_reaped:
+            orphans = self.reap_orphans()
+            if orphans:
+                print(f"[connectors] reaped {len(orphans)} orphaned connector(s): {orphans}")
         for name, state in self.states.items():
             if not state.plan.enabled:
                 state.state = "disabled"
@@ -235,14 +227,16 @@ class ChannelSupervisor:
 
     def stop(self, *, timeout: float = 10.0) -> None:
         self._stopping.set()
+        # Snapshot and mark under one lock hold, so a _spawn racing this can
+        # only ever land on the stillborn branch — never re-publish `running`.
         with self._lock:
             children = list(self._children.items())
             self._children.clear()
-        for name, child in children:
+            for name, _child in children:
+                self.states[name].state = "stopped"
+                self.states[name].pid = None
+        for _name, child in children:
             self._terminate(child, timeout=timeout)
-            state = self.states[name]
-            state.state = "stopped"
-            state.pid = None
         thread = self._thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=timeout)
@@ -289,6 +283,10 @@ class ChannelSupervisor:
         finally:
             if not handle.closed:
                 handle.close()
+        # Registration and the state transition must be one atomic step. If
+        # `running` were published after releasing the lock, a stop() that
+        # interleaved would terminate this child, mark it stopped, and then be
+        # overwritten back to `running` — a dead pid reported as healthy.
         with self._lock:
             if self._stopping.is_set():
                 # stop() already took its snapshot; this child would never be
@@ -297,16 +295,16 @@ class ChannelSupervisor:
                 stillborn = True
             else:
                 self._children[name] = child
+                state.pid = child.pid
+                state.state = "running"
+                state.error = ""
+                state.started_at = time.time()
                 stillborn = False
         if stillborn:
             self._terminate(child, timeout=timeout_for_stillborn())
-            state.pid = None
-            state.state = "stopped"
-            return
-        state.pid = child.pid
-        state.state = "running"
-        state.error = ""
-        state.started_at = time.time()
+            with self._lock:
+                state.pid = None
+                state.state = "stopped"
 
     def _terminate(self, child: subprocess.Popen, *, timeout: float) -> None:
         if child.poll() is not None:

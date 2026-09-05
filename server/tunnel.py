@@ -66,7 +66,16 @@ def _read_state() -> dict:
 
 
 def _write_state(state: dict):
-    TUNNEL_STATE_FILE.write_text(json.dumps(state))
+    """Stamp every tunnel record with the instance that started it.
+
+    Without the stamp nothing can tell "my own tunnel" from "somebody else's",
+    which is how a stray control plane came to delete the incumbent's state on
+    its way out.
+    """
+    stamped = dict(state)
+    if stamped:
+        stamped.setdefault("instance_id", os.environ.get("WOLTSPACE_INSTANCE_ID", ""))
+    TUNNEL_STATE_FILE.write_text(json.dumps(stamped))
 
 
 def start_tunnel():
@@ -112,11 +121,24 @@ def start_tunnel():
 
 
 def stop_tunnel():
-    """Stop the lodge tunnel. Called at server shutdown."""
+    """Stop the lodge tunnel. Called at server shutdown.
+
+    Only ever tears down a tunnel this instance started. An unstamped record
+    predates the stamp and is treated as ours for compatibility; one carrying
+    somebody else's id is left exactly as found.
+    """
     _import_lib()
     from tunnel import stop_cloudflared
 
     state = _read_state()
+    owner = state.get("instance_id")
+    mine = os.environ.get("WOLTSPACE_INSTANCE_ID", "")
+    if owner and mine and owner != mine:
+        log.warning(
+            f"leaving tunnel state alone: started by instance {owner}, not {mine}"
+        )
+        return
+
     pid = state.get("pid")
     if pid:
         stop_cloudflared(pid)

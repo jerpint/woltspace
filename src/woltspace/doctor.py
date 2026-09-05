@@ -131,18 +131,34 @@ SHARED_REMEDY = (
 )
 
 
-def _live_tunnel_owner(layout: RuntimeLayout) -> int | None:
-    """The pid of a cloudflared this data root is currently publishing through."""
-    from .instance import pid_alive
+CONTROL_PLANE_NEEDLE = "woltspace"
+TUNNEL_NEEDLE = "cloudflared"
+
+
+def _live_tunnel_owner(layout: RuntimeLayout, *, runner=None) -> int | None:
+    """A cloudflared this data root is publishing through, right now.
+
+    The pid alone proves nothing: a container reboot recycles pids fast, and a
+    stale tunnel.json naming a recycled pid would otherwise look live forever.
+    Confirm the process is actually cloudflared before believing the file.
+    """
+    from .processes import pid_runs
 
     try:
         state = json.loads((layout.platform_state / "tunnel.json").read_text())
     except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError):
         return None
-    pid = state.get("pid") if isinstance(state, dict) else None
-    if isinstance(pid, int) and pid > 0 and pid_alive(pid):
-        return pid
-    return None
+    if not isinstance(state, dict):
+        return None
+    if state.get("instance_id") and state["instance_id"] == os.environ.get(
+        "WOLTSPACE_INSTANCE_ID"
+    ):
+        return None  # our own tunnel, from this very instance
+    pid = state.get("pid")
+    if not isinstance(pid, int):
+        return None
+    kwargs = {"runner": runner} if runner is not None else {}
+    return pid if pid_runs(pid, TUNNEL_NEEDLE, **kwargs) else None
 
 
 def _running_session_count(layout: RuntimeLayout) -> int:
@@ -168,50 +184,77 @@ def _running_session_count(layout: RuntimeLayout) -> int:
     return running
 
 
+def _owner_is_live_and_foreign(layout: RuntimeLayout, *, runner=None) -> "InstanceOwner | None":
+    """An owner record that belongs to a control plane still running elsewhere.
+
+    Three ways to be sure it is *not* a live foreigner, and they matter more
+    than the ways to be sure it is — a false positive here bricks every restart:
+
+    * it names this very instance;
+    * its endpoint answers /health with its own instance id → live, and if that
+      id is ours it is us;
+    * its pid is dead, or alive but running something else entirely (a reboot
+      recycled the number).
+
+    A foreign *hostname* is not by itself proof of life. Container hostnames
+    change on every `docker run`, so treating that as a conflict would refuse
+    every rebuild on the container's own data root.
+    """
+    from .instance import read_health, read_owner
+    from .processes import pid_runs
+
+    owner = read_owner(layout)
+    if owner is None:
+        return None
+    if owner.instance_id and owner.instance_id == os.environ.get("WOLTSPACE_INSTANCE_ID"):
+        return None
+
+    health = read_health(owner.endpoint or layout.endpoint)
+    if health and health.get("instance_id") == owner.instance_id:
+        return owner  # it is up and answering: unambiguously live
+    if health:
+        return None  # something else holds that endpoint; the record is stale
+
+    kwargs = {"runner": runner} if runner is not None else {}
+    if pid_runs(owner.pid, CONTROL_PLANE_NEEDLE, **kwargs):
+        return owner
+    return None
+
+
 def shared_data_root_check(
-    layout: RuntimeLayout, *, as_entrypoint: bool = False
+    layout: RuntimeLayout, *, as_entrypoint: bool = False, runner=None
 ) -> DoctorCheck | None:
     """Report when this data root is already in use by something else.
 
-    Deliberately *not* scoped to an isolation mode. The instance lock is an
-    flock, which does not cross a Docker bind mount on macOS and which a
-    control plane too old to take one never held at all — so the evidence a
-    live instance leaves behind (its owner record, its tunnel, its running
-    sessions) is the only thing that can catch this.
+    Deliberately *not* scoped to an isolation mode, and — since the review —
+    not skipped for entrypoints either. Being the entrypoint means being
+    deliberate, not being alone: a second `woltspace start` on another port is
+    every bit as deliberate as the first, and across a Docker bind mount the
+    flock cannot tell them apart.
 
-    Severity depends on who is asking. The entrypoint *is* the owner, so for it
-    this is nothing. For a guest process it is a hard failure: adopting another
-    instance's data root rewrites its session records and, on shutdown, tears
-    down its tunnel.
+    What changes with `as_entrypoint` is which evidence counts. An entrypoint
+    is *expected* to find its own leftovers — sessions it will re-adopt, a
+    stale owner record from the run it is replacing — so only live, foreign
+    evidence stops it. A guest is stopped by anything suggesting use at all.
     """
-    from .instance import pid_alive, read_owner
-
-    if as_entrypoint or layout.is_entrypoint or _sharing_allowed():
+    if _sharing_allowed():
         return None
 
-    severity = "warn" if layout.isolation == "host" else "fail"
-    owner = read_owner(layout)
-    if owner is not None:
-        foreign_host = bool(owner.hostname and owner.hostname != socket.gethostname())
-        if owner.isolation == "external" or foreign_host:
-            return DoctorCheck(
-                "data-root-sharing",
-                severity,
-                f"{layout.wolts_dir} is claimed by a {owner.isolation or 'unknown'} "
-                f"instance (pid {owner.pid} on {owner.hostname}). The instance lock "
-                f"cannot be trusted across a Docker bind mount.",
-                SHARED_REMEDY,
-            )
-        if pid_alive(owner.pid):
-            return DoctorCheck(
-                "data-root-sharing",
-                severity,
-                f"{layout.wolts_dir} is claimed by pid {owner.pid} "
-                f"(instance {owner.instance_id}).",
-                SHARED_REMEDY,
-            )
+    entrypoint = as_entrypoint or layout.is_entrypoint
+    severity = "warn" if (layout.isolation == "host" and not entrypoint) else "fail"
 
-    tunnel_pid = _live_tunnel_owner(layout)
+    owner = _owner_is_live_and_foreign(layout, runner=runner)
+    if owner is not None:
+        return DoctorCheck(
+            "data-root-sharing",
+            severity,
+            f"{layout.wolts_dir} is owned by a live control plane "
+            f"(pid {owner.pid} on {owner.hostname}, instance {owner.instance_id}, "
+            f"serving {owner.endpoint}).",
+            SHARED_REMEDY,
+        )
+
+    tunnel_pid = _live_tunnel_owner(layout, runner=runner)
     if tunnel_pid:
         return DoctorCheck(
             "data-root-sharing",
@@ -220,6 +263,11 @@ def shared_data_root_check(
             f"(cloudflared pid {tunnel_pid}), so a control plane is already using it.",
             SHARED_REMEDY,
         )
+
+    if entrypoint:
+        # Running sessions are what an entrypoint exists to re-adopt. They are
+        # evidence of a previous run, not of a concurrent one.
+        return None
 
     running = _running_session_count(layout)
     if running:
@@ -240,14 +288,14 @@ def _sharing_allowed() -> bool:
 
 
 def ensure_data_root_available(
-    layout: RuntimeLayout, *, as_entrypoint: bool = False
+    layout: RuntimeLayout, *, as_entrypoint: bool = False, runner=None
 ) -> None:
     """Refuse to serve someone else's live data root. Runs even with --no-doctor.
 
     This is the guard, not the doctor check: `serve` is normally invoked with
     `--no-doctor`, so a check that only runs inside doctor protects nothing.
     """
-    check = shared_data_root_check(layout, as_entrypoint=as_entrypoint)
+    check = shared_data_root_check(layout, as_entrypoint=as_entrypoint, runner=runner)
     if check is not None and check.status == "fail":
         raise DataRootConflict(check)
 
