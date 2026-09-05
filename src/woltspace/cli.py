@@ -156,7 +156,11 @@ def _start(args) -> int:
     if args.json:
         print(json.dumps(result, indent=2))
     elif code == 0:
-        print(f"woltspace {result.get('detail', 'running')}: {layout.endpoint}")
+        # Report where it is actually serving. An already-running instance may
+        # own a different port than the one just asked for, and naming the
+        # requested port sends you to a dead address.
+        endpoint = result.get("endpoint") or layout.endpoint
+        print(f"woltspace {result.get('detail', 'running')}: {endpoint}")
         print(f"wolts: {layout.wolts_dir}")
         if result.get("log"):
             print(f"logs: {result['log']}")

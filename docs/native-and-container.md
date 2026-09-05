@@ -47,6 +47,10 @@ crash-looping.
 
 ### Installing before the packages are published
 
+For a step-by-step first run with real expected output, see
+[native-first-run.md](native-first-run.md).
+
+
 `@woltspace/tui` is not on the npm registry yet, so `woltspace tui` cannot fall
 back to `npx` — it will fail with what looks like a network error. Until the
 first release, install both artifacts from a checkout:

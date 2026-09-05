@@ -221,3 +221,40 @@ class TestOptInTierIsRunnable:
         doc = (TEST_DIR.parent / "docs" / "native-and-container.md").read_text()
         assert "run-tests.sh opt-in" in doc
         assert doc.index("run-tests.sh opt-in") < doc.index("Publish PyPI and npm together")
+
+
+class TestFirstRunDocIsHonest:
+    """The doc is a walkthrough someone follows on a machine we cannot test."""
+
+    DOC = TEST_DIR.parent / "docs" / "native-first-run.md"
+
+    def test_it_flags_what_could_not_be_verified_on_macos(self):
+        text = self.DOC.read_text()
+        assert "(untested on macOS)" in text
+        lines = text.splitlines()
+        commands = [i for i, line in enumerate(lines) if line.strip().startswith("brew ")]
+        assert commands, "the prerequisites section should show the brew commands"
+        # Every brew command sits in a section that admits it is unverified.
+        for index in commands:
+            context = "\n".join(lines[max(index - 6, 0):index])
+            assert "untested on macOS" in context, lines[index]
+
+    def test_the_commands_it_teaches_are_the_ones_the_cli_has(self):
+        import sys
+
+        sys.path.insert(0, str(TEST_DIR.parent / "src"))
+        from woltspace.cli import build_parser
+
+        text = self.DOC.read_text()
+        subcommands = set(build_parser()._subparsers._group_actions[0].choices)
+        for name in ("paths", "doctor", "start", "status", "stop", "tui"):
+            assert name in subcommands
+            assert f"woltspace {name}" in text, name
+
+    def test_the_pre_publish_tarball_name_matches_the_pinned_version(self):
+        from woltspace.compatibility import TUI_VERSION
+
+        assert f"woltspace-tui-{TUI_VERSION}.tgz" in self.DOC.read_text()
+
+    def test_it_is_linked_from_the_readme(self):
+        assert "docs/native-first-run.md" in (TEST_DIR.parent / "README.md").read_text()
