@@ -26,6 +26,13 @@ from .processes import pid_alive, process_command
 # Bounded restart: at most MAX_RESTARTS crashes inside RESTART_WINDOW seconds.
 MAX_RESTARTS = 5
 RESTART_WINDOW = 300.0
+# A child that dies before it has drawn breath never started at all — a busy
+# port, a missing module. The five-minute budget above eventually catches it,
+# but slowly and with backoff, so `woltspace status` reads "restarting" for
+# minutes while nothing is ever going to change. Consecutive births this short
+# end it early, with the plan's remedy instead of another attempt.
+FAST_EXIT_SECONDS = 5.0
+MAX_FAST_EXITS = 5
 BACKOFF_BASE = 1.0
 BACKOFF_CAP = 30.0
 POLL_INTERVAL = 0.25
@@ -122,6 +129,7 @@ class ConnectorState:
     token_clash: bool = False
     log_offset: int = 0
     crash_times: list[float] = field(default_factory=list)
+    fast_exits: int = 0
 
     def to_record(self) -> dict:
         record = self.plan.to_record()
@@ -149,6 +157,8 @@ class ChannelSupervisor:
         *,
         max_restarts: int = MAX_RESTARTS,
         restart_window: float = RESTART_WINDOW,
+        fast_exit_seconds: float = FAST_EXIT_SECONDS,
+        max_fast_exits: int = MAX_FAST_EXITS,
         poll_interval: float = POLL_INTERVAL,
         popen=subprocess.Popen,
         sleep=time.sleep,
@@ -163,6 +173,8 @@ class ChannelSupervisor:
         self._run = runner
         self.max_restarts = max_restarts
         self.restart_window = restart_window
+        self.fast_exit_seconds = fast_exit_seconds
+        self.max_fast_exits = max_fast_exits
         self.poll_interval = poll_interval
         self._popen = popen
         self._sleep = sleep
@@ -323,7 +335,7 @@ class ChannelSupervisor:
                 state.pid = child.pid
                 state.state = "running"
                 state.error = ""
-                state.started_at = time.time()
+                state.started_at = self._clock()
                 stillborn = False
         if stillborn:
             self._terminate(child, timeout=timeout_for_stillborn())
@@ -388,6 +400,19 @@ class ChannelSupervisor:
         state.token_clash = True
         return True
 
+    def last_log_line(self, name: str) -> str:
+        """The child's parting words, for a status line that names the cause."""
+        state = self.states[name]
+        if not state.log:
+            return ""
+        try:
+            with open(state.log, "r", errors="replace") as handle:
+                handle.seek(max(os.path.getsize(state.log) - LOG_SCAN_LIMIT, 0))
+                lines = [line.strip() for line in handle.read().splitlines() if line.strip()]
+        except OSError:
+            return ""
+        return lines[-1][:200] if lines else ""
+
     def poll_once(self) -> None:
         """One supervision tick. Public so tests can drive it deterministically."""
         changed = False
@@ -423,6 +448,19 @@ class ChannelSupervisor:
             # the machine is asleep — a suspend would otherwise look like no
             # time passing at all.
             now = self._clock()
+            if now - state.started_at < self.fast_exit_seconds:
+                state.fast_exits += 1
+            else:
+                state.fast_exits = 0
+            if state.fast_exits >= self.max_fast_exits:
+                tail = self.last_log_line(name)
+                state.state = "failed"
+                state.error = (
+                    f"exited within {self.fast_exit_seconds:g}s of starting "
+                    f"{state.fast_exits} times in a row (last code {code}); not restarting"
+                    + (f": {tail}" if tail else "")
+                )
+                continue
             state.crash_times = [
                 stamp for stamp in state.crash_times if now - stamp < self.restart_window
             ]

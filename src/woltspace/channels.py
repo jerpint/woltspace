@@ -28,7 +28,17 @@ from .compatibility import TUI_SERVICE_BINARY, tui_spec
 from .config import channel_config, config_path
 from .layout import RuntimeLayout
 
-DEFAULT_TUI_PORT = "3001"
+
+def default_tui_port(layout: RuntimeLayout) -> str:
+    """The bridge follows the instance it serves.
+
+    A fixed 3001 meant every control plane on a machine wanted the same pty
+    port, so a second instance (`--port 7778` beside the colony on 7777)
+    crash-looped its bridge forever on EADDRINUSE. Deriving it from the API
+    port gives each instance its own by default; every explicit knob still
+    wins, so a colony that already configured one is untouched.
+    """
+    return str(layout.port + 1)
 
 
 def _truthy(value: str) -> bool:
@@ -369,7 +379,7 @@ class TuiBridgeConnector:
         enabled = _truthy(raw) if raw is not None else bool(settings.get("enabled", True))
         port = str(
             values.get("WOLTSPACE_TUI_PORT") or values.get("TUI_PORT")
-            or settings.get("port") or DEFAULT_TUI_PORT
+            or settings.get("port") or default_tui_port(layout)
         )
         enable_remedy = (
             f'Set channels.tui = {{"enabled": true}} in {path} '

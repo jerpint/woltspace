@@ -311,6 +311,67 @@ class TestChannelSupervisor:
         finally:
             sup.stop()
 
+    def test_a_child_that_never_lives_gives_up_with_its_remedy(self, layout):
+        """A busy port is not a transient crash — restarting is just waiting slower."""
+        plan = ConnectorPlan(
+            "tui", True, "pty bridge", _crasher(), str(ROOT), {},
+            remedy="Something else holds port 7778; pick another with WOLTSPACE_TUI_PORT.",
+        )
+        sup = ChannelSupervisor(
+            layout, [plan], max_fast_exits=3, poll_interval=0, sleep=lambda _seconds: None
+        )
+        sup.start(watch=False)
+        try:
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                sup.poll_once()
+                if sup.states["tui"].state == "failed":
+                    break
+                time.sleep(0.02)
+            state = sup.states["tui"]
+            assert state.state == "failed"
+            assert state.restarts == 2, "gave up on the third stillbirth, not the sixth"
+            assert "within 5s of starting" in state.error
+            record = read_connector_report(layout)["connectors"][0]
+            assert record["state"] == "failed"
+            assert "WOLTSPACE_TUI_PORT" in record["remedy"]
+            # Failed is final — further ticks must not resurrect it.
+            pid_before = record["pid"]
+            sup.poll_once()
+            assert sup.states["tui"].state == "failed"
+            assert sup.states["tui"].restarts == 2
+            assert pid_before is None
+        finally:
+            sup.stop()
+
+    def test_a_child_that_lived_a_while_still_gets_the_full_budget(self, layout):
+        """Only *fast* exits are hopeless; a connector that ran is retried."""
+        clock = {"now": 1000.0}
+        sup = ChannelSupervisor(
+            layout,
+            [running_plan(_crasher())],
+            max_fast_exits=2,
+            poll_interval=0,
+            sleep=lambda _seconds: None,
+            clock=lambda: clock["now"],
+        )
+        sup.start(watch=False)
+        try:
+            for _ in range(4):
+                clock["now"] += 60.0  # the child ran for a minute before dying
+                deadline = time.monotonic() + 20
+                restarts_before = sup.states["telegram"].restarts
+                while time.monotonic() < deadline:
+                    sup.poll_once()
+                    if sup.states["telegram"].restarts > restarts_before:
+                        break
+                    time.sleep(0.02)
+            state = sup.states["telegram"]
+            assert state.state != "failed", state.error
+            assert state.restarts == 4
+        finally:
+            sup.stop()
+
     def test_backoff_is_bounded(self):
         assert backoff_delay(1) == 1.0
         assert backoff_delay(2) == 2.0

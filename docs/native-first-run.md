@@ -126,7 +126,7 @@ $ woltspace doctor
 ✓ tmux: /usr/bin/tmux
 ✓ harness: claude=/Users/you/.local/bin/claude, codex=/usr/local/bin/codex
 ✓ host-auth: claude, codex
-✓ tui-bridge: pty bridge on 127.0.0.1:3001 · node /path/to/woltspace/tui/src/tui-service.js
+✓ tui-bridge: pty bridge on 127.0.0.1:7778 · node /path/to/woltspace/tui/src/tui-service.js
 ✓ port: 127.0.0.1:7777 is available
 ```
 
@@ -170,7 +170,7 @@ owner: pid 67618 · bd6929db67a34a8bb0ab484b632ceff3 · your-macbook
 adoption: 0 live · 0 orphaned · 0 unchanged
 connector telegram: disabled · disabled
   fix: Set channels.telegram = {"enabled": true, "token": "<bot token>"} in /Users/you/.woltspace/native-wolts/.space/platform/config.json (or export TELEGRAM_BOT_TOKEN).
-connector tui: running · pty bridge on 127.0.0.1:3001 · node /path/to/woltspace/tui/src/tui-service.js · pid 67631
+connector tui: running · pty bridge on 127.0.0.1:7778 · node /path/to/woltspace/tui/src/tui-service.js · pid 67631
 ```
 
 `adoption: 0 live` is right on a first run — there are no sessions to adopt
@@ -325,7 +325,7 @@ most of it.
 | Connector `degraded` with a 409 | Another process is polling that bot token. |
 | Connector `failed` after several restarts | It could not stay up; read `.space/logs/connector-<name>.log`. |
 | Terminal pane says `[tui] connection failed: … Connection refused` | The pty bridge is not running. `woltspace status` names it (`connector tui`); `woltspace doctor` says what is missing. |
-| `connector tui: failed` and its log says `EADDRINUSE` | Something else holds port 3001 — a hand-started `tui-service.js`, perhaps. Stop it, or set `WOLTSPACE_TUI_PORT`. |
+| `connector tui: failed` and its log says `EADDRINUSE` | Something else holds the bridge port (the API port + 1 unless you set one) — a hand-started `tui-service.js`, perhaps. Stop it, or set `WOLTSPACE_TUI_PORT`. |
 | Pane opens then closes, log says `posix_spawnp failed` | node-pty's `spawn-helper` lost its exec bit in the npm tarball. The bridge fixes this itself on start; if you see it, `chmod +x` the `prebuilds/darwin-*/spawn-helper` under your node-pty. |
 
 The control plane's own log is `$WOLTS_DIR/.space/logs/control-plane.log`.

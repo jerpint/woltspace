@@ -153,7 +153,7 @@ Python server running on port 7777 inside the container.
 - Live reload via SSE at `/livereload`
 
 ### `tui/src/tui-service.js` (Node.js) — the pty bridge
-TUI WebSocket service on port 3001, shipped as the `woltspace-tui-service` bin of `@woltspace/tui`. The only remaining Node service — attaches xterm.js to tmux via `node-pty`. The control plane starts it as a supervised connector (`tui` in `woltspace status` / `GET /health`); nothing launches it by hand.
+TUI WebSocket service on the API port + 1 (7778 beside the usual 7777; override with `WOLTSPACE_TUI_PORT` or `channels.tui.port`), shipped as the `woltspace-tui-service` bin of `@woltspace/tui`. The only remaining Node service — attaches xterm.js to tmux via `node-pty`. The control plane starts it as a supervised connector (`tui` in `woltspace status` / `GET /health`); nothing launches it by hand.
 
 ### `container/bot/core.py` (Python)
 The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routing.

@@ -116,10 +116,10 @@ class TestPlan:
             _layout(tmp_path), ENTRY, which=lambda name: "/usr/bin/node" if name == "node" else None,
         )
         assert plan.enabled is True
-        assert plan.env["TUI_PORT"] == "3001"
+        assert plan.env["TUI_PORT"] == "7800"  # the instance's own port + 1
         assert plan.env["WOLT_DIR"] == str(tmp_path / "wolts")
         assert plan.process_signature == (str(ROOT / "tui" / "src" / "tui-service.js"),)
-        assert "3001" in plan.detail
+        assert "7800" in plan.detail
         assert "TUI_PORT" not in plan.to_record()  # env is never in the public record
 
     def test_a_guest_never_binds_the_port(self, tmp_path):
@@ -127,6 +127,17 @@ class TestPlan:
         assert plan.enabled is False
         assert "not the platform entrypoint" in plan.detail
         assert plan.command == ()
+
+    def test_the_default_port_follows_the_instance(self, tmp_path):
+        """Two control planes on one machine must not want the same pty port."""
+        which = lambda name: "/usr/bin/node" if name == "node" else None  # noqa: E731
+        for port in (7777, 7778):
+            layout = RuntimeLayout(
+                wolts_dir=tmp_path / "wolts", install_root=ROOT,
+                host="127.0.0.1", port=port, isolation="host",
+            )
+            plan = TuiBridgeConnector().plan(layout, ENTRY, which=which)
+            assert plan.env["TUI_PORT"] == str(port + 1)
 
     def test_port_comes_from_env_or_config(self, tmp_path):
         layout = _layout(tmp_path)
@@ -137,6 +148,9 @@ class TestPlan:
         assert TuiBridgeConnector().plan(
             layout, {**ENTRY, "WOLTSPACE_TUI_PORT": "4000"}, which=which
         ).env["TUI_PORT"] == "4000"
+        assert TuiBridgeConnector().plan(
+            layout, {**ENTRY, "TUI_PORT": "4001"}, which=which
+        ).env["TUI_PORT"] == "4001"
 
     def test_can_be_switched_off(self, tmp_path):
         layout = _layout(tmp_path)
