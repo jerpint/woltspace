@@ -72,6 +72,32 @@ class TestSyncAllWoltSkills:
 
         assert (skills / "woltspace-notify").is_dir()
 
+    def test_a_source_holding_only_legacy_deletes_nothing(self, tmp_path):
+        """A stale bundle must not strip the colony on its way past."""
+        install_root = tmp_path / "install"
+        _platform_skill(install_root, "legacy", "old\n")
+        _platform_skill(install_root, "check-usage", "wolt-owned, not ours\n")
+        skills = tmp_path / "wolts" / "nw" / ".claude" / "skills"
+        (skills / "woltspace-notify").mkdir(parents=True)
+        (skills / "woltspace-notify" / "SKILL.md").write_text("still here\n")
+        (skills / "woltspace-wolf").mkdir(parents=True)
+
+        sync_all_wolt_skills(install_root, tmp_path / "wolts")
+
+        assert (skills / "woltspace-notify" / "SKILL.md").read_text() == "still here\n"
+        assert (skills / "woltspace-wolf").is_dir()
+        assert not (skills / "legacy").exists()
+
+    def test_an_empty_skills_folder_deletes_nothing(self, tmp_path):
+        install_root = tmp_path / "install"
+        (install_root / "container" / "skills").mkdir(parents=True)
+        skills = tmp_path / "wolts" / "nw" / ".claude" / "skills"
+        (skills / "woltspace-notify").mkdir(parents=True)
+
+        sync_all_wolt_skills(install_root, tmp_path / "wolts")
+
+        assert (skills / "woltspace-notify").is_dir()
+
 
 class TestSeedWoltSkills:
     def test_a_new_wolt_gets_a_skills_dir_the_sync_can_find(self, tmp_path):
@@ -84,6 +110,16 @@ class TestSeedWoltSkills:
 
         seeded = wolt_dir / ".claude" / "skills" / "woltspace-create-wolt"
         assert (seeded / "SKILL.md").read_text() == "hello\n"
+
+    def test_a_source_with_nothing_to_give_leaves_the_wolt_unseeded(self, tmp_path):
+        install_root = tmp_path / "install"
+        _platform_skill(install_root, "legacy", "old\n")
+        wolt_dir = tmp_path / "wolts" / "new"
+        wolt_dir.mkdir(parents=True)
+
+        seed_wolt_skills(install_root, wolt_dir)
+
+        assert not (wolt_dir / ".claude").exists()
 
     def test_native_creation_seeds_skills_without_credentials(self, tmp_path, monkeypatch):
         from wolts import setup_wolt_claude_config

@@ -12,15 +12,34 @@ def platform_skills_dir(woltspace_dir: Path) -> Path:
     return Path(woltspace_dir) / "container" / "skills"
 
 
-def sync_wolt_skills(platform_skills: Path, skills_dir: Path):
-    """Replace the woltspace-* skills inside one wolt's skills directory."""
+def platform_skill_sources(woltspace_dir: Path) -> list[Path]:
+    """The woltspace-* skill directories this install can hand out.
+
+    Empty when the install root is wrong — a stale bundle, a half-copied
+    checkout, a skills folder holding only legacy/. Callers treat an empty
+    list as "this install has nothing to say" and leave every wolt alone.
+    """
+    platform_skills = platform_skills_dir(woltspace_dir)
+    if not platform_skills.is_dir():
+        return []
+    return sorted(d for d in platform_skills.glob("woltspace-*") if d.is_dir())
+
+
+def sync_wolt_skills(sources: list[Path], skills_dir: Path):
+    """Replace the woltspace-* skills inside one wolt's skills directory.
+
+    Refuses to run on an empty source list: the delete pass would strip every
+    platform skill the wolt has and the copy pass would put nothing back.
+    """
+    if not sources:
+        return
+
     for d in skills_dir.glob("woltspace-*"):
         if d.is_dir():
             shutil.rmtree(d)
 
-    for d in platform_skills.glob("woltspace-*"):
-        if d.is_dir():
-            shutil.copytree(d, skills_dir / d.name)
+    for d in sources:
+        shutil.copytree(d, skills_dir / d.name)
 
 
 def sync_all_wolt_skills(woltspace_dir: Path, wolts_dir: Path):
@@ -28,9 +47,15 @@ def sync_all_wolt_skills(woltspace_dir: Path, wolts_dir: Path):
 
     Only touches woltspace-* prefixed skills — wolt-owned skills (no prefix)
     are never modified. The legacy/ folder is never copied.
+
+    A source with no woltspace-* skills at all is a no-op for the whole
+    colony. That reading is deliberate: an install root pointing somewhere
+    stale is far likelier than a real platform that genuinely ships zero
+    skills, and the cost of guessing wrong is every wolt losing every
+    platform skill at once.
     """
-    platform_skills = platform_skills_dir(woltspace_dir)
-    if not platform_skills.is_dir():
+    sources = platform_skill_sources(woltspace_dir)
+    if not sources:
         return
 
     for wolt in sorted(Path(wolts_dir).iterdir()):
@@ -41,19 +66,23 @@ def sync_all_wolt_skills(woltspace_dir: Path, wolts_dir: Path):
             # Skip wolts without .claude/skills/ (non-rodents, etc.)
             continue
 
-        sync_wolt_skills(platform_skills, skills_dir)
+        sync_wolt_skills(sources, skills_dir)
 
 
 def seed_wolt_skills(woltspace_dir: Path, wolt_dir: Path):
     """Give a newly created wolt its .claude/skills/.
 
     sync_all_wolt_skills deliberately skips wolts that have no skills
-    directory, so a wolt that is never seeded is never synced either.
+    directory, so a wolt that is never seeded is never synced either. When the
+    source has no woltspace-* skills the wolt is left unseeded rather than
+    handed an empty directory: an empty skills dir is no more useful than none,
+    and leaving it absent keeps a later sync from a healthy install honest —
+    it will still skip this wolt, and the next seed can do the job properly.
     """
-    platform_skills = platform_skills_dir(woltspace_dir)
-    if not platform_skills.is_dir():
+    sources = platform_skill_sources(woltspace_dir)
+    if not sources:
         return
 
     skills_dir = Path(wolt_dir) / ".claude" / "skills"
     skills_dir.mkdir(parents=True, exist_ok=True)
-    sync_wolt_skills(platform_skills, skills_dir)
+    sync_wolt_skills(sources, skills_dir)

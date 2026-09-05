@@ -52,6 +52,44 @@ def test_explicit_layout_is_canonical_and_applies_environment(tmp_path, monkeypa
     assert sys.path[:2] == [str(layout.runtime_lib), str(root)]
 
 
+def test_a_stale_install_pointer_loses_to_the_running_install(tmp_path):
+    """A WOLTSPACE_DIR naming a directory with no container/lib is ignored."""
+    ghost = tmp_path / "old-tool" / "_bundle"
+    ghost.mkdir(parents=True)
+
+    layout = RuntimeLayout.from_env({"WOLTSPACE_DIR": str(ghost)})
+
+    assert layout.install_root == installation_root().resolve()
+    assert layout.runtime_lib.is_dir()
+
+
+def test_a_missing_install_pointer_loses_too(tmp_path):
+    layout = RuntimeLayout.from_env({"WOLTSPACE_DIR": str(tmp_path / "never-existed")})
+
+    assert layout.install_root == installation_root().resolve()
+
+
+def test_a_live_install_pointer_is_still_honoured(tmp_path):
+    other = tmp_path / "elsewhere" / "woltspace"
+    (other / "container" / "lib").mkdir(parents=True)
+
+    layout = RuntimeLayout.from_env({"WOLTSPACE_DIR": str(other)})
+
+    assert layout.install_root == other.resolve()
+
+
+def test_a_stale_pointer_is_not_stamped_back_into_the_environment(tmp_path, monkeypatch):
+    ghost = tmp_path / "ghost"
+    ghost.mkdir()
+    layout = RuntimeLayout.from_env({"WOLTSPACE_DIR": str(ghost)})
+    for key in ("WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION", "PORT"):
+        monkeypatch.delenv(key, raising=False)
+
+    layout.apply_environment()
+
+    assert os.environ["WOLTSPACE_DIR"] == str(installation_root().resolve())
+
+
 def test_invalid_isolation_is_rejected():
     with pytest.raises(ValueError, match="isolation"):
         RuntimeLayout.from_env({"WOLTSPACE_ISOLATION": "wishful"})

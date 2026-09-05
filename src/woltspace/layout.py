@@ -17,6 +17,15 @@ def installation_root() -> Path:
     return Path(__file__).resolve().parent / "_bundle"
 
 
+def looks_like_install_root(path: Path) -> bool:
+    """Whether a path still holds a platform runtime.
+
+    The same signature `installation_root` tests for: a directory is only an
+    install root while `container/lib` lives inside it.
+    """
+    return (Path(path) / "container" / "lib").is_dir()
+
+
 @dataclass(frozen=True)
 class RuntimeLayout:
     wolts_dir: Path
@@ -52,9 +61,7 @@ class RuntimeLayout:
         values = os.environ if env is None else env
         raw_wolts = values.get("WOLTS_DIR", "~/.woltspace/wolts")
         wolts_dir = Path(raw_wolts).expanduser().resolve(strict=False)
-        root = Path(values.get("WOLTSPACE_DIR", installation_root())).expanduser().resolve(
-            strict=False
-        )
+        root = cls._resolve_install_root(values.get("WOLTSPACE_DIR"))
         resolved_isolation = isolation or values.get("WOLTSPACE_ISOLATION", "host")
         if resolved_isolation not in {"host", "external"}:
             raise ValueError("isolation must be 'host' or 'external'")
@@ -65,6 +72,25 @@ class RuntimeLayout:
             port=int(values.get("WOLTSPACE_PORT") or values.get("PORT") or "7777"),
             isolation=resolved_isolation,
         )
+
+    @staticmethod
+    def _resolve_install_root(raw: str | None) -> Path:
+        """Honour a WOLTSPACE_DIR that still names an install; ignore a corpse.
+
+        The env override is a supported knob, but it is also the most
+        self-perpetuating way to break a machine: tmux hands its server
+        environment to every session it spawns, so a value that once pointed at
+        a since-deleted or emptied install root outlives the install and gets
+        inherited back on every restart. When the pointed-at directory no
+        longer looks like a platform, the install we are actually running from
+        wins — a fresh install can then heal a host without anyone hunting
+        down the stale export.
+        """
+        if raw:
+            candidate = Path(raw).expanduser().resolve(strict=False)
+            if looks_like_install_root(candidate):
+                return candidate
+        return Path(installation_root()).expanduser().resolve(strict=False)
 
     @property
     def is_entrypoint(self) -> bool:
