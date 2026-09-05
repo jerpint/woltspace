@@ -217,6 +217,31 @@ class TestResumeSessionNotFound:
             resume_session("nonexistent-session-abc123", "hello")
 
 
+class TestResumeSessionForeignRuntime:
+    """A record whose workdir does not exist on this host (written by the
+    other runtime across a migrated data root) must refuse to resume loudly
+    instead of respawning a dead-on-arrival tmux and reporting success."""
+
+    @patch("sessions.subprocess.run")
+    @patch("sessions.resolve_agent_handle", return_value=None)
+    @patch("sessions._tmux_alive", return_value=False)
+    def test_refuses_resume_when_workdir_missing(self, mock_alive, mock_agent, mock_run, wolt_env):
+        from sessions import resume_session, SessionRegistry
+
+        reg = SessionRegistry(wolt_env)
+        foreign = "/workspace/wolts/testwolt-does-not-exist-here"
+        reg.update("testwolt-chompy-dam-abc123", wolt="testwolt",
+                   dir=foreign, workdir=foreign,
+                   target={"wolt_id": "testwolt", "canonical_workdir": foreign})
+
+        with pytest.raises(ValueError, match="different runtime"):
+            resume_session("testwolt-chompy-dam-abc123", "hello")
+
+        # And it never spawned anything.
+        new_session_calls = [c for c in mock_run.call_args_list if "new-session" in str(c)]
+        assert new_session_calls == []
+
+
 class TestStartSessionNoClaudeSessionId:
     """start_session() should NOT set claude_session_id — run-session.sh generates a UUID."""
 

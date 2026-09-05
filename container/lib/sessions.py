@@ -1245,6 +1245,16 @@ def resume_session(name: str, prompt: str = "") -> dict:
         )
         return {"name": name, "url": session_url, "status": "delivered", "detail": "agent running, message sent"}
 
+    # A record whose workdir does not exist on this host was written by a
+    # different runtime (container vs native share a migrated data root).
+    # Its transcript and paths are not here — a --resume would die on arrival
+    # while this function reported success, silently eating the message.
+    if work_dir and not Path(work_dir).is_dir():
+        raise ValueError(
+            f"session '{name}' belongs to a different runtime — "
+            f"workdir {work_dir} does not exist on this host"
+        )
+
     # Both resume paths deliver run-session.sh — the single runtime wrapper.
     # It reads dir/model/harness from the registry, builds the agent command
     # via prepare_session_command, and closes out the lifecycle (finish status,
