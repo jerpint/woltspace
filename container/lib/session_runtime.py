@@ -51,6 +51,26 @@ _SESSION_ENV_KEYS = (
 )
 
 
+def _session_env_value(key: str, value: str) -> str:
+    """Adjust one carried variable for the session that will inherit it.
+
+    Only PATH is adjusted: sessions call `notify`, `push-view` and friends by
+    bare name, and natively-spawned ones inherit a control-plane PATH that has
+    never heard of `<install_root>/container/bin`. The container image already
+    ships that directory on PATH, and some hosts export it by hand, so the
+    prepend is skipped when it is already a component — copies must not stack.
+    """
+    if key != "PATH":
+        return value
+    install_root = os.environ.get("WOLTSPACE_DIR")
+    if not install_root:
+        return value
+    bin_dir = os.path.join(install_root, "container", "bin")
+    if not os.path.isdir(bin_dir) or bin_dir in value.split(os.pathsep):
+        return value
+    return f"{bin_dir}{os.pathsep}{value}"
+
+
 @dataclass(frozen=True)
 class RuntimeHandle:
     """Exact process-runtime address stored beneath a Woltspace session ID."""
@@ -302,7 +322,7 @@ class TmuxSessionRuntime:
         a visible tmux start command.
         """
         values = [
-            shlex.quote(f"{key}={os.environ[key]}")
+            shlex.quote(f"{key}={_session_env_value(key, os.environ[key])}")
             for key in _SESSION_ENV_KEYS
             if key in os.environ
         ]

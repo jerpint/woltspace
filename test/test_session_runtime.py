@@ -117,6 +117,54 @@ class TestTmuxSessionRuntime:
         assert "PATH=/native/bin:/usr/bin" in launched
         assert launched.endswith(" run-session")
 
+    def test_spawn_puts_the_install_bin_first_on_the_session_path(
+        self, tmp_path, monkeypatch
+    ):
+        bin_dir = tmp_path / "container" / "bin"
+        bin_dir.mkdir(parents=True)
+        monkeypatch.setenv("WOLTSPACE_DIR", str(tmp_path))
+        monkeypatch.setenv("PATH", "/usr/bin")
+        runner = FakeRunner(["%17\n"])
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
+
+        runtime.spawn("named-session", str(tmp_path), "run-session")
+
+        launched = runner.calls[0][0][-1]
+        assert f"PATH={bin_dir}:/usr/bin" in launched
+
+    def test_spawn_does_not_stack_a_bin_dir_already_on_path(
+        self, tmp_path, monkeypatch
+    ):
+        bin_dir = tmp_path / "container" / "bin"
+        bin_dir.mkdir(parents=True)
+        monkeypatch.setenv("WOLTSPACE_DIR", str(tmp_path))
+        monkeypatch.setenv("PATH", f"/usr/bin:{bin_dir}")
+        runner = FakeRunner(["%17\n"])
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
+
+        runtime.spawn("named-session", str(tmp_path), "run-session")
+
+        launched = runner.calls[0][0][-1]
+        assert f"PATH=/usr/bin:{bin_dir}" in launched
+
+    def test_spawn_leaves_path_alone_without_a_resolvable_install_bin(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.delenv("WOLTSPACE_DIR", raising=False)
+        monkeypatch.setenv("PATH", "/usr/bin")
+        runner = FakeRunner(["%17\n"])
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
+
+        runtime.spawn("named-session", str(tmp_path), "run-session")
+        assert "PATH=/usr/bin " in runner.calls[0][0][-1]
+
+        monkeypatch.setenv("WOLTSPACE_DIR", str(tmp_path / "gone"))
+        runner = FakeRunner(["%17\n"])
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
+
+        runtime.spawn("named-session", str(tmp_path), "run-session")
+        assert "PATH=/usr/bin " in runner.calls[0][0][-1]
+
     def test_liveness_is_session_level_across_all_windows(self, tmp_path):
         runner = FakeRunner(["named-session\t%17\t123\t1\nnamed-session\t%18\t456\t0\n"])
         runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
