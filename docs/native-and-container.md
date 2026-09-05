@@ -233,6 +233,7 @@ live with it.
 | `status` says `N orphaned` on first start | The registry still marks sessions the container was running. Their tmux sessions never existed on the host, so adoption orphans them. | Nothing; it is correct. | — |
 | Wolt `CLAUDE.md` / memory files mention `/workspace/wolts/...` | Written from inside the container. Registry records are normalized on adoption; prose is not. | Cosmetic. | — |
 | Old wolts' skills refer to `/workspace/woltspace` | Same. | Cosmetic until a skill shells out to that path. | Skills should use `$WOLTSPACE_DIR`. |
+| Entering a session from the tui inside your own tmux moves your whole client there | The tui was designed to own the terminal. Same-server entry now uses `switch-client` (no more nested clients), but a switch teleports you out of the windows you were working in. | The detach key (`ctrl-\`) switches back to where the tui lives. | A "peek" mode: `link-window` grafts the wolt session in as a window of the *current* session — flip to it and back, workspace never moves. Real edges (window numbering, one window in two sessions, unlink discipline), so it is a designed feature, not a patch. |
 
 Pivoting between the two is safe as long as only one runs at a time (same
 data root, same port, and the instance lock cannot see across the Docker
