@@ -18,6 +18,7 @@ from .instance import (
     read_owner,
 )
 from .layout import RuntimeLayout
+from .skills import sync_platform_skills
 
 
 def start(layout: RuntimeLayout, *, timeout: float = 15.0) -> tuple[int, dict]:
@@ -38,6 +39,15 @@ def start(layout: RuntimeLayout, *, timeout: float = 15.0) -> tuple[int, dict]:
             "state": "doctor-failed",
             "checks": [check.to_record() for check in checks],
         }
+
+    # The container refreshes every wolt's woltspace-* skills on boot, and a
+    # native start is that boot. Skills going stale is worth saying out loud;
+    # it is never worth refusing to start over.
+    skills_error = None
+    try:
+        sync_platform_skills(layout)
+    except Exception as error:  # noqa: BLE001 — a broken sync must not block start
+        skills_error = f"{type(error).__name__}: {error}"
 
     layout.logs_dir.mkdir(parents=True, exist_ok=True)
     instance_id = uuid.uuid4().hex
@@ -83,7 +93,7 @@ def start(layout: RuntimeLayout, *, timeout: float = 15.0) -> tuple[int, dict]:
     while time.monotonic() < deadline:
         health = read_health(layout.endpoint)
         if health and health.get("instance_id") == instance_id:
-            return 0, {
+            started = {
                 "state": "healthy",
                 "detail": "started",
                 "pid": process.pid,
@@ -93,6 +103,9 @@ def start(layout: RuntimeLayout, *, timeout: float = 15.0) -> tuple[int, dict]:
                 "log": str(log_path),
                 "health": health,
             }
+            if skills_error:
+                started["skills_sync_error"] = skills_error
+            return 0, started
         if process.poll() is not None:
             return 1, {
                 "state": "failed",

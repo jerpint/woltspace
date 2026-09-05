@@ -16,6 +16,11 @@ from pathlib import Path
 WOLTSPACE_DIR = Path("/workspace/woltspace")
 HOME = Path("/home/node")
 
+# Skill sync is shared with the native control plane, so it lives in lib/ —
+# resolved from this file rather than WOLTSPACE_DIR so a checkout anywhere boots.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from skills_sync import sync_all_wolt_skills  # noqa: E402
+
 
 def resolve_wolt_name(wolts_dir: Path) -> str:
     """Resolve active wolt name: WOLT_NAME env > woltspace.json > first wolt found."""
@@ -88,35 +93,6 @@ def derive_worktui_skill(woltspace_dir: Path, worktui_dir: Path = HOME / "worktu
         shutil.rmtree(dest_dir)
     dest_dir.mkdir(parents=True)
     (dest_dir / "SKILL.md").write_text(text.rstrip("\n") + "\n" + WORKTUI_SKILL_NOTES)
-
-
-def sync_all_wolt_skills(woltspace_dir: Path, wolts_dir: Path):
-    """Sync woltspace-* platform skills to every wolt's .claude/skills/.
-
-    Only touches woltspace-* prefixed skills — wolt-owned skills (no prefix)
-    are never modified. The legacy/ folder is never copied.
-    """
-    platform_skills = woltspace_dir / "container" / "skills"
-    if not platform_skills.is_dir():
-        return
-
-    for wolt in sorted(wolts_dir.iterdir()):
-        if not wolt.is_dir() or wolt.name.startswith("."):
-            continue
-        skills_dir = wolt / ".claude" / "skills"
-        if not skills_dir.exists():
-            # Skip wolts without .claude/skills/ (non-rodents, etc.)
-            continue
-
-        # Remove old platform skills
-        for d in skills_dir.glob("woltspace-*"):
-            if d.is_dir():
-                shutil.rmtree(d)
-
-        # Copy fresh platform skills
-        for d in platform_skills.glob("woltspace-*"):
-            if d.is_dir():
-                shutil.copytree(d, skills_dir / d.name)
 
 
 def write_bashrc(wolt_dir: Path, wolt_name: str):

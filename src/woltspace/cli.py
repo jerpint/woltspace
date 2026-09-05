@@ -164,6 +164,8 @@ def _start(args) -> int:
         print(f"wolts: {layout.wolts_dir}")
         if result.get("log"):
             print(f"logs: {result['log']}")
+        if result.get("skills_sync_error"):
+            print(f"skills: not synced ({result['skills_sync_error']})")
         print("status: woltspace status")
     else:
         print(f"start failed: {result.get('error') or result.get('state')}")

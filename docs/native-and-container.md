@@ -41,6 +41,11 @@ woltspace stop           # stops the control plane — never touches tmux
 fixes it. `stop` deliberately leaves tmux alone: your sessions outlive the
 control plane, and the next `start` re-adopts them from the registry.
 
+`start` also refreshes the `woltspace-*` platform skills in every wolt that has
+a `.claude/skills/`, the way the container entrypoint does on boot. Wolt-owned
+skills (no prefix) are never touched, and a sync that fails is reported rather
+than fatal.
+
 The `connectors` extra brings the Telegram dependencies. Without it the
 Telegram connector reports itself disabled with that remedy instead of
 crash-looping.
@@ -226,7 +231,6 @@ live with it.
 | Slack is silent | There is no Slack connector; only Telegram is behind the seam. | Nothing — Slack stays on the container. | A `SlackConnector` beside `TelegramConnector`. |
 | No public URL | Native defaults the tunnel off (deliberately). `.env`'s named-tunnel token is ignored unless `WOLTSPACE_PUBLIC_TUNNEL=true`. | `WOLTSPACE_PUBLIC_TUNNEL=true woltspace start` — only with the container stopped, or two connectors load-balance the same hostname. | Document; possibly a `tunnel` block in `config.json`. |
 | Wolf crons, the digest, the vulture reaper do not run | `container/entrypoint.sh` starts the creatures; the native supervisor only supervises connectors. | None natively. | Creatures become supervised children like connectors. |
-| `woltspace-*` skills are stale or missing | The container entrypoint syncs platform skills into every wolt's `.claude/skills/` on boot. Native never syncs. Existing wolts keep their last container copy; a wolt created natively gets no `.claude/` at all. | Keep booting the container now and then, or copy `container/skills/woltspace-*` by hand. | Skill sync at native start (and in `create_wolt`). |
 | Every new session shows Claude Code's workspace trust prompt | Native runs bare `claude`; the container pre-trusts via `wclaude`/`trust-dir`. | Accept it. Prompt mode is the point of native. | Probably nothing; document it. |
 | `status` says `N orphaned` on first start | The registry still marks sessions the container was running. Their tmux sessions never existed on the host, so adoption orphans them. | Nothing; it is correct. | — |
 | Wolt `CLAUDE.md` / memory files mention `/workspace/wolts/...` | Written from inside the container. Registry records are normalized on adoption; prose is not. | Cosmetic. | — |

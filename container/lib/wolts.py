@@ -17,6 +17,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from skills_sync import seed_wolt_skills
+
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 WOLTSPACE_DIR = Path(os.environ.get("WOLTSPACE_DIR", "/workspace/woltspace"))
 CONFIG_FILE = WOLTS_DIR / "woltspace.json"
@@ -187,8 +189,12 @@ def setup_wolt_claude_config(wolt_dir: Path, name: str) -> None:
 
     Native sessions inherit the host harness environment and receive wolt
     context explicitly, so writing or copying harness config into a wolt would
-    be both unnecessary and a credential-leak risk.
+    be both unnecessary and a credential-leak risk. Skills are the exception:
+    they are platform content, not credentials, and a wolt whose first prompt
+    is /woltspace-create-wolt needs them in both modes.
     """
+    seed_wolt_skills(WOLTSPACE_DIR, wolt_dir)
+
     if os.environ.get("WOLTSPACE_ISOLATION", "external") == "host":
         return
 
@@ -214,18 +220,6 @@ def setup_wolt_claude_config(wolt_dir: Path, name: str) -> None:
         wolt_creds.unlink()
     if shared_creds.exists() and not wolt_creds.exists():
         shutil.copy2(shared_creds, wolt_creds)
-
-    # Skills — copy woltspace-* platform skills only
-    skills_dir = claude_dir / "skills"
-    skills_dir.mkdir(exist_ok=True)
-    platform_skills = WOLTSPACE_DIR / "container" / "skills"
-    if platform_skills.is_dir():
-        for d in platform_skills.glob("woltspace-*"):
-            if d.is_dir():
-                dest = skills_dir / d.name
-                if dest.exists():
-                    shutil.rmtree(dest)
-                shutil.copytree(d, dest)
 
     # Trust config — .claude.json at wolt root.
     # Copy from global ~/.claude.json so the wolt inherits runtime state
