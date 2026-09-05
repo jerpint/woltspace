@@ -142,6 +142,7 @@ class TestTunnelPolicy:
     def test_container_default_is_unchanged(self, tmp_path, monkeypatch):
         monkeypatch.delenv("WOLTSPACE_PUBLIC_TUNNEL", raising=False)
         layout = RuntimeLayout(tmp_path / "wolts", ROOT, isolation="external")
+        layout.wolts_dir.mkdir(parents=True)  # a container always has the mount
         Supervisor(layout).prepare()
         import os
 

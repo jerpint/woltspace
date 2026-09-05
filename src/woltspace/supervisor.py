@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from .layout import RuntimeLayout
 from .instance import DataRootLock
 from .adoption import adopt_runtime_sessions
+from .doctor import ensure_container_mounts
 from .channels import connector_secrets, plan_connectors
 from .channel_supervisor import ChannelSupervisor
 
@@ -21,6 +22,7 @@ class Supervisor:
     instance_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def prepare(self) -> None:
+        ensure_container_mounts(self.layout)
         self.layout.apply_environment()
         self.layout.platform_state.mkdir(parents=True, exist_ok=True)
         self.layout.logs_dir.mkdir(parents=True, exist_ok=True)

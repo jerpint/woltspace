@@ -59,6 +59,49 @@ def _auth_paths(home: Path) -> dict[str, Path]:
     }
 
 
+class MountError(RuntimeError):
+    """A container run is missing a mount it cannot work without."""
+
+    def __init__(self, check: "DoctorCheck"):
+        self.check = check
+        super().__init__(f"{check.detail}. {check.remedy}")
+
+
+def container_mount_check(layout: RuntimeLayout) -> DoctorCheck:
+    """The wolts directory is a host mount in container mode, never created here.
+
+    Creating it would silently hand the user an empty, disposable data root
+    inside the container — every wolt they own missing, with no error.
+    """
+    remedy = (
+        f"Mount your wolts directory into the container: "
+        f"`docker run -v \"$HOME/.woltspace/wolts:{layout.wolts_dir}\" ...` "
+        f"(or point WOLTS_DIR at the mount you use)."
+    )
+    if not layout.wolts_dir.exists():
+        return DoctorCheck(
+            "mounts", "fail", f"{layout.wolts_dir} is not mounted", remedy
+        )
+    if not layout.wolts_dir.is_dir():
+        return DoctorCheck(
+            "mounts", "fail", f"{layout.wolts_dir} is not a directory", remedy
+        )
+    if not os.access(layout.wolts_dir, os.W_OK):
+        return DoctorCheck(
+            "mounts", "fail", f"{layout.wolts_dir} is mounted read-only", remedy
+        )
+    return DoctorCheck("mounts", "pass", f"{layout.wolts_dir} is mounted and writable")
+
+
+def ensure_container_mounts(layout: RuntimeLayout) -> None:
+    """Fail fast with the remedy, rather than a traceback deeper in boot."""
+    if layout.isolation == "host":
+        return
+    check = container_mount_check(layout)
+    if not check.ok:
+        raise MountError(check)
+
+
 def run_doctor(layout: RuntimeLayout, *, check_port: bool = True) -> list[DoctorCheck]:
     checks = []
     version = sys.version_info
@@ -119,6 +162,9 @@ def run_doctor(layout: RuntimeLayout, *, check_port: bool = True) -> list[Doctor
         "Log in with the selected harness; Woltspace will use its existing host auth."
         if not authenticated else "",
     ))
+
+    if layout.isolation != "host":
+        checks.append(container_mount_check(layout))
 
     if check_port:
         available = _port_available(layout.host, layout.port)

@@ -76,6 +76,7 @@ def _serve(args) -> int:
         return 1
     from .supervisor import Supervisor
     from .instance import InstanceConflict
+    from .doctor import MountError
 
     supervisor = Supervisor(
         layout,
@@ -85,7 +86,7 @@ def _serve(args) -> int:
     )
     try:
         supervisor.run()
-    except InstanceConflict as exc:
+    except (InstanceConflict, MountError) as exc:
         print(f"serve failed: {exc}")
         return 1
     return 0

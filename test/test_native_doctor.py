@@ -82,7 +82,9 @@ def test_supervisor_prepare_freezes_environment_and_creates_only_state(tmp_path,
 
 def test_external_supervisor_does_not_override_tunnel_default(tmp_path, monkeypatch):
     monkeypatch.delenv("WOLTSPACE_PUBLIC_TUNNEL", raising=False)
-    Supervisor(_layout(tmp_path, isolation="external")).prepare()
+    layout = _layout(tmp_path, isolation="external")
+    layout.wolts_dir.mkdir(parents=True)  # a container always has the mount
+    Supervisor(layout).prepare()
     assert "WOLTSPACE_PUBLIC_TUNNEL" not in os.environ
 
 
