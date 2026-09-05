@@ -166,6 +166,8 @@ def _start(args) -> int:
             print(f"logs: {result['log']}")
         if result.get("skills_sync_error"):
             print(f"skills: not synced ({result['skills_sync_error']})")
+        if result.get("hooks_normalize_error"):
+            print(f"hooks: not normalized ({result['hooks_normalize_error']})")
         print("status: woltspace status")
     else:
         print(f"start failed: {result.get('error') or result.get('state')}")

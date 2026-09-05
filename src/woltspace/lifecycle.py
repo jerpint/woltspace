@@ -10,6 +10,7 @@ import time
 import uuid
 
 from .doctor import doctor_ok, run_doctor
+from .hooks import normalize_platform_hooks
 from .instance import (
     clear_owner_if_unlocked,
     inspect_instance,
@@ -48,6 +49,15 @@ def start(layout: RuntimeLayout, *, timeout: float = 15.0) -> tuple[int, dict]:
         sync_platform_skills(layout)
     except Exception as error:  # noqa: BLE001 — a broken sync must not block start
         skills_error = f"{type(error).__name__}: {error}"
+
+    # The claude hooks the platform used to write are retired; sweep their baked
+    # paths out of wolts made before the change so they stop spamming errors.
+    # Like the skill sync, a failure here is worth naming but never fatal.
+    hooks_error = None
+    try:
+        normalize_platform_hooks(layout)
+    except Exception as error:  # noqa: BLE001 — a broken sweep must not block start
+        hooks_error = f"{type(error).__name__}: {error}"
 
     layout.logs_dir.mkdir(parents=True, exist_ok=True)
     instance_id = uuid.uuid4().hex
@@ -105,6 +115,8 @@ def start(layout: RuntimeLayout, *, timeout: float = 15.0) -> tuple[int, dict]:
             }
             if skills_error:
                 started["skills_sync_error"] = skills_error
+            if hooks_error:
+                started["hooks_normalize_error"] = hooks_error
             return 0, started
         if process.poll() is not None:
             return 1, {

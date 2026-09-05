@@ -138,18 +138,11 @@ def write_trust_config(wolts_dir: Path):
     (HOME / ".claude.json").write_text(json.dumps(config, indent=2) + "\n")
 
 
-def write_settings_json(woltspace_dir: Path):
-    hooks_dir = woltspace_dir / "container" / "hooks"
-    if not (hooks_dir / "session-done.sh").exists():
-        return
+def write_settings_json():
     claude_dir = HOME / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
     settings = {
         "skipDangerousModePermissionPrompt": True,
-        "hooks": {
-            "Stop": [{"hooks": [{"type": "command", "command": str(hooks_dir / "session-done.sh")}]}],
-            "Notification": [{"hooks": [{"type": "command", "command": str(hooks_dir / "notify.sh")}]}],
-        },
     }
     (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
 
@@ -378,7 +371,7 @@ def main():
     # Always configure git — new wolts created later via the lodge need it
     configure_git(wolt_name or "wolt")
     write_trust_config(wolts_dir)
-    write_settings_json(woltspace_dir)
+    write_settings_json()
     symlink_node_modules(woltspace_dir)
 
     # Clean up stale sessions from previous boot

@@ -69,11 +69,11 @@ container/
 
   bin/                        Scripts on PATH inside the container
     notify, push-view           Wolt-facing helpers (notify the user, set the viewport)
-    wclaude, run-session.sh     Session entry — wraps `claude` with notify hooks + identity
+    wclaude, run-session.sh     Session entry — wraps `claude` with notify context + identity
     gh-app-token                Mints short-lived GitHub App installation tokens
     version-check               Compares stamped version to upstream releases
 
-  hooks/                      Claude Code hooks (notify.sh, session-done.sh, run-session.sh)
+  hooks/                      Session entry wrapper (run-session.sh)
   cron/                       Scheduled scripts (e.g. check-update.sh)
   creatures/                  Per-creature behavior modules (wolf, dog, vulture, …)
   skills/                     Platform skills exported into every wolt
@@ -108,7 +108,7 @@ The agent loop is multi-turn — Haiku can chain tool calls. Tools live in `core
 
 ```
 Claude in session calls: notify "done, check it out"
-  → hooks/notify.sh                                Claude Code Notification hook
+  → bin/notify                                     wolt-facing helper
   → POST /notify on FastAPI
   → server reads session routing from registry
   → adapter sends to Telegram/Slack with footer:

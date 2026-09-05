@@ -182,7 +182,7 @@ def setup_wolt_claude_config(wolt_dir: Path, name: str) -> None:
     """Set up per-wolt Claude isolation only in the external/container mode.
 
     Creates:
-      - .claude/settings.json — platform defaults (hooks, permissions)
+      - .claude/settings.json — platform defaults (permissions)
       - .claude/.credentials.json — symlink to shared credentials
       - .claude/skills/ — copy of platform skills
       - .claude.json — trust config for this wolt's directories
@@ -204,10 +204,6 @@ def setup_wolt_claude_config(wolt_dir: Path, name: str) -> None:
     # Settings — platform defaults
     settings = {
         "skipDangerousModePermissionPrompt": True,
-        "hooks": {
-            "Stop": [{"hooks": [{"type": "command", "command": str(WOLTSPACE_DIR / "container/hooks/session-done.sh")}]}],
-            "Notification": [{"hooks": [{"type": "command", "command": str(WOLTSPACE_DIR / "container/hooks/notify.sh")}]}],
-        },
     }
     (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
 
