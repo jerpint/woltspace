@@ -38,6 +38,7 @@ class TuiResolution:
 def _probe(
     binary: str,
     *,
+    expected_binary: str = TUI_BINARY,
     runner: Callable = subprocess.run,
 ) -> dict:
     try:
@@ -57,7 +58,7 @@ def _probe(
     valid = (
         payload.get("name") == TUI_PACKAGE
         and payload.get("version") == TUI_VERSION
-        and payload.get("binary") == TUI_BINARY
+        and payload.get("binary") == expected_binary
     )
     record = {
         "path": binary,

@@ -748,10 +748,13 @@ class TestAStrayServeCannotTakeOverALiveDataRoot:
         from woltspace.channels import plan_connectors
 
         layout = _layout(tmp_path, isolation="external")
-        plans = plan_connectors(layout)
-        assert [plan.enabled for plan in plans] == [False]
-        assert "ambient environment" in plans[0].detail
-        assert plans[0].command == ()
+        plans = {plan.name: plan for plan in plan_connectors(layout)}
+        assert [plan.enabled for plan in plans.values()] == [False, False]
+        assert "ambient environment" in plans["telegram"].detail
+        assert plans["telegram"].command == ()
+        # The pty bridge is a guest here too: the real instance owns that port.
+        assert "not the platform entrypoint" in plans["tui"].detail
+        assert plans["tui"].command == ()
 
     def test_the_supervisor_plans_no_child_for_a_guest(self, tmp_path):
         layout = _layout(tmp_path, isolation="external")

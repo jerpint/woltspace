@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import uuid
 from dataclasses import dataclass, field
 from typing import Callable
@@ -20,6 +21,14 @@ from .channels import (
     telegram_token_is_busy,
 )
 from .channel_supervisor import ChannelSupervisor
+
+# How long uvicorn may wait for in-flight handlers (open websockets included)
+# once told to stop. Well inside `woltspace stop`'s own 10s patience.
+GRACEFUL_SHUTDOWN_SECONDS = 3.0
+
+
+def _note_signal(signum, frame) -> None:
+    """Swallow the SIGTERM uvicorn re-raises after shutdown; see Supervisor.run."""
 
 
 @dataclass
@@ -39,15 +48,21 @@ class Supervisor:
         self.layout.platform_state.mkdir(parents=True, exist_ok=True)
         self.layout.logs_dir.mkdir(parents=True, exist_ok=True)
         os.environ["WOLTSPACE_INSTANCE_ID"] = self.instance_id
+        # Native runs with the tunnel off unless someone says otherwise. This
+        # has to happen before the entrypoint early-return below: the server's
+        # own default is "true", so a `woltspace start` on a Mac that skipped
+        # this line published a public quick tunnel for the lodge.
+        if self.layout.isolation == "host":
+            os.environ.setdefault("WOLTSPACE_PUBLIC_TUNNEL", "false")
         if self.layout.is_entrypoint:
             return
-        # A guest never publishes. The container exports
+        # A guest in the container never publishes. The container exports
         # WOLTSPACE_PUBLIC_TUNNEL=true to everything it hosts, and the tunnel
         # lifecycle is process-wide: starting one here would race the real
         # instance's cloudflared, and stopping would delete its state file.
-        if self.layout.isolation == "host":
-            os.environ.setdefault("WOLTSPACE_PUBLIC_TUNNEL", "false")
-        else:
+        # (A native guest already got the off-default above; an explicit
+        # opt-in there is someone's deliberate choice and stays.)
+        if self.layout.isolation != "host":
             os.environ["WOLTSPACE_PUBLIC_TUNNEL"] = "false"
 
     def channel_supervisor(self) -> ChannelSupervisor:
@@ -70,6 +85,12 @@ class Supervisor:
         plans = [self._refuse_busy_token(plan) for plan in planned]
         for key, value in connector_secrets(plans).items():
             os.environ.setdefault(key, value)
+        for plan in plans:
+            # The server proxies `/tui` to whatever port the bridge binds, and
+            # `server.config` reads TUI_PORT at import — so it must be in the
+            # environment before `server.app` is imported in run().
+            if plan.name == "tui" and plan.enabled:
+                os.environ["TUI_PORT"] = plan.env["TUI_PORT"]
         return ChannelSupervisor(self.layout, plans, already_reaped=True)
 
     def _refuse_busy_token(self, plan: ConnectorPlan) -> ConnectorPlan:
@@ -91,28 +112,45 @@ class Supervisor:
     def run(self) -> None:
         self.prepare()
         import uvicorn
+        # uvicorn captures SIGTERM for the length of serve() and, on the way
+        # out, restores the previous disposition and *re-raises* the signal.
+        # The previous disposition was the default — death — so the process
+        # ended between "Finished server process" and the `finally` below, and
+        # every connector was left running for the next start's reaper to
+        # find. A handler that merely notes the signal lets the re-raise land
+        # here instead, so the children are stopped by the parent that owns them.
+        previous = signal.signal(signal.SIGTERM, _note_signal)
+        try:
+            self._serve(uvicorn)
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+
+    def _serve(self, uvicorn) -> None:
         with DataRootLock(self.layout, self.instance_id):
             adopt_runtime_sessions(self.layout)
             channels = self.channel_supervisor()
             channels.start()
             try:
+                # Without a graceful-shutdown deadline uvicorn waits forever
+                # for open handlers — and a browser tab holding a `/tui`
+                # websocket is one. `woltspace stop` then times out with the
+                # process still alive and the port already released.
+                serve_options = dict(
+                    host=self.layout.host,
+                    port=self.layout.port,
+                    log_level=self.log_level,
+                    timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
+                )
                 if self.reload:
                     uvicorn.run(
                         "server.app:app",
-                        host=self.layout.host,
-                        port=self.layout.port,
                         reload=True,
                         reload_dirs=[str(self.layout.install_root / "server")],
-                        log_level=self.log_level,
+                        **serve_options,
                     )
                     return
 
                 from server.app import app
-                uvicorn.run(
-                    app,
-                    host=self.layout.host,
-                    port=self.layout.port,
-                    log_level=self.log_level,
-                )
+                uvicorn.run(app, **serve_options)
             finally:
                 channels.stop()

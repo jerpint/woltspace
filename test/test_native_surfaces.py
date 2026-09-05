@@ -171,6 +171,27 @@ class TestTunnelPolicy:
         Supervisor(layout).prepare()
         assert os.environ["WOLTSPACE_PUBLIC_TUNNEL"] == "true"
 
+    def test_the_native_entrypoint_also_defaults_to_tunnel_off(self, tmp_path, monkeypatch):
+        """`woltspace start` on a Mac published a quick tunnel: prepare() returned
+        early for the entrypoint before setting the default, and the server's
+        own default is on. The lodge must not be public by accident."""
+        import os
+
+        monkeypatch.delenv("WOLTSPACE_PUBLIC_TUNNEL", raising=False)
+        monkeypatch.setenv("WOLTSPACE_ENTRYPOINT", "1")
+        layout = RuntimeLayout(tmp_path / "wolts", ROOT, isolation="host")
+        Supervisor(layout).prepare()
+        assert os.environ["WOLTSPACE_PUBLIC_TUNNEL"] == "false"
+
+    def test_the_native_entrypoint_can_still_opt_in(self, tmp_path, monkeypatch):
+        import os
+
+        monkeypatch.setenv("WOLTSPACE_PUBLIC_TUNNEL", "true")
+        monkeypatch.setenv("WOLTSPACE_ENTRYPOINT", "1")
+        layout = RuntimeLayout(tmp_path / "wolts", ROOT, isolation="host")
+        Supervisor(layout).prepare()
+        assert os.environ["WOLTSPACE_PUBLIC_TUNNEL"] == "true"
+
     def test_the_container_entrypoint_keeps_its_tunnel(self, tmp_path, monkeypatch):
         import os
 

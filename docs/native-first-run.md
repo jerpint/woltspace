@@ -73,7 +73,21 @@ later.
 
 > If `uv tool install` warns that its bin directory is not on your PATH, follow
 > the `export PATH=...` line it prints (or run `uv tool update-shell`) and open
-> a new shell. **(untested on macOS)**
+> a new shell.
+
+> **Three programs are called `woltspace`**, and one of them may already be on
+> your PATH: the bash Docker launcher at the root of this checkout. If your
+> shell rc puts the checkout ahead of `~/.local/bin`, plain `woltspace` keeps
+> running the container CLI. `which -a woltspace` shows the order; until you fix
+> it, call the native one as `~/.local/bin/woltspace` or alias it.
+
+The TUI install also brings `woltspace-tui-service`, the pty bridge behind the
+browser terminal. Check it landed too:
+
+```console
+$ woltspace-tui-service --version --json
+{"name":"@woltspace/tui","version":"0.2.2","binary":"woltspace-tui-service"}
+```
 
 ---
 
@@ -112,6 +126,7 @@ $ woltspace doctor
 ✓ tmux: /usr/bin/tmux
 ✓ harness: claude=/Users/you/.local/bin/claude, codex=/usr/local/bin/codex
 ✓ host-auth: claude, codex
+✓ tui-bridge: pty bridge on 127.0.0.1:3001 · node /path/to/woltspace/tui/src/tui-service.js
 ✓ port: 127.0.0.1:7777 is available
 ```
 
@@ -126,6 +141,10 @@ Two checks worth understanding:
 - **data-root-sharing** only appears if the directory is already claimed by
   another instance, including a running container. If you see it, stop that
   instance or pick a different `WOLTS_DIR`.
+- **tui-bridge** is what the browser's terminal pane connects through. From a
+  checkout it is the checkout's own `tui/src/tui-service.js`; from a wheel it
+  is the `woltspace-tui-service` that came with the TUI. A warning here means
+  the lodge will load but every terminal pane will say *connection failed*.
 
 ---
 
@@ -151,13 +170,23 @@ owner: pid 67618 · bd6929db67a34a8bb0ab484b632ceff3 · your-macbook
 adoption: 0 live · 0 orphaned · 0 unchanged
 connector telegram: disabled · disabled
   fix: Set channels.telegram = {"enabled": true, "token": "<bot token>"} in /Users/you/.woltspace/native-wolts/.space/platform/config.json (or export TELEGRAM_BOT_TOKEN).
+connector tui: running · pty bridge on 127.0.0.1:3001 · node /path/to/woltspace/tui/src/tui-service.js · pid 67631
 ```
 
 `adoption: 0 live` is right on a first run — there are no sessions to adopt
 yet. On later restarts this is how you see that live sessions were picked back
-up.
+up. `connector tui: running` is the pty bridge — without it the split view's
+terminal pane cannot attach.
 
-Open <http://127.0.0.1:7777> and the lodge should be there.
+The tunnel is **off** by default natively; nothing is published. To expose the
+lodge deliberately, `WOLTSPACE_PUBLIC_TUNNEL=true woltspace start`.
+
+Open <http://127.0.0.1:7777> and the lodge should be there. Create a wolt from
+the lodge and the split view opens with a terminal on the left. The first
+thing you will see in it is Claude Code's own **workspace trust prompt** for
+the new wolt directory — native sessions run bare `claude` (the container
+pre-trusts with `wclaude`), and prompt mode is the point. Accept it and the
+session continues; it has not hung.
 
 ---
 
@@ -284,7 +313,10 @@ most of it.
 | `data-root-sharing` warning | Another instance — likely the container — claims this directory. Stop it or use a different `WOLTS_DIR`. |
 | `serve failed: … is not mounted` | Container mode without the wolts mount. Not applicable to a native run. |
 | Connector `degraded` with a 409 | Another process is polling that bot token. |
-| Connector `failed` after several restarts | It could not stay up; read `.space/logs/connector-telegram.log`. |
+| Connector `failed` after several restarts | It could not stay up; read `.space/logs/connector-<name>.log`. |
+| Terminal pane says `[tui] connection failed: … Connection refused` | The pty bridge is not running. `woltspace status` names it (`connector tui`); `woltspace doctor` says what is missing. |
+| `connector tui: failed` and its log says `EADDRINUSE` | Something else holds port 3001 — a hand-started `tui-service.js`, perhaps. Stop it, or set `WOLTSPACE_TUI_PORT`. |
+| Pane opens then closes, log says `posix_spawnp failed` | node-pty's `spawn-helper` lost its exec bit in the npm tarball. The bridge fixes this itself on start; if you see it, `chmod +x` the `prebuilds/darwin-*/spawn-helper` under your node-pty. |
 
 The control plane's own log is `$WOLTS_DIR/.space/logs/control-plane.log`.
 
@@ -303,10 +335,14 @@ $ find "$WOLTS_DIR"
 <wolts>/.space
 <wolts>/.space/logs
 <wolts>/.space/logs/control-plane.log
+<wolts>/.space/logs/connector-tui.log
 <wolts>/.space/platform
 <wolts>/.space/platform/adoption.json
 <wolts>/.space/platform/connectors.json
+<wolts>/.space/platform/control-plane.json
 <wolts>/.space/platform/control-plane.lock
 ```
+
+No `tunnel.json` either: natively the tunnel is off unless you turned it on.
 
 If a credential file ever shows up there, that is a bug worth stopping for.

@@ -5,7 +5,8 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "woltspace-tui": "./src/main.js"
+    "woltspace-tui": "./src/main.js",
+    "woltspace-tui-service": "./src/tui-service.js"
   },
   "files": [
     "src",
@@ -23,6 +24,8 @@
   },
   "dependencies": {
     "ink": "^5.1.0",
-    "react": "^18.3.1"
+    "node-pty": "^1.1.0",
+    "react": "^18.3.1",
+    "ws": "^8.19.0"
   }
 }

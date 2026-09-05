@@ -3,6 +3,7 @@
 TUI_PACKAGE = "@woltspace/tui"
 TUI_VERSION = "0.2.2"
 TUI_BINARY = "woltspace-tui"
+TUI_SERVICE_BINARY = "woltspace-tui-service"
 
 
 def tui_spec() -> str:

@@ -133,3 +133,43 @@ def test_supervisor_adopts_registry_before_serving(tmp_path, monkeypatch):
 
     assert events[0] == ("adopt", layout)
     assert events[1][0] == "serve"
+
+
+def test_the_sigterm_uvicorn_reraises_still_lets_connectors_stop(tmp_path, monkeypatch):
+    """uvicorn restores the previous SIGTERM disposition and re-raises the
+    signal after serve() returns. With the default disposition that kills the
+    process before `channels.stop()` runs — observed live: the pty bridge and
+    the Telegram poller outlived every `woltspace stop`, and connectors.json
+    still said `running`. The supervisor must survive that re-raise."""
+    import signal
+
+    layout = _layout(tmp_path)
+    events = []
+    for key in (
+        "WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
+        "WOLTSPACE_INSTANCE_ID", "WOLTSPACE_PUBLIC_TUNNEL", "WOLTSPACE_HOST",
+        "PORT",
+    ):
+        monkeypatch.setenv(key, os.environ.get(key, ""))
+
+    class FakeChannels:
+        def start(self):
+            events.append("start")
+
+        def stop(self):
+            events.append("stop")
+
+    def serve_then_reraise(*args, **kwargs):
+        events.append("serve")
+        signal.raise_signal(signal.SIGTERM)  # exactly what uvicorn does on the way out
+
+    before = signal.getsignal(signal.SIGTERM)
+    with (
+        patch("woltspace.supervisor.adopt_runtime_sessions"),
+        patch.object(Supervisor, "channel_supervisor", return_value=FakeChannels()),
+        patch("uvicorn.run", side_effect=serve_then_reraise),
+    ):
+        Supervisor(layout, instance_id="survives-sigterm", reload=True).run()
+
+    assert events == ["start", "serve", "stop"]
+    assert signal.getsignal(signal.SIGTERM) is before, "the handler is scoped to run()"

@@ -367,6 +367,18 @@ def run_doctor(
         if not authenticated else "",
     ))
 
+    # The browser terminal needs the pty bridge. Plan it as the entrypoint
+    # would, so doctor reports what `woltspace start` will actually do.
+    from .channels import TuiBridgeConnector
+
+    bridge = TuiBridgeConnector().plan(layout, {**os.environ, "WOLTSPACE_ENTRYPOINT": "1"})
+    checks.append(DoctorCheck(
+        "tui-bridge",
+        "pass" if bridge.enabled else "warn",
+        bridge.detail,
+        "" if bridge.enabled else bridge.remedy,
+    ))
+
     if layout.isolation != "host":
         checks.append(container_mount_check(layout))
 

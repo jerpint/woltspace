@@ -88,6 +88,14 @@ Telegram runs as a **channel connector**: a child process the control plane
 starts with the API, stops with the API, restarts (bounded) when it dies, and
 reports through `woltspace status` and `GET /health`.
 
+The browser terminal's **pty bridge** is a connector too (`tui`). It is the
+Node service (`woltspace-tui-service`, shipped inside `@woltspace/tui`) that
+`server/app.py` proxies `/tui` websockets to, and it is enabled by default in
+both modes — the container no longer starts it by hand. A guest never binds
+its port. Switch it off with `channels.tui.enabled = false` or
+`WOLTSPACE_TUI_BRIDGE=false`; move it with `channels.tui.port` or
+`WOLTSPACE_TUI_PORT`.
+
 > **Three programs are called `woltspace`.** On the host, the bash launcher that
 > drives Docker. Inside the container, `container/bin/woltspace` — a thin HTTP
 > client, first on `PATH`, with its own `status` that lists sessions and knows
@@ -230,6 +238,8 @@ human go-ahead.
    - `src/woltspace/compatibility.py`
 3. Build both artifacts and clean-install them **outside the checkout**: wheel
    and sdist into fresh venvs, `npm pack` tarball into an isolated npm prefix.
+   Check both bins answer: `woltspace-tui --version --json` and
+   `woltspace-tui-service --version --json`.
 4. **Publish PyPI and npm together.** The Python package embeds the exact npm
    version, so a half-published release is a broken `woltspace tui`.
 5. **Build the OCI image from the released artifacts** — not from a checkout —

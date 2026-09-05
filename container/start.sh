@@ -62,9 +62,8 @@ fi
 
 # ── Services ──
 
-# TUI pty service
-TUI_PORT=3001 WOLT_DIR="$WOLT_DIR" node "$WOLTSPACE_DIR/server/tui-service.js" &
-TUI_PID=$!
+# The TUI pty service is a supervised connector of the control plane now
+# (`tui` in /health) — it starts and stops with `woltspace serve` below.
 
 # Python server through the same packaged supervisor used natively.
 (cd "$WOLTSPACE_DIR" && uv run --project "$WOLTSPACE_DIR" woltspace serve \
@@ -126,7 +125,7 @@ if [ -n "$WOLF_CONFIG" ]; then
 fi
 
 # ── Cleanup ──
-cleanup() { kill $TUI_PID $SERVER_PID 2>/dev/null; }
+cleanup() { kill $SERVER_PID 2>/dev/null; }
 trap cleanup EXIT
 wait -n
 cleanup

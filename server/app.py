@@ -1,6 +1,7 @@
 """Woltspace server — FastAPI replacement for server.js.
 
-All endpoints except /tui WebSocket (which stays in Node via tui-service.js).
+All endpoints except /tui WebSocket, which is proxied to the Node pty bridge
+(`woltspace-tui-service` from @woltspace/tui, supervised by the control plane).
 """
 
 import json

@@ -1,8 +1,10 @@
 export const packageName = '@woltspace/tui';
 export const packageVersion = '0.2.2';
 
-export const versionRecord = () => ({
+// One package, two bins. Both answer `--version --json` with the same name and
+// version and say which bin they are, so the Python side can match exactly.
+export const versionRecord = (binary = 'woltspace-tui') => ({
   name: packageName,
   version: packageVersion,
-  binary: 'woltspace-tui',
+  binary,
 });

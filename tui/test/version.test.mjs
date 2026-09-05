@@ -26,3 +26,18 @@ test('binary exposes machine-readable package identity', () => {
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), versionRecord());
 });
+
+test('the pty bridge bin shares the identity and names itself', () => {
+  assert.deepEqual(versionRecord('woltspace-tui-service'), {
+    name: manifest.name,
+    version: manifest.version,
+    binary: 'woltspace-tui-service',
+  });
+  assert.equal(manifest.bin['woltspace-tui-service'], './src/tui-service.js');
+  const result = spawnSync(process.execPath, ['src/tui-service.js', '--version', '--json'], {
+    cwd: new URL('..', import.meta.url),
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), versionRecord('woltspace-tui-service'));
+});
