@@ -311,6 +311,82 @@ class TestMissingContainerMounts:
         assert 'print(f"serve failed: {exc}")' in source
 
 
+class TestEnvFileLoading:
+    """Native start reads the data root's .env — one colony config, both runtimes.
+
+    Precedence: operator's shell export > connector config (config.json) > .env.
+    """
+
+    _KEYS = (
+        "CLOUDFLARE_TUNNEL_TOKEN", "WOLTSPACE_PUBLIC_TUNNEL",
+        "TELEGRAM_BOT_TOKEN", "WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_INSTANCE_ID",
+    )
+
+    def _prepare(self, tmp_path, monkeypatch, env_lines, shell=None):
+        for key in self._KEYS:
+            monkeypatch.delenv(key, raising=False)
+        for key, value in (shell or {}).items():
+            monkeypatch.setenv(key, value)
+        layout = _layout(tmp_path)
+        layout.wolts_dir.mkdir(parents=True, exist_ok=True)
+        (layout.wolts_dir / ".env").write_text("\n".join(env_lines) + "\n")
+        supervisor = Supervisor(layout)
+        supervisor.prepare()
+        return supervisor
+
+    def test_env_file_reaches_the_process(self, tmp_path, monkeypatch):
+        self._prepare(tmp_path, monkeypatch, ["CLOUDFLARE_TUNNEL_TOKEN=tok-from-file"])
+        assert os.environ["CLOUDFLARE_TUNNEL_TOKEN"] == "tok-from-file"
+
+    def test_env_file_can_opt_the_tunnel_on(self, tmp_path, monkeypatch):
+        # Loaded before the native off-default lands, so a colony that always
+        # ran a named tunnel keeps it across the migration without a per-run
+        # flag. The default stays off for everyone whose .env says nothing.
+        self._prepare(tmp_path, monkeypatch, ["WOLTSPACE_PUBLIC_TUNNEL=true"])
+        assert os.environ["WOLTSPACE_PUBLIC_TUNNEL"] == "true"
+
+    def test_absent_env_file_still_defaults_the_tunnel_off(self, tmp_path, monkeypatch):
+        for key in self._KEYS:
+            monkeypatch.delenv(key, raising=False)
+        layout = _layout(tmp_path)
+        layout.wolts_dir.mkdir(parents=True, exist_ok=True)
+        Supervisor(layout).prepare()
+        assert os.environ["WOLTSPACE_PUBLIC_TUNNEL"] == "false"
+
+    def test_shell_export_beats_env_file(self, tmp_path, monkeypatch):
+        self._prepare(
+            tmp_path, monkeypatch, ["CLOUDFLARE_TUNNEL_TOKEN=tok-from-file"],
+            shell={"CLOUDFLARE_TUNNEL_TOKEN": "tok-from-shell"},
+        )
+        assert os.environ["CLOUDFLARE_TUNNEL_TOKEN"] == "tok-from-shell"
+
+    def _with_connector_secret(self, monkeypatch, secret):
+        monkeypatch.setattr("woltspace.supervisor.plan_connectors", lambda layout: [])
+        monkeypatch.setattr(
+            "woltspace.supervisor.connector_secrets", lambda plans: dict(secret)
+        )
+
+    def test_connector_config_overrides_a_stale_env_file_token(self, tmp_path, monkeypatch):
+        # The .env may carry the OTHER runtime's bot token (the container's).
+        # notify must speak as the bot that is actually polling — the one
+        # config.json resolved.
+        supervisor = self._prepare(
+            tmp_path, monkeypatch, ["TELEGRAM_BOT_TOKEN=old-container-token"]
+        )
+        self._with_connector_secret(monkeypatch, {"TELEGRAM_BOT_TOKEN": "config-token"})
+        supervisor.channel_supervisor()
+        assert os.environ["TELEGRAM_BOT_TOKEN"] == "config-token"
+
+    def test_connector_config_never_clobbers_a_shell_export(self, tmp_path, monkeypatch):
+        supervisor = self._prepare(
+            tmp_path, monkeypatch, [],
+            shell={"TELEGRAM_BOT_TOKEN": "shell-token"},
+        )
+        self._with_connector_secret(monkeypatch, {"TELEGRAM_BOT_TOKEN": "config-token"})
+        supervisor.channel_supervisor()
+        assert os.environ["TELEGRAM_BOT_TOKEN"] == "shell-token"
+
+
 class TestTelegramTokenClash:
     """One bot token, two pollers: Telegram answers 409 and our bot goes deaf."""
 

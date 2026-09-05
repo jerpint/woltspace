@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import signal
 import uuid
+
+from dotenv import dotenv_values
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -45,6 +47,21 @@ class Supervisor:
         # here rather than in doctor because `serve` is normally --no-doctor.
         ensure_data_root_available(self.layout)
         self.layout.apply_environment()
+        # The container hands the data root's .env to everything through
+        # docker --env-file; native start reads the same file, so one colony
+        # config drives both runtimes (tunnel token, model keys, allowlists).
+        # Precedence: an operator's exported shell variable > connector config
+        # (config.json, applied in channel_supervisor) > .env. The keys loaded
+        # here are remembered so connector config can override a stale .env
+        # value without ever clobbering an explicit shell export. In the
+        # container this is a no-op: PID1 already carries every .env key.
+        self._env_file_keys: set[str] = set()
+        env_file = self.layout.wolts_dir / ".env"
+        if env_file.is_file():
+            for key, value in dotenv_values(env_file).items():
+                if value is not None and key not in os.environ:
+                    os.environ[key] = value
+                    self._env_file_keys.add(key)
         self.layout.platform_state.mkdir(parents=True, exist_ok=True)
         self.layout.logs_dir.mkdir(parents=True, exist_ok=True)
         os.environ["WOLTSPACE_INSTANCE_ID"] = self.instance_id
@@ -83,8 +100,14 @@ class Supervisor:
             print(f"[connectors] reaped {len(reaped)} orphaned connector(s): {reaped}")
 
         plans = [self._refuse_busy_token(plan) for plan in planned]
+        # config.json is the authority for connector secrets: it overrides a
+        # value that merely came from .env (that one may be the OTHER runtime's
+        # bot token — notify must speak as the bot that is actually polling),
+        # but never a variable the operator exported themselves.
+        env_file_keys = getattr(self, "_env_file_keys", set())
         for key, value in connector_secrets(plans).items():
-            os.environ.setdefault(key, value)
+            if key not in os.environ or key in env_file_keys:
+                os.environ[key] = value
         for plan in plans:
             # The server proxies `/tui` to whatever port the bridge binds, and
             # `server.config` reads TUI_PORT at import — so it must be in the
