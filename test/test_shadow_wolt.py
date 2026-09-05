@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import SHADOW_MARKER, SHADOW_WOLT, shadow_is_reusable
+from conftest import SHADOW_MARKER, SHADOW_PREFIX, SHADOW_WOLT, shadow_is_reusable
 
 TEST_DIR = Path(__file__).resolve().parent
 
@@ -39,11 +39,33 @@ class TestFixtureLifecycle:
 
 
 class TestDeletionGuard:
-    def test_a_directory_the_suite_created_may_be_removed(self, tmp_path):
+    def test_a_directory_this_run_created_may_be_removed(self, tmp_path):
+        import os
+
         home = tmp_path / SHADOW_WOLT
         home.mkdir()
-        (home / SHADOW_MARKER).write_text("created by tests")
+        (home / SHADOW_MARKER).write_text(f"created by tests pid={os.getpid()}\n")
         assert shadow_is_reusable(home) is True
+
+    def test_a_live_concurrent_runs_directory_is_left_alone(self, tmp_path):
+        """Two suite runs share WOLTS_DIR; neither may rmtree the other's."""
+        import os
+
+        home = tmp_path / SHADOW_WOLT
+        home.mkdir()
+        (home / SHADOW_MARKER).write_text(f"created by tests pid={os.getppid()}\n")
+        assert shadow_is_reusable(home) is False
+
+    def test_a_finished_runs_leftovers_may_be_cleared(self, tmp_path):
+        home = tmp_path / SHADOW_WOLT
+        home.mkdir()
+        (home / SHADOW_MARKER).write_text("created by tests pid=999999\n")
+        assert shadow_is_reusable(home) is True
+
+    def test_each_run_gets_its_own_name(self):
+        import os
+
+        assert SHADOW_WOLT == f"{SHADOW_PREFIX}-{os.getpid()}"
 
     def test_a_real_directory_of_that_name_is_never_touched(self, tmp_path):
         home = tmp_path / SHADOW_WOLT
@@ -56,24 +78,102 @@ class TestDeletionGuard:
 
 
 class TestNoRealWoltIsTargeted:
-    """Structural guarantee: no test names a real wolt as a spawn target."""
+    """Structural guarantee: no test names a real wolt as a spawn target.
 
-    SPAWN_TARGET = re.compile(r'"wolt"\s*:\s*"([a-zA-Z][\w-]*)"')
-    ALLOWED = {SHADOW_WOLT, "nonexistent-wolt-xyz"}
+    Parsed, not grepped. A line-by-line regex misses the shapes that actually
+    occur — a multi-line dict literal, a kwarg, an f-string endpoint — which
+    means it passes for the wrong reason.
+    """
+
+    ALLOWED = {"nonexistent-wolt-xyz"}
+
+    def _is_allowed(self, name: str) -> bool:
+        return name in self.ALLOWED or name.startswith(SHADOW_PREFIX)
+
+    def _live_registry_files(self):
+        """Files that build a registry on the real data root, not tmp_path."""
+        return sorted(TEST_DIR.glob("test_*.py"))
 
     def test_no_live_spawn_hardcodes_a_wolt_name(self):
+        import ast
+
         offenders = []
-        for path in sorted(TEST_DIR.glob("test_*.py")):
-            for number, line in enumerate(path.read_text().splitlines(), 1):
-                if "sessions/new" not in line and "server_post" not in line:
+        for path in self._live_registry_files():
+            tree = ast.parse(path.read_text())
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
                     continue
-                for name in self.SPAWN_TARGET.findall(line):
-                    if name not in self.ALLOWED:
-                        offenders.append(f"{path.name}:{number} → {name}")
+                if not self._targets_the_server(node):
+                    continue
+                for value in self._wolt_literals(node):
+                    if not self._is_allowed(value):
+                        offenders.append(f"{path.name}:{node.lineno} → {value}")
         assert offenders == [], (
             "live-server spawns must target the shadow wolt fixture: "
             + ", ".join(offenders)
         )
+
+    @staticmethod
+    def _targets_the_server(node) -> bool:
+        import ast
+
+        callee = node.func
+        name = getattr(callee, "id", None) or getattr(callee, "attr", None) or ""
+        if name in {"server_post", "_server_post"}:
+            return True
+        for arg in node.args:
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                if "sessions/new" in arg.value:
+                    return True
+            if isinstance(arg, ast.JoinedStr):
+                for part in arg.values:
+                    if isinstance(part, ast.Constant) and "sessions/new" in str(part.value):
+                        return True
+        return False
+
+    @staticmethod
+    def _wolt_literals(node):
+        """Every literal `wolt` value in the call — dict entry or keyword."""
+        import ast
+
+        found = []
+        for keyword in node.keywords:
+            if keyword.arg == "wolt" and isinstance(keyword.value, ast.Constant):
+                if isinstance(keyword.value.value, str):
+                    found.append(keyword.value.value)
+        for arg in node.args:
+            if not isinstance(arg, ast.Dict):
+                continue
+            for key, value in zip(arg.keys, arg.values):
+                if (
+                    isinstance(key, ast.Constant) and key.value == "wolt"
+                    and isinstance(value, ast.Constant)
+                    and isinstance(value.value, str)
+                ):
+                    found.append(value.value)
+        return found
+
+    def test_the_parser_catches_the_shapes_a_regex_missed(self, tmp_path):
+        """Guard the guard: a multi-line literal and a kwarg must both be seen."""
+        import ast
+
+        source = tmp_path / "test_probe.py"
+        source.write_text(
+            "def t(server_post):\n"
+            "    server_post(\n"
+            '        "/sessions/new/lodge",\n'
+            '        {"wolt": "somebodys-real-wolt"},\n'
+            "    )\n"
+        )
+        tree = ast.parse(source.read_text())
+        names = [
+            value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and self._targets_the_server(node)
+            for value in self._wolt_literals(node)
+        ]
+        assert names == ["somebodys-real-wolt"]
+        assert not self._is_allowed("somebodys-real-wolt")
 
     def test_the_conftest_exposes_no_way_to_name_a_real_wolt(self):
         source = (TEST_DIR / "conftest.py").read_text()
@@ -124,25 +224,78 @@ class TestNoRealUserStateIsDiscovered:
             if previous is not None:
                 os.environ["WOLTSPACE_TEST_LIVE_SEND"] = previous
 
-    def test_every_live_send_is_gated(self):
-        """Each real send site carries the opt-in marker."""
-        gated = {
-            "test_closed_loop.py": [
-                "test_bot_can_send_to_chat", "TestNotifySeam",
-                "test_notify_with_freshly_created_session",
-            ],
-            "test_server_health.py": ["test_notify_returns_adapter"],
-            "test_telegram_loop.py": ["test_server_notify_json_contract"],
-        }
-        for filename, names in gated.items():
-            lines = (TEST_DIR / filename).read_text().splitlines()
-            for name in names:
-                index = next(
-                    i for i, line in enumerate(lines)
-                    if line.strip().startswith((f"def {name}", f"class {name}"))
-                )
-                preceding = "\n".join(lines[max(index - 4, 0):index])
-                assert "requires_live_send" in preceding, f"{filename}::{name} is ungated"
+    # A live marker is either a direct call to Telegram / the notify endpoint,
+    # or a call to one of the helpers that makes one.
+    LIVE_CALLS = (
+        "api.telegram.org", '"/notify"',
+        "_telegram_send(", "_telegram_get_updates(", "_tg_send_transcript(",
+    )
+    # Fixtures that already skip unless the live gate and TEST_CHAT_ID are set.
+    GATING_FIXTURES = {"routed_test_session", "test_chat_id", "spawned_lodge_session"}
+
+    def test_every_live_telegram_call_sits_under_a_gate(self):
+        """Found by parsing, not by a hand-kept list.
+
+        The previous version enumerated the gated sites from a dict, so it
+        could only confirm what someone had already remembered — which is why
+        an ungated live `getUpdates` survived the first sweep.
+        """
+        import ast
+
+        offenders = []
+        for path in sorted(TEST_DIR.glob("test_*.py")):
+            text = path.read_text()
+            if not any(marker in text for marker in self.LIVE_CALLS):
+                continue
+            tree = ast.parse(text)
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                body = ast.get_source_segment(text, node) or ""
+                if not any(marker in body for marker in self.LIVE_CALLS):
+                    continue
+                if node.name.startswith("_"):
+                    continue  # a helper; its callers are what must be gated
+                if (
+                    self._gated(node)
+                    or self._gated_by_owner(tree, node)
+                    or self._gated_by_fixture(node)
+                    or self._skips(body)
+                ):
+                    continue
+                offenders.append(f"{path.name}::{node.name}")
+        assert offenders == [], (
+            "these touch the live bot without an opt-in gate: " + ", ".join(offenders)
+        )
+
+    @staticmethod
+    def _gated(node) -> bool:
+        import ast
+
+        names = []
+        for decorator in node.decorator_list:
+            target = decorator.func if isinstance(decorator, ast.Call) else decorator
+            names.append(getattr(target, "id", None) or getattr(target, "attr", "") or "")
+        return any("live" in name for name in names)
+
+    def _gated_by_owner(self, tree, node) -> bool:
+        """A gate on the enclosing class covers its methods."""
+        import ast
+
+        for parent in ast.walk(tree):
+            if isinstance(parent, ast.ClassDef) and node in parent.body:
+                return self._gated(parent)
+        return False
+
+    def _gated_by_fixture(self, node) -> bool:
+        """Requesting a fixture that skips without the gate counts as gated."""
+        names = {arg.arg for arg in node.args.args}
+        return bool(names & self.GATING_FIXTURES)
+
+    @staticmethod
+    def _skips(body: str) -> bool:
+        """A test that resolves the chat itself and skips without one is safe."""
+        return "pytest.skip" in body and "_find_chat_id" in body
 
 
 class TestRoutingIsActuallyResolvable:
@@ -166,11 +319,13 @@ class TestRoutingIsActuallyResolvable:
 
         from test_closed_loop import REGISTRY_ROOT
 
-        wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
-        assert REGISTRY_ROOT == wolts_dir, (
+        from test_closed_loop import WOLTS_DIR as CLOSED_LOOP_WOLTS_DIR
+
+        assert REGISTRY_ROOT == CLOSED_LOOP_WOLTS_DIR, (
             "SessionRegistry takes the wolts dir; anything else hides routing "
             "from the server and notify falls back to a real user"
         )
+        wolts_dir = REGISTRY_ROOT
 
         name = "test-shadow-routing-probe"
         registry = SessionRegistry(REGISTRY_ROOT)

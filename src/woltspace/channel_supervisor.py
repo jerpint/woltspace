@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import signal
 import subprocess
 import threading
@@ -68,6 +69,43 @@ def find_token_clash(text: str) -> bool:
     return any(marker in lowered for marker in TOKEN_CLASH_MARKERS)
 
 
+def pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def _matches_connector(pid: int, command: list) -> bool:
+    """Only reap a pid that still looks like the connector we recorded.
+
+    Pids are reused. Without this, a stale record could point at whatever
+    unrelated process inherited the number.
+    """
+    if not command:
+        return False
+    try:
+        raw = pathlib.Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return False
+    argv = [part for part in raw.decode("utf-8", "replace").split("\0") if part]
+    if not argv:
+        return False
+    joined = " ".join(argv)
+    module = command[-1]
+    return module in joined or " ".join(str(part) for part in command) == joined
+
+
+def timeout_for_stillborn() -> float:
+    """A child that must die immediately after birth gets a short leash."""
+    return 5.0
+
+
 def backoff_delay(restarts: int) -> float:
     return min(BACKOFF_BASE * (2 ** max(restarts - 1, 0)), BACKOFF_CAP)
 
@@ -116,7 +154,7 @@ class ChannelSupervisor:
         poll_interval: float = POLL_INTERVAL,
         popen=subprocess.Popen,
         sleep=time.sleep,
-        clock=time.monotonic,
+        clock=time.time,
     ):
         self.layout = layout
         self.max_restarts = max_restarts
@@ -133,9 +171,56 @@ class ChannelSupervisor:
 
     # -- lifecycle ---------------------------------------------------------
 
+    def reap_orphans(self) -> list[int]:
+        """Kill connectors a previous control plane left behind.
+
+        A `kill -9`, an OOM, or a `docker kill` never reaches `stop()`, and the
+        connector runs in its own process group, so it survives — still holding
+        the bot token. The next start would then spawn a rival that loses the
+        409 race and reports a remedy (`woltspace stop`) which cannot help,
+        because nothing tracks the orphan. `connectors.json` does: it already
+        records the pid and the command.
+        """
+        reaped = []
+        for record in read_connector_report(self.layout).get("connectors", []):
+            pid = record.get("pid")
+            if not isinstance(pid, int) or pid <= 0 or not pid_alive(pid):
+                continue
+            if not _matches_connector(pid, record.get("command") or []):
+                continue
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except OSError:
+                    continue
+            reaped.append(pid)
+        for _ in range(40):
+            if not any(pid_alive(pid) for pid in reaped):
+                break
+            time.sleep(0.05)
+        for pid in reaped:
+            if pid_alive(pid):
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
+            try:
+                # If the orphan happens to be our own child (a restart inside
+                # one process), collect it rather than leave a zombie holding
+                # the pid.
+                os.waitpid(pid, os.WNOHANG)
+            except (ChildProcessError, OSError):
+                pass
+        return reaped
+
     def start(self, *, watch: bool = True) -> None:
         """Spawn every enabled connector. `watch=False` leaves ticking to the caller."""
         self.layout.logs_dir.mkdir(parents=True, exist_ok=True)
+        orphans = self.reap_orphans()
+        if orphans:
+            print(f"[connectors] reaped {len(orphans)} orphaned connector(s): {orphans}")
         for name, state in self.states.items():
             if not state.plan.enabled:
                 state.state = "disabled"
@@ -150,12 +235,14 @@ class ChannelSupervisor:
 
     def stop(self, *, timeout: float = 10.0) -> None:
         self._stopping.set()
-        for name, child in list(self._children.items()):
+        with self._lock:
+            children = list(self._children.items())
+            self._children.clear()
+        for name, child in children:
             self._terminate(child, timeout=timeout)
             state = self.states[name]
             state.state = "stopped"
             state.pid = None
-        self._children.clear()
         thread = self._thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=timeout)
@@ -176,6 +263,9 @@ class ChannelSupervisor:
         env.update(plan.env)
         try:
             handle = log_path.open("a")
+            # The adapter may log a request URL, and a request URL carries the
+            # token. Keep it as private as the report beside it.
+            os.chmod(log_path, 0o600)
         except OSError as exc:
             state.state = "failed"
             state.error = f"cannot open {log_path}: {exc}"
@@ -200,7 +290,19 @@ class ChannelSupervisor:
             if not handle.closed:
                 handle.close()
         with self._lock:
-            self._children[name] = child
+            if self._stopping.is_set():
+                # stop() already took its snapshot; this child would never be
+                # in it. Drop it here rather than leak a poller that `stop`
+                # has already reported as stopped.
+                stillborn = True
+            else:
+                self._children[name] = child
+                stillborn = False
+        if stillborn:
+            self._terminate(child, timeout=timeout_for_stillborn())
+            state.pid = None
+            state.state = "stopped"
+            return
         state.pid = child.pid
         state.state = "running"
         state.error = ""
@@ -244,6 +346,11 @@ class ChannelSupervisor:
         if not state.log:
             return False
         try:
+            size = os.path.getsize(state.log)
+            if size < state.log_offset:
+                # Truncated or rotated. Without this, seek() lands past EOF and
+                # clash detection goes permanently blind.
+                state.log_offset = 0
             with open(state.log, "r", errors="replace") as handle:
                 handle.seek(state.log_offset)
                 chunk = handle.read(LOG_SCAN_LIMIT)
@@ -288,6 +395,10 @@ class ChannelSupervisor:
                 state.state = "failed"
                 state.error = TOKEN_CLASH_ERROR
                 continue
+            # Wall clock, not monotonic: the window means "crashes per five
+            # minutes", and on macOS time.monotonic() does not advance while
+            # the machine is asleep — a suspend would otherwise look like no
+            # time passing at all.
             now = self._clock()
             state.crash_times = [
                 stamp for stamp in state.crash_times if now - stamp < self.restart_window

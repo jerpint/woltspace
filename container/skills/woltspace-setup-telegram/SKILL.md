@@ -102,7 +102,7 @@ LLM_MODEL=<provider/model>
 woltspace restart
 ```
 
-The entrypoint sees `ENABLE_TELEGRAM_BOT=true`, starts the bot automatically.
+The control-plane supervisor sees `ENABLE_TELEGRAM_BOT=true` and starts the bot as a supervised channel connector. Check it with `curl -s localhost:7777/health | jq .connectors` — it reports `running`, `degraded` (another process holds the token), or `disabled` with a fix.
 
 ## Step 5: Test
 

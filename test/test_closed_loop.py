@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "l
 
 from conftest import (
     requires_live_send,
+    requires_live_telegram,
     requires_server,
     requires_telegram,
     requires_tmux,
@@ -121,6 +122,7 @@ def _find_chat_id() -> str | None:
 # Seam 1: Telegram API — bot can send and receive
 # ---------------------------------------------------------------------------
 
+@requires_live_telegram
 @requires_telegram
 class TestTelegramSeam:
     """Verify the Telegram API connection is healthy."""

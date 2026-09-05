@@ -142,7 +142,7 @@ case "$TIER" in
     echo "  chat: $TEST_CHAT_ID — every message lands here"
     echo "  wolt: test-shadow — created and removed per test; no real wolt is touched"
     export WOLTSPACE_TEST_REAL_SPAWN=1
-    export WOLTSPACE_TEST_LIVE_SEND=1
+    export WOLTSPACE_TEST_LIVE_SEND=1  # also unlocks the live getUpdates probes
     _run_tests "opt-in" uv run --extra test --project "$WOLTSPACE_DIR" pytest \
       test/test_server_health.py test/test_closed_loop.py test/test_telegram_loop.py \
       -v "${@:2}"

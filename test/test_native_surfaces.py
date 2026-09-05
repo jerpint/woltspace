@@ -124,7 +124,8 @@ class TestSitePathsResolveFromTheLayout:
 
 RUNTIME_ENV_KEYS = (
     "WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
-    "WOLTSPACE_HOST", "WOLTSPACE_INSTANCE_ID", "WOLTSPACE_PUBLIC_TUNNEL", "PORT",
+    "WOLTSPACE_HOST", "WOLTSPACE_INSTANCE_ID", "WOLTSPACE_PUBLIC_TUNNEL",
+    "WOLTSPACE_ENTRYPOINT", "PORT",
 )
 
 
@@ -153,29 +154,47 @@ def isolated_runtime_env():
 @pytest.mark.usefixtures("isolated_runtime_env")
 class TestTunnelPolicy:
     def test_native_default_is_tunnel_off(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("WOLTSPACE_PUBLIC_TUNNEL", raising=False)
-        layout = RuntimeLayout(tmp_path / "wolts", ROOT, isolation="host")
-        Supervisor(layout).prepare()
         import os
 
+        monkeypatch.delenv("WOLTSPACE_PUBLIC_TUNNEL", raising=False)
+        monkeypatch.delenv("WOLTSPACE_ENTRYPOINT", raising=False)
+        layout = RuntimeLayout(tmp_path / "wolts", ROOT, isolation="host")
+        Supervisor(layout).prepare()
         assert os.environ["WOLTSPACE_PUBLIC_TUNNEL"] == "false"
 
     def test_native_enabling_is_explicit_and_respected(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("WOLTSPACE_PUBLIC_TUNNEL", "true")
-        layout = RuntimeLayout(tmp_path / "wolts", ROOT, isolation="host")
-        Supervisor(layout).prepare()
         import os
 
+        monkeypatch.setenv("WOLTSPACE_PUBLIC_TUNNEL", "true")
+        monkeypatch.delenv("WOLTSPACE_ENTRYPOINT", raising=False)
+        layout = RuntimeLayout(tmp_path / "wolts", ROOT, isolation="host")
+        Supervisor(layout).prepare()
         assert os.environ["WOLTSPACE_PUBLIC_TUNNEL"] == "true"
 
-    def test_container_default_is_unchanged(self, tmp_path, monkeypatch):
+    def test_the_container_entrypoint_keeps_its_tunnel(self, tmp_path, monkeypatch):
+        import os
+
         monkeypatch.delenv("WOLTSPACE_PUBLIC_TUNNEL", raising=False)
+        monkeypatch.setenv("WOLTSPACE_ENTRYPOINT", "1")
         layout = RuntimeLayout(tmp_path / "wolts", ROOT, isolation="external")
         layout.wolts_dir.mkdir(parents=True)  # a container always has the mount
         Supervisor(layout).prepare()
+        assert "WOLTSPACE_PUBLIC_TUNNEL" not in os.environ
+
+    def test_a_guest_in_the_container_never_publishes(self, tmp_path, monkeypatch):
+        """The container exports WOLTSPACE_PUBLIC_TUNNEL=true to everything.
+
+        A stray serve inheriting it would race the real cloudflared and, on
+        shutdown, delete the incumbent's tunnel state.
+        """
         import os
 
-        assert "WOLTSPACE_PUBLIC_TUNNEL" not in os.environ
+        monkeypatch.setenv("WOLTSPACE_PUBLIC_TUNNEL", "true")
+        monkeypatch.delenv("WOLTSPACE_ENTRYPOINT", raising=False)
+        layout = RuntimeLayout(tmp_path / "wolts", ROOT, isolation="external")
+        layout.wolts_dir.mkdir(parents=True)
+        Supervisor(layout).prepare()
+        assert os.environ["WOLTSPACE_PUBLIC_TUNNEL"] == "false"
 
     def test_disabled_tunnel_starts_no_process_and_writes_no_state(self, native_root):
         payload = run_in_clean_process(

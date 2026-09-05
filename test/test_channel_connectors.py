@@ -109,11 +109,48 @@ class TestTelegramPlan:
         assert "token" in plan.detail
         assert "TELEGRAM_BOT_TOKEN" in plan.remedy
 
-    def test_container_keeps_its_own_bot_project_and_module(self, layout):
-        external = RuntimeLayout(
+    def _container(self, layout):
+        return RuntimeLayout(
             layout.wolts_dir, layout.install_root, layout.host, layout.port, "external"
         )
-        plan = TelegramConnector().plan(external, {
+
+    def test_container_keeps_its_own_bot_project_and_module(self, layout):
+        """The container entrypoint runs the adapter from the `bot` uv project."""
+        plan = TelegramConnector().plan(self._container(layout), {
+            "WOLTSPACE_ENTRYPOINT": "1",
+            "ENABLE_TELEGRAM_BOT": "true",
+            "TELEGRAM_BOT_TOKEN": TOKEN,
+            "TELEGRAM_BOT_DIR": str(ROOT / "container"),
+            "TELEGRAM_BOT_MODULE": "bot.telegram_adapter",
+        })
+        assert plan.enabled is True
+        assert plan.cwd == str(ROOT / "container")
+        assert plan.command[0].endswith("uv")
+        assert plan.command[1:5] == ("run", "--project", str(ROOT / "container" / "bot"), "python")
+        assert plan.command[-2:] == ("-m", "bot.telegram_adapter")
+
+    def test_dev_mode_keeps_hot_reload_as_one_supervised_child(self, layout):
+        plan = TelegramConnector().plan(self._container(layout), {
+            "WOLTSPACE_ENTRYPOINT": "1",
+            "ENABLE_TELEGRAM_BOT": "true",
+            "TELEGRAM_BOT_TOKEN": TOKEN,
+            "TELEGRAM_BOT_DIR": str(ROOT / "container"),
+            "DEV_MODE": "true",
+        })
+        assert plan.enabled is True
+        assert "watchfiles" in plan.command
+        assert plan.command[-1] == "bot/"
+        assert "bot.telegram_adapter" in plan.command[-2]
+        assert "dev reload" in plan.detail
+
+    def test_a_custom_wolt_adapter_still_finds_an_interpreter_with_telegram(self, layout):
+        """A wolt's own adapter lives at <wolt>/wolt/bot, not <wolt>/bot.
+
+        Probing only the latter fell through to an interpreter without
+        python-telegram-bot and then blamed a missing extra.
+        """
+        plan = TelegramConnector().plan(self._container(layout), {
+            "WOLTSPACE_ENTRYPOINT": "1",
             "ENABLE_TELEGRAM_BOT": "true",
             "TELEGRAM_BOT_TOKEN": TOKEN,
             "TELEGRAM_BOT_DIR": "/workspace/wolts/mywolt",
@@ -122,6 +159,57 @@ class TestTelegramPlan:
         assert plan.enabled is True
         assert plan.cwd == "/workspace/wolts/mywolt"
         assert plan.command[-1] == "wolt.bot.telegram_adapter"
+        # Falls back to the platform's bot project, which owns the dependency.
+        assert str(ROOT / "container" / "bot") in plan.command
+
+
+class TestAmbientEnvironmentIsNeverEnough:
+    """A stray `woltspace serve` in the container must not spawn a rival bot.
+
+    `container/start.sh` exports ENABLE_TELEGRAM_BOT and the production
+    TELEGRAM_BOT_TOKEN to every process it hosts, so inheriting them is not
+    evidence that anyone wants a connector *here*.
+    """
+
+    CONTAINER_ENV = {
+        "WOLTSPACE_ISOLATION": "external",
+        "ENABLE_TELEGRAM_BOT": "true",
+        "TELEGRAM_BOT_TOKEN": TOKEN,
+        "TELEGRAM_BOT_DIR": "/workspace/woltspace/container",
+        "DEV_MODE": "true",
+    }
+
+    def test_a_guest_refuses_to_spawn_from_inherited_environment(self, layout):
+        plan = TelegramConnector().plan(layout, dict(self.CONTAINER_ENV))
+        assert plan.enabled is False
+        assert plan.command == ()
+        assert "ambient environment" in plan.detail
+        assert "different bot token" in plan.remedy
+
+    def test_the_entrypoint_may_use_the_environment(self, layout):
+        plan = TelegramConnector().plan(
+            layout, {**self.CONTAINER_ENV, "WOLTSPACE_ENTRYPOINT": "1"}
+        )
+        assert plan.enabled is True
+
+    def test_a_data_root_that_declares_it_may_use_it_without_the_entrypoint(self, layout):
+        """A config.json in this data root is a deliberate statement."""
+        layout.platform_state.mkdir(parents=True, exist_ok=True)
+        (layout.platform_state / "config.json").write_text(json.dumps({
+            "channels": {"telegram": {"enabled": True, "token": "own-token"}}
+        }))
+        plan = TelegramConnector().plan(layout, dict(self.CONTAINER_ENV))
+        assert plan.enabled is True
+
+    def test_the_environment_can_still_switch_it_off(self, layout):
+        layout.platform_state.mkdir(parents=True, exist_ok=True)
+        (layout.platform_state / "config.json").write_text(json.dumps({
+            "channels": {"telegram": {"enabled": True, "token": "own-token"}}
+        }))
+        plan = TelegramConnector().plan(layout, {
+            **self.CONTAINER_ENV, "ENABLE_TELEGRAM_BOT": "false",
+        })
+        assert plan.enabled is False
 
     def test_no_secret_reaches_the_public_record(self, layout):
         write_config(layout, {

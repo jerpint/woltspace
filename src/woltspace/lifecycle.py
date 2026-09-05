@@ -29,7 +29,10 @@ def start(layout: RuntimeLayout, *, timeout: float = 15.0) -> tuple[int, dict]:
     if current["state"] == "conflict":
         return 1, {**current, "error": "endpoint belongs to another control plane"}
 
-    checks = run_doctor(layout, check_port=True)
+    # Typing `woltspace start` against a named data root IS the deliberate act
+    # that makes this its owner, so doctor judges it as the entrypoint rather
+    # than as a guest that found live sessions lying around.
+    checks = run_doctor(layout, check_port=True, as_entrypoint=True)
     if not doctor_ok(checks):
         return 1, {
             "state": "doctor-failed",
@@ -56,6 +59,9 @@ def start(layout: RuntimeLayout, *, timeout: float = 15.0) -> tuple[int, dict]:
     ]
     env = dict(os.environ)
     env.update({
+        # `woltspace start` is a deliberate act on a named data root, so the
+        # control plane it launches is the owner.
+        "WOLTSPACE_ENTRYPOINT": "1",
         "WOLTS_DIR": str(layout.wolts_dir),
         "WOLTSPACE_DIR": str(layout.install_root),
         "WOLTSPACE_ISOLATION": layout.isolation,

@@ -59,6 +59,14 @@ def test_doctor_discovers_existing_host_auth_without_copying_it(tmp_path, monkey
     assert not layout.wolts_dir.exists()
 
 
+def _restore_env(snapshot: dict):
+    for key, value in snapshot.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
 def test_supervisor_prepare_freezes_environment_and_creates_only_state(
     tmp_path, monkeypatch, request
 ):
@@ -88,15 +96,7 @@ def test_supervisor_prepare_freezes_environment_and_creates_only_state(
     assert list(layout.wolts_dir.glob("**/auth.json")) == []
 
 
-def _restore_env(snapshot: dict):
-    for key, value in snapshot.items():
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = value
-
-
-def test_external_supervisor_does_not_override_tunnel_default(tmp_path, monkeypatch, request):
+def test_entrypoint_supervisor_does_not_override_tunnel_default(tmp_path, monkeypatch, request):
     # prepare() writes os.environ directly; keep the rewrite inside this test.
     # Restore by hand: setenv("") on an absent variable leaves an empty string
     # behind, which is not the same as absent for `os.environ.get(k, default)`.
@@ -106,6 +106,7 @@ def test_external_supervisor_does_not_override_tunnel_default(tmp_path, monkeypa
     snapshot = {key: os.environ.get(key) for key in keys}
     request.addfinalizer(lambda: _restore_env(snapshot))
     monkeypatch.delenv("WOLTSPACE_PUBLIC_TUNNEL", raising=False)
+    monkeypatch.setenv("WOLTSPACE_ENTRYPOINT", "1")
     layout = _layout(tmp_path, isolation="external")
     layout.wolts_dir.mkdir(parents=True)  # a container always has the mount
     Supervisor(layout).prepare()

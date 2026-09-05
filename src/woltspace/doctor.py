@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import socket
@@ -67,6 +68,17 @@ class MountError(RuntimeError):
         super().__init__(f"{check.detail}. {check.remedy}")
 
 
+def _really_writable(path: Path) -> bool:
+    """Try it. `os.access(W_OK)` answers yes for uid 0 even on a read-only mount."""
+    probe = path / ".woltspace-write-probe"
+    try:
+        probe.touch()
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
 def container_mount_check(layout: RuntimeLayout) -> DoctorCheck:
     """The wolts directory is a host mount in container mode, never created here.
 
@@ -86,7 +98,7 @@ def container_mount_check(layout: RuntimeLayout) -> DoctorCheck:
         return DoctorCheck(
             "mounts", "fail", f"{layout.wolts_dir} is not a directory", remedy
         )
-    if not os.access(layout.wolts_dir, os.W_OK):
+    if not _really_writable(layout.wolts_dir):
         return DoctorCheck(
             "mounts", "fail", f"{layout.wolts_dir} is mounted read-only", remedy
         )
@@ -102,44 +114,147 @@ def ensure_container_mounts(layout: RuntimeLayout) -> None:
         raise MountError(check)
 
 
-def shared_data_root_check(layout: RuntimeLayout) -> DoctorCheck | None:
-    """Warn when a native run points at a data root something else already owns.
+class DataRootConflict(RuntimeError):
+    """This process was asked to serve a data root something else is using."""
 
-    The instance lock is an flock, and flock is not reliable across a Docker
-    bind mount on macOS — so a running container holding this same directory
-    would not be caught by the lock. The owner record it leaves behind is
-    readable either way, so use that.
-    """
-    if layout.isolation != "host":
+    def __init__(self, check: "DoctorCheck"):
+        self.check = check
+        super().__init__(f"{check.detail} {check.remedy}")
+
+
+ALLOW_SHARED_ENV = "WOLTSPACE_ALLOW_SHARED_DATA_ROOT"
+
+SHARED_REMEDY = (
+    "Stop that instance first, use a fresh data root "
+    "(`WOLTS_DIR=~/.woltspace/native-wolts woltspace start`), or set "
+    f"{ALLOW_SHARED_ENV}=1 if you really mean to share it."
+)
+
+
+def _live_tunnel_owner(layout: RuntimeLayout) -> int | None:
+    """The pid of a cloudflared this data root is currently publishing through."""
+    from .instance import pid_alive
+
+    try:
+        state = json.loads((layout.platform_state / "tunnel.json").read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError):
         return None
+    pid = state.get("pid") if isinstance(state, dict) else None
+    if isinstance(pid, int) and pid > 0 and pid_alive(pid):
+        return pid
+    return None
+
+
+def _running_session_count(layout: RuntimeLayout) -> int:
+    """How many sessions this data root believes are alive right now."""
+    try:
+        entries = list(layout.wolts_dir.iterdir())
+    except OSError:
+        return 0
+    running = 0
+    for entry in entries:
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        sessions = entry / ".state" / "sessions"
+        if not sessions.is_dir():
+            continue
+        for record in sessions.glob("*.json"):
+            try:
+                data = json.loads(record.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+            if isinstance(data, dict) and data.get("status") == "running":
+                running += 1
+    return running
+
+
+def shared_data_root_check(
+    layout: RuntimeLayout, *, as_entrypoint: bool = False
+) -> DoctorCheck | None:
+    """Report when this data root is already in use by something else.
+
+    Deliberately *not* scoped to an isolation mode. The instance lock is an
+    flock, which does not cross a Docker bind mount on macOS and which a
+    control plane too old to take one never held at all — so the evidence a
+    live instance leaves behind (its owner record, its tunnel, its running
+    sessions) is the only thing that can catch this.
+
+    Severity depends on who is asking. The entrypoint *is* the owner, so for it
+    this is nothing. For a guest process it is a hard failure: adopting another
+    instance's data root rewrites its session records and, on shutdown, tears
+    down its tunnel.
+    """
     from .instance import pid_alive, read_owner
 
-    owner = read_owner(layout)
-    if owner is None:
+    if as_entrypoint or layout.is_entrypoint or _sharing_allowed():
         return None
-    foreign_host = owner.hostname and owner.hostname != socket.gethostname()
-    if owner.isolation == "external" or foreign_host:
+
+    severity = "warn" if layout.isolation == "host" else "fail"
+    owner = read_owner(layout)
+    if owner is not None:
+        foreign_host = bool(owner.hostname and owner.hostname != socket.gethostname())
+        if owner.isolation == "external" or foreign_host:
+            return DoctorCheck(
+                "data-root-sharing",
+                severity,
+                f"{layout.wolts_dir} is claimed by a {owner.isolation or 'unknown'} "
+                f"instance (pid {owner.pid} on {owner.hostname}). The instance lock "
+                f"cannot be trusted across a Docker bind mount.",
+                SHARED_REMEDY,
+            )
+        if pid_alive(owner.pid):
+            return DoctorCheck(
+                "data-root-sharing",
+                severity,
+                f"{layout.wolts_dir} is claimed by pid {owner.pid} "
+                f"(instance {owner.instance_id}).",
+                SHARED_REMEDY,
+            )
+
+    tunnel_pid = _live_tunnel_owner(layout)
+    if tunnel_pid:
         return DoctorCheck(
             "data-root-sharing",
-            "warn",
-            f"{layout.wolts_dir} is claimed by a {owner.isolation or 'unknown'} "
-            f"instance (pid {owner.pid} on {owner.hostname}). The instance lock "
-            f"cannot be trusted across a Docker bind mount.",
-            "Stop that instance first, or start native with a fresh data root: "
-            "`WOLTS_DIR=~/.woltspace/native-wolts woltspace start`.",
+            severity,
+            f"{layout.wolts_dir} is publishing through a live tunnel "
+            f"(cloudflared pid {tunnel_pid}), so a control plane is already using it.",
+            SHARED_REMEDY,
         )
-    if pid_alive(owner.pid):
+
+    running = _running_session_count(layout)
+    if running:
         return DoctorCheck(
             "data-root-sharing",
-            "warn",
-            f"{layout.wolts_dir} is claimed by pid {owner.pid} "
-            f"(instance {owner.instance_id}).",
-            "Run `woltspace status` — stop that control plane before starting another.",
+            severity,
+            f"{layout.wolts_dir} has {running} session(s) marked running, so a "
+            f"control plane is already using it.",
+            SHARED_REMEDY,
         )
     return None
 
 
-def run_doctor(layout: RuntimeLayout, *, check_port: bool = True) -> list[DoctorCheck]:
+def _sharing_allowed() -> bool:
+    return os.environ.get(ALLOW_SHARED_ENV, "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def ensure_data_root_available(
+    layout: RuntimeLayout, *, as_entrypoint: bool = False
+) -> None:
+    """Refuse to serve someone else's live data root. Runs even with --no-doctor.
+
+    This is the guard, not the doctor check: `serve` is normally invoked with
+    `--no-doctor`, so a check that only runs inside doctor protects nothing.
+    """
+    check = shared_data_root_check(layout, as_entrypoint=as_entrypoint)
+    if check is not None and check.status == "fail":
+        raise DataRootConflict(check)
+
+
+def run_doctor(
+    layout: RuntimeLayout, *, check_port: bool = True, as_entrypoint: bool = False
+) -> list[DoctorCheck]:
     checks = []
     version = sys.version_info
     checks.append(DoctorCheck(
@@ -203,7 +318,7 @@ def run_doctor(layout: RuntimeLayout, *, check_port: bool = True) -> list[Doctor
     if layout.isolation != "host":
         checks.append(container_mount_check(layout))
 
-    sharing = shared_data_root_check(layout)
+    sharing = shared_data_root_check(layout, as_entrypoint=as_entrypoint)
     if sharing is not None:
         checks.append(sharing)
 

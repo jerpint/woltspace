@@ -64,16 +64,46 @@ def _real_spawn_enabled() -> bool:
     }
 
 
-SHADOW_WOLT = "test-shadow"
+SHADOW_PREFIX = "test-shadow"
+SHADOW_WOLT = f"{SHADOW_PREFIX}-{os.getpid()}"
 SHADOW_MARKER = ".created-by-tests"
 
 
 def shadow_is_reusable(home: Path) -> bool:
-    """Only ever delete a directory the suite created itself."""
-    return not home.exists() or (home / SHADOW_MARKER).is_file()
+    """Only ever delete a directory *this run* created.
+
+    The marker records the pid that wrote it, so two concurrent suite runs
+    cannot delete each other's shadow wolt mid-test, and a directory belonging
+    to a live run is left alone.
+    """
+    if not home.exists():
+        return True
+    marker = home / SHADOW_MARKER
+    if not marker.is_file():
+        return False
+    try:
+        owner = int(marker.read_text().split("pid=", 1)[1].split()[0])
+    except (OSError, IndexError, ValueError):
+        return False
+    if owner == os.getpid():
+        return True
+    try:
+        os.kill(owner, 0)
+    except ProcessLookupError:
+        return True  # its run is over; the leftovers are ours to clear
+    except PermissionError:
+        return False
+    return False
 
 
 requires_server = pytest.mark.skipif(not _server_up(), reason="server not running on localhost:7777")
+# getUpdates is not the read-only call it looks like: it is exclusive, so a
+# second caller either gets 409 or wins the race and takes updates the real bot
+# then never sees. Touching the live bot at all is opt-in.
+requires_live_telegram = pytest.mark.skipif(
+    not _live_send_enabled(),
+    reason="talks to the live bot; set WOLTSPACE_TEST_LIVE_SEND=1",
+)
 requires_live_send = pytest.mark.skipif(
     not (_live_send_enabled() and _test_chat_id()),
     reason="sends a real message; set WOLTSPACE_TEST_LIVE_SEND=1 and TEST_CHAT_ID",
@@ -179,6 +209,12 @@ def shadow_wolt():
     if not shadow_is_reusable(home):
         pytest.skip(f"{home} exists but was not created by the tests; refusing to touch it")
 
+    # Marker first: if anything below fails, the directory is still
+    # recognisably ours rather than a permanent skip for every later run.
+    home.mkdir(parents=True, exist_ok=True)
+    marker.write_text(
+        f"Created by test/conftest.py::shadow_wolt pid={os.getpid()}. Safe to delete.\n"
+    )
     (home / "wolt" / "site").mkdir(parents=True, exist_ok=True)
     (home / "wolt" / "memory").mkdir(parents=True, exist_ok=True)
     (home / "wolt" / "wolt.json").write_text(json.dumps({
@@ -188,7 +224,6 @@ def shadow_wolt():
         "description": "throwaway wolt owned by the test suite",
         "test_fixture": True,
     }, indent=2) + "\n")
-    marker.write_text("Created by test/conftest.py::shadow_wolt. Safe to delete.\n")
 
     try:
         yield SHADOW_WOLT
@@ -196,6 +231,13 @@ def shadow_wolt():
         _stop_shadow_sessions(wolts_dir)
         if marker.exists():
             shutil.rmtree(home, ignore_errors=True)
+
+
+def _server_endpoint() -> str:
+    """Where this suite's server lives — not always :7777."""
+    host = os.environ.get("WOLTSPACE_HOST", "localhost")
+    port = os.environ.get("WOLTSPACE_PORT") or os.environ.get("PORT") or "7777"
+    return f"http://{host}:{port}"
 
 
 def _stop_shadow_sessions(wolts_dir: Path):
@@ -209,7 +251,7 @@ def _stop_shadow_sessions(wolts_dir: Path):
     for name in names:
         body = json.dumps({}).encode()
         request = urllib.request.Request(
-            f"http://localhost:7777/sessions/{name}/stop",
+            f"{_server_endpoint()}/sessions/{name}/stop",
             data=body, headers={"Content-Type": "application/json"}, method="POST",
         )
         try:

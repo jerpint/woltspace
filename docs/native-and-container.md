@@ -88,6 +88,15 @@ Telegram runs as a **channel connector**: a child process the control plane
 starts with the API, stops with the API, restarts (bounded) when it dies, and
 reports through `woltspace status` and `GET /health`.
 
+> **Three programs are called `woltspace`.** On the host, the bash launcher that
+> drives Docker. Inside the container, `container/bin/woltspace` — a thin HTTP
+> client, first on `PATH`, with its own `status` that lists sessions and knows
+> nothing about connectors. And the packaged native CLI from this Python
+> package, which is the one the `woltspace start` / `status` / `tui` commands in
+> this document mean. **Inside the container, read connector state with
+> `curl -s localhost:7777/health | jq .connectors`** — `woltspace status` there
+> is the other program and will answer, confidently, about something else.
+
 Configure it in the data root the control plane owns —
 `<wolts>/.space/platform/config.json`:
 
@@ -143,6 +152,39 @@ to whichever instance answers, so a test instance ends up serving strangers.
 Give a second instance its own tunnel, or leave it on `localhost`.
 
 ---
+
+## Guests
+
+Only two things are the platform *entrypoint*: `container/start.sh`, and the
+control plane that `woltspace start` launches. Both announce it with
+`WOLTSPACE_ENTRYPOINT=1`. Anything else that runs `woltspace serve` — a command
+typed in a worktree, a smoke test, an agent exploring — is a **guest**, and a
+guest is deliberately weak:
+
+- it will not spawn a channel connector on the strength of inherited
+  environment variables alone (the data root's own `config.json` must ask for
+  it), because the process that exported `TELEGRAM_BOT_TOKEN` is by definition
+  already polling that token;
+- it never publishes a tunnel, whatever `WOLTSPACE_PUBLIC_TUNNEL` says, because
+  the tunnel lifecycle is process-wide and its shutdown would delete the real
+  instance's state;
+- it refuses outright to serve a data root that shows signs of being in use —
+  an owner record with a live pid, a live `tunnel.json`, or sessions marked
+  running.
+
+That last refusal is a hard error naming the conflict, not a warning:
+
+```
+serve failed: /workspace/wolts is publishing through a live tunnel (cloudflared
+pid 4711), so a control plane is already using it. Stop that instance first, use
+a fresh data root (`WOLTS_DIR=~/.woltspace/native-wolts woltspace start`), or set
+WOLTSPACE_ALLOW_SHARED_DATA_ROOT=1 if you really mean to share it.
+```
+
+This matters because the instance lock cannot catch it. A control plane old
+enough not to take the lock never held one, and `flock` does not cross a Docker
+bind mount — so the evidence a live instance leaves behind is the only thing
+that can.
 
 ## Sharing a data root
 

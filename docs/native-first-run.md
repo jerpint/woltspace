@@ -205,11 +205,18 @@ long-polled by one process; the second poller gets `409 Conflict` from
 Telegram and goes deaf while still looking alive. Make a second bot with
 BotFather for native testing.
 
-The Telegram dependencies come from an extra:
+The Telegram dependencies come from an extra. From the checkout — the same
+place step 2 installed from, and the only place it can resolve before the
+package is published:
 
 ```bash
-uv tool install 'woltspace[connectors]'
+cd /path/to/woltspace
+uv tool install '.[connectors]'
 ```
+
+That replaces the step 2 install rather than adding to it. (Plain
+`uv tool install 'woltspace[connectors]'` resolves from PyPI, where nothing is
+published yet.)
 
 Then write `$WOLTS_DIR/.space/platform/config.json`:
 

@@ -13,6 +13,11 @@ rm -f "$ENV_FILE"
 export WOLT_NAME WOLT_DIR WOLTS_DIR DEV_MODE WOLF_CONFIG PYTHONPATH PATH
 export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
 export WOLTSPACE_ISOLATION=external
+# This script IS the platform entrypoint. Nothing else in the container should
+# claim the data root, the tunnel, or the bot token — a stray `woltspace serve`
+# from a worktree inherits every variable above, so the control plane refuses to
+# act as owner unless it sees this.
+export WOLTSPACE_ENTRYPOINT=1
 
 # Codex seed home — codex errors if CODEX_HOME doesn't exist, and the wolts
 # mount shadows any build-time mkdir. Harmless if codex is never used.
@@ -90,8 +95,11 @@ fi
 
 # Telegram bot — started by the control-plane supervisor as a ChannelConnector,
 # not here. ENABLE_TELEGRAM_BOT/TELEGRAM_BOT_TOKEN are already in this process's
-# environment, so `woltspace serve` above resolves and supervises it.
-# Inspect it with: woltspace status  (or GET /health → connectors)
+# environment, and this script exports WOLTSPACE_ENTRYPOINT, so `woltspace serve`
+# above resolves and supervises it.
+# Inspect it with:  curl -s localhost:7777/health | jq .connectors
+# (NOT `woltspace status` — inside the container that name resolves to
+#  container/bin/woltspace, a different CLI which knows nothing about connectors.)
 
 # Slack bot
 if [ "${ENABLE_SLACK_BOT:-}" = "true" ] && [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -n "${SLACK_APP_TOKEN:-}" ]; then

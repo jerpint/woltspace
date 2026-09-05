@@ -7,6 +7,7 @@ disturbing the tmux sessions the registry already owns.
 """
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -54,13 +55,16 @@ def _plan(command=None):
 
 
 def _alive(pid: int) -> bool:
-    import os
-
+    """Running, and not merely a zombie waiting to be collected."""
     try:
         os.kill(pid, 0)
-        return True
     except ProcessLookupError:
         return False
+    try:
+        status = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1][0]
+    except (OSError, IndexError):
+        return True
+    return status != "Z"
 
 
 class TestInstanceLockWithAConnectorRunning:
@@ -202,7 +206,7 @@ class AdoptionRuntime:
 
 
 class TestUpgradePath:
-    def test_stop_then_start_readopts_sessions_and_the_connector(self, tmp_path):
+    def test_stop_then_start_readopts_sessions_and_the_connector(self, tmp_path, request):
         layout = _layout(tmp_path)
         registry = SessionRegistry(layout.wolts_dir)
         registry.create("upgrade-session", wolt="testwolt", harness="claude")
@@ -212,6 +216,9 @@ class TestUpgradePath:
         )
         runtime = AdoptionRuntime(alive={"upgrade-tmux"})
         set_runtime(runtime)
+        # A process-wide fake left installed makes every later in-process test
+        # see a runtime that reports all sessions dead and swallows every kill.
+        request.addfinalizer(lambda: set_runtime(None))
 
         old = ChannelSupervisor(layout, [_plan()])
         with DataRootLock(layout, "old-version"):
@@ -285,7 +292,7 @@ class TestMissingContainerMounts:
     def test_serve_surfaces_the_mount_error_as_a_message(self):
         """`woltspace serve` catches MountError rather than dumping a traceback."""
         source = (ROOT / "src" / "woltspace" / "cli.py").read_text()
-        assert "except (InstanceConflict, MountError)" in source
+        assert "except (InstanceConflict, MountError, DataRootConflict)" in source
         assert 'print(f"serve failed: {exc}")' in source
 
 
@@ -379,7 +386,7 @@ class TestSharedDataRootWarning:
 
         assert shared_data_root_check(_layout(tmp_path)) is None
 
-    def test_container_mode_does_not_warn_about_itself(self, tmp_path):
+    def test_the_entrypoint_does_not_warn_about_itself(self, tmp_path):
         from woltspace.doctor import shared_data_root_check
         from woltspace.instance import InstanceOwner, write_owner
 
@@ -389,7 +396,7 @@ class TestSharedDataRootWarning:
             instance_id="container-instance", pid=1, started_at=0,
             endpoint="http://127.0.0.1:7777", isolation="external", hostname="elsewhere",
         ))
-        assert shared_data_root_check(layout) is None
+        assert shared_data_root_check(layout, as_entrypoint=True) is None
 
 
 class TestPrePublishTuiRemedy:
@@ -474,3 +481,243 @@ class TestDocsStayTrue:
 
     def test_it_is_linked_from_the_readme(self):
         assert "docs/native-and-container.md" in (ROOT / "README.md").read_text()
+
+
+class TestAStrayServeCannotTakeOverALiveDataRoot:
+    """F0: `woltspace serve` typed in a worktree inside the running container.
+
+    Every ingredient is ambient — WOLTSPACE_ISOLATION=external, the production
+    bot token, WOLTSPACE_PUBLIC_TUNNEL=true — and the instance lock cannot
+    defend, because a control plane old enough not to take one leaves no owner
+    record. This happened for real; these tests are the fence.
+    """
+
+    CONTAINER_ENV = {
+        "WOLTSPACE_ISOLATION": "external",
+        "WOLTSPACE_PUBLIC_TUNNEL": "true",
+        "ENABLE_TELEGRAM_BOT": "true",
+        "TELEGRAM_BOT_TOKEN": "999999:production-token",
+        "TELEGRAM_BOT_DIR": "/workspace/woltspace/container",
+        "DEV_MODE": "true",
+    }
+
+    @pytest.fixture
+    def occupied_root(self, tmp_path):
+        """A data root a live control plane is already using, owner-record-free."""
+        layout = _layout(tmp_path, isolation="external")
+        layout.platform_state.mkdir(parents=True, exist_ok=True)
+        # The incumbent's evidence: a cloudflared this process can see is alive.
+        (layout.platform_state / "tunnel.json").write_text(json.dumps({
+            "pid": os.getpid(), "url": "https://incumbent.example", "type": "named",
+        }))
+        sessions = layout.wolts_dir / "realwolt" / ".state" / "sessions"
+        sessions.mkdir(parents=True)
+        (sessions / "realwolt-live.json").write_text(json.dumps({
+            "name": "realwolt-live", "wolt": "realwolt", "status": "running",
+        }))
+        return layout
+
+    # prepare() writes these directly; snapshot so a refused-then-allowed run
+    # cannot repoint WOLTS_DIR for every test after it.
+    RUNTIME_KEYS = (
+        "WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
+        "WOLTSPACE_HOST", "WOLTSPACE_INSTANCE_ID", "WOLTSPACE_PUBLIC_TUNNEL",
+        "WOLTSPACE_ENTRYPOINT", "PORT",
+    )
+
+    @pytest.fixture(autouse=True)
+    def container_ambient_env(self, monkeypatch):
+        snapshot = {key: os.environ.get(key) for key in self.RUNTIME_KEYS}
+        for key, value in self.CONTAINER_ENV.items():
+            monkeypatch.setenv(key, value)
+        monkeypatch.delenv("WOLTSPACE_ENTRYPOINT", raising=False)
+        monkeypatch.delenv("WOLTSPACE_ALLOW_SHARED_DATA_ROOT", raising=False)
+        try:
+            yield
+        finally:
+            for key, value in snapshot.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_prepare_refuses_and_names_the_conflict(self, occupied_root):
+        from woltspace.doctor import DataRootConflict
+
+        with pytest.raises(DataRootConflict) as caught:
+            Supervisor(occupied_root).prepare()
+        message = str(caught.value)
+        assert "already using it" in message or "claimed by" in message
+        assert "fresh data root" in message
+
+    def test_it_writes_nothing_into_the_data_root_it_was_refused(self, occupied_root):
+        from woltspace.doctor import DataRootConflict
+
+        before = sorted(p.name for p in occupied_root.platform_state.iterdir())
+        with pytest.raises(DataRootConflict):
+            Supervisor(occupied_root).prepare()
+        after = sorted(p.name for p in occupied_root.platform_state.iterdir())
+        assert after == before
+        assert not (occupied_root.platform_state / "control-plane.json").exists()
+        assert not (occupied_root.platform_state / "adoption.json").exists()
+        assert not (occupied_root.platform_state / "connectors.json").exists()
+
+    def test_the_incumbent_tunnel_state_survives(self, occupied_root):
+        from woltspace.doctor import DataRootConflict
+
+        state = (occupied_root.platform_state / "tunnel.json").read_text()
+        with pytest.raises(DataRootConflict):
+            Supervisor(occupied_root).prepare()
+        assert (occupied_root.platform_state / "tunnel.json").read_text() == state
+
+    def test_an_owner_record_alone_is_enough_to_refuse(self, tmp_path):
+        from woltspace.doctor import DataRootConflict
+        from woltspace.instance import InstanceOwner, write_owner
+
+        layout = _layout(tmp_path, isolation="external")
+        layout.wolts_dir.mkdir(parents=True)
+        write_owner(layout, InstanceOwner(
+            instance_id="incumbent", pid=os.getpid(), started_at=0,
+            endpoint="http://127.0.0.1:7777", isolation="external",
+            hostname=__import__("socket").gethostname(),
+        ))
+        with pytest.raises(DataRootConflict):
+            Supervisor(layout).prepare()
+
+    def test_an_empty_data_root_is_still_fine(self, tmp_path):
+        layout = _layout(tmp_path, isolation="external")
+        layout.wolts_dir.mkdir(parents=True)
+        Supervisor(layout).prepare()  # no conflict, no exception
+        assert layout.platform_state.is_dir()
+
+    def test_an_explicit_override_still_lets_you_through(self, occupied_root, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_ALLOW_SHARED_DATA_ROOT", "1")
+        Supervisor(occupied_root).prepare()
+
+    def test_a_guest_never_publishes_even_with_the_tunnel_enabled(self, tmp_path):
+        layout = _layout(tmp_path, isolation="external")
+        layout.wolts_dir.mkdir(parents=True)
+        Supervisor(layout).prepare()
+        assert os.environ["WOLTSPACE_PUBLIC_TUNNEL"] == "false"
+
+    def test_no_connector_is_planned_from_inherited_environment(self, tmp_path):
+        from woltspace.channels import plan_connectors
+
+        layout = _layout(tmp_path, isolation="external")
+        plans = plan_connectors(layout)
+        assert [plan.enabled for plan in plans] == [False]
+        assert "ambient environment" in plans[0].detail
+        assert plans[0].command == ()
+
+    def test_the_supervisor_plans_no_child_for_a_guest(self, tmp_path):
+        layout = _layout(tmp_path, isolation="external")
+        layout.wolts_dir.mkdir(parents=True)
+        supervisor = Supervisor(layout)
+        supervisor.prepare()
+        channels = supervisor.channel_supervisor()
+        assert all(not state.plan.enabled for state in channels.states.values())
+        # And the resolved secret is not silently exported for something else.
+        assert channels.states["telegram"].plan.env == {}
+
+
+class TestTokenPreflight:
+    """Never spawn a poller onto a token someone else already holds."""
+
+    @pytest.fixture(autouse=True)
+    def restore_runtime_env(self):
+        keys = TestAStrayServeCannotTakeOverALiveDataRoot.RUNTIME_KEYS
+        snapshot = {key: os.environ.get(key) for key in keys}
+        try:
+            yield
+        finally:
+            for key, value in snapshot.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_a_busy_token_is_refused_before_any_child_is_spawned(self, tmp_path, monkeypatch):
+        from woltspace.channels import TOKEN_BUSY_DETAIL
+
+        monkeypatch.setenv("WOLTSPACE_ENTRYPOINT", "1")
+        monkeypatch.setenv("ENABLE_TELEGRAM_BOT", "true")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "111:busy")
+        layout = _layout(tmp_path)
+        supervisor = Supervisor(layout, probe_token=lambda token: True)
+        channels = supervisor.channel_supervisor()
+        state = channels.states["telegram"]
+        assert state.plan.enabled is False
+        assert state.plan.detail == TOKEN_BUSY_DETAIL
+        assert "own bot token" in state.plan.remedy
+
+    def test_a_free_token_is_allowed(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_ENTRYPOINT", "1")
+        monkeypatch.setenv("ENABLE_TELEGRAM_BOT", "true")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "111:free")
+        layout = _layout(tmp_path)
+        supervisor = Supervisor(layout, probe_token=lambda token: False)
+        assert supervisor.channel_supervisor().states["telegram"].plan.enabled is True
+
+    def test_a_409_means_busy_and_anything_else_means_proceed(self):
+        import urllib.error
+
+        from woltspace.channels import telegram_token_is_busy
+
+        def conflict(url, timeout=0):
+            raise urllib.error.HTTPError(url, 409, "Conflict", {}, None)
+
+        def unreachable(url, timeout=0):
+            raise OSError("network is down")
+
+        assert telegram_token_is_busy("t", opener=conflict) is True
+        # Not knowing must never block a legitimate start.
+        assert telegram_token_is_busy("t", opener=unreachable) is False
+        assert telegram_token_is_busy("") is False
+
+
+class TestOrphanedConnectorsAreReaped:
+    """A kill -9 leaves the connector holding the token; nothing tracked it."""
+
+    def test_start_kills_a_previous_run_that_still_holds_the_token(self, tmp_path):
+        layout = _layout(tmp_path)
+        first = ChannelSupervisor(layout, [_plan()])
+        first.start(watch=False)
+        orphan = read_connector_report(layout)["connectors"][0]["pid"]
+        # Simulate the control plane dying without ever calling stop().
+        first._children.clear()
+        first._thread = None
+        assert _alive(orphan)
+
+        second = ChannelSupervisor(layout, [_plan()])
+        try:
+            reaped = second.reap_orphans()
+            assert orphan in reaped
+            for _ in range(40):
+                if not _alive(orphan):
+                    break
+                time.sleep(0.05)
+            assert not _alive(orphan)
+        finally:
+            second.stop()
+
+    def test_it_never_kills_a_pid_that_is_not_the_connector(self, tmp_path):
+        layout = _layout(tmp_path)
+        supervisor = ChannelSupervisor(layout, [_plan()])
+        layout.platform_state.mkdir(parents=True, exist_ok=True)
+        # A stale record whose pid was recycled by something unrelated.
+        (layout.platform_state / "connectors.json").write_text(json.dumps({
+            "connectors": [{
+                "name": "telegram", "pid": os.getpid(),
+                "command": [sys.executable, "-m", "bot.telegram_adapter"],
+            }],
+        }))
+        assert supervisor.reap_orphans() == []
+
+    def test_a_dead_record_is_ignored(self, tmp_path):
+        layout = _layout(tmp_path)
+        supervisor = ChannelSupervisor(layout, [_plan()])
+        layout.platform_state.mkdir(parents=True, exist_ok=True)
+        (layout.platform_state / "connectors.json").write_text(json.dumps({
+            "connectors": [{"name": "telegram", "pid": 999999, "command": ["x"]}],
+        }))
+        assert supervisor.reap_orphans() == []

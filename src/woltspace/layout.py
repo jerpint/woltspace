@@ -66,6 +66,20 @@ class RuntimeLayout:
             isolation=resolved_isolation,
         )
 
+    @property
+    def is_entrypoint(self) -> bool:
+        """True only when this process was launched as the platform entrypoint.
+
+        `container/start.sh` sets WOLTSPACE_ENTRYPOINT; `woltspace start` sets it
+        for the control plane it launches. Anything else — a `serve` typed in a
+        worktree, a smoke test, an agent poking around — is a *guest*, and a
+        guest must not take over the data root, the tunnel, or the bot token
+        just because the ambient environment happens to name them.
+        """
+        return os.environ.get("WOLTSPACE_ENTRYPOINT", "").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
+
     def apply_environment(self) -> None:
         """Freeze paths before modules with import-time configuration load."""
         for path in (self.install_root, self.runtime_lib):
