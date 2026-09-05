@@ -212,6 +212,37 @@ guarantee. The lock is the mechanism; on a shared mount, you are.
 
 ---
 
+## Running an existing colony natively — what does not work yet
+
+Field notes from pointing the native control plane at a data root the
+container had been running for months (`~/.woltspace/wolts`, 34 wolts). The
+lodge, the registry, sessions, sites and the TUI all work. These do not, and
+each is a piece of the container entrypoint that native has no equivalent for
+yet. Fixing them is the refactor; until then, the workaround column is how to
+live with it.
+
+| What | Why | Workaround for now | Intended fix |
+|---|---|---|---|
+| `push-view`, `notify`, `session-reg`, `wclaude` are "command not found" inside a wolt's session | Sessions inherit the control plane's PATH and nothing adds `container/bin` to it. The container has it on PATH image-wide. | `export PATH=<checkout>/container/bin:$PATH` before `woltspace start` | The session runtime prepends `<install_root>/container/bin` to the session PATH. |
+| The Telegram bot starts, then cannot call its model | The control plane reads `channels.telegram` from `config.json` and passes only the token and allowlist to the child. It never reads the data root's `.env`, where `OPENROUTER_API_KEY` / `OPENAI_API_KEY` / `LLM_MODEL` live. The container passes the whole `.env` through `--env-file`. | `set -a; . $WOLTS_DIR/.env; set +a` before `woltspace start` | Either a `channels.telegram.env` / top-level `env` block in `config.json`, or the connector plan reading `$WOLTS_DIR/.env` explicitly. |
+| Slack is silent | There is no Slack connector; only Telegram is behind the seam. | Nothing — Slack stays on the container. | A `SlackConnector` beside `TelegramConnector`. |
+| No public URL | Native defaults the tunnel off (deliberately). `.env`'s named-tunnel token is ignored unless `WOLTSPACE_PUBLIC_TUNNEL=true`. | `WOLTSPACE_PUBLIC_TUNNEL=true woltspace start` — only with the container stopped, or two connectors load-balance the same hostname. | Document; possibly a `tunnel` block in `config.json`. |
+| Wolf crons, the digest, the vulture reaper do not run | `container/entrypoint.sh` starts the creatures; the native supervisor only supervises connectors. | None natively. | Creatures become supervised children like connectors. |
+| `woltspace-*` skills are stale or missing | The container entrypoint syncs platform skills into every wolt's `.claude/skills/` on boot. Native never syncs. Existing wolts keep their last container copy; a wolt created natively gets no `.claude/` at all. | Keep booting the container now and then, or copy `container/skills/woltspace-*` by hand. | Skill sync at native start (and in `create_wolt`). |
+| Every new session shows Claude Code's workspace trust prompt | Native runs bare `claude`; the container pre-trusts via `wclaude`/`trust-dir`. | Accept it. Prompt mode is the point of native. | Probably nothing; document it. |
+| `status` says `N orphaned` on first start | The registry still marks sessions the container was running. Their tmux sessions never existed on the host, so adoption orphans them. | Nothing; it is correct. | — |
+| Wolt `CLAUDE.md` / memory files mention `/workspace/wolts/...` | Written from inside the container. Registry records are normalized on adoption; prose is not. | Cosmetic. | — |
+| Old wolts' skills refer to `/workspace/woltspace` | Same. | Cosmetic until a skill shells out to that path. | Skills should use `$WOLTSPACE_DIR`. |
+
+Pivoting between the two is safe as long as only one runs at a time (same
+data root, same port, and the instance lock cannot see across the Docker
+mount): `woltspace stop` natively **before** `woltspace start` for the
+container, and stop the container before the native `start`. The native
+`stop` clears its owner record and takes its connectors down with it; a
+container that finds a live-looking native owner record refuses to serve.
+
+---
+
 ## Release checklist
 
 Publishing is a single coordinated moment, and it happens only on an explicit

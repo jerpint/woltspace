@@ -299,6 +299,16 @@ re-adopts them from the registry — `woltspace status` will show them under
 
 ---
 
+## Pointing native at your real colony
+
+Once the fresh-root run works, the same commands against `WOLTS_DIR=~/.woltspace/wolts`
+(container stopped!) bring up your existing wolts. Several things the container
+does at boot have no native equivalent yet — platform tools on PATH, `.env`
+secrets for the bot, skill sync, the creatures. The full list with workarounds
+is in [native-and-container.md](native-and-container.md#running-an-existing-colony-natively--what-does-not-work-yet).
+
+---
+
 ## Troubleshooting
 
 Start with `woltspace doctor` and `woltspace status`; between them they cover
