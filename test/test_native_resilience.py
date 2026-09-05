@@ -351,6 +351,31 @@ class TestTelegramTokenClash:
         assert record["state"] == "running"
         assert record["error"] is None
 
+    def test_a_clash_from_a_previous_life_does_not_degrade_a_fresh_connector(self, tmp_path):
+        """The log is appended across restarts and across the container/native
+        boundary. Pointing native at the container's data root, the very first
+        tick read weeks-old 409s and reported a healthy bot as degraded."""
+        layout = _layout(tmp_path)
+        layout.logs_dir.mkdir(parents=True, exist_ok=True)
+        stale = layout.logs_dir / "connector-telegram.log"
+        stale.write_text(
+            "telegram.error.Conflict: Conflict: terminated by other getUpdates request\n" * 50
+        )
+        supervisor = ChannelSupervisor(layout, [_plan()])
+        supervisor.start(watch=False)
+        try:
+            supervisor.poll_once()
+            record = read_connector_report(layout)["connectors"][0]
+            assert record["state"] == "running"
+            assert record["error"] is None
+            # ...but a clash logged by *this* life is still caught.
+            with stale.open("a") as handle:
+                handle.write('{"ok":false,"error_code":409,"description":"Conflict"}\n')
+            supervisor.poll_once()
+            assert read_connector_report(layout)["connectors"][0]["state"] == "degraded"
+        finally:
+            supervisor.stop()
+
     def test_a_connector_that_died_of_a_clash_is_not_restarted(self, tmp_path):
         layout = _layout(tmp_path)
         crasher = (sys.executable, "-c", "import sys; sys.exit(1)")

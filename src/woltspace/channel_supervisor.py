@@ -279,6 +279,12 @@ class ChannelSupervisor:
             # The adapter may log a request URL, and a request URL carries the
             # token. Keep it as private as the report beside it.
             os.chmod(log_path, 0o600)
+            # Scan only what *this* life writes. The log is appended across
+            # restarts and across the container/native boundary, so a 409 from
+            # a previous instance — the container's, weeks ago — would
+            # otherwise degrade a perfectly healthy fresh connector on its
+            # first tick.
+            state.log_offset = handle.tell()
         except OSError as exc:
             state.state = "failed"
             state.error = f"cannot open {log_path}: {exc}"
