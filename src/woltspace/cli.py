@@ -113,7 +113,34 @@ def _status(args) -> int:
                 f"{len(adoption.get('orphaned', []))} orphaned · "
                 f"{len(adoption.get('unchanged', []))} unchanged"
             )
+        for line in format_connector_lines(result):
+            print(line)
     return 0 if result["state"] in {"healthy", "stopped"} else 1
+
+
+def format_connector_lines(result: dict) -> list[str]:
+    """One line per channel connector, with the remedy when it is not running."""
+    connectors = (result.get("health") or {}).get("connectors")
+    if connectors is None:
+        connectors = result.get("connectors") or []
+    lines = []
+    for connector in connectors:
+        state = connector.get("state", "unknown")
+        detail = connector.get("detail") or ""
+        suffix = f" · {detail}" if detail else ""
+        pid = connector.get("pid")
+        if pid:
+            suffix += f" · pid {pid}"
+        restarts = connector.get("restarts") or 0
+        if restarts:
+            suffix += f" · {restarts} restart(s)"
+        lines.append(f"connector {connector.get('name', '?')}: {state}{suffix}")
+        error = connector.get("error")
+        if error:
+            lines.append(f"  error: {error}")
+        if state in {"disabled", "failed"} and connector.get("remedy"):
+            lines.append(f"  fix: {connector['remedy']}")
+    return lines
 
 
 def _start(args) -> int:

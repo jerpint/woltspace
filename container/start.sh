@@ -88,16 +88,10 @@ else
   echo "tunnel disabled — access via http://localhost:7777"
 fi
 
-# Telegram bot
-if [ "${ENABLE_TELEGRAM_BOT:-}" = "true" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
-  echo "starting telegram bot ($TELEGRAM_BOT_DIR, dev=$DEV_MODE)..."
-  if [ "$DEV_MODE" = "true" ]; then
-    (cd "$TELEGRAM_BOT_DIR" && uv run --project bot watchfiles --filter python "python -m $TELEGRAM_BOT_MODULE" bot/) &
-  else
-    (cd "$TELEGRAM_BOT_DIR" && uv run --project bot python -m "$TELEGRAM_BOT_MODULE") &
-  fi
-  disown
-fi
+# Telegram bot — started by the control-plane supervisor as a ChannelConnector,
+# not here. ENABLE_TELEGRAM_BOT/TELEGRAM_BOT_TOKEN are already in this process's
+# environment, so `woltspace serve` above resolves and supervises it.
+# Inspect it with: woltspace status  (or GET /health → connectors)
 
 # Slack bot
 if [ "${ENABLE_SLACK_BOT:-}" = "true" ] && [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -n "${SLACK_APP_TOKEN:-}" ]; then

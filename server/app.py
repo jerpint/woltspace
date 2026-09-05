@@ -174,15 +174,18 @@ app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
 @app.get("/health")
 async def health():
     from woltspace.adoption import read_adoption_report
+    from woltspace.channel_supervisor import read_connector_report
     from woltspace.layout import RuntimeLayout
 
+    layout = RuntimeLayout.from_env()
     return {
         "ok": True,
         "instance_id": os.environ.get("WOLTSPACE_INSTANCE_ID", ""),
         "pid": os.getpid(),
         "wolts_dir": str(WOLTS_DIR),
         "isolation": os.environ.get("WOLTSPACE_ISOLATION", "external"),
-        "adoption": read_adoption_report(RuntimeLayout.from_env()),
+        "adoption": read_adoption_report(layout),
+        "connectors": read_connector_report(layout).get("connectors", []),
     }
 
 # --- Templates & Static ---
