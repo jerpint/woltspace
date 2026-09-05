@@ -92,17 +92,43 @@ def process_command(pid: int, *, ps_bin: str | None = None, runner=subprocess.ru
     return stdout.strip()
 
 
+def process_executable(pid: int, *, ps_bin: str | None = None, runner=subprocess.run) -> str:
+    """The basename of what `pid` is executing, via `ps -o comm=`.
+
+    `comm` is the executable, not the argument vector — which is the whole
+    point. macOS reports a full path here and Linux a bare name, so take the
+    basename of either.
+    """
+    if pid is None or pid <= 0:
+        return ""
+    binary = ps_bin or os.environ.get("WOLTSPACE_PS_BIN", "ps")
+    try:
+        result = runner(
+            [binary, "-o", "comm=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return ""
+    stdout = result.stdout if isinstance(result.stdout, str) else ""
+    return os.path.basename(stdout.strip())
+
+
 def is_cloudflared(pid: int, *, ps_bin: str | None = None, runner=subprocess.run) -> bool:
-    """Whether `pid` is alive *and* still running cloudflared.
+    """Whether `pid` is alive *and* the program it runs is cloudflared.
 
     A pid recorded in state is not evidence that the thing it named is still
-    there. Pids are recycled — hard and fast across a container reboot — so a
-    stale record can point at anything.
+    there — pids are recycled hard and fast across a reboot. Nor is the word
+    "cloudflared" appearing somewhere in a command line: `tail -f
+    something-cloudflared.log` contains it, and this helper's own log files are
+    named `*-cloudflared.log`, so that collision is ordinary rather than
+    contrived. Identity is the executable, matched whole.
     """
     if not _is_pid_alive(pid):
         return False
-    command = process_command(pid, ps_bin=ps_bin, runner=runner)
-    return bool(command) and CLOUDFLARED_NEEDLE in command
+    return process_executable(pid, ps_bin=ps_bin, runner=runner) == CLOUDFLARED_NEEDLE
 
 
 def stop_cloudflared(pid: int, *, ps_bin: str | None = None, runner=subprocess.run) -> bool:

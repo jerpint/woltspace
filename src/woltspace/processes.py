@@ -50,13 +50,50 @@ def process_command(pid: int, *, ps_bin: str | None = None, runner=subprocess.ru
     return stdout.strip()
 
 
-def pid_runs(pid: int, needle: str, *, ps_bin: str | None = None, runner=subprocess.run) -> bool:
-    """True only when `pid` is alive *and* still running what we expect.
+def process_executable(pid: int, *, ps_bin: str | None = None, runner=subprocess.run) -> str:
+    """The basename of the program `pid` is executing, via `ps -o comm=`.
 
-    Pids are recycled — hard, and fast, across a container reboot. A record
-    naming a pid is not evidence that the thing it named is still there.
+    `comm` is the executable rather than the argument vector, which is what
+    makes it an identity. macOS reports a full path and Linux a bare name, so
+    take the basename of either.
+    """
+    if pid <= 0:
+        return ""
+    try:
+        result = runner(
+            [ps_bin or default_ps_bin(), "-o", "comm=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return ""
+    stdout = result.stdout if isinstance(result.stdout, str) else ""
+    return os.path.basename(stdout.strip())
+
+
+def pid_runs_program(
+    pid: int, program: str, *, ps_bin: str | None = None, runner=subprocess.run
+) -> bool:
+    """True only when `pid` is alive and the program it runs *is* `program`.
+
+    Not "mentions": `tail -f something-cloudflared.log` mentions cloudflared,
+    and our own tunnel logs are named that way.
+    """
+    if not pid_alive(pid):
+        return False
+    return process_executable(pid, ps_bin=ps_bin, runner=runner) == program
+
+
+def pid_argv_has_token(
+    pid: int, token: str, *, ps_bin: str | None = None, runner=subprocess.run
+) -> bool:
+    """True when `pid` is alive and `token` appears as a whole argv token.
+
+    Whole token, not substring — `woltspace.log` is not `woltspace`.
     """
     if not pid_alive(pid):
         return False
     command = process_command(pid, ps_bin=ps_bin, runner=runner)
-    return bool(command) and needle in command
+    return bool(command) and token in command.split()

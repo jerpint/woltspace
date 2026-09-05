@@ -49,6 +49,9 @@ def _layout(tmp_path, isolation="host", port=18811):
 # A string that appears in the stand-in child's argv and nowhere else, so the
 # reaper's marker matching is exercised the way the real adapter module is.
 PROBE_MARKER = "woltspace-test-connector"
+# An adjacent token pair in the stand-in child's argv, standing in for the real
+# `-m <module>` pair. A pair is the point: no filename can forge one.
+PROBE_SIGNATURE = ("#", PROBE_MARKER)
 
 
 def _sleeper(seconds: int = 60):
@@ -59,10 +62,10 @@ def _sleeper(seconds: int = 60):
     )
 
 
-def _plan(command=None, marker=PROBE_MARKER):
+def _plan(command=None, signature=PROBE_SIGNATURE):
     return ConnectorPlan(
         "telegram", True, "resilience child", command or _sleeper(), str(ROOT), {},
-        process_marker=marker,
+        process_signature=signature,
     )
 
 
@@ -375,11 +378,18 @@ class TestTelegramTokenClash:
 
 
 def fake_ps(mapping: dict):
-    """An injectable `ps` that reports whatever command each pid should have."""
+    """An injectable `ps` answering both `-o command=` and `-o comm=`.
+
+    `comm` is derived from the first token, the way a real ps would: the
+    executable, not the argument vector.
+    """
 
     def runner(argv, **kwargs):
         pid = int(argv[-1])
-        return subprocess.CompletedProcess(argv, 0, mapping.get(pid, ""), "")
+        command = mapping.get(pid, "")
+        if "comm=" in argv:
+            command = command.split()[0] if command else ""
+        return subprocess.CompletedProcess(argv, 0, command, "")
 
     return runner
 
@@ -960,22 +970,35 @@ class TestPidValidationIsPortable:
         source = (ROOT / "src" / "woltspace" / "processes.py").read_text()
         assert '"-ww"' in source
 
-    def test_a_matching_command_is_recognised(self):
-        from woltspace.processes import pid_runs
+    def test_the_executable_is_matched_whole(self):
+        from woltspace.processes import pid_runs_program
 
-        runner = fake_ps({os.getpid(): "uv run --project bot python -m bot.telegram_adapter"})
-        assert pid_runs(os.getpid(), "bot.telegram_adapter", runner=runner) is True
+        runner = fake_ps({os.getpid(): "/usr/local/bin/cloudflared tunnel --url http://x"})
+        assert pid_runs_program(os.getpid(), "cloudflared", runner=runner) is True
 
-    def test_a_recycled_pid_is_not(self):
-        from woltspace.processes import pid_runs
+    def test_a_process_merely_mentioning_it_is_not_it(self):
+        from woltspace.processes import pid_runs_program
 
-        runner = fake_ps({os.getpid(): "/usr/sbin/cron -f"})
-        assert pid_runs(os.getpid(), "bot.telegram_adapter", runner=runner) is False
+        runner = fake_ps({os.getpid(): "tail -f /tmp/abc-cloudflared.log"})
+        assert pid_runs_program(os.getpid(), "cloudflared", runner=runner) is False
 
-    def test_a_dead_pid_is_not(self):
-        from woltspace.processes import pid_runs
+    def test_an_argv_token_must_be_whole(self):
+        from woltspace.processes import pid_argv_has_token
 
-        assert pid_runs(999999, "anything", runner=fake_ps({})) is False
+        assert pid_argv_has_token(
+            os.getpid(), "woltspace",
+            runner=fake_ps({os.getpid(): "python -m woltspace serve --port 7777"}),
+        ) is True
+        assert pid_argv_has_token(
+            os.getpid(), "woltspace",
+            runner=fake_ps({os.getpid(): "tail -f /var/log/woltspace.log"}),
+        ) is False
+
+    def test_a_dead_pid_is_never_anything(self):
+        from woltspace.processes import pid_argv_has_token, pid_runs_program
+
+        assert pid_runs_program(999999, "cloudflared", runner=fake_ps({})) is False
+        assert pid_argv_has_token(999999, "woltspace", runner=fake_ps({})) is False
 
     def test_an_unusable_ps_reports_nothing_rather_than_crashing(self):
         from woltspace.processes import process_command
@@ -995,6 +1018,7 @@ class TestPidValidationIsPortable:
             "connectors": [{
                 "name": "telegram", "pid": 999999,
                 "command": [sys.executable, "-m", "bot.telegram_adapter"],
+                "process_signature": ["-m", "bot.telegram_adapter"],
             }],
         }))
         # Dead pid: nothing to reap, and no /proc lookup involved.
@@ -1075,6 +1099,34 @@ class TestAStaleTunnelPidIsNeverSignalled:
 
         return tunnel_lib
 
+    def test_a_log_file_named_after_cloudflared_is_not_cloudflared(self, tmp_path):
+        """codexw's round-2 repro — and our own logs are named `*-cloudflared.log`."""
+        tunnel_lib = self._tunnel_lib()
+        log = tmp_path / "abc-cloudflared.log"
+        log.write_text("")
+        child = subprocess.Popen(
+            ["tail", "-f", str(log)], start_new_session=True,
+        )
+        time.sleep(0.3)
+        try:
+            assert tunnel_lib.is_cloudflared(child.pid) is False
+            assert tunnel_lib.stop_cloudflared(child.pid) is False
+            time.sleep(0.3)
+            assert child.poll() is None, "an unrelated tail was signalled"
+        finally:
+            child.kill()
+            child.wait()
+
+    def test_identity_comes_from_the_executable_not_the_argv(self):
+        tunnel_lib = self._tunnel_lib()
+        me = os.getpid()  # a pid that is genuinely alive
+        assert tunnel_lib.is_cloudflared(
+            me, runner=fake_ps({me: "/usr/local/bin/cloudflared tunnel run"})
+        ) is True
+        assert tunnel_lib.is_cloudflared(
+            me, runner=fake_ps({me: "tail -f cloudflared.log"})
+        ) is False
+
     def test_stop_cloudflared_refuses_a_pid_that_is_not_cloudflared(self, innocent_process):
         tunnel_lib = self._tunnel_lib()
         assert tunnel_lib.stop_cloudflared(innocent_process.pid) is False
@@ -1128,6 +1180,13 @@ class TestAStaleTunnelPidIsNeverSignalled:
             "stale state by definition"
         )
 
+    def test_identity_is_an_equality_not_a_membership(self):
+        """Guard the guard: substring matching is what failed twice."""
+        source = (ROOT / "container" / "lib" / "tunnel.py").read_text()
+        body = source.split("def is_cloudflared(")[1].split("\ndef ")[0]
+        assert "CLOUDFLARED_NEEDLE in " not in body
+        assert "== CLOUDFLARED_NEEDLE" in body
+
 
 class TestTheReaperMarkerIsSpecific:
     """Gate B: "bot/" matched anything, and killpg is not a forgiving verb."""
@@ -1149,10 +1208,10 @@ class TestTheReaperMarkerIsSpecific:
         plan = self._dev_command(tmp_path)
         assert plan.command[-1] == "bot/"
 
-    def test_but_the_marker_is_the_adapter_module(self, tmp_path):
+    def test_but_the_signature_is_a_token_pair(self, tmp_path):
         plan = self._dev_command(tmp_path)
-        assert plan.process_marker == "bot.telegram_adapter"
-        assert plan.to_record()["process_marker"] == "bot.telegram_adapter"
+        assert plan.process_signature == ("-m", "bot.telegram_adapter")
+        assert plan.to_record()["process_signature"] == ["-m", "bot.telegram_adapter"]
 
     def test_the_real_dev_process_matches(self, tmp_path):
         from woltspace.channel_supervisor import _matches_connector
@@ -1171,10 +1230,38 @@ class TestTheReaperMarkerIsSpecific:
             "rsync -a /srv/bot/ /backup/bot/",
             "python -m http.server --directory bot/",
             "tail -f bot/output.log",
+            # codexw's round-2 repro: a file *named* after the marker.
+            "tail -f /tmp/logs/bot.telegram_adapter.log",
+            "less /var/log/bot.telegram_adapter",
+            "grep -r bot.telegram_adapter /srv",
         ):
             assert _matches_connector(
                 4242, plan.to_record(), runner=fake_ps({4242: impostor})
             ) is False, impostor
+
+    def test_a_record_with_the_old_string_marker_kills_nothing(self, tmp_path):
+        """Round-1 records carry `process_marker`, which no longer matches."""
+        from woltspace.channel_supervisor import _matches_connector
+
+        legacy = {
+            "name": "telegram", "pid": 4242,
+            "command": [sys.executable, "-m", "watchfiles", "bot/"],
+            "process_marker": "bot.telegram_adapter",
+        }
+        assert _matches_connector(
+            4242, legacy,
+            runner=fake_ps({4242: "python -m bot.telegram_adapter"}),
+        ) is False
+
+    def test_the_signature_must_be_adjacent(self, tmp_path):
+        """Both tokens present but apart is not the pair."""
+        from woltspace.channel_supervisor import _matches_connector
+
+        plan = self._dev_command(tmp_path)
+        assert _matches_connector(
+            4242, plan.to_record(),
+            runner=fake_ps({4242: "python -m other.module --note bot.telegram_adapter"}),
+        ) is False
 
     def test_a_record_without_a_marker_kills_nothing(self, tmp_path):
         """Fail closed: no marker, no match, no signal."""

@@ -82,10 +82,11 @@ class ConnectorPlan:
     cwd: str = ""
     env: Mapping[str, str] = field(default_factory=dict)
     remedy: str = ""
-    # A string specific enough to recognise this connector's process later.
-    # The last element of `command` is not it: the dev-reload form ends in
-    # "bot/", which matches any recycled pid whose argv happens to contain it.
-    process_marker: str = ""
+    # An adjacent run of argv tokens that identifies this connector's process.
+    # Neither `command[-1]` nor a bare substring will do: the dev-reload form
+    # ends in "bot/", and the module name appears inside any file *named* after
+    # it (`tail -f bot.telegram_adapter.log`). A token pair cannot.
+    process_signature: tuple[str, ...] = ()
 
     def to_record(self) -> dict:
         """Public description. Never includes `env` — that carries the token."""
@@ -96,7 +97,7 @@ class ConnectorPlan:
             "command": list(self.command),
             "cwd": self.cwd or None,
             "remedy": self.remedy or None,
-            "process_marker": self.process_marker or None,
+            "process_signature": list(self.process_signature) or None,
         }
 
 
@@ -235,9 +236,9 @@ class TelegramConnector:
             cwd=bot_dir,
             env=child_env,
             remedy=remedy,
-            # The adapter module is in the argv of both the plain and the
-            # dev-reload form, and is specific to this connector.
-            process_marker=module,
+            # `-m <module>` is present as an adjacent pair in both the plain
+            # and the dev-reload argv, and no filename can produce it.
+            process_signature=("-m", module),
         )
 
 

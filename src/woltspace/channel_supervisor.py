@@ -69,20 +69,34 @@ def find_token_clash(text: str) -> bool:
     return any(marker in lowered for marker in TOKEN_CLASH_MARKERS)
 
 
+def _contains_tokens(argv: list[str], signature: list[str]) -> bool:
+    """Whether `signature` appears as an adjacent run of tokens in `argv`."""
+    if not signature or len(signature) > len(argv):
+        return False
+    span = len(signature)
+    return any(
+        argv[index:index + span] == signature
+        for index in range(len(argv) - span + 1)
+    )
+
+
 def _matches_connector(pid: int, record: dict, *, ps_bin="ps", runner=subprocess.run) -> bool:
     """Only reap a pid still running the exact connector we recorded.
 
-    Fails closed. `command[-1]` used to serve as the marker, which is wrong for
-    the dev-reload form — that command ends in "bot/", so any recycled pid
-    whose unrelated argv merely contained "bot/" was accepted as ours and
-    killpg'd. The marker is now the adapter module, recorded at plan time; with
-    no marker there is no match and nothing is signalled.
+    Structural, and fails closed. Two earlier versions of this were substring
+    tests and both were wrong: `command[-1]` is "bot/" in the dev-reload form,
+    and the module name occurs in any file *named* after it — `tail -f
+    bot.telegram_adapter.log` matched. The signature is an adjacent token pair,
+    `-m <module>`, which a path cannot forge. No signature, no match, no
+    signal: a record written before this field existed reaps nothing.
     """
-    marker = str(record.get("process_marker") or "").strip()
-    if not marker:
+    signature = [str(part) for part in (record.get("process_signature") or [])]
+    if not signature:
         return False
     running = process_command(pid, ps_bin=ps_bin, runner=runner)
-    return bool(running) and marker in running
+    if not running:
+        return False
+    return _contains_tokens(running.split(), signature)
 
 
 def timeout_for_stillborn() -> float:

@@ -667,14 +667,13 @@ class TestUnitShareApp:
             killed_pids.append(pid)
         monkeypatch.setattr(apps_mod, "_is_pid_alive", lambda pid: True)
         monkeypatch.setattr(os, "kill", lambda pid, sig: killed_pids.append(pid))
-        # stop_cloudflared now validates that the pid is still cloudflared
-        # before signalling, so a recycled number is never shot. Make these
-        # stand-in pids look like real tunnels.
+        # stop_cloudflared now validates the *executable* before signalling, so
+        # a recycled number is never shot. Make these stand-in pids genuinely
+        # look like cloudflared.
         import tunnel as tunnel_mod
         monkeypatch.setattr(tunnel_mod, "_is_pid_alive", lambda pid: True)
         monkeypatch.setattr(
-            tunnel_mod, "process_command",
-            lambda pid, **kwargs: f"cloudflared tunnel --url http://localhost:{pid}",
+            tunnel_mod, "process_executable", lambda pid, **kwargs: "cloudflared",
         )
         # Also mock _set_public to avoid filesystem writes
         monkeypatch.setattr(apps_mod, "_set_public", lambda name, public: None)

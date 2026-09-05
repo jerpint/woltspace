@@ -142,7 +142,7 @@ def _live_tunnel_owner(layout: RuntimeLayout, *, runner=None) -> int | None:
     stale tunnel.json naming a recycled pid would otherwise look live forever.
     Confirm the process is actually cloudflared before believing the file.
     """
-    from .processes import pid_runs
+    from .processes import pid_runs_program
 
     try:
         state = json.loads((layout.platform_state / "tunnel.json").read_text())
@@ -158,7 +158,9 @@ def _live_tunnel_owner(layout: RuntimeLayout, *, runner=None) -> int | None:
     if not isinstance(pid, int):
         return None
     kwargs = {"runner": runner} if runner is not None else {}
-    return pid if pid_runs(pid, TUNNEL_NEEDLE, **kwargs) else None
+    # Executable identity, not a word in the argv: `tail -f x-cloudflared.log`
+    # is not a tunnel, and our own logs are named exactly that way.
+    return pid if pid_runs_program(pid, TUNNEL_NEEDLE, **kwargs) else None
 
 
 def _running_session_count(layout: RuntimeLayout) -> int:
@@ -201,7 +203,7 @@ def _owner_is_live_and_foreign(layout: RuntimeLayout, *, runner=None) -> "Instan
     every rebuild on the container's own data root.
     """
     from .instance import read_health, read_owner
-    from .processes import pid_runs
+    from .processes import pid_argv_has_token
 
     owner = read_owner(layout)
     if owner is None:
@@ -216,7 +218,9 @@ def _owner_is_live_and_foreign(layout: RuntimeLayout, *, runner=None) -> "Instan
         return None  # something else holds that endpoint; the record is stale
 
     kwargs = {"runner": runner} if runner is not None else {}
-    if pid_runs(owner.pid, CONTROL_PLANE_NEEDLE, **kwargs):
+    # A whole argv token, so a path that merely mentions woltspace is not a
+    # control plane. Same defect class as the two matchers above.
+    if pid_argv_has_token(owner.pid, CONTROL_PLANE_NEEDLE, **kwargs):
         return owner
     return None
 
