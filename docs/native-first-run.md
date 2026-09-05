@@ -246,7 +246,7 @@ installed`, you skipped the extra — this is the exact output when that happens
 
 ```console
 connector telegram: disabled · enabled but python-telegram-bot is not installed
-  fix: Reinstall with the connectors extra: `uv tool install 'woltspace[connectors]'` (or `pip install 'woltspace[connectors]'`), then `woltspace start`.
+  fix: Reinstall with the connectors extra — from a checkout while the package is unpublished: `uv tool install '.[connectors]'` (after release: `uv tool install 'woltspace[connectors]'`), then `woltspace start`.
 ```
 
 **Leave the tunnel off.** Native defaults to no tunnel, and you should not

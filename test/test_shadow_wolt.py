@@ -406,6 +406,42 @@ class TestFirstRunDocIsHonest:
             assert name in subcommands
             assert f"woltspace {name}" in text, name
 
+    def test_the_quoted_connector_remedy_matches_the_one_the_code_emits(self):
+        """The doc quotes this string verbatim; drift is how it went stale."""
+        import sys
+
+        sys.path.insert(0, str(TEST_DIR.parent / "src"))
+        from woltspace.channels import TelegramConnector
+        from woltspace.layout import RuntimeLayout
+
+        layout = RuntimeLayout(
+            wolts_dir=TEST_DIR.parent / "nonexistent-data-root",
+            install_root=TEST_DIR.parent,
+        )
+        import woltspace.channels as channels
+
+        # Force the missing-extra branch: it is what a fresh native install
+        # hits, and the suite's own venv always has the dependency.
+        original = channels._module_available
+        channels._module_available = lambda name: name != "telegram"
+        try:
+            plan = TelegramConnector().plan(layout, {
+                "WOLTSPACE_ENTRYPOINT": "1",
+                "ENABLE_TELEGRAM_BOT": "true",
+                "TELEGRAM_BOT_TOKEN": "1:t",
+                "TELEGRAM_BOT_DIR": "/nowhere",
+            })
+        finally:
+            channels._module_available = original
+
+        assert "python-telegram-bot is not installed" in plan.detail
+        assert "'.[connectors]'" in plan.remedy, (
+            "pre-publish, the PyPI form is a dead end — name the checkout first"
+        )
+        assert plan.remedy in self.DOC.read_text(), (
+            "the doc quotes this remedy verbatim; they have drifted apart"
+        )
+
     def test_the_pre_publish_tarball_name_matches_the_pinned_version(self):
         from woltspace.compatibility import TUI_VERSION
 

@@ -204,9 +204,10 @@ class TelegramConnector:
                 False,
                 "enabled but python-telegram-bot is not installed",
                 remedy=(
-                    "Reinstall with the connectors extra: "
-                    "`uv tool install 'woltspace[connectors]'` (or "
-                    "`pip install 'woltspace[connectors]'`), then `woltspace start`."
+                    "Reinstall with the connectors extra — from a checkout while "
+                    "the package is unpublished: `uv tool install '.[connectors]'` "
+                    "(after release: `uv tool install 'woltspace[connectors]'`), "
+                    "then `woltspace start`."
                 ),
             )
 
