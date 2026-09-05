@@ -2,8 +2,13 @@
 // tmux until detach (C-b d), then the list re-renders with a fresh fetch.
 //
 // native host:    tmux attach -t <slug>
+//                 — unless we are already inside tmux on the SAME server, where
+//                   attach would nest a client inside a pane (two status bars,
+//                   fighting prefixes): then switch-client moves this client to
+//                   the session instead, and the detach key switches back.
 // container:      tmux attach -t <slug>  (TMUX cleared so nested attach works)
 // external host:  docker exec -it -u node <container> tmux attach -t <slug>
+//                 (different tmux server — nesting is the only option there)
 
 import { existsSync } from 'node:fs';
 import { spawnSync, execSync } from 'node:child_process';
@@ -63,11 +68,20 @@ function tmuxCmd(args, options = {}) {
     : ['docker', 'exec', '-u', 'node', options.container || containerName(), 'tmux', ...args];
 }
 
+// Moving this client to the session on the same server. `=` forces an exact
+// session-name match — bare -t prefix-matches, and a slug that prefixes
+// another session's name would switch to the wrong one.
+export const switchCommand = (slug) => ['tmux', 'switch-client', '-t', `=${slug}`];
+
 // Bind ONLY the current detach key - never unbind others. Users bind their own
 // root keys in tmux.conf.local (e.g. vim-tmux-navigator's C-h/j/k/l/C-\), and
 // a hardcoded "retired defaults" unbind list would silently eat them.
-function ensureDetachKey(options) {
-  const cmd = tmuxCmd(['bind-key', '-n', detachKey(), 'detach-client'], options);
+// The key's action matches how the session was entered: a nested-free
+// switch-client is left with `switch-client -l` (back to where the tui lives),
+// a real attach with `detach-client`. Rebound before every entry, so the
+// binding always matches the most recent gesture.
+function ensureDetachKey(options, action = ['detach-client']) {
+  const cmd = tmuxCmd(['bind-key', '-n', detachKey(), ...action], options);
   try {
     spawnSync(cmd[0], cmd.slice(1), { stdio: 'ignore' });
   } catch {
@@ -75,9 +89,29 @@ function ensureDetachKey(options) {
   }
 }
 
+// True when the caller is inside tmux and <slug> lives on that same server —
+// the case where attach would nest. has-session runs with $TMUX intact, so it
+// asks the server this client belongs to, the one switch-client would act on.
+function sameServerSession(slug) {
+  if (!process.env.TMUX) return false;
+  try {
+    const r = spawnSync('tmux', ['has-session', '-t', `=${slug}`], { stdio: 'ignore' });
+    return r.status === 0;
+  } catch {
+    return false;
+  }
+}
+
 export function attach(slug, options = {}) {
-  ensureDetachKey(options);
   const [cmd, ...args] = attachCommand(slug, options);
+  if (cmd === 'tmux' && sameServerSession(slug)) {
+    ensureDetachKey(options, ['switch-client', '-l']);
+    const [sw, ...swArgs] = switchCommand(slug);
+    const r = spawnSync(sw, swArgs, { stdio: 'inherit' });
+    if (r.error) throw new Error(`switch failed: ${r.error.message}`);
+    return r.status ?? 1;
+  }
+  ensureDetachKey(options);
   const env = { ...process.env };
   delete env.TMUX; // allow attach from inside another tmux
   const r = spawnSync(cmd, args, { stdio: 'inherit', env });

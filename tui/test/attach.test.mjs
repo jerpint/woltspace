@@ -1,7 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { attachCommand } from '../src/attach.js';
+import { attachCommand, switchCommand } from '../src/attach.js';
+
+test('same-server entry switches the client with an exact-match target', () => {
+  // `=` matters: bare -t prefix-matches, and a session slug that prefixes
+  // another session's name would switch to the wrong one.
+  assert.deepEqual(
+    switchCommand('maple-session'),
+    ['tmux', 'switch-client', '-t', '=maple-session'],
+  );
+});
 
 test('native host attach uses direct inherited-stdio tmux', () => {
   assert.deepEqual(
