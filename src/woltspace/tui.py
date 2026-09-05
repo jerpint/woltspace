@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping
@@ -109,7 +110,9 @@ def resolve_tui(
         mismatch = f" Local candidate: {probe['error']}." if probe else ""
         raise TuiResolutionError(
             f"No exact {tui_spec()} TUI is installed and npx is unavailable."
-            f"{mismatch} Install npm with npx, then rerun `woltspace tui`."
+            f"{mismatch} Install npm with npx, then rerun `woltspace tui` — or, "
+            f"while {TUI_PACKAGE} is unpublished, install from a checkout: "
+            f"{local_tarball_recipe()}"
         )
     return TuiResolution(
         "npx",
@@ -118,6 +121,44 @@ def resolve_tui(
     )
 
 
+def local_tarball_recipe() -> str:
+    """How to install both artifacts from a checkout, before either is published."""
+    return (
+        "uv tool install . && cd tui && npm pack && "
+        f"npm install -g ./{TUI_BINARY}-{TUI_VERSION}.tgz"
+    )
+
+
+def fallback_notices(resolution: TuiResolution) -> list[str]:
+    """One line each, for stderr, when the exact local binary was not used.
+
+    `@woltspace/tui` is not published yet, so the npx fallback cannot resolve
+    and npm's own error reads as a network failure. Say what happened and name
+    the from-checkout recipe before handing control to npx.
+    """
+    if resolution.source != "npx":
+        return []
+    notices = []
+    probe = resolution.local_probe
+    if probe and probe.get("path"):
+        notices.append(
+            f"woltspace: ignoring {probe['path']} — {probe.get('error', 'version mismatch')}; "
+            f"resolving {tui_spec()} through npx instead."
+        )
+    else:
+        notices.append(
+            f"woltspace: no local {TUI_BINARY} found; resolving {tui_spec()} through npx."
+        )
+    notices.append(
+        f"woltspace: if that fails because {tui_spec()} is not published yet, "
+        f"install both artifacts from a checkout: {local_tarball_recipe()}"
+    )
+    return notices
+
+
 def launch_tui(resolution: TuiResolution, args: list[str]) -> None:
+    for notice in fallback_notices(resolution):
+        print(notice, file=sys.stderr)
+    sys.stderr.flush()
     command = [*resolution.command, *args]
     os.execvpe(command[0], command, dict(os.environ))

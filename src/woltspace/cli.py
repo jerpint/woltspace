@@ -195,14 +195,19 @@ def _tui(args) -> int:
     if forwarded[:1] == ["--"]:
         forwarded = forwarded[1:]
     if args.dry_run:
+        from .tui import fallback_notices
+
         record = resolution.to_record()
         record["command"] = [*resolution.command, *forwarded]
+        record["notices"] = fallback_notices(resolution)
         if args.json:
             print(json.dumps(record, indent=2))
         else:
             print(f"source: {record['source']}")
             print(f"package: {record['package']}@{record['version']}")
             print(f"command: {' '.join(record['command'])}")
+            for notice in record["notices"]:
+                print(notice)
         return 0
     launch_tui(resolution, forwarded)
     return 0

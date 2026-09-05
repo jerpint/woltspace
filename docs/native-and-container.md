@@ -1,0 +1,192 @@
+# Native and container
+
+Woltspace is one product with one codebase. Native and container are not two
+implementations of it — they are two answers to a single question:
+
+> **Whose machine takes the risk when a wolt runs a command?**
+
+- **Native** — the control plane runs on your machine, in your shell, with the
+  harness you already logged into. A wolt working in one of your repos touches
+  your files, so it asks before it acts. Nothing copies your credentials
+  anywhere.
+- **Container** — Docker is *Auto wolts in a box*. The wolt can run without
+  asking because the blast radius is a disposable container and one mounted
+  directory.
+
+Everything else — the lodge, the registry, sessions, sites, the TUI, Telegram —
+is the same code either way. Choose by how much you want to be asked.
+
+| | Native | Container |
+|---|---|---|
+| Harness auth | your own, reused in place | seeded into the image |
+| Default permission | prompt | auto (opt-in per wolt) |
+| Session working dir | any repo on your machine | the mounted wolts directory |
+| Survives a platform update | yes — tmux outlives the control plane | container rebuild ends sessions |
+| Public URL | tunnel **off** by default | tunnel on by default |
+| Data root | `~/.woltspace/wolts` on the host | the same directory, bind-mounted |
+
+---
+
+## Native
+
+```bash
+uv tool install 'woltspace[connectors]'
+woltspace start          # runs doctor, takes the data-root lock, serves the lodge
+woltspace tui            # the terminal UI
+woltspace status         # who owns the data root, which sessions were adopted
+woltspace stop           # stops the control plane — never touches tmux
+```
+
+`woltspace start` runs `doctor` first; every failed check names one command that
+fixes it. `stop` deliberately leaves tmux alone: your sessions outlive the
+control plane, and the next `start` re-adopts them from the registry.
+
+The `connectors` extra brings the Telegram dependencies. Without it the
+Telegram connector reports itself disabled with that remedy instead of
+crash-looping.
+
+### Installing before the packages are published
+
+`@woltspace/tui` is not on the npm registry yet, so `woltspace tui` cannot fall
+back to `npx` — it will fail with what looks like a network error. Until the
+first release, install both artifacts from a checkout:
+
+```bash
+uv tool install .
+cd tui && npm pack && npm install -g ./woltspace-tui-0.2.2.tgz
+```
+
+The Python package embeds the exact TUI version it accepts, so a locally
+installed binary is used only when its name and version match exactly. When it
+does not match, `woltspace tui` says so on stderr and names this recipe before
+handing over to `npx`.
+
+---
+
+## Container
+
+```bash
+woltspace init      # first-time setup
+woltspace start     # start or resume the container
+```
+
+The container mounts exactly one directory — your wolts directory — and bakes
+everything else into the image. The mount is not optional: a container without
+it would come up with an empty data root and every wolt you own silently
+missing, so `doctor` and startup both fail with the `docker run -v` command
+that fixes it, rather than a traceback.
+
+---
+
+## Channels
+
+Telegram runs as a **channel connector**: a child process the control plane
+starts with the API, stops with the API, restarts (bounded) when it dies, and
+reports through `woltspace status` and `GET /health`.
+
+Configure it in the data root the control plane owns —
+`<wolts>/.space/platform/config.json`:
+
+```json
+{
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "token": "123456:your-bot-token",
+      "allowed_users": ["11111111"]
+    }
+  }
+}
+```
+
+Environment variables override the file (`ENABLE_TELEGRAM_BOT`,
+`TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS`), which is how the container
+passes its `--env-file` through unchanged. The token is read once, passed to
+the connector in its environment, and never written to disk; the status report
+carries no secret.
+
+### One token, one poller
+
+**A Telegram bot token can only be long-polled by one process.** A second
+poller makes Telegram answer `409 Conflict`, and the loser goes deaf while
+still looking alive.
+
+So: while the container colony is running, a native instance must use a
+**different** bot token — or stop the container first. If a connector does hit
+the clash, `woltspace status` reports it in those terms and stops restarting,
+because restarting cannot win that race:
+
+```
+connector telegram: degraded · bot.telegram_adapter from …
+  error: another process is already polling this bot token (Telegram getUpdates returned 409 Conflict)
+  fix: One bot token can only be polled by one process. Stop the other instance …
+```
+
+---
+
+## The tunnel
+
+Native runs with the tunnel **off**. Turn it on explicitly:
+
+```bash
+WOLTSPACE_PUBLIC_TUNNEL=true woltspace start
+```
+
+**Do not reuse the container's named-tunnel token while the container is
+running.** Two `cloudflared` connectors on one named tunnel do not conflict —
+they *load-balance*. Cloudflare will quietly send a share of your real traffic
+to whichever instance answers, so a test instance ends up serving strangers.
+Give a second instance its own tunnel, or leave it on `localhost`.
+
+---
+
+## Sharing a data root
+
+The instance lock is an `flock` on the data root, and **`flock` is not reliable
+across a Docker bind mount on macOS**. If your wolts directory is mounted into
+a running container, the lock cannot be trusted to catch native-versus-container
+contention — two control planes could both believe they own it.
+
+- Your **first native run should use a fresh data root**:
+  `WOLTS_DIR=~/.woltspace/native-wolts woltspace start`.
+- Pointing native at a **container-mounted data root requires stopping the
+  container first**.
+
+`woltspace doctor` warns when the data root already carries another instance's
+owner record — including a container's — but treat that as a courtesy, not a
+guarantee. The lock is the mechanism; on a shared mount, you are.
+
+---
+
+## Release checklist
+
+Publishing is a single coordinated moment, and it happens only on an explicit
+human go-ahead.
+
+1. **Run the opt-in integration probes.** They cover the seams nothing else
+   does — a real agent spawn, a real Telegram round-trip, real session revival
+   — and they are skipped by default because they boot agent processes and
+   message a real chat, not because they are optional:
+
+   ```bash
+   TEST_CHAT_ID=<your test group> bash test/run-tests.sh opt-in
+   ```
+
+   Every spawn goes into a throwaway `test-shadow` wolt that the fixture
+   creates and removes, so no real wolt is touched and no agent survives the
+   run. Every message goes to the chat you named: the suite never discovers a
+   chat id from live state, so an unset `TEST_CHAT_ID` skips rather than
+   guesses.
+2. **Bump the version in all three places** — they are pinned exactly, and the
+   cross-manifest tests fail on drift:
+   - `tui/package.json`
+   - `tui/src/version.js`
+   - `src/woltspace/compatibility.py`
+3. Build both artifacts and clean-install them **outside the checkout**: wheel
+   and sdist into fresh venvs, `npm pack` tarball into an isolated npm prefix.
+4. **Publish PyPI and npm together.** The Python package embeds the exact npm
+   version, so a half-published release is a broken `woltspace tui`.
+5. **Build the OCI image from the released artifacts** — not from a checkout —
+   so the container ships the same bytes as the native install.
+6. Remove the pre-publish install recipe above once `npx` can resolve
+   `@woltspace/tui`.

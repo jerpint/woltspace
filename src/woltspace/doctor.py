@@ -102,6 +102,43 @@ def ensure_container_mounts(layout: RuntimeLayout) -> None:
         raise MountError(check)
 
 
+def shared_data_root_check(layout: RuntimeLayout) -> DoctorCheck | None:
+    """Warn when a native run points at a data root something else already owns.
+
+    The instance lock is an flock, and flock is not reliable across a Docker
+    bind mount on macOS — so a running container holding this same directory
+    would not be caught by the lock. The owner record it leaves behind is
+    readable either way, so use that.
+    """
+    if layout.isolation != "host":
+        return None
+    from .instance import pid_alive, read_owner
+
+    owner = read_owner(layout)
+    if owner is None:
+        return None
+    foreign_host = owner.hostname and owner.hostname != socket.gethostname()
+    if owner.isolation == "external" or foreign_host:
+        return DoctorCheck(
+            "data-root-sharing",
+            "warn",
+            f"{layout.wolts_dir} is claimed by a {owner.isolation or 'unknown'} "
+            f"instance (pid {owner.pid} on {owner.hostname}). The instance lock "
+            f"cannot be trusted across a Docker bind mount.",
+            "Stop that instance first, or start native with a fresh data root: "
+            "`WOLTS_DIR=~/.woltspace/native-wolts woltspace start`.",
+        )
+    if pid_alive(owner.pid):
+        return DoctorCheck(
+            "data-root-sharing",
+            "warn",
+            f"{layout.wolts_dir} is claimed by pid {owner.pid} "
+            f"(instance {owner.instance_id}).",
+            "Run `woltspace status` — stop that control plane before starting another.",
+        )
+    return None
+
+
 def run_doctor(layout: RuntimeLayout, *, check_port: bool = True) -> list[DoctorCheck]:
     checks = []
     version = sys.version_info
@@ -165,6 +202,10 @@ def run_doctor(layout: RuntimeLayout, *, check_port: bool = True) -> list[Doctor
 
     if layout.isolation != "host":
         checks.append(container_mount_check(layout))
+
+    sharing = shared_data_root_check(layout)
+    if sharing is not None:
+        checks.append(sharing)
 
     if check_port:
         available = _port_available(layout.host, layout.port)

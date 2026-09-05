@@ -42,6 +42,32 @@ def read_connector_report(layout: RuntimeLayout) -> dict:
         return {}
 
 
+# A second long-poller on the same bot token makes Telegram reject ours with
+# 409 Conflict. Restarting cannot win that race — the other poller owns the
+# token until it stops — so we name it instead of looping.
+TOKEN_CLASH_MARKERS = (
+    "terminated by other getupdates request",
+    "conflict: terminated by other",
+    "error_code\":409",
+    "409 conflict",
+)
+TOKEN_CLASH_ERROR = (
+    "another process is already polling this bot token "
+    "(Telegram getUpdates returned 409 Conflict)"
+)
+TOKEN_CLASH_REMEDY = (
+    "One bot token can only be polled by one process. Stop the other instance "
+    "(e.g. `woltspace stop`, or stop the container) — or give this instance its "
+    "own test bot token in channels.telegram.token."
+)
+LOG_SCAN_LIMIT = 64 * 1024
+
+
+def find_token_clash(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in TOKEN_CLASH_MARKERS)
+
+
 def backoff_delay(restarts: int) -> float:
     return min(BACKOFF_BASE * (2 ** max(restarts - 1, 0)), BACKOFF_CAP)
 
@@ -56,10 +82,15 @@ class ConnectorState:
     last_exit_code: int | None = None
     error: str = ""
     log: str = ""
+    remedy_override: str = ""
+    token_clash: bool = False
+    log_offset: int = 0
     crash_times: list[float] = field(default_factory=list)
 
     def to_record(self) -> dict:
         record = self.plan.to_record()
+        if self.remedy_override:
+            record["remedy"] = self.remedy_override
         record.update({
             "state": self.state,
             "pid": self.pid,
@@ -203,12 +234,38 @@ class ChannelSupervisor:
             self.poll_once()
             self._sleep(self.poll_interval)
 
+    def scan_log(self, name: str) -> bool:
+        """Read what the connector appended since last tick; report a token clash.
+
+        A clashing connector stays alive but deaf — python-telegram-bot logs the
+        409 and keeps retrying — so a liveness check alone would call it healthy.
+        """
+        state = self.states[name]
+        if not state.log:
+            return False
+        try:
+            with open(state.log, "r", errors="replace") as handle:
+                handle.seek(state.log_offset)
+                chunk = handle.read(LOG_SCAN_LIMIT)
+                state.log_offset = handle.tell()
+        except OSError:
+            return False
+        if not chunk or not find_token_clash(chunk):
+            return False
+        state.state = "degraded"
+        state.error = TOKEN_CLASH_ERROR
+        state.remedy_override = TOKEN_CLASH_REMEDY
+        state.token_clash = True
+        return True
+
     def poll_once(self) -> None:
         """One supervision tick. Public so tests can drive it deterministically."""
         changed = False
         for name, state in self.states.items():
             if not state.plan.enabled or state.state in {"failed", "stopped", "disabled"}:
                 continue
+            if state.state in {"running", "degraded"} and self.scan_log(name):
+                changed = True
             with self._lock:
                 child = self._children.get(name)
             if child is None:
@@ -223,6 +280,13 @@ class ChannelSupervisor:
                 self._children.pop(name, None)
             if self._stopping.is_set():
                 state.state = "stopped"
+                continue
+            self.scan_log(name)
+            if state.token_clash:
+                # It did not merely die; it died because another poller owns the
+                # token. Restarting would lose the same race five more times.
+                state.state = "failed"
+                state.error = TOKEN_CLASH_ERROR
                 continue
             now = self._clock()
             state.crash_times = [
