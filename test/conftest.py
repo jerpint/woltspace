@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -28,9 +29,20 @@ def _telegram_bot_configured() -> bool:
 
 
 def _test_chat_id() -> str | None:
-    """Get the dedicated test chat ID (group where test notifies go).
-    Set TEST_CHAT_ID in .env or fall back to None."""
-    return os.environ.get("TEST_CHAT_ID")
+    """The dedicated test group chat. Never discovered — only configured.
+
+    Anything that would send a real message must be told exactly where to send
+    it. Finding a chat id lying around in the registry means messaging whoever
+    happens to be using this woltspace.
+    """
+    return os.environ.get("TEST_CHAT_ID") or None
+
+
+def _live_send_enabled() -> bool:
+    """Sending to Telegram reaches a real person's phone. Opt in explicitly."""
+    return os.environ.get("WOLTSPACE_TEST_LIVE_SEND", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
 
 
 def _tmux_available() -> bool:
@@ -45,7 +57,32 @@ def _tmux_available() -> bool:
 # Markers / skips
 # ---------------------------------------------------------------------------
 
+def _real_spawn_enabled() -> bool:
+    """Real spawns boot an agent process (~300MB) that outlives the test run."""
+    return os.environ.get("WOLTSPACE_TEST_REAL_SPAWN", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+SHADOW_WOLT = "test-shadow"
+SHADOW_MARKER = ".created-by-tests"
+
+
+def shadow_is_reusable(home: Path) -> bool:
+    """Only ever delete a directory the suite created itself."""
+    return not home.exists() or (home / SHADOW_MARKER).is_file()
+
+
 requires_server = pytest.mark.skipif(not _server_up(), reason="server not running on localhost:7777")
+requires_live_send = pytest.mark.skipif(
+    not (_live_send_enabled() and _test_chat_id()),
+    reason="sends a real message; set WOLTSPACE_TEST_LIVE_SEND=1 and TEST_CHAT_ID",
+)
+requires_real_spawn = pytest.mark.skipif(
+    not _real_spawn_enabled(),
+    reason="boots a real agent process; set WOLTSPACE_TEST_REAL_SPAWN=1 to opt in",
+)
+
 requires_telegram = pytest.mark.skipif(not _telegram_bot_configured(), reason="TELEGRAM_BOT_TOKEN not set")
 requires_tmux = pytest.mark.skipif(not _tmux_available(), reason="tmux not installed")
 
@@ -117,15 +154,75 @@ def tmp_registry(tmp_path):
 
 @pytest.fixture
 def test_chat_id():
-    """The dedicated test group chat ID. Skip if not configured."""
+    """The dedicated test group chat ID. Skip unless explicitly opted in."""
     chat_id = _test_chat_id()
     if not chat_id:
         pytest.skip("TEST_CHAT_ID not set — configure in .env for live tests")
+    if not _live_send_enabled():
+        pytest.skip("live sends are opt-in — set WOLTSPACE_TEST_LIVE_SEND=1")
     return chat_id
 
 
 @pytest.fixture
-def routed_test_session(test_chat_id):
+def shadow_wolt():
+    """A throwaway wolt that exists only for the duration of one test.
+
+    Live-server tests need a real wolt on disk, and borrowing someone's actual
+    wolt means spawning agents into their directory and leaving debris behind.
+    This is the only way a test gets a wolt name, so there is no real name to
+    hardcode. Teardown stops every session it spawned, then removes it — and
+    refuses to remove anything it did not create.
+    """
+    wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    home = wolts_dir / SHADOW_WOLT
+    marker = home / SHADOW_MARKER
+    if not shadow_is_reusable(home):
+        pytest.skip(f"{home} exists but was not created by the tests; refusing to touch it")
+
+    (home / "wolt" / "site").mkdir(parents=True, exist_ok=True)
+    (home / "wolt" / "memory").mkdir(parents=True, exist_ok=True)
+    (home / "wolt" / "wolt.json").write_text(json.dumps({
+        "name": SHADOW_WOLT,
+        "type": "rodent",
+        "emoji": "🫥",
+        "description": "throwaway wolt owned by the test suite",
+        "test_fixture": True,
+    }, indent=2) + "\n")
+    marker.write_text("Created by test/conftest.py::shadow_wolt. Safe to delete.\n")
+
+    try:
+        yield SHADOW_WOLT
+    finally:
+        _stop_shadow_sessions(wolts_dir)
+        if marker.exists():
+            shutil.rmtree(home, ignore_errors=True)
+
+
+def _stop_shadow_sessions(wolts_dir: Path):
+    """Stop every session the shadow wolt spawned — through the server if it is up."""
+    import urllib.request
+
+    sessions_dir = wolts_dir / SHADOW_WOLT / ".state" / "sessions"
+    names = []
+    if sessions_dir.is_dir():
+        names = [path.stem for path in sessions_dir.glob("*.json")]
+    for name in names:
+        body = json.dumps({}).encode()
+        request = urllib.request.Request(
+            f"http://localhost:7777/sessions/{name}/stop",
+            data=body, headers={"Content-Type": "application/json"}, method="POST",
+        )
+        try:
+            urllib.request.urlopen(request, timeout=15).read()
+        except Exception:
+            # Server down or already gone — fall back to killing tmux directly so
+            # a failed run still cannot leak an agent process.
+            subprocess.run(["tmux", "kill-session", "-t", name],
+                           capture_output=True, check=False)
+
+
+@pytest.fixture
+def routed_test_session(test_chat_id, shadow_wolt):
     """Create a temporary session registered with TEST_CHAT_ID routing.
 
     Ensures notify probes go to the test group, never the main chat.
@@ -134,20 +231,22 @@ def routed_test_session(test_chat_id):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
     from sessions import SessionRegistry
 
-    reg = SessionRegistry(Path("/workspace/wolts"))
+    wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    wolt = shadow_wolt
+    reg = SessionRegistry(wolts_dir)
     name = f"test-probe-{int(time.time()) % 100000}-{os.getpid()}"
     reg.create(
         name=name,
-        wolt="neowolt",
+        wolt=wolt,
         creature="beaver",
         model="sonnet",
-        dir="/workspace/wolts/neowolt",
+        dir=str(wolts_dir / wolt),
         prompt="test probe session",
         adapter="telegram",
         chat_id=test_chat_id,
     )
     yield name
-    reg.delete(name, wolt="neowolt")
+    reg.delete(name, wolt=wolt)
 
 
 @pytest.fixture

@@ -287,3 +287,190 @@ class TestMissingContainerMounts:
         source = (ROOT / "src" / "woltspace" / "cli.py").read_text()
         assert "except (InstanceConflict, MountError)" in source
         assert 'print(f"serve failed: {exc}")' in source
+
+
+class TestTelegramTokenClash:
+    """One bot token, two pollers: Telegram answers 409 and our bot goes deaf."""
+
+    def _degraded(self, tmp_path, log_line):
+        layout = _layout(tmp_path)
+        supervisor = ChannelSupervisor(layout, [_plan()])
+        supervisor.start(watch=False)
+        try:
+            log = Path(supervisor.states["telegram"].log)
+            log.write_text(log_line)
+            supervisor.states["telegram"].log_offset = 0
+            supervisor.poll_once()
+            return supervisor, read_connector_report(layout)["connectors"][0]
+        finally:
+            supervisor.stop()
+
+    def test_a_clash_is_reported_in_telegram_terms_not_raw_http(self, tmp_path):
+        _supervisor, record = self._degraded(
+            tmp_path,
+            "telegram.error.Conflict: Conflict: terminated by other getUpdates request\n",
+        )
+        assert record["state"] == "degraded"
+        assert "already polling this bot token" in record["error"]
+        assert "409" in record["error"]
+        assert "own test bot token" in record["remedy"]
+
+    def test_a_live_but_deaf_connector_is_not_reported_healthy(self, tmp_path):
+        supervisor, record = self._degraded(
+            tmp_path, '{"ok":false,"error_code":409,"description":"Conflict"}\n'
+        )
+        assert record["state"] == "degraded"
+        assert record["pid"], "the child is still alive — liveness alone would pass"
+
+    def test_a_clean_log_leaves_the_connector_running(self, tmp_path):
+        _supervisor, record = self._degraded(
+            tmp_path, "telegram v2 bot starting (chat-per-wolt model)...\n"
+        )
+        assert record["state"] == "running"
+        assert record["error"] is None
+
+    def test_a_connector_that_died_of_a_clash_is_not_restarted(self, tmp_path):
+        layout = _layout(tmp_path)
+        crasher = (sys.executable, "-c", "import sys; sys.exit(1)")
+        supervisor = ChannelSupervisor(
+            layout, [_plan(crasher)], max_restarts=5, sleep=lambda _s: None
+        )
+        supervisor.start(watch=False)
+        try:
+            Path(supervisor.states["telegram"].log).write_text(
+                "Conflict: terminated by other getUpdates request\n"
+            )
+            supervisor.states["telegram"].log_offset = 0
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                supervisor.poll_once()
+                if supervisor.states["telegram"].state == "failed":
+                    break
+                time.sleep(0.02)
+            state = supervisor.states["telegram"]
+            assert state.state == "failed"
+            assert state.restarts == 0, "restarting cannot win the token race"
+            assert "already polling this bot token" in state.error
+        finally:
+            supervisor.stop()
+
+
+class TestSharedDataRootWarning:
+    def test_a_container_owned_data_root_warns_a_native_run(self, tmp_path):
+        from woltspace.doctor import shared_data_root_check
+        from woltspace.instance import InstanceOwner, write_owner
+
+        layout = _layout(tmp_path)
+        write_owner(layout, InstanceOwner(
+            instance_id="container-instance", pid=1, started_at=0,
+            endpoint="http://127.0.0.1:7777", isolation="external",
+            hostname="woltspace-container",
+        ))
+        check = shared_data_root_check(layout)
+        assert check is not None
+        assert check.status == "warn"
+        assert "cannot be trusted across a Docker bind mount" in check.detail
+        assert "fresh data root" in check.remedy
+        # A warning, never a hard failure — the operator decides.
+        assert check.ok
+
+    def test_an_unclaimed_data_root_says_nothing(self, tmp_path):
+        from woltspace.doctor import shared_data_root_check
+
+        assert shared_data_root_check(_layout(tmp_path)) is None
+
+    def test_container_mode_does_not_warn_about_itself(self, tmp_path):
+        from woltspace.doctor import shared_data_root_check
+        from woltspace.instance import InstanceOwner, write_owner
+
+        layout = _layout(tmp_path, isolation="external")
+        layout.wolts_dir.mkdir(parents=True)
+        write_owner(layout, InstanceOwner(
+            instance_id="container-instance", pid=1, started_at=0,
+            endpoint="http://127.0.0.1:7777", isolation="external", hostname="elsewhere",
+        ))
+        assert shared_data_root_check(layout) is None
+
+
+class TestPrePublishTuiRemedy:
+    """@woltspace/tui is not on the registry yet, so npx cannot resolve it."""
+
+    def test_the_npx_fallback_names_the_from_checkout_recipe(self):
+        from woltspace.tui import TuiResolution, fallback_notices, local_tarball_recipe
+
+        resolution = TuiResolution(
+            "npx", ("npx", "--yes", "--package=@woltspace/tui@0.2.2", "woltspace-tui"),
+            {"path": "/usr/local/bin/woltspace-tui", "valid": False,
+             "error": "expected @woltspace/tui@0.2.2, got @woltspace/tui@0.1.0"},
+        )
+        notices = fallback_notices(resolution)
+        assert any("ignoring /usr/local/bin/woltspace-tui" in line for line in notices)
+        assert any("not published yet" in line for line in notices)
+        assert any(local_tarball_recipe() in line for line in notices)
+        assert "npm pack" in local_tarball_recipe()
+        assert "woltspace-tui-0.2.2.tgz" in local_tarball_recipe()
+
+    def test_an_exact_local_binary_prints_nothing(self):
+        from woltspace.tui import TuiResolution, fallback_notices
+
+        assert fallback_notices(TuiResolution("local", ("/usr/local/bin/woltspace-tui",))) == []
+
+    def test_missing_npx_also_names_the_recipe(self):
+        from woltspace.tui import TuiResolutionError, resolve_tui
+
+        def which(name):
+            return "/usr/bin/node" if name == "node" else None
+
+        def runner(command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, "v20.11.0", "")
+
+        with pytest.raises(TuiResolutionError) as caught:
+            resolve_tui({}, which=which, runner=runner)
+        assert "npm pack" in str(caught.value)
+
+
+class TestDocsStayTrue:
+    """The doc makes promises the code has to keep."""
+
+    DOC = ROOT / "docs" / "native-and-container.md"
+
+    def test_the_release_checklist_names_every_pinned_file(self):
+        text = self.DOC.read_text()
+        for path in ("tui/package.json", "tui/src/version.js",
+                     "src/woltspace/compatibility.py"):
+            assert path in text, path
+            assert (ROOT / path).is_file(), path
+
+    def test_the_pre_publish_recipe_matches_the_one_the_cli_prints(self):
+        from woltspace.compatibility import TUI_VERSION
+        from woltspace.tui import local_tarball_recipe
+
+        text = self.DOC.read_text()
+        assert f"woltspace-tui-{TUI_VERSION}.tgz" in text
+        assert f"woltspace-tui-{TUI_VERSION}.tgz" in local_tarball_recipe()
+
+    def test_the_config_example_is_the_shape_the_connector_reads(self, tmp_path):
+        import re
+
+        from woltspace.channels import TelegramConnector
+
+        text = self.DOC.read_text()
+        block = re.search(r'```json\n(\{.*?\})\n```', text, re.S)
+        assert block, "the doc must show a config.json example"
+        layout = _layout(tmp_path)
+        layout.platform_state.mkdir(parents=True)
+        (layout.platform_state / "config.json").write_text(block.group(1))
+        plan = TelegramConnector().plan(layout, {})
+        assert plan.enabled is True
+        assert plan.env["TELEGRAM_BOT_TOKEN"] == "123456:your-bot-token"
+        assert plan.env["TELEGRAM_ALLOWED_USERS"] == "11111111"
+
+    def test_the_documented_status_output_is_what_status_renders(self):
+        from woltspace.channel_supervisor import TOKEN_CLASH_ERROR, TOKEN_CLASH_REMEDY
+
+        text = self.DOC.read_text()
+        assert TOKEN_CLASH_ERROR in text
+        assert TOKEN_CLASH_REMEDY.split(".")[0] in text
+
+    def test_it_is_linked_from_the_readme(self):
+        assert "docs/native-and-container.md" in (ROOT / "README.md").read_text()

@@ -122,6 +122,35 @@ class TestSitePathsResolveFromTheLayout:
         assert payload["message"] == "reload"
 
 
+RUNTIME_ENV_KEYS = (
+    "WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
+    "WOLTSPACE_HOST", "WOLTSPACE_INSTANCE_ID", "WOLTSPACE_PUBLIC_TUNNEL", "PORT",
+)
+
+
+@pytest.fixture
+def isolated_runtime_env():
+    """`prepare()` writes os.environ directly — keep that inside the test.
+
+    Snapshot and restore by hand: `monkeypatch.delenv(..., raising=False)` on a
+    variable that is *absent* records nothing to undo, so a value the test then
+    sets would survive and repoint WOLTS_DIR (or WOLTSPACE_ISOLATION) for every
+    test that runs afterwards.
+    """
+    import os
+
+    snapshot = {key: os.environ.get(key) for key in RUNTIME_ENV_KEYS}
+    try:
+        yield
+    finally:
+        for key, value in snapshot.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+@pytest.mark.usefixtures("isolated_runtime_env")
 class TestTunnelPolicy:
     def test_native_default_is_tunnel_off(self, tmp_path, monkeypatch):
         monkeypatch.delenv("WOLTSPACE_PUBLIC_TUNNEL", raising=False)

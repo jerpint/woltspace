@@ -59,12 +59,20 @@ def test_doctor_discovers_existing_host_auth_without_copying_it(tmp_path, monkey
     assert not layout.wolts_dir.exists()
 
 
-def test_supervisor_prepare_freezes_environment_and_creates_only_state(tmp_path, monkeypatch):
+def test_supervisor_prepare_freezes_environment_and_creates_only_state(
+    tmp_path, monkeypatch, request
+):
     layout = _layout(tmp_path)
-    for key in (
+    keys = (
         "WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
         "WOLTSPACE_INSTANCE_ID", "WOLTSPACE_PUBLIC_TUNNEL",
-    ):
+    )
+    # delenv on an absent variable records nothing to undo, so the values
+    # prepare() writes would outlive this test and reconfigure every test after
+    # it (`WOLTSPACE_ISOLATION=host` silently disables container-mode code).
+    snapshot = {key: os.environ.get(key) for key in keys}
+    request.addfinalizer(lambda: _restore_env(snapshot))
+    for key in keys:
         monkeypatch.delenv(key, raising=False)
 
     supervisor = Supervisor(layout, instance_id="instance-test")
@@ -80,7 +88,23 @@ def test_supervisor_prepare_freezes_environment_and_creates_only_state(tmp_path,
     assert list(layout.wolts_dir.glob("**/auth.json")) == []
 
 
-def test_external_supervisor_does_not_override_tunnel_default(tmp_path, monkeypatch):
+def _restore_env(snapshot: dict):
+    for key, value in snapshot.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
+def test_external_supervisor_does_not_override_tunnel_default(tmp_path, monkeypatch, request):
+    # prepare() writes os.environ directly; keep the rewrite inside this test.
+    # Restore by hand: setenv("") on an absent variable leaves an empty string
+    # behind, which is not the same as absent for `os.environ.get(k, default)`.
+    keys = ("WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
+            "WOLTSPACE_HOST", "WOLTSPACE_INSTANCE_ID", "WOLTSPACE_PUBLIC_TUNNEL",
+            "PORT")
+    snapshot = {key: os.environ.get(key) for key in keys}
+    request.addfinalizer(lambda: _restore_env(snapshot))
     monkeypatch.delenv("WOLTSPACE_PUBLIC_TUNNEL", raising=False)
     layout = _layout(tmp_path, isolation="external")
     layout.wolts_dir.mkdir(parents=True)  # a container always has the mount
