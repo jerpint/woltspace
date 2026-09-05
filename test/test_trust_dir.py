@@ -9,6 +9,7 @@ Usage: uv run --with pytest pytest test/test_trust_dir.py -v
 import json
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -379,9 +380,180 @@ class TestSpawnPathTrustsWorkdir:
         assert result["workdir"].endswith("/wolt/apps/dashboard")
         assert result["workdir"] in read_claude_json(claude_trust_home)["projects"]
 
-    def test_codex_sessions_are_left_to_their_own_mechanism(self, fake_runtime, claude_trust_home):
+    def test_codex_sessions_do_not_touch_claudes_config(self, fake_runtime, claude_trust_home):
         from sessions import prepare_session_command
         result = self._start(harness="codex")
         prepare_session_command(result["name"], "spawn", "hello")
 
         assert not (claude_trust_home / ".claude.json").exists()
+
+    def test_codex_spawn_trusts_the_workdir_in_codex_config(self, fake_runtime, codex_trust_home):
+        """Codex asks too — even under --dangerously-bypass-approvals-and-sandbox."""
+        from sessions import prepare_session_command
+        result = self._start(harness="codex")
+        prepare_session_command(result["name"], "spawn", "hello")
+
+        config = tomllib.loads((codex_trust_home / "config.toml").read_text())
+        assert config["projects"][result["workdir"]]["trust_level"] == "trusted"
+
+    def test_claude_sessions_do_not_touch_codexs_config(self, fake_runtime, codex_trust_home):
+        from sessions import prepare_session_command
+        result = self._start()
+        prepare_session_command(result["name"], "spawn", "hello")
+
+        assert not (codex_trust_home / "config.toml").exists()
+
+    def test_opencode_sessions_are_left_to_their_own_mechanism(self, fake_runtime, claude_trust_home, codex_trust_home):
+        from sessions import prepare_session_command
+        result = self._start(harness="opencode")
+        prepare_session_command(result["name"], "spawn", "hello")
+
+        assert not (claude_trust_home / ".claude.json").exists()
+        assert not (codex_trust_home / "config.toml").exists()
+
+
+# ---------------------------------------------------------------------------
+# ensure_codex_dir_trusted — codex's dialog, same boundary
+# ---------------------------------------------------------------------------
+
+class TestEnsureCodexDirTrusted:
+    """Append the block codex itself writes, and never outside the data root."""
+
+    def _trust(self, work_dir, wolts_dir):
+        from trust import ensure_codex_dir_trusted
+        return ensure_codex_dir_trusted(work_dir, wolts_dir)
+
+    def _config(self, codex_trust_home):
+        return codex_trust_home / "config.toml"
+
+    def test_trusts_dir_inside_the_data_root(self, tmp_path, codex_trust_home):
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+
+        assert self._trust(work_dir, wolts_dir) is True
+
+        config = tomllib.loads(self._config(codex_trust_home).read_text())
+        assert config["projects"][str(work_dir.resolve())]["trust_level"] == "trusted"
+
+    def test_preserves_the_rest_of_the_config(self, tmp_path, codex_trust_home):
+        """It is the user's TOML — comments and all — not a file we own."""
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        existing = '# hand written\n[shell_environment_policy]\ninherit = "all"\n'
+        self._config(codex_trust_home).write_text(existing)
+
+        assert self._trust(work_dir, wolts_dir) is True
+
+        text = self._config(codex_trust_home).read_text()
+        assert text.startswith(existing)
+        assert tomllib.loads(text)["shell_environment_policy"]["inherit"] == "all"
+
+    def test_already_trusted_is_not_rewritten(self, tmp_path, codex_trust_home):
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+
+        assert self._trust(work_dir, wolts_dir) is True
+        before = self._config(codex_trust_home).read_bytes()
+
+        assert self._trust(work_dir, wolts_dir) is False
+        assert self._config(codex_trust_home).read_bytes() == before
+
+    def test_trusted_by_wcodex_is_recognised(self, tmp_path, codex_trust_home):
+        """The container wrapper writes the same block; the two must agree."""
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        block = f'\n[projects."{work_dir.resolve()}"]\ntrust_level = "trusted"\n'
+        self._config(codex_trust_home).write_text(block)
+
+        assert self._trust(work_dir, wolts_dir) is False
+        assert self._config(codex_trust_home).read_text() == block
+
+    def test_outside_the_data_root_is_untouched(self, tmp_path, codex_trust_home):
+        """The scope guard is the security story — nothing outside gets trusted."""
+        wolts_dir = tmp_path / "wolts"
+        wolts_dir.mkdir()
+        outsider = tmp_path / "somewhere-else"
+        outsider.mkdir()
+        self._config(codex_trust_home).write_text('model = "gpt-5"\n')
+        before = self._config(codex_trust_home).read_bytes()
+
+        assert self._trust(outsider, wolts_dir) is False
+        assert self._config(codex_trust_home).read_bytes() == before
+
+    def test_outside_the_data_root_creates_nothing(self, tmp_path, codex_trust_home):
+        wolts_dir = tmp_path / "wolts"
+        wolts_dir.mkdir()
+        outsider = tmp_path / "somewhere-else"
+        outsider.mkdir()
+
+        assert self._trust(outsider, wolts_dir) is False
+        assert not self._config(codex_trust_home).exists()
+
+    def test_sibling_prefix_is_not_inside(self, tmp_path, codex_trust_home):
+        """'/data/wolts-backup' must not read as inside '/data/wolts'."""
+        wolts_dir = tmp_path / "wolts"
+        wolts_dir.mkdir()
+        lookalike = tmp_path / "wolts-backup"
+        lookalike.mkdir()
+
+        assert self._trust(lookalike, wolts_dir) is False
+        assert not self._config(codex_trust_home).exists()
+
+    def test_missing_codex_home_is_created(self, tmp_path, monkeypatch):
+        """Codex hard-errors on an absent CODEX_HOME; creating it fixes that too."""
+        codex_home = tmp_path / "never-existed" / ".codex"
+        monkeypatch.setenv("CODEX_HOME", str(codex_home))
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+
+        assert self._trust(work_dir, wolts_dir) is True
+
+        config = codex_home / "config.toml"
+        assert config.read_text() == (
+            f'\n[projects."{work_dir.resolve()}"]\ntrust_level = "trusted"\n'
+        )
+        assert list(tomllib.loads(config.read_text())) == ["projects"]
+
+    def test_unparseable_config_falls_back_to_the_header(self, tmp_path, codex_trust_home):
+        """Broken TOML we cannot parse still must not collect duplicate blocks."""
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        broken = f'not = toml = at = all\n[projects."{work_dir.resolve()}"]\n'
+        self._config(codex_trust_home).write_text(broken)
+
+        assert self._trust(work_dir, wolts_dir) is False
+        assert self._config(codex_trust_home).read_text() == broken
+
+    def test_unparseable_config_without_the_header_is_appended_to(self, tmp_path, codex_trust_home):
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        self._config(codex_trust_home).write_text("not = toml = at = all\n")
+
+        assert self._trust(work_dir, wolts_dir) is True
+        assert f'[projects."{work_dir.resolve()}"]' in self._config(codex_trust_home).read_text()
+
+    def test_default_codex_home_is_under_the_users_home(self, tmp_path, monkeypatch):
+        """No CODEX_HOME exported — the native default — resolves to ~/.codex."""
+        from trust import codex_config_path
+        monkeypatch.delenv("CODEX_HOME", raising=False)
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+        assert codex_config_path() == tmp_path / ".codex" / "config.toml"
+
+    def test_nested_app_workdir_is_trusted(self, tmp_path, codex_trust_home):
+        """App sessions run in wolt/apps/<name> — still inside the data root."""
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt" / "wolt" / "apps" / "dashboard"
+        work_dir.mkdir(parents=True)
+
+        assert self._trust(work_dir, wolts_dir) is True
+
+        config = tomllib.loads(self._config(codex_trust_home).read_text())
+        assert str(work_dir.resolve()) in config["projects"]

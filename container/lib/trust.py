@@ -1,4 +1,4 @@
-"""Claude workspace trust — so a headless spawn never parks on the dialog.
+"""Workspace trust — so a headless spawn never parks on the dialog.
 
 Claude Code will not start in a directory it has never been trusted for: it
 paints the workspace-trust dialog and waits. A session we spawn headlessly
@@ -15,6 +15,12 @@ wrapper and is left alone — both writers are idempotent and set the same two
 keys, so in-container they simply agree. Natively, `wclaude` deliberately
 touches nothing in the user's HOME; this is the one place that does, and it
 writes two booleans for one directory inside the colony.
+
+Codex has the same dialog and the same blind spot — it asks even with
+`--dangerously-bypass-approvals-and-sandbox` (verified live, codex-cli
+0.144.4). `container/bin/wcodex` preseeds its answer, but from below the
+early `exec codex` the host path takes, so natively nothing preseeded it at
+all. `ensure_codex_dir_trusted` closes that gap under the same boundary.
 """
 
 from __future__ import annotations
@@ -22,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import tomllib
 from pathlib import Path
 
 TRUST_FLAGS = {
@@ -33,6 +40,32 @@ TRUST_FLAGS = {
 def claude_config_path() -> Path:
     """Where Claude Code keeps its live state (and its trusted-project list)."""
     return Path.home() / ".claude.json"
+
+
+def codex_config_path() -> Path:
+    """Where codex keeps its config (and its trusted-project list).
+
+    `$CODEX_HOME/config.toml`, defaulting to `~/.codex` — the same resolution
+    `woltspace doctor` uses to find codex's auth. In the container `wcodex`
+    repoints CODEX_HOME per wolt before codex ever runs; natively it is
+    whatever the host exports, which is usually nothing at all.
+    """
+    codex_home = os.environ.get("CODEX_HOME") or (Path.home() / ".codex")
+    return Path(codex_home).expanduser() / "config.toml"
+
+
+def _resolve_inside(work_dir: str | Path, wolts_dir: str | Path) -> Path | None:
+    """Resolve ``work_dir``, or None if it does not live inside ``wolts_dir``.
+
+    The scope guard both trust writers share: woltspace auto-trusts the colony
+    it was pointed at and nothing else.
+    """
+    try:
+        target = Path(work_dir).expanduser().resolve()
+        root = Path(wolts_dir).expanduser().resolve()
+    except OSError:
+        return None
+    return target if target.is_relative_to(root) else None
 
 
 def _write_atomically(path: Path, text: str) -> None:
@@ -62,12 +95,8 @@ def ensure_claude_dir_trusted(work_dir: str | Path, wolts_dir: str | Path) -> bo
     untouched, because every gratuitous rewrite of ~/.claude.json widens the
     clobber race with a claude process that is running right now.
     """
-    try:
-        target = Path(work_dir).expanduser().resolve()
-        root = Path(wolts_dir).expanduser().resolve()
-    except OSError:
-        return False
-    if not target.is_relative_to(root):
+    target = _resolve_inside(work_dir, wolts_dir)
+    if target is None:
         return False
 
     config = claude_config_path()
@@ -95,6 +124,58 @@ def ensure_claude_dir_trusted(work_dir: str | Path, wolts_dir: str | Path) -> bo
     try:
         config.parent.mkdir(parents=True, exist_ok=True)
         _write_atomically(config, json.dumps(data, indent=2))
+    except OSError:
+        return False
+    return True
+
+
+def _codex_already_trusted(text: str, key: str) -> bool:
+    """Does this config.toml already trust ``key``?
+
+    Parsed when it parses; when it does not — a half-written or hand-edited
+    file — fall back to spotting the exact header, which is the shape both
+    codex and `wcodex` write.
+    """
+    try:
+        projects = tomllib.loads(text).get("projects", {})
+    except (tomllib.TOMLDecodeError, AttributeError):
+        return f'[projects."{key}"]' in text
+    entry = projects.get(key) if isinstance(projects, dict) else None
+    return isinstance(entry, dict) and entry.get("trust_level") == "trusted"
+
+
+def ensure_codex_dir_trusted(work_dir: str | Path, wolts_dir: str | Path) -> bool:
+    """Pre-accept codex's trust dialog for ``work_dir``. Returns True if written.
+
+    Same boundary as claude's: a no-op — never a write — when ``work_dir`` is
+    not inside ``wolts_dir``.
+
+    The block is appended rather than merged, because that is exactly what
+    codex itself does when a human accepts the dialog, and it leaves the rest
+    of a config we do not own — comments, ordering, keys we have never heard
+    of — byte for byte where the user put it. CODEX_HOME is created if it is
+    missing; codex hard-errors on an absent one.
+    """
+    target = _resolve_inside(work_dir, wolts_dir)
+    if target is None:
+        return False
+
+    config = codex_config_path()
+    try:
+        text = config.read_text() if config.exists() else ""
+    except (OSError, UnicodeDecodeError):
+        # Not something we can read as text, so not something we may append
+        # to blind. A session that prompts beats a config we corrupted.
+        return False
+
+    key = str(target)
+    if _codex_already_trusted(text, key):
+        return False
+
+    try:
+        config.parent.mkdir(parents=True, exist_ok=True)
+        with config.open("a") as f:
+            f.write(f'\n[projects."{key}"]\ntrust_level = "trusted"\n')
     except OSError:
         return False
     return True

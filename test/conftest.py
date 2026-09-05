@@ -139,6 +139,19 @@ def claude_trust_home(tmp_path_factory, monkeypatch):
     return home
 
 
+@pytest.fixture(autouse=True)
+def codex_trust_home(tmp_path_factory, monkeypatch):
+    """Point codex's config at a throwaway CODEX_HOME for every test.
+
+    Same reason as `claude_trust_home`: preparing a codex session appends a
+    trust block to $CODEX_HOME/config.toml, and no test may append to the
+    developer's real ~/.codex. Yields the fake CODEX_HOME.
+    """
+    home = tmp_path_factory.mktemp("codex-home")
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    return home
+
+
 @pytest.fixture
 def server_post():
     """Helper to POST JSON to localhost:7777."""

@@ -51,7 +51,7 @@ from execution_policy import (
     resolve_execution_policy,
 )
 from runtime_context import RuntimeContext
-from trust import ensure_claude_dir_trusted
+from trust import ensure_claude_dir_trusted, ensure_codex_dir_trusted
 
 _UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
@@ -862,14 +862,18 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
     wolt = data.get("wolt", "")
     model = data.get("model", "")
 
-    # Claude refuses to start in a directory it has not been trusted for, and
-    # a headless spawn has nobody to answer the dialog. This is the one seam
-    # both modes pass through on their way to run-session.sh — spawn, resume,
-    # revive — so the workdir gets trusted exactly once per agent launch.
-    # Scoped to the data root; codex and opencode carry their own mechanisms.
-    if harness == "claude":
+    # Claude and codex both refuse to start in a directory they have not been
+    # trusted for, and a headless spawn has nobody to answer the dialog. This
+    # is the one seam both modes pass through on their way to run-session.sh —
+    # spawn, resume, revive — so the workdir gets trusted exactly once per
+    # agent launch. Scoped to the data root; opencode carries its own mechanism.
+    trust_writer = {
+        "claude": ensure_claude_dir_trusted,
+        "codex": ensure_codex_dir_trusted,
+    }.get(harness)
+    if trust_writer:
         target = SessionTarget.from_record(data, wolts_dir=WOLTS_DIR, fallback_wolt=wolt)
-        ensure_claude_dir_trusted(target.canonical_workdir, WOLTS_DIR)
+        trust_writer(target.canonical_workdir, WOLTS_DIR)
 
     if mode == "spawn":
         # Harnesses that accept a preset session id (claude --session-id) get
