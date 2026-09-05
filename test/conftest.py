@@ -121,6 +121,24 @@ requires_tmux = pytest.mark.skipif(not _tmux_available(), reason="tmux not insta
 # Fixtures
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def claude_trust_home(tmp_path_factory, monkeypatch):
+    """Point Claude's trust file at a throwaway home for every test.
+
+    Preparing a claude session auto-trusts its workdir in ~/.claude.json.
+    Tests spawn sessions in tmp dirs by the dozen; none of that may land in
+    the developer's real Claude state. Yields the fake home so trust tests
+    can read the file back.
+    """
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+    import trust
+
+    home = tmp_path_factory.mktemp("claude-home")
+    monkeypatch.setattr(trust, "claude_config_path", lambda: home / ".claude.json")
+    return home
+
+
 @pytest.fixture
 def server_post():
     """Helper to POST JSON to localhost:7777."""

@@ -188,3 +188,200 @@ class TestUnitWriteTrustConfig:
 
         data = json.loads((home / ".claude.json").read_text())
         assert "/" not in data["projects"]
+
+
+# ---------------------------------------------------------------------------
+# ensure_claude_dir_trusted — the shared helper the spawn path calls
+# ---------------------------------------------------------------------------
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+
+
+class TestEnsureClaudeDirTrusted:
+    """The data root is the boundary; ~/.claude.json is someone else's file."""
+
+    def _trust(self, work_dir, wolts_dir):
+        from trust import ensure_claude_dir_trusted
+        return ensure_claude_dir_trusted(work_dir, wolts_dir)
+
+    def test_trusts_dir_inside_the_data_root(self, tmp_path, claude_trust_home):
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+
+        assert self._trust(work_dir, wolts_dir) is True
+
+        data = read_claude_json(claude_trust_home)
+        entry = data["projects"][str(work_dir.resolve())]
+        assert entry["hasTrustDialogAccepted"] is True
+        assert entry["hasCompletedProjectOnboarding"] is True
+
+    def test_preserves_unrelated_claude_state(self, tmp_path, claude_trust_home):
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        (claude_trust_home / ".claude.json").write_text(json.dumps({
+            "numStartups": 7,
+            "oauthAccount": {"emailAddress": "someone@example.com"},
+            "projects": {"/elsewhere": {"hasTrustDialogAccepted": True}},
+        }))
+
+        self._trust(work_dir, wolts_dir)
+
+        data = read_claude_json(claude_trust_home)
+        assert data["numStartups"] == 7
+        assert data["oauthAccount"]["emailAddress"] == "someone@example.com"
+        assert "/elsewhere" in data["projects"]
+        assert str(work_dir.resolve()) in data["projects"]
+
+    def test_outside_the_data_root_is_untouched(self, tmp_path, claude_trust_home):
+        """The scope guard is the security story — nothing outside gets trusted."""
+        wolts_dir = tmp_path / "wolts"
+        wolts_dir.mkdir()
+        outsider = tmp_path / "somewhere-else"
+        outsider.mkdir()
+        config = claude_trust_home / ".claude.json"
+        config.write_text(json.dumps({"projects": {}}))
+        before = config.read_bytes()
+
+        assert self._trust(outsider, wolts_dir) is False
+        assert config.read_bytes() == before
+
+    def test_outside_the_data_root_creates_nothing(self, tmp_path, claude_trust_home):
+        wolts_dir = tmp_path / "wolts"
+        wolts_dir.mkdir()
+        outsider = tmp_path / "somewhere-else"
+        outsider.mkdir()
+
+        assert self._trust(outsider, wolts_dir) is False
+        assert not (claude_trust_home / ".claude.json").exists()
+
+    def test_sibling_prefix_is_not_inside(self, tmp_path, claude_trust_home):
+        """'/data/wolts-backup' must not read as inside '/data/wolts'."""
+        wolts_dir = tmp_path / "wolts"
+        wolts_dir.mkdir()
+        lookalike = tmp_path / "wolts-backup"
+        lookalike.mkdir()
+
+        assert self._trust(lookalike, wolts_dir) is False
+        assert not (claude_trust_home / ".claude.json").exists()
+
+    def test_already_trusted_is_not_rewritten(self, tmp_path, claude_trust_home):
+        """~/.claude.json is claude's live state; a redundant write races it."""
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+
+        assert self._trust(work_dir, wolts_dir) is True
+        config = claude_trust_home / ".claude.json"
+        before = config.read_bytes()
+
+        assert self._trust(work_dir, wolts_dir) is False
+        assert config.read_bytes() == before
+
+    def test_partial_entry_is_completed(self, tmp_path, claude_trust_home):
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        (claude_trust_home / ".claude.json").write_text(json.dumps({
+            "projects": {str(work_dir.resolve()): {"lastCost": 0.5}},
+        }))
+
+        assert self._trust(work_dir, wolts_dir) is True
+
+        entry = read_claude_json(claude_trust_home)["projects"][str(work_dir.resolve())]
+        assert entry["lastCost"] == 0.5
+        assert entry["hasTrustDialogAccepted"] is True
+
+    def test_missing_config_is_created_with_just_the_entry(self, tmp_path, claude_trust_home):
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+
+        assert not (claude_trust_home / ".claude.json").exists()
+        self._trust(work_dir, wolts_dir)
+
+        data = read_claude_json(claude_trust_home)
+        assert list(data) == ["projects"]
+        assert list(data["projects"]) == [str(work_dir.resolve())]
+
+    def test_unreadable_config_is_left_alone(self, tmp_path, claude_trust_home):
+        """Half-written JSON is not an invitation to truncate the file."""
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        config = claude_trust_home / ".claude.json"
+        config.write_text('{"projects": {"a"')
+
+        assert self._trust(work_dir, wolts_dir) is False
+        assert config.read_text() == '{"projects": {"a"'
+
+    def test_nested_app_workdir_is_trusted(self, tmp_path, claude_trust_home):
+        """App sessions run in wolt/apps/<name> — still inside the data root."""
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt" / "wolt" / "apps" / "dashboard"
+        work_dir.mkdir(parents=True)
+
+        assert self._trust(work_dir, wolts_dir) is True
+        assert str(work_dir.resolve()) in read_claude_json(claude_trust_home)["projects"]
+
+
+# ---------------------------------------------------------------------------
+# The spawn path — every claude session launch runs through `prepare`
+# ---------------------------------------------------------------------------
+
+class TestSpawnPathTrustsWorkdir:
+
+    @pytest.fixture(autouse=True)
+    def setup_wolt(self, tmp_path, monkeypatch):
+        import sessions
+        import sites
+        import paths
+
+        monkeypatch.setattr(sessions, "WOLTS_DIR", tmp_path)
+        monkeypatch.setattr(sessions, "RUN_SESSION_SCRIPT", Path("/bin/true"))
+        monkeypatch.setattr(sites, "WOLTS_DIR", tmp_path)
+        monkeypatch.setattr(paths, "WOLTS_DIR", tmp_path)
+        (tmp_path / "testwolt" / "wolt").mkdir(parents=True)
+        (tmp_path / "testwolt" / "wolt" / "wolt.json").write_text(json.dumps({
+            "name": "testwolt", "type": "raccoon",
+        }))
+        self.wolts_dir = tmp_path
+
+    def _start(self, **kwargs):
+        from sessions import start_session
+        return start_session(wolt="testwolt", prompt="hello", **kwargs)
+
+    def test_spawn_trusts_the_session_workdir(self, fake_runtime, claude_trust_home):
+        from sessions import prepare_session_command
+        result = self._start()
+        prepare_session_command(result["name"], "spawn", "hello")
+
+        entry = read_claude_json(claude_trust_home)["projects"][result["workdir"]]
+        assert entry["hasTrustDialogAccepted"] is True
+        assert entry["hasCompletedProjectOnboarding"] is True
+
+    def test_resume_trusts_too(self, fake_runtime, claude_trust_home):
+        """A revived session launches a fresh claude — it needs trust as much."""
+        from sessions import prepare_session_command
+        result = self._start()
+        (claude_trust_home / ".claude.json").unlink(missing_ok=True)
+
+        prepare_session_command(result["name"], "resume", "still there?")
+
+        assert result["workdir"] in read_claude_json(claude_trust_home)["projects"]
+
+    def test_app_session_workdir_is_trusted(self, fake_runtime, claude_trust_home):
+        from sessions import prepare_session_command
+        result = self._start(app="dashboard")
+        prepare_session_command(result["name"], "spawn", "hello")
+
+        assert result["workdir"].endswith("/wolt/apps/dashboard")
+        assert result["workdir"] in read_claude_json(claude_trust_home)["projects"]
+
+    def test_codex_sessions_are_left_to_their_own_mechanism(self, fake_runtime, claude_trust_home):
+        from sessions import prepare_session_command
+        result = self._start(harness="codex")
+        prepare_session_command(result["name"], "spawn", "hello")
+
+        assert not (claude_trust_home / ".claude.json").exists()
