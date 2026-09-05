@@ -223,8 +223,6 @@ live with it.
 
 | What | Why | Workaround for now | Intended fix |
 |---|---|---|---|
-| `push-view`, `notify`, `session-reg`, `wclaude` are "command not found" inside a wolt's session | Sessions inherit the control plane's PATH and nothing adds `container/bin` to it. The container has it on PATH image-wide. | `export PATH=<checkout>/container/bin:$PATH` before `woltspace start` | The session runtime prepends `<install_root>/container/bin` to the session PATH. |
-| The Telegram bot starts, then cannot call its model | The control plane reads `channels.telegram` from `config.json` and passes only the token and allowlist to the child. It never reads the data root's `.env`, where `OPENROUTER_API_KEY` / `OPENAI_API_KEY` / `LLM_MODEL` live. The container passes the whole `.env` through `--env-file`. | `set -a; . $WOLTS_DIR/.env; set +a` before `woltspace start` | Either a `channels.telegram.env` / top-level `env` block in `config.json`, or the connector plan reading `$WOLTS_DIR/.env` explicitly. |
 | Slack is silent | There is no Slack connector; only Telegram is behind the seam. | Nothing — Slack stays on the container. | A `SlackConnector` beside `TelegramConnector`. |
 | No public URL | Native defaults the tunnel off (deliberately). `.env`'s named-tunnel token is ignored unless `WOLTSPACE_PUBLIC_TUNNEL=true`. | `WOLTSPACE_PUBLIC_TUNNEL=true woltspace start` — only with the container stopped, or two connectors load-balance the same hostname. | Document; possibly a `tunnel` block in `config.json`. |
 | Wolf crons, the digest, the vulture reaper do not run | `container/entrypoint.sh` starts the creatures; the native supervisor only supervises connectors. | None natively. | Creatures become supervised children like connectors. |
