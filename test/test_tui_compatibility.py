@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from packaging.version import Version
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -19,9 +20,14 @@ def test_python_embeds_exact_scoped_tui_version():
         (Path(__file__).resolve().parent.parent / "tui" / "package.json").read_text()
     )
     assert manifest["name"] == TUI_PACKAGE == "@woltspace/tui"
-    assert manifest["version"] == TUI_VERSION == __version__
+    # The npm pin must match the npm manifest byte-for-byte — it is what npx
+    # resolves. The Python version is the same release in PEP 440 spelling,
+    # which writes pre-releases without semver's separators ("0.5.0rc1" vs
+    # "0.5.0-rc.1"), so those two compare normalized.
+    assert manifest["version"] == TUI_VERSION
+    assert Version(TUI_VERSION) == Version(__version__)
     assert TUI_BINARY == "woltspace-tui"
-    assert tui_spec() == "@woltspace/tui@0.2.2"
+    assert tui_spec() == "@woltspace/tui@0.5.0-rc.1"
 
 
 def _runner(payload, returncode=0):
@@ -62,7 +68,7 @@ def test_mismatched_local_binary_falls_back_to_exact_npx_spec():
     )
     assert resolution.source == "npx"
     assert resolution.command == (
-        "/tools/npx", "--yes", "--package=@woltspace/tui@0.2.2", "woltspace-tui",
+        "/tools/npx", "--yes", "--package=@woltspace/tui@0.5.0-rc.1", "woltspace-tui",
     )
     assert resolution.local_probe["version"] == "0.2.1"
 

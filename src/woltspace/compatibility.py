@@ -1,7 +1,7 @@
 """Release-time compatibility pins shared by the Python launcher."""
 
 TUI_PACKAGE = "@woltspace/tui"
-TUI_VERSION = "0.2.2"
+TUI_VERSION = "0.5.0-rc.1"
 TUI_BINARY = "woltspace-tui"
 TUI_SERVICE_BINARY = "woltspace-tui-service"
 
