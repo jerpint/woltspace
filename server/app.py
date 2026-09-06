@@ -959,6 +959,86 @@ async def list_wolts():
     return _configured_wolts()
 
 
+# --- Wolf 🐺 ---
+# Read-only windows onto the scheduler's own state. The wolf already writes
+# everything here — per-cron last-run stamps and an append-only job journal in
+# `.space/wolf/` — but the only way to see a fire was to grep a connector log
+# from inside the container, and the source pointed at the wrong directory
+# while doing it. No new daemon, no new writer: just the files, served.
+
+def _wolf_state_dir() -> Path:
+    from paths import space_wolf_dir
+
+    return space_wolf_dir(WOLTS_DIR)
+
+
+def _wolf_last_run(state_dir: Path, cron_name: str) -> str | None:
+    """The `YYYY-MM-DD-HH:MM` stamp the scheduler writes after each fire."""
+    stamp = state_dir / f"{cron_name}.last"
+    try:
+        return stamp.read_text().strip() or None
+    except OSError:
+        return None
+
+
+@app.get("/wolf/schedules")
+async def wolf_schedules():
+    """Every wolt's registered crons, with the last time each one fired."""
+    state_dir = _wolf_state_dir()
+    schedules = []
+    for wolf_json in sorted(WOLTS_DIR.glob("*/wolt/wolf.json")):
+        wolt = wolf_json.parent.parent.name
+        try:
+            crons = json.loads(wolf_json.read_text()).get("crons", [])
+        except (json.JSONDecodeError, OSError) as exc:
+            schedules.append({"wolt": wolt, "error": str(exc), "crons": []})
+            continue
+        schedules.append({
+            "wolt": wolt,
+            "crons": [{
+                "name": cron.get("name", ""),
+                # recurring crons carry `schedule`, one-offs carry `at`
+                "schedule": cron.get("schedule", ""),
+                "at": cron.get("at", ""),
+                "prompt": cron.get("prompt", ""),
+                "notify": cron.get("notify", ""),
+                "last_run": _wolf_last_run(state_dir, cron.get("name", "")),
+            } for cron in crons],
+        })
+    return {"wolts_dir": str(WOLTS_DIR), "schedules": schedules}
+
+
+@app.get("/wolf/fires")
+async def wolf_fires(limit: int = 50, cron: str = "", wolt: str = ""):
+    """Recent cron fires, newest first, from the scheduler's job journal.
+
+    `limit` caps the response; `cron` and `wolt` narrow it. A journal that does
+    not exist yet is an empty list, not an error — a colony whose wolf has never
+    fired is a normal colony.
+    """
+    journal = _wolf_state_dir() / "jobs.jsonl"
+    fires = []
+    try:
+        lines = journal.read_text().splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # a torn last line while the wolf is mid-append
+        if cron and entry.get("cron") != cron:
+            continue
+        if wolt and entry.get("owner") != wolt:
+            continue
+        fires.append(entry)
+    fires.reverse()
+    return {"count": len(fires), "fires": fires[:max(0, limit)]}
+
+
 # --- Harnesses ---
 # The agent engine a wolt runs on (claude, codex, …). Pickers/badges read
 # /harnesses; the two POSTs set the lodge default and per-wolt overrides.

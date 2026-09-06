@@ -88,7 +88,8 @@ The wolf auto-deletes one-off entries from your wolf.json after they fire.
 - When a cron matches, wolf spawns a session for the owning wolt via `/sessions/new/lodge`
 - A notification is sent: `🐺 *Howl* — 🦫 nunu has been notified: "morning playlist time"`
 - Won't double-fire within the same minute (idempotent)
-- Last-run timestamps stored in `.state/wolf/`
+- Last-run timestamps and the job journal are lodge-global, in `.space/wolf/`
+- Read them without shelling in: `GET /wolf/schedules` and `GET /wolf/fires`
 
 ## CLI (for debugging)
 

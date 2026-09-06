@@ -4,8 +4,10 @@
 Each wolt registers its own schedule in wolt/wolf.json. The wolf discovers
 all schedules, fires crons on time, and spawns sessions for the owning wolt.
 
-Schedule config: {each_wolt}/wolt/wolf.json
-Last-run state:  {wolf_wolt}/.state/wolf/  (per-wolt)
+Schedule config: {each_wolt}/wolt/wolf.json   (per-wolt)
+Last-run state:  {wolts_dir}/.space/wolf/     (lodge-global — one scheduler
+                 serves every wolt, so the stamps and the job journal that keep
+                 a cron from firing twice cannot live inside one of them)
 
 Usage:
   python -m creatures.wolf              # Run as background service
@@ -140,7 +142,7 @@ def get_state_dir() -> Path:
 
 
 def _log_job(name: str, action: str, **kwargs):
-    """Append a job event to {wolt}/.state/wolf/jobs.jsonl."""
+    """Append a job event to the lodge-global {wolts_dir}/.space/wolf/jobs.jsonl."""
     log_file = get_state_dir() / "jobs.jsonl"
     entry = {
         "ts": datetime.now().isoformat(),
