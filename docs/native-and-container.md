@@ -62,7 +62,7 @@ first release, install both artifacts from a checkout:
 
 ```bash
 uv tool install .
-cd tui && npm pack && npm install -g ./woltspace-tui-0.5.0-rc.2.tgz
+cd tui && npm pack && npm install -g ./woltspace-tui-0.5.0-rc.1.tgz
 ```
 
 The Python package embeds the exact TUI version it accepts, so a locally
