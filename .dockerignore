@@ -1,2 +1,13 @@
-node_modules
+# Keep the --local build context lean: COPY . writes a permanent layer, so
+# anything listed here never enters the image. Registry builds copy nothing.
 .env
+.git
+.venv
+**/node_modules
+**/.venv
+dist
+desktop
+wolt
+worktrees
+**/*.tgz
+.dockerignore
