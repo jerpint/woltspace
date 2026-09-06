@@ -407,6 +407,79 @@ class TestChannelSupervisor:
         finally:
             sup.stop()
 
+    def test_the_phrase_in_a_healthy_childs_log_is_not_a_life_sentence(self, layout):
+        """A connector relays messages. One of them can say "address in use".
+
+        The marker used to be latched forever on the first sighting: the child
+        went on serving happily for an hour, died of something else entirely,
+        and was buried as a port clash that never got a restart.
+        """
+        clock = {"now": 1000.0}
+        talker = (
+            sys.executable, "-c",
+            "import sys, time;"
+            " print('user said: address already in use, lol'); sys.stdout.flush();"
+            " time.sleep(30)",
+        )
+        sup = ChannelSupervisor(
+            layout,
+            [running_plan(talker)],
+            poll_interval=0,
+            sleep=lambda _seconds: None,
+            clock=lambda: clock["now"],
+        )
+        sup.start(watch=False)
+        try:
+            state = sup.states["telegram"]
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline and not state.port_clash:
+                sup.poll_once()
+                time.sleep(0.02)
+            assert state.port_clash, "the marker was in the log and was noticed"
+            assert state.state == "running"
+
+            first = state.pid
+            clock["now"] += 3600.0  # an hour of honest work
+            os.kill(first, 9)
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                sup.poll_once()
+                if state.state == "running" and state.pid != first:
+                    break
+                time.sleep(0.02)
+            assert state.state == "running", state.error
+            assert state.restarts == 1
+        finally:
+            sup.stop()
+
+    def test_a_respawn_starts_the_clash_flag_clean(self, layout):
+        """The flag describes this incarnation's log, not the last one's."""
+        clock = {"now": 1000.0}
+        sup = ChannelSupervisor(
+            layout,
+            [running_plan(_sleeper())],
+            poll_interval=0,
+            sleep=lambda _seconds: None,
+            clock=lambda: clock["now"],
+        )
+        sup.start(watch=False)
+        try:
+            state = sup.states["telegram"]
+            state.port_clash = True  # a sighting from the life about to end
+            first = state.pid
+            clock["now"] += 3600.0
+            os.kill(first, 9)
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                sup.poll_once()
+                if state.state == "running" and state.pid != first:
+                    break
+                time.sleep(0.02)
+            assert state.state == "running", state.error
+            assert state.port_clash is False
+        finally:
+            sup.stop()
+
     def test_backoff_is_bounded(self):
         assert backoff_delay(1) == 1.0
         assert backoff_delay(2) == 2.0

@@ -314,6 +314,11 @@ class ChannelSupervisor:
             # otherwise degrade a perfectly healthy fresh connector on its
             # first tick.
             state.log_offset = handle.tell()
+            # The flag describes *this* incarnation's log and nothing else. A
+            # marker seen in a previous life — or a connector that merely
+            # relayed a message containing the phrase — must not follow the
+            # child across a restart and condemn it forever.
+            state.port_clash = False
         except OSError as exc:
             state.state = "failed"
             state.error = f"cannot open {log_path}: {exc}"
@@ -467,10 +472,21 @@ class ChannelSupervisor:
                 state.state = "failed"
                 state.error = TOKEN_CLASH_ERROR
                 continue
-            if state.port_clash:
+            # Wall clock, not monotonic: the window means "crashes per five
+            # minutes", and on macOS time.monotonic() does not advance while
+            # the machine is asleep — a suspend would otherwise look like no
+            # time passing at all.
+            now = self._clock()
+            died_fast = now - state.started_at < self.fast_exit_seconds
+            if state.port_clash and died_fast:
                 # It died on the socket, not on its work. Five more attempts
                 # would collide five more times; the plan's remedy already
                 # names the port and the knob that moves it.
+                #
+                # Only on a *fast* exit. A connector that ran happily for an
+                # hour did not fail to bind — whatever put the phrase in its
+                # log, it was not this death, and it deserves the ordinary
+                # restart every other crash gets.
                 tail = self.last_log_line(name)
                 state.state = "failed"
                 state.error = (
@@ -478,12 +494,7 @@ class ChannelSupervisor:
                     + (f": {tail}" if tail else "")
                 )
                 continue
-            # Wall clock, not monotonic: the window means "crashes per five
-            # minutes", and on macOS time.monotonic() does not advance while
-            # the machine is asleep — a suspend would otherwise look like no
-            # time passing at all.
-            now = self._clock()
-            if now - state.started_at < self.fast_exit_seconds:
+            if died_fast:
                 state.fast_exits += 1
             else:
                 state.fast_exits = 0
