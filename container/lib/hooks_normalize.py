@@ -13,8 +13,10 @@ wolt writes itself, and a sweep matching on the name would delete the wolt's
 own work. So the parent directory has to be one the platform ever shipped:
 `<anything>/container/hooks` (the current layout, in every form it was baked —
 "/workspace/woltspace/...", a mac checkout's absolute path, or an unexpanded
-"$WOLTSPACE_DIR/...") or the pre-container "/app/hooks". A hook named notify.sh
-living in a wolt's own directory survives.
+"$WOLTSPACE_DIR/...") or the pre-container "/app/hooks" — that one matched
+exactly, because it was one absolute path inside the image and a user checkout
+is perfectly entitled to its own app/hooks/. A hook named notify.sh living in a
+wolt's own directory survives.
 
 Every other key, and any hook a wolt added itself, is left untouched. A
 settings file with no woltspace hooks is left byte-identical.
@@ -22,14 +24,22 @@ settings file with no woltspace hooks is left byte-identical.
 
 import json
 import os
+import sys
 from pathlib import Path, PurePosixPath
 
 WOLTSPACE_HOOK_BASENAMES = frozenset({"session-done.sh", "notify.sh"})
 
-# Directory suffixes the platform's own hooks have always lived under. Matched
-# as a trailing path segment, so every prefix the writers ever produced —
-# absolute install path or literal $WOLTSPACE_DIR — resolves the same way.
-PLATFORM_HOOK_DIRS = ("container/hooks", "app/hooks")
+# The current layout, matched as a trailing path segment: every prefix the
+# writers ever produced — absolute install path or literal $WOLTSPACE_DIR —
+# resolves the same way, and "container/hooks" is distinctive enough that a
+# wolt's own directory will not wear it by accident.
+PLATFORM_HOOK_DIR_SUFFIX = "container/hooks"
+
+# The pre-container layout was one exact absolute path inside the image, and
+# nothing else. Matching it as a *suffix* would swallow any user checkout with
+# an app/hooks/ in it — /Users/me/project/app/hooks/notify.sh is the wolt's
+# own hook, not ours.
+PLATFORM_HOOK_DIR_EXACT = "/app/hooks"
 
 
 def _points_into_platform_hooks(command: str) -> bool:
@@ -37,7 +47,12 @@ def _points_into_platform_hooks(command: str) -> bool:
     if path.name not in WOLTSPACE_HOOK_BASENAMES:
         return False
     parent = path.parent.as_posix()
-    return any(parent == d or parent.endswith("/" + d) for d in PLATFORM_HOOK_DIRS)
+    if parent == PLATFORM_HOOK_DIR_EXACT:
+        return True
+    return (
+        parent == PLATFORM_HOOK_DIR_SUFFIX
+        or parent.endswith("/" + PLATFORM_HOOK_DIR_SUFFIX)
+    )
 
 
 def _is_woltspace_hook(entry) -> bool:
@@ -103,11 +118,23 @@ def normalize_settings_file(settings_path: Path) -> None:
 
 
 def normalize_all_wolt_hooks(wolts_dir: Path) -> None:
-    """Strip retired woltspace hooks from every wolt's .claude/settings.json."""
+    """Strip retired woltspace hooks from every wolt's .claude/settings.json.
+
+    One wolt's unwritable settings file is that wolt's problem and nobody
+    else's — the sweep says so once and carries on down the colony. Aborting
+    would leave every wolt alphabetically after it still spamming the hook
+    errors this pass exists to stop.
+    """
     wolts_dir = Path(wolts_dir)
     if not wolts_dir.is_dir():
         return
     for wolt in sorted(wolts_dir.iterdir()):
         if not wolt.is_dir() or wolt.name.startswith("."):
             continue
-        normalize_settings_file(wolt / ".claude" / "settings.json")
+        try:
+            normalize_settings_file(wolt / ".claude" / "settings.json")
+        except OSError as exc:
+            print(
+                f"⚠️  hooks normalize: {wolt.name}: {exc} — skipping",
+                file=sys.stderr,
+            )

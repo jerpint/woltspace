@@ -101,6 +101,26 @@ class TestStripWoltspaceHooks:
         assert strip_woltspace_hooks(settings) is True
         assert "hooks" not in settings
 
+    def test_a_users_own_app_hooks_directory_survives(self):
+        """"/app/hooks" was one absolute path in the image, not a suffix.
+
+        A checkout with an app/hooks/ of its own is the user's, and a hook of
+        theirs called notify.sh living in it is theirs too.
+        """
+        own = {
+            "hooks": {
+                "Notification": [{"hooks": [{"type": "command", "command": "/Users/me/project/app/hooks/notify.sh"}]}],
+            }
+        }
+        settings = json.loads(json.dumps(own))
+        assert strip_woltspace_hooks(settings) is False
+        assert settings == own
+
+    def test_a_users_own_container_hooks_directory_is_still_swept(self):
+        """The distinctive one stays a suffix match — every baked prefix hits."""
+        settings = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "/opt/anything/container/hooks/session-done.sh"}]}]}}
+        assert strip_woltspace_hooks(settings) is True
+
     def test_a_user_hook_with_the_same_basename_survives(self):
         """notify.sh is an obvious name for a wolt's own hook — don't eat it."""
         own = {
@@ -203,6 +223,22 @@ class TestNormalizeAllWoltHooks:
         before = own.read_text()
         normalize_all_wolt_hooks(wolts)
         assert own.read_text() == before
+
+    def test_one_unwritable_wolt_does_not_stop_the_sweep(self, tmp_path, capsys):
+        """Alphabetically first and unwritable — everyone after it still gets swept."""
+        wolts = tmp_path / "wolts"
+        stuck = _write_settings(wolts, "aardvark", {"hooks": _container_hooks()})
+        later = _write_settings(wolts, "zebra", {"hooks": _container_hooks()})
+        stuck_before = stuck.read_text()
+        stuck.parent.chmod(0o500)  # can read the file, cannot replace it
+        try:
+            normalize_all_wolt_hooks(wolts)
+        finally:
+            stuck.parent.chmod(0o700)
+
+        assert stuck.read_text() == stuck_before
+        assert json.loads(later.read_text()) == {}
+        assert "aardvark" in capsys.readouterr().err
 
     def test_a_wolt_without_settings_is_skipped(self, tmp_path):
         wolts = tmp_path / "wolts"
