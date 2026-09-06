@@ -557,3 +557,338 @@ class TestEnsureCodexDirTrusted:
 
         config = tomllib.loads(self._config(codex_trust_home).read_text())
         assert str(work_dir.resolve()) in config["projects"]
+
+
+# ---------------------------------------------------------------------------
+# Fail-open, locking, and TOML surgery — the trust writers must never be the
+# reason a session does not launch, and never the reason a config stops parsing
+# ---------------------------------------------------------------------------
+
+WEIRD = 'neo"wolt\\den'  # a path segment with both TOML escape characters in it
+
+
+def _stderr(capsys) -> str:
+    return capsys.readouterr().err
+
+
+class TestClaudeTrustFailsOpen:
+    """An unreadable ~/.claude.json costs a dialog, never a session."""
+
+    def _trust(self, work_dir, wolts_dir):
+        from trust import ensure_claude_dir_trusted
+        return ensure_claude_dir_trusted(work_dir, wolts_dir)
+
+    def test_invalid_utf8_is_survived(self, tmp_path, claude_trust_home, capsys):
+        """`session-reg prepare` used to die here, and the pane never rendered."""
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        config = claude_trust_home / ".claude.json"
+        raw = b'{"projects": {"\xff\xfe": {}}}'
+        config.write_bytes(raw)
+
+        assert self._trust(work_dir, wolts_dir) is False
+        assert config.read_bytes() == raw
+        assert "not valid UTF-8" in _stderr(capsys)
+
+    def test_malformed_json_warns_and_skips(self, tmp_path, claude_trust_home, capsys):
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        (claude_trust_home / ".claude.json").write_text("{oh no")
+
+        assert self._trust(work_dir, wolts_dir) is False
+        assert "not valid JSON" in _stderr(capsys)
+
+    def test_json_that_is_not_an_object_warns_and_skips(self, tmp_path, claude_trust_home, capsys):
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        (claude_trust_home / ".claude.json").write_text("[1, 2, 3]")
+
+        assert self._trust(work_dir, wolts_dir) is False
+        assert "not a JSON object" in _stderr(capsys)
+
+    def test_quotes_and_backslashes_in_the_path(self, tmp_path, claude_trust_home):
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / WEIRD
+        work_dir.mkdir(parents=True)
+
+        assert self._trust(work_dir, wolts_dir) is True
+
+        data = read_claude_json(claude_trust_home)
+        assert data["projects"][str(work_dir.resolve())]["hasTrustDialogAccepted"] is True
+
+
+class TestClaudeTrustIsSerialised:
+    """Two spawns landing together must both keep their entry."""
+
+    def test_concurrent_spawns_all_survive(self, tmp_path, claude_trust_home, monkeypatch):
+        """Last-writer-wins used to drop every entry but one."""
+        import threading
+        import time
+        import trust
+
+        wolts_dir = tmp_path / "wolts"
+        dirs = [wolts_dir / f"wolt{i}" for i in range(8)]
+        for d in dirs:
+            d.mkdir(parents=True)
+
+        # Widen the read-modify-write window so an unserialised version would
+        # lose entries every single run rather than one run in a hundred.
+        real_write = trust._write_atomically
+
+        def slow_write(path, text):
+            time.sleep(0.02)
+            real_write(path, text)
+
+        monkeypatch.setattr(trust, "_write_atomically", slow_write)
+
+        barrier = threading.Barrier(len(dirs))
+        results = {}
+
+        def worker(d):
+            barrier.wait()
+            results[d] = trust.ensure_claude_dir_trusted(d, wolts_dir)
+
+        threads = [threading.Thread(target=worker, args=(d,)) for d in dirs]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert all(results.values())
+        data = read_claude_json(claude_trust_home)  # also asserts it still parses
+        for d in dirs:
+            assert data["projects"][str(d.resolve())]["hasTrustDialogAccepted"] is True
+
+    def test_concurrent_spawns_preserve_unrelated_state(self, tmp_path, claude_trust_home):
+        import threading
+        import trust
+
+        wolts_dir = tmp_path / "wolts"
+        dirs = [wolts_dir / f"wolt{i}" for i in range(6)]
+        for d in dirs:
+            d.mkdir(parents=True)
+        (claude_trust_home / ".claude.json").write_text(json.dumps({
+            "numStartups": 12, "projects": {"/elsewhere": {"hasTrustDialogAccepted": True}},
+        }))
+
+        barrier = threading.Barrier(len(dirs))
+
+        def worker(d):
+            barrier.wait()
+            trust.ensure_claude_dir_trusted(d, wolts_dir)
+
+        threads = [threading.Thread(target=worker, args=(d,)) for d in dirs]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        data = read_claude_json(claude_trust_home)
+        assert data["numStartups"] == 12
+        assert "/elsewhere" in data["projects"]
+        assert len(data["projects"]) == len(dirs) + 1
+
+
+class TestCodexTrustDoesNotDuplicateTables:
+    """TOML has room for one [projects."x"] header. Two is a config codex dies on."""
+
+    def _trust(self, work_dir, wolts_dir):
+        from trust import ensure_codex_dir_trusted
+        return ensure_codex_dir_trusted(work_dir, wolts_dir)
+
+    def _config(self, codex_trust_home):
+        return codex_trust_home / "config.toml"
+
+    def test_existing_untrusted_table_is_flipped_not_duplicated(self, tmp_path, codex_trust_home):
+        """The bug: an untrusted entry made the append produce invalid TOML."""
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        key = str(work_dir.resolve())
+        self._config(codex_trust_home).write_text(
+            f'# mine\nmodel = "gpt-5"\n\n[projects."{key}"]\ntrust_level = "untrusted"\n'
+        )
+
+        assert self._trust(work_dir, wolts_dir) is True
+
+        text = self._config(codex_trust_home).read_text()
+        assert text.count(f'[projects."{key}"]') == 1
+        config = tomllib.loads(text)  # would raise on a duplicate table
+        assert config["projects"][key]["trust_level"] == "trusted"
+        assert config["model"] == "gpt-5"
+        assert "# mine" in text
+
+    def test_flipping_an_untrusted_table_is_idempotent(self, tmp_path, codex_trust_home):
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        key = str(work_dir.resolve())
+        self._config(codex_trust_home).write_text(
+            f'[projects."{key}"]\ntrust_level = "untrusted"\n'
+        )
+
+        assert self._trust(work_dir, wolts_dir) is True
+        after_first = self._config(codex_trust_home).read_bytes()
+
+        assert self._trust(work_dir, wolts_dir) is False
+        assert self._config(codex_trust_home).read_bytes() == after_first
+
+    def test_table_without_a_trust_level_gains_one(self, tmp_path, codex_trust_home):
+        """codex writes other per-project keys; the table can exist untrusted."""
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        key = str(work_dir.resolve())
+        self._config(codex_trust_home).write_text(
+            f'[projects."{key}"]\nsomething_else = 1\n\n[other]\nx = 2\n'
+        )
+
+        assert self._trust(work_dir, wolts_dir) is True
+
+        text = self._config(codex_trust_home).read_text()
+        assert text.count(f'[projects."{key}"]') == 1
+        config = tomllib.loads(text)
+        assert config["projects"][key] == {"trust_level": "trusted", "something_else": 1}
+        assert config["other"]["x"] == 2
+
+    def test_a_differently_quoted_header_is_the_same_table(self, tmp_path, codex_trust_home):
+        """Literal-string headers name the same path; do not append beside one."""
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        key = str(work_dir.resolve())
+        self._config(codex_trust_home).write_text(
+            f"[projects.'{key}']\ntrust_level = 'untrusted'\n"
+        )
+
+        assert self._trust(work_dir, wolts_dir) is True
+
+        text = self._config(codex_trust_home).read_text()
+        assert tomllib.loads(text)["projects"][key]["trust_level"] == "trusted"
+        assert text.count("[projects.") == 1
+
+    def test_inline_table_is_left_alone(self, tmp_path, codex_trust_home, capsys):
+        """No header line to edit — decline rather than append a rival table."""
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        key = str(work_dir.resolve())
+        original = f'projects = {{ "{key}" = {{ trust_level = "untrusted" }} }}\n'
+        self._config(codex_trust_home).write_text(original)
+
+        assert self._trust(work_dir, wolts_dir) is False
+        assert self._config(codex_trust_home).read_text() == original
+        assert "cannot edit safely" in _stderr(capsys)
+
+    def test_concurrent_preparations_write_one_table(self, tmp_path, codex_trust_home):
+        """Two spawns racing used to stack two identical headers."""
+        import threading
+        import trust
+
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        key = str(work_dir.resolve())
+
+        barrier = threading.Barrier(6)
+
+        def worker():
+            barrier.wait()
+            trust.ensure_codex_dir_trusted(work_dir, wolts_dir)
+
+        threads = [threading.Thread(target=worker) for _ in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        text = self._config(codex_trust_home).read_text()
+        assert text.count("[projects.") == 1
+        assert tomllib.loads(text)["projects"][key]["trust_level"] == "trusted"
+
+    def test_concurrent_preparations_for_different_workdirs(self, tmp_path, codex_trust_home):
+        import threading
+        import trust
+
+        wolts_dir = tmp_path / "wolts"
+        dirs = [wolts_dir / f"wolt{i}" for i in range(6)]
+        for d in dirs:
+            d.mkdir(parents=True)
+
+        barrier = threading.Barrier(len(dirs))
+
+        def worker(d):
+            barrier.wait()
+            trust.ensure_codex_dir_trusted(d, wolts_dir)
+
+        threads = [threading.Thread(target=worker, args=(d,)) for d in dirs]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        config = tomllib.loads(self._config(codex_trust_home).read_text())
+        for d in dirs:
+            assert config["projects"][str(d.resolve())]["trust_level"] == "trusted"
+
+
+class TestCodexTrustEscapesThePath:
+    """A `"` or `\\` in a workdir is legal on macOS and lethal to raw interpolation."""
+
+    def _trust(self, work_dir, wolts_dir):
+        from trust import ensure_codex_dir_trusted
+        return ensure_codex_dir_trusted(work_dir, wolts_dir)
+
+    def test_quoted_and_backslashed_path_round_trips(self, tmp_path, codex_trust_home):
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / WEIRD
+        work_dir.mkdir(parents=True)
+
+        assert self._trust(work_dir, wolts_dir) is True
+
+        text = (codex_trust_home / "config.toml").read_text()
+        config = tomllib.loads(text)  # raw interpolation would not even parse
+        assert config["projects"][str(work_dir.resolve())]["trust_level"] == "trusted"
+
+    def test_escaped_path_is_idempotent(self, tmp_path, codex_trust_home):
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / WEIRD
+        work_dir.mkdir(parents=True)
+
+        assert self._trust(work_dir, wolts_dir) is True
+        before = (codex_trust_home / "config.toml").read_bytes()
+
+        assert self._trust(work_dir, wolts_dir) is False
+        assert (codex_trust_home / "config.toml").read_bytes() == before
+
+
+class TestCodexTrustFailsOpen:
+
+    def _trust(self, work_dir, wolts_dir):
+        from trust import ensure_codex_dir_trusted
+        return ensure_codex_dir_trusted(work_dir, wolts_dir)
+
+    def test_invalid_utf8_config_is_survived(self, tmp_path, codex_trust_home, capsys):
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        config = codex_trust_home / "config.toml"
+        raw = b'model = "\xff\xfe"\n'
+        config.write_bytes(raw)
+
+        assert self._trust(work_dir, wolts_dir) is False
+        assert config.read_bytes() == raw
+        assert "not valid UTF-8" in _stderr(capsys)
+
+    def test_unparseable_config_naming_the_key_warns(self, tmp_path, codex_trust_home, capsys):
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        broken = f'not = toml = at = all\n[projects."{work_dir.resolve()}"]\n'
+        (codex_trust_home / "config.toml").write_text(broken)
+
+        assert self._trust(work_dir, wolts_dir) is False
+        assert "does not parse as TOML" in _stderr(capsys)
