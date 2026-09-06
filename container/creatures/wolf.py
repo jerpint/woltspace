@@ -29,18 +29,41 @@ from typing import Optional
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 
 
+def _dialable_host(host: str) -> str:
+    """A bind address turned into one a caller can actually connect to.
+
+    Mirrors `RuntimeLayout.dialable_host`, duplicated rather than imported
+    because the wolf runs from `container/` with no `woltspace` package on its
+    path. Wildcards become loopback; an IPv6 literal gets its brackets, without
+    which the URL below is unparseable.
+    """
+    raw = (host or "").strip().strip("[]")
+    if raw in {"", "0.0.0.0"}:
+        return "127.0.0.1"
+    if raw == "::":
+        return "[::1]"
+    return f"[{raw}]" if ":" in raw else raw
+
+
 def server_url(path: str = "") -> str:
     """The control plane this wolf reports to.
 
-    The port is whatever the platform was started on — the container has
-    always used 7777, but a native `woltspace start --port 8080` is a
-    perfectly ordinary thing to do, and a wolf hardcoded to 7777 would fire
-    every cron into a closed socket. Same precedence as RuntimeLayout:
-    WOLTSPACE_PORT, then PORT, then the historical default. The host stays
-    loopback — the wolf is always a child of the plane it calls.
+    WOLTSPACE_API is the whole address, stamped by the connector that spawned
+    us, and it is the answer whenever it is set. Behind it: host and port
+    assembled by hand, for a wolf launched by something older than the stamp.
+
+    Both halves matter. The port has to follow the instance — a native
+    `woltspace start --port 8080` is an ordinary thing to do, and a wolf
+    hardcoded to 7777 would fire every cron into a closed socket. So does the
+    *host*: a plane bound to a LAN address or to `::` was never on 127.0.0.1
+    either, and loopback-by-assumption silently dropped every callback.
     """
+    api = (os.environ.get("WOLTSPACE_API") or "").strip().rstrip("/")
+    if api:
+        return f"{api}{path}"
+    host = _dialable_host(os.environ.get("WOLTSPACE_HOST", ""))
     port = (os.environ.get("WOLTSPACE_PORT") or os.environ.get("PORT") or "7777").strip()
-    return f"http://127.0.0.1:{port}{path}"
+    return f"http://{host}:{port}{path}"
 
 
 def _get_tunnel_url() -> Optional[str]:

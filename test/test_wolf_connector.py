@@ -51,6 +51,7 @@ class TestPlan:
         assert plan.env["WOLTS_DIR"] == str(tmp_path / "wolts")
         assert plan.env["WOLTSPACE_DIR"] == str(ROOT)
         assert plan.env["WOLTSPACE_PORT"] == "8123"
+        assert plan.env["WOLTSPACE_API"] == "http://127.0.0.1:8123"
         parts = plan.env["PYTHONPATH"].split(":")
         assert str(ROOT / "container") in parts
         assert str(ROOT / "container" / "lib") in parts
@@ -60,6 +61,16 @@ class TestPlan:
             {"WOLTS_DIR": str(tmp_path / "wolts"), "WOLTSPACE_PORT": "9001"}
         )
         assert WolfConnector().plan(layout, ENTRY).env["WOLTSPACE_PORT"] == "9001"
+
+    def test_a_plane_bound_off_loopback_still_gets_its_callbacks(self, tmp_path):
+        """The wolf assumed 127.0.0.1; a LAN-bound plane heard nothing at all."""
+        layout = RuntimeLayout(
+            wolts_dir=tmp_path / "wolts", install_root=ROOT,
+            host="192.168.1.9", port=8080, isolation="host",
+        )
+        assert WolfConnector().plan(layout, ENTRY).env["WOLTSPACE_API"] == (
+            "http://192.168.1.9:8080"
+        )
 
     def test_a_guest_never_fires_the_schedules(self, tmp_path):
         plan = WolfConnector().plan(_layout(tmp_path), {})

@@ -488,8 +488,14 @@ class WolfConnector:
             "WOLTSPACE_DIR": str(layout.install_root),
             "WOLTSPACE_ISOLATION": layout.isolation,
             "WOLTSPACE_HOST": layout.host,
-            # Wolf builds its own endpoint from this; see `server_url` there.
             "WOLTSPACE_PORT": str(layout.port),
+            # The whole address, not just the port. The wolf used to assume
+            # loopback, so an instance bound to a LAN or IPv6 address got no
+            # callbacks at all — every cron fired into a closed socket. This is
+            # already the dialable form (see `RuntimeLayout.dialable_host`),
+            # IPv6 brackets included; `server_url` there still falls back to
+            # host+port and then to loopback.
+            "WOLTSPACE_API": layout.endpoint,
             "PYTHONPATH": os.pathsep.join(
                 part
                 for part in (
