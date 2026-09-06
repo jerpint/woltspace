@@ -261,6 +261,7 @@ class TestNoRealUserStateIsDiscovered:
                     or self._gated_by_owner(tree, node)
                     or self._gated_by_fixture(node)
                     or self._skips(body)
+                    or self._in_process(text, node, body)
                 ):
                     continue
                 offenders.append(f"{path.name}::{node.name}")
@@ -296,6 +297,22 @@ class TestNoRealUserStateIsDiscovered:
     def _skips(body: str) -> bool:
         """A test that resolves the chat itself and skips without one is safe."""
         return "pytest.skip" in body and "_find_chat_id" in body
+
+    @staticmethod
+    def _in_process(text: str, node, body: str) -> bool:
+        """A starlette TestClient calls the ASGI app directly — no socket.
+
+        `POST "/notify"` against one cannot reach a bot, a chat, or anything
+        outside the process, so it needs no live gate. Deliberately narrow:
+        the module must import TestClient and the test must actually use one,
+        and only the notify *endpoint* marker is excused — a literal
+        `api.telegram.org` in the same test would still be an offence.
+        """
+        if "from starlette.testclient import TestClient" not in text:
+            return False
+        if "api.telegram.org" in body:
+            return False
+        return "TestClient(" in body or "self._client(" in body
 
 
 class TestRoutingIsActuallyResolvable:
