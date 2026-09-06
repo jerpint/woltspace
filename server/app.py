@@ -4,10 +4,12 @@ All endpoints except /tui WebSocket, which is proxied to the Node pty bridge
 (`woltspace-tui-service` from @woltspace/tui, supervised by the control plane).
 """
 
+import asyncio
 import json
 import os
 import re
 import subprocess
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -111,24 +113,63 @@ async def _broadcast_reload():
         _livereload_clients.discard(ws)
 
 
+# --- Livereload watchers ---
+# Two of them, both running a blocking rust file-watch loop, and neither used to
+# be told when to stop:
+#
+#   * the lodge watcher below is a daemon thread. Interpreter shutdown kills a
+#     daemon thread wherever it happens to be — mid-rust-call, here — which the
+#     C runtime reports as `FATAL: exception not rethrown` and docker reports as
+#     exit 133 instead of 0. It only ever appeared on colonies that had a wolt,
+#     because that is when SITE_DIR exists and this thread starts.
+#   * the per-connection `awatch` in the site livereload websocket outlives
+#     uvicorn's graceful window, because `to_thread` cannot be cancelled: hence
+#     `Cancel N running task(s), timeout graceful shutdown exceeded` followed by
+#     a CancelledError traceback, and ~3 seconds added to every `docker stop`.
+#
+# One stop event each, set on shutdown, ends both. `rust_timeout` is how long a
+# blocked watch waits before coming up for air to check the flag.
+_WATCHER_POLL_MS = 500
+_WATCHER_JOIN_TIMEOUT = 2.0
+
+_watcher_stop = threading.Event()
+_watcher_threads: list[threading.Thread] = []
+_livereload_stops: set[threading.Event] = set()
+
+
 def _start_file_watcher():
     """Watch wolt/site/ for changes and broadcast reload."""
-    import asyncio
-    import threading
-
     from watchfiles import watch
 
     def _watch():
         loop = None
-        for _changes in watch(str(SITE_DIR)):
+        for _changes in watch(str(SITE_DIR), stop_event=_watcher_stop,
+                              rust_timeout=_WATCHER_POLL_MS):
             if loop is None:
                 loop = asyncio.get_event_loop()
             loop.call_soon_threadsafe(asyncio.ensure_future, _broadcast_reload())
 
     if SITE_DIR.exists():
+        _watcher_stop.clear()
         t = threading.Thread(target=_watch, daemon=True)
         t.start()
+        _watcher_threads.append(t)
         print(f"[livereload] watching {SITE_DIR}")
+
+
+def stop_file_watchers(timeout: float = _WATCHER_JOIN_TIMEOUT) -> None:
+    """Ask every file watcher to stop, and wait for the threads to actually go.
+
+    Called from the lifespan's shutdown half so the watchers are gone *before*
+    uvicorn starts counting down its graceful window — which is what turns a
+    noisy 3-second stop into a quiet one.
+    """
+    _watcher_stop.set()
+    for event in list(_livereload_stops):
+        event.set()
+    for thread in _watcher_threads:
+        thread.join(timeout=timeout)
+    _watcher_threads.clear()
 
 
 # Digest cron removed — the wolf creature owns all scheduling via wolt/wolf.json.
@@ -168,6 +209,8 @@ async def lifespan(app: FastAPI):
   tunnel: {tunnel_mgr.get_tunnel_url() or 'disabled'}
     """)
     yield
+    # Watchers first: they are what used to outlive the shutdown window.
+    stop_file_watchers()
     tunnel_mgr.stop_tunnel()
 
 
@@ -1254,16 +1297,27 @@ async def site_livereload_ws(wolt_name: str, ws: WebSocket):
         await ws.close()
         return
     await ws.accept()
+    stop = threading.Event()
+    _livereload_stops.add(stop)
     try:
-        async for _changes in awatch(str(sdir)):
+        async for _changes in awatch(str(sdir), stop_event=stop,
+                                     rust_timeout=_WATCHER_POLL_MS):
             try:
                 await ws.send_text("reload")
             except Exception:
                 break
     except WebSocketDisconnect:
         pass
+    except asyncio.CancelledError:
+        # Server shutting down. Swallowed on purpose: this handler is ending
+        # anyway, and letting it propagate is what printed a CancelledError
+        # traceback under "Exception in ASGI application" on every clean stop.
+        pass
     except Exception:
         pass
+    finally:
+        stop.set()
+        _livereload_stops.discard(stop)
 
 
 @app.get("/app/{app_name}/{path:path}")
