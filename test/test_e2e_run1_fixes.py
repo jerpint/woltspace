@@ -233,13 +233,38 @@ class TestWatchersStopOnShutdown:
         body = source[source.index("async def lifespan("):]
         assert body.index("stop_file_watchers()") < body.index("tunnel_mgr.stop_tunnel()")
 
-    def test_the_socket_handler_swallows_cancellation(self):
+    def test_the_socket_handler_watches_for_the_disconnect_too(self):
+        """uvicorn closes connections *before* running lifespan shutdown, so a
+        handler that only watches files hears about the stop too late."""
         source = (ROOT / "server" / "app.py").read_text()
         handler = source[source.index("async def site_livereload_ws("):]
         handler = handler[:handler.index("@app.get")]
+
         assert "stop_event=stop" in handler
+        assert "ws.receive()" in handler, "nothing notices uvicorn's disconnect"
+        assert "FIRST_COMPLETED" in handler
         assert "except asyncio.CancelledError:" in handler
         assert "_livereload_stops.discard(stop)" in handler
+        # no orphan task may outlive the handler — but the watcher is given a
+        # moment to finish on its own first, because ripping an async generator
+        # out of a to_thread call is what leaked a CancelledError into whoever
+        # opened the socket
+        assert "asyncio.wait_for(asyncio.shield(watcher)" in handler
+        assert "watcher.cancel()" in handler
+        assert "return_exceptions=True" in handler
+
+    def test_flagging_is_separable_from_joining(self):
+        """The flags must be raisable without blocking on a thread join."""
+        from server import app as server_app
+
+        stop = threading.Event()
+        server_app._livereload_stops.add(stop)
+        try:
+            server_app.signal_watchers_to_stop()
+            assert stop.is_set()
+        finally:
+            server_app._livereload_stops.discard(stop)
+            server_app._watcher_stop.clear()
 
 
 # ---------------------------------------------------------------------------

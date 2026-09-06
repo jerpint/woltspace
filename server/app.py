@@ -11,6 +11,7 @@ import re
 import subprocess
 import threading
 import time
+import contextlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -131,6 +132,9 @@ async def _broadcast_reload():
 # blocked watch waits before coming up for air to check the flag.
 _WATCHER_POLL_MS = 500
 _WATCHER_JOIN_TIMEOUT = 2.0
+# How long a livereload handler waits for its own watcher to notice the flag
+# and finish, before it stops being polite about it.
+_WATCHER_SETTLE_S = 2.0
 
 _watcher_stop = threading.Event()
 _watcher_threads: list[threading.Thread] = []
@@ -157,6 +161,13 @@ def _start_file_watcher():
         print(f"[livereload] watching {SITE_DIR}")
 
 
+def signal_watchers_to_stop() -> None:
+    """Raise every stop flag. Cheap, non-blocking, safe to call repeatedly."""
+    _watcher_stop.set()
+    for event in list(_livereload_stops):
+        event.set()
+
+
 def stop_file_watchers(timeout: float = _WATCHER_JOIN_TIMEOUT) -> None:
     """Ask every file watcher to stop, and wait for the threads to actually go.
 
@@ -164,9 +175,7 @@ def stop_file_watchers(timeout: float = _WATCHER_JOIN_TIMEOUT) -> None:
     uvicorn starts counting down its graceful window — which is what turns a
     noisy 3-second stop into a quiet one.
     """
-    _watcher_stop.set()
-    for event in list(_livereload_stops):
-        event.set()
+    signal_watchers_to_stop()
     for thread in _watcher_threads:
         thread.join(timeout=timeout)
     _watcher_threads.clear()
@@ -1390,25 +1399,40 @@ async def site_livereload_ws(wolt_name: str, ws: WebSocket):
     await ws.accept()
     stop = threading.Event()
     _livereload_stops.add(stop)
-    try:
+
+    async def _push_reloads():
         async for _changes in awatch(str(sdir), stop_event=stop,
                                      rust_timeout=_WATCHER_POLL_MS):
-            try:
-                await ws.send_text("reload")
-            except Exception:
-                break
-    except WebSocketDisconnect:
-        pass
+            await ws.send_text("reload")
+
+    # Race the watcher against the socket's own receive. That second task is
+    # the whole point: uvicorn's shutdown order is signal → close connections →
+    # *then* lifespan shutdown, so a handler that only watches files learns
+    # about the shutdown after the graceful window it was supposed to fit
+    # inside, and gets reported as `Cancel 1 running task(s)`. `ws.receive()`
+    # completes as soon as uvicorn sends the disconnect — and equally when the
+    # browser simply navigates away.
+    watcher = asyncio.create_task(_push_reloads())
+    disconnect = asyncio.create_task(ws.receive())
+    try:
+        await asyncio.wait({watcher, disconnect},
+                           return_when=asyncio.FIRST_COMPLETED)
     except asyncio.CancelledError:
-        # Server shutting down. Swallowed on purpose: this handler is ending
-        # anyway, and letting it propagate is what printed a CancelledError
-        # traceback under "Exception in ASGI application" on every clean stop.
-        pass
-    except Exception:
         pass
     finally:
+        # Raising the flag is enough: awatch checks it within `rust_timeout`
+        # and its generator finishes on its own. Give it that moment before
+        # resorting to cancellation — tearing an async generator out of a
+        # to_thread call mid-flight is what turns a tidy close into a
+        # CancelledError escaping into whoever opened the socket.
         stop.set()
         _livereload_stops.discard(stop)
+        disconnect.cancel()
+        with contextlib.suppress(BaseException):
+            await asyncio.wait_for(asyncio.shield(watcher), _WATCHER_SETTLE_S)
+        watcher.cancel()
+        with contextlib.suppress(BaseException):
+            await asyncio.gather(watcher, disconnect, return_exceptions=True)
 
 
 @app.get("/app/{app_name}/{path:path}")
