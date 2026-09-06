@@ -287,10 +287,16 @@ def _codex_retrust(text: str, key: str) -> str | None:
         # table, or a dotted key. Not a shape we will edit blind.
         return None
 
+    # Where our table stops. A boundary is *any* header-looking line: the
+    # permissive check is the correct one here, because getting it wrong means
+    # rewriting a trust_level that belongs to somebody else's table. A header
+    # with a trailing comment (`[other] # mine`), odd spacing, or an
+    # array-of-tables (`[[x]]`) all end our table just as firmly as a header
+    # we could parse. `_projects_table_key` is for *identifying* our table,
+    # not for deciding where it ends.
     end = len(lines)
     for j in range(start + 1, len(lines)):
-        stripped = lines[j].strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
+        if lines[j].lstrip().startswith("["):
             end = j
             break
 

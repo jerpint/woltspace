@@ -770,6 +770,60 @@ class TestCodexTrustDoesNotDuplicateTables:
         assert tomllib.loads(text)["projects"][key]["trust_level"] == "trusted"
         assert text.count("[projects.") == 1
 
+    def test_the_next_header_ends_our_table_even_with_a_trailing_comment(
+        self, tmp_path, codex_trust_home
+    ):
+        """`[other] # mine` does not parse bare — it still ends our table."""
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        key = str(work_dir.resolve())
+        self._config(codex_trust_home).write_text(
+            f'[projects."{key}"]\nsomething_else = 1\n'
+            '[other] # mine\ntrust_level = "untrusted"\n'
+        )
+
+        assert self._trust(work_dir, wolts_dir) is True
+
+        config = tomllib.loads(self._config(codex_trust_home).read_text())
+        assert config["projects"][key]["trust_level"] == "trusted"
+        # The stranger's trust_level is the stranger's business.
+        assert config["other"]["trust_level"] == "untrusted"
+
+    def test_the_next_header_ends_our_table_with_odd_spacing(
+        self, tmp_path, codex_trust_home
+    ):
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        key = str(work_dir.resolve())
+        self._config(codex_trust_home).write_text(
+            f'[projects."{key}"]\nsomething_else = 1\n'
+            '  [ other ]  \ntrust_level = "untrusted"\n'
+        )
+
+        assert self._trust(work_dir, wolts_dir) is True
+
+        config = tomllib.loads(self._config(codex_trust_home).read_text())
+        assert config["projects"][key]["trust_level"] == "trusted"
+        assert config["other"]["trust_level"] == "untrusted"
+
+    def test_an_array_of_tables_ends_our_table(self, tmp_path, codex_trust_home):
+        wolts_dir = tmp_path / "wolts"
+        work_dir = wolts_dir / "neowolt"
+        work_dir.mkdir(parents=True)
+        key = str(work_dir.resolve())
+        self._config(codex_trust_home).write_text(
+            f'[projects."{key}"]\nsomething_else = 1\n'
+            '[[servers]]\ntrust_level = "untrusted"\n'
+        )
+
+        assert self._trust(work_dir, wolts_dir) is True
+
+        config = tomllib.loads(self._config(codex_trust_home).read_text())
+        assert config["projects"][key]["trust_level"] == "trusted"
+        assert config["servers"][0]["trust_level"] == "untrusted"
+
     def test_inline_table_is_left_alone(self, tmp_path, codex_trust_home, capsys):
         """No header line to edit — decline rather than append a rival table."""
         wolts_dir = tmp_path / "wolts"
