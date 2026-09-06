@@ -10,7 +10,7 @@ ENV_FILE=$(mktemp /tmp/entrypoint-env.XXXXXX)
 python3 "$WOLTSPACE_DIR/container/entrypoint_setup.py" --env-file "$ENV_FILE"
 source "$ENV_FILE"
 rm -f "$ENV_FILE"
-export WOLT_NAME WOLT_DIR WOLTS_DIR DEV_MODE WOLF_CONFIG PYTHONPATH PATH
+export WOLT_NAME WOLT_DIR WOLTS_DIR DEV_MODE PYTHONPATH PATH
 export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
 export WOLTSPACE_ISOLATION=external
 # This script IS the platform entrypoint. Nothing else in the container should
@@ -117,12 +117,10 @@ echo "starting vulture reaper..."
 (cd "$WOLTSPACE_DIR/container" && python3 -m creatures.vulture) &
 disown
 
-# Wolf scheduler
-if [ -n "$WOLF_CONFIG" ]; then
-  echo "starting wolf scheduler (config: $WOLF_CONFIG)..."
-  (cd "$WOLTSPACE_DIR/container" && uv run --project bot watchfiles --filter python "python -m creatures.wolf" creatures/) &
-  disown
-fi
+# Wolf scheduler — started by the control-plane supervisor as a WolfConnector,
+# not here (see src/woltspace/channels.py). Launching it here too would give the
+# colony two schedulers and fire every cron twice.
+# Inspect it with:  curl -s localhost:7777/health | jq .connectors
 
 # ── Cleanup ──
 cleanup() { kill $SERVER_PID 2>/dev/null; }
