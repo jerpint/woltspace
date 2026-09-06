@@ -79,11 +79,56 @@ woltspace init      # first-time setup
 woltspace start     # start or resume the container
 ```
 
-The container mounts exactly one directory — your wolts directory — and bakes
-everything else into the image. The mount is not optional: a container without
-it would come up with an empty data root and every wolt you own silently
-missing, so `doctor` and startup both fail with the `docker run -v` command
-that fixes it, rather than a traceback.
+The container mounts exactly one directory — your wolts directory. The mount is
+not optional: a container without it would come up with an empty data root and
+every wolt you own silently missing, so `doctor` and startup both fail with the
+`docker run -v` command that fixes it, rather than a traceback.
+
+### What is in the image
+
+The image no longer bakes the source tree. It installs **the same two published
+artifacts a native install uses**:
+
+```dockerfile
+uv tool install 'woltspace[connectors]==<WOLTSPACE_PYPI_VERSION>'   # the control plane
+npm  install -g '@woltspace/tui@<WOLTSPACE_TUI_VERSION>'            # tui + pty bridge
+```
+
+Everything else in the Dockerfile is environment and isolation: the OS, the
+harness CLIs (claude, codex, opencode), tmux, `cloudflared`, worktui, a non-root
+`node` user, and one mount point. There is no git clone of the platform, no
+`npm install` of the repo, no per-project `uv sync`. The wheel carries the whole
+runtime in its bundle — `server/`, `container/lib`, `container/bin`, the
+platform skills and templates — and the image points the familiar
+`/workspace/woltspace` path at that bundle with a symlink, so every skill, wolt
+`CLAUDE.md` and bin script that knows the old path still works.
+
+The **entrypoint ships inside the package too** (`container/entrypoint.sh` →
+`container/start.sh`). It does only what a container has to: read the
+`--env-file` secrets, seed harness credentials and trust into the per-wolt
+HOMEs (container-only by design — native reuses your own login and copies
+nothing), prepare the workspace dirs the mount shadows, declare
+`WOLTSPACE_ISOLATION=external` and `WOLTSPACE_ENTRYPOINT=1`, open the tmux
+window — and then `exec` the installed `woltspace serve`. Skills sync, hook
+normalization, session adoption, the connectors and the tunnel all belong to
+that control plane, which is byte-for-byte the one a native user runs.
+
+Because the entrypoint comes from the installed package, a registry build is
+only coherent from the **first release that carries this slim entrypoint**: an
+image built on an older `WOLTSPACE_PYPI_VERSION` would run that release's
+entrypoint, which still expects a checkout. Build dev images from the tree
+instead.
+
+### Building from a checkout
+
+```bash
+woltspace rebuild --local        # --build-arg USE_LOCAL=true
+```
+
+`--local` builds a wheel from the checkout and a tarball from its `tui/`, then
+installs *those* — the same install shape as a release, only a different source
+for the artifact. There is no source mount and no hot reload: the platform is
+always run as an installed package, never from raw files. Edit, rebuild, restart.
 
 ---
 
@@ -230,7 +275,7 @@ live with it.
 |---|---|---|---|
 | Slack is silent | There is no Slack connector; only Telegram is behind the seam. | Nothing — Slack stays on the container. | A `SlackConnector` beside `TelegramConnector`. |
 | No public URL | Native defaults the tunnel off (deliberately). `.env`'s named-tunnel token is ignored unless `WOLTSPACE_PUBLIC_TUNNEL=true`. | `WOLTSPACE_PUBLIC_TUNNEL=true woltspace start` — only with the container stopped, or two connectors load-balance the same hostname. | Document; possibly a `tunnel` block in `config.json`. |
-| Wolf crons, the digest, the vulture reaper do not run | `container/entrypoint.sh` starts the creatures; the native supervisor only supervises connectors. | None natively. | Creatures become supervised children like connectors. |
+| The digest cron and the vulture reaper do not run | The wolf is a supervised connector in both runtimes now, so schedules fire natively. The vulture is gone from the container entrypoint too — adoption on start does the reconciling it existed for. | None; adoption covers the reaping. | The digest is a wolf schedule, not a creature. |
 | A session whose workdir sits outside the data root shows its agent's workspace trust prompt | Preparing a session pre-accepts the trust dialog — claude's in `~/.claude.json`, codex's in `$CODEX_HOME/config.toml` — but only for directories inside the data root: pointing woltspace at a colony is the trust decision, and it does not extend past it. Everything else still asks, and a headless spawn there parks with nobody to answer. | Trust the directory once by hand (open the agent in it), or keep session workdirs inside the data root. | Nothing — the data root is the boundary on purpose. |
 | `status` says `N orphaned` on first start | The registry still marks sessions the container was running. Their tmux sessions never existed on the host, so adoption orphans them. | Nothing; it is correct. | — |
 | Wolt `CLAUDE.md` / memory files mention `/workspace/wolts/...` | Written from inside the container. Registry records are normalized on adoption; prose is not. | Cosmetic. | — |
