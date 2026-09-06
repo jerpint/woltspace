@@ -318,8 +318,11 @@ def wolts_with_credentials(wolts):
     (wolts / "beaverwolt" / "home" / ".codex" / "auth.json").write_text(SECRET)
     (wolts / "beaverwolt" / "wolt" / "apps" / "shop").mkdir(parents=True)
     (wolts / "beaverwolt" / "wolt" / "apps" / "shop" / ".env").write_text(f"STRIPE={SECRET}")
+    (wolts / "beaverwolt" / "wolt" / "apps" / "shop" / ".env.local").write_text(f"DB={SECRET}")
+    (wolts / "beaverwolt" / "wolt" / "apps" / "shop" / ".env.production").write_text(SECRET)
     # Lookalikes that are documentation, not credentials.
     (wolts / "beaverwolt" / "wolt" / "apps" / "shop" / "env.example").write_text("STRIPE=")
+    (wolts / "beaverwolt" / "wolt" / "apps" / "shop" / ".env.sample").write_text("DB=")
     (wolts / ".env.example").write_text("TELEGRAM_BOT_TOKEN=")
     (wolts / "beaverwolt" / "wolt" / "memory" / "credentials.md").write_text("how auth works")
     (wolts / "beaverwolt" / "wolt" / "memory" / ".codex").mkdir()
@@ -338,6 +341,8 @@ def test_no_credential_ever_enters_the_archive(wolts_with_credentials, tmp_path)
         f"{ARCHIVE_ROOT}/.claude/.credentials.json.stale-2025.bak",
         f"{ARCHIVE_ROOT}/beaverwolt/home/.codex/auth.json",
         f"{ARCHIVE_ROOT}/beaverwolt/wolt/apps/shop/.env",
+        f"{ARCHIVE_ROOT}/beaverwolt/wolt/apps/shop/.env.local",
+        f"{ARCHIVE_ROOT}/beaverwolt/wolt/apps/shop/.env.production",
     ):
         assert secret not in names
 
@@ -354,6 +359,8 @@ def test_the_manifest_names_every_withheld_path(wolts_with_credentials, tmp_path
     assert paths == {
         ".env": "dotenv",
         "beaverwolt/wolt/apps/shop/.env": "dotenv",
+        "beaverwolt/wolt/apps/shop/.env.local": "dotenv",
+        "beaverwolt/wolt/apps/shop/.env.production": "dotenv",
         ".claude/.credentials.json": "claude-credentials",
         ".claude/.credentials.json.expired-2026.bak": "claude-credentials",
         ".claude/.credentials.json.stale-2025.bak": "claude-credentials",
@@ -363,7 +370,7 @@ def test_the_manifest_names_every_withheld_path(wolts_with_credentials, tmp_path
         "dotenv", "claude-credentials", "codex-auth",
     }
     assert SECRET not in json.dumps(result.manifest)
-    assert "6 credential file(s)" in "\n".join(backup_mod.summary_lines(result))
+    assert "8 credential file(s)" in "\n".join(backup_mod.summary_lines(result))
 
 
 def test_lookalikes_are_not_withheld(wolts_with_credentials, tmp_path):
@@ -373,19 +380,23 @@ def test_lookalikes_are_not_withheld(wolts_with_credentials, tmp_path):
     for kept in (
         f"{ARCHIVE_ROOT}/.env.example",
         f"{ARCHIVE_ROOT}/beaverwolt/wolt/apps/shop/env.example",
+        f"{ARCHIVE_ROOT}/beaverwolt/wolt/apps/shop/.env.sample",
         f"{ARCHIVE_ROOT}/beaverwolt/wolt/memory/credentials.md",
         f"{ARCHIVE_ROOT}/beaverwolt/wolt/memory/.codex/notes.json",
     ):
         assert kept in names
     withheld = {item["path"] for item in result.manifest["withheld"]["paths"]}
-    assert not [path for path in withheld if "example" in path or path.endswith(".md")]
+    assert not [
+        path for path in withheld
+        if path.endswith((".example", ".sample", ".md"))
+    ]
 
 
 def test_restore_prints_the_reprovision_checklist(wolts_with_credentials, tmp_path, capsys):
     result = create_backup(wolts_with_credentials, out_dir=tmp_path / "out", tag="creds")
     assert cli_main(["restore", str(result.archive), "--to", str(tmp_path / "back")]) == 0
     out = capsys.readouterr().out
-    assert "6 credential file(s), by design" in out
+    assert "8 credential file(s), by design" in out
     assert "copy .env.example" in out
     assert "woltspace init" in out
     assert "codex login" in out

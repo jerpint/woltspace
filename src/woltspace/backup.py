@@ -95,10 +95,17 @@ EXCLUDED_FILE_SUFFIXES = (".pyc", ".sock")
 #: heuristic that reads files looking for secrets is a heuristic that reads
 #: secrets, and one that guesses wrong drops data.
 SECRET_RULES = (
-    ("dotenv", "a file named exactly .env, at any depth"),
+    ("dotenv", ".env or .env.* at any depth, except .example / .sample templates"),
     ("claude-credentials", ".credentials.json* directly inside a .claude directory"),
     ("codex-auth", "auth.json directly inside a .codex directory"),
 )
+
+
+#: `.env.local`, `.env.production`, `.env.staging` — in every app ecosystem a
+#: wolt builds in, a suffixed dotenv holds real values. `.env.example` and
+#: `.env.sample` are the two conventions for the opposite: a checked-in
+#: template with the values blanked out.
+DOTENV_TEMPLATE_SUFFIXES = (".example", ".sample")
 
 
 def secret_rule(rel: str) -> str | None:
@@ -106,7 +113,9 @@ def secret_rule(rel: str) -> str | None:
     path = PurePosixPath(rel)
     name = path.name
     parent = path.parent.name
-    if name == ".env":
+    if name == ".env" or (
+        name.startswith(".env.") and not name.endswith(DOTENV_TEMPLATE_SUFFIXES)
+    ):
         return "dotenv"
     if parent == ".claude" and name.startswith(".credentials.json"):
         return "claude-credentials"

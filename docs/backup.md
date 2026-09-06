@@ -68,7 +68,7 @@ handed back to you as a checklist.
 
 | Withheld | Rule |
 | --- | --- |
-| `.env` | a file named exactly `.env`, at any depth (apps carry their own) |
+| `.env`, `.env.local`, `.env.production`, … | `.env` or `.env.*` at any depth (apps carry their own), except `.example` and `.sample` templates |
 | `.claude/.credentials.json`, `…json.expired-*.bak`, `…json.stale-*.bak` | `.credentials.json*` directly inside a `.claude` directory |
 | `.codex/auth.json` | `auth.json` directly inside a `.codex` directory |
 
@@ -82,8 +82,9 @@ rest.
 
 The rules are explicit names and paths. Nothing sniffs file contents: a
 heuristic that reads files looking for secrets is a heuristic that reads
-secrets, and one that guesses wrong drops data. Lookalikes — `.env.example`,
-`env.example`, `credentials.md` — are ordinary files and are backed up.
+secrets, and one that guesses wrong drops data. Templates and lookalikes —
+`.env.example`, `.env.sample`, `env.example`, `credentials.md` — are ordinary
+files and are backed up.
 
 There is no `--with-secrets`. The safe default is the only default.
 
