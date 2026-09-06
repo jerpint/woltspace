@@ -415,7 +415,9 @@ class TuiBridgeConnector:
             env=child_env,
             remedy=(
                 f"Something else holds port {port}; pick another with WOLTSPACE_TUI_PORT "
-                f"or channels.tui.port in {path}, or read {layout.logs_dir / 'connector-tui.log'}."
+                f"or channels.tui.port in {path}, or read {layout.logs_dir / 'connector-tui.log'}. "
+                f"The default is the API port + 1 ({layout.port} + 1), so an instance started "
+                f"one port above another lands on that one's bridge — give it an explicit port."
             ),
             # The script or binary path is one argv token no other process
             # reproduces; `node` alone would match every Node program.

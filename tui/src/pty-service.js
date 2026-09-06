@@ -126,6 +126,23 @@ export function startPtyService({ port = 3001, woltDir = process.cwd(), log = co
     });
   });
 
+  // Without this the 'error' event is unhandled, so a busy port becomes an
+  // uncaught exception: a Node stack trace in connector-tui.log and a bridge
+  // that just isn't there. The default port is the API port + 1, so a second
+  // instance on :7778 lands on the default instance's bridge — say which port
+  // and which knob, then exit nonzero so the supervisor can act on it.
+  server.on('error', (error) => {
+    if (error && error.code === 'EADDRINUSE') {
+      log(`[tui-service] cannot bind port ${port}: address already in use — `
+        + 'something else holds it (another woltspace instance?). '
+        + 'Set WOLTSPACE_TUI_PORT, or channels.tui.port in the data root config, '
+        + 'to give this instance its own pty port.');
+    } else {
+      log(`[tui-service] listen on port ${port} failed: ${error && error.message}`);
+    }
+    process.exit(1);
+  });
+
   server.listen(port, () => {
     log(`[tui-service] listening on port ${port}`);
   });

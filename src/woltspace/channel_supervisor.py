@@ -68,12 +68,28 @@ TOKEN_CLASH_REMEDY = (
     "(e.g. `woltspace stop`, or stop the container) — or give this instance its "
     "own test bot token in channels.telegram.token."
 )
+# A child that cannot bind its port will never bind it by trying again: the
+# other holder owns it until it stops. The generic fast-exit give-up eventually
+# catches this, but only after five stillbirths — and it reports "exited within
+# 5s five times", which says nothing about *why*. Name the collision on the
+# first death instead.
+PORT_CLASH_MARKERS = (
+    "eaddrinuse",
+    "address already in use",
+    "address in use",
+)
+PORT_CLASH_ERROR = "cannot bind its port — something else already holds it"
 LOG_SCAN_LIMIT = 64 * 1024
 
 
 def find_token_clash(text: str) -> bool:
     lowered = text.lower()
     return any(marker in lowered for marker in TOKEN_CLASH_MARKERS)
+
+
+def find_port_clash(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in PORT_CLASH_MARKERS)
 
 
 def _contains_tokens(argv: list[str], signature: list[str]) -> bool:
@@ -127,6 +143,7 @@ class ConnectorState:
     log: str = ""
     remedy_override: str = ""
     token_clash: bool = False
+    port_clash: bool = False
     log_offset: int = 0
     crash_times: list[float] = field(default_factory=list)
     fast_exits: int = 0
@@ -392,7 +409,14 @@ class ChannelSupervisor:
                 state.log_offset = handle.tell()
         except OSError:
             return False
-        if not chunk or not find_token_clash(chunk):
+        if not chunk:
+            return False
+        # Noted, not acted on: a child that logged this is already dying, and
+        # the exit path is where a refusal to restart belongs. Recorded here
+        # because the offset only passes over each line once.
+        if find_port_clash(chunk):
+            state.port_clash = True
+        if not find_token_clash(chunk):
             return False
         state.state = "degraded"
         state.error = TOKEN_CLASH_ERROR
@@ -442,6 +466,17 @@ class ChannelSupervisor:
                 # token. Restarting would lose the same race five more times.
                 state.state = "failed"
                 state.error = TOKEN_CLASH_ERROR
+                continue
+            if state.port_clash:
+                # It died on the socket, not on its work. Five more attempts
+                # would collide five more times; the plan's remedy already
+                # names the port and the knob that moves it.
+                tail = self.last_log_line(name)
+                state.state = "failed"
+                state.error = (
+                    f"{PORT_CLASH_ERROR} (exit code {code}); not restarting"
+                    + (f": {tail}" if tail else "")
+                )
                 continue
             # Wall clock, not monotonic: the window means "crashes per five
             # minutes", and on macOS time.monotonic() does not advance while

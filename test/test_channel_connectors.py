@@ -344,6 +344,41 @@ class TestChannelSupervisor:
         finally:
             sup.stop()
 
+    def test_a_busy_port_is_named_on_the_first_death_not_the_fifth(self, layout):
+        """The bridge defaults to API port + 1, so an instance one port above
+        another lands on that one's bridge. It used to crash-loop through five
+        stillbirths and then report only "exited within 5s five times" — true,
+        and useless. Say what actually happened, immediately."""
+        binder = (
+            sys.executable, "-c",
+            "import sys; print('Error: listen EADDRINUSE: address already in use :::7778');"
+            " sys.exit(1)",
+        )
+        plan = ConnectorPlan(
+            "tui", True, "pty bridge", binder, str(ROOT), {},
+            remedy="Something else holds port 7778; pick another with WOLTSPACE_TUI_PORT.",
+        )
+        sup = ChannelSupervisor(
+            layout, [plan], poll_interval=0, sleep=lambda _seconds: None
+        )
+        sup.start(watch=False)
+        try:
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                sup.poll_once()
+                if sup.states["tui"].state == "failed":
+                    break
+                time.sleep(0.02)
+            state = sup.states["tui"]
+            assert state.state == "failed"
+            assert state.restarts == 0, "gave up on the first death, not the fifth"
+            assert "cannot bind its port" in state.error
+            assert "7778" in state.error, "the colliding port is in the parting words"
+            record = read_connector_report(layout)["connectors"][0]
+            assert "WOLTSPACE_TUI_PORT" in record["remedy"]
+        finally:
+            sup.stop()
+
     def test_a_child_that_lived_a_while_still_gets_the_full_budget(self, layout):
         """Only *fast* exits are hopeless; a connector that ran is retried."""
         clock = {"now": 1000.0}
