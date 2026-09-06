@@ -69,7 +69,14 @@ EXCLUDED_PATH_SUFFIXES = (
     ".claude/plugins/cache",
     "wolt/worktrees",
     ".local/share/claude",
+    ".codex/shell_snapshots",
 )
+
+#: `.codex/shell_snapshots` earns its place twice over. Codex snapshots the
+#: shell environment into runnable `.sh` files, so every exported secret — the
+#: telegram bot token, on three wolts of the colony this was swept — is baked
+#: into them verbatim. They are also pure runtime scratch, rebuilt on the next
+#: session. The rest of `.codex` (sessions, rollouts) is history, and stays.
 
 #: At the top of the data root, a name means something else. `dist`, `build`,
 #: `target` and friends are junk *inside* a project and perfectly good names
@@ -202,6 +209,8 @@ def is_wolt_dir(path: Path) -> bool:
 
 def _dir_excluded(name: str, rel: str, path: Path) -> bool:
     """Whether a directory is junk — depth and wolt-ness both get a veto."""
+    if _under_root_exclude(rel):
+        return True  # the platform's own derived dirs outrank every veto
     if is_wolt_dir(path):
         return False  # a wolt is never junk, wherever it happens to sit
     if "/" not in rel:  # a direct child of the data root
@@ -213,6 +222,11 @@ def _file_excluded(name: str, rel: str) -> bool:
     if name in EXCLUDED_FILE_NAMES or name.endswith(EXCLUDED_FILE_SUFFIXES):
         return True
     return _path_excluded(rel)
+
+
+def _under_root_exclude(rel: str) -> bool:
+    """Whether a path lives inside one of the root's derived directories."""
+    return rel.split("/", 1)[0] in ROOT_EXCLUDED_DIR_NAMES
 
 
 def _probe_excluded(path: Path) -> tuple[int, int, bool]:
@@ -294,7 +308,12 @@ def scan_tree(wolts_dir: Path) -> Scan:
                 continue
             if _dir_excluded(name, rel, child):
                 size, files, has_wolt = _probe_excluded(child)
-                if has_wolt:
+                # The rescue is for a wolt filed under a junk-sounding name. It
+                # is NOT for `.worktui`, whose worktrees hold *copies* of wolts,
+                # wolt.json and all — a copy of a wolt is not the wolt, and
+                # resurrecting one would drag back the tree the root rule drops
+                # on purpose.
+                if has_wolt and not _under_root_exclude(rel):
                     continue  # a wolt lives down there; the subtree stays
                 dirnames.remove(name)
                 scan.excluded_bytes += size

@@ -296,6 +296,64 @@ def test_the_agent_clis_version_store_goes_but_the_rest_of_local_stays(wolts, tm
     assert f"{ARCHIVE_ROOT}/beaverwolt/wolt/sparks/claude/poster.html" in names
 
 
+def test_codex_shell_snapshots_go_but_the_rest_of_codex_stays(wolts, tmp_path):
+    """Codex bakes the whole exported environment into runnable .sh files.
+
+    Every secret env var lands in them verbatim — the telegram bot token, on
+    three wolts of the colony this was swept — and they are rebuilt on the next
+    session anyway. `sessions/` and `rollouts/` beside them are history.
+    """
+    codex = wolts / "beaverwolt" / "home" / ".codex"
+    (codex / "shell_snapshots").mkdir(parents=True)
+    (codex / "shell_snapshots" / "snapshot-1.sh").write_text(
+        f"export TELEGRAM_BOT_TOKEN={SECRET}\n"
+    )
+    (codex / "sessions").mkdir()
+    (codex / "sessions" / "2026-09-06.jsonl").write_text('{"role":"user"}\n')
+    (codex / "rollouts").mkdir()
+    (codex / "rollouts" / "run.json").write_text("{}")
+    # A directory of the same name that is not under .codex stays.
+    (wolts / "beaverwolt" / "wolt" / "sparks" / "shell_snapshots").mkdir(parents=True)
+    (wolts / "beaverwolt" / "wolt" / "sparks" / "shell_snapshots" / "demo.sh").write_text("echo hi")
+
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    names = _members(result.archive)
+    assert not [name for name in names if "shell_snapshots" in name and ".codex" in name]
+    assert f"{ARCHIVE_ROOT}/beaverwolt/home/.codex/sessions/2026-09-06.jsonl" in names
+    assert f"{ARCHIVE_ROOT}/beaverwolt/home/.codex/rollouts/run.json" in names
+    assert f"{ARCHIVE_ROOT}/beaverwolt/wolt/sparks/shell_snapshots/demo.sh" in names
+    with tarfile.open(result.archive, "r:gz") as tar:
+        for member in tar.getmembers():
+            if member.isreg():
+                assert SECRET.encode() not in tar.extractfile(member).read()
+
+
+def test_a_worktree_copy_of_a_wolt_is_not_rescued_from_worktui(wolts, tmp_path):
+    """`.worktui` holds worktrees, and a worktree of a wolt carries wolt.json.
+
+    The buried-wolt rescue must not resurrect what the root rule deliberately
+    drops: a copy of a wolt is not the wolt.
+    """
+    copy = wolts / ".worktui" / "wolts" / "nw-feature" / "beaverwolt"
+    (copy / "wolt").mkdir(parents=True)
+    (copy / "wolt" / "wolt.json").write_text(json.dumps({"name": "beaverwolt"}))
+    (copy / "wolt" / "memory").mkdir()
+    (copy / "wolt" / "memory" / "identity.md").write_text("a copy, not the wolt")
+
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    assert not [name for name in _members(result.archive) if ".worktui" in name]
+    assert "beaverwolt" in {wolt["name"] for wolt in result.manifest["wolts"]}
+
+
+def test_the_rescue_still_works_under_an_ordinary_name_exclude(wolts, tmp_path):
+    """The other direction: `apps/build/rescuedwolt` is still rescued."""
+    nested = wolts / "beaverwolt" / "wolt" / "apps" / "build" / "rescuedwolt"
+    (nested / "wolt").mkdir(parents=True)
+    (nested / "wolt" / "wolt.json").write_text(json.dumps({"name": "rescuedwolt"}))
+    names = _members(create_backup(wolts, out_dir=tmp_path / "out").archive)
+    assert any(name.endswith("build/rescuedwolt/wolt/wolt.json") for name in names)
+
+
 def test_a_top_level_dir_named_claude_is_never_path_excluded(wolts, tmp_path):
     (wolts / "claude" / "wolt").mkdir(parents=True)
     (wolts / "claude" / "wolt" / "wolt.json").write_text(json.dumps({"name": "claude"}))

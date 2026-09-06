@@ -49,6 +49,7 @@ top level (see "The root is different"):
 | `.claude/plugins/cache` | plugin download cache |
 | `wolt/worktrees` | a wolt's throwaway checkouts |
 | `.local/share/claude` | the agent CLI's auto-downloaded version binaries |
+| `.codex/shell_snapshots` | codex's runnable env snapshots — rebuilt every session, and every exported secret is baked into them |
 
 `.local/share/claude` is the single biggest thing in a lived-in colony —
 **12.8GB** of redownloadable CLI binaries across per-wolt HOMEs on the colony
@@ -87,6 +88,13 @@ secrets, and one that guesses wrong drops data. Templates and lookalikes —
 files and are backed up.
 
 There is no `--with-secrets`. The safe default is the only default.
+
+**What this does not do:** session transcripts (`.claude/projects`,
+`.codex/sessions`) are kept, and a transcript can contain a secret somebody
+echoed into a session. That exposure exists on disk whether or not you ever take
+a backup, and the history is real data — the policy is credential *files*
+withheld, history kept. If a secret was echoed into a session, rotate it; do not
+count on the backup to have forgotten it.
 
 **A restore never leaves you guessing.** The manifest's `withheld` section
 lists every path that was left behind (paths only, never contents), the backup
