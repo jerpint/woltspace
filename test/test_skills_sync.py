@@ -7,10 +7,18 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from skills_sync import seed_wolt_skills, sync_all_wolt_skills  # noqa: E402
+import skills_sync  # noqa: E402
+from skills_sync import (  # noqa: E402
+    _recover_interrupted_sync,
+    seed_wolt_skills,
+    sync_all_wolt_skills,
+    sync_wolt_skills,
+)
 from woltspace.layout import RuntimeLayout  # noqa: E402
 from woltspace.lifecycle import start  # noqa: E402
 
@@ -97,6 +105,83 @@ class TestSyncAllWoltSkills:
         sync_all_wolt_skills(install_root, tmp_path / "wolts")
 
         assert (skills / "woltspace-notify").is_dir()
+
+
+class TestSyncIsCrashSafe:
+    """An interrupted sync must never leave a wolt without its skills."""
+
+    def test_a_crash_mid_sync_leaves_every_other_skill_intact(self, tmp_path):
+        install_root = tmp_path / "install"
+        first = _platform_skill(install_root, "woltspace-notify", "fresh\n")
+        _platform_skill(install_root, "woltspace-wolf", "fresh\n")
+        skills = tmp_path / "wolts" / "nw" / ".claude" / "skills"
+        for name in ("woltspace-notify", "woltspace-wolf"):
+            (skills / name).mkdir(parents=True)
+            (skills / name / "SKILL.md").write_text("stale\n")
+
+        real_copytree = skills_sync.shutil.copytree
+
+        def blow_up_on_the_second(src, dst, *args, **kwargs):
+            if Path(src).name != first.name:
+                raise OSError("interrupted")
+            return real_copytree(src, dst, *args, **kwargs)
+
+        with patch.object(skills_sync.shutil, "copytree", blow_up_on_the_second):
+            with pytest.raises(OSError):
+                sync_all_wolt_skills(install_root, tmp_path / "wolts")
+
+        # The one that made it is new, the one that didn't still has its old copy.
+        assert (skills / "woltspace-notify" / "SKILL.md").read_text() == "fresh\n"
+        assert (skills / "woltspace-wolf" / "SKILL.md").read_text() == "stale\n"
+
+    def test_a_half_copied_staging_dir_is_never_a_skill(self, tmp_path):
+        install_root = tmp_path / "install"
+        _platform_skill(install_root, "woltspace-notify", "fresh\n")
+        skills = tmp_path / "wolts" / "nw" / ".claude" / "skills"
+        skills.mkdir(parents=True)
+        (skills / f".woltspace-notify{skills_sync.STAGE_SUFFIX}").mkdir()
+
+        sync_all_wolt_skills(install_root, tmp_path / "wolts")
+
+        assert (skills / "woltspace-notify" / "SKILL.md").read_text() == "fresh\n"
+        assert sorted(p.name for p in skills.iterdir()) == ["woltspace-notify"]
+
+    def test_a_retired_skill_is_restored_when_its_swap_never_landed(self, tmp_path):
+        skills = tmp_path / "skills"
+        retired = skills / f".woltspace-wolf{skills_sync.RETIRED_SUFFIX}"
+        retired.mkdir(parents=True)
+        (retired / "SKILL.md").write_text("the only copy left\n")
+
+        _recover_interrupted_sync(skills)
+
+        assert (skills / "woltspace-wolf" / "SKILL.md").read_text() == "the only copy left\n"
+        assert not retired.exists()
+
+    def test_a_retired_skill_is_dropped_when_the_swap_did_land(self, tmp_path):
+        skills = tmp_path / "skills"
+        (skills / "woltspace-wolf").mkdir(parents=True)
+        (skills / "woltspace-wolf" / "SKILL.md").write_text("live\n")
+        retired = skills / f".woltspace-wolf{skills_sync.RETIRED_SUFFIX}"
+        retired.mkdir()
+        (retired / "SKILL.md").write_text("old\n")
+
+        _recover_interrupted_sync(skills)
+
+        assert (skills / "woltspace-wolf" / "SKILL.md").read_text() == "live\n"
+        assert not retired.exists()
+
+    def test_a_skill_this_install_no_longer_ships_is_removed(self, tmp_path):
+        install_root = tmp_path / "install"
+        source = _platform_skill(install_root, "woltspace-notify", "fresh\n")
+        skills = tmp_path / "skills"
+        (skills / "woltspace-retired").mkdir(parents=True)
+        (skills / "check-usage").mkdir()
+
+        sync_wolt_skills([source], skills)
+
+        assert (skills / "woltspace-notify").is_dir()
+        assert not (skills / "woltspace-retired").exists()
+        assert (skills / "check-usage").is_dir()  # not ours to touch
 
 
 class TestSeedWoltSkills:
