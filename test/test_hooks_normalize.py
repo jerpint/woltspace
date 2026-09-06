@@ -321,7 +321,7 @@ class TestNewWoltSettingsHaveNoHooks:
         from wolts import setup_wolt_claude_config
 
         install_root = tmp_path / "install"
-        skill = install_root / "container" / "skills" / "woltspace-create-wolt"
+        skill = install_root / "container" / "skills" / "create-wolt"
         skill.mkdir(parents=True)
         (skill / "SKILL.md").write_text("hi\n")
         (tmp_path / ".claude").mkdir()

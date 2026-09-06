@@ -285,6 +285,9 @@ HARNESSES = {
         ],
         # how a skill is invoked inside a prompt
         "skill_invoke": "/{name}",
+        # platform skills arrive through the woltspace plugin, which namespaces
+        # every skill under the marketplace name. Verified live 2026-09-06.
+        "platform_skill_invoke": "/woltspace:{name}",
         "instructions_file": "CLAUDE.md",
         "auth_file": ".claude/.credentials.json",
         # claude accepts --session-id at spawn; codex assigns its own
@@ -320,6 +323,11 @@ HARNESSES = {
         # discovered skill for real. `$name` only worked by the model choosing to
         # read the SKILL.md itself; `@` is the reliable trigger. Verified live 2026-07-16.
         "skill_invoke": "@{name}",
+        # codex auto-namespaces a skill tree that carries .claude-plugin/ at its
+        # root under the plugin name — so the platform skills it discovers
+        # through the symlink answer to `woltspace:<base>`, the same name claude
+        # gets from the plugin. Verified live 2026-09-06.
+        "platform_skill_invoke": "@woltspace:{name}",
         "instructions_file": "AGENTS.md",
         "auth_file": ".codex/auth.json",
         "preset_session_id": False,
@@ -367,6 +375,15 @@ HARNESSES = {
         # "/" open the TUI command palette ("No matching items") and never
         # submit, which is one of the two reasons boot prompts go via paste.
         "skill_invoke": "/{name}",
+        # TODO(unverified): opencode is not installed here, so what it does with
+        # a namespaced skill dir (`.claude-plugin/` at the root of the tree it
+        # walks) has not been benched. It reads ~/.claude/skills like claude, and
+        # the platform skills reach it through the same symlink codex walks, so
+        # claude's shape is the best available guess — re-verify live and adjust
+        # this one string if opencode spells the namespace differently.
+        # No leading space here on purpose: _guard_paste_text already prepends
+        # one when a pasted message starts with "/" (leading_slash_opens_palette).
+        "platform_skill_invoke": "/woltspace:{name}",
         # The TUI can't take the boot prompt on the CLI (see _opencode_command
         # docstring). prepare_session_command stamps it; deliver_boot_prompt
         # pastes it once the marker below shows in the pane (the composer hint
@@ -412,6 +429,28 @@ def resolve_harness(name: str | None) -> str:
 def get_harness(name: str | None) -> dict:
     """Get a harness table entry, falling back to the default harness."""
     return HARNESSES[resolve_harness(name)]
+
+
+# The namespace every platform skill answers to once it is delivered as the
+# woltspace plugin (claude) or as a `.claude-plugin/`-rooted tree (codex).
+PLATFORM_SKILL_NAMESPACE = "woltspace"
+
+# The pre-plugin spelling: skills were copied in under a `woltspace-` prefix and
+# invoked as `/woltspace-<name>`. Still live for un-ratcheted wolts, so anything
+# that recognizes a platform-skill invocation has to know both shapes.
+LEGACY_PLATFORM_SKILL_PREFIX = "woltspace-"
+
+
+def platform_skill_invoke(harness: str | None, name: str) -> str:
+    """How this harness invokes a *platform* skill named `name`.
+
+    Platform skills are namespaced by their delivery mechanism, so they are not
+    spelled the way a wolt's own skills are — `skill_invoke` stays the template
+    for those. Harnesses that never got a platform template fall back to it.
+    """
+    entry = get_harness(harness)
+    template = entry.get("platform_skill_invoke") or entry["skill_invoke"]
+    return template.format(name=name)
 
 
 def _model_overlay(harness: str | None) -> dict:

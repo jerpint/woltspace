@@ -516,10 +516,9 @@ class TestDeriveWorktuiSkill:
 
         mod.derive_worktui_skill(woltspace, worktui)
 
-        derived = (woltspace / "container" / "skills" / "woltspace-worktui" / "SKILL.md").read_text()
-        # Frontmatter name rewritten to the platform prefix, rest kept
-        assert "name: woltspace-worktui" in derived
-        assert "name: worktui\n" not in derived
+        derived = (woltspace / "container" / "skills" / "worktui" / "SKILL.md").read_text()
+        # Frontmatter name normalised to the directory name, rest kept
+        assert "name: worktui\n" in derived
         assert "description: Orchestrate sessions." in derived
         assert "wt spawn / wt send / wt read / wt kill" in derived
         # Woltspace-specific notes appended
@@ -531,12 +530,12 @@ class TestDeriveWorktuiSkill:
 
         mod.derive_worktui_skill(woltspace, tmp_path / "nope")
 
-        assert not (woltspace / "container" / "skills" / "woltspace-worktui").exists()
+        assert not (woltspace / "container" / "skills" / "worktui").exists()
 
     def test_replaces_stale_derived_copy(self, tmp_path):
         mod = _load_entrypoint()
         woltspace = tmp_path / "woltspace"
-        stale = woltspace / "container" / "skills" / "woltspace-worktui"
+        stale = woltspace / "container" / "skills" / "worktui"
         stale.mkdir(parents=True)
         (stale / "SKILL.md").write_text("old hand-written copy")
         (stale / "extra.md").write_text("leftover")
@@ -544,7 +543,7 @@ class TestDeriveWorktuiSkill:
 
         mod.derive_worktui_skill(woltspace, worktui)
 
-        derived_dir = woltspace / "container" / "skills" / "woltspace-worktui"
+        derived_dir = woltspace / "container" / "skills" / "worktui"
         assert "wt spawn" in (derived_dir / "SKILL.md").read_text()
         assert not (derived_dir / "extra.md").exists()
 
@@ -561,9 +560,9 @@ class TestDeriveWorktuiSkill:
         from skills_sync import sync_all_wolt_skills
         sync_all_wolt_skills(woltspace, wolts)
 
-        synced = (wolts / "alpha" / ".claude" / "skills" / "woltspace-worktui" / "SKILL.md").read_text()
+        synced = (wolts / "alpha" / ".claude" / "skills" / "worktui" / "SKILL.md").read_text()
         assert "wt spawn / wt send / wt read / wt kill" in synced
-        assert "name: woltspace-worktui" in synced
+        assert "name: worktui\n" in synced
 
 
 class TestWorktuiCommand:

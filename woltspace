@@ -626,7 +626,7 @@ RESTORE
     echo "  ${_L}   updateWolt will walk you through the update${_R}"
     echo ""
     cd "$WOLTSPACE_DIR"
-    claude "/woltspace-update"
+    claude "/woltspace:update"
     ;;
   *)
     echo "usage: woltspace <init|start|stop|rebuild|backup|shell|chat|logs|update>"

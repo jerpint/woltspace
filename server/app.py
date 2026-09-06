@@ -60,6 +60,7 @@ _sys.path.insert(0, str(WOLTSPACE_DIR / "container" / "lib"))
 from sessions import (
     resume_session, start_session, stop_session,
     deliver_message, resolve_active_session, format_spawned_prompt,
+    wolt_harness,
 )
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
@@ -71,6 +72,7 @@ from harnesses import (
     get_default_harness,
     set_default_harness,
     resolve_harness,
+    platform_skill_invoke,
     HARNESSES,
 )
 from apps import (
@@ -775,7 +777,9 @@ async def session_new_create(request: Request):
         # Step 2: Start a session — full isolation, site auto-start, viewport
         result = start_session(
             wolt=wolt_name,
-            prompt="/woltspace-create-wolt",
+            # Platform skills are namespaced by their delivery mechanism and
+            # spelled per harness — ask, don't assume claude.
+            prompt=platform_skill_invoke(wolt_harness(wolt_name), "create-wolt"),
             workdir=body.get("workdir"),
             execution_policy=body.get("execution_policy"),
             routing={"adapter": "lodge"},

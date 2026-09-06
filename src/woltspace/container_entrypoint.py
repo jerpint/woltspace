@@ -70,7 +70,7 @@ def run_root_phase() -> int:
     # The platform is an installed package, so this is its wheel bundle rather
     # than a checkout — a few MB, not the venv. It still has to be re-owned
     # here: `usermod` above just moved node to the host's uid, and boot writes a
-    # derived skill into it (container/skills/woltspace-worktui).
+    # derived skill into it (container/skills/worktui).
     bundle = resolve_install_root(os.environ.get("WOLTSPACE_DIR"))
     subprocess.run(["chown", "-R", "node:node", str(bundle)], check=True)
 
@@ -132,13 +132,13 @@ WORKTUI_SKILL_NOTES = """
 
 
 def derive_worktui_skill(woltspace_dir: Path, worktui_dir: Path | None = None):
-    """Regenerate the woltspace-worktui skill from worktui's own bundled skill.
+    """Regenerate the worktui platform skill from worktui's own bundled skill.
 
     worktui (cloned into the image at ~/worktui) ships its own skill at
-    skills/worktui/ — deriving from it at boot means the synced skill always
+    skills/worktui/ — deriving from it at boot means the delivered skill always
     matches the installed wt version instead of a hand-maintained copy that
-    drifts. The frontmatter name is rewritten to the woltspace- prefix so the
-    sync machinery owns it, and woltspace-specific notes are appended.
+    drifts. The frontmatter name is normalised to the directory name (what
+    every delivery path keys on) and woltspace-specific notes are appended.
 
     No-op if worktui isn't installed — a skill for a missing binary is worse
     than no skill.
@@ -146,7 +146,7 @@ def derive_worktui_skill(woltspace_dir: Path, worktui_dir: Path | None = None):
     if worktui_dir is None:
         worktui_dir = HOME / "worktui"
     bundled = worktui_dir / "skills" / "worktui" / "SKILL.md"
-    dest_dir = woltspace_dir / "container" / "skills" / "woltspace-worktui"
+    dest_dir = woltspace_dir / "container" / "skills" / "worktui"
     if not bundled.is_file():
         return
 
@@ -154,7 +154,7 @@ def derive_worktui_skill(woltspace_dir: Path, worktui_dir: Path | None = None):
     if text.startswith("---"):
         head, _, body = text[3:].partition("---")
         head = "\n".join(
-            "name: woltspace-worktui" if line.strip().startswith("name:") else line
+            "name: worktui" if line.strip().startswith("name:") else line
             for line in head.splitlines()
         )
         text = f"---{head}\n---{body}"
@@ -283,7 +283,7 @@ def scaffold_wolt(wolt_name: str, wolts_dir: Path, woltspace_dir: Path) -> Path:
     if not (wolt_dir / ".git").is_dir():
         subprocess.run(["git", "init", "-q", str(wolt_dir)], check=False)
 
-    # Signal first-run so entrypoint launches /woltspace-create-wolt instead of normal greeting
+    # Signal first-run so entrypoint launches create-wolt instead of normal greeting
     first_run = HOME / ".claude" / ".first-run"
     first_run.parent.mkdir(parents=True, exist_ok=True)
     first_run.touch()
@@ -450,7 +450,7 @@ def open_tmux_window(wolt_name: str, wolt_dir: Path, wolts_dir: Path) -> None:
         sweep_node_modules(wolts_dir)
         preload_viewport(wolt_name, wolt_dir / ".state")
         send_keys("export WOLT_SESSION=main && wclaude --dangerously-skip-permissions "
-                  "/woltspace-create-wolt")
+                  "/woltspace:create-wolt")
     else:
         # TODO: replace with a /wake skill — check for recent sessions, offer
         # resume or fresh start

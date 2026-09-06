@@ -191,7 +191,7 @@ def setup_wolt_claude_config(wolt_dir: Path, name: str) -> None:
     context explicitly, so writing or copying harness config into a wolt would
     be both unnecessary and a credential-leak risk. Skills are the exception:
     they are platform content, not credentials, and a wolt whose first prompt
-    is /woltspace-create-wolt needs them in both modes.
+    invokes the woltspace create-wolt skill needs them in both modes.
     """
     seed_wolt_skills(WOLTSPACE_DIR, wolt_dir)
 
@@ -322,7 +322,7 @@ Edit files and changes appear instantly. Use `push-view` to show a specific page
 ## Apps
 
 Apps live in `wolts/apps/` and have their own server and dependencies.
-Don't create apps without user permission — use `/woltspace-new-app` when ready.
+Don't create apps without user permission — load the woltspace new-app skill when ready.
 """
 
 

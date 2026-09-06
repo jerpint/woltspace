@@ -41,6 +41,9 @@ from harnesses import (
     get_default_harness,
     build_command,
     session_has_agent_process,
+    platform_skill_invoke,
+    PLATFORM_SKILL_NAMESPACE,
+    LEGACY_PLATFORM_SKILL_PREFIX,
 )
 from sites import ensure_site
 from session_runtime import RuntimeHandle, get_runtime
@@ -846,22 +849,38 @@ def _wolt_boot_context(data: dict) -> str:
     )
 
 
+def _invokes_platform_skill(prompt: str) -> bool:
+    """True if `prompt` already asks for a platform skill by name.
+
+    Two shapes are live at once during the plugin ratchet: the namespaced one
+    every harness gets from the plugin / `.claude-plugin/` tree
+    (`/woltspace:notify`, `@woltspace:notify`) and the pre-plugin copy-sync
+    spelling a wolt that has not been ratcheted still uses
+    (`/woltspace-notify`). Matched on the name itself rather than a
+    harness-formatted string, because a prompt is written by whoever called us
+    and may carry either.
+    """
+    return (
+        f"{PLATFORM_SKILL_NAMESPACE}:" in prompt
+        or LEGACY_PLATFORM_SKILL_PREFIX in prompt
+    )
+
+
 def _assemble_spawn_prompt(data: dict, prompt: str, harness: str) -> str:
     """Full opening prompt: user's task + adapter context + start-chat invocation.
 
     Skips start-chat if the prompt already invokes a woltspace skill
-    (e.g. create-wolt). The skill invocation syntax comes from the harness
-    table — claude spells it /name, codex @name.
+    (e.g. create-wolt). The invocation syntax comes from the harness table —
+    claude spells a platform skill /woltspace:name, codex @woltspace:name.
     """
-    skill_invoke = get_harness(harness)["skill_invoke"]
     context = _adapter_context(data)
     boot_context = _wolt_boot_context(data)
     prefix = f"{boot_context}\n\n" if boot_context else ""
-    if skill_invoke.format(name="woltspace-") in prompt:
+    if _invokes_platform_skill(prompt):
         return f"{prefix}{prompt}{context}"
     adapter = data.get("adapter") or "lodge"
     wolt = data.get("wolt") or "wolt"
-    start_chat = skill_invoke.format(name="woltspace-start-chat")
+    start_chat = platform_skill_invoke(harness, "start-chat")
     return f"{prefix}{prompt}{context} {start_chat} {adapter} {wolt}"
 
 
@@ -1078,6 +1097,22 @@ def deliver_boot_prompt(name: str, timeout: int = 90) -> bool:
 # ---------------------------------------------------------------------------
 # Session spawning — shared entry point for all adapters
 # ---------------------------------------------------------------------------
+
+def wolt_harness(wolt: str) -> str:
+    """The harness a new session for `wolt` would run on.
+
+    Same order start_session resolves: wolt.json "harness" > lodge default >
+    platform default. Callers that have to spell a skill invocation before a
+    session exists ask here instead of assuming claude.
+    """
+    wolt_json_path = WOLTS_DIR / wolt / "wolt" / "wolt.json"
+    pinned = ""
+    try:
+        pinned = json.loads(wolt_json_path.read_text()).get("harness", "") or ""
+    except (json.JSONDecodeError, OSError):
+        pass
+    return resolve_harness(pinned or get_default_harness())
+
 
 def start_session(
     *,

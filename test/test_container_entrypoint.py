@@ -175,7 +175,7 @@ class TestGreetingBranches:
 
         assert _sent(fake_tmux) == [
             "export WOLT_SESSION=main && wclaude --dangerously-skip-permissions "
-            "/woltspace-create-wolt"
+            "/woltspace:create-wolt"
         ]
         assert not (claude / ".first-run").exists()
 

@@ -190,7 +190,7 @@ Selection is config-driven; `server/tunnel.py` picks the right path at startup. 
 
 ## Onboarding
 
-A new install with no wolt and no auth boots into "onboard mode": the server falls back to `public/onboard.html`, the tmux main session runs bare `claude /login`, and there is no active wolt. Once the user authenticates and creates a wolt (lodge UI or `/woltspace-create-wolt`), normal mode kicks in: viewport defaults to the new wolt's site, Claude relaunches under that wolt's identity, and the bot adapters can start.
+A new install with no wolt and no auth boots into "onboard mode": the server falls back to `public/onboard.html`, the tmux main session runs bare `claude /login`, and there is no active wolt. Once the user authenticates and creates a wolt (lodge UI or the woltspace create-wolt skill), normal mode kicks in: viewport defaults to the new wolt's site, Claude relaunches under that wolt's identity, and the bot adapters can start.
 
 The onboard fallback lives in `server/state.py` and the boot branching in `src/woltspace/container_entrypoint.py`.
 

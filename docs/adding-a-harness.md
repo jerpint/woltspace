@@ -25,7 +25,8 @@ Each `HARNESSES` entry is a dict. Fields, with what they mean and how `claude` v
 | `label` / `emoji` | Display metadata for pickers and badges, exposed through the API. `claude`: "Claude Code" 🟠; `codex`: "Codex" ⬛. |
 | `process_names` | Set of `comm` names that mean "the agent is live" in a session's process tree. Used by liveness checks and the vulture. Get this wrong and the vulture reaps live sessions. `{"claude"}`, `{"codex"}`. |
 | `models` | Creature tier → model flag value. Keys: `raccoon`, `beaver`, `otter`, plus legacy aliases `rodent` (→ treat as raccoon) and `wolf` (→ balanced). `claude`: `opus`/`sonnet`/`haiku`. |
-| `skill_invoke` | Format string for invoking a skill inside a prompt. `claude`: `/{name}`; `codex`: `${name}`. Used to inject the start-chat skill into the opening prompt. |
+| `skill_invoke` | Format string for invoking a **wolt-owned** skill inside a prompt. `claude`: `/{name}`; `codex`: `@{name}`. |
+| `platform_skill_invoke` | Format string for invoking a **platform** skill — the ones woltspace ships. They arrive namespaced (claude installs them as the `woltspace` plugin; codex namespaces any skill tree with `.claude-plugin/` at its root), so they are spelled `/woltspace:{name}` on claude and `@woltspace:{name}` on codex. Used to inject start-chat into the opening prompt. Absent = fall back to `skill_invoke`. |
 | `instructions_file` | The project-instructions filename the agent reads. `claude`: `CLAUDE.md`; `codex`: `AGENTS.md`. The wrapper symlinks it to the wolt's `CLAUDE.md`. |
 | `auth_file` | Path (relative to the per-wolt HOME) where credentials live. `claude`: `.claude/.credentials.json`; `codex`: `.codex/auth.json`. Used by boot auth checks. |
 | `preset_session_id` | `True` if the CLI accepts a session id *you* generate at spawn (`claude --session-id <uuid>`). `False` if it assigns its own (`codex`, `opencode`). |

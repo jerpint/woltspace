@@ -137,7 +137,7 @@ ships no bash. The command runs twice, dispatched on uid:
    re-own `/workspace`, `/home/node` and the wheel bundle, then re-exec itself
    as node through `gosu`.
 2. **node phase** — scaffold the lodge and the wolt from `template/`, derive the
-   `woltspace-worktui` skill from worktui's own bundled copy, sync the platform
+   `worktui` platform skill from worktui's own bundled copy, sync the platform
    section of every wolt's `CLAUDE.md`, write trust config / `settings.json` /
    `.bashrc` / git config, assemble the environment every child inherits
    (including `WOLTSPACE_ISOLATION=external` and `WOLTSPACE_ENTRYPOINT=1`), open
@@ -155,7 +155,7 @@ Python server running on port 7777 inside the container.
 - Manages per-session viewport URLs (`/current`)
 - Serves static files: `public/` (platform UI) → `wolt/site/` → `wolt/sparks/`
 - Proxies tool registrations at `/tools`
-- Serves apps at `/app/:name/` (static from `dist/` or proxy to port — see `woltspace-apps` skill)
+- Serves apps at `/app/:name/` (static from `dist/` or proxy to port — see the `apps` platform skill)
 - Live reload via SSE at `/livereload`
 
 ### `tui/src/tui-service.js` (Node.js) — the pty bridge
@@ -172,7 +172,7 @@ The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routi
 Thin Telegram layer over core. Persists chat history to `.state/chat/{chat_id}.jsonl`. Group chat support (responds when @mentioned).
 
 ### `container/skills/`
-Discovery files Claude Code reads from `~/.claude/skills/`. Platform skills use `woltspace-` prefix and are synced to all wolts on boot. Current platform skills: `woltspace-start-chat`, `woltspace-create-wolt`, `woltspace-notify`, `woltspace-viewport`, `woltspace-apps`, `woltspace-new-app`, `woltspace-wolf`, `woltspace-update`, `woltspace-session-summary`, `woltspace-worktui` (derived at boot from worktui's own bundled skill — see `derive_worktui_skill` in `src/woltspace/container_entrypoint.py`, not hand-maintained), `woltspace-organize-context`, `woltspace-setup-telegram`, `woltspace-setup-github`.
+Discovery files agents read from `~/.claude/skills/`. Platform skills live under base names (`notify`, `viewport`, …) and are delivered namespaced as `woltspace:<name>` — claude installs them as the `woltspace` plugin (`container/skills/.claude-plugin/`), codex/opencode reach the same tree through a `~/.claude/skills/woltspace` symlink. Current platform skills: `start-chat`, `create-wolt`, `notify`, `viewport`, `apps`, `new-app`, `wolf`, `update`, `session-summary`, `worktui` (derived at boot from worktui's own bundled skill — see `derive_worktui_skill` in `src/woltspace/container_entrypoint.py`, not hand-maintained), `organize-context`, `setup-telegram`, `setup-github`, `iwcl`, `cloudflare`. Retired skills live in `container/legacy-skills/`, outside the plugin root.
 
 ### `container/cron/digest.mjs`
 Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select via `claude -p` → render HTML. Writes to `wolt/sparks/`. Optional Spotify playlist curation.

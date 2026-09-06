@@ -80,7 +80,7 @@ def platform_skill_sources(woltspace_dir: Path) -> list[Path]:
     """The woltspace-* skill directories this install can hand out.
 
     Empty when the install root is wrong — a stale bundle, a half-copied
-    checkout, a skills folder holding only legacy/. Callers treat an empty
+    checkout, a skills folder holding nothing we ship. Callers treat an empty
     list as "this install has nothing to say" and leave every wolt alone.
     """
     platform_skills = platform_skills_dir(woltspace_dir)
@@ -178,7 +178,8 @@ def sync_all_wolt_skills(woltspace_dir: Path, wolts_dir: Path):
     """Sync woltspace-* platform skills to every wolt's .claude/skills/.
 
     Only touches woltspace-* prefixed skills — wolt-owned skills (no prefix)
-    are never modified. The legacy/ folder is never copied.
+    are never modified. Retired skills live in container/legacy-skills/,
+    outside the source tree entirely, so they are never copied.
 
     A source with no woltspace-* skills at all is a no-op for the whole
     colony. That reading is deliberate: an install root pointing somewhere
