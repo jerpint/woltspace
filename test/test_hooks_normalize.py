@@ -75,7 +75,7 @@ class TestStripWoltspaceHooks:
             "hooks": {
                 "Notification": [
                     {"hooks": [
-                        {"type": "command", "command": "/anywhere/notify.sh"},
+                        {"type": "command", "command": "/workspace/woltspace/container/hooks/notify.sh"},
                         {"type": "command", "command": "/home/node/mine.sh"},
                     ]},
                 ],
@@ -84,6 +84,54 @@ class TestStripWoltspaceHooks:
         assert strip_woltspace_hooks(settings) is True
         kept = settings["hooks"]["Notification"][0]["hooks"]
         assert kept == [{"type": "command", "command": "/home/node/mine.sh"}]
+
+    def test_unexpanded_woltspace_dir_form_is_stripped(self):
+        """The oldest writer emitted the literal, unexpanded variable."""
+        settings = {
+            "hooks": {
+                "Stop": [{"hooks": [{"type": "command", "command": "$WOLTSPACE_DIR/container/hooks/session-done.sh"}]}],
+                "Notification": [{"hooks": [{"type": "command", "command": "${WOLTSPACE_DIR}/container/hooks/notify.sh"}]}],
+            }
+        }
+        assert strip_woltspace_hooks(settings) is True
+        assert "hooks" not in settings
+
+    def test_pre_container_app_hooks_layout_is_stripped(self):
+        settings = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "/app/hooks/session-done.sh"}]}]}}
+        assert strip_woltspace_hooks(settings) is True
+        assert "hooks" not in settings
+
+    def test_a_user_hook_with_the_same_basename_survives(self):
+        """notify.sh is an obvious name for a wolt's own hook — don't eat it."""
+        own = {
+            "hooks": {
+                "Notification": [{"hooks": [{"type": "command", "command": "/workspace/wolts/nw/.claude/hooks/notify.sh"}]}],
+                "Stop": [{"hooks": [{"type": "command", "command": "/home/node/scripts/session-done.sh"}]}],
+            }
+        }
+        settings = json.loads(json.dumps(own))
+        assert strip_woltspace_hooks(settings) is False
+        assert settings == own
+
+    def test_user_hook_survives_beside_a_platform_hook_in_one_group(self):
+        settings = {
+            "hooks": {
+                "Notification": [
+                    {"hooks": [
+                        {"type": "command", "command": "/workspace/woltspace/container/hooks/notify.sh"},
+                        {"type": "command", "command": "/workspace/wolts/nw/hooks/notify.sh"},
+                    ]},
+                ],
+            }
+        }
+        assert strip_woltspace_hooks(settings) is True
+        kept = settings["hooks"]["Notification"][0]["hooks"]
+        assert kept == [{"type": "command", "command": "/workspace/wolts/nw/hooks/notify.sh"}]
+
+    def test_a_bare_basename_command_survives(self):
+        """No directory at all — nothing says this is the platform's."""
+        settings = {"hooks": {"Notification": [{"hooks": [{"type": "command", "command": "notify.sh"}]}]}}
+        assert strip_woltspace_hooks(settings) is False
 
     def test_no_woltspace_hooks_reports_no_change(self):
         settings = {
@@ -146,6 +194,15 @@ class TestNormalizeAllWoltHooks:
         assert json.loads((wolts / "bloggo" / ".claude" / "settings.json").read_text()) == {"skipDangerousModePermissionPrompt": True}
         assert own.read_text() == own_before
         assert (wolts / ".state" / ".claude" / "settings.json").read_text() == dotted_before
+
+    def test_a_wolt_with_its_own_notify_hook_is_untouched(self, tmp_path):
+        wolts = tmp_path / "wolts"
+        own = _write_settings(wolts, "tinkerer", {
+            "hooks": {"Notification": [{"hooks": [{"type": "command", "command": "/workspace/wolts/tinkerer/wolt/hooks/notify.sh"}]}]}
+        })
+        before = own.read_text()
+        normalize_all_wolt_hooks(wolts)
+        assert own.read_text() == before
 
     def test_a_wolt_without_settings_is_skipped(self, tmp_path):
         wolts = tmp_path / "wolts"

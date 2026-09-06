@@ -7,16 +7,37 @@ Notification hook never fired natively — but the baked paths linger in wolts
 made before the change and spam "No such file" on every event.
 
 This runs at start (beside the skill sync) and removes those specific hook
-entries by BASENAME, so both the container path and any hand-patched path are
-caught. Every other key, and any hook a wolt added itself, is left untouched.
-A settings file with no woltspace hooks is left byte-identical.
+entries — but only when the command points *into a platform hooks directory*.
+The basename alone is not enough: "notify.sh" is an obvious name for a hook a
+wolt writes itself, and a sweep matching on the name would delete the wolt's
+own work. So the parent directory has to be one the platform ever shipped:
+`<anything>/container/hooks` (the current layout, in every form it was baked —
+"/workspace/woltspace/...", a mac checkout's absolute path, or an unexpanded
+"$WOLTSPACE_DIR/...") or the pre-container "/app/hooks". A hook named notify.sh
+living in a wolt's own directory survives.
+
+Every other key, and any hook a wolt added itself, is left untouched. A
+settings file with no woltspace hooks is left byte-identical.
 """
 
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 WOLTSPACE_HOOK_BASENAMES = frozenset({"session-done.sh", "notify.sh"})
+
+# Directory suffixes the platform's own hooks have always lived under. Matched
+# as a trailing path segment, so every prefix the writers ever produced —
+# absolute install path or literal $WOLTSPACE_DIR — resolves the same way.
+PLATFORM_HOOK_DIRS = ("container/hooks", "app/hooks")
+
+
+def _points_into_platform_hooks(command: str) -> bool:
+    path = PurePosixPath(command.strip().strip("'\""))
+    if path.name not in WOLTSPACE_HOOK_BASENAMES:
+        return False
+    parent = path.parent.as_posix()
+    return any(parent == d or parent.endswith("/" + d) for d in PLATFORM_HOOK_DIRS)
 
 
 def _is_woltspace_hook(entry) -> bool:
@@ -25,7 +46,7 @@ def _is_woltspace_hook(entry) -> bool:
     command = entry.get("command")
     if not isinstance(command, str):
         return False
-    return os.path.basename(command) in WOLTSPACE_HOOK_BASENAMES
+    return _points_into_platform_hooks(command)
 
 
 def strip_woltspace_hooks(settings: dict) -> bool:
