@@ -122,7 +122,11 @@ def test_manifest_describes_the_lodge_without_leaking_secrets(wolts, tmp_path):
     assert manifest["tag"] == "probe"
     assert [wolt["name"] for wolt in manifest["wolts"]] == ["beaverwolt", "raccoonwolt"]
     assert all(wolt["files"] > 0 for wolt in manifest["wolts"])
-    assert "node_modules" in manifest["excludes"]["dir_names"]
+    excludes = manifest["excludes"]
+    assert "node_modules" in excludes["by_dir_name"]["below_root"]
+    assert excludes["by_dir_name"]["at_root"] == [".worktui"]
+    assert ".local/share/claude" in excludes["by_path"]["suffixes"]
+    assert "node_modules" not in excludes["by_path"]["suffixes"]
 
     blob = json.dumps(manifest)
     assert SECRET not in blob
@@ -214,6 +218,283 @@ def test_restore_refuses_a_member_that_escapes_the_target(tmp_path):
         tar.add(payload, arcname="../escaped")
     with pytest.raises(ValueError, match="outside the target"):
         restore_backup(archive, to=tmp_path / "target")
+
+
+# ---------------------------------------------------------------------------
+# The root is not the inside of a project
+# ---------------------------------------------------------------------------
+
+def test_a_wolt_named_dist_is_backed_up_whole(wolts, tmp_path):
+    """The blocker: name-based excludes must not eat a top-level wolt.
+
+    `dist`, `build`, `target` are junk inside a project and ordinary names for
+    a wolt. Silently dropping one is the worst thing a backup can do.
+    """
+    for name in ("dist", "build", "target", ".cache"):
+        (wolts / name / "wolt" / "memory").mkdir(parents=True)
+        (wolts / name / "wolt" / "wolt.json").write_text(json.dumps({"name": name}))
+        (wolts / name / "wolt" / "memory" / "identity.md").write_text(f"I am {name}.\n")
+        # …and the junk *inside* it must still go.
+        (wolts / name / "wolt" / "node_modules").mkdir()
+        (wolts / name / "wolt" / "node_modules" / "blob.js").write_text("j" * 4_000)
+
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    names = _members(result.archive)
+    for name in ("dist", "build", "target", ".cache"):
+        assert f"{ARCHIVE_ROOT}/{name}/wolt/wolt.json" in names
+        assert f"{ARCHIVE_ROOT}/{name}/wolt/memory/identity.md" in names
+        assert not [entry for entry in names if entry.startswith(f"{ARCHIVE_ROOT}/{name}/wolt/node_modules")]
+    assert {wolt["name"] for wolt in result.manifest["wolts"]} >= {"dist", "build", "target", ".cache"}
+
+
+def test_a_plain_top_level_dir_is_kept_even_with_a_junk_name(wolts, tmp_path):
+    (wolts / "build").mkdir()
+    (wolts / "build" / "notes.md").write_text("not a wolt, still data")
+    (wolts / "apps" / "site").mkdir(parents=True)
+    (wolts / "apps" / "site" / "app.json").write_text("{}")
+    names = _members(create_backup(wolts, out_dir=tmp_path / "out").archive)
+    assert f"{ARCHIVE_ROOT}/build/notes.md" in names
+    assert f"{ARCHIVE_ROOT}/apps/site/app.json" in names
+
+
+def test_the_platforms_own_worktree_store_still_goes(wolts, tmp_path):
+    names = _members(create_backup(wolts, out_dir=tmp_path / "out").archive)
+    assert not [name for name in names if ".worktui" in name]
+
+
+def test_a_wolt_nested_under_a_junk_name_survives(wolts, tmp_path):
+    nested = wolts / "beaverwolt" / "wolt" / "apps" / "build" / "rescuedwolt"
+    (nested / "wolt").mkdir(parents=True)
+    (nested / "wolt" / "wolt.json").write_text(json.dumps({"name": "rescuedwolt"}))
+    names = _members(create_backup(wolts, out_dir=tmp_path / "out").archive)
+    assert any(name.endswith("build/rescuedwolt/wolt/wolt.json") for name in names)
+
+
+def test_the_agent_clis_version_store_goes_but_the_rest_of_local_stays(wolts, tmp_path):
+    """`.local/share/claude` is the biggest thing in a lived-in colony.
+
+    12.8GB of redownloadable CLI binaries on the colony this was measured
+    against — and the only part of `.local` that may go. `opencode.db` beside
+    it is session state, and large, and stays.
+    """
+    home = wolts / "beaverwolt" / "home" / ".local" / "share"
+    (home / "claude" / "versions").mkdir(parents=True)
+    (home / "claude" / "versions" / "1.2.3").write_text("b" * 60_000)
+    (home / "claude" / "runtime-cache.bin").write_text("c" * 20_000)
+    (home / "opencode").mkdir(parents=True)
+    (home / "opencode" / "opencode.db").write_text("session state")
+    (home.parent / "state" / "notes").mkdir(parents=True)
+    (home.parent / "state" / "notes" / "keep.md").write_text("kept")
+    # A wolt's own directory called `claude`, nowhere near `.local/share`.
+    (wolts / "beaverwolt" / "wolt" / "sparks" / "claude").mkdir(parents=True)
+    (wolts / "beaverwolt" / "wolt" / "sparks" / "claude" / "poster.html").write_text("mine")
+
+    names = _members(create_backup(wolts, out_dir=tmp_path / "out").archive)
+    assert not [name for name in names if "/.local/share/claude" in name]
+    assert f"{ARCHIVE_ROOT}/beaverwolt/home/.local/share/opencode/opencode.db" in names
+    assert f"{ARCHIVE_ROOT}/beaverwolt/home/.local/state/notes/keep.md" in names
+    assert f"{ARCHIVE_ROOT}/beaverwolt/wolt/sparks/claude/poster.html" in names
+
+
+def test_a_top_level_dir_named_claude_is_never_path_excluded(wolts, tmp_path):
+    (wolts / "claude" / "wolt").mkdir(parents=True)
+    (wolts / "claude" / "wolt" / "wolt.json").write_text(json.dumps({"name": "claude"}))
+    names = _members(create_backup(wolts, out_dir=tmp_path / "out").archive)
+    assert f"{ARCHIVE_ROOT}/claude/wolt/wolt.json" in names
+
+
+# ---------------------------------------------------------------------------
+# Extraction safety — archives built by hand, to be refused by hand
+# ---------------------------------------------------------------------------
+
+def _outside_witness(tmp_path):
+    """A directory no restore is ever allowed to touch."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "witness.txt").write_text("untouched")
+    return outside
+
+
+def _write_archive(path: Path, build) -> Path:
+    with tarfile.open(path, "w:gz") as tar:
+        build(tar)
+    return path
+
+
+def _add_bytes(tar, name, data=b"payload", **kw):
+    info = tarfile.TarInfo(name)
+    info.size = len(data)
+    for key, value in kw.items():
+        setattr(info, key, value)
+    tar.addfile(info, __import__("io").BytesIO(data))
+
+
+def _add_symlink(tar, name, target):
+    info = tarfile.TarInfo(name)
+    info.type = tarfile.SYMTYPE
+    info.linkname = target
+    tar.addfile(info)
+
+
+def test_restore_refuses_a_hard_link(tmp_path):
+    outside = _outside_witness(tmp_path)
+    archive = tmp_path / "hardlink.tar.gz"
+
+    def build(tar):
+        _add_bytes(tar, "wolts/anchor.txt")
+        info = tarfile.TarInfo("wolts/stolen")
+        info.type = tarfile.LNKTYPE
+        info.linkname = str(outside / "witness.txt")
+        tar.addfile(info)
+
+    _write_archive(archive, build)
+    with pytest.raises(ValueError, match="hard link"):
+        restore_backup(archive, to=tmp_path / "target")
+    assert (outside / "witness.txt").read_text() == "untouched"
+    assert not (tmp_path / "target" / "wolts").exists()
+
+
+def test_restore_refuses_a_hard_link_climbing_out(tmp_path):
+    archive = tmp_path / "hardlink2.tar.gz"
+
+    def build(tar):
+        info = tarfile.TarInfo("wolts/stolen")
+        info.type = tarfile.LNKTYPE
+        info.linkname = "../../etc/passwd"
+        tar.addfile(info)
+
+    _write_archive(archive, build)
+    with pytest.raises(ValueError, match="hard link"):
+        restore_backup(archive, to=tmp_path / "target")
+
+
+def test_restore_refuses_a_write_through_a_symlink(tmp_path):
+    """Member 1 links out of the tree; member 2 writes through it."""
+    outside = _outside_witness(tmp_path)
+    archive = tmp_path / "through.tar.gz"
+
+    def build(tar):
+        _add_symlink(tar, "wolts/x", str(outside))
+        _add_bytes(tar, "wolts/x/evil.txt", b"pwned")
+
+    _write_archive(archive, build)
+    with pytest.raises(ValueError, match="runs through a symlink"):
+        restore_backup(archive, to=tmp_path / "target")
+    assert not (outside / "evil.txt").exists()
+    assert sorted(item.name for item in outside.iterdir()) == ["witness.txt"]
+
+
+def test_restore_refuses_a_file_that_replaces_a_symlink(tmp_path):
+    """The same trick without a path component: link `x`, then a file `x`."""
+    outside = _outside_witness(tmp_path)
+    archive = tmp_path / "replace.tar.gz"
+
+    def build(tar):
+        _add_symlink(tar, "wolts/x", str(outside / "witness.txt"))
+        _add_bytes(tar, "wolts/x", b"pwned")
+
+    _write_archive(archive, build)
+    with pytest.raises(ValueError, match="symlink|duplicate"):
+        restore_backup(archive, to=tmp_path / "target")
+    assert (outside / "witness.txt").read_text() == "untouched"
+
+
+def test_restore_refuses_duplicate_members(tmp_path):
+    """Last-wins is how a reader and an extractor get told different stories."""
+    archive = tmp_path / "dupes.tar.gz"
+
+    def build(tar):
+        _add_bytes(tar, "wolts/note.md", b"first")
+        _add_bytes(tar, "wolts/note.md", b"second")
+
+    _write_archive(archive, build)
+    with pytest.raises(ValueError, match="duplicate"):
+        restore_backup(archive, to=tmp_path / "target")
+    assert not (tmp_path / "target" / "wolts").exists()
+
+
+def test_case_folding_collision_is_refused_or_kept_distinct(tmp_path):
+    """On APFS two names that differ only by case cannot both exist.
+
+    Restoring one file's bytes under the other's name is silent corruption, so
+    a case-folding filesystem refuses the archive outright. On a case-sensitive
+    one both files are restored, distinct and intact.
+    """
+    archive = tmp_path / "case.tar.gz"
+
+    def build(tar):
+        _add_bytes(tar, "wolts/Notes.md", b"upper")
+        _add_bytes(tar, "wolts/notes.md", b"lower")
+
+    _write_archive(archive, build)
+    target = tmp_path / "target"
+    try:
+        restore_backup(archive, to=target)
+    except ValueError as exc:
+        assert "collide" in str(exc)
+        return
+    assert (target / "wolts" / "Notes.md").read_bytes() == b"upper"
+    assert (target / "wolts" / "notes.md").read_bytes() == b"lower"
+
+
+def test_absolute_member_is_refused(tmp_path):
+    archive = tmp_path / "absolute.tar.gz"
+    _write_archive(archive, lambda tar: _add_bytes(tar, "/etc/pwned"))
+    with pytest.raises(ValueError, match="outside the target"):
+        restore_backup(archive, to=tmp_path / "target")
+
+
+def test_long_and_non_ascii_names_round_trip(wolts, tmp_path):
+    deep = wolts / "beaverwolt" / "wolt" / "memory" / ("nest/" * 30)
+    deep = Path(str(deep))
+    deep.mkdir(parents=True)
+    (deep / ("l" * 120 + ".md")).write_text("deep")
+    (wolts / "beaverwolt" / "wolt" / "memory" / "мойволт-🦫-ноты.md").write_text("юникод")
+
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    restored = restore_backup(result.archive, to=tmp_path / "restored")
+    base = restored.wolts_dir / "beaverwolt" / "wolt" / "memory"
+    assert (base / "мойволт-🦫-ноты.md").read_text() == "юникод"
+    assert (Path(str(base / ("nest/" * 30))) / ("l" * 120 + ".md")).read_text() == "deep"
+
+
+# ---------------------------------------------------------------------------
+# Symlinks on the way in
+# ---------------------------------------------------------------------------
+
+def test_broken_symlink_and_cycle_neither_crash_nor_hang(wolts, tmp_path):
+    memory = wolts / "beaverwolt" / "wolt" / "memory"
+    (memory / "dangling.md").symlink_to(wolts / "beaverwolt" / "wolt" / "gone.md")
+    (memory / "loop-a").symlink_to(memory / "loop-b")
+    (memory / "loop-b").symlink_to(memory / "loop-a")
+
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    names = _members(result.archive)
+    for link in ("dangling.md", "loop-a", "loop-b"):
+        assert f"{ARCHIVE_ROOT}/beaverwolt/wolt/memory/{link}" in names
+
+    restored = restore_backup(result.archive, to=tmp_path / "restored")
+    back = restored.wolts_dir / "beaverwolt" / "wolt" / "memory"
+    assert os.path.islink(back / "dangling.md")
+    assert not (back / "dangling.md").exists()  # still dangling, as it was
+    assert os.path.islink(back / "loop-a")
+
+
+def test_a_relative_link_inside_the_tree_still_resolves_after_restore(wolts, tmp_path):
+    (wolts / "beaverwolt" / "wolt" / "sparks").mkdir(parents=True, exist_ok=True)
+    (wolts / "beaverwolt" / "wolt" / "sparks" / "latest.html").symlink_to(
+        Path("..") / "site" / "index.html"
+    )
+    (wolts / "shared.json").symlink_to(Path("beaverwolt") / "wolt" / "wolt.json")
+
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    restored = restore_backup(result.archive, to=tmp_path / "restored")
+    spark = restored.wolts_dir / "beaverwolt" / "wolt" / "sparks" / "latest.html"
+    assert os.readlink(spark) == "../site/index.html"
+    assert spark.read_text() == "<h1>pond</h1>"
+    root_link = restored.wolts_dir / "shared.json"
+    assert os.readlink(root_link) == "beaverwolt/wolt/wolt.json"
+    assert json.loads(root_link.read_text())["name"] == "beaverwolt"
 
 
 def test_cli_backup_and_restore(wolts, tmp_path, capsys, monkeypatch):
