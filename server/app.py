@@ -29,6 +29,7 @@ from fastapi.templating import Jinja2Templates
 from . import tools as tool_registry
 from .config import (
     APP_MIME_TYPES,
+    CONTAINER_HOME,
     DEN_REPLY_FOOTER,
     MIME_TYPES,
     PORT,
@@ -60,6 +61,7 @@ from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
 from execution_policy import AutoGrantStore, POLICY_VERSION
 from runtime_context import RuntimeContext
+from harness_auth import claude_authenticated
 from harnesses import (
     harness_metadata,
     get_default_harness,
@@ -429,12 +431,25 @@ async def _serve_static(url_path: str, request: Request | None = None) -> Respon
 
 # jerpint: will have to look into how this works and security around it
 async def _serve_platform_file(filename: str) -> Response | None:
-    """Serve from public/ (platform UI)."""
+    """Serve from public/ (platform UI), with the type the file actually is.
+
+    This used to answer `text/html` for everything in `public/`, which is fine
+    right up until the browser is asked to *execute* one: chromium refuses
+    `/sw.js` with "unsupported MIME type ('text/html')", so the service worker
+    never registers and woltspace is quietly not installable as a PWA. The
+    sibling `_serve_static` had the lookup right all along — same table here.
+    """
     path = PUBLIC_DIR / filename
-    if not path.exists():
+    if not path.exists() or not path.is_file():
         return None
-    content = path.read_text()
-    return HTMLResponse(content, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    ext = path.suffix
+    mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext)
+    headers = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+    if mime == "text/html":
+        return HTMLResponse(path.read_text(), headers=headers)
+    # Bytes, not text: fonts, icons and images in public/ are not decodable.
+    return Response(path.read_bytes(),
+                    media_type=mime or "application/octet-stream", headers=headers)
 
 
 # ============================================================
@@ -530,7 +545,7 @@ async def onboard_status():
     return {
         "wolts_dir": str(WOLTS_DIR),
         "wolt_name": WOLT_NAME,
-        "has_oauth": Path("/home/node/.claude/.credentials.json").exists(),
+        "has_oauth": claude_authenticated(CONTAINER_HOME),
         "has_llm_key": bool(env.get("ANTHROPIC_API_KEY") or env.get("OPENROUTER_API_KEY")),
         "has_telegram": env.get("ENABLE_TELEGRAM_BOT") == "true" and bool(env.get("TELEGRAM_BOT_TOKEN")),
         "login_url": _extract_login_url(),
