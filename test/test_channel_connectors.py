@@ -12,6 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from woltspace import channels  # noqa: E402
 from woltspace.channel_supervisor import (  # noqa: E402
     ChannelSupervisor,
     backoff_delay,
@@ -26,6 +27,7 @@ from woltspace.channels import (  # noqa: E402
 )
 from woltspace.config import channel_config, config_path, load_config  # noqa: E402
 from woltspace.layout import RuntimeLayout  # noqa: E402
+from woltspace.supervisor import Supervisor  # noqa: E402
 
 TOKEN = "123456:configured-telegram-token"
 
@@ -114,8 +116,14 @@ class TestTelegramPlan:
             layout.wolts_dir, layout.install_root, layout.host, layout.port, "external"
         )
 
-    def test_container_keeps_its_own_bot_project_and_module(self, layout):
-        """The container entrypoint runs the adapter from the `bot` uv project."""
+    def test_the_container_runs_the_adapter_on_the_installed_interpreter(self, layout):
+        """The slim image installs `woltspace[connectors]`, so this one owns it.
+
+        The `bot` uv project now lives inside the installed wheel, where
+        syncing a venv would mean writing into site-packages. When the
+        interpreter running the control plane already has the dependency, it is
+        the interpreter — container or not.
+        """
         plan = TelegramConnector().plan(self._container(layout), {
             "WOLTSPACE_ENTRYPOINT": "1",
             "ENABLE_TELEGRAM_BOT": "true",
@@ -125,6 +133,20 @@ class TestTelegramPlan:
         })
         assert plan.enabled is True
         assert plan.cwd == str(ROOT / "container")
+        assert plan.command[0] == sys.executable
+        assert plan.command[-2:] == ("-m", "bot.telegram_adapter")
+
+    def test_an_image_without_the_extra_falls_back_to_the_bot_project(self, layout, monkeypatch):
+        """A container built some other way keeps the uv project it always had."""
+        monkeypatch.setattr(channels, "_module_available", lambda name: False)
+        plan = TelegramConnector().plan(self._container(layout), {
+            "WOLTSPACE_ENTRYPOINT": "1",
+            "ENABLE_TELEGRAM_BOT": "true",
+            "TELEGRAM_BOT_TOKEN": TOKEN,
+            "TELEGRAM_BOT_DIR": str(ROOT / "container"),
+            "TELEGRAM_BOT_MODULE": "bot.telegram_adapter",
+        })
+        assert plan.enabled is True
         assert plan.command[0].endswith("uv")
         assert plan.command[1:5] == ("run", "--project", str(ROOT / "container" / "bot"), "python")
         assert plan.command[-2:] == ("-m", "bot.telegram_adapter")
@@ -143,12 +165,14 @@ class TestTelegramPlan:
         assert "bot.telegram_adapter" in plan.command[-2]
         assert "dev reload" in plan.detail
 
-    def test_a_custom_wolt_adapter_still_finds_an_interpreter_with_telegram(self, layout):
+    def test_a_custom_wolt_adapter_still_finds_an_interpreter_with_telegram(self, layout, monkeypatch):
         """A wolt's own adapter lives at <wolt>/wolt/bot, not <wolt>/bot.
 
         Probing only the latter fell through to an interpreter without
-        python-telegram-bot and then blamed a missing extra.
+        python-telegram-bot and then blamed a missing extra. Only reachable in
+        an image whose own environment lacks the dependency.
         """
+        monkeypatch.setattr(channels, "_module_available", lambda name: False)
         plan = TelegramConnector().plan(self._container(layout), {
             "WOLTSPACE_ENTRYPOINT": "1",
             "ENABLE_TELEGRAM_BOT": "true",
@@ -560,3 +584,44 @@ class TestContainerEntrypoint:
         text = (ROOT / "container" / "start.sh").read_text()
         assert "TELEGRAM_BOT_MODULE" not in text
         assert "ChannelConnector" in text
+
+    def test_start_sh_hands_the_process_to_the_installed_control_plane(self):
+        """The slim image runs the packaged CLI, in the foreground, as itself.
+
+        `exec` matters: docker's SIGTERM has to land on the process that owns
+        the connectors, not on a shell that would leave them orphaned.
+        """
+        text = (ROOT / "container" / "start.sh").read_text()
+        assert 'exec "$WOLTSPACE_CLI" serve' in text
+        assert "--isolation external" in text
+        assert "uv run" not in text
+        assert "creatures.vulture" not in text
+
+    def test_the_container_entrypoint_runs_the_boot_sweep_itself(self, tmp_path, monkeypatch):
+        """No `woltspace start` wrapper in the container — so `serve` does it.
+
+        Natively `lifecycle.start` syncs skills and normalizes hooks before the
+        control plane is spawned. The container execs `serve` directly, which
+        makes prepare() the only place left for the same sweep.
+        """
+        from woltspace import supervisor as supervisor_module
+
+        called = []
+        monkeypatch.setattr(supervisor_module, "ensure_container_mounts", lambda layout: None)
+        monkeypatch.setattr(supervisor_module, "ensure_data_root_available", lambda layout: None)
+        monkeypatch.setattr("woltspace.skills.sync_platform_skills",
+                            lambda layout: called.append("skills"))
+        monkeypatch.setattr("woltspace.hooks.normalize_platform_hooks",
+                            lambda layout: called.append("hooks"))
+        monkeypatch.setenv("WOLTSPACE_ENTRYPOINT", "1")
+
+        wolts = tmp_path / "wolts"
+        wolts.mkdir()
+        Supervisor(RuntimeLayout(wolts, ROOT, isolation="external")).prepare()
+        assert called == ["skills", "hooks"]
+
+        called.clear()
+        # Native: `lifecycle.start` already ran both; repeating them here would
+        # only cost a second walk of every wolt.
+        Supervisor(RuntimeLayout(wolts, ROOT, isolation="host")).prepare()
+        assert called == []

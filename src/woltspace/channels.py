@@ -77,11 +77,16 @@ def _interpreter(
 ) -> tuple[str, ...]:
     """The interpreter that owns the adapter's dependencies.
 
-    Container runs keep the `bot` uv project they have always used. Native runs
-    stay inside the installed environment — never provisioning a venv under an
-    installed package.
+    This interpreter wins whenever it already has them: the slim container
+    installs `woltspace[connectors]`, so its own environment owns
+    python-telegram-bot exactly as a native install does — and the `bot` uv
+    project it would otherwise use now lives *inside* the installed wheel,
+    where syncing a venv means writing a `.venv` into site-packages.
+
+    A container built some other way (a checkout with no connectors extra)
+    still falls back to that uv project, which is what it has always used.
     """
-    if isolation != "host":
+    if isolation != "host" and not _module_available("telegram"):
         uv = shutil.which("uv")
         project = _bot_project(bot_dir, install_root)
         if uv and project is not None:

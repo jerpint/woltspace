@@ -72,6 +72,7 @@ class Supervisor:
         if self.layout.isolation == "host":
             os.environ.setdefault("WOLTSPACE_PUBLIC_TUNNEL", "false")
         if self.layout.is_entrypoint:
+            self._platform_preflight()
             return
         # A guest in the container never publishes. The container exports
         # WOLTSPACE_PUBLIC_TUNNEL=true to everything it hosts, and the tunnel
@@ -81,6 +82,28 @@ class Supervisor:
         # opt-in there is someone's deliberate choice and stays.)
         if self.layout.isolation != "host":
             os.environ["WOLTSPACE_PUBLIC_TUNNEL"] = "false"
+
+    def _platform_preflight(self) -> None:
+        """The boot sweep, for the entrypoint that execs `serve` directly.
+
+        Natively this runs in `lifecycle.start` before the control plane is
+        spawned, so it is skipped here — repeating it would only cost a second
+        walk of every wolt. The container entrypoint has no such wrapper: it
+        execs `woltspace serve` so docker's SIGTERM lands on the process that
+        owns the connectors, which makes this the only place the sweep can
+        happen. Same modules, same result, never fatal.
+        """
+        if self.layout.isolation == "host":
+            return
+        from .hooks import normalize_platform_hooks
+        from .skills import sync_platform_skills
+
+        for label, run in (("skills", sync_platform_skills),
+                           ("hooks", normalize_platform_hooks)):
+            try:
+                run(self.layout)
+            except Exception as error:  # noqa: BLE001 — never block a boot
+                print(f"[{label}] not applied ({type(error).__name__}: {error})")
 
     def channel_supervisor(self) -> ChannelSupervisor:
         """Plan connectors and share their resolved secrets with this process.
