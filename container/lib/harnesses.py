@@ -375,15 +375,17 @@ HARNESSES = {
         # "/" open the TUI command palette ("No matching items") and never
         # submit, which is one of the two reasons boot prompts go via paste.
         "skill_invoke": "/{name}",
-        # TODO(unverified): opencode is not installed here, so what it does with
-        # a namespaced skill dir (`.claude-plugin/` at the root of the tree it
-        # walks) has not been benched. It reads ~/.claude/skills like claude, and
-        # the platform skills reach it through the same symlink codex walks, so
-        # claude's shape is the best available guess — re-verify live and adjust
-        # this one string if opencode spells the namespace differently.
-        # No leading space here on purpose: _guard_paste_text already prepends
-        # one when a pasted message starts with "/" (leading_slash_opens_palette).
-        "platform_skill_invoke": "/woltspace:{name}",
+        # opencode is the odd one out. Benched live on 1.18.29: it discovers the
+        # whole platform tree through the symlink chain, but it does NOT
+        # namespace it — a platform skill answers to its bare frontmatter name
+        # (`/notify`), not `woltspace:notify` the way claude and codex spell it.
+        # Consequence, documented rather than defended against: on opencode a
+        # wolt-owned skill named `notify` collides with the platform one, and
+        # neither wins by rule. Nothing here special-cases that; a wolt that
+        # names its own skill after a platform skill gets what it asked for.
+        # The leading space is the palette defuse — a pasted message starting
+        # with "/" opens the command palette instead of submitting.
+        "platform_skill_invoke": " /{name}",
         # The TUI can't take the boot prompt on the CLI (see _opencode_command
         # docstring). prepare_session_command stamps it; deliver_boot_prompt
         # pastes it once the marker below shows in the pane (the composer hint
@@ -444,9 +446,10 @@ LEGACY_PLATFORM_SKILL_PREFIX = "woltspace-"
 def platform_skill_invoke(harness: str | None, name: str) -> str:
     """How this harness invokes a *platform* skill named `name`.
 
-    Platform skills are namespaced by their delivery mechanism, so they are not
-    spelled the way a wolt's own skills are — `skill_invoke` stays the template
-    for those. Harnesses that never got a platform template fall back to it.
+    Most harnesses namespace platform skills by their delivery mechanism, so
+    they are not spelled the way a wolt's own skills are — `skill_invoke` stays
+    the template for those. opencode is the exception (bare names; see its table
+    entry). Harnesses with no platform template fall back to `skill_invoke`.
     """
     entry = get_harness(harness)
     template = entry.get("platform_skill_invoke") or entry["skill_invoke"]

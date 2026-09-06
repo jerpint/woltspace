@@ -266,15 +266,15 @@ class TestTableShape:
             missing = self.REQUIRED_KEYS - set(entry)
             assert not missing, f"harness '{name}' missing keys: {missing}"
 
-    def test_platform_skills_are_namespaced_on_every_harness(self):
-        """Platform skills reach every harness namespaced under `woltspace:` —
-        claude via the plugin, codex via the .claude-plugin-rooted tree."""
+    def test_platform_skills_are_spelled_per_harness(self):
+        """claude and codex namespace platform skills under `woltspace:` — one
+        via the plugin, one via the .claude-plugin-rooted tree. opencode
+        (benched live, 1.18.29) namespaces nothing: bare frontmatter names,
+        with the leading space that keeps "/" out of the command palette."""
         from harnesses import platform_skill_invoke
         assert platform_skill_invoke("claude", "start-chat") == "/woltspace:start-chat"
         assert platform_skill_invoke("codex", "start-chat") == "@woltspace:start-chat"
-        assert platform_skill_invoke("opencode", "start-chat") == "/woltspace:start-chat"
-        for name in HARNESSES:
-            assert "woltspace:" in platform_skill_invoke(name, "viewport")
+        assert platform_skill_invoke("opencode", "start-chat") == " /start-chat"
 
     def test_a_harness_without_a_platform_template_falls_back(self, monkeypatch):
         from harnesses import HARNESSES as table, platform_skill_invoke
@@ -509,6 +509,16 @@ class TestBootPromptViaPaste:
         # The full assembled prompt (skill invocation intact) is stamped
         assert self._session_data(result["name"])["pending_boot_prompt"] == "/woltspace:create-wolt"
 
+    def test_a_bare_name_invocation_still_suppresses_start_chat(self):
+        """opencode names platform skills bare, so there is no `woltspace:` to
+        look for — a prompt that opens with the sigil is the invocation."""
+        from sessions import prepare_session_command
+        result = self._start()
+        prepare_session_command(result["name"], "spawn", " /create-wolt")
+        stamped = self._session_data(result["name"])["pending_boot_prompt"]
+        assert stamped == " /create-wolt"
+        assert "start-chat" not in stamped
+
     def test_resume_stamps_pending_and_omits_prompt(self):
         from sessions import prepare_session_command
         result = self._start()
@@ -584,7 +594,7 @@ class TestBootPromptViaPaste:
         monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
 
         assert deliver_boot_prompt(name, timeout=5) is True
-        assert pasted == ["hello world /woltspace:start-chat lodge testwolt"]
+        assert pasted == ["hello world /start-chat lodge testwolt"]
         # Three visible-pane reads: stale frame, repaint, real marker.
         assert [start for _, start in self.runtime.captures] == [None, None, None]
 
@@ -608,7 +618,7 @@ class TestBootPromptViaPaste:
         monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
 
         assert deliver_boot_prompt(name, timeout=5) is True
-        assert pasted == ["hello world /woltspace:start-chat lodge testwolt"]
+        assert pasted == ["hello world /start-chat lodge testwolt"]
 
     def test_concurrent_deliver_does_not_double_paste(self, monkeypatch):
         """A second poller that runs after the stamp is claimed must bail."""
@@ -628,7 +638,7 @@ class TestBootPromptViaPaste:
         # A second poller (marker present from the start) finds the stamp gone
         self.runtime.feed_capture("ctrl+p commands")
         assert deliver_boot_prompt(name, timeout=5) is False
-        assert pasted == ["hello world /woltspace:start-chat lodge testwolt"]  # only once
+        assert pasted == ["hello world /start-chat lodge testwolt"]  # only once
 
     def test_resume_with_prompt_merges_preserved_stamp(self):
         """A boot prompt stranded by a boot-time crash must not be clobbered
@@ -679,7 +689,7 @@ class TestBootPromptViaPaste:
 
         assert deliver_boot_prompt(name, timeout=2) is False
         # Stamp survives (full assembled prompt — start-chat appended)
-        assert self._session_data(name)["pending_boot_prompt"] == "hello /woltspace:start-chat lodge testwolt"
+        assert self._session_data(name)["pending_boot_prompt"] == "hello /start-chat lodge testwolt"
 
     def test_deliver_noop_for_claude_sessions(self):
         from sessions import deliver_boot_prompt, prepare_session_command

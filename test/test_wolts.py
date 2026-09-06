@@ -560,7 +560,7 @@ class TestDeriveWorktuiSkill:
         from skills_sync import sync_all_wolt_skills
         sync_all_wolt_skills(woltspace, wolts)
 
-        synced = (wolts / "alpha" / ".claude" / "skills" / "worktui" / "SKILL.md").read_text()
+        synced = (wolts / "alpha" / ".claude" / "skills" / "woltspace-worktui" / "SKILL.md").read_text()
         assert "wt spawn / wt send / wt read / wt kill" in synced
         assert "name: worktui\n" in synced
 
@@ -644,17 +644,18 @@ class TestSyncClaudeMdPlatformSection:
 
 
 class TestSetupWoltSkillsOnly:
-    """Unit: setup_wolt_claude_config only copies woltspace-* skills."""
+    """Unit: a seeded wolt gets the platform skills under their delivered names."""
 
-    def test_only_copies_woltspace_prefixed_skills(self, tmp_path):
+    def test_seeds_platform_skills_under_the_legacy_prefix(self, tmp_path):
         from wolts import setup_wolt_claude_config
 
         woltspace = tmp_path / "woltspace"
         skills_src = woltspace / "container" / "skills"
-        (skills_src / "woltspace-notify").mkdir(parents=True)
-        (skills_src / "woltspace-notify" / "SKILL.md").write_text("notify")
-        (skills_src / "legacy" / "old-skill").mkdir(parents=True)
-        (skills_src / "legacy" / "old-skill" / "SKILL.md").write_text("old")
+        (skills_src / "notify").mkdir(parents=True)
+        (skills_src / "notify" / "SKILL.md").write_text("notify")
+        # The plugin manifest is not a skill and must never be delivered as one.
+        (skills_src / ".claude-plugin").mkdir()
+        (skills_src / ".claude-plugin" / "plugin.json").write_text("{}")
 
         wolt_dir = tmp_path / "mywolt"
         wolt_dir.mkdir()
@@ -664,4 +665,6 @@ class TestSetupWoltSkillsOnly:
 
         skills_dir = wolt_dir / ".claude" / "skills"
         assert (skills_dir / "woltspace-notify" / "SKILL.md").exists()
-        assert not (skills_dir / "legacy").exists()
+        assert not (skills_dir / "notify").exists()
+        assert not (skills_dir / ".claude-plugin").exists()
+        assert not (skills_dir / "woltspace-.claude-plugin").exists()

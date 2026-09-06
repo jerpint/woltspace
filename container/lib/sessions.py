@@ -849,21 +849,22 @@ def _wolt_boot_context(data: dict) -> str:
     )
 
 
-def _invokes_platform_skill(prompt: str) -> bool:
-    """True if `prompt` already asks for a platform skill by name.
+def _invokes_platform_skill(prompt: str, harness: str) -> bool:
+    """True if `prompt` already asks for a skill, so start-chat must not follow.
 
-    Two shapes are live at once during the plugin ratchet: the namespaced one
-    every harness gets from the plugin / `.claude-plugin/` tree
-    (`/woltspace:notify`, `@woltspace:notify`) and the pre-plugin copy-sync
-    spelling a wolt that has not been ratcheted still uses
-    (`/woltspace-notify`). Matched on the name itself rather than a
-    harness-formatted string, because a prompt is written by whoever called us
-    and may carry either.
+    Three shapes are live at once. The namespaced one claude and codex get from
+    the plugin (`/woltspace:notify`, `@woltspace:notify`); the pre-plugin
+    copy-sync spelling an un-ratcheted wolt still uses (`/woltspace-notify`);
+    and opencode's, which namespaces nothing — a platform skill there answers
+    to its bare name, so the only thing that marks an invocation is the leading
+    sigil. The first two are matched anywhere in the prompt, because a caller
+    may hand us either regardless of harness.
     """
-    return (
-        f"{PLATFORM_SKILL_NAMESPACE}:" in prompt
-        or LEGACY_PLATFORM_SKILL_PREFIX in prompt
-    )
+    if (f"{PLATFORM_SKILL_NAMESPACE}:" in prompt
+            or LEGACY_PLATFORM_SKILL_PREFIX in prompt):
+        return True
+    sigil = platform_skill_invoke(harness, "").strip()
+    return bool(sigil) and prompt.lstrip().startswith(sigil)
 
 
 def _assemble_spawn_prompt(data: dict, prompt: str, harness: str) -> str:
@@ -876,11 +877,15 @@ def _assemble_spawn_prompt(data: dict, prompt: str, harness: str) -> str:
     context = _adapter_context(data)
     boot_context = _wolt_boot_context(data)
     prefix = f"{boot_context}\n\n" if boot_context else ""
-    if _invokes_platform_skill(prompt):
+    if _invokes_platform_skill(prompt, harness):
         return f"{prefix}{prompt}{context}"
     adapter = data.get("adapter") or "lodge"
     wolt = data.get("wolt") or "wolt"
-    start_chat = platform_skill_invoke(harness, "start-chat")
+    # The template may carry a leading space of its own (opencode's palette
+    # defuse). Landing mid-prompt it is redundant, not harmful — strip it here
+    # so the assembled prompt reads cleanly, and leave the guard to the one
+    # place it matters: a prompt that OPENS with the invocation.
+    start_chat = platform_skill_invoke(harness, "start-chat").strip()
     return f"{prefix}{prompt}{context} {start_chat} {adapter} {wolt}"
 
 
