@@ -130,6 +130,12 @@ ENV UV_TOOL_DIR=/opt/woltspace/tools \
     UV_LINK_MODE=copy \
     UV_NO_CACHE=1
 
+# Boot is a long-lived python process writing to docker's pipe, which is not a
+# tty: block buffering would hold "scaffolded new wolt", "setup complete" and
+# the tunnel URL until the container exits. Set for every python in the image,
+# the entrypoint and its children alike.
+ENV PYTHONUNBUFFERED=1
+
 # Local source (only read when USE_LOCAL=true). Last COPY in the file so the
 # layers above stay cached.
 COPY . /tmp/local-src/

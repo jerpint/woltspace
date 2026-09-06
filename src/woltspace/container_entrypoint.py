@@ -400,12 +400,21 @@ def build_environment(
 # ---------------------------------------------------------------------------
 
 def open_tmux_window(wolt_name: str, wolt_dir: Path, wolts_dir: Path) -> None:
-    """The window the human lands in, and the greeting that belongs in it."""
+    """The window the human lands in, and the greeting that belongs in it.
+
+    Only the create is tolerant, exactly as bash's `2>/dev/null || true` was: a
+    session named `main` already existing is the normal case on a restart.
+    Everything after it is fatal under `set -e` and stays fatal here. A tmux
+    that cannot be talked to must not produce a healthy-looking API with no
+    window behind it — and on first run the `.first-run` marker is already
+    spent by then, so a boot that swallowed the failure would never offer the
+    creation greeting again.
+    """
     subprocess.run(
         ["tmux", "-u", "new-session", "-d", "-s", "main", "-c", str(wolt_dir)],
         capture_output=True, check=False,
     )
-    subprocess.run(["tmux", "set", "-g", "mouse", "on"], check=False)
+    subprocess.run(["tmux", "set", "-g", "mouse", "on"], check=True)
 
     has_auth = (HOME / ".claude" / ".credentials.json").is_file()
     first_run = HOME / ".claude" / ".first-run"
@@ -429,7 +438,7 @@ def open_tmux_window(wolt_name: str, wolt_dir: Path, wolts_dir: Path) -> None:
 
 
 def send_keys(keys: str) -> None:
-    subprocess.run(["tmux", "send-keys", "-t", "main", keys, "Enter"], check=False)
+    subprocess.run(["tmux", "send-keys", "-t", "main", keys, "Enter"], check=True)
 
 
 def sweep_node_modules(wolts_dir: Path) -> None:
@@ -498,9 +507,18 @@ def start_slack_bot(env: dict[str, str]) -> subprocess.Popen | None:
     child_env = dict(env)
     child_env["BOT_ADAPTER"] = "slack"
     child_env["PYTHONPATH"] = f"{bot_dir}:{env.get('PYTHONPATH', '')}"
-    # start_new_session is bash's `disown`: the bot outlives nothing here, but it
-    # must not take a terminal signal meant for the control plane.
-    return subprocess.Popen(command, cwd=bot_dir, env=child_env, start_new_session=True)
+    try:
+        # start_new_session is bash's `disown`: the bot outlives nothing here,
+        # but it must not take a terminal signal meant for the control plane.
+        return subprocess.Popen(command, cwd=bot_dir, env=child_env,
+                                start_new_session=True)
+    except OSError as exc:
+        # A missing interpreter or an unusable cwd raises here, in the boot
+        # process. Bash launched this in a backgrounded subshell, where the same
+        # failure cost one line of stderr and nothing else — a chat adapter that
+        # cannot start is not a reason to withhold the whole colony.
+        print(f"slack bot failed to start: {exc}")
+        return None
 
 
 def report_tunnel_url(wolts_dir: Path) -> None:

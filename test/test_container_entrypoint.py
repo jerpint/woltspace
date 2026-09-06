@@ -9,6 +9,7 @@ Usage: uv run pytest test/test_container_entrypoint.py -v
 """
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -111,15 +112,32 @@ class TestEnvironmentAssembly:
 # The greeting the human lands on
 # ---------------------------------------------------------------------------
 
+class _TmuxCalls(list):
+    """The recorded commands, with a dict of verbs that should fail."""
+
+    def __init__(self):
+        super().__init__()
+        self.failures: dict[tuple, int] = {}
+
+
 @pytest.fixture
 def fake_tmux(tmp_path, monkeypatch):
-    """Record every tmux invocation instead of running one."""
-    calls = []
+    """Record every tmux invocation instead of running one.
+
+    `calls.failures[("tmux", verb, ...)] = code` makes one tmux verb fail, so a
+    test can prove which failures boot is supposed to survive.
+    """
+    calls = _TmuxCalls()
+    failures = calls.failures
+
+    import subprocess
 
     def run(command, **kwargs):
         calls.append(list(command))
-        import subprocess
-        return subprocess.CompletedProcess(command, 0, b"", b"")
+        code = failures.get(tuple(command[:3]), 0)
+        if code and kwargs.get("check"):
+            raise subprocess.CalledProcessError(code, command)
+        return subprocess.CompletedProcess(command, code, b"", b"")
 
     monkeypatch.setattr(boot.subprocess, "run", run)
     monkeypatch.setattr(boot, "HOME", tmp_path / "home")
@@ -169,6 +187,35 @@ class TestGreetingBranches:
         assert _sent(fake_tmux) == [
             'wclaude --dangerously-skip-permissions "hey mywolt"'
         ]
+
+    def test_an_existing_main_session_is_not_an_error(self, tmp_path, fake_tmux):
+        """`2>/dev/null || true` — a restart finds `main` already there."""
+        (tmp_path / "home" / ".claude" / ".credentials.json").write_text("{}")
+        fake_tmux.failures[("tmux", "-u", "new-session")] = 1
+
+        boot.open_tmux_window("mywolt", tmp_path / "wolt", tmp_path / "wolts")
+
+        assert _sent(fake_tmux) == ['wclaude --dangerously-skip-permissions "hey mywolt"']
+
+    def test_an_unreachable_tmux_kills_the_boot(self, tmp_path, fake_tmux):
+        """Under `set -e` everything after the create was fatal. Still is.
+
+        A swallowed failure leaves a healthy-looking API with no window behind
+        it — and on first run the marker is already spent, so the creation
+        greeting would never be offered again.
+        """
+        (tmp_path / "home" / ".claude" / ".credentials.json").write_text("{}")
+        fake_tmux.failures[("tmux", "set", "-g")] = 1
+
+        with pytest.raises(subprocess.CalledProcessError):
+            boot.open_tmux_window("mywolt", tmp_path / "wolt", tmp_path / "wolts")
+
+    def test_a_greeting_that_never_lands_kills_the_boot(self, tmp_path, fake_tmux):
+        (tmp_path / "home" / ".claude" / ".credentials.json").write_text("{}")
+        fake_tmux.failures[("tmux", "send-keys", "-t")] = 1
+
+        with pytest.raises(subprocess.CalledProcessError):
+            boot.open_tmux_window("mywolt", tmp_path / "wolt", tmp_path / "wolts")
 
     def test_the_window_opens_in_the_wolt_dir_with_mouse_on(self, tmp_path, fake_tmux):
         (tmp_path / "home" / ".claude" / ".credentials.json").write_text("{}")
@@ -256,6 +303,14 @@ class TestSlackBot:
         assert kwargs["start_new_session"] is True
         assert kwargs["env"]["BOT_ADAPTER"] == "slack"
         assert kwargs["env"]["PYTHONPATH"] == "/bundle/container:/bundle/container/lib:"
+
+    def test_a_bot_that_cannot_start_is_a_warning_not_a_dead_colony(self, capsys):
+        """Bash backgrounded this; the failure cost one line and nothing else."""
+        with patch.object(boot.subprocess, "Popen",
+                          side_effect=FileNotFoundError(2, "no woltspace-python")):
+            assert boot.start_slack_bot(dict(self.BASE)) is None
+
+        assert "slack bot failed to start:" in capsys.readouterr().out
 
     def test_dev_mode_wraps_it_in_watchfiles(self):
         popen = self._launch(dict(self.BASE, DEV_MODE="true"))

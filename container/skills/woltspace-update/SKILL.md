@@ -191,7 +191,7 @@ This is fast (no-ops if deps haven't changed) and safe to run every time.
 After pulling, re-sync platform skills and the CLAUDE.md platform section to all wolts:
 
 ```bash
-python3 -c "
+woltspace-python -c "
 import sys; sys.path.insert(0, '/workspace/woltspace/container/lib')
 from pathlib import Path
 from skills_sync import sync_all_wolt_skills
