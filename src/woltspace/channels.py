@@ -201,6 +201,7 @@ class TelegramConnector:
             "WOLTSPACE_ISOLATION": layout.isolation,
             "WOLTSPACE_HOST": layout.host,
             "WOLTSPACE_PORT": str(layout.port),
+            "WOLTSPACE_API": layout.endpoint,
             "PYTHONPATH": os.pathsep.join(
                 part
                 for part in (

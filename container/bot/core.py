@@ -330,8 +330,10 @@ def _call_server(method: str, path: str, body: dict | None = None) -> dict:
     """Make an HTTP request to the local woltspace server."""
     import urllib.request
     data = json.dumps(body).encode() if body is not None else None
+    # The instance this adapter was spawned by, not whoever holds 7777.
+    api = os.environ.get("WOLTSPACE_API", "http://localhost:7777")
     req = urllib.request.Request(
-        f"http://localhost:7777{path}",
+        f"{api}{path}",
         data=data,
         headers={"Content-Type": "application/json"} if data else {},
         method=method,

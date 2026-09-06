@@ -17,6 +17,25 @@ def installation_root() -> Path:
     return Path(__file__).resolve().parent / "_bundle"
 
 
+def dialable_host(host: str) -> str:
+    """The bind host, rewritten into something a child can actually connect to.
+
+    A bind address and a client address are not the same thing. `0.0.0.0` and
+    `::` mean "every interface" to a listener and nothing useful to a caller,
+    and an IPv6 literal has to be bracketed before it can go in a URL at all —
+    `http://::1:7777` is unparseable. Everything a child dials (its endpoint,
+    the API URL stamped into session and connector environments) goes through
+    here, so a control plane bound to a LAN or IPv6 address is still reachable
+    by the wolf, the sessions, and `notify`.
+    """
+    raw = (host or "").strip().strip("[]")
+    if raw in {"", "0.0.0.0"}:
+        return "127.0.0.1"
+    if raw == "::":
+        return "[::1]"
+    return f"[{raw}]" if ":" in raw else raw
+
+
 def looks_like_install_root(path: Path) -> bool:
     """Whether a path still holds a platform runtime.
 
@@ -52,7 +71,8 @@ class RuntimeLayout:
 
     @property
     def endpoint(self) -> str:
-        return f"http://{self.host}:{self.port}"
+        """Where a caller on this machine reaches this instance's API."""
+        return f"http://{dialable_host(self.host)}:{self.port}"
 
     @classmethod
     def from_env(
@@ -119,3 +139,11 @@ class RuntimeLayout:
         os.environ["WOLTSPACE_ISOLATION"] = self.isolation
         os.environ["WOLTSPACE_HOST"] = self.host
         os.environ["PORT"] = str(self.port)
+        os.environ["WOLTSPACE_PORT"] = str(self.port)
+        # The one address every child is told. `notify`, `push-view`,
+        # `send-to-session` and the in-container `woltspace` CLI all used to
+        # bake in http://localhost:7777, which is a lie on any instance started
+        # with `--port 8080`: the call either reached the *wrong* colony or
+        # nothing at all. Stamped here, inherited by sessions (see
+        # `_SESSION_ENV_KEYS` in session_runtime) and by connectors.
+        os.environ["WOLTSPACE_API"] = self.endpoint

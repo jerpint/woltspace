@@ -8,7 +8,31 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from woltspace.layout import RuntimeLayout, installation_root
+from woltspace.layout import RuntimeLayout, dialable_host, installation_root
+
+
+@pytest.mark.parametrize("bind, dialable", [
+    ("127.0.0.1", "127.0.0.1"),
+    ("localhost", "localhost"),
+    ("192.168.1.9", "192.168.1.9"),
+    # "every interface" to a listener is not an address to a caller.
+    ("0.0.0.0", "127.0.0.1"),
+    ("", "127.0.0.1"),
+    ("::", "[::1]"),
+    # A URL cannot hold a bare IPv6 literal — http://fd00::1:7777 is nonsense.
+    ("fd00::1", "[fd00::1]"),
+    ("[fd00::1]", "[fd00::1]"),
+])
+def test_a_bind_address_becomes_one_a_child_can_dial(bind, dialable):
+    assert dialable_host(bind) == dialable
+
+
+def test_the_endpoint_is_dialable_for_every_bind_address():
+    root = installation_root()
+    wide = RuntimeLayout(wolts_dir=Path("/tmp/w"), install_root=root, host="0.0.0.0", port=8080)
+    assert wide.endpoint == "http://127.0.0.1:8080"
+    six = RuntimeLayout(wolts_dir=Path("/tmp/w"), install_root=root, host="::", port=8080)
+    assert six.endpoint == "http://[::1]:8080"
 
 
 def test_source_installation_root_contains_runtime_and_assets():
@@ -39,7 +63,8 @@ def test_explicit_layout_is_canonical_and_applies_environment(tmp_path, monkeypa
         "WOLTSPACE_PORT": "8123",
         "WOLTSPACE_ISOLATION": "external",
     })
-    for key in ("WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION", "PORT"):
+    for key in ("WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
+                "PORT", "WOLTSPACE_PORT", "WOLTSPACE_API"):
         monkeypatch.delenv(key, raising=False)
     layout.apply_environment()
 
@@ -49,6 +74,9 @@ def test_explicit_layout_is_canonical_and_applies_environment(tmp_path, monkeypa
     assert os.environ["WOLTSPACE_DIR"] == str(root)
     assert os.environ["WOLTSPACE_ISOLATION"] == "external"
     assert os.environ["PORT"] == "8123"
+    assert os.environ["WOLTSPACE_PORT"] == "8123"
+    # The one address every child is told — sessions, connectors, `notify`.
+    assert os.environ["WOLTSPACE_API"] == "http://localhost:8123"
     assert sys.path[:2] == [str(layout.runtime_lib), str(root)]
 
 

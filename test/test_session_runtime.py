@@ -117,6 +117,26 @@ class TestTmuxSessionRuntime:
         assert "PATH=/native/bin:/usr/bin" in launched
         assert launched.endswith(" run-session")
 
+    def test_spawn_tells_the_session_which_control_plane_owns_it(
+        self, tmp_path, monkeypatch
+    ):
+        """`notify` and `push-view` used to bake in :7777 and reach whoever
+        held it. They read WOLTSPACE_API now, so it has to survive the spawn —
+        tmux hands panes the *server's* environment, which on a pre-existing
+        tmux server may name a different instance entirely."""
+        monkeypatch.setenv("WOLTSPACE_API", "http://127.0.0.1:8080")
+        monkeypatch.setenv("WOLTSPACE_HOST", "127.0.0.1")
+        monkeypatch.setenv("WOLTSPACE_PORT", "8080")
+        runner = FakeRunner(["%17\n"])
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
+
+        runtime.spawn("named-session", str(tmp_path), "run-session")
+
+        launched = runner.calls[0][0][-1]
+        assert "WOLTSPACE_API=http://127.0.0.1:8080" in launched
+        assert "WOLTSPACE_HOST=127.0.0.1" in launched
+        assert "WOLTSPACE_PORT=8080" in launched
+
     def test_spawn_puts_the_install_bin_first_on_the_session_path(
         self, tmp_path, monkeypatch
     ):

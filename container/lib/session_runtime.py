@@ -46,6 +46,15 @@ _SESSION_ENV_KEYS = (
     "WOLTS_DIR",
     "WOLTSPACE_DIR",
     "WOLTSPACE_ISOLATION",
+    # Which control plane this session belongs to. A session that reaches its
+    # lodge — `notify`, `push-view`, `send-to-session`, `woltspace session
+    # send` — dials WOLTSPACE_API, and tmux hands panes the *server's*
+    # environment, which on a pre-existing tmux server may name a different
+    # instance entirely. Carrying it explicitly is what makes a second
+    # instance (`woltspace start --port 8080`) talk to itself.
+    "WOLTSPACE_API",
+    "WOLTSPACE_HOST",
+    "WOLTSPACE_PORT",
     "WOLTSPACE_TMUX_BIN",
     "WOLTSPACE_PS_BIN",
 )

@@ -1317,10 +1317,15 @@ async def handle_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _reply(update, f"couldn't start session for {wolt}: {e}")
 
 
+def _api() -> str:
+    """The control plane that spawned this adapter — see WolfConnector/notify."""
+    return os.environ.get("WOLTSPACE_API", "http://localhost:7777")
+
+
 async def _fetch_apps() -> list[dict]:
     import httpx
     async with httpx.AsyncClient() as client:
-        resp = await client.get("http://localhost:7777/apps", timeout=5)
+        resp = await client.get(f"{_api()}/apps", timeout=5)
         resp.raise_for_status()
         return resp.json()
 
@@ -1389,7 +1394,7 @@ async def _app_action(name: str, action: str) -> bool:
     import httpx
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.post(f"http://localhost:7777/apps/{name}/{action}", timeout=15)
+            resp = await client.post(f"{_api()}/apps/{name}/{action}", timeout=15)
             return resp.status_code < 400
         except Exception:
             return False

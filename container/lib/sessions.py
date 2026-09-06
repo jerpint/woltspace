@@ -1177,7 +1177,10 @@ def start_session(
     # Set viewport: app subdomain URL if app session, otherwise wolt site.
     if app:
         try:
-            app_url = f"http://{app}.localhost:7777/"
+            # The browser reaches the app through *this* instance's subdomain
+            # proxy; a second instance on :8080 served a viewport pointing at
+            # whoever holds 7777.
+            app_url = f"http://{app}.localhost:{os.environ.get('PORT', '7777')}/"
             registry.set_viewport(name, app_url, wolt=wolt)
             result["viewport_url"] = app_url
         except Exception as e:

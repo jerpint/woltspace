@@ -55,7 +55,8 @@ def _send_notify(message: str):
     payload = json.dumps({"message": full_message, "session": ""})
     try:
         result = subprocess.run(
-            ["curl", "-s", "-X", "POST", "http://localhost:7777/notify",
+            ["curl", "-s", "-X", "POST",
+             os.environ.get("WOLTSPACE_API", "http://localhost:7777") + "/notify",
              "-H", "Content-Type: application/json",
              "-d", payload],
             capture_output=True, text=True, timeout=10,
