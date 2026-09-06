@@ -16,9 +16,14 @@ from pathlib import Path
 WOLTSPACE_DIR = Path("/workspace/woltspace")
 HOME = Path("/home/node")
 
-# Skill sync is shared with the native control plane, so it lives in lib/ —
-# resolved from this file rather than WOLTSPACE_DIR so a checkout anywhere boots.
+# Skill sync and hook normalization are shared with the native control plane,
+# so they live in lib/ — resolved from this file rather than WOLTSPACE_DIR so a
+# checkout anywhere boots. Native reaches the same modules via
+# src/woltspace/skills.py and src/woltspace/hooks.py; one implementation, two
+# runtimes. An upgraded container that never normalized would keep every wolt
+# pointing at the deleted container/hooks/*.sh and spam "No such file".
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from hooks_normalize import normalize_all_wolt_hooks  # noqa: E402
 from skills_sync import sync_all_wolt_skills  # noqa: E402
 
 
@@ -364,6 +369,12 @@ def main():
     # Config & identity
     derive_worktui_skill(woltspace_dir)
     sync_all_wolt_skills(woltspace_dir, wolts_dir)
+    # Same sweep the native start runs, same module. Never fatal — a wolt whose
+    # settings.json can't be rewritten is worth a line, not a failed boot.
+    try:
+        normalize_all_wolt_hooks(wolts_dir)
+    except Exception as error:  # noqa: BLE001
+        print(f"hooks: not normalized ({type(error).__name__}: {error})")
     sync_claude_md_platform_section(wolts_dir, woltspace_dir)
     if wolt_name:
         write_bashrc(wolt_dir, wolt_name)
