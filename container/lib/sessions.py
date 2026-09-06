@@ -61,6 +61,14 @@ WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 RUN_SESSION_SCRIPT = Path(__file__).resolve().parent.parent / "bin" / "run-session.sh"
 
 
+# Why a session stopped being `running`. Recorded on the record itself, because
+# "orphaned" alone cannot tell a crashed agent from a machine that went away —
+# and the adoption report that knew the difference is overwritten by the next
+# reconcile.
+ORPHAN_TMUX_MISSING = "tmux-session-missing"
+ORPHAN_RUNTIME_GONE = "runtime-gone"
+
+
 class SessionRegistry:
     """Per-wolt session registry.
 
@@ -278,6 +286,7 @@ class SessionRegistry:
             data["alive"] = _tmux_alive(data)
             if data["status"] == "running" and not data["alive"]:
                 data["status"] = "orphaned"
+                data["orphaned_reason"] = ORPHAN_TMUX_MISSING
         return data
 
     def set_viewport(self, name: str, url: str, *, wolt: str = None, port: int = 7777) -> dict | None:
@@ -357,6 +366,7 @@ class SessionRegistry:
                 data["alive"] = alive
                 if data["status"] == "running" and not alive:
                     data["status"] = "orphaned"
+                    data["orphaned_reason"] = ORPHAN_TMUX_MISSING
                 if alive_only and not alive:
                     continue
                 results.append(data)
@@ -380,6 +390,7 @@ class SessionRegistry:
                     continue
                 if data.get("status") == "running" and data.get("name") not in live_sessions:
                     data["status"] = "orphaned"
+                    data["orphaned_reason"] = ORPHAN_TMUX_MISSING
                     data["last_activity"] = int(time.time())
                     wolt_name = data.get("wolt", w)
                     self._write(wolt_name, data["name"], data)
@@ -440,11 +451,13 @@ class SessionRegistry:
                             current = self._read(wolt, name)
                             if current is not None:
                                 current["status"] = "orphaned"
+                                current["orphaned_reason"] = ORPHAN_RUNTIME_GONE
                                 self._write(wolt, name, current)
                     report["orphaned"].append({
                         "session": name,
                         "wolt": wolt,
                         "previous_status": previous,
+                        "reason": ORPHAN_RUNTIME_GONE,
                         "runtime": handle.to_record(),
                     })
                     continue
