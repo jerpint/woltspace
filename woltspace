@@ -20,8 +20,9 @@
 #   woltspace session spawn <wolt> ["…"]       — spawn a new session for a wolt
 #
 # Flags:
-#   --branch <name>   — build image from a specific branch (default: main)
-#   --local           — build image from local repo instead of git clone
+#   --version <ver>   — build the image on a specific published release
+#   --local           — build the image from this checkout (wheel + local tui)
+#   --branch <name>   — legacy; the image installs published artifacts, not git
 #
 # All state lives under ~/.woltspace/wolts (overridable via WOLTS_DIR).
 # The container is disposable — ~/wolts is the backup.
@@ -90,30 +91,32 @@ _build_image() {
   local cache_flag=""
   [ "$NO_CACHE" = true ] && cache_flag="--no-cache"
 
+  # The image installs the published artifacts (PyPI + npm); it does not clone
+  # or run the source tree. --local still builds from this checkout, but as a
+  # wheel — one install shape for dev and release alike.
   if [ "$LOCAL_BUILD" = true ]; then
-    echo "  ${_D}🪵 building image from local source${_R}"
+    echo "  ${_D}🪵 building image from local source (wheel + local tui)${_R}"
     echo "  ${_L}   felling fresh timber...${_R}"
     echo ""
     docker build -t woltspace $cache_flag \
       --build-arg USE_LOCAL=true \
+      --build-arg CACHE_BUST="$(date +%s)" \
       -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR"
   else
     local version_arg=""
-    if [ "${CURRENT_VERSION:-}" = "HEAD" ]; then
-      echo "  ${_D}🪵 building image (nightly — main branch tip)${_R}"
-      version_arg="--build-arg WOLTSPACE_VERSION=HEAD"
-    elif [ -n "${CURRENT_VERSION:-}" ]; then
-      echo "  ${_D}🪵 building image (version: $CURRENT_VERSION)${_R}"
-      version_arg="--build-arg WOLTSPACE_VERSION=$CURRENT_VERSION"
-    elif [ "$BUILD_BRANCH" != "main" ]; then
-      echo "  ${_D}🪵 building image (branch: $BUILD_BRANCH)${_R}"
+    if [ -n "${CURRENT_VERSION:-}" ] && [ "${CURRENT_VERSION:-}" != "HEAD" ]; then
+      echo "  ${_D}🪵 building image (woltspace $CURRENT_VERSION from pypi)${_R}"
+      version_arg="--build-arg WOLTSPACE_PYPI_VERSION=$CURRENT_VERSION"
     else
-      echo "  ${_D}🪵 building image (latest release)${_R}"
+      echo "  ${_D}🪵 building image (the release the Dockerfile pins)${_R}"
+    fi
+    if [ "$BUILD_BRANCH" != "main" ] || [ "${CURRENT_VERSION:-}" = "HEAD" ]; then
+      echo "  ${_D}   note: --branch/--nightly build from git, and the image now"
+      echo "  ${_D}   installs published artifacts. Use --local for a checkout.${_R}"
     fi
     echo "  ${_L}   felling fresh timber...${_R}"
     echo ""
     docker build -t woltspace $cache_flag $version_arg \
-      --build-arg WOLTSPACE_BRANCH="$BUILD_BRANCH" \
       --build-arg CACHE_BUST="$(date +%s)" \
       -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR/container"
   fi
@@ -126,11 +129,12 @@ _start_container() {
   local extra_args=""
   [ -n "$wolt_name" ] && extra_args="-e WOLT_NAME=$wolt_name"
 
-  # Dev mode: mount local repo so code edits are live without rebuild
-  local dev_mount=""
+  # No dev mount. /workspace/woltspace is the installed package's own bundle
+  # now; shadowing it with a checkout would put the platform back to running
+  # from raw source — the exact split this image was slimmed to remove.
+  # Dev loop: edit → `woltspace rebuild --local` → the wheel is rebuilt.
   if [ "$LOCAL_BUILD" = "true" ]; then
-    dev_mount="-v $WOLTSPACE_DIR:/workspace/woltspace:rw"
-    echo "  ${_L}   dev mount: $WOLTSPACE_DIR → /workspace/woltspace${_R}"
+    echo "  ${_L}   local build: installed from $WOLTSPACE_DIR (rebuild to reload)${_R}"
   fi
 
   mkdir -p "$WOLTS_DIR/.claude"
@@ -141,7 +145,6 @@ _start_container() {
     -e HOST_GID=$(id -g) \
     -v "$WOLTS_DIR:/workspace/wolts:rw" \
     -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
-    $dev_mount \
     -p "${WOLTSPACE_PORT:-7777}":7777 \
     $extra_args \
     woltspace > /dev/null
