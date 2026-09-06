@@ -50,15 +50,36 @@ EXCLUDED_DIR_NAMES = frozenset({
     ".next",
     "target",
     ".worktui",
+    ".npm",
 })
 
-#: Paths excluded by their tail rather than by a bare name — a directory called
-#: `cache` is only junk when it is Claude's plugin cache, and `worktrees` only
-#: when it is a wolt's pile of throwaway checkouts.
+#: Paths excluded by their tail rather than by a bare name. A directory called
+#: `cache` is only junk when it is Claude's plugin cache; `worktrees` only when
+#: it is a wolt's pile of throwaway checkouts; and `claude` only when it is the
+#: agent CLI's own version store.
+#:
+#: `.local/share/claude` is the single largest thing in a lived-in colony —
+#: 12.8GB of auto-downloaded CLI binaries across per-wolt HOMEs on the colony
+#: this was measured against, redownloadable to the byte. It is scoped by path
+#: on purpose: a wolt's own directory called `claude` is data, and only `.local`'s
+#: `share/claude` goes. The rest of `.local` stays, `.local/share/opencode`
+#: (session state, and big) very much included, and conversation transcripts live
+#: in `.claude/projects`, which is kept.
 EXCLUDED_PATH_SUFFIXES = (
     ".claude/plugins/cache",
     "wolt/worktrees",
+    ".local/share/claude",
 )
+
+#: At the top of the data root, a name means something else. `dist`, `build`,
+#: `target` and friends are junk *inside* a project and perfectly good names
+#: *for* a wolt or an app, and a backup that silently skipped a wolt called
+#: `dist` would be worse than no backup at all. So depth 1 excludes nothing by
+#: name except what the platform itself derives there — worktui's worktree
+#: store. Everything else the platform puts at the root (`.space`, `.state`,
+#: `.claude`, `.codex`, `apps`, `projects`, `woltspace.json`, `.env`) is data
+#: and stays.
+ROOT_EXCLUDED_DIR_NAMES = frozenset({".worktui"})
 
 EXCLUDED_FILE_NAMES = frozenset({".DS_Store"})
 EXCLUDED_FILE_SUFFIXES = (".pyc", ".sock")
@@ -124,7 +145,27 @@ def _path_excluded(rel: str) -> bool:
     return any(rel == suffix or rel.endswith("/" + suffix) for suffix in EXCLUDED_PATH_SUFFIXES)
 
 
-def _dir_excluded(name: str, rel: str) -> bool:
+def is_wolt_dir(path: Path) -> bool:
+    """The discovery rule from `container/lib/wolts.py`, held one notch looser.
+
+    Discovery globs `*/wolt/wolt.json`. Here anything that even looks like a
+    wolt counts, because the cost of a false positive is a cache getting backed
+    up and the cost of a false negative is a wolt going missing.
+    """
+    path = Path(path)
+    return (
+        (path / "wolt" / "wolt.json").is_file()
+        or (path / "wolt.json").is_file()
+        or (path / "wolt").is_dir()
+    )
+
+
+def _dir_excluded(name: str, rel: str, path: Path) -> bool:
+    """Whether a directory is junk — depth and wolt-ness both get a veto."""
+    if is_wolt_dir(path):
+        return False  # a wolt is never junk, wherever it happens to sit
+    if "/" not in rel:  # a direct child of the data root
+        return name in ROOT_EXCLUDED_DIR_NAMES or _path_excluded(rel)
     return name in EXCLUDED_DIR_NAMES or _path_excluded(rel)
 
 
@@ -134,14 +175,24 @@ def _file_excluded(name: str, rel: str) -> bool:
     return _path_excluded(rel)
 
 
-def _tree_bytes(path: Path) -> tuple[int, int]:
-    """Size an excluded subtree, so the summary can name what it left behind."""
+def _probe_excluded(path: Path) -> tuple[int, int, bool]:
+    """Size a subtree about to be dropped — and check it hides no wolt.
+
+    The walk is happening anyway (the summary names what it left behind), so it
+    also watches for a `wolt.json`. A wolt filed under a junk-sounding
+    directory is still a wolt, and the caller keeps the whole subtree rather
+    than lose it. Backing up too much is a cost; backing up too little is a
+    silent loss.
+    """
     total = 0
     count = 0
+    has_wolt = False
     for dirpath, dirnames, filenames in os.walk(path, followlinks=False):
         for name in list(dirnames):
             if Path(dirpath, name).is_symlink():
                 dirnames.remove(name)
+        if "wolt.json" in filenames:
+            has_wolt = True
         for name in filenames:
             try:
                 info = os.lstat(Path(dirpath, name))
@@ -150,7 +201,7 @@ def _tree_bytes(path: Path) -> tuple[int, int]:
             count += 1
             if stat.S_ISREG(info.st_mode):
                 total += info.st_size
-    return total, count
+    return total, count, has_wolt
 
 
 def scan_tree(wolts_dir: Path) -> Scan:
@@ -176,7 +227,7 @@ def scan_tree(wolts_dir: Path) -> Scan:
             per_wolt[top]["excluded_bytes"] += size
 
     for child in sorted(wolts_dir.iterdir()):
-        if child.is_dir() and not child.is_symlink() and (child / "wolt").is_dir():
+        if child.is_dir() and not child.is_symlink() and is_wolt_dir(child):
             per_wolt[child.name] = {
                 "name": child.name, "bytes": 0, "files": 0, "excluded_bytes": 0,
             }
@@ -201,9 +252,11 @@ def scan_tree(wolts_dir: Path) -> Scan:
                 dirnames.remove(name)
                 scan.entries.append(Entry(child, f"{ARCHIVE_ROOT}/{rel}", "symlink"))
                 continue
-            if _dir_excluded(name, rel):
+            if _dir_excluded(name, rel, child):
+                size, files, has_wolt = _probe_excluded(child)
+                if has_wolt:
+                    continue  # a wolt lives down there; the subtree stays
                 dirnames.remove(name)
-                size, files = _tree_bytes(child)
                 scan.excluded_bytes += size
                 scan.excluded_files += files
                 note(rel, size, files, included=False)
@@ -269,12 +322,25 @@ def build_manifest(wolts_dir: Path, tag: str, scan: Scan) -> dict:
             "excluded_files": scan.excluded_files,
         },
         "excludes": {
-            "dir_names": sorted(EXCLUDED_DIR_NAMES),
-            "path_suffixes": list(EXCLUDED_PATH_SUFFIXES),
-            "file_names": sorted(EXCLUDED_FILE_NAMES),
-            "file_suffixes": list(EXCLUDED_FILE_SUFFIXES),
-            "symlinks": "archived as links; never followed",
-            "git": "included — history is data",
+            "by_dir_name": {
+                "below_root": sorted(EXCLUDED_DIR_NAMES),
+                "at_root": sorted(ROOT_EXCLUDED_DIR_NAMES),
+                "rule": (
+                    "a bare directory name is junk only below the top level; "
+                    "the root drops only what the platform derives there"
+                ),
+            },
+            "by_path": {
+                "suffixes": list(EXCLUDED_PATH_SUFFIXES),
+                "rule": "matched on the whole path tail, never on the bare name",
+            },
+            "by_file_name": sorted(EXCLUDED_FILE_NAMES),
+            "by_file_suffix": list(EXCLUDED_FILE_SUFFIXES),
+            "never_excluded": {
+                "wolt_dirs": "a wolt, or any subtree containing one, at any depth",
+                "git": "history is data",
+                "symlinks": "archived as links; never followed",
+            },
         },
         "unreadable": scan.unreadable,
     }
@@ -352,16 +418,87 @@ def _restore_filter(member: tarfile.TarInfo, path: str) -> tarfile.TarInfo:
     tarfile's `data` filter refuses any link that points outside the archive,
     which is exactly what the plugin-delivery links do — they point at the
     installed wheel. So member *names* are policed as strictly as `data` does
-    (no absolute paths, no `..`), link targets are left alone, and the odd
+    (no absolute paths, no `..`), link *targets* are left alone, and the odd
     permission bits nobody wants restored are cleared.
+
+    Allowing those link targets is only safe because nothing is ever written
+    *through* a link: `audit_members` refuses an archive where a member's path
+    passes through, or collides with, a symlink the same archive creates.
     """
     name = PurePosixPath(member.name)
     if name.is_absolute() or ".." in name.parts:
         raise ValueError(f"refusing archive member outside the target: {member.name}")
     if member.isdev():
         raise ValueError(f"refusing device node in archive: {member.name}")
+    if member.islnk():
+        raise ValueError(f"refusing hard link in archive: {member.name}")
     member.mode = member.mode & 0o777 & ~(stat.S_ISUID | stat.S_ISGID)
     return member
+
+
+def _case_insensitive(directory: Path) -> bool:
+    """Whether this filesystem would fold two names into one. APFS does."""
+    probe = directory / ".woltspace-Case-Probe"
+    try:
+        probe.touch()
+        return (directory / ".woltspace-case-probe").exists()
+    except OSError:
+        return False
+    finally:
+        try:
+            probe.unlink()
+        except OSError:
+            pass
+
+
+def audit_members(members: list[tarfile.TarInfo], target: Path) -> None:
+    """Refuse an archive that could write anywhere but into `target`.
+
+    The whole-archive checks that a per-member filter cannot make, because they
+    are about how members relate to each other:
+
+    * a **hard link** has no business in a colony backup, and its link target is
+      resolved by the extractor, not by us;
+    * a member whose path passes *through* a symlink this archive creates
+      (`x` → /elsewhere, then `x/evil`), or that **replaces** one (`x` → /file,
+      then a regular `x`), is the classic write-through-a-link trick;
+    * **duplicate names** are how that trick is smuggled past a reader that only
+      looks at the last member, so any repeat is refused outright — a backup
+      this code wrote never contains one;
+    * names that differ **only by case** cannot both exist on APFS, and silently
+      keeping one file's content under another's name is exactly the corruption
+      a restore must not perform.
+    """
+    seen: set[str] = set()
+    symlinks: set[str] = set()
+    folded: dict[str, str] = {}
+    for member in members:
+        name = member.name.rstrip("/")
+        path = PurePosixPath(name)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError(f"refusing archive member outside the target: {member.name}")
+        if member.islnk():
+            raise ValueError(f"refusing hard link in archive: {member.name} → {member.linkname}")
+        if member.isdev():
+            raise ValueError(f"refusing device node in archive: {member.name}")
+        if name in seen:
+            raise ValueError(f"refusing duplicate archive member: {member.name}")
+        seen.add(name)
+        for ancestor in list(path.parents)[:-1]:
+            if ancestor.as_posix() in symlinks:
+                raise ValueError(
+                    f"refusing member whose path runs through a symlink: {member.name}"
+                )
+        if name in symlinks:
+            raise ValueError(f"refusing member that overwrites a symlink: {member.name}")
+        if member.issym():
+            symlinks.add(name)
+        clash = folded.setdefault(name.casefold(), name)
+        if clash != name and _case_insensitive(target):
+            raise ValueError(
+                "refusing archive: this filesystem folds case and these members "
+                f"would collide: {clash} / {member.name}"
+            )
 
 
 def restore_backup(archive: Path | str, *, to: Path | str | None = None) -> RestoreResult:
@@ -385,6 +522,9 @@ def restore_backup(archive: Path | str, *, to: Path | str | None = None) -> Rest
 
     with tarfile.open(archive, "r:gz") as tar:
         members = tar.getmembers()
+        # Audit the whole member list before a single byte lands: a refusal
+        # after a partial extraction is a refusal that already happened.
+        audit_members(members, target)
         tar.extractall(target, members=members, filter=_restore_filter)
     manifest = json.loads((target / MANIFEST_NAME).read_text())
     return RestoreResult(
