@@ -144,7 +144,10 @@ class TestSyncIsCrashSafe:
         sync_all_wolt_skills(install_root, tmp_path / "wolts")
 
         assert (skills / "woltspace-notify" / "SKILL.md").read_text() == "fresh\n"
-        assert sorted(p.name for p in skills.iterdir()) == ["woltspace-notify"]
+        leftovers = sorted(
+            p.name for p in skills.iterdir() if p.name != skills_sync.LOCK_NAME
+        )
+        assert leftovers == ["woltspace-notify"]
 
     def test_a_retired_skill_is_restored_when_its_swap_never_landed(self, tmp_path):
         skills = tmp_path / "skills"
@@ -170,6 +173,24 @@ class TestSyncIsCrashSafe:
         assert (skills / "woltspace-wolf" / "SKILL.md").read_text() == "live\n"
         assert not retired.exists()
 
+    def test_a_wolts_own_dotdir_wearing_our_suffix_survives(self, tmp_path):
+        """`.notes.wsync-new` is the wolt's. Our leftovers are `.woltspace-*`."""
+        skills = tmp_path / "skills"
+        skills.mkdir()
+        mine = skills / f".notes{skills_sync.STAGE_SUFFIX}"
+        mine.mkdir()
+        (mine / "keep.md").write_text("mine\n")
+        also_mine = skills / f".notes{skills_sync.RETIRED_SUFFIX}"
+        also_mine.mkdir()
+        (also_mine / "keep.md").write_text("also mine\n")
+
+        _recover_interrupted_sync(skills)
+
+        assert (mine / "keep.md").read_text() == "mine\n"
+        assert (also_mine / "keep.md").read_text() == "also mine\n"
+        # ...and nothing was resurrected under a name we invented.
+        assert not (skills / "notes").exists()
+
     def test_a_skill_this_install_no_longer_ships_is_removed(self, tmp_path):
         install_root = tmp_path / "install"
         source = _platform_skill(install_root, "woltspace-notify", "fresh\n")
@@ -182,6 +203,58 @@ class TestSyncIsCrashSafe:
         assert (skills / "woltspace-notify").is_dir()
         assert not (skills / "woltspace-retired").exists()
         assert (skills / "check-usage").is_dir()  # not ours to touch
+
+
+class TestSyncIsSerialised:
+    """Two syncs share every staging name. Only one may be in the directory."""
+
+    def test_a_second_sync_stands_down_while_one_holds_the_lock(self, tmp_path, capsys):
+        import fcntl
+        import os
+
+        install_root = tmp_path / "install"
+        source = _platform_skill(install_root, "woltspace-notify", "fresh\n")
+        skills = tmp_path / "skills"
+        skills.mkdir()
+
+        fd = os.open(str(skills / skills_sync.LOCK_NAME), os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            sync_wolt_skills([source], skills)
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+        # It did not stage half a copy over the holder's work.
+        assert not (skills / "woltspace-notify").exists()
+        assert not (skills / f".woltspace-notify{skills_sync.STAGE_SUFFIX}").exists()
+        assert "another sync" in capsys.readouterr().err
+
+        # And once the holder lets go, the next sync does the job.
+        sync_wolt_skills([source], skills)
+        assert (skills / "woltspace-notify" / "SKILL.md").read_text() == "fresh\n"
+
+    def test_the_lock_is_released_and_reusable(self, tmp_path):
+        install_root = tmp_path / "install"
+        source = _platform_skill(install_root, "woltspace-notify", "fresh\n")
+        skills = tmp_path / "skills"
+
+        sync_wolt_skills([source], skills)
+        sync_wolt_skills([source], skills)  # would hang or skip on a leaked lock
+
+        assert (skills / "woltspace-notify" / "SKILL.md").read_text() == "fresh\n"
+
+    def test_the_lockfile_is_never_mistaken_for_a_skill(self, tmp_path):
+        install_root = tmp_path / "install"
+        source = _platform_skill(install_root, "woltspace-notify", "fresh\n")
+        skills = tmp_path / "skills"
+
+        sync_wolt_skills([source], skills)
+        _recover_interrupted_sync(skills)
+        sync_wolt_skills([source], skills)
+
+        assert (skills / skills_sync.LOCK_NAME).is_file()
+        assert (skills / "woltspace-notify" / "SKILL.md").read_text() == "fresh\n"
 
 
 class TestSeedWoltSkills:
