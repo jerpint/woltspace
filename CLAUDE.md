@@ -125,13 +125,18 @@ The only mount is `$WOLTS_DIR:/workspace/wolts`. Everything else is baked into t
 The data-plane snapshot, in the python CLI, identical native and in-container:
 
 - `woltspace backup [--tag T] [--out DIR]` — one `woltspace-backup-<tag>.tar.gz`
-  of the wolts tree (memory, sites, sparks, apps, `.env`, `woltspace.json`,
-  `.state`, `.space`, `.git` history), with caches and build products excluded
-  by name at any depth and symlinks archived as links. Writes a
+  of the wolts tree (memory, sites, sparks, apps, `woltspace.json`, `.state`,
+  `.space`, `.git` history), with caches and build products excluded by name
+  below the root and symlinks archived as links. Writes a
   `backup-manifest.json` into the archive, then re-opens the archive to verify
   it. Never touches docker.
+- **Credentials are never archived** — `.env` at any depth,
+  `.claude/.credentials.json*`, `.codex/auth.json`. A restored stale OAuth
+  chain can trip reuse-detection and revoke the live one. The manifest lists
+  every withheld path and `restore` prints the re-provision checklist.
 - `woltspace restore <archive> [--to DIR]` — extracts into a new directory and
-  refuses a populated one; prints the `WOLTS_DIR=…` line to boot from it.
+  refuses a populated one; prints what to re-authenticate and the `WOLTS_DIR=…`
+  line to boot from it.
 
 Full guide, including what is excluded and why: `docs/backup.md`.
 

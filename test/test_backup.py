@@ -84,7 +84,6 @@ def test_excludes_drop_the_junk_and_keep_the_data(wolts, tmp_path):
     names = _members(result.archive)
 
     for kept in (
-        f"{ARCHIVE_ROOT}/.env",
         f"{ARCHIVE_ROOT}/woltspace.json",
         f"{ARCHIVE_ROOT}/.state/registry/session-1.json",
         f"{ARCHIVE_ROOT}/.space/platform/config.json",
@@ -190,7 +189,8 @@ def test_round_trip_restores_the_tree_byte_for_byte(wolts, tmp_path):
     assert before == after
     assert restored.manifest["tag"] == result.manifest["tag"]
     assert restored.entries == result.manifest["entries"]
-    assert (restored.wolts_dir / ".env").read_text().endswith(f"{SECRET}\n")
+    # The secret is the one thing that does NOT come back — by design.
+    assert not (restored.wolts_dir / ".env").exists()
 
 
 def test_restore_refuses_a_populated_target(wolts, tmp_path):
@@ -301,6 +301,106 @@ def test_a_top_level_dir_named_claude_is_never_path_excluded(wolts, tmp_path):
     (wolts / "claude" / "wolt" / "wolt.json").write_text(json.dumps({"name": "claude"}))
     names = _members(create_backup(wolts, out_dir=tmp_path / "out").archive)
     assert f"{ARCHIVE_ROOT}/claude/wolt/wolt.json" in names
+
+
+# ---------------------------------------------------------------------------
+# Secrets stay home
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def wolts_with_credentials(wolts):
+    """The credential shapes a real colony actually has on disk."""
+    (wolts / ".claude").mkdir(parents=True, exist_ok=True)
+    (wolts / ".claude" / ".credentials.json").write_text(json.dumps({"token": SECRET}))
+    (wolts / ".claude" / ".credentials.json.expired-2026.bak").write_text(SECRET)
+    (wolts / ".claude" / ".credentials.json.stale-2025.bak").write_text(SECRET)
+    (wolts / "beaverwolt" / "home" / ".codex").mkdir(parents=True)
+    (wolts / "beaverwolt" / "home" / ".codex" / "auth.json").write_text(SECRET)
+    (wolts / "beaverwolt" / "wolt" / "apps" / "shop").mkdir(parents=True)
+    (wolts / "beaverwolt" / "wolt" / "apps" / "shop" / ".env").write_text(f"STRIPE={SECRET}")
+    # Lookalikes that are documentation, not credentials.
+    (wolts / "beaverwolt" / "wolt" / "apps" / "shop" / "env.example").write_text("STRIPE=")
+    (wolts / ".env.example").write_text("TELEGRAM_BOT_TOKEN=")
+    (wolts / "beaverwolt" / "wolt" / "memory" / "credentials.md").write_text("how auth works")
+    (wolts / "beaverwolt" / "wolt" / "memory" / ".codex").mkdir()
+    (wolts / "beaverwolt" / "wolt" / "memory" / ".codex" / "notes.json").write_text("{}")
+    return wolts
+
+
+def test_no_credential_ever_enters_the_archive(wolts_with_credentials, tmp_path):
+    result = create_backup(wolts_with_credentials, out_dir=tmp_path / "out")
+    names = _members(result.archive)
+
+    for secret in (
+        f"{ARCHIVE_ROOT}/.env",
+        f"{ARCHIVE_ROOT}/.claude/.credentials.json",
+        f"{ARCHIVE_ROOT}/.claude/.credentials.json.expired-2026.bak",
+        f"{ARCHIVE_ROOT}/.claude/.credentials.json.stale-2025.bak",
+        f"{ARCHIVE_ROOT}/beaverwolt/home/.codex/auth.json",
+        f"{ARCHIVE_ROOT}/beaverwolt/wolt/apps/shop/.env",
+    ):
+        assert secret not in names
+
+    with tarfile.open(result.archive, "r:gz") as tar:
+        for member in tar.getmembers():
+            if member.isreg():
+                assert SECRET.encode() not in tar.extractfile(member).read()
+
+
+def test_the_manifest_names_every_withheld_path(wolts_with_credentials, tmp_path):
+    result = create_backup(wolts_with_credentials, out_dir=tmp_path / "out")
+    withheld = result.manifest["withheld"]
+    paths = {item["path"]: item["rule"] for item in withheld["paths"]}
+    assert paths == {
+        ".env": "dotenv",
+        "beaverwolt/wolt/apps/shop/.env": "dotenv",
+        ".claude/.credentials.json": "claude-credentials",
+        ".claude/.credentials.json.expired-2026.bak": "claude-credentials",
+        ".claude/.credentials.json.stale-2025.bak": "claude-credentials",
+        "beaverwolt/home/.codex/auth.json": "codex-auth",
+    }
+    assert {rule["rule"] for rule in withheld["rules"]} == {
+        "dotenv", "claude-credentials", "codex-auth",
+    }
+    assert SECRET not in json.dumps(result.manifest)
+    assert "6 credential file(s)" in "\n".join(backup_mod.summary_lines(result))
+
+
+def test_lookalikes_are_not_withheld(wolts_with_credentials, tmp_path):
+    """`env.example`, `.env.example`, `credentials.md`, `.codex/notes.json`."""
+    result = create_backup(wolts_with_credentials, out_dir=tmp_path / "out")
+    names = _members(result.archive)
+    for kept in (
+        f"{ARCHIVE_ROOT}/.env.example",
+        f"{ARCHIVE_ROOT}/beaverwolt/wolt/apps/shop/env.example",
+        f"{ARCHIVE_ROOT}/beaverwolt/wolt/memory/credentials.md",
+        f"{ARCHIVE_ROOT}/beaverwolt/wolt/memory/.codex/notes.json",
+    ):
+        assert kept in names
+    withheld = {item["path"] for item in result.manifest["withheld"]["paths"]}
+    assert not [path for path in withheld if "example" in path or path.endswith(".md")]
+
+
+def test_restore_prints_the_reprovision_checklist(wolts_with_credentials, tmp_path, capsys):
+    result = create_backup(wolts_with_credentials, out_dir=tmp_path / "out", tag="creds")
+    assert cli_main(["restore", str(result.archive), "--to", str(tmp_path / "back")]) == 0
+    out = capsys.readouterr().out
+    assert "6 credential file(s), by design" in out
+    assert "copy .env.example" in out
+    assert "woltspace init" in out
+    assert "codex login" in out
+    assert "beaverwolt/wolt/apps/shop/.env" in out
+    assert "revoke the live one" in out
+    assert not (tmp_path / "back" / ARCHIVE_ROOT / ".env").exists()
+
+
+def test_a_backup_with_no_credentials_says_nothing_about_them(wolts, tmp_path):
+    (wolts / ".env").unlink()
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    assert result.manifest["withheld"]["paths"] == []
+    assert "withheld" not in "\n".join(backup_mod.summary_lines(result))
+    restored = restore_backup(result.archive, to=tmp_path / "back")
+    assert "by design" not in "\n".join(backup_mod.restore_lines(restored))
 
 
 # ---------------------------------------------------------------------------

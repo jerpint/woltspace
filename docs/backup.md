@@ -19,7 +19,7 @@ Everything under `WOLTS_DIR` that is data:
 
 - each wolt's `wolt/` tree — `memory/`, `site/`, `sparks/`, `drafts/`, `apps/`
 - `CLAUDE.md` and `wolt.json` per wolt
-- `.env`, `woltspace.json`
+- `woltspace.json` (but not `.env` — see "Secrets are not backed up")
 - `.state/` (session registry, wolf state) and `.space/` (platform metadata)
 - `.git` directories — a wolt's history is data, so it is archived in full
 
@@ -61,6 +61,48 @@ transcripts live in `.claude/projects`, which is also kept.
 regular file, a directory, or a symlink (sockets, fifos, devices): noise, or
 meaningless once restored.
 
+## Secrets are not backed up
+
+Credentials are **withheld**. Not excluded as junk — withheld, listed, and
+handed back to you as a checklist.
+
+| Withheld | Rule |
+| --- | --- |
+| `.env` | a file named exactly `.env`, at any depth (apps carry their own) |
+| `.claude/.credentials.json`, `…json.expired-*.bak`, `…json.stale-*.bak` | `.credentials.json*` directly inside a `.claude` directory |
+| `.codex/auth.json` | `auth.json` directly inside a `.codex` directory |
+
+**Why, and it is not just tidiness.** A rotating OAuth chain has exactly one
+live owner. Restoring a *stale* credentials file replays a refresh token that
+has already been spent, reuse-detection sees a replay, and the chain gets
+revoked — including the live session you were still using. A backup that
+restores credentials can take down the colony it was meant to protect. Second,
+an archive sitting on a disk or in a bucket should not be a bearer token at
+rest.
+
+The rules are explicit names and paths. Nothing sniffs file contents: a
+heuristic that reads files looking for secrets is a heuristic that reads
+secrets, and one that guesses wrong drops data. Lookalikes — `.env.example`,
+`env.example`, `credentials.md` — are ordinary files and are backed up.
+
+There is no `--with-secrets`. The safe default is the only default.
+
+**A restore never leaves you guessing.** The manifest's `withheld` section
+lists every path that was left behind (paths only, never contents), the backup
+summary prints the count, and `woltspace restore` ends with the re-provision
+checklist:
+
+```
+withheld from this backup — 3 credential file(s), by design:
+  claude-credentials: re-authenticate Claude: `woltspace init`, or `claude login`
+    .claude/.credentials.json
+  codex-auth: re-authenticate codex: `codex login`
+    beaverwolt/home/.codex/auth.json
+  dotenv: recreate it — copy .env.example and fill in the tokens
+    .env
+  (a stale rotating token, restored, can revoke the live one)
+```
+
 ## The root is different, and a wolt is never junk
 
 A directory called `dist` is junk inside a project and a perfectly good name
@@ -69,7 +111,8 @@ for a wolt. Two structural rules keep a name from ever costing you data:
 1. **At the top level of `WOLTS_DIR`, nothing is excluded by name** except what
    the platform derives there — `.worktui`. Everything else the platform keeps
    at the root (`.space`, `.state`, `.claude`, `.codex`, `apps`, `projects`,
-   `woltspace.json`, `.env`) is data and stays.
+   `woltspace.json`) is data and stays — minus the individual credential files
+   inside them, which are withheld by the rules above.
 2. **A wolt is never excluded**, wherever it sits — nor is a subtree that has a
    wolt somewhere underneath it. A directory counts as a wolt on the same
    signal discovery uses: a `wolt/wolt.json` (or a `wolt/` directory, or a
@@ -94,9 +137,9 @@ tree, and records: creation time, host, woltspace version, tag, source path,
 the wolt list with per-wolt sizes, total entry count, the exclude rules that
 were applied, and any paths that were skipped.
 
-It never contains a secret's **value**. `.env` is inside the archive — that is
-the point of a backup — but nothing reads its contents into the manifest or the
-printed summary.
+It also carries a `withheld` section naming every credential path the backup
+left behind. Paths only: no credential is in the archive, and nothing reads a
+secret's **value** into the manifest or the printed summary.
 
 ## Trust but verify
 

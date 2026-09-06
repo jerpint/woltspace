@@ -84,6 +84,36 @@ ROOT_EXCLUDED_DIR_NAMES = frozenset({".worktui"})
 EXCLUDED_FILE_NAMES = frozenset({".DS_Store"})
 EXCLUDED_FILE_SUFFIXES = (".pyc", ".sock")
 
+#: Credentials are withheld, not backed up. Two reasons, and the first is the
+#: one that bites: a rotating OAuth chain has exactly one live owner, so
+#: restoring a *stale* credentials file replays a spent refresh token, and
+#: reuse-detection answers by revoking the chain — the backup takes down the
+#: colony it was supposed to protect. The second is plain: an archive sitting
+#: on a disk or in a bucket should not be a bearer token at rest.
+#:
+#: These rules are explicit names and paths. Nothing here sniffs content: a
+#: heuristic that reads files looking for secrets is a heuristic that reads
+#: secrets, and one that guesses wrong drops data.
+SECRET_RULES = (
+    ("dotenv", "a file named exactly .env, at any depth"),
+    ("claude-credentials", ".credentials.json* directly inside a .claude directory"),
+    ("codex-auth", "auth.json directly inside a .codex directory"),
+)
+
+
+def secret_rule(rel: str) -> str | None:
+    """Which secret rule a path trips, if any. Names and paths only."""
+    path = PurePosixPath(rel)
+    name = path.name
+    parent = path.parent.name
+    if name == ".env":
+        return "dotenv"
+    if parent == ".claude" and name.startswith(".credentials.json"):
+        return "claude-credentials"
+    if parent == ".codex" and name == "auth.json":
+        return "codex-auth"
+    return None
+
 #: `.git` is deliberately absent from all of the above: a wolt's history is
 #: data, and a snapshot that loses it is not a snapshot.
 
@@ -113,6 +143,7 @@ class Scan:
     included_files: int = 0
     excluded_bytes: int = 0
     excluded_files: int = 0
+    withheld: list[dict] = field(default_factory=list)
     unreadable: list[dict] = field(default_factory=list)
     wolts: list[dict] = field(default_factory=list)
 
@@ -265,6 +296,11 @@ def scan_tree(wolts_dir: Path) -> Scan:
         for name in sorted(filenames):
             child = here / name
             rel = _rel(wolts_dir, child)
+            rule = secret_rule(rel)
+            if rule:
+                # Withheld, not excluded: the human is told to put it back.
+                scan.withheld.append({"path": rel, "rule": rule})
+                continue
             if _file_excluded(name, rel):
                 try:
                     size = os.lstat(child).st_size
@@ -302,8 +338,9 @@ def scan_tree(wolts_dir: Path) -> Scan:
 def build_manifest(wolts_dir: Path, tag: str, scan: Scan) -> dict:
     """Describe the snapshot without ever reading a secret's value.
 
-    `.env` is in the archive — that is the point of a backup — but only its
-    name and size appear here, and nothing in this function opens a file.
+    Credentials are not in the archive at all, and the `withheld` section names
+    the paths that were left behind — paths only. Nothing in this function
+    opens a file.
     """
     return {
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -314,6 +351,15 @@ def build_manifest(wolts_dir: Path, tag: str, scan: Scan) -> dict:
         "archive_root": ARCHIVE_ROOT,
         "wolts": scan.wolts,
         "entries": len(scan.entries),
+        "withheld": {
+            "why": (
+                "credentials are never archived: a restored stale OAuth chain "
+                "trips reuse-detection and revokes the live one, and an archive "
+                "at rest should not be a bearer token"
+            ),
+            "rules": [{"rule": rule, "matches": how} for rule, how in SECRET_RULES],
+            "paths": scan.withheld,
+        },
         "totals": {
             "scanned_bytes": scan.scanned_bytes,
             "included_bytes": scan.included_bytes,
@@ -597,6 +643,12 @@ def summary_lines(result: BackupResult) -> list[str]:
             f"  wolt {wolt['name']}: {human_bytes(wolt['bytes'])} in {wolt['files']} files"
             + (f" (−{human_bytes(wolt['excluded_bytes'])} excluded)" if wolt["excluded_bytes"] else "")
         )
+    withheld = result.manifest["withheld"]["paths"]
+    if withheld:
+        lines.append(
+            f"withheld: {len(withheld)} credential file(s) — not in the archive, "
+            f"listed in {MANIFEST_NAME}"
+        )
     unreadable = result.manifest["unreadable"]
     if unreadable:
         lines.append(f"warnings: {len(unreadable)} path(s) skipped")
@@ -608,6 +660,36 @@ def summary_lines(result: BackupResult) -> list[str]:
     return lines
 
 
+#: What to do about each kind of withheld file, said in the imperative. A
+#: restore that is quietly missing credentials is a restore that fails later,
+#: somewhere confusing.
+REPROVISION = {
+    "dotenv": "recreate it — copy .env.example and fill in the tokens",
+    "claude-credentials": "re-authenticate Claude: `woltspace init`, or `claude login`",
+    "codex-auth": "re-authenticate codex: `codex login`",
+}
+
+
+def reprovision_lines(manifest: dict) -> list[str]:
+    """The checklist a human works through after a restore."""
+    withheld = (manifest.get("withheld") or {}).get("paths") or []
+    if not withheld:
+        return []
+    by_rule: dict[str, list[str]] = {}
+    for item in withheld:
+        by_rule.setdefault(item["rule"], []).append(item["path"])
+    lines = [
+        "",
+        f"withheld from this backup — {len(withheld)} credential file(s), by design:",
+    ]
+    for rule, paths in sorted(by_rule.items()):
+        lines.append(f"  {rule}: {REPROVISION.get(rule, 'restore this credential by hand')}")
+        for path in sorted(paths):
+            lines.append(f"    {path}")
+    lines.append("  (a stale rotating token, restored, can revoke the live one)")
+    return lines
+
+
 def restore_lines(result: RestoreResult) -> list[str]:
     manifest = result.manifest
     lines = [
@@ -615,8 +697,11 @@ def restore_lines(result: RestoreResult) -> list[str]:
         f"tag: {manifest['tag']}  ·  taken {manifest['created_at']} on {manifest['host']}",
         f"woltspace {manifest['woltspace_version']}  ·  {result.entries} entries",
         f"wolts: {', '.join(wolt['name'] for wolt in manifest['wolts']) or '(none)'}",
+    ]
+    lines.extend(reprovision_lines(manifest))
+    lines.extend([
         "",
         "boot from it with:",
         f"  WOLTS_DIR={result.wolts_dir} woltspace start",
-    ]
+    ])
     return lines
