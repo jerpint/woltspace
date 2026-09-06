@@ -128,20 +128,26 @@ Image based on `node:22-slim`. Installs: cloudflared, uv, Claude Code CLI, tmux,
 
 The Claude Code CLI is installed in an isolated `claude` build stage, cached independently. To update Claude: `docker build --no-cache-filter=claude ...`
 
-### `container/entrypoint.sh`
-Slim bash (~100 lines). Two phases:
-1. **Python setup** — calls `entrypoint_setup.py` which handles all config/identity
-2. **Services** — starts TUI, server, tunnel, bots, creatures
+### `src/woltspace/container_entrypoint.py`
+Container boot, as a subcommand of the installed CLI —
+`ENTRYPOINT ["/usr/local/bin/woltspace", "container-entrypoint"]`. The wheel
+ships no bash. The command runs twice, dispatched on uid:
 
-### `container/entrypoint_setup.py`
-All config and identity logic in Python (stdlib only). Handles:
-- Resolve active wolt (from `WOLT_NAME` env, `woltspace.json`, or first wolt found)
-- Scaffold new wolt from template (first boot)
-- Copy skills (platform defaults + wolt overrides)
-- Write OAuth credentials, trust config, settings.json
-- Git config, wolf.json seeding, node_modules symlink
-- Resolve wolf config, bot modules, dev mode
-- Outputs a sourceable env file for bash
+1. **root phase** — `groupmod`/`usermod` the `node` user onto `HOST_UID`/`HOST_GID`,
+   re-own `/workspace`, `/home/node` and the wheel bundle, then re-exec itself
+   as node through `gosu`.
+2. **node phase** — scaffold the lodge and the wolt from `template/`, derive the
+   `woltspace-worktui` skill from worktui's own bundled copy, sync the platform
+   section of every wolt's `CLAUDE.md`, write trust config / `settings.json` /
+   `.bashrc` / git config, assemble the environment every child inherits
+   (including `WOLTSPACE_ISOLATION=external` and `WOLTSPACE_ENTRYPOINT=1`), open
+   the tmux window the human lands in, start the slack bot if configured, and
+   then run the control plane **in-process** via the same `serve` call a native
+   user's CLI makes.
+
+Everything else — skills sync, hook normalization, session adoption, the
+connectors, the tunnel — belongs to that control plane, which is byte-for-byte
+the one a native user runs.
 
 ### `server/app.py` (FastAPI)
 Python server running on port 7777 inside the container.
@@ -166,7 +172,7 @@ The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routi
 Thin Telegram layer over core. Persists chat history to `.state/chat/{chat_id}.jsonl`. Group chat support (responds when @mentioned).
 
 ### `container/skills/`
-Discovery files Claude Code reads from `~/.claude/skills/`. Platform skills use `woltspace-` prefix and are synced to all wolts on boot. Current platform skills: `woltspace-start-chat`, `woltspace-create-wolt`, `woltspace-notify`, `woltspace-viewport`, `woltspace-apps`, `woltspace-new-app`, `woltspace-wolf`, `woltspace-update`, `woltspace-session-summary`, `woltspace-worktui` (derived at boot from worktui's own bundled skill — see `derive_worktui_skill` in `entrypoint_setup.py`, not hand-maintained), `woltspace-organize-context`, `woltspace-setup-telegram`, `woltspace-setup-github`.
+Discovery files Claude Code reads from `~/.claude/skills/`. Platform skills use `woltspace-` prefix and are synced to all wolts on boot. Current platform skills: `woltspace-start-chat`, `woltspace-create-wolt`, `woltspace-notify`, `woltspace-viewport`, `woltspace-apps`, `woltspace-new-app`, `woltspace-wolf`, `woltspace-update`, `woltspace-session-summary`, `woltspace-worktui` (derived at boot from worktui's own bundled skill — see `derive_worktui_skill` in `src/woltspace/container_entrypoint.py`, not hand-maintained), `woltspace-organize-context`, `woltspace-setup-telegram`, `woltspace-setup-github`.
 
 ### `container/cron/digest.mjs`
 Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select via `claude -p` → render HTML. Writes to `wolt/sparks/`. Optional Spotify playlist curation.
@@ -292,7 +298,7 @@ Multiple wolts can run in one container. They all share:
 
 Currently supported: **Telegram**, **Slack**. WhatsApp is planned.
 
-Each adapter is a thin Python file over `core.py`. To add a new adapter: copy `telegram_adapter.py`, implement message send/receive, set `BOT_ADAPTER` env var, start it in `entrypoint.sh`.
+Each adapter is a thin Python file over `core.py`. To add a new adapter: copy `telegram_adapter.py`, implement message send/receive, set `BOT_ADAPTER` env var, and give it a `ChannelConnector` in `src/woltspace/channels.py`.
 
 ---
 

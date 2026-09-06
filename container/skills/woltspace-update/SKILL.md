@@ -28,7 +28,7 @@ git diff --stat
 ```
 
 2. Categorize the risk:
-   - `container/entrypoint.sh`, `server.js`, `server/`, `woltspace` → **HIGH** — platform infrastructure
+   - `src/woltspace/`, `server/`, `woltspace` → **HIGH** — platform infrastructure
    - `container/bot/`, `container/creatures/` → **MEDIUM** — bot/creature code
    - `container/skills/`, `CLAUDE.md`, `*.md` → **LOW** — skills/docs, likely auto-updated
 
@@ -128,7 +128,7 @@ Focus on:
 - **Config/env changes** — new required env vars, renamed vars, changed defaults
 - **Removed or renamed files** — skills, cron scripts, bot tools that wolts might depend on
 - **CLAUDE.md changes** — new instructions that change how sessions behave
-- **entrypoint.sh / entrypoint_setup.py changes** — startup behavior, process management
+- **`src/woltspace/container_entrypoint.py` changes** — container boot, startup behavior, process management
 - **Database/state format changes** — .state files, woltspace.json schema changes
 - **Bot behavior changes** — tool renames, removed capabilities, changed routing
 
@@ -194,7 +194,8 @@ After pulling, re-sync platform skills and the CLAUDE.md platform section to all
 python3 -c "
 import sys; sys.path.insert(0, '/workspace/woltspace/container/lib')
 from pathlib import Path
-from entrypoint_setup import sync_all_wolt_skills, sync_claude_md_platform_section
+from skills_sync import sync_all_wolt_skills
+from woltspace.container_entrypoint import sync_claude_md_platform_section
 woltspace = Path('/workspace/woltspace')
 wolts = Path('${WOLTS_DIR:-/workspace/wolts}')
 sync_all_wolt_skills(woltspace, wolts)
@@ -234,7 +235,7 @@ Notify the user: what landed, the version, and any action items.
 
 Action items to flag:
 - **Bot code changed** → "the bot auto-reloads via watchfiles — should pick this up shortly"
-- **entrypoint.sh or entrypoint_setup.py changed** → "container restart needed for this to take full effect"
+- **`container_entrypoint.py` or the Dockerfile changed** → "container restart needed for this to take full effect"
 - **New env vars** → "add `VAR_NAME` to your `.env` before restarting"
 - **Server code changed** → "server auto-reloads via uvicorn --reload, should be live already"
 - **Skills changed** → "woltspace-* skills synced to all wolts — new sessions will use updated skills, existing sessions keep the old version"

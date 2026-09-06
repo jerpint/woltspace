@@ -20,7 +20,7 @@ from hooks_normalize import (  # noqa: E402
 
 
 def _container_hooks() -> dict:
-    """The shape wolts.py / entrypoint_setup.py used to bake in."""
+    """The shape wolts.py / the container entrypoint used to bake in."""
     return {
         "Stop": [{"hooks": [{"type": "command", "command": "/workspace/woltspace/container/hooks/session-done.sh"}]}],
         "Notification": [{"hooks": [{"type": "command", "command": "/workspace/woltspace/container/hooks/notify.sh"}]}],
@@ -308,10 +308,10 @@ class TestStartNormalizesHooks:
 
 class TestNewWoltSettingsHaveNoHooks:
     def test_entrypoint_writes_hookless_settings(self, tmp_path):
-        import entrypoint_setup
+        from woltspace import container_entrypoint
 
-        with patch.object(entrypoint_setup, "HOME", tmp_path):
-            entrypoint_setup.write_settings_json()
+        with patch.object(container_entrypoint, "HOME", tmp_path):
+            container_entrypoint.write_settings_json()
 
         settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
         assert settings == {"skipDangerousModePermissionPrompt": True}

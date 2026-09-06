@@ -103,15 +103,21 @@ platform skills and templates — and the image points the familiar
 `/workspace/woltspace` path at that bundle with a symlink, so every skill, wolt
 `CLAUDE.md` and bin script that knows the old path still works.
 
-The **entrypoint ships inside the package too** (`container/entrypoint.sh` →
-`container/start.sh`). It does only what a container has to: read the
-`--env-file` secrets, seed harness credentials and trust into the per-wolt
-HOMEs (container-only by design — native reuses your own login and copies
-nothing), prepare the workspace dirs the mount shadows, declare
+The **entrypoint IS the package**: `ENTRYPOINT ["/usr/local/bin/woltspace",
+"container-entrypoint"]`, a subcommand of the installed CLI
+(`src/woltspace/container_entrypoint.py`). The wheel ships no bash. The command
+runs twice — once as root, which moves the `node` user onto the host's uid/gid
+and re-execs itself through `gosu`, and once as node, which does only what a
+container has to: seed harness credentials and trust into the per-wolt HOMEs
+(container-only by design — native reuses your own login and copies nothing),
+prepare the workspace dirs the mount shadows, declare
 `WOLTSPACE_ISOLATION=external` and `WOLTSPACE_ENTRYPOINT=1`, open the tmux
-window — and then `exec` the installed `woltspace serve`. Skills sync, hook
-normalization, session adoption, the connectors and the tunnel all belong to
-that control plane, which is byte-for-byte the one a native user runs.
+window — and then run `serve` **in this very process**, through the same call
+the `serve` subcommand makes. No exec, no shell in between: docker's SIGTERM
+lands on the process that owns the connectors, which is the guarantee bash's
+`exec` used to provide. Skills sync, hook normalization, session adoption, the
+connectors and the tunnel all belong to that control plane, which is
+byte-for-byte the one a native user runs.
 
 Because the entrypoint comes from the installed package, a registry build is
 only coherent from the **first release that carries this slim entrypoint**: an
@@ -213,8 +219,8 @@ Give a second instance its own tunnel, or leave it on `localhost`.
 
 ## Guests
 
-Only two things are the platform *entrypoint*: `container/start.sh`, and the
-control plane that `woltspace start` launches. Both announce it with
+Only two things are the platform *entrypoint*: `woltspace
+container-entrypoint`, and the control plane that `woltspace start` launches. Both announce it with
 `WOLTSPACE_ENTRYPOINT=1`. Anything else that runs `woltspace serve` — a command
 typed in a worktree, a smoke test, an agent exploring — is a **guest**, and a
 guest is deliberately weak:

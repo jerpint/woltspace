@@ -190,8 +190,8 @@ class TestTelegramPlan:
 class TestAmbientEnvironmentIsNeverEnough:
     """A stray `woltspace serve` in the container must not spawn a rival bot.
 
-    `container/start.sh` exports ENABLE_TELEGRAM_BOT and the production
-    TELEGRAM_BOT_TOKEN to every process it hosts, so inheriting them is not
+    The container's boot puts ENABLE_TELEGRAM_BOT and the production
+    TELEGRAM_BOT_TOKEN in the environment every process it hosts inherits, so inheriting them is not
     evidence that anyone wants a connector *here*.
     """
 
@@ -580,22 +580,62 @@ class TestStatusRendering:
 
 
 class TestContainerEntrypoint:
-    def test_start_sh_no_longer_launches_a_second_telegram_bot(self):
-        text = (ROOT / "container" / "start.sh").read_text()
-        assert "TELEGRAM_BOT_MODULE" not in text
-        assert "ChannelConnector" in text
+    def test_boot_no_longer_launches_a_second_telegram_bot(self):
+        """Boot resolves the telegram module but must never start it itself."""
+        from woltspace import container_entrypoint
 
-    def test_start_sh_hands_the_process_to_the_installed_control_plane(self):
-        """The slim image runs the packaged CLI, in the foreground, as itself.
+        source = Path(container_entrypoint.__file__).read_text()
+        assert "ChannelConnector" in source
+        # The module resolves the telegram adapter for the connector to use...
+        env = container_entrypoint.build_environment(
+            wolt_name="mywolt", wolt_dir=Path("/workspace/wolts/mywolt"),
+            wolts_dir=Path("/workspace/wolts"), woltspace_dir=ROOT,
+            dev_mode=False, env={},
+        )
+        assert env["TELEGRAM_BOT_MODULE"] == "bot.telegram_adapter"
+        # ...and the only process boot starts by hand is slack, which has no
+        # connector yet. A second telegram poller on one token is the bug.
+        launchers = [name for name in vars(container_entrypoint)
+                     if name.startswith("start_") and "slack" not in name]
+        assert launchers == ["start_tunnel_report"]
 
-        `exec` matters: docker's SIGTERM has to land on the process that owns
-        the connectors, not on a shell that would leave them orphaned.
+    def test_boot_runs_the_installed_control_plane_in_its_own_process(self):
+        """The container runs the packaged supervisor as the foreground process.
+
+        In-process matters for the same reason bash's `exec` did: docker's
+        SIGTERM has to land on the process that owns the connectors, not on a
+        wrapper that would leave them orphaned.
         """
-        text = (ROOT / "container" / "start.sh").read_text()
-        assert 'exec "$WOLTSPACE_CLI" serve' in text
-        assert "--isolation external" in text
-        assert "uv run" not in text
-        assert "creatures.vulture" not in text
+        from woltspace import cli, container_entrypoint
+
+        source = Path(container_entrypoint.__file__).read_text()
+        # The same entry point the `serve` subcommand calls, with the
+        # container's fixed arguments — no exec, no second CLI, no shell.
+        assert "from .cli import serve" in source
+        assert 'serve(host="0.0.0.0", port=7777, isolation="external", no_doctor=True)' in source
+        assert callable(cli.serve)
+        assert "uv run" not in source
+        assert "creatures.vulture" not in source
+
+    def test_boot_declares_entrypoint_and_isolation_before_serving(self):
+        """WOLTSPACE_ENTRYPOINT and WOLTSPACE_ISOLATION are this process's facts.
+
+        The ownership refusal reads both from the environment, so they have to
+        be in `os.environ` before the supervisor is constructed.
+        """
+        from woltspace import container_entrypoint
+
+        env = container_entrypoint.build_environment(
+            wolt_name="mywolt", wolt_dir=Path("/workspace/wolts/mywolt"),
+            wolts_dir=Path("/workspace/wolts"), woltspace_dir=ROOT,
+            dev_mode=False, env={},
+        )
+        assert env["WOLTSPACE_ENTRYPOINT"] == "1"
+        assert env["WOLTSPACE_ISOLATION"] == "external"
+
+        source = Path(container_entrypoint.__file__).read_text()
+        assert source.index("os.environ.update(build_environment(") < source.index(
+            "from .cli import serve")
 
     def test_the_container_entrypoint_runs_the_boot_sweep_itself(self, tmp_path, monkeypatch):
         """No `woltspace start` wrapper in the container — so `serve` does it.

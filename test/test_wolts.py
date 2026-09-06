@@ -6,7 +6,6 @@ in container/lib/wolts.py.
 Usage: uv run pytest test/test_wolts.py -v
 """
 
-import importlib.util
 import json
 import os
 import sys
@@ -19,7 +18,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 
-ENTRYPOINT_SETUP = Path(__file__).resolve().parent.parent / "container" / "entrypoint_setup.py"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 
 # ---------------------------------------------------------------------------
@@ -488,87 +487,14 @@ class TestStartSession:
 
 
 # ---------------------------------------------------------------------------
-# Skill sync tests (entrypoint_setup.py)
+# Boot-time skill/CLAUDE.md derivation (woltspace.container_entrypoint)
 # ---------------------------------------------------------------------------
 
 def _load_entrypoint():
-    spec = importlib.util.spec_from_file_location("entrypoint_setup", ENTRYPOINT_SETUP)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    """The container entrypoint — boot's derivation steps live in the package."""
+    from woltspace import container_entrypoint
 
-
-class TestSyncAllWoltSkills:
-    """Unit: sync_all_wolt_skills copies woltspace-* skills to all wolts."""
-
-    def test_syncs_woltspace_skills_to_all_wolts(self, tmp_path):
-        mod = _load_entrypoint()
-        woltspace = tmp_path / "woltspace"
-        skills_src = woltspace / "container" / "skills"
-
-        # Create two platform skills and one non-platform
-        (skills_src / "woltspace-notify").mkdir(parents=True)
-        (skills_src / "woltspace-notify" / "SKILL.md").write_text("notify skill")
-        (skills_src / "woltspace-viewport").mkdir()
-        (skills_src / "woltspace-viewport" / "SKILL.md").write_text("viewport skill")
-        (skills_src / "legacy").mkdir()  # should NOT be copied
-
-        # Create two wolts with .claude/skills/
-        wolts = tmp_path / "wolts"
-        for name in ["alpha", "beta"]:
-            (wolts / name / ".claude" / "skills").mkdir(parents=True)
-
-        mod.sync_all_wolt_skills(woltspace, wolts)
-
-        for name in ["alpha", "beta"]:
-            assert (wolts / name / ".claude" / "skills" / "woltspace-notify" / "SKILL.md").exists()
-            assert (wolts / name / ".claude" / "skills" / "woltspace-viewport" / "SKILL.md").exists()
-            assert not (wolts / name / ".claude" / "skills" / "legacy").exists()
-
-    def test_preserves_wolt_owned_skills(self, tmp_path):
-        mod = _load_entrypoint()
-        woltspace = tmp_path / "woltspace"
-        (woltspace / "container" / "skills" / "woltspace-notify").mkdir(parents=True)
-        (woltspace / "container" / "skills" / "woltspace-notify" / "SKILL.md").write_text("x")
-
-        wolts = tmp_path / "wolts"
-        skills_dir = wolts / "alpha" / ".claude" / "skills"
-        (skills_dir / "my-custom-skill").mkdir(parents=True)
-        (skills_dir / "my-custom-skill" / "SKILL.md").write_text("mine")
-
-        mod.sync_all_wolt_skills(woltspace, wolts)
-
-        # Wolt's own skill is untouched
-        assert (skills_dir / "my-custom-skill" / "SKILL.md").read_text() == "mine"
-        # Platform skill was synced
-        assert (skills_dir / "woltspace-notify" / "SKILL.md").exists()
-
-    def test_replaces_stale_platform_skills(self, tmp_path):
-        mod = _load_entrypoint()
-        woltspace = tmp_path / "woltspace"
-        (woltspace / "container" / "skills" / "woltspace-notify").mkdir(parents=True)
-        (woltspace / "container" / "skills" / "woltspace-notify" / "SKILL.md").write_text("v2")
-
-        wolts = tmp_path / "wolts"
-        skills_dir = wolts / "alpha" / ".claude" / "skills"
-        (skills_dir / "woltspace-notify").mkdir(parents=True)
-        (skills_dir / "woltspace-notify" / "SKILL.md").write_text("v1")
-
-        mod.sync_all_wolt_skills(woltspace, wolts)
-
-        assert (skills_dir / "woltspace-notify" / "SKILL.md").read_text() == "v2"
-
-    def test_skips_wolts_without_skills_dir(self, tmp_path):
-        mod = _load_entrypoint()
-        woltspace = tmp_path / "woltspace"
-        (woltspace / "container" / "skills" / "woltspace-notify").mkdir(parents=True)
-        (woltspace / "container" / "skills" / "woltspace-notify" / "SKILL.md").write_text("x")
-
-        wolts = tmp_path / "wolts"
-        (wolts / "no-claude-dir").mkdir(parents=True)  # no .claude/skills/
-
-        # Should not raise
-        mod.sync_all_wolt_skills(woltspace, wolts)
+    return container_entrypoint
 
 
 class TestDeriveWorktuiSkill:
@@ -631,7 +557,9 @@ class TestDeriveWorktuiSkill:
         (wolts / "alpha" / ".claude" / "skills").mkdir(parents=True)
 
         mod.derive_worktui_skill(woltspace, worktui)
-        mod.sync_all_wolt_skills(woltspace, wolts)
+        # The control plane's own sync is what carries it out to the wolts.
+        from skills_sync import sync_all_wolt_skills
+        sync_all_wolt_skills(woltspace, wolts)
 
         synced = (wolts / "alpha" / ".claude" / "skills" / "woltspace-worktui" / "SKILL.md").read_text()
         assert "wt spawn / wt send / wt read / wt kill" in synced

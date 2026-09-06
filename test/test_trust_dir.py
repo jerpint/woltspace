@@ -20,7 +20,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 TRUST_DIR_SCRIPT = Path(__file__).resolve().parent.parent / "container" / "bin" / "trust-dir"
-ENTRYPOINT_SETUP = Path(__file__).resolve().parent.parent / "container" / "entrypoint_setup.py"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 
 def run_trust_dir(work_dir: str, home: Path) -> subprocess.CompletedProcess:
@@ -147,12 +147,10 @@ class TestUnitWriteTrustConfig:
     """Tests for the entrypoint write_trust_config() function."""
 
     def _load_module(self):
-        """Import entrypoint_setup as a module."""
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("entrypoint_setup", ENTRYPOINT_SETUP)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
+        """The container entrypoint, which owns the trust baseline."""
+        from woltspace import container_entrypoint
+
+        return container_entrypoint
 
     def test_trusts_all_existing_wolt_dirs(self, tmp_path):
         """write_trust_config should pre-trust every wolt directory."""
@@ -165,8 +163,8 @@ class TestUnitWriteTrustConfig:
         home.mkdir()
 
         mod = self._load_module()
-        mod.HOME = home
-        mod.write_trust_config(wolts_dir)
+        with patch.object(mod, "HOME", home):
+            mod.write_trust_config(wolts_dir)
 
         data = json.loads((home / ".claude.json").read_text())
         assert str(wolts_dir / "alpha") in data["projects"]
@@ -184,8 +182,8 @@ class TestUnitWriteTrustConfig:
         home.mkdir()
 
         mod = self._load_module()
-        mod.HOME = home
-        mod.write_trust_config(wolts_dir)
+        with patch.object(mod, "HOME", home):
+            mod.write_trust_config(wolts_dir)
 
         data = json.loads((home / ".claude.json").read_text())
         assert "/" not in data["projects"]
