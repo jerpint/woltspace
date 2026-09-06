@@ -25,7 +25,7 @@ def test_python_embeds_exact_scoped_tui_version():
     # their own cadence: the pin names the last PUBLISHED tui, so within a line
     # the python side may run ahead of it (rc3 over rc.1) while the pin must
     # never name a tui that doesn't exist yet. Versions compare normalized —
-    # PEP 440 writes pre-releases without semver's separators ("0.5.0rc3" vs
+    # PEP 440 writes pre-releases without semver's separators ("0.5.0rc4" vs
     # "0.5.0-rc.1").
     assert manifest["version"] == TUI_VERSION
     assert Version(TUI_VERSION).release == Version(__version__).release
