@@ -374,6 +374,35 @@ def verify_archive(archive: Path) -> dict:
     return manifest
 
 
+def _add_entry(tar: tarfile.TarFile, entry: Entry) -> None:
+    """Add one member — and never as a hard link.
+
+    A colony's kept data *does* contain hard links: Claude's `file-history`
+    dedupes identical file versions across sessions that way. `TarFile.add`
+    remembers inodes, so the second name for one inode becomes a LNK member —
+    and this module's own restore refuses LNK members, which meant a backup
+    could write an archive it would not accept back.
+
+    Rather than soften the restore, every regular file is stored whole. The
+    duplication is bounded: the heavy hard-link populations on a real colony
+    (uv caches, virtualenvs, worktrees) all sit in excluded directories, and the
+    kept ones are tens of megabytes. What comes back out is two independent
+    files with identical content, which is what a restored backup should be.
+    """
+    info = tar.gettarinfo(str(entry.path), entry.arcname)
+    if info is None:
+        raise OSError(f"unsupported file type: {entry.path}")
+    if info.islnk():
+        info.type = tarfile.REGTYPE
+        info.linkname = ""
+        info.size = os.lstat(entry.path).st_size
+    if info.isreg():
+        with open(entry.path, "rb") as payload:
+            tar.addfile(info, payload)
+    else:
+        tar.addfile(info)
+
+
 def create_backup(
     wolts_dir: Path | str, *, out_dir: Path | str | None = None, tag: str | None = None,
 ) -> BackupResult:
@@ -392,7 +421,7 @@ def create_backup(
     with tarfile.open(archive, "w:gz") as tar:
         for entry in scan.entries:
             try:
-                tar.add(entry.path, arcname=entry.arcname, recursive=False)
+                _add_entry(tar, entry)
             except OSError as exc:
                 # A file that vanished or turned unreadable between the scan
                 # and the write is a warning, never a failed backup.
@@ -457,8 +486,11 @@ def audit_members(members: list[tarfile.TarInfo], target: Path) -> None:
     The whole-archive checks that a per-member filter cannot make, because they
     are about how members relate to each other:
 
-    * a **hard link** has no business in a colony backup, and its link target is
-      resolved by the extractor, not by us;
+    * a **hard link** never appears in an archive this module writes — real
+      colony data does contain them (Claude's `file-history` dedupes versions
+      that way) and `_add_entry` materializes each one as a full regular file,
+      so a LNK member here came from somewhere else and its target would be
+      resolved by the extractor rather than by us;
     * a member whose path passes *through* a symlink this archive creates
       (`x` → /elsewhere, then `x/evil`), or that **replaces** one (`x` → /file,
       then a regular `x`), is the classic write-through-a-link trick;

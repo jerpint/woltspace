@@ -336,6 +336,44 @@ def _add_symlink(tar, name, target):
     tar.addfile(info)
 
 
+def test_hard_linked_data_is_stored_whole_not_linked(wolts, tmp_path):
+    """Claude's `file-history` hard-links identical versions. Kept data, real.
+
+    tarfile's inode memory would turn the second name into a LNK member, and
+    this module's restore refuses those — a backup that wrote an archive it
+    could not read back. Every regular file is stored whole instead.
+    """
+    history = wolts / ".claude" / "file-history" / "session-a"
+    history.mkdir(parents=True)
+    original = history / "notes.md@v1"
+    original.write_text("one version, two names")
+    twin_dir = wolts / ".claude" / "file-history" / "session-b"
+    twin_dir.mkdir(parents=True)
+    twin = twin_dir / "notes.md@v1"
+    os.link(original, twin)
+    assert original.stat().st_nlink == 2
+
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    with tarfile.open(result.archive, "r:gz") as tar:
+        members = {
+            member.name: member
+            for member in tar.getmembers()
+            if member.name.endswith("notes.md@v1")
+        }
+        assert len(members) == 2
+        for member in members.values():
+            assert member.isreg(), f"{member.name} was stored as {member.type!r}"
+            assert member.size == original.stat().st_size
+
+    restored = restore_backup(result.archive, to=tmp_path / "restored")
+    back_a = restored.wolts_dir / ".claude" / "file-history" / "session-a" / "notes.md@v1"
+    back_b = restored.wolts_dir / ".claude" / "file-history" / "session-b" / "notes.md@v1"
+    assert back_a.read_text() == back_b.read_text() == "one version, two names"
+    assert back_a.stat().st_nlink == 1
+    assert back_b.stat().st_nlink == 1
+    assert back_a.stat().st_ino != back_b.stat().st_ino
+
+
 def test_restore_refuses_a_hard_link(tmp_path):
     outside = _outside_witness(tmp_path)
     archive = tmp_path / "hardlink.tar.gz"

@@ -135,8 +135,14 @@ those). Instead the whole member list is audited before a single byte lands,
 and the archive is refused outright if it contains:
 
 - an **absolute path** or a `..` component;
-- a **hard link** — a colony backup has none, and its target is resolved by the
-  extractor rather than by us;
+- a **hard link** — no archive written here contains one, so any that shows up
+  came from elsewhere and its target would be resolved by the extractor rather
+  than by us. Colony data *does* contain hard links (Claude's `file-history`
+  dedupes identical file versions across sessions that way); the backup stores
+  every regular file whole instead of linking the second name to the first, so
+  a restore yields two independent files with equal content. The duplication is
+  bounded — the big hard-link populations live in excluded directories;
+  `file-history` is tens of megabytes.
 - a member whose path **runs through a symlink** the same archive creates
   (`x` → elsewhere, then `x/evil`), or that **replaces** one (`x` → a file,
   then a regular file `x`) — the write-through-a-link trick, in both shapes;
