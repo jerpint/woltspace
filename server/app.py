@@ -49,7 +49,7 @@ from .config import (
     load_dotenv,
 )
 from . import tunnel as tunnel_mgr
-from .notify import send_notification
+from .notify import NoNotificationTarget, send_notification
 from .sparks import get_spark_with_chain, list_sparks
 
 # Session spawning — shared with bot
@@ -623,6 +623,17 @@ async def post_notify(request: Request):
         print(f"[notify] → {result.get('adapter')} | {message[:80]}")
         bot_log("notify_sent", {"session": session, **result, "message": message})
         return {"ok": True, **result}
+    except NoNotificationTarget as e:
+        # Not a server fault: no chat has been connected yet. 409 so a caller
+        # can tell "woltspace is broken" from "you have not set this up".
+        print(f"[notify] undeliverable: {e}")
+        return JSONResponse({
+            "ok": False,
+            "error": str(e),
+            "reason": "no_notification_target",
+            "remedy": "Set TELEGRAM_BOT_TOKEN + TELEGRAM_ALLOWED_USERS in the data "
+                      "root's .env, or run the /telegram skill to connect a chat.",
+        }, status_code=409)
     except Exception as e:
         print(f"[notify] error: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
