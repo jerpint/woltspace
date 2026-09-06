@@ -653,16 +653,16 @@ class TestPrePublishTuiRemedy:
         from woltspace.tui import TuiResolution, fallback_notices, local_tarball_recipe
 
         resolution = TuiResolution(
-            "npx", ("npx", "--yes", "--package=@woltspace/tui@0.5.0-rc.1", "woltspace-tui"),
+            "npx", ("npx", "--yes", "--package=@woltspace/tui@0.5.0-rc.2", "woltspace-tui"),
             {"path": "/usr/local/bin/woltspace-tui", "valid": False,
-             "error": "expected @woltspace/tui@0.5.0-rc.1, got @woltspace/tui@0.1.0"},
+             "error": "expected @woltspace/tui@0.5.0-rc.2, got @woltspace/tui@0.1.0"},
         )
         notices = fallback_notices(resolution)
         assert any("ignoring /usr/local/bin/woltspace-tui" in line for line in notices)
         assert any("not published yet" in line for line in notices)
         assert any(local_tarball_recipe() in line for line in notices)
         assert "npm pack" in local_tarball_recipe()
-        assert "woltspace-tui-0.5.0-rc.1.tgz" in local_tarball_recipe()
+        assert "woltspace-tui-0.5.0-rc.2.tgz" in local_tarball_recipe()
 
     def test_an_exact_local_binary_prints_nothing(self):
         from woltspace.tui import TuiResolution, fallback_notices
