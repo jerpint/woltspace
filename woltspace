@@ -160,6 +160,36 @@ _start_container() {
   echo "  ${_L}   the lodge is open${_R}"
 }
 
+# The native CLI, if the wheel is installed beside this launcher. The python
+# `woltspace backup` is the data-plane snapshot — no docker, no caches — and
+# this launcher only points at it. Nothing here changes what the bash backup
+# does for container users.
+_native_cli() {
+  local self candidate
+  self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  # `type -aP` (not `command -v -a`, which bash 3.2 on macOS does not have)
+  for candidate in $(type -aP woltspace 2>/dev/null); do
+    [ "$candidate" = "$self" ] && continue
+    [ -x "$candidate" ] || continue
+    # The wheel's entrypoint is a python console script. Matching on the
+    # shebang rather than on a string keeps this launcher from ever mistaking
+    # a copy of itself for the native CLI.
+    case "$(head -n 1 "$candidate" 2>/dev/null)" in
+      *python*) ;;
+      *) continue ;;
+    esac
+    if grep -q woltspace "$candidate" 2>/dev/null; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  if command -v python3 >/dev/null 2>&1 && python3 -c "import woltspace" 2>/dev/null; then
+    echo "python3 -m woltspace"
+    return 0
+  fi
+  return 1
+}
+
 _show_url() {
   echo ""
   printf "  ${_D}🦫 ${_R}%bhttp://localhost:${WOLTSPACE_PORT:-7777}%b\n" "${_C}" "${_R}"
@@ -483,6 +513,12 @@ case "$cmd" in
     echo "  ${_D}🐘 snapshot tag: $TAG${_R}"
     echo "  ${_L}   backing up the lodge${_R}"
     echo ""
+
+    if _NATIVE_CLI="$(_native_cli)"; then
+      echo "  ${_D}native snapshot available:${_R} $_NATIVE_CLI backup"
+      echo "  ${_L}   data only — no container, no node_modules, one tar.gz${_R}"
+      echo ""
+    fi
 
     # Container snapshot
     HAS_CONTAINER=false

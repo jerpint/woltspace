@@ -106,7 +106,7 @@ Commands:
 - `woltspace init` — first-time setup (or reconnect existing wolts)
 - `woltspace start` — start, restart, or resume container
 - `woltspace stop` — stop and remove container
-- `woltspace backup [tag] [--bundle]` — snapshot container + wolts (tag defaults to datetime, `--bundle` zips into one portable file)
+- `woltspace backup [tag] [--bundle]` — container-era snapshot: `docker commit` + `rsync` of the whole wolts dir (`--bundle` zips it around a `docker save`). Superseded by the native command below; kept for container users.
 - `woltspace rebuild` — rebuild image + restart
 - `woltspace shell/chat/logs` — interact with running container
 
@@ -119,6 +119,21 @@ Env vars:
 - `WOLTSPACE_LOCAL=true` — sticky equivalent of `--local` (for dev workflows)
 
 The only mount is `$WOLTS_DIR:/workspace/wolts`. Everything else is baked into the image.
+
+### `src/woltspace/backup.py` — snapshots
+
+The data-plane snapshot, in the python CLI, identical native and in-container:
+
+- `woltspace backup [--tag T] [--out DIR]` — one `woltspace-backup-<tag>.tar.gz`
+  of the wolts tree (memory, sites, sparks, apps, `.env`, `woltspace.json`,
+  `.state`, `.space`, `.git` history), with caches and build products excluded
+  by name at any depth and symlinks archived as links. Writes a
+  `backup-manifest.json` into the archive, then re-opens the archive to verify
+  it. Never touches docker.
+- `woltspace restore <archive> [--to DIR]` — extracts into a new directory and
+  refuses a populated one; prints the `WOLTS_DIR=…` line to boot from it.
+
+Full guide, including what is excluded and why: `docs/backup.md`.
 
 ### Docker Image
 
