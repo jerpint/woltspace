@@ -29,16 +29,53 @@ a backup is not supposed to be backing up.
 
 ## What is excluded, and why
 
-Dropped wherever they appear, at any depth:
+Two kinds of rule, and the manifest reports them separately because they are
+not interchangeable.
+
+**By directory name** — dropped wherever the name appears, but only *below* the
+top level (see "The root is different"):
 
 | Excluded | Why |
 | --- | --- |
-| `node_modules`, `.venv`, `venv` | reinstallable from a lockfile |
-| `__pycache__`, `*.pyc`, `.cache`, `.pytest_cache` | derived, per-machine |
+| `node_modules`, `.venv`, `venv`, `.npm` | reinstallable from a lockfile |
+| `__pycache__`, `.cache`, `.pytest_cache` | derived, per-machine |
 | `dist`, `build`, `.next`, `target` | build products |
+| `.worktui` | worktui's worktree store; the branches live in git |
+
+**By path** — matched on the whole tail, never on a bare name:
+
+| Excluded | Why |
+| --- | --- |
 | `.claude/plugins/cache` | plugin download cache |
-| `wolt/worktrees`, `.worktui` | throwaway checkouts; the branches live in git |
-| `.DS_Store`, `*.sock`, sockets and fifos | noise, or meaningless once restored |
+| `wolt/worktrees` | a wolt's throwaway checkouts |
+| `.local/share/claude` | the agent CLI's auto-downloaded version binaries |
+
+`.local/share/claude` is the single biggest thing in a lived-in colony —
+**12.8GB** of redownloadable CLI binaries across per-wolt HOMEs on the colony
+these rules were measured against. It is scoped by path deliberately: a wolt's
+own directory called `claude` is data, the rest of `.local` is data, and
+`.local/share/opencode` (session state, easily 150MB) is kept. Conversation
+transcripts live in `.claude/projects`, which is also kept.
+
+**By file** — `.DS_Store`, `*.pyc`, `*.sock`, and anything that is not a
+regular file, a directory, or a symlink (sockets, fifos, devices): noise, or
+meaningless once restored.
+
+## The root is different, and a wolt is never junk
+
+A directory called `dist` is junk inside a project and a perfectly good name
+for a wolt. Two structural rules keep a name from ever costing you data:
+
+1. **At the top level of `WOLTS_DIR`, nothing is excluded by name** except what
+   the platform derives there — `.worktui`. Everything else the platform keeps
+   at the root (`.space`, `.state`, `.claude`, `.codex`, `apps`, `projects`,
+   `woltspace.json`, `.env`) is data and stays.
+2. **A wolt is never excluded**, wherever it sits — nor is a subtree that has a
+   wolt somewhere underneath it. A directory counts as a wolt on the same
+   signal discovery uses: a `wolt/wolt.json` (or a `wolt/` directory, or a
+   `wolt.json`).
+
+Backing up too much costs disk. Backing up too little loses a wolt.
 
 The summary prints the scanned size and the excluded size side by side, so the
 win is visible on every run:
@@ -89,6 +126,28 @@ boot from it with:
 
 Pointing a colony at a restored directory is the human's explicit act, never a
 side effect of unpacking a file.
+
+### What a restore refuses
+
+Symlinks are archived as links, including ones pointing outside the tree, so
+the extractor cannot rely on the stdlib `data` filter (which rejects exactly
+those). Instead the whole member list is audited before a single byte lands,
+and the archive is refused outright if it contains:
+
+- an **absolute path** or a `..` component;
+- a **hard link** — a colony backup has none, and its target is resolved by the
+  extractor rather than by us;
+- a member whose path **runs through a symlink** the same archive creates
+  (`x` → elsewhere, then `x/evil`), or that **replaces** one (`x` → a file,
+  then a regular file `x`) — the write-through-a-link trick, in both shapes;
+- **duplicate member names**, which is how that trick gets smuggled past a
+  reader that only looks at the last member;
+- names that differ **only by case**, when the target filesystem folds case
+  (APFS does) — both cannot exist, and quietly storing one file's bytes under
+  the other's name is corruption.
+
+A refusal happens before extraction starts, so nothing is half-written, and
+nothing is ever created outside the target directory.
 
 ## Running colonies
 
