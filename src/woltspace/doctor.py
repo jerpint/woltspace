@@ -372,9 +372,12 @@ def run_doctor(
     authenticated = [name for name in installed if auth[name].is_file()]
     # A token in the environment is auth too — Claude Code prefers it over the
     # file. Reporting "no supported auth file detected" at a host that is in
-    # fact logged in sends people to re-run a login they do not need.
+    # fact logged in sends people to re-run a login they do not need. It is
+    # named as a token rather than folded in silently: presence is not validity,
+    # and someone whose sessions fail while doctor says "pass" needs to know
+    # which credential answered before they can remove the dead one.
     if "claude" in installed and "claude" not in authenticated and _claude_token_in_env():
-        authenticated.append("claude")
+        authenticated.append("claude (env token)")
     checks.append(DoctorCheck(
         "host-auth",
         "pass" if authenticated else "warn",

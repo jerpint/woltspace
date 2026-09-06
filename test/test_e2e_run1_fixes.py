@@ -26,7 +26,12 @@ sys.path.insert(0, str(ROOT / "container" / "lib"))
 # *installed* bundle's container/lib to sys.path, which would otherwise shadow
 # this worktree's copy of `sessions` and test the wrong file.
 import sessions  # noqa: E402,F401
-from harness_auth import claude_authenticated, claude_token_in_env  # noqa: E402
+from harness_auth import (  # noqa: E402
+    CLAUDE_TOKEN_VARS,
+    auth_source,
+    claude_authenticated,
+    claude_token_in_env,
+)
 
 import server.app as server_app  # noqa: E402
 
@@ -39,6 +44,13 @@ class TestAuthProbeHonoursTheEnvironmentToken:
     """The run booted a colony on CLAUDE_CODE_OAUTH_TOKEN. Its sessions
     authenticated fine; its human window was sent to `wclaude /login`, whose own
     warning says continuing there replaces the working token."""
+
+    @pytest.fixture(autouse=True)
+    def _no_ambient_token(self, monkeypatch):
+        """Both vars, every test: a developer with ANTHROPIC_API_KEY exported
+        must get the same answers as CI, or these assertions mean nothing."""
+        for name in CLAUDE_TOKEN_VARS:
+            monkeypatch.delenv(name, raising=False)
 
     def test_a_credentials_file_is_still_authentication(self, tmp_path):
         (tmp_path / ".claude").mkdir()
@@ -60,10 +72,55 @@ class TestAuthProbeHonoursTheEnvironmentToken:
     def test_the_environment_is_read_at_call_time(self, tmp_path, monkeypatch):
         """The entrypoint assembles its environment mid-boot; a snapshot taken
         at import would answer with the environment boot started in."""
-        monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
         assert claude_token_in_env() is False
         monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
         assert claude_token_in_env() is True
+
+
+class TestTheAuthSourceIsVisible:
+    """Presence is not validity. A dead env token still reads as authenticated,
+    so the one thing the platform owes a user debugging that is which credential
+    answered — the thing to remove."""
+
+    def test_the_file_and_the_token_are_told_apart(self, tmp_path):
+        assert auth_source(tmp_path, {}) == "none"
+        assert auth_source(tmp_path, {"CLAUDE_CODE_OAUTH_TOKEN": "t"}) == "env-token"
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / ".credentials.json").write_text("{}")
+        assert auth_source(tmp_path, {}) == "credentials-file"
+
+    def test_the_file_wins_when_both_are_present(self, tmp_path):
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / ".credentials.json").write_text("{}")
+
+        assert auth_source(tmp_path, {"CLAUDE_CODE_OAUTH_TOKEN": "t"}) == "credentials-file"
+
+    def test_the_module_says_out_loud_that_presence_is_not_validity(self):
+        import harness_auth
+
+        doc = harness_auth.__doc__
+        assert "Presence is not validity" in doc
+        # and names the way out
+        assert "unset" in doc.lower() and "restart" in doc.lower()
+
+    def test_onboard_status_reports_the_source(self, monkeypatch):
+        from starlette.testclient import TestClient
+
+        monkeypatch.setattr(server_app, "CONTAINER_HOME", Path("/nonexistent-home"))
+        for name in CLAUDE_TOKEN_VARS:
+            monkeypatch.delenv(name, raising=False)
+        body = TestClient(server_app.app).get("/onboard-status").json()
+        assert body["auth_source"] == "none"
+        assert body["has_oauth"] is False
+
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
+        body = TestClient(server_app.app).get("/onboard-status").json()
+        assert body["auth_source"] == "env-token"
+        assert body["has_oauth"] is True
+
+    def test_doctor_names_the_token_rather_than_folding_it_in(self):
+        source = (ROOT / "src" / "woltspace" / "doctor.py").read_text()
+        assert 'authenticated.append("claude (env token)")' in source
 
 
 class TestBootGreetsAnAuthenticatedColonyProperly:
@@ -98,8 +155,8 @@ class TestDoctorHostAuthHonoursTheToken:
     def test_a_token_counts_as_claude_auth(self, monkeypatch):
         from woltspace import doctor
 
-        monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        for name in CLAUDE_TOKEN_VARS:
+            monkeypatch.delenv(name, raising=False)
         assert doctor._claude_token_in_env() is False
 
         monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
@@ -253,6 +310,17 @@ class TestWatchersStopOnShutdown:
         assert "watcher.cancel()" in handler
         assert "return_exceptions=True" in handler
 
+    def test_a_client_data_frame_is_not_a_disconnect(self):
+        """A heartbeat used to look like a hangup: it ended the watcher and
+        left the socket open with nothing behind it."""
+        source = (ROOT / "server" / "app.py").read_text()
+        handler = source[source.index("async def site_livereload_ws("):]
+        handler = handler[:handler.index("@app.get")]
+
+        assert "async def _await_disconnect()" in handler
+        assert 'message.get("type") == "websocket.disconnect"' in handler
+        assert "while True:" in handler
+
     def test_flagging_is_separable_from_joining(self):
         """The flags must be raisable without blocking on a thread join."""
         from server import app as server_app
@@ -302,8 +370,19 @@ class TestNotifyWithNowhereToSend:
 
         assert response.status_code == 500
 
-    def test_the_message_is_still_required(self):
+    def test_the_message_is_still_required(self, monkeypatch):
+        """The stand-in is the assertion: a bodyless notify must be refused
+        before anything reaches the sending layer."""
+        sent = []
+
+        async def record(*args, **kwargs):
+            sent.append(args)
+            return {"adapter": "telegram"}
+
+        monkeypatch.setattr(server_app, "send_notification", record)
+
         assert self._client().post("/notify", json={}).status_code == 400
+        assert sent == []
 
 
 # ---------------------------------------------------------------------------
@@ -370,7 +449,6 @@ class TestWolfObservabilityApi:
         crons = {cron["name"]: cron for cron in by_wolt["alpha"]["crons"]}
         assert crons["digest"]["schedule"] == "0 6 * * *"
         assert crons["digest"]["last_run"] == "2026-09-06-06:00"
-        assert crons["digest"]["notify"] == "digest time"
         # a one-off carries `at` instead of `schedule`, and has never fired
         assert crons["one-off"]["at"] == "2026-03-22T14:30"
         assert crons["one-off"]["schedule"] == ""
@@ -407,6 +485,59 @@ class TestWolfObservabilityApi:
 
         assert client.get("/wolf/fires").json() == {"count": 0, "fires": []}
         assert client.get("/wolf/schedules").json()["schedules"] == []
+
+    def test_the_crons_own_words_are_never_served(self, colony):
+        """No auth, and `Access-Control-Allow-Origin: *`. What a cron is told to
+        do is the user's private business; when it runs is the observability."""
+        raw = colony.get("/wolf/schedules").text
+
+        assert "/digest" not in raw          # the prompt
+        assert "digest time" not in raw      # the notify text
+        assert "check the deploy" not in raw
+        for cron in colony.get("/wolf/schedules").json()["schedules"][0]["crons"]:
+            assert set(cron) == {"name", "schedule", "at", "last_run"}
+
+    def test_a_cron_name_cannot_walk_out_of_the_state_dir(self, tmp_path, monkeypatch):
+        """`wolf.json` is a file a wolt can write, so the name is untrusted."""
+        from starlette.testclient import TestClient
+
+        wolts = tmp_path / "wolts"
+        (wolts / "alpha" / "wolt").mkdir(parents=True)
+        secret = wolts / ".space" / "secret.last"
+        secret.parent.mkdir(parents=True)
+        secret.write_text("SECRET-CONTENT")
+        (wolts / "alpha" / "wolt" / "wolf.json").write_text(json.dumps({"crons": [
+            {"name": "../secret", "schedule": "0 6 * * *"},
+            {"name": "../../etc/passwd", "schedule": "0 6 * * *"},
+            {"name": "has spaces", "schedule": "0 6 * * *"},
+            {"name": "fine-one_2", "schedule": "0 6 * * *"},
+        ]}))
+        monkeypatch.setattr(server_app, "WOLTS_DIR", wolts)
+
+        body = TestClient(server_app.app).get("/wolf/schedules")
+
+        assert "SECRET-CONTENT" not in body.text
+        assert all(cron["last_run"] is None for cron in body.json()["schedules"][0]["crons"])
+
+    def test_the_limit_is_clamped(self, colony):
+        assert len(colony.get("/wolf/fires?limit=99999").json()["fires"]) <= 500
+        assert colony.get("/wolf/fires?limit=-5").json()["fires"] == []
+
+    def test_only_the_journals_tail_is_parsed(self, colony, monkeypatch):
+        """A colony that has fired crons for a year must not pay for all of it."""
+        monkeypatch.setattr(server_app, "_WOLF_JOURNAL_TAIL", 2)
+
+        body = colony.get("/wolf/fires").json()
+
+        assert body["count"] == 1   # only the last two lines were read; one is torn
+        assert body["fires"][0]["cron"] == "sweep"
+
+    def test_the_routes_do_not_block_the_event_loop(self):
+        """Sync filesystem work in an `async def` stalls every other request."""
+        import inspect
+
+        assert not inspect.iscoroutinefunction(server_app.wolf_schedules)
+        assert not inspect.iscoroutinefunction(server_app.wolf_fires)
 
     def test_the_exactly_once_evidence_the_e2e_run_had_to_grep_for(self, colony):
         """The run proved one fire by grepping a connector log. Now it is data."""
@@ -457,6 +588,28 @@ class TestOrphanedSessionsRecordWhy:
         record = json.loads(
             (tmp_path / "alpha" / ".state" / "sessions" / "s2.json").read_text())
         assert record["orphaned_reason"] == sessions.ORPHAN_RUNTIME_GONE
+
+    def test_coming_back_to_life_clears_the_reason(self, tmp_path, fake_runtime):
+        """`running` plus an `orphaned_reason` is a record that lies."""
+        import sessions
+
+        reg = self._registry(tmp_path)
+        reg.create(name="s4", wolt="alpha", creature="otter", model="haiku",
+                   dir=str(tmp_path / "alpha"), prompt="x")
+        record_path = tmp_path / "alpha" / ".state" / "sessions" / "s4.json"
+
+        fake_runtime._alive = False
+        reg.adopt_runtime_sessions()
+        assert json.loads(record_path.read_text())["orphaned_reason"]
+
+        # every road back to running goes through _write, so one check covers
+        # adoption and all three resume branches
+        fake_runtime._alive = True
+        reg.update("s4", wolt="alpha", status="running")
+
+        record = json.loads(record_path.read_text())
+        assert record["status"] == "running"
+        assert "orphaned_reason" not in record
 
     def test_a_live_session_carries_no_reason(self, tmp_path, monkeypatch):
         import sessions

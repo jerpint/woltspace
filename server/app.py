@@ -12,6 +12,7 @@ import subprocess
 import threading
 import time
 import contextlib
+from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -64,7 +65,7 @@ from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
 from execution_policy import AutoGrantStore, POLICY_VERSION
 from runtime_context import RuntimeContext
-from harness_auth import claude_authenticated
+from harness_auth import auth_source, claude_authenticated
 from harnesses import (
     harness_metadata,
     get_default_harness,
@@ -598,6 +599,10 @@ async def onboard_status():
         "wolts_dir": str(WOLTS_DIR),
         "wolt_name": WOLT_NAME,
         "has_oauth": claude_authenticated(CONTAINER_HOME),
+        # Which credential answered — "credentials-file", "env-token" or "none".
+        # Presence is not validity: a dead env token still reads as authenticated,
+        # and this is how someone debugging that finds out what to remove.
+        "auth_source": auth_source(CONTAINER_HOME),
         "has_llm_key": bool(env.get("ANTHROPIC_API_KEY") or env.get("OPENROUTER_API_KEY")),
         "has_telegram": env.get("ENABLE_TELEGRAM_BOT") == "true" and bool(env.get("TELEGRAM_BOT_TOKEN")),
         "login_url": _extract_login_url(),
@@ -974,6 +979,21 @@ async def list_wolts():
 # `.space/wolf/` — but the only way to see a fire was to grep a connector log
 # from inside the container, and the source pointed at the wrong directory
 # while doing it. No new daemon, no new writer: just the files, served.
+#
+# Observability, and nothing more. These routes need no auth and the server
+# answers them with `Access-Control-Allow-Origin: *`, so what they may say is
+# *when* a cron is scheduled and *whether* it fired — never what it asks the
+# wolt to do. A cron's `prompt` and `notify` are the user's own words, often
+# about private work, and they are deliberately not in the response.
+
+# The scheduler stamps last-run state as `<cron name>.last`, so the name is a
+# filename. Anything outside this shape is not looked up at all.
+_WOLF_CRON_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+_WOLF_FIRES_MAX = 500
+# Enough of the journal's tail to satisfy the largest allowed page even when
+# every line is filtered out; the file is append-only and never rewritten.
+_WOLF_JOURNAL_TAIL = 5000
+
 
 def _wolf_state_dir() -> Path:
     from paths import space_wolf_dir
@@ -982,8 +1002,20 @@ def _wolf_state_dir() -> Path:
 
 
 def _wolf_last_run(state_dir: Path, cron_name: str) -> str | None:
-    """The `YYYY-MM-DD-HH:MM` stamp the scheduler writes after each fire."""
-    stamp = state_dir / f"{cron_name}.last"
+    """The `YYYY-MM-DD-HH:MM` stamp the scheduler writes after each fire.
+
+    A cron name comes from a wolt's own `wolf.json`, which is a file a wolt can
+    write — so it is untrusted input on the way to a path join. `../../secret`
+    reads outside the state dir otherwise. Two gates: the name must look like a
+    plain identifier, and the resolved path must still be inside the state dir.
+    """
+    if not _WOLF_CRON_NAME.match(cron_name or ""):
+        return None
+    stamp = (state_dir / f"{cron_name}.last").resolve()
+    try:
+        stamp.relative_to(state_dir.resolve())
+    except ValueError:
+        return None
     try:
         return stamp.read_text().strip() or None
     except OSError:
@@ -991,8 +1023,13 @@ def _wolf_last_run(state_dir: Path, cron_name: str) -> str | None:
 
 
 @app.get("/wolf/schedules")
-async def wolf_schedules():
-    """Every wolt's registered crons, with the last time each one fired."""
+def wolf_schedules():
+    """Every wolt's registered crons, with the last time each one fired.
+
+    Names, timings and stamps only — see the note above on what is withheld.
+    A plain `def`: this walks the filesystem, and doing that on the event loop
+    blocks every other request while it runs.
+    """
     state_dir = _wolf_state_dir()
     schedules = []
     for wolf_json in sorted(WOLTS_DIR.glob("*/wolt/wolf.json")):
@@ -1009,8 +1046,6 @@ async def wolf_schedules():
                 # recurring crons carry `schedule`, one-offs carry `at`
                 "schedule": cron.get("schedule", ""),
                 "at": cron.get("at", ""),
-                "prompt": cron.get("prompt", ""),
-                "notify": cron.get("notify", ""),
                 "last_run": _wolf_last_run(state_dir, cron.get("name", "")),
             } for cron in crons],
         })
@@ -1018,20 +1053,24 @@ async def wolf_schedules():
 
 
 @app.get("/wolf/fires")
-async def wolf_fires(limit: int = 50, cron: str = "", wolt: str = ""):
+def wolf_fires(limit: int = 50, cron: str = "", wolt: str = ""):
     """Recent cron fires, newest first, from the scheduler's job journal.
 
     `limit` caps the response; `cron` and `wolt` narrow it. A journal that does
     not exist yet is an empty list, not an error — a colony whose wolf has never
-    fired is a normal colony.
+    fired is a normal colony. Only the journal's tail is parsed: this answers
+    "what happened lately", and a colony that has been firing crons for a year
+    should not pay for all of it to serve `limit=1`.
     """
+    limit = max(0, min(limit, _WOLF_FIRES_MAX))
     journal = _wolf_state_dir() / "jobs.jsonl"
     fires = []
     try:
-        lines = journal.read_text().splitlines()
+        with journal.open() as handle:
+            tail = deque(handle, maxlen=_WOLF_JOURNAL_TAIL)
     except OSError:
-        lines = []
-    for line in lines:
+        tail = ()
+    for line in tail:
         line = line.strip()
         if not line:
             continue
@@ -1045,7 +1084,7 @@ async def wolf_fires(limit: int = 50, cron: str = "", wolt: str = ""):
             continue
         fires.append(entry)
     fires.reverse()
-    return {"count": len(fires), "fires": fires[:max(0, limit)]}
+    return {"count": len(fires), "fires": fires[:limit]}
 
 
 # --- Harnesses ---
@@ -1405,15 +1444,24 @@ async def site_livereload_ws(wolt_name: str, ws: WebSocket):
                                      rust_timeout=_WATCHER_POLL_MS):
             await ws.send_text("reload")
 
+    async def _await_disconnect():
+        # Only a disconnect ends this. A client that sends anything at all — a
+        # heartbeat, a stray text frame — used to look like one, killing the
+        # watcher and leaving the socket open with nothing behind it.
+        while True:
+            message = await ws.receive()
+            if message.get("type") == "websocket.disconnect":
+                return
+
     # Race the watcher against the socket's own receive. That second task is
     # the whole point: uvicorn's shutdown order is signal → close connections →
     # *then* lifespan shutdown, so a handler that only watches files learns
     # about the shutdown after the graceful window it was supposed to fit
-    # inside, and gets reported as `Cancel 1 running task(s)`. `ws.receive()`
-    # completes as soon as uvicorn sends the disconnect — and equally when the
+    # inside, and gets reported as `Cancel 1 running task(s)`. The disconnect
+    # arrives as soon as uvicorn begins shutting down — and equally when the
     # browser simply navigates away.
     watcher = asyncio.create_task(_push_reloads())
-    disconnect = asyncio.create_task(ws.receive())
+    disconnect = asyncio.create_task(_await_disconnect())
     try:
         await asyncio.wait({watcher, disconnect},
                            return_when=asyncio.FIRST_COMPLETED)

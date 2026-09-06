@@ -107,6 +107,13 @@ class SessionRegistry:
         normalized = normalize_session_target(
             data, wolts_dir=self.wolts_dir, fallback_wolt=wolt
         )
+        # The reason belongs to the orphaned state and dies with it. Enforced
+        # here rather than at each writer because there are many ways back to
+        # running — adoption, three resume branches — and a record that says
+        # `running` while still carrying `orphaned_reason` is a record that
+        # lies to whoever reads it next.
+        if normalized.get("status") != "orphaned":
+            normalized.pop("orphaned_reason", None)
         tmp.write_text(json.dumps(normalized, indent=2) + "\n")
         tmp.rename(path)
 
