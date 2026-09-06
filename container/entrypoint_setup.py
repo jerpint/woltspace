@@ -13,18 +13,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-WOLTSPACE_DIR = Path("/workspace/woltspace")
+# The installed bundle. Resolved from this file rather than hardcoded so the
+# same script boots whatever path the wheel landed on (the image pins the
+# familiar /workspace/woltspace name at it with a symlink).
+WOLTSPACE_DIR = Path(
+    os.environ.get("WOLTSPACE_DIR") or Path(__file__).resolve().parent.parent
+)
 HOME = Path("/home/node")
 
-# Skill sync and hook normalization are shared with the native control plane,
-# so they live in lib/ — resolved from this file rather than WOLTSPACE_DIR so a
-# checkout anywhere boots. Native reaches the same modules via
-# src/woltspace/skills.py and src/woltspace/hooks.py; one implementation, two
-# runtimes. An upgraded container that never normalized would keep every wolt
-# pointing at the deleted container/hooks/*.sh and spam "No such file".
-sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
-from hooks_normalize import normalize_all_wolt_hooks  # noqa: E402
-from skills_sync import sync_all_wolt_skills  # noqa: E402
+# Skill sync, hook normalization and session adoption are NOT here any more:
+# the control plane runs all three at start, the same way it does natively.
+# What is left in this file is the container-only half — per-wolt HOME config,
+# harness trust/credential seeding, and the values bash needs.
 
 
 def resolve_wolt_name(wolts_dir: Path) -> str:
@@ -237,49 +237,12 @@ def seed_wolf_json(wolt_dir: Path, woltspace_dir: Path):
         print(f"seeded default wolf.json for {wolt_dir.name}")
 
 
-def resolve_wolf_config(wolts_dir: Path, wolt_dir: Path) -> str:
-    """Find wolf.json — dedicated wolf-wolt first, then fallback to active wolt."""
-    try:
-        config = json.loads((wolts_dir / "woltspace.json").read_text())
-        active_wolf = config.get("creatures", {}).get("active_wolf", "")
-        if active_wolf:
-            wolf_json = wolts_dir / active_wolf / "wolt" / "wolf.json"
-            if wolf_json.is_file():
-                return str(wolf_json)
-    except (json.JSONDecodeError, OSError):
-        pass
-    fallback = wolt_dir / "wolt" / "wolf.json"
-    return str(fallback) if fallback.is_file() else ""
-
-
 def resolve_bot_module(wolt_dir: Path, woltspace_dir: Path, adapter: str) -> tuple:
     """Returns (bot_dir, bot_module) — custom wolt bot or platform default."""
     custom = wolt_dir / "wolt" / "bot" / f"{adapter}_adapter.py"
     if custom.is_file():
         return str(wolt_dir), f"wolt.bot.{adapter}_adapter"
     return str(woltspace_dir / "container"), f"bot.{adapter}_adapter"
-
-
-def reconcile_sessions(wolts_dir: Path, woltspace_dir: Path):
-    """Mark any 'running' sessions as orphaned if their tmux session is gone.
-
-    Runs on container boot before tmux starts, so any session still marked
-    'running' from a previous boot is definitely dead.
-    """
-    registry_dir = wolts_dir / ".state" / "registry"
-    if not registry_dir.is_dir():
-        return
-    lib_dir = str(woltspace_dir / "container" / "lib")
-    if lib_dir not in sys.path:
-        sys.path.insert(0, lib_dir)
-    try:
-        from sessions import SessionRegistry
-        reg = SessionRegistry(registry_dir)
-        orphaned = reg.reconcile()
-        if orphaned:
-            print(f"reconciled {len(orphaned)} orphaned session(s): {', '.join(orphaned)}")
-    except Exception as e:
-        print(f"session reconcile skipped: {e}", file=sys.stderr)
 
 
 PLATFORM_SECTION_START = "<!-- WOLTSPACE:BEGIN — auto-managed, do not edit -->"
@@ -326,13 +289,6 @@ def sync_claude_md_platform_section(wolts_dir: Path, woltspace_dir: Path):
             claude_md.write_text(new_content)
 
 
-def symlink_node_modules(woltspace_dir: Path):
-    target = Path("/workspace/node_modules")
-    if target.is_symlink() or target.exists():
-        target.unlink()
-    target.symlink_to(woltspace_dir / "node_modules")
-
-
 def write_env_file(env_file: Path, env_vars: dict):
     """Write a sourceable shell file with exported vars."""
     lines = []
@@ -364,17 +320,15 @@ def main():
         wolt_dir = wolts_dir
         print("no wolts found — starting in onboard mode")
 
-    dev_mode = (woltspace_dir / ".git").is_dir()
+    # The image installs a package, so there is no checkout to detect any more —
+    # dev mode is a thing you declare (`DEV_MODE=true` in the data root's .env),
+    # not a thing inferred from a .git the slim image never has.
+    dev_mode = os.environ.get("DEV_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
 
-    # Config & identity
+    # Config & identity. The worktui skill is regenerated *before* the control
+    # plane's skill sync runs (it is the next thing to happen after this exits),
+    # so the copy every wolt receives matches the wt in this image.
     derive_worktui_skill(woltspace_dir)
-    sync_all_wolt_skills(woltspace_dir, wolts_dir)
-    # Same sweep the native start runs, same module. Never fatal — a wolt whose
-    # settings.json can't be rewritten is worth a line, not a failed boot.
-    try:
-        normalize_all_wolt_hooks(wolts_dir)
-    except Exception as error:  # noqa: BLE001
-        print(f"hooks: not normalized ({type(error).__name__}: {error})")
     sync_claude_md_platform_section(wolts_dir, woltspace_dir)
     if wolt_name:
         write_bashrc(wolt_dir, wolt_name)
@@ -383,13 +337,8 @@ def main():
     configure_git(wolt_name or "wolt")
     write_trust_config(wolts_dir)
     write_settings_json()
-    symlink_node_modules(woltspace_dir)
-
-    # Clean up stale sessions from previous boot
-    reconcile_sessions(wolts_dir, woltspace_dir)
 
     # Resolve derived values for bash
-    wolf_config = resolve_wolf_config(wolts_dir, wolt_dir)
     tg_dir, tg_mod = resolve_bot_module(wolt_dir, woltspace_dir, "telegram")
     slack_dir, slack_mod = resolve_bot_module(wolt_dir, woltspace_dir, "slack")
 
@@ -398,7 +347,6 @@ def main():
         "WOLT_DIR": str(wolt_dir),
         "WOLTS_DIR": str(wolts_dir),
         "DEV_MODE": "true" if dev_mode else "false",
-        "WOLF_CONFIG": wolf_config,
         "TELEGRAM_BOT_DIR": tg_dir,
         "TELEGRAM_BOT_MODULE": tg_mod,
         "SLACK_BOT_DIR": slack_dir,

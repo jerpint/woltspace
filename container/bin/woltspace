@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 import urllib.request
 import urllib.error
@@ -246,12 +247,15 @@ def main():
     # tui: exec the terminal cockpit (same app the host launcher runs; it
     # auto-detects in-container mode - native tmux attach, localhost API).
     if argv and argv[0] == "tui":
-        tui = "/workspace/woltspace/tui/src/main.js"
-        if not os.path.exists(tui):
-            print("tui not found in this image - needs a rebuild that includes tui/",
+        # `woltspace-tui`, the bin of the @woltspace/tui npm package the image
+        # installs (and the same artifact `woltspace tui` resolves natively).
+        tui = shutil.which("woltspace-tui")
+        if not tui:
+            print("woltspace-tui is not installed in this image - "
+                  "needs a rebuild, or `npm install -g @woltspace/tui`",
                   file=sys.stderr)
             sys.exit(1)
-        os.execvp("node", ["node", tui])
+        os.execvp(tui, [tui, *argv[1:]])
 
     # Friendly hint: lifecycle verbs belong to the host launcher, not in-container.
     if argv and argv[0] in LIFECYCLE:

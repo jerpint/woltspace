@@ -1,9 +1,27 @@
 #!/bin/bash
-# Start services. Runs as node (dropped from root by entrypoint.sh via gosu).
+# Container boot. Runs as node (dropped from root by entrypoint.sh via gosu).
+#
+# Everything here is container-specific by design; the platform itself is the
+# installed `woltspace` package, and this script ends by handing the process
+# over to it. What stays:
+#
+#   - env/secret ingestion and the derived values bash needs (entrypoint_setup)
+#   - harness credential/trust seeding into the per-wolt HOMEs (containers seed
+#     creds; native reuses the host login and never copies anything)
+#   - the workspace dirs the mount shadows at build time
+#   - WOLTSPACE_ISOLATION=external + WOLTSPACE_ENTRYPOINT, the two facts only
+#     this process knows
+#   - the tmux window the human lands in
+#
+# What left: skills sync, hook normalization, session adoption and the tunnel
+# all belong to the control plane now, which does them the same way natively.
 set -e
 
-WOLTSPACE_DIR="/workspace/woltspace"  # mount point inside the container
-WOLTS_DIR="${WOLTS_DIR:-/workspace/wolts}"
+WOLTSPACE_DIR="${WOLTSPACE_DIR:-/workspace/woltspace}"   # the installed bundle
+WOLTS_DIR="${WOLTS_DIR:-/workspace/wolts}"               # the one host mount
+# The packaged CLI, by absolute path: `woltspace` on PATH is deliberately the
+# in-container HTTP client (container/bin/woltspace), a different program.
+WOLTSPACE_CLI="${WOLTSPACE_CLI:-/usr/local/bin/woltspace}"
 
 # ── Python setup (config, identity, JSON files, env resolution) ──
 ENV_FILE=$(mktemp /tmp/entrypoint-env.XXXXXX)
@@ -61,69 +79,54 @@ else
 fi
 
 # ── Services ──
-
-# The TUI pty service is a supervised connector of the control plane now
-# (`tui` in /health) — it starts and stops with `woltspace serve` below.
-
-# Python server through the same packaged supervisor used natively.
-(cd "$WOLTSPACE_DIR" && uv run --project "$WOLTSPACE_DIR" woltspace serve \
-  --host 0.0.0.0 --port 7777 --isolation external --reload --no-doctor) &
-SERVER_PID=$!
-
-sleep 2
-
-# Tunnel — managed by FastAPI server, just wait for the URL and print it
-# Lodge scaffold handles .space/platform — just ensure per-wolt state dir
-[ -n "$WOLT_NAME" ] && mkdir -p "$WOLT_DIR/.state"
-TUNNEL_STATE_FILE="$WOLTS_DIR/.space/platform/tunnel.json"
-if [ "${WOLTSPACE_PUBLIC_TUNNEL:-true}" = "true" ]; then
-  echo "waiting for tunnel..."
-  for i in $(seq 1 45); do
-    if [ -f "$TUNNEL_STATE_FILE" ]; then
-      URL=$(grep -o '"url": *"[^"]*"' "$TUNNEL_STATE_FILE" 2>/dev/null | sed 's/"url": *"\(.*\)"/\1/')
-      [ -n "$URL" ] && echo "tunnel ready: $URL" && break
-    fi
-    sleep 1
-  done
-  if [ ! -f "$TUNNEL_STATE_FILE" ]; then
-    echo "warning: tunnel URL not available yet (server will keep trying)"
-  fi
-else
-  echo "tunnel disabled — access via http://localhost:7777"
-fi
-
-# Telegram bot — started by the control-plane supervisor as a ChannelConnector,
-# not here. ENABLE_TELEGRAM_BOT/TELEGRAM_BOT_TOKEN are already in this process's
-# environment, and this script exports WOLTSPACE_ENTRYPOINT, so `woltspace serve`
-# above resolves and supervises it.
-# Inspect it with:  curl -s localhost:7777/health | jq .connectors
+#
+# Telegram, the wolf scheduler and the TUI pty bridge are all supervised
+# children of the control plane (ChannelConnector — see src/woltspace/channels.py).
+# Starting any of them here would give the colony two of it: two pollers on one
+# bot token, two schedulers firing every cron twice.
+# Inspect them with:  curl -s localhost:7777/health | jq .connectors
 # (NOT `woltspace status` — inside the container that name resolves to
 #  container/bin/woltspace, a different CLI which knows nothing about connectors.)
 
-# Slack bot
+# Slack has no connector yet, so it is still launched by hand. It runs on the
+# installed interpreter, which owns slack-bolt via the `connectors` extra.
 if [ "${ENABLE_SLACK_BOT:-}" = "true" ] && [ -n "${SLACK_BOT_TOKEN:-}" ] && [ -n "${SLACK_APP_TOKEN:-}" ]; then
   echo "starting slack bot ($SLACK_BOT_DIR, dev=$DEV_MODE)..."
   if [ "$DEV_MODE" = "true" ]; then
-    (cd "$SLACK_BOT_DIR" && BOT_ADAPTER=slack uv run --project bot watchfiles --filter python "python -m $SLACK_BOT_MODULE" bot/) &
+    (cd "$SLACK_BOT_DIR" && BOT_ADAPTER=slack PYTHONPATH="$SLACK_BOT_DIR:$PYTHONPATH" \
+      woltspace-python -m watchfiles --filter python "python -m $SLACK_BOT_MODULE" bot/) &
   else
-    (cd "$SLACK_BOT_DIR" && BOT_ADAPTER=slack uv run --project bot python -m "$SLACK_BOT_MODULE") &
+    (cd "$SLACK_BOT_DIR" && BOT_ADAPTER=slack PYTHONPATH="$SLACK_BOT_DIR:$PYTHONPATH" \
+      woltspace-python -m "$SLACK_BOT_MODULE") &
   fi
   disown
 fi
 
-# Vulture reaper
-echo "starting vulture reaper..."
-(cd "$WOLTSPACE_DIR/container" && python3 -m creatures.vulture --once) 2>/dev/null || true
-(cd "$WOLTSPACE_DIR/container" && python3 -m creatures.vulture) &
-disown
+# Tunnel — owned by the control plane (server-side lifecycle). Report the URL
+# once it lands, in the background, so the log still shows it without anyone
+# standing between docker and the supervisor.
+TUNNEL_STATE_FILE="$WOLTS_DIR/.space/platform/tunnel.json"
+if [ "${WOLTSPACE_PUBLIC_TUNNEL:-true}" = "true" ]; then
+  (
+    echo "waiting for tunnel..."
+    for _ in $(seq 1 45); do
+      if [ -f "$TUNNEL_STATE_FILE" ]; then
+        URL=$(grep -o '"url": *"[^"]*"' "$TUNNEL_STATE_FILE" 2>/dev/null | sed 's/"url": *"\(.*\)"/\1/')
+        [ -n "$URL" ] && echo "tunnel ready: $URL" && exit 0
+      fi
+      sleep 1
+    done
+    echo "warning: tunnel URL not available yet (server will keep trying)"
+  ) &
+  disown
+else
+  echo "tunnel disabled — access via http://localhost:7777"
+fi
 
-# Wolf scheduler — started by the control-plane supervisor as a WolfConnector,
-# not here (see src/woltspace/channels.py). Launching it here too would give the
-# colony two schedulers and fire every cron twice.
-# Inspect it with:  curl -s localhost:7777/health | jq .connectors
-
-# ── Cleanup ──
-cleanup() { kill $SERVER_PID 2>/dev/null; }
-trap cleanup EXIT
-wait -n
-cleanup
+# ── The control plane ──
+# The same supervisor a native user runs, from the same installed package.
+# `exec` so it becomes the container's foreground process: docker's SIGTERM
+# reaches the owner of the connectors instead of a shell that would leave them
+# orphaned.
+exec "$WOLTSPACE_CLI" serve \
+  --host 0.0.0.0 --port 7777 --isolation external --no-doctor

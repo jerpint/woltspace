@@ -1,4 +1,4 @@
-#!/workspace/woltspace/container/bot/.venv/bin/python3
+#!/usr/bin/env woltspace-python
 """Print a short-lived GitHub App installation token to stdout.
 
 Usage:
@@ -6,6 +6,11 @@ Usage:
 
 Reads GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, and GITHUB_APP_PRIVATE_KEY
 from the environment (or from WOLT_DIR/.env).
+
+Runs on `woltspace-python` — the interpreter woltspace itself is installed on,
+which owns PyJWT through the `connectors` extra. The image puts it on PATH; the
+old shebang pointed at a per-project .venv that the packaged install has not
+had since the container stopped baking the source tree.
 
 Token is valid for ~1 hour. Generate a fresh one each time.
 """
