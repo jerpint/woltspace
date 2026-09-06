@@ -162,7 +162,7 @@ RUN set -eux; \
     test -d "$BUNDLE/container/lib"; \
     ln -s "$BUNDLE" /workspace/woltspace; \
     ln -s "${UV_TOOL_DIR}/woltspace/bin/python" /usr/local/bin/woltspace-python; \
-    chmod +x "$BUNDLE"/container/bin/* "$BUNDLE"/container/entrypoint.sh "$BUNDLE"/container/start.sh; \
+    chmod +x "$BUNDLE"/container/bin/*; \
     /usr/local/bin/woltspace --version | awk '{print $2}' > "$BUNDLE/.version"; \
     ln -sf /workspace/woltspace/container/config/tmux.conf /etc/tmux.conf
 
@@ -178,4 +178,7 @@ WORKDIR /workspace
 
 EXPOSE 7777
 
-ENTRYPOINT ["/workspace/woltspace/container/entrypoint.sh"]
+# Boot is a subcommand of the installed CLI — the wheel ships no bash. The
+# command runs twice: once as root (uid/gid fixup) and once as node, which it
+# re-execs itself as through gosu.
+ENTRYPOINT ["/usr/local/bin/woltspace", "container-entrypoint"]

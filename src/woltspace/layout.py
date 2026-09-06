@@ -36,6 +36,24 @@ def dialable_host(host: str) -> str:
     return f"[{raw}]" if ":" in raw else raw
 
 
+def resolve_install_root(raw: str | None = None) -> Path:
+    """Honour a WOLTSPACE_DIR that still names an install; ignore a corpse.
+
+    The env override is a supported knob, but it is also the most
+    self-perpetuating way to break a machine: tmux hands its server environment
+    to every session it spawns, so a value that once pointed at a since-deleted
+    or emptied install root outlives the install and gets inherited back on
+    every restart. When the pointed-at directory no longer looks like a
+    platform, the install we are actually running from wins — a fresh install
+    can then heal a host without anyone hunting down the stale export.
+    """
+    if raw:
+        candidate = Path(raw).expanduser().resolve(strict=False)
+        if looks_like_install_root(candidate):
+            return candidate
+    return Path(installation_root()).expanduser().resolve(strict=False)
+
+
 def looks_like_install_root(path: Path) -> bool:
     """Whether a path still holds a platform runtime.
 
@@ -93,30 +111,13 @@ class RuntimeLayout:
             isolation=resolved_isolation,
         )
 
-    @staticmethod
-    def _resolve_install_root(raw: str | None) -> Path:
-        """Honour a WOLTSPACE_DIR that still names an install; ignore a corpse.
-
-        The env override is a supported knob, but it is also the most
-        self-perpetuating way to break a machine: tmux hands its server
-        environment to every session it spawns, so a value that once pointed at
-        a since-deleted or emptied install root outlives the install and gets
-        inherited back on every restart. When the pointed-at directory no
-        longer looks like a platform, the install we are actually running from
-        wins — a fresh install can then heal a host without anyone hunting
-        down the stale export.
-        """
-        if raw:
-            candidate = Path(raw).expanduser().resolve(strict=False)
-            if looks_like_install_root(candidate):
-                return candidate
-        return Path(installation_root()).expanduser().resolve(strict=False)
+    _resolve_install_root = staticmethod(resolve_install_root)
 
     @property
     def is_entrypoint(self) -> bool:
         """True only when this process was launched as the platform entrypoint.
 
-        `container/start.sh` sets WOLTSPACE_ENTRYPOINT; `woltspace start` sets it
+        `woltspace container-entrypoint` sets WOLTSPACE_ENTRYPOINT; `woltspace start` sets it
         for the control plane it launches. Anything else — a `serve` typed in a
         worktree, a smoke test, an agent poking around — is a *guest*, and a
         guest must not take over the data root, the tunnel, or the bot token

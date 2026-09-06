@@ -56,17 +56,26 @@ def _doctor(args) -> int:
     return 0 if doctor_ok(checks) else 1
 
 
-def _serve(args) -> int:
-    isolation = args.isolation or os.environ.get("WOLTSPACE_ISOLATION", "host")
+def serve(
+    *, host: str = "", port: int = 0, isolation: str = "", reload: bool = False,
+    no_doctor: bool = False, log_level: str = "info", instance_id: str = "",
+) -> int:
+    """Run the control plane in this process.
+
+    Shared by the `serve` subcommand and `container-entrypoint`: the container
+    runs the supervisor in-process rather than exec'ing a second CLI, so both
+    reach it through the same call instead of a shell command line.
+    """
+    isolation = isolation or os.environ.get("WOLTSPACE_ISOLATION", "host")
     layout = RuntimeLayout.from_env(isolation=isolation)
     layout = RuntimeLayout(
         layout.wolts_dir,
         layout.install_root,
-        args.host or layout.host,
-        args.port or layout.port,
+        host or layout.host,
+        port or layout.port,
         layout.isolation,
     )
-    if not args.no_doctor and _doctor(argparse.Namespace(
+    if not no_doctor and _doctor(argparse.Namespace(
         isolation=layout.isolation,
         host=layout.host,
         port=layout.port,
@@ -80,9 +89,9 @@ def _serve(args) -> int:
 
     supervisor = Supervisor(
         layout,
-        reload=args.reload,
-        log_level=args.log_level,
-        **({"instance_id": args.instance_id} if args.instance_id else {}),
+        reload=reload,
+        log_level=log_level,
+        **({"instance_id": instance_id} if instance_id else {}),
     )
     try:
         supervisor.run()
@@ -90,6 +99,20 @@ def _serve(args) -> int:
         print(f"serve failed: {exc}")
         return 1
     return 0
+
+
+def _serve(args) -> int:
+    return serve(
+        host=args.host, port=args.port, isolation=args.isolation,
+        reload=args.reload, no_doctor=args.no_doctor,
+        log_level=args.log_level, instance_id=args.instance_id,
+    )
+
+
+def _container_entrypoint(args) -> int:
+    from .container_entrypoint import main as boot
+
+    return boot()
 
 
 def _status(args) -> int:
@@ -263,6 +286,12 @@ def build_parser() -> argparse.ArgumentParser:
     stop.add_argument("--timeout", type=float, default=10.0)
     stop.add_argument("--json", action="store_true")
     stop.set_defaults(func=_stop)
+
+    entrypoint = sub.add_parser(
+        "container-entrypoint",
+        help="container boot — root phase + setup + serve; not for interactive use",
+    )
+    entrypoint.set_defaults(func=_container_entrypoint)
 
     tui = sub.add_parser("tui", help="open the exactly compatible terminal UI")
     tui.add_argument("--dry-run", action="store_true", help="show resolution without launching")

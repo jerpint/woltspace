@@ -357,7 +357,7 @@ class TuiBridgeConnector:
     """The browser terminal's pty bridge.
 
     `server/app.py` proxies every `/tui` websocket to a small Node service that
-    attaches to the session's tmux through node-pty. `container/start.sh` used
+    attaches to the session's tmux through node-pty. The container's boot used
     to launch it by hand, so a native control plane served a split view whose
     terminal pane could only ever say "Connection refused". Now it is a
     supervised child like Telegram: starts with the API, restarts if it dies,
@@ -438,7 +438,7 @@ class WolfConnector:
 
     `container/creatures/wolf.py` reads every wolt's `wolf.json`, fires the
     schedules that are due, and posts them back to this very control plane.
-    `container/start.sh` launched it by hand, so a colony run natively simply
+    The container's boot launched it by hand, so a colony run natively simply
     had no scheduler — every cron silently stopped firing. It is a supervised
     child now: starts with the API, restarts if it dies, shows up in
     `woltspace status`, and goes down with `woltspace stop`.
