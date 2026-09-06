@@ -18,13 +18,15 @@ Two delivery paths run side by side while the colony ratchets over:
       <platform skills dir>`, feeds codex and opencode the whole tree (both
       recurse; claude does not, so the link is invisible to it). Claude gets
       the same directory as an installed plugin, which namespaces every skill
-      under `woltspace:`. codex and opencode read the source directly, so an
-      upgrade reaches them the moment the platform updates; claude caches the
-      plugin per commit sha under `.claude/plugins/cache/`, so a platform
-      upgrade reaches an already-installed wolt only after a
-      `claude plugin update woltspace@woltspace` (the update skill's job, not
-      this module's — re-installing on every boot would cost a subprocess per
-      wolt per boot).
+      under `woltspace:`. All three harnesses read skill CONTENT live from
+      the source directory, so an upgrade needs no re-delivery: codex and
+      opencode follow the symlink, and claude — although the install drops a
+      copy under `.claude/plugins/cache/` — demonstrably serves a
+      directory-marketplace plugin's skills from the source path (probed by
+      editing a skill after install: the next session quotes the edit while
+      the cache copy still lacks it). The cache copy is dead weight for
+      skills; only if a future plugin ships components beyond skills should
+      `claude plugin update` after upgrades be revisited.
 
 The second path is a ratchet, not a flag day: a wolt opts in, the stale copies
 the first path owns are swept out for it, and everyone else is untouched.
