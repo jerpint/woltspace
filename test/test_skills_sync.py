@@ -4,6 +4,7 @@ Usage: uv run pytest test/test_skills_sync.py -v
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -583,19 +584,23 @@ class TestPluginSettings:
 
         def fake_run(cmd, **kwargs):
             calls.append((cmd, kwargs.get("env", {}).get("HOME")))
-            installed = wolt / ".claude" / "plugins" / "installed_plugins.json"
-            installed.parent.mkdir(parents=True, exist_ok=True)
-            installed.write_text(json.dumps({"woltspace": ["woltspace"]}))
+            if cmd[2] == "install":
+                installed = wolt / ".claude" / "plugins" / "installed_plugins.json"
+                installed.parent.mkdir(parents=True, exist_ok=True)
+                installed.write_text(json.dumps(
+                    {"version": 2, "plugins": {"woltspace@woltspace": [{}]}}))
             return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
         with patch.object(skills_sync.subprocess, "run", fake_run):
             ensure_platform_skills(wolt, "claude", source)
             ensure_platform_skills(wolt, "claude", source)
 
-        assert len(calls) == 1
-        cmd, home = calls[0]
-        assert cmd == ["claude", "plugin", "install", "woltspace@woltspace"]
-        assert home == str(wolt)
+        # marketplace add THEN install, once — the second pass sees it installed
+        assert [c[0][2:] for c in calls] == [
+            ["marketplace", "add", str(source)],
+            ["install", "woltspace@woltspace"],
+        ]
+        assert {c[1] for c in calls} == {str(wolt)}
 
     def test_a_failed_install_warns_instead_of_crashing(self, tmp_path, capsys):
         source = tmp_path / "install" / "container" / "skills"
@@ -604,7 +609,7 @@ class TestPluginSettings:
 
         with patch.object(skills_sync.subprocess, "run",
                           side_effect=FileNotFoundError("no claude here")):
-            ensure_platform_skills(wolt, "claude", source)
+            assert ensure_platform_skills(wolt, "claude", source) is False
 
         assert "no claude here" in capsys.readouterr().err
         assert (wolt / ".claude" / "skills" / "woltspace").is_symlink()
@@ -675,3 +680,309 @@ class TestDeliveryDispatch:
             sync_all_wolt_skills(install_root, wolts_dir)
 
         install.assert_not_called()   # codex needs no plugin install
+
+
+# ---------------------------------------------------------------------------
+# Review findings — each of these failed before the fix it guards
+# ---------------------------------------------------------------------------
+
+class TestTheCopyPathKeepsItsContract:
+    """A copy-path wolt's skills must be named `woltspace-<name>` BOTH ways:
+    claude reads the directory, codex reads the frontmatter."""
+
+    def test_the_staged_copy_gets_its_frontmatter_renamed_too(self, tmp_path):
+        install_root = tmp_path / "install"
+        _platform_skill(install_root, "notify",
+                        "---\nname: notify\ndescription: ping\n---\n\nbody\n")
+        skills = tmp_path / "wolts" / "nw" / ".claude" / "skills"
+        skills.mkdir(parents=True)
+
+        sync_all_wolt_skills(install_root, tmp_path / "wolts")
+
+        delivered = (skills / "woltspace-notify" / "SKILL.md").read_text()
+        assert "name: woltspace-notify" in delivered
+        assert "name: notify\n" not in delivered
+        assert "description: ping" in delivered   # nothing else disturbed
+        assert "body" in delivered
+
+    def test_the_source_frontmatter_is_never_touched(self, tmp_path):
+        install_root = tmp_path / "install"
+        source = _platform_skill(install_root, "notify", "---\nname: notify\n---\nb\n")
+        skills = tmp_path / "wolts" / "nw" / ".claude" / "skills"
+        skills.mkdir(parents=True)
+
+        sync_all_wolt_skills(install_root, tmp_path / "wolts")
+
+        assert (source / "SKILL.md").read_text() == "---\nname: notify\n---\nb\n"
+
+    def test_a_skill_md_without_frontmatter_survives_intact(self, tmp_path):
+        install_root = tmp_path / "install"
+        _platform_skill(install_root, "notify", "no frontmatter here\n")
+        skills = tmp_path / "wolts" / "nw" / ".claude" / "skills"
+        skills.mkdir(parents=True)
+
+        sync_all_wolt_skills(install_root, tmp_path / "wolts")
+
+        assert (skills / "woltspace-notify" / "SKILL.md").read_text() == \
+            "no frontmatter here\n"
+
+
+class TestACrashBetweenTheTwoRenamesIsRecoverable:
+    """The retired name has to be the one recovery looks for, or an interrupted
+    swap loses the skill outright: the old copy is stranded under a name the
+    recovery pass never scans, and the staged replacement is deleted as an
+    assumed-incomplete copy."""
+
+    def test_the_old_copy_is_restored_after_a_crash_mid_swap(self, tmp_path):
+        install_root = tmp_path / "install"
+        source = _platform_skill(install_root, "notify", "fresh\n")
+        skills = tmp_path / "wolts" / "nw" / ".claude" / "skills"
+        (skills / "woltspace-notify").mkdir(parents=True)
+        (skills / "woltspace-notify" / "SKILL.md").write_text("old but real\n")
+
+        real_replace = skills_sync.os.replace
+        calls = {"n": 0}
+
+        def die_after_retiring(src, dst):
+            calls["n"] += 1
+            real_replace(src, dst)
+            if calls["n"] == 1:          # the live -> retired rename landed
+                raise KeyboardInterrupt("killed mid-swap")
+
+        with patch.object(skills_sync.os, "replace", die_after_retiring):
+            with pytest.raises(KeyboardInterrupt):
+                sync_wolt_skills([source], skills)
+
+        # The skill is gone from its real name — exactly the crash window.
+        assert not (skills / "woltspace-notify").exists()
+
+        # The next sync must find it and put it back before doing anything else.
+        _recover_interrupted_sync(skills)
+        assert (skills / "woltspace-notify" / "SKILL.md").read_text() == "old but real\n"
+
+    def test_the_retired_name_is_the_delivered_name(self, tmp_path):
+        install_root = tmp_path / "install"
+        source = _platform_skill(install_root, "notify", "fresh\n")
+        skills = tmp_path / "wolts" / "nw" / ".claude" / "skills"
+        (skills / "woltspace-notify").mkdir(parents=True)
+
+        seen = []
+        real_replace = skills_sync.os.replace
+
+        def watch(src, dst):
+            seen.append(Path(dst).name)
+            return real_replace(src, dst)
+
+        with patch.object(skills_sync.os, "replace", watch):
+            sync_wolt_skills([source], skills)
+
+        retired = [n for n in seen if n.endswith(skills_sync.RETIRED_SUFFIX)]
+        assert retired == [f".woltspace-notify{skills_sync.RETIRED_SUFFIX}"]
+        # ...which is exactly what the recovery pass scans for.
+        assert all(n.startswith(".woltspace-") for n in retired)
+
+
+class TestPluginInstallSequence:
+    """A fresh HOME needs `marketplace add` before `install`: settings.json
+    declares a marketplace for a future session, it does not register one for
+    the CLI. Reproduced live 2026-09-06 — install alone exits 1 with
+    'Plugin "woltspace" not found in marketplace "woltspace"'."""
+
+    def test_the_marketplace_is_added_before_the_install(self, tmp_path):
+        source = tmp_path / "install" / "container" / "skills"
+        source.mkdir(parents=True)
+        wolt = _plugin_wolt(tmp_path, harness="claude")
+        order = []
+
+        def fake_run(cmd, **kwargs):
+            order.append(cmd[2])
+            if cmd[2] == "install":
+                # ...and it only succeeds because the add came first
+                assert "marketplace" in order
+                installed = wolt / ".claude" / "plugins" / "installed_plugins.json"
+                installed.parent.mkdir(parents=True, exist_ok=True)
+                installed.write_text(json.dumps(
+                    {"version": 2, "plugins": {"woltspace@woltspace": [{}]}}))
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+        with patch.object(skills_sync.subprocess, "run", fake_run):
+            assert ensure_platform_skills(wolt, "claude", source) is True
+
+        assert order == ["marketplace", "install"]
+
+    def test_a_failed_marketplace_add_never_reaches_the_install(self, tmp_path):
+        source = tmp_path / "install" / "container" / "skills"
+        source.mkdir(parents=True)
+        wolt = _plugin_wolt(tmp_path, harness="claude")
+        order = []
+
+        def fake_run(cmd, **kwargs):
+            order.append(cmd[2])
+            return type("R", (), {"returncode": 1, "stdout": "",
+                                  "stderr": "no such directory"})()
+
+        with patch.object(skills_sync.subprocess, "run", fake_run):
+            assert ensure_platform_skills(wolt, "claude", source) is False
+
+        assert order == ["marketplace"]
+
+    def test_an_unconfirmed_delivery_keeps_the_copy_synced_skills(self, tmp_path):
+        """The blocker: install fails, the failure is only a warning, and the
+        sweep runs anyway — leaving the wolt with no platform skills at all."""
+        source = tmp_path / "install" / "container" / "skills"
+        (source / "notify").mkdir(parents=True)
+        wolt = _plugin_wolt(tmp_path, harness="claude")
+        copies = wolt / ".claude" / "skills" / "woltspace-notify"
+        copies.mkdir()
+        (copies / "SKILL.md").write_text("the only copy this wolt has\n")
+
+        def fails(cmd, **kwargs):
+            return type("R", (), {
+                "returncode": 1, "stdout": "",
+                "stderr": 'Plugin "woltspace" not found in marketplace "woltspace".',
+            })()
+
+        with patch.object(skills_sync.subprocess, "run", fails):
+            assert ensure_platform_skills(wolt, "claude", source) is False
+
+        assert (copies / "SKILL.md").read_text() == "the only copy this wolt has\n"
+
+    def test_a_confirmed_delivery_does_sweep(self, tmp_path):
+        source = tmp_path / "install" / "container" / "skills"
+        (source / "notify").mkdir(parents=True)
+        wolt = _plugin_wolt(tmp_path, harness="claude")
+        (wolt / ".claude" / "skills" / "woltspace-notify").mkdir()
+        installed = wolt / ".claude" / "plugins" / "installed_plugins.json"
+        installed.parent.mkdir(parents=True)
+        installed.write_text(json.dumps(
+            {"version": 2, "plugins": {"woltspace@woltspace": [{}]}}))
+
+        with patch.object(skills_sync.subprocess, "run") as run:
+            assert ensure_platform_skills(wolt, "claude", source) is True
+
+        run.assert_not_called()   # already installed
+        assert not (wolt / ".claude" / "skills" / "woltspace-notify").exists()
+
+    def test_the_live_installed_plugins_schema_is_understood(self, tmp_path):
+        """Verified against claude's actual file, 2026-09-06."""
+        wolt = _plugin_wolt(tmp_path)
+        installed = wolt / ".claude" / "plugins" / "installed_plugins.json"
+        installed.parent.mkdir(parents=True)
+        installed.write_text(json.dumps({
+            "version": 2,
+            "plugins": {"woltspace@woltspace": [
+                {"scope": "user", "version": "1079dcf80016"},
+            ]},
+        }))
+        assert skills_sync._plugin_installed(wolt) is True
+
+    def test_an_absent_or_unrelated_file_reads_as_not_installed(self, tmp_path):
+        wolt = _plugin_wolt(tmp_path)
+        assert skills_sync._plugin_installed(wolt) is False
+        installed = wolt / ".claude" / "plugins" / "installed_plugins.json"
+        installed.parent.mkdir(parents=True)
+        installed.write_text(json.dumps({"version": 2, "plugins": {"other@x": []}}))
+        assert skills_sync._plugin_installed(wolt) is False
+
+
+class TestTheAgentsBridge:
+    """codex reads $HOME/.agents/skills. The wcodex wrapper lays that bridge in
+    container mode and exits early in host mode, so native codex wolts had
+    nothing."""
+
+    def test_delivery_lays_the_bridge(self, tmp_path):
+        source = tmp_path / "install" / "container" / "skills"
+        source.mkdir(parents=True)
+        wolt = _plugin_wolt(tmp_path, harness="codex")
+
+        ensure_platform_skills(wolt, "codex", source)
+
+        link = wolt / ".agents" / "skills"
+        assert link.is_symlink()
+        # Same shape wcodex writes — relative, so the wolt dir stays movable.
+        assert os.readlink(link) == "../.claude/skills"
+        assert link.resolve() == (wolt / ".claude" / "skills").resolve()
+
+    def test_the_bridge_reaches_the_platform_tree(self, tmp_path):
+        source = tmp_path / "install" / "container" / "skills"
+        (source / "notify").mkdir(parents=True)
+        (source / "notify" / "SKILL.md").write_text("hi\n")
+        wolt = _plugin_wolt(tmp_path, harness="codex")
+
+        ensure_platform_skills(wolt, "codex", source)
+
+        reached = wolt / ".agents" / "skills" / "woltspace" / "notify" / "SKILL.md"
+        assert reached.read_text() == "hi\n"
+
+    def test_it_is_idempotent(self, tmp_path):
+        source = tmp_path / "install" / "container" / "skills"
+        source.mkdir(parents=True)
+        wolt = _plugin_wolt(tmp_path, harness="codex")
+
+        ensure_platform_skills(wolt, "codex", source)
+        ensure_platform_skills(wolt, "codex", source)
+
+        assert os.readlink(wolt / ".agents" / "skills") == "../.claude/skills"
+
+    def test_a_real_directory_there_is_never_deleted(self, tmp_path):
+        source = tmp_path / "install" / "container" / "skills"
+        source.mkdir(parents=True)
+        wolt = _plugin_wolt(tmp_path, harness="codex")
+        theirs = wolt / ".agents" / "skills"
+        theirs.mkdir(parents=True)
+        (theirs / "keep.md").write_text("mine\n")
+
+        ensure_platform_skills(wolt, "codex", source)
+
+        assert (theirs / "keep.md").read_text() == "mine\n"
+
+
+class TestSettingsAreReallyPreserved:
+    def test_a_non_object_at_one_of_our_keys_blocks_the_write(self, tmp_path, capsys):
+        """The docstring promises unrelated keys survive. Overwriting a list at
+        enabledPlugins would destroy exactly what we promised to keep."""
+        source = tmp_path / "install" / "container" / "skills"
+        source.mkdir(parents=True)
+        wolt = _plugin_wolt(tmp_path, harness="claude")
+        settings = wolt / ".claude" / "settings.json"
+        original = json.dumps({"enabledPlugins": ["theirs@theirs"], "keep": 1})
+        settings.write_text(original)
+
+        with patch.object(skills_sync, "_install_plugin", return_value=True):
+            ensure_platform_skills(wolt, "claude", source)
+
+        assert settings.read_text() == original
+        assert "enabledPlugins" in capsys.readouterr().err
+
+    def test_a_nested_non_object_also_blocks_the_write(self, tmp_path):
+        source = tmp_path / "install" / "container" / "skills"
+        source.mkdir(parents=True)
+        wolt = _plugin_wolt(tmp_path, harness="claude")
+        settings = wolt / ".claude" / "settings.json"
+        original = json.dumps({"extraKnownMarketplaces": {"woltspace": "a string"}})
+        settings.write_text(original)
+
+        with patch.object(skills_sync, "_install_plugin", return_value=True):
+            ensure_platform_skills(wolt, "claude", source)
+
+        assert settings.read_text() == original
+
+
+class TestWoltSkillsDelivery:
+    def test_the_opt_in_is_explicit_and_everything_else_is_the_copy_path(self, tmp_path):
+        from skills_sync import wolt_skills_delivery
+
+        plugin = _plugin_wolt(tmp_path, name="ratcheted")
+        assert wolt_skills_delivery(plugin) == "plugin"
+
+        old = tmp_path / "wolts" / "old"
+        (old / "wolt").mkdir(parents=True)
+        (old / "wolt" / "wolt.json").write_text(json.dumps({"name": "old"}))
+        assert wolt_skills_delivery(old) == "copy"
+
+        broken = tmp_path / "wolts" / "broken"
+        (broken / "wolt").mkdir(parents=True)
+        (broken / "wolt" / "wolt.json").write_text("{not json")
+        assert wolt_skills_delivery(broken) == "copy"
+
+        assert wolt_skills_delivery(tmp_path / "wolts" / "nothing-here") == "copy"

@@ -45,6 +45,7 @@ from harnesses import (
     PLATFORM_SKILL_NAMESPACE,
     LEGACY_PLATFORM_SKILL_PREFIX,
 )
+from skills_sync import wolt_skills_delivery
 from sites import ensure_site
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget, normalize_session_target
@@ -849,43 +850,57 @@ def _wolt_boot_context(data: dict) -> str:
     )
 
 
-def _invokes_platform_skill(prompt: str, harness: str) -> bool:
-    """True if `prompt` already asks for a skill, so start-chat must not follow.
+# A platform-skill invocation, in either delivered spelling: a sigil at the
+# start of a word, then the woltspace namespace (`woltspace:`) or the
+# copy-sync prefix (`woltspace-`), then a name. Anchored on the sigil so a
+# prompt that merely TALKS about /woltspace-notify or the woltspace: namespace
+# — "rename woltspace-notify", "the woltspace: prefix" — is prose, not a call,
+# and still gets its start-chat.
+_PLATFORM_INVOKE_RE = re.compile(r"(?:^|\s)[/@]woltspace[-:]\S")
 
-    Three shapes are live at once. The namespaced one claude and codex get from
-    the plugin (`/woltspace:notify`, `@woltspace:notify`); the pre-plugin
-    copy-sync spelling an un-ratcheted wolt still uses (`/woltspace-notify`);
-    and opencode's, which namespaces nothing — a platform skill there answers
-    to its bare name, so the only thing that marks an invocation is the leading
-    sigil. The first two are matched anywhere in the prompt, because a caller
-    may hand us either regardless of harness.
+
+def _invokes_platform_skill(prompt: str, harness: str, delivery: str) -> bool:
+    """True if `prompt` already opens a skill, so start-chat must not follow.
+
+    Both delivered spellings are recognized regardless of this wolt's own —
+    a caller may hand us either, and appending start-chat to a prompt that is
+    already a skill call is the failure worth avoiding.
+
+    opencode under plugin delivery is the one shape with nothing to anchor on:
+    its platform skills answer to bare names, so the sigil alone marks a call,
+    and only when the prompt opens with it.
     """
-    if (f"{PLATFORM_SKILL_NAMESPACE}:" in prompt
-            or LEGACY_PLATFORM_SKILL_PREFIX in prompt):
+    if _PLATFORM_INVOKE_RE.search(prompt):
         return True
-    sigil = platform_skill_invoke(harness, "").strip()
-    return bool(sigil) and prompt.lstrip().startswith(sigil)
+    sigil = platform_skill_invoke(harness, "", delivery=delivery).strip()
+    if not sigil or sigil.endswith((f"{PLATFORM_SKILL_NAMESPACE}:",
+                                    LEGACY_PLATFORM_SKILL_PREFIX)):
+        # A namespaced spelling — the regex above is the whole answer.
+        return False
+    return prompt.lstrip().startswith(sigil)
 
 
 def _assemble_spawn_prompt(data: dict, prompt: str, harness: str) -> str:
     """Full opening prompt: user's task + adapter context + start-chat invocation.
 
-    Skips start-chat if the prompt already invokes a woltspace skill
-    (e.g. create-wolt). The invocation syntax comes from the harness table —
-    claude spells a platform skill /woltspace:name, codex @woltspace:name.
+    Skips start-chat if the prompt already invokes a skill (e.g. create-wolt).
+    How start-chat is spelled follows how this wolt's skills were DELIVERED,
+    not just which harness it runs: a copy-path wolt has `woltspace-start-chat`
+    sitting in its skills directory and has never heard of `woltspace:`.
     """
     context = _adapter_context(data)
     boot_context = _wolt_boot_context(data)
     prefix = f"{boot_context}\n\n" if boot_context else ""
-    if _invokes_platform_skill(prompt, harness):
+    wolt = data.get("wolt") or "wolt"
+    delivery = wolt_skills_delivery(WOLTS_DIR / wolt)
+    if _invokes_platform_skill(prompt, harness, delivery):
         return f"{prefix}{prompt}{context}"
     adapter = data.get("adapter") or "lodge"
-    wolt = data.get("wolt") or "wolt"
     # The template may carry a leading space of its own (opencode's palette
     # defuse). Landing mid-prompt it is redundant, not harmful — strip it here
     # so the assembled prompt reads cleanly, and leave the guard to the one
     # place it matters: a prompt that OPENS with the invocation.
-    start_chat = platform_skill_invoke(harness, "start-chat").strip()
+    start_chat = platform_skill_invoke(harness, "start-chat", delivery=delivery).strip()
     return f"{prefix}{prompt}{context} {start_chat} {adapter} {wolt}"
 
 

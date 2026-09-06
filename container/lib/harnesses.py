@@ -27,6 +27,7 @@ from pathlib import Path
 
 from session_runtime import RuntimeHandle, get_runtime
 from execution_policy import policy_mode
+from skills_sync import COPY_DELIVERY, PLUGIN_DELIVERY
 
 DEFAULT_HARNESS = "claude"
 
@@ -433,25 +434,43 @@ def get_harness(name: str | None) -> dict:
     return HARNESSES[resolve_harness(name)]
 
 
-# The namespace every platform skill answers to once it is delivered as the
+# The namespace a platform skill answers to once it is delivered as the
 # woltspace plugin (claude) or as a `.claude-plugin/`-rooted tree (codex).
 PLATFORM_SKILL_NAMESPACE = "woltspace"
 
-# The pre-plugin spelling: skills were copied in under a `woltspace-` prefix and
-# invoked as `/woltspace-<name>`. Still live for un-ratcheted wolts, so anything
-# that recognizes a platform-skill invocation has to know both shapes.
+# The copy-sync spelling: skills are copied into the wolt under a `woltspace-`
+# prefix and invoked by that whole name (`/woltspace-notify` on claude,
+# `@woltspace-notify` on codex). Most of the colony is still here.
 LEGACY_PLATFORM_SKILL_PREFIX = "woltspace-"
 
 
-def platform_skill_invoke(harness: str | None, name: str) -> str:
-    """How this harness invokes a *platform* skill named `name`.
+def platform_skill_invoke(harness: str | None, name: str,
+                          delivery: str = COPY_DELIVERY) -> str:
+    """How this harness invokes the platform skill `name` for THIS wolt.
 
-    Most harnesses namespace platform skills by their delivery mechanism, so
-    they are not spelled the way a wolt's own skills are — `skill_invoke` stays
-    the template for those. opencode is the exception (bare names; see its table
-    entry). Harnesses with no platform template fall back to `skill_invoke`.
+    The spelling is a function of two things, and getting either wrong hands a
+    session a skill that does not exist:
+
+      delivery == "copy" (the default, and most of the colony)
+          The skill is a copy sitting in the wolt's own skills directory under
+          `woltspace-<name>`, with no namespace of its own. It is invoked the
+          way any wolt-owned skill is — `skill_invoke` — with that full
+          prefixed name.
+
+      delivery == "plugin"
+          claude and codex namespace it: `/woltspace:<name>`, `@woltspace:<name>`.
+          opencode namespaces nothing and answers to the bare name (see its
+          table entry). A harness with no platform template falls back to
+          `skill_invoke` with the bare name.
+
+    `COPY_DELIVERY` is the default on purpose: a caller with no wolt in hand
+    cannot know, and the un-ratcheted spelling is the one almost every wolt
+    currently understands.
     """
     entry = get_harness(harness)
+    if delivery != PLUGIN_DELIVERY:
+        return entry["skill_invoke"].format(
+            name=f"{LEGACY_PLATFORM_SKILL_PREFIX}{name}")
     template = entry.get("platform_skill_invoke") or entry["skill_invoke"]
     return template.format(name=name)
 

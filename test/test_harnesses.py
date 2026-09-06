@@ -252,6 +252,106 @@ class TestCodexDiscovery:
         assert _codex_discover_session_id(data, since=0) is None
 
 
+class TestDeliveryAwareInvocation:
+    """The spelling of a platform skill in a prompt follows how that wolt's
+    skills were DELIVERED. Emitting the plugin spelling at a copy-path wolt
+    names a skill it does not have."""
+
+    @pytest.fixture(autouse=True)
+    def _wolt(self, tmp_path, monkeypatch, fake_runtime):
+        import sessions
+        import sites
+        import paths
+
+        monkeypatch.setattr(sessions, "WOLTS_DIR", tmp_path)
+        monkeypatch.setattr(sessions, "RUN_SESSION_SCRIPT", Path("/bin/true"))
+        monkeypatch.setattr(sites, "WOLTS_DIR", tmp_path)
+        monkeypatch.setattr(paths, "WOLTS_DIR", tmp_path)
+        self.wolts_dir = tmp_path
+
+    def _wolt_json(self, harness, **extra):
+        wolt_dir = self.wolts_dir / "testwolt" / "wolt"
+        wolt_dir.mkdir(parents=True, exist_ok=True)
+        (wolt_dir / "site").mkdir(exist_ok=True)
+        (wolt_dir / "site" / "index.html").write_text("<h1>t</h1>")
+        (wolt_dir / "wolt.json").write_text(json.dumps(
+            {"name": "testwolt", "type": "raccoon", "harness": harness, **extra}))
+
+    def _boot_prompt(self, harness, prompt="hello", **extra):
+        from sessions import start_session, prepare_session_command, SessionRegistry
+        self._wolt_json(harness, **extra)
+        result = start_session(wolt="testwolt", prompt=prompt,
+                               routing={"adapter": "lodge"})
+        cmd = prepare_session_command(result["name"], "spawn", prompt)
+        stamped = SessionRegistry(self.wolts_dir).get(
+            result["name"], check_alive=False).get("pending_boot_prompt", "")
+        return stamped or cmd
+
+    def test_a_copy_path_claude_wolt_gets_the_legacy_name(self):
+        assert "/woltspace-start-chat" in self._boot_prompt("claude")
+
+    def test_a_copy_path_codex_wolt_gets_the_legacy_name(self):
+        """Pre-change codex emitted `@woltspace-start-chat`. Nothing about the
+        rename changed what a copy-path wolt has on disk."""
+        assert "@woltspace-start-chat" in self._boot_prompt("codex")
+
+    def test_a_plugin_claude_wolt_gets_the_namespaced_name(self):
+        out = self._boot_prompt("claude", skills_delivery="plugin")
+        assert "/woltspace:start-chat" in out
+        assert "/woltspace-start-chat" not in out
+
+    def test_a_plugin_codex_wolt_gets_the_namespaced_name(self):
+        out = self._boot_prompt("codex", skills_delivery="plugin")
+        assert "@woltspace:start-chat" in out
+        assert "@woltspace-start-chat" not in out
+
+    def test_an_unreadable_wolt_json_falls_back_to_the_legacy_name(self):
+        """Guessing "plugin" wrongly hands a session a name that isn't there;
+        guessing "copy" wrongly is where the whole colony already lives."""
+        from sessions import start_session, prepare_session_command, SessionRegistry
+        self._wolt_json("claude")
+        result = start_session(wolt="testwolt", prompt="hello",
+                               routing={"adapter": "lodge"})
+        (self.wolts_dir / "testwolt" / "wolt" / "wolt.json").write_text("{broken")
+        prepare_session_command(result["name"], "spawn", "hello")
+        # claude takes the prompt on the CLI, so read it back off the command
+        cmd = prepare_session_command(result["name"], "spawn", "hello")
+        assert "/woltspace-start-chat" in cmd
+
+
+class TestPlatformInvocationDetection:
+    """start-chat is skipped when a prompt already opens a skill — and only
+    then. A prompt that merely mentions one is prose."""
+
+    def _skips_start_chat(self, prompt, harness="claude", delivery="copy"):
+        from sessions import _invokes_platform_skill
+        return _invokes_platform_skill(prompt, harness, delivery)
+
+    def test_a_real_invocation_is_recognised_in_either_spelling(self):
+        assert self._skips_start_chat("/woltspace-create-wolt")
+        assert self._skips_start_chat("/woltspace:create-wolt")
+        assert self._skips_start_chat("@woltspace-create-wolt", harness="codex")
+        assert self._skips_start_chat("please run /woltspace:notify now")
+
+    def test_merely_talking_about_a_skill_is_not_an_invocation(self):
+        """A substring match here silently costs the session its boot context."""
+        assert not self._skips_start_chat("rename woltspace-notify to notify")
+        assert not self._skips_start_chat("the woltspace: namespace is new")
+        assert not self._skips_start_chat("grep for woltspace-* in the repo")
+
+    def test_a_bare_sigil_only_counts_where_names_are_bare(self):
+        # opencode + plugin delivery is the one shape with bare names
+        assert self._skips_start_chat("/create-wolt", harness="opencode",
+                                      delivery="plugin")
+        assert self._skips_start_chat(" /create-wolt", harness="opencode",
+                                      delivery="plugin")
+        # everywhere else a bare "/foo" is a wolt-owned skill, not ours to read
+        assert not self._skips_start_chat("/create-wolt", harness="claude",
+                                          delivery="plugin")
+        assert not self._skips_start_chat("/create-wolt", harness="opencode",
+                                          delivery="copy")
+
+
 class TestTableShape:
     """Every harness entry must carry the keys the platform relies on."""
 
@@ -266,20 +366,39 @@ class TestTableShape:
             missing = self.REQUIRED_KEYS - set(entry)
             assert not missing, f"harness '{name}' missing keys: {missing}"
 
-    def test_platform_skills_are_spelled_per_harness(self):
+    def test_plugin_delivery_is_spelled_per_harness(self):
         """claude and codex namespace platform skills under `woltspace:` — one
         via the plugin, one via the .claude-plugin-rooted tree. opencode
         (benched live, 1.18.29) namespaces nothing: bare frontmatter names,
         with the leading space that keeps "/" out of the command palette."""
         from harnesses import platform_skill_invoke
-        assert platform_skill_invoke("claude", "start-chat") == "/woltspace:start-chat"
-        assert platform_skill_invoke("codex", "start-chat") == "@woltspace:start-chat"
-        assert platform_skill_invoke("opencode", "start-chat") == " /start-chat"
+        for harness, expected in (("claude", "/woltspace:start-chat"),
+                                  ("codex", "@woltspace:start-chat"),
+                                  ("opencode", " /start-chat")):
+            assert platform_skill_invoke(
+                harness, "start-chat", delivery="plugin") == expected
+
+    def test_copy_delivery_keeps_the_prefixed_name_every_wolt_already_has(self):
+        """The un-ratcheted colony's skills are literally named
+        `woltspace-start-chat`. Spelling them the plugin way names a skill that
+        is not there."""
+        from harnesses import platform_skill_invoke
+        for harness, expected in (("claude", "/woltspace-start-chat"),
+                                  ("codex", "@woltspace-start-chat"),
+                                  ("opencode", "/woltspace-start-chat")):
+            assert platform_skill_invoke(
+                harness, "start-chat", delivery="copy") == expected
+
+    def test_copy_delivery_is_the_default(self):
+        """A caller with no wolt in hand must not guess "plugin"."""
+        from harnesses import platform_skill_invoke
+        assert platform_skill_invoke("claude", "start-chat") == "/woltspace-start-chat"
 
     def test_a_harness_without_a_platform_template_falls_back(self, monkeypatch):
         from harnesses import HARNESSES as table, platform_skill_invoke
         monkeypatch.delitem(table["claude"], "platform_skill_invoke")
-        assert platform_skill_invoke("claude", "viewport") == "/viewport"
+        assert platform_skill_invoke(
+            "claude", "viewport", delivery="plugin") == "/viewport"
 
     def test_default_exists(self):
         assert DEFAULT_HARNESS in HARNESSES
@@ -510,14 +629,32 @@ class TestBootPromptViaPaste:
         assert self._session_data(result["name"])["pending_boot_prompt"] == "/woltspace:create-wolt"
 
     def test_a_bare_name_invocation_still_suppresses_start_chat(self):
-        """opencode names platform skills bare, so there is no `woltspace:` to
-        look for — a prompt that opens with the sigil is the invocation."""
+        """Under plugin delivery opencode names platform skills bare, so there
+        is no `woltspace:` to look for — a prompt that opens with the sigil is
+        the invocation."""
         from sessions import prepare_session_command
+        wolt_json = self.wolts_dir / "testwolt" / "wolt" / "wolt.json"
+        wolt_json.write_text(json.dumps({
+            "name": "testwolt", "type": "raccoon", "harness": "opencode",
+            "skills_delivery": "plugin",
+        }))
         result = self._start()
         prepare_session_command(result["name"], "spawn", " /create-wolt")
         stamped = self._session_data(result["name"])["pending_boot_prompt"]
         assert stamped == " /create-wolt"
         assert "start-chat" not in stamped
+
+    def test_a_plugin_wolt_gets_the_bare_start_chat(self):
+        from sessions import prepare_session_command
+        wolt_json = self.wolts_dir / "testwolt" / "wolt" / "wolt.json"
+        wolt_json.write_text(json.dumps({
+            "name": "testwolt", "type": "raccoon", "harness": "opencode",
+            "skills_delivery": "plugin",
+        }))
+        result = self._start()
+        prepare_session_command(result["name"], "spawn", "hello world")
+        assert self._session_data(result["name"])["pending_boot_prompt"] == \
+            "hello world /start-chat lodge testwolt"
 
     def test_resume_stamps_pending_and_omits_prompt(self):
         from sessions import prepare_session_command
@@ -594,7 +731,7 @@ class TestBootPromptViaPaste:
         monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
 
         assert deliver_boot_prompt(name, timeout=5) is True
-        assert pasted == ["hello world /start-chat lodge testwolt"]
+        assert pasted == ["hello world /woltspace-start-chat lodge testwolt"]
         # Three visible-pane reads: stale frame, repaint, real marker.
         assert [start for _, start in self.runtime.captures] == [None, None, None]
 
@@ -618,7 +755,7 @@ class TestBootPromptViaPaste:
         monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
 
         assert deliver_boot_prompt(name, timeout=5) is True
-        assert pasted == ["hello world /start-chat lodge testwolt"]
+        assert pasted == ["hello world /woltspace-start-chat lodge testwolt"]
 
     def test_concurrent_deliver_does_not_double_paste(self, monkeypatch):
         """A second poller that runs after the stamp is claimed must bail."""
@@ -638,7 +775,7 @@ class TestBootPromptViaPaste:
         # A second poller (marker present from the start) finds the stamp gone
         self.runtime.feed_capture("ctrl+p commands")
         assert deliver_boot_prompt(name, timeout=5) is False
-        assert pasted == ["hello world /start-chat lodge testwolt"]  # only once
+        assert pasted == ["hello world /woltspace-start-chat lodge testwolt"]  # only once
 
     def test_resume_with_prompt_merges_preserved_stamp(self):
         """A boot prompt stranded by a boot-time crash must not be clobbered
@@ -689,7 +826,7 @@ class TestBootPromptViaPaste:
 
         assert deliver_boot_prompt(name, timeout=2) is False
         # Stamp survives (full assembled prompt — start-chat appended)
-        assert self._session_data(name)["pending_boot_prompt"] == "hello /start-chat lodge testwolt"
+        assert self._session_data(name)["pending_boot_prompt"] == "hello /woltspace-start-chat lodge testwolt"
 
     def test_deliver_noop_for_claude_sessions(self):
         from sessions import deliver_boot_prompt, prepare_session_command

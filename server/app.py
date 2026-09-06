@@ -67,6 +67,7 @@ from session_targets import SessionTarget
 from execution_policy import AutoGrantStore, POLICY_VERSION
 from runtime_context import RuntimeContext
 from harness_auth import auth_source, claude_authenticated
+from skills_sync import wolt_skills_delivery
 from harnesses import (
     harness_metadata,
     get_default_harness,
@@ -777,9 +778,12 @@ async def session_new_create(request: Request):
         # Step 2: Start a session — full isolation, site auto-start, viewport
         result = start_session(
             wolt=wolt_name,
-            # Platform skills are namespaced by their delivery mechanism and
-            # spelled per harness — ask, don't assume claude.
-            prompt=platform_skill_invoke(wolt_harness(wolt_name), "create-wolt"),
+            # How create-wolt is spelled follows this wolt's harness AND its
+            # skills delivery — a freshly scaffolded wolt is on the copy path,
+            # so it gets the copy path's names.
+            prompt=platform_skill_invoke(
+                wolt_harness(wolt_name), "create-wolt",
+                delivery=wolt_skills_delivery(WOLTS_DIR / wolt_name)),
             workdir=body.get("workdir"),
             execution_policy=body.get("execution_policy"),
             routing={"adapter": "lodge"},

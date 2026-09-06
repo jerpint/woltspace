@@ -449,8 +449,12 @@ def open_tmux_window(wolt_name: str, wolt_dir: Path, wolts_dir: Path) -> None:
         first_run.unlink()
         sweep_node_modules(wolts_dir)
         preload_viewport(wolt_name, wolt_dir / ".state")
+        # A wolt that has just been scaffolded is on the copy delivery — its
+        # skills directory holds `woltspace-create-wolt`, not a plugin. The
+        # copy-path spelling is also the safe default anywhere the delivery
+        # cannot be read: it is what every un-ratcheted wolt understands.
         send_keys("export WOLT_SESSION=main && wclaude --dangerously-skip-permissions "
-                  "/woltspace:create-wolt")
+                  "/woltspace-create-wolt")
     else:
         # TODO: replace with a /wake skill — check for recent sessions, offer
         # resume or fresh start

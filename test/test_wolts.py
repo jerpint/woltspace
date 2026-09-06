@@ -562,7 +562,9 @@ class TestDeriveWorktuiSkill:
 
         synced = (wolts / "alpha" / ".claude" / "skills" / "woltspace-worktui" / "SKILL.md").read_text()
         assert "wt spawn / wt send / wt read / wt kill" in synced
-        assert "name: worktui\n" in synced
+        # Delivered under the copy path, so both of its names — directory and
+        # frontmatter — are the prefixed one. claude reads one, codex the other.
+        assert "name: woltspace-worktui\n" in synced
 
 
 class TestWorktuiCommand:

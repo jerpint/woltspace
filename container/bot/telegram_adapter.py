@@ -39,6 +39,7 @@ from paths import space_dir
 from session_runtime import RuntimeHandle, get_runtime
 from sessions import resolve_active_session, wolt_harness
 from harnesses import platform_skill_invoke
+from skills_sync import wolt_skills_delivery
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -301,8 +302,12 @@ async def _notify_switch(update: Update, old_state: dict, new_wolt: str, new_ses
 
 
 def _start_chat_prompt(wolt: str) -> str:
-    """The bare boot prompt: start-chat, spelled for the wolt's own engine."""
-    return f"{platform_skill_invoke(wolt_harness(wolt), 'start-chat')} telegram {wolt}"
+    """The bare boot prompt: start-chat, spelled for this wolt's engine AND
+    its skills delivery — the two together decide the name."""
+    invoke = platform_skill_invoke(
+        wolt_harness(wolt), "start-chat",
+        delivery=wolt_skills_delivery(_WOLTS_DIR / wolt))
+    return f"{invoke} telegram {wolt}"
 
 
 def _spawn_session(wolt: str, chat_id: int, prompt: str = "") -> dict:

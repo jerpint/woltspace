@@ -18,8 +18,13 @@ Two delivery paths run side by side while the colony ratchets over:
       <platform skills dir>`, feeds codex and opencode the whole tree (both
       recurse; claude does not, so the link is invisible to it). Claude gets
       the same directory as an installed plugin, which namespaces every skill
-      under `woltspace:`. Skill content is read live from the source, so an
-      upgrade needs no re-delivery at all.
+      under `woltspace:`. codex and opencode read the source directly, so an
+      upgrade reaches them the moment the platform updates; claude caches the
+      plugin per commit sha under `.claude/plugins/cache/`, so a platform
+      upgrade reaches an already-installed wolt only after a
+      `claude plugin update woltspace@woltspace` (the update skill's job, not
+      this module's — re-installing on every boot would cost a subprocess per
+      wolt per boot).
 
 The second path is a ratchet, not a flag day: a wolt opts in, the stale copies
 the first path owns are swept out for it, and everyone else is untouched.
@@ -60,8 +65,12 @@ PLUGIN_ID = f"{PLUGIN_NAME}@{PLUGIN_MARKETPLACE}"
 PLUGIN_LINK_NAME = "woltspace"
 
 # wolt.json opt-in. Anything else (including absent) means the copy sync.
+# These names are the contract between delivery and invocation: how a skill is
+# spelled in a prompt follows how it was delivered, so harnesses.py reads them
+# from here rather than keeping a second copy.
 DELIVERY_KEY = "skills_delivery"
 PLUGIN_DELIVERY = "plugin"
+COPY_DELIVERY = "copy"
 
 # `claude plugin install` reaches the network for a remote marketplace; ours is
 # a local directory, so this is generous rather than tight.
@@ -155,6 +164,32 @@ def _delivered_name(source: Path) -> str:
     return f"{LEGACY_PREFIX}{source.name}"
 
 
+def _rename_frontmatter(skill_md: Path, name: str) -> None:
+    """Rewrite a staged SKILL.md's frontmatter `name:` to its delivered name.
+
+    Claude reads a skill's name off its directory; codex reads it off the
+    frontmatter. Renaming the directory alone therefore delivers a skill that
+    two harnesses in the same colony call two different things — a copy-path
+    codex wolt would see `notify` where its boot prompt says
+    `woltspace-notify`. Only ever touches a staged copy, never a source.
+    """
+    try:
+        text = skill_md.read_text()
+    except OSError:
+        return
+    if not text.startswith("---"):
+        return
+    head, sep, body = text[3:].partition("---")
+    if not sep:
+        return
+    head = "\n".join(f"name: {name}" if line.strip().startswith("name:") else line
+                     for line in head.splitlines())
+    try:
+        skill_md.write_text(f"---{head}\n---{body}")
+    except OSError as exc:
+        _warn(f"could not rename {skill_md}: {exc}")
+
+
 def _stage_path(skills_dir: Path, name: str) -> Path:
     return skills_dir / f".{name}{STAGE_SUFFIX}"
 
@@ -197,9 +232,15 @@ def _swap_in_skill(source: Path, skills_dir: Path):
     staged = _stage_path(skills_dir, name)
     shutil.rmtree(staged, ignore_errors=True)
     shutil.copytree(source, staged)
+    _rename_frontmatter(staged / "SKILL.md", name)
 
     if live.exists():
-        retired = _retired_path(skills_dir, source.name)
+        # The retired name must be the DELIVERED name: `_recover_interrupted_sync`
+        # only looks for its own leftovers, and it knows them by that name. Retire
+        # under anything else and a crash between the two renames strands the old
+        # copy where recovery cannot see it — while recovery deletes the staged
+        # replacement, because a staging dir is always assumed incomplete.
+        retired = _retired_path(skills_dir, name)
         shutil.rmtree(retired, ignore_errors=True)
         os.replace(live, retired)
         os.replace(staged, live)
@@ -269,11 +310,27 @@ def _ensure_symlink(link: Path, target: Path) -> bool:
     return True
 
 
-def _deep_merge(base: dict, overlay: dict) -> dict:
-    """Overlay onto base, recursing into dicts. Unrelated keys survive."""
+class _MergeConflict(Exception):
+    """A key we need to write into holds something that is not an object."""
+
+
+def _deep_merge(base: dict, overlay: dict, path: str = "") -> dict:
+    """Overlay onto base, recursing into dicts. Unrelated keys survive.
+
+    "Survive" is the whole promise, so a collision is a refusal rather than an
+    overwrite: if we need `enabledPlugins` to be an object and this wolt has a
+    list there, replacing it silently destroys settings we were supposed to
+    preserve. Raises `_MergeConflict`; the caller leaves the file alone.
+    """
     for key, value in overlay.items():
-        if isinstance(value, dict) and isinstance(base.get(key), dict):
-            _deep_merge(base[key], value)
+        here = f"{path}.{key}" if path else key
+        if isinstance(value, dict):
+            existing = base.get(key)
+            if existing is None:
+                base[key] = {}
+            elif not isinstance(existing, dict):
+                raise _MergeConflict(here)
+            _deep_merge(base[key], value, here)
         else:
             base[key] = value
     return base
@@ -299,14 +356,18 @@ def _merge_plugin_settings(claude_dir: Path, source_dir: Path) -> None:
             _warn(f"{settings_path} is not an object — not touching it")
             return
 
-    _deep_merge(settings, {
-        "extraKnownMarketplaces": {
-            PLUGIN_MARKETPLACE: {
-                "source": {"source": "directory", "path": str(source_dir)},
+    try:
+        _deep_merge(settings, {
+            "extraKnownMarketplaces": {
+                PLUGIN_MARKETPLACE: {
+                    "source": {"source": "directory", "path": str(source_dir)},
+                },
             },
-        },
-        "enabledPlugins": {PLUGIN_ID: True},
-    })
+            "enabledPlugins": {PLUGIN_ID: True},
+        })
+    except _MergeConflict as clash:
+        _warn(f"{settings_path} holds a non-object at {clash} — not touching it")
+        return
     claude_dir.mkdir(parents=True, exist_ok=True)
     tmp = settings_path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(settings, indent=2) + "\n")
@@ -319,9 +380,11 @@ def _plugin_installed(home: Path) -> bool:
     Settings alone lag a session behind — the install command is what makes
     the plugin live immediately — so this is the check that decides whether to
     spend a subprocess. The installed-plugins file has carried both a flat
-    `<plugin>@<marketplace>` key and a marketplace → plugins mapping; accept
-    either, and treat anything unreadable as "not installed" (a redundant
-    install is cheap, a missing one costs the wolt every platform skill).
+    `<plugin>@<marketplace>` key and a marketplace → plugins mapping; the
+    current one (schema version 2, verified live 2026-09-06) nests the flat key
+    under "plugins". Accept all three, and treat anything unreadable as "not
+    installed" — a redundant install is cheap and idempotent, a missing one
+    costs the wolt every platform skill.
     """
     path = home / ".claude" / "plugins" / "installed_plugins.json"
     try:
@@ -330,6 +393,10 @@ def _plugin_installed(home: Path) -> bool:
         return False
     if not isinstance(data, dict):
         return False
+    # {"version": 2, "plugins": {"woltspace@woltspace": [...]}} — the live shape
+    nested = data.get("plugins")
+    if isinstance(nested, dict) and PLUGIN_ID in nested:
+        return True
     if PLUGIN_ID in data:
         return True
     entry = data.get(PLUGIN_MARKETPLACE)
@@ -338,28 +405,53 @@ def _plugin_installed(home: Path) -> bool:
     return False
 
 
-def _install_plugin(home: Path) -> None:
-    """Run `claude plugin install` under this wolt's HOME.
+def _claude_plugin(home: Path, *args: str) -> tuple[bool, str]:
+    """Run one `claude plugin ...` under this wolt's HOME.
 
-    Failure is a warning, never an exception: this runs inside boot, and a
-    colony that will not start because one wolt's claude binary is missing is
-    a far worse outcome than a wolt whose plugin lands on the next pass.
+    Returns (ok, last line of output). Failure is never an exception: this runs
+    inside boot, and a colony that will not start because one wolt's claude
+    binary is missing is a far worse outcome than a wolt whose plugin lands on
+    the next pass.
     """
     env = dict(os.environ)
     env["HOME"] = str(home)
     try:
         proc = subprocess.run(
-            ["claude", "plugin", "install", PLUGIN_ID],
+            ["claude", "plugin", *args],
             env=env, cwd=str(home), capture_output=True, text=True,
             timeout=PLUGIN_INSTALL_TIMEOUT,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        _warn(f"could not install {PLUGIN_ID} for {home}: {exc}")
-        return
-    if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip().splitlines()
-        _warn(f"{PLUGIN_ID} install failed for {home}: "
-              f"{detail[-1] if detail else f'exit {proc.returncode}'}")
+        return False, str(exc)
+    detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+    return proc.returncode == 0, (detail[-1] if detail else f"exit {proc.returncode}")
+
+
+def _install_plugin(home: Path, source_dir: Path) -> bool:
+    """Register the marketplace, then install the plugin. Returns delivered?
+
+    The marketplace add is not optional and not a belt-and-braces extra.
+    Writing `extraKnownMarketplaces` into settings.json declares the
+    marketplace for a future *session*; it does not register it for the CLI, so
+    `claude plugin install woltspace@woltspace` in a fresh HOME fails with
+    `Plugin "woltspace" not found in marketplace "woltspace"` (reproduced live,
+    2026-09-06). `marketplace add` is what puts it on disk. Both commands are
+    idempotent — a second run reports "already on disk" / "already installed"
+    and exits 0.
+
+    The answer comes from re-reading the installed-plugins file rather than
+    from the exit code, because the caller uses it to decide whether it is safe
+    to delete this wolt's copy-synced skills. Only a plugin that is actually
+    there earns that.
+    """
+    ok, detail = _claude_plugin(home, "marketplace", "add", str(source_dir))
+    if not ok:
+        _warn(f"could not add the {PLUGIN_MARKETPLACE} marketplace for {home}: {detail}")
+        return False
+    ok, detail = _claude_plugin(home, "install", PLUGIN_ID)
+    if not ok:
+        _warn(f"{PLUGIN_ID} install failed for {home}: {detail}")
+    return _plugin_installed(home)
 
 
 def _remove_stale_copies(skills_dir: Path, sources: list[Path]) -> None:
@@ -375,31 +467,62 @@ def _remove_stale_copies(skills_dir: Path, sources: list[Path]) -> None:
             shutil.rmtree(stale, ignore_errors=True)
 
 
-def ensure_platform_skills(wolt_dir: Path, harness: str, source_dir: Path) -> None:
+def _ensure_agents_bridge(wolt_dir: Path) -> None:
+    """Point codex's skills directory at the wolt's claude one.
+
+    codex reads `$HOME/.agents/skills`, not `.claude/skills`. In container mode
+    the wcodex wrapper lays this bridge on every launch — but it exits early in
+    host isolation, so a native codex wolt never gets one and sees no skills at
+    all. Same shape wcodex writes (a relative link, so the wolt directory stays
+    movable), same real-directory guard: something that is not our symlink is
+    not ours to replace.
+    """
+    agents = wolt_dir / ".agents"
+    link = agents / "skills"
+    if link.is_symlink():
+        if Path(os.readlink(link)) == Path("../.claude/skills"):
+            return
+        link.unlink()
+    elif link.exists():
+        _warn(f"{link} exists and is not a symlink — leaving it alone")
+        return
+    agents.mkdir(parents=True, exist_ok=True)
+    os.symlink("../.claude/skills", link, target_is_directory=True)
+
+
+def ensure_platform_skills(wolt_dir: Path, harness: str, source_dir: Path) -> bool:
     """Deliver the platform skills to one wolt as a plugin, not as copies.
 
     The symlink is the whole delivery for codex and opencode: both recurse
-    through `~/.claude/skills`, including through a symlink, so one entry
+    through the skills directory, including through a symlink, so one entry
     hands them the entire tree — and claude, which does not recurse, never
     sees it. Claude is told about the same directory as a marketplace instead,
     and the plugin namespaces every skill under `woltspace:`.
 
-    Idempotent, and safe to run on every boot: content is read live from the
-    source, so an upgrade needs nothing here at all.
+    Returns whether delivery is confirmed. Nothing is swept out of the wolt's
+    skills directory unless it is: the copy-synced skills are the only ones a
+    wolt has until the plugin is genuinely in place, and deleting them on an
+    unconfirmed delivery leaves it with no platform skills at all.
+
+    Idempotent, and safe to run on every boot.
     """
     wolt_dir = Path(wolt_dir)
     source_dir = Path(source_dir)
     skills_dir = wolt_dir / ".claude" / "skills"
 
     if not _ensure_symlink(skills_dir / PLUGIN_LINK_NAME, source_dir):
-        return
+        return False
+    _ensure_agents_bridge(wolt_dir)
 
     if harness == "claude":
         _merge_plugin_settings(wolt_dir / ".claude", source_dir)
-        if not _plugin_installed(wolt_dir):
-            _install_plugin(wolt_dir)
+        if not _plugin_installed(wolt_dir) and not _install_plugin(wolt_dir, source_dir):
+            _warn(f"{PLUGIN_ID} is not installed for {wolt_dir} — "
+                  "keeping its copy-synced skills")
+            return False
 
     _remove_stale_copies(skills_dir, platform_skill_sources_of(source_dir))
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +543,21 @@ def _lodge_default_harness(wolts_dir: Path) -> str:
         return cfg.get("harness", {}).get("default") or "claude"
     except (json.JSONDecodeError, OSError, AttributeError):
         return "claude"
+
+
+def wolt_skills_delivery(wolt_dir: Path) -> str:
+    """Which delivery path this wolt is on: "plugin" or "copy".
+
+    The public answer to "how are this wolt's platform skills named?", which is
+    what every prompt-building caller actually needs. Anything but an explicit
+    opt-in is the copy path — an unreadable wolt.json, a missing one, a wolt
+    that predates the key. Guessing "plugin" for a wolt that is not on it hands
+    its session a skill name that does not exist; guessing "copy" wrongly is
+    the state the whole colony was in yesterday.
+    """
+    if _wolt_config(Path(wolt_dir)).get(DELIVERY_KEY) == PLUGIN_DELIVERY:
+        return PLUGIN_DELIVERY
+    return COPY_DELIVERY
 
 
 def _wolt_harness(config: dict, wolts_dir: Path) -> str:
@@ -458,7 +596,7 @@ def sync_all_wolt_skills(woltspace_dir: Path, wolts_dir: Path):
             continue
 
         config = _wolt_config(wolt)
-        if config.get(DELIVERY_KEY) == PLUGIN_DELIVERY:
+        if wolt_skills_delivery(wolt) == PLUGIN_DELIVERY:
             ensure_platform_skills(wolt, _wolt_harness(config, wolts_dir), source_dir)
         else:
             sync_wolt_skills(sources, skills_dir)
