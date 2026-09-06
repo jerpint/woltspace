@@ -319,9 +319,7 @@ def sync_claude_md_platform_section(wolts_dir: Path, woltspace_dir: Path):
     If no markers exist, prepends the platform section to the existing content.
     """
     # Import the canonical platform section from wolts.py
-    lib_dir = str(woltspace_dir / "container" / "lib")
-    if lib_dir not in sys.path:
-        sys.path.insert(0, lib_dir)
+    runtime_lib_on_path(woltspace_dir)
     try:
         from wolts import _platform_claude_md_section
         platform_block = _platform_claude_md_section()
@@ -399,6 +397,28 @@ def build_environment(
 # Phase 2 — node: tmux, services, tunnel
 # ---------------------------------------------------------------------------
 
+def runtime_lib_on_path(woltspace_dir: Path) -> None:
+    """Make the bundle's `container/lib` importable — the shared runtime code."""
+    lib_dir = str(Path(woltspace_dir) / "container" / "lib")
+    if lib_dir not in sys.path:
+        sys.path.insert(0, lib_dir)
+
+
+def claude_authenticated() -> bool:
+    """Whether the human's window will land on a prompt or on a login screen.
+
+    Deliberately not just "is there a credentials file": a colony handed a
+    `CLAUDE_CODE_OAUTH_TOKEN` is authenticated too, and greeting it with
+    `wclaude /login` invited the user to replace a working token with nothing.
+    The predicate is shared with the server (`/onboard-status`, the viewport's
+    onboarding fallback) so all three cannot drift apart again.
+    """
+    runtime_lib_on_path(resolve_install_root(os.environ.get("WOLTSPACE_DIR")))
+    from harness_auth import claude_authenticated as _authenticated
+
+    return _authenticated(HOME)
+
+
 def open_tmux_window(wolt_name: str, wolt_dir: Path, wolts_dir: Path) -> None:
     """The window the human lands in, and the greeting that belongs in it.
 
@@ -416,7 +436,7 @@ def open_tmux_window(wolt_name: str, wolt_dir: Path, wolts_dir: Path) -> None:
     )
     subprocess.run(["tmux", "set", "-g", "mouse", "on"], check=True)
 
-    has_auth = (HOME / ".claude" / ".credentials.json").is_file()
+    has_auth = claude_authenticated()
     first_run = HOME / ".claude" / ".first-run"
 
     if not wolt_name or not has_auth:

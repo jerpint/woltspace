@@ -50,6 +50,17 @@ def _port_available(host: str, port: int) -> bool:
         return False
 
 
+# Kept in step with `container/lib/harness_auth.py`, which the container boot
+# and the server share. Duplicated as a literal rather than imported: doctor
+# runs before any layout has put `container/lib` on the path.
+CLAUDE_TOKEN_VARS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
+
+
+def _claude_token_in_env() -> bool:
+    """Whether Claude Code would start logged in from the environment alone."""
+    return any((os.environ.get(name) or "").strip() for name in CLAUDE_TOKEN_VARS)
+
+
 def _auth_paths(home: Path) -> dict[str, Path]:
     codex_home = Path(os.environ.get("CODEX_HOME", home / ".codex"))
     xdg_data = Path(os.environ.get("XDG_DATA_HOME", home / ".local" / "share"))
@@ -359,6 +370,11 @@ def run_doctor(
     home = Path.home()
     auth = _auth_paths(home)
     authenticated = [name for name in installed if auth[name].is_file()]
+    # A token in the environment is auth too — Claude Code prefers it over the
+    # file. Reporting "no supported auth file detected" at a host that is in
+    # fact logged in sends people to re-run a login they do not need.
+    if "claude" in installed and "claude" not in authenticated and _claude_token_in_env():
+        authenticated.append("claude")
     checks.append(DoctorCheck(
         "host-auth",
         "pass" if authenticated else "warn",
