@@ -60,7 +60,7 @@ _sys.path.insert(0, str(WOLTSPACE_DIR / "container" / "lib"))
 from sessions import (
     resume_session, start_session, stop_session,
     deliver_message, resolve_active_session, format_spawned_prompt,
-    wolt_harness,
+    wolt_harness, ResumeUnavailable, ResumeFailed,
 )
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
@@ -1328,6 +1328,16 @@ async def session_resume(name: str, request: Request):
         result = resume_session(safe, prompt)
         print(f"[sessions/resume] {safe} → {result.get('status')}")
         return result
+    except ResumeUnavailable as e:
+        # Nothing to replay. Retrying will never help, so say so rather than
+        # letting the caller loop on a wake that cannot happen.
+        print(f"[sessions/resume] {safe} → unavailable: {e}")
+        return JSONResponse({"error": str(e)}, status_code=409)
+    except ResumeFailed as e:
+        # We relaunched and no agent came up. The message names what to look
+        # at; the TUI prints it verbatim instead of "won't stir".
+        print(f"[sessions/resume] {safe} → failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=502)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
     except Exception as e:

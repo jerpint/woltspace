@@ -26,6 +26,8 @@ from sessions import (
     build_session_command,
     get_tunnel_url,
     resume_session,
+    ResumeFailed,
+    ResumeUnavailable,
     session_name as _session_name,
     start_session,
     _tmux_capture,
@@ -534,7 +536,10 @@ def message_session(session_name: str, text: str) -> dict:
         result = resume_session(safe, text)
         _bot_log("message_sent", {"session": safe, "text": text[:200], "status": result.get("status")})
         return {"ok": True, "session": safe, "url": session_url, **result}
-    except ValueError as e:
+    except (ValueError, ResumeUnavailable, ResumeFailed) as e:
+        # The resume errors carry the actual reason (no transcript to replay,
+        # or the relaunched agent never came up). Pass it through verbatim so
+        # the wolt can tell the human what happened instead of "resume failed".
         return {"ok": False, "error": str(e), "session": safe, "url": session_url}
     except subprocess.CalledProcessError as e:
         return {"ok": False, "error": f"resume failed: {e}", "session": safe, "url": session_url}
