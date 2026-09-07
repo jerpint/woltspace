@@ -327,7 +327,7 @@ class TestDenReplySeam:
         )
         assert message in result.stdout
 
-    def test_message_session_function(self, tmux_session, tmp_path):
+    def test_message_session_function(self, tmux_session, tmp_path, agent_comes_up):
         """core.message_session should deliver to a live tmux session."""
         import sessions
         name = tmux_session
@@ -372,7 +372,13 @@ class TestFullRoundTrip:
     """End-to-end: create session → deliver message → notify back."""
 
     def test_create_session_and_verify_in_registry(self, tmux_session, shadow_wolt):
-        """Create a real tmux session and verify it appears in the live registry."""
+        """A real tmux session appears in the registry — and is honestly classified.
+
+        The session runs `sleep 60`, so it is exactly the shape of a husk: tmux
+        holds it, nothing in it is an agent. This used to assert alive is True,
+        which was the bug in miniature — enter attached to it, and IWCL pasted
+        into its shell.
+        """
         from sessions import SessionRegistry
         name = tmux_session
 
@@ -387,8 +393,12 @@ class TestFullRoundTrip:
 
         data = reg.get(name, check_alive=True)
         assert data is not None
-        assert data["alive"] is True
-        assert data["status"] == "running"
+        assert data["tmux_alive"] is True
+        assert data["agent_alive"] is False
+        assert data["alive"] is False
+        # And it stops claiming to be running, naming which half is missing.
+        assert data["status"] == "orphaned"
+        assert data["orphaned_reason"] == "agent-process-missing"
 
         # Cleanup registry
         reg.delete(name)
@@ -498,7 +508,7 @@ class TestRegressions:
         assert sentinel in adapter_src
 
     @requires_tmux
-    def test_revival_picks_correct_session(self, tmp_path):
+    def test_revival_picks_correct_session(self, tmp_path, agent_comes_up):
         """Reviving session A must --resume with A's UUID, not B's.
 
         UUID selection now happens in prepare_session_command (run by
@@ -564,8 +574,8 @@ class TestRegressions:
                 subprocess.run(["tmux", "kill-session", "-t", name], capture_output=True)
 
     @requires_tmux
-    def test_revival_uses_session_name_as_id(self, tmp_path):
-        """Session name IS the claude session ID — no UUID needed, no --continue fallback."""
+    def test_revival_uses_session_name_as_id(self, tmp_path, agent_comes_up):
+        """Revival resumes by the stored conversation id, never --continue."""
         from sessions import SessionRegistry, resume_session
         from session_runtime import TmuxSessionRuntime
         import sessions
@@ -579,7 +589,8 @@ class TestRegressions:
             (tmp_path / "neowolt" / "wolt").mkdir(parents=True, exist_ok=True)
             reg = SessionRegistry(tmp_path)
             reg.create(session_name, wolt="neowolt")
-            reg.update(session_name, wolt="neowolt", claude_session_id=session_name)
+            reg.update(session_name, wolt="neowolt",
+                       claude_session_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
             runtime = TmuxSessionRuntime()
             handle = runtime.spawn(session_name, str(tmp_path), "bash")
@@ -597,7 +608,7 @@ class TestRegressions:
             subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
 
     @requires_tmux
-    def test_revival_cds_into_session_wolt_dir(self, tmp_path):
+    def test_revival_cds_into_session_wolt_dir(self, tmp_path, agent_comes_up):
         """Reviving a session must run in the session's wolt dir, not the current dir.
 
         The cd now happens inside run-session.sh (from the registry 'dir'
@@ -619,7 +630,8 @@ class TestRegressions:
             (tmp_path / "uxwolt" / "wolt").mkdir(parents=True, exist_ok=True)
             reg = SessionRegistry(tmp_path)
             reg.create(session_name, wolt="uxwolt")
-            reg.update(session_name, wolt="uxwolt", claude_session_id=session_name, dir=wolt_dir)
+            reg.update(session_name, wolt="uxwolt", dir=wolt_dir,
+                       claude_session_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
             runtime = TmuxSessionRuntime()
             handle = runtime.spawn(session_name, wolt_dir, "bash")

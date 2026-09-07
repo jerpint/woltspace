@@ -291,3 +291,42 @@ class TestSystemPrompt:
         prompt = build_system_prompt()
         assert "raccoon" in prompt
         assert "beaver" in prompt
+
+
+class TestCheckSessionAgreesWithTheList:
+    """check_session and list_sessions used to disagree about the same session.
+
+    check_session asked get(check_alive=True) — tmux only — so a husk (tmux
+    session whose agent died, login shell still holding it open) came back
+    alive/running with pane output, while list_sessions called it orphaned.
+    Both read the registry's one liveness definition now.
+    """
+
+    def test_a_husk_reads_offline_with_a_resume_hint(self, tmp_path, monkeypatch):
+        import sessions
+        from bot import core
+
+        monkeypatch.setattr(sessions, "WOLTS_DIR", tmp_path)
+        reg = sessions.SessionRegistry(tmp_path)
+        (tmp_path / "neowolt" / "wolt").mkdir(parents=True)
+        reg.create("neowolt-husk-oak-aaaaaa", wolt="neowolt")
+        reg.update("neowolt-husk-oak-aaaaaa", wolt="neowolt", status="running")
+
+        monkeypatch.setattr(core, "registry", reg)
+        monkeypatch.setattr(sessions, "_tmux_alive", lambda s: True)
+        monkeypatch.setattr(sessions, "session_has_agent_process",
+                            lambda *a, **k: False)
+        # Pane capture must not even be attempted for a session with no agent.
+        monkeypatch.setattr(core, "_tmux_capture",
+                            lambda *a, **k: pytest.fail("captured an agentless pane"))
+        monkeypatch.setattr(core, "get_tunnel_url", lambda: "")
+        monkeypatch.setattr(core, "get_recent_sessions", lambda n=5, tag=None: [])
+
+        result = core.check_session("neowolt-husk-oak-aaaaaa")
+
+        assert result["alive"] is False
+        assert result["status"] == "orphaned"
+        assert result["tmux_alive"] is True
+        assert result["agent_alive"] is False
+        assert "resume it" in result["detail"]
+        assert result["output"] == ""

@@ -60,6 +60,22 @@ _SESSION_ENV_KEYS = (
 )
 
 
+def _comm_name(raw: str) -> str:
+    """Normalize one ps `comm` field to a bare executable name.
+
+    Harness process names are bare ("claude", "codex", "run-session.sh"), but
+    what `comm` reports is not: GNU ps gives the bare name, BSD ps (macOS
+    native) gives whatever argv[0] held — often an absolute path
+    (/usr/local/bin/claude), and a login shell reports itself as "-zsh". A
+    literal comparison against the raw field silently misses those, and a miss
+    reads as "no agent here".
+    """
+    name = raw.strip()
+    if name.startswith("-"):
+        name = name[1:]
+    return name.rsplit("/", 1)[-1]
+
+
 def _session_env_value(key: str, value: str) -> str:
     """Adjust one carried variable for the session that will inherit it.
 
@@ -141,6 +157,9 @@ class SessionRuntime(Protocol):
     def resolve_process_handle(
         self, handle: RuntimeHandle, process_names: Iterable[str]
     ) -> RuntimeHandle | None: ...
+    def sessions_with_process(
+        self, process_names: Iterable[str]
+    ) -> set[str] | None: ...
 
 
 class TmuxSessionRuntime:
@@ -493,11 +512,13 @@ class TmuxSessionRuntime:
         commands: dict[str, str] = {}
         stdout = result.stdout if isinstance(result.stdout, str) else ""
         for line in stdout.splitlines():
-            parts = line.split()
+            # split(None, 2) keeps a command containing a space in one piece;
+            # a plain split() would hand back its first word as the comm.
+            parts = line.split(None, 2)
             if len(parts) >= 3:
-                pid, parent, command = parts[0], parts[1], parts[2]
+                pid, parent = parts[0], parts[1]
                 children.setdefault(parent, []).append(pid)
-                commands[pid] = command
+                commands[pid] = _comm_name(parts[2])
         return children, commands
 
     def _panes_running(
@@ -588,6 +609,34 @@ class TmuxSessionRuntime:
         if matched is None:
             return None
         return bool(matched)
+
+    def sessions_with_process(
+        self,
+        process_names: Iterable[str],
+    ) -> set[str] | None:
+        """Every tmux session carrying a wanted process — in two calls total.
+
+        The batched form of `has_descendant_process`, for `list()`: one
+        `list-panes -a` plus one `ps` for the whole server instead of two
+        forks per session. Session-wide by construction (it never scopes to a
+        persisted pane), which is the right definition for liveness — a
+        vanished pane is not evidence the agent left the session.
+
+        None means undetermined (the process table could not be read), and is
+        never "nothing is alive": callers fall back to tmux presence rather
+        than declaring every session dead because ps hiccupped.
+        """
+        panes = self.all_panes()
+        if not panes:
+            # No tmux server, or no panes at all. Genuinely empty, not unknown.
+            return set()
+        table = self._process_table()
+        if table is None:
+            return None
+        return {
+            pane.session_name
+            for pane in self._panes_running(panes, process_names, table)
+        }
 
 
 # ---------------------------------------------------------------------------

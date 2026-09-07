@@ -6,7 +6,7 @@ import { Box, Text, useApp, useInput } from 'ink';
 import * as api from '../api.js';
 import { detachLabel } from '../attach.js';
 import { color, creatureGlyph, lore, age, clock } from '../theme.js';
-import { sessionPolicy, sessionWorkdir, spawnTarget } from '../session-view.js';
+import { agentAlive, inactiveCount, sessionPolicy, sessionWorkdir, spawnTarget } from '../session-view.js';
 import { createWoltAction, validateWoltName, woltTypes } from '../create-wolt.js';
 
 const h = React.createElement;
@@ -15,7 +15,8 @@ const userName = () =>
   process.env.WOLTSPACE_USER || process.env.HUMAN_NAME || os.userInfo().username || 'human';
 
 const sortSessions = (list) =>
-  [...list].sort((a, b) => (b.alive - a.alive) || (b.last_activity || 0) - (a.last_activity || 0));
+  [...list].sort((a, b) =>
+    (agentAlive(b) - agentAlive(a)) || (b.last_activity || 0) - (a.last_activity || 0));
 
 export default function App({ onAction, launchCwd = process.cwd() }) {
   const { exit } = useApp();
@@ -37,7 +38,8 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
   const [createTypeCursor, setCreateTypeCursor] = useState(0);
   const pendingG = useRef(false);
 
-  const view = sortSessions(sessions).filter((s) => showAll || s.alive);
+  const view = sortSessions(sessions).filter((s) => showAll || agentAlive(s));
+  const hidden = showAll ? 0 : inactiveCount(sessions);
   const selected = view[Math.min(cursor, view.length - 1)] || null;
   const needle = (mode === 'search' ? query : committed).toLowerCase();
   const isMatch = (s) =>
@@ -56,7 +58,7 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
       setFetchedAt(new Date());
       setError('');
       if (keepSlug) {
-        const v = sortSessions(list).filter((s) => showAll || s.alive);
+        const v = sortSessions(list).filter((s) => showAll || agentAlive(s));
         const i = v.findIndex((s) => s.name === keepSlug);
         if (i >= 0) setCursor(i);
       }
@@ -271,16 +273,19 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
       setCreateTypeCursor(0);
       setError('');
       setMode('create-name');
-    } else if (ch === 's' && selected?.alive) {
+    } else if (ch === 's' && agentAlive(selected)) {
       setInput('');
       setMode('send');
-    } else if (ch === 'x' && selected?.alive) {
+    } else if (ch === 'x' && (agentAlive(selected) || selected?.tmux_alive === true)) {
       setMode('confirm');
     } else if (key.return && selected) {
-      // Alive → straight into the pane. Offline → rouse it first (the server
-      // rebuilds tmux + restarts the agent with its harness's resume flavor).
+      // An agent in there → straight into the pane. No agent → rouse it first
+      // (the server rebuilds tmux if needed, clears out a husk that only holds
+      // a login shell, and restarts the agent with its harness's resume
+      // flavor). Keyed on the agent, not on tmux: a stale agentless tmux
+      // session used to read as alive here, and enter attached to the shell.
       onAction?.({
-        type: selected.alive ? 'attach' : 'resume',
+        type: agentAlive(selected) ? 'attach' : 'resume',
         slug: selected.name,
         isolation: capabilities?.isolation,
       });
@@ -303,7 +308,8 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
     return h(Box, { key: s.name, flexDirection: 'column' },
       h(Box, null,
         h(Text, { color: color.terra, bold: true }, sel ? '▸ ' : '  '),
-        h(Text, { color: s.alive ? color.green : color.dim }, s.alive ? '● ' : '○ '),
+        h(Text, { color: agentAlive(s) ? color.green : color.dim },
+          agentAlive(s) ? '● ' : s.tmux_alive ? '◐ ' : '○ '),
         h(Text, null, creatureGlyph(s.creature) + ' '),
         h(Text, {
           bold: sel,
@@ -318,10 +324,17 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
     );
   });
 
+  const emptyText = () => {
+    if (loading) return lore.loading;
+    if (needle) return lore.emptyMatch;
+    if (showAll) return lore.emptyAll;
+    // Quiet is not the same as empty: say what is one keystroke away.
+    return hidden ? `${lore.emptyAlive} — ${lore.hiddenHint(hidden)}` : lore.emptyAlive;
+  };
+
   const list = view.length
     ? rows
-    : [h(Text, { key: 'empty', color: color.dim, italic: true },
-        '  ' + (loading ? lore.loading : needle ? lore.emptyMatch : showAll ? lore.emptyAll : lore.emptyAlive))];
+    : [h(Text, { key: 'empty', color: color.dim, italic: true }, '  ' + emptyText())];
 
   return h(Box, { flexDirection: 'column', borderStyle: 'round', borderColor: color.green, paddingX: 1 },
     h(Box, null,
@@ -377,9 +390,12 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
       lines.push(h(Text, { key: 'cc5', color: color.dim }, '   y confirm · n/esc back'));
     } else {
       lines.push(h(Text, { key: 'k1', color: color.dim },
-        `j/k move  enter attach${selected && !selected.alive ? ' (wakes it)' : ''} (${detachLabel()} comes back)  n session  c wolt`));
+        `j/k move  enter attach${selected && !agentAlive(selected) ? ' (wakes it)' : ''} (${detachLabel()} comes back)  n session  c wolt`));
       lines.push(h(Text, { key: 'k2', color: color.dim },
         's send  x stop  r refresh  / find  tab/shift-tab match  a all  q quit'));
+      if (hidden && view.length) {
+        lines.push(h(Text, { key: 'k3', color: color.dim }, lore.hiddenHint(hidden)));
+      }
     }
     if (error) lines.push(h(Text, { key: 'e', color: color.terra }, error));
     else if (flash) lines.push(h(Text, { key: 'f', color: color.green }, flash));
