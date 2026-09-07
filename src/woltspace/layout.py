@@ -8,6 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+# The per-wolt home the container image builds; `server/config.py` defaults to
+# the same path for the same reason. Only containers own a home outright.
+CONTAINER_HOME = Path("/home/node")
+
 
 def installation_root() -> Path:
     """Return the source root or the self-contained wheel bundle."""
@@ -84,6 +88,16 @@ class RuntimeLayout:
         return self.state_root / "logs"
 
     @property
+    def home(self) -> Path:
+        """The home directory whose harness credentials this instance uses.
+
+        Host isolation runs as the human, so it is their own home. Containers
+        own the per-wolt home the image builds, at a path that does not depend
+        on whatever $HOME a stray exec happens to carry.
+        """
+        return Path.home() if self.isolation == "host" else CONTAINER_HOME
+
+    @property
     def runtime_lib(self) -> Path:
         return self.install_root / "container" / "lib"
 
@@ -148,3 +162,13 @@ class RuntimeLayout:
         # nothing at all. Stamped here, inherited by sessions (see
         # `_SESSION_ENV_KEYS` in session_runtime) and by connectors.
         os.environ["WOLTSPACE_API"] = self.endpoint
+        # Where the server looks for harness credentials. The container owns a
+        # home outright, so `server/config.py` defaults to the image's
+        # /home/node — but natively there is no such directory, and probing it
+        # told every authenticated Mac "Claude Code isn't authenticated yet."
+        # Host isolation means the *user's* home is the home, the same place
+        # `doctor` already reads for its host-auth check. `setdefault` so a
+        # deliberate export still wins, and only in host mode so the container
+        # keeps its fixed path.
+        if self.isolation == "host":
+            os.environ.setdefault("WOLTSPACE_CONTAINER_HOME", str(self.home))
