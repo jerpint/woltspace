@@ -53,8 +53,16 @@ fi
 # Steps 3-5 all verify rather than assume: a python that cannot import jwt would
 # otherwise fail later, deeper, and less legibly — and `gh-app-token` failing
 # late is the failure that ends with work attributed to the wrong identity.
+#
+# Both streams are discarded, not just stderr. A python that greets stdout — a
+# banner, a telemetry notice, a sitecustomize print — would otherwise emit that
+# text *before* the payload, and every script behind this shim promises its
+# stdout is machine-readable. `gh-app-token` promises specifically that its
+# stdout is a token or empty; a probe that prepends a banner to it breaks that
+# promise, and today it only fails safe by accident (the noise happens to break
+# the ghs_ prefix match).
 _owns_deps() {
-  [ -x "$1" ] && "$1" -c 'import jwt, dotenv' 2>/dev/null
+  [ -x "$1" ] && "$1" -c 'import jwt, dotenv' >/dev/null 2>&1
 }
 
 # 3. <venv>/lib/pythonX.Y/site-packages/woltspace/_bundle/container/bin -> <venv>/bin/python

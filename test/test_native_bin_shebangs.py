@@ -104,6 +104,65 @@ def run_shim(argv, env):
 # The interpreter shim
 # --------------------------------------------------------------------------
 
+def _noisy_interpreter(directory, name, marker, noise):
+    """A python that greets stdout — a banner, a telemetry notice, a plugin.
+
+    It still answers the dependency probe correctly. The point is that the probe
+    must not let the greeting through: everything behind this shim promises a
+    machine-readable stdout.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    script = directory / name
+    script.write_text(
+        "#!/bin/sh\n"
+        f"echo '{noise}'\n"
+        'if [ "$1" = "-c" ] && [ "$2" = "import jwt, dotenv" ]; then\n'
+        "  exit 0\n"
+        "fi\n"
+        f"echo '{marker}'\n"
+        'echo "args=$*"\n'
+    )
+    script.chmod(0o755)
+    return script
+
+
+def test_the_dependency_probe_swallows_stdout_noise(tmp_path):
+    """A probe that leaks the banner would break every caller's stdout contract.
+
+    Before this, `_owns_deps` redirected only stderr. A python printing to
+    stdout got its banner emitted by the *probe*, ahead of the real payload —
+    so `GH_TOKEN=$(gh-app-token)` could capture "Telemetry enabled\\nghs_…".
+    It failed safe only by accident: the noise broke the ghs_ prefix match.
+    """
+    venv = tmp_path / "venv"
+    bin_dir = (venv / "lib" / "python3.13" / "site-packages" / "woltspace"
+               / "_bundle" / "container" / "bin")
+    bin_dir.mkdir(parents=True)
+    shim = bin_dir / "woltspace-python"
+    shim.write_text(SHIM.read_text())
+    shim.chmod(0o755)
+    _noisy_interpreter(
+        venv / "bin", "python", "PAYLOAD",
+        noise="Telemetry is enabled. See https://example.invalid",
+    )
+
+    result = subprocess.run(
+        ["sh", str(shim), "-V"],
+        capture_output=True, text=True, timeout=30, env=sandbox_env(tmp_path),
+    )
+    assert result.returncode == 0, result.stderr
+    # The chosen interpreter still runs, and its own output is untouched...
+    assert "PAYLOAD" in result.stdout
+    # ...but the probe contributed nothing. Exactly one banner line — the
+    # interpreter's own, from the real invocation — not two.
+    assert result.stdout.count("Telemetry is enabled") == 1, (
+        f"probe leaked stdout noise:\n{result.stdout}"
+    )
+    # And the payload is not preceded by a second copy of the greeting.
+    assert result.stdout.splitlines()[0].startswith("Telemetry")
+    assert result.stdout.splitlines()[1] == "PAYLOAD"
+
+
 def _fake_interpreter(directory, name, marker, *, owns_deps=True):
     """A stand-in python that identifies itself and echoes its arguments.
 

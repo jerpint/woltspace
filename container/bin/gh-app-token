@@ -39,9 +39,12 @@ import json
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-# GitHub installation tokens are `ghs_`-prefixed. A user PAT is `ghp_`, an OAuth
-# token `gho_` — this script only ever mints the installation kind, so anything
-# else means we are about to print something we did not intend to.
+# This script mints exactly one kind of credential — a GitHub App *installation*
+# token — and those are `ghs_`-prefixed. The gate is deliberately scoped to that
+# one kind rather than to "any GitHub token shape": a value of some other kind
+# reaching this stdout means the mint went somewhere it should not have, and
+# passing it through would act as an identity nobody asked for. Narrow on
+# purpose; widening it would defeat the point.
 TOKEN_PREFIX = "ghs_"
 
 
