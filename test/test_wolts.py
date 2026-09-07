@@ -516,10 +516,9 @@ class TestDeriveWorktuiSkill:
 
         mod.derive_worktui_skill(woltspace, worktui)
 
-        derived = (woltspace / "container" / "skills" / "woltspace-worktui" / "SKILL.md").read_text()
-        # Frontmatter name rewritten to the platform prefix, rest kept
-        assert "name: woltspace-worktui" in derived
-        assert "name: worktui\n" not in derived
+        derived = (woltspace / "container" / "skills" / "worktui" / "SKILL.md").read_text()
+        # Frontmatter name normalised to the directory name, rest kept
+        assert "name: worktui\n" in derived
         assert "description: Orchestrate sessions." in derived
         assert "wt spawn / wt send / wt read / wt kill" in derived
         # Woltspace-specific notes appended
@@ -531,12 +530,12 @@ class TestDeriveWorktuiSkill:
 
         mod.derive_worktui_skill(woltspace, tmp_path / "nope")
 
-        assert not (woltspace / "container" / "skills" / "woltspace-worktui").exists()
+        assert not (woltspace / "container" / "skills" / "worktui").exists()
 
     def test_replaces_stale_derived_copy(self, tmp_path):
         mod = _load_entrypoint()
         woltspace = tmp_path / "woltspace"
-        stale = woltspace / "container" / "skills" / "woltspace-worktui"
+        stale = woltspace / "container" / "skills" / "worktui"
         stale.mkdir(parents=True)
         (stale / "SKILL.md").write_text("old hand-written copy")
         (stale / "extra.md").write_text("leftover")
@@ -544,7 +543,7 @@ class TestDeriveWorktuiSkill:
 
         mod.derive_worktui_skill(woltspace, worktui)
 
-        derived_dir = woltspace / "container" / "skills" / "woltspace-worktui"
+        derived_dir = woltspace / "container" / "skills" / "worktui"
         assert "wt spawn" in (derived_dir / "SKILL.md").read_text()
         assert not (derived_dir / "extra.md").exists()
 
@@ -563,7 +562,9 @@ class TestDeriveWorktuiSkill:
 
         synced = (wolts / "alpha" / ".claude" / "skills" / "woltspace-worktui" / "SKILL.md").read_text()
         assert "wt spawn / wt send / wt read / wt kill" in synced
-        assert "name: woltspace-worktui" in synced
+        # Delivered under the copy path, so both of its names — directory and
+        # frontmatter — are the prefixed one. claude reads one, codex the other.
+        assert "name: woltspace-worktui\n" in synced
 
 
 class TestWorktuiCommand:
@@ -645,17 +646,18 @@ class TestSyncClaudeMdPlatformSection:
 
 
 class TestSetupWoltSkillsOnly:
-    """Unit: setup_wolt_claude_config only copies woltspace-* skills."""
+    """Unit: a seeded wolt gets the platform skills under their delivered names."""
 
-    def test_only_copies_woltspace_prefixed_skills(self, tmp_path):
+    def test_seeds_platform_skills_under_the_legacy_prefix(self, tmp_path):
         from wolts import setup_wolt_claude_config
 
         woltspace = tmp_path / "woltspace"
         skills_src = woltspace / "container" / "skills"
-        (skills_src / "woltspace-notify").mkdir(parents=True)
-        (skills_src / "woltspace-notify" / "SKILL.md").write_text("notify")
-        (skills_src / "legacy" / "old-skill").mkdir(parents=True)
-        (skills_src / "legacy" / "old-skill" / "SKILL.md").write_text("old")
+        (skills_src / "notify").mkdir(parents=True)
+        (skills_src / "notify" / "SKILL.md").write_text("notify")
+        # The plugin manifest is not a skill and must never be delivered as one.
+        (skills_src / ".claude-plugin").mkdir()
+        (skills_src / ".claude-plugin" / "plugin.json").write_text("{}")
 
         wolt_dir = tmp_path / "mywolt"
         wolt_dir.mkdir()
@@ -665,4 +667,6 @@ class TestSetupWoltSkillsOnly:
 
         skills_dir = wolt_dir / ".claude" / "skills"
         assert (skills_dir / "woltspace-notify" / "SKILL.md").exists()
-        assert not (skills_dir / "legacy").exists()
+        assert not (skills_dir / "notify").exists()
+        assert not (skills_dir / ".claude-plugin").exists()
+        assert not (skills_dir / "woltspace-.claude-plugin").exists()

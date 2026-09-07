@@ -27,7 +27,7 @@ Edit files and changes appear instantly. Use `push-view` to show a specific page
 ## Apps
 
 Apps live in `wolts/apps/` and have their own server and dependencies.
-Don't create apps without user permission — use `/woltspace-new-app` when ready.
+Don't create apps without user permission — load the woltspace new-app skill when ready.
 <!-- WOLTSPACE:END -->
 
 # Wolt
@@ -73,4 +73,4 @@ Update memories frequently — sessions can end unexpectedly.
 
 ## First Session
 
-If `wolt/memory/identity.md` is empty or just a placeholder, this is a brand new wolt. Run /woltspace-create-wolt immediately — do not wait for instructions, do not greet the user first, just run the skill.
+If `wolt/memory/identity.md` is empty or just a placeholder, this is a brand new wolt. Run the woltspace create-wolt skill immediately — do not wait for instructions, do not greet the user first, just run the skill.

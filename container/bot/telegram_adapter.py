@@ -37,7 +37,9 @@ from wolts import get_active_creature
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from paths import space_dir
 from session_runtime import RuntimeHandle, get_runtime
-from sessions import resolve_active_session
+from sessions import resolve_active_session, wolt_harness
+from harnesses import platform_skill_invoke
+from skills_sync import wolt_skills_delivery
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -299,11 +301,20 @@ async def _notify_switch(update: Update, old_state: dict, new_wolt: str, new_ses
         await _reply(update, f"🪵 now talking to {emoji} {new_wolt} ({new_session})")
 
 
+def _start_chat_prompt(wolt: str) -> str:
+    """The bare boot prompt: start-chat, spelled for this wolt's engine AND
+    its skills delivery — the two together decide the name."""
+    invoke = platform_skill_invoke(
+        wolt_harness(wolt), "start-chat",
+        delivery=wolt_skills_delivery(_WOLTS_DIR / wolt))
+    return f"{invoke} telegram {wolt}"
+
+
 def _spawn_session(wolt: str, chat_id: int, prompt: str = "") -> dict:
     """Spawn a new Claude Code session for a wolt, return session info."""
     routing = {"adapter": "telegram", "chat_id": chat_id}
     session = start_claude_session(
-        prompt=prompt or f"/woltspace-start-chat telegram {wolt}",
+        prompt=prompt or _start_chat_prompt(wolt),
         wolt=wolt,
         routing=routing,
     )
@@ -1154,7 +1165,7 @@ async def handle_setwolt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active = state.get("active_wolt")
     wolts = [w for w in list_wolts() if _is_wolt(w)]
     if not wolts:
-        await _reply(update, "no wolts found. run /woltspace-create-wolt in the lodge first.")
+        await _reply(update, "no wolts found. create a wolt in the lodge first.")
         return
 
     await _reply(

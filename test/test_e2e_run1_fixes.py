@@ -402,7 +402,7 @@ class TestWolfStatePathsAreDocumentedWhereTheyAre:
         assert "{wolt}/.state/wolf/jobs.jsonl" not in source
 
     def test_the_skill_points_at_the_real_directory(self):
-        skill = (ROOT / "container" / "skills" / "woltspace-wolf" / "SKILL.md").read_text()
+        skill = (ROOT / "container" / "skills" / "wolf" / "SKILL.md").read_text()
         assert "`.space/wolf/`" in skill
         assert "- Last-run timestamps stored in `.state/wolf/`" not in skill
 

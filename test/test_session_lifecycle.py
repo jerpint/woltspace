@@ -225,7 +225,7 @@ class TestStartSessionSiteAutoStart:
     def test_prompt_passed_verbatim_to_tmux(self, mock_run, tmp_path):
         """start_session() should pass the prompt to run-session.sh without appending start-chat.
 
-        run-session.sh is responsible for appending /woltspace-start-chat — Python must not duplicate it.
+        run-session.sh is responsible for appending /woltspace:start-chat — Python must not duplicate it.
         """
         self.sessions.start_session(
             wolt="testwolt",
@@ -238,7 +238,7 @@ class TestStartSessionSiteAutoStart:
         shell_cmd = tmux_cmd[-1]
         # Prompt should appear exactly once, not duplicated or with start-chat appended
         assert "hello world" in shell_cmd
-        assert "/woltspace-start-chat" not in shell_cmd
+        assert "/woltspace:start-chat" not in shell_cmd
 
 
 # ---------------------------------------------------------------------------

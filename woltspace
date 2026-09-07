@@ -662,6 +662,8 @@ RESTORE
     echo "  ${_L}   updateWolt will walk you through the update${_R}"
     echo ""
     cd "$WOLTSPACE_DIR"
+    # Runs in the host checkout under the human's own HOME — no woltspace
+    # plugin registered there, only the copy-synced woltspace-update skill.
     claude "/woltspace-update"
     ;;
   *)
