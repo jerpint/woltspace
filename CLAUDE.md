@@ -228,7 +228,8 @@ Utility scripts available in container PATH:
 - `create-creature-wolt <name> <type>` — create a new creature-wolt (wolf, dog, rodent, etc.)
 - `version-check` — check for newer woltspace release (polls GitHub API, no git fetch)
 - `spawn-tool` — register a tool proxy with the server
-- `gh-app-token` — print a short-lived GitHub App installation token to stdout (used by `open_issue` tool and available for `gh` CLI auth)
+- `gh-app-token` — print a short-lived GitHub App installation token to stdout (used by `open_issue` tool and available for `gh` CLI auth). **stdout is a `ghs_` token or it is empty** — diagnostics go to stderr and failures exit non-zero. Callers must assert the `ghs_` prefix, because an empty `GH_TOKEN` makes `gh` fall back to the human's own credentials.
+- `woltspace-python` — the interpreter woltspace is installed on, the one that owns PyJWT and python-dotenv. Scripts here name it in their shebang; the image also provides it as `/usr/local/bin/woltspace-python`, and this shim is what makes those shebangs resolve on a native install too.
 
 ### Worktui (`wt`)
 Worktree + Claude session manager, available in all sessions. Manages git worktrees for parallel development — each branch gets an isolated working directory.

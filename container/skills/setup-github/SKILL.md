@@ -113,6 +113,31 @@ GH_TOKEN=$(gh-app-token) gh api repos/<owner>/<repo>/issues --jq '.[0:3] | .[] |
 
 If issues are listed, everything works. The bot can now create issues and PRs as `<app-name>[bot]`.
 
+### Always check the token's shape, not its length
+
+An installation token starts with `ghs_`. Anything else means the mint failed —
+and a failed mint leaves `GH_TOKEN` empty, which `gh` reads as "not set" and
+answers by using the human's own stored credentials. Work you meant to do as
+the bot then lands under their name.
+
+```bash
+GH_TOKEN=$(gh-app-token) || exit 1
+case "$GH_TOKEN" in
+  ghs_*) ;;
+  *) echo "gh-app-token did not mint a bot token — refusing to act" >&2; exit 1 ;;
+esac
+GH_TOKEN="$GH_TOKEN" gh pr create ...
+```
+
+Two ways to get this wrong:
+
+- `$(gh-app-token 2>&1)` — merges diagnostics into the value. An error string
+  passes `[ -n "$T" ]` and any plausible length check.
+- checking non-emptiness instead of the prefix — same failure, one step later.
+
+After anything that acts as the bot, confirm who actually did it:
+`gh pr view <n> --json author`.
+
 ## Troubleshooting
 
 - **"Missing env vars"** — check that all three vars are in `.env`: `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY`
