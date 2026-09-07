@@ -106,7 +106,7 @@ Commands:
 - `woltspace init` — first-time setup (or reconnect existing wolts)
 - `woltspace start` — start, restart, or resume container
 - `woltspace stop` — stop and remove container
-- `woltspace backup [tag] [--bundle]` — snapshot container + wolts (tag defaults to datetime, `--bundle` zips into one portable file)
+- `woltspace backup [tag] [--bundle]` — container-era snapshot: `docker commit` + `rsync` of the whole wolts dir (`--bundle` zips it around a `docker save`). Superseded by the native command below; kept for container users.
 - `woltspace rebuild` — rebuild image + restart
 - `woltspace shell/chat/logs` — interact with running container
 
@@ -120,6 +120,26 @@ Env vars:
 
 The only mount is `$WOLTS_DIR:/workspace/wolts`. Everything else is baked into the image.
 
+### `src/woltspace/backup.py` — snapshots
+
+The data-plane snapshot, in the python CLI, identical native and in-container:
+
+- `woltspace backup [--tag T] [--out DIR]` — one `woltspace-backup-<tag>.tar.gz`
+  of the wolts tree (memory, sites, sparks, apps, `woltspace.json`, `.state`,
+  `.space`, `.git` history), with caches and build products excluded by name
+  below the root and symlinks archived as links. Writes a
+  `backup-manifest.json` into the archive, then re-opens the archive to verify
+  it. Never touches docker.
+- **Credentials are never archived** — `.env` at any depth,
+  `.claude/.credentials.json*`, `.codex/auth.json`. A restored stale OAuth
+  chain can trip reuse-detection and revoke the live one. The manifest lists
+  every withheld path and `restore` prints the re-provision checklist.
+- `woltspace restore <archive> [--to DIR]` — extracts into a new directory and
+  refuses a populated one; prints what to re-authenticate and the `WOLTS_DIR=…`
+  line to boot from it.
+
+Full guide, including what is excluded and why: `docs/backup.md`.
+
 ### Docker Image
 
 The Dockerfile does `git clone` of the woltspace repo during build (branch configurable via `--build-arg WOLTSPACE_BRANCH`). With `--local`, the local repo is `COPY`'d instead. Both produce the same image structure — no separate code paths.
@@ -128,20 +148,26 @@ Image based on `node:22-slim`. Installs: cloudflared, uv, Claude Code CLI, tmux,
 
 The Claude Code CLI is installed in an isolated `claude` build stage, cached independently. To update Claude: `docker build --no-cache-filter=claude ...`
 
-### `container/entrypoint.sh`
-Slim bash (~100 lines). Two phases:
-1. **Python setup** — calls `entrypoint_setup.py` which handles all config/identity
-2. **Services** — starts TUI, server, tunnel, bots, creatures
+### `src/woltspace/container_entrypoint.py`
+Container boot, as a subcommand of the installed CLI —
+`ENTRYPOINT ["/usr/local/bin/woltspace", "container-entrypoint"]`. The wheel
+ships no bash. The command runs twice, dispatched on uid:
 
-### `container/entrypoint_setup.py`
-All config and identity logic in Python (stdlib only). Handles:
-- Resolve active wolt (from `WOLT_NAME` env, `woltspace.json`, or first wolt found)
-- Scaffold new wolt from template (first boot)
-- Copy skills (platform defaults + wolt overrides)
-- Write OAuth credentials, trust config, settings.json
-- Git config, wolf.json seeding, node_modules symlink
-- Resolve wolf config, bot modules, dev mode
-- Outputs a sourceable env file for bash
+1. **root phase** — `groupmod`/`usermod` the `node` user onto `HOST_UID`/`HOST_GID`,
+   re-own `/workspace`, `/home/node` and the wheel bundle, then re-exec itself
+   as node through `gosu`.
+2. **node phase** — scaffold the lodge and the wolt from `template/`, derive the
+   `worktui` platform skill from worktui's own bundled copy, sync the platform
+   section of every wolt's `CLAUDE.md`, write trust config / `settings.json` /
+   `.bashrc` / git config, assemble the environment every child inherits
+   (including `WOLTSPACE_ISOLATION=external` and `WOLTSPACE_ENTRYPOINT=1`), open
+   the tmux window the human lands in, start the slack bot if configured, and
+   then run the control plane **in-process** via the same `serve` call a native
+   user's CLI makes.
+
+Everything else — skills sync, hook normalization, session adoption, the
+connectors, the tunnel — belongs to that control plane, which is byte-for-byte
+the one a native user runs.
 
 ### `server/app.py` (FastAPI)
 Python server running on port 7777 inside the container.
@@ -149,11 +175,11 @@ Python server running on port 7777 inside the container.
 - Manages per-session viewport URLs (`/current`)
 - Serves static files: `public/` (platform UI) → `wolt/site/` → `wolt/sparks/`
 - Proxies tool registrations at `/tools`
-- Serves apps at `/app/:name/` (static from `dist/` or proxy to port — see `woltspace-apps` skill)
+- Serves apps at `/app/:name/` (static from `dist/` or proxy to port — see the `apps` platform skill)
 - Live reload via SSE at `/livereload`
 
-### `server/tui-service.js` (Node.js)
-TUI WebSocket service on port 3001. The only remaining Node service — handles xterm.js PTY via `node-pty`.
+### `tui/src/tui-service.js` (Node.js) — the pty bridge
+TUI WebSocket service on the API port + 1 (7778 beside the usual 7777; override with `WOLTSPACE_TUI_PORT` or `channels.tui.port`), shipped as the `woltspace-tui-service` bin of `@woltspace/tui`. The only remaining Node service — attaches xterm.js to tmux via `node-pty`. The control plane starts it as a supervised connector (`tui` in `woltspace status` / `GET /health`); nothing launches it by hand.
 
 ### `container/bot/core.py` (Python)
 The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routing.
@@ -166,7 +192,7 @@ The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routi
 Thin Telegram layer over core. Persists chat history to `.state/chat/{chat_id}.jsonl`. Group chat support (responds when @mentioned).
 
 ### `container/skills/`
-Discovery files Claude Code reads from `~/.claude/skills/`. Platform skills use `woltspace-` prefix and are synced to all wolts on boot. Current platform skills: `woltspace-start-chat`, `woltspace-create-wolt`, `woltspace-notify`, `woltspace-viewport`, `woltspace-apps`, `woltspace-new-app`, `woltspace-wolf`, `woltspace-update`, `woltspace-session-summary`, `woltspace-worktui` (derived at boot from worktui's own bundled skill — see `derive_worktui_skill` in `entrypoint_setup.py`, not hand-maintained), `woltspace-organize-context`, `woltspace-setup-telegram`, `woltspace-setup-github`.
+Discovery files agents read from `~/.claude/skills/`. Platform skills live under base names (`notify`, `viewport`, …) and are delivered namespaced as `woltspace:<name>` — claude installs them as the `woltspace` plugin (`container/skills/.claude-plugin/`), codex/opencode reach the same tree through a `~/.claude/skills/woltspace` symlink. Current platform skills: `start-chat`, `create-wolt`, `notify`, `viewport`, `apps`, `new-app`, `wolf`, `update`, `session-summary`, `worktui` (derived at boot from worktui's own bundled skill — see `derive_worktui_skill` in `src/woltspace/container_entrypoint.py`, not hand-maintained), `organize-context`, `setup-telegram`, `setup-github`, `iwcl`, `cloudflare`. A wolt opts into that delivery with `"skills_delivery": "plugin"` in its `wolt.json`; without it the old copy sync still runs, delivering the same skills under their historical `woltspace-<name>` names — directory **and** frontmatter, since claude reads one and codex the other. How a skill is spelled in a prompt follows how it was delivered: build one with `platform_skill_invoke(harness, name, delivery)`, never by hand. Retired skills live in `container/legacy-skills/`, outside the plugin root. **The full intent record — both delivery paths, the naming matrix, why it works natively, and the ratchet's end state — is `docs/skills-delivery.md`; read it before touching skill delivery or renaming a skill.**
 
 ### `container/cron/digest.mjs`
 Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select via `claude -p` → render HTML. Writes to `wolt/sparks/`. Optional Spotify playlist curation.
@@ -292,7 +318,7 @@ Multiple wolts can run in one container. They all share:
 
 Currently supported: **Telegram**, **Slack**. WhatsApp is planned.
 
-Each adapter is a thin Python file over `core.py`. To add a new adapter: copy `telegram_adapter.py`, implement message send/receive, set `BOT_ADAPTER` env var, start it in `entrypoint.sh`.
+Each adapter is a thin Python file over `core.py`. To add a new adapter: copy `telegram_adapter.py`, implement message send/receive, set `BOT_ADAPTER` env var, and give it a `ChannelConnector` in `src/woltspace/channels.py`.
 
 ---
 

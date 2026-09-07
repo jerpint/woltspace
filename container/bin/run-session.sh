@@ -14,7 +14,8 @@
 set -euo pipefail
 
 # Log session startup for debugging — capture errors if the session dies instantly
-SESSION_LOG="/workspace/wolts/.space/logs/session-boot.log"
+WOLTSPACE_WOLTS_ROOT="${WOLTS_DIR:-/workspace/wolts}"
+SESSION_LOG="$WOLTSPACE_WOLTS_ROOT/.space/logs/session-boot.log"
 mkdir -p "$(dirname "$SESSION_LOG")"
 exec 2> >(tee -a "$SESSION_LOG" >&2)
 
@@ -41,7 +42,9 @@ fi
 export WOLT_SESSION="$SESSION_NAME"
 if [ -n "$WOLT" ]; then
     export WOLT_NAME="$WOLT"
+    export WOLTSPACE_WOLT_HOME="$WOLTSPACE_WOLTS_ROOT/$WOLT"
 fi
+export WOLTSPACE_WORKDIR="$WORK_DIR"
 
 # Build the agent command. On spawn this also stamps harness_session_id
 # (used later for --resume) and a title into the registry.

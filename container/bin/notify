@@ -70,7 +70,13 @@ elif adapter == 'telegram':
 print(json.dumps(d))
 " "$SESSION" "$FULL_MESSAGE" "$ADAPTER" "${SLACK_CHANNEL:-${TELEGRAM_CHAT_ID:-}}" "${SLACK_THREAD:-}")
 
-RESPONSE=$(curl -s -X POST http://localhost:7777/notify \
+# The control plane that owns this session. Stamped into the session's
+# environment at spawn (RuntimeLayout.apply_environment → _SESSION_ENV_KEYS);
+# the literal below is only the container's baked-in default, for a shell that
+# predates the stamp.
+API="${WOLTSPACE_API:-http://localhost:7777}"
+
+RESPONSE=$(curl -s -X POST "${API}/notify" \
   -H "Content-Type: application/json" \
   -d "$PAYLOAD")
 

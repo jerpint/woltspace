@@ -1,13 +1,18 @@
 """Woltspace server — FastAPI replacement for server.js.
 
-All endpoints except /tui WebSocket (which stays in Node via tui-service.js).
+All endpoints except /tui WebSocket, which is proxied to the Node pty bridge
+(`woltspace-tui-service` from @woltspace/tui, supervised by the control plane).
 """
 
+import asyncio
 import json
 import os
 import re
 import subprocess
+import threading
 import time
+import contextlib
+from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -28,6 +33,7 @@ from fastapi.templating import Jinja2Templates
 from . import tools as tool_registry
 from .config import (
     APP_MIME_TYPES,
+    CONTAINER_HOME,
     DEN_REPLY_FOOTER,
     MIME_TYPES,
     PORT,
@@ -45,21 +51,29 @@ from .config import (
     load_dotenv,
 )
 from . import tunnel as tunnel_mgr
-from .notify import send_notification
+from .notify import NoNotificationTarget, send_notification
 from .sparks import get_spark_with_chain, list_sparks
 
 # Session spawning — shared with bot
 import sys as _sys
-_sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+_sys.path.insert(0, str(WOLTSPACE_DIR / "container" / "lib"))
 from sessions import (
     resume_session, start_session, stop_session,
     deliver_message, resolve_active_session, format_spawned_prompt,
+    wolt_harness,
 )
+from session_runtime import RuntimeHandle, get_runtime
+from session_targets import SessionTarget
+from execution_policy import AutoGrantStore, POLICY_VERSION
+from runtime_context import RuntimeContext
+from harness_auth import auth_source, claude_authenticated
+from skills_sync import wolt_skills_delivery
 from harnesses import (
     harness_metadata,
     get_default_harness,
     set_default_harness,
     resolve_harness,
+    platform_skill_invoke,
     HARNESSES,
 )
 from apps import (
@@ -104,24 +118,71 @@ async def _broadcast_reload():
         _livereload_clients.discard(ws)
 
 
+# --- Livereload watchers ---
+# Two of them, both running a blocking rust file-watch loop, and neither used to
+# be told when to stop:
+#
+#   * the lodge watcher below is a daemon thread. Interpreter shutdown kills a
+#     daemon thread wherever it happens to be — mid-rust-call, here — which the
+#     C runtime reports as `FATAL: exception not rethrown` and docker reports as
+#     exit 133 instead of 0. It only ever appeared on colonies that had a wolt,
+#     because that is when SITE_DIR exists and this thread starts.
+#   * the per-connection `awatch` in the site livereload websocket outlives
+#     uvicorn's graceful window, because `to_thread` cannot be cancelled: hence
+#     `Cancel N running task(s), timeout graceful shutdown exceeded` followed by
+#     a CancelledError traceback, and ~3 seconds added to every `docker stop`.
+#
+# One stop event each, set on shutdown, ends both. `rust_timeout` is how long a
+# blocked watch waits before coming up for air to check the flag.
+_WATCHER_POLL_MS = 500
+_WATCHER_JOIN_TIMEOUT = 2.0
+# How long a livereload handler waits for its own watcher to notice the flag
+# and finish, before it stops being polite about it.
+_WATCHER_SETTLE_S = 2.0
+
+_watcher_stop = threading.Event()
+_watcher_threads: list[threading.Thread] = []
+_livereload_stops: set[threading.Event] = set()
+
+
 def _start_file_watcher():
     """Watch wolt/site/ for changes and broadcast reload."""
-    import asyncio
-    import threading
-
     from watchfiles import watch
 
     def _watch():
         loop = None
-        for _changes in watch(str(SITE_DIR)):
+        for _changes in watch(str(SITE_DIR), stop_event=_watcher_stop,
+                              rust_timeout=_WATCHER_POLL_MS):
             if loop is None:
                 loop = asyncio.get_event_loop()
             loop.call_soon_threadsafe(asyncio.ensure_future, _broadcast_reload())
 
     if SITE_DIR.exists():
+        _watcher_stop.clear()
         t = threading.Thread(target=_watch, daemon=True)
         t.start()
+        _watcher_threads.append(t)
         print(f"[livereload] watching {SITE_DIR}")
+
+
+def signal_watchers_to_stop() -> None:
+    """Raise every stop flag. Cheap, non-blocking, safe to call repeatedly."""
+    _watcher_stop.set()
+    for event in list(_livereload_stops):
+        event.set()
+
+
+def stop_file_watchers(timeout: float = _WATCHER_JOIN_TIMEOUT) -> None:
+    """Ask every file watcher to stop, and wait for the threads to actually go.
+
+    Called from the lifespan's shutdown half so the watchers are gone *before*
+    uvicorn starts counting down its graceful window — which is what turns a
+    noisy 3-second stop into a quiet one.
+    """
+    signal_watchers_to_stop()
+    for thread in _watcher_threads:
+        thread.join(timeout=timeout)
+    _watcher_threads.clear()
 
 
 # Digest cron removed — the wolf creature owns all scheduling via wolt/wolf.json.
@@ -161,10 +222,30 @@ async def lifespan(app: FastAPI):
   tunnel: {tunnel_mgr.get_tunnel_url() or 'disabled'}
     """)
     yield
+    # Watchers first: they are what used to outlive the shutdown window.
+    stop_file_watchers()
     tunnel_mgr.stop_tunnel()
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
+
+
+@app.get("/health")
+async def health():
+    from woltspace.adoption import read_adoption_report
+    from woltspace.channel_supervisor import read_connector_report
+    from woltspace.layout import RuntimeLayout
+
+    layout = RuntimeLayout.from_env()
+    return {
+        "ok": True,
+        "instance_id": os.environ.get("WOLTSPACE_INSTANCE_ID", ""),
+        "pid": os.getpid(),
+        "wolts_dir": str(WOLTS_DIR),
+        "isolation": os.environ.get("WOLTSPACE_ISOLATION", "external"),
+        "adoption": read_adoption_report(layout),
+        "connectors": read_connector_report(layout).get("connectors", []),
+    }
 
 # --- Templates & Static ---
 
@@ -406,12 +487,25 @@ async def _serve_static(url_path: str, request: Request | None = None) -> Respon
 
 # jerpint: will have to look into how this works and security around it
 async def _serve_platform_file(filename: str) -> Response | None:
-    """Serve from public/ (platform UI)."""
+    """Serve from public/ (platform UI), with the type the file actually is.
+
+    This used to answer `text/html` for everything in `public/`, which is fine
+    right up until the browser is asked to *execute* one: chromium refuses
+    `/sw.js` with "unsupported MIME type ('text/html')", so the service worker
+    never registers and woltspace is quietly not installable as a PWA. The
+    sibling `_serve_static` had the lookup right all along — same table here.
+    """
     path = PUBLIC_DIR / filename
-    if not path.exists():
+    if not path.exists() or not path.is_file():
         return None
-    content = path.read_text()
-    return HTMLResponse(content, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    ext = path.suffix
+    mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext)
+    headers = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+    if mime == "text/html":
+        return HTMLResponse(path.read_text(), headers=headers)
+    # Bytes, not text: fonts, icons and images in public/ are not decodable.
+    return Response(path.read_bytes(),
+                    media_type=mime or "application/octet-stream", headers=headers)
 
 
 # ============================================================
@@ -478,11 +572,10 @@ def _extract_login_url() -> str:
     or non-URL line.
     """
     try:
-        result = subprocess.run(
-            ["tmux", "capture-pane", "-t", "main", "-p", "-S", "-200"],
-            capture_output=True, text=True, timeout=5,
-        )
-        lines = result.stdout.splitlines()
+        # -S -200 on purpose here: the login URL has usually scrolled out of
+        # the visible pane by the time this is polled.
+        pane = get_runtime().capture(RuntimeHandle("main", "main"), start="-200")
+        lines = pane.splitlines()
         url = ""
         capturing = False
         for line in lines:
@@ -508,7 +601,11 @@ async def onboard_status():
     return {
         "wolts_dir": str(WOLTS_DIR),
         "wolt_name": WOLT_NAME,
-        "has_oauth": Path("/home/node/.claude/.credentials.json").exists(),
+        "has_oauth": claude_authenticated(CONTAINER_HOME),
+        # Which credential answered — "credentials-file", "env-token" or "none".
+        # Presence is not validity: a dead env token still reads as authenticated,
+        # and this is how someone debugging that finds out what to remove.
+        "auth_source": auth_source(CONTAINER_HOME),
         "has_llm_key": bool(env.get("ANTHROPIC_API_KEY") or env.get("OPENROUTER_API_KEY")),
         "has_telegram": env.get("ENABLE_TELEGRAM_BOT") == "true" and bool(env.get("TELEGRAM_BOT_TOKEN")),
         "login_url": _extract_login_url(),
@@ -543,6 +640,17 @@ async def post_notify(request: Request):
         print(f"[notify] → {result.get('adapter')} | {message[:80]}")
         bot_log("notify_sent", {"session": session, **result, "message": message})
         return {"ok": True, **result}
+    except NoNotificationTarget as e:
+        # Not a server fault: no chat has been connected yet. 409 so a caller
+        # can tell "woltspace is broken" from "you have not set this up".
+        print(f"[notify] undeliverable: {e}")
+        return JSONResponse({
+            "ok": False,
+            "error": str(e),
+            "reason": "no_notification_target",
+            "remedy": "Set TELEGRAM_BOT_TOKEN + TELEGRAM_ALLOWED_USERS in the data "
+                      "root's .env, or run the /telegram skill to connect a chat.",
+        }, status_code=409)
     except Exception as e:
         print(f"[notify] error: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -641,8 +749,8 @@ async def session_new_create(request: Request):
       - name: wolt name (required, lowercase alphanumeric + hyphens)
       - type: creature type (required, one of: otter, beaver, raccoon)
 
-    The server scaffolds the full wolt directory (including .claude/ isolation)
-    before spawning the session. No fallback HOME needed.
+    The server scaffolds the full wolt directory before spawning the session.
+    External mode adds per-wolt harness isolation; native mode inherits host auth.
     """
     body = await request.json()
     wolt_name = (body.get("name") or "").strip().lower()
@@ -662,7 +770,7 @@ async def session_new_create(request: Request):
         return JSONResponse({"detail": "type must be otter, beaver, or raccoon"}, status_code=400)
 
     try:
-        # Step 1: Scaffold the wolt (dir, wolt.json, memory, site, .claude/, CLAUDE.md)
+        # Step 1: Scaffold the wolt with environment-appropriate harness config.
         from wolts import create_creature_wolt
         create_creature_wolt(wolt_name, wolt_type)
         print(f"[sessions/create] scaffolded wolt '{wolt_name}' ({wolt_type})")
@@ -670,11 +778,20 @@ async def session_new_create(request: Request):
         # Step 2: Start a session — full isolation, site auto-start, viewport
         result = start_session(
             wolt=wolt_name,
-            prompt="/woltspace-create-wolt",
+            # How create-wolt is spelled follows this wolt's harness AND its
+            # skills delivery — a freshly scaffolded wolt is on the copy path,
+            # so it gets the copy path's names.
+            prompt=platform_skill_invoke(
+                wolt_harness(wolt_name), "create-wolt",
+                delivery=wolt_skills_delivery(WOLTS_DIR / wolt_name)),
+            workdir=body.get("workdir"),
+            execution_policy=body.get("execution_policy"),
             routing={"adapter": "lodge"},
         )
         print(f"[sessions/create] spawned {result['name']} for {wolt_name}")
         return result
+    except PermissionError as e:
+        return JSONResponse({"detail": str(e)}, status_code=403)
     except ValueError as e:
         return JSONResponse({"detail": str(e)}, status_code=409)
     except Exception as e:
@@ -705,11 +822,15 @@ async def session_new_lodge(request: Request):
             prompt=prompt,
             creature=body.get("creature", ""),
             app=body.get("app", ""),
+            workdir=body.get("workdir"),
+            execution_policy=body.get("execution_policy"),
             routing={"adapter": "lodge"},
         )
         # Site auto-start + viewport URL handled by start_session()
         print(f"[sessions/lodge] spawned {result['name']} for {wolt}")
         return result
+    except PermissionError as e:
+        return JSONResponse({"error": str(e)}, status_code=403)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
     except Exception as e:
@@ -729,6 +850,8 @@ async def session_new_telegram(request: Request):
             prompt=body.get("prompt", ""),
             creature=body.get("creature", ""),
             app=body.get("app", ""),
+            workdir=body.get("workdir"),
+            execution_policy=body.get("execution_policy"),
             routing={
                 "adapter": "telegram",
                 "chat_id": body.get("chat_id", ""),
@@ -738,6 +861,8 @@ async def session_new_telegram(request: Request):
         # Site auto-start + viewport URL handled by start_session()
         print(f"[sessions/telegram] spawned {result['name']} for {wolt}")
         return result
+    except PermissionError as e:
+        return JSONResponse({"error": str(e)}, status_code=403)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
     except Exception as e:
@@ -757,6 +882,8 @@ async def session_new_slack(request: Request):
             prompt=body.get("prompt", ""),
             creature=body.get("creature", ""),
             app=body.get("app", ""),
+            workdir=body.get("workdir"),
+            execution_policy=body.get("execution_policy"),
             routing={
                 "adapter": "slack",
                 "chat_id": body.get("channel", ""),
@@ -767,6 +894,8 @@ async def session_new_slack(request: Request):
         # Site auto-start + viewport URL handled by start_session()
         print(f"[sessions/slack] spawned {result['name']} for {wolt}")
         return result
+    except PermissionError as e:
+        return JSONResponse({"error": str(e)}, status_code=403)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
     except Exception as e:
@@ -838,6 +967,7 @@ def _configured_wolts() -> list[dict]:
                 config = json.loads(wolt_json.read_text())
                 wolts.append({
                     "dir": entry.name,
+                    "home": str(entry.resolve()),
                     **config,
                 })
             except Exception:
@@ -849,6 +979,120 @@ def _configured_wolts() -> list[dict]:
 async def list_wolts():
     """List all wolts by scanning WOLTS_DIR for wolt/wolt.json files."""
     return _configured_wolts()
+
+
+# --- Wolf 🐺 ---
+# Read-only windows onto the scheduler's own state. The wolf already writes
+# everything here — per-cron last-run stamps and an append-only job journal in
+# `.space/wolf/` — but the only way to see a fire was to grep a connector log
+# from inside the container, and the source pointed at the wrong directory
+# while doing it. No new daemon, no new writer: just the files, served.
+#
+# Observability, and nothing more. These routes need no auth and the server
+# answers them with `Access-Control-Allow-Origin: *`, so what they may say is
+# *when* a cron is scheduled and *whether* it fired — never what it asks the
+# wolt to do. A cron's `prompt` and `notify` are the user's own words, often
+# about private work, and they are deliberately not in the response.
+
+# The scheduler stamps last-run state as `<cron name>.last`, so the name is a
+# filename. Anything outside this shape is not looked up at all.
+_WOLF_CRON_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+_WOLF_FIRES_MAX = 500
+# Enough of the journal's tail to satisfy the largest allowed page even when
+# every line is filtered out; the file is append-only and never rewritten.
+_WOLF_JOURNAL_TAIL = 5000
+
+
+def _wolf_state_dir() -> Path:
+    from paths import space_wolf_dir
+
+    return space_wolf_dir(WOLTS_DIR)
+
+
+def _wolf_last_run(state_dir: Path, cron_name: str) -> str | None:
+    """The `YYYY-MM-DD-HH:MM` stamp the scheduler writes after each fire.
+
+    A cron name comes from a wolt's own `wolf.json`, which is a file a wolt can
+    write — so it is untrusted input on the way to a path join. `../../secret`
+    reads outside the state dir otherwise. Two gates: the name must look like a
+    plain identifier, and the resolved path must still be inside the state dir.
+    """
+    if not _WOLF_CRON_NAME.match(cron_name or ""):
+        return None
+    stamp = (state_dir / f"{cron_name}.last").resolve()
+    try:
+        stamp.relative_to(state_dir.resolve())
+    except ValueError:
+        return None
+    try:
+        return stamp.read_text().strip() or None
+    except OSError:
+        return None
+
+
+@app.get("/wolf/schedules")
+def wolf_schedules():
+    """Every wolt's registered crons, with the last time each one fired.
+
+    Names, timings and stamps only — see the note above on what is withheld.
+    A plain `def`: this walks the filesystem, and doing that on the event loop
+    blocks every other request while it runs.
+    """
+    state_dir = _wolf_state_dir()
+    schedules = []
+    for wolf_json in sorted(WOLTS_DIR.glob("*/wolt/wolf.json")):
+        wolt = wolf_json.parent.parent.name
+        try:
+            crons = json.loads(wolf_json.read_text()).get("crons", [])
+        except (json.JSONDecodeError, OSError) as exc:
+            schedules.append({"wolt": wolt, "error": str(exc), "crons": []})
+            continue
+        schedules.append({
+            "wolt": wolt,
+            "crons": [{
+                "name": cron.get("name", ""),
+                # recurring crons carry `schedule`, one-offs carry `at`
+                "schedule": cron.get("schedule", ""),
+                "at": cron.get("at", ""),
+                "last_run": _wolf_last_run(state_dir, cron.get("name", "")),
+            } for cron in crons],
+        })
+    return {"wolts_dir": str(WOLTS_DIR), "schedules": schedules}
+
+
+@app.get("/wolf/fires")
+def wolf_fires(limit: int = 50, cron: str = "", wolt: str = ""):
+    """Recent cron fires, newest first, from the scheduler's job journal.
+
+    `limit` caps the response; `cron` and `wolt` narrow it. A journal that does
+    not exist yet is an empty list, not an error — a colony whose wolf has never
+    fired is a normal colony. Only the journal's tail is parsed: this answers
+    "what happened lately", and a colony that has been firing crons for a year
+    should not pay for all of it to serve `limit=1`.
+    """
+    limit = max(0, min(limit, _WOLF_FIRES_MAX))
+    journal = _wolf_state_dir() / "jobs.jsonl"
+    fires = []
+    try:
+        with journal.open() as handle:
+            tail = deque(handle, maxlen=_WOLF_JOURNAL_TAIL)
+    except OSError:
+        tail = ()
+    for line in tail:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # a torn last line while the wolf is mid-append
+        if cron and entry.get("cron") != cron:
+            continue
+        if wolt and entry.get("owner") != wolt:
+            continue
+        fires.append(entry)
+    fires.reverse()
+    return {"count": len(fires), "fires": fires[:limit]}
 
 
 # --- Harnesses ---
@@ -906,6 +1150,75 @@ async def set_wolt_harness(name: str, request: Request):
     tmp.write_text(json.dumps(cfg, indent=2) + "\n")
     tmp.rename(wolt_json)
     return {"ok": True, "wolt": safe, "harness": effective, "pinned": pinned}
+
+
+# --- Runtime capabilities and repository-scoped Auto consent ---
+
+@app.get("/runtime/capabilities")
+async def runtime_capabilities():
+    context = RuntimeContext.from_env()
+    return {
+        "isolation": context.isolation,
+        "supports_host_workdirs": context.isolation == "host",
+        "default_execution_policy": (
+            "prompt" if context.isolation == "host" else "auto"
+        ),
+        "policy_version": POLICY_VERSION,
+    }
+
+
+def _auto_target(body: dict) -> SessionTarget:
+    return SessionTarget.resolve(
+        str(body.get("wolt_id") or body.get("wolt") or ""),
+        body.get("workdir"),
+        wolts_dir=WOLTS_DIR,
+    )
+
+
+@app.post("/auto-grants/check")
+async def auto_grant_check(request: Request):
+    body = await request.json()
+    try:
+        target = _auto_target(body)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    grant = AutoGrantStore(WOLTS_DIR).find(target)
+    return {
+        "approved": grant is not None,
+        "target": target.to_record(),
+        "grant": grant.to_record() if grant else None,
+    }
+
+
+@app.post("/auto-grants/grant")
+async def auto_grant_create(request: Request):
+    body = await request.json()
+    try:
+        target = _auto_target(body)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    canonical = str(target.canonical_workdir)
+    if body.get("confirm") != canonical:
+        return JSONResponse(
+            {
+                "error": "Auto consent must confirm the exact canonical directory",
+                "canonical_workdir": canonical,
+            },
+            status_code=400,
+        )
+    grant = AutoGrantStore(WOLTS_DIR).grant(target)
+    return {"ok": True, "grant": grant.to_record()}
+
+
+@app.post("/auto-grants/revoke")
+async def auto_grant_revoke(request: Request):
+    body = await request.json()
+    try:
+        target = _auto_target(body)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    revoked = AutoGrantStore(WOLTS_DIR).revoke(target)
+    return {"ok": True, "revoked": revoked, "target": target.to_record()}
 
 
 # --- Apps ---
@@ -1131,16 +1444,51 @@ async def site_livereload_ws(wolt_name: str, ws: WebSocket):
         await ws.close()
         return
     await ws.accept()
+    stop = threading.Event()
+    _livereload_stops.add(stop)
+
+    async def _push_reloads():
+        async for _changes in awatch(str(sdir), stop_event=stop,
+                                     rust_timeout=_WATCHER_POLL_MS):
+            await ws.send_text("reload")
+
+    async def _await_disconnect():
+        # Only a disconnect ends this. A client that sends anything at all — a
+        # heartbeat, a stray text frame — used to look like one, killing the
+        # watcher and leaving the socket open with nothing behind it.
+        while True:
+            message = await ws.receive()
+            if message.get("type") == "websocket.disconnect":
+                return
+
+    # Race the watcher against the socket's own receive. That second task is
+    # the whole point: uvicorn's shutdown order is signal → close connections →
+    # *then* lifespan shutdown, so a handler that only watches files learns
+    # about the shutdown after the graceful window it was supposed to fit
+    # inside, and gets reported as `Cancel 1 running task(s)`. The disconnect
+    # arrives as soon as uvicorn begins shutting down — and equally when the
+    # browser simply navigates away.
+    watcher = asyncio.create_task(_push_reloads())
+    disconnect = asyncio.create_task(_await_disconnect())
     try:
-        async for _changes in awatch(str(sdir)):
-            try:
-                await ws.send_text("reload")
-            except Exception:
-                break
-    except WebSocketDisconnect:
+        await asyncio.wait({watcher, disconnect},
+                           return_when=asyncio.FIRST_COMPLETED)
+    except asyncio.CancelledError:
         pass
-    except Exception:
-        pass
+    finally:
+        # Raising the flag is enough: awatch checks it within `rust_timeout`
+        # and its generator finishes on its own. Give it that moment before
+        # resorting to cancellation — tearing an async generator out of a
+        # to_thread call mid-flight is what turns a tidy close into a
+        # CancelledError escaping into whoever opened the socket.
+        stop.set()
+        _livereload_stops.discard(stop)
+        disconnect.cancel()
+        with contextlib.suppress(BaseException):
+            await asyncio.wait_for(asyncio.shield(watcher), _WATCHER_SETTLE_S)
+        watcher.cancel()
+        with contextlib.suppress(BaseException):
+            await asyncio.gather(watcher, disconnect, return_exceptions=True)
 
 
 @app.get("/app/{app_name}/{path:path}")

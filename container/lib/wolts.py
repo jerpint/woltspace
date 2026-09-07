@@ -17,6 +17,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from skills_sync import seed_wolt_skills
+
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 WOLTSPACE_DIR = Path(os.environ.get("WOLTSPACE_DIR", "/workspace/woltspace"))
 CONFIG_FILE = WOLTS_DIR / "woltspace.json"
@@ -177,24 +179,31 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "", descript
 
 
 def setup_wolt_claude_config(wolt_dir: Path, name: str) -> None:
-    """Set up per-wolt .claude/ directory for config isolation.
+    """Set up per-wolt Claude isolation only in the external/container mode.
 
     Creates:
-      - .claude/settings.json — platform defaults (hooks, permissions)
+      - .claude/settings.json — platform defaults (permissions)
       - .claude/.credentials.json — symlink to shared credentials
       - .claude/skills/ — copy of platform skills
       - .claude.json — trust config for this wolt's directories
+
+    Native sessions inherit the host harness environment and receive wolt
+    context explicitly, so writing or copying harness config into a wolt would
+    be both unnecessary and a credential-leak risk. Skills are the exception:
+    they are platform content, not credentials, and a wolt whose first prompt
+    invokes the woltspace create-wolt skill needs them in both modes.
     """
+    seed_wolt_skills(WOLTSPACE_DIR, wolt_dir)
+
+    if os.environ.get("WOLTSPACE_ISOLATION", "external") == "host":
+        return
+
     claude_dir = wolt_dir / ".claude"
     claude_dir.mkdir(exist_ok=True)
 
     # Settings — platform defaults
     settings = {
         "skipDangerousModePermissionPrompt": True,
-        "hooks": {
-            "Stop": [{"hooks": [{"type": "command", "command": str(WOLTSPACE_DIR / "container/hooks/session-done.sh")}]}],
-            "Notification": [{"hooks": [{"type": "command", "command": str(WOLTSPACE_DIR / "container/hooks/notify.sh")}]}],
-        },
     }
     (claude_dir / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
 
@@ -207,18 +216,6 @@ def setup_wolt_claude_config(wolt_dir: Path, name: str) -> None:
         wolt_creds.unlink()
     if shared_creds.exists() and not wolt_creds.exists():
         shutil.copy2(shared_creds, wolt_creds)
-
-    # Skills — copy woltspace-* platform skills only
-    skills_dir = claude_dir / "skills"
-    skills_dir.mkdir(exist_ok=True)
-    platform_skills = WOLTSPACE_DIR / "container" / "skills"
-    if platform_skills.is_dir():
-        for d in platform_skills.glob("woltspace-*"):
-            if d.is_dir():
-                dest = skills_dir / d.name
-                if dest.exists():
-                    shutil.rmtree(dest)
-                shutil.copytree(d, dest)
 
     # Trust config — .claude.json at wolt root.
     # Copy from global ~/.claude.json so the wolt inherits runtime state
@@ -325,7 +322,7 @@ Edit files and changes appear instantly. Use `push-view` to show a specific page
 ## Apps
 
 Apps live in `wolts/apps/` and have their own server and dependencies.
-Don't create apps without user permission — use `/woltspace-new-app` when ready.
+Don't create apps without user permission — load the woltspace new-app skill when ready.
 """
 
 

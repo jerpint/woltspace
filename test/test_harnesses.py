@@ -86,6 +86,10 @@ class TestBuildCommandClaude:
         assert "--resume" not in cmd
         assert "--dangerously-skip-permissions" in cmd
 
+    def test_prompt_policy_keeps_normal_approvals(self):
+        cmd = build_command("claude", "spawn", execution_policy="prompt")
+        assert "--dangerously-skip-permissions" not in cmd
+
     def test_login(self):
         cmd = build_command("claude", "login")
         assert cmd.endswith("wclaude /login")
@@ -138,6 +142,10 @@ class TestBuildCommandCodex:
         cmd = build_command("codex", "login")
         assert cmd.endswith("login --device-auth")
 
+    def test_prompt_policy_keeps_normal_sandbox(self):
+        cmd = build_command("codex", "spawn", execution_policy="prompt")
+        assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
+
     def test_codex_tier_models(self):
         """Mapped from the live /model picker (2026-07 lineup)."""
         assert creature_model("codex", "raccoon") == "gpt-5.5"
@@ -164,7 +172,7 @@ class TestGuardPasteText:
         # newlines → spaces so the attributed message doesn't jam together
         assert _guard_paste_text("opencode", "[from x]\nbody") == "[from x] body"
         # leading slash gets a space (applied after flatten)
-        assert _guard_paste_text("opencode", "/woltspace-create-wolt") == " /woltspace-create-wolt"
+        assert _guard_paste_text("opencode", "/woltspace:create-wolt") == " /woltspace:create-wolt"
         # a leading newline flattens to a leading space, which already defuses
         # the palette — no second space added
         assert _guard_paste_text("opencode", "\n/skill") == " /skill"
@@ -195,6 +203,10 @@ class TestBuildCommandOpencode:
 
     def test_login_is_auth_login(self):
         assert build_command("opencode", "login").endswith("auth login")
+
+    def test_prompt_policy_omits_auto(self):
+        cmd = build_command("opencode", "spawn", execution_policy="prompt")
+        assert "--auto" not in cmd
 
 
 class TestCodexDiscovery:
@@ -240,11 +252,112 @@ class TestCodexDiscovery:
         assert _codex_discover_session_id(data, since=0) is None
 
 
+class TestDeliveryAwareInvocation:
+    """The spelling of a platform skill in a prompt follows how that wolt's
+    skills were DELIVERED. Emitting the plugin spelling at a copy-path wolt
+    names a skill it does not have."""
+
+    @pytest.fixture(autouse=True)
+    def _wolt(self, tmp_path, monkeypatch, fake_runtime):
+        import sessions
+        import sites
+        import paths
+
+        monkeypatch.setattr(sessions, "WOLTS_DIR", tmp_path)
+        monkeypatch.setattr(sessions, "RUN_SESSION_SCRIPT", Path("/bin/true"))
+        monkeypatch.setattr(sites, "WOLTS_DIR", tmp_path)
+        monkeypatch.setattr(paths, "WOLTS_DIR", tmp_path)
+        self.wolts_dir = tmp_path
+
+    def _wolt_json(self, harness, **extra):
+        wolt_dir = self.wolts_dir / "testwolt" / "wolt"
+        wolt_dir.mkdir(parents=True, exist_ok=True)
+        (wolt_dir / "site").mkdir(exist_ok=True)
+        (wolt_dir / "site" / "index.html").write_text("<h1>t</h1>")
+        (wolt_dir / "wolt.json").write_text(json.dumps(
+            {"name": "testwolt", "type": "raccoon", "harness": harness, **extra}))
+
+    def _boot_prompt(self, harness, prompt="hello", **extra):
+        from sessions import start_session, prepare_session_command, SessionRegistry
+        self._wolt_json(harness, **extra)
+        result = start_session(wolt="testwolt", prompt=prompt,
+                               routing={"adapter": "lodge"})
+        cmd = prepare_session_command(result["name"], "spawn", prompt)
+        stamped = SessionRegistry(self.wolts_dir).get(
+            result["name"], check_alive=False).get("pending_boot_prompt", "")
+        return stamped or cmd
+
+    def test_a_copy_path_claude_wolt_gets_the_legacy_name(self):
+        assert "/woltspace-start-chat" in self._boot_prompt("claude")
+
+    def test_a_copy_path_codex_wolt_gets_the_legacy_name(self):
+        """Pre-change codex emitted `@woltspace-start-chat`. Nothing about the
+        rename changed what a copy-path wolt has on disk."""
+        assert "@woltspace-start-chat" in self._boot_prompt("codex")
+
+    def test_a_plugin_claude_wolt_gets_the_namespaced_name(self):
+        out = self._boot_prompt("claude", skills_delivery="plugin")
+        assert "/woltspace:start-chat" in out
+        assert "/woltspace-start-chat" not in out
+
+    def test_a_plugin_codex_wolt_gets_the_namespaced_name(self):
+        out = self._boot_prompt("codex", skills_delivery="plugin")
+        assert "@woltspace:start-chat" in out
+        assert "@woltspace-start-chat" not in out
+
+    def test_an_unreadable_wolt_json_falls_back_to_the_legacy_name(self):
+        """Guessing "plugin" wrongly hands a session a name that isn't there;
+        guessing "copy" wrongly is where the whole colony already lives."""
+        from sessions import start_session, prepare_session_command, SessionRegistry
+        self._wolt_json("claude")
+        result = start_session(wolt="testwolt", prompt="hello",
+                               routing={"adapter": "lodge"})
+        (self.wolts_dir / "testwolt" / "wolt" / "wolt.json").write_text("{broken")
+        prepare_session_command(result["name"], "spawn", "hello")
+        # claude takes the prompt on the CLI, so read it back off the command
+        cmd = prepare_session_command(result["name"], "spawn", "hello")
+        assert "/woltspace-start-chat" in cmd
+
+
+class TestPlatformInvocationDetection:
+    """start-chat is skipped when a prompt already opens a skill — and only
+    then. A prompt that merely mentions one is prose."""
+
+    def _skips_start_chat(self, prompt, harness="claude", delivery="copy"):
+        from sessions import _invokes_platform_skill
+        return _invokes_platform_skill(prompt, harness, delivery)
+
+    def test_a_real_invocation_is_recognised_in_either_spelling(self):
+        assert self._skips_start_chat("/woltspace-create-wolt")
+        assert self._skips_start_chat("/woltspace:create-wolt")
+        assert self._skips_start_chat("@woltspace-create-wolt", harness="codex")
+        assert self._skips_start_chat("please run /woltspace:notify now")
+
+    def test_merely_talking_about_a_skill_is_not_an_invocation(self):
+        """A substring match here silently costs the session its boot context."""
+        assert not self._skips_start_chat("rename woltspace-notify to notify")
+        assert not self._skips_start_chat("the woltspace: namespace is new")
+        assert not self._skips_start_chat("grep for woltspace-* in the repo")
+
+    def test_a_bare_sigil_only_counts_where_names_are_bare(self):
+        # opencode + plugin delivery is the one shape with bare names
+        assert self._skips_start_chat("/create-wolt", harness="opencode",
+                                      delivery="plugin")
+        assert self._skips_start_chat(" /create-wolt", harness="opencode",
+                                      delivery="plugin")
+        # everywhere else a bare "/foo" is a wolt-owned skill, not ours to read
+        assert not self._skips_start_chat("/create-wolt", harness="claude",
+                                          delivery="plugin")
+        assert not self._skips_start_chat("/create-wolt", harness="opencode",
+                                          delivery="copy")
+
+
 class TestTableShape:
     """Every harness entry must carry the keys the platform relies on."""
 
     REQUIRED_KEYS = {"wrapper", "command", "process_names", "models",
-                     "model_catalog", "skill_invoke", "instructions_file",
+                     "model_catalog", "skill_invoke", "platform_skill_invoke",
+                     "instructions_file",
                      "auth_file", "preset_session_id", "discover_session_id",
                      "paste_settle", "label", "emoji"}
 
@@ -252,6 +365,40 @@ class TestTableShape:
         for name, entry in HARNESSES.items():
             missing = self.REQUIRED_KEYS - set(entry)
             assert not missing, f"harness '{name}' missing keys: {missing}"
+
+    def test_plugin_delivery_is_spelled_per_harness(self):
+        """claude and codex namespace platform skills under `woltspace:` — one
+        via the plugin, one via the .claude-plugin-rooted tree. opencode
+        (benched live, 1.18.29) namespaces nothing: bare frontmatter names,
+        with the leading space that keeps "/" out of the command palette."""
+        from harnesses import platform_skill_invoke
+        for harness, expected in (("claude", "/woltspace:start-chat"),
+                                  ("codex", "@woltspace:start-chat"),
+                                  ("opencode", " /start-chat")):
+            assert platform_skill_invoke(
+                harness, "start-chat", delivery="plugin") == expected
+
+    def test_copy_delivery_keeps_the_prefixed_name_every_wolt_already_has(self):
+        """The un-ratcheted colony's skills are literally named
+        `woltspace-start-chat`. Spelling them the plugin way names a skill that
+        is not there."""
+        from harnesses import platform_skill_invoke
+        for harness, expected in (("claude", "/woltspace-start-chat"),
+                                  ("codex", "@woltspace-start-chat"),
+                                  ("opencode", "/woltspace-start-chat")):
+            assert platform_skill_invoke(
+                harness, "start-chat", delivery="copy") == expected
+
+    def test_copy_delivery_is_the_default(self):
+        """A caller with no wolt in hand must not guess "plugin"."""
+        from harnesses import platform_skill_invoke
+        assert platform_skill_invoke("claude", "start-chat") == "/woltspace-start-chat"
+
+    def test_a_harness_without_a_platform_template_falls_back(self, monkeypatch):
+        from harnesses import HARNESSES as table, platform_skill_invoke
+        monkeypatch.delitem(table["claude"], "platform_skill_invoke")
+        assert platform_skill_invoke(
+            "claude", "viewport", delivery="plugin") == "/viewport"
 
     def test_default_exists(self):
         assert DEFAULT_HARNESS in HARNESSES
@@ -338,8 +485,7 @@ class TestSessionHarnessPlumbing:
 
     def _start(self, **kwargs):
         from sessions import start_session
-        with patch("sessions.subprocess.run"):
-            return start_session(wolt="testwolt", prompt="hello", **kwargs)
+        return start_session(wolt="testwolt", prompt="hello", **kwargs)
 
     def _session_data(self, name):
         from sessions import SessionRegistry
@@ -445,7 +591,7 @@ class TestBootPromptViaPaste:
     """
 
     @pytest.fixture(autouse=True)
-    def setup_wolt(self, tmp_path, monkeypatch):
+    def setup_wolt(self, tmp_path, monkeypatch, fake_runtime):
         import sessions
         import sites
         import paths
@@ -463,11 +609,11 @@ class TestBootPromptViaPaste:
             "name": "testwolt", "type": "raccoon", "harness": "opencode",
         }))
         self.wolts_dir = tmp_path
+        self.runtime = fake_runtime
 
     def _start(self, **kwargs):
         from sessions import start_session
-        with patch("sessions.subprocess.run"):
-            return start_session(wolt="testwolt", prompt="hello", **kwargs)
+        return start_session(wolt="testwolt", prompt="hello", **kwargs)
 
     def _session_data(self, name):
         from sessions import SessionRegistry
@@ -476,11 +622,39 @@ class TestBootPromptViaPaste:
     def test_spawn_stamps_pending_and_omits_prompt(self):
         from sessions import prepare_session_command
         result = self._start()
-        cmd = prepare_session_command(result["name"], "spawn", "/woltspace-create-wolt")
+        cmd = prepare_session_command(result["name"], "spawn", "/woltspace:create-wolt")
         assert "wopencode" in cmd
         assert "--prompt" not in cmd
         # The full assembled prompt (skill invocation intact) is stamped
-        assert self._session_data(result["name"])["pending_boot_prompt"] == "/woltspace-create-wolt"
+        assert self._session_data(result["name"])["pending_boot_prompt"] == "/woltspace:create-wolt"
+
+    def test_a_bare_name_invocation_still_suppresses_start_chat(self):
+        """Under plugin delivery opencode names platform skills bare, so there
+        is no `woltspace:` to look for — a prompt that opens with the sigil is
+        the invocation."""
+        from sessions import prepare_session_command
+        wolt_json = self.wolts_dir / "testwolt" / "wolt" / "wolt.json"
+        wolt_json.write_text(json.dumps({
+            "name": "testwolt", "type": "raccoon", "harness": "opencode",
+            "skills_delivery": "plugin",
+        }))
+        result = self._start()
+        prepare_session_command(result["name"], "spawn", " /create-wolt")
+        stamped = self._session_data(result["name"])["pending_boot_prompt"]
+        assert stamped == " /create-wolt"
+        assert "start-chat" not in stamped
+
+    def test_a_plugin_wolt_gets_the_bare_start_chat(self):
+        from sessions import prepare_session_command
+        wolt_json = self.wolts_dir / "testwolt" / "wolt" / "wolt.json"
+        wolt_json.write_text(json.dumps({
+            "name": "testwolt", "type": "raccoon", "harness": "opencode",
+            "skills_delivery": "plugin",
+        }))
+        result = self._start()
+        prepare_session_command(result["name"], "spawn", "hello world")
+        assert self._session_data(result["name"])["pending_boot_prompt"] == \
+            "hello world /start-chat lodge testwolt"
 
     def test_resume_stamps_pending_and_omits_prompt(self):
         from sessions import prepare_session_command
@@ -502,8 +676,8 @@ class TestBootPromptViaPaste:
             "name": "testwolt", "type": "raccoon", "harness": "claude",
         }))
         result = self._start()
-        cmd = prepare_session_command(result["name"], "spawn", "/woltspace-create-wolt")
-        assert "/woltspace-create-wolt" in cmd
+        cmd = prepare_session_command(result["name"], "spawn", "/woltspace:create-wolt")
+        assert "/woltspace:create-wolt" in cmd
         assert not self._session_data(result["name"]).get("pending_boot_prompt")
 
     def test_deliver_pastes_once_tui_ready_and_clears_stamp(self, monkeypatch):
@@ -511,7 +685,7 @@ class TestBootPromptViaPaste:
         from sessions import deliver_boot_prompt, prepare_session_command
         result = self._start()
         name = result["name"]
-        prepare_session_command(name, "spawn", "/woltspace-create-wolt")
+        prepare_session_command(name, "spawn", "/woltspace:create-wolt")
 
         pasted = []
         monkeypatch.setattr(sessions, "_tmux_paste",
@@ -519,16 +693,17 @@ class TestBootPromptViaPaste:
 
         # First capture: marker absent (blank pane) → satisfies absent-first.
         # Second: marker present → ready.
-        panes = iter(["", "┃ Ask anything...\n tab agents  ctrl+p commands"])
-
-        def fake_run(cmd, **kwargs):
-            return type("R", (), {"stdout": next(panes, "ctrl+p commands")})()
-        monkeypatch.setattr(sessions.subprocess, "run", fake_run)
+        self.runtime.feed_capture(["", "┃ Ask anything...\n tab agents  ctrl+p commands"])
         monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
 
         assert deliver_boot_prompt(name, timeout=5) is True
         # Leading slash gets a space guard (opencode palette defuse)
-        assert pasted == [(name, " /woltspace-create-wolt", 0.5)]
+        assert pasted == [(name, " /woltspace:create-wolt", 0.5)]
+        # The readiness gate waits for the marker to CLEAR on repaint, so it
+        # must read the VISIBLE pane — no -S. With scrollback, a marker that
+        # scrolled off screen still reads as present, seen_absent never flips,
+        # and the prompt is stranded until the timeout.
+        assert [start for _, start in self.runtime.captures] == [None, None]
         assert self._session_data(name)["pending_boot_prompt"] == ""
         # Second call is a no-op — the stamp is gone
         assert deliver_boot_prompt(name, timeout=5) is False
@@ -548,17 +723,17 @@ class TestBootPromptViaPaste:
         # Marker present on the FIRST capture (stale frame). If deliver
         # accepted it, it would paste into the frozen pane. It must wait for a
         # capture without the marker (repaint) then one with it again.
-        panes = iter([
+        self.runtime.feed_capture([
             "old frame\n ctrl+p commands",   # stale — must be rejected
             "booting...",                     # repaint, marker gone
             "fresh TUI\n ctrl+p commands",   # real ready
         ])
-        monkeypatch.setattr(sessions.subprocess, "run",
-                            lambda *a, **k: type("R", (), {"stdout": next(panes, "ctrl+p commands")})())
         monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
 
         assert deliver_boot_prompt(name, timeout=5) is True
         assert pasted == ["hello world /woltspace-start-chat lodge testwolt"]
+        # Three visible-pane reads: stale frame, repaint, real marker.
+        assert [start for _, start in self.runtime.captures] == [None, None, None]
 
     def test_deliver_without_marker_falls_back_to_settle(self, monkeypatch):
         """A prompt_via_paste harness with no tui_ready_marker must still
@@ -593,16 +768,12 @@ class TestBootPromptViaPaste:
         pasted = []
         monkeypatch.setattr(sessions, "_tmux_paste",
                             lambda target, text, settle=0.0: pasted.append(text))
-        panes = iter(["", "ctrl+p commands"])
-        monkeypatch.setattr(sessions.subprocess, "run",
-                            lambda *a, **k: type("R", (), {"stdout": next(panes, "ctrl+p commands")})())
+        self.runtime.feed_capture(["", "ctrl+p commands"])
         monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
 
         assert deliver_boot_prompt(name, timeout=5) is True
         # A second poller (marker present from the start) finds the stamp gone
-        panes2 = iter(["ctrl+p commands"])
-        monkeypatch.setattr(sessions.subprocess, "run",
-                            lambda *a, **k: type("R", (), {"stdout": next(panes2, "ctrl+p commands")})())
+        self.runtime.feed_capture("ctrl+p commands")
         assert deliver_boot_prompt(name, timeout=5) is False
         assert pasted == ["hello world /woltspace-start-chat lodge testwolt"]  # only once
 
@@ -613,12 +784,12 @@ class TestBootPromptViaPaste:
         result = self._start()
         name = result["name"]
         # Simulate a boot prompt that deliver_boot_prompt never got to send
-        prepare_session_command(name, "spawn", "/woltspace-create-wolt")
-        assert self._session_data(name)["pending_boot_prompt"] == "/woltspace-create-wolt"
+        prepare_session_command(name, "spawn", "/woltspace:create-wolt")
+        assert self._session_data(name)["pending_boot_prompt"] == "/woltspace:create-wolt"
         # Bot resumes with the user's message
         prepare_session_command(name, "resume", "hey are you there")
         assert self._session_data(name)["pending_boot_prompt"] == \
-            "/woltspace-create-wolt hey are you there"
+            "/woltspace:create-wolt hey are you there"
 
     def test_deliver_no_space_guard_for_non_slash_prompt(self, monkeypatch):
         """A normal prompt is pasted verbatim — the guard only touches "/"."""
@@ -631,13 +802,12 @@ class TestBootPromptViaPaste:
         pasted = []
         monkeypatch.setattr(sessions, "_tmux_paste",
                             lambda target, text, settle=0.0: pasted.append(text))
-        panes = iter(["", "ctrl+p commands"])
-        monkeypatch.setattr(sessions.subprocess, "run",
-                            lambda *a, **k: type("R", (), {"stdout": next(panes, "ctrl+p commands")})())
+        self.runtime.feed_capture(["", "ctrl+p commands"])
         monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
 
         assert deliver_boot_prompt(name, timeout=5) is True
         assert pasted == ["just chatting"]
+        assert all(start is None for _, start in self.runtime.captures)
 
     def test_deliver_leaves_stamp_when_tui_never_paints(self, monkeypatch):
         """Agent died at boot → keep the stamp so a --resume respawn delivers it."""
@@ -649,8 +819,7 @@ class TestBootPromptViaPaste:
 
         # Marker never appears (agent died at boot) — exercise the real poll
         # loop with a short timeout, not the pre-expired-deadline shortcut.
-        monkeypatch.setattr(sessions.subprocess, "run",
-                            lambda *a, **k: type("R", (), {"stdout": "booting, no tui yet"})())
+        self.runtime.feed_capture("booting, no tui yet")
         monkeypatch.setattr(sessions.time, "sleep", lambda s: None)
         monkeypatch.setattr(sessions, "_tmux_paste",
                             lambda *a, **k: pytest.fail("must not paste before TUI paints"))

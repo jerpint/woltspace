@@ -28,6 +28,8 @@ from sessions import (
     resume_session,
     session_name as _session_name,
     start_session,
+    _tmux_capture,
+    _tmux_stop,
 )
 from wolts import get_active_creature, find_by_type, list_wolts as _list_wolts_full
 from paths import (
@@ -328,8 +330,10 @@ def _call_server(method: str, path: str, body: dict | None = None) -> dict:
     """Make an HTTP request to the local woltspace server."""
     import urllib.request
     data = json.dumps(body).encode() if body is not None else None
+    # The instance this adapter was spawned by, not whoever holds 7777.
+    api = os.environ.get("WOLTSPACE_API", "http://localhost:7777")
     req = urllib.request.Request(
-        f"http://localhost:7777{path}",
+        f"{api}{path}",
         data=data,
         headers={"Content-Type": "application/json"} if data else {},
         method=method,
@@ -444,14 +448,10 @@ def check_session(session_name: str = None) -> dict:
     output = ""
     if alive:
         try:
-            tmux_result = subprocess.run(
-                ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-30"],
-                capture_output=True, text=True, check=True,
-            )
-            output = tmux_result.stdout.strip()
+            output = _tmux_capture(session_name, start="-30").strip()
             lines = [l for l in output.split("\n") if l.strip()][-30:]
             output = "\n".join(lines)
-        except subprocess.CalledProcessError:
+        except (subprocess.SubprocessError, OSError, RuntimeError):
             output = "(couldn't read session output)"
 
     if data:
@@ -545,11 +545,7 @@ def kill_session(name: str) -> bool:
     if name == "main":
         return False
     safe = "".join(c for c in name if c.isalnum() or c in "-_")
-    try:
-        subprocess.run(["tmux", "kill-session", "-t", safe], check=True)
-        return True
-    except subprocess.CalledProcessError:
-        return False
+    return _tmux_stop(safe)
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,11 @@
+{
+  "name": "woltspace",
+  "owner": { "name": "woltspace" },
+  "plugins": [
+    {
+      "name": "woltspace",
+      "source": "./",
+      "description": "Woltspace platform skills — notify, viewport, IWCL, wolf, apps, and session bootstrap."
+    }
+  ]
+}

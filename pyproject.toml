@@ -1,16 +1,35 @@
 [project]
 name = "woltspace"
-version = "0.2.2"
+version = "0.5.0rc5"
+description = "A persistent lodge for local AI agent sessions"
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
 dependencies = [
-    # server deps
     "fastapi",
     "uvicorn[standard]",
     "websockets",
     "httpx",
     "watchfiles",
     "python-dotenv",
-    # bot deps
+    "jinja2",
+]
+
+[project.scripts]
+woltspace = "woltspace.cli:main"
+
+[project.optional-dependencies]
+connectors = [
+    "litellm",
+    "openai",
+    "python-telegram-bot",
+    "slack-bolt",
+    "slack-sdk",
+    "pyjwt[crypto]>=2.12.1",
+]
+test = [
+    "pytest",
+    "pytest-asyncio",
     "litellm",
     "openai",
     "python-telegram-bot",
@@ -19,5 +38,35 @@ dependencies = [
     "pyjwt[crypto]>=2.12.1",
 ]
 
-[project.optional-dependencies]
-test = ["pytest", "pytest-asyncio"]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+exclude = [
+    "**/__pycache__/**",
+    "**/*.pyc",
+    "container/bot/test_*.py",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/woltspace"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"server" = "woltspace/_bundle/server"
+"container" = "woltspace/_bundle/container"
+"public" = "woltspace/_bundle/public"
+"template" = "woltspace/_bundle/template"
+"templates" = "woltspace/_bundle/templates"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/woltspace",
+    "/server",
+    "/container",
+    "/public",
+    "/template",
+    "/templates",
+    "/README.md",
+    "/LICENSE",
+]

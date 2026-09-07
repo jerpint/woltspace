@@ -25,6 +25,10 @@ import shlex
 import subprocess
 from pathlib import Path
 
+from session_runtime import RuntimeHandle, get_runtime
+from execution_policy import policy_mode
+from skills_sync import COPY_DELIVERY, PLUGIN_DELIVERY
+
 DEFAULT_HARNESS = "claude"
 
 # Wrappers resolved relative to this file so the dev clone drives its own
@@ -41,13 +45,15 @@ _ROLLOUT_UUID_RE = re.compile(
 
 def _claude_command(entry: dict, mode: str, *, session_id: str = "",
                     session_name: str = "", model: str = "", prompt: str = "",
-                    resume_id: str = "") -> str:
+                    resume_id: str = "", execution_policy=None) -> str:
     """Build a Claude Code command line. Mirrors the historical invocations exactly."""
     wrapper = entry["wrapper"]
     if mode == "login":
         return f"{wrapper} /login"
 
-    parts = [wrapper, "--dangerously-skip-permissions"]
+    parts = [wrapper]
+    if policy_mode(execution_policy) == "auto":
+        parts.append("--dangerously-skip-permissions")
     if mode == "spawn":
         if session_id:
             parts += ["--session-id", session_id]
@@ -67,7 +73,7 @@ def _claude_command(entry: dict, mode: str, *, session_id: str = "",
 
 def _codex_command(entry: dict, mode: str, *, session_id: str = "",
                    session_name: str = "", model: str = "", prompt: str = "",
-                   resume_id: str = "") -> str:
+                   resume_id: str = "", execution_policy=None) -> str:
     """Build a Codex CLI command line (verified against codex-cli 0.144).
 
     Codex can't preset a session id at spawn — run-session.sh discovers the
@@ -87,7 +93,8 @@ def _codex_command(entry: dict, mode: str, *, session_id: str = "",
         parts += ["resume", resume_id]
     # Codex's own help: "Intended solely for running in environments that are
     # externally sandboxed" — which is exactly the woltspace container.
-    parts.append("--dangerously-bypass-approvals-and-sandbox")
+    if policy_mode(execution_policy) == "auto":
+        parts.append("--dangerously-bypass-approvals-and-sandbox")
     if model:
         parts += ["-m", model]
     if prompt:
@@ -141,7 +148,7 @@ def _codex_discover_session_id(data: dict, since: float) -> str | None:
 
 def _opencode_command(entry: dict, mode: str, *, session_id: str = "",
                       session_name: str = "", model: str = "", prompt: str = "",
-                      resume_id: str = "") -> str:
+                      resume_id: str = "", execution_policy=None) -> str:
     """Build an opencode CLI command line (verified against opencode 1.18.3).
 
       - The interactive TUI (root command, attachable in tmux) accepts -m/--model
@@ -176,7 +183,9 @@ def _opencode_command(entry: dict, mode: str, *, session_id: str = "",
     # --auto = full permissions, no approval prompts (unattended, like all wolts)
     # No --prompt ever — the boot prompt arrives via deliver_boot_prompt (see
     # docstring); a CLI prompt would race model resolution and strand on "/".
-    parts = [wrapper, "--auto"]
+    parts = [wrapper]
+    if policy_mode(execution_policy) == "auto":
+        parts.append("--auto")
     if mode == "resume" and resume_id:
         parts += ["--session", resume_id]
     if model:
@@ -277,6 +286,9 @@ HARNESSES = {
         ],
         # how a skill is invoked inside a prompt
         "skill_invoke": "/{name}",
+        # platform skills arrive through the woltspace plugin, which namespaces
+        # every skill under the marketplace name. Verified live 2026-09-06.
+        "platform_skill_invoke": "/woltspace:{name}",
         "instructions_file": "CLAUDE.md",
         "auth_file": ".claude/.credentials.json",
         # claude accepts --session-id at spawn; codex assigns its own
@@ -312,6 +324,11 @@ HARNESSES = {
         # discovered skill for real. `$name` only worked by the model choosing to
         # read the SKILL.md itself; `@` is the reliable trigger. Verified live 2026-07-16.
         "skill_invoke": "@{name}",
+        # codex auto-namespaces a skill tree that carries .claude-plugin/ at its
+        # root under the plugin name — so the platform skills it discovers
+        # through the symlink answer to `woltspace:<base>`, the same name claude
+        # gets from the plugin. Verified live 2026-09-06.
+        "platform_skill_invoke": "@woltspace:{name}",
         "instructions_file": "AGENTS.md",
         "auth_file": ".codex/auth.json",
         "preset_session_id": False,
@@ -359,6 +376,17 @@ HARNESSES = {
         # "/" open the TUI command palette ("No matching items") and never
         # submit, which is one of the two reasons boot prompts go via paste.
         "skill_invoke": "/{name}",
+        # opencode is the odd one out. Benched live on 1.18.29: it discovers the
+        # whole platform tree through the symlink chain, but it does NOT
+        # namespace it — a platform skill answers to its bare frontmatter name
+        # (`/notify`), not `woltspace:notify` the way claude and codex spell it.
+        # Consequence, documented rather than defended against: on opencode a
+        # wolt-owned skill named `notify` collides with the platform one, and
+        # neither wins by rule. Nothing here special-cases that; a wolt that
+        # names its own skill after a platform skill gets what it asked for.
+        # The leading space is the palette defuse — a pasted message starting
+        # with "/" opens the command palette instead of submitting.
+        "platform_skill_invoke": " /{name}",
         # The TUI can't take the boot prompt on the CLI (see _opencode_command
         # docstring). prepare_session_command stamps it; deliver_boot_prompt
         # pastes it once the marker below shows in the pane (the composer hint
@@ -404,6 +432,47 @@ def resolve_harness(name: str | None) -> str:
 def get_harness(name: str | None) -> dict:
     """Get a harness table entry, falling back to the default harness."""
     return HARNESSES[resolve_harness(name)]
+
+
+# The namespace a platform skill answers to once it is delivered as the
+# woltspace plugin (claude) or as a `.claude-plugin/`-rooted tree (codex).
+PLATFORM_SKILL_NAMESPACE = "woltspace"
+
+# The copy-sync spelling: skills are copied into the wolt under a `woltspace-`
+# prefix and invoked by that whole name (`/woltspace-notify` on claude,
+# `@woltspace-notify` on codex). Most of the colony is still here.
+LEGACY_PLATFORM_SKILL_PREFIX = "woltspace-"
+
+
+def platform_skill_invoke(harness: str | None, name: str,
+                          delivery: str = COPY_DELIVERY) -> str:
+    """How this harness invokes the platform skill `name` for THIS wolt.
+
+    The spelling is a function of two things, and getting either wrong hands a
+    session a skill that does not exist:
+
+      delivery == "copy" (the default, and most of the colony)
+          The skill is a copy sitting in the wolt's own skills directory under
+          `woltspace-<name>`, with no namespace of its own. It is invoked the
+          way any wolt-owned skill is — `skill_invoke` — with that full
+          prefixed name.
+
+      delivery == "plugin"
+          claude and codex namespace it: `/woltspace:<name>`, `@woltspace:<name>`.
+          opencode namespaces nothing and answers to the bare name (see its
+          table entry). A harness with no platform template falls back to
+          `skill_invoke` with the bare name.
+
+    `COPY_DELIVERY` is the default on purpose: a caller with no wolt in hand
+    cannot know, and the un-ratcheted spelling is the one almost every wolt
+    currently understands.
+    """
+    entry = get_harness(harness)
+    if delivery != PLUGIN_DELIVERY:
+        return entry["skill_invoke"].format(
+            name=f"{LEGACY_PLATFORM_SKILL_PREFIX}{name}")
+    template = entry.get("platform_skill_invoke") or entry["skill_invoke"]
+    return template.format(name=name)
 
 
 def _model_overlay(harness: str | None) -> dict:
@@ -563,65 +632,66 @@ def build_command(harness: str | None, mode: str, **kwargs) -> str:
     return entry["command"](entry, mode, **kwargs)
 
 
-def session_has_agent_process(session_name: str, harness: str | None = None,
-                              include_launching: bool = True) -> bool | None:
-    """Check if a tmux session has a live agent process anywhere in its tree.
+def _as_handle(session: str | dict | RuntimeHandle) -> RuntimeHandle:
+    """Accept a session name, a registry record, or an already-built handle."""
+    if isinstance(session, RuntimeHandle):
+        return session
+    if isinstance(session, dict):
+        return RuntimeHandle.from_record(session)
+    return RuntimeHandle(session, session)
 
-    Walks the full subtree from the pane's root PID — not just direct children.
-    The actual tree is: pane(bash) → bash(run-session.sh) → bash(wrapper) → agent,
-    so checking only direct children always misses the agent.
 
-    harness=None matches ANY known harness's process names — for callers like
-    the vulture that only see a tmux session and must not kill a live agent
-    just because they can't tell which harness it runs.
-
-    include_launching also counts run-session.sh itself as alive — a session
-    that is still booting has no agent process yet but must not be reaped.
-
-    Returns True/False, or None if the tmux session doesn't exist.
-    """
+def _wanted_processes(harness: str | None, include_launching: bool) -> set[str]:
     if harness is None:
+        # Match ANY known harness — callers like the vulture only see a tmux
+        # session and must not kill a live agent because they can't tell which
+        # harness it runs.
         process_names = set().union(*(e["process_names"] for e in HARNESSES.values()))
     else:
         process_names = set(get_harness(harness)["process_names"])
     if include_launching:
         process_names |= LAUNCHING_NAMES
-    try:
-        result = subprocess.run(
-            ["tmux", "list-panes", "-t", session_name, "-F", "#{pane_pid}"],
-            capture_output=True, text=True, check=True,
-        )
-        pane_pids = [p for p in result.stdout.strip().split("\n") if p]
-        if not pane_pids:
-            return None
+    return process_names
 
-        # Build full process table: pid → (ppid, comm)
-        ps_result = subprocess.run(
-            ["ps", "--no-headers", "-eo", "pid,ppid,comm"],
-            capture_output=True, text=True,
-        )
-        children: dict[str, list[str]] = {}
-        comms: dict[str, str] = {}
-        for line in ps_result.stdout.strip().split("\n"):
-            parts = line.split()
-            if len(parts) >= 3:
-                pid, ppid, comm = parts[0], parts[1], parts[2]
-                children.setdefault(ppid, []).append(pid)
-                comms[pid] = comm
 
-        # BFS from each pane pid — True if any descendant is an agent process
-        queue = list(pane_pids)
-        seen: set[str] = set()
-        while queue:
-            cur = queue.pop()
-            if cur in seen:
-                continue
-            seen.add(cur)
-            if comms.get(cur) in process_names:
-                return True
-            queue.extend(children.get(cur, []))
-        return False
-    except subprocess.CalledProcessError:
-        return None
-    except Exception:
-        return None
+def resolve_agent_handle(session_name: str | dict | RuntimeHandle,
+                         harness: str | None = None,
+                         include_launching: bool = True) -> RuntimeHandle | None:
+    """Locate the pane an agent is actually running in, or None.
+
+    This is the same walk `session_has_agent_process` reports on, but it hands
+    back *where* the agent was found rather than just whether it exists. Resume
+    delivery uses the returned handle so detection and delivery can never
+    resolve different panes — the failure that made a prompt land silently in
+    whichever window the human last clicked on.
+    """
+    handle = _as_handle(session_name)
+    return get_runtime().resolve_process_handle(
+        handle, _wanted_processes(harness, include_launching)
+    )
+
+
+def session_has_agent_process(session_name: str | dict | RuntimeHandle,
+                              harness: str | None = None,
+                              include_launching: bool = True) -> bool | None:
+    """Check if a tmux session has a live agent process anywhere in its tree.
+
+    Walks every pane of the session (all windows, not just the current one)
+    and the full subtree from each pane's root PID — not just direct children.
+    The actual tree is: pane(bash) -> bash(run-session.sh) -> bash(wrapper) ->
+    agent, so checking only direct children always misses the agent.
+
+    harness: restrict to one harness's process names; None matches any harness.
+    include_launching: also count the launching shim (run-session.sh, uv, node)
+        so a session that has not finished booting reads as alive.
+
+    Returns True/False, or None when the answer is undetermined — the tmux
+    session does not exist, or the process table could not be read. None is
+    never "dead": the vulture treats anything but False as alive so it can
+    never reap on uncertainty.
+    """
+    handle = _as_handle(session_name)
+    runtime = get_runtime()
+    return runtime.has_descendant_process(
+        handle, _wanted_processes(harness, include_launching)
+    )

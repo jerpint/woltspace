@@ -19,6 +19,16 @@ from .config import (
 from .state import sanitize_session
 
 
+class NoNotificationTarget(RuntimeError):
+    """Nowhere to deliver to — a configuration gap, not a platform failure.
+
+    Its own type so the API can answer 409 instead of 500: an unconnected chat
+    is the user's next step, and a 500 tells them woltspace is broken. The
+    agent that hit this had to guess which it was.
+    """
+
+
+
 def read_session_registry(session: str) -> dict | None:
     """Find a session file by scanning all per-wolt .state/sessions/ dirs."""
     safe = sanitize_session(session)
@@ -163,4 +173,7 @@ async def send_notification(session: str, message: str, explicit: dict | None = 
     if telegram_token and telegram_chat_id:
         return await _send_telegram(session, message, telegram_chat_id)
 
-    raise RuntimeError("no notification target — set TELEGRAM_BOT_TOKEN + TELEGRAM_ALLOWED_USERS")
+    raise NoNotificationTarget(
+        "no notification target — set TELEGRAM_BOT_TOKEN + TELEGRAM_ALLOWED_USERS "
+        f"in {WOLTS_DIR}/.env, or connect a chat with the /telegram skill"
+    )

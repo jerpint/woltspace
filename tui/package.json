@@ -1,20 +1,31 @@
 {
-  "name": "woltspace-tui",
-  "version": "0.1.0",
+  "name": "@woltspace/tui",
+  "version": "0.5.0-rc.1",
   "description": "woltspace tui - terminal cockpit for the colony",
   "license": "MIT",
   "type": "module",
   "bin": {
-    "woltspace-tui": "./src/main.js"
+    "woltspace-tui": "./src/main.js",
+    "woltspace-tui-service": "./src/tui-service.js"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
-    "start": "node src/main.js"
+    "start": "node src/main.js",
+    "test": "node --test test/**/*.test.mjs"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
     "ink": "^5.1.0",
-    "react": "^18.3.1"
+    "node-pty": "^1.1.0",
+    "react": "^18.3.1",
+    "ws": "^8.19.0"
   }
 }

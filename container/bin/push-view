@@ -13,8 +13,18 @@ if [ -z "$SESSION" ]; then
 fi
 SESSION="${SESSION:-main}"
 
-curl -s -X POST "http://localhost:7777/current?session=${SESSION}" \
+# The control plane that owns this session — see `notify` for where the stamp
+# comes from. The literal is the container's baked-in default only.
+API="${WOLTSPACE_API:-http://localhost:7777}"
+
+# `curl -s` swallows a connection refusal, and the old unconditional echo below
+# then reported a push that never happened — the single most misleading thing a
+# tool can do to an agent checking its own work. Fail loudly instead.
+if ! RESPONSE=$(curl -sS -f -X POST "${API}/current?session=${SESSION}" \
   -H 'Content-Type: application/json' \
-  -d "{\"url\":\"${URL}\"}" > /dev/null
+  -d "{\"url\":\"${URL}\"}" 2>&1); then
+  echo "[viewport:${SESSION}] failed to reach ${API}: ${RESPONSE}" >&2
+  exit 1
+fi
 
 echo "[viewport:${SESSION}] → ${URL}"

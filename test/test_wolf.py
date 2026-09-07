@@ -100,6 +100,71 @@ class TestCronParser:
 
 
 # ---------------------------------------------------------------------------
+# server_url
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def bare_env(monkeypatch):
+    """No ambient instance. These tests run *inside* a wolt session, which is
+    handed WOLTSPACE_API/HOST/PORT — without this they would assert against
+    whatever colony happens to be running."""
+    for key in ("WOLTSPACE_API", "WOLTSPACE_HOST", "WOLTSPACE_PORT", "PORT"):
+        monkeypatch.delenv(key, raising=False)
+
+
+class TestServerUrl:
+    """Unit: the wolf calls the exact plane that spawned it — host and port."""
+
+    def test_defaults_to_the_historical_address(self, bare_env):
+        from creatures.wolf import server_url
+        assert server_url("/sessions/new/lodge") == "http://127.0.0.1:7777/sessions/new/lodge"
+
+    def test_honors_woltspace_port(self, bare_env, monkeypatch):
+        from creatures.wolf import server_url
+        monkeypatch.setenv("WOLTSPACE_PORT", "8123")
+        assert server_url("/sessions/new/lodge") == "http://127.0.0.1:8123/sessions/new/lodge"
+
+    def test_falls_back_to_port(self, bare_env, monkeypatch):
+        from creatures.wolf import server_url
+        monkeypatch.setenv("PORT", "9001")
+        assert server_url() == "http://127.0.0.1:9001"
+
+    def test_woltspace_port_wins(self, bare_env, monkeypatch):
+        from creatures.wolf import server_url
+        monkeypatch.setenv("WOLTSPACE_PORT", "8123")
+        monkeypatch.setenv("PORT", "9001")
+        assert server_url() == "http://127.0.0.1:8123"
+
+    def test_the_stamped_endpoint_wins_over_everything(self, bare_env, monkeypatch):
+        from creatures.wolf import server_url
+        monkeypatch.setenv("WOLTSPACE_API", "http://192.168.1.9:8080")
+        monkeypatch.setenv("WOLTSPACE_PORT", "8123")
+        assert server_url("/health") == "http://192.168.1.9:8080/health"
+
+    def test_a_lan_bound_plane_is_not_loopback(self, bare_env, monkeypatch):
+        """The bug: every callback went to 127.0.0.1 and nothing was listening."""
+        from creatures.wolf import server_url
+        monkeypatch.setenv("WOLTSPACE_HOST", "192.168.1.9")
+        monkeypatch.setenv("WOLTSPACE_PORT", "8080")
+        assert server_url("/health") == "http://192.168.1.9:8080/health"
+
+    def test_an_ipv6_literal_gets_its_brackets(self, bare_env, monkeypatch):
+        from creatures.wolf import server_url
+        monkeypatch.setenv("WOLTSPACE_HOST", "fd00::1")
+        monkeypatch.setenv("WOLTSPACE_PORT", "8080")
+        assert server_url() == "http://[fd00::1]:8080"
+
+    def test_a_wildcard_bind_is_dialled_as_loopback(self, bare_env, monkeypatch):
+        """0.0.0.0 and :: mean 'every interface' to a listener, nothing to a caller."""
+        from creatures.wolf import server_url
+        monkeypatch.setenv("WOLTSPACE_PORT", "8080")
+        monkeypatch.setenv("WOLTSPACE_HOST", "0.0.0.0")
+        assert server_url() == "http://127.0.0.1:8080"
+        monkeypatch.setenv("WOLTSPACE_HOST", "::")
+        assert server_url() == "http://[::1]:8080"
+
+
+# ---------------------------------------------------------------------------
 # _parse_field
 # ---------------------------------------------------------------------------
 

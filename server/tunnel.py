@@ -5,7 +5,7 @@ import logging
 import os
 from pathlib import Path
 
-from .config import SPACE_PLATFORM_DIR, WOLTS_DIR
+from .config import SPACE_PLATFORM_DIR, WOLTS_DIR, WOLTSPACE_DIR
 
 log = logging.getLogger("woltspace.tunnel")
 
@@ -23,7 +23,7 @@ def _import_lib():
     global _lib_imported
     if not _lib_imported:
         import sys
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+        sys.path.insert(0, str(WOLTSPACE_DIR / "container" / "lib"))
         _lib_imported = True
 
 
@@ -66,7 +66,16 @@ def _read_state() -> dict:
 
 
 def _write_state(state: dict):
-    TUNNEL_STATE_FILE.write_text(json.dumps(state))
+    """Stamp every tunnel record with the instance that started it.
+
+    Without the stamp nothing can tell "my own tunnel" from "somebody else's",
+    which is how a stray control plane came to delete the incumbent's state on
+    its way out.
+    """
+    stamped = dict(state)
+    if stamped:
+        stamped.setdefault("instance_id", os.environ.get("WOLTSPACE_INSTANCE_ID", ""))
+    TUNNEL_STATE_FILE.write_text(json.dumps(stamped))
 
 
 def start_tunnel():
@@ -81,11 +90,17 @@ def start_tunnel():
 
     SPACE_PLATFORM_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Kill any orphaned tunnel from a previous server run
+    # Kill any orphaned tunnel from a previous server run. `stop_cloudflared`
+    # validates that the pid is still cloudflared before signalling, so a
+    # recycled pid is simply discarded rather than shot: the state file names a
+    # number, which is not evidence that the process it named still exists.
     old_state = _read_state()
     old_pid = old_state.get("pid")
     if old_pid:
-        stop_cloudflared(old_pid)
+        if stop_cloudflared(old_pid):
+            log.info(f"stopped orphaned tunnel (pid {old_pid})")
+        else:
+            log.info(f"discarding stale tunnel state (pid {old_pid} is not cloudflared)")
 
     tunnel_token = os.environ.get("CLOUDFLARE_TUNNEL_TOKEN")
     tunnel_url = os.environ.get("CLOUDFLARE_TUNNEL_URL")
@@ -112,11 +127,24 @@ def start_tunnel():
 
 
 def stop_tunnel():
-    """Stop the lodge tunnel. Called at server shutdown."""
+    """Stop the lodge tunnel. Called at server shutdown.
+
+    Only ever tears down a tunnel this instance started. An unstamped record
+    predates the stamp and is treated as ours for compatibility; one carrying
+    somebody else's id is left exactly as found.
+    """
     _import_lib()
     from tunnel import stop_cloudflared
 
     state = _read_state()
+    owner = state.get("instance_id")
+    mine = os.environ.get("WOLTSPACE_INSTANCE_ID", "")
+    if owner and mine and owner != mine:
+        log.warning(
+            f"leaving tunnel state alone: started by instance {owner}, not {mine}"
+        )
+        return
+
     pid = state.get("pid")
     if pid:
         stop_cloudflared(pid)

@@ -1,7 +1,5 @@
 #!/bin/bash
-# Wrapper that sets per-wolt HOME + XDG dirs and self-heals opencode config
-# before launching opencode. Use this instead of bare `opencode` inside the
-# container. Mirrors wcodex / wclaude.
+# Harness wrapper for externally isolated containers and native hosts.
 #
 # If $PWD is under /workspace/wolts/<name>/, set HOME to that wolt's root dir and
 # point opencode's XDG dirs at that wolt. This gives each wolt its own opencode
@@ -17,11 +15,16 @@
 # but we set XDG_DATA_HOME/XDG_CONFIG_HOME explicitly so isolation doesn't depend
 # on how opencode resolves defaults.
 
-WOLT_HOME=$(echo "$PWD" | sed -n 's|\(/workspace/wolts/[^/]*\).*|\1|p')
-if [ -n "$WOLT_HOME" ] && [ -d "$WOLT_HOME" ]; then
-    export HOME="$WOLT_HOME"
-    export XDG_DATA_HOME="$WOLT_HOME/.local/share"
-    export XDG_CONFIG_HOME="$WOLT_HOME/.config"
+if [ "${WOLTSPACE_ISOLATION:-external}" = "host" ]; then
+    # Preserve host HOME/XDG authentication and configuration untouched.
+    exec opencode "$@"
+fi
+
+WOLTSPACE_HOME_DIR="${WOLTSPACE_WOLT_HOME:-$(echo "$PWD" | sed -n 's|\(/workspace/wolts/[^/]*\).*|\1|p')}"
+if [ -n "$WOLTSPACE_HOME_DIR" ] && [ -d "$WOLTSPACE_HOME_DIR" ]; then
+    export HOME="$WOLTSPACE_HOME_DIR"
+    export XDG_DATA_HOME="$WOLTSPACE_HOME_DIR/.local/share"
+    export XDG_CONFIG_HOME="$WOLTSPACE_HOME_DIR/.config"
     # opencode may self-update into $HOME/.local/bin (or ~/.opencode/bin). With a
     # per-wolt HOME that dir isn't on PATH, so the image's baked opencode runs and
     # warns about the newer install it can't reach. Put the wolt's own bin first.
@@ -42,8 +45,8 @@ if [ -n "$WOLT_HOME" ] && [ -d "$WOLT_HOME" ]; then
     # opencode reads AGENTS.md as primary and CLAUDE.md as a documented fallback.
     # Point AGENTS.md at the wolt's CLAUDE.md (shared with codex; the fallback
     # means opencode would still read CLAUDE.md even without this).
-    if [ ! -e "$WOLT_HOME/AGENTS.md" ] && [ -f "$WOLT_HOME/CLAUDE.md" ]; then
-        ln -s CLAUDE.md "$WOLT_HOME/AGENTS.md"
+    if [ ! -e "$WOLTSPACE_HOME_DIR/AGENTS.md" ] && [ -f "$WOLTSPACE_HOME_DIR/CLAUDE.md" ]; then
+        ln -s CLAUDE.md "$WOLTSPACE_HOME_DIR/AGENTS.md"
     fi
 
     # Skills: opencode reads $HOME/.claude/skills natively (Claude Code compat).

@@ -6,6 +6,8 @@ import { Box, Text, useApp, useInput } from 'ink';
 import * as api from '../api.js';
 import { detachLabel } from '../attach.js';
 import { color, creatureGlyph, lore, age, clock } from '../theme.js';
+import { sessionPolicy, sessionWorkdir, spawnTarget } from '../session-view.js';
+import { createWoltAction, validateWoltName, woltTypes } from '../create-wolt.js';
 
 const h = React.createElement;
 
@@ -15,21 +17,24 @@ const userName = () =>
 const sortSessions = (list) =>
   [...list].sort((a, b) => (b.alive - a.alive) || (b.last_activity || 0) - (a.last_activity || 0));
 
-export default function App({ onAction }) {
+export default function App({ onAction, launchCwd = process.cwd() }) {
   const { exit } = useApp();
   const [sessions, setSessions] = useState([]);
   const [wolts, setWolts] = useState([]);
+  const [capabilities, setCapabilities] = useState(null);
   const [fetchedAt, setFetchedAt] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [flash, setFlash] = useState('');
-  const [mode, setMode] = useState('normal'); // normal | search | send | spawn | confirm
+  const [mode, setMode] = useState('normal');
   const [cursor, setCursor] = useState(0);
   const [showAll, setShowAll] = useState(false);
   const [query, setQuery] = useState('');
   const [committed, setCommitted] = useState('');
   const [input, setInput] = useState('');
   const [spawnCursor, setSpawnCursor] = useState(0);
+  const [createName, setCreateName] = useState('');
+  const [createTypeCursor, setCreateTypeCursor] = useState(0);
   const pendingG = useRef(false);
 
   const view = sortSessions(sessions).filter((s) => showAll || s.alive);
@@ -40,7 +45,8 @@ export default function App({ onAction }) {
     (s.name.toLowerCase().includes(needle) ||
       (s.wolt || '').toLowerCase().includes(needle) ||
       (s.harness || '').toLowerCase().includes(needle) ||
-      (s.model || '').toLowerCase().includes(needle));
+      (s.model || '').toLowerCase().includes(needle) ||
+      sessionWorkdir(s).toLowerCase().includes(needle));
 
   const refetch = useCallback(async (keepSlug) => {
     setLoading(true);
@@ -64,6 +70,7 @@ export default function App({ onAction }) {
   useEffect(() => {
     refetch();
     api.listWolts().then(setWolts).catch(() => {});
+    api.runtimeCapabilities().then(setCapabilities).catch(() => {});
   }, []);
 
   const act = async (fn, doneMsg) => {
@@ -94,6 +101,25 @@ export default function App({ onAction }) {
 
   useInput((ch, key) => {
     // --- text-entry modes -------------------------------------------------
+    if (mode === 'create-name') {
+      if (key.escape) {
+        setCreateName('');
+        setMode('normal');
+      } else if (key.return) {
+        const validation = validateWoltName(createName);
+        if (validation) setError(validation);
+        else {
+          setError('');
+          setMode('create-type');
+        }
+      } else if (key.backspace || key.delete) {
+        setCreateName(createName.slice(0, -1));
+      } else if (ch && !key.ctrl && !key.meta && !key.tab) {
+        setCreateName((createName + ch).toLowerCase());
+      }
+      return;
+    }
+
     if (mode === 'search' || mode === 'send') {
       const [val, setVal] = mode === 'search' ? [query, setQuery] : [input, setInput];
       if (key.escape) {
@@ -135,15 +161,60 @@ export default function App({ onAction }) {
       return;
     }
 
+    if (mode === 'spawn-confirm') {
+      if (key.escape || ch === 'n') {
+        setMode('spawn');
+      } else if (ch === 'y' && wolts[spawnCursor]) {
+        const target = spawnTarget(capabilities, wolts[spawnCursor], launchCwd);
+        onAction?.({
+          type: 'spawn',
+          wolt: wolts[spawnCursor].name,
+          workdir: target.workdir,
+          executionPolicy: target.executionPolicy,
+          isolation: capabilities?.isolation,
+        });
+        exit();
+      }
+      return;
+    }
+
+    if (mode === 'create-confirm') {
+      if (key.escape || ch === 'n') {
+        setMode('create-type');
+      } else if (ch === 'y') {
+        onAction?.(createWoltAction(
+          createName, woltTypes[createTypeCursor], capabilities, launchCwd,
+        ));
+        exit();
+      }
+      return;
+    }
+
+    if (mode === 'create-type') {
+      if (key.escape) return setMode('create-name');
+      if (ch === 'j' || key.downArrow) {
+        return setCreateTypeCursor((c) => Math.min(woltTypes.length - 1, c + 1));
+      }
+      if (ch === 'k' || key.upArrow) {
+        return setCreateTypeCursor((c) => Math.max(0, c - 1));
+      }
+      if (key.return) {
+        if (!capabilities) setError('runtime capabilities are not loaded; press r and retry');
+        else setMode('create-confirm');
+      }
+      return;
+    }
+
     if (mode === 'spawn') {
       if (key.escape) return setMode('normal');
       if (ch === 'j' || key.downArrow) return setSpawnCursor((c) => Math.min(wolts.length - 1, c + 1));
       if (ch === 'k' || key.upArrow) return setSpawnCursor((c) => Math.max(0, c - 1));
       if (key.return && wolts[spawnCursor]) {
-        // Spawn happens in the render loop so we can drop straight into the
-        // new session's pane instead of bouncing back to the list.
-        onAction?.({ type: 'spawn', wolt: wolts[spawnCursor].name });
-        exit();
+        if (!capabilities) {
+          setError('runtime capabilities are not loaded yet');
+          return;
+        }
+        setMode('spawn-confirm');
       }
       return;
     }
@@ -195,6 +266,11 @@ export default function App({ onAction }) {
           setMode('spawn');
         }).catch((e) => setError(e.message));
       }
+    } else if (ch === 'c') {
+      setCreateName('');
+      setCreateTypeCursor(0);
+      setError('');
+      setMode('create-name');
     } else if (ch === 's' && selected?.alive) {
       setInput('');
       setMode('send');
@@ -203,13 +279,17 @@ export default function App({ onAction }) {
     } else if (key.return && selected) {
       // Alive → straight into the pane. Offline → rouse it first (the server
       // rebuilds tmux + restarts the agent with its harness's resume flavor).
-      onAction?.({ type: selected.alive ? 'attach' : 'resume', slug: selected.name });
+      onAction?.({
+        type: selected.alive ? 'attach' : 'resume',
+        slug: selected.name,
+        isolation: capabilities?.isolation,
+      });
       exit();
     }
   });
 
   // --- rendering ----------------------------------------------------------
-  const rowBudget = () => Math.max(4, (process.stdout.rows || 24) - 10);
+  const rowBudget = () => Math.max(2, Math.floor(((process.stdout.rows || 24) - 10) / 2));
   const budget = rowBudget();
   const top = Math.max(0, Math.min(cursor - Math.floor(budget / 2), view.length - budget));
   const visible = view.slice(top, top + budget);
@@ -220,17 +300,21 @@ export default function App({ onAction }) {
     const i = top + idx;
     const sel = i === cursor;
     const match = isMatch(s);
-    return h(Box, { key: s.name },
-      h(Text, { color: color.terra, bold: true }, sel ? '▸ ' : '  '),
-      h(Text, { color: s.alive ? color.green : color.dim }, s.alive ? '● ' : '○ '),
-      h(Text, null, creatureGlyph(s.creature) + ' '),
-      h(Text, {
-        bold: sel,
-        underline: match,
-        color: match ? color.amber : undefined,
-      }, s.name.padEnd(slugWidth + 2)),
-      h(Text, { color: color.amber, dimColor: !sel }, engineLabel(s).padEnd(engineWidth + 2)),
-      h(Text, { color: color.dim }, age(s.last_activity).padStart(4)),
+    return h(Box, { key: s.name, flexDirection: 'column' },
+      h(Box, null,
+        h(Text, { color: color.terra, bold: true }, sel ? '▸ ' : '  '),
+        h(Text, { color: s.alive ? color.green : color.dim }, s.alive ? '● ' : '○ '),
+        h(Text, null, creatureGlyph(s.creature) + ' '),
+        h(Text, {
+          bold: sel,
+          underline: match,
+          color: match ? color.amber : undefined,
+        }, s.name.padEnd(slugWidth + 2)),
+        h(Text, { color: color.amber, dimColor: !sel }, engineLabel(s).padEnd(engineWidth + 2)),
+        h(Text, { color: color.dim }, age(s.last_activity).padStart(4)),
+      ),
+      h(Text, { color: color.dim },
+        `     ${s.wolt_id || s.wolt || '?'} · ${sessionPolicy(s)} · ${sessionWorkdir(s) || '?'}`),
     );
   });
 
@@ -267,11 +351,35 @@ export default function App({ onAction }) {
           (i === spawnCursor ? ' ▸ ' : '   ') + creatureGlyph(w.type) + ' ' + w.name));
       });
       lines.push(h(Text, { key: 'sh', color: color.dim }, '   j/k pick · enter wake · esc cancel'));
+    } else if (mode === 'spawn-confirm' && wolts[spawnCursor]) {
+      const wolt = wolts[spawnCursor];
+      const target = spawnTarget(capabilities, wolt, launchCwd);
+      lines.push(h(Text, { key: 'sc1', color: color.amber }, `start ${wolt.name}?`));
+      lines.push(h(Text, { key: 'sc2' }, `   cwd: ${target.displayWorkdir}`));
+      lines.push(h(Text, { key: 'sc3' }, `   policy: ${target.executionPolicy}`));
+      lines.push(h(Text, { key: 'sc4', color: color.dim }, '   y confirm · n/esc back'));
+    } else if (mode === 'create-name') {
+      lines.push(h(Text, { key: 'cn1', color: color.amber }, 'name the new wolt'));
+      lines.push(h(Text, { key: 'cn2' }, `   ${createName}▏`));
+      lines.push(h(Text, { key: 'cn3', color: color.dim }, '   enter continue · esc cancel'));
+    } else if (mode === 'create-type') {
+      lines.push(h(Text, { key: 'ct1', color: color.amber }, `choose ${createName}'s creature`));
+      woltTypes.forEach((type, i) => lines.push(h(Text, {
+        key: type, bold: i === createTypeCursor,
+      }, `${i === createTypeCursor ? ' ▸ ' : '   '}${creatureGlyph(type)} ${type}`)));
+      lines.push(h(Text, { key: 'ct2', color: color.dim }, '   j/k pick · enter continue · esc back'));
+    } else if (mode === 'create-confirm') {
+      const target = spawnTarget(capabilities, null, launchCwd);
+      lines.push(h(Text, { key: 'cc1', color: color.amber }, `create ${createName}?`));
+      lines.push(h(Text, { key: 'cc2' }, `   type: ${woltTypes[createTypeCursor]}`));
+      lines.push(h(Text, { key: 'cc3' }, `   cwd: ${target.displayWorkdir}`));
+      lines.push(h(Text, { key: 'cc4' }, `   policy: ${target.executionPolicy}`));
+      lines.push(h(Text, { key: 'cc5', color: color.dim }, '   y confirm · n/esc back'));
     } else {
       lines.push(h(Text, { key: 'k1', color: color.dim },
-        `j/k move  enter attach${selected && !selected.alive ? ' (wakes it)' : ''} (${detachLabel()} comes back)  n new  s send  x stop`));
+        `j/k move  enter attach${selected && !selected.alive ? ' (wakes it)' : ''} (${detachLabel()} comes back)  n session  c wolt`));
       lines.push(h(Text, { key: 'k2', color: color.dim },
-        'r refresh  / find  tab/shift-tab match  a all  q quit'));
+        's send  x stop  r refresh  / find  tab/shift-tab match  a all  q quit'));
     }
     if (error) lines.push(h(Text, { key: 'e', color: color.terra }, error));
     else if (flash) lines.push(h(Text, { key: 'f', color: color.green }, flash));

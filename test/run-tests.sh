@@ -12,6 +12,11 @@
 #
 # Environment:
 #   TELEGRAM_BOT_TOKEN  — set to run live Telegram API tests
+#   TEST_CHAT_ID        — dedicated test group; required by the opt-in tier. Never
+#                         discovered from the registry: a test that would message a
+#                         real person skips unless you name the chat yourself.
+#   WOLTSPACE_TEST_REAL_SPAWN=1 — let tests boot real agent processes
+#   WOLTSPACE_TEST_LIVE_SEND=1  — let tests send real Telegram messages
 #   Server on :7777     — required for integration tests (auto-skipped if down)
 #   TEST_VERBOSE=1      — post every test result to test group (default: on)
 #   TEST_VERBOSE=0      — summary only
@@ -29,11 +34,9 @@ if [ -f "$WOLTS_DIR/.env" ]; then
   set -a && source "$WOLTS_DIR/.env" && set +a
 fi
 
-# Ensure deps
-if [ ! -d "container/bot/.venv" ]; then
-  echo "installing python deps..."
-  uv sync --project container/bot/pyproject.toml
-fi
+# Ensure deps — the test extra of the root project owns pytest and the bot
+# libraries the adapters import.
+uv sync --quiet --extra test --project "$WOLTSPACE_DIR"
 
 # ---------------------------------------------------------------------------
 # Telegram test group notifications
@@ -101,33 +104,55 @@ TIER="${1:-all}"
 case "$TIER" in
   unit)
     echo "=== Unit tests (no external deps) ==="
-    _run_tests "unit" uv run --project container/bot/pyproject.toml pytest test/test_bot_core.py test/test_session_lifecycle.py::TestSessionRegistry test/test_projects.py test/test_wolf.py test/test_trust_dir.py -k "Unit" -v "${@:2}"
+    _run_tests "unit" uv run --extra test --project "$WOLTSPACE_DIR" pytest test/test_bot_core.py test/test_session_lifecycle.py::TestSessionRegistry test/test_woltspace_apps.py test/test_wolf.py test/test_trust_dir.py -k "Unit" -v "${@:2}"
     ;;
   integration)
     echo "=== Integration tests (requires server + tmux) ==="
-    _run_tests "integration" uv run --project container/bot/pyproject.toml pytest test/test_server_health.py test/test_session_lifecycle.py test/test_telegram_loop.py::TestNotifyRoundTrip -v "${@:2}"
+    _run_tests "integration" uv run --extra test --project "$WOLTSPACE_DIR" pytest test/test_server_health.py test/test_session_lifecycle.py test/test_telegram_loop.py::TestNotifyRoundTrip -v "${@:2}"
     ;;
   closed-loop)
     echo "=== Closed-loop tests (full chain: telegram + server + tmux + registry) ==="
-    _run_tests "closed-loop" uv run --project container/bot/pyproject.toml pytest test/test_closed_loop.py -v "${@:2}"
+    _run_tests "closed-loop" uv run --extra test --project "$WOLTSPACE_DIR" pytest test/test_closed_loop.py -v "${@:2}"
     ;;
   agent)
     echo "=== Agent loop tests (haiku in the loop — costs API tokens) ==="
     echo "  decision: mocked tools, ~\$0.01/test"
     echo "  scenario: multi-turn convos, ~\$0.05/test"
     echo "  live: real sessions spawned, ~\$0.50/test"
-    _run_tests "agent" uv run --project container/bot/pyproject.toml pytest test/test_agent_loop.py -v "${@:2}"
+    _run_tests "agent" uv run --extra test --project "$WOLTSPACE_DIR" pytest test/test_agent_loop.py -v "${@:2}"
     ;;
   live)
     echo "=== Live tests (requires TELEGRAM_BOT_TOKEN) ==="
-    _run_tests "live" uv run --project container/bot/pyproject.toml pytest test/test_telegram_loop.py::TestTelegramAPI -v "${@:2}"
+    _run_tests "live" uv run --extra test --project "$WOLTSPACE_DIR" pytest test/test_telegram_loop.py::TestTelegramAPI -v "${@:2}"
+    ;;
+  opt-in)
+    # The seams nothing else covers: a real agent spawn, a real Telegram
+    # round-trip, real revival. Skipped by default because they boot agent
+    # processes and message a real chat — not because they are optional.
+    # Run this before every release.
+    echo "=== Opt-in integration probes (real spawns + real Telegram sends) ==="
+    if [ -z "${TEST_CHAT_ID:-}" ]; then
+      echo "  ✗ TEST_CHAT_ID not set — point it at your dedicated test group, never a real chat"
+      exit 1
+    fi
+    if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+      echo "  ✗ TELEGRAM_BOT_TOKEN not set"
+      exit 1
+    fi
+    echo "  chat: $TEST_CHAT_ID — every message lands here"
+    echo "  wolt: test-shadow — created and removed per test; no real wolt is touched"
+    export WOLTSPACE_TEST_REAL_SPAWN=1
+    export WOLTSPACE_TEST_LIVE_SEND=1  # also unlocks the live getUpdates probes
+    _run_tests "opt-in" uv run --extra test --project "$WOLTSPACE_DIR" pytest \
+      test/test_server_health.py test/test_closed_loop.py test/test_telegram_loop.py \
+      -v "${@:2}"
     ;;
   all)
     echo "=== Full test suite ==="
-    _run_tests "all" uv run --project container/bot/pyproject.toml pytest test/ -v "${@:2}"
+    _run_tests "all" uv run --extra test --project "$WOLTSPACE_DIR" pytest test/ -v "${@:2}"
     ;;
   *)
     # Pass everything as pytest args
-    _run_tests "custom" uv run --project container/bot/pyproject.toml pytest test/ -v "$@"
+    _run_tests "custom" uv run --extra test --project "$WOLTSPACE_DIR" pytest test/ -v "$@"
     ;;
 esac

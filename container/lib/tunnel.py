@@ -66,9 +66,79 @@ def start_cloudflared(port: int, host_header: str | None = "localhost") -> dict:
     return {"url": url, "pid": proc.pid, "log_file": log_file}
 
 
-def stop_cloudflared(pid: int) -> bool:
-    """Stop a cloudflared process by PID. Returns True if it was alive."""
+CLOUDFLARED_NEEDLE = "cloudflared"
+
+
+def process_command(pid: int, *, ps_bin: str | None = None, runner=subprocess.run) -> str:
+    """The full command line of a pid, on Linux and macOS alike.
+
+    `-ww` is load-bearing: without it ps truncates to the terminal width, so a
+    long argv stops matching whenever the window is narrow — or absent.
+    """
+    if pid is None or pid <= 0:
+        return ""
+    binary = ps_bin or os.environ.get("WOLTSPACE_PS_BIN", "ps")
+    try:
+        result = runner(
+            [binary, "-ww", "-o", "command=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return ""
+    stdout = result.stdout if isinstance(result.stdout, str) else ""
+    return stdout.strip()
+
+
+def process_executable(pid: int, *, ps_bin: str | None = None, runner=subprocess.run) -> str:
+    """The basename of what `pid` is executing, via `ps -o comm=`.
+
+    `comm` is the executable, not the argument vector — which is the whole
+    point. macOS reports a full path here and Linux a bare name, so take the
+    basename of either.
+    """
+    if pid is None or pid <= 0:
+        return ""
+    binary = ps_bin or os.environ.get("WOLTSPACE_PS_BIN", "ps")
+    try:
+        result = runner(
+            [binary, "-o", "comm=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return ""
+    stdout = result.stdout if isinstance(result.stdout, str) else ""
+    return os.path.basename(stdout.strip())
+
+
+def is_cloudflared(pid: int, *, ps_bin: str | None = None, runner=subprocess.run) -> bool:
+    """Whether `pid` is alive *and* the program it runs is cloudflared.
+
+    A pid recorded in state is not evidence that the thing it named is still
+    there — pids are recycled hard and fast across a reboot. Nor is the word
+    "cloudflared" appearing somewhere in a command line: `tail -f
+    something-cloudflared.log` contains it, and this helper's own log files are
+    named `*-cloudflared.log`, so that collision is ordinary rather than
+    contrived. Identity is the executable, matched whole.
+    """
     if not _is_pid_alive(pid):
+        return False
+    return process_executable(pid, ps_bin=ps_bin, runner=runner) == CLOUDFLARED_NEEDLE
+
+
+def stop_cloudflared(pid: int, *, ps_bin: str | None = None, runner=subprocess.run) -> bool:
+    """Stop a cloudflared process by PID. Returns True if it was signalled.
+
+    Validates at the point of the kill, not only at whatever decided to call
+    this. A caller acting on stale state would otherwise SIGTERM whichever
+    innocent process inherited the number.
+    """
+    if not is_cloudflared(pid, ps_bin=ps_bin, runner=runner):
         return False
     try:
         os.kill(pid, signal.SIGTERM)

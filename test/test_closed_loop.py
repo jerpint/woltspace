@@ -38,7 +38,13 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 
-from conftest import requires_server, requires_telegram, requires_tmux
+from conftest import (
+    requires_live_send,
+    requires_live_telegram,
+    requires_server,
+    requires_telegram,
+    requires_tmux,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -46,13 +52,20 @@ from conftest import requires_server, requires_telegram, requires_tmux
 # ---------------------------------------------------------------------------
 
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
-WOLT_NAME = os.environ.get("WOLT_NAME", "neowolt")
+# A log path only — never a spawn target. Absent WOLT_NAME simply yields no
+# wolt-level log, and the wolts-level log below still applies.
+WOLT_NAME = os.environ.get("WOLT_NAME", "").strip() or "_absent_"
 # Server writes to wolt-level log, core.py writes to wolts-level log
 BOT_LOG_PATHS = [
     WOLTS_DIR / WOLT_NAME / ".state" / "bot-debug" / "bot.jsonl",
     WOLTS_DIR / ".state" / "bot-debug" / "bot.jsonl",
 ]
-REGISTRY_DIR = WOLTS_DIR / ".state" / "registry"
+# SessionRegistry takes the WOLTS dir, not a registry dir: sessions live at
+# wolts/{wolt}/.state/sessions/. The old `WOLTS_DIR/.state/registry` argument
+# wrote records where the server's routing lookup cannot see them — so every
+# /notify in these tests fell through to the default chat (a real person),
+# no matter what TEST_CHAT_ID said.
+REGISTRY_ROOT = WOLTS_DIR
 
 
 def _read_bot_log_tail(n: int = 20) -> list[dict]:
@@ -95,26 +108,21 @@ def _telegram_get_updates(token: str, offset: int = 0, limit: int = 5, timeout: 
 
 
 def _find_chat_id() -> str | None:
-    """Find a chat_id for tests — prefer TEST_CHAT_ID env var, fall back to registry."""
-    env_id = os.environ.get("TEST_CHAT_ID")
-    if env_id:
-        return env_id
-    if not REGISTRY_DIR.exists():
-        return None
-    for f in REGISTRY_DIR.glob("*.json"):
-        try:
-            data = json.loads(f.read_text())
-            if data.get("chat_id") and data.get("adapter") == "telegram":
-                return str(data["chat_id"])
-        except (json.JSONDecodeError, KeyError):
-            continue
-    return None
+    """The configured test chat, or nothing.
+
+    This used to fall back to scraping a chat_id out of the live session
+    registry — which meant a test run messaged whichever real person happened
+    to be talking to this woltspace. Tests must never discover real user state
+    to target; if the test chat is not configured, the test does not run.
+    """
+    return os.environ.get("TEST_CHAT_ID") or None
 
 
 # ---------------------------------------------------------------------------
 # Seam 1: Telegram API — bot can send and receive
 # ---------------------------------------------------------------------------
 
+@requires_live_telegram
 @requires_telegram
 class TestTelegramSeam:
     """Verify the Telegram API connection is healthy."""
@@ -129,12 +137,13 @@ class TestTelegramSeam:
         assert data["result"]["is_bot"]
         assert data["result"]["username"]
 
+    @requires_live_send
     def test_bot_can_send_to_chat(self):
         """Bot can send a message to its known chat."""
         token = os.environ["TELEGRAM_BOT_TOKEN"]
         chat_id = _find_chat_id()
         if not chat_id:
-            pytest.skip("no chat_id found in registry")
+            pytest.skip("TEST_CHAT_ID not set")
 
         marker = f"🧪 closed-loop probe {int(time.time())}"
         result = _telegram_send(token, chat_id, marker)
@@ -162,6 +171,7 @@ class TestTelegramSeam:
 # Seam 2: Server notify pipeline
 # ---------------------------------------------------------------------------
 
+@requires_live_send
 @requires_server
 @requires_tmux
 class TestNotifySeam:
@@ -172,16 +182,16 @@ class TestNotifySeam:
     """
 
     @pytest.fixture(autouse=True)
-    def _test_session(self, tmux_session, server_post):
+    def _test_session(self, tmux_session, server_post, shadow_wolt):
         """Create a temporary session routed to TEST_CHAT_ID for notify tests."""
         from sessions import SessionRegistry
         self._name = tmux_session
         self._chat_id = _find_chat_id()
         if not self._chat_id:
-            pytest.skip("no chat_id available (set TEST_CHAT_ID)")
-        self._reg = SessionRegistry(REGISTRY_DIR)
+            pytest.skip("TEST_CHAT_ID not set")
+        self._reg = SessionRegistry(REGISTRY_ROOT)
         self._reg.create(
-            self._name, wolt="neowolt", creature="beaver",
+            self._name, wolt=shadow_wolt, creature="beaver",
             adapter="telegram", chat_id=self._chat_id,
         )
         subprocess.run(["tmux", "new-session", "-d", "-s", self._name, "sleep 60"], check=True)
@@ -361,13 +371,16 @@ class TestDenReplySeam:
 class TestFullRoundTrip:
     """End-to-end: create session → deliver message → notify back."""
 
-    def test_create_session_and_verify_in_registry(self, tmux_session):
+    def test_create_session_and_verify_in_registry(self, tmux_session, shadow_wolt):
         """Create a real tmux session and verify it appears in the live registry."""
         from sessions import SessionRegistry
         name = tmux_session
 
-        reg = SessionRegistry(REGISTRY_DIR)
-        reg.create(name, wolt="neowolt", creature="beaver", adapter="telegram", chat_id="test")
+        reg = SessionRegistry(REGISTRY_ROOT)
+        reg.create(
+            name, wolt=shadow_wolt, creature="beaver",
+            adapter="telegram", chat_id="test",
+        )
 
         subprocess.run(["tmux", "new-session", "-d", "-s", name, "sleep 60"], check=True)
         time.sleep(0.5)
@@ -380,17 +393,20 @@ class TestFullRoundTrip:
         # Cleanup registry
         reg.delete(name)
 
-    def test_notify_with_freshly_created_session(self, tmux_session, server_post):
+    @requires_live_send
+    def test_notify_with_freshly_created_session(
+        self, tmux_session, server_post, shadow_wolt
+    ):
         """Create a session with routing, then notify through it."""
         from sessions import SessionRegistry
         name = tmux_session
         chat_id = _find_chat_id()
         if not chat_id:
-            pytest.skip("no chat_id available")
+            pytest.skip("TEST_CHAT_ID not set")
 
-        reg = SessionRegistry(REGISTRY_DIR)
+        reg = SessionRegistry(REGISTRY_ROOT)
         reg.create(
-            name, wolt="neowolt", creature="beaver",
+            name, wolt=shadow_wolt, creature="beaver",
             adapter="telegram", chat_id=chat_id,
         )
         subprocess.run(["tmux", "new-session", "-d", "-s", name, "sleep 60"], check=True)
@@ -490,6 +506,7 @@ class TestRegressions:
         pane. Both layers are checked here.
         """
         from sessions import SessionRegistry, resume_session, prepare_session_command
+        from session_runtime import TmuxSessionRuntime
         import sessions
 
         original_wolts = sessions.WOLTS_DIR
@@ -514,9 +531,13 @@ class TestRegressions:
             assert f"--resume {uuid_a}" in cmd_a
             assert uuid_b not in cmd_a
 
-            # Create tmux sessions running bash (no agent → revive path)
+            # Create tmux sessions running bash (no agent -> revive path) and
+            # persist the exact panes they own.
+            runtime = TmuxSessionRuntime()
+            handles = {}
             for name in [session_a, session_b]:
-                subprocess.run(["tmux", "new-session", "-d", "-s", name, "bash"], check=True)
+                handles[name] = runtime.spawn(name, str(tmp_path), "bash")
+                reg.update(name, wolt="neowolt", runtime=handles[name].to_record())
             time.sleep(0.3)
 
             # Layer 2: revive session A — wrapper lands in A's pane in resume mode
@@ -526,7 +547,7 @@ class TestRegressions:
 
             time.sleep(0.3)
             capture = subprocess.run(
-                ["tmux", "capture-pane", "-t", session_a, "-p", "-J"],
+                ["tmux", "capture-pane", "-t", handles[session_a].pane_id, "-p", "-J"],
                 capture_output=True, text=True, check=True,
             )
             flat = capture.stdout.replace("\n", " ")
@@ -546,6 +567,7 @@ class TestRegressions:
     def test_revival_uses_session_name_as_id(self, tmp_path):
         """Session name IS the claude session ID — no UUID needed, no --continue fallback."""
         from sessions import SessionRegistry, resume_session
+        from session_runtime import TmuxSessionRuntime
         import sessions
 
         original_wolts = sessions.WOLTS_DIR
@@ -559,7 +581,9 @@ class TestRegressions:
             reg.create(session_name, wolt="neowolt")
             reg.update(session_name, wolt="neowolt", claude_session_id=session_name)
 
-            subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "bash"], check=True)
+            runtime = TmuxSessionRuntime()
+            handle = runtime.spawn(session_name, str(tmp_path), "bash")
+            reg.update(session_name, wolt="neowolt", runtime=handle.to_record())
             time.sleep(0.3)
 
             result = resume_session(session_name, "test name-as-id")
@@ -582,6 +606,7 @@ class TestRegressions:
         wrapper reading the same registry field the resume delivery relies on.
         """
         from sessions import SessionRegistry, resume_session
+        from session_runtime import TmuxSessionRuntime
         import sessions
 
         original_wolts = sessions.WOLTS_DIR
@@ -596,7 +621,9 @@ class TestRegressions:
             reg.create(session_name, wolt="uxwolt")
             reg.update(session_name, wolt="uxwolt", claude_session_id=session_name, dir=wolt_dir)
 
-            subprocess.run(["tmux", "new-session", "-d", "-s", session_name, "bash"], check=True)
+            runtime = TmuxSessionRuntime()
+            handle = runtime.spawn(session_name, wolt_dir, "bash")
+            reg.update(session_name, wolt="uxwolt", runtime=handle.to_record())
             time.sleep(0.3)
 
             result = resume_session(session_name, "test dir fix")
@@ -605,7 +632,7 @@ class TestRegressions:
             # Verify the wrapper command was delivered in resume mode
             time.sleep(0.3)
             capture = subprocess.run(
-                ["tmux", "capture-pane", "-t", session_name, "-p", "-J"],
+                ["tmux", "capture-pane", "-t", handle.pane_id, "-p", "-J"],
                 capture_output=True, text=True, check=True,
             )
             flat = capture.stdout.replace("\n", " ")

@@ -5,10 +5,17 @@ from pathlib import Path
 
 # --- Directories ---
 
-WOLTSPACE_DIR = Path(__file__).resolve().parent.parent  # /workspace/woltspace
+WOLTSPACE_DIR = Path(
+    os.environ.get("WOLTSPACE_DIR", Path(__file__).resolve().parent.parent)
+)
 WOLT_DIR = Path(os.environ.get("WOLT_DIR", str(WOLTSPACE_DIR)))
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", str(WOLT_DIR.parent)))
 WOLT_NAME = os.environ.get("WOLT_NAME", "")
+
+# The per-wolt HOME the container image builds. Containers are the only
+# isolation mode that owns a home outright, so harness credentials live at a
+# fixed path rather than wherever $HOME happens to point.
+CONTAINER_HOME = Path(os.environ.get("WOLTSPACE_CONTAINER_HOME", "/home/node"))
 
 SITE_DIR = WOLT_DIR / "wolt" / "site"
 APPS_DIR = WOLT_DIR / "wolt" / "apps"
@@ -31,7 +38,11 @@ SPACE_PLATFORM_DIR = SPACE_DIR / "platform"
 SPACE_LOGS_DIR = SPACE_DIR / "logs"
 
 PORT = int(os.environ.get("PORT", "7777"))
-TUI_PORT = int(os.environ.get("TUI_PORT", "3001"))
+# `woltspace serve` exports TUI_PORT from the connector plan before this
+# module is imported; the fallback only covers a server started by hand, and
+# has to derive the port the same way the plan does or the /tui proxy dials a
+# bridge that is not there.
+TUI_PORT = int(os.environ.get("TUI_PORT") or PORT + 1)
 
 # --- State files ---
 

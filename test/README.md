@@ -83,5 +83,5 @@ See `CLAUDE.md` for full test file descriptions and environment variables.
 - Tunnel setup/teardown
 - Multi-wolt switching
 - `--branch` vs `--local` image equivalence
-- `.first-run` → `/woltspace-create-wolt` onboarding flow
+- `.first-run` → the create-wolt onboarding flow
 - Bot adapter startup (Telegram, Slack)

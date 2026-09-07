@@ -4,8 +4,10 @@
 Each wolt registers its own schedule in wolt/wolf.json. The wolf discovers
 all schedules, fires crons on time, and spawns sessions for the owning wolt.
 
-Schedule config: {each_wolt}/wolt/wolf.json
-Last-run state:  {wolf_wolt}/.state/wolf/  (per-wolt)
+Schedule config: {each_wolt}/wolt/wolf.json   (per-wolt)
+Last-run state:  {wolts_dir}/.space/wolf/     (lodge-global — one scheduler
+                 serves every wolt, so the stamps and the job journal that keep
+                 a cron from firing twice cannot live inside one of them)
 
 Usage:
   python -m creatures.wolf              # Run as background service
@@ -29,12 +31,48 @@ from typing import Optional
 WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
 
 
+def _dialable_host(host: str) -> str:
+    """A bind address turned into one a caller can actually connect to.
+
+    Mirrors `RuntimeLayout.dialable_host`, duplicated rather than imported
+    because the wolf runs from `container/` with no `woltspace` package on its
+    path. Wildcards become loopback; an IPv6 literal gets its brackets, without
+    which the URL below is unparseable.
+    """
+    raw = (host or "").strip().strip("[]")
+    if raw in {"", "0.0.0.0"}:
+        return "127.0.0.1"
+    if raw == "::":
+        return "[::1]"
+    return f"[{raw}]" if ":" in raw else raw
+
+
+def server_url(path: str = "") -> str:
+    """The control plane this wolf reports to.
+
+    WOLTSPACE_API is the whole address, stamped by the connector that spawned
+    us, and it is the answer whenever it is set. Behind it: host and port
+    assembled by hand, for a wolf launched by something older than the stamp.
+
+    Both halves matter. The port has to follow the instance — a native
+    `woltspace start --port 8080` is an ordinary thing to do, and a wolf
+    hardcoded to 7777 would fire every cron into a closed socket. So does the
+    *host*: a plane bound to a LAN address or to `::` was never on 127.0.0.1
+    either, and loopback-by-assumption silently dropped every callback.
+    """
+    api = (os.environ.get("WOLTSPACE_API") or "").strip().rstrip("/")
+    if api:
+        return f"{api}{path}"
+    host = _dialable_host(os.environ.get("WOLTSPACE_HOST", ""))
+    port = (os.environ.get("WOLTSPACE_PORT") or os.environ.get("PORT") or "7777").strip()
+    return f"http://{host}:{port}{path}"
+
 
 def _get_tunnel_url() -> Optional[str]:
     """Read tunnel URL from .space/platform/tunnel.json."""
     try:
         import json
-        from lib.paths import tunnel_state_file
+        from paths import tunnel_state_file
         state = json.loads(tunnel_state_file().read_text())
         url = state.get("url", "").strip()
         return url if url else None
@@ -104,7 +142,7 @@ def get_state_dir() -> Path:
 
 
 def _log_job(name: str, action: str, **kwargs):
-    """Append a job event to {wolt}/.state/wolf/jobs.jsonl."""
+    """Append a job event to the lodge-global {wolts_dir}/.space/wolf/jobs.jsonl."""
     log_file = get_state_dir() / "jobs.jsonl"
     entry = {
         "ts": datetime.now().isoformat(),
@@ -182,7 +220,7 @@ def send_wolf_notify(message: str):
     payload = json.dumps({"message": full_message, "session": ""})
     try:
         result = subprocess.run(
-            ["curl", "-s", "-X", "POST", "http://localhost:7777/notify",
+            ["curl", "-s", "-X", "POST", server_url("/notify"),
              "-H", "Content-Type: application/json",
              "-d", payload],
             capture_output=True, text=True, timeout=10,
@@ -222,7 +260,7 @@ def dispatch_session(entry: dict) -> Optional[str]:
     })
     try:
         result = subprocess.run(
-            ["curl", "-s", "-X", "POST", "http://localhost:7777/sessions/new/lodge",
+            ["curl", "-s", "-X", "POST", server_url("/sessions/new/lodge"),
              "-H", "Content-Type: application/json",
              "-d", payload],
             capture_output=True, text=True, timeout=10,

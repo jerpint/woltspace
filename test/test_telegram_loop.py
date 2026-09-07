@@ -24,7 +24,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 
-from conftest import requires_server, requires_telegram
+from conftest import (
+    requires_live_send,
+    requires_live_telegram,
+    requires_server,
+    requires_telegram,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -408,6 +413,7 @@ class TestNotifyRoundTrip:
         assert notify_path.exists(), "notify script missing"
         assert os.access(notify_path, os.X_OK), "notify not executable"
 
+    @requires_live_send
     def test_server_notify_json_contract(self, routed_test_session, server_post):
         """The /notify endpoint should accept {session, message} and return {ok/error, adapter}."""
         result = server_post("/notify", {
@@ -425,6 +431,7 @@ class TestNotifyRoundTrip:
 # ---------------------------------------------------------------------------
 
 @requires_telegram
+@requires_live_telegram
 class TestTelegramAPI:
     """Tests that hit the real Telegram API. Require TELEGRAM_BOT_TOKEN."""
 
