@@ -135,9 +135,15 @@ def _container_entrypoint(args) -> int:
 
 def _status(args) -> int:
     from .instance import inspect_instance
+    from .lifecycle import tunnel_report
 
     layout = RuntimeLayout.from_env(isolation=args.isolation)
     result = inspect_instance(layout)
+    # `status` answers instantly. It reads the same configuration and the same
+    # state file `start` reads — one resolution, one shape in `--json` — but
+    # with `wait=False`: a question about right now must never sit for eight
+    # seconds hoping cloudflared turns up.
+    result["tunnel"] = tunnel_report(layout, wait=False)
     if args.json:
         print(json.dumps(result, indent=2))
     else:
@@ -155,13 +161,15 @@ def _status(args) -> int:
         )
         lore.blank()
         lore.link(result["endpoint"], note="")
+        lore.status_tunnel_line(result["tunnel"])
         lore.note(f"wolts: {result['wolts_dir']}")
         owner = result.get("owner") or {}
         if owner:
-            lore.note(
-                f"owner: pid {owner['pid']} · {owner['instance_id']} · "
-                f"{owner['hostname']}"
-            )
+            # Hostname only. A pid and a 32-character instance id are
+            # diagnostics — an agent reads them out of `--json`; a human
+            # reading a terminal wants to know *which machine* holds the lodge,
+            # which is the part that matters in a colony spanning more than one.
+            lore.note(f"owner: {owner['hostname']}")
         adoption = (result.get("health") or {}).get("adoption") or {}
         if adoption:
             lore.note(
@@ -171,7 +179,7 @@ def _status(args) -> int:
                 f"{len(adoption.get('unchanged', []))} unchanged",
                 emoji=lore.TRACKS,
             )
-        connector_lines = format_connector_lines(result)
+        connector_lines = format_connector_lines(result, show_pid=False)
         if connector_lines:
             lore.blank()
         for line in connector_lines:
@@ -220,8 +228,13 @@ def _connector_line_style(line: str) -> str:
     return lore.AMBER
 
 
-def format_connector_lines(result: dict) -> list[str]:
-    """One line per channel connector, with the remedy when it is not running."""
+def format_connector_lines(result: dict, *, show_pid: bool = True) -> list[str]:
+    """One line per channel connector, with the remedy when it is not running.
+
+    `show_pid=False` is the human render: a pid is a diagnostic, not something
+    anyone reads off a terminal and uses. It stays in `--json`, where the
+    agents and scripts that actually need it look.
+    """
     connectors = (result.get("health") or {}).get("connectors")
     if connectors is None:
         connectors = result.get("connectors") or []
@@ -231,7 +244,7 @@ def format_connector_lines(result: dict) -> list[str]:
         detail = connector.get("detail") or ""
         suffix = f" · {detail}" if detail else ""
         pid = connector.get("pid")
-        if pid:
+        if pid and show_pid:
             suffix += f" · pid {pid}"
         restarts = connector.get("restarts") or 0
         if restarts:

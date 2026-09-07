@@ -196,15 +196,18 @@ def link(url: str, *, emoji: str = BEAVER, note: str = "") -> None:
         subtitle(note)
 
 
-def labelled(label: str, value: str, *, value_style: str = TEAL) -> None:
-    """`public: https://…` — a bark label, a teal value."""
-    line = _text(f"{INDENT}")
+def labelled(
+    label: str, value: str, *, value_style: str = TEAL, emoji: str = ""
+) -> None:
+    """`public: https://…` — a bark label, a teal value, optionally a creature."""
+    prefix = f"{INDENT}{emoji} " if emoji else INDENT
+    line = _text(prefix)
     try:
         line.append(f"{label}: ", style=BARK)
         line.append(value, style=value_style)
         _emit(line)
     except AttributeError:  # pragma: no cover
-        _emit(f"{INDENT}{label}: {value}")
+        _emit(f"{prefix}{label}: {value}")
 
 
 def note(text: str, *, emoji: str = TIMBER, style: str = BARK) -> None:
@@ -262,3 +265,27 @@ def public_tunnel_lines(tunnel: dict) -> None:
         warn(SHARE_WARNING)
     else:
         warn(TUNNEL_DIGGING)
+
+
+def status_tunnel_line(tunnel: dict) -> None:
+    """The one-line answer to "is this lodge reachable from outside?"
+
+    `status` never waits on a tunnel, so this says only what is true right
+    now. A disabled tunnel still gets its quiet line: whether the lodge is
+    published is a fact worth reading, not one worth inferring from silence.
+    """
+    if not tunnel.get("enabled"):
+        note("tunnel: disabled", style=BARK)
+        return
+    if tunnel.get("live"):
+        labelled("public", tunnel["live"], emoji=TREE)
+        return
+    # Configured is not the same as up. A named tunnel's address is known from
+    # `.env` whether or not cloudflared ever started, and printing it as though
+    # the lodge were reachable there would be the one lie this line must not
+    # tell — so it is named as configuration, in amber, on one line.
+    configured = tunnel.get("url")
+    if configured:
+        headline(TREE, f"tunnel configured, not up: {configured}")
+        return
+    headline(TREE, f"tunnel {tunnel.get('kind', 'quick')}, no public URL yet")
