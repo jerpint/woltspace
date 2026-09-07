@@ -24,6 +24,20 @@ Shell and JavaScript do the same thing inline —
 `${WOLTSPACE_WOLTS_DIR:-${WOLTS_DIR:-/workspace/wolts}}`,
 `process.env.WOLTSPACE_WOLT_DIR || process.env.WOLT_DIR`.
 
+**How thoroughly this is enforced.** For python, a test walks every module and
+extensionless `container/bin/` script and fails on any direct read of a legacy
+name — writes are exempt, since those are the both-name exports. Shell and
+JavaScript get a weaker contract, because `$WOLT_NAME` in bash is the same
+syntax whether the value came from the environment or from an assignment three
+lines up, and `WOLT_NAME` in JS is the same token in `process.env.WOLT_NAME` as
+in a `const`. Telling a read from a local would take dataflow analysis, so
+instead those files must never name a legacy variable *alone*: the canonical
+name has to appear in the same file, which is what the fallback shape and the
+both-name exports already produce. A new script reading only the old spelling
+fails; a new script reading the old spelling *next to* the new one does not.
+Migration guides and `migrations/*.sh` are exempt — they are the record of what
+a released version did, and rewriting them would falsify history.
+
 ---
 
 ## Legacy names
@@ -67,7 +81,7 @@ lists in the host `woltspace` launcher.
 |---|---|---|---|
 | `WOLTSPACE_WOLTS_DIR` | The data root — every wolt, plus `.space/` platform state. The one host mount in container mode. | `layout.py`, `container/lib/paths.py`, `sessions.py`, `wolts.py`, `sites.py`, `apps.py`, `harnesses.py`, `server/config.py`, the bot adapters, the creatures, the host launcher | `~/.woltspace/wolts` native, `/workspace/wolts` in the container |
 | `WOLTSPACE_WOLT_DIR` | The active wolt's home directory. Where its `.env`, memory, site and sparks live. | `server/config.py`, `container/bot/core.py`, the bot adapters, `container/bin/gh-app-token`, `tui/src/tui-service.js`, `container/cron/digest.mjs` | the data root natively; `/workspace/wolt` in the container |
-| `WOLTSPACE_WOLT_NAME` | The active wolt's name. Also the sender identity a wolt posts under, and — on a fresh non-interactive install — the name of the first wolt created. | `container_entrypoint.resolve_wolt_name`, `server/config.py`, `container/bot/core.py`, the bot adapters, `container/bin/notify`, `container/bin/woltspace`, the host launcher | unset (resolved from `woltspace.json`, else the first wolt on disk) |
+| `WOLTSPACE_WOLT_NAME` | The active wolt's name — the wolt this process belongs to. Also the sender identity a wolt posts under. Exported into every session, cron and worktree shell, so it is *never* an instruction about which wolt to create: see `WOLTSPACE_INIT_WOLT_NAME`. | `container_entrypoint.resolve_wolt_name`, `server/config.py`, `container/bot/core.py`, the bot adapters, `container/bin/notify`, `container/bin/woltspace`, the host launcher | unset (resolved from `woltspace.json`, else the first wolt on disk) |
 | `WOLTSPACE_WOLT_SESSION` | Which session this process is. How `notify` and `push-view` route a message back to the chat that asked for it. | `container/bin/notify`, `container/bin/push-view`, `container/bin/woltspace` | unset (falls back to the tmux session name, then `main`) |
 | `WOLTSPACE_WOLT_HOME` | The wolt home a harness wrapper should treat as `$HOME`. Set per session so credentials and harness config stay inside the wolt. | `container/bin/wclaude`, `wcodex`, `wopencode` | derived from `$PWD` under the data root |
 | `WOLTSPACE_HOME_DIR` | The resolved `$HOME` a harness wrapper exports, with the XDG directories under it. | `container/bin/wclaude`, `wcodex`, `wopencode` | derived from `WOLTSPACE_WOLT_HOME` |
@@ -115,11 +129,31 @@ by the platform runtime.
 | `WOLTSPACE_CONTAINER_HOME` | The per-wolt `$HOME` the container image builds. Containers are the only isolation mode that owns a home outright, so harness credentials sit at a fixed path rather than wherever `$HOME` points. | `server/config.py` | `/home/node` |
 | `WOLTSPACE_IMAGE` | Docker image to run. | `desktop/src-tauri/src/docker.rs` | the published image |
 | `WOLTSPACE_LOCAL` | Sticky equivalent of `--local`: build the image from this checkout. | the host launcher | `false` |
-| `WOLTSPACE_NONINTERACTIVE` | Run `init` without prompting. Pair with `WOLTSPACE_WOLT_NAME` to name the first wolt. | the host launcher | unset |
+| `WOLTSPACE_NONINTERACTIVE` | Run `init` without prompting. Pair with `WOLTSPACE_INIT_WOLT_NAME` to name the first wolt. | the host launcher | unset |
+| `WOLTSPACE_INIT_WOLT_NAME` | Which wolt a fresh non-interactive `init` should **create**. A different question from `WOLTSPACE_WOLT_NAME`, which names the wolt a shell already belongs to — see the note below. | the host launcher | unset (the lodge asks) |
 | `WOLTSPACE_BRANCH` | Build arg naming the branch the image installs from. | `container/Dockerfile` | `main` |
 | `WOLTSPACE_PYPI_VERSION` | Build arg: the `woltspace` version the image installs. | `container/Dockerfile` | the release being built |
 | `WOLTSPACE_TUI_VERSION` | Build arg: the `@woltspace/tui` version the image installs. | `container/Dockerfile` | the release being built |
 | `HOST_UID` / `HOST_GID` | The host user the container's `node` user is matched to, so files a wolt writes are readable on the host. | `container_entrypoint.run_root_phase` | the invoking user |
+
+### Creating a wolt vs. being one
+
+`WOLTSPACE_INIT_WOLT_NAME` and `WOLTSPACE_WOLT_NAME` look like the same
+question and are not. The first says *create a wolt with this name*; the second
+says *this process belongs to that wolt*, and it reaches every session, cron and
+worktree shell. A scripted install launched from inside a wolt would otherwise
+read the ambient value and silently name the new wolt after the current one.
+
+So the launcher resolves the first wolt's name in this order:
+
+1. `WOLTSPACE_INIT_WOLT_NAME`, if set.
+2. otherwise `WOLTSPACE_WOLT_NAME` — deprecated for this purpose, honoured for
+   install scripts that predate the split, and reported on stderr.
+3. except when `WOLTSPACE_WOLT_SESSION` is also set, which means the value
+   arrived ambiently from a wolt session. Then it is ignored and the reason is
+   printed, and the lodge asks for a name the usual way.
+
+The deprecated step 2 goes away at 1.0 with the rest of the legacy names.
 
 ## Tests
 

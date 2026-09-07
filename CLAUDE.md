@@ -340,7 +340,7 @@ GITHUB_APP_INSTALLATION_ID=
 GITHUB_APP_PRIVATE_KEY=   # PEM key, newlines escaped as \n
 ```
 
-The container also accepts `WOLTSPACE_WOLT_NAME` as an env var (passed by the CLI during `init` for first boot). After that, the container reads `woltspace.json` to resolve the active wolt.
+The container also accepts `WOLTSPACE_WOLT_NAME` as an env var (the CLI passes it at first boot to name the active wolt). After that, the container reads `woltspace.json` to resolve the active wolt. Naming the wolt a fresh non-interactive `init` should *create* is a different variable, `WOLTSPACE_INIT_WOLT_NAME` — see `docs/environment.md`.
 
 Every variable the platform owns, what consumes it, and the legacy names still honoured for the pre-namespace spellings: `docs/environment.md`.
 

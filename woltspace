@@ -309,7 +309,25 @@ if [ "$cmd" = "init" ]; then
 
   # Fresh install
   if [ "${WOLTSPACE_NONINTERACTIVE:-}" = "true" ]; then
-    NAME="${WOLTSPACE_WOLT_NAME:-}"
+    # Which wolt to CREATE — a different question from WOLTSPACE_WOLT_NAME,
+    # which names the wolt a session already belongs to and is now exported
+    # into every session, cron and worktree shell. Reading the latter here
+    # meant a scripted install launched from inside a wolt silently named the
+    # new wolt after the current one. The old name is still honoured for
+    # existing install scripts, but never when it arrived ambiently from a
+    # session — WOLTSPACE_WOLT_SESSION is the tell. See docs/environment.md.
+    NAME="${WOLTSPACE_INIT_WOLT_NAME:-}"
+    if [ -z "$NAME" ] && [ -n "${WOLTSPACE_WOLT_NAME:-}" ]; then
+      if [ -n "${WOLTSPACE_WOLT_SESSION:-}" ]; then
+        echo "  ${_D}ignoring WOLTSPACE_WOLT_NAME='${WOLTSPACE_WOLT_NAME}' — it names the" >&2
+        echo "  wolt this shell belongs to, not a wolt to create. Set" >&2
+        echo "  WOLTSPACE_INIT_WOLT_NAME to name the first wolt.${_R}" >&2
+      else
+        NAME="$WOLTSPACE_WOLT_NAME"
+        echo "  ${_D}deprecated env var WOLTSPACE_WOLT_NAME for init — use" >&2
+        echo "  WOLTSPACE_INIT_WOLT_NAME (legacy names honored until 1.0)${_R}" >&2
+      fi
+    fi
     [ -n "$NAME" ] && echo "  non-interactive: creating wolt '$NAME'"
   else
     clear
