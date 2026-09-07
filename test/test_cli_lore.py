@@ -15,6 +15,8 @@ Usage: uv run pytest test/test_cli_lore.py -v
 """
 
 import json
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -94,20 +96,25 @@ class TestStatusIsFunAndStillFactual:
         assert "\x1b" not in out
         assert out.splitlines() == [
             "  🌙 lodge closed for the night",
-            "     state: stopped",
+            "state: stopped",
             "",
-            "  🦫 http://127.0.0.1:7799",
+            "endpoint: http://127.0.0.1:7799",
             "  🪵 tunnel: disabled",
             f"  🪵 wolts: {(tmp_path / 'wolts').resolve()}",
         ]
 
     def test_every_fact_is_still_greppable(self, tmp_path, monkeypatch, capsys):
-        """`grep 'state:'`, `grep 'wolts:'` — the labels did not move."""
+        """The labels did not move — asserted the way a script reads them.
+
+        `grep 'state:'` matches a substring and would have passed while the
+        line sat five columns in with no `endpoint:` label anywhere; the checks
+        that actually break are anchored ones. So anchor them.
+        """
         self._scratch(tmp_path, monkeypatch)
         cli_main(["status"])
         out = capsys.readouterr().out
-        assert "state: stopped" in out
-        assert "http://127.0.0.1:7799" in out
+        assert re.search(r"^state: stopped$", out, re.M), out
+        assert re.search(r"^endpoint: http://127\.0\.0\.1:7799$", out, re.M), out
         assert f"wolts: {(tmp_path / 'wolts').resolve()}" in out
 
     def test_a_lodge_in_conflict_does_not_get_a_cheerful_line(
@@ -346,6 +353,37 @@ class TestTunnelResolution:
             json.dumps({"url": "https://tiny-forest.trycloudflare.com", "type": "quick"})
         )
         assert read_tunnel_url(layout) == "https://tiny-forest.trycloudflare.com"
+
+    def test_a_dead_tunnel_pid_is_not_a_published_url(self, tmp_path):
+        """tunnel.json is only unlinked on a graceful shutdown.
+
+        After a crash it names a cloudflared that is gone, and `status` would
+        print its address as live — a public URL that answers nothing. The pid
+        is the evidence, and a pid alone is not enough: they get recycled. This
+        one belongs to pytest, which is emphatically not a tunnel.
+        """
+        layout = _colony(tmp_path)
+        layout.platform_state.mkdir(parents=True, exist_ok=True)
+        (layout.platform_state / "tunnel.json").write_text(json.dumps({
+            "url": "https://ghost-forest.trycloudflare.com",
+            "pid": os.getpid(),
+            "type": "quick",
+        }))
+        assert read_tunnel_url(layout) == ""
+
+    def test_a_live_cloudflared_pid_is_believed(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "woltspace.processes.pid_runs_program",
+            lambda pid, program, **kwargs: program == "cloudflared",
+        )
+        layout = _colony(tmp_path)
+        layout.platform_state.mkdir(parents=True, exist_ok=True)
+        (layout.platform_state / "tunnel.json").write_text(json.dumps({
+            "url": "https://live-forest.trycloudflare.com",
+            "pid": 4242,
+            "type": "quick",
+        }))
+        assert read_tunnel_url(layout) == "https://live-forest.trycloudflare.com"
 
     def test_a_missing_or_broken_state_file_is_silence_not_a_crash(self, tmp_path):
         layout = _colony(tmp_path)

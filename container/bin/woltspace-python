@@ -43,10 +43,24 @@ if [ -n "${WOLTSPACE_PYTHON:-}" ] && [ -x "${WOLTSPACE_PYTHON}" ]; then
   exec "${WOLTSPACE_PYTHON}" "$@"
 fi
 
-# 2. The image's symlink. Never this script — that would be a loop.
+# 2. The image's symlink. Never this script — that would be a loop, and the
+#    comparison has to be made after resolving it: on an install where that
+#    path links back into the bundle rather than to the venv python, comparing
+#    the unresolved name would find no match and exec this file forever.
 _image="/usr/local/bin/woltspace-python"
-if [ -x "$_image" ] && [ "$(cd "$(dirname "$_image")" && pwd)/$(basename "$_image")" != "$_self" ]; then
-  exec "$_image" "$@"
+if [ -x "$_image" ]; then
+  _image_real="$_image"
+  while [ -L "$_image_real" ]; do
+    _link="$(readlink "$_image_real")"
+    case "$_link" in
+      /*) _image_real="$_link" ;;
+      *) _image_real="$(dirname "$_image_real")/$_link" ;;
+    esac
+  done
+  _image_real="$(cd "$(dirname "$_image_real")" && pwd)/$(basename "$_image_real")"
+  if [ "$_image_real" != "$_self" ]; then
+    exec "$_image" "$@"
+  fi
 fi
 
 # Whether a candidate interpreter actually owns what these scripts import.
@@ -61,8 +75,14 @@ fi
 # stdout is a token or empty; a probe that prepends a banner to it breaks that
 # promise, and today it only fails safe by accident (the noise happens to break
 # the ghs_ prefix match).
+#
+# `woltspace` itself is part of the probe, not only its third-party
+# dependencies: gh-app-token imports `woltspace.envvars` at module level, so an
+# interpreter that owns PyJWT and python-dotenv but not the wheel dies on
+# arrival with an ImportError and an empty stdout — the "token that wasn't",
+# which is the exact failure this shim exists to remove.
 _owns_deps() {
-  [ -x "$1" ] && "$1" -c 'import jwt, dotenv' >/dev/null 2>&1
+  [ -x "$1" ] && "$1" -c 'import jwt, dotenv, woltspace.envvars' >/dev/null 2>&1
 }
 
 # 3. <venv>/lib/pythonX.Y/site-packages/woltspace/_bundle/container/bin -> <venv>/bin/python
@@ -145,9 +165,12 @@ done
 cat >&2 <<'EOF'
 woltspace-python: no interpreter found that owns woltspace's dependencies.
 
-This name means "the python woltspace is installed on" — it needs PyJWT and
-python-dotenv, which the `connectors` extra provides and an ambient python3
-does not. Tried, in order: $WOLTSPACE_PYTHON, /usr/local/bin/woltspace-python,
+This name means "the python woltspace is installed on" — it needs the
+`woltspace` package itself plus PyJWT and python-dotenv, which the `connectors`
+extra provides and an ambient python3 does not. An interpreter with the two
+libraries but no `woltspace` package is not enough: the scripts behind this
+shim import `woltspace.envvars`. Tried, in order:
+$WOLTSPACE_PYTHON, /usr/local/bin/woltspace-python,
 the venv beside this bundle, the `woltspace` console script's own interpreter,
 and any python3 that could import them.
 

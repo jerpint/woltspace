@@ -391,6 +391,15 @@ def main():
     if argv and (argv[0] == "--version" or
                  (not argv[0].startswith("-") and argv[0] not in LOCAL_NOUNS)):
         _delegate(argv)
+    elif not argv or argv[0] in ("--help", "-h"):
+        # Help is a question about the whole CLI, not about this client. A
+        # native user whose PATH puts the bundle first was getting a help page
+        # listing four nouns and no lifecycle at all — as though `start`,
+        # `doctor` and `backup` did not exist. In the container the thin
+        # client's own help is still the honest answer: the rest really does
+        # live on the host.
+        if not _running_in_container():
+            _delegate(argv or ["--help"])
 
     args = p.parse_args(argv)
     if not getattr(args, "func", None):

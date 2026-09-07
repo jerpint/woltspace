@@ -29,6 +29,7 @@ The `sandbox_is_not_the_live_colony` fixture asserts all of that and fails the
 run rather than letting a probe escape.
 """
 
+import importlib.machinery
 import os
 import subprocess
 import sys
@@ -40,6 +41,12 @@ ROOT = Path(__file__).resolve().parents[1]
 BIN = ROOT / "container" / "bin"
 SHIM = BIN / "woltspace-python"
 TOKEN_SCRIPT = BIN / "gh-app-token"
+
+# The exact probe the shim uses to decide an interpreter owns what the scripts
+# behind it import. `woltspace.envvars` is part of it: gh-app-token imports it
+# at module level, so a python with PyJWT and python-dotenv but no woltspace
+# package produces an ImportError and an empty stdout — a token that wasn't.
+DEPS_PROBE = "import jwt, dotenv, woltspace.envvars"
 
 # A port nothing listens on. Not 7777 — that is the colony's, and the point of
 # this constant is that a probe which somehow builds a real client fails to
@@ -126,7 +133,7 @@ def _noisy_interpreter(directory, name, marker, noise):
     script.write_text(
         "#!/bin/sh\n"
         f"echo '{noise}'\n"
-        'if [ "$1" = "-c" ] && [ "$2" = "import jwt, dotenv" ]; then\n'
+        f'if [ "$1" = "-c" ] && [ "$2" = "{DEPS_PROBE}" ]; then\n'
         "  exit 0\n"
         "fi\n"
         f"echo '{marker}'\n"
@@ -176,17 +183,17 @@ def test_the_dependency_probe_swallows_stdout_noise(tmp_path):
 def _fake_interpreter(directory, name, marker, *, owns_deps=True):
     """A stand-in python that identifies itself and echoes its arguments.
 
-    The shim probes a candidate with `-c 'import jwt, dotenv'` before trusting
-    it, so a usable fake has to answer that probe. `owns_deps=False` models the
-    interpreter that exists but owns none of the wheel's dependencies — an
-    ambient `python3`.
+    The shim probes a candidate with `-c 'import jwt, dotenv, woltspace.envvars'`
+    before trusting it, so a usable fake has to answer that probe.
+    `owns_deps=False` models the interpreter that exists but owns none of the
+    wheel's dependencies — an ambient `python3`.
     """
     directory.mkdir(parents=True, exist_ok=True)
     script = directory / name
     probe_exit = 0 if owns_deps else 1
     script.write_text(
         "#!/bin/sh\n"
-        'if [ "$1" = "-c" ] && [ "$2" = "import jwt, dotenv" ]; then\n'
+        f'if [ "$1" = "-c" ] && [ "$2" = "{DEPS_PROBE}" ]; then\n'
         f"  exit {probe_exit}\n"
         "fi\n"
         f"echo '{marker}'\n"
@@ -300,6 +307,81 @@ def test_a_candidate_without_the_dependencies_is_rejected(tmp_path):
     )
     assert result.returncode == 1
     assert "EMPTY VENV" not in result.stdout
+    assert "no interpreter found" in result.stderr
+
+
+def _load_token_script():
+    """Import `gh-app-token` as a module — it has no .py suffix and no side
+    effects at import (everything is behind `if __name__ == "__main__"`)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_loader(
+        "gh_app_token_under_test",
+        importlib.machinery.SourceFileLoader(
+            "gh_app_token_under_test", str(TOKEN_SCRIPT)),
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_an_explicit_data_root_does_not_borrow_the_default_colony_env(
+    tmp_path, monkeypatch
+):
+    """A colony at its own data root must not mint the *default* colony's app.
+
+    The home default is a fallback for shells that carry no data root at all.
+    Appending it unconditionally meant a colony whose own `.env` has no GitHub
+    App silently picked up `~/.woltspace/wolts/.env` and minted a real token
+    for somebody else's app — a wrong identity the caller cannot detect,
+    because the token is perfectly well-formed.
+    """
+    module = _load_token_script()
+    home = tmp_path / "home"
+    (home / ".woltspace" / "wolts").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("WOLTSPACE_WOLT_DIR", raising=False)
+    monkeypatch.delenv("WOLT_DIR", raising=False)
+
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path / "colony"))
+    files = [str(path) for path in module._env_files()]
+    assert str(tmp_path / "colony" / ".env") in files
+    assert str(home / ".woltspace" / "wolts" / ".env") not in files
+
+    # With no data root named, the default is still the right guess.
+    monkeypatch.delenv("WOLTSPACE_WOLTS_DIR")
+    monkeypatch.delenv("WOLTS_DIR", raising=False)
+    files = [str(path) for path in module._env_files()]
+    assert str(home / ".woltspace" / "wolts" / ".env") in files
+
+
+def test_pyjwt_alone_is_not_enough(tmp_path):
+    """The gap #405 left open: `gh-app-token` needs the wheel, not just PyJWT.
+
+    An interpreter that imports jwt and dotenv but has no `woltspace` package
+    dies on gh-app-token's module-level `from woltspace.envvars import get_env`
+    — traceback on stderr, nothing on stdout, and `GH_TOKEN=$(gh-app-token) gh
+    …` then acts as the human. So the probe asks for all three.
+    """
+    half = tmp_path / "half"
+    half.mkdir()
+    script = half / "python3"
+    script.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "-c" ] && [ "$2" = "import jwt, dotenv" ]; then\n'
+        "  exit 0\n"          # owns the libraries...
+        "fi\n"
+        'if [ "$1" = "-c" ]; then\n'
+        "  exit 1\n"          # ...but not the woltspace package
+        "fi\n"
+        "echo 'HALF PYTHON'\n"
+    )
+    script.chmod(0o755)
+
+    result = run_shim(["-V"], sandbox_env(tmp_path, extra_path=str(half)))
+
+    assert result.returncode == 1
+    assert "HALF PYTHON" not in result.stdout
     assert "no interpreter found" in result.stderr
 
 

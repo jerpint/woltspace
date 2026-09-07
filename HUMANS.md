@@ -211,8 +211,13 @@ GH_TOKEN=$(gh-app-token) gh issue list --repo jerpint/woltspace
 > ```bash
 > GH_TOKEN=$(gh-app-token) || exit 1
 > case "$GH_TOKEN" in ghs_*) ;; *) echo "no bot token" >&2; exit 1 ;; esac
-> gh pr create ...
+> GH_TOKEN="$GH_TOKEN" gh pr create ...
 > ```
+>
+> The last line is not a typo. `GH_TOKEN=$(...)` on a line of its own makes a
+> *shell* variable, which `gh` — a separate process — never sees; it would fall
+> back to your credentials, which is the whole failure this box is about. Pass
+> it on the command (or `export GH_TOKEN` after the check).
 >
 > Never `$(gh-app-token 2>&1)` — that captures the diagnostics into the variable,
 > and an error string is perfectly capable of passing a length check.

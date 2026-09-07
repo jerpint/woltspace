@@ -65,9 +65,14 @@ def _env_files() -> list:
     """Every `.env` that could hold the app credentials, most specific first.
 
     The container has exactly one answer (`/workspace/wolts/.env`). A native
-    colony's data root is wherever WOLTS_DIR points, defaulting to
-    `~/.woltspace/wolts` — and outside a session neither WOLT_DIR nor WOLTS_DIR
-    is necessarily exported, so the default has to be tried too.
+    colony's data root is wherever WOLTSPACE_WOLTS_DIR points, defaulting to
+    `~/.woltspace/wolts` — and outside a session neither the wolt dir nor the
+    data root is necessarily exported, so the default has to be tried too.
+
+    But only then. A colony running at an explicit data root that has no
+    GitHub App of its own must not quietly fall through to the *default*
+    colony's credentials: that mints a real token for the wrong app, and the
+    caller cannot tell. An explicit data root ends the search at its own .env.
     """
     candidates = []
     # get_env owns the legacy-name fallback (WOLT_DIR/WOLTS_DIR) via the alias
@@ -77,7 +82,8 @@ def _env_files() -> list:
         if raw:
             candidates.append(Path(raw).expanduser() / ".env")
     candidates.append(Path("/workspace/wolts/.env"))
-    candidates.append(Path("~/.woltspace/wolts/.env").expanduser())
+    if not (get_env("WOLTSPACE_WOLTS_DIR", "") or "").strip():
+        candidates.append(Path("~/.woltspace/wolts/.env").expanduser())
 
     seen = set()
     ordered = []

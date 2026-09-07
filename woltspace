@@ -185,7 +185,7 @@ _refuse_over_native_colony() {
   echo "   installed — usually ~/.local/bin/woltspace. \`which -a woltspace\`.)${_R}"
   echo ""
   echo "  ${_D}to run the container alongside it, give it its own data root:${_R}"
-  echo "    WOLTS_DIR=~/.woltspace/container-wolts $0 $cmd"
+  echo "    WOLTSPACE_WOLTS_DIR=~/.woltspace/container-wolts $0 $cmd"
   echo ""
   exit 1
 }

@@ -154,14 +154,16 @@ def _status(args) -> int:
         state = result["state"]
         emoji, said = lore.STATUS_LORE.get(state, lore.DEFAULT_STATUS_LORE)
         lore.headline(emoji, said)
-        # The state word keeps its `state: …` shape, coloured by what it means
-        # rather than always moss: a conflict painted green would be a lie.
-        lore.plain(
-            f"{lore.SUBINDENT}state: {state}",
-            _STATE_STYLES.get(state, lore.MOSS),
-        )
+        # The state word keeps its `state: …` shape at column 0 — coloured by
+        # what it means rather than always moss, because a conflict painted
+        # green would be a lie, but not moved: `grep '^state:'` and
+        # `awk -F': ' '/^state/{print $2}'` are how this line is read.
+        lore.field("state", state, value_style=_STATE_STYLES.get(state, lore.MOSS))
         lore.blank()
-        lore.link(result["endpoint"], note="")
+        # Same for the address. It was briefly a bare URL beside a beaver,
+        # which reads beautifully and cannot be grepped for by name — and the
+        # label is the only thing that says what the URL *is*.
+        lore.field("endpoint", result["endpoint"], value_style=lore.TEAL)
         lore.status_tunnel_line(result["tunnel"])
         lore.note(f"wolts: {result['wolts_dir']}")
         owner = result.get("owner") or {}
@@ -426,7 +428,8 @@ def _report_line_style(line: str) -> str:
         return lore.TERRA
     if stripped.startswith(("verified:", "restored:", "backup:")):
         return lore.MOSS
-    if stripped.startswith(("wolt ", "WOLTS_DIR=", "archive:", "data:")):
+    if stripped.startswith(("wolt ", "WOLTSPACE_WOLTS_DIR=", "WOLTS_DIR=",
+                            "archive:", "data:")):
         return lore.BARK
     if stripped.startswith(("tag:", "source:", "woltspace ", "wolts:")):
         return lore.AMBER
@@ -470,7 +473,8 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             '"how much wolt could a wolt chuck chuck\n'
             ' if a wolt chuck could chuck wolt?"\n\n'
-            "all state lives under ~/.woltspace/wolts (override with WOLTS_DIR)."
+            "all state lives under ~/.woltspace/wolts "
+            "(override with WOLTSPACE_WOLTS_DIR)."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

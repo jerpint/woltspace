@@ -166,10 +166,19 @@ Two checks worth understanding:
 
 ```console
 $ woltspace start
-woltspace started: http://127.0.0.1:7777
-wolts: /Users/you/.woltspace/native-wolts
-logs: /Users/you/.woltspace/native-wolts/.space/logs/control-plane.log
-status: woltspace status
+  🦫  woltspace
+
+  ⛺ the lodge started
+     lights on in the den
+
+  🦫 http://127.0.0.1:7777
+     the lodge is open
+
+  🌲 tunnel disabled - the lodge stays on this machine
+
+  🪵 wolts: /Users/you/.woltspace/native-wolts
+  🪵 logs: /Users/you/.woltspace/native-wolts/.space/logs/control-plane.log
+  🪵 status: woltspace status
 ```
 
 `start` runs doctor first and refuses to launch if it fails. Add `--port 7788`
@@ -177,20 +186,26 @@ if 7777 is taken.
 
 ```console
 $ woltspace status
+  ⛺ the lodge is open
 state: healthy
+
 endpoint: http://127.0.0.1:7777
-wolts: /Users/you/.woltspace/native-wolts
-owner: pid 67618 · bd6929db67a34a8bb0ab484b632ceff3 · your-macbook
-adoption: 0 live · 0 orphaned · 0 unchanged
-connector telegram: disabled · disabled
-  fix: Set channels.telegram = {"enabled": true, "token": "<bot token>"} in /Users/you/.woltspace/native-wolts/.space/platform/config.json (or export TELEGRAM_BOT_TOKEN).
-connector tui: running · pty bridge on 127.0.0.1:7778 · node /path/to/woltspace/tui/src/tui-service.js · pid 67631
+  🪵 tunnel: disabled
+  🪵 wolts: /Users/you/.woltspace/native-wolts
+  🪵 owner: your-macbook
+  🐾 adoption: 0 live · 0 orphaned · 0 unchanged
+
+  🐶 connector telegram: disabled · disabled
+     fix: Set channels.telegram = {"enabled": true, "token": "<bot token>"} in /Users/you/.woltspace/native-wolts/.space/platform/config.json (or export TELEGRAM_BOT_TOKEN).
+  🦫 connector tui: running · pty bridge on 127.0.0.1:7778 · woltspace-tui-service at /opt/homebrew/bin/woltspace-tui-service
 ```
 
-`adoption: 0 live` is right on a first run — there are no sessions to adopt
-yet. On later restarts this is how you see that live sessions were picked back
-up. `connector tui: running` is the pty bridge — without it the split view's
-terminal pane cannot attach.
+`state:` and `endpoint:` sit at column 0 on purpose — those two lines are what
+scripts grep for, and `--json` carries everything else, including the pid and
+instance id the human read leaves out. `adoption: 0 live` is right on a first
+run — there are no sessions to adopt yet. On later restarts this is how you see
+that live sessions were picked back up. `connector tui: running` is the pty
+bridge — without it the split view's terminal pane cannot attach.
 
 The tunnel is **off** by default natively; nothing is published. To expose the
 lodge deliberately, `WOLTSPACE_PUBLIC_TUNNEL=true woltspace start`.

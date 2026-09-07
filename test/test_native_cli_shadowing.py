@@ -39,14 +39,25 @@ LAUNCHER = ROOT / "woltspace"
 SYSTEM_PATH = f"/usr/bin{os.pathsep}/bin"
 
 
-def _clean_env(**extra):
-    """The ambient environment minus every woltspace path variable."""
+def _clean_env(tmp_path=None, **extra):
+    """The ambient environment minus every woltspace path variable.
+
+    HOME is redirected too, whenever the caller has a tmp_path to give. The
+    guards in these probes are what keep a launcher from reaching `_setup_path`
+    — which appends to `~/.zshrc` / `~/.bash_profile` after a
+    `read -r _confirm </dev/tty` — and a test should not be one regression away
+    from editing the developer's shell rc.
+    """
     env = {
         key: value
         for key, value in os.environ.items()
         if not key.startswith(("WOLTS_", "WOLTSPACE_", "WOLT_"))
     }
     env["PATH"] = SYSTEM_PATH
+    if tmp_path is not None:
+        home = Path(tmp_path) / "home"
+        home.mkdir(parents=True, exist_ok=True)
+        env["HOME"] = str(home)
     env.update(extra)
     return env
 
@@ -101,7 +112,7 @@ def test_native_lifecycle_verb_execs_the_console_script_beside_the_bundle(tmp_pa
     result = subprocess.run(
         [sys.executable, str(client), "start", "--port", "8080"],
         capture_output=True, text=True, timeout=30,
-        env=_clean_env(WOLTSPACE_ISOLATION="host"),
+        env=_clean_env(tmp_path, WOLTSPACE_ISOLATION="host"),
     )
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
@@ -111,18 +122,50 @@ def test_native_lifecycle_verb_execs_the_console_script_beside_the_bundle(tmp_pa
     assert "docker lives" not in result.stderr
 
 
-@pytest.mark.parametrize("verb", ["doctor", "paths", "serve", "restore", "--version"])
+@pytest.mark.parametrize(
+    "verb", ["doctor", "paths", "serve", "restore", "--version", "--help", "-h"])
 def test_native_delegates_every_verb_it_does_not_serve(verb, tmp_path):
-    """`woltspace doctor` used to die on an argparse error. It is the CLI's now."""
+    """`woltspace doctor` used to die on an argparse error. It is the CLI's now.
+
+    `--help` is in the list for the same reason: the bundle is first on a
+    session's PATH, so its four-noun help page was the only help a native user
+    could see — no start, no doctor, no backup, as though they did not exist.
+    """
     client, _ = _fake_bundle(tmp_path)
     result = subprocess.run(
         [sys.executable, str(client), verb],
         capture_output=True, text=True, timeout=30,
-        env=_clean_env(WOLTSPACE_ISOLATION="host"),
+        env=_clean_env(tmp_path, WOLTSPACE_ISOLATION="host"),
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["argv"] == verb
     assert "invalid choice" not in result.stderr
+
+
+def test_bare_invocation_natively_shows_the_real_cli(tmp_path):
+    """No verb at all is still a question about the whole CLI."""
+    client, _ = _fake_bundle(tmp_path)
+    result = subprocess.run(
+        [sys.executable, str(client)],
+        capture_output=True, text=True, timeout=30,
+        env=_clean_env(tmp_path, WOLTSPACE_ISOLATION="host"),
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["argv"] == "--help"
+
+
+def test_container_help_stays_with_the_thin_client(tmp_path):
+    """In the container the rest of the CLI really does live on the host, so
+    the client's own help is the honest answer and nothing is delegated."""
+    client, _ = _fake_bundle(tmp_path)
+    result = subprocess.run(
+        [sys.executable, str(client), "--help"],
+        capture_output=True, text=True, timeout=30,
+        env=_clean_env(tmp_path, WOLTSPACE_ISOLATION="external"),
+    )
+    assert result.returncode == 0, result.stderr
+    assert "native" not in result.stdout
+    assert "session" in result.stdout
 
 
 def test_native_refuses_loudly_when_no_console_script_can_be_found(tmp_path):
@@ -133,7 +176,7 @@ def test_native_refuses_loudly_when_no_console_script_can_be_found(tmp_path):
     result = subprocess.run(
         [sys.executable, str(client), "start"],
         capture_output=True, text=True, timeout=30,
-        env=_clean_env(WOLTSPACE_ISOLATION="host", PATH=str(empty_bin)),
+        env=_clean_env(tmp_path, WOLTSPACE_ISOLATION="host", PATH=str(empty_bin)),
     )
     assert result.returncode == 2
     assert "belongs to the native woltspace CLI" in result.stderr
@@ -165,6 +208,7 @@ def test_path_fallback_skips_the_bash_launcher(tmp_path):
         [sys.executable, str(client), "start"],
         capture_output=True, text=True, timeout=30,
         env=_clean_env(
+            tmp_path,
             WOLTSPACE_ISOLATION="host",
             PATH=f"{bash_first}{os.pathsep}{real}{os.pathsep}{SYSTEM_PATH}",
         ),
@@ -180,7 +224,7 @@ def test_container_keeps_the_host_lifecycle_message(tmp_path):
     result = subprocess.run(
         [sys.executable, str(client), "start"],
         capture_output=True, text=True, timeout=30,
-        env=_clean_env(WOLTSPACE_ISOLATION="external"),
+        env=_clean_env(tmp_path, WOLTSPACE_ISOLATION="external"),
     )
     assert result.returncode == 2
     assert "is a host lifecycle command" in result.stderr
@@ -200,7 +244,7 @@ def test_container_is_detected_from_mount_points_without_any_environment(tmp_pat
     client, _ = _fake_bundle(tmp_path)
     result = subprocess.run(
         [sys.executable, str(client), "start"],
-        capture_output=True, text=True, timeout=30, env=_clean_env(),
+        capture_output=True, text=True, timeout=30, env=_clean_env(tmp_path),
     )
     assert result.returncode == 2
     assert "is a host lifecycle command" in result.stderr
@@ -217,6 +261,7 @@ def test_control_nouns_stay_local_and_never_delegate(tmp_path):
         [sys.executable, str(client), "session", "list"],
         capture_output=True, text=True, timeout=30,
         env=_clean_env(
+            tmp_path,
             WOLTSPACE_ISOLATION="host",
             WOLTSPACE_API="http://127.0.0.1:1",  # nothing listening
         ),
@@ -287,6 +332,7 @@ def _launch(wolts_dir, verb="start"):
         ["bash", str(LAUNCHER), verb],
         capture_output=True, text=True, timeout=60,
         env=_clean_env(
+            wolts_dir.parent,
             WOLTSPACE_WOLTS_DIR=str(wolts_dir),
             WOLTS_DIR=str(wolts_dir),
             PATH=f"{fake_bin}{os.pathsep}{SYSTEM_PATH}",

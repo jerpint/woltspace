@@ -46,7 +46,10 @@ TRACKS = "🐾"          # reading the ground — doctor
 #: The headlines say "the lodge" where the launcher said "container": there is
 #: no container in a native run, and the lodge is what was ever meant.
 TRANSITIONS = {
-    "started": (TENT, "the lodge started", "the lodge is open"),
+    # The subtitle must not be "the lodge is open" — `start` prints that under
+    # the endpoint as the link's note, and the two lines landed one after the
+    # other saying the same thing twice.
+    "started": (TENT, "the lodge started", "lights on in the den"),
     "running": (BEAVER, "the lodge is running", "already gnawing"),
     "waking": (SUN, "the lodge is waking", "waking up the lodge..."),
     "stopped": (MOON, "the lodge stopped", "lodge closed for the night"),

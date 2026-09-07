@@ -65,14 +65,33 @@ def tunnel_settings(layout: RuntimeLayout) -> dict:
 
 
 def read_tunnel_url(layout: RuntimeLayout) -> str:
-    """The URL the running control plane published, if it has published one."""
+    """The URL the running control plane published, if it is still publishing.
+
+    The file is only unlinked on a graceful shutdown, so after a crash it names
+    a tunnel that is gone — and `status` would report `public: https://…` for
+    an address that answers nothing. The pid it carries is the evidence, and
+    the pid alone is not enough either: pids get recycled. Confirm the process
+    is cloudflared, exactly as `doctor._live_tunnel_owner` does.
+
+    A record with no pid at all is trusted: older control planes wrote one, and
+    calling every one of those tunnels dead would be its own wrong answer.
+    """
+    from .processes import pid_runs_program
+
     state_file = layout.platform_state / "tunnel.json"
     try:
         data = json.loads(state_file.read_text())
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return ""
-    url = data.get("url") if isinstance(data, dict) else None
-    return url if isinstance(url, str) else ""
+    if not isinstance(data, dict):
+        return ""
+    url = data.get("url")
+    if not isinstance(url, str) or not url:
+        return ""
+    pid = data.get("pid")
+    if isinstance(pid, int) and not pid_runs_program(pid, "cloudflared"):
+        return ""
+    return url
 
 
 def tunnel_report(layout: RuntimeLayout, *, wait: bool = True) -> dict:
