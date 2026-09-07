@@ -54,6 +54,27 @@ TRANSITIONS = {
     "broken": (BRICKS, "the lodge failed to open", "the dam broke"),
 }
 
+#: How each instance state greets you. The emoji and the one-liner; the state
+#: word itself is still printed underneath, so `state: healthy` stays greppable.
+STATUS_LORE = {
+    "healthy": (TENT, "the lodge is open"),
+    "stopped": (MOON, "lodge closed for the night"),
+    "starting": (SUN, "the lodge is waking"),
+    "stale": (SLEEP, "the lodge left tracks but nobody is home"),
+    "conflict": (BRICKS, "another lodge holds this ground"),
+}
+DEFAULT_STATUS_LORE = (SLEEP, "the lodge is quiet")
+
+#: A connector gets the creature that actually does its job: the dog is the
+#: lodge companion on chat, the wolf fires the crons, the beaver runs the
+#: terminal the human works in.
+CONNECTOR_CREATURES = {
+    "telegram": "🐶",
+    "slack": "🐶",
+    "wolf": "🐺",
+    "tui": BEAVER,
+}
+
 INDENT = "  "
 #: Where a subtitle sits: under its headline, past the emoji.
 SUBINDENT = "     "

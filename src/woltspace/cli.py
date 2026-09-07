@@ -141,31 +141,60 @@ def _status(args) -> int:
     if args.json:
         print(json.dumps(result, indent=2))
     else:
-        # `status` is the one surface tools read, so it is styled and not
-        # restyled: the same lines, in the same order, with no emoji, no
-        # indent, and nothing added. Only the colour is new — and `rich` drops
-        # even that the moment stdout is not a terminal.
+        # The human read: a creature and a lore line for the state, then every
+        # fact the plain CLI printed, each keeping its own `key: value` shape
+        # so it stays greppable. `--json` is the machine contract.
         state = result["state"]
-        lore.field("state", state, value_style=_STATE_STYLES.get(state, ""))
-        lore.field("endpoint", result["endpoint"], value_style=lore.TEAL)
-        lore.field("wolts", result["wolts_dir"], value_style=lore.TEAL)
+        emoji, said = lore.STATUS_LORE.get(state, lore.DEFAULT_STATUS_LORE)
+        lore.headline(emoji, said)
+        # The state word keeps its `state: …` shape, coloured by what it means
+        # rather than always moss: a conflict painted green would be a lie.
+        lore.plain(
+            f"{lore.SUBINDENT}state: {state}",
+            _STATE_STYLES.get(state, lore.MOSS),
+        )
+        lore.blank()
+        lore.link(result["endpoint"], note="")
+        lore.note(f"wolts: {result['wolts_dir']}")
         owner = result.get("owner") or {}
         if owner:
-            lore.field(
-                "owner",
-                f"pid {owner['pid']} · {owner['instance_id']} · {owner['hostname']}",
+            lore.note(
+                f"owner: pid {owner['pid']} · {owner['instance_id']} · "
+                f"{owner['hostname']}"
             )
         adoption = (result.get("health") or {}).get("adoption") or {}
         if adoption:
-            lore.field(
-                "adoption",
+            lore.note(
+                "adoption: "
                 f"{len(adoption.get('adopted', []))} live · "
                 f"{len(adoption.get('orphaned', []))} orphaned · "
                 f"{len(adoption.get('unchanged', []))} unchanged",
+                emoji=lore.TRACKS,
             )
-        for line in format_connector_lines(result):
-            lore.plain(line, _connector_line_style(line))
+        connector_lines = format_connector_lines(result)
+        if connector_lines:
+            lore.blank()
+        for line in connector_lines:
+            _print_connector_line(line)
     return 0 if result["state"] in {"healthy", "stopped"} else 1
+
+
+def _print_connector_line(line: str) -> None:
+    """A connector's own line, with the creature that does its job in front.
+
+    Continuation lines (`error:`, `fix:`) stay indented under their connector
+    rather than collecting a creature of their own.
+    """
+    stripped = line.strip()
+    if line.startswith("  "):
+        lore.plain(f"{lore.SUBINDENT}{stripped}", lore.BARK)
+        return
+    name = stripped.split(":", 1)[0].removeprefix("connector ").strip()
+    lore.note(
+        stripped,
+        emoji=lore.CONNECTOR_CREATURES.get(name, lore.TIMBER),
+        style=_connector_line_style(line),
+    )
 
 
 #: How each instance state reads at a glance: a lodge that is up is moss, a

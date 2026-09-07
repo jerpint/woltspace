@@ -41,30 +41,143 @@ def _colony(tmp_path, env_lines=()):
 # ---------------------------------------------------------------------------
 
 
-class TestStatusStaysParseable:
-    """`woltspace status` is read by tools. Styled, never restructured."""
+class TestStatusIsFunAndStillFactual:
+    """`woltspace status` reads like the lodge. Every fact survives the fun.
 
-    def test_a_captured_status_carries_no_escapes_and_no_extra_lines(
-        self, tmp_path, monkeypatch, capsys
-    ):
+    The machine contract is `--json` (see TestStatusJsonIsTheMachineContract);
+    the human read gets a creature and a lore line, and then says everything
+    it always said, each fact keeping its own `key: value` shape.
+    """
+
+    def _scratch(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WOLTS_DIR", str(tmp_path / "wolts"))
         monkeypatch.setenv("WOLTSPACE_PORT", "7799")
         monkeypatch.delenv("FORCE_COLOR", raising=False)
+
+    def test_a_stopped_lodge_is_the_moon_and_the_facts(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        self._scratch(tmp_path, monkeypatch)
         assert cli_main(["status"]) == 0
         out = capsys.readouterr().out
         assert "\x1b" not in out
         assert out.splitlines() == [
-            "state: stopped",
-            "endpoint: http://127.0.0.1:7799",
-            f"wolts: {(tmp_path / 'wolts').resolve()}",
+            "  🌙 lodge closed for the night",
+            "     state: stopped",
+            "",
+            "  🦫 http://127.0.0.1:7799",
+            f"  🪵 wolts: {(tmp_path / 'wolts').resolve()}",
         ]
 
-    def test_json_status_is_untouched(self, tmp_path, monkeypatch, capsys):
+    def test_every_fact_is_still_greppable(self, tmp_path, monkeypatch, capsys):
+        """`grep 'state:'`, `grep 'wolts:'` — the labels did not move."""
+        self._scratch(tmp_path, monkeypatch)
+        cli_main(["status"])
+        out = capsys.readouterr().out
+        assert "state: stopped" in out
+        assert "http://127.0.0.1:7799" in out
+        assert f"wolts: {(tmp_path / 'wolts').resolve()}" in out
+
+    def test_a_lodge_in_conflict_does_not_get_a_cheerful_line(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """The state word is coloured by what it means; the emoji matches."""
+        self._scratch(tmp_path, monkeypatch)
+        monkeypatch.setattr(
+            "woltspace.instance.inspect_instance",
+            lambda layout: {
+                "state": "conflict",
+                "endpoint": layout.endpoint,
+                "wolts_dir": str(layout.wolts_dir),
+            },
+        )
+        assert cli_main(["status"]) == 1
+        out = capsys.readouterr().out
+        assert "another lodge holds this ground" in out
+        assert "state: conflict" in out
+        assert lore.BRICKS in out
+
+
+class TestStatusJsonIsTheMachineContract:
+    """Scripts read `--json`. It carries everything the human read shows."""
+
+    def _running(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WOLTS_DIR", str(tmp_path / "wolts"))
         monkeypatch.setenv("WOLTSPACE_PORT", "7799")
+        monkeypatch.setattr(
+            "woltspace.instance.inspect_instance",
+            lambda layout: {
+                "state": "healthy",
+                "endpoint": layout.endpoint,
+                "wolts_dir": str(layout.wolts_dir),
+                "owner": {
+                    "pid": 4242,
+                    "instance_id": "deadbeef",
+                    "hostname": "lodge.local",
+                },
+                "health": {
+                    "adoption": {"adopted": ["a"], "orphaned": [], "unchanged": []},
+                    "connectors": [
+                        {"name": "wolf", "state": "running", "pid": 99,
+                         "detail": "cron scheduler", "restarts": 0},
+                        {"name": "telegram", "state": "disabled", "pid": None,
+                         "detail": "disabled", "remedy": "set a token"},
+                    ],
+                },
+            },
+        )
+
+    def test_the_json_verb_exists_and_carries_every_fact(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        self._running(tmp_path, monkeypatch)
         assert cli_main(["status", "--json"]) == 0
         payload = json.loads(capsys.readouterr().out)
-        assert payload["state"] == "stopped"
+        assert payload["state"] == "healthy"
+        assert payload["endpoint"] == "http://127.0.0.1:7799"
+        assert payload["wolts_dir"] == str((tmp_path / "wolts").resolve())
+        assert payload["owner"]["pid"] == 4242
+        assert payload["owner"]["instance_id"] == "deadbeef"
+        connectors = {c["name"]: c for c in payload["health"]["connectors"]}
+        assert connectors["wolf"]["pid"] == 99
+        assert connectors["telegram"]["state"] == "disabled"
+        assert payload["health"]["adoption"]["adopted"] == ["a"]
+
+    def test_the_json_is_plain_json_with_no_styling_in_it(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        self._running(tmp_path, monkeypatch)
+        cli_main(["status", "--json"])
+        out = capsys.readouterr().out
+        assert "\x1b" not in out
+        for creature in lore.CONNECTOR_CREATURES.values():
+            assert creature not in out
+        assert lore.TENT not in out
+
+    def test_the_human_read_keeps_the_owner_pid_and_connector_pids(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Fun, but no fact is traded away for it."""
+        self._running(tmp_path, monkeypatch)
+        assert cli_main(["status"]) == 0
+        out = capsys.readouterr().out
+        assert "the lodge is open" in out
+        assert "owner: pid 4242 · deadbeef · lodge.local" in out
+        assert "connector wolf: running · cron scheduler · pid 99" in out
+        assert "connector telegram: disabled · disabled" in out
+        assert "fix: set a token" in out
+        assert "adoption: 1 live · 0 orphaned · 0 unchanged" in out
+
+    def test_each_connector_wears_the_creature_that_does_its_job(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        self._running(tmp_path, monkeypatch)
+        cli_main(["status"])
+        out = capsys.readouterr().out
+        assert "🐺 connector wolf" in out
+        assert "🐶 connector telegram" in out
+        # A continuation line stays a continuation line — no creature of its own.
+        assert "     fix: set a token" in out
 
     def test_a_wolts_path_with_brackets_is_not_read_as_markup(
         self, tmp_path, monkeypatch, capsys
