@@ -160,6 +160,25 @@ its port. Switch it off with `channels.tui.enabled = false` or
 > this document mean. **Inside the container, read connector state with
 > `curl -s localhost:7777/health | jq .connectors`** — `woltspace status` there
 > is the other program and will answer, confidently, about something else.
+>
+> On a *native* install the thin client is on PATH too — the wheel bundle's
+> `container/bin` is what puts `notify` and `push-view` in front of a session —
+> and it can win the race with `~/.local/bin`. So it detects a native install
+> (`WOLTSPACE_ISOLATION`, else the image's fixed `/workspace` mount points) and
+> execs the console script sitting at `<venv>/bin/woltspace` for every verb it
+> does not serve: the whole lifecycle set plus `doctor`, `paths`, `serve`,
+> `restore`, `--version`. It keeps `session`, `status`, `auto` and `tui` for
+> itself, because the native CLI has no `session` noun and wolts message each
+> other through it. In the container nothing changed: lifecycle verbs still get
+> the "run it on the host where docker lives" refusal.
+>
+> The bash launcher has the matching guard from the other side. Before its first
+> `docker` verb it reads `<wolts>/.space/platform/control-plane.json`, and if a
+> live pid owns that data root with `"isolation": "host"`, it refuses to boot.
+> It has to be a refusal rather than a warning: `docker run` mounts the same
+> wolts directory, binds the same port, and loads the same `.env` — so the
+> second colony comes up holding the *same* bot token, and two long-polls on one
+> token trade 409s while the human watches a server they did not start.
 
 Configure it in the data root the control plane owns —
 `<wolts>/.space/platform/config.json`:
