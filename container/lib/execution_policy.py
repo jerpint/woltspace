@@ -154,17 +154,32 @@ def resolve_execution_policy(
     target: SessionTarget,
     grants: AutoGrantStore,
 ) -> tuple[ExecutionPolicy, AutoGrant | None]:
-    """Resolve defaults and enforce host Auto consent for the exact target."""
-    mode = requested or ("auto" if isolation == "external" else "prompt")
+    """Resolve defaults and enforce host Auto consent for the exact target.
+
+    On the host the grant *is* the consent, so it also decides the default: a
+    caller that asks for nothing gets Auto exactly where someone has already
+    approved this wolt in this directory, and prompt everywhere else. Without
+    that, every unattended native session — the bot's spawns, the lodge's —
+    booted prompt-mode with nobody there to answer, because no spawn path asks
+    for Auto by name.
+
+    Explicit still beats implicit in both directions: `requested="prompt"`
+    keeps asking even where Auto is approved, and `requested="auto"` without a
+    grant is refused rather than quietly downgraded.
+    """
+    grant = grants.find(target) if isolation == "host" else None
+    default = "auto" if isolation == "external" or grant is not None else "prompt"
+    mode = requested or default
     policy = ExecutionPolicy(mode=mode, isolation=isolation)
-    grant = grants.find(target) if mode == "auto" and isolation == "host" else None
     if mode == "auto" and isolation == "host" and grant is None:
         raise PermissionError(
             "Auto is not approved for "
             f"wolt '{target.wolt_id}' in '{target.canonical_workdir}'. "
             "Grant that exact wolt and directory before spawning."
         )
-    return policy, grant
+    # A prompt-mode session records no grant: the registry says what the
+    # session actually runs under, not what it could have run under.
+    return policy, grant if mode == "auto" else None
 
 
 def policy_mode(value) -> str:

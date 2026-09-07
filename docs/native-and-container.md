@@ -19,7 +19,7 @@ is the same code either way. Choose by how much you want to be asked.
 | | Native | Container |
 |---|---|---|
 | Harness auth | your own, reused in place | seeded into the image |
-| Default permission | prompt | auto (opt-in per wolt) |
+| Default permission | prompt, auto where you granted it | auto (opt-in per wolt) |
 | Session working dir | any repo on your machine | the mounted wolts directory |
 | Survives a platform update | yes — tmux outlives the control plane | container rebuild ends sessions |
 | Public URL | tunnel **off** by default | tunnel on by default |
@@ -34,6 +34,7 @@ uv tool install 'woltspace[connectors]'
 woltspace start          # runs doctor, takes the data-root lock, serves the lodge
 woltspace tui            # the terminal UI
 woltspace status         # who owns the data root, which sessions were adopted
+woltspace auto list      # which wolts may work unattended, and where
 woltspace stop           # stops the control plane — never touches tmux
 ```
 
@@ -49,6 +50,50 @@ than fatal.
 The `connectors` extra brings the Telegram dependencies. Without it the
 Telegram connector reports itself disabled with that remedy instead of
 crash-looping.
+
+### Auto — letting a wolt work unattended
+
+A native session asks before it acts. That is the right default for a machine
+with your repos on it, but it also means nobody is home: a wolt woken by
+Telegram, or by the wolf at 6am, stops at the first permission prompt and waits
+for a human who is asleep.
+
+**Auto** is the other posture, and it is granted per wolt *and* per directory:
+
+```bash
+woltspace auto grant mossy                 # its own wolt directory
+woltspace auto grant mossy --workdir ~/src/api
+woltspace auto list
+woltspace auto revoke mossy --workdir ~/src/api
+```
+
+A grant names one wolt and one canonical directory — symlinks resolved, so the
+path recorded is the path a session actually runs in. It is not a mode you
+switch on; it is consent you gave to a specific pair, and it is the whole of the
+consent: **once a grant exists, sessions for that wolt in that directory
+default to Auto**, and everything else keeps asking. That is what makes an
+unattended wolt possible without a flag on every spawn — nothing in the lodge,
+the bot, or the wolf asks for Auto by name.
+
+The explicit forms still win in both directions. A session started in prompt
+mode on purpose keeps asking even where Auto is approved, and asking for Auto
+where no grant exists is refused rather than quietly downgraded — you find out
+at spawn, not three commands into the transcript.
+
+Grants live in `<wolts>/.space/auto-grants.json`, owner-readable only, and
+`woltspace auto revoke` takes one back. Revoking does not touch a session
+already running under it: a live agent keeps the permissions it started with
+until it exits.
+
+Containers do not use grants. Their whole isolation argument is the disposable
+box, so Auto is their default and the grant store is ignored.
+
+> Two programs answer to `woltspace auto` — see the shadowing note further
+> down. The native CLI's `auto` reads and writes the grant file directly, so it
+> works with the lodge stopped. The thin client's (`container/bin/woltspace`,
+> which a *session* has first on its PATH) posts to `/auto-grants/*` on a
+> running control plane and takes its directory as a positional argument. Same
+> store either way; only the reach differs.
 
 ### Installing before the packages are published
 

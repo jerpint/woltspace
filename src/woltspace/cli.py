@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 
 from . import __version__, lore
 from .envvars import warn_legacy_once
@@ -466,6 +467,101 @@ def _tui(args) -> int:
     return 0
 
 
+def _auto(args) -> int:
+    """A bare `woltspace auto` names its own verbs, not the whole CLI."""
+    args.auto_parser.print_help()
+    return 1
+
+
+def _auto_runtime():
+    """Borrow the runtime's own grant store and target resolver.
+
+    The grant file's shape, its lock, and the canonicalization rule that makes
+    a grant match a spawn all live in `container/lib`, and a second
+    implementation here would be a second answer to "is this directory
+    approved?". Same sys.path graft `adoption.py` uses to reach the registry.
+    """
+    layout = RuntimeLayout.from_env()
+    lib_dir = str(layout.runtime_lib)
+    if lib_dir not in sys.path:
+        sys.path.insert(0, lib_dir)
+    from execution_policy import AutoGrantStore
+    from session_targets import SessionTarget
+
+    return layout, AutoGrantStore(layout.wolts_dir), SessionTarget
+
+
+def _auto_target(args):
+    """Resolve the exact wolt and directory a grant is keyed by.
+
+    `--workdir` is optional and defaults to the wolt's own home — the same
+    default `SessionTarget.resolve` applies to a spawn that names no
+    directory, so `woltspace auto grant <wolt>` approves precisely the
+    sessions the lodge starts for that wolt with no workdir of their own.
+    """
+    layout, store, target_cls = _auto_runtime()
+    target = target_cls.resolve(
+        args.wolt, getattr(args, "workdir", "") or None, wolts_dir=layout.wolts_dir
+    )
+    return store, target
+
+
+def _auto_grant(args) -> int:
+    try:
+        store, target = _auto_target(args)
+    except ValueError as exc:
+        lore.failure(f"auto grant failed: {exc}")
+        return 1
+    grant = store.grant(target)
+    if args.json:
+        print(json.dumps({"ok": True, "grant": grant.to_record()}, indent=2))
+        return 0
+    lore.headline(lore.SUN, f"auto approved: {target.wolt_id}")
+    lore.subtitle("it works here without asking")
+    lore.labelled("workdir", str(target.canonical_workdir))
+    return 0
+
+
+def _auto_revoke(args) -> int:
+    try:
+        store, target = _auto_target(args)
+    except ValueError as exc:
+        lore.failure(f"auto revoke failed: {exc}")
+        return 1
+    revoked = store.revoke(target)
+    if args.json:
+        print(json.dumps(
+            {"ok": True, "revoked": revoked, "target": target.to_record()}, indent=2
+        ))
+        return 0
+    lore.headline(
+        lore.MOON,
+        f"auto {'revoked' if revoked else 'was not granted'}: {target.wolt_id}",
+    )
+    lore.subtitle("it asks again from here on")
+    lore.labelled("workdir", str(target.canonical_workdir))
+    return 0
+
+
+def _auto_list(args) -> int:
+    _, store, _ = _auto_runtime()
+    grants = sorted(
+        store.list(), key=lambda g: (g.wolt_id, str(g.canonical_workdir))
+    )
+    if args.json:
+        print(json.dumps({"grants": [g.to_record() for g in grants]}, indent=2))
+        return 0
+    if not grants:
+        lore.headline(lore.TRACKS, "no auto grants")
+        lore.subtitle("every native session asks before it acts")
+        return 0
+    lore.headline(lore.TRACKS, f"auto grants: {len(grants)}")
+    lore.subtitle("these wolts work unattended in these directories")
+    for grant in grants:
+        lore.labelled(grant.wolt_id, str(grant.canonical_workdir))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="woltspace",
@@ -537,6 +633,36 @@ def build_parser() -> argparse.ArgumentParser:
     restore.add_argument("--to", default="", help="target directory (must be new or empty)")
     restore.add_argument("--json", action="store_true")
     restore.set_defaults(func=_restore)
+
+    auto = sub.add_parser(
+        "auto", help="manage repository-scoped Auto consent for native sessions"
+    )
+    auto.set_defaults(func=_auto, auto_parser=auto)
+    auto_sub = auto.add_subparsers(dest="verb")
+
+    auto_grant = auto_sub.add_parser(
+        "grant", help="let a wolt work unattended in one exact directory"
+    )
+    auto_grant.add_argument("wolt")
+    auto_grant.add_argument(
+        "--workdir", default="", help="directory to approve (default: the wolt's home)"
+    )
+    auto_grant.add_argument("--json", action="store_true")
+    auto_grant.set_defaults(func=_auto_grant)
+
+    auto_revoke = auto_sub.add_parser(
+        "revoke", help="withdraw one wolt's Auto consent for a directory"
+    )
+    auto_revoke.add_argument("wolt")
+    auto_revoke.add_argument(
+        "--workdir", default="", help="directory to revoke (default: the wolt's home)"
+    )
+    auto_revoke.add_argument("--json", action="store_true")
+    auto_revoke.set_defaults(func=_auto_revoke)
+
+    auto_list = auto_sub.add_parser("list", help="show every standing Auto grant")
+    auto_list.add_argument("--json", action="store_true")
+    auto_list.set_defaults(func=_auto_list)
 
     tui = sub.add_parser("tui", help="open the exactly compatible terminal UI")
     tui.add_argument("--dry-run", action="store_true", help="show resolution without launching")
