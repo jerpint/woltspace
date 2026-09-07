@@ -11,6 +11,7 @@ Everything harness-specific lives here:
   - process_names   — what a live agent looks like in a process tree (liveness/vulture)
   - models          — creature tier → model flag value, per harness
   - session_has_agent_process() — the shared process-tree walker
+  - sessions_with_agent_process() — its batched form, for whole-list liveness
 
 Adding a harness = adding one entry to HARNESSES. Nothing else should need
 to know how a harness spells its flags.
@@ -695,3 +696,22 @@ def session_has_agent_process(session_name: str | dict | RuntimeHandle,
     return runtime.has_descendant_process(
         handle, _wanted_processes(harness, include_launching)
     )
+
+
+def sessions_with_agent_process(harness: str | None = None,
+                                include_launching: bool = True) -> set[str] | None:
+    """Batched `session_has_agent_process`: which tmux sessions carry an agent.
+
+    `list()` asks this of every registry record at once; asking per session
+    forks tmux and ps once each, which is what made agent-accurate liveness
+    look too expensive to put in the list in the first place.
+
+    Returns a set of tmux session names, or None when undetermined (the
+    process table could not be read, or the installed runtime does not
+    implement the batch call). None is never "nothing is alive" — callers
+    fall back to tmux presence.
+    """
+    batch = getattr(get_runtime(), "sessions_with_process", None)
+    if batch is None:
+        return None
+    return batch(_wanted_processes(harness, include_launching))
