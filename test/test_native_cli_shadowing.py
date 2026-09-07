@@ -290,6 +290,62 @@ def test_launcher_ignores_a_stale_native_record(tmp_path):
     assert "this clearing is already taken" not in result.stdout
 
 
+def test_launcher_ignores_a_recycled_pid(tmp_path):
+    """A live pid that is not a woltspace must not block a legitimate start.
+
+    Pids get recycled. `kill -0` says only "something answers to this number",
+    so a stale record naming a since-recycled pid — a shell, an editor — used
+    to refuse the boot with a message about a colony that is not there, and no
+    way for the human to tell from the text that it was wrong.
+    """
+    wolts_dir = _lodge(tmp_path)
+    # A shell, not a control plane — and one whose command line *does* contain
+    # the word "woltspace", because on a developer machine every path does: the
+    # checkout, the data root, the worktrees. A plain substring match on argv
+    # was the second half of this bug, and it refused exactly this process.
+    decoy = subprocess.Popen(
+        ["sh", "-c", "sleep 30  # /Users/someone/.woltspace/wolts/uxwolt"]
+    )
+    try:
+        _owner_record(wolts_dir, pid=decoy.pid)
+        result = _launch(wolts_dir)
+        assert "this clearing is already taken" not in result.stdout, (
+            "a recycled pid must not be mistaken for a running colony"
+        )
+    finally:
+        decoy.terminate()
+        decoy.wait(timeout=10)
+
+
+@pytest.mark.parametrize(
+    "argv_tail,why",
+    [
+        (["woltspace", "serve"], "the control plane's own invocation shape"),
+        (["--config", "/Users/x/.woltspace/wolts"], "a python that is about woltspace"),
+    ],
+)
+def test_launcher_still_refuses_for_a_live_control_plane(argv_tail, why, tmp_path):
+    """The positive cases. Narrowing the check must not narrow it past these.
+
+    The native control plane runs `<python> -m woltspace serve …`, so both
+    signals are present in the first case. The second is the deliberate
+    leniency: a python whose command line mentions woltspace counts, because a
+    missed refusal costs a double boot and a spurious one only costs a retry.
+    """
+    wolts_dir = _lodge(tmp_path)
+    plane = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)", *argv_tail]
+    )
+    try:
+        _owner_record(wolts_dir, pid=plane.pid)
+        result = _launch(wolts_dir)
+        assert result.returncode == 1, why
+        assert "this clearing is already taken" in result.stdout, why
+    finally:
+        plane.terminate()
+        plane.wait(timeout=10)
+
+
 def test_launcher_ignores_a_missing_record(tmp_path):
     wolts_dir = _lodge(tmp_path)
     result = _launch(wolts_dir)

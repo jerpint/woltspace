@@ -104,6 +104,57 @@ _native_owner_field() {
 # two bots then fight over one long-poll with 409s while the human watches a
 # server that isn't the one they started. A warning after the fact does not
 # help: by then both are running. So this exits before the first docker verb.
+
+# Whether a recorded pid is alive *and* plausibly the control plane that wrote
+# it. `kill -0` alone gets this wrong twice over:
+#
+#   * Pids are recycled. A stale record can name a live but entirely unrelated
+#     process — a shell, an editor — and refusing a legitimate container start
+#     because someone inherited the number is its own bug, one the human has no
+#     way to diagnose from the message.
+#   * `kill -0` against a process owned by another user fails with EPERM, which
+#     is indistinguishable from "no such process". The guard would silently
+#     drop exactly when a colony really is running, under another account.
+#
+# `ps` answers both: it reports other users' processes, and it says what the
+# process actually is.
+#
+# What it must NOT do is match the bare word "woltspace" anywhere in the
+# command line. Every path on a woltspace developer's machine contains that
+# string — the checkout, the data root, the worktrees — so a plain substring
+# test matches any shell that happens to be sitting in one of them, which is
+# precisely the false refusal this is here to remove. The real control plane
+# runs `<python> -m woltspace serve …`, so the invocation shape is the signal:
+# `woltspace serve` in argv, or a process actually named for the CLI, or a
+# python whose command line mentions it.
+_pid_is_live_woltspace() {
+  local pid="$1" args comm
+  if command -v ps >/dev/null 2>&1; then
+    args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+    comm="$(ps -p "$pid" -o comm= 2>/dev/null || true)"
+    if [ -z "$args" ] && [ -z "$comm" ]; then
+      return 1
+    fi
+    # The control plane's own invocation.
+    case "$args" in *"woltspace serve"*) return 0 ;; esac
+    # `comm` is a full path on macOS and a bare name on Linux.
+    comm="${comm##*/}"
+    case "$comm" in
+      woltspace*) return 0 ;;
+      python*)
+        # A python is a plausible control plane, but only if its command line
+        # is about woltspace at all.
+        case "$args" in *woltspace*) return 0 ;; esac
+        ;;
+    esac
+    return 1
+  fi
+  # No `ps` at all (it is POSIX, so this is close to impossible). Keep the
+  # conservative answer: a pid that responds means assume the colony is up,
+  # because a wrong refusal is recoverable and a double boot is not.
+  kill -0 "$pid" 2>/dev/null
+}
+
 _refuse_over_native_colony() {
   [ -f "$WOLTS_DIR/.space/platform/control-plane.json" ] || return 0
   local isolation pid endpoint
@@ -112,7 +163,7 @@ _refuse_over_native_colony() {
   pid="$(_native_owner_field pid)"
   endpoint="$(_native_owner_field endpoint)"
   case "$pid" in ''|*[!0-9]*) return 0 ;; esac
-  kill -0 "$pid" 2>/dev/null || return 0
+  _pid_is_live_woltspace "$pid" || return 0
 
   echo ""
   printf "  %b🛑%b  %bthis clearing is already taken%b\n\n" "${_D}" "${_R}" "${_B}${_D}" "${_R}"
