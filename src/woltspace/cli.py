@@ -214,6 +214,49 @@ def _stop(args) -> int:
     return code
 
 
+def _backup(args) -> int:
+    from .backup import create_backup, summary_lines
+
+    layout = RuntimeLayout.from_env()
+    wolts_dir = args.wolts_dir or layout.wolts_dir
+    try:
+        result = create_backup(wolts_dir, out_dir=args.out or None, tag=args.tag or None)
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        print(f"backup failed: {exc}")
+        return 1
+    if args.json:
+        print(json.dumps({
+            "archive": str(result.archive),
+            "verified": result.verified,
+            "manifest": result.manifest,
+        }, indent=2))
+    else:
+        for line in summary_lines(result):
+            print(line)
+    return 0
+
+
+def _restore(args) -> int:
+    from .backup import restore_backup, restore_lines
+
+    try:
+        result = restore_backup(args.archive, to=args.to or None)
+    except (FileNotFoundError, FileExistsError, OSError, ValueError) as exc:
+        print(f"restore failed: {exc}")
+        return 1
+    if args.json:
+        print(json.dumps({
+            "target": str(result.target),
+            "wolts_dir": str(result.wolts_dir),
+            "entries": result.entries,
+            "manifest": result.manifest,
+        }, indent=2))
+    else:
+        for line in restore_lines(result):
+            print(line)
+    return 0
+
+
 def _tui(args) -> int:
     from .tui import TuiResolutionError, launch_tui, resolve_tui
 
@@ -292,6 +335,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="container boot — root phase + setup + serve; not for interactive use",
     )
     entrypoint.set_defaults(func=_container_entrypoint)
+
+    backup = sub.add_parser("backup", help="archive the wolts directory — data only")
+    backup.add_argument("--tag", default="", help="archive tag (default: UTC timestamp)")
+    backup.add_argument("--out", default="", help="where to write it (default: beside the wolts dir)")
+    backup.add_argument("--wolts-dir", default="", help=argparse.SUPPRESS)
+    backup.add_argument("--json", action="store_true")
+    backup.set_defaults(func=_backup)
+
+    restore = sub.add_parser("restore", help="extract a backup archive into a new directory")
+    restore.add_argument("archive")
+    restore.add_argument("--to", default="", help="target directory (must be new or empty)")
+    restore.add_argument("--json", action="store_true")
+    restore.set_defaults(func=_restore)
 
     tui = sub.add_parser("tui", help="open the exactly compatible terminal UI")
     tui.add_argument("--dry-run", action="store_true", help="show resolution without launching")
