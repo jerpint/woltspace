@@ -372,7 +372,13 @@ class TestFullRoundTrip:
     """End-to-end: create session → deliver message → notify back."""
 
     def test_create_session_and_verify_in_registry(self, tmux_session, shadow_wolt):
-        """Create a real tmux session and verify it appears in the live registry."""
+        """A real tmux session appears in the registry — and is honestly classified.
+
+        The session runs `sleep 60`, so it is exactly the shape of a husk: tmux
+        holds it, nothing in it is an agent. This used to assert alive is True,
+        which was the bug in miniature — enter attached to it, and IWCL pasted
+        into its shell.
+        """
         from sessions import SessionRegistry
         name = tmux_session
 
@@ -387,8 +393,12 @@ class TestFullRoundTrip:
 
         data = reg.get(name, check_alive=True)
         assert data is not None
-        assert data["alive"] is True
-        assert data["status"] == "running"
+        assert data["tmux_alive"] is True
+        assert data["agent_alive"] is False
+        assert data["alive"] is False
+        # And it stops claiming to be running, naming which half is missing.
+        assert data["status"] == "orphaned"
+        assert data["orphaned_reason"] == "agent-process-missing"
 
         # Cleanup registry
         reg.delete(name)
