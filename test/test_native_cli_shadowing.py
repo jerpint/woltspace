@@ -23,6 +23,7 @@ import json
 import os
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -58,15 +59,31 @@ def _fake_bundle(tmp_path, *, cli_body=None, interpreter=True):
     """A venv-shaped install: <venv>/lib/pythonX.Y/site-packages/woltspace/_bundle.
 
     The client's whole point is that it can find its own sibling console script
-    by arithmetic on its path, so the test has to reproduce the real shape.
+    by arithmetic on its path, so the test has to reproduce the real shape —
+    and "the real shape" includes `container/lib` beside `container/bin`. The
+    client imports from there (`env_compat`), resolving it relative to its own
+    location, so a fake bundle holding only the script is not a bundle the
+    client can run in.
     """
     venv = tmp_path / "venv"
     site_packages = venv / "lib" / "python3.13" / "site-packages"
-    bin_dir = site_packages / "woltspace" / "_bundle" / "container" / "bin"
+    bundle = site_packages / "woltspace" / "_bundle"
+    bin_dir = bundle / "container" / "bin"
     bin_dir.mkdir(parents=True)
     client = bin_dir / "woltspace"
     client.write_text(CLIENT.read_text())
     client.chmod(0o755)
+
+    # Mirror the wheel: whatever the client imports out of `container/lib` has
+    # to be there. Copied by discovery rather than by name, and tolerantly, so
+    # this fixture is correct both before and after the modules land.
+    repo_lib = CLIENT.resolve().parents[1] / "lib"
+    fake_lib = bundle / "container" / "lib"
+    fake_lib.mkdir(parents=True, exist_ok=True)
+    for module in ("env_compat.py",):
+        source = repo_lib / module
+        if source.exists():
+            (fake_lib / module).write_text(source.read_text())
 
     (venv / "bin").mkdir(parents=True)
     if interpreter:
@@ -235,6 +252,27 @@ def _lodge(tmp_path):
     return wolts_dir
 
 
+@contextmanager
+def _control_plane_decoy():
+    """A live process shaped like the native control plane, and its pid.
+
+    The refusal tests used to record `os.getpid()` — pytest's own pid — and so
+    passed only while pytest's argv happened to satisfy the guard's heuristic.
+    That is an accidental pass: run the same suite from a directory whose path
+    does not contain "woltspace" and the guard correctly declines to recognise
+    the recorder, and every refusal test fails for a reason that has nothing to
+    do with the code under test. Spawn the shape explicitly instead.
+    """
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)", "woltspace", "serve"]
+    )
+    try:
+        yield process.pid
+    finally:
+        process.terminate()
+        process.wait(timeout=10)
+
+
 def _launch(wolts_dir, verb="start"):
     fake_bin = wolts_dir.parent / "fake-bin"
     fake_bin.mkdir(exist_ok=True)
@@ -242,10 +280,14 @@ def _launch(wolts_dir, verb="start"):
     docker = fake_bin / "docker"
     docker.write_text("#!/bin/sh\necho 'DOCKER INVOKED' >&2\nexit 0\n")
     docker.chmod(0o755)
+    # Both spellings of the data-root variable. The canonical name is what the
+    # launcher prefers; the legacy one is still honoured, and setting both keeps
+    # this correct on either side of the env-namespace rename.
     return subprocess.run(
         ["bash", str(LAUNCHER), verb],
         capture_output=True, text=True, timeout=60,
         env=_clean_env(
+            WOLTSPACE_WOLTS_DIR=str(wolts_dir),
             WOLTS_DIR=str(wolts_dir),
             PATH=f"{fake_bin}{os.pathsep}{SYSTEM_PATH}",
         ),
@@ -255,8 +297,9 @@ def _launch(wolts_dir, verb="start"):
 @pytest.mark.parametrize("verb", ["start", "rebuild", "init"])
 def test_launcher_refuses_to_boot_over_a_live_native_colony(verb, tmp_path):
     wolts_dir = _lodge(tmp_path)
-    _owner_record(wolts_dir)
-    result = _launch(wolts_dir, verb)
+    with _control_plane_decoy() as pid:
+        _owner_record(wolts_dir, pid=pid)
+        result = _launch(wolts_dir, verb)
     assert result.returncode == 1, result.stdout
     assert "this clearing is already taken" in result.stdout
     assert "two bots on one token" in result.stdout
@@ -267,8 +310,9 @@ def test_launcher_refuses_to_boot_over_a_live_native_colony(verb, tmp_path):
 
 def test_launcher_refusal_points_at_the_native_cli_and_an_escape_hatch(tmp_path):
     wolts_dir = _lodge(tmp_path)
-    _owner_record(wolts_dir)
-    out = _launch(wolts_dir).stdout
+    with _control_plane_decoy() as pid:
+        _owner_record(wolts_dir, pid=pid)
+        out = _launch(wolts_dir).stdout
     assert "woltspace stop" in out
     assert "which -a woltspace" in out
     assert "WOLTS_DIR=" in out
