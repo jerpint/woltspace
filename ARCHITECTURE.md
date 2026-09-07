@@ -68,6 +68,7 @@ container/
     notify, push-view           Wolt-facing helpers (notify the user, set the viewport)
     wclaude, run-session.sh     Session entry — wraps `claude` with notify context + identity
     gh-app-token                Mints short-lived GitHub App installation tokens
+    woltspace-python            Resolves the interpreter that owns the wheel's deps
     version-check               Compares stamped version to upstream releases
 
   hooks/                      Session entry wrapper (run-session.sh)

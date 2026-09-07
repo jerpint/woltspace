@@ -1,0 +1,158 @@
+#!/bin/sh
+# woltspace-python — the interpreter woltspace itself is installed on.
+#
+# Scripts in this directory ask for it by name in their shebang
+# (`#!/usr/bin/env woltspace-python`) because they need the dependencies the
+# wheel owns through the `connectors` extra — PyJWT, python-dotenv — which no
+# ambient `python3` has.
+#
+# The image creates /usr/local/bin/woltspace-python as a symlink at build time,
+# so in the container this name has always resolved. Natively it resolved to
+# nothing at all: every `woltspace-python` shebang in the bundle died with
+# `env: woltspace-python: No such file or directory`. That is how
+# `GH_TOKEN=$(gh-app-token) gh ...` came to run as whoever `gh` had stored
+# credentials for — the token command produced nothing and the caller went on
+# regardless.
+#
+# So the name is a script now, and it ships inside the bundle where the shebangs
+# can reach it: `container/bin` is on PATH in both worlds, and `/usr/bin/env`
+# will happily exec a shell script as an interpreter.
+#
+# Resolution order, first hit wins:
+#   1. $WOLTSPACE_PYTHON              — explicit override
+#   2. /usr/local/bin/woltspace-python — the image's own symlink
+#   3. <venv>/bin/python              — arithmetic from this script's location
+#   4. the interpreter in the `woltspace` console script's shebang
+#   5. a python3 that can import the wheel's dependencies
+set -eu
+
+_self="$0"
+# Follow symlinks to the real file, so the path arithmetic below sees the bundle
+# rather than whatever `bin` directory linked to it.
+while [ -L "$_self" ]; do
+  _link="$(readlink "$_self")"
+  case "$_link" in
+    /*) _self="$_link" ;;
+    *) _self="$(dirname "$_self")/$_link" ;;
+  esac
+done
+_self="$(cd "$(dirname "$_self")" && pwd)/$(basename "$_self")"
+
+# 1. Explicit override.
+if [ -n "${WOLTSPACE_PYTHON:-}" ] && [ -x "${WOLTSPACE_PYTHON}" ]; then
+  exec "${WOLTSPACE_PYTHON}" "$@"
+fi
+
+# 2. The image's symlink. Never this script — that would be a loop.
+_image="/usr/local/bin/woltspace-python"
+if [ -x "$_image" ] && [ "$(cd "$(dirname "$_image")" && pwd)/$(basename "$_image")" != "$_self" ]; then
+  exec "$_image" "$@"
+fi
+
+# Whether a candidate interpreter actually owns what these scripts import.
+# Steps 3-5 all verify rather than assume: a python that cannot import jwt would
+# otherwise fail later, deeper, and less legibly — and `gh-app-token` failing
+# late is the failure that ends with work attributed to the wrong identity.
+#
+# Both streams are discarded, not just stderr. A python that greets stdout — a
+# banner, a telemetry notice, a sitecustomize print — would otherwise emit that
+# text *before* the payload, and every script behind this shim promises its
+# stdout is machine-readable. `gh-app-token` promises specifically that its
+# stdout is a token or empty; a probe that prepends a banner to it breaks that
+# promise, and today it only fails safe by accident (the noise happens to break
+# the ghs_ prefix match).
+_owns_deps() {
+  [ -x "$1" ] && "$1" -c 'import jwt, dotenv' >/dev/null 2>&1
+}
+
+# 3. <venv>/lib/pythonX.Y/site-packages/woltspace/_bundle/container/bin -> <venv>/bin/python
+_bin_dir="$(dirname "$_self")"
+_bundle="$(dirname "$(dirname "$_bin_dir")")"
+_site_packages="$(dirname "$(dirname "$_bundle")")"
+if [ "$(basename "$_bundle")" = "_bundle" ] && [ "$(basename "$_site_packages")" = "site-packages" ]; then
+  # site-packages -> pythonX.Y -> lib -> <venv>
+  _venv="$(dirname "$(dirname "$(dirname "$_site_packages")")")"
+  for _name in python python3; do
+    if _owns_deps "$_venv/bin/$_name"; then
+      exec "$_venv/bin/$_name" "$@"
+    fi
+  done
+fi
+
+# 4. Borrow the interpreter out of the console script's shebang. Covers installs
+#    that are not venv-shaped (pip --user) and a bundle running from a checkout.
+#
+#    Which `woltspace` matters: this very directory holds one too — the thin
+#    HTTP control client, whose shebang is a bare `#!/usr/bin/env python3`. That
+#    is the *ambient* python and it owns none of the wheel's dependencies, so
+#    borrowing from it lands on an interpreter without PyJWT. Skip any candidate
+#    sitting in a `container/bin`, and verify the result either way.
+#    Walk PATH by hand, in the current shell: `command -v -a` is not portable,
+#    and we want every candidate rather than only the first.
+_interp_from_shebang() {
+  # Echo the interpreter named by $1's shebang, if it looks like a python.
+  _shebang="$(head -1 "$1")"
+  case "$_shebang" in
+    '#!'*python*) ;;
+    *) return 1 ;;
+  esac
+  _raw="${_shebang#??}"
+  _raw="${_raw# }"
+  # Drop a /usr/bin/env prefix and any trailing arguments.
+  case "$_raw" in
+    /usr/bin/env\ *) _raw="${_raw#/usr/bin/env }" ;;
+  esac
+  _raw="${_raw%% *}"
+  [ -n "$_raw" ] || return 1
+  printf '%s\n' "$_raw"
+}
+
+_old_ifs="$IFS"
+_picked=""
+IFS=:
+for _cli_dir in $PATH; do
+  IFS="$_old_ifs"
+  if [ -n "$_cli_dir" ] && [ -f "$_cli_dir/woltspace" ] && [ -r "$_cli_dir/woltspace" ]; then
+    # Not the thin client sitting in a container/bin — its shebang names the
+    # ambient python3, which owns none of the wheel's dependencies.
+    if [ "$(basename "$_cli_dir")" != "bin" ] ||
+       [ "$(basename "$(dirname "$_cli_dir")")" != "container" ]; then
+      _candidate="$(_interp_from_shebang "$_cli_dir/woltspace" || true)"
+      if [ -n "$_candidate" ] && ! [ -x "$_candidate" ]; then
+        _candidate="$(command -v "$_candidate" 2>/dev/null || true)"
+      fi
+      if [ -n "$_candidate" ] && _owns_deps "$_candidate"; then
+        _picked="$_candidate"
+      fi
+    fi
+  fi
+  [ -z "$_picked" ] || break
+  IFS=:
+done
+IFS="$_old_ifs"
+if [ -n "$_picked" ]; then
+  exec "$_picked" "$@"
+fi
+
+# 5. Any python3 that owns the dependencies these scripts need.
+for _name in python3 python; do
+  _candidate="$(command -v "$_name" 2>/dev/null || true)"
+  if _owns_deps "$_candidate"; then
+    exec "$_candidate" "$@"
+  fi
+done
+
+cat >&2 <<'EOF'
+woltspace-python: no interpreter found that owns woltspace's dependencies.
+
+This name means "the python woltspace is installed on" — it needs PyJWT and
+python-dotenv, which the `connectors` extra provides and an ambient python3
+does not. Tried, in order: $WOLTSPACE_PYTHON, /usr/local/bin/woltspace-python,
+the venv beside this bundle, the `woltspace` console script's own interpreter,
+and any python3 that could import them.
+
+Fix it with either:
+  uv tool install 'woltspace[connectors]'
+  export WOLTSPACE_PYTHON=/path/to/python
+EOF
+exit 1

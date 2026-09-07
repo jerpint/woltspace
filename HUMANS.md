@@ -202,6 +202,21 @@ Once configured, the bot's `open_issue` tool works automatically. You can also u
 GH_TOKEN=$(gh-app-token) gh issue list --repo jerpint/woltspace
 ```
 
+> **Check the token before you trust it.** `gh-app-token` writes only a token to
+> stdout and only diagnostics to stderr, so a failure leaves `GH_TOKEN` empty —
+> and `gh` reads an empty `GH_TOKEN` as "not set" and quietly uses *your* stored
+> credentials instead of the bot's. When it matters who the author is, assert
+> the shape rather than that the string is non-empty:
+>
+> ```bash
+> GH_TOKEN=$(gh-app-token) || exit 1
+> case "$GH_TOKEN" in ghs_*) ;; *) echo "no bot token" >&2; exit 1 ;; esac
+> gh pr create ...
+> ```
+>
+> Never `$(gh-app-token 2>&1)` — that captures the diagnostics into the variable,
+> and an error string is perfectly capable of passing a length check.
+
 ## Local development
 
 For contributors working on woltspace itself:

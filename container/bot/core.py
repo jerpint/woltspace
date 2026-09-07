@@ -851,6 +851,15 @@ def _tool_open_issue(args: dict, routing: dict | None) -> str:
             err = token_result.stderr.strip()
             return json.dumps({"error": f"GitHub App auth failed: {err}"})
         gh_token = token_result.stdout.strip()
+        # Assert the shape, not merely non-emptiness. An installation token is
+        # `ghs_`-prefixed; anything else means the mint failed in a way that
+        # still wrote to stdout, and passing it on would either fail confusingly
+        # or — worse — let a caller fall back to a human's own credentials.
+        if not gh_token.startswith("ghs_"):
+            return json.dumps({
+                "error": "GitHub App auth failed: gh-app-token did not return "
+                         "an installation token"
+            })
     except Exception as e:
         return json.dumps({"error": f"GitHub App auth failed: {e}"})
 
