@@ -49,7 +49,12 @@ async function main() {
         if (!slug) throw new Error('lodge returned no session name');
       }
     } catch (e) {
-      console.error(lore.wakeFailed(slug || action.wolt || action.name, e.message));
+      // Print the lodge's own reason, on its own line and never truncated:
+      // "no conversation id to resume", "no claude process appeared", "workdir
+      // does not exist on this host". A bare "won't stir" sent people digging
+      // through server logs for a message the API had already handed us.
+      console.error(lore.wakeFailed(slug || action.wolt || action.name, ''));
+      console.error(`  ${e.message}`);
       continue;
     }
     let status;
