@@ -89,6 +89,107 @@ _G=$'\033[0;32m'; _B=$'\033[1m'; _R=$'\033[0m'
 
 # --- Helpers ---
 
+# The native control plane writes its ownership record here — instance id, pid,
+# endpoint, and the isolation mode it runs in. A record whose isolation is
+# "host" and whose pid is still alive means a *native* woltspace owns this data
+# root right now.
+_native_owner_field() {
+  sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\{0,1\}\([^\",}]*\)\"\{0,1\}.*/\1/p" \
+    "$WOLTS_DIR/.space/platform/control-plane.json" 2>/dev/null | head -1
+}
+
+# Refuse to boot the container over a live native colony.
+#
+# This is not a cosmetic conflict. `docker run` below mounts the same
+# $WOLTS_DIR, binds the same port, and loads the same $WOLTS_DIR/.env — so the
+# second colony comes up with the *same* Telegram token as the first, and the
+# two bots then fight over one long-poll with 409s while the human watches a
+# server that isn't the one they started. A warning after the fact does not
+# help: by then both are running. So this exits before the first docker verb.
+
+# Whether a recorded pid is alive *and* plausibly the control plane that wrote
+# it. `kill -0` alone gets this wrong twice over:
+#
+#   * Pids are recycled. A stale record can name a live but entirely unrelated
+#     process — a shell, an editor — and refusing a legitimate container start
+#     because someone inherited the number is its own bug, one the human has no
+#     way to diagnose from the message.
+#   * `kill -0` against a process owned by another user fails with EPERM, which
+#     is indistinguishable from "no such process". The guard would silently
+#     drop exactly when a colony really is running, under another account.
+#
+# `ps` answers both: it reports other users' processes, and it says what the
+# process actually is.
+#
+# What it must NOT do is match the bare word "woltspace" anywhere in the
+# command line. Every path on a woltspace developer's machine contains that
+# string — the checkout, the data root, the worktrees — so a plain substring
+# test matches any shell that happens to be sitting in one of them, which is
+# precisely the false refusal this is here to remove. The real control plane
+# runs `<python> -m woltspace serve …`, so the invocation shape is the signal:
+# `woltspace serve` in argv, or a process actually named for the CLI, or a
+# python whose command line mentions it.
+_pid_is_live_woltspace() {
+  local pid="$1" args comm
+  if command -v ps >/dev/null 2>&1; then
+    args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+    comm="$(ps -p "$pid" -o comm= 2>/dev/null || true)"
+    if [ -z "$args" ] && [ -z "$comm" ]; then
+      return 1
+    fi
+    # The control plane's own invocation.
+    case "$args" in *"woltspace serve"*) return 0 ;; esac
+    # `comm` is a full path on macOS and a bare name on Linux.
+    comm="${comm##*/}"
+    case "$comm" in
+      woltspace*) return 0 ;;
+      python*)
+        # A python is a plausible control plane, but only if its command line
+        # is about woltspace at all.
+        case "$args" in *woltspace*) return 0 ;; esac
+        ;;
+    esac
+    return 1
+  fi
+  # No `ps` at all (it is POSIX, so this is close to impossible). Keep the
+  # conservative answer: a pid that responds means assume the colony is up,
+  # because a wrong refusal is recoverable and a double boot is not.
+  kill -0 "$pid" 2>/dev/null
+}
+
+_refuse_over_native_colony() {
+  [ -f "$WOLTS_DIR/.space/platform/control-plane.json" ] || return 0
+  local isolation pid endpoint
+  isolation="$(_native_owner_field isolation)"
+  [ "$isolation" = "host" ] || return 0
+  pid="$(_native_owner_field pid)"
+  endpoint="$(_native_owner_field endpoint)"
+  case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+  _pid_is_live_woltspace "$pid" || return 0
+
+  echo ""
+  printf "  %b🛑%b  %bthis clearing is already taken%b\n\n" "${_D}" "${_R}" "${_B}${_D}" "${_R}"
+  echo "  ${_L}   one lodge to a pond${_R}"
+  echo ""
+  echo "  A native woltspace owns ${_C}$WOLTS_DIR${_R} — PID $pid, serving"
+  echo "  ${_C}${endpoint:-http://127.0.0.1:${WOLTSPACE_PORT:-7777}}${_R}."
+  echo ""
+  echo "  Starting the container here would mount that same wolts directory,"
+  echo "  bind that same port, and load that same .env — two bots on one token"
+  echo "  answering with 409s. Not doing that."
+  echo ""
+  echo "  ${_C}native lifecycle lives in the python CLI, not in this script:${_R}"
+  echo "    woltspace status      ${_D}# who owns this data root${_R}"
+  echo "    woltspace stop        ${_D}# stop the native control plane${_R}"
+  echo "  ${_D}(if plain \`woltspace\` lands back here, that CLI is the one uv"
+  echo "   installed — usually ~/.local/bin/woltspace. \`which -a woltspace\`.)${_R}"
+  echo ""
+  echo "  ${_D}to run the container alongside it, give it its own data root:${_R}"
+  echo "    WOLTS_DIR=~/.woltspace/container-wolts $0 $cmd"
+  echo ""
+  exit 1
+}
+
 _build_image() {
   local cache_flag=""
   [ "$NO_CACHE" = true ] && cache_flag="--no-cache"
@@ -126,6 +227,7 @@ _build_image() {
 
 _start_container() {
   local wolt_name="${1:-}"
+  _refuse_over_native_colony
   docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
   local extra_args=""
@@ -285,6 +387,7 @@ if [ "$cmd" = "init" ]; then
     exit 1
   fi
 
+  _refuse_over_native_colony
   _setup_path
 
   # Detect existing lodge (wolts or just scaffold from prior init)
@@ -615,6 +718,7 @@ RESTORE
     echo ""
     ;;
   rebuild)
+    _refuse_over_native_colony
     # Resolve version: --version > --latest > current container version
     CURRENT_VERSION=""
     if [ -n "$BUILD_VERSION" ]; then
@@ -647,6 +751,7 @@ RESTORE
     _show_url
     ;;
   start)
+    _refuse_over_native_colony
     printf "\n  %b🦫%b  %b\n\n" "${_L}" "${_R}" "${_B}${_G}woltspace${_R}"
     if [ "$LOCAL_BUILD" = true ]; then
       echo "  ${_D}🪵 local build — $WOLTSPACE_DIR${_R}"

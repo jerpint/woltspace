@@ -75,11 +75,25 @@ later.
 > the `export PATH=...` line it prints (or run `uv tool update-shell`) and open
 > a new shell.
 
-> **Three programs are called `woltspace`**, and one of them may already be on
-> your PATH: the bash Docker launcher at the root of this checkout. If your
-> shell rc puts the checkout ahead of `~/.local/bin`, plain `woltspace` keeps
-> running the container CLI. `which -a woltspace` shows the order; until you fix
-> it, call the native one as `~/.local/bin/woltspace` or alias it.
+> **Three programs are called `woltspace`**, and on a native install two of
+> them can sit ahead of the one you just installed:
+>
+> 1. `<bundle>/container/bin/woltspace` — the thin HTTP control client. It is on
+>    every session's PATH by design, because that is the directory `notify`,
+>    `push-view` and `session-reg` come from. It now recognises a native install
+>    and execs the console script beside it for anything it does not serve
+>    itself, so `woltspace start` and `woltspace doctor` reach the right program
+>    even when this copy wins the PATH race.
+> 2. `woltspace` at the root of a checkout — the container-era **bash Docker
+>    launcher**. If your shell rc puts the checkout ahead of `~/.local/bin`
+>    (`export PATH="$HOME/woltspace:$PATH"` is the usual line), plain
+>    `woltspace start` runs *this*, and it will try to boot a container. It now
+>    refuses when a native control plane owns the data root — but the launcher
+>    is not the CLI you want on a native host either way.
+> 3. `~/.local/bin/woltspace` — the one you want.
+>
+> `which -a woltspace` shows the order. If a checkout is winning, drop that
+> `export PATH` line from your shell rc, or move it after `~/.local/bin`.
 
 The TUI install also brings `woltspace-tui-service`, the pty bridge behind the
 browser terminal. Check it landed too:
