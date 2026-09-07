@@ -15,7 +15,7 @@ Guide the human through creating and configuring a GitHub App for their wolt. St
 Check if GitHub App credentials are already configured:
 
 ```bash
-grep -c "GITHUB_APP_ID" "$WOLT_DIR/.env" 2>/dev/null && echo "found" || echo "not found"
+grep -c "GITHUB_APP_ID" "$WOLTSPACE_WOLT_DIR/.env" 2>/dev/null && echo "found" || echo "not found"
 ```
 
 **If already configured:** Validate the credentials work:

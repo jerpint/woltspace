@@ -42,4 +42,4 @@ The format is `http://<app-name>.localhost:7777/`. Do **not** use `/app/<name>/`
 - The viewport only shows content served by localhost:7777. External URLs won't work (iframe CORS).
 - Each session's viewport is independent. Pushing to one doesn't affect others.
 - **Always use `push-view`** — never manually curl to `/current`.
-- If you don't know your wolt name, check `$WOLT_NAME` or read `wolt/wolt.json`.
+- If you don't know your wolt name, check `$WOLTSPACE_WOLT_NAME` or read `wolt/wolt.json`.

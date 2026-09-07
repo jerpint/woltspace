@@ -24,6 +24,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+from env_compat import get_env
 from paths import (
     WOLTS_DIR as _PATHS_WOLTS_DIR,
     wolt_sessions_dir,
@@ -60,7 +61,7 @@ from trust import ensure_claude_dir_trusted, ensure_codex_dir_trusted
 
 _UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
-WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 # Resolved relative to this file so the dev clone drives its own script —
 # a hardcoded production path pairs new sessions.py with old run-session.sh.
 RUN_SESSION_SCRIPT = Path(__file__).resolve().parent.parent / "bin" / "run-session.sh"

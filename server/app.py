@@ -47,7 +47,6 @@ from .config import (
     WOLT_NAME,
     WOLTS_DIR,
     WOLTSPACE_DIR,
-    get_env,
     load_dotenv,
 )
 from . import tunnel as tunnel_mgr

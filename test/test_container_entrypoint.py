@@ -173,8 +173,11 @@ class TestGreetingBranches:
 
         boot.open_tmux_window("mywolt", wolt_dir, tmp_path / "wolts")
 
+        # Both spellings of the session variable — `notify` and `push-view`
+        # read the canonical one, an un-updated skill still reads the old one.
         assert _sent(fake_tmux) == [
-            "export WOLT_SESSION=main && wclaude --dangerously-skip-permissions "
+            "export WOLTSPACE_WOLT_SESSION=main WOLT_SESSION=main && "
+            "wclaude --dangerously-skip-permissions "
             "/woltspace-create-wolt"
         ]
         assert not (claude / ".first-run").exists()

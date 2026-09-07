@@ -98,7 +98,7 @@ class TestTmuxSessionRuntime:
     def test_spawn_carries_current_native_paths_across_old_tmux_server(
         self, tmp_path, monkeypatch
     ):
-        monkeypatch.setenv("WOLTS_DIR", "/native/wolts")
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", "/native/wolts")
         monkeypatch.setenv("WOLTSPACE_DIR", "/installed/woltspace")
         monkeypatch.setenv("WOLTSPACE_ISOLATION", "host")
         monkeypatch.setenv("HOME", "/real/home")

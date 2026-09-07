@@ -65,7 +65,7 @@ class TestSitePathsResolveFromTheLayout:
                 "layout_wolts_dir": str(layout.wolts_dir),
             }))
             """,
-            {"WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
+            {"WOLTSPACE_WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
         )
         assert payload["sites_wolts_dir"] == payload["layout_wolts_dir"]
         assert payload["config_wolts_dir"] == payload["layout_wolts_dir"]
@@ -88,7 +88,7 @@ class TestSitePathsResolveFromTheLayout:
                 "sites": listing,
             }))
             """,
-            {"WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
+            {"WOLTSPACE_WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
         )
         assert payload["status"] == 200
         assert "native site" in payload["body"]
@@ -117,7 +117,7 @@ class TestSitePathsResolveFromTheLayout:
                     message = socket.receive_text()
             print(json.dumps({"message": message}))
             """,
-            {"WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
+            {"WOLTSPACE_WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
         )
         assert payload["message"] == "reload"
 
@@ -194,7 +194,8 @@ class TestOnboardingReadsTheRealHome:
 
 
 RUNTIME_ENV_KEYS = (
-    "WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
+    "WOLTSPACE_WOLTS_DIR", "WOLTS_DIR", "WOLTSPACE_WOLT_DIR", "WOLT_DIR",
+    "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
     "WOLTSPACE_HOST", "WOLTSPACE_INSTANCE_ID", "WOLTSPACE_PUBLIC_TUNNEL",
     "WOLTSPACE_ENTRYPOINT", "PORT",
 )
@@ -303,7 +304,7 @@ class TestTunnelPolicy:
                 "state_exists": tunnel.TUNNEL_STATE_FILE.exists(),
             }))
             """,
-            {"WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
+            {"WOLTSPACE_WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
         )
         assert payload["url"] == ""
         assert payload["state_exists"] is False

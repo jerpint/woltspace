@@ -5,7 +5,7 @@ Usage:
     GH_TOKEN=$(gh-app-token) gh issue create ...
 
 Reads GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, and GITHUB_APP_PRIVATE_KEY
-from the environment (or from WOLT_DIR/.env).
+from the environment (or from the active wolt's .env).
 
 Runs on `woltspace-python` — the interpreter woltspace itself is installed on,
 which owns PyJWT through the `connectors` extra. The image puts it on PATH; the
@@ -22,6 +22,10 @@ import json
 from pathlib import Path
 from urllib.request import Request, urlopen
 
+# `woltspace-python` is the interpreter woltspace itself is installed on, so
+# the env namespace helper is a plain package import here.
+from woltspace.envvars import get_env
+
 # ---------------------------------------------------------------------------
 # Env loading — uses python-dotenv for reliable parsing (multi-line values, quotes)
 # ---------------------------------------------------------------------------
@@ -31,7 +35,7 @@ def _get_env(key: str) -> str:
     if val:
         return val
     from dotenv import dotenv_values
-    wolt_dir = os.environ.get("WOLT_DIR", "")
+    wolt_dir = get_env("WOLTSPACE_WOLT_DIR", "")
     for candidate in [
         Path(wolt_dir) / ".env" if wolt_dir else None,
         Path("/workspace/wolts/.env"),

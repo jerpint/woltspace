@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from .envvars import export_both, get_env
+
 # The per-wolt home the container image builds; `server/config.py` defaults to
 # the same path for the same reason. Only containers own a home outright.
 CONTAINER_HOME = Path("/home/node")
@@ -111,7 +113,7 @@ class RuntimeLayout:
         cls, env: Mapping[str, str] | None = None, *, isolation: str | None = None
     ) -> "RuntimeLayout":
         values = os.environ if env is None else env
-        raw_wolts = values.get("WOLTS_DIR", "~/.woltspace/wolts")
+        raw_wolts = get_env("WOLTSPACE_WOLTS_DIR", "~/.woltspace/wolts", env=values)
         wolts_dir = Path(raw_wolts).expanduser().resolve(strict=False)
         root = cls._resolve_install_root(values.get("WOLTSPACE_DIR"))
         resolved_isolation = isolation or values.get("WOLTSPACE_ISOLATION", "host")
@@ -148,7 +150,12 @@ class RuntimeLayout:
             if resolved in sys.path:
                 sys.path.remove(resolved)
             sys.path.insert(0, resolved)
+        # Both spellings of the renamed pair. The platform reads the
+        # WOLTSPACE_* names; wolt skills and tools written against the old ones
+        # keep working until 1.0 (docs/environment.md).
+        os.environ["WOLTSPACE_WOLTS_DIR"] = str(self.wolts_dir)
         os.environ["WOLTS_DIR"] = str(self.wolts_dir)
+        os.environ.setdefault("WOLTSPACE_WOLT_DIR", str(self.wolts_dir))
         os.environ.setdefault("WOLT_DIR", str(self.wolts_dir))
         os.environ["WOLTSPACE_DIR"] = str(self.install_root)
         os.environ["WOLTSPACE_ISOLATION"] = self.isolation

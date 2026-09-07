@@ -34,6 +34,7 @@ from sessions import (
     _tmux_capture,
     _tmux_stop,
 )
+from env_compat import get_env
 from wolts import get_active_creature, find_by_type, list_wolts as _list_wolts_full
 from paths import (
     wolt_sessions_log,
@@ -47,10 +48,11 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
-_wolt_name = os.environ.get("WOLT_NAME", "wolt")
+WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
+_wolt_name = get_env("WOLTSPACE_WOLT_NAME", "wolt")
 _derived = WOLTS_DIR / _wolt_name
-WOLT_DIR = Path(os.environ.get("WOLT_DIR") or (_derived if _derived.exists() else "/workspace/wolt"))
+WOLT_DIR = Path(get_env("WOLTSPACE_WOLT_DIR")
+                or (_derived if _derived.exists() else "/workspace/wolt"))
 MEMORY_DIR = WOLT_DIR / "wolt" / "memory"
 LLM_MODEL = os.environ.get("LLM_MODEL", "anthropic/claude-haiku-4-5-20251001")
 MAX_TOOL_ROUNDS = 5
@@ -92,7 +94,11 @@ def switch_wolt(name: str) -> str | None:
         return None
     WOLT_DIR = target
     MEMORY_DIR = WOLT_DIR / "wolt" / "memory"
+    # Both spellings — the platform reads the WOLTSPACE_* names, and every
+    # session this bot spawns from here on inherits the pair.
+    os.environ["WOLTSPACE_WOLT_DIR"] = str(WOLT_DIR)
     os.environ["WOLT_DIR"] = str(WOLT_DIR)
+    os.environ["WOLTSPACE_WOLT_NAME"] = name
     os.environ["WOLT_NAME"] = name
     config_path = WOLTS_DIR / "woltspace.json"
     if config_path.exists():
@@ -155,7 +161,7 @@ def _load_dog_identity() -> str | None:
 def build_system_prompt() -> str:
     """Build the system prompt from memory + base instructions."""
     memory = load_memory()
-    wolt_name = os.environ.get("WOLT_NAME", "wolt")
+    wolt_name = get_env("WOLTSPACE_WOLT_NAME", "wolt")
     human_name = "human"
     adapter = os.environ.get("BOT_ADAPTER", "chat")
 
@@ -352,9 +358,9 @@ def start_claude_session(prompt: str, wolt: str = None, creature: str = None, ro
     """Start an interactive Claude Code session. Delegates to sessions.start_session.
 
     Wraps the shared start_session() with bot-specific logging and
-    backwards-compat fallback (wolt defaults to WOLT_NAME env var).
+    backwards-compat fallback (wolt defaults to the active-wolt env var).
     """
-    target_wolt = wolt or os.environ.get("WOLT_NAME", "wolt")
+    target_wolt = wolt or get_env("WOLTSPACE_WOLT_NAME", "wolt")
     result = start_session(
         wolt=target_wolt,
         prompt=prompt,
@@ -661,7 +667,7 @@ def _tool_read_memory(args: dict, routing: dict | None) -> str:
 
 
 def _tool_list_wolts(args: dict, routing: dict | None) -> str:
-    active = os.environ.get("WOLT_NAME", "?")
+    active = get_env("WOLTSPACE_WOLT_NAME", "?")
     return json.dumps({"active": active, "available": list_wolts()})
 
 

@@ -22,6 +22,7 @@ from bot.core import get_response, transcribe_audio, list_sessions, kill_session
 from wolts import get_active_creature
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from env_compat import get_env
 from paths import wolt_state_dir, wolt_chat_dir, wolt_uploads_dir
 
 logging.basicConfig(
@@ -30,17 +31,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-WOLT_DIR = Path(os.environ.get("WOLT_DIR", "/workspace/wolt"))
-_WOLT_NAME = os.environ.get("WOLT_NAME", WOLT_DIR.name)
-_WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", str(WOLT_DIR.parent)))
+WOLT_DIR = Path(get_env("WOLTSPACE_WOLT_DIR", "/workspace/wolt"))
+_WOLT_NAME = get_env("WOLTSPACE_WOLT_NAME", WOLT_DIR.name)
+_WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", str(WOLT_DIR.parent)))
 STATE_DIR = wolt_state_dir(_WOLT_NAME, _WOLTS_DIR)
 CHAT_DIR = wolt_chat_dir(_WOLT_NAME, _WOLTS_DIR)
 
 
 def _dog_name() -> str:
-    """Get the dog's display name — from dog-wolt if available, else WOLT_NAME."""
+    """Get the dog's display name — from dog-wolt if available, else the active-wolt env var."""
     name = get_active_creature("dog")
-    return name or os.environ.get("WOLT_NAME", "wolt")
+    return name or get_env("WOLTSPACE_WOLT_NAME", "wolt")
 
 ALLOWED_USERS: set[int] = set()
 chat_histories: dict[int, list] = defaultdict(list)
@@ -457,8 +458,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def _get_uploads_dir() -> Path:
-    """Resolve uploads dir from current WOLT_NAME (respects switch_wolt)."""
-    wolt = os.environ.get("WOLT_NAME", _WOLT_NAME)
+    """Resolve uploads dir from the current active wolt (respects switch_wolt)."""
+    wolt = get_env("WOLTSPACE_WOLT_NAME", _WOLT_NAME)
     return wolt_uploads_dir(wolt, _WOLTS_DIR)
 
 
@@ -606,7 +607,7 @@ async def handle_wolt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if not args:
         wolts = list_wolts()
-        active = os.environ.get("WOLT_NAME", "?")
+        active = get_env("WOLTSPACE_WOLT_NAME", "?")
         lines = [f"active: {active}", "", "available:"]
         for w in wolts:
             marker = " ←" if w == active else ""
@@ -642,7 +643,7 @@ def run():
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
     app.add_handler(MessageHandler(filters.Document.ALL & ~filters.Document.IMAGE, handle_document))
 
-    wolt_name = os.environ.get("WOLT_NAME", "wolt")
+    wolt_name = get_env("WOLTSPACE_WOLT_NAME", "wolt")
     logger.info(f"{wolt_name} telegram bot starting...")
 
     loop = asyncio.new_event_loop()

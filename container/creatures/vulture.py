@@ -30,12 +30,13 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from env_compat import get_env
 from sessions import SessionRegistry
 from harnesses import session_has_agent_process
 from paths import space_vulture_dir
 from session_runtime import RuntimeHandle, get_runtime
 
-WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 STATE_DIR = space_vulture_dir(WOLTS_DIR)
 LOG_FILE = STATE_DIR / "vulture.log"
 LAST_RUN_FILE = STATE_DIR / "last-run"

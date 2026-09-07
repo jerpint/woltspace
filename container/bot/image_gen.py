@@ -16,6 +16,8 @@ import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from env_compat import get_env
+
 logger = logging.getLogger(__name__)
 
 # Valid params for gpt-image-1
@@ -112,14 +114,14 @@ def generate_image(
         prompt:     What to generate
         size:       "1024x1024" | "1536x1024" (landscape) | "1024x1536" (portrait) | "auto"
         quality:    "low" | "medium" | "high" | "auto"
-        output_dir: Where to save the image. Defaults to WOLT_DIR/wolt/images/
+        output_dir: Where to save the image. Defaults to the active wolt's wolt/images/
         provider:   "openai" (default)
 
     Returns:
         {path, filename, provider, model, size, quality, prompt}
     """
     if output_dir is None:
-        wolt_dir = Path(os.environ.get("WOLT_DIR", "/workspace/wolt"))
+        wolt_dir = Path(get_env("WOLTSPACE_WOLT_DIR", "/workspace/wolt"))
         output_dir = wolt_dir / "wolt" / "images"
     output_dir = Path(output_dir)
 

@@ -38,6 +38,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 
+from env_compat import get_env  # noqa: E402
+
 from conftest import (
     requires_live_send,
     requires_live_telegram,
@@ -51,10 +53,10 @@ from conftest import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 # A log path only — never a spawn target. Absent WOLT_NAME simply yields no
 # wolt-level log, and the wolts-level log below still applies.
-WOLT_NAME = os.environ.get("WOLT_NAME", "").strip() or "_absent_"
+WOLT_NAME = get_env("WOLTSPACE_WOLT_NAME", "").strip() or "_absent_"
 # Server writes to wolt-level log, core.py writes to wolts-level log
 BOT_LOG_PATHS = [
     WOLTS_DIR / WOLT_NAME / ".state" / "bot-debug" / "bot.jsonl",

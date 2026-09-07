@@ -57,7 +57,7 @@ git clean -fd
 ## Step 1: Determine what's incoming
 
 ```bash
-WOLTS_DIR="${WOLTS_DIR:-/workspace/wolts}"
+WOLTS_DIR="${WOLTSPACE_WOLTS_DIR:-/workspace/wolts}"
 BRANCH=$(cat "$WOLTS_DIR/.space/platform/woltspace-branch" 2>/dev/null || echo "main")
 
 cd /workspace/woltspace
@@ -197,7 +197,7 @@ from pathlib import Path
 from skills_sync import sync_all_wolt_skills
 from woltspace.container_entrypoint import sync_claude_md_platform_section
 woltspace = Path('/workspace/woltspace')
-wolts = Path('${WOLTS_DIR:-/workspace/wolts}')
+wolts = Path('${WOLTSPACE_WOLTS_DIR:-/workspace/wolts}')
 sync_all_wolt_skills(woltspace, wolts)
 sync_claude_md_platform_section(wolts, woltspace)
 print('skills and CLAUDE.md synced to all wolts')

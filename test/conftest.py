@@ -4,10 +4,14 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+from env_compat import get_env  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +238,7 @@ def shadow_wolt():
     hardcode. Teardown stops every session it spawned, then removes it — and
     refuses to remove anything it did not create.
     """
-    wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    wolts_dir = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
     home = wolts_dir / SHADOW_WOLT
     marker = home / SHADOW_MARKER
     if not shadow_is_reusable(home):
@@ -304,7 +308,7 @@ def routed_test_session(test_chat_id, shadow_wolt):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
     from sessions import SessionRegistry
 
-    wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    wolts_dir = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
     wolt = shadow_wolt
     reg = SessionRegistry(wolts_dir)
     name = f"test-probe-{int(time.time()) % 100000}-{os.getpid()}"

@@ -12,15 +12,14 @@ from pathlib import Path
 import pytest
 
 from conftest import SHADOW_MARKER, SHADOW_PREFIX, SHADOW_WOLT, shadow_is_reusable
+from env_compat import get_env
 
 TEST_DIR = Path(__file__).resolve().parent
 
 
 class TestFixtureLifecycle:
     def test_it_exists_on_disk_and_is_discoverable_as_a_wolt(self, shadow_wolt):
-        import os
-
-        home = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts")) / shadow_wolt
+        home = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts")) / shadow_wolt
         assert home.is_dir()
         manifest = json.loads((home / "wolt" / "wolt.json").read_text())
         assert manifest["name"] == SHADOW_WOLT
@@ -31,7 +30,7 @@ class TestFixtureLifecycle:
         # This test runs without the fixture: nothing should be left over.
         import os
 
-        wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+        wolts_dir = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
         assert not (wolts_dir / SHADOW_WOLT).exists()
 
     def test_its_name_is_recognizably_a_test_artifact(self):

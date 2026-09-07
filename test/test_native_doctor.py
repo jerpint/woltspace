@@ -72,7 +72,8 @@ def test_supervisor_prepare_freezes_environment_and_creates_only_state(
 ):
     layout = _layout(tmp_path)
     keys = (
-        "WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
+        "WOLTSPACE_WOLTS_DIR", "WOLTS_DIR", "WOLTSPACE_WOLT_DIR", "WOLT_DIR",
+        "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
         "WOLTSPACE_INSTANCE_ID", "WOLTSPACE_PUBLIC_TUNNEL",
     )
     # delenv on an absent variable records nothing to undo, so the values
@@ -88,6 +89,7 @@ def test_supervisor_prepare_freezes_environment_and_creates_only_state(
 
     assert layout.platform_state.is_dir()
     assert layout.logs_dir.is_dir()
+    assert os.environ["WOLTSPACE_WOLTS_DIR"] == str(layout.wolts_dir)
     assert os.environ["WOLTS_DIR"] == str(layout.wolts_dir)
     assert os.environ["WOLTSPACE_ISOLATION"] == "host"
     assert os.environ["WOLTSPACE_INSTANCE_ID"] == "instance-test"
@@ -100,7 +102,8 @@ def test_entrypoint_supervisor_does_not_override_tunnel_default(tmp_path, monkey
     # prepare() writes os.environ directly; keep the rewrite inside this test.
     # Restore by hand: setenv("") on an absent variable leaves an empty string
     # behind, which is not the same as absent for `os.environ.get(k, default)`.
-    keys = ("WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
+    keys = ("WOLTSPACE_WOLTS_DIR", "WOLTS_DIR", "WOLTSPACE_WOLT_DIR", "WOLT_DIR",
+            "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
             "WOLTSPACE_HOST", "WOLTSPACE_INSTANCE_ID", "WOLTSPACE_PUBLIC_TUNNEL",
             "PORT")
     snapshot = {key: os.environ.get(key) for key in keys}
@@ -117,7 +120,8 @@ def test_supervisor_adopts_registry_before_serving(tmp_path, monkeypatch):
     layout = _layout(tmp_path)
     events = []
     for key in (
-        "WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
+        "WOLTSPACE_WOLTS_DIR", "WOLTS_DIR", "WOLTSPACE_WOLT_DIR", "WOLT_DIR",
+        "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
         "WOLTSPACE_INSTANCE_ID", "WOLTSPACE_PUBLIC_TUNNEL", "WOLTSPACE_HOST",
         "PORT",
     ):
@@ -146,7 +150,8 @@ def test_the_sigterm_uvicorn_reraises_still_lets_connectors_stop(tmp_path, monke
     layout = _layout(tmp_path)
     events = []
     for key in (
-        "WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
+        "WOLTSPACE_WOLTS_DIR", "WOLTS_DIR", "WOLTSPACE_WOLT_DIR", "WOLT_DIR",
+        "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
         "WOLTSPACE_INSTANCE_ID", "WOLTSPACE_PUBLIC_TUNNEL", "WOLTSPACE_HOST",
         "PORT",
     ):

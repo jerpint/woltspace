@@ -198,7 +198,7 @@ class TestResponseFormatting:
 
     def test_session_response_with_text(self):
         from bot.telegram_adapter import format_response
-        with patch.dict(os.environ, {"WOLT_NAME": "neowolt"}):
+        with patch.dict(os.environ, {"WOLTSPACE_WOLT_NAME": "neowolt"}):
             result = {
                 "type": "session",
                 "text": "session started — chompy dam",
@@ -209,7 +209,7 @@ class TestResponseFormatting:
 
     def test_image_response_format(self):
         from bot.telegram_adapter import format_response
-        with patch.dict(os.environ, {"WOLT_NAME": "neowolt"}):
+        with patch.dict(os.environ, {"WOLTSPACE_WOLT_NAME": "neowolt"}):
             result = {"type": "image", "text": "cool image", "path": "/tmp/img.png"}
             formatted = format_response(result)
             assert "cool image" in formatted
