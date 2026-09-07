@@ -16,7 +16,8 @@ So: the name resolves natively now (a shim in the same directory), and the token
 script's stdout is a validated `ghs_` token or it is empty.
 
 Isolation contract for this file — every probe runs with:
-  * WOLTS_DIR pointed at a tmp_path, set *explicitly*. Merely unsetting it makes
+  * the data-root variable pointed at a tmp_path, set *explicitly* and under
+    both its canonical and legacy spellings. Merely unsetting it makes
     the real CLI default to the live data root, which is how an earlier test
     file reached a running colony.
   * WOLTSPACE_API pointed at a closed port.
@@ -57,8 +58,17 @@ def sandbox_env(tmp_path, *, extra_path="", **extra):
     env = {
         "HOME": str(tmp_path / "home"),
         "PATH": path,
-        # Explicit, not absent. An absent WOLTS_DIR means "the live one".
+        # Explicit, not absent. An absent data-root variable means "the live
+        # one" — the default is the running colony, so unsetting is not
+        # isolation.
+        #
+        # Both spellings, canonical first: the scripts under test resolve the
+        # canonical name and fall back to the legacy one, and a probe that set
+        # only the old name would be testing the fallback rather than the
+        # behaviour. Reads below take the canonical key.
+        "WOLTSPACE_WOLTS_DIR": str(wolts_dir),
         "WOLTS_DIR": str(wolts_dir),
+        "WOLTSPACE_WOLT_DIR": str(wolts_dir),
         "WOLT_DIR": str(wolts_dir),
         "WOLTSPACE_API": DEAD_API,
         "WOLTSPACE_ISOLATION": "host",
@@ -78,12 +88,12 @@ def sandbox_is_not_the_live_colony(tmp_path):
         f"probe API {api} points at the live control plane"
     )
 
-    wolts_dir = Path(env["WOLTS_DIR"])
+    wolts_dir = Path(env["WOLTSPACE_WOLTS_DIR"])
     assert tmp_path in wolts_dir.parents or wolts_dir == tmp_path / "wolts", (
-        f"WOLTS_DIR {wolts_dir} is outside the test's tmp_path"
+        f"data root {wolts_dir} is outside the test's tmp_path"
     )
     live_root = Path("~/.woltspace/wolts").expanduser()
-    assert wolts_dir != live_root, f"WOLTS_DIR is the live data root {live_root}"
+    assert wolts_dir != live_root, f"sandbox points at the live data root {live_root}"
 
     for entry in env["PATH"].split(os.pathsep):
         for name in ("woltspace", "gh"):
@@ -401,9 +411,9 @@ def test_a_non_pem_key_fails_before_any_network_call(tmp_path):
 
 
 def test_credentials_are_read_from_the_data_root_env_file(tmp_path):
-    """Native colonies keep `.env` in WOLTS_DIR, not `/workspace/wolts`."""
+    """Native colonies keep `.env` in the data root, not `/workspace/wolts`."""
     env = sandbox_env(tmp_path)
-    env_file = Path(env["WOLTS_DIR"]) / ".env"
+    env_file = Path(env["WOLTSPACE_WOLTS_DIR"]) / ".env"
     env_file.write_text(
         "GITHUB_APP_ID=12345\n"
         "GITHUB_APP_INSTALLATION_ID=67890\n"
@@ -420,7 +430,7 @@ def test_credentials_are_read_from_the_data_root_env_file(tmp_path):
 
 def test_the_searched_paths_are_reported_and_exclude_nothing_obvious(tmp_path):
     result = run_token_script(sandbox_env(tmp_path))
-    assert str(Path(sandbox_env(tmp_path)["WOLTS_DIR"]) / ".env") in result.stderr
+    assert str(Path(sandbox_env(tmp_path)["WOLTSPACE_WOLTS_DIR"]) / ".env") in result.stderr
     assert "/workspace/wolts/.env" in result.stderr
 
 
