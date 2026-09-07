@@ -13,7 +13,8 @@ Phase 1 nouns:
   session send <wolt|session> "message" [--from <wolt>]
   session spawn <wolt> ["seed prompt"] [--from <wolt>]
 
-A wolt self-identifies as the sender via $WOLT_NAME / $WOLT_SESSION (exported
+A wolt self-identifies as the sender via $WOLTSPACE_WOLT_NAME /
+$WOLTSPACE_WOLT_SESSION (exported
 into every wolt session). A human posts with --from (e.g. --from jerpint).
 """
 import argparse
@@ -24,6 +25,12 @@ import shutil
 import sys
 import urllib.request
 import urllib.error
+from pathlib import Path
+
+# The env namespace helper, resolved beside this script so the dev clone drives
+# its own copy. Nothing else here needs the runtime tree.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from env_compat import get_env  # noqa: E402
 
 API = os.environ.get("WOLTSPACE_API", "http://localhost:7777")
 # Session slugs end in "-<6 hex>" (see SESSION_NOUNS naming). Anything else is
@@ -87,8 +94,8 @@ def cmd_status(args):
 
 
 def cmd_session_send(args):
-    from_wolt = args.from_ or os.environ.get("WOLT_NAME", "")
-    from_session = os.environ.get("WOLT_SESSION", "") if not args.from_ else "human"
+    from_wolt = args.from_ or get_env("WOLTSPACE_WOLT_NAME", "")
+    from_session = get_env("WOLTSPACE_WOLT_SESSION", "") if not args.from_ else "human"
     payload = {"text": args.message, "from_wolt": from_wolt, "from_session": from_session}
     target = args.target
     if _SESSION_RE.search(target):
@@ -118,10 +125,10 @@ def cmd_session_spawn(args):
               f"Put the work order in a file the new session can read and pass a short pointer.",
               file=sys.stderr)
         sys.exit(1)
-    from_wolt = args.from_ or os.environ.get("WOLT_NAME", "")
+    from_wolt = args.from_ or get_env("WOLTSPACE_WOLT_NAME", "")
     # A human spawner (--from) has no session to reply into — omit it so the
     # child doesn't get a bogus `session send <name>` reply line.
-    from_session = "" if args.from_ else os.environ.get("WOLT_SESSION", "")
+    from_session = "" if args.from_ else get_env("WOLTSPACE_WOLT_SESSION", "")
     payload = {"wolt": args.wolt, "prompt": args.prompt,
                "from_wolt": from_wolt, "from_session": from_session}
     if args.workdir:
@@ -209,7 +216,7 @@ def main():
     ss.add_argument("target", help="wolt name (resolves to active session) or a session id")
     ss.add_argument("message", help="the message text")
     ss.add_argument("--from", dest="from_", default="",
-                    help="sender identity (default: $WOLT_NAME); use e.g. --from jerpint as a human")
+                    help="sender identity (default: $WOLTSPACE_WOLT_NAME); use --from jerpint as a human")
     ss.add_argument("--json", action="store_true", help="raw JSON output")
     ss.set_defaults(func=cmd_session_send)
 
@@ -218,7 +225,7 @@ def main():
     sp.add_argument("prompt", nargs="?", default="",
                     help="seed prompt for the new session (a briefing, not a payload)")
     sp.add_argument("--from", dest="from_", default="",
-                    help="spawner identity (default: $WOLT_NAME); use e.g. --from jerpint as a human")
+                    help="spawner identity (default: $WOLTSPACE_WOLT_NAME); use --from jerpint as a human")
     sp.add_argument("--json", action="store_true", help="raw JSON output")
     sp.add_argument("--workdir", default="",
                     help="existing working directory (native runtime)")

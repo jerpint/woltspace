@@ -75,7 +75,7 @@ woltspace start
 
 ## Where things live
 
-All your wolt data lives in `~/.woltspace/wolts/` (or `$WOLTS_DIR` if you set it):
+All your wolt data lives in `~/.woltspace/wolts/` (or `$WOLTSPACE_WOLTS_DIR` if you set it):
 
 ```
 ~/.woltspace/wolts/

@@ -44,7 +44,7 @@ Run this node one-liner, filling in the fields:
 ```bash
 node -e "
 const {appendFileSync, mkdirSync} = require('fs');
-const woltDir = process.env.WOLT_DIR || '/workspace/wolt';
+const woltDir = process.env.WOLTSPACE_WOLT_DIR || '/workspace/wolt';
 const stateDir = woltDir + '/.state';
 mkdirSync(stateDir, {recursive: true});
 const entry = {
@@ -67,7 +67,7 @@ Drop the `artifact` key if there's nothing to link.
 ```bash
 node -e "
 const {appendFileSync, mkdirSync} = require('fs');
-const woltDir = process.env.WOLT_DIR || '/workspace/wolt';
+const woltDir = process.env.WOLTSPACE_WOLT_DIR || '/workspace/wolt';
 const stateDir = woltDir + '/.state';
 mkdirSync(stateDir, {recursive: true});
 const entry = {

@@ -57,18 +57,22 @@ def test_explicit_layout_is_canonical_and_applies_environment(tmp_path, monkeypa
     root = installation_root()
     raw = tmp_path / "state" / ".." / "wolts"
     layout = RuntimeLayout.from_env({
-        "WOLTS_DIR": str(raw),
+        "WOLTSPACE_WOLTS_DIR": str(raw),
         "WOLTSPACE_DIR": str(root),
         "WOLTSPACE_HOST": "localhost",
         "WOLTSPACE_PORT": "8123",
         "WOLTSPACE_ISOLATION": "external",
     })
-    for key in ("WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
+    for key in ("WOLTSPACE_WOLTS_DIR", "WOLTS_DIR", "WOLTSPACE_WOLT_DIR", "WOLT_DIR",
+                "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
                 "PORT", "WOLTSPACE_PORT", "WOLTSPACE_API"):
         monkeypatch.delenv(key, raising=False)
     layout.apply_environment()
 
     assert layout.wolts_dir == (tmp_path / "wolts").resolve()
+    # Canonical names, plus the legacy pair every existing wolt tool reads.
+    assert os.environ["WOLTSPACE_WOLTS_DIR"] == str(layout.wolts_dir)
+    assert os.environ["WOLTSPACE_WOLT_DIR"] == str(layout.wolts_dir)
     assert os.environ["WOLTS_DIR"] == str(layout.wolts_dir)
     assert os.environ["WOLT_DIR"] == str(layout.wolts_dir)
     assert os.environ["WOLTSPACE_DIR"] == str(root)
@@ -110,7 +114,8 @@ def test_a_stale_pointer_is_not_stamped_back_into_the_environment(tmp_path, monk
     ghost = tmp_path / "ghost"
     ghost.mkdir()
     layout = RuntimeLayout.from_env({"WOLTSPACE_DIR": str(ghost)})
-    for key in ("WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION", "PORT"):
+    for key in ("WOLTSPACE_WOLTS_DIR", "WOLTS_DIR", "WOLTSPACE_WOLT_DIR", "WOLT_DIR",
+                "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION", "PORT"):
         monkeypatch.delenv(key, raising=False)
 
     layout.apply_environment()

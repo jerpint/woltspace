@@ -33,6 +33,7 @@ import threading
 import time
 from pathlib import Path
 
+from .envvars import export_both, get_env, warn_legacy_once
 from .layout import resolve_install_root
 
 # The per-wolt HOME the image builds. Containers are the only isolation mode
@@ -41,7 +42,7 @@ from .layout import resolve_install_root
 HOME = Path("/home/node")
 
 # The one host mount. Not passed in by the host CLI — the bind target is fixed
-# by `docker run -v "$WOLTS_DIR:/workspace/wolts"`.
+# by `docker run -v "$WOLTSPACE_WOLTS_DIR:/workspace/wolts"`.
 DEFAULT_WOLTS_DIR = "/workspace/wolts"
 
 TUNNEL_POLL_ATTEMPTS = 45
@@ -91,8 +92,8 @@ def run_root_phase() -> int:
 # ---------------------------------------------------------------------------
 
 def resolve_wolt_name(wolts_dir: Path) -> str:
-    """Resolve active wolt name: WOLT_NAME env > woltspace.json > first wolt found."""
-    env_name = os.environ.get("WOLT_NAME", "")
+    """Active wolt: env name > woltspace.json > first wolt found."""
+    env_name = get_env("WOLTSPACE_WOLT_NAME", "")
     if env_name:
         return env_name
     config_file = wolts_dir / "woltspace.json"
@@ -115,7 +116,7 @@ def resolve_wolt_dir(wolts_dir: Path, wolt_name: str) -> Path:
     candidate = wolts_dir / wolt_name
     if candidate.is_dir():
         return candidate
-    return Path(os.environ.get("WOLT_DIR", "/workspace/wolt"))
+    return Path(get_env("WOLTSPACE_WOLT_DIR", "/workspace/wolt"))
 
 
 WORKTUI_SKILL_NOTES = """
@@ -371,10 +372,10 @@ def build_environment(
     source = os.environ if env is None else env
     tg_dir, tg_mod = resolve_bot_module(wolt_dir, woltspace_dir, "telegram")
     slack_dir, slack_mod = resolve_bot_module(wolt_dir, woltspace_dir, "slack")
-    return {
-        "WOLT_NAME": wolt_name,
-        "WOLT_DIR": str(wolt_dir),
-        "WOLTS_DIR": str(wolts_dir),
+    return export_both({
+        "WOLTSPACE_WOLT_NAME": wolt_name,
+        "WOLTSPACE_WOLT_DIR": str(wolt_dir),
+        "WOLTSPACE_WOLTS_DIR": str(wolts_dir),
         "DEV_MODE": "true" if dev_mode else "false",
         "TELEGRAM_BOT_DIR": tg_dir,
         "TELEGRAM_BOT_MODULE": tg_mod,
@@ -390,7 +391,7 @@ def build_environment(
         "WOLTSPACE_ENTRYPOINT": "1",
         "WOLTSPACE_ISOLATION": "external",
         "LANG": "C.UTF-8",
-    }
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +454,8 @@ def open_tmux_window(wolt_name: str, wolt_dir: Path, wolts_dir: Path) -> None:
         # skills directory holds `woltspace-create-wolt`, not a plugin. The
         # copy-path spelling is also the safe default anywhere the delivery
         # cannot be read: it is what every un-ratcheted wolt understands.
-        send_keys("export WOLT_SESSION=main && wclaude --dangerously-skip-permissions "
+        send_keys("export WOLTSPACE_WOLT_SESSION=main WOLT_SESSION=main && "
+                  "wclaude --dangerously-skip-permissions "
                   "/woltspace-create-wolt")
     else:
         # TODO: replace with a /wake skill — check for recent sessions, offer
@@ -584,7 +586,7 @@ def start_tunnel_report(wolts_dir: Path, env: dict[str, str]) -> threading.Threa
 
 def run_node_phase() -> int:
     woltspace_dir = resolve_install_root(os.environ.get("WOLTSPACE_DIR"))
-    wolts_dir = Path(os.environ.get("WOLTS_DIR") or DEFAULT_WOLTS_DIR)
+    wolts_dir = Path(get_env("WOLTSPACE_WOLTS_DIR") or DEFAULT_WOLTS_DIR)
 
     # Lodge infrastructure — always, regardless of whether any wolts exist
     scaffold_lodge(wolts_dir, woltspace_dir)
@@ -643,6 +645,7 @@ def run_node_phase() -> int:
 
 
 def main() -> int:
+    warn_legacy_once()
     if os.getuid() == 0:
         return run_root_phase()
     return run_node_phase()

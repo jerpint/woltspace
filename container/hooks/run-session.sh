@@ -10,7 +10,7 @@ if [ -z "$SESSION_NAME" ] || [ -z "$PROMPT" ]; then
   exit 1
 fi
 
-WOLTS_DIR="${WOLTS_DIR:-/workspace/wolts}"
+WOLTS_DIR="${WOLTSPACE_WOLTS_DIR:-${WOLTS_DIR:-/workspace/wolts}}"
 RESULTS_DIR="$WOLTS_DIR/.space/task-results"
 LOG_FILE="/tmp/${SESSION_NAME}.log"
 mkdir -p "$RESULTS_DIR"

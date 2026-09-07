@@ -16,9 +16,13 @@ import shlex
 import subprocess
 import time
 from pathlib import Path
+import sys
 from unittest.mock import MagicMock
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from env_compat import get_env  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +457,7 @@ class TestNotifyEndToEnd:
 
     def _find_session_with_routing(self):
         """Find a session file that has routing info (adapter + chat_id)."""
-        wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+        wolts_dir = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
         for wolt_dir in wolts_dir.iterdir():
             if not wolt_dir.is_dir() or wolt_dir.name.startswith("."):
                 continue
@@ -471,8 +475,8 @@ class TestNotifyEndToEnd:
 
     def _read_last_chat_line(self, chat_id: str) -> str:
         """Read the last line from the chat history file."""
-        wolt_name = os.environ.get("WOLT_NAME", "wolt")
-        wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+        wolt_name = get_env("WOLTSPACE_WOLT_NAME", "wolt")
+        wolts_dir = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
         chat_file = wolts_dir / wolt_name / ".state" / "chat" / f"telegram-{chat_id}.jsonl"
         if not chat_file.exists():
             return ""

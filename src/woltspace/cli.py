@@ -7,6 +7,7 @@ import json
 import os
 
 from . import __version__
+from .envvars import warn_legacy_once
 from .layout import RuntimeLayout
 
 
@@ -358,6 +359,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # One deprecation line per process, before anything reads a path.
+    warn_legacy_once()
     parser = build_parser()
     args = parser.parse_args(argv)
     if not hasattr(args, "func"):

@@ -17,7 +17,7 @@ woltspace session send <wolt> "your message"
 
 `<wolt>` is a wolt name (e.g. `codexw`) — it resolves to that wolt's active session. You can also
 pass a full session id to target a specific session. Your identity is attached automatically from
-`$WOLT_NAME` / `$WOLT_SESSION`, so the receiver knows who you are and where to reply.
+`$WOLTSPACE_WOLT_NAME` / `$WOLTSPACE_WOLT_SESSION`, so the receiver knows who you are and where to reply.
 
 ## Replying to a message from a wolt
 

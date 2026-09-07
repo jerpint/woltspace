@@ -223,7 +223,7 @@ class TestCodexDiscovery:
 
     def test_finds_new_rollout(self, tmp_path, monkeypatch):
         from harnesses import _codex_discover_session_id
-        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         self._write_rollout(tmp_path, "testwolt", self.ROLLOUT_UUID)
         data = {"wolt": "testwolt", "dir": ""}
         assert _codex_discover_session_id(data, since=0) == self.ROLLOUT_UUID
@@ -231,14 +231,14 @@ class TestCodexDiscovery:
     def test_ignores_old_rollouts(self, tmp_path, monkeypatch):
         import time as _time
         from harnesses import _codex_discover_session_id
-        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         self._write_rollout(tmp_path, "testwolt", self.ROLLOUT_UUID)
         data = {"wolt": "testwolt", "dir": ""}
         assert _codex_discover_session_id(data, since=_time.time() + 60) is None
 
     def test_prefers_cwd_match(self, tmp_path, monkeypatch):
         from harnesses import _codex_discover_session_id
-        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         other = "b2c3d4e5-f6a7-8901-bcde-f12345678901"
         self._write_rollout(tmp_path, "testwolt", other, cwd="/other/dir")
         self._write_rollout(tmp_path, "testwolt", self.ROLLOUT_UUID, cwd="/right/dir")
@@ -247,7 +247,7 @@ class TestCodexDiscovery:
 
     def test_no_sessions_dir(self, tmp_path, monkeypatch):
         from harnesses import _codex_discover_session_id
-        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         data = {"wolt": "testwolt", "dir": ""}
         assert _codex_discover_session_id(data, since=0) is None
 
@@ -429,13 +429,13 @@ class TestDefaultHarness:
 
     def test_missing_config_falls_back(self, tmp_path, monkeypatch):
         from harnesses import get_default_harness
-        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         assert get_default_harness() == "claude"
 
     def test_set_and_get_roundtrip(self, tmp_path, monkeypatch):
         import json
         from harnesses import get_default_harness, set_default_harness
-        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         (tmp_path / "woltspace.json").write_text(json.dumps({"telegram": {"x": 1}}))
         set_default_harness("codex")
         assert get_default_harness() == "codex"
@@ -447,13 +447,13 @@ class TestDefaultHarness:
     def test_set_rejects_unknown(self, tmp_path, monkeypatch):
         import pytest as _pytest
         from harnesses import set_default_harness
-        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         with _pytest.raises(ValueError):
             set_default_harness("winamp")
 
     def test_malformed_config_falls_back(self, tmp_path, monkeypatch):
         from harnesses import get_default_harness
-        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         (tmp_path / "woltspace.json").write_text("{ not json")
         assert get_default_harness() == "claude"
 
@@ -509,7 +509,7 @@ class TestSessionHarnessPlumbing:
 
     def test_lodge_default_applies_when_no_override(self, monkeypatch):
         """A wolt with no harness field follows the woltspace.json lodge default."""
-        monkeypatch.setenv("WOLTS_DIR", str(self.wolts_dir))
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(self.wolts_dir))
         (self.wolts_dir / "woltspace.json").write_text(json.dumps({"harness": {"default": "codex"}}))
         # wolt.json has no harness override
         result = self._start()
@@ -518,7 +518,7 @@ class TestSessionHarnessPlumbing:
 
     def test_wolt_override_beats_lodge_default(self, monkeypatch):
         """A pinned wolt.json harness wins over the lodge default."""
-        monkeypatch.setenv("WOLTS_DIR", str(self.wolts_dir))
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(self.wolts_dir))
         (self.wolts_dir / "woltspace.json").write_text(json.dumps({"harness": {"default": "codex"}}))
         self.wolt_json.write_text(json.dumps({"name": "testwolt", "type": "raccoon", "harness": "claude"}))
         result = self._start()
@@ -538,7 +538,7 @@ class TestSessionHarnessPlumbing:
         """discover_session_id_for finds the rollout and stamps the registry."""
         import json as _json
         from sessions import discover_session_id_for
-        monkeypatch.setenv("WOLTS_DIR", str(self.wolts_dir))
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(self.wolts_dir))
         result = self._start(harness="codex")
         rollout_uuid = "c3d4e5f6-a7b8-9012-cdef-123456789012"
         d = self.wolts_dir / "testwolt" / ".codex" / "sessions" / "2026" / "07" / "14"
@@ -856,7 +856,7 @@ class TestModelCatalog:
         assert model_catalog("winamp") == model_catalog("claude")
 
     def test_overlay_replaces_catalog_string_ids(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         (tmp_path / "woltspace.json").write_text(json.dumps(
             {"harness": {"models": {"claude": {"catalog": ["opus", "fable"]}}}}))
         ids = [m["id"] for m in model_catalog("claude")]
@@ -866,20 +866,20 @@ class TestModelCatalog:
         assert labels["opus"] == "Opus 4.8"
 
     def test_overlay_can_add_new_model_by_id(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         (tmp_path / "woltspace.json").write_text(json.dumps(
             {"harness": {"models": {"claude": {"catalog": ["opus", "brand-new"]}}}}))
         cat = {m["id"]: m["label"] for m in model_catalog("claude")}
         assert cat["brand-new"] == "brand-new"  # label falls back to id
 
     def test_overlay_object_entries(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         (tmp_path / "woltspace.json").write_text(json.dumps(
             {"harness": {"models": {"claude": {"catalog": [{"id": "x", "label": "Fancy X"}]}}}}))
         assert model_catalog("claude") == [{"id": "x", "label": "Fancy X"}]
 
     def test_malformed_config_yields_seed(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         (tmp_path / "woltspace.json").write_text("{ not json")
         assert {m["id"] for m in model_catalog("claude")} >= {"opus", "fable"}
 
@@ -897,7 +897,7 @@ class TestTierDefaultModel:
         assert tier_default_model("claude", None) is None
 
     def test_overlay_overrides_tier(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         (tmp_path / "woltspace.json").write_text(json.dumps(
             {"harness": {"models": {"claude": {"tiers": {"otter": "fable"}}}}}))
         assert tier_default_model("claude", "otter") == "fable"
@@ -905,7 +905,7 @@ class TestTierDefaultModel:
         assert tier_default_model("claude", "raccoon") == "opus"
 
     def test_creature_model_routes_through_default(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         (tmp_path / "woltspace.json").write_text(json.dumps(
             {"harness": {"models": {"claude": {"tiers": {"raccoon": "fable"}}}}}))
         assert creature_model("claude", "raccoon") == "fable"

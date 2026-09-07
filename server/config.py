@@ -1,6 +1,7 @@
 """Shared configuration — paths, env, constants."""
 
 import os
+import sys
 from pathlib import Path
 
 # --- Directories ---
@@ -8,9 +9,19 @@ from pathlib import Path
 WOLTSPACE_DIR = Path(
     os.environ.get("WOLTSPACE_DIR", Path(__file__).resolve().parent.parent)
 )
-WOLT_DIR = Path(os.environ.get("WOLT_DIR", str(WOLTSPACE_DIR)))
-WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", str(WOLT_DIR.parent)))
-WOLT_NAME = os.environ.get("WOLT_NAME", "")
+
+# The env namespace helper lives in the shared runtime tree, and this module is
+# imported before `app.py` puts that tree on the path. Same insert, done early
+# enough that the first thing to read the environment reads it through the
+# helper.
+_runtime_lib = str(WOLTSPACE_DIR / "container" / "lib")
+if _runtime_lib not in sys.path:
+    sys.path.insert(0, _runtime_lib)
+from env_compat import get_env  # noqa: E402
+
+WOLT_DIR = Path(get_env("WOLTSPACE_WOLT_DIR", str(WOLTSPACE_DIR)))
+WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", str(WOLT_DIR.parent)))
+WOLT_NAME = get_env("WOLTSPACE_WOLT_NAME", "")
 
 # The per-wolt HOME the container image builds. Containers are the only
 # isolation mode that owns a home outright, so harness credentials live at a

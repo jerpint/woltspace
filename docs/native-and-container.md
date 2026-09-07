@@ -241,7 +241,7 @@ That last refusal is a hard error naming the conflict, not a warning:
 ```
 serve failed: /workspace/wolts is publishing through a live tunnel (cloudflared
 pid 4711), so a control plane is already using it. Stop that instance first, use
-a fresh data root (`WOLTS_DIR=~/.woltspace/native-wolts woltspace start`), or set
+a fresh data root (`WOLTSPACE_WOLTS_DIR=~/.woltspace/native-wolts woltspace start`), or set
 WOLTSPACE_ALLOW_SHARED_DATA_ROOT=1 if you really mean to share it.
 ```
 
@@ -258,7 +258,7 @@ a running container, the lock cannot be trusted to catch native-versus-container
 contention — two control planes could both believe they own it.
 
 - Your **first native run should use a fresh data root**:
-  `WOLTS_DIR=~/.woltspace/native-wolts woltspace start`.
+  `WOLTSPACE_WOLTS_DIR=~/.woltspace/native-wolts woltspace start`.
 - Pointing native at a **container-mounted data root requires stopping the
   container first**.
 

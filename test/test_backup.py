@@ -705,7 +705,7 @@ def test_a_relative_link_inside_the_tree_still_resolves_after_restore(wolts, tmp
 
 
 def test_cli_backup_and_restore(wolts, tmp_path, capsys, monkeypatch):
-    monkeypatch.setenv("WOLTS_DIR", str(wolts))
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(wolts))
     assert cli_main(["backup", "--tag", "cli", "--out", str(tmp_path / "out"), "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["verified"] is True

@@ -19,10 +19,11 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from env_compat import get_env
 from paths import space_apps_dir
 from tunnel import start_cloudflared, stop_cloudflared
 
-WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 APPS_DIR = WOLTS_DIR / "apps"
 LEGACY_PROJECTS_DIR = WOLTS_DIR / "projects"  # deprecated — still discovered for backwards compat
 

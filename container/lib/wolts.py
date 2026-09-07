@@ -17,9 +17,10 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from env_compat import get_env
 from skills_sync import seed_wolt_skills
 
-WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 WOLTSPACE_DIR = Path(os.environ.get("WOLTSPACE_DIR", "/workspace/woltspace"))
 CONFIG_FILE = WOLTS_DIR / "woltspace.json"
 

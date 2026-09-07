@@ -10,6 +10,7 @@ import time
 import uuid
 
 from .doctor import doctor_ok, run_doctor
+from .envvars import export_both
 from .hooks import normalize_platform_hooks
 from .instance import (
     clear_owner_if_unlocked,
@@ -78,16 +79,16 @@ def start(layout: RuntimeLayout, *, timeout: float = 15.0) -> tuple[int, dict]:
         "--no-doctor",
     ]
     env = dict(os.environ)
-    env.update({
+    env.update(export_both({
         # `woltspace start` is a deliberate act on a named data root, so the
         # control plane it launches is the owner.
         "WOLTSPACE_ENTRYPOINT": "1",
-        "WOLTS_DIR": str(layout.wolts_dir),
+        "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
         "WOLTSPACE_DIR": str(layout.install_root),
         "WOLTSPACE_ISOLATION": layout.isolation,
         "WOLTSPACE_HOST": layout.host,
         "WOLTSPACE_PORT": str(layout.port),
-    })
+    }))
     with log_path.open("a") as log:
         process = subprocess.Popen(
             command,

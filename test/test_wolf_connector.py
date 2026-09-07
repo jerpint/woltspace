@@ -58,7 +58,7 @@ class TestPlan:
 
     def test_the_port_follows_the_layout_not_a_literal(self, tmp_path):
         layout = RuntimeLayout.from_env(
-            {"WOLTS_DIR": str(tmp_path / "wolts"), "WOLTSPACE_PORT": "9001"}
+            {"WOLTSPACE_WOLTS_DIR": str(tmp_path / "wolts"), "WOLTSPACE_PORT": "9001"}
         )
         assert WolfConnector().plan(layout, ENTRY).env["WOLTSPACE_PORT"] == "9001"
 

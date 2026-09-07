@@ -24,7 +24,7 @@
 #   --local           — build the image from this checkout (wheel + local tui)
 #   --branch <name>   — legacy; the image installs published artifacts, not git
 #
-# All state lives under ~/.woltspace/wolts (overridable via WOLTS_DIR).
+# All state lives under ~/.woltspace/wolts (overridable via WOLTSPACE_WOLTS_DIR).
 # The container is disposable — ~/wolts is the backup.
 
 set -e
@@ -33,7 +33,9 @@ set -e
 WOLTSPACE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Wolts directory — all wolt data lives here
-WOLTS_DIR="${WOLTS_DIR:-$HOME/.woltspace/wolts}"
+# The canonical name, with the pre-namespace spelling still honoured.
+# See docs/environment.md for the full table and the sunset plan.
+WOLTS_DIR="${WOLTSPACE_WOLTS_DIR:-${WOLTS_DIR:-$HOME/.woltspace/wolts}}"
 WOLTS_DIR="${WOLTS_DIR/#\~/$HOME}"
 
 # Default name for default path, hash-suffixed for custom paths (avoids collisions)
@@ -127,7 +129,9 @@ _start_container() {
   docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
   local extra_args=""
-  [ -n "$wolt_name" ] && extra_args="-e WOLT_NAME=$wolt_name"
+  # Both spellings — the platform reads WOLTSPACE_WOLT_NAME, container-era
+  # skills and tools still read WOLT_NAME.
+  [ -n "$wolt_name" ] && extra_args="-e WOLTSPACE_WOLT_NAME=$wolt_name -e WOLT_NAME=$wolt_name"
 
   # No dev mount. /workspace/woltspace is the installed package's own bundle
   # now; shadowing it with a checkout would put the platform back to running
@@ -375,7 +379,7 @@ if [ ! -d "$WOLTS_DIR" ] || [ "$(_count_wolts)" -eq 0 ]; then
       echo "  🦫 no wolts found at $WOLTS_DIR"
       echo ""
       echo "  ${_D}if your wolts live elsewhere:${_R}"
-      echo "    WOLTS_DIR=/path/to/wolts woltspace start"
+      echo "    WOLTSPACE_WOLTS_DIR=/path/to/wolts woltspace start"
       echo ""
       echo "  ${_D}or start a new lodge:${_R}"
       echo "    woltspace init"
@@ -396,14 +400,15 @@ case "$cmd" in
     #
     # We exec by full path because container/bin is on wolts' login-shell PATH
     # (profile.d), not the non-login PATH a plain `docker exec` command gets.
-    # WOLT_NAME defaults the sender identity to the host user (override with
+    # The wolt-name variable defaults the sender identity to the host user (override with
     # --from); the in-container client reads it for message attribution.
     if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
       echo "  ${_D}💤 container not running — run 'woltspace start'${_R}"
       echo "  ${_L}   control commands need the lodge up${_R}"
       exit 1
     fi
-    exec docker exec -e "WOLT_NAME=${HUMAN_NAME:-$(whoami)}" "$CONTAINER_NAME" \
+    exec docker exec -e "WOLTSPACE_WOLT_NAME=${HUMAN_NAME:-$(whoami)}" \
+      -e "WOLT_NAME=${HUMAN_NAME:-$(whoami)}" "$CONTAINER_NAME" \
       /workspace/woltspace/container/bin/woltspace "$@"
     ;;
   tui)

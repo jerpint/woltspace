@@ -99,7 +99,7 @@ def container_mount_check(layout: RuntimeLayout) -> DoctorCheck:
     remedy = (
         f"Mount your wolts directory into the container: "
         f"`docker run -v \"$HOME/.woltspace/wolts:{layout.wolts_dir}\" ...` "
-        f"(or point WOLTS_DIR at the mount you use)."
+        f"(or point WOLTSPACE_WOLTS_DIR at the mount you use)."
     )
     if not layout.wolts_dir.exists():
         return DoctorCheck(
@@ -137,7 +137,7 @@ ALLOW_SHARED_ENV = "WOLTSPACE_ALLOW_SHARED_DATA_ROOT"
 
 SHARED_REMEDY = (
     "Stop that instance first, use a fresh data root "
-    "(`WOLTS_DIR=~/.woltspace/native-wolts woltspace start`), or set "
+    "(`WOLTSPACE_WOLTS_DIR=~/.woltspace/native-wolts woltspace start`), or set "
     f"{ALLOW_SHARED_ENV}=1 if you really mean to share it."
 )
 
@@ -347,7 +347,7 @@ def run_doctor(
         "data-root",
         "pass" if writable else "fail",
         f"{layout.wolts_dir} (nearest existing parent: {ancestor})",
-        f"Create a writable directory or set WOLTS_DIR to one you own." if not writable else "",
+        f"Create a writable directory or set WOLTSPACE_WOLTS_DIR to one you own." if not writable else "",
     ))
 
     tmux = shutil.which("tmux")

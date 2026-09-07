@@ -8,12 +8,12 @@
 #   bash test/test-cli.sh --branch X           # test a specific branch
 #   bash test/test-cli.sh --local --no-cache   # clean build (simulates new user, slower)
 #
-# Uses a temp WOLTS_DIR so your real wolts are untouched.
+# Uses a temp WOLTSPACE_WOLTS_DIR so your real wolts are untouched.
 
 set -e
 
 WOLTSPACE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-export WOLTS_DIR="/tmp/test-woltspace-cli/wolts"
+export WOLTSPACE_WOLTS_DIR="/tmp/test-woltspace-cli/wolts"
 unset WOLTSPACE_LOCAL
 export WOLTSPACE_CONTAINER="woltspace-test"
 export WOLTSPACE_PORT=7778
@@ -41,7 +41,7 @@ echo ""
 echo "  ════════════════════════════════════════"
 echo "  🦫 WOLTSPACE CLI SMOKE TEST"
 echo "  ════════════════════════════════════════"
-echo "  ${_D}WOLTS_DIR=$WOLTS_DIR${_N}"
+echo "  ${_D}WOLTSPACE_WOLTS_DIR=$WOLTSPACE_WOLTS_DIR${_N}"
 echo "  ${_D}container: $CONTAINER_NAME${_N}"
 if echo "$BUILD_FLAGS" | grep -q "\-\-local"; then
   echo "  ${_D}source: local repo${_N}"
@@ -64,8 +64,8 @@ step "running woltspace init (this includes docker build, may take a few minutes
 "$WOLTSPACE_DIR/woltspace" init $BUILD_FLAGS 2>&1
 
 step "checking results..."
-[ -d "$WOLTS_DIR" ] && pass "wolts dir created" || fail "wolts dir not created"
-[ -f "$WOLTS_DIR/.env" ] && pass ".env created" || fail ".env not created"
+[ -d "$WOLTSPACE_WOLTS_DIR" ] && pass "wolts dir created" || fail "wolts dir not created"
+[ -f "$WOLTSPACE_WOLTS_DIR/.env" ] && pass ".env created" || fail ".env not created"
 docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" && pass "container running" || fail "container not running"
 
 step "waiting for server..."

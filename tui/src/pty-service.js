@@ -6,7 +6,7 @@
 // it ships inside @woltspace/tui and not the Python wheel.
 //
 // Started by the control plane as a supervised connector ("tui" in
-// `woltspace status`). Standalone: TUI_PORT=3001 WOLT_DIR=/path woltspace-tui-service
+// `woltspace status`). Standalone: TUI_PORT=3001 WOLTSPACE_WOLT_DIR=/path woltspace-tui-service
 
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';

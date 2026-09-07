@@ -115,10 +115,10 @@ Flags:
 - `--branch <name>` — build image from a specific branch (default: main)
 
 Env vars:
-- `WOLTS_DIR` — override wolts directory (default: `~/.woltspace/wolts`)
+- `WOLTSPACE_WOLTS_DIR` — override wolts directory (default: `~/.woltspace/wolts`)
 - `WOLTSPACE_LOCAL=true` — sticky equivalent of `--local` (for dev workflows)
 
-The only mount is `$WOLTS_DIR:/workspace/wolts`. Everything else is baked into the image.
+The only mount is `$WOLTSPACE_WOLTS_DIR:/workspace/wolts`. Everything else is baked into the image.
 
 ### `src/woltspace/backup.py` — snapshots
 
@@ -135,7 +135,7 @@ The data-plane snapshot, in the python CLI, identical native and in-container:
   chain can trip reuse-detection and revoke the live one. The manifest lists
   every withheld path and `restore` prints the re-provision checklist.
 - `woltspace restore <archive> [--to DIR]` — extracts into a new directory and
-  refuses a populated one; prints what to re-authenticate and the `WOLTS_DIR=…`
+  refuses a populated one; prints what to re-authenticate and the `WOLTSPACE_WOLTS_DIR=…`
   line to boot from it.
 
 Full guide, including what is excluded and why: `docs/backup.md`.
@@ -340,7 +340,9 @@ GITHUB_APP_INSTALLATION_ID=
 GITHUB_APP_PRIVATE_KEY=   # PEM key, newlines escaped as \n
 ```
 
-The container also accepts `WOLT_NAME` as an env var (passed by the CLI during `init` for first boot). After that, the container reads `woltspace.json` to resolve the active wolt.
+The container also accepts `WOLTSPACE_WOLT_NAME` as an env var (passed by the CLI during `init` for first boot). After that, the container reads `woltspace.json` to resolve the active wolt.
+
+Every variable the platform owns, what consumes it, and the legacy names still honoured for the pre-namespace spellings: `docs/environment.md`.
 
 **Claude auth** is handled during `woltspace init` via the native OAuth flow. Credentials are stored in `~/.woltspace/wolts/.claude/.credentials.json` and persist across container rebuilds.
 

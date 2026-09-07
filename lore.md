@@ -40,7 +40,7 @@ woltspace         — the whole thing
 ## What This Means for Code
 
 - **Kit = the bot process.** Always running. Lightweight (Haiku). Lives in the lodge.
-- **Den = a Claude Code session.** Carries `WOLT_NAME` + `WOLT_DIR`. Spawned by kit when real work arrives.
+- **Den = a Claude Code session.** Carries `WOLTSPACE_WOLT_NAME` + `WOLTSPACE_WOLT_DIR`. Spawned by kit when real work arrives.
 - **Pond = the viewport.** The right pane of the split view. `POST /current` pushes to the pond.
 - **A wolt = a directory.** `wolts/{name}/` — lodge lives here.
 - **Memory is shared format.** Kit and wolt read the same files. This is intentional.

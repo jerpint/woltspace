@@ -33,6 +33,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 
+from env_compat import get_env  # noqa: E402
+
 from conftest import requires_server, requires_tmux
 
 
@@ -40,8 +42,8 @@ from conftest import requires_server, requires_tmux
 # Helpers
 # ---------------------------------------------------------------------------
 
-WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
-WOLT_NAME = os.environ.get("WOLT_NAME", "neowolt")
+WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
+WOLT_NAME = get_env("WOLTSPACE_WOLT_NAME", "neowolt")
 REGISTRY_DIR = WOLTS_DIR / ".state" / "registry"
 BOT_LOG_PATHS = [
     WOLTS_DIR / WOLT_NAME / ".state" / "bot-debug" / "bot.jsonl",

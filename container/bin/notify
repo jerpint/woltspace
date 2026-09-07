@@ -35,12 +35,14 @@ if [ -z "$MESSAGE" ]; then
   exit 1
 fi
 
-SESSION="${WOLT_SESSION:-}"
+# Both spellings: the platform stamps WOLTSPACE_WOLT_SESSION, older shells
+# and skills still carry WOLT_SESSION. See docs/environment.md.
+SESSION="${WOLTSPACE_WOLT_SESSION:-${WOLT_SESSION:-}}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SESSION_REG="$SCRIPT_DIR/session-reg"
 
 # Build message — footer (session URL + reply hint) is added by server
-WOLT_NAME="${WOLT_NAME:-wolt}"
+WOLT_NAME="${WOLTSPACE_WOLT_NAME:-${WOLT_NAME:-wolt}}"
 
 # Read creature from session registry
 EMOJI="🦫"

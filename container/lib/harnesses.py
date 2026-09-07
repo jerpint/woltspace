@@ -25,6 +25,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
+from env_compat import get_env
 from session_runtime import RuntimeHandle, get_runtime
 from execution_policy import policy_mode
 from skills_sync import COPY_DELIVERY, PLUGIN_DELIVERY
@@ -113,7 +114,7 @@ def _codex_discover_session_id(data: dict, since: float) -> str | None:
     wolt = data.get("wolt", "")
     if not wolt:
         return None
-    wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    wolts_dir = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
     sessions_dir = wolts_dir / wolt / ".codex" / "sessions"
     if not sessions_dir.exists():
         return None
@@ -208,7 +209,7 @@ def _opencode_discover_session_id(data: dict, since: float) -> str | None:
     wolt = data.get("wolt", "")
     if not wolt:
         return None
-    wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    wolts_dir = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
     wolt_home = wolts_dir / wolt
     if not (wolt_home / ".local" / "share" / "opencode").exists():
         return None
@@ -590,7 +591,7 @@ def harness_metadata() -> list[dict]:
 # Lives in woltspace.json (structured lodge settings), not .env.
 
 def _woltspace_json_path() -> Path:
-    return Path(os.environ.get("WOLTS_DIR", "/workspace/wolts")) / "woltspace.json"
+    return Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts")) / "woltspace.json"
 
 
 def get_default_harness() -> str:

@@ -26,6 +26,7 @@ from typing import Callable, Mapping, Protocol, runtime_checkable
 
 from .compatibility import TUI_SERVICE_BINARY, tui_spec
 from .config import channel_config, config_path
+from .envvars import export_both
 from .layout import RuntimeLayout
 
 
@@ -199,9 +200,9 @@ class TelegramConnector:
 
         bot_dir = values.get("TELEGRAM_BOT_DIR") or str(layout.install_root / "container")
         module = values.get("TELEGRAM_BOT_MODULE") or "bot.telegram_adapter"
-        child_env = {
+        child_env = export_both({
             "TELEGRAM_BOT_TOKEN": token,
-            "WOLTS_DIR": str(layout.wolts_dir),
+            "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
             "WOLTSPACE_DIR": str(layout.install_root),
             "WOLTSPACE_ISOLATION": layout.isolation,
             "WOLTSPACE_HOST": layout.host,
@@ -216,7 +217,7 @@ class TelegramConnector:
                 )
                 if part
             ),
-        }
+        })
         allowed = values.get("TELEGRAM_ALLOWED_USERS") or settings.get("allowed_users")
         if isinstance(allowed, (list, tuple)):
             allowed = ",".join(str(item) for item in allowed)
@@ -407,11 +408,11 @@ class TuiBridgeConnector:
                 self.name, False, f"pty bridge not found: {why_not}",
                 remedy=TUI_BRIDGE_INSTALL_REMEDY,
             )
-        child_env = {
+        child_env = export_both({
             "TUI_PORT": port,
-            "WOLT_DIR": str(layout.wolts_dir),
-            "WOLTS_DIR": str(layout.wolts_dir),
-        }
+            "WOLTSPACE_WOLT_DIR": str(layout.wolts_dir),
+            "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
+        })
         return ConnectorPlan(
             name=self.name,
             enabled=True,
@@ -490,8 +491,8 @@ class WolfConnector:
         # project, a native run stays inside the installed environment. Wolf is
         # stdlib-only either way — this is one mechanism, not a special case.
         interpreter = _interpreter(str(container), layout.isolation, layout.install_root)
-        child_env = {
-            "WOLTS_DIR": str(layout.wolts_dir),
+        child_env = export_both({
+            "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
             "WOLTSPACE_DIR": str(layout.install_root),
             "WOLTSPACE_ISOLATION": layout.isolation,
             "WOLTSPACE_HOST": layout.host,
@@ -512,7 +513,7 @@ class WolfConnector:
                 )
                 if part
             ),
-        }
+        })
         return ConnectorPlan(
             name=self.name,
             enabled=True,

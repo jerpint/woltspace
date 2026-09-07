@@ -97,7 +97,7 @@ Do **not** point the first native run at `~/.woltspace/wolts` while the
 container has it mounted. Use a new directory:
 
 ```bash
-export WOLTS_DIR=~/.woltspace/native-wolts
+export WOLTSPACE_WOLTS_DIR=~/.woltspace/native-wolts
 ```
 
 Confirm what it resolved:
@@ -140,7 +140,7 @@ Two checks worth understanding:
   with that CLI — Woltspace will never copy a credential file for you.
 - **data-root-sharing** only appears if the directory is already claimed by
   another instance, including a running container. If you see it, stop that
-  instance or pick a different `WOLTS_DIR`.
+  instance or pick a different `WOLTSPACE_WOLTS_DIR`.
 - **tui-bridge** is what the browser's terminal pane connects through. From a
   checkout it is the checkout's own `tui/src/tui-service.js`; from a wheel it
   is the `woltspace-tui-service` that came with the TUI. A warning here means
@@ -247,7 +247,7 @@ That replaces the step 2 install rather than adding to it. (Plain
 `uv tool install 'woltspace[connectors]'` resolves from PyPI, where nothing is
 published yet.)
 
-Then write `$WOLTS_DIR/.space/platform/config.json`:
+Then write `$WOLTSPACE_WOLTS_DIR/.space/platform/config.json`:
 
 ```json
 {
@@ -301,7 +301,7 @@ re-adopts them from the registry — `woltspace status` will show them under
 
 ## Pointing native at your real colony
 
-Once the fresh-root run works, the same commands against `WOLTS_DIR=~/.woltspace/wolts`
+Once the fresh-root run works, the same commands against `WOLTSPACE_WOLTS_DIR=~/.woltspace/wolts`
 (container stopped!) bring up your existing wolts. Several things the container
 does at boot have no native equivalent yet — platform tools on PATH, `.env`
 secrets for the bot, skill sync, the creatures. The full list with workarounds
@@ -320,7 +320,7 @@ most of it.
 | `port: 127.0.0.1:7777 is already in use` | Something else has the port — `woltspace start --port 7788`. |
 | `woltspace already running: http://127.0.0.1:PORT` | An instance owns this data root. That URL is where it actually serves, which may not be the port you asked for. |
 | `state: stale` | A previous control plane died without cleaning up. `woltspace stop` clears the metadata; it signals nothing and leaves tmux alone. |
-| `data-root-sharing` warning | Another instance — likely the container — claims this directory. Stop it or use a different `WOLTS_DIR`. |
+| `data-root-sharing` warning | Another instance — likely the container — claims this directory. Stop it or use a different `WOLTSPACE_WOLTS_DIR`. |
 | `serve failed: … is not mounted` | Container mode without the wolts mount. Not applicable to a native run. |
 | Connector `degraded` with a 409 | Another process is polling that bot token. |
 | Connector `failed` after several restarts | It could not stay up; read `.space/logs/connector-<name>.log`. |
@@ -328,7 +328,7 @@ most of it.
 | `connector tui: failed` and its log says `EADDRINUSE` | Something else holds the bridge port (the API port + 1 unless you set one) — a hand-started `tui-service.js`, perhaps. Stop it, or set `WOLTSPACE_TUI_PORT`. |
 | Pane opens then closes, log says `posix_spawnp failed` | node-pty's `spawn-helper` lost its exec bit in the npm tarball. The bridge fixes this itself on start; if you see it, `chmod +x` the `prebuilds/darwin-*/spawn-helper` under your node-pty. |
 
-The control plane's own log is `$WOLTS_DIR/.space/logs/control-plane.log`.
+The control plane's own log is `$WOLTSPACE_WOLTS_DIR/.space/logs/control-plane.log`.
 
 ### Confirming it wrote no credentials
 
@@ -337,10 +337,10 @@ After a first run, the data root should contain state and logs and nothing
 resembling a credential:
 
 ```console
-$ find "$WOLTS_DIR" \( -name "*credential*" -o -name "auth.json" \) | wc -l
+$ find "$WOLTSPACE_WOLTS_DIR" \( -name "*credential*" -o -name "auth.json" \) | wc -l
 0
 
-$ find "$WOLTS_DIR"
+$ find "$WOLTSPACE_WOLTS_DIR"
 <wolts>
 <wolts>/.space
 <wolts>/.space/logs

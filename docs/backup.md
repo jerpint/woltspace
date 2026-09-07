@@ -15,7 +15,7 @@ touch files. Take one before an upgrade.
 
 ## What goes in
 
-Everything under `WOLTS_DIR` that is data:
+Everything under `WOLTSPACE_WOLTS_DIR` that is data:
 
 - each wolt's `wolt/` tree — `memory/`, `site/`, `sparks/`, `drafts/`, `apps/`
 - `CLAUDE.md` and `wolt.json` per wolt
@@ -117,7 +117,7 @@ withheld from this backup — 3 credential file(s), by design:
 A directory called `dist` is junk inside a project and a perfectly good name
 for a wolt. Two structural rules keep a name from ever costing you data:
 
-1. **At the top level of `WOLTS_DIR`, nothing is excluded by name** except what
+1. **At the top level of `WOLTSPACE_WOLTS_DIR`, nothing is excluded by name** except what
    the platform derives there — `.worktui`. Everything else the platform keeps
    at the root (`.space`, `.state`, `.claude`, `.codex`, `apps`, `projects`,
    `woltspace.json`) is data and stays — minus the individual credential files
@@ -173,7 +173,7 @@ existing non-empty one. There is no `--force`. The archive's tree lands at
 
 ```
 boot from it with:
-  WOLTS_DIR=/path/to/woltspace-backup-pre-rc5-restored/wolts woltspace start
+  WOLTSPACE_WOLTS_DIR=/path/to/woltspace-backup-pre-rc5-restored/wolts woltspace start
 ```
 
 Pointing a colony at a restored directory is the human's explicit act, never a

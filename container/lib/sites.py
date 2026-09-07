@@ -11,10 +11,11 @@ Usage:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
-WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+from env_compat import get_env
+
+WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 
 
 def site_dir(wolt_name: str) -> Path:

@@ -319,7 +319,8 @@ class TestEnvFileLoading:
 
     _KEYS = (
         "CLOUDFLARE_TUNNEL_TOKEN", "WOLTSPACE_PUBLIC_TUNNEL",
-        "TELEGRAM_BOT_TOKEN", "WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_INSTANCE_ID",
+        "TELEGRAM_BOT_TOKEN", "WOLTSPACE_WOLTS_DIR", "WOLTS_DIR",
+        "WOLTSPACE_WOLT_DIR", "WOLT_DIR", "WOLTSPACE_INSTANCE_ID",
     )
 
     def _prepare(self, tmp_path, monkeypatch, env_lines, shell=None):
@@ -767,7 +768,8 @@ class TestAStrayServeCannotTakeOverALiveDataRoot:
     # prepare() writes these directly; snapshot so a refused-then-allowed run
     # cannot repoint WOLTS_DIR for every test after it.
     RUNTIME_KEYS = (
-        "WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
+        "WOLTSPACE_WOLTS_DIR", "WOLTS_DIR", "WOLTSPACE_WOLT_DIR", "WOLT_DIR",
+        "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
         "WOLTSPACE_HOST", "WOLTSPACE_INSTANCE_ID", "WOLTSPACE_PUBLIC_TUNNEL",
         "WOLTSPACE_ENTRYPOINT", "PORT",
     )

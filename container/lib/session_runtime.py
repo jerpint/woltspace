@@ -28,6 +28,7 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Callable, Iterable, Protocol, runtime_checkable
 
+from env_compat import export_both
 from runtime_context import RuntimeContext
 
 
@@ -43,7 +44,17 @@ _SESSION_ENV_KEYS = (
     "XDG_DATA_HOME",
     "XDG_STATE_HOME",
     "XDG_CACHE_HOME",
+    # Both spellings of every renamed variable travel to the session. The
+    # platform reads the WOLTSPACE_* names; skills and tools written against
+    # the old ones keep working until 1.0. See docs/environment.md.
+    "WOLTSPACE_WOLTS_DIR",
     "WOLTS_DIR",
+    "WOLTSPACE_WOLT_DIR",
+    "WOLT_DIR",
+    "WOLTSPACE_WOLT_NAME",
+    "WOLT_NAME",
+    "WOLTSPACE_WOLT_SESSION",
+    "WOLT_SESSION",
     "WOLTSPACE_DIR",
     "WOLTSPACE_ISOLATION",
     # Which control plane this session belongs to. A session that reaches its
@@ -330,10 +341,14 @@ class TmuxSessionRuntime:
         runtime variables; harness tokens are intentionally never embedded in
         a visible tmux start command.
         """
+        # `export_both` fills in the other spelling of every renamed
+        # variable, so a session inherits `WOLT_NAME` even when this process
+        # was only handed `WOLTSPACE_WOLT_NAME` (and the reverse).
+        source = export_both(os.environ)
         values = [
-            shlex.quote(f"{key}={_session_env_value(key, os.environ[key])}")
+            shlex.quote(f"{key}={_session_env_value(key, source[key])}")
             for key in _SESSION_ENV_KEYS
-            if key in os.environ
+            if source.get(key) not in (None, "")
         ]
         return f"env {' '.join(values)} {command}" if values else command
 
