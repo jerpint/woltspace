@@ -13,6 +13,11 @@ dependencies = [
     "watchfiles",
     "python-dotenv",
     "jinja2",
+    # The CLI's voice. Pure Python, no compiled extensions, one transitive
+    # dependency tree already common in this stack — and it is the piece that
+    # makes the lodge palette safe: it drops every escape when stdout is not a
+    # terminal, so `woltspace status | cat` stays plain parseable text.
+    "rich",
 ]
 
 [project.scripts]
