@@ -362,8 +362,12 @@ class TestSpawnPathTrustsWorkdir:
 
     def test_resume_trusts_too(self, fake_runtime, claude_trust_home):
         """A revived session launches a fresh claude — it needs trust as much."""
-        from sessions import prepare_session_command
+        from sessions import SessionRegistry, prepare_session_command
         result = self._start()
+        # run-session.sh stamps the conversation id at spawn; a resume command
+        # cannot be built without one.
+        SessionRegistry(self.wolts_dir).update(
+            result["name"], harness_session_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890")
         (claude_trust_home / ".claude.json").unlink(missing_ok=True)
 
         prepare_session_command(result["name"], "resume", "still there?")

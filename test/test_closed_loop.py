@@ -327,7 +327,7 @@ class TestDenReplySeam:
         )
         assert message in result.stdout
 
-    def test_message_session_function(self, tmux_session, tmp_path):
+    def test_message_session_function(self, tmux_session, tmp_path, agent_comes_up):
         """core.message_session should deliver to a live tmux session."""
         import sessions
         name = tmux_session
@@ -498,7 +498,7 @@ class TestRegressions:
         assert sentinel in adapter_src
 
     @requires_tmux
-    def test_revival_picks_correct_session(self, tmp_path):
+    def test_revival_picks_correct_session(self, tmp_path, agent_comes_up):
         """Reviving session A must --resume with A's UUID, not B's.
 
         UUID selection now happens in prepare_session_command (run by
@@ -564,8 +564,8 @@ class TestRegressions:
                 subprocess.run(["tmux", "kill-session", "-t", name], capture_output=True)
 
     @requires_tmux
-    def test_revival_uses_session_name_as_id(self, tmp_path):
-        """Session name IS the claude session ID — no UUID needed, no --continue fallback."""
+    def test_revival_uses_session_name_as_id(self, tmp_path, agent_comes_up):
+        """Revival resumes by the stored conversation id, never --continue."""
         from sessions import SessionRegistry, resume_session
         from session_runtime import TmuxSessionRuntime
         import sessions
@@ -579,7 +579,8 @@ class TestRegressions:
             (tmp_path / "neowolt" / "wolt").mkdir(parents=True, exist_ok=True)
             reg = SessionRegistry(tmp_path)
             reg.create(session_name, wolt="neowolt")
-            reg.update(session_name, wolt="neowolt", claude_session_id=session_name)
+            reg.update(session_name, wolt="neowolt",
+                       claude_session_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
             runtime = TmuxSessionRuntime()
             handle = runtime.spawn(session_name, str(tmp_path), "bash")
@@ -597,7 +598,7 @@ class TestRegressions:
             subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
 
     @requires_tmux
-    def test_revival_cds_into_session_wolt_dir(self, tmp_path):
+    def test_revival_cds_into_session_wolt_dir(self, tmp_path, agent_comes_up):
         """Reviving a session must run in the session's wolt dir, not the current dir.
 
         The cd now happens inside run-session.sh (from the registry 'dir'
@@ -619,7 +620,8 @@ class TestRegressions:
             (tmp_path / "uxwolt" / "wolt").mkdir(parents=True, exist_ok=True)
             reg = SessionRegistry(tmp_path)
             reg.create(session_name, wolt="uxwolt")
-            reg.update(session_name, wolt="uxwolt", claude_session_id=session_name, dir=wolt_dir)
+            reg.update(session_name, wolt="uxwolt", dir=wolt_dir,
+                       claude_session_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
             runtime = TmuxSessionRuntime()
             handle = runtime.spawn(session_name, wolt_dir, "bash")

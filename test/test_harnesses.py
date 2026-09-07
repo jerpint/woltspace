@@ -557,7 +557,7 @@ class TestSessionHarnessPlumbing:
         stamped = self._session_data(result["name"])["harness_session_id"]
         assert discover_session_id_for(result["name"], timeout=5) == stamped
 
-    def test_old_sessions_without_harness_resolve_to_claude(self):
+    def test_old_sessions_without_harness_resolve_to_claude(self, agent_comes_up):
         """Sessions created before the harness field must resume on claude."""
         from sessions import SessionRegistry
         reg = SessionRegistry(self.wolts_dir)
@@ -619,6 +619,20 @@ class TestBootPromptViaPaste:
         from sessions import SessionRegistry
         return SessionRegistry(self.wolts_dir).get(name, check_alive=False)
 
+    def _stamp_resume_id(self, name):
+        """Give the session the conversation id a real one would carry.
+
+        opencode assigns its own session id, so run-session.sh discovers and
+        stamps it just after launch (discover_session_id). Nothing can be
+        resumed before that lands — prepare_session_command now refuses rather
+        than building a resume command with an empty id — so a resume test has
+        to stand where a launched session stands.
+        """
+        from sessions import SessionRegistry
+        SessionRegistry(self.wolts_dir).update(
+            name, wolt="testwolt", harness_session_id="ses_2f0a1c9d4e",
+        )
+
     def test_spawn_stamps_pending_and_omits_prompt(self):
         from sessions import prepare_session_command
         result = self._start()
@@ -659,6 +673,7 @@ class TestBootPromptViaPaste:
     def test_resume_stamps_pending_and_omits_prompt(self):
         from sessions import prepare_session_command
         result = self._start()
+        self._stamp_resume_id(result["name"])
         cmd = prepare_session_command(result["name"], "resume", "continue please")
         assert "--prompt" not in cmd
         assert self._session_data(result["name"])["pending_boot_prompt"] == "continue please"
@@ -666,6 +681,7 @@ class TestBootPromptViaPaste:
     def test_resume_without_prompt_stamps_nothing(self):
         from sessions import prepare_session_command
         result = self._start()
+        self._stamp_resume_id(result["name"])
         prepare_session_command(result["name"], "resume", "")
         assert not self._session_data(result["name"]).get("pending_boot_prompt")
 
@@ -787,6 +803,7 @@ class TestBootPromptViaPaste:
         prepare_session_command(name, "spawn", "/woltspace:create-wolt")
         assert self._session_data(name)["pending_boot_prompt"] == "/woltspace:create-wolt"
         # Bot resumes with the user's message
+        self._stamp_resume_id(name)
         prepare_session_command(name, "resume", "hey are you there")
         assert self._session_data(name)["pending_boot_prompt"] == \
             "/woltspace:create-wolt hey are you there"
@@ -797,6 +814,7 @@ class TestBootPromptViaPaste:
         from sessions import deliver_boot_prompt, prepare_session_command
         result = self._start()
         name = result["name"]
+        self._stamp_resume_id(name)
         prepare_session_command(name, "resume", "just chatting")
 
         pasted = []

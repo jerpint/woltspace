@@ -112,7 +112,9 @@ def test_one_wolt_can_start_sessions_in_two_repositories(
     ]
 
 
-def test_resume_uses_persisted_canonical_workdir(tmp_path, monkeypatch, fake_runtime):
+def test_resume_uses_persisted_canonical_workdir(
+    tmp_path, monkeypatch, fake_runtime, agent_comes_up
+):
     import paths
     import sessions
 
@@ -127,6 +129,10 @@ def test_resume_uses_persisted_canonical_workdir(tmp_path, monkeypatch, fake_run
     reg = sessions.SessionRegistry(wolts_dir)
     target = SessionTarget.resolve("testwolt", repo, wolts_dir=wolts_dir)
     reg.create("testwolt-session", wolt="testwolt", target=target)
+    # A resume needs a conversation to replay; run-session.sh stamps this id
+    # just after spawn, and resume_session now refuses without it.
+    reg.update("testwolt-session", wolt="testwolt",
+               harness_session_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890")
     fake_runtime._alive = False
 
     sessions.resume_session("testwolt-session")

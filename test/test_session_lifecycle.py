@@ -126,6 +126,157 @@ class TestSessionRegistry:
 
 
 # ---------------------------------------------------------------------------
+# Liveness: agent present, not tmux present
+# ---------------------------------------------------------------------------
+
+class TestListLiveness:
+    """`alive` in the session list means an agent is in there.
+
+    A tmux session outlives its agent — a failed respawn, an OOM-killed
+    harness, or an ordinary exit all leave the login shell holding the session
+    open. Reporting that as alive is what let the TUI *attach* to it: the human
+    pressed enter expecting their conversation and got a bare shell wearing the
+    session's name.
+    """
+
+    def _reg(self, tmp_registry, monkeypatch, *, tmux, agents):
+        import sessions
+        monkeypatch.setattr(sessions, "_tmux_sessions", lambda: set(tmux))
+        monkeypatch.setattr(
+            sessions, "sessions_with_agent_process",
+            lambda: None if agents is None else set(agents),
+        )
+        return tmp_registry
+
+    def test_an_agentless_tmux_session_is_not_alive(self, tmp_registry, monkeypatch):
+        reg = self._reg(tmp_registry, monkeypatch,
+                        tmux={"husk-sess"}, agents=set())
+        reg.create("husk-sess", wolt="neowolt")
+        reg.update("husk-sess", wolt="neowolt", status="running")
+
+        row = reg.list()[0]
+        assert row["tmux_alive"] is True
+        assert row["agent_alive"] is False
+        assert row["alive"] is False
+        # ...and it stops claiming to be running, with the reason spelled out.
+        assert row["status"] == "orphaned"
+        assert row["orphaned_reason"] == sessions_module().ORPHAN_AGENT_GONE
+
+    def test_an_agent_bearing_session_is_alive(self, tmp_registry, monkeypatch):
+        reg = self._reg(tmp_registry, monkeypatch,
+                        tmux={"live-sess"}, agents={"live-sess"})
+        reg.create("live-sess", wolt="neowolt")
+        reg.update("live-sess", wolt="neowolt", status="running")
+
+        row = reg.list()[0]
+        assert (row["tmux_alive"], row["agent_alive"], row["alive"]) == (True, True, True)
+        assert row["status"] == "running"
+
+    def test_a_missing_tmux_session_keeps_its_own_orphan_reason(
+        self, tmp_registry, monkeypatch
+    ):
+        reg = self._reg(tmp_registry, monkeypatch, tmux=set(), agents=set())
+        reg.create("gone-sess", wolt="neowolt")
+        reg.update("gone-sess", wolt="neowolt", status="running")
+
+        row = reg.list()[0]
+        assert row["tmux_alive"] is False
+        assert row["orphaned_reason"] == sessions_module().ORPHAN_TMUX_MISSING
+
+    def test_alive_only_filters_on_the_agent(self, tmp_registry, monkeypatch):
+        reg = self._reg(tmp_registry, monkeypatch,
+                        tmux={"husk-sess", "live-sess"}, agents={"live-sess"})
+        reg.create("husk-sess", wolt="neowolt")
+        reg.create("live-sess", wolt="neowolt")
+
+        assert [s["name"] for s in reg.list(alive_only=True)] == ["live-sess"]
+
+    def test_an_unreadable_process_table_falls_back_to_tmux(
+        self, tmp_registry, monkeypatch
+    ):
+        """None is 'undetermined', never 'dead'.
+
+        A ps hiccup must not mark the colony offline and route every enter
+        through a resume.
+        """
+        reg = self._reg(tmp_registry, monkeypatch,
+                        tmux={"live-sess"}, agents=None)
+        reg.create("live-sess", wolt="neowolt")
+
+        row = reg.list()[0]
+        assert (row["tmux_alive"], row["agent_alive"], row["alive"]) == (True, True, True)
+
+    def test_liveness_follows_the_persisted_tmux_name(self, tmp_registry, monkeypatch):
+        """The tmux session name is not always the woltspace session name."""
+        reg = self._reg(tmp_registry, monkeypatch,
+                        tmux={"tmux-name"}, agents={"tmux-name"})
+        reg.create("wolt-sess", wolt="neowolt")
+        reg.update("wolt-sess", wolt="neowolt", runtime={
+            "woltspace_session_id": "wolt-sess",
+            "tmux_session_name": "tmux-name",
+            "pane_id": "%3",
+            "kind": "tmux",
+        })
+
+        assert reg.list()[0]["alive"] is True
+
+
+class TestBatchedAgentLiveness:
+    """One tmux call plus one ps call for the whole list, not two per session."""
+
+    def test_twenty_sessions_cost_two_process_calls(self, monkeypatch):
+        import session_runtime
+
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            from types import SimpleNamespace
+            if argv[1] == "list-panes":
+                rows = "\n".join(
+                    f"sess-{i}\t%{i}\t{1000 + i}\t1" for i in range(20)
+                )
+                return SimpleNamespace(stdout=rows, returncode=0)
+            # ps: every pane pid parents a claude
+            rows = "\n".join(
+                f"{2000 + i} {1000 + i} claude" for i in range(20)
+            )
+            return SimpleNamespace(stdout=rows, returncode=0)
+
+        runtime = session_runtime.TmuxSessionRuntime(runner=fake_run)
+        found = runtime.sessions_with_process({"claude"})
+
+        assert found == {f"sess-{i}" for i in range(20)}
+        assert len(calls) == 2, f"expected list-panes + ps, got {calls}"
+
+    def test_an_unreadable_process_table_is_undetermined(self, monkeypatch):
+        import session_runtime
+        from types import SimpleNamespace
+
+        def fake_run(argv, **kwargs):
+            if argv[1] == "list-panes":
+                return SimpleNamespace(stdout="sess-a\t%1\t1001\t1", returncode=0)
+            raise OSError("ps: cannot read process table")
+
+        runtime = session_runtime.TmuxSessionRuntime(runner=fake_run)
+        assert runtime.sessions_with_process({"claude"}) is None
+
+    def test_no_tmux_server_is_empty_not_undetermined(self):
+        import session_runtime
+
+        def fake_run(argv, **kwargs):
+            raise OSError("no server running")
+
+        runtime = session_runtime.TmuxSessionRuntime(runner=fake_run)
+        assert runtime.sessions_with_process({"claude"}) == set()
+
+
+def sessions_module():
+    import sessions
+    return sessions
+
+
+# ---------------------------------------------------------------------------
 # start_session — site auto-start (unit tests)
 # ---------------------------------------------------------------------------
 

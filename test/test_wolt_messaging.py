@@ -84,10 +84,47 @@ class TestResolveActiveSession:
         new = reg.get("codexw-new-elm-bbbbbb", check_alive=False)
         new["last_activity"] = 999
         reg._write("codexw", "codexw-new-elm-bbbbbb", new)
-        # both live
-        monkeypatch.setattr(sessions, "_tmux_sessions",
-                            lambda: {"codexw-old-oak-aaaaaa", "codexw-new-elm-bbbbbb"})
+        # both live, both carrying an agent
+        both = {"codexw-old-oak-aaaaaa", "codexw-new-elm-bbbbbb"}
+        monkeypatch.setattr(sessions, "_tmux_sessions", lambda: both)
+        monkeypatch.setattr(sessions, "sessions_with_agent_process", lambda: both)
         assert resolve_active_session("codexw", registry=reg) == "codexw-new-elm-bbbbbb"
+
+    def test_skips_a_live_tmux_session_with_no_agent_in_it(
+        self, tmp_registry, monkeypatch
+    ):
+        """The newest session's tmux survived, but its agent is gone.
+
+        Addressing the wolt has to reach a session that can actually answer.
+        Picking the newest by tmux presence alone routes the message into a
+        leftover login shell, where it lands as a shell command.
+        """
+        reg = tmp_registry
+        reg.create("codexw-old-oak-aaaaaa", wolt="codexw")
+        reg.create("codexw-husk-elm-bbbbbb", wolt="codexw")
+        old = reg.get("codexw-old-oak-aaaaaa", check_alive=False)
+        old["last_activity"] = 100
+        reg._write("codexw", "codexw-old-oak-aaaaaa", old)
+        husk = reg.get("codexw-husk-elm-bbbbbb", check_alive=False)
+        husk["last_activity"] = 999
+        reg._write("codexw", "codexw-husk-elm-bbbbbb", husk)
+
+        monkeypatch.setattr(sessions, "_tmux_sessions",
+                            lambda: {"codexw-old-oak-aaaaaa", "codexw-husk-elm-bbbbbb"})
+        monkeypatch.setattr(sessions, "sessions_with_agent_process",
+                            lambda: {"codexw-old-oak-aaaaaa"})
+        assert resolve_active_session("codexw", registry=reg) == "codexw-old-oak-aaaaaa"
+
+    def test_an_unreadable_process_table_falls_back_to_tmux_presence(
+        self, tmp_registry, monkeypatch
+    ):
+        """ps failing must not report the whole colony offline."""
+        reg = tmp_registry
+        reg.create("codexw-only-oak-aaaaaa", wolt="codexw")
+        monkeypatch.setattr(sessions, "_tmux_sessions",
+                            lambda: {"codexw-only-oak-aaaaaa"})
+        monkeypatch.setattr(sessions, "sessions_with_agent_process", lambda: None)
+        assert resolve_active_session("codexw", registry=reg) == "codexw-only-oak-aaaaaa"
 
     def test_ignores_dead_sessions(self, tmp_registry, monkeypatch):
         reg = tmp_registry

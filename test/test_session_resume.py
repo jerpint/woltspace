@@ -50,6 +50,26 @@ def wolt_env(tmp_path, monkeypatch):
     return tmp_path
 
 
+def _absent_then_present(pane_id: str = "%1", absences: int = 1):
+    """resolve_agent_handle stand-in: no agent now, an agent after the relaunch.
+
+    resume_session asks at least twice on every relaunch path — once to pick
+    the path (nothing running) and once to verify the relaunch actually
+    produced an agent. A stub that always answers None describes a resume that
+    failed, not one that worked. `absences` covers paths that relaunch twice
+    (revive in place, then escalate to a clean respawn).
+    """
+    remaining = [None] * absences
+
+    def _resolve(*args, **kwargs):
+        if remaining:
+            remaining.pop()
+            return None
+        return _agent_in(pane_id)
+
+    return _resolve
+
+
 def _agent_in(pane_id: str):
     """The handle resolve_agent_handle would return for an agent in pane_id."""
     from session_runtime import RuntimeHandle
@@ -105,7 +125,7 @@ class TestResumeSessionClaudeRunning:
 class TestResumeSessionClaudeExited:
     """Path 2: Tmux alive but claude exited — restart with --resume."""
 
-    @patch("sessions.resolve_agent_handle", return_value=None)
+    @patch("sessions.resolve_agent_handle", side_effect=_absent_then_present("%1"))
     @patch("sessions._tmux_alive", return_value=True)
     def test_revives_claude_with_resume(
         self, mock_alive, mock_agent, wolt_env, fake_runtime
@@ -136,7 +156,7 @@ class TestResumeSessionClaudeExited:
         assert "--resume" in cmd_str
         assert "'continue working'" in cmd_str
 
-    @patch("sessions.resolve_agent_handle", return_value=None)
+    @patch("sessions.resolve_agent_handle", side_effect=_absent_then_present("%8"))
     @patch("sessions._tmux_alive", return_value=True)
     def test_missing_saved_pane_gets_a_dedicated_window(
         self, mock_alive, mock_agent, wolt_env, fake_runtime
@@ -181,7 +201,8 @@ class TestResumeSessionTmuxDead:
     @patch("sessions.subprocess.run")
     @patch("sessions.resolve_agent_handle", return_value=None)
     @patch("sessions._tmux_alive", return_value=False)
-    def test_respawns_tmux_with_resume(self, mock_alive, mock_agent, mock_run, wolt_env):
+    def test_respawns_tmux_with_resume(self, mock_alive, mock_agent, mock_run,
+                                       wolt_env, agent_comes_up):
         from sessions import resume_session
         result = resume_session("testwolt-chompy-dam-abc123", "pick up where we left off")
 
@@ -195,7 +216,8 @@ class TestResumeSessionTmuxDead:
 
     @patch("sessions.subprocess.run")
     @patch("sessions._tmux_alive", return_value=False)
-    def test_updates_status_to_running(self, mock_alive, mock_run, wolt_env):
+    def test_updates_status_to_running(self, mock_alive, mock_run, wolt_env,
+                                       agent_comes_up):
         from sessions import resume_session, SessionRegistry
 
         # Mark session as orphaned first
@@ -242,6 +264,166 @@ class TestResumeSessionForeignRuntime:
         assert new_session_calls == []
 
 
+class TestResumeNeedsAConversation:
+    """A resume with no conversation id must refuse, loudly, before touching tmux.
+
+    Every harness silently drops its resume flag when handed an empty id
+    (_claude_command, _codex_command, _opencode_command all guard on
+    `if resume_id`). So an unstamped session used to launch a BRAND NEW agent
+    into the old session's slot: tmux alive, agent alive, prompt delivered,
+    conversation gone — and the caller was told "respawned".
+    """
+
+    @pytest.fixture
+    def unstamped(self, tmp_path, monkeypatch):
+        import paths
+        import sessions
+
+        monkeypatch.setattr(sessions, "WOLTS_DIR", tmp_path)
+        monkeypatch.setattr(paths, "WOLTS_DIR", tmp_path)
+        (tmp_path / "testwolt" / "wolt").mkdir(parents=True)
+        reg = sessions.SessionRegistry(tmp_path)
+        reg.create("testwolt-blank-dam-abc123", wolt="testwolt",
+                   dir=str(tmp_path / "testwolt"))
+        return tmp_path
+
+    @patch("sessions.subprocess.run")
+    @patch("sessions.resolve_agent_handle", return_value=None)
+    @patch("sessions._tmux_alive", return_value=False)
+    def test_resume_refuses_and_spawns_nothing(
+        self, mock_alive, mock_agent, mock_run, unstamped
+    ):
+        from sessions import ResumeUnavailable, resume_session
+
+        with pytest.raises(ResumeUnavailable, match="nothing to resume"):
+            resume_session("testwolt-blank-dam-abc123", "hello")
+
+        assert [c for c in mock_run.call_args_list if "new-session" in str(c)] == []
+
+    def test_prepare_refuses_to_build_a_resume_command(self, unstamped):
+        """The run-session.sh seam refuses too — the CLI prints the reason."""
+        from sessions import prepare_session_command
+
+        with pytest.raises(ValueError, match="no harness_session_id"):
+            prepare_session_command("testwolt-blank-dam-abc123", "resume", "hi")
+
+    def test_a_non_uuid_legacy_id_does_not_count(self, unstamped):
+        """Some legacy records stored the session NAME in claude_session_id.
+
+        That is not a conversation id; resuming on it would start a fresh
+        agent. The UUID check already existed in prepare — this makes it a
+        refusal rather than a silent downgrade.
+        """
+        from sessions import ResumeUnavailable, SessionRegistry, resume_session
+
+        SessionRegistry(unstamped).update(
+            "testwolt-blank-dam-abc123", wolt="testwolt",
+            claude_session_id="testwolt-blank-dam-abc123",
+        )
+        with pytest.raises(ResumeUnavailable):
+            resume_session("testwolt-blank-dam-abc123", "hello")
+
+
+class TestResumeVerification:
+    """A relaunch is not a resume until an agent actually shows up.
+
+    tmux returns the instant the pane exists — long before run-session.sh has
+    decided whether it can start anything. Reporting success in that gap is
+    what let the TUI attach to a dying shell and call it a wake.
+    """
+
+    @patch("sessions.resolve_agent_handle", return_value=None)
+    @patch("sessions._tmux_alive", return_value=False)
+    def test_respawn_that_never_boots_an_agent_raises(
+        self, mock_alive, mock_agent, wolt_env, fake_runtime, monkeypatch
+    ):
+        import sessions
+        from sessions import ResumeFailed, SessionRegistry, resume_session
+
+        monkeypatch.setattr(sessions, "_AGENT_APPEAR_TIMEOUT", 0.0)
+        monkeypatch.setattr(sessions, "_AGENT_REVIVE_TIMEOUT", 0.0)
+
+        with pytest.raises(ResumeFailed, match="no claude process appeared"):
+            resume_session("testwolt-chompy-dam-abc123", "hello")
+
+        # It spawned — and then said so honestly instead of claiming a wake.
+        assert len(fake_runtime.spawns) == 1
+        stored = SessionRegistry(wolt_env).get(
+            "testwolt-chompy-dam-abc123", check_alive=False)
+        assert stored["status"] == "failed"
+
+    @patch("sessions.session_has_agent_process", return_value=False)
+    @patch("sessions.resolve_agent_handle",
+           side_effect=_absent_then_present("%1", absences=2))
+    @patch("sessions._tmux_alive", return_value=True)
+    def test_a_stale_agentless_tmux_session_is_killed_and_respawned(
+        self, mock_alive, mock_agent, mock_has_agent,
+        wolt_env, fake_runtime, monkeypatch
+    ):
+        """The live bug: tmux holds the session, only a login shell inside.
+
+        Reviving in place is tried first (cheap, keeps the pane). When that
+        produces no agent, the husk is killed and the session respawns clean —
+        which is the path that actually gets the human their conversation back.
+        """
+        import sessions
+        from sessions import SessionRegistry, resume_session
+        from session_runtime import RuntimeHandle
+
+        name = "testwolt-chompy-dam-abc123"
+        monkeypatch.setattr(sessions, "_AGENT_APPEAR_TIMEOUT", 0.0)
+        monkeypatch.setattr(sessions, "_AGENT_REVIVE_TIMEOUT", 0.0)
+        SessionRegistry(wolt_env).update(
+            name, wolt="testwolt",
+            runtime=RuntimeHandle(name, name, "%1").to_record(),
+        )
+
+        result = resume_session(name, "continue working")
+
+        assert result["status"] == "respawned"
+        # Tried the cheap in-place revival first...
+        assert len(fake_runtime.pastes) == 1
+        # ...then cleared the husk and built a fresh session.
+        assert fake_runtime.stops == [name]
+        assert len(fake_runtime.spawns) == 1
+        session_id, cwd, command = fake_runtime.last_spawn
+        assert session_id == name
+        assert "--resume" in command
+
+    @patch("sessions.session_has_agent_process", return_value=True)
+    @patch("sessions.resolve_agent_handle", return_value=None)
+    @patch("sessions._tmux_alive", return_value=True)
+    def test_it_never_kills_a_session_that_has_a_live_agent(
+        self, mock_alive, mock_agent, mock_has_agent,
+        wolt_env, fake_runtime, monkeypatch
+    ):
+        """The escalation must not become a foot-gun.
+
+        resolve_agent_handle can miss (a pane scoped wrong, a harness the
+        session-level walk still sees). Killing on that would destroy exactly
+        the conversation the resume was asked to rescue — so the session-level
+        check gets the last word, and anything but a definite False is left
+        alone.
+        """
+        import sessions
+        from sessions import ResumeFailed, SessionRegistry, resume_session
+        from session_runtime import RuntimeHandle
+
+        name = "testwolt-chompy-dam-abc123"
+        monkeypatch.setattr(sessions, "_AGENT_APPEAR_TIMEOUT", 0.0)
+        monkeypatch.setattr(sessions, "_AGENT_REVIVE_TIMEOUT", 0.0)
+        SessionRegistry(wolt_env).update(
+            name, wolt="testwolt",
+            runtime=RuntimeHandle(name, name, "%1").to_record(),
+        )
+
+        with pytest.raises(ResumeFailed, match="left alone"):
+            resume_session(name, "continue working")
+
+        assert fake_runtime.stops == []
+        assert fake_runtime.spawns == []
+
+
 class TestStartSessionNoClaudeSessionId:
     """start_session() should NOT set claude_session_id — run-session.sh generates a UUID."""
 
@@ -279,7 +461,7 @@ class TestStartSessionNoClaudeSessionId:
 
 @requires_tmux
 def test_resume_replaces_a_missing_agent_pane_without_touching_user_layout(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, agent_comes_up
 ):
     """A surviving tmux session gets a new agent window, never a user pane."""
     import paths
@@ -298,7 +480,8 @@ def test_resume_replaces_a_missing_agent_pane_without_touching_user_layout(
 
     reg = sessions.SessionRegistry(tmp_path)
     reg.create(name, wolt="testwolt", dir=str(tmp_path / "testwolt"))
-    reg.update(name, wolt="testwolt", runtime=original.to_record())
+    reg.update(name, wolt="testwolt", runtime=original.to_record(),
+               harness_session_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
     try:
         subprocess.run(
