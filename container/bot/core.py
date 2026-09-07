@@ -26,6 +26,7 @@ from sessions import (
     build_session_command,
     get_tunnel_url,
     resume_session,
+    ORPHAN_AGENT_GONE,
     ResumeFailed,
     ResumeUnavailable,
     session_name as _session_name,
@@ -437,7 +438,15 @@ def find_session(query: str) -> list[dict]:
 
 
 def check_session(session_name: str = None) -> dict:
-    """Check on a running session — registry + pane capture."""
+    """Check on a running session — registry + pane capture.
+
+    `alive` here is the registry's agent-level answer, so this and
+    list_sessions can no longer disagree about the same session. They used to:
+    a husk (tmux session whose agent died, login shell still holding it open)
+    came back alive and running with pane output from this tool, while the list
+    called it orphaned. tmux_alive/agent_alive are passed through so the wolt
+    can say which half is missing instead of guessing.
+    """
     if not session_name:
         sessions = list_sessions()
         if not sessions:
@@ -473,6 +482,16 @@ def check_session(session_name: str = None) -> dict:
         "output": output,
         "url": session_url,
     }
+    if data:
+        result["tmux_alive"] = data.get("tmux_alive")
+        result["agent_alive"] = data.get("agent_alive")
+        if data.get("orphaned_reason") == ORPHAN_AGENT_GONE:
+            # Not "gone" — the session is still resumable, and saying so is the
+            # difference between the wolt offering to wake it and writing it off.
+            result["detail"] = (
+                "the tmux session is still up but its agent has exited; "
+                "resume it to pick the conversation back up"
+            )
     if data and data.get("exit_code") is not None:
         result["exit_code"] = data["exit_code"]
 

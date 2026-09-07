@@ -702,7 +702,10 @@ async def session_message(session_id: str, request: Request):
     if status == "delivered":
         print(f"[message] → {safe}: {text[:80]}")
         return {"ok": True, **result}
-    code = 404 if status == "no-session" else 409  # 409 = session-dead
+    # 409 for session-dead and agent-gone alike: the request was well
+    # formed, the session just cannot receive right now. agent-gone carries a
+    # detail saying to resume and retry.
+    code = 404 if status == "no-session" else 409
     return JSONResponse({"ok": False, **result}, status_code=code)
 
 
