@@ -22,6 +22,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "container" / "lib"))
 
+# server/app.py puts `$WOLTSPACE_DIR/container/lib` at the FRONT of sys.path when
+# it imports. A shell inside a running colony inherits WOLTSPACE_DIR pointing at
+# the installed wheel's bundle, so without this pin the server would import the
+# *installed* sessions.py ahead of this worktree's, and every test that reads
+# `sessions` afterwards would be testing shipped code instead of the diff.
+import os
+os.environ["WOLTSPACE_DIR"] = str(ROOT)
+
 from server import app as app_module
 
 
