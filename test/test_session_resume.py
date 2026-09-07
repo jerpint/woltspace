@@ -332,10 +332,12 @@ class TestResumeVerification:
     what let the TUI attach to a dying shell and call it a wake.
     """
 
+    @patch("sessions.session_has_agent_process", return_value=False)
     @patch("sessions.resolve_agent_handle", return_value=None)
     @patch("sessions._tmux_alive", return_value=False)
     def test_respawn_that_never_boots_an_agent_raises(
-        self, mock_alive, mock_agent, wolt_env, fake_runtime, monkeypatch
+        self, mock_alive, mock_agent, mock_has_agent,
+        wolt_env, fake_runtime, monkeypatch
     ):
         import sessions
         from sessions import ResumeFailed, SessionRegistry, resume_session
@@ -350,7 +352,35 @@ class TestResumeVerification:
         assert len(fake_runtime.spawns) == 1
         stored = SessionRegistry(wolt_env).get(
             "testwolt-chompy-dam-abc123", check_alive=False)
-        assert stored["status"] == "failed"
+        # ...without stamping the record. "failed" is terminal — list() only
+        # re-classifies "running" records — so a record stamped here on nothing
+        # but a timeout could hide a live agent forever.
+        assert stored["status"] == "running"
+
+    @patch("sessions.session_has_agent_process", return_value=True)
+    @patch("sessions.resolve_agent_handle", return_value=None)
+    @patch("sessions._tmux_alive", return_value=False)
+    def test_an_agent_that_lands_just_past_the_wait_is_a_wake(
+        self, mock_alive, mock_agent, mock_has_agent,
+        wolt_env, fake_runtime, monkeypatch
+    ):
+        """The boot path is three python subprocesses deep before the agent
+        execs. On a loaded host that can outlast our patience, and the session
+        is then perfectly healthy — so the wait running out asks once more,
+        session-wide, rather than declaring a failure it cannot see."""
+        import sessions
+        from sessions import SessionRegistry, resume_session
+
+        monkeypatch.setattr(sessions, "_AGENT_APPEAR_TIMEOUT", 0.0)
+        monkeypatch.setattr(sessions, "_AGENT_REVIVE_TIMEOUT", 0.0)
+
+        result = resume_session("testwolt-chompy-dam-abc123", "hello")
+
+        assert result["status"] == "respawned"
+        assert "just past the wait" in result["detail"]
+        stored = SessionRegistry(wolt_env).get(
+            "testwolt-chompy-dam-abc123", check_alive=False)
+        assert stored["status"] == "running"
 
     @patch("sessions.session_has_agent_process", return_value=False)
     @patch("sessions.resolve_agent_handle",
@@ -416,6 +446,43 @@ class TestResumeVerification:
             name, wolt="testwolt",
             runtime=RuntimeHandle(name, name, "%1").to_record(),
         )
+
+        with pytest.raises(ResumeFailed, match="left alone"):
+            resume_session(name, "continue working")
+
+        assert fake_runtime.stops == []
+        assert fake_runtime.spawns == []
+
+
+    @patch("sessions.resolve_agent_handle", return_value=None)
+    @patch("sessions._tmux_alive", return_value=True)
+    def test_the_kill_check_asks_about_the_session_not_the_pasted_pane(
+        self, mock_alive, mock_agent, wolt_env, fake_runtime, monkeypatch
+    ):
+        """The pane we pasted into is the *last* place to ask.
+
+        A session reaches the escalation exactly when its dedicated pane is a
+        leftover login shell — and the reason that session still exists is
+        usually a second window with the human's own agent in it. A handle
+        carrying a pane_id narrows the liveness walk to that one pane, so the
+        "no agent anywhere" check answered False and the kill took the live
+        agent with it.
+        """
+        import sessions
+        from sessions import ResumeFailed, resume_session
+        from session_runtime import RuntimeHandle
+
+        name = "testwolt-chompy-dam-abc123"
+        monkeypatch.setattr(sessions, "_AGENT_APPEAR_TIMEOUT", 0.0)
+        monkeypatch.setattr(sessions, "_AGENT_REVIVE_TIMEOUT", 0.0)
+        sessions.SessionRegistry(wolt_env).update(
+            name, wolt="testwolt",
+            runtime=RuntimeHandle(name, name, "%1").to_record(),
+        )
+        # Two panes: the dedicated one we paste into (%1, agentless) and the
+        # human's own window (%2, a live agent).
+        fake_runtime._panes = [("%1", "100", True), ("%2", "200", False)]
+        fake_runtime._agents = {"%2"}
 
         with pytest.raises(ResumeFailed, match="left alone"):
             resume_session(name, "continue working")

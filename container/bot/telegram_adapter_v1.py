@@ -220,7 +220,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"[telegram message from {human_name}, chat_id={chat_id}]: {text}\n"
             f"Reply back to them with: notify --telegram {chat_id} \"your message\""
         )
-        result = message_session(den_session, den_msg)
+        result = await asyncio.to_thread(message_session, den_session, den_msg)
         _bot_log("den_reply", {"session": den_session, "text": text[:200], "result": result})
         if result.get("ok"):
             _append_message(chat_id, {
@@ -338,7 +338,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"[telegram voice from {human_name}, chat_id={voice_chat_id}]: {text}\n"
             f"Reply back to them with: notify --telegram {voice_chat_id} \"your message\""
         )
-        result = message_session(den_session, den_msg)
+        result = await asyncio.to_thread(message_session, den_session, den_msg)
         _bot_log("den_reply_voice", {"session": den_session, "text": text[:200], "result": result})
         if result.get("ok"):
             session_link = result.get("url") or den_session
@@ -522,7 +522,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"[telegram file from {human_name}, chat_id={chat_id}]: {user_message}\n"
             f"Reply back to them with: notify --telegram {chat_id} \"your message\""
         )
-        result = message_session(den_session, den_msg)
+        result = await asyncio.to_thread(message_session, den_session, den_msg)
         _bot_log("den_reply_file", {"session": den_session, "file": file_name, "path": str(saved_path), "result": result})
         if result.get("ok"):
             session_link = result.get("url") or den_session

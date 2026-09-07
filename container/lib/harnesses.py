@@ -421,8 +421,11 @@ HARNESSES = {
     },
 }
 
-# comm names that mean "still launching" — the wrapper chain before the agent
-# process exists. Shared across harnesses (run-session.sh is ours, not theirs).
+# Process names that mean "still launching" — the wrapper chain before the
+# agent process exists. Shared across harnesses (run-session.sh is ours, not
+# theirs). These are matched against the *script* an interpreter is running,
+# not against `comm`: a shebang script is only ever reported as its
+# interpreter (`bash`), which is why the runtime reads argv for these.
 LAUNCHING_NAMES = {"run-session.sh", "run-session"}
 
 
@@ -684,8 +687,8 @@ def session_has_agent_process(session_name: str | dict | RuntimeHandle,
     agent, so checking only direct children always misses the agent.
 
     harness: restrict to one harness's process names; None matches any harness.
-    include_launching: also count the launching shim (run-session.sh, uv, node)
-        so a session that has not finished booting reads as alive.
+    include_launching: also count the launching shim (run-session.sh) so a
+        session that has not finished booting reads as alive.
 
     Returns True/False, or None when the answer is undetermined — the tmux
     session does not exist, or the process table could not be read. None is

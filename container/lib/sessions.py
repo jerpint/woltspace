@@ -97,9 +97,10 @@ class ResumeFailed(Exception):
 
 
 # How long resume waits for a relaunched agent to show up in the process tree
-# before calling it a failure. The launching shim (run-session.sh, uv, node)
-# counts, and that appears within a second or two of the tmux spawn — this is
-# slack for a loaded host, not for a slow model.
+# before calling it a failure. The launching shim (run-session.sh) counts, and
+# that appears within a second or two of the tmux spawn — this is slack for a
+# loaded host, not for a slow model. Running out is never persisted as
+# "failed": it is a statement about our patience, not about the session.
 _AGENT_APPEAR_TIMEOUT = 12.0
 # The in-place revival gets a shorter leash: it pastes a command into a pane
 # that either runs it right away or never will (a busy foreground process eats
@@ -707,6 +708,17 @@ def _tmux_spawn_in_session(
 def _tmux_stop(session: str | dict | RuntimeHandle) -> bool:
     """Stop one exact named tmux session."""
     return _runtime().stop(_runtime_handle(session))
+
+
+def _session_scope(session: str | dict | RuntimeHandle) -> RuntimeHandle:
+    """The same address with the pane dropped — "anywhere in this session".
+
+    Liveness walks narrow to the persisted pane while that pane exists, which
+    is the right answer for delivery (paste where the agent actually is) and
+    the wrong one for "is anything running in here at all". Killing a session
+    is a session-level act, so the question in front of it has to be too.
+    """
+    return _runtime_handle(session).at_pane("")
 
 
 def _await_agent(session: str | dict | RuntimeHandle, harness: str | None,
@@ -1567,6 +1579,9 @@ def resume_session(name: str, prompt: str = "") -> dict:
                 status="running",
                 runtime=target.to_record(),
             )
+            # The pane on disk just moved. Keep the in-memory record in step so
+            # nothing below this line addresses the pane we already replaced.
+            data = {**data, "runtime": target.to_record()}
             detail = "agent pane was gone, restarted with --resume in a new window"
         if _await_agent(target, harness, _AGENT_REVIVE_TIMEOUT):
             return {"name": name, "url": session_url,
@@ -1577,14 +1592,19 @@ def resume_session(name: str, prompt: str = "") -> dict:
         # re-confirming, at the session level, that no agent is running
         # anywhere in it. Killing a session with a live agent would destroy
         # exactly the conversation we were asked to rescue.
-        if session_has_agent_process(data, harness) is not False:
+        # Ask about the whole tmux session, not the pane we just pasted into:
+        # a handle carrying a pane_id narrows the walk to that pane while it
+        # lives, and the pane living is precisely why we are here. Dropping the
+        # pane is what makes this the session-level question the kill needs.
+        whole_session = _session_scope(target)
+        if session_has_agent_process(whole_session, harness) is not False:
             raise ResumeFailed(
                 f"session '{name}': tried to restart the agent in its tmux "
                 f"session and could not confirm it came up ({detail}); "
                 f"something is running in there, so it was left alone — "
                 f"attach and look before retrying"
             )
-        _tmux_stop(data)
+        _tmux_stop(whole_session)
         tmux_alive = False
         respawn_detail = (
             "stale tmux session held nothing but a shell and would not revive "
@@ -1596,10 +1616,20 @@ def resume_session(name: str, prompt: str = "") -> dict:
     handle = _tmux_spawn(name, work_dir or "/workspace", resume_cmd)
     registry.update(name, wolt=wolt, status="running", runtime=handle.to_record())
     if not _await_agent(handle, harness):
-        # run-session.sh exited before an agent appeared: a prepare failure, a
-        # missing harness binary, an auth wall. Reporting "respawned" here is
-        # what let the TUI attach to an empty shell and call it a wake.
-        registry.update(name, wolt=wolt, status="failed", finished_at=int(time.time()))
+        # run-session.sh may have exited before an agent appeared: a prepare
+        # failure, a missing harness binary, an auth wall. Reporting
+        # "respawned" here is what let the TUI attach to an empty shell and
+        # call it a wake. But the wait running out is also just evidence about
+        # our patience — the boot path is three python subprocesses deep before
+        # the agent execs — so look once more, session-wide, before saying no.
+        if session_has_agent_process(_session_scope(handle), harness) is True:
+            return {"name": name, "url": session_url, "status": "respawned",
+                    "detail": f"{respawn_detail}; the agent surfaced just past the wait"}
+        # Still nothing. Report the failure, but do NOT stamp the record:
+        # "failed" is terminal (list() only re-classifies records that are
+        # "running"), so a slow-but-healthy agent stamped here would stay
+        # hidden from the TUI forever with a live conversation inside it.
+        # Left "running", list() tells the truth from the process table.
         raise ResumeFailed(
             f"session '{name}': respawned its tmux with --resume but no "
             f"{harness} process appeared within {_AGENT_APPEAR_TIMEOUT:.0f}s — "

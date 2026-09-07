@@ -313,9 +313,9 @@ class TestGetLiveness:
 
 
 class TestBatchedAgentLiveness:
-    """One tmux call plus one ps call for the whole list, not two per session."""
+    """A fixed handful of process calls for the whole list, not two per session."""
 
-    def test_twenty_sessions_cost_two_process_calls(self, monkeypatch):
+    def test_twenty_sessions_cost_a_constant_number_of_process_calls(self, monkeypatch):
         import session_runtime
 
         calls = []
@@ -338,7 +338,10 @@ class TestBatchedAgentLiveness:
         found = runtime.sessions_with_process({"claude"})
 
         assert found == {f"sess-{i}" for i in range(20)}
-        assert len(calls) == 2, f"expected list-panes + ps, got {calls}"
+        # list-panes, then the two ps field sets that make one snapshot (comm
+        # cannot be read in the same call as args without being truncated).
+        # Three for twenty sessions is the property under test — not two.
+        assert len(calls) == 3, f"expected list-panes + two ps, got {calls}"
 
     def test_an_unreadable_process_table_is_undetermined(self, monkeypatch):
         import session_runtime

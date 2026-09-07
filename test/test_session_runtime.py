@@ -33,6 +33,10 @@ class FakeRunner:
         verb = command[1] if len(command) > 1 else command[0]
         if verb in self.by_verb:
             return SimpleNamespace(stdout=self.by_verb[verb], returncode=0)
+        # A process snapshot takes two ps calls with different field sets; a
+        # test keys them by the field string to answer each one separately.
+        if command[-1] in self.by_verb:
+            return SimpleNamespace(stdout=self.by_verb[command[-1]], returncode=0)
         if command[0] == "ps" and "ps" in self.by_verb:
             return SimpleNamespace(stdout=self.by_verb["ps"], returncode=0)
         stdout = self.outputs.pop(0) if self.outputs else ""
@@ -77,12 +81,41 @@ class TestTmuxSessionRuntime:
         assert isinstance(runtime, SessionRuntime)
 
     def test_process_table_uses_portable_ps_form_from_context(self, tmp_path):
-        runner = FakeRunner(["100 1 claude\n"])
+        runner = FakeRunner(["100 1 claude\n", "100 claude --resume abc\n"])
         ctx = RuntimeContext(tmux_bin="tmux-test", ps_bin="ps-test")
         runtime = TmuxSessionRuntime(ctx, runner=runner)
 
-        assert runtime._process_table() == ({"1": ["100"]}, {"100": "claude"})
-        assert runner.commands() == [["ps-test", "-axo", "pid=,ppid=,comm="]]
+        # Two calls, each with its wide column last: BSD ps truncates comm to
+        # 16 characters the moment another column follows it.
+        assert runtime._process_table() == ({"1": ["100"]}, {"100": "claude"}, {})
+        assert runner.commands() == [
+            ["ps-test", "-axo", "pid=,ppid=,comm="],
+            ["ps-test", "-axo", "pid=,args="],
+        ]
+
+    def test_process_table_names_the_script_an_interpreter_is_running(self, tmp_path):
+        runner = FakeRunner([
+            "101 100 bash\n102 101 python3\n",
+            "101 bash /opt/woltspace/container/bin/run-session.sh mywolt\n"
+            "102 python3 -u /opt/woltspace/container/bin/session-reg prepare\n",
+        ])
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
+
+        _, commands, scripts = runtime._process_table()
+        assert commands == {"101": "bash", "102": "python3"}
+        assert scripts == {"101": "run-session.sh", "102": "session-reg"}
+
+    def test_process_table_survives_a_missing_argv_snapshot(self, tmp_path):
+        """A failed second ps degrades to comms alone, never to no table."""
+        runner = FakeRunner(by_verb={"pid=,ppid=,comm=": "100 1 claude\n"})
+
+        def explode(command, **kwargs):
+            if command[-1] == "pid=,args=":
+                raise OSError("no argv for you")
+            return runner(command, **kwargs)
+
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=explode)
+        assert runtime._process_table() == ({"1": ["100"]}, {"100": "claude"}, {})
 
     def test_spawn_returns_exact_pane_handle(self, tmp_path):
         runner = FakeRunner(["%17\n"])
@@ -307,10 +340,14 @@ class TestAgentDetection:
 
     PS = "100 1 bash\n101 100 run-session.sh\n102 101 claude\n200 1 bash\n"
 
-    def _runtime(self, tmp_path, panes, ps=None):
+    def _runtime(self, tmp_path, panes, ps=None, args=""):
         return TmuxSessionRuntime(
             context(tmp_path),
-            runner=FakeRunner(by_verb={"list-panes": panes, "ps": ps or self.PS}),
+            runner=FakeRunner(by_verb={
+                "list-panes": panes,
+                "ps": ps or self.PS,
+                "pid=,args=": args,
+            }),
         )
 
     def test_finds_agent_under_the_wrapper_chain(self, tmp_path):
@@ -351,6 +388,30 @@ class TestAgentDetection:
         handle = RuntimeHandle("s", "s", "%7")
         assert runtime.resolve_delivery_pane(handle).pane_id == "%7"
         assert runner.calls == []
+
+    def test_a_booting_session_is_found_by_its_shim_script_name(self, tmp_path):
+        """The real shape of a session that has not reached its agent yet.
+
+        `ps -o comm=` reports the interpreter, never the script: the launching
+        `run-session.sh` shows up as plain `bash` on macOS and on GNU ps alike,
+        so matching LAUNCHING_NAMES against comm could never fire and a booting
+        session read as dead — orphaned in the TUI, `agent-gone` to IWCL.
+        """
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+        from harnesses import _wanted_processes
+
+        ps = "100 1 bash\n101 100 bash\n"
+        args = ("100 -bash\n"
+                "101 bash /opt/woltspace/container/bin/run-session.sh mywolt\n")
+        runtime = self._runtime(tmp_path, "s\t%1\t100\t1\n", ps=ps, args=args)
+        handle = RuntimeHandle("s", "s")
+
+        assert runtime.has_descendant_process(
+            handle, _wanted_processes("claude", True)) is True
+        # ...and excluding the shim still means "no agent is ready in there".
+        assert runtime.has_descendant_process(
+            handle, _wanted_processes("claude", False)) is False
 
     def test_session_names_come_from_server_wide_pane_snapshot(self, tmp_path):
         runner = FakeRunner(["main\t%1\t10\t1\nnamed-a\t%2\t20\t1\nnamed-a\t%3\t30\t0\n"])

@@ -1327,7 +1327,11 @@ async def session_resume(name: str, request: Request):
     body = await request.json()
     prompt = body.get("prompt", "")
     try:
-        result = resume_session(safe, prompt)
+        # resume_session polls the process table for up to 12s waiting for the
+        # relaunched agent — a synchronous wait. Called inline it would freeze
+        # every other request, the /tui socket and viewport livereload for the
+        # whole resume, so it runs in a thread (same shape as app_share).
+        result = await asyncio.to_thread(resume_session, safe, prompt)
         print(f"[sessions/resume] {safe} → {result.get('status')}")
         return result
     except ResumeUnavailable as e:

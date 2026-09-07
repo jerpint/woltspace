@@ -347,7 +347,10 @@ async def _route_to_session(update: Update, session_name: str, wolt: str, text: 
         f"[telegram message from human, chat_id={chat_id}]: {text}\n"
         f"Reply back to them with: notify --telegram {chat_id} \"your message\""
     )
-    result = message_session(session_name, session_msg)
+    # message_session → resume_session blocks for as long as the agent takes
+    # to come up (up to 12s). On the bot's event loop that stalls every other
+    # chat, so the wait happens in a thread.
+    result = await asyncio.to_thread(message_session, session_name, session_msg)
     _bot_log("telegram_v2_session_route", {
         "session": session_name, "wolt": wolt,
         "text": text[:200], "result": result,
@@ -361,7 +364,10 @@ async def _route_to_session(update: Update, session_name: str, wolt: str, text: 
         # up (caller spawns fresh), prefer the wolt's live session: the
         # message still gets delivered, and the human is told where.
         live = resolve_active_session(wolt)
-        fallback = message_session(live, session_msg) if live and live != session_name else None
+        fallback = (
+            await asyncio.to_thread(message_session, live, session_msg)
+            if live and live != session_name else None
+        )
         _bot_log("telegram_v2_fallback_route", {
             "from": session_name, "to": live, "wolt": wolt,
             "result": fallback,
