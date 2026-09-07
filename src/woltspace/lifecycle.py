@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -21,6 +22,87 @@ from .instance import (
 )
 from .layout import RuntimeLayout
 from .skills import sync_platform_skills
+
+
+#: How long `tunnel_report` will wait for a quick tunnel's random URL to land
+#: in the state file. A named tunnel needs none of this — its URL is config.
+QUICK_TUNNEL_ATTEMPTS = 16
+QUICK_TUNNEL_INTERVAL = 0.5
+
+
+def tunnel_settings(layout: RuntimeLayout) -> dict:
+    """Resolve publishing the way the control plane will resolve it.
+
+    Same precedence the supervisor applies when it boots: an exported shell
+    variable wins, then the data root's `.env`, and a native run publishes
+    nothing unless somebody said otherwise. Read here so `woltspace start` can
+    name the public URL from configuration alone — a named tunnel's address is
+    known before cloudflared has drawn breath, and nothing has to be scraped
+    out of a log to say it.
+    """
+    values = dict(os.environ)
+    env_file = layout.wolts_dir / ".env"
+    if env_file.is_file():
+        try:
+            from dotenv import dotenv_values
+
+            for key, value in dotenv_values(env_file).items():
+                if value is not None and key not in values:
+                    values[key] = value
+        except (OSError, ImportError):  # a broken .env must not break start
+            pass
+    default = "false" if layout.isolation == "host" else "true"
+    enabled = (values.get("WOLTSPACE_PUBLIC_TUNNEL") or default).lower() == "true"
+    named = (values.get("CLOUDFLARE_TUNNEL_URL") or "").strip()
+    token = (values.get("CLOUDFLARE_TUNNEL_TOKEN") or "").strip()
+    return {
+        "enabled": enabled,
+        # A named tunnel is a token *and* a URL: with only one of the pair the
+        # server falls back to a quick tunnel, whose URL is random.
+        "kind": "named" if (named and token) else "quick",
+        "url": named if (named and token) else "",
+    }
+
+
+def read_tunnel_url(layout: RuntimeLayout) -> str:
+    """The URL the running control plane published, if it has published one."""
+    state_file = layout.platform_state / "tunnel.json"
+    try:
+        data = json.loads(state_file.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return ""
+    url = data.get("url") if isinstance(data, dict) else None
+    return url if isinstance(url, str) else ""
+
+
+def tunnel_report(layout: RuntimeLayout, *, wait: bool = True) -> dict:
+    """What to tell the human about public access.
+
+    Three fields, and the difference between two of them matters:
+
+    * ``url`` — the address the lodge publishes at, from config or from the
+      running tunnel. For a named tunnel this is known before cloudflared has
+      drawn breath.
+    * ``live`` — the address a tunnel is *actually* serving right now, as
+      written to ``tunnel.json`` by the control plane. Empty when nothing is
+      published, which is why `status` can tell "configured" from "up".
+
+    A quick tunnel's URL is assigned by Cloudflare at run time, so with
+    ``wait=True`` (a fresh `start`) the state file is briefly watched. With
+    ``wait=False`` (a `status`, which is a question about right now) nothing
+    is ever waited on.
+    """
+    settings = tunnel_settings(layout)
+    if not settings["enabled"]:
+        return {**settings, "live": ""}
+    attempts = QUICK_TUNNEL_ATTEMPTS if (wait and not settings["url"]) else 1
+    for attempt in range(attempts):
+        live = read_tunnel_url(layout)
+        if live:
+            return {**settings, "live": live, "url": settings["url"] or live}
+        if attempt + 1 < attempts:
+            time.sleep(QUICK_TUNNEL_INTERVAL)
+    return {**settings, "live": ""}
 
 
 def start(layout: RuntimeLayout, *, timeout: float = 15.0) -> tuple[int, dict]:

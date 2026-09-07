@@ -308,7 +308,9 @@ class TestMissingContainerMounts:
         """`woltspace serve` catches MountError rather than dumping a traceback."""
         source = (ROOT / "src" / "woltspace" / "cli.py").read_text()
         assert "except (InstanceConflict, MountError, DataRootConflict)" in source
-        assert 'print(f"serve failed: {exc}")' in source
+        # Said in the lodge's voice now — `lore.failure` prints the same words
+        # with a broken-dam colour, and drops the colour when piped.
+        assert 'lore.failure(f"serve failed: {exc}")' in source
 
 
 class TestEnvFileLoading:
