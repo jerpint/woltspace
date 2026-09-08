@@ -31,7 +31,7 @@ def test_python_embeds_exact_scoped_tui_version():
     assert Version(TUI_VERSION).release == Version(__version__).release
     assert Version(TUI_VERSION) <= Version(__version__)
     assert TUI_BINARY == "woltspace-tui"
-    assert tui_spec() == "@woltspace/tui@0.5.0-rc.1"
+    assert tui_spec() == "@woltspace/tui@0.5.0"
 
 
 def _runner(payload, returncode=0):
@@ -72,7 +72,7 @@ def test_mismatched_local_binary_falls_back_to_exact_npx_spec():
     )
     assert resolution.source == "npx"
     assert resolution.command == (
-        "/tools/npx", "--yes", "--package=@woltspace/tui@0.5.0-rc.1", "woltspace-tui",
+        "/tools/npx", "--yes", "--package=@woltspace/tui@0.5.0", "woltspace-tui",
     )
     assert resolution.local_probe["version"] == "0.2.1"
 
