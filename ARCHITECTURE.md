@@ -79,7 +79,7 @@ container/
 templates/                  Jinja2 — base.html, home.html (lodge), tui.html (split view)
 public/                     Static assets — onboard.html, favicon, sw.js, static/ (CSS/JS/sprites)
 test/                       Pytest suite (run with `uv run --extra test pytest test/`)
-migrations/                 Per-version migration scripts (see VERSIONING.md)
+container/migrations/       Per-version migration docs, shipped in the wheel (see VERSIONING.md)
 ```
 
 ---

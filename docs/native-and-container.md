@@ -95,6 +95,30 @@ box, so Auto is their default and the grant store is ignored.
 > running control plane and takes its directory as a positional argument. Same
 > store either way; only the reach differs.
 
+### Upgrading
+
+**Ask any wolt to update the lodge.** The `update` platform skill is the
+gatekeeper: it reads the published versions off PyPI and npm, summarizes the
+release notes in plain words, names anything breaking and any migration that
+ships with the new version, and installs nothing until you say go. Then it
+reinstalls both packages, restarts the control plane, and confirms what came
+back — your tmux sessions survive the restart and are re-adopted. In a
+container it hands you the host commands instead of pretending it can reach
+docker.
+
+The manual fallback is the same two commands, in lockstep, followed by a
+restart:
+
+```bash
+uv tool install --force 'woltspace[connectors]==<version>'
+npm install -g @woltspace/tui@<version>
+woltspace stop && woltspace start
+```
+
+Migrations for a release ship inside the wheel at
+`<install_root>/container/migrations/` — the path `woltspace paths` prints —
+so they arrive with the code that needs them. Patch bumps never carry one.
+
 ### Installing before the packages are published
 
 For a step-by-step first run with real expected output, see

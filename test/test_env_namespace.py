@@ -310,10 +310,10 @@ CANONICAL_TOKEN = re.compile(r"WOLTSPACE_(?:" + LEGACY + r")")
 SCRIPT_SUFFIXES = (".sh", ".bash", ".js", ".mjs", ".cjs", ".md")
 
 #: Migration guides and scripts are the record of what a *released* version
-#: did. Rewriting them would falsify history, and `migrations/v0.5.0.sh` takes
-#: its wolts directory as a positional argument rather than from the
-#: environment at all.
-HISTORICAL = ("migrations/", "docs/migrations/")
+#: did. Rewriting them would falsify history, and
+#: `container/migrations/v0.5.0.sh` takes its wolts directory as a positional
+#: argument rather than from the environment at all.
+HISTORICAL = ("container/migrations/", "docs/migrations/")
 
 
 def _script_sources() -> list[str]:
