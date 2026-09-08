@@ -1,8 +1,7 @@
-# First run on macOS, from a checkout
+# First run natively on macOS
 
 For jerpint and whoever is pairing with him. This is the walkthrough for
-running Woltspace natively on a Mac — no Docker — before either package is
-published.
+running Woltspace natively on a Mac — no Docker.
 
 **Stop the container first.** Two things below depend on it: the Telegram bot
 token can only be polled by one process, and the instance lock is not reliable
@@ -43,10 +42,19 @@ that CLI first.
 
 ---
 
-## 2. Install both artifacts from the checkout
+## 2. Install both artifacts
 
-`@woltspace/tui` is not on the npm registry yet, so `woltspace tui` cannot fall
-back to `npx` — install the TUI from the checkout too.
+The published packages are the way to install:
+
+```bash
+uv tool install 'woltspace[connectors]'
+npm install -g @woltspace/tui
+```
+
+### From a checkout (developing the platform)
+
+If you are working on the platform itself, install from your checkout instead
+so you pick up local changes:
 
 ```bash
 cd /path/to/woltspace

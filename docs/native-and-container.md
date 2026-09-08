@@ -170,6 +170,10 @@ image built on an older `WOLTSPACE_PYPI_VERSION` would run that release's
 entrypoint, which still expects a checkout. Build dev images from the tree
 instead.
 
+Today's default install (`install.sh`) still clones the repo and builds this
+image locally on the host. A `compose` file that pulls a published image
+instead is coming; until then, building locally is the container path.
+
 ### Building from a checkout
 
 ```bash

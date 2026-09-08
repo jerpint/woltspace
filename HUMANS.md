@@ -14,23 +14,39 @@ Each wolt gets:
 
 ## Install
 
+Most people just need Docker Desktop:
+
 ```bash
 curl -fsSL https://woltspace.com/install.sh | bash
 ```
 
-Or clone the repo:
+This runs the container. No git, no Python, no Node required on your machine.
+
+If you're developing wolts or the platform itself, install natively instead:
 
 ```bash
-git clone https://github.com/jerpint/woltspace
+curl -fsSL https://woltspace.com/install.sh | bash -s -- --native
 ```
 
-Then run `woltspace init` — it will offer to add itself to your PATH automatically.
+Or by hand:
+
+```bash
+uv tool install 'woltspace[connectors]'
+npm install -g @woltspace/tui
+woltspace doctor
+woltspace start
+```
+
+Native prerequisites: `uv`, Node >= 18, `tmux`, and a harness CLI (`claude`,
+`codex`, or `opencode`) that you're already logged into.
+
+To upgrade a native install later, reinstall both packages, then
+`woltspace stop && woltspace start`.
 
 ### Prerequisites
 
-- [Docker](https://docs.docker.com/get-docker/)
-
-That's it. No git, no Python, no Node required on your machine.
+- Container: [Docker](https://docs.docker.com/get-docker/)
+- Native: `uv`, Node >= 18, `tmux`, a harness CLI
 
 ## Quick start
 

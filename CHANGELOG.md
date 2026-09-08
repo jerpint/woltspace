@@ -1,5 +1,7 @@
 # Changelog
 
+Releases are documented on GitHub: https://github.com/jerpint/woltspace/releases — this file stopped at 0.4.12 and is kept for history.
+
 ## v0.4.12
 
 - **Projects → Apps rename** — "projects" are now "apps" across the platform. API routes `/projects` → `/apps`, skills `woltspace-projects` → `woltspace-apps`, bot tool `list_projects` → `list_apps`. New apps are created under `wolts/apps/`. **Backwards compatible:** existing apps in `wolts/projects/` are still discovered and served. Optional migration script at `migrations/v0.5.0.sh`. The `woltspace.json` manifest schema is unchanged.
