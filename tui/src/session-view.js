@@ -26,11 +26,26 @@ export const sessionPolicy = (session) => {
   return policy?.mode || 'auto';
 };
 
+// Where a newly woken wolt starts.
+//
+// Every spawn is rooted at the wolt's own home, native and container alike. A
+// null workdir is the API's "use the wolt home" — start_session resolves it
+// against the wolt, which is the only place that knows it. Native used to
+// substitute the directory `woltspace tui` happened to be launched from, which
+// meant a den woken from the platform checkout booted with none of its own
+// project-scoped skills, and a den woken from another wolt's directory booted
+// rooted inside that wolt's tree.
+//
+// `supportsHostWorkdirs` is passed through so callers can see the host can do
+// it; spawning into a host directory is a deliberate opt-in still to be built,
+// and until then nothing picks one implicitly. `launchCwd` is kept in the
+// signature for that future opt-in.
 export function spawnTarget(capabilities, wolt, launchCwd) {
   const native = capabilities?.supports_host_workdirs === true;
   return {
-    workdir: native ? launchCwd : null,
-    displayWorkdir: native ? launchCwd : (wolt?.home || 'wolt home'),
+    workdir: null,
+    displayWorkdir: wolt?.home || 'wolt home',
     executionPolicy: capabilities?.default_execution_policy || (native ? 'prompt' : 'auto'),
+    supportsHostWorkdirs: native,
   };
 }

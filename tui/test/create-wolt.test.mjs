@@ -10,7 +10,9 @@ test('wolt name validation mirrors the server contract', () => {
   assert.match(validateWoltName('a'.repeat(21)), /20 characters/);
 });
 
-test('native create action carries confirmed cwd policy and isolation', () => {
+// A wolt created from a checkout used to be rooted in that checkout. It now
+// starts in <wolts_dir>/<name>, the home the lodge just made for it.
+test('native create action starts the new wolt in its own home', () => {
   assert.deepEqual(createWoltAction(
     'maple', 'raccoon', {
       isolation: 'host',
@@ -21,7 +23,7 @@ test('native create action carries confirmed cwd policy and isolation', () => {
     type: 'create',
     name: 'maple',
     woltType: 'raccoon',
-    workdir: '/src/project',
+    workdir: null,
     executionPolicy: 'prompt',
     isolation: 'host',
   });
