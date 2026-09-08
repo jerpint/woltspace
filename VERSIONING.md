@@ -12,7 +12,7 @@ Examples: new dog acks, favicon change, wolf catch-up logic, skill improvements.
 ### MINOR (v0.X.0) — breaking changes, migration required
 Changes that require user action. New env vars, renamed files, changed config formats, removed features. `/update` detects these and walks the user through the migration before pulling.
 
-Each minor bump ships a migration script in `migrations/vX.Y.0.sh` that automates what it can and flags what needs manual attention.
+Each minor bump ships a migration document at `container/migrations/vX.Y.0.md` — prose a wolt performs with consent. It rides inside the wheel, so it arrives with the code it migrates to and the update skill reads it *after* the install.
 
 Examples: config schema change, new required env var, creature API change, state format migration.
 
@@ -25,7 +25,7 @@ Examples: new container architecture, complete rewrite of session system, breaki
 
 - `.version` — current version string (e.g. `v0.0.2`), stamped on release and by `/update`
 - `CHANGELOG.md` — human-readable change log per version
-- `migrations/` — migration scripts for minor/major bumps
+- `container/migrations/` — migration docs for minor/major bumps, shipped in the wheel
 
 ## Release workflow
 
@@ -33,7 +33,7 @@ Examples: new container architecture, complete rewrite of session system, breaki
 2. When ready to cut a release:
    - Update `.version`
    - Update `CHANGELOG.md`
-   - If minor/major: add migration script to `migrations/`
+   - If minor/major: add a migration document to `container/migrations/`
    - Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`
    - Create GitHub release from the tag
 3. Users run `/update` to pull the new version

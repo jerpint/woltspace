@@ -6,245 +6,197 @@ user_invocable: true
 
 # Update Woltspace
 
-You are the lodge's gatekeeper for platform updates. Your job: check what's arriving from upstream, translate it into plain language (no git jargon), flag anything that could disrupt the lodge, and only open the gates when the human says go.
+You are the lodge's gatekeeper for platform updates. Check what is published upstream,
+translate it into plain language, flag anything that could disrupt the lodge, and open the
+gates only when the human says go.
 
-**Never pull without explicit user confirmation. This is the safety gate — updates can crash the running app.**
+**Never update without explicit consent. This is the safety gate — an update stops and
+restarts the control plane the lodge is running on.**
 
-## Step 0: Check for local drift
+The platform is two published packages, not a checkout:
 
-Before anything else, check if the platform code has been modified inside the container. Wolts or Claude sessions sometimes accidentally edit files in `/workspace/woltspace`. If there's drift, a pull will fail with merge conflicts.
+- `woltspace` on PyPI — the control plane, the lodge, the connectors, and the platform
+  skills (they ship inside the wheel).
+- `@woltspace/tui` on npm — the terminal cockpit and the pty bridge.
 
-```bash
-cd /workspace/woltspace
-DRIFT=$(git status --short)
-```
+The wheel pins the exact TUI version it accepts, so the two move **in lockstep**. Updating
+one alone leaves `woltspace tui` refusing to start.
 
-**If drift is found:**
-
-1. Show the user what's changed:
-```bash
-git status --short
-git diff --stat
-```
-
-2. Categorize the risk:
-   - `src/woltspace/`, `server/`, `woltspace` → **HIGH** — platform infrastructure
-   - `container/bot/`, `container/creatures/` → **MEDIUM** — bot/creature code
-   - `container/skills/`, `CLAUDE.md`, `*.md` → **LOW** — skills/docs, likely auto-updated
-
-3. Notify the user about the drift and ask how to proceed:
-   - **If LOW risk only:** "found some skill/doc changes in the platform dir — safe to discard. want me to reset and pull?"
-   - **If MEDIUM/HIGH risk:** "found modifications to platform code — [list files]. these will be lost on pull. want me to save them to a branch first, or discard and proceed?"
-
-4. If the user wants to save:
-```bash
-cd /workspace/woltspace
-git checkout -b backup/pre-update-$(date +%Y%m%d-%H%M%S)
-git add -A
-git commit -m "pre-update snapshot — local modifications"
-git checkout -  # return to previous branch
-```
-
-5. Reset to clean state before proceeding:
-```bash
-cd /workspace/woltspace
-git checkout -- .
-git clean -fd
-```
-
-**If clean (no drift):** proceed to Step 1.
-
-## Step 1: Determine what's incoming
+## Step 1 — name the runtime
 
 ```bash
-WOLTS_DIR="${WOLTSPACE_WOLTS_DIR:-${WOLTS_DIR:-/workspace/wolts}}"
-BRANCH=$(cat "$WOLTS_DIR/.space/platform/woltspace-branch" 2>/dev/null || echo "main")
-
-cd /workspace/woltspace
-git fetch origin "$BRANCH" --tags
+printenv WOLTSPACE_ISOLATION   # host = native, external = container
 ```
 
-Check if there's actually anything new:
-```bash
-LOCAL=$(git rev-parse HEAD)
-REMOTE=$(git rev-parse "origin/$BRANCH")
-```
+If the variable is empty, fall back to the shape of the filesystem: `/workspace/woltspace`
+and `/workspace/wolts` both existing means container; otherwise native.
 
-If they match, tell the user they're already up to date and stop.
+Say which one you are in before anything else — the rest of this skill forks there.
+Native updates itself. A container cannot: docker lives on the human's machine and
+nothing inside the box can reach it.
 
-## Step 2: Determine the version bump type
+## Step 2 — check
+
+**Installed.** The `woltspace` first on a session's PATH is the bundled thin client; it
+execs the real CLI for `--version` and `paths`, so this is accurate in both runtimes:
 
 ```bash
-CURRENT=$(cat /workspace/woltspace/.version 2>/dev/null || echo "v0.0.0")
-LATEST_TAG=$(git describe --tags --abbrev=0 origin/$BRANCH 2>/dev/null || echo "untagged")
+woltspace --version
+woltspace paths                      # install_root — remember it, Step 6 needs it
+woltspace-tui-service --version || npm ls -g @woltspace/tui
 ```
 
-Parse the version components to determine the bump type:
+**Published.**
 
 ```bash
-# Parse current version (strip leading 'v')
-CUR="${CURRENT#v}"
-CUR_MAJOR=$(echo "$CUR" | cut -d. -f1)
-CUR_MINOR=$(echo "$CUR" | cut -d. -f2)
-CUR_PATCH=$(echo "$CUR" | cut -d. -f3)
-
-# Parse latest tag
-LAT="${LATEST_TAG#v}"
-LAT_MAJOR=$(echo "$LAT" | cut -d. -f1)
-LAT_MINOR=$(echo "$LAT" | cut -d. -f2)
-LAT_PATCH=$(echo "$LAT" | cut -d. -f3)
-
-# Determine bump type
-if [ "$LAT_MAJOR" != "$CUR_MAJOR" ]; then
-  BUMP="major"
-elif [ "$LAT_MINOR" != "$CUR_MINOR" ]; then
-  BUMP="minor"
-else
-  BUMP="patch"
-fi
-echo "Bump type: $BUMP ($CURRENT → $LATEST_TAG)"
+curl -s https://pypi.org/pypi/woltspace/json | python3 -c "import json,sys;print(json.load(sys.stdin)['info']['version'])"
+npm view @woltspace/tui version
 ```
 
-Also check if a migration script exists for the target version:
-```bash
-MIGRATION="/workspace/woltspace/migrations/${LATEST_TAG}.sh"
-# We'll check after pulling — the migration ships with the new code
-```
+If installed and published match, say the lodge is current and stop. No consent question,
+no commands.
 
-## Step 3: Review the changes
+**Bump type** comes from the numbers alone — `MAJOR.MINOR.PATCH`. Major changed → major,
+else minor changed → minor, else patch.
 
-Look at what's incoming:
-```bash
-git log --oneline HEAD..origin/$BRANCH
-git diff --stat HEAD..origin/$BRANCH
-```
-
-Read the actual diff for anything that looks like it could break existing behavior. Also read the CHANGELOG.md from the incoming code if it exists:
-```bash
-git show origin/$BRANCH:CHANGELOG.md 2>/dev/null || echo "no changelog"
-```
-
-Focus on:
-- **Config/env changes** — new required env vars, renamed vars, changed defaults
-- **Removed or renamed files** — skills, cron scripts, bot tools that wolts might depend on
-- **CLAUDE.md changes** — new instructions that change how sessions behave
-- **`src/woltspace/container_entrypoint.py` changes** — container boot, startup behavior, process management
-- **Database/state format changes** — .state files, woltspace.json schema changes
-- **Bot behavior changes** — tool renames, removed capabilities, changed routing
-
-## Step 4: Report to the user
-
-**Tone: lore-flavored, brief by default.** Lead with what's cool and new. Only go technical if the user asks or if something could break.
-
-### Patch bump (safe)
-> 🟢 **Patch update available** ($CURRENT → $LATEST_TAG)
-> [1-2 sentence lore-flavored summary]. Safe to pull — no migration needed. Want me to bring it in?
-
-### Minor bump (migration required)
-> 🟡 **Minor update available** ($CURRENT → $LATEST_TAG) — migration required
-> [summary of what's new]. This one needs a migration step: [plain-English description of what changes and what the user needs to do]. Want details, or proceed?
-
-### Major bump (platform overhaul)
-> 🔴 **Major update available** ($CURRENT → $LATEST_TAG) — significant changes
-> [summary]. This is a big one: [description of what's changing]. I'd recommend reading the full changelog before pulling. Want me to walk through it?
-
-Rules:
-- Lead with the cool stuff, not the risk
-- Name the risk clearly but briefly — don't bury it in lore
-- Never say "breaking changes" without saying exactly what breaks and what the user needs to do
-- Offer "want more details?" rather than front-loading everything
-
-## Step 5: Confirm before pulling
-
-**Use `AskUserQuestion` to wait for the user's explicit yes/no.** Do not skip this. Do not assume consent.
-
-Accept any of: "yes", "pull it", "go ahead", "do it", "yes pull", "confirm".
-
-Once confirmed:
+**Release notes** for the published version (public, no auth):
 
 ```bash
-cd /workspace/woltspace && git pull origin "$BRANCH"
-
-# Stamp version (prefer tag if HEAD is tagged)
-NEW_VERSION=$(git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD)
-mkdir -p "$WOLTS_DIR/.space/platform"
-echo "$NEW_VERSION" > "$WOLTS_DIR/.space/platform/woltspace-version"
-echo "$BRANCH" > "$WOLTS_DIR/.space/platform/woltspace-branch"
-# Also update the .version file used at image build time
-echo "$NEW_VERSION" > /workspace/woltspace/.version
+curl -s https://api.github.com/repos/jerpint/woltspace/releases/tags/v<latest> \
+  | python3 -c "import json,sys;d=json.load(sys.stdin);print(d.get('name',''));print(d.get('body',''))"
 ```
 
-## Step 5.5: Sync dependencies
+Read the body and summarize it in plain words — what the lodge gains, what changes under
+the human. No commit hashes, no branch names, no diff jargon. Two things you must not
+bury: anything the notes mark **breaking**, and whether a migration ships for that
+version (Step 6 tells you how to look; the answer arrives with the new code, so before
+the install you can only report what the notes claim).
 
-After pulling, always sync Python dependencies. New code may import packages that aren't installed yet — skipping this will crash the server or bot on next reload.
+## Step 3 — one status block
+
+Brief, lore-flavoured, risk named but not dramatized. Lead with what is new.
+
+### Already current
+> 🟢 **The lodge is current** (0.5.0)
+> Nothing to fetch. Both halves — control plane and cockpit — are on the published version.
+
+### Patch
+> 🟢 **Patch available** (0.5.0 → 0.5.1)
+> [one or two sentences on what it fixes]. Small and safe, no migration. Want me to bring it in?
+
+### Minor
+> 🟡 **Minor update available** (0.5.0 → 0.6.0)
+> [what the lodge gains]. [If a migration ships: one plain sentence on what it changes and
+> what it asks of you.] The lodge blinks for about ten seconds while the control plane
+> restarts — live sessions survive it. Want details, or shall I go?
+
+### Major
+> 🔴 **Major update available** (0.5.0 → 1.0.0) — big one
+> [what it is]. Breaking: [exactly what breaks and what you do about it]. I'd read the
+> notes before we move. Want me to walk you through them?
+
+Rules: never say "breaking changes" without saying what breaks and what the human does
+about it. Offer detail rather than front-loading it.
+
+## Step 4 — consent
+
+Ask with `AskUserQuestion` and wait. Do not infer a yes. Accept "yes", "go", "do it",
+"go ahead", "update". Anything else is a no.
+
+If the human already said "update it, confirm" in their first message, that is the yes —
+still show the status block from Step 3 first, so they know what they agreed to.
+
+## Step 5a — native update (on GO)
+
+Both packages, same version, in this order:
 
 ```bash
-cd /workspace/woltspace
-uv sync --project server 2>&1
-uv sync --project container/bot 2>&1
+uv tool install --force 'woltspace[connectors]==<latest>'
+npm install -g @woltspace/tui@<latest>
 ```
 
-This is fast (no-ops if deps haven't changed) and safe to run every time.
+The `connectors` extra carries the Telegram dependencies; dropping it takes chat dark.
+The TUI install is not optional — the wheel pins that exact version and refuses a
+mismatch.
 
-## Step 5.6: Sync skills and CLAUDE.md
-
-After pulling, re-sync platform skills and the CLAUDE.md platform section to all wolts:
+Then the restart. **Tell the human before you run it**, because this kills the control
+plane your own session is talking to:
 
 ```bash
-woltspace-python -c "
-import sys; sys.path.insert(0, '/workspace/woltspace/container/lib')
-from pathlib import Path
-from skills_sync import sync_all_wolt_skills
-from woltspace.container_entrypoint import sync_claude_md_platform_section
-woltspace = Path('/workspace/woltspace')
-wolts = Path('${WOLTSPACE_WOLTS_DIR:-${WOLTS_DIR:-/workspace/wolts}}')
-sync_all_wolt_skills(woltspace, wolts)
-sync_claude_md_platform_section(wolts, woltspace)
-print('skills and CLAUDE.md synced to all wolts')
-"
+woltspace stop
+woltspace start
 ```
 
-This ensures all wolts get the latest `woltspace-*` skills and platform instructions immediately — no container restart needed.
+What that costs, in plain words:
 
-## Step 6: Run migration (minor/major bumps only)
+- Live sessions **survive** — they live in tmux, which `stop` never touches, and `start`
+  re-adopts them from the registry.
+- Telegram goes quiet for roughly ten seconds while the connector comes back.
+- The lodge and the cockpit are unreachable for the same few seconds.
+- Platform skills resync during `start`. There is no separate sync step — do not invent one.
 
-After pulling, check for a migration script:
+Then confirm it came back:
 
 ```bash
-MIGRATION="/workspace/woltspace/migrations/${NEW_VERSION}.sh"
-if [ -f "$MIGRATION" ]; then
-  echo "Migration script found: $MIGRATION"
-  cat "$MIGRATION"
-fi
+woltspace status
 ```
 
-**For patch bumps:** skip migration entirely — just do a quick sanity check:
-- Did the pull succeed cleanly?
-- Are the key processes still running? (`curl -s http://localhost:7777/health` or similar)
-- Report success.
+Report the state (healthy or not) and how many sessions were adopted. If `start` fails,
+`woltspace doctor` names the one command that fixes each failed check — read it out
+rather than guessing.
 
-**For minor/major bumps:** if a migration script exists, show it to the user and run it with their confirmation. The script handles the mechanical parts (moving files, updating configs). Flag anything that needs manual action (new env vars, etc.).
+## Step 5b — container (on GO)
 
-## Step 7: Verify and report
+You cannot do it. Docker is on the human's machine and this box has no reach into it.
+Print the two commands for them to run on the host, and say plainly that you are handing
+over rather than executing:
 
 ```bash
-git log --oneline ORIG_HEAD..HEAD
+woltspace rebuild --latest
+woltspace restart
 ```
 
-Notify the user: what landed, the version, and any action items.
+Once the image is published to a registry, that pair becomes `docker compose pull &&
+docker compose up -d` — mention it as what is coming, not as what to run today.
 
-Action items to flag:
-- **Bot code changed** → "the bot auto-reloads via watchfiles — should pick this up shortly"
-- **`container_entrypoint.py` or the Dockerfile changed** → "container restart needed for this to take full effect"
-- **New env vars** → "add `VAR_NAME` to your `.env` before restarting"
-- **Server code changed** → "server auto-reloads via uvicorn --reload, should be live already"
-- **Skills changed** → "woltspace-* skills synced to all wolts — new sessions will use updated skills, existing sessions keep the old version"
+A container rebuild ends the running sessions; unlike native, they do not survive it.
+Say so before the human commits.
+
+## Step 6 — migration
+
+Migrations ship **inside the wheel**, so the one for the new version only exists after the
+install. Look after Step 5a, never before:
+
+```bash
+INSTALL_ROOT=$(woltspace paths | awk '$1=="install_root:"{print $2}')
+ls "$INSTALL_ROOT/container/migrations/"
+```
+
+The file for the version you just installed is `v<latest>.md` (older entries may be bare
+`<latest>.md` or `.sh` — check both spellings before concluding there is none).
+
+- **Patch bump:** skip this step entirely. Patches do not carry migrations.
+- **Minor or major:** if the file exists, read it, summarize the steps in plain words, and
+  ask before performing any of them. The documents are prose a wolt carries out with
+  consent — not scripts to fire blind. If one names a shell script beside it, show the
+  human what it does before running it. If no file exists, say so; that is a normal answer.
+
+## Step 7 — report
+
+Close with: the version now installed (both halves), whether the control plane came back
+healthy, how many sessions were adopted, and any action item the notes or the migration
+left open — a new config key, a renamed setting, something the human has to do by hand.
+
+Flag anything you could not verify rather than rounding it up to success.
 
 ## Notes
 
-- The platform code at `/workspace/woltspace` is a git clone inside the container — `git pull` works
-- After pulling, the running image is now stale vs the container's filesystem. A `woltspace rebuild` from the host will re-bake the image for future cold starts, but isn't required for the current session
-- The uvicorn server runs with `--reload` so Python server changes auto-apply
-- Bot code auto-reloads via watchfiles
-- When in doubt about whether a change is breaking, err on the side of flagging it
-- If the user said `confirm` up front or already said "yes, pull it", skip straight to Step 5
+- The platform is an installed package. There is no clone to pull, no branch to track, and
+  nothing under `/workspace` to edit — a wolt that finds itself reaching for git here has
+  the wrong model of the world.
+- Two artifacts, one version. If you ever see them disagree, that is the bug: reinstall the
+  pair rather than patching one.
+- Skills are read live from the installed bundle, so upgrading the wheel upgrades every
+  platform skill at once. Sessions already running keep the bodies they started with.
+- When unsure whether something is breaking, flag it. A false alarm costs a sentence; a
+  missed one costs the lodge.
