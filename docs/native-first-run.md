@@ -51,20 +51,20 @@ back to `npx` — install the TUI from the checkout too.
 ```bash
 cd /path/to/woltspace
 uv tool install .
-cd tui && npm pack && npm install -g ./woltspace-tui-0.5.0-rc.1.tgz
+cd tui && npm pack && npm install -g ./woltspace-tui-0.5.0.tgz
 ```
 
-`npm pack` prints the file list and leaves `woltspace-tui-0.5.0-rc.1.tgz` in `tui/`;
+`npm pack` prints the file list and leaves `woltspace-tui-0.5.0.tgz` in `tui/`;
 delete it afterwards if you do not want it lying in the checkout.
 
 Check both halves agree:
 
 ```console
 $ woltspace --version
-woltspace 0.5.0-rc.1
+woltspace 0.5.0
 
 $ woltspace-tui --version --json
-{"name":"@woltspace/tui","version":"0.5.0-rc.1","binary":"woltspace-tui"}
+{"name":"@woltspace/tui","version":"0.5.0","binary":"woltspace-tui"}
 ```
 
 The Python side embeds that exact name and version and accepts a local binary
@@ -100,7 +100,7 @@ browser terminal. Check it landed too:
 
 ```console
 $ woltspace-tui-service --version --json
-{"name":"@woltspace/tui","version":"0.5.0-rc.1","binary":"woltspace-tui-service"}
+{"name":"@woltspace/tui","version":"0.5.0","binary":"woltspace-tui-service"}
 ```
 
 ---
@@ -224,7 +224,7 @@ session continues; it has not hung.
 ```console
 $ woltspace tui --dry-run
 source: local
-package: @woltspace/tui@0.5.0-rc.1
+package: @woltspace/tui@0.5.0
 command: /Users/you/.npm-global/bin/woltspace-tui
 ```
 
@@ -246,10 +246,10 @@ tells you so:
 ```console
 $ woltspace tui --dry-run
 source: npx
-package: @woltspace/tui@0.5.0-rc.1
-command: /usr/local/bin/npx --yes --package=@woltspace/tui@0.5.0-rc.1 woltspace-tui
-woltspace: ignoring /nonexistent/woltspace-tui — [Errno 2] No such file or directory: '/nonexistent/woltspace-tui'; resolving @woltspace/tui@0.5.0-rc.1 through npx instead.
-woltspace: if that fails because @woltspace/tui@0.5.0-rc.1 is not published yet, install both artifacts from a checkout: uv tool install . && cd tui && npm pack && npm install -g ./woltspace-tui-0.5.0-rc.1.tgz
+package: @woltspace/tui@0.5.0
+command: /usr/local/bin/npx --yes --package=@woltspace/tui@0.5.0 woltspace-tui
+woltspace: ignoring /nonexistent/woltspace-tui — [Errno 2] No such file or directory: '/nonexistent/woltspace-tui'; resolving @woltspace/tui@0.5.0 through npx instead.
+woltspace: if that fails because @woltspace/tui@0.5.0 is not published yet, install both artifacts from a checkout: uv tool install . && cd tui && npm pack && npm install -g ./woltspace-tui-0.5.0.tgz
 ```
 
 Redo step 2 if you see that.
