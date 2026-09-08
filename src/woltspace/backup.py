@@ -30,7 +30,7 @@ from pathlib import Path, PurePosixPath
 from . import __version__
 
 #: Everything inside the archive lives under this prefix, so a restore lands a
-#: single directory the human can point WOLTS_DIR at, with the manifest beside
+#: single directory the human can point WOLTSPACE_WOLTS_DIR at, with the manifest beside
 #: it rather than buried in the tree it describes.
 ARCHIVE_ROOT = "wolts"
 MANIFEST_NAME = "backup-manifest.json"
@@ -730,6 +730,6 @@ def restore_lines(result: RestoreResult) -> list[str]:
     lines.extend([
         "",
         "boot from it with:",
-        f"  WOLTS_DIR={result.wolts_dir} woltspace start",
+        f"  WOLTSPACE_WOLTS_DIR={result.wolts_dir} woltspace start",
     ])
     return lines

@@ -28,6 +28,12 @@ class AdoptionRuntime:
         pane = self.resolved.get(handle.tmux_session_name)
         return handle.at_pane(pane) if pane else None
 
+    def has_descendant_process(self, handle, process_names):
+        # Part of the SessionRuntime protocol, and liveness now goes through
+        # it for one session as well as for a list: a resolved agent pane means
+        # an agent is in there.
+        return handle.tmux_session_name in self.resolved
+
     def paste(self, handle, text, settle=0.0, **kwargs):
         self.pastes.append((handle, text, settle))
 

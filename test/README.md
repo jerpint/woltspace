@@ -35,7 +35,7 @@ bash test/test-cli.sh --branch refactor-init
 
 The test is fully isolated from your real setup:
 
-- `WOLTS_DIR=/tmp/test-woltspace-cli/wolts` — temp directory, cleaned up after
+- `WOLTSPACE_WOLTS_DIR=/tmp/test-woltspace-cli/wolts` — temp directory, cleaned up after
 - `WOLTSPACE_CONTAINER=woltspace-test` — separate container name
 - `WOLTSPACE_PORT=7778` — different host port (won't conflict with running woltspace on 7777)
 - `WOLTSPACE_NONINTERACTIVE=true` — skips all prompts

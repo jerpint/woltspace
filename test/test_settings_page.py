@@ -30,7 +30,7 @@ def test_settings_page_renders_defaults_and_overrides(tmp_path, monkeypatch):
     (tmp_path / "woltspace.json").write_text(json.dumps({"harness": {"default": "claude"}}))
 
     monkeypatch.setattr(app_module, "WOLTS_DIR", tmp_path)
-    monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
 
     response = asyncio.run(_request("GET", "/settings"))
     body = response.text
@@ -50,7 +50,7 @@ def test_settings_page_renders_defaults_and_overrides(tmp_path, monkeypatch):
 def test_settings_assets_and_mutations_are_wired(tmp_path, monkeypatch):
     _write_wolt(tmp_path, "maple", "raccoon")
     monkeypatch.setattr(app_module, "WOLTS_DIR", tmp_path)
-    monkeypatch.setenv("WOLTS_DIR", str(tmp_path))
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
 
     css = asyncio.run(_request("GET", "/static/design-system.css"))
     script = asyncio.run(_request("GET", "/static/settings.js"))

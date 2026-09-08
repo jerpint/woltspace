@@ -47,7 +47,6 @@ from .config import (
     WOLT_NAME,
     WOLTS_DIR,
     WOLTSPACE_DIR,
-    get_env,
     load_dotenv,
 )
 from . import tunnel as tunnel_mgr
@@ -60,7 +59,7 @@ _sys.path.insert(0, str(WOLTSPACE_DIR / "container" / "lib"))
 from sessions import (
     resume_session, start_session, stop_session,
     deliver_message, resolve_active_session, format_spawned_prompt,
-    wolt_harness,
+    wolt_harness, ResumeUnavailable, ResumeFailed,
 )
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
@@ -702,7 +701,10 @@ async def session_message(session_id: str, request: Request):
     if status == "delivered":
         print(f"[message] → {safe}: {text[:80]}")
         return {"ok": True, **result}
-    code = 404 if status == "no-session" else 409  # 409 = session-dead
+    # 409 for session-dead and agent-gone alike: the request was well
+    # formed, the session just cannot receive right now. agent-gone carries a
+    # detail saying to resume and retry.
+    code = 404 if status == "no-session" else 409
     return JSONResponse({"ok": False, **result}, status_code=code)
 
 
@@ -1325,9 +1327,23 @@ async def session_resume(name: str, request: Request):
     body = await request.json()
     prompt = body.get("prompt", "")
     try:
-        result = resume_session(safe, prompt)
+        # resume_session polls the process table for up to 12s waiting for the
+        # relaunched agent — a synchronous wait. Called inline it would freeze
+        # every other request, the /tui socket and viewport livereload for the
+        # whole resume, so it runs in a thread (same shape as app_share).
+        result = await asyncio.to_thread(resume_session, safe, prompt)
         print(f"[sessions/resume] {safe} → {result.get('status')}")
         return result
+    except ResumeUnavailable as e:
+        # Nothing to replay. Retrying will never help, so say so rather than
+        # letting the caller loop on a wake that cannot happen.
+        print(f"[sessions/resume] {safe} → unavailable: {e}")
+        return JSONResponse({"error": str(e)}, status_code=409)
+    except ResumeFailed as e:
+        # We relaunched and no agent came up. The message names what to look
+        # at; the TUI prints it verbatim instead of "won't stir".
+        print(f"[sessions/resume] {safe} → failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=502)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
     except Exception as e:

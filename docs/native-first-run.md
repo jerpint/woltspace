@@ -75,11 +75,25 @@ later.
 > the `export PATH=...` line it prints (or run `uv tool update-shell`) and open
 > a new shell.
 
-> **Three programs are called `woltspace`**, and one of them may already be on
-> your PATH: the bash Docker launcher at the root of this checkout. If your
-> shell rc puts the checkout ahead of `~/.local/bin`, plain `woltspace` keeps
-> running the container CLI. `which -a woltspace` shows the order; until you fix
-> it, call the native one as `~/.local/bin/woltspace` or alias it.
+> **Three programs are called `woltspace`**, and on a native install two of
+> them can sit ahead of the one you just installed:
+>
+> 1. `<bundle>/container/bin/woltspace` — the thin HTTP control client. It is on
+>    every session's PATH by design, because that is the directory `notify`,
+>    `push-view` and `session-reg` come from. It now recognises a native install
+>    and execs the console script beside it for anything it does not serve
+>    itself, so `woltspace start` and `woltspace doctor` reach the right program
+>    even when this copy wins the PATH race.
+> 2. `woltspace` at the root of a checkout — the container-era **bash Docker
+>    launcher**. If your shell rc puts the checkout ahead of `~/.local/bin`
+>    (`export PATH="$HOME/woltspace:$PATH"` is the usual line), plain
+>    `woltspace start` runs *this*, and it will try to boot a container. It now
+>    refuses when a native control plane owns the data root — but the launcher
+>    is not the CLI you want on a native host either way.
+> 3. `~/.local/bin/woltspace` — the one you want.
+>
+> `which -a woltspace` shows the order. If a checkout is winning, drop that
+> `export PATH` line from your shell rc, or move it after `~/.local/bin`.
 
 The TUI install also brings `woltspace-tui-service`, the pty bridge behind the
 browser terminal. Check it landed too:
@@ -97,7 +111,7 @@ Do **not** point the first native run at `~/.woltspace/wolts` while the
 container has it mounted. Use a new directory:
 
 ```bash
-export WOLTS_DIR=~/.woltspace/native-wolts
+export WOLTSPACE_WOLTS_DIR=~/.woltspace/native-wolts
 ```
 
 Confirm what it resolved:
@@ -140,7 +154,7 @@ Two checks worth understanding:
   with that CLI — Woltspace will never copy a credential file for you.
 - **data-root-sharing** only appears if the directory is already claimed by
   another instance, including a running container. If you see it, stop that
-  instance or pick a different `WOLTS_DIR`.
+  instance or pick a different `WOLTSPACE_WOLTS_DIR`.
 - **tui-bridge** is what the browser's terminal pane connects through. From a
   checkout it is the checkout's own `tui/src/tui-service.js`; from a wheel it
   is the `woltspace-tui-service` that came with the TUI. A warning here means
@@ -152,10 +166,19 @@ Two checks worth understanding:
 
 ```console
 $ woltspace start
-woltspace started: http://127.0.0.1:7777
-wolts: /Users/you/.woltspace/native-wolts
-logs: /Users/you/.woltspace/native-wolts/.space/logs/control-plane.log
-status: woltspace status
+  🦫  woltspace
+
+  ⛺ the lodge started
+     lights on in the den
+
+  🦫 http://127.0.0.1:7777
+     the lodge is open
+
+  🌲 tunnel disabled - the lodge stays on this machine
+
+  🪵 wolts: /Users/you/.woltspace/native-wolts
+  🪵 logs: /Users/you/.woltspace/native-wolts/.space/logs/control-plane.log
+  🪵 status: woltspace status
 ```
 
 `start` runs doctor first and refuses to launch if it fails. Add `--port 7788`
@@ -163,20 +186,26 @@ if 7777 is taken.
 
 ```console
 $ woltspace status
+  ⛺ the lodge is open
 state: healthy
+
 endpoint: http://127.0.0.1:7777
-wolts: /Users/you/.woltspace/native-wolts
-owner: pid 67618 · bd6929db67a34a8bb0ab484b632ceff3 · your-macbook
-adoption: 0 live · 0 orphaned · 0 unchanged
-connector telegram: disabled · disabled
-  fix: Set channels.telegram = {"enabled": true, "token": "<bot token>"} in /Users/you/.woltspace/native-wolts/.space/platform/config.json (or export TELEGRAM_BOT_TOKEN).
-connector tui: running · pty bridge on 127.0.0.1:7778 · node /path/to/woltspace/tui/src/tui-service.js · pid 67631
+  🪵 tunnel: disabled
+  🪵 wolts: /Users/you/.woltspace/native-wolts
+  🪵 owner: your-macbook
+  🐾 adoption: 0 live · 0 orphaned · 0 unchanged
+
+  🐶 connector telegram: disabled · disabled
+     fix: Set channels.telegram = {"enabled": true, "token": "<bot token>"} in /Users/you/.woltspace/native-wolts/.space/platform/config.json (or export TELEGRAM_BOT_TOKEN).
+  🦫 connector tui: running · pty bridge on 127.0.0.1:7778 · woltspace-tui-service at /opt/homebrew/bin/woltspace-tui-service
 ```
 
-`adoption: 0 live` is right on a first run — there are no sessions to adopt
-yet. On later restarts this is how you see that live sessions were picked back
-up. `connector tui: running` is the pty bridge — without it the split view's
-terminal pane cannot attach.
+`state:` and `endpoint:` sit at column 0 on purpose — those two lines are what
+scripts grep for, and `--json` carries everything else, including the pid and
+instance id the human read leaves out. `adoption: 0 live` is right on a first
+run — there are no sessions to adopt yet. On later restarts this is how you see
+that live sessions were picked back up. `connector tui: running` is the pty
+bridge — without it the split view's terminal pane cannot attach.
 
 The tunnel is **off** by default natively; nothing is published. To expose the
 lodge deliberately, `WOLTSPACE_PUBLIC_TUNNEL=true woltspace start`.
@@ -247,7 +276,7 @@ That replaces the step 2 install rather than adding to it. (Plain
 `uv tool install 'woltspace[connectors]'` resolves from PyPI, where nothing is
 published yet.)
 
-Then write `$WOLTS_DIR/.space/platform/config.json`:
+Then write `$WOLTSPACE_WOLTS_DIR/.space/platform/config.json`:
 
 ```json
 {
@@ -301,7 +330,7 @@ re-adopts them from the registry — `woltspace status` will show them under
 
 ## Pointing native at your real colony
 
-Once the fresh-root run works, the same commands against `WOLTS_DIR=~/.woltspace/wolts`
+Once the fresh-root run works, the same commands against `WOLTSPACE_WOLTS_DIR=~/.woltspace/wolts`
 (container stopped!) bring up your existing wolts. Several things the container
 does at boot have no native equivalent yet — platform tools on PATH, `.env`
 secrets for the bot, skill sync, the creatures. The full list with workarounds
@@ -320,7 +349,7 @@ most of it.
 | `port: 127.0.0.1:7777 is already in use` | Something else has the port — `woltspace start --port 7788`. |
 | `woltspace already running: http://127.0.0.1:PORT` | An instance owns this data root. That URL is where it actually serves, which may not be the port you asked for. |
 | `state: stale` | A previous control plane died without cleaning up. `woltspace stop` clears the metadata; it signals nothing and leaves tmux alone. |
-| `data-root-sharing` warning | Another instance — likely the container — claims this directory. Stop it or use a different `WOLTS_DIR`. |
+| `data-root-sharing` warning | Another instance — likely the container — claims this directory. Stop it or use a different `WOLTSPACE_WOLTS_DIR`. |
 | `serve failed: … is not mounted` | Container mode without the wolts mount. Not applicable to a native run. |
 | Connector `degraded` with a 409 | Another process is polling that bot token. |
 | Connector `failed` after several restarts | It could not stay up; read `.space/logs/connector-<name>.log`. |
@@ -328,7 +357,7 @@ most of it.
 | `connector tui: failed` and its log says `EADDRINUSE` | Something else holds the bridge port (the API port + 1 unless you set one) — a hand-started `tui-service.js`, perhaps. Stop it, or set `WOLTSPACE_TUI_PORT`. |
 | Pane opens then closes, log says `posix_spawnp failed` | node-pty's `spawn-helper` lost its exec bit in the npm tarball. The bridge fixes this itself on start; if you see it, `chmod +x` the `prebuilds/darwin-*/spawn-helper` under your node-pty. |
 
-The control plane's own log is `$WOLTS_DIR/.space/logs/control-plane.log`.
+The control plane's own log is `$WOLTSPACE_WOLTS_DIR/.space/logs/control-plane.log`.
 
 ### Confirming it wrote no credentials
 
@@ -337,10 +366,10 @@ After a first run, the data root should contain state and logs and nothing
 resembling a credential:
 
 ```console
-$ find "$WOLTS_DIR" \( -name "*credential*" -o -name "auth.json" \) | wc -l
+$ find "$WOLTSPACE_WOLTS_DIR" \( -name "*credential*" -o -name "auth.json" \) | wc -l
 0
 
-$ find "$WOLTS_DIR"
+$ find "$WOLTSPACE_WOLTS_DIR"
 <wolts>
 <wolts>/.space
 <wolts>/.space/logs

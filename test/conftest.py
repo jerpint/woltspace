@@ -4,10 +4,14 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+from env_compat import get_env  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +238,7 @@ def shadow_wolt():
     hardcode. Teardown stops every session it spawned, then removes it — and
     refuses to remove anything it did not create.
     """
-    wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    wolts_dir = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
     home = wolts_dir / SHADOW_WOLT
     marker = home / SHADOW_MARKER
     if not shadow_is_reusable(home):
@@ -304,7 +308,7 @@ def routed_test_session(test_chat_id, shadow_wolt):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
     from sessions import SessionRegistry
 
-    wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    wolts_dir = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
     wolt = shadow_wolt
     reg = SessionRegistry(wolts_dir)
     name = f"test-probe-{int(time.time()) % 100000}-{os.getpid()}"
@@ -348,12 +352,17 @@ class FakeSessionRuntime:
 
     panes: the pane inventory this fake reports for any session, as
     (pane_id, pane_pid, active) tuples. agents: the pane_ids whose process
-    tree should count as carrying an agent.
+    tree should count as carrying an agent. agent_sessions: tmux session names
+    the batch check reports as agent-bearing (None = undetermined, which makes
+    list() fall back to tmux presence).
     """
 
     def __init__(self, *, alive: bool = True, capture_text: str = "",
-                 next_pane: str = "%1", panes=None, agents=()):
+                 next_pane: str = "%1", panes=None, agents=(),
+                 agent_sessions=None):
         self._alive = alive
+        # Batch liveness answer, by tmux session name. None = undetermined.
+        self._agent_sessions = agent_sessions
         self._capture_text = capture_text
         self._next_pane = next_pane
         self._panes = list(panes) if panes is not None else []
@@ -467,6 +476,43 @@ class FakeSessionRuntime:
     def has_descendant_process(self, handle, process_names):
         matched = self._matching_panes_for_handle(handle, process_names)
         return None if matched is None else bool(matched)
+
+    def sessions_with_process(self, process_names):
+        """Batched form: which tmux session names carry an agent.
+
+        The fake reports one shared pane inventory for every session, so it
+        cannot derive this from `agents` (pane ids) — a test that cares names
+        the sessions via `agent_sessions`. Left unset it returns None,
+        "undetermined", which is what makes `list()` fall back to plain tmux
+        presence and keeps every pre-existing test's liveness unchanged.
+        """
+        if self._agent_sessions is None:
+            return None
+        return set(self._agent_sessions)
+
+
+@pytest.fixture
+def agent_comes_up(monkeypatch):
+    """Make resume's post-relaunch verification succeed.
+
+    resume_session waits for an agent to appear in the session's process tree
+    before it will report success — that wait is what stops a failed respawn
+    from being reported as a wake. Tests whose subject is the *command* that
+    got built, not the verification, opt out of the wait with this; the wait
+    itself is covered by TestResumeVerification in test_session_resume.py.
+    """
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+    import sessions
+
+    seen: list[tuple] = []
+
+    def _await(session, harness, timeout=None):
+        seen.append((session, harness))
+        return True
+
+    monkeypatch.setattr(sessions, "_await_agent", _await)
+    return seen
 
 
 @pytest.fixture

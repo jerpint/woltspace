@@ -28,6 +28,7 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Callable, Iterable, Protocol, runtime_checkable
 
+from env_compat import export_both
 from runtime_context import RuntimeContext
 
 
@@ -43,7 +44,17 @@ _SESSION_ENV_KEYS = (
     "XDG_DATA_HOME",
     "XDG_STATE_HOME",
     "XDG_CACHE_HOME",
+    # Both spellings of every renamed variable travel to the session. The
+    # platform reads the WOLTSPACE_* names; skills and tools written against
+    # the old ones keep working until 1.0. See docs/environment.md.
+    "WOLTSPACE_WOLTS_DIR",
     "WOLTS_DIR",
+    "WOLTSPACE_WOLT_DIR",
+    "WOLT_DIR",
+    "WOLTSPACE_WOLT_NAME",
+    "WOLT_NAME",
+    "WOLTSPACE_WOLT_SESSION",
+    "WOLT_SESSION",
     "WOLTSPACE_DIR",
     "WOLTSPACE_ISOLATION",
     # Which control plane this session belongs to. A session that reaches its
@@ -58,6 +69,56 @@ _SESSION_ENV_KEYS = (
     "WOLTSPACE_TMUX_BIN",
     "WOLTSPACE_PS_BIN",
 )
+
+
+def _comm_name(raw: str) -> str:
+    """Normalize one ps `comm` field to a bare executable name.
+
+    Harness process names are bare ("claude", "codex", "run-session.sh"), but
+    what `comm` reports is not: GNU ps gives the bare name, BSD ps (macOS
+    native) gives whatever argv[0] held — often an absolute path
+    (/usr/local/bin/claude), and a login shell reports itself as "-zsh". A
+    literal comparison against the raw field silently misses those, and a miss
+    reads as "no agent here".
+    """
+    name = raw.strip()
+    if name.startswith("-"):
+        name = name[1:]
+    return name.rsplit("/", 1)[-1]
+
+
+# comm names that mean "this process is an interpreter, and what it is really
+# running is named on its command line". A shebang script never shows up under
+# its own name in `comm` on either ps: `#!/usr/bin/env bash run-session.sh` is
+# reported as `bash`.
+_INTERPRETER_NAMES = frozenset({
+    "sh", "bash", "zsh", "dash", "ksh", "ash", "env",
+    "python", "python3", "perl", "ruby", "node", "uv",
+})
+
+
+def _script_name(comm: str, raw_args: str) -> str:
+    """The basename of the script an interpreter process was handed, or "".
+
+    Only interpreters get one: for anything else `comm` is already the answer
+    and reading argv would just rename it after its first argument.  Options
+    are skipped, and a `-c` shell is running inline text rather than a file,
+    so it has no script name at all.
+    """
+    if comm not in _INTERPRETER_NAMES:
+        return ""
+    tokens = raw_args.split()
+    for token in tokens[1:]:
+        if token in ("-c", "--command"):
+            return ""
+        if token.startswith("-"):
+            continue
+        if comm == "env" and "=" in token:
+            # `env WOLTS_DIR=… PATH=… run-session.sh` — the assignments come
+            # before the program env is about to exec.
+            continue
+        return token.rsplit("/", 1)[-1]
+    return ""
 
 
 def _session_env_value(key: str, value: str) -> str:
@@ -141,6 +202,9 @@ class SessionRuntime(Protocol):
     def resolve_process_handle(
         self, handle: RuntimeHandle, process_names: Iterable[str]
     ) -> RuntimeHandle | None: ...
+    def sessions_with_process(
+        self, process_names: Iterable[str]
+    ) -> set[str] | None: ...
 
 
 class TmuxSessionRuntime:
@@ -330,10 +394,14 @@ class TmuxSessionRuntime:
         runtime variables; harness tokens are intentionally never embedded in
         a visible tmux start command.
         """
+        # `export_both` fills in the other spelling of every renamed
+        # variable, so a session inherits `WOLT_NAME` even when this process
+        # was only handed `WOLTSPACE_WOLT_NAME` (and the reverse).
+        source = export_both(os.environ)
         values = [
-            shlex.quote(f"{key}={_session_env_value(key, os.environ[key])}")
+            shlex.quote(f"{key}={_session_env_value(key, source[key])}")
             for key in _SESSION_ENV_KEYS
-            if key in os.environ
+            if source.get(key) not in (None, "")
         ]
         return f"env {' '.join(values)} {command}" if values else command
 
@@ -474,13 +542,13 @@ class TmuxSessionRuntime:
 
     # -- process inspection ------------------------------------------------
 
-    def _process_table(self) -> tuple[dict[str, list[str]], dict[str, str]] | None:
-        """One ps snapshot as (pid → child pids, pid → comm)."""
+    def _ps(self, fields: str) -> str | None:
+        """One `ps -axo <fields>` snapshot as raw text, or None if ps failed."""
         try:
             result = self._run(
                 # The field-name '=' form suppresses headers on both GNU ps
                 # (Linux/container) and BSD ps (macOS/native).
-                [self.context.ps_bin, "-axo", "pid=,ppid=,comm="],
+                [self.context.ps_bin, "-axo", fields],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -488,29 +556,64 @@ class TmuxSessionRuntime:
             )
         except (subprocess.SubprocessError, OSError):
             return None
+        return result.stdout if isinstance(result.stdout, str) else ""
+
+    def _process_table(
+        self,
+    ) -> tuple[dict[str, list[str]], dict[str, str], dict[str, str]] | None:
+        """One process snapshot as (pid → child pids, pid → comm, pid → script).
+
+        Two ps calls rather than one. BSD ps only lets the *last* requested
+        column run to full width — asking for `comm=,args=` together truncates
+        comm to 16 characters ("/Applications/Go"), which would silently break
+        every harness match on macOS. Each field set therefore gets its own
+        call with the wide column last, and both stay exact.
+
+        The second call exists because `comm` reports the interpreter, never
+        the script: `run-session.sh` shows up as plain `bash` on macOS and as
+        `bash` on GNU ps too, so a table of comms alone can never see the
+        launching shim. `scripts` carries, for interpreter processes only, the
+        basename of the file they were handed on the command line.
+        """
+        stdout = self._ps("pid=,ppid=,comm=")
+        if stdout is None:
+            return None
 
         children: dict[str, list[str]] = {}
         commands: dict[str, str] = {}
-        stdout = result.stdout if isinstance(result.stdout, str) else ""
         for line in stdout.splitlines():
-            parts = line.split()
+            # split(None, 2) keeps a command containing a space in one piece;
+            # a plain split() would hand back its first word as the comm.
+            parts = line.split(None, 2)
             if len(parts) >= 3:
-                pid, parent, command = parts[0], parts[1], parts[2]
+                pid, parent = parts[0], parts[1]
                 children.setdefault(parent, []).append(pid)
-                commands[pid] = command
-        return children, commands
+                commands[pid] = _comm_name(parts[2])
+
+        # A failed argv snapshot is not a failed table: fall back to comms
+        # alone, which is exactly the pre-shim behaviour.
+        scripts: dict[str, str] = {}
+        argv = self._ps("pid=,args=")
+        for line in (argv or "").splitlines():
+            parts = line.split(None, 1)
+            if len(parts) < 2:
+                continue
+            name = _script_name(commands.get(parts[0], ""), parts[1])
+            if name:
+                scripts[parts[0]] = name
+        return children, commands, scripts
 
     def _panes_running(
         self,
         panes: list[TmuxPane],
         process_names: Iterable[str],
-        table: tuple[dict[str, list[str]], dict[str, str]] | None = None,
+        table: tuple[dict[str, list[str]], dict[str, str], dict[str, str]] | None = None,
     ) -> list[TmuxPane]:
         """Subset of panes whose process tree contains one of process_names."""
         table = table or self._process_table()
         if table is None:
             return []
-        children, commands = table
+        children, commands, scripts = table
         wanted = set(process_names)
 
         matched = []
@@ -524,7 +627,10 @@ class TmuxSessionRuntime:
                 if pid in seen:
                     continue
                 seen.add(pid)
-                if commands.get(pid) in wanted:
+                # comm answers for real binaries (claude, codex); the script
+                # name answers for our own shebang wrappers, which comm only
+                # ever reports as their interpreter.
+                if commands.get(pid) in wanted or scripts.get(pid) in wanted:
                     matched.append(pane)
                     break
                 queue.extend(children.get(pid, []))
@@ -588,6 +694,34 @@ class TmuxSessionRuntime:
         if matched is None:
             return None
         return bool(matched)
+
+    def sessions_with_process(
+        self,
+        process_names: Iterable[str],
+    ) -> set[str] | None:
+        """Every tmux session carrying a wanted process — in two calls total.
+
+        The batched form of `has_descendant_process`, for `list()`: one
+        `list-panes -a` plus one `ps` for the whole server instead of two
+        forks per session. Session-wide by construction (it never scopes to a
+        persisted pane), which is the right definition for liveness — a
+        vanished pane is not evidence the agent left the session.
+
+        None means undetermined (the process table could not be read), and is
+        never "nothing is alive": callers fall back to tmux presence rather
+        than declaring every session dead because ps hiccupped.
+        """
+        panes = self.all_panes()
+        if not panes:
+            # No tmux server, or no panes at all. Genuinely empty, not unknown.
+            return set()
+        table = self._process_table()
+        if table is None:
+            return None
+        return {
+            pane.session_name
+            for pane in self._panes_running(panes, process_names, table)
+        }
 
 
 # ---------------------------------------------------------------------------

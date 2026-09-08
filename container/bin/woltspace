@@ -13,7 +13,8 @@ Phase 1 nouns:
   session send <wolt|session> "message" [--from <wolt>]
   session spawn <wolt> ["seed prompt"] [--from <wolt>]
 
-A wolt self-identifies as the sender via $WOLT_NAME / $WOLT_SESSION (exported
+A wolt self-identifies as the sender via $WOLTSPACE_WOLT_NAME /
+$WOLTSPACE_WOLT_SESSION (exported
 into every wolt session). A human posts with --from (e.g. --from jerpint).
 """
 import argparse
@@ -24,6 +25,12 @@ import shutil
 import sys
 import urllib.request
 import urllib.error
+from pathlib import Path
+
+# The env namespace helper, resolved beside this script so the dev clone drives
+# its own copy. Nothing else here needs the runtime tree.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from env_compat import get_env  # noqa: E402
 
 API = os.environ.get("WOLTSPACE_API", "http://localhost:7777")
 # Session slugs end in "-<6 hex>" (see SESSION_NOUNS naming). Anything else is
@@ -87,8 +94,8 @@ def cmd_status(args):
 
 
 def cmd_session_send(args):
-    from_wolt = args.from_ or os.environ.get("WOLT_NAME", "")
-    from_session = os.environ.get("WOLT_SESSION", "") if not args.from_ else "human"
+    from_wolt = args.from_ or get_env("WOLTSPACE_WOLT_NAME", "")
+    from_session = get_env("WOLTSPACE_WOLT_SESSION", "") if not args.from_ else "human"
     payload = {"text": args.message, "from_wolt": from_wolt, "from_session": from_session}
     target = args.target
     if _SESSION_RE.search(target):
@@ -118,10 +125,10 @@ def cmd_session_spawn(args):
               f"Put the work order in a file the new session can read and pass a short pointer.",
               file=sys.stderr)
         sys.exit(1)
-    from_wolt = args.from_ or os.environ.get("WOLT_NAME", "")
+    from_wolt = args.from_ or get_env("WOLTSPACE_WOLT_NAME", "")
     # A human spawner (--from) has no session to reply into — omit it so the
     # child doesn't get a bogus `session send <name>` reply line.
-    from_session = "" if args.from_ else os.environ.get("WOLT_SESSION", "")
+    from_session = "" if args.from_ else get_env("WOLTSPACE_WOLT_SESSION", "")
     payload = {"wolt": args.wolt, "prompt": args.prompt,
                "from_wolt": from_wolt, "from_session": from_session}
     if args.workdir:
@@ -191,6 +198,128 @@ def cmd_auto_revoke(args):
 
 LIFECYCLE = {"start", "stop", "rebuild", "backup", "shell", "chat", "logs", "init", "update"}
 
+# The nouns this client actually serves over HTTP. Everything else belongs to
+# the real CLI — `doctor`, `paths`, `serve`, `restore`, and the whole lifecycle
+# set. In the container "elsewhere" means the host; natively it means the python
+# CLI sitting a few directories up from this script.
+LOCAL_NOUNS = {"session", "status", "auto", "tui"}
+
+
+def _running_in_container():
+    """Whether this process is inside the woltspace image.
+
+    Not answerable from this script's own path: the image pins the wheel bundle
+    at /workspace/woltspace with a symlink, so `__file__` resolves into
+    `site-packages/woltspace/_bundle/container/bin` in *both* worlds. The
+    control plane stamps WOLTSPACE_ISOLATION into every session and connector
+    environment, and the image's fixed mount points answer for the bare
+    `docker exec` shells that carry no environment at all.
+    """
+    isolation = os.environ.get("WOLTSPACE_ISOLATION", "").strip().lower()
+    if isolation == "external":
+        return True
+    if isolation == "host":
+        return False
+    return os.path.isdir("/workspace/woltspace") and os.path.isdir("/workspace/wolts")
+
+
+def _is_python_program(path):
+    """Whether a file is a python entry point rather than a shell launcher.
+
+    The container-era bash launcher is also called `woltspace` and is also on
+    plenty of PATHs. Handing it our arguments is the whole accident this guard
+    exists to prevent, so a candidate has to look like the console script the
+    wheel installs.
+    """
+    try:
+        with open(path, "rb") as handle:
+            return b"python" in handle.readline()
+    except OSError:
+        return False
+
+
+def _native_cli():
+    """Argv prefix for the native CLI installed beside this bundle, or None.
+
+    Preferred answer is arithmetic, not search: this script lives at
+    `<venv>/lib/pythonX.Y/site-packages/woltspace/_bundle/container/bin/woltspace`,
+    so the console script is `<venv>/bin/woltspace` — the exact same version,
+    with no PATH guessing and no chance of picking up a different install.
+    """
+    here = os.path.realpath(__file__)
+    bin_dir = os.path.dirname(here)
+    bundle = os.path.dirname(os.path.dirname(bin_dir))
+    site_packages = os.path.dirname(os.path.dirname(bundle))
+    if os.path.basename(bundle) == "_bundle" and os.path.basename(site_packages) == "site-packages":
+        # <venv>/lib/pythonX.Y/site-packages -> <venv>
+        venv = os.path.dirname(os.path.dirname(os.path.dirname(site_packages)))
+        script = os.path.join(venv, "bin", "woltspace")
+        if os.access(script, os.X_OK) and os.path.realpath(script) != here:
+            return [script]
+        for name in ("python", "python3"):
+            interpreter = os.path.join(venv, "bin", name)
+            if os.access(interpreter, os.X_OK):
+                return [interpreter, "-m", "woltspace"]
+    return _native_cli_on_path(here)
+
+
+def _native_cli_on_path(here):
+    """Fallback for installs that are not venv-shaped (pip --user, a checkout).
+
+    Skips this script, any other `container/bin/woltspace`, and anything that
+    is not a python program — which is how the bash docker launcher gets
+    excluded even when it sits first on PATH.
+    """
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        candidate = os.path.join(entry, "woltspace")
+        if os.path.isdir(candidate) or not os.access(candidate, os.X_OK):
+            continue
+        real = os.path.realpath(candidate)
+        if real == here:
+            continue
+        parent = os.path.dirname(real)
+        if os.path.basename(parent) == "bin" and \
+                os.path.basename(os.path.dirname(parent)) == "container":
+            continue
+        if _is_python_program(real):
+            return [candidate]
+    return None
+
+
+def _delegate(argv):
+    """Hand a verb we do not serve to whoever actually owns it.
+
+    In the container that is the host, and the message is the one this client
+    has always printed. Natively it is the python CLI, and we *exec* it: the
+    old message ("run it on the host where docker lives") is not just useless
+    on a native colony, it is the instruction that boots a second one.
+    """
+    verb = argv[0]
+    if _running_in_container():
+        if verb in LIFECYCLE:
+            print(f"'{verb}' is a host lifecycle command — run it on the host "
+                  f"where docker lives, not inside the container.", file=sys.stderr)
+            sys.exit(2)
+        return
+    cli = _native_cli()
+    if cli:
+        os.execv(cli[0], [*cli, *argv])
+    print(
+        f"'{verb}' belongs to the native woltspace CLI, not to this bundled "
+        f"control client ({os.path.realpath(__file__)}), which is on your PATH "
+        f"so that `notify` and `push-view` resolve inside sessions.\n"
+        f"The native CLI was not found beside this bundle. Install it with "
+        f"`uv tool install woltspace` and call it by full path, e.g.\n"
+        f"  ~/.local/bin/woltspace {' '.join(argv)}\n"
+        f"Do not reach for the container-era bash launcher on a native host: it "
+        f"boots a second colony against the same data root, the same port and "
+        f"the same bot token.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
 
 def main():
     p = argparse.ArgumentParser(prog="woltspace", description="woltspace control CLI")
@@ -209,7 +338,7 @@ def main():
     ss.add_argument("target", help="wolt name (resolves to active session) or a session id")
     ss.add_argument("message", help="the message text")
     ss.add_argument("--from", dest="from_", default="",
-                    help="sender identity (default: $WOLT_NAME); use e.g. --from jerpint as a human")
+                    help="sender identity (default: $WOLTSPACE_WOLT_NAME); use --from jerpint as a human")
     ss.add_argument("--json", action="store_true", help="raw JSON output")
     ss.set_defaults(func=cmd_session_send)
 
@@ -218,7 +347,7 @@ def main():
     sp.add_argument("prompt", nargs="?", default="",
                     help="seed prompt for the new session (a briefing, not a payload)")
     sp.add_argument("--from", dest="from_", default="",
-                    help="spawner identity (default: $WOLT_NAME); use e.g. --from jerpint as a human")
+                    help="spawner identity (default: $WOLTSPACE_WOLT_NAME); use --from jerpint as a human")
     sp.add_argument("--json", action="store_true", help="raw JSON output")
     sp.add_argument("--workdir", default="",
                     help="existing working directory (native runtime)")
@@ -257,11 +386,20 @@ def main():
             sys.exit(1)
         os.execvp(tui, [tui, *argv[1:]])
 
-    # Friendly hint: lifecycle verbs belong to the host launcher, not in-container.
-    if argv and argv[0] in LIFECYCLE:
-        print(f"'{argv[0]}' is a host lifecycle command — run it on the host "
-              f"where docker lives, not inside the container.", file=sys.stderr)
-        sys.exit(2)
+    # Anything we do not serve ourselves goes to whoever does — the host
+    # launcher in the container, the native CLI on a native install.
+    if argv and (argv[0] == "--version" or
+                 (not argv[0].startswith("-") and argv[0] not in LOCAL_NOUNS)):
+        _delegate(argv)
+    elif not argv or argv[0] in ("--help", "-h"):
+        # Help is a question about the whole CLI, not about this client. A
+        # native user whose PATH puts the bundle first was getting a help page
+        # listing four nouns and no lifecycle at all — as though `start`,
+        # `doctor` and `backup` did not exist. In the container the thin
+        # client's own help is still the honest answer: the rest really does
+        # live on the host.
+        if not _running_in_container():
+            _delegate(argv or ["--help"])
 
     args = p.parse_args(argv)
     if not getattr(args, "func", None):

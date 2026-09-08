@@ -26,11 +26,15 @@ from sessions import (
     build_session_command,
     get_tunnel_url,
     resume_session,
+    ORPHAN_AGENT_GONE,
+    ResumeFailed,
+    ResumeUnavailable,
     session_name as _session_name,
     start_session,
     _tmux_capture,
     _tmux_stop,
 )
+from env_compat import get_env
 from wolts import get_active_creature, find_by_type, list_wolts as _list_wolts_full
 from paths import (
     wolt_sessions_log,
@@ -44,10 +48,11 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 
-WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
-_wolt_name = os.environ.get("WOLT_NAME", "wolt")
+WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
+_wolt_name = get_env("WOLTSPACE_WOLT_NAME", "wolt")
 _derived = WOLTS_DIR / _wolt_name
-WOLT_DIR = Path(os.environ.get("WOLT_DIR") or (_derived if _derived.exists() else "/workspace/wolt"))
+WOLT_DIR = Path(get_env("WOLTSPACE_WOLT_DIR")
+                or (_derived if _derived.exists() else "/workspace/wolt"))
 MEMORY_DIR = WOLT_DIR / "wolt" / "memory"
 LLM_MODEL = os.environ.get("LLM_MODEL", "anthropic/claude-haiku-4-5-20251001")
 MAX_TOOL_ROUNDS = 5
@@ -89,7 +94,11 @@ def switch_wolt(name: str) -> str | None:
         return None
     WOLT_DIR = target
     MEMORY_DIR = WOLT_DIR / "wolt" / "memory"
+    # Both spellings — the platform reads the WOLTSPACE_* names, and every
+    # session this bot spawns from here on inherits the pair.
+    os.environ["WOLTSPACE_WOLT_DIR"] = str(WOLT_DIR)
     os.environ["WOLT_DIR"] = str(WOLT_DIR)
+    os.environ["WOLTSPACE_WOLT_NAME"] = name
     os.environ["WOLT_NAME"] = name
     config_path = WOLTS_DIR / "woltspace.json"
     if config_path.exists():
@@ -152,7 +161,7 @@ def _load_dog_identity() -> str | None:
 def build_system_prompt() -> str:
     """Build the system prompt from memory + base instructions."""
     memory = load_memory()
-    wolt_name = os.environ.get("WOLT_NAME", "wolt")
+    wolt_name = get_env("WOLTSPACE_WOLT_NAME", "wolt")
     human_name = "human"
     adapter = os.environ.get("BOT_ADAPTER", "chat")
 
@@ -349,9 +358,9 @@ def start_claude_session(prompt: str, wolt: str = None, creature: str = None, ro
     """Start an interactive Claude Code session. Delegates to sessions.start_session.
 
     Wraps the shared start_session() with bot-specific logging and
-    backwards-compat fallback (wolt defaults to WOLT_NAME env var).
+    backwards-compat fallback (wolt defaults to the active-wolt env var).
     """
-    target_wolt = wolt or os.environ.get("WOLT_NAME", "wolt")
+    target_wolt = wolt or get_env("WOLTSPACE_WOLT_NAME", "wolt")
     result = start_session(
         wolt=target_wolt,
         prompt=prompt,
@@ -435,7 +444,15 @@ def find_session(query: str) -> list[dict]:
 
 
 def check_session(session_name: str = None) -> dict:
-    """Check on a running session — registry + pane capture."""
+    """Check on a running session — registry + pane capture.
+
+    `alive` here is the registry's agent-level answer, so this and
+    list_sessions can no longer disagree about the same session. They used to:
+    a husk (tmux session whose agent died, login shell still holding it open)
+    came back alive and running with pane output from this tool, while the list
+    called it orphaned. tmux_alive/agent_alive are passed through so the wolt
+    can say which half is missing instead of guessing.
+    """
     if not session_name:
         sessions = list_sessions()
         if not sessions:
@@ -471,6 +488,16 @@ def check_session(session_name: str = None) -> dict:
         "output": output,
         "url": session_url,
     }
+    if data:
+        result["tmux_alive"] = data.get("tmux_alive")
+        result["agent_alive"] = data.get("agent_alive")
+        if data.get("orphaned_reason") == ORPHAN_AGENT_GONE:
+            # Not "gone" — the session is still resumable, and saying so is the
+            # difference between the wolt offering to wake it and writing it off.
+            result["detail"] = (
+                "the tmux session is still up but its agent has exited; "
+                "resume it to pick the conversation back up"
+            )
     if data and data.get("exit_code") is not None:
         result["exit_code"] = data["exit_code"]
 
@@ -534,7 +561,10 @@ def message_session(session_name: str, text: str) -> dict:
         result = resume_session(safe, text)
         _bot_log("message_sent", {"session": safe, "text": text[:200], "status": result.get("status")})
         return {"ok": True, "session": safe, "url": session_url, **result}
-    except ValueError as e:
+    except (ValueError, ResumeUnavailable, ResumeFailed) as e:
+        # The resume errors carry the actual reason (no transcript to replay,
+        # or the relaunched agent never came up). Pass it through verbatim so
+        # the wolt can tell the human what happened instead of "resume failed".
         return {"ok": False, "error": str(e), "session": safe, "url": session_url}
     except subprocess.CalledProcessError as e:
         return {"ok": False, "error": f"resume failed: {e}", "session": safe, "url": session_url}
@@ -637,7 +667,7 @@ def _tool_read_memory(args: dict, routing: dict | None) -> str:
 
 
 def _tool_list_wolts(args: dict, routing: dict | None) -> str:
-    active = os.environ.get("WOLT_NAME", "?")
+    active = get_env("WOLTSPACE_WOLT_NAME", "?")
     return json.dumps({"active": active, "available": list_wolts()})
 
 
@@ -821,6 +851,15 @@ def _tool_open_issue(args: dict, routing: dict | None) -> str:
             err = token_result.stderr.strip()
             return json.dumps({"error": f"GitHub App auth failed: {err}"})
         gh_token = token_result.stdout.strip()
+        # Assert the shape, not merely non-emptiness. An installation token is
+        # `ghs_`-prefixed; anything else means the mint failed in a way that
+        # still wrote to stdout, and passing it on would either fail confusingly
+        # or — worse — let a caller fall back to a human's own credentials.
+        if not gh_token.startswith("ghs_"):
+            return json.dumps({
+                "error": "GitHub App auth failed: gh-app-token did not return "
+                         "an installation token"
+            })
     except Exception as e:
         return json.dumps({"error": f"GitHub App auth failed: {e}"})
 

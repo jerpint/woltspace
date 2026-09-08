@@ -68,6 +68,7 @@ container/
     notify, push-view           Wolt-facing helpers (notify the user, set the viewport)
     wclaude, run-session.sh     Session entry — wraps `claude` with notify context + identity
     gh-app-token                Mints short-lived GitHub App installation tokens
+    woltspace-python            Resolves the interpreter that owns the wheel's deps
     version-check               Compares stamped version to upstream releases
 
   hooks/                      Session entry wrapper (run-session.sh)
@@ -235,7 +236,7 @@ The split between `wolts/{wolt}/` (owned by one wolt) and `wolts/.space/` (cross
 - **Single entry points** — `start_session()` for sessions, `start_app()` for apps, `ensure_site()` for sites. Don't reimplement; import.
 - **Filesystem as database** — paths are queries, files are records, dirs are indexes. Cleanup is `rm`.
 - **FastAPI is the central authority** — it owns reads, writes, and policy. Adapters ask the server, not the filesystem.
-- **`WOLT_DIR` is for code, not state** — runtime state always goes through `.state/` or `.space/`.
+- **`WOLTSPACE_WOLT_DIR` is for code, not state** — runtime state always goes through `.state/` or `.space/`.
 - **`/workspace/woltspace/` is baked into the image, not mounted** — only `/workspace/wolts/` is mounted at runtime. Container-lifecycle changes (Dockerfile, entrypoint, baked deps) require `woltspace rebuild`; everything else is hot-editable in dev mode.
 - **Skills layer** — platform defaults in `container/skills/`, wolt-specific overrides in `wolts/{wolt}/.claude/skills/`. Wolt overrides win.
 

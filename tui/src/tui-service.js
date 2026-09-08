@@ -14,5 +14,5 @@ if (args.includes('--version')) {
 const { startPtyService } = await import('./pty-service.js');
 startPtyService({
   port: parseInt(process.env.TUI_PORT || '3001', 10),
-  woltDir: process.env.WOLT_DIR || process.cwd(),
+  woltDir: process.env.WOLTSPACE_WOLT_DIR || process.env.WOLT_DIR || process.cwd(),
 });

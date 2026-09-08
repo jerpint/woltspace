@@ -65,7 +65,7 @@ class TestSitePathsResolveFromTheLayout:
                 "layout_wolts_dir": str(layout.wolts_dir),
             }))
             """,
-            {"WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
+            {"WOLTSPACE_WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
         )
         assert payload["sites_wolts_dir"] == payload["layout_wolts_dir"]
         assert payload["config_wolts_dir"] == payload["layout_wolts_dir"]
@@ -88,7 +88,7 @@ class TestSitePathsResolveFromTheLayout:
                 "sites": listing,
             }))
             """,
-            {"WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
+            {"WOLTSPACE_WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
         )
         assert payload["status"] == 200
         assert "native site" in payload["body"]
@@ -117,13 +117,85 @@ class TestSitePathsResolveFromTheLayout:
                     message = socket.receive_text()
             print(json.dumps({"message": message}))
             """,
-            {"WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
+            {"WOLTSPACE_WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
         )
         assert payload["message"] == "reload"
 
 
+class TestOnboardingReadsTheRealHome:
+    """The false "Claude Code isn't authenticated yet." banner, end to end.
+
+    Nothing on the native start path set WOLTSPACE_CONTAINER_HOME, so the
+    server kept `server/config.py`'s container default and probed
+    /home/node/.claude/.credentials.json — a path no Mac has. A logged-in
+    native colony was told to log in, and its viewport fell through to
+    /onboard.
+    """
+
+    @pytest.fixture
+    def logged_in_home(self, tmp_path):
+        home = tmp_path / "home"
+        (home / ".claude").mkdir(parents=True)
+        (home / ".claude" / ".credentials.json").write_text('{"claudeAiOauth": {}}')
+        return home
+
+    def probe(self, native_root, home):
+        return run_in_clean_process(
+            """
+            import json
+            from woltspace.layout import RuntimeLayout
+            layout = RuntimeLayout.from_env()
+            layout.apply_environment()
+            from starlette.testclient import TestClient
+            import server.app as app_module
+            from server import config, state
+            with TestClient(app_module.app) as client:
+                status = client.get("/onboard-status").json()
+            print(json.dumps({
+                "container_home": str(config.CONTAINER_HOME),
+                "has_oauth": status["has_oauth"],
+                "auth_source": status["auth_source"],
+                "onboarding": state._is_onboarding(),
+            }))
+            """,
+            {
+                "WOLTS_DIR": str(native_root),
+                "WOLTSPACE_DIR": str(ROOT),
+                "HOME": str(home),
+                # An env token authenticates on its own — blank them out, or
+                # this proves nothing about the path that was broken.
+                "CLAUDE_CODE_OAUTH_TOKEN": "",
+                "ANTHROPIC_API_KEY": "",
+            },
+        )
+
+    def test_a_native_colony_with_credentials_is_not_asked_to_log_in(
+        self, native_root, logged_in_home
+    ):
+        payload = self.probe(native_root, logged_in_home)
+
+        assert payload["container_home"] == str(logged_in_home)
+        assert payload["has_oauth"] is True
+        assert payload["auth_source"] == "credentials-file"
+        assert payload["onboarding"] is False
+
+    def test_a_native_colony_without_credentials_still_onboards(
+        self, native_root, tmp_path
+    ):
+        empty = tmp_path / "fresh-home"
+        empty.mkdir()
+
+        payload = self.probe(native_root, empty)
+
+        assert payload["container_home"] == str(empty)
+        assert payload["has_oauth"] is False
+        assert payload["auth_source"] == "none"
+        assert payload["onboarding"] is True
+
+
 RUNTIME_ENV_KEYS = (
-    "WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
+    "WOLTSPACE_WOLTS_DIR", "WOLTS_DIR", "WOLTSPACE_WOLT_DIR", "WOLT_DIR",
+    "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
     "WOLTSPACE_HOST", "WOLTSPACE_INSTANCE_ID", "WOLTSPACE_PUBLIC_TUNNEL",
     "WOLTSPACE_ENTRYPOINT", "PORT",
 )
@@ -232,7 +304,7 @@ class TestTunnelPolicy:
                 "state_exists": tunnel.TUNNEL_STATE_FILE.exists(),
             }))
             """,
-            {"WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
+            {"WOLTSPACE_WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
         )
         assert payload["url"] == ""
         assert payload["state_exists"] is False

@@ -84,10 +84,47 @@ class TestResolveActiveSession:
         new = reg.get("codexw-new-elm-bbbbbb", check_alive=False)
         new["last_activity"] = 999
         reg._write("codexw", "codexw-new-elm-bbbbbb", new)
-        # both live
-        monkeypatch.setattr(sessions, "_tmux_sessions",
-                            lambda: {"codexw-old-oak-aaaaaa", "codexw-new-elm-bbbbbb"})
+        # both live, both carrying an agent
+        both = {"codexw-old-oak-aaaaaa", "codexw-new-elm-bbbbbb"}
+        monkeypatch.setattr(sessions, "_tmux_sessions", lambda: both)
+        monkeypatch.setattr(sessions, "sessions_with_agent_process", lambda: both)
         assert resolve_active_session("codexw", registry=reg) == "codexw-new-elm-bbbbbb"
+
+    def test_skips_a_live_tmux_session_with_no_agent_in_it(
+        self, tmp_registry, monkeypatch
+    ):
+        """The newest session's tmux survived, but its agent is gone.
+
+        Addressing the wolt has to reach a session that can actually answer.
+        Picking the newest by tmux presence alone routes the message into a
+        leftover login shell, where it lands as a shell command.
+        """
+        reg = tmp_registry
+        reg.create("codexw-old-oak-aaaaaa", wolt="codexw")
+        reg.create("codexw-husk-elm-bbbbbb", wolt="codexw")
+        old = reg.get("codexw-old-oak-aaaaaa", check_alive=False)
+        old["last_activity"] = 100
+        reg._write("codexw", "codexw-old-oak-aaaaaa", old)
+        husk = reg.get("codexw-husk-elm-bbbbbb", check_alive=False)
+        husk["last_activity"] = 999
+        reg._write("codexw", "codexw-husk-elm-bbbbbb", husk)
+
+        monkeypatch.setattr(sessions, "_tmux_sessions",
+                            lambda: {"codexw-old-oak-aaaaaa", "codexw-husk-elm-bbbbbb"})
+        monkeypatch.setattr(sessions, "sessions_with_agent_process",
+                            lambda: {"codexw-old-oak-aaaaaa"})
+        assert resolve_active_session("codexw", registry=reg) == "codexw-old-oak-aaaaaa"
+
+    def test_an_unreadable_process_table_falls_back_to_tmux_presence(
+        self, tmp_registry, monkeypatch
+    ):
+        """ps failing must not report the whole colony offline."""
+        reg = tmp_registry
+        reg.create("codexw-only-oak-aaaaaa", wolt="codexw")
+        monkeypatch.setattr(sessions, "_tmux_sessions",
+                            lambda: {"codexw-only-oak-aaaaaa"})
+        monkeypatch.setattr(sessions, "sessions_with_agent_process", lambda: None)
+        assert resolve_active_session("codexw", registry=reg) == "codexw-only-oak-aaaaaa"
 
     def test_ignores_dead_sessions(self, tmp_registry, monkeypatch):
         reg = tmp_registry
@@ -105,7 +142,32 @@ class TestResolveActiveSession:
 # Delivery
 # ---------------------------------------------------------------------------
 
+def _agent_ready(pane_id="%1", tmux_name=None):
+    """Patch pair for "tmux is up and an agent is ready in it".
+
+    Delivery asks two different questions and both have to be answered: is an
+    agent in there at all (get(check_alive=True) → agent_alive), and which
+    exact pane is it ready in (resolve_agent_handle, launching excluded).
+    """
+    def _has(session, harness=None, include_launching=True):
+        return True
+
+    def _resolve(session, harness=None, include_launching=True):
+        handle = RuntimeHandle.from_record(session) if isinstance(session, dict) else session
+        name = tmux_name or handle.tmux_session_name
+        return RuntimeHandle(handle.woltspace_session_id, name, pane_id)
+
+    return _has, _resolve
+
+
 class TestDeliverMessage:
+    """A paste is not a read.
+
+    The text goes to whatever owns the pane, and a login shell left behind by a
+    dead agent will EXECUTE an IWCL message. So delivery refuses on anything
+    short of a positive agent answer — including "undetermined".
+    """
+
     def test_no_session(self, tmp_registry, monkeypatch):
         monkeypatch.setattr(sessions, "_tmux_alive", lambda n: False)
         res = deliver_message("nope-xxx-yyy-zzzzzz", "hi", registry=tmp_registry)
@@ -118,6 +180,70 @@ class TestDeliverMessage:
         res = deliver_message("codexw-cold-oak-aaaaaa", "hi", registry=reg)
         assert res["status"] == "session-dead"
 
+    def test_refuses_an_agentless_tmux_session(self, tmp_registry, monkeypatch):
+        """The blocker: a husk used to be indistinguishable from a live session.
+
+        tmux holds it, the login shell owns the pane, and the message lands in
+        a shell prompt that runs it.
+        """
+        reg = tmp_registry
+        reg.create("codexw-husk-oak-aaaaaa", wolt="codexw", harness="codex")
+        monkeypatch.setattr(sessions, "_tmux_alive", lambda n: True)
+        monkeypatch.setattr(sessions, "session_has_agent_process",
+                            lambda *a, **k: False)
+        pasted = []
+        monkeypatch.setattr(sessions, "_tmux_paste",
+                            lambda *a, **k: pasted.append(a))
+
+        res = deliver_message("codexw-husk-oak-aaaaaa", "hi", registry=reg)
+
+        # Distinct from session-dead: tmux is still there, so the caller can
+        # resume-then-retry rather than writing the session off.
+        assert res["status"] == "agent-gone"
+        assert "resume it and retry" in res["detail"]
+        assert pasted == [], "nothing may reach a shell that would run it"
+
+    def test_refuses_when_the_process_table_is_unreadable(self, tmp_registry, monkeypatch):
+        """Undetermined must not become "paste it and hope".
+
+        `alive` falls back to tmux presence when ps cannot be read — right for
+        a list, wrong for a paste. The conservative side is self-healing: the
+        caller resumes, and a resume that finds a live agent delivers the
+        prompt itself.
+        """
+        reg = tmp_registry
+        reg.create("codexw-fog-oak-aaaaaa", wolt="codexw", harness="codex")
+        monkeypatch.setattr(sessions, "_tmux_alive", lambda n: True)
+        monkeypatch.setattr(sessions, "session_has_agent_process",
+                            lambda *a, **k: None)
+        pasted = []
+        monkeypatch.setattr(sessions, "_tmux_paste",
+                            lambda *a, **k: pasted.append(a))
+
+        res = deliver_message("codexw-fog-oak-aaaaaa", "hi", registry=reg)
+        assert res["status"] == "agent-gone"
+        assert pasted == []
+
+    def test_refuses_a_still_booting_agent(self, tmp_registry, monkeypatch):
+        """A launching agent counts as alive everywhere else — but a
+        half-painted TUI swallows a paste, so delivery waits for a real one."""
+        reg = tmp_registry
+        reg.create("codexw-boot-oak-aaaaaa", wolt="codexw", harness="codex")
+        monkeypatch.setattr(sessions, "_tmux_alive", lambda n: True)
+        # alive (launching counts) but no ready pane (launching excluded)
+        monkeypatch.setattr(sessions, "session_has_agent_process",
+                            lambda *a, **k: True)
+        monkeypatch.setattr(sessions, "resolve_agent_handle",
+                            lambda *a, **k: None)
+        pasted = []
+        monkeypatch.setattr(sessions, "_tmux_paste",
+                            lambda *a, **k: pasted.append(a))
+
+        res = deliver_message("codexw-boot-oak-aaaaaa", "hi", registry=reg)
+        assert res["status"] == "agent-gone"
+        assert "still booting" in res["detail"]
+        assert pasted == []
+
     def test_delivered_pastes_attributed_body_with_harness_settle(self, tmp_registry, monkeypatch):
         reg = tmp_registry
         reg.create("codexw-warm-oak-aaaaaa", wolt="codexw", harness="codex")
@@ -128,6 +254,9 @@ class TestDeliverMessage:
             ).to_record(),
         )
         monkeypatch.setattr(sessions, "_tmux_alive", lambda n: True)
+        has, resolve = _agent_ready("%42", "persisted-tmux")
+        monkeypatch.setattr(sessions, "session_has_agent_process", has)
+        monkeypatch.setattr(sessions, "resolve_agent_handle", resolve)
         captured = {}
 
         def fake_paste(target, text, settle=0.0):
@@ -142,8 +271,11 @@ class TestDeliverMessage:
         )
         assert res["status"] == "delivered"
         assert res["harness"] == "codex"
-        assert captured["target"]["runtime"]["tmux_session_name"] == "persisted-tmux"
-        assert captured["target"]["runtime"]["pane_id"] == "%42"
+        # Delivery targets the pane the agent was FOUND in, not the record —
+        # same invariant resume_session holds, so detection and delivery can
+        # never resolve different panes.
+        assert captured["target"].tmux_session_name == "persisted-tmux"
+        assert captured["target"].pane_id == "%42"
         # attribution was applied
         assert captured["text"].startswith("[message from uxwolt, session=uxwolt-bushy-fur-224aa5]")
         assert "let's talk" in captured["text"]
@@ -154,6 +286,9 @@ class TestDeliverMessage:
         reg = tmp_registry
         reg.create("uxwolt-warm-oak-aaaaaa", wolt="uxwolt", harness="claude")
         monkeypatch.setattr(sessions, "_tmux_alive", lambda n: True)
+        has, resolve = _agent_ready()
+        monkeypatch.setattr(sessions, "session_has_agent_process", has)
+        monkeypatch.setattr(sessions, "resolve_agent_handle", resolve)
         captured = {}
         monkeypatch.setattr(sessions, "_tmux_paste",
                             lambda t, x, settle=0.0: captured.update(settle=settle))

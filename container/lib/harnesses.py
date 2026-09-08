@@ -11,6 +11,7 @@ Everything harness-specific lives here:
   - process_names   — what a live agent looks like in a process tree (liveness/vulture)
   - models          — creature tier → model flag value, per harness
   - session_has_agent_process() — the shared process-tree walker
+  - sessions_with_agent_process() — its batched form, for whole-list liveness
 
 Adding a harness = adding one entry to HARNESSES. Nothing else should need
 to know how a harness spells its flags.
@@ -25,6 +26,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
+from env_compat import get_env
 from session_runtime import RuntimeHandle, get_runtime
 from execution_policy import policy_mode
 from skills_sync import COPY_DELIVERY, PLUGIN_DELIVERY
@@ -113,7 +115,7 @@ def _codex_discover_session_id(data: dict, since: float) -> str | None:
     wolt = data.get("wolt", "")
     if not wolt:
         return None
-    wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    wolts_dir = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
     sessions_dir = wolts_dir / wolt / ".codex" / "sessions"
     if not sessions_dir.exists():
         return None
@@ -208,7 +210,7 @@ def _opencode_discover_session_id(data: dict, since: float) -> str | None:
     wolt = data.get("wolt", "")
     if not wolt:
         return None
-    wolts_dir = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    wolts_dir = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
     wolt_home = wolts_dir / wolt
     if not (wolt_home / ".local" / "share" / "opencode").exists():
         return None
@@ -419,8 +421,11 @@ HARNESSES = {
     },
 }
 
-# comm names that mean "still launching" — the wrapper chain before the agent
-# process exists. Shared across harnesses (run-session.sh is ours, not theirs).
+# Process names that mean "still launching" — the wrapper chain before the
+# agent process exists. Shared across harnesses (run-session.sh is ours, not
+# theirs). These are matched against the *script* an interpreter is running,
+# not against `comm`: a shebang script is only ever reported as its
+# interpreter (`bash`), which is why the runtime reads argv for these.
 LAUNCHING_NAMES = {"run-session.sh", "run-session"}
 
 
@@ -590,7 +595,7 @@ def harness_metadata() -> list[dict]:
 # Lives in woltspace.json (structured lodge settings), not .env.
 
 def _woltspace_json_path() -> Path:
-    return Path(os.environ.get("WOLTS_DIR", "/workspace/wolts")) / "woltspace.json"
+    return Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts")) / "woltspace.json"
 
 
 def get_default_harness() -> str:
@@ -682,8 +687,8 @@ def session_has_agent_process(session_name: str | dict | RuntimeHandle,
     agent, so checking only direct children always misses the agent.
 
     harness: restrict to one harness's process names; None matches any harness.
-    include_launching: also count the launching shim (run-session.sh, uv, node)
-        so a session that has not finished booting reads as alive.
+    include_launching: also count the launching shim (run-session.sh) so a
+        session that has not finished booting reads as alive.
 
     Returns True/False, or None when the answer is undetermined — the tmux
     session does not exist, or the process table could not be read. None is
@@ -695,3 +700,22 @@ def session_has_agent_process(session_name: str | dict | RuntimeHandle,
     return runtime.has_descendant_process(
         handle, _wanted_processes(harness, include_launching)
     )
+
+
+def sessions_with_agent_process(harness: str | None = None,
+                                include_launching: bool = True) -> set[str] | None:
+    """Batched `session_has_agent_process`: which tmux sessions carry an agent.
+
+    `list()` asks this of every registry record at once; asking per session
+    forks tmux and ps once each, which is what made agent-accurate liveness
+    look too expensive to put in the list in the first place.
+
+    Returns a set of tmux session names, or None when undetermined (the
+    process table could not be read, or the installed runtime does not
+    implement the batch call). None is never "nothing is alive" — callers
+    fall back to tmux presence.
+    """
+    batch = getattr(get_runtime(), "sessions_with_process", None)
+    if batch is None:
+        return None
+    return batch(_wanted_processes(harness, include_launching))

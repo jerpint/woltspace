@@ -57,18 +57,22 @@ def test_explicit_layout_is_canonical_and_applies_environment(tmp_path, monkeypa
     root = installation_root()
     raw = tmp_path / "state" / ".." / "wolts"
     layout = RuntimeLayout.from_env({
-        "WOLTS_DIR": str(raw),
+        "WOLTSPACE_WOLTS_DIR": str(raw),
         "WOLTSPACE_DIR": str(root),
         "WOLTSPACE_HOST": "localhost",
         "WOLTSPACE_PORT": "8123",
         "WOLTSPACE_ISOLATION": "external",
     })
-    for key in ("WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
+    for key in ("WOLTSPACE_WOLTS_DIR", "WOLTS_DIR", "WOLTSPACE_WOLT_DIR", "WOLT_DIR",
+                "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
                 "PORT", "WOLTSPACE_PORT", "WOLTSPACE_API"):
         monkeypatch.delenv(key, raising=False)
     layout.apply_environment()
 
     assert layout.wolts_dir == (tmp_path / "wolts").resolve()
+    # Canonical names, plus the legacy pair every existing wolt tool reads.
+    assert os.environ["WOLTSPACE_WOLTS_DIR"] == str(layout.wolts_dir)
+    assert os.environ["WOLTSPACE_WOLT_DIR"] == str(layout.wolts_dir)
     assert os.environ["WOLTS_DIR"] == str(layout.wolts_dir)
     assert os.environ["WOLT_DIR"] == str(layout.wolts_dir)
     assert os.environ["WOLTSPACE_DIR"] == str(root)
@@ -110,12 +114,92 @@ def test_a_stale_pointer_is_not_stamped_back_into_the_environment(tmp_path, monk
     ghost = tmp_path / "ghost"
     ghost.mkdir()
     layout = RuntimeLayout.from_env({"WOLTSPACE_DIR": str(ghost)})
-    for key in ("WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION", "PORT"):
+    for key in ("WOLTSPACE_WOLTS_DIR", "WOLTS_DIR", "WOLTSPACE_WOLT_DIR", "WOLT_DIR",
+                "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION", "PORT"):
         monkeypatch.delenv(key, raising=False)
 
     layout.apply_environment()
 
     assert os.environ["WOLTSPACE_DIR"] == str(installation_root().resolve())
+
+
+class TestTheHomeHarnessCredentialsLiveIn:
+    """A native colony reads the human's home, not the image's /home/node.
+
+    `server/config.py` defaults WOLTSPACE_CONTAINER_HOME to /home/node — right
+    for the container, which owns a home outright, and a directory that does
+    not exist on a Mac. Nothing on the native start path set the variable, so
+    `/onboard-status` probed /home/node/.claude/.credentials.json, found
+    nothing, and every authenticated native install was told "Claude Code
+    isn't authenticated yet."
+    """
+
+    @pytest.fixture(autouse=True)
+    def isolated_env(self):
+        """`apply_environment` writes os.environ — restore it by hand.
+
+        `monkeypatch.delenv(..., raising=False)` on an *absent* key records
+        nothing to undo, so a WOLTS_DIR stamped here would repoint the real
+        colony's config for every test that ran afterwards.
+        """
+        keys = (
+            "HOME", "WOLTS_DIR", "WOLT_DIR", "WOLTSPACE_DIR",
+            "WOLTSPACE_ISOLATION", "WOLTSPACE_HOST", "WOLTSPACE_PORT", "PORT",
+            "WOLTSPACE_API", "WOLTSPACE_CONTAINER_HOME",
+        )
+        snapshot = {key: os.environ.get(key) for key in keys}
+        try:
+            yield
+        finally:
+            for key, value in snapshot.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_host_isolation_uses_the_real_home(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        layout = RuntimeLayout(wolts_dir=tmp_path / "wolts", install_root=installation_root())
+        assert layout.isolation == "host"
+        assert layout.home == tmp_path
+
+    def test_container_isolation_keeps_the_image_home(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        layout = RuntimeLayout(
+            wolts_dir=tmp_path / "wolts", install_root=installation_root(),
+            isolation="external",
+        )
+        assert layout.home == Path("/home/node")
+
+    def test_a_native_run_stamps_that_home_for_the_server(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("WOLTSPACE_CONTAINER_HOME", raising=False)
+        layout = RuntimeLayout(wolts_dir=tmp_path / "wolts", install_root=installation_root())
+
+        layout.apply_environment()
+
+        assert os.environ["WOLTSPACE_CONTAINER_HOME"] == str(tmp_path)
+
+    def test_a_container_run_leaves_the_default_alone(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("WOLTSPACE_CONTAINER_HOME", raising=False)
+        layout = RuntimeLayout(
+            wolts_dir=tmp_path / "wolts", install_root=installation_root(),
+            isolation="external",
+        )
+
+        layout.apply_environment()
+
+        assert "WOLTSPACE_CONTAINER_HOME" not in os.environ
+
+    def test_a_deliberate_override_still_wins(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("WOLTSPACE_CONTAINER_HOME", "/somewhere/else")
+        layout = RuntimeLayout(wolts_dir=tmp_path / "wolts", install_root=installation_root())
+
+        layout.apply_environment()
+
+        assert os.environ["WOLTSPACE_CONTAINER_HOME"] == "/somewhere/else"
 
 
 def test_invalid_isolation_is_rejected():

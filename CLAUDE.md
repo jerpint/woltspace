@@ -115,10 +115,10 @@ Flags:
 - `--branch <name>` — build image from a specific branch (default: main)
 
 Env vars:
-- `WOLTS_DIR` — override wolts directory (default: `~/.woltspace/wolts`)
+- `WOLTSPACE_WOLTS_DIR` — override wolts directory (default: `~/.woltspace/wolts`)
 - `WOLTSPACE_LOCAL=true` — sticky equivalent of `--local` (for dev workflows)
 
-The only mount is `$WOLTS_DIR:/workspace/wolts`. Everything else is baked into the image.
+The only mount is `$WOLTSPACE_WOLTS_DIR:/workspace/wolts`. Everything else is baked into the image.
 
 ### `src/woltspace/backup.py` — snapshots
 
@@ -135,7 +135,7 @@ The data-plane snapshot, in the python CLI, identical native and in-container:
   chain can trip reuse-detection and revoke the live one. The manifest lists
   every withheld path and `restore` prints the re-provision checklist.
 - `woltspace restore <archive> [--to DIR]` — extracts into a new directory and
-  refuses a populated one; prints what to re-authenticate and the `WOLTS_DIR=…`
+  refuses a populated one; prints what to re-authenticate and the `WOLTSPACE_WOLTS_DIR=…`
   line to boot from it.
 
 Full guide, including what is excluded and why: `docs/backup.md`.
@@ -228,7 +228,8 @@ Utility scripts available in container PATH:
 - `create-creature-wolt <name> <type>` — create a new creature-wolt (wolf, dog, rodent, etc.)
 - `version-check` — check for newer woltspace release (polls GitHub API, no git fetch)
 - `spawn-tool` — register a tool proxy with the server
-- `gh-app-token` — print a short-lived GitHub App installation token to stdout (used by `open_issue` tool and available for `gh` CLI auth)
+- `gh-app-token` — print a short-lived GitHub App installation token to stdout (used by `open_issue` tool and available for `gh` CLI auth). **stdout is a `ghs_` token or it is empty** — diagnostics go to stderr and failures exit non-zero. Callers must assert the `ghs_` prefix, because an empty `GH_TOKEN` makes `gh` fall back to the human's own credentials.
+- `woltspace-python` — the interpreter woltspace is installed on, the one that owns PyJWT and python-dotenv. Scripts here name it in their shebang; the image also provides it as `/usr/local/bin/woltspace-python`, and this shim is what makes those shebangs resolve on a native install too.
 
 ### Worktui (`wt`)
 Worktree + Claude session manager, available in all sessions. Manages git worktrees for parallel development — each branch gets an isolated working directory.
@@ -340,7 +341,9 @@ GITHUB_APP_INSTALLATION_ID=
 GITHUB_APP_PRIVATE_KEY=   # PEM key, newlines escaped as \n
 ```
 
-The container also accepts `WOLT_NAME` as an env var (passed by the CLI during `init` for first boot). After that, the container reads `woltspace.json` to resolve the active wolt.
+The container also accepts `WOLTSPACE_WOLT_NAME` as an env var (the CLI passes it at first boot to name the active wolt). After that, the container reads `woltspace.json` to resolve the active wolt. Naming the wolt a fresh non-interactive `init` should *create* is a different variable, `WOLTSPACE_INIT_WOLT_NAME` — see `docs/environment.md`.
+
+Every variable the platform owns, what consumes it, and the legacy names still honoured for the pre-namespace spellings: `docs/environment.md`.
 
 **Claude auth** is handled during `woltspace init` via the native OAuth flow. Credentials are stored in `~/.woltspace/wolts/.claude/.credentials.json` and persist across container rebuilds.
 

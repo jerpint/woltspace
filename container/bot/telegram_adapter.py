@@ -35,6 +35,7 @@ from urllib.parse import urlparse, parse_qs
 from wolts import get_active_creature
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from env_compat import get_env
 from paths import space_dir
 from session_runtime import RuntimeHandle, get_runtime
 from sessions import resolve_active_session, wolt_harness
@@ -47,7 +48,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-_WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+_WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 
 # Global telegram state directories
 TELEGRAM_DIR = space_dir(_WOLTS_DIR) / "telegram"
@@ -84,7 +85,7 @@ DOG_VOICE_ACKS = [
 
 def _dog_name() -> str:
     name = get_active_creature("dog")
-    return name or os.environ.get("WOLT_NAME", "wolt")
+    return name or get_env("WOLTSPACE_WOLT_NAME", "wolt")
 
 
 async def _reply(update: Update, text: str, **kwargs):
@@ -346,7 +347,10 @@ async def _route_to_session(update: Update, session_name: str, wolt: str, text: 
         f"[telegram message from human, chat_id={chat_id}]: {text}\n"
         f"Reply back to them with: notify --telegram {chat_id} \"your message\""
     )
-    result = message_session(session_name, session_msg)
+    # message_session → resume_session blocks for as long as the agent takes
+    # to come up (up to 12s). On the bot's event loop that stalls every other
+    # chat, so the wait happens in a thread.
+    result = await asyncio.to_thread(message_session, session_name, session_msg)
     _bot_log("telegram_v2_session_route", {
         "session": session_name, "wolt": wolt,
         "text": text[:200], "result": result,
@@ -360,7 +364,10 @@ async def _route_to_session(update: Update, session_name: str, wolt: str, text: 
         # up (caller spawns fresh), prefer the wolt's live session: the
         # message still gets delivered, and the human is told where.
         live = resolve_active_session(wolt)
-        fallback = message_session(live, session_msg) if live and live != session_name else None
+        fallback = (
+            await asyncio.to_thread(message_session, live, session_msg)
+            if live and live != session_name else None
+        )
         _bot_log("telegram_v2_fallback_route", {
             "from": session_name, "to": live, "wolt": wolt,
             "result": fallback,
@@ -1502,7 +1509,7 @@ def run():
     app.add_handler(MessageHandler(filters.VIDEO | filters.ANIMATION | filters.VIDEO_NOTE | filters.Document.VIDEO, handle_video))
     app.add_handler(MessageHandler(filters.Document.ALL & ~filters.Document.IMAGE & ~filters.Document.VIDEO, handle_document))
 
-    wolt_name = os.environ.get("WOLT_NAME", "wolt")
+    wolt_name = get_env("WOLTSPACE_WOLT_NAME", "wolt")
     logger.info(f"{wolt_name} telegram v2 bot starting (chat-per-wolt model)...")
 
     loop = asyncio.new_event_loop()

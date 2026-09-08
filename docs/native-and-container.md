@@ -19,7 +19,7 @@ is the same code either way. Choose by how much you want to be asked.
 | | Native | Container |
 |---|---|---|
 | Harness auth | your own, reused in place | seeded into the image |
-| Default permission | prompt | auto (opt-in per wolt) |
+| Default permission | prompt, auto where you granted it | auto (opt-in per wolt) |
 | Session working dir | any repo on your machine | the mounted wolts directory |
 | Survives a platform update | yes — tmux outlives the control plane | container rebuild ends sessions |
 | Public URL | tunnel **off** by default | tunnel on by default |
@@ -34,6 +34,7 @@ uv tool install 'woltspace[connectors]'
 woltspace start          # runs doctor, takes the data-root lock, serves the lodge
 woltspace tui            # the terminal UI
 woltspace status         # who owns the data root, which sessions were adopted
+woltspace auto list      # which wolts may work unattended, and where
 woltspace stop           # stops the control plane — never touches tmux
 ```
 
@@ -49,6 +50,50 @@ than fatal.
 The `connectors` extra brings the Telegram dependencies. Without it the
 Telegram connector reports itself disabled with that remedy instead of
 crash-looping.
+
+### Auto — letting a wolt work unattended
+
+A native session asks before it acts. That is the right default for a machine
+with your repos on it, but it also means nobody is home: a wolt woken by
+Telegram, or by the wolf at 6am, stops at the first permission prompt and waits
+for a human who is asleep.
+
+**Auto** is the other posture, and it is granted per wolt *and* per directory:
+
+```bash
+woltspace auto grant mossy                 # its own wolt directory
+woltspace auto grant mossy --workdir ~/src/api
+woltspace auto list
+woltspace auto revoke mossy --workdir ~/src/api
+```
+
+A grant names one wolt and one canonical directory — symlinks resolved, so the
+path recorded is the path a session actually runs in. It is not a mode you
+switch on; it is consent you gave to a specific pair, and it is the whole of the
+consent: **once a grant exists, sessions for that wolt in that directory
+default to Auto**, and everything else keeps asking. That is what makes an
+unattended wolt possible without a flag on every spawn — nothing in the lodge,
+the bot, or the wolf asks for Auto by name.
+
+The explicit forms still win in both directions. A session started in prompt
+mode on purpose keeps asking even where Auto is approved, and asking for Auto
+where no grant exists is refused rather than quietly downgraded — you find out
+at spawn, not three commands into the transcript.
+
+Grants live in `<wolts>/.space/auto-grants.json`, owner-readable only, and
+`woltspace auto revoke` takes one back. Revoking does not touch a session
+already running under it: a live agent keeps the permissions it started with
+until it exits.
+
+Containers do not use grants. Their whole isolation argument is the disposable
+box, so Auto is their default and the grant store is ignored.
+
+> Two programs answer to `woltspace auto` — see the shadowing note further
+> down. The native CLI's `auto` reads and writes the grant file directly, so it
+> works with the lodge stopped. The thin client's (`container/bin/woltspace`,
+> which a *session* has first on its PATH) posts to `/auto-grants/*` on a
+> running control plane and takes its directory as a positional argument. Same
+> store either way; only the reach differs.
 
 ### Installing before the packages are published
 
@@ -160,6 +205,25 @@ its port. Switch it off with `channels.tui.enabled = false` or
 > this document mean. **Inside the container, read connector state with
 > `curl -s localhost:7777/health | jq .connectors`** — `woltspace status` there
 > is the other program and will answer, confidently, about something else.
+>
+> On a *native* install the thin client is on PATH too — the wheel bundle's
+> `container/bin` is what puts `notify` and `push-view` in front of a session —
+> and it can win the race with `~/.local/bin`. So it detects a native install
+> (`WOLTSPACE_ISOLATION`, else the image's fixed `/workspace` mount points) and
+> execs the console script sitting at `<venv>/bin/woltspace` for every verb it
+> does not serve: the whole lifecycle set plus `doctor`, `paths`, `serve`,
+> `restore`, `--version`. It keeps `session`, `status`, `auto` and `tui` for
+> itself, because the native CLI has no `session` noun and wolts message each
+> other through it. In the container nothing changed: lifecycle verbs still get
+> the "run it on the host where docker lives" refusal.
+>
+> The bash launcher has the matching guard from the other side. Before its first
+> `docker` verb it reads `<wolts>/.space/platform/control-plane.json`, and if a
+> live pid owns that data root with `"isolation": "host"`, it refuses to boot.
+> It has to be a refusal rather than a warning: `docker run` mounts the same
+> wolts directory, binds the same port, and loads the same `.env` — so the
+> second colony comes up holding the *same* bot token, and two long-polls on one
+> token trade 409s while the human watches a server they did not start.
 
 Configure it in the data root the control plane owns —
 `<wolts>/.space/platform/config.json`:
@@ -241,7 +305,7 @@ That last refusal is a hard error naming the conflict, not a warning:
 ```
 serve failed: /workspace/wolts is publishing through a live tunnel (cloudflared
 pid 4711), so a control plane is already using it. Stop that instance first, use
-a fresh data root (`WOLTS_DIR=~/.woltspace/native-wolts woltspace start`), or set
+a fresh data root (`WOLTSPACE_WOLTS_DIR=~/.woltspace/native-wolts woltspace start`), or set
 WOLTSPACE_ALLOW_SHARED_DATA_ROOT=1 if you really mean to share it.
 ```
 
@@ -258,7 +322,7 @@ a running container, the lock cannot be trusted to catch native-versus-container
 contention — two control planes could both believe they own it.
 
 - Your **first native run should use a fresh data root**:
-  `WOLTS_DIR=~/.woltspace/native-wolts woltspace start`.
+  `WOLTSPACE_WOLTS_DIR=~/.woltspace/native-wolts woltspace start`.
 - Pointing native at a **container-mounted data root requires stopping the
   container first**.
 

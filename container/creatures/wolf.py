@@ -26,9 +26,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+from env_compat import get_env
+
 # ── Cached helpers ─────────────────────────────────────────────────
 
-WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 
 
 def _dialable_host(host: str) -> str:

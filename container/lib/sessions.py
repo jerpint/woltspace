@@ -24,6 +24,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+from env_compat import get_env
 from paths import (
     WOLTS_DIR as _PATHS_WOLTS_DIR,
     wolt_sessions_dir,
@@ -41,6 +42,7 @@ from harnesses import (
     get_default_harness,
     build_command,
     session_has_agent_process,
+    sessions_with_agent_process,
     platform_skill_invoke,
     PLATFORM_SKILL_NAMESPACE,
     LEGACY_PLATFORM_SKILL_PREFIX,
@@ -59,7 +61,7 @@ from trust import ensure_claude_dir_trusted, ensure_codex_dir_trusted
 
 _UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
-WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 # Resolved relative to this file so the dev clone drives its own script —
 # a hardcoded production path pairs new sessions.py with old run-session.sh.
 RUN_SESSION_SCRIPT = Path(__file__).resolve().parent.parent / "bin" / "run-session.sh"
@@ -71,6 +73,40 @@ RUN_SESSION_SCRIPT = Path(__file__).resolve().parent.parent / "bin" / "run-sessi
 # reconcile.
 ORPHAN_TMUX_MISSING = "tmux-session-missing"
 ORPHAN_RUNTIME_GONE = "runtime-gone"
+# Tmux still holds the session, but nothing in it is an agent any more: a
+# failed respawn, an OOM-killed harness, or a session whose agent exited and
+# left the login shell behind. Indistinguishable from healthy if you only ask
+# tmux, which is exactly how an "alive" row used to drop a human into an
+# agentless shell.
+ORPHAN_AGENT_GONE = "agent-process-missing"
+
+# The fields get(check_alive=True) and list() compute rather than read off disk.
+LIVENESS_FIELDS = frozenset({"alive", "tmux_alive", "agent_alive"})
+
+
+class ResumeUnavailable(Exception):
+    """This session can never be resumed — there is no conversation to replay.
+
+    Distinct from ResumeFailed: retrying will not help, and the caller should
+    offer a fresh session instead. Surfaces as 409 on the API.
+    """
+
+
+class ResumeFailed(Exception):
+    """Resume was attempted and the agent did not come up. Surfaces as 502."""
+
+
+# How long resume waits for a relaunched agent to show up in the process tree
+# before calling it a failure. The launching shim (run-session.sh) counts, and
+# that appears within a second or two of the tmux spawn — this is slack for a
+# loaded host, not for a slow model. Running out is never persisted as
+# "failed": it is a statement about our patience, not about the session.
+_AGENT_APPEAR_TIMEOUT = 12.0
+# The in-place revival gets a shorter leash: it pastes a command into a pane
+# that either runs it right away or never will (a busy foreground process eats
+# it), and the escalation behind it needs the remaining patience.
+_AGENT_REVIVE_TIMEOUT = 6.0
+_AGENT_POLL_INTERVAL = 0.4
 
 
 class SessionRegistry:
@@ -285,7 +321,28 @@ class SessionRegistry:
         return self.update(name, wolt=wolt, status=status, exit_code=exit_code, finished_at=int(time.time()))
 
     def get(self, name: str, *, wolt: str = None, check_alive: bool = True) -> dict | None:
-        """Get session data, optionally checking tmux for liveness."""
+        """Get session data, optionally checking liveness.
+
+        check_alive reports the same three fields as `list()`, and means the
+        same thing by them — one definition of alive, whether you ask about one
+        session or all of them:
+
+          tmux_alive  — tmux still holds the session (the historical `alive`).
+          agent_alive — True/False, or None when undetermined (the process
+                        table could not be read).
+          alive       — agent_alive, with None falling back to tmux presence.
+
+        Asking tmux alone is what let a husk — a tmux session whose agent died,
+        leaving the login shell holding it open — read as a healthy running
+        session here. `check_session` then showed it alive with pane output
+        while `list()` called the same session orphaned, and `deliver_message`
+        pasted into its shell.
+
+        `alive` is deliberately the permissive answer: a ps hiccup must not
+        report the whole colony offline. Callers about to do something
+        destructive — delivery pastes text a shell would EXECUTE — must gate on
+        `agent_alive is True` instead, and deliver_message does.
+        """
         if not wolt:
             wolt = self._find_wolt(name)
         if not wolt:
@@ -294,10 +351,22 @@ class SessionRegistry:
         if data is None:
             return None
         if check_alive:
-            data["alive"] = _tmux_alive(data)
+            tmux_alive = _tmux_alive(data)
+            # No panes means no processes: definitively agentless, and worth
+            # skipping the ps fork for. Launching shims count as an agent here
+            # so a session mid-boot does not read as orphaned — same as list().
+            agent_alive = (
+                session_has_agent_process(data, resolve_harness(data.get("harness")))
+                if tmux_alive else False
+            )
+            data["tmux_alive"] = tmux_alive
+            data["agent_alive"] = agent_alive
+            data["alive"] = tmux_alive if agent_alive is None else agent_alive
             if data["status"] == "running" and not data["alive"]:
                 data["status"] = "orphaned"
-                data["orphaned_reason"] = ORPHAN_TMUX_MISSING
+                data["orphaned_reason"] = (
+                    ORPHAN_TMUX_MISSING if not tmux_alive else ORPHAN_AGENT_GONE
+                )
         return data
 
     def set_viewport(self, name: str, url: str, *, wolt: str = None, port: int = 7777) -> dict | None:
@@ -352,8 +421,28 @@ class SessionRegistry:
 
         If wolt is given, only list that wolt's sessions.
         Otherwise, scan all wolts.
+
+        Liveness is reported three ways, because "is it alive" has two honest
+        answers and callers want different ones:
+
+          tmux_alive  — tmux still holds the session (the historical meaning).
+          agent_alive — an agent process, or its launching shim, is somewhere
+                        in that session's process tree.
+          alive       — agent_alive. This is what the lists key off, and the
+                        reason: a died or failed-to-respawn agent leaves a bare
+                        login shell in a live tmux session, which the old
+                        tmux-only check reported as alive. The TUI then
+                        *attached* to it, dropping the human into an agentless
+                        shell instead of resuming the conversation.
+
+        Both flags come from two process calls for the whole list, not two per
+        session (see sessions_with_agent_process).
         """
         live_sessions = _tmux_sessions()
+        # None = undetermined (unreadable process table). Never read as dead:
+        # a ps hiccup must not mark the whole colony offline and send every
+        # Enter through a resume.
+        agent_sessions = sessions_with_agent_process()
         results = []
 
         wolts_to_scan = [wolt] if wolt else self._all_wolts()
@@ -373,12 +462,21 @@ class SessionRegistry:
                 except (json.JSONDecodeError, OSError):
                     continue
                 name = data.get("name", path.stem)
-                alive = name in live_sessions
-                data["alive"] = alive
-                if data["status"] == "running" and not alive:
+                tmux_name = RuntimeHandle.from_record(data).tmux_session_name or name
+                tmux_alive = tmux_name in live_sessions
+                agent_alive = (
+                    tmux_alive if agent_sessions is None
+                    else tmux_name in agent_sessions
+                )
+                data["tmux_alive"] = tmux_alive
+                data["agent_alive"] = agent_alive
+                data["alive"] = agent_alive
+                if data["status"] == "running" and not agent_alive:
                     data["status"] = "orphaned"
-                    data["orphaned_reason"] = ORPHAN_TMUX_MISSING
-                if alive_only and not alive:
+                    data["orphaned_reason"] = (
+                        ORPHAN_TMUX_MISSING if not tmux_alive else ORPHAN_AGENT_GONE
+                    )
+                if alive_only and not agent_alive:
                     continue
                 results.append(data)
 
@@ -612,6 +710,39 @@ def _tmux_stop(session: str | dict | RuntimeHandle) -> bool:
     return _runtime().stop(_runtime_handle(session))
 
 
+def _session_scope(session: str | dict | RuntimeHandle) -> RuntimeHandle:
+    """The same address with the pane dropped — "anywhere in this session".
+
+    Liveness walks narrow to the persisted pane while that pane exists, which
+    is the right answer for delivery (paste where the agent actually is) and
+    the wrong one for "is anything running in here at all". Killing a session
+    is a session-level act, so the question in front of it has to be too.
+    """
+    return _runtime_handle(session).at_pane("")
+
+
+def _await_agent(session: str | dict | RuntimeHandle, harness: str | None,
+                 timeout: float | None = None) -> bool:
+    """Poll until a launching-or-live agent shows up in this session. True/False.
+
+    A relaunch is fire-and-forget — tmux returns the moment the pane exists,
+    long before run-session.sh has decided whether it can start anything. That
+    gap is where a resume used to be reported as a success and the human got
+    attached to a dying shell. Launching processes count, so this waits for
+    evidence of a launch, not for the model to be ready.
+
+    Read from the module globals at call time so a test can shorten them.
+    """
+    limit = _AGENT_APPEAR_TIMEOUT if timeout is None else timeout
+    deadline = time.monotonic() + limit
+    while True:
+        if resolve_agent_handle(session, harness, include_launching=True) is not None:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(_AGENT_POLL_INTERVAL)
+
+
 def _guard_paste_text(harness: str | None, text: str) -> str:
     """Defuse harness-specific paste quirks. Pure no-op unless the harness
     opts in via a flag, so shared paste paths (IWCL, resume) are unchanged
@@ -711,9 +842,31 @@ def deliver_message(session_id: str, text: str, from_wolt: str = "",
     """Deliver a message into a running session, with optional attribution.
 
     Returns {"status": ..., "session": session_id} where status is:
-      delivered   — pasted into a live session
-      session-dead — session exists in the registry but tmux/agent is gone
+      delivered    — pasted into the pane an agent was actually found in
+      agent-gone   — tmux holds the session but no agent is ready in it
+      session-dead — the tmux session itself is gone
       no-session   — no such session
+
+    Delivery is the one place liveness has teeth. A paste is not a read: the
+    text goes to whatever owns the pane, and a login shell left behind by a
+    dead agent will happily EXECUTE an IWCL message. So this refuses on
+    anything short of a positive answer:
+
+      * `agent_alive is not True` — False, and also None. `alive` falls back
+        to tmux presence when the process table is unreadable, which is right
+        for a list but wrong here: undetermined must not become "paste it and
+        hope". The conservative side is cheap and self-healing — the caller
+        sees agent-gone and resumes, and a resume that finds a live agent just
+        delivers the prompt itself.
+      * a *launching* agent — counted as alive everywhere else, so a booting
+        session is not reported orphaned, but a half-painted TUI swallows a
+        paste. Detection uses include_launching=False and hands back the exact
+        pane, so a session found in one window can never be pasted into
+        another.
+
+    agent-gone is deliberately distinct from session-dead: the tmux session is
+    still there, so a caller can resume-then-retry rather than concluding the
+    session is beyond reach.
 
     Delivery is harness-aware: it reuses _tmux_paste with the target harness's
     paste_settle (codex needs a settle before Enter; claude takes 0).
@@ -722,12 +875,28 @@ def deliver_message(session_id: str, text: str, from_wolt: str = "",
     data = reg.get(session_id)
     if data is None:
         return {"status": "no-session", "session": session_id}
-    if not data.get("alive"):
+    if not data.get("tmux_alive", data.get("alive")):
         return {"status": "session-dead", "session": session_id}
     harness = resolve_harness(data.get("harness"))
+    if data.get("agent_alive") is not True:
+        return {
+            "status": "agent-gone",
+            "session": session_id,
+            "detail": (
+                "tmux session is up but could not be confirmed to hold a live "
+                f"{harness} agent — resume it and retry"
+            ),
+        }
+    target = resolve_agent_handle(data, harness, include_launching=False)
+    if target is None:
+        return {
+            "status": "agent-gone",
+            "session": session_id,
+            "detail": f"the {harness} agent is still booting — retry shortly",
+        }
     settle = get_harness(harness).get("paste_settle", 0.0)
     body = format_attributed_message(text, from_wolt, from_session)
-    _tmux_paste(data, _guard_paste_text(harness, body), settle=settle)
+    _tmux_paste(target, _guard_paste_text(harness, body), settle=settle)
     reg.touch(session_id)
     return {"status": "delivered", "session": session_id, "harness": harness}
 
@@ -904,6 +1073,21 @@ def _assemble_spawn_prompt(data: dict, prompt: str, harness: str) -> str:
     return f"{prefix}{prompt}{context} {start_chat} {adapter} {wolt}"
 
 
+def stored_resume_id(data: dict) -> str:
+    """The harness conversation id a --resume would replay, or "".
+
+    harness_session_id is the generic field, written by us at spawn.
+    claude_session_id is the pre-harness spelling — old sessions resume through
+    the fallback, UUID-validated because some legacy sessions stored non-UUID
+    values there.
+    """
+    resume_id = data.get("harness_session_id") or ""
+    if resume_id:
+        return resume_id
+    legacy = data.get("claude_session_id") or ""
+    return legacy if _UUID_RE.match(legacy) else ""
+
+
 def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
     """Build the full agent command for a session — the run-session.sh backend.
 
@@ -958,14 +1142,18 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
         )
 
     if mode == "resume":
-        # harness_session_id is the generic field, written by us at spawn.
-        # claude_session_id is the pre-harness spelling — old sessions resume
-        # through the fallback, UUID-validated because some legacy sessions
-        # stored non-UUID values there.
-        resume_id = data.get("harness_session_id") or ""
+        resume_id = stored_resume_id(data)
         if not resume_id:
-            legacy = data.get("claude_session_id") or ""
-            resume_id = legacy if _UUID_RE.match(legacy) else ""
+            # Loud on purpose. Every harness silently drops its resume flag
+            # when handed an empty id (see _claude_command / _codex_command /
+            # _opencode_command), so this used to launch a BRAND NEW agent in
+            # the resumed session's slot: tmux alive, agent alive, prompt
+            # delivered, conversation gone. Better to refuse and say why.
+            raise ValueError(
+                f"session '{name}' cannot be resumed: no harness_session_id on "
+                f"record (the {harness} conversation id was never stamped, so "
+                f"there is no transcript to resume) — start a new session instead"
+            )
         # Same CLI-prompt constraint as spawn — stamp for paste delivery.
         if get_harness(harness).get("prompt_via_paste"):
             if prompt:
@@ -1288,8 +1476,15 @@ def resume_session(name: str, prompt: str = "") -> dict:
       5. If tmux is dead → create a new tmux session with run-session.sh --resume.
       6. Update status and the exact runtime handle on success.
 
+    Every relaunch (3, 4, 5) is then *verified*: an agent has to appear in the
+    session's process tree, or this raises. A stale agentless tmux session that
+    refuses to revive in place is killed and respawned clean — never one with a
+    live agent in it.
+
     Returns dict with resume info.
-    Raises ValueError if session not found in registry.
+    Raises ValueError if session not found in registry, ResumeUnavailable if
+    the session has no conversation id to replay, ResumeFailed if the agent
+    did not come up.
     """
     registry = SessionRegistry()
     data = registry.get(name, check_alive=False)
@@ -1347,11 +1542,24 @@ def resume_session(name: str, prompt: str = "") -> dict:
             f"workdir {work_dir} does not exist on this host"
         )
 
+    # Nothing below this line can succeed without a conversation to replay, and
+    # every harness quietly drops --resume when handed an empty id — which used
+    # to spawn a fresh agent into the old session's slot and report success.
+    # Refuse here, before any tmux is touched, so the caller gets the real
+    # reason rather than a blank agent wearing the session's name.
+    if not stored_resume_id(data):
+        raise ResumeUnavailable(
+            f"session '{name}' has no {harness} conversation id on record "
+            f"(harness_session_id was never stamped), so there is nothing to "
+            f"resume — start a new session for this wolt instead"
+        )
+
     # Both resume paths deliver run-session.sh — the single runtime wrapper.
     # It reads dir/model/harness from the registry, builds the agent command
     # via prepare_session_command, and closes out the lifecycle (finish status,
     # viewport reset) when the agent exits — which raw agent commands skipped.
     resume_cmd = build_session_command(name, prompt, resume=True)
+    respawn_detail = "tmux was dead, created new tmux with --resume"
 
     if tmux_alive and not agent_running:
         if _runtime().handle_is_alive(target):
@@ -1371,13 +1579,65 @@ def resume_session(name: str, prompt: str = "") -> dict:
                 status="running",
                 runtime=target.to_record(),
             )
+            # The pane on disk just moved. Keep the in-memory record in step so
+            # nothing below this line addresses the pane we already replaced.
+            data = {**data, "runtime": target.to_record()}
             detail = "agent pane was gone, restarted with --resume in a new window"
-        return {"name": name, "url": session_url, "status": "revived", "detail": detail}
+        if _await_agent(target, harness, _AGENT_REVIVE_TIMEOUT):
+            return {"name": name, "url": session_url,
+                    "status": "revived", "detail": detail}
+        # In-place revival did not take. The pane we pasted into may be a
+        # leftover login shell in a state that swallows the command, or the
+        # wrapper died on arrival. Escalate to a clean tmux — but only after
+        # re-confirming, at the session level, that no agent is running
+        # anywhere in it. Killing a session with a live agent would destroy
+        # exactly the conversation we were asked to rescue.
+        # Ask about the whole tmux session, not the pane we just pasted into:
+        # a handle carrying a pane_id narrows the walk to that pane while it
+        # lives, and the pane living is precisely why we are here. Dropping the
+        # pane is what makes this the session-level question the kill needs.
+        whole_session = _session_scope(target)
+        if session_has_agent_process(whole_session, harness) is not False:
+            raise ResumeFailed(
+                f"session '{name}': tried to restart the agent in its tmux "
+                f"session and could not confirm it came up ({detail}); "
+                f"something is running in there, so it was left alone — "
+                f"attach and look before retrying"
+            )
+        _tmux_stop(whole_session)
+        tmux_alive = False
+        respawn_detail = (
+            "stale tmux session held nothing but a shell and would not revive "
+            "in place; killed it and created a new tmux with --resume"
+        )
 
-    # Tmux is dead — create a fresh tmux session running the wrapper
+    # Tmux is dead (or was just cleared out from under a stale, agentless
+    # session) — create a fresh tmux session running the wrapper.
     handle = _tmux_spawn(name, work_dir or "/workspace", resume_cmd)
     registry.update(name, wolt=wolt, status="running", runtime=handle.to_record())
-    return {"name": name, "url": session_url, "status": "respawned", "detail": "tmux was dead, created new tmux with --resume"}
+    if not _await_agent(handle, harness):
+        # run-session.sh may have exited before an agent appeared: a prepare
+        # failure, a missing harness binary, an auth wall. Reporting
+        # "respawned" here is what let the TUI attach to an empty shell and
+        # call it a wake. But the wait running out is also just evidence about
+        # our patience — the boot path is three python subprocesses deep before
+        # the agent execs — so look once more, session-wide, before saying no.
+        if session_has_agent_process(_session_scope(handle), harness) is True:
+            return {"name": name, "url": session_url, "status": "respawned",
+                    "detail": f"{respawn_detail}; the agent surfaced just past the wait"}
+        # Still nothing. Report the failure, but do NOT stamp the record:
+        # "failed" is terminal (list() only re-classifies records that are
+        # "running"), so a slow-but-healthy agent stamped here would stay
+        # hidden from the TUI forever with a live conversation inside it.
+        # Left "running", list() tells the truth from the process table.
+        raise ResumeFailed(
+            f"session '{name}': respawned its tmux with --resume but no "
+            f"{harness} process appeared within {_AGENT_APPEAR_TIMEOUT:.0f}s — "
+            f"the launcher died on arrival. Run "
+            f"`session-reg prepare {name} resume` to see why"
+        )
+    return {"name": name, "url": session_url, "status": "respawned",
+            "detail": respawn_detail}
 
 
 def stop_session(name: str) -> dict:
@@ -1521,7 +1781,11 @@ def cli():
         if len(args) < 3:
             print("Usage: session-reg get-field <name> <field>", file=sys.stderr)
             sys.exit(1)
-        data = reg.get(args[1])
+        # Liveness now costs a ps snapshot on top of the tmux call, and this
+        # runs on the session boot path (run-session.sh reads dir and wolt
+        # through it, twice, before the agent even starts). Only pay for it
+        # when a liveness field is what was asked for.
+        data = reg.get(args[1], check_alive=args[2] in LIVENESS_FIELDS)
         if data and args[2] in data:
             print(data[args[2]] or "")
         else:
