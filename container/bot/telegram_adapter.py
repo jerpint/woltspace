@@ -35,7 +35,12 @@ from urllib.parse import urlparse, parse_qs
 from wolts import get_active_creature
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from env_compat import get_env
 from paths import space_dir
+from session_runtime import RuntimeHandle, get_runtime
+from sessions import resolve_active_session, wolt_harness
+from harnesses import platform_skill_invoke
+from skills_sync import wolt_skills_delivery
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -43,7 +48,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-_WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+_WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 
 # Global telegram state directories
 TELEGRAM_DIR = space_dir(_WOLTS_DIR) / "telegram"
@@ -80,7 +85,7 @@ DOG_VOICE_ACKS = [
 
 def _dog_name() -> str:
     name = get_active_creature("dog")
-    return name or os.environ.get("WOLT_NAME", "wolt")
+    return name or get_env("WOLTSPACE_WOLT_NAME", "wolt")
 
 
 async def _reply(update: Update, text: str, **kwargs):
@@ -257,19 +262,21 @@ async def _send_result(update: Update, result: dict):
 # ---------------------------------------------------------------------------
 
 def _is_session_alive(session_name: str) -> bool:
-    """Check if a session is still alive in tmux. Diagnostic only — not used for routing."""
-    import subprocess
+    """Check if a session is still alive in tmux. Diagnostic only — not used for routing.
+
+    Goes straight to the runtime with a bare handle rather than through the
+    registry: liveness is session-level, so the persisted pane would not change
+    the answer, and this runs inside an async handler where a per-check scan of
+    every wolt directory is not worth paying for.
+    """
     try:
-        result = subprocess.run(
-            ["tmux", "has-session", "-t", session_name],
-            capture_output=True,
-        )
-        alive = result.returncode == 0
+        runtime = get_runtime()
+        alive = runtime.is_alive(RuntimeHandle(session_name, session_name))
         if not alive:
             _bot_log("session_alive_check_false", {
                 "session": session_name,
-                "returncode": result.returncode,
-                "stderr": result.stderr.decode(errors="replace"),
+                "panes": 0,
+                "live_sessions": sorted(runtime.list_session_names())[:20],
             })
         return alive
     except Exception as e:
@@ -295,11 +302,20 @@ async def _notify_switch(update: Update, old_state: dict, new_wolt: str, new_ses
         await _reply(update, f"🪵 now talking to {emoji} {new_wolt} ({new_session})")
 
 
+def _start_chat_prompt(wolt: str) -> str:
+    """The bare boot prompt: start-chat, spelled for this wolt's engine AND
+    its skills delivery — the two together decide the name."""
+    invoke = platform_skill_invoke(
+        wolt_harness(wolt), "start-chat",
+        delivery=wolt_skills_delivery(_WOLTS_DIR / wolt))
+    return f"{invoke} telegram {wolt}"
+
+
 def _spawn_session(wolt: str, chat_id: int, prompt: str = "") -> dict:
     """Spawn a new Claude Code session for a wolt, return session info."""
     routing = {"adapter": "telegram", "chat_id": chat_id}
     session = start_claude_session(
-        prompt=prompt or f"/woltspace-start-chat telegram {wolt}",
+        prompt=prompt or _start_chat_prompt(wolt),
         wolt=wolt,
         routing=routing,
     )
@@ -307,7 +323,13 @@ def _spawn_session(wolt: str, chat_id: int, prompt: str = "") -> dict:
 
 
 async def _route_to_session(update: Update, session_name: str, wolt: str, text: str, chat_id: int):
-    """Route a message directly to a Claude Code session."""
+    """Route a message directly to a Claude Code session.
+
+    Returns the name of the session the message was actually delivered to
+    (which may differ from session_name if it fell back to the wolt's live
+    session), or None if nothing could be delivered — callers save the
+    returned name as the chat's active session.
+    """
     creature = ""  # will be filled from wolt.json by message_session
     emoji = "🐾"
 
@@ -325,7 +347,10 @@ async def _route_to_session(update: Update, session_name: str, wolt: str, text: 
         f"[telegram message from human, chat_id={chat_id}]: {text}\n"
         f"Reply back to them with: notify --telegram {chat_id} \"your message\""
     )
-    result = message_session(session_name, session_msg)
+    # message_session → resume_session blocks for as long as the agent takes
+    # to come up (up to 12s). On the bot's event loop that stalls every other
+    # chat, so the wait happens in a thread.
+    result = await asyncio.to_thread(message_session, session_name, session_msg)
     _bot_log("telegram_v2_session_route", {
         "session": session_name, "wolt": wolt,
         "text": text[:200], "result": result,
@@ -333,21 +358,41 @@ async def _route_to_session(update: Update, session_name: str, wolt: str, text: 
 
     _append_history(chat_id, "user", text)
 
-    if result.get("ok"):
-        session_link = result.get("url") or session_name
-        if result.get("status") == "revived":
-            await _reply(update, f"🪵 session had exited — revived and delivered\n{session_link}")
-        else:
-            await _reply(update, f"🪵 sent to {session_name}\n{session_link}")
-        _append_message(chat_id, {
-            "role": "assistant",
-            "content": f"[delivered to session {session_name}]",
+    if not result.get("ok"):
+        # Session unroutable — not in the registry, or a foreign-runtime
+        # record left behind by a container↔native migration. Before giving
+        # up (caller spawns fresh), prefer the wolt's live session: the
+        # message still gets delivered, and the human is told where.
+        live = resolve_active_session(wolt)
+        fallback = (
+            await asyncio.to_thread(message_session, live, session_msg)
+            if live and live != session_name else None
+        )
+        _bot_log("telegram_v2_fallback_route", {
+            "from": session_name, "to": live, "wolt": wolt,
+            "result": fallback,
         })
-    else:
-        # Session truly dead — need to respawn
-        return False
+        if fallback and fallback.get("ok"):
+            session_link = fallback.get("url") or live
+            await _reply(update, f"🪵 {session_name} is gone — delivered to {wolt}'s live session instead\n{session_link}")
+            _append_message(chat_id, {
+                "role": "assistant",
+                "content": f"[delivered to session {live}]",
+            })
+            return live
+        # Nothing live — caller respawns
+        return None
 
-    return True
+    session_link = result.get("url") or session_name
+    if result.get("status") == "revived":
+        await _reply(update, f"🪵 session had exited — revived and delivered\n{session_link}")
+    else:
+        await _reply(update, f"🪵 sent to {session_name}\n{session_link}")
+    _append_message(chat_id, {
+        "role": "assistant",
+        "content": f"[delivered to session {session_name}]",
+    })
+    return session_name
 
 
 # ---------------------------------------------------------------------------
@@ -485,13 +530,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 # Try routing directly — message_session handles revive internally
                 prev_state = _load_chat_state(chat_id)
-                success = await _route_to_session(update, reply_session, reply_wolt, reply_text, chat_id)
-                if success:
+                delivered = await _route_to_session(update, reply_session, reply_wolt, reply_text, chat_id)
+                if delivered:
                     new_state = dict(prev_state)
                     new_state["active_wolt"] = reply_wolt
-                    new_state["active_session"] = reply_session
+                    new_state["active_session"] = delivered
                     _save_chat_state(chat_id, new_state)
-                    await _notify_switch(update, prev_state, reply_wolt, reply_session)
+                    await _notify_switch(update, prev_state, reply_wolt, delivered)
                     return
                 # Route failed (session truly gone) — spawn new one for that wolt
                 try:
@@ -523,8 +568,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- Has active wolt + session: route to session ---
     if active_session:
         # Route directly — message_session handles revive (Claude exited, tmux dead, etc.)
-        success = await _route_to_session(update, active_session, active_wolt, text, chat_id)
-        if success:
+        delivered = await _route_to_session(update, active_session, active_wolt, text, chat_id)
+        if delivered:
+            if delivered != active_session:
+                state["active_session"] = delivered
+                _save_chat_state(chat_id, state)
             return
         # message_session failed (session not in registry) — spawn new
         await _reply(update, f"🪵 session expired — spawning new one for {active_wolt}")
@@ -651,13 +699,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 # Try routing directly — message_session handles revive internally
                 prev_state = _load_chat_state(chat_id)
-                success = await _route_to_session(update, reply_session, reply_wolt, reply_text, chat_id)
-                if success:
+                delivered = await _route_to_session(update, reply_session, reply_wolt, reply_text, chat_id)
+                if delivered:
                     new_state = dict(prev_state)
                     new_state["active_wolt"] = reply_wolt
-                    new_state["active_session"] = reply_session
+                    new_state["active_session"] = delivered
                     _save_chat_state(chat_id, new_state)
-                    await _notify_switch(update, prev_state, reply_wolt, reply_session)
+                    await _notify_switch(update, prev_state, reply_wolt, delivered)
                     return
                 # Route failed (session truly gone) — spawn new one for that wolt
                 try:
@@ -681,8 +729,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active_session = state.get("active_session")
 
     if active_wolt and active_session:
-        success = await _route_to_session(update, active_session, active_wolt, voice_message, chat_id)
-        if not success:
+        delivered = await _route_to_session(update, active_session, active_wolt, voice_message, chat_id)
+        if delivered and delivered != active_session:
+            state["active_session"] = delivered
+            _save_chat_state(chat_id, state)
+        if not delivered:
             try:
                 session = _spawn_session(active_wolt, chat_id)
                 state["active_session"] = session["name"]
@@ -754,8 +805,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_msg += f"\nCaption: {caption}"
 
     if active_wolt and active_session:
-        success = await _route_to_session(update, active_session, active_wolt, file_msg, chat_id)
-        if not success:
+        delivered = await _route_to_session(update, active_session, active_wolt, file_msg, chat_id)
+        if delivered and delivered != active_session:
+            state["active_session"] = delivered
+            _save_chat_state(chat_id, state)
+        if not delivered:
             try:
                 session = _spawn_session(active_wolt, chat_id)
                 state["active_session"] = session["name"]
@@ -837,8 +891,11 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_msg += f"\nCaption: {caption}"
 
     if active_wolt and active_session:
-        success = await _route_to_session(update, active_session, active_wolt, file_msg, chat_id)
-        if not success:
+        delivered = await _route_to_session(update, active_session, active_wolt, file_msg, chat_id)
+        if delivered and delivered != active_session:
+            state["active_session"] = delivered
+            _save_chat_state(chat_id, state)
+        if not delivered:
             try:
                 session = _spawn_session(active_wolt, chat_id)
                 state["active_session"] = session["name"]
@@ -903,8 +960,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_msg += f"\nCaption: {caption}"
 
     if active_wolt and active_session:
-        success = await _route_to_session(update, active_session, active_wolt, file_msg, chat_id)
-        if not success:
+        delivered = await _route_to_session(update, active_session, active_wolt, file_msg, chat_id)
+        if delivered and delivered != active_session:
+            state["active_session"] = delivered
+            _save_chat_state(chat_id, state)
+        if not delivered:
             try:
                 session = _spawn_session(active_wolt, chat_id)
                 state["active_session"] = session["name"]
@@ -1112,7 +1172,7 @@ async def handle_setwolt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active = state.get("active_wolt")
     wolts = [w for w in list_wolts() if _is_wolt(w)]
     if not wolts:
-        await _reply(update, "no wolts found. run /woltspace-create-wolt in the lodge first.")
+        await _reply(update, "no wolts found. create a wolt in the lodge first.")
         return
 
     await _reply(
@@ -1275,10 +1335,15 @@ async def handle_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _reply(update, f"couldn't start session for {wolt}: {e}")
 
 
+def _api() -> str:
+    """The control plane that spawned this adapter — see WolfConnector/notify."""
+    return os.environ.get("WOLTSPACE_API", "http://localhost:7777")
+
+
 async def _fetch_apps() -> list[dict]:
     import httpx
     async with httpx.AsyncClient() as client:
-        resp = await client.get("http://localhost:7777/apps", timeout=5)
+        resp = await client.get(f"{_api()}/apps", timeout=5)
         resp.raise_for_status()
         return resp.json()
 
@@ -1347,7 +1412,7 @@ async def _app_action(name: str, action: str) -> bool:
     import httpx
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.post(f"http://localhost:7777/apps/{name}/{action}", timeout=15)
+            resp = await client.post(f"{_api()}/apps/{name}/{action}", timeout=15)
             return resp.status_code < 400
         except Exception:
             return False
@@ -1444,7 +1509,7 @@ def run():
     app.add_handler(MessageHandler(filters.VIDEO | filters.ANIMATION | filters.VIDEO_NOTE | filters.Document.VIDEO, handle_video))
     app.add_handler(MessageHandler(filters.Document.ALL & ~filters.Document.IMAGE & ~filters.Document.VIDEO, handle_document))
 
-    wolt_name = os.environ.get("WOLT_NAME", "wolt")
+    wolt_name = get_env("WOLTSPACE_WOLT_NAME", "wolt")
     logger.info(f"{wolt_name} telegram v2 bot starting (chat-per-wolt model)...")
 
     loop = asyncio.new_event_loop()

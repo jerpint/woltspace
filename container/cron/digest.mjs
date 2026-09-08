@@ -12,10 +12,10 @@ import { randomBytes } from 'node:crypto';
 import { spawn as spawnProcess } from 'node:child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const WOLT_DIR   = process.env.WOLT_DIR || '/workspace/wolt';
+const WOLT_DIR   = process.env.WOLTSPACE_WOLT_DIR || process.env.WOLT_DIR || '/workspace/wolt';
 const MEMORY_DIR = join(WOLT_DIR, 'wolt', 'memory');
 const SPARKS_DIR = join(WOLT_DIR, 'wolt', 'sparks');
-const WOLT_NAME  = process.env.WOLT_NAME || 'wolt';
+const WOLT_NAME  = process.env.WOLTSPACE_WOLT_NAME || process.env.WOLT_NAME || 'wolt';
 
 // -- Spotify API --
 
@@ -216,7 +216,7 @@ function recentSparks(n = 4) {
 // -- Push to right pane --
 
 function pushToPane(sparkId) {
-  // Use push-view so session routing works correctly (reads WOLT_SESSION / tmux)
+  // Use push-view so session routing works correctly (reads the session env var / tmux)
   return new Promise((resolve, reject) => {
     const proc = spawnProcess('push-view', ['/history/' + sparkId]);
     proc.on('close', resolve);

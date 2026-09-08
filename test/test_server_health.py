@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import requires_server
+from conftest import requires_live_send, requires_real_spawn, requires_server
 
 
 # ---------------------------------------------------------------------------
@@ -40,6 +40,7 @@ class TestServerAlive:
 class TestNotifyEndpoint:
     """The /notify endpoint accepts messages and routes them."""
 
+    @requires_live_send
     def test_notify_returns_adapter(self, routed_test_session, server_post):
         """If routing exists, notify should return which adapter was used."""
         result = server_post("/notify", {
@@ -102,6 +103,24 @@ class TestWoltsEndpoint:
 # Session routing
 # ---------------------------------------------------------------------------
 
+@pytest.fixture
+def spawned_lodge_session(server_post, shadow_wolt):
+    """Spawn one real lodge session in the shadow wolt and stop it again.
+
+    A real spawn boots an agent process that nothing else reaps, so the stop is
+    the point of this fixture — not a nicety. The shadow wolt keeps that agent
+    out of anybody's actual directory.
+    """
+    result = server_post("/sessions/new/lodge", {"wolt": shadow_wolt})
+    name = result.get("name")
+    try:
+        yield result, shadow_wolt
+    finally:
+        if name:
+            stopped = server_post(f"/sessions/{name}/stop", {})
+            assert "error" not in stopped, f"failed to stop {name}: {stopped}"
+
+
 @requires_server
 class TestSessionRouting:
     """The /sessions/new/{adapter} endpoints route to the correct wolt."""
@@ -122,15 +141,19 @@ class TestSessionRouting:
         result = server_post("/sessions/new/slack", {})
         assert result.get("error"), "should reject missing wolt"
 
-    def test_lodge_spawns_session_for_valid_wolt(self, server_post):
+    @requires_real_spawn
+    def test_lodge_spawns_session_for_valid_wolt(self, spawned_lodge_session):
         """Gnaw on a real wolt → session spawns under that wolt."""
-        result = server_post("/sessions/new/lodge", {"wolt": "neowolt"})
+        result, wolt = spawned_lodge_session
         assert "name" in result, f"expected session name, got: {result}"
-        assert result["name"].startswith("neowolt-"), f"session should be under neowolt, got: {result['name']}"
-        assert result["wolt"] == "neowolt"
+        assert result["name"].startswith(f"{wolt}-"), (
+            f"session should be under {wolt}, got: {result['name']}"
+        )
+        assert result["wolt"] == wolt
 
-    def test_lodge_session_has_url(self, server_post):
+    @requires_real_spawn
+    def test_lodge_session_has_url(self, spawned_lodge_session):
         """Spawned session should include a URL for the split view."""
-        result = server_post("/sessions/new/lodge", {"wolt": "neowolt"})
+        result, _wolt = spawned_lodge_session
         # url may be None if no tunnel is configured, but the key should exist
         assert "url" in result

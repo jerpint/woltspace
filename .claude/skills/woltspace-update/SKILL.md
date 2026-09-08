@@ -17,7 +17,7 @@ You're running on the HOST machine, not inside the Docker container. You have ac
 - Docker commands (`docker build`, `docker stop`, etc.)
 - The `woltspace` CLI (in PATH)
 
-The wolts directory is at `$WOLTS_DIR` (default: `~/.woltspace/wolts`). Read it from the environment or fall back to the default.
+The wolts directory is at `$WOLTSPACE_WOLTS_DIR` (default: `~/.woltspace/wolts`). Read it from the environment or fall back to the default.
 
 **Updates are tag-based.** We only update to tagged releases (e.g. `v0.3.2` → `v0.4.0`). Unreleased commits on main are not offered as updates.
 
@@ -71,7 +71,7 @@ If a newer tag exists, show:
    ```bash
    git show ${LATEST}:CHANGELOG.md 2>/dev/null
    ```
-4. If the changelog references a migration guide (e.g. `docs/migrations/v0.4.0.md`), read it from the incoming version and include its steps in your report. Migration steps run on the host against `$WOLTS_DIR` — execute them after backup (Step 5a) but before rebuild (Step 5c).
+4. If the changelog references a migration guide (e.g. `docs/migrations/v0.4.0.md`), read it from the incoming version and include its steps in your report. Migration steps run on the host against `$WOLTSPACE_WOLTS_DIR` — execute them after backup (Step 5a) but before rebuild (Step 5c).
 5. Any breaking changes, new env vars, or action items
 
 **Determine the bump type** (for backup decision in Step 5):

@@ -6,7 +6,6 @@ in container/lib/wolts.py.
 Usage: uv run pytest test/test_wolts.py -v
 """
 
-import importlib.util
 import json
 import os
 import sys
@@ -19,7 +18,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 
-ENTRYPOINT_SETUP = Path(__file__).resolve().parent.parent / "container" / "entrypoint_setup.py"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +284,25 @@ class TestCreateCreatureWolt:
 class TestCredentials:
     """Unit: setup_wolt_claude_config manages credential copies correctly."""
 
+    def test_native_host_writes_no_harness_config_or_credentials(
+        self, tmp_path, monkeypatch
+    ):
+        from wolts import setup_wolt_claude_config
+        shared_claude = tmp_path / ".claude"
+        shared_claude.mkdir()
+        (shared_claude / ".credentials.json").write_text('{"token": "host"}')
+        wolt_dir = tmp_path / "mywolt"
+        wolt_dir.mkdir()
+        monkeypatch.setenv("WOLTSPACE_ISOLATION", "host")
+
+        with patch("wolts.WOLTS_DIR", tmp_path), patch(
+            "wolts.WOLTSPACE_DIR", tmp_path / "woltspace"
+        ):
+            setup_wolt_claude_config(wolt_dir, "mywolt")
+
+        assert not (wolt_dir / ".claude").exists()
+        assert not (wolt_dir / ".claude.json").exists()
+
     def test_copies_shared_credentials(self, tmp_path):
         """Fresh wolt gets a copy (not symlink) of shared creds."""
         from wolts import setup_wolt_claude_config
@@ -425,125 +443,58 @@ class TestStartSession:
             with pytest.raises(ValueError, match="not found"):
                 start_session(wolt="nonexistent", prompt="hey")
 
-    def test_resolves_wolt_dir(self, tmp_path):
+    def test_resolves_wolt_dir(self, tmp_path, fake_runtime):
         from sessions import start_session
         # Create a valid wolt dir
         (tmp_path / "mywolt").mkdir()
-        with patch("sessions.WOLTS_DIR", tmp_path), \
-             patch("sessions.subprocess") as mock_sub:
-            mock_sub.run.return_value = None
+        with patch("sessions.WOLTS_DIR", tmp_path):
             result = start_session(wolt="mywolt", prompt="hey")
             assert result["wolt"] == "mywolt"
             assert result["name"].startswith("mywolt-")
-            # Verify tmux was called with the right working dir
-            call_args = mock_sub.run.call_args
-            tmux_cmd = call_args[0][0]
-            c_idx = tmux_cmd.index("-c")
-            assert str(tmp_path / "mywolt") == tmux_cmd[c_idx + 1]
+            # Verify the session was spawned in the right working dir
+            session_id, cwd, command = fake_runtime.last_spawn
+            assert session_id == result["name"]
+            assert cwd == str(tmp_path / "mywolt")
+            assert command
 
-    def test_creature_sets_model(self, tmp_path):
+    def test_persists_runtime_handle(self, tmp_path, fake_runtime):
+        """The spawned pane is recorded on the session so later ops target it."""
+        from sessions import SessionRegistry, start_session
+        (tmp_path / "mywolt").mkdir()
+        with patch("sessions.WOLTS_DIR", tmp_path):
+            result = start_session(wolt="mywolt", prompt="hey")
+            stored = SessionRegistry(tmp_path).get(result["name"], check_alive=False)
+            assert stored["runtime"]["pane_id"] == "%1"
+            assert stored["runtime"]["tmux_session_name"] == result["name"]
+
+    def test_creature_sets_model(self, tmp_path, fake_runtime):
         from sessions import start_session
         (tmp_path / "mywolt").mkdir()
-        with patch("sessions.WOLTS_DIR", tmp_path), \
-             patch("sessions.subprocess") as mock_sub:
-            mock_sub.run.return_value = None
+        with patch("sessions.WOLTS_DIR", tmp_path):
             result = start_session(wolt="mywolt", creature="raccoon")
             assert result["creature"] == "raccoon"
             assert result["model"] == "opus"
 
-    def test_app_creates_subdir(self, tmp_path):
+    def test_app_creates_subdir(self, tmp_path, fake_runtime):
         from sessions import start_session
         (tmp_path / "mywolt").mkdir()
-        with patch("sessions.WOLTS_DIR", tmp_path), \
-             patch("sessions.subprocess") as mock_sub:
-            mock_sub.run.return_value = None
+        with patch("sessions.WOLTS_DIR", tmp_path):
             result = start_session(wolt="mywolt", app="myapp")
             assert result["app"] == "myapp"
             assert (tmp_path / "mywolt" / "wolt" / "apps" / "myapp").is_dir()
+            # the app session runs inside the app subdir, not the wolt root
+            assert fake_runtime.last_spawn[1] == str(tmp_path / "mywolt" / "wolt" / "apps" / "myapp")
 
 
 # ---------------------------------------------------------------------------
-# Skill sync tests (entrypoint_setup.py)
+# Boot-time skill/CLAUDE.md derivation (woltspace.container_entrypoint)
 # ---------------------------------------------------------------------------
 
 def _load_entrypoint():
-    spec = importlib.util.spec_from_file_location("entrypoint_setup", ENTRYPOINT_SETUP)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    """The container entrypoint — boot's derivation steps live in the package."""
+    from woltspace import container_entrypoint
 
-
-class TestSyncAllWoltSkills:
-    """Unit: sync_all_wolt_skills copies woltspace-* skills to all wolts."""
-
-    def test_syncs_woltspace_skills_to_all_wolts(self, tmp_path):
-        mod = _load_entrypoint()
-        woltspace = tmp_path / "woltspace"
-        skills_src = woltspace / "container" / "skills"
-
-        # Create two platform skills and one non-platform
-        (skills_src / "woltspace-notify").mkdir(parents=True)
-        (skills_src / "woltspace-notify" / "SKILL.md").write_text("notify skill")
-        (skills_src / "woltspace-viewport").mkdir()
-        (skills_src / "woltspace-viewport" / "SKILL.md").write_text("viewport skill")
-        (skills_src / "legacy").mkdir()  # should NOT be copied
-
-        # Create two wolts with .claude/skills/
-        wolts = tmp_path / "wolts"
-        for name in ["alpha", "beta"]:
-            (wolts / name / ".claude" / "skills").mkdir(parents=True)
-
-        mod.sync_all_wolt_skills(woltspace, wolts)
-
-        for name in ["alpha", "beta"]:
-            assert (wolts / name / ".claude" / "skills" / "woltspace-notify" / "SKILL.md").exists()
-            assert (wolts / name / ".claude" / "skills" / "woltspace-viewport" / "SKILL.md").exists()
-            assert not (wolts / name / ".claude" / "skills" / "legacy").exists()
-
-    def test_preserves_wolt_owned_skills(self, tmp_path):
-        mod = _load_entrypoint()
-        woltspace = tmp_path / "woltspace"
-        (woltspace / "container" / "skills" / "woltspace-notify").mkdir(parents=True)
-        (woltspace / "container" / "skills" / "woltspace-notify" / "SKILL.md").write_text("x")
-
-        wolts = tmp_path / "wolts"
-        skills_dir = wolts / "alpha" / ".claude" / "skills"
-        (skills_dir / "my-custom-skill").mkdir(parents=True)
-        (skills_dir / "my-custom-skill" / "SKILL.md").write_text("mine")
-
-        mod.sync_all_wolt_skills(woltspace, wolts)
-
-        # Wolt's own skill is untouched
-        assert (skills_dir / "my-custom-skill" / "SKILL.md").read_text() == "mine"
-        # Platform skill was synced
-        assert (skills_dir / "woltspace-notify" / "SKILL.md").exists()
-
-    def test_replaces_stale_platform_skills(self, tmp_path):
-        mod = _load_entrypoint()
-        woltspace = tmp_path / "woltspace"
-        (woltspace / "container" / "skills" / "woltspace-notify").mkdir(parents=True)
-        (woltspace / "container" / "skills" / "woltspace-notify" / "SKILL.md").write_text("v2")
-
-        wolts = tmp_path / "wolts"
-        skills_dir = wolts / "alpha" / ".claude" / "skills"
-        (skills_dir / "woltspace-notify").mkdir(parents=True)
-        (skills_dir / "woltspace-notify" / "SKILL.md").write_text("v1")
-
-        mod.sync_all_wolt_skills(woltspace, wolts)
-
-        assert (skills_dir / "woltspace-notify" / "SKILL.md").read_text() == "v2"
-
-    def test_skips_wolts_without_skills_dir(self, tmp_path):
-        mod = _load_entrypoint()
-        woltspace = tmp_path / "woltspace"
-        (woltspace / "container" / "skills" / "woltspace-notify").mkdir(parents=True)
-        (woltspace / "container" / "skills" / "woltspace-notify" / "SKILL.md").write_text("x")
-
-        wolts = tmp_path / "wolts"
-        (wolts / "no-claude-dir").mkdir(parents=True)  # no .claude/skills/
-
-        # Should not raise
-        mod.sync_all_wolt_skills(woltspace, wolts)
+    return container_entrypoint
 
 
 class TestDeriveWorktuiSkill:
@@ -565,10 +516,9 @@ class TestDeriveWorktuiSkill:
 
         mod.derive_worktui_skill(woltspace, worktui)
 
-        derived = (woltspace / "container" / "skills" / "woltspace-worktui" / "SKILL.md").read_text()
-        # Frontmatter name rewritten to the platform prefix, rest kept
-        assert "name: woltspace-worktui" in derived
-        assert "name: worktui\n" not in derived
+        derived = (woltspace / "container" / "skills" / "worktui" / "SKILL.md").read_text()
+        # Frontmatter name normalised to the directory name, rest kept
+        assert "name: worktui\n" in derived
         assert "description: Orchestrate sessions." in derived
         assert "wt spawn / wt send / wt read / wt kill" in derived
         # Woltspace-specific notes appended
@@ -580,12 +530,12 @@ class TestDeriveWorktuiSkill:
 
         mod.derive_worktui_skill(woltspace, tmp_path / "nope")
 
-        assert not (woltspace / "container" / "skills" / "woltspace-worktui").exists()
+        assert not (woltspace / "container" / "skills" / "worktui").exists()
 
     def test_replaces_stale_derived_copy(self, tmp_path):
         mod = _load_entrypoint()
         woltspace = tmp_path / "woltspace"
-        stale = woltspace / "container" / "skills" / "woltspace-worktui"
+        stale = woltspace / "container" / "skills" / "worktui"
         stale.mkdir(parents=True)
         (stale / "SKILL.md").write_text("old hand-written copy")
         (stale / "extra.md").write_text("leftover")
@@ -593,7 +543,7 @@ class TestDeriveWorktuiSkill:
 
         mod.derive_worktui_skill(woltspace, worktui)
 
-        derived_dir = woltspace / "container" / "skills" / "woltspace-worktui"
+        derived_dir = woltspace / "container" / "skills" / "worktui"
         assert "wt spawn" in (derived_dir / "SKILL.md").read_text()
         assert not (derived_dir / "extra.md").exists()
 
@@ -606,11 +556,15 @@ class TestDeriveWorktuiSkill:
         (wolts / "alpha" / ".claude" / "skills").mkdir(parents=True)
 
         mod.derive_worktui_skill(woltspace, worktui)
-        mod.sync_all_wolt_skills(woltspace, wolts)
+        # The control plane's own sync is what carries it out to the wolts.
+        from skills_sync import sync_all_wolt_skills
+        sync_all_wolt_skills(woltspace, wolts)
 
         synced = (wolts / "alpha" / ".claude" / "skills" / "woltspace-worktui" / "SKILL.md").read_text()
         assert "wt spawn / wt send / wt read / wt kill" in synced
-        assert "name: woltspace-worktui" in synced
+        # Delivered under the copy path, so both of its names — directory and
+        # frontmatter — are the prefixed one. claude reads one, codex the other.
+        assert "name: woltspace-worktui\n" in synced
 
 
 class TestWorktuiCommand:
@@ -692,17 +646,18 @@ class TestSyncClaudeMdPlatformSection:
 
 
 class TestSetupWoltSkillsOnly:
-    """Unit: setup_wolt_claude_config only copies woltspace-* skills."""
+    """Unit: a seeded wolt gets the platform skills under their delivered names."""
 
-    def test_only_copies_woltspace_prefixed_skills(self, tmp_path):
+    def test_seeds_platform_skills_under_the_legacy_prefix(self, tmp_path):
         from wolts import setup_wolt_claude_config
 
         woltspace = tmp_path / "woltspace"
         skills_src = woltspace / "container" / "skills"
-        (skills_src / "woltspace-notify").mkdir(parents=True)
-        (skills_src / "woltspace-notify" / "SKILL.md").write_text("notify")
-        (skills_src / "legacy" / "old-skill").mkdir(parents=True)
-        (skills_src / "legacy" / "old-skill" / "SKILL.md").write_text("old")
+        (skills_src / "notify").mkdir(parents=True)
+        (skills_src / "notify" / "SKILL.md").write_text("notify")
+        # The plugin manifest is not a skill and must never be delivered as one.
+        (skills_src / ".claude-plugin").mkdir()
+        (skills_src / ".claude-plugin" / "plugin.json").write_text("{}")
 
         wolt_dir = tmp_path / "mywolt"
         wolt_dir.mkdir()
@@ -712,4 +667,6 @@ class TestSetupWoltSkillsOnly:
 
         skills_dir = wolt_dir / ".claude" / "skills"
         assert (skills_dir / "woltspace-notify" / "SKILL.md").exists()
-        assert not (skills_dir / "legacy").exists()
+        assert not (skills_dir / "notify").exists()
+        assert not (skills_dir / ".claude-plugin").exists()
+        assert not (skills_dir / "woltspace-.claude-plugin").exists()

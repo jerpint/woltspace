@@ -6,18 +6,21 @@ import time
 from pathlib import Path
 
 from .config import (
+    CONTAINER_HOME,
     STATE_DIR,
     VIEWS_HISTORY_FILE,
     BOT_LOG_DIR,
     BOT_LOG_FILE,
     WOLTS_DIR,
+    WOLTSPACE_DIR,
 )
 
 # Import session registry from container/lib
-_lib_path = Path(__file__).resolve().parent.parent / "container" / "lib"
+_lib_path = WOLTSPACE_DIR / "container" / "lib"
 if str(_lib_path) not in sys.path:
     sys.path.insert(0, str(_lib_path))
 
+from harness_auth import claude_authenticated  # noqa: E402
 from sessions import SessionRegistry  # noqa: E402
 
 
@@ -36,8 +39,13 @@ def sanitize_session(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _is_onboarding() -> bool:
-    """True when Claude Code hasn't been authenticated yet."""
-    return not Path("/home/node/.claude/.credentials.json").exists()
+    """True when Claude Code hasn't been authenticated yet.
+
+    A token in the environment counts — see `container/lib/harness_auth.py`.
+    Testing only for the credentials file sent an authenticated colony's
+    viewport to /onboard.
+    """
+    return not claude_authenticated(CONTAINER_HOME)
 
 
 def get_current_url(session: str = "main") -> str | None:
@@ -153,5 +161,4 @@ def bot_log(event: str, data: dict):
             f.write(entry + "\n")
     except Exception:
         pass
-
 

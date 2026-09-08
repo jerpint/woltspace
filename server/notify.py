@@ -14,9 +14,19 @@ from .config import (
     SPACE_PLATFORM_DIR,
     WOLTS_DIR,
     DEN_REPLY_FOOTER,
-    get_env,
+    dotenv_env,
 )
 from .state import sanitize_session
+
+
+class NoNotificationTarget(RuntimeError):
+    """Nowhere to deliver to — a configuration gap, not a platform failure.
+
+    Its own type so the API can answer 409 instead of 500: an unconnected chat
+    is the user's next step, and a 500 tells them woltspace is broken. The
+    agent that hit this had to guess which it was.
+    """
+
 
 
 def read_session_registry(session: str) -> dict | None:
@@ -85,7 +95,7 @@ async def slack_send(token: str, channel: str, thread_ts: str | None, text: str)
 
 async def _send_telegram(session: str, message: str, chat_id: str) -> dict:
     """Send a notification via Telegram with den-reply footer."""
-    token = get_env("TELEGRAM_BOT_TOKEN")
+    token = dotenv_env("TELEGRAM_BOT_TOKEN")
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
 
@@ -109,11 +119,11 @@ async def _send_telegram(session: str, message: str, chat_id: str) -> dict:
 
 async def _send_slack(message: str, channel: str, thread_ts: str | None = None) -> dict:
     """Send a notification via Slack to a specific channel/thread."""
-    token = get_env("SLACK_BOT_TOKEN")
+    token = dotenv_env("SLACK_BOT_TOKEN")
     if not token:
         raise RuntimeError("SLACK_BOT_TOKEN not set")
     if not channel:
-        channel = get_env("SLACK_NOTIFY_CHANNEL")
+        channel = dotenv_env("SLACK_NOTIFY_CHANNEL")
     if not channel:
         raise RuntimeError("no slack channel provided and SLACK_NOTIFY_CHANNEL not set")
     await slack_send(token, channel, thread_ts, message)
@@ -156,11 +166,14 @@ async def send_notification(session: str, message: str, explicit: dict | None = 
                     return await _send_telegram(session, message, str(chat_id))
 
     # 3. Telegram default — fall back to first allowed user
-    telegram_token = get_env("TELEGRAM_BOT_TOKEN")
-    allowed = [s.strip() for s in get_env("TELEGRAM_ALLOWED_USERS").split(",") if s.strip()]
+    telegram_token = dotenv_env("TELEGRAM_BOT_TOKEN")
+    allowed = [s.strip() for s in dotenv_env("TELEGRAM_ALLOWED_USERS").split(",") if s.strip()]
     telegram_chat_id = allowed[0] if allowed else None
 
     if telegram_token and telegram_chat_id:
         return await _send_telegram(session, message, telegram_chat_id)
 
-    raise RuntimeError("no notification target — set TELEGRAM_BOT_TOKEN + TELEGRAM_ALLOWED_USERS")
+    raise NoNotificationTarget(
+        "no notification target — set TELEGRAM_BOT_TOKEN + TELEGRAM_ALLOWED_USERS "
+        f"in {WOLTS_DIR}/.env, or connect a chat with the /telegram skill"
+    )

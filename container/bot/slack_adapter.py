@@ -29,6 +29,7 @@ from bot.core import get_response, message_session, list_sessions, kill_session,
 from wolts import get_active_creature
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from env_compat import get_env
 from paths import wolt_state_dir, wolt_chat_dir
 
 logging.basicConfig(
@@ -39,9 +40,9 @@ logger = logging.getLogger(__name__)
 
 os.environ["BOT_ADAPTER"] = "slack"
 
-WOLT_DIR = Path(os.environ.get("WOLT_DIR", "/workspace/wolt"))
-_WOLT_NAME = os.environ.get("WOLT_NAME", WOLT_DIR.name)
-_WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", str(WOLT_DIR.parent)))
+WOLT_DIR = Path(get_env("WOLTSPACE_WOLT_DIR", "/workspace/wolt"))
+_WOLT_NAME = get_env("WOLTSPACE_WOLT_NAME", WOLT_DIR.name)
+_WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", str(WOLT_DIR.parent)))
 STATE_DIR = wolt_state_dir(_WOLT_NAME, _WOLTS_DIR)
 CHAT_DIR = wolt_chat_dir(_WOLT_NAME, _WOLTS_DIR) / "slack"
 
@@ -56,9 +57,9 @@ THREAD_SESSIONS_FILE = CHAT_DIR / "_thread_sessions.json"
 
 
 def _dog_name() -> str:
-    """Get the dog's display name — from dog-wolt if available, else WOLT_NAME."""
+    """Get the dog's display name — from dog-wolt if available, else the active-wolt env var."""
     name = get_active_creature("dog")
-    return name or os.environ.get("WOLT_NAME", "wolt")
+    return name or get_env("WOLTSPACE_WOLT_NAME", "wolt")
 
 
 def _load_active_threads() -> set[str]:
@@ -353,7 +354,9 @@ async def _route_to_session(client, channel: str, thread_ts: str, owner: dict, t
         f"[slack message from human, channel={channel}, thread={thread_ts}]: {text}\n"
         f"Reply back to them with: notify --slack {channel} {thread_ts} \"your message\""
     )
-    result = message_session(session_name, session_msg)
+    # Blocking resume wait — off the event loop, or the whole Slack app stops
+    # answering while one session boots.
+    result = await asyncio.to_thread(message_session, session_name, session_msg)
     _bot_log("slack_session_route", {"session": session_name, "text": text[:200], "result": result})
 
     _append_history(channel, thread_ts, "user", text)
@@ -553,7 +556,7 @@ def create_app():
 def run():
     """Start the Slack bot with Socket Mode."""
     app = create_app()
-    wolt_name = os.environ.get("WOLT_NAME", "wolt")
+    wolt_name = get_env("WOLTSPACE_WOLT_NAME", "wolt")
     logger.info(f"{wolt_name} slack bot starting (socket mode)...")
 
     async def _run():

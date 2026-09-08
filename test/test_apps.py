@@ -28,6 +28,8 @@ from conftest import requires_server, requires_tmux
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 
+from env_compat import get_env  # noqa: E402
+
 
 # ---------------------------------------------------------------------------
 # Unit: Session registry tracks app field
@@ -313,7 +315,7 @@ class TestIntegrationAppsEndpoint:
 class TestIntegrationAppServing:
     """Test that apps with woltspace.json get served correctly."""
 
-    WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 
     @pytest.fixture(autouse=True)
     def setup_test_app(self):
@@ -363,7 +365,7 @@ class TestIntegrationAppServing:
 class TestIntegrationAppWithManifest:
     """Test app serving with full woltspace.json metadata."""
 
-    WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 
     @pytest.fixture(autouse=True)
     def setup_manifest_app(self):
@@ -397,7 +399,7 @@ class TestIntegrationAppWithManifest:
 class TestIntegrationAppWithDist:
     """Test that dist/ directory takes priority for serving."""
 
-    WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 
     @pytest.fixture(autouse=True)
     def setup_dist_app(self):
@@ -437,7 +439,7 @@ class TestIntegrationAppWithDist:
 class TestIntegrationAppSecurity:
     """Ensure apps can't serve files outside their directory."""
 
-    WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 
     @pytest.fixture(autouse=True)
     def setup_security_app(self):
@@ -472,7 +474,7 @@ class TestIntegrationAppSecurity:
 class TestE2EAppLifecycle:
     """End-to-end: create app via bot tool, verify it's served."""
 
-    WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+    WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 
     @pytest.fixture(autouse=True)
     def setup_e2e_app(self):
@@ -514,10 +516,9 @@ class TestE2EAppLifecycle:
         assert app["description"] == "E2E test app"
         assert app["url"] == "/app/e2e-test-app/"
 
-    def test_app_session_scoping_creates_dir(self):
+    def test_app_session_scoping_creates_dir(self, shadow_wolt):
         """start_session with app= creates the app directory under the wolt."""
-        # Use a real wolt dir that exists
-        wolt_name = os.environ.get("WOLT_NAME", "neowolt")
+        wolt_name = shadow_wolt
         wolt_dir = self.WOLTS_DIR / wolt_name
         test_app = wolt_dir / "wolt" / "apps" / "e2e-auto-created"
         try:
@@ -668,6 +669,14 @@ class TestUnitShareApp:
             killed_pids.append(pid)
         monkeypatch.setattr(apps_mod, "_is_pid_alive", lambda pid: True)
         monkeypatch.setattr(os, "kill", lambda pid, sig: killed_pids.append(pid))
+        # stop_cloudflared now validates the *executable* before signalling, so
+        # a recycled number is never shot. Make these stand-in pids genuinely
+        # look like cloudflared.
+        import tunnel as tunnel_mod
+        monkeypatch.setattr(tunnel_mod, "_is_pid_alive", lambda pid: True)
+        monkeypatch.setattr(
+            tunnel_mod, "process_executable", lambda pid, **kwargs: "cloudflared",
+        )
         # Also mock _set_public to avoid filesystem writes
         monkeypatch.setattr(apps_mod, "_set_public", lambda name, public: None)
 

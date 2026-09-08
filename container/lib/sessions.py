@@ -12,6 +12,7 @@ Usage:
     reg.create("neowolt-chompy-dam-a3f1e2", wolt="neowolt", creature="beaver", ...)
 """
 
+import fcntl
 import json
 import os
 import random
@@ -20,8 +21,10 @@ import shlex
 import subprocess
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
+from env_compat import get_env
 from paths import (
     WOLTS_DIR as _PATHS_WOLTS_DIR,
     wolt_sessions_dir,
@@ -29,6 +32,7 @@ from paths import (
     space_dir,
 )
 from harnesses import (
+    resolve_agent_handle,
     HARNESSES,
     DEFAULT_HARNESS,
     resolve_harness,
@@ -38,15 +42,71 @@ from harnesses import (
     get_default_harness,
     build_command,
     session_has_agent_process,
+    sessions_with_agent_process,
+    platform_skill_invoke,
+    PLATFORM_SKILL_NAMESPACE,
+    LEGACY_PLATFORM_SKILL_PREFIX,
 )
+from skills_sync import wolt_skills_delivery
 from sites import ensure_site
+from session_runtime import RuntimeHandle, get_runtime
+from session_targets import SessionTarget, normalize_session_target
+from execution_policy import (
+    AutoGrantStore,
+    ExecutionPolicy,
+    resolve_execution_policy,
+)
+from runtime_context import RuntimeContext
+from trust import ensure_claude_dir_trusted, ensure_codex_dir_trusted
 
 _UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
-WOLTS_DIR = Path(os.environ.get("WOLTS_DIR", "/workspace/wolts"))
+WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 # Resolved relative to this file so the dev clone drives its own script —
 # a hardcoded production path pairs new sessions.py with old run-session.sh.
 RUN_SESSION_SCRIPT = Path(__file__).resolve().parent.parent / "bin" / "run-session.sh"
+
+
+# Why a session stopped being `running`. Recorded on the record itself, because
+# "orphaned" alone cannot tell a crashed agent from a machine that went away —
+# and the adoption report that knew the difference is overwritten by the next
+# reconcile.
+ORPHAN_TMUX_MISSING = "tmux-session-missing"
+ORPHAN_RUNTIME_GONE = "runtime-gone"
+# Tmux still holds the session, but nothing in it is an agent any more: a
+# failed respawn, an OOM-killed harness, or a session whose agent exited and
+# left the login shell behind. Indistinguishable from healthy if you only ask
+# tmux, which is exactly how an "alive" row used to drop a human into an
+# agentless shell.
+ORPHAN_AGENT_GONE = "agent-process-missing"
+
+# The fields get(check_alive=True) and list() compute rather than read off disk.
+LIVENESS_FIELDS = frozenset({"alive", "tmux_alive", "agent_alive"})
+
+
+class ResumeUnavailable(Exception):
+    """This session can never be resumed — there is no conversation to replay.
+
+    Distinct from ResumeFailed: retrying will not help, and the caller should
+    offer a fresh session instead. Surfaces as 409 on the API.
+    """
+
+
+class ResumeFailed(Exception):
+    """Resume was attempted and the agent did not come up. Surfaces as 502."""
+
+
+# How long resume waits for a relaunched agent to show up in the process tree
+# before calling it a failure. The launching shim (run-session.sh) counts, and
+# that appears within a second or two of the tmux spawn — this is slack for a
+# loaded host, not for a slow model. Running out is never persisted as
+# "failed": it is a statement about our patience, not about the session.
+_AGENT_APPEAR_TIMEOUT = 12.0
+# The in-place revival gets a shorter leash: it pastes a command into a pane
+# that either runs it right away or never will (a busy foreground process eats
+# it), and the escalation behind it needs the remaining patience.
+_AGENT_REVIVE_TIMEOUT = 6.0
+_AGENT_POLL_INTERVAL = 0.4
 
 
 class SessionRegistry:
@@ -73,7 +133,10 @@ class SessionRegistry:
         if not path.exists():
             return None
         try:
-            return json.loads(path.read_text())
+            data = json.loads(path.read_text())
+            return normalize_session_target(
+                data, wolts_dir=self.wolts_dir, fallback_wolt=wolt
+            )
         except (json.JSONDecodeError, OSError):
             return None
 
@@ -81,7 +144,17 @@ class SessionRegistry:
         path = self._path(wolt, name)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2) + "\n")
+        normalized = normalize_session_target(
+            data, wolts_dir=self.wolts_dir, fallback_wolt=wolt
+        )
+        # The reason belongs to the orphaned state and dies with it. Enforced
+        # here rather than at each writer because there are many ways back to
+        # running — adoption, three resume branches — and a record that says
+        # `running` while still carrying `orphaned_reason` is a record that
+        # lies to whoever reads it next.
+        if normalized.get("status") != "orphaned":
+            normalized.pop("orphaned_reason", None)
+        tmp.write_text(json.dumps(normalized, indent=2) + "\n")
         tmp.rename(path)
 
     def _find_wolt(self, name: str) -> str | None:
@@ -113,11 +186,20 @@ class SessionRegistry:
         user_id: str = "",
         thread_ts: str = "",
         session_url: str = "",
+        target: SessionTarget | None = None,
+        execution_policy: ExecutionPolicy | dict | str | None = None,
+        auto_grant: dict | None = None,
     ) -> dict:
         """Create a new session entry. Returns the full session dict."""
         if not wolt:
             raise ValueError("wolt is required for session creation")
         now = int(time.time())
+        if target is None:
+            target = SessionTarget.from_record(
+                {"wolt": wolt, "dir": dir},
+                wolts_dir=self.wolts_dir,
+                fallback_wolt=wolt,
+            )
         data = {
             "name": name,
             "wolt": wolt,
@@ -132,7 +214,14 @@ class SessionRegistry:
             "created_at": now,
             "finished_at": None,
             "exit_code": None,
-            "dir": dir,
+            "target": target.to_record(),
+            "wolt_id": target.wolt_id,
+            "workdir": str(target.canonical_workdir),
+            "dir": str(target.canonical_workdir),
+            "execution_policy": ExecutionPolicy.from_record(
+                execution_policy
+            ).to_record(),
+            "auto_grant": auto_grant,
             "title": title,
             "prompt": prompt[:500],
             "last_activity": now,
@@ -165,18 +254,52 @@ class SessionRegistry:
         self._write(wolt, name, data)
         return data
 
+    @contextmanager
+    def _lock(self, wolt: str, name: str):
+        """Serialize one session's read-modify-write across processes.
+
+        start_session writes the runtime handle immediately after spawning,
+        while the spawned run-session.sh has already started and writes
+        harness_session_id via `session-reg prepare` — two processes, same
+        file. Unserialized, whichever reads first wins and the other's field
+        vanishes: a lost runtime handle is cosmetic, a lost harness_session_id
+        breaks --resume. Best-effort — a filesystem without flock just falls
+        through to the old unlocked behavior rather than failing the write.
+        """
+        path = self._path(wolt, name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            handle = open(path.with_suffix(".lock"), "w")
+        except OSError:
+            yield
+            return
+        try:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            except OSError:
+                pass
+            yield
+        finally:
+            handle.close()
+
     def update(self, name: str, *, wolt: str = None, **fields) -> dict | None:
-        """Update fields on an existing session. Returns updated dict or None."""
+        """Update fields on an existing session. Returns updated dict or None.
+
+        Merges into whatever is on disk at write time, under a per-session
+        lock, so concurrent writers touching different fields don't clobber
+        each other.
+        """
         if not wolt:
             wolt = self._find_wolt(name)
         if not wolt:
             return None
-        data = self._read(wolt, name)
-        if data is None:
-            return None
-        data.update(fields)
-        data["last_activity"] = int(time.time())
-        self._write(wolt, name, data)
+        with self._lock(wolt, name):
+            data = self._read(wolt, name)
+            if data is None:
+                return None
+            data.update(fields)
+            data["last_activity"] = int(time.time())
+            self._write(wolt, name, data)
         return data
 
     def touch(self, name: str, *, wolt: str = None) -> bool:
@@ -198,7 +321,28 @@ class SessionRegistry:
         return self.update(name, wolt=wolt, status=status, exit_code=exit_code, finished_at=int(time.time()))
 
     def get(self, name: str, *, wolt: str = None, check_alive: bool = True) -> dict | None:
-        """Get session data, optionally checking tmux for liveness."""
+        """Get session data, optionally checking liveness.
+
+        check_alive reports the same three fields as `list()`, and means the
+        same thing by them — one definition of alive, whether you ask about one
+        session or all of them:
+
+          tmux_alive  — tmux still holds the session (the historical `alive`).
+          agent_alive — True/False, or None when undetermined (the process
+                        table could not be read).
+          alive       — agent_alive, with None falling back to tmux presence.
+
+        Asking tmux alone is what let a husk — a tmux session whose agent died,
+        leaving the login shell holding it open — read as a healthy running
+        session here. `check_session` then showed it alive with pane output
+        while `list()` called the same session orphaned, and `deliver_message`
+        pasted into its shell.
+
+        `alive` is deliberately the permissive answer: a ps hiccup must not
+        report the whole colony offline. Callers about to do something
+        destructive — delivery pastes text a shell would EXECUTE — must gate on
+        `agent_alive is True` instead, and deliver_message does.
+        """
         if not wolt:
             wolt = self._find_wolt(name)
         if not wolt:
@@ -207,9 +351,22 @@ class SessionRegistry:
         if data is None:
             return None
         if check_alive:
-            data["alive"] = _tmux_alive(name)
+            tmux_alive = _tmux_alive(data)
+            # No panes means no processes: definitively agentless, and worth
+            # skipping the ps fork for. Launching shims count as an agent here
+            # so a session mid-boot does not read as orphaned — same as list().
+            agent_alive = (
+                session_has_agent_process(data, resolve_harness(data.get("harness")))
+                if tmux_alive else False
+            )
+            data["tmux_alive"] = tmux_alive
+            data["agent_alive"] = agent_alive
+            data["alive"] = tmux_alive if agent_alive is None else agent_alive
             if data["status"] == "running" and not data["alive"]:
                 data["status"] = "orphaned"
+                data["orphaned_reason"] = (
+                    ORPHAN_TMUX_MISSING if not tmux_alive else ORPHAN_AGENT_GONE
+                )
         return data
 
     def set_viewport(self, name: str, url: str, *, wolt: str = None, port: int = 7777) -> dict | None:
@@ -264,8 +421,28 @@ class SessionRegistry:
 
         If wolt is given, only list that wolt's sessions.
         Otherwise, scan all wolts.
+
+        Liveness is reported three ways, because "is it alive" has two honest
+        answers and callers want different ones:
+
+          tmux_alive  — tmux still holds the session (the historical meaning).
+          agent_alive — an agent process, or its launching shim, is somewhere
+                        in that session's process tree.
+          alive       — agent_alive. This is what the lists key off, and the
+                        reason: a died or failed-to-respawn agent leaves a bare
+                        login shell in a live tmux session, which the old
+                        tmux-only check reported as alive. The TUI then
+                        *attached* to it, dropping the human into an agentless
+                        shell instead of resuming the conversation.
+
+        Both flags come from two process calls for the whole list, not two per
+        session (see sessions_with_agent_process).
         """
         live_sessions = _tmux_sessions()
+        # None = undetermined (unreadable process table). Never read as dead:
+        # a ps hiccup must not mark the whole colony offline and send every
+        # Enter through a resume.
+        agent_sessions = sessions_with_agent_process()
         results = []
 
         wolts_to_scan = [wolt] if wolt else self._all_wolts()
@@ -277,15 +454,29 @@ class SessionRegistry:
                 if path.suffix == ".tmp":
                     continue
                 try:
-                    data = json.loads(path.read_text())
+                    data = normalize_session_target(
+                        json.loads(path.read_text()),
+                        wolts_dir=self.wolts_dir,
+                        fallback_wolt=w,
+                    )
                 except (json.JSONDecodeError, OSError):
                     continue
                 name = data.get("name", path.stem)
-                alive = name in live_sessions
-                data["alive"] = alive
-                if data["status"] == "running" and not alive:
+                tmux_name = RuntimeHandle.from_record(data).tmux_session_name or name
+                tmux_alive = tmux_name in live_sessions
+                agent_alive = (
+                    tmux_alive if agent_sessions is None
+                    else tmux_name in agent_sessions
+                )
+                data["tmux_alive"] = tmux_alive
+                data["agent_alive"] = agent_alive
+                data["alive"] = agent_alive
+                if data["status"] == "running" and not agent_alive:
                     data["status"] = "orphaned"
-                if alive_only and not alive:
+                    data["orphaned_reason"] = (
+                        ORPHAN_TMUX_MISSING if not tmux_alive else ORPHAN_AGENT_GONE
+                    )
+                if alive_only and not agent_alive:
                     continue
                 results.append(data)
 
@@ -308,11 +499,100 @@ class SessionRegistry:
                     continue
                 if data.get("status") == "running" and data.get("name") not in live_sessions:
                     data["status"] = "orphaned"
+                    data["orphaned_reason"] = ORPHAN_TMUX_MISSING
                     data["last_activity"] = int(time.time())
                     wolt_name = data.get("wolt", w)
                     self._write(wolt_name, data["name"], data)
                     orphaned.append(data["name"])
         return orphaned
+
+    def adopt_runtime_sessions(self) -> dict:
+        """Reconcile only registered resumable sessions after control-plane boot.
+
+        Registry records are the authority: this deliberately does not enumerate
+        tmux or import unmanaged sessions. Live registered runtimes become running
+        and refresh their exact agent pane when it can be resolved. Missing
+        runtimes become orphaned. Terminal records remain untouched.
+        """
+        report = {
+            "at": int(time.time()),
+            "adopted": [],
+            "orphaned": [],
+            "unchanged": [],
+        }
+        runtime = _runtime()
+        for wolt in self._all_wolts():
+            sessions_dir = self.wolts_dir / wolt / ".state" / "sessions"
+            if not sessions_dir.exists():
+                continue
+            for path in sorted(sessions_dir.glob("*.json")):
+                if path.suffix == ".tmp":
+                    continue
+                try:
+                    data = normalize_session_target(
+                        json.loads(path.read_text()),
+                        wolts_dir=self.wolts_dir,
+                        fallback_wolt=wolt,
+                    )
+                except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+                    report["unchanged"].append({
+                        "session": path.stem,
+                        "wolt": wolt,
+                        "reason": f"unreadable registry record: {type(exc).__name__}",
+                    })
+                    continue
+
+                name = data.get("name") or path.stem
+                previous = data.get("status") or ""
+                if previous not in {"running", "orphaned"}:
+                    report["unchanged"].append({
+                        "session": name,
+                        "wolt": wolt,
+                        "status": previous,
+                        "reason": "terminal record",
+                    })
+                    continue
+
+                handle = RuntimeHandle.from_record(data)
+                if not runtime.is_alive(handle):
+                    if previous != "orphaned":
+                        with self._lock(wolt, name):
+                            current = self._read(wolt, name)
+                            if current is not None:
+                                current["status"] = "orphaned"
+                                current["orphaned_reason"] = ORPHAN_RUNTIME_GONE
+                                self._write(wolt, name, current)
+                    report["orphaned"].append({
+                        "session": name,
+                        "wolt": wolt,
+                        "previous_status": previous,
+                        "reason": ORPHAN_RUNTIME_GONE,
+                        "runtime": handle.to_record(),
+                    })
+                    continue
+
+                resolved = resolve_agent_handle(
+                    handle,
+                    harness=data.get("harness"),
+                    include_launching=True,
+                )
+                adopted_handle = resolved or handle
+                changed = previous != "running" or adopted_handle != handle
+                if changed:
+                    with self._lock(wolt, name):
+                        current = self._read(wolt, name)
+                        if current is not None:
+                            current["status"] = "running"
+                            current["runtime"] = adopted_handle.to_record()
+                            self._write(wolt, name, current)
+                report["adopted"].append({
+                    "session": name,
+                    "wolt": wolt,
+                    "previous_status": previous,
+                    "runtime": adopted_handle.to_record(),
+                    "handle_refreshed": adopted_handle != handle,
+                })
+        return report
 
     def delete(self, name: str, *, wolt: str = None) -> bool:
         """Remove a session file. Returns True if it existed."""
@@ -339,33 +619,40 @@ class SessionRegistry:
 # --- Helpers ---
 
 def _tmux_sessions() -> set[str]:
-    """Get set of live tmux session names."""
-    try:
-        raw = subprocess.run(
-            ["tmux", "list-sessions", "-F", "#{session_name}"],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip()
-        return {name for name in raw.split("\n") if name and name != "main"}
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return set()
+    """Every live session name, in one call.
+
+    The batched form of _tmux_alive and the same definition — a session is
+    live while it has any pane — so list()/reconcile() and get(check_alive)
+    can never disagree about the same session.
+    """
+    return _runtime().list_session_names()
 
 
-def _tmux_alive(name: str) -> bool:
-    """Check if a specific tmux session is alive."""
-    try:
-        subprocess.run(
-            ["tmux", "has-session", "-t", name],
-            capture_output=True, check=True,
-        )
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+def _runtime():
+    """The shared process-control boundary (see session_runtime.get_runtime)."""
+    return get_runtime()
 
 
-_TMUX_TIMEOUT = 10  # seconds — safety net so a stuck tmux call never freezes the bot
+def _runtime_handle(session: str | dict | RuntimeHandle) -> RuntimeHandle:
+    if isinstance(session, RuntimeHandle):
+        return session
+    if isinstance(session, dict):
+        return RuntimeHandle.from_record(session)
+    data = SessionRegistry(WOLTS_DIR).get(session, check_alive=False)
+    return RuntimeHandle.from_record(data or {"name": session})
 
 
-def _tmux_paste(target: str, text: str, settle: float = 0.0):
+def _tmux_alive(session: str | dict | RuntimeHandle) -> bool:
+    """Whether the session's tmux session exists — one definition, everywhere.
+
+    Session-level, matching list()/reconcile() and the pre-refactor
+    has-session check. Pane identity decides where a message is *delivered*
+    (resolve_delivery_pane), never whether the session counts as alive.
+    """
+    return _runtime().is_alive(_runtime_handle(session))
+
+
+def _tmux_paste(target: str | dict | RuntimeHandle, text: str, settle: float = 0.0):
     """Paste text into a tmux pane and press Enter.
 
     Uses set-buffer + paste-buffer instead of send-keys -l.
@@ -395,25 +682,65 @@ def _tmux_paste(target: str, text: str, settle: float = 0.0):
     Codex's TUI folds an immediate Enter into the paste (message stays in
     the composer) — its harness entry sets paste_settle=0.5. Claude takes 0.
     """
-    buf_name = f"paste-{target}"
-    subprocess.run(
-        ["tmux", "send-keys", "-t", target, "-X", "cancel"],
-        check=False, timeout=_TMUX_TIMEOUT,
-    )
-    subprocess.run(
-        ["tmux", "set-buffer", "-b", buf_name, text],
-        check=True, timeout=_TMUX_TIMEOUT,
-    )
-    subprocess.run(
-        ["tmux", "paste-buffer", "-b", buf_name, "-d", "-t", target],
-        check=True, timeout=_TMUX_TIMEOUT,
-    )
-    if settle > 0:
-        time.sleep(settle)
-    subprocess.run(
-        ["tmux", "send-keys", "-t", target, "Enter"],
-        check=True, timeout=_TMUX_TIMEOUT,
-    )
+    _runtime().paste(_runtime_handle(target), text, settle=settle)
+
+
+def _tmux_capture(target: str | dict | RuntimeHandle, start: str | None = "-30") -> str:
+    """Capture one named session through its exact persisted runtime handle.
+
+    start is the tmux -S history offset; None captures the visible pane only.
+    """
+    return _runtime().capture(_runtime_handle(target), start=start)
+
+
+def _tmux_spawn(name: str, cwd: str, command: str) -> RuntimeHandle:
+    """Spawn and return the exact handle to persist on the session record."""
+    return _runtime().spawn(name, cwd, command)
+
+
+def _tmux_spawn_in_session(
+    handle: RuntimeHandle, cwd: str, command: str
+) -> RuntimeHandle:
+    """Create a dedicated execution surface inside a surviving session."""
+    return _runtime().spawn_in_session(handle, cwd, command)
+
+
+def _tmux_stop(session: str | dict | RuntimeHandle) -> bool:
+    """Stop one exact named tmux session."""
+    return _runtime().stop(_runtime_handle(session))
+
+
+def _session_scope(session: str | dict | RuntimeHandle) -> RuntimeHandle:
+    """The same address with the pane dropped — "anywhere in this session".
+
+    Liveness walks narrow to the persisted pane while that pane exists, which
+    is the right answer for delivery (paste where the agent actually is) and
+    the wrong one for "is anything running in here at all". Killing a session
+    is a session-level act, so the question in front of it has to be too.
+    """
+    return _runtime_handle(session).at_pane("")
+
+
+def _await_agent(session: str | dict | RuntimeHandle, harness: str | None,
+                 timeout: float | None = None) -> bool:
+    """Poll until a launching-or-live agent shows up in this session. True/False.
+
+    A relaunch is fire-and-forget — tmux returns the moment the pane exists,
+    long before run-session.sh has decided whether it can start anything. That
+    gap is where a resume used to be reported as a success and the human got
+    attached to a dying shell. Launching processes count, so this waits for
+    evidence of a launch, not for the model to be ready.
+
+    Read from the module globals at call time so a test can shorten them.
+    """
+    limit = _AGENT_APPEAR_TIMEOUT if timeout is None else timeout
+    deadline = time.monotonic() + limit
+    while True:
+        if resolve_agent_handle(session, harness, include_launching=True) is not None:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(_AGENT_POLL_INTERVAL)
 
 
 def _guard_paste_text(harness: str | None, text: str) -> str:
@@ -515,9 +842,31 @@ def deliver_message(session_id: str, text: str, from_wolt: str = "",
     """Deliver a message into a running session, with optional attribution.
 
     Returns {"status": ..., "session": session_id} where status is:
-      delivered   — pasted into a live session
-      session-dead — session exists in the registry but tmux/agent is gone
+      delivered    — pasted into the pane an agent was actually found in
+      agent-gone   — tmux holds the session but no agent is ready in it
+      session-dead — the tmux session itself is gone
       no-session   — no such session
+
+    Delivery is the one place liveness has teeth. A paste is not a read: the
+    text goes to whatever owns the pane, and a login shell left behind by a
+    dead agent will happily EXECUTE an IWCL message. So this refuses on
+    anything short of a positive answer:
+
+      * `agent_alive is not True` — False, and also None. `alive` falls back
+        to tmux presence when the process table is unreadable, which is right
+        for a list but wrong here: undetermined must not become "paste it and
+        hope". The conservative side is cheap and self-healing — the caller
+        sees agent-gone and resumes, and a resume that finds a live agent just
+        delivers the prompt itself.
+      * a *launching* agent — counted as alive everywhere else, so a booting
+        session is not reported orphaned, but a half-painted TUI swallows a
+        paste. Detection uses include_launching=False and hands back the exact
+        pane, so a session found in one window can never be pasted into
+        another.
+
+    agent-gone is deliberately distinct from session-dead: the tmux session is
+    still there, so a caller can resume-then-retry rather than concluding the
+    session is beyond reach.
 
     Delivery is harness-aware: it reuses _tmux_paste with the target harness's
     paste_settle (codex needs a settle before Enter; claude takes 0).
@@ -526,12 +875,28 @@ def deliver_message(session_id: str, text: str, from_wolt: str = "",
     data = reg.get(session_id)
     if data is None:
         return {"status": "no-session", "session": session_id}
-    if not data.get("alive"):
+    if not data.get("tmux_alive", data.get("alive")):
         return {"status": "session-dead", "session": session_id}
     harness = resolve_harness(data.get("harness"))
+    if data.get("agent_alive") is not True:
+        return {
+            "status": "agent-gone",
+            "session": session_id,
+            "detail": (
+                "tmux session is up but could not be confirmed to hold a live "
+                f"{harness} agent — resume it and retry"
+            ),
+        }
+    target = resolve_agent_handle(data, harness, include_launching=False)
+    if target is None:
+        return {
+            "status": "agent-gone",
+            "session": session_id,
+            "detail": f"the {harness} agent is still booting — retry shortly",
+        }
     settle = get_harness(harness).get("paste_settle", 0.0)
     body = format_attributed_message(text, from_wolt, from_session)
-    _tmux_paste(session_id, _guard_paste_text(harness, body), settle=settle)
+    _tmux_paste(target, _guard_paste_text(harness, body), settle=settle)
     reg.touch(session_id)
     return {"status": "delivered", "session": session_id, "harness": harness}
 
@@ -621,21 +986,106 @@ def _adapter_context(data: dict) -> str:
     return ""
 
 
+def _wolt_boot_context(data: dict) -> str:
+    """Load the owning wolt's lean boot memory without touching the repo.
+
+    Harnesses run in arbitrary project directories, so cwd-based instruction
+    discovery cannot establish wolt identity. The opening message carries the
+    three documented boot files directly; HOME and the repository stay intact.
+    """
+    wolt = data.get("wolt_id") or data.get("wolt") or ""
+    if not wolt:
+        return ""
+    memory_dir = WOLTS_DIR / wolt / "wolt" / "memory"
+    sections = []
+    for filename in ("identity.md", "context.md", "learnings.md"):
+        path = memory_dir / filename
+        try:
+            content = path.read_text().strip()
+        except OSError:
+            continue
+        if content:
+            sections.append(f"## {filename}\n{content}")
+    if not sections:
+        return ""
+    target = SessionTarget.from_record(data, wolts_dir=WOLTS_DIR, fallback_wolt=wolt)
+    return (
+        "[Woltspace boot context]\n"
+        f"Wolt: {target.wolt_id}\n"
+        f"Working directory: {target.canonical_workdir}\n"
+        "Persistent boot memory follows; treat it as the owning wolt's context.\n\n"
+        + "\n\n".join(sections)
+        + "\n[/Woltspace boot context]"
+    )
+
+
+# A platform-skill invocation, in either delivered spelling: a sigil at the
+# start of a word, then the woltspace namespace (`woltspace:`) or the
+# copy-sync prefix (`woltspace-`), then a name. Anchored on the sigil so a
+# prompt that merely TALKS about /woltspace-notify or the woltspace: namespace
+# — "rename woltspace-notify", "the woltspace: prefix" — is prose, not a call,
+# and still gets its start-chat.
+_PLATFORM_INVOKE_RE = re.compile(r"(?:^|\s)[/@]woltspace[-:]\S")
+
+
+def _invokes_platform_skill(prompt: str, harness: str, delivery: str) -> bool:
+    """True if `prompt` already opens a skill, so start-chat must not follow.
+
+    Both delivered spellings are recognized regardless of this wolt's own —
+    a caller may hand us either, and appending start-chat to a prompt that is
+    already a skill call is the failure worth avoiding.
+
+    opencode under plugin delivery is the one shape with nothing to anchor on:
+    its platform skills answer to bare names, so the sigil alone marks a call,
+    and only when the prompt opens with it.
+    """
+    if _PLATFORM_INVOKE_RE.search(prompt):
+        return True
+    sigil = platform_skill_invoke(harness, "", delivery=delivery).strip()
+    if not sigil or sigil.endswith((f"{PLATFORM_SKILL_NAMESPACE}:",
+                                    LEGACY_PLATFORM_SKILL_PREFIX)):
+        # A namespaced spelling — the regex above is the whole answer.
+        return False
+    return prompt.lstrip().startswith(sigil)
+
+
 def _assemble_spawn_prompt(data: dict, prompt: str, harness: str) -> str:
     """Full opening prompt: user's task + adapter context + start-chat invocation.
 
-    Skips start-chat if the prompt already invokes a woltspace skill
-    (e.g. create-wolt). The skill invocation syntax comes from the harness
-    table — claude spells it /name, codex @name.
+    Skips start-chat if the prompt already invokes a skill (e.g. create-wolt).
+    How start-chat is spelled follows how this wolt's skills were DELIVERED,
+    not just which harness it runs: a copy-path wolt has `woltspace-start-chat`
+    sitting in its skills directory and has never heard of `woltspace:`.
     """
-    skill_invoke = get_harness(harness)["skill_invoke"]
     context = _adapter_context(data)
-    if skill_invoke.format(name="woltspace-") in prompt:
-        return f"{prompt}{context}"
-    adapter = data.get("adapter") or "lodge"
+    boot_context = _wolt_boot_context(data)
+    prefix = f"{boot_context}\n\n" if boot_context else ""
     wolt = data.get("wolt") or "wolt"
-    start_chat = skill_invoke.format(name="woltspace-start-chat")
-    return f"{prompt}{context} {start_chat} {adapter} {wolt}"
+    delivery = wolt_skills_delivery(WOLTS_DIR / wolt)
+    if _invokes_platform_skill(prompt, harness, delivery):
+        return f"{prefix}{prompt}{context}"
+    adapter = data.get("adapter") or "lodge"
+    # The template may carry a leading space of its own (opencode's palette
+    # defuse). Landing mid-prompt it is redundant, not harmful — strip it here
+    # so the assembled prompt reads cleanly, and leave the guard to the one
+    # place it matters: a prompt that OPENS with the invocation.
+    start_chat = platform_skill_invoke(harness, "start-chat", delivery=delivery).strip()
+    return f"{prefix}{prompt}{context} {start_chat} {adapter} {wolt}"
+
+
+def stored_resume_id(data: dict) -> str:
+    """The harness conversation id a --resume would replay, or "".
+
+    harness_session_id is the generic field, written by us at spawn.
+    claude_session_id is the pre-harness spelling — old sessions resume through
+    the fallback, UUID-validated because some legacy sessions stored non-UUID
+    values there.
+    """
+    resume_id = data.get("harness_session_id") or ""
+    if resume_id:
+        return resume_id
+    legacy = data.get("claude_session_id") or ""
+    return legacy if _UUID_RE.match(legacy) else ""
 
 
 def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
@@ -654,6 +1104,19 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
     harness = resolve_harness(data.get("harness"))
     wolt = data.get("wolt", "")
     model = data.get("model", "")
+
+    # Claude and codex both refuse to start in a directory they have not been
+    # trusted for, and a headless spawn has nobody to answer the dialog. This
+    # is the one seam both modes pass through on their way to run-session.sh —
+    # spawn, resume, revive — so the workdir gets trusted exactly once per
+    # agent launch. Scoped to the data root; opencode carries its own mechanism.
+    trust_writer = {
+        "claude": ensure_claude_dir_trusted,
+        "codex": ensure_codex_dir_trusted,
+    }.get(harness)
+    if trust_writer:
+        target = SessionTarget.from_record(data, wolts_dir=WOLTS_DIR, fallback_wolt=wolt)
+        trust_writer(target.canonical_workdir, WOLTS_DIR)
 
     if mode == "spawn":
         # Harnesses that accept a preset session id (claude --session-id) get
@@ -675,17 +1138,22 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
             harness, "spawn",
             session_id=session_id, session_name=name,
             model=model, prompt=full_prompt,
+            execution_policy=data.get("execution_policy"),
         )
 
     if mode == "resume":
-        # harness_session_id is the generic field, written by us at spawn.
-        # claude_session_id is the pre-harness spelling — old sessions resume
-        # through the fallback, UUID-validated because some legacy sessions
-        # stored non-UUID values there.
-        resume_id = data.get("harness_session_id") or ""
+        resume_id = stored_resume_id(data)
         if not resume_id:
-            legacy = data.get("claude_session_id") or ""
-            resume_id = legacy if _UUID_RE.match(legacy) else ""
+            # Loud on purpose. Every harness silently drops its resume flag
+            # when handed an empty id (see _claude_command / _codex_command /
+            # _opencode_command), so this used to launch a BRAND NEW agent in
+            # the resumed session's slot: tmux alive, agent alive, prompt
+            # delivered, conversation gone. Better to refuse and say why.
+            raise ValueError(
+                f"session '{name}' cannot be resumed: no harness_session_id on "
+                f"record (the {harness} conversation id was never stamped, so "
+                f"there is no transcript to resume) — start a new session instead"
+            )
         # Same CLI-prompt constraint as spawn — stamp for paste delivery.
         if get_harness(harness).get("prompt_via_paste"):
             if prompt:
@@ -702,7 +1170,10 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
                 merged = f"{pending} {prompt}".strip() if pending else prompt
                 registry.update(name, wolt=wolt, pending_boot_prompt=merged)
             prompt = ""
-        return build_command(harness, "resume", resume_id=resume_id, model=model, prompt=prompt)
+        return build_command(
+            harness, "resume", resume_id=resume_id, model=model, prompt=prompt,
+            execution_policy=data.get("execution_policy"),
+        )
 
     raise ValueError(f"unknown mode: {mode}")
 
@@ -791,11 +1262,12 @@ def deliver_boot_prompt(name: str, timeout: int = 90) -> bool:
             ready = True
             break
         try:
-            pane = subprocess.run(
-                ["tmux", "capture-pane", "-t", name, "-p"],
-                capture_output=True, text=True, timeout=_TMUX_TIMEOUT,
-            ).stdout
-        except (subprocess.SubprocessError, OSError):
+            # Visible pane only (no -S). The gate below waits for the marker to
+            # CLEAR when the pane repaints; scrollback keeps a scrolled-off
+            # marker permanently "present", so seen_absent would never flip and
+            # the prompt would be stranded until the timeout.
+            pane = _tmux_capture(name, start=None)
+        except (subprocess.SubprocessError, OSError, RuntimeError):
             pane = ""
         present = marker in pane
         if not present:
@@ -834,6 +1306,22 @@ def deliver_boot_prompt(name: str, timeout: int = 90) -> bool:
 # Session spawning — shared entry point for all adapters
 # ---------------------------------------------------------------------------
 
+def wolt_harness(wolt: str) -> str:
+    """The harness a new session for `wolt` would run on.
+
+    Same order start_session resolves: wolt.json "harness" > lodge default >
+    platform default. Callers that have to spell a skill invocation before a
+    session exists ask here instead of assuming claude.
+    """
+    wolt_json_path = WOLTS_DIR / wolt / "wolt" / "wolt.json"
+    pinned = ""
+    try:
+        pinned = json.loads(wolt_json_path.read_text()).get("harness", "") or ""
+    except (json.JSONDecodeError, OSError):
+        pass
+    return resolve_harness(pinned or get_default_harness())
+
+
 def start_session(
     *,
     wolt: str,
@@ -842,6 +1330,8 @@ def start_session(
     routing: dict = None,
     app: str = "",
     harness: str = "",
+    workdir: str | Path | None = None,
+    execution_policy: str | None = None,
 ) -> dict:
     """Start an agent session for a specific wolt.
 
@@ -856,13 +1346,13 @@ def start_session(
     Returns dict with session info: name, url, wolt, and optionally app/creature/model.
     Raises ValueError if the wolt directory doesn't exist.
     """
-    target_dir = WOLTS_DIR / wolt
-    if not target_dir.is_dir():
-        raise ValueError(f"wolt '{wolt}' not found at {target_dir}")
+    wolt_home = WOLTS_DIR / wolt
+    if not wolt_home.is_dir():
+        raise ValueError(f"wolt '{wolt}' not found at {wolt_home}")
 
     # Always derive creature from the wolt's type — never let the caller override this.
     # The wolt.json may also carry a default harness for new sessions.
-    wolt_json_path = target_dir / "wolt" / "wolt.json"
+    wolt_json_path = wolt_home / "wolt" / "wolt.json"
     pinned_model = ""
     if wolt_json_path.exists():
         try:
@@ -882,9 +1372,22 @@ def start_session(
     harness = resolve_harness(harness)
 
     if app:
-        apps_work_dir = target_dir / "wolt" / "apps" / app
+        if workdir is not None:
+            raise ValueError("workdir cannot be combined with an app session")
+        apps_work_dir = wolt_home / "wolt" / "apps" / app
         apps_work_dir.mkdir(parents=True, exist_ok=True)
-        target_dir = apps_work_dir
+        workdir = apps_work_dir
+
+    target = SessionTarget.resolve(
+        wolt, workdir, wolts_dir=WOLTS_DIR
+    )
+    isolation = RuntimeContext.from_env().isolation
+    policy, grant = resolve_execution_policy(
+        execution_policy,
+        isolation=isolation,
+        target=target,
+        grants=AutoGrantStore(WOLTS_DIR),
+    )
 
     name = session_name(wolt)
     # pin wins if valid for the resolved harness, else the tier default (see resolve_model)
@@ -900,7 +1403,10 @@ def start_session(
         creature=creature or "",
         model=model or "",
         harness=harness,
-        dir=str(target_dir),
+        dir=str(target.canonical_workdir),
+        target=target,
+        execution_policy=policy,
+        auto_grant=grant.to_record() if grant else None,
         app=app or "",
         prompt=prompt,
         adapter=(routing or {}).get("adapter", ""),
@@ -911,12 +1417,20 @@ def start_session(
     )
 
     cmd = build_session_command(name, prompt)
-    subprocess.run(
-        ["tmux", "new-session", "-d", "-s", name, "-c", str(target_dir), cmd],
-        check=True,
-    )
+    handle = _tmux_spawn(name, str(target.canonical_workdir), cmd)
+    registry.update(name, wolt=wolt, runtime=handle.to_record())
 
-    result = {"name": name, "url": session_url or None, "wolt": wolt, "harness": harness}
+    result = {
+        "name": name,
+        "url": session_url or None,
+        "wolt": wolt,
+        "wolt_id": target.wolt_id,
+        "workdir": str(target.canonical_workdir),
+        "target": target.to_record(),
+        "execution_policy": policy.to_record(),
+        "auto_grant": grant.to_record() if grant else None,
+        "harness": harness,
+    }
     if app:
         result["app"] = app
     if creature:
@@ -926,7 +1440,10 @@ def start_session(
     # Set viewport: app subdomain URL if app session, otherwise wolt site.
     if app:
         try:
-            app_url = f"http://{app}.localhost:7777/"
+            # The browser reaches the app through *this* instance's subdomain
+            # proxy; a second instance on :8080 served a viewport pointing at
+            # whoever holds 7777.
+            app_url = f"http://{app}.localhost:{os.environ.get('PORT', '7777')}/"
             registry.set_viewport(name, app_url, wolt=wolt)
             result["viewport_url"] = app_url
         except Exception as e:
@@ -954,12 +1471,20 @@ def resume_session(name: str, prompt: str = "") -> dict:
     Logic:
       1. Look up session in registry (scan all wolts).
       2. If tmux is alive and the agent is running → paste the prompt directly.
-      3. If tmux is alive but the agent exited → run-session.sh --resume in the pane.
-      4. If tmux is dead → create a new tmux session with run-session.sh --resume.
-      5. Update status back to "running" on success.
+      3. If tmux and the saved pane live but the agent exited → resume in that pane.
+      4. If tmux lives but the saved pane is gone → resume in a fresh window.
+      5. If tmux is dead → create a new tmux session with run-session.sh --resume.
+      6. Update status and the exact runtime handle on success.
+
+    Every relaunch (3, 4, 5) is then *verified*: an agent has to appear in the
+    session's process tree, or this raises. A stale agentless tmux session that
+    refuses to revive in place is killed and respawned clean — never one with a
+    live agent in it.
 
     Returns dict with resume info.
-    Raises ValueError if session not found in registry.
+    Raises ValueError if session not found in registry, ResumeUnavailable if
+    the session has no conversation id to replay, ResumeFailed if the agent
+    did not come up.
     """
     registry = SessionRegistry()
     data = registry.get(name, check_alive=False)
@@ -967,19 +1492,26 @@ def resume_session(name: str, prompt: str = "") -> dict:
         raise ValueError(f"session '{name}' not found in registry")
 
     wolt = data.get("wolt", "")
-    session_dir = data.get("dir", "")
+    target = SessionTarget.from_record(data, wolts_dir=WOLTS_DIR, fallback_wolt=wolt)
+    work_dir = str(target.canonical_workdir)
     # Resume with the harness the session was born on — old sessions have no
     # harness field, which resolves to claude.
     harness = resolve_harness(data.get("harness"))
     tunnel_url = get_tunnel_url()
     session_url = f"{tunnel_url}/tui?session={name}" if tunnel_url else ""
 
-    tmux_alive = _tmux_alive(name)
+    tmux_alive = _tmux_alive(data)
     agent_running = False
+    # Where the agent was actually found. Delivery targets this exact pane, so
+    # a session detected in one window can never be pasted into another.
+    target = _runtime_handle(data)
 
     if tmux_alive:
         # Launching doesn't count here — pasting into a half-booted TUI is lost.
-        agent_running = session_has_agent_process(name, harness, include_launching=False)
+        found = resolve_agent_handle(data, harness, include_launching=False)
+        agent_running = found is not None
+        if found is not None:
+            target = found
 
     if tmux_alive and agent_running:
         # Agent is running — paste the prompt into the TUI as a single buffer paste.
@@ -990,31 +1522,122 @@ def resume_session(name: str, prompt: str = "") -> dict:
         # the multi-line attributed message renders intact — hence the flatten
         # lives at the call site, not in _guard_paste_text.
         if prompt:
-            _tmux_paste(name, _guard_paste_text(harness, prompt.replace("\n", " ")),
+            _tmux_paste(target, _guard_paste_text(harness, prompt.replace("\n", " ")),
                         settle=get_harness(harness).get("paste_settle", 0.0))
-        registry.update(name, wolt=wolt, status="running")
+        registry.update(
+            name,
+            wolt=wolt,
+            status="running",
+            runtime=target.to_record(),
+        )
         return {"name": name, "url": session_url, "status": "delivered", "detail": "agent running, message sent"}
+
+    # A record whose workdir does not exist on this host was written by a
+    # different runtime (container vs native share a migrated data root).
+    # Its transcript and paths are not here — a --resume would die on arrival
+    # while this function reported success, silently eating the message.
+    if work_dir and not Path(work_dir).is_dir():
+        raise ValueError(
+            f"session '{name}' belongs to a different runtime — "
+            f"workdir {work_dir} does not exist on this host"
+        )
+
+    # Nothing below this line can succeed without a conversation to replay, and
+    # every harness quietly drops --resume when handed an empty id — which used
+    # to spawn a fresh agent into the old session's slot and report success.
+    # Refuse here, before any tmux is touched, so the caller gets the real
+    # reason rather than a blank agent wearing the session's name.
+    if not stored_resume_id(data):
+        raise ResumeUnavailable(
+            f"session '{name}' has no {harness} conversation id on record "
+            f"(harness_session_id was never stamped), so there is nothing to "
+            f"resume — start a new session for this wolt instead"
+        )
 
     # Both resume paths deliver run-session.sh — the single runtime wrapper.
     # It reads dir/model/harness from the registry, builds the agent command
     # via prepare_session_command, and closes out the lifecycle (finish status,
     # viewport reset) when the agent exits — which raw agent commands skipped.
     resume_cmd = build_session_command(name, prompt, resume=True)
+    respawn_detail = "tmux was dead, created new tmux with --resume"
 
     if tmux_alive and not agent_running:
-        # Tmux alive but the agent exited — run the wrapper inside the pane
-        _tmux_paste(name, resume_cmd)
-        registry.update(name, wolt=wolt, status="running")
-        return {"name": name, "url": session_url, "status": "revived", "detail": "agent exited, restarted with --resume in existing tmux"}
+        if _runtime().handle_is_alive(target):
+            # The exact dedicated pane survived; reuse it rather than creating
+            # a new window on every ordinary agent exit.
+            _tmux_paste(target, resume_cmd)
+            registry.update(name, wolt=wolt, status="running")
+            detail = "agent exited, restarted with --resume in existing pane"
+        else:
+            # The session survived only because unrelated user panes/windows
+            # remain. Never commandeer one: add a detached dedicated window and
+            # persist the exact pane tmux returns.
+            target = _tmux_spawn_in_session(target, work_dir or "/workspace", resume_cmd)
+            registry.update(
+                name,
+                wolt=wolt,
+                status="running",
+                runtime=target.to_record(),
+            )
+            # The pane on disk just moved. Keep the in-memory record in step so
+            # nothing below this line addresses the pane we already replaced.
+            data = {**data, "runtime": target.to_record()}
+            detail = "agent pane was gone, restarted with --resume in a new window"
+        if _await_agent(target, harness, _AGENT_REVIVE_TIMEOUT):
+            return {"name": name, "url": session_url,
+                    "status": "revived", "detail": detail}
+        # In-place revival did not take. The pane we pasted into may be a
+        # leftover login shell in a state that swallows the command, or the
+        # wrapper died on arrival. Escalate to a clean tmux — but only after
+        # re-confirming, at the session level, that no agent is running
+        # anywhere in it. Killing a session with a live agent would destroy
+        # exactly the conversation we were asked to rescue.
+        # Ask about the whole tmux session, not the pane we just pasted into:
+        # a handle carrying a pane_id narrows the walk to that pane while it
+        # lives, and the pane living is precisely why we are here. Dropping the
+        # pane is what makes this the session-level question the kill needs.
+        whole_session = _session_scope(target)
+        if session_has_agent_process(whole_session, harness) is not False:
+            raise ResumeFailed(
+                f"session '{name}': tried to restart the agent in its tmux "
+                f"session and could not confirm it came up ({detail}); "
+                f"something is running in there, so it was left alone — "
+                f"attach and look before retrying"
+            )
+        _tmux_stop(whole_session)
+        tmux_alive = False
+        respawn_detail = (
+            "stale tmux session held nothing but a shell and would not revive "
+            "in place; killed it and created a new tmux with --resume"
+        )
 
-    # Tmux is dead — create a fresh tmux session running the wrapper
-    work_dir = session_dir or str(WOLTS_DIR / wolt) if wolt else "/workspace"
-    subprocess.run(
-        ["tmux", "new-session", "-d", "-s", name, "-c", work_dir or "/workspace", resume_cmd],
-        check=True, timeout=_TMUX_TIMEOUT,
-    )
-    registry.update(name, wolt=wolt, status="running")
-    return {"name": name, "url": session_url, "status": "respawned", "detail": "tmux was dead, created new tmux with --resume"}
+    # Tmux is dead (or was just cleared out from under a stale, agentless
+    # session) — create a fresh tmux session running the wrapper.
+    handle = _tmux_spawn(name, work_dir or "/workspace", resume_cmd)
+    registry.update(name, wolt=wolt, status="running", runtime=handle.to_record())
+    if not _await_agent(handle, harness):
+        # run-session.sh may have exited before an agent appeared: a prepare
+        # failure, a missing harness binary, an auth wall. Reporting
+        # "respawned" here is what let the TUI attach to an empty shell and
+        # call it a wake. But the wait running out is also just evidence about
+        # our patience — the boot path is three python subprocesses deep before
+        # the agent execs — so look once more, session-wide, before saying no.
+        if session_has_agent_process(_session_scope(handle), harness) is True:
+            return {"name": name, "url": session_url, "status": "respawned",
+                    "detail": f"{respawn_detail}; the agent surfaced just past the wait"}
+        # Still nothing. Report the failure, but do NOT stamp the record:
+        # "failed" is terminal (list() only re-classifies records that are
+        # "running"), so a slow-but-healthy agent stamped here would stay
+        # hidden from the TUI forever with a live conversation inside it.
+        # Left "running", list() tells the truth from the process table.
+        raise ResumeFailed(
+            f"session '{name}': respawned its tmux with --resume but no "
+            f"{harness} process appeared within {_AGENT_APPEAR_TIMEOUT:.0f}s — "
+            f"the launcher died on arrival. Run "
+            f"`session-reg prepare {name} resume` to see why"
+        )
+    return {"name": name, "url": session_url, "status": "respawned",
+            "detail": respawn_detail}
 
 
 def stop_session(name: str) -> dict:
@@ -1029,16 +1652,13 @@ def stop_session(name: str) -> dict:
         raise ValueError(f"session '{name}' not found in registry")
 
     wolt = data.get("wolt", "")
-    tmux_alive = _tmux_alive(name)
+    # Session-level: kill whenever tmux still holds the session, even if the
+    # persisted pane is long gone. Gating this on the pane would mark the
+    # record stopped while the tmux session ran on, unreachable forever.
+    tmux_alive = _tmux_alive(data)
 
     if tmux_alive:
-        try:
-            subprocess.run(
-                ["tmux", "kill-session", "-t", name],
-                capture_output=True, check=True,
-            )
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
+        _tmux_stop(data)
 
     registry.update(name, wolt=wolt, status="stopped", finished_at=int(time.time()))
     return {"name": name, "status": "stopped", "was_alive": tmux_alive}
@@ -1058,14 +1678,8 @@ def archive_session(name: str) -> dict:
     wolt = data.get("wolt", "")
 
     # Stop tmux if still alive
-    if _tmux_alive(name):
-        try:
-            subprocess.run(
-                ["tmux", "kill-session", "-t", name],
-                capture_output=True, check=True,
-            )
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
+    if _tmux_alive(data):
+        _tmux_stop(data)
 
     registry.update(name, wolt=wolt, status="archived", finished_at=data.get("finished_at") or int(time.time()))
     return {"name": name, "status": "archived", "wolt": wolt}
@@ -1085,14 +1699,8 @@ def delete_session(name: str) -> dict:
     wolt = data.get("wolt", "")
 
     # Stop tmux if still alive
-    if _tmux_alive(name):
-        try:
-            subprocess.run(
-                ["tmux", "kill-session", "-t", name],
-                capture_output=True, check=True,
-            )
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
+    if _tmux_alive(data):
+        _tmux_stop(data)
 
     registry.delete(name, wolt=wolt)
     return {"name": name, "status": "deleted", "wolt": wolt}
@@ -1173,7 +1781,11 @@ def cli():
         if len(args) < 3:
             print("Usage: session-reg get-field <name> <field>", file=sys.stderr)
             sys.exit(1)
-        data = reg.get(args[1])
+        # Liveness now costs a ps snapshot on top of the tmux call, and this
+        # runs on the session boot path (run-session.sh reads dir and wolt
+        # through it, twice, before the agent even starts). Only pay for it
+        # when a liveness field is what was asked for.
+        data = reg.get(args[1], check_alive=args[2] in LIVENESS_FIELDS)
         if data and args[2] in data:
             print(data[args[2]] or "")
         else:

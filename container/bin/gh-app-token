@@ -1,11 +1,33 @@
-#!/workspace/woltspace/container/bot/.venv/bin/python3
+#!/usr/bin/env woltspace-python
 """Print a short-lived GitHub App installation token to stdout.
 
 Usage:
     GH_TOKEN=$(gh-app-token) gh issue create ...
 
 Reads GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, and GITHUB_APP_PRIVATE_KEY
-from the environment (or from WOLT_DIR/.env).
+from the environment, or from the `.env` in the data root.
+
+Runs on `woltspace-python` — the interpreter woltspace itself is installed on,
+which owns PyJWT through the `connectors` extra. In the container that name is
+a symlink the image builds; natively it is the shim beside this script.
+
+**stdout is a token or it is empty.** That contract is the whole safety
+property of this script, because of how every caller uses it:
+
+    GH_TOKEN=$(gh-app-token) gh pr create ...
+
+`gh` treats an empty GH_TOKEN as "not set" and falls back to whatever
+credentials the human has stored — so a failure that leaves stdout empty
+degrades to *the human's own identity*, which is bad but visible. A failure
+that prints anything else to stdout is worse: it hands `gh` a garbage token, or
+worse still gets captured by a caller doing `$(gh-app-token 2>&1)` and passes a
+non-empty-string check. That is not hypothetical — an error string 48
+characters long once satisfied a "token is non-empty" guard and opened a PR
+under a human's name.
+
+So: every diagnostic goes to stderr, every failure exits non-zero, and nothing
+reaches stdout until the value has been checked to look like an installation
+token. Callers should assert the `ghs_` prefix, not merely non-emptiness.
 
 Token is valid for ~1 hour. Generate a fresh one each time.
 """
@@ -17,21 +39,77 @@ import json
 from pathlib import Path
 from urllib.request import Request, urlopen
 
+# `woltspace-python` is the interpreter woltspace itself is installed on, so
+# the env namespace helper is a plain package import here.
+from woltspace.envvars import get_env  # noqa: E402
+
+# This script mints exactly one kind of credential — a GitHub App *installation*
+# token — and those are `ghs_`-prefixed. The gate is deliberately scoped to that
+# one kind rather than to "any GitHub token shape": a value of some other kind
+# reaching this stdout means the mint went somewhere it should not have, and
+# passing it through would act as an identity nobody asked for. Narrow on
+# purpose; widening it would defeat the point.
+TOKEN_PREFIX = "ghs_"
+
+
+def _die(message: str) -> "None":
+    """Fail the only way this script is allowed to: stderr, non-zero, no stdout."""
+    print(f"gh-app-token: {message}", file=sys.stderr)
+    sys.exit(1)
+
 # ---------------------------------------------------------------------------
 # Env loading — uses python-dotenv for reliable parsing (multi-line values, quotes)
 # ---------------------------------------------------------------------------
+
+def _env_files() -> list:
+    """Every `.env` that could hold the app credentials, most specific first.
+
+    The container has exactly one answer (`/workspace/wolts/.env`). A native
+    colony's data root is wherever WOLTSPACE_WOLTS_DIR points, defaulting to
+    `~/.woltspace/wolts` — and outside a session neither the wolt dir nor the
+    data root is necessarily exported, so the default has to be tried too.
+
+    But only then. A colony running at an explicit data root that has no
+    GitHub App of its own must not quietly fall through to the *default*
+    colony's credentials: that mints a real token for the wrong app, and the
+    caller cannot tell. An explicit data root ends the search at its own .env.
+    """
+    candidates = []
+    # get_env owns the legacy-name fallback (WOLT_DIR/WOLTS_DIR) via the alias
+    # table — see docs/environment.md.
+    for name in ("WOLTSPACE_WOLT_DIR", "WOLTSPACE_WOLTS_DIR"):
+        raw = (get_env(name, "") or "").strip()
+        if raw:
+            candidates.append(Path(raw).expanduser() / ".env")
+    candidates.append(Path("/workspace/wolts/.env"))
+    if not (get_env("WOLTSPACE_WOLTS_DIR", "") or "").strip():
+        candidates.append(Path("~/.woltspace/wolts/.env").expanduser())
+
+    seen = set()
+    ordered = []
+    for candidate in candidates:
+        resolved = str(candidate)
+        if resolved not in seen:
+            seen.add(resolved)
+            ordered.append(candidate)
+    return ordered
+
 
 def _get_env(key: str) -> str:
     val = os.environ.get(key)
     if val:
         return val
-    from dotenv import dotenv_values
-    wolt_dir = os.environ.get("WOLT_DIR", "")
-    for candidate in [
-        Path(wolt_dir) / ".env" if wolt_dir else None,
-        Path("/workspace/wolts/.env"),
-    ]:
-        if candidate and candidate.exists():
+    try:
+        from dotenv import dotenv_values
+    except ImportError:
+        _die(
+            "python-dotenv is missing, so the .env fallback is unavailable. "
+            "Install woltspace with its connectors extra "
+            "(`uv tool install 'woltspace[connectors]'`), or export "
+            f"{key} directly."
+        )
+    for candidate in _env_files():
+        if candidate.exists():
             vals = dotenv_values(candidate)
             if key in vals and vals[key] is not None:
                 return vals[key]
@@ -44,7 +122,15 @@ def _get_env(key: str) -> str:
 
 def _make_jwt(app_id: str, private_key: str) -> str:
     """Sign a JWT for GitHub App auth. Valid for 9 minutes."""
-    import jwt  # PyJWT
+    try:
+        import jwt  # PyJWT
+    except ImportError:
+        _die(
+            "PyJWT is missing — this script is running on an interpreter that "
+            "does not own woltspace's dependencies. Install woltspace with its "
+            "connectors extra (`uv tool install 'woltspace[connectors]'`), or "
+            "point WOLTSPACE_PYTHON at an interpreter that has PyJWT."
+        )
     now = int(time.time())
     payload = {
         "iat": now - 60,   # 60s leeway for clock skew
@@ -71,15 +157,22 @@ def get_token() -> str:
     if not private_key:
         missing.append("GITHUB_APP_PRIVATE_KEY")
     if missing:
-        print(f"error: missing env vars: {', '.join(missing)}", file=sys.stderr)
-        sys.exit(1)
+        searched = "\n".join(f"  {path}" for path in _env_files())
+        _die(
+            f"missing env vars: {', '.join(missing)}\n"
+            f"Looked in the environment and then:\n{searched}"
+        )
 
     # Validate PEM format
     if "BEGIN" not in private_key:
-        print("error: GITHUB_APP_PRIVATE_KEY doesn't look like a PEM key", file=sys.stderr)
-        sys.exit(1)
+        _die("GITHUB_APP_PRIVATE_KEY doesn't look like a PEM key")
 
-    app_jwt = _make_jwt(app_id, private_key)
+    try:
+        app_jwt = _make_jwt(app_id, private_key)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        _die(f"could not sign the app JWT: {exc}")
 
     url = f"https://api.github.com/app/installations/{installation_id}/access_tokens"
     req = Request(url, method="POST", data=b"")
@@ -90,11 +183,22 @@ def get_token() -> str:
     try:
         with urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())
-            return data["token"]
     except Exception as e:
-        print(f"error: token exchange failed: {e}", file=sys.stderr)
-        sys.exit(1)
+        _die(f"token exchange failed: {e}")
+
+    token = str(data.get("token") or "")
+    if not token.startswith(TOKEN_PREFIX):
+        # Never print it. A response we do not recognise is a response we must
+        # not hand to `gh` — and describing it is safer than echoing it.
+        _die(
+            f"token exchange returned something that is not an installation "
+            f"token (expected a {TOKEN_PREFIX}* value, got "
+            f"{len(token)} characters)"
+        )
+    return token
 
 
 if __name__ == "__main__":
+    # get_token() either returns a validated token or exits non-zero without
+    # writing to stdout. Nothing else may print here.
     print(get_token())

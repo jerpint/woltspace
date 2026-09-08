@@ -75,7 +75,7 @@ woltspace start
 
 ## Where things live
 
-All your wolt data lives in `~/.woltspace/wolts/` (or `$WOLTS_DIR` if you set it):
+All your wolt data lives in `~/.woltspace/wolts/` (or `$WOLTSPACE_WOLTS_DIR` if you set it):
 
 ```
 ~/.woltspace/wolts/
@@ -201,6 +201,26 @@ Once configured, the bot's `open_issue` tool works automatically. You can also u
 ```bash
 GH_TOKEN=$(gh-app-token) gh issue list --repo jerpint/woltspace
 ```
+
+> **Check the token before you trust it.** `gh-app-token` writes only a token to
+> stdout and only diagnostics to stderr, so a failure leaves `GH_TOKEN` empty —
+> and `gh` reads an empty `GH_TOKEN` as "not set" and quietly uses *your* stored
+> credentials instead of the bot's. When it matters who the author is, assert
+> the shape rather than that the string is non-empty:
+>
+> ```bash
+> GH_TOKEN=$(gh-app-token) || exit 1
+> case "$GH_TOKEN" in ghs_*) ;; *) echo "no bot token" >&2; exit 1 ;; esac
+> GH_TOKEN="$GH_TOKEN" gh pr create ...
+> ```
+>
+> The last line is not a typo. `GH_TOKEN=$(...)` on a line of its own makes a
+> *shell* variable, which `gh` — a separate process — never sees; it would fall
+> back to your credentials, which is the whole failure this box is about. Pass
+> it on the command (or `export GH_TOKEN` after the check).
+>
+> Never `$(gh-app-token 2>&1)` — that captures the diagnostics into the variable,
+> and an error string is perfectly capable of passing a length check.
 
 ## Local development
 

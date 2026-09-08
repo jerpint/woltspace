@@ -10,7 +10,7 @@
 set -e
 
 WOLTSPACE_REPO="https://github.com/jerpint/woltspace.git"
-WOLTS_DIR="${WOLTS_DIR:-/workspace/wolts}"
+WOLTS_DIR="${WOLTSPACE_WOLTS_DIR:-${WOLTS_DIR:-/workspace/wolts}}"
 PLATFORM_DIR="$WOLTS_DIR/.space/platform"
 VERSION_FILE="$PLATFORM_DIR/woltspace-version"
 BRANCH_FILE="$PLATFORM_DIR/woltspace-branch"

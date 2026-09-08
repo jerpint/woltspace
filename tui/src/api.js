@@ -2,14 +2,25 @@
 // When the event feed ships it plugs in behind this same module as a push
 // transport; the UI never learns the difference.
 
-export const BASE = (process.env.WOLTSPACE_URL || 'http://localhost:7777').replace(/\/$/, '');
+// WOLTSPACE_API is what the platform stamps on everything it spawns — the
+// whole address of *this* colony, port and all. WOLTSPACE_URL stays honoured
+// behind it for anyone who set it by hand before the stamp existed. Falling
+// through to 7777 when a colony runs elsewhere means driving the wrong lodge's
+// sessions, so the stamp wins.
+export const BASE = (
+  process.env.WOLTSPACE_API?.trim() ||
+  process.env.WOLTSPACE_URL?.trim() ||
+  'http://localhost:7777'
+).replace(/\/$/, '');
 
 async function req(path, opts = {}) {
   let res;
   try {
     res = await fetch(BASE + path, opts);
   } catch (e) {
-    throw new Error(`lodge unreachable at ${BASE} (${e.cause?.code || e.message})`);
+    throw new Error(
+      `lodge unreachable at ${BASE} (${e.cause?.code || e.message}); run woltspace start, then retry`,
+    );
   }
   let data = null;
   try {
@@ -30,7 +41,20 @@ const post = (path, body) =>
 
 export const listSessions = () => req('/sessions');
 export const listWolts = () => req('/wolts');
-export const spawnSession = (wolt) => post('/sessions/new/lodge', { wolt });
+export const runtimeCapabilities = () => req('/runtime/capabilities');
+export const spawnSession = (wolt, workdir, executionPolicy) =>
+  post('/sessions/new/lodge', {
+    wolt,
+    ...(workdir ? { workdir } : {}),
+    ...(executionPolicy ? { execution_policy: executionPolicy } : {}),
+  });
+export const createWolt = (name, type, workdir, executionPolicy) =>
+  post('/sessions/new/create', {
+    name,
+    type,
+    ...(workdir ? { workdir } : {}),
+    ...(executionPolicy ? { execution_policy: executionPolicy } : {}),
+  });
 export const stopSession = (name) => post(`/sessions/${encodeURIComponent(name)}/stop`);
 // Harness-aware on the server side: rebuilds tmux if needed and restarts the
 // agent with its own resume flavor (claude --resume / codex resume / opencode --session).

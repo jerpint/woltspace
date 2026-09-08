@@ -20,10 +20,11 @@
 #   woltspace session spawn <wolt> ["…"]       — spawn a new session for a wolt
 #
 # Flags:
-#   --branch <name>   — build image from a specific branch (default: main)
-#   --local           — build image from local repo instead of git clone
+#   --version <ver>   — build the image on a specific published release
+#   --local           — build the image from this checkout (wheel + local tui)
+#   --branch <name>   — legacy; the image installs published artifacts, not git
 #
-# All state lives under ~/.woltspace/wolts (overridable via WOLTS_DIR).
+# All state lives under ~/.woltspace/wolts (overridable via WOLTSPACE_WOLTS_DIR).
 # The container is disposable — ~/wolts is the backup.
 
 set -e
@@ -32,7 +33,9 @@ set -e
 WOLTSPACE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Wolts directory — all wolt data lives here
-WOLTS_DIR="${WOLTS_DIR:-$HOME/.woltspace/wolts}"
+# The canonical name, with the pre-namespace spelling still honoured.
+# See docs/environment.md for the full table and the sunset plan.
+WOLTS_DIR="${WOLTSPACE_WOLTS_DIR:-${WOLTS_DIR:-$HOME/.woltspace/wolts}}"
 WOLTS_DIR="${WOLTS_DIR/#\~/$HOME}"
 
 # Default name for default path, hash-suffixed for custom paths (avoids collisions)
@@ -86,34 +89,137 @@ _G=$'\033[0;32m'; _B=$'\033[1m'; _R=$'\033[0m'
 
 # --- Helpers ---
 
+# The native control plane writes its ownership record here — instance id, pid,
+# endpoint, and the isolation mode it runs in. A record whose isolation is
+# "host" and whose pid is still alive means a *native* woltspace owns this data
+# root right now.
+_native_owner_field() {
+  sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\{0,1\}\([^\",}]*\)\"\{0,1\}.*/\1/p" \
+    "$WOLTS_DIR/.space/platform/control-plane.json" 2>/dev/null | head -1
+}
+
+# Refuse to boot the container over a live native colony.
+#
+# This is not a cosmetic conflict. `docker run` below mounts the same
+# $WOLTS_DIR, binds the same port, and loads the same $WOLTS_DIR/.env — so the
+# second colony comes up with the *same* Telegram token as the first, and the
+# two bots then fight over one long-poll with 409s while the human watches a
+# server that isn't the one they started. A warning after the fact does not
+# help: by then both are running. So this exits before the first docker verb.
+
+# Whether a recorded pid is alive *and* plausibly the control plane that wrote
+# it. `kill -0` alone gets this wrong twice over:
+#
+#   * Pids are recycled. A stale record can name a live but entirely unrelated
+#     process — a shell, an editor — and refusing a legitimate container start
+#     because someone inherited the number is its own bug, one the human has no
+#     way to diagnose from the message.
+#   * `kill -0` against a process owned by another user fails with EPERM, which
+#     is indistinguishable from "no such process". The guard would silently
+#     drop exactly when a colony really is running, under another account.
+#
+# `ps` answers both: it reports other users' processes, and it says what the
+# process actually is.
+#
+# What it must NOT do is match the bare word "woltspace" anywhere in the
+# command line. Every path on a woltspace developer's machine contains that
+# string — the checkout, the data root, the worktrees — so a plain substring
+# test matches any shell that happens to be sitting in one of them, which is
+# precisely the false refusal this is here to remove. The real control plane
+# runs `<python> -m woltspace serve …`, so the invocation shape is the signal:
+# `woltspace serve` in argv, or a process actually named for the CLI, or a
+# python whose command line mentions it.
+_pid_is_live_woltspace() {
+  local pid="$1" args comm
+  if command -v ps >/dev/null 2>&1; then
+    args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+    comm="$(ps -p "$pid" -o comm= 2>/dev/null || true)"
+    if [ -z "$args" ] && [ -z "$comm" ]; then
+      return 1
+    fi
+    # The control plane's own invocation.
+    case "$args" in *"woltspace serve"*) return 0 ;; esac
+    # `comm` is a full path on macOS and a bare name on Linux.
+    comm="${comm##*/}"
+    case "$comm" in
+      woltspace*) return 0 ;;
+      python*)
+        # A python is a plausible control plane, but only if its command line
+        # is about woltspace at all.
+        case "$args" in *woltspace*) return 0 ;; esac
+        ;;
+    esac
+    return 1
+  fi
+  # No `ps` at all (it is POSIX, so this is close to impossible). Keep the
+  # conservative answer: a pid that responds means assume the colony is up,
+  # because a wrong refusal is recoverable and a double boot is not.
+  kill -0 "$pid" 2>/dev/null
+}
+
+_refuse_over_native_colony() {
+  [ -f "$WOLTS_DIR/.space/platform/control-plane.json" ] || return 0
+  local isolation pid endpoint
+  isolation="$(_native_owner_field isolation)"
+  [ "$isolation" = "host" ] || return 0
+  pid="$(_native_owner_field pid)"
+  endpoint="$(_native_owner_field endpoint)"
+  case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+  _pid_is_live_woltspace "$pid" || return 0
+
+  echo ""
+  printf "  %b🛑%b  %bthis clearing is already taken%b\n\n" "${_D}" "${_R}" "${_B}${_D}" "${_R}"
+  echo "  ${_L}   one lodge to a pond${_R}"
+  echo ""
+  echo "  A native woltspace owns ${_C}$WOLTS_DIR${_R} — PID $pid, serving"
+  echo "  ${_C}${endpoint:-http://127.0.0.1:${WOLTSPACE_PORT:-7777}}${_R}."
+  echo ""
+  echo "  Starting the container here would mount that same wolts directory,"
+  echo "  bind that same port, and load that same .env — two bots on one token"
+  echo "  answering with 409s. Not doing that."
+  echo ""
+  echo "  ${_C}native lifecycle lives in the python CLI, not in this script:${_R}"
+  echo "    woltspace status      ${_D}# who owns this data root${_R}"
+  echo "    woltspace stop        ${_D}# stop the native control plane${_R}"
+  echo "  ${_D}(if plain \`woltspace\` lands back here, that CLI is the one uv"
+  echo "   installed — usually ~/.local/bin/woltspace. \`which -a woltspace\`.)${_R}"
+  echo ""
+  echo "  ${_D}to run the container alongside it, give it its own data root:${_R}"
+  echo "    WOLTSPACE_WOLTS_DIR=~/.woltspace/container-wolts $0 $cmd"
+  echo ""
+  exit 1
+}
+
 _build_image() {
   local cache_flag=""
   [ "$NO_CACHE" = true ] && cache_flag="--no-cache"
 
+  # The image installs the published artifacts (PyPI + npm); it does not clone
+  # or run the source tree. --local still builds from this checkout, but as a
+  # wheel — one install shape for dev and release alike.
   if [ "$LOCAL_BUILD" = true ]; then
-    echo "  ${_D}🪵 building image from local source${_R}"
+    echo "  ${_D}🪵 building image from local source (wheel + local tui)${_R}"
     echo "  ${_L}   felling fresh timber...${_R}"
     echo ""
     docker build -t woltspace $cache_flag \
       --build-arg USE_LOCAL=true \
+      --build-arg CACHE_BUST="$(date +%s)" \
       -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR"
   else
     local version_arg=""
-    if [ "${CURRENT_VERSION:-}" = "HEAD" ]; then
-      echo "  ${_D}🪵 building image (nightly — main branch tip)${_R}"
-      version_arg="--build-arg WOLTSPACE_VERSION=HEAD"
-    elif [ -n "${CURRENT_VERSION:-}" ]; then
-      echo "  ${_D}🪵 building image (version: $CURRENT_VERSION)${_R}"
-      version_arg="--build-arg WOLTSPACE_VERSION=$CURRENT_VERSION"
-    elif [ "$BUILD_BRANCH" != "main" ]; then
-      echo "  ${_D}🪵 building image (branch: $BUILD_BRANCH)${_R}"
+    if [ -n "${CURRENT_VERSION:-}" ] && [ "${CURRENT_VERSION:-}" != "HEAD" ]; then
+      echo "  ${_D}🪵 building image (woltspace $CURRENT_VERSION from pypi)${_R}"
+      version_arg="--build-arg WOLTSPACE_PYPI_VERSION=$CURRENT_VERSION"
     else
-      echo "  ${_D}🪵 building image (latest release)${_R}"
+      echo "  ${_D}🪵 building image (the release the Dockerfile pins)${_R}"
+    fi
+    if [ "$BUILD_BRANCH" != "main" ] || [ "${CURRENT_VERSION:-}" = "HEAD" ]; then
+      echo "  ${_D}   note: --branch/--nightly build from git, and the image now"
+      echo "  ${_D}   installs published artifacts. Use --local for a checkout.${_R}"
     fi
     echo "  ${_L}   felling fresh timber...${_R}"
     echo ""
     docker build -t woltspace $cache_flag $version_arg \
-      --build-arg WOLTSPACE_BRANCH="$BUILD_BRANCH" \
       --build-arg CACHE_BUST="$(date +%s)" \
       -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR/container"
   fi
@@ -121,16 +227,20 @@ _build_image() {
 
 _start_container() {
   local wolt_name="${1:-}"
+  _refuse_over_native_colony
   docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
   local extra_args=""
-  [ -n "$wolt_name" ] && extra_args="-e WOLT_NAME=$wolt_name"
+  # Both spellings — the platform reads WOLTSPACE_WOLT_NAME, container-era
+  # skills and tools still read WOLT_NAME.
+  [ -n "$wolt_name" ] && extra_args="-e WOLTSPACE_WOLT_NAME=$wolt_name -e WOLT_NAME=$wolt_name"
 
-  # Dev mode: mount local repo so code edits are live without rebuild
-  local dev_mount=""
+  # No dev mount. /workspace/woltspace is the installed package's own bundle
+  # now; shadowing it with a checkout would put the platform back to running
+  # from raw source — the exact split this image was slimmed to remove.
+  # Dev loop: edit → `woltspace rebuild --local` → the wheel is rebuilt.
   if [ "$LOCAL_BUILD" = "true" ]; then
-    dev_mount="-v $WOLTSPACE_DIR:/workspace/woltspace:rw"
-    echo "  ${_L}   dev mount: $WOLTSPACE_DIR → /workspace/woltspace${_R}"
+    echo "  ${_L}   local build: installed from $WOLTSPACE_DIR (rebuild to reload)${_R}"
   fi
 
   mkdir -p "$WOLTS_DIR/.claude"
@@ -141,7 +251,6 @@ _start_container() {
     -e HOST_GID=$(id -g) \
     -v "$WOLTS_DIR:/workspace/wolts:rw" \
     -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
-    $dev_mount \
     -p "${WOLTSPACE_PORT:-7777}":7777 \
     $extra_args \
     woltspace > /dev/null
@@ -155,6 +264,36 @@ _start_container() {
   fi
   echo "  ${_D}🏕️ container started${_R}"
   echo "  ${_L}   the lodge is open${_R}"
+}
+
+# The native CLI, if the wheel is installed beside this launcher. The python
+# `woltspace backup` is the data-plane snapshot — no docker, no caches — and
+# this launcher only points at it. Nothing here changes what the bash backup
+# does for container users.
+_native_cli() {
+  local self candidate
+  self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  # `type -aP` (not `command -v -a`, which bash 3.2 on macOS does not have)
+  for candidate in $(type -aP woltspace 2>/dev/null); do
+    [ "$candidate" = "$self" ] && continue
+    [ -x "$candidate" ] || continue
+    # The wheel's entrypoint is a python console script. Matching on the
+    # shebang rather than on a string keeps this launcher from ever mistaking
+    # a copy of itself for the native CLI.
+    case "$(head -n 1 "$candidate" 2>/dev/null)" in
+      *python*) ;;
+      *) continue ;;
+    esac
+    if grep -q woltspace "$candidate" 2>/dev/null; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  if command -v python3 >/dev/null 2>&1 && python3 -c "import woltspace" 2>/dev/null; then
+    echo "python3 -m woltspace"
+    return 0
+  fi
+  return 1
 }
 
 _show_url() {
@@ -248,6 +387,7 @@ if [ "$cmd" = "init" ]; then
     exit 1
   fi
 
+  _refuse_over_native_colony
   _setup_path
 
   # Detect existing lodge (wolts or just scaffold from prior init)
@@ -272,7 +412,25 @@ if [ "$cmd" = "init" ]; then
 
   # Fresh install
   if [ "${WOLTSPACE_NONINTERACTIVE:-}" = "true" ]; then
-    NAME="${WOLTSPACE_WOLT_NAME:-}"
+    # Which wolt to CREATE — a different question from WOLTSPACE_WOLT_NAME,
+    # which names the wolt a session already belongs to and is now exported
+    # into every session, cron and worktree shell. Reading the latter here
+    # meant a scripted install launched from inside a wolt silently named the
+    # new wolt after the current one. The old name is still honoured for
+    # existing install scripts, but never when it arrived ambiently from a
+    # session — WOLTSPACE_WOLT_SESSION is the tell. See docs/environment.md.
+    NAME="${WOLTSPACE_INIT_WOLT_NAME:-}"
+    if [ -z "$NAME" ] && [ -n "${WOLTSPACE_WOLT_NAME:-}" ]; then
+      if [ -n "${WOLTSPACE_WOLT_SESSION:-}" ]; then
+        echo "  ${_D}ignoring WOLTSPACE_WOLT_NAME='${WOLTSPACE_WOLT_NAME}' — it names the" >&2
+        echo "  wolt this shell belongs to, not a wolt to create. Set" >&2
+        echo "  WOLTSPACE_INIT_WOLT_NAME to name the first wolt.${_R}" >&2
+      else
+        NAME="$WOLTSPACE_WOLT_NAME"
+        echo "  ${_D}deprecated env var WOLTSPACE_WOLT_NAME for init — use" >&2
+        echo "  WOLTSPACE_INIT_WOLT_NAME (legacy names honored until 1.0)${_R}" >&2
+      fi
+    fi
     [ -n "$NAME" ] && echo "  non-interactive: creating wolt '$NAME'"
   else
     clear
@@ -342,7 +500,7 @@ if [ ! -d "$WOLTS_DIR" ] || [ "$(_count_wolts)" -eq 0 ]; then
       echo "  🦫 no wolts found at $WOLTS_DIR"
       echo ""
       echo "  ${_D}if your wolts live elsewhere:${_R}"
-      echo "    WOLTS_DIR=/path/to/wolts woltspace start"
+      echo "    WOLTSPACE_WOLTS_DIR=/path/to/wolts woltspace start"
       echo ""
       echo "  ${_D}or start a new lodge:${_R}"
       echo "    woltspace init"
@@ -355,7 +513,7 @@ fi
 # --- Subcommands ---
 
 case "$cmd" in
-  session|wolt|app|harness)
+  session|wolt|app|harness|auto|status)
     # Control plane — forward to the in-container `woltspace` client, which
     # talks to the localhost API. Lifecycle verbs below stay host-side (docker);
     # control lives in the API. This is what makes `woltspace session send ...`
@@ -363,14 +521,15 @@ case "$cmd" in
     #
     # We exec by full path because container/bin is on wolts' login-shell PATH
     # (profile.d), not the non-login PATH a plain `docker exec` command gets.
-    # WOLT_NAME defaults the sender identity to the host user (override with
+    # The wolt-name variable defaults the sender identity to the host user (override with
     # --from); the in-container client reads it for message attribution.
     if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
       echo "  ${_D}💤 container not running — run 'woltspace start'${_R}"
       echo "  ${_L}   control commands need the lodge up${_R}"
       exit 1
     fi
-    exec docker exec -e "WOLT_NAME=${HUMAN_NAME:-$(whoami)}" "$CONTAINER_NAME" \
+    exec docker exec -e "WOLTSPACE_WOLT_NAME=${HUMAN_NAME:-$(whoami)}" \
+      -e "WOLT_NAME=${HUMAN_NAME:-$(whoami)}" "$CONTAINER_NAME" \
       /workspace/woltspace/container/bin/woltspace "$@"
     ;;
   tui)
@@ -481,6 +640,12 @@ case "$cmd" in
     echo "  ${_L}   backing up the lodge${_R}"
     echo ""
 
+    if _NATIVE_CLI="$(_native_cli)"; then
+      echo "  ${_D}native snapshot available:${_R} $_NATIVE_CLI backup"
+      echo "  ${_L}   data only — no container, no node_modules, one tar.gz${_R}"
+      echo ""
+    fi
+
     # Container snapshot
     HAS_CONTAINER=false
     if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
@@ -553,6 +718,7 @@ RESTORE
     echo ""
     ;;
   rebuild)
+    _refuse_over_native_colony
     # Resolve version: --version > --latest > current container version
     CURRENT_VERSION=""
     if [ -n "$BUILD_VERSION" ]; then
@@ -585,6 +751,7 @@ RESTORE
     _show_url
     ;;
   start)
+    _refuse_over_native_colony
     printf "\n  %b🦫%b  %b\n\n" "${_L}" "${_R}" "${_B}${_G}woltspace${_R}"
     if [ "$LOCAL_BUILD" = true ]; then
       echo "  ${_D}🪵 local build — $WOLTSPACE_DIR${_R}"
@@ -623,6 +790,8 @@ RESTORE
     echo "  ${_L}   updateWolt will walk you through the update${_R}"
     echo ""
     cd "$WOLTSPACE_DIR"
+    # Runs in the host checkout under the human's own HOME — no woltspace
+    # plugin registered there, only the copy-synced woltspace-update skill.
     claude "/woltspace-update"
     ;;
   *)
