@@ -21,11 +21,16 @@ test('legacy session view keeps old dir and implicit Auto visible', () => {
   assert.equal(sessionPolicy({}), 'auto');
 });
 
-test('native spawn targets the TUI launch directory with prompt policy', () => {
+test('native spawn roots the wolt in its own home, not the launch directory', () => {
   assert.deepEqual(
     spawnTarget({ supports_host_workdirs: true, default_execution_policy: 'prompt' },
       { home: '/wolts/maple' }, '/src/project'),
-    { workdir: '/src/project', displayWorkdir: '/src/project', executionPolicy: 'prompt' },
+    {
+      workdir: null,
+      displayWorkdir: '/wolts/maple',
+      executionPolicy: 'prompt',
+      supportsHostWorkdirs: true,
+    },
   );
 });
 
@@ -33,8 +38,30 @@ test('container spawn keeps the existing wolt-home default', () => {
   assert.deepEqual(
     spawnTarget({ supports_host_workdirs: false, default_execution_policy: 'auto' },
       { home: '/workspace/wolts/maple' }, '/host/project'),
-    { workdir: null, displayWorkdir: '/workspace/wolts/maple', executionPolicy: 'auto' },
+    {
+      workdir: null,
+      displayWorkdir: '/workspace/wolts/maple',
+      executionPolicy: 'auto',
+      supportsHostWorkdirs: false,
+    },
   );
+});
+
+// Two wolts woken from the same terminal must not share a root. Before this,
+// native handed both of them the one directory the TUI was launched from.
+test('two wolts woken from one launch directory land in their own homes', () => {
+  const caps = { supports_host_workdirs: true, default_execution_policy: 'prompt' };
+  const a = spawnTarget(caps, { home: '/wolts/maple' }, '/wolts/birch');
+  const b = spawnTarget(caps, { home: '/wolts/birch' }, '/wolts/birch');
+  assert.equal(a.workdir, null);
+  assert.equal(b.workdir, null);
+  assert.notEqual(a.displayWorkdir, b.displayWorkdir);
+});
+
+test('a spawn with no wolt in hand still never borrows the launch directory', () => {
+  const target = spawnTarget({ supports_host_workdirs: true }, null, '/src/project');
+  assert.equal(target.workdir, null);
+  assert.equal(target.displayWorkdir, 'wolt home');
 });
 
 // --- liveness -------------------------------------------------------------
