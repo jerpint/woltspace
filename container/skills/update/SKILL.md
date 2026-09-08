@@ -1,6 +1,6 @@
 ---
 name: update
-description: "Update woltspace platform — review incoming changes, warn about breaking changes, and pull with user consent. Use when asked to update woltspace."
+description: "Update the woltspace platform — check what is published, explain what is new, warn about anything breaking, and install with explicit consent. Use when asked to update woltspace."
 user_invocable: true
 ---
 
@@ -28,8 +28,8 @@ one alone leaves `woltspace tui` refusing to start.
 printenv WOLTSPACE_ISOLATION   # host = native, external = container
 ```
 
-If the variable is empty, fall back to the shape of the filesystem: `/workspace/woltspace`
-and `/workspace/wolts` both existing means container; otherwise native.
+If the variable is empty, fall back to the shape of the filesystem: a `/workspace/wolts`
+directory means the image's fixed mount, so container; otherwise native.
 
 Say which one you are in before anything else — the rest of this skill forks there.
 Native updates itself. A container cannot: docker lives on the human's machine and
@@ -192,7 +192,7 @@ Flag anything you could not verify rather than rounding it up to success.
 ## Notes
 
 - The platform is an installed package. There is no clone to pull, no branch to track, and
-  nothing under `/workspace` to edit — a wolt that finds itself reaching for git here has
+  no platform source on disk to edit — a wolt that finds itself reaching for git here has
   the wrong model of the world.
 - Two artifacts, one version. If you ever see them disagree, that is the bug: reinstall the
   pair rather than patching one.
