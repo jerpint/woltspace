@@ -59,7 +59,7 @@ async function main() {
     }
     let status;
     try {
-      status = await attach(slug, { isolation: action.isolation });
+      status = attach(slug, { isolation: action.isolation });
     } catch (e) {
       console.error(`attach to ${slug} failed: ${e.message}`);
       continue;

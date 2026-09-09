@@ -111,7 +111,6 @@ lists in the host `woltspace` launcher.
 | `WOLTSPACE_TUI_PORT` | Port for the pty bridge. `TUI_PORT` is honoured as a second-choice source. | `channels.py` | API port + 1 |
 | `WOLTSPACE_TUI_SERVICE_BIN` | Path to the `woltspace-tui-service` binary, when it is not on `PATH`. | `channels.py` | resolved from `PATH` |
 | `WOLTSPACE_TUI_BIN` | Path to the terminal cockpit binary. | `src/woltspace/tui.py` | resolved from `PATH` |
-| `WOLTSPACE_TUI_DETACH` | Detach key for the cockpit's tmux attach. | `tui/src/attach.js` | `C-\` |
 | `WOLTSPACE_WOLF` | Enable or disable the cron scheduler connector. | `channels.py` | enabled for the entrypoint |
 | `WOLTSPACE_SHARING_ENABLED` | Whether apps may be given public tunnels. | `container/lib/apps.py` | on |
 | `WOLTSPACE_USER` | Display name for the human in the cockpit. `HUMAN_NAME` is honoured as a second-choice source. | `tui/src/ui/App.js` | the OS username |

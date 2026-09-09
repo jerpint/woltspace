@@ -13,14 +13,39 @@ export const BASE = (
   'http://localhost:7777'
 ).replace(/\/$/, '');
 
+const unreachable = (e) =>
+  `lodge unreachable at ${BASE} (${e.cause?.code || e.message}); run woltspace start, then retry`;
+
+// A GET may be retried once; a POST may not.
+//
+// The first fetch after an attach has been seen to fail with ECONNRESET against
+// a lodge that was demonstrably healthy - same pid, still listening, answering
+// /health throughout. Pressing r immediately fixed it every time, so whatever
+// the cause, it does not survive one more attempt. (The obvious suspect is a
+// pooled socket the lodge closed while the tui sat blocked in spawnSync for the
+// length of the session, unable to see the close; that did not reproduce under
+// a deliberately blocked event loop, so it stays a suspect, not an answer.)
+//
+// What is certain is that the old behaviour was wrong: one dropped connection
+// printed "run woltspace start" about a lodge that was already running. Reads
+// only - a spawn or create the lodge already received would come back as a
+// second session.
+const idempotent = (opts) => !opts.method || opts.method.toUpperCase() === 'GET';
+
 async function req(path, opts = {}) {
   let res;
   try {
     res = await fetch(BASE + path, opts);
   } catch (e) {
-    throw new Error(
-      `lodge unreachable at ${BASE} (${e.cause?.code || e.message}); run woltspace start, then retry`,
-    );
+    // Only a connection-level failure is worth a second try, and even then the
+    // message has to stay honest: if the retry fails the same way, the lodge
+    // really is unreachable and `woltspace start` really is the answer.
+    if (!idempotent(opts)) throw new Error(unreachable(e));
+    try {
+      res = await fetch(BASE + path, opts);
+    } catch (again) {
+      throw new Error(unreachable(again));
+    }
   }
   let data = null;
   try {
