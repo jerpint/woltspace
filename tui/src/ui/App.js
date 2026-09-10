@@ -7,6 +7,7 @@ import * as api from '../api.js';
 import { color, creatureGlyph, lore, age, clock } from '../theme.js';
 import { agentAlive, inactiveCount, sessionPolicy, sessionWorkdir, spawnTarget } from '../session-view.js';
 import { createWoltAction, validateWoltName, woltTypes } from '../create-wolt.js';
+import { versionBanner } from '../version.js';
 
 const h = React.createElement;
 
@@ -22,6 +23,7 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
   const [sessions, setSessions] = useState([]);
   const [wolts, setWolts] = useState([]);
   const [capabilities, setCapabilities] = useState(null);
+  const [versionNote, setVersionNote] = useState('');
   const [fetchedAt, setFetchedAt] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -72,6 +74,10 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
     refetch();
     api.listWolts().then(setWolts).catch(() => {});
     api.runtimeCapabilities().then(setCapabilities).catch(() => {});
+    // Advisory only: a mismatched pair still runs, it just says so once.
+    api.lodgeHealth()
+      .then((health) => setVersionNote(versionBanner(health?.version) || ''))
+      .catch(() => {});
   }, []);
 
   const act = async (fn, doneMsg) => {
@@ -342,6 +348,9 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
       h(Box, { flexGrow: 1 }),
       h(Text, { color: color.dim }, loading ? lore.loading : fetchedAt ? `as of ${clock(fetchedAt)}` : ''),
     ),
+    versionNote
+      ? h(Text, { key: 'vn', color: color.amber }, versionNote)
+      : null,
     h(Box, { flexDirection: 'column', marginTop: 1 }, ...list),
     h(Box, { marginTop: 1, flexDirection: 'column' }, ...statusLines()),
   );

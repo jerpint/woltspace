@@ -41,7 +41,10 @@ Native prerequisites: `uv`, Node >= 18, `tmux`, and a harness CLI (`claude`,
 `codex`, or `opencode`) that you're already logged into.
 
 To upgrade a native install later, reinstall both packages, then
-`woltspace stop && woltspace start`.
+`woltspace stop && woltspace start`. The two are versioned independently: the
+tui declares the minimum `woltspace` version it needs and says so if the lodge
+is older, and woltspace never checks the tui's version — so you can upgrade
+either on its own.
 
 ### Prerequisites
 

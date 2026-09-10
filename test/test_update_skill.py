@@ -45,7 +45,7 @@ def test_no_container_era_mechanics(body, banned, why):
 
 @pytest.mark.parametrize("needle, why", [
     ("uv tool install", "the python half is installed with uv"),
-    ("@woltspace/tui", "the tui half moves in lockstep and must be named"),
+    ("@woltspace/tui", "the tui half is its own install and must be named"),
     ("woltspace stop", "the update stops the control plane"),
     ("woltspace start", "and starts it again — that is where skills resync"),
 ])

@@ -67,6 +67,9 @@ const post = (path, body) =>
 export const listSessions = () => req('/sessions');
 export const listWolts = () => req('/wolts');
 export const runtimeCapabilities = () => req('/runtime/capabilities');
+// The lodge's own version rides on /health. A lodge older than 0.5.1 has no
+// `version` field there; the tui reads that absence as 0.5.0.
+export const lodgeHealth = () => req('/health');
 export const spawnSession = (wolt, workdir, executionPolicy) =>
   post('/sessions/new/lodge', {
     wolt,

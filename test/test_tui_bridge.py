@@ -1,4 +1,4 @@
-"""The TUI pty bridge is a supervised connector, resolved exactly like the TUI."""
+"""The TUI pty bridge is a supervised connector, resolved like the TUI itself."""
 
 import json
 import sys
@@ -17,7 +17,8 @@ from woltspace.channels import (  # noqa: E402
     plan_connectors,
     resolve_tui_service,
 )
-from woltspace.compatibility import TUI_PACKAGE, TUI_SERVICE_BINARY, TUI_VERSION  # noqa: E402
+from woltspace import __version__  # noqa: E402
+from woltspace.compatibility import TUI_PACKAGE, TUI_SERVICE_BINARY  # noqa: E402
 from woltspace.layout import RuntimeLayout  # noqa: E402
 
 ENTRY = {"WOLTSPACE_ENTRYPOINT": "1"}
@@ -65,26 +66,28 @@ class TestResolution:
         assert command == ()
         assert "no node-pty" in why_not
 
-    def test_a_wheel_install_uses_the_exact_global_bin(self, tmp_path):
+    def test_a_wheel_install_uses_the_global_bin_whatever_its_version(self, tmp_path):
+        """The bridge checks the lodge's version; the lodge never checks the bridge's."""
         layout = _layout(tmp_path, _wheel_root(tmp_path))
         command, detail, why_not = resolve_tui_service(
             layout, {},
             which=lambda name: f"/tools/{name}",
-            runner=_probe_runner({"name": TUI_PACKAGE, "version": TUI_VERSION, "binary": TUI_SERVICE_BINARY}),
+            runner=_probe_runner({"name": TUI_PACKAGE, "version": "9.9.9", "binary": TUI_SERVICE_BINARY}),
         )
         assert command == (f"/tools/{TUI_SERVICE_BINARY}",)
         assert why_not == ""
         assert TUI_SERVICE_BINARY in detail
 
-    def test_a_mismatched_global_bin_is_refused(self, tmp_path):
+    def test_a_foreign_global_bin_is_refused(self, tmp_path):
+        """Some other package's `woltspace-tui-service` is not ours."""
         layout = _layout(tmp_path, _wheel_root(tmp_path))
         command, _detail, why_not = resolve_tui_service(
             layout, {},
             which=lambda name: f"/tools/{name}",
-            runner=_probe_runner({"name": TUI_PACKAGE, "version": "0.0.1", "binary": TUI_SERVICE_BINARY}),
+            runner=_probe_runner({"name": "tui", "version": "0.0.1", "binary": TUI_SERVICE_BINARY}),
         )
         assert command == ()
-        assert "expected" in why_not and "0.0.1" in why_not
+        assert "expected" in why_not and TUI_PACKAGE in why_not
 
     def test_the_tui_bin_does_not_pass_for_the_service_bin(self, tmp_path):
         """Same package, same version, wrong bin — identity is not a substring."""
@@ -92,7 +95,7 @@ class TestResolution:
         command, _detail, why_not = resolve_tui_service(
             layout, {},
             which=lambda name: f"/tools/{name}",
-            runner=_probe_runner({"name": TUI_PACKAGE, "version": TUI_VERSION, "binary": "woltspace-tui"}),
+            runner=_probe_runner({"name": TUI_PACKAGE, "version": __version__, "binary": "woltspace-tui"}),
         )
         assert command == ()
         assert why_not
@@ -118,6 +121,10 @@ class TestPlan:
         assert plan.enabled is True
         assert plan.env["TUI_PORT"] == "7800"  # the instance's own port + 1
         assert plan.env["WOLT_DIR"] == str(tmp_path / "wolts")
+        # The bridge's half of the compatibility conversation: it checks this
+        # against the minimum lodge version it declares, and refuses to boot
+        # against a lodge older than that. Unstamped reads as pre-0.5.1.
+        assert plan.env["WOLTSPACE_VERSION"] == __version__
         assert plan.process_signature == (str(ROOT / "tui" / "src" / "tui-service.js"),)
         assert "7800" in plan.detail
         assert "TUI_PORT" not in plan.to_record()  # env is never in the public record

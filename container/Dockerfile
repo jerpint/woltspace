@@ -7,7 +7,9 @@
 #         whose wheel carries the whole runtime in its `_bundle` (server,
 #         container/lib, container/bin, skills, templates)
 #   npm   @woltspace/tui@<WOLTSPACE_TUI_VERSION>            → woltspace-tui and
-#         the woltspace-tui-service pty bridge the control plane supervises
+#         the woltspace-tui-service pty bridge the control plane supervises.
+#         Defaults to `latest`: the tui declares the minimum woltspace it needs
+#         and checks it at startup, so the wheel never pins a tui version
 #
 # So what is left here is what a container is actually for: the OS, the harness
 # CLIs, tmux, the tunnel binary, a non-root user, and one mount point. The
@@ -111,8 +113,10 @@ RUN git clone https://github.com/jerpint/worktui.git /home/node/worktui \
 ENV WORKTUI_DIR="/workspace/wolts/.worktui"
 
 # --- The woltspace runtime, from the registries ---
-ARG WOLTSPACE_PYPI_VERSION=0.5.0
-ARG WOLTSPACE_TUI_VERSION=0.5.0
+ARG WOLTSPACE_PYPI_VERSION=0.5.1
+# `latest`, not a pin — the two artifacts are versioned independently. Pass an
+# explicit version to reproduce an older image.
+ARG WOLTSPACE_TUI_VERSION=latest
 # --build-arg USE_LOCAL=true installs a wheel built from the build context
 # instead of PyPI (and the context's tui/ instead of npm). Same install shape,
 # same code path — only the source of the artifact differs.

@@ -7,7 +7,7 @@ zero timers.
 
 ```bash
 woltspace start
-woltspace tui          # exact compatible local TUI, or exact pinned npx fallback
+woltspace tui          # the local TUI if one is installed, else npx @woltspace/tui@latest
 ```
 
 or directly:
@@ -41,9 +41,11 @@ node src/main.js       # node >= 18 or bun, host or in-container
 - **One attach primitive:** runtime capabilities select direct inherited-stdio tmux for a
   native lodge or an in-container TUI. A host TUI talking to the external/container lodge
   retains the Docker exec compatibility path (`WOLTSPACE_CONTAINER` overrides its name).
-- **Exact release pairing:** the Python launcher accepts a local binary only when
-  `--version --json` reports the pinned `@woltspace/tui` identity and version. Otherwise it
-  invokes that exact npm version through `npx`; it never asks for `latest` or a range.
+- **Independent releases:** the tui declares the minimum woltspace version it needs
+  (`minLodgeVersion` in `src/version.js`) and checks it against the lodge's `/health`;
+  woltspace does not check the tui's version. Its launcher accepts a local binary when
+  `--version --json` reports this package and this bin, whatever the version, and otherwise
+  falls back to `npx @woltspace/tui@latest`. Install or upgrade each half on its own.
 - **npx-ready by construction:** plain ESM JavaScript (no JSX or build step), stock Node.js
   18+, scoped package metadata, and a single `woltspace-tui` bin entry.
 - Message attribution: sends identify as the host user (override `WOLTSPACE_USER`), with no

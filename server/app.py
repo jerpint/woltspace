@@ -231,6 +231,7 @@ app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
 
 @app.get("/health")
 async def health():
+    from woltspace import __version__ as woltspace_version
     from woltspace.adoption import read_adoption_report
     from woltspace.channel_supervisor import read_connector_report
     from woltspace.layout import RuntimeLayout
@@ -238,6 +239,9 @@ async def health():
     layout = RuntimeLayout.from_env()
     return {
         "ok": True,
+        # The lodge's own version. The tui reads it to check the minimum
+        # woltspace it needs; a lodge too old to report it is treated as 0.5.0.
+        "version": woltspace_version,
         "instance_id": os.environ.get("WOLTSPACE_INSTANCE_ID", ""),
         "pid": os.getpid(),
         "wolts_dir": str(WOLTS_DIR),
