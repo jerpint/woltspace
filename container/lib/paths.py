@@ -85,6 +85,17 @@ def space_logs_dir(wolts_dir: Path = None) -> Path:
     return space_dir(wolts_dir) / "logs"
 
 
+def space_locks_dir(wolts_dir: Path = None) -> Path:
+    """Cross-process lock files: wolts/.space/locks/
+
+    Colony-global rather than per-wolt on purpose: the processes that contend
+    here (the control plane and the chat bot) address a session by its id and
+    do not always know which wolt owns it. One directory keyed by session id
+    is the smallest thing every one of them can agree on.
+    """
+    return space_dir(wolts_dir) / "locks"
+
+
 # ---------------------------------------------------------------------------
 # Specific files
 # ---------------------------------------------------------------------------

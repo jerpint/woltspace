@@ -658,8 +658,12 @@ def _tmux_paste(target: str | dict | RuntimeHandle, text: str, settle: float = 0
     Uses set-buffer + paste-buffer instead of send-keys -l.
     send-keys -l sends each character as an individual keystroke which
     blocks on long messages (the pane input buffer backs up). Buffer
-    paste delivers the entire text atomically — same as a clipboard
-    paste from a human.
+    paste delivers the text the way a clipboard paste from a human does.
+
+    A long message goes in as several paced buffer pastes rather than one:
+    the harness on the other end drops the leading blocks of a big paste.
+    See `_PASTE_CHUNK_CHARS` in session_runtime. The text itself is
+    untouched, and short messages still take the single-paste path.
 
     Enter is sent as a separate send-keys call after the paste. Claude
     Code's TUI has paste-aware input: a \\n inside a paste is treated
@@ -667,16 +671,21 @@ def _tmux_paste(target: str | dict | RuntimeHandle, text: str, settle: float = 0
     A standalone Enter keystroke arriving after the paste completes
     is the canonical "submit" signal.
 
-    Exits copy-mode on the target pane first. With `mouse on`, scrolling
-    up in a pane auto-enters copy-mode — paste-buffer to a copy-mode
-    pane visibly inserts the text but it never reaches the underlying
-    process, and the Enter keystroke is consumed as a copy-mode command.
-    `send-keys -X cancel` is a no-op when the pane isn't in a mode,
-    errors harmlessly which we ignore via check=False.
+    Exits copy-mode on the target pane before every chunk, not just the
+    first. With `mouse on`, scrolling up in a pane auto-enters copy-mode —
+    paste-buffer to a copy-mode pane visibly inserts the text but it never
+    reaches the underlying process, and the Enter keystroke is consumed as
+    a copy-mode command. A paced paste lasts seconds, long enough for a
+    scroll to arrive mid-delivery. `send-keys -X cancel` is a no-op when
+    the pane isn't in a mode, errors harmlessly which we ignore via
+    check=False.
 
     Uses a named buffer (the target session name) so concurrent pastes
     to different sessions don't clobber each other.  The -d flag on
-    paste-buffer deletes the named buffer after pasting.
+    paste-buffer deletes the named buffer after pasting. Concurrent pastes
+    to the *same* session are serialised by a per-session file lock — see
+    `_delivery_lock` in session_runtime — so two senders cannot interleave
+    their chunks into one composer and each press Enter.
 
     settle: seconds to wait between the paste and the Enter keystroke.
     Codex's TUI folds an immediate Enter into the paste (message stays in

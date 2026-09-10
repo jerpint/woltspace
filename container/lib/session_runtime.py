@@ -20,20 +20,124 @@ Two questions are asked of a session, and they are deliberately different:
 
 from __future__ import annotations
 
+import fcntl
 import os
 import re
 import shlex
 import subprocess
+import sys
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from typing import Callable, Iterable, Protocol, runtime_checkable
+from pathlib import Path
+from typing import Callable, Iterable, Iterator, Protocol, runtime_checkable
 
 from env_compat import export_both
+from paths import space_locks_dir
 from runtime_context import RuntimeContext
 
 
 _TMUX_TIMEOUT = 10
 _SAFE_BUFFER = re.compile(r"[^A-Za-z0-9_-]")
+
+#: How much text goes into one tmux paste, and how long to wait before the
+#: next one. A stopgap for a harness-side ingestion race: the claude TUI drops
+#: whole *leading* 1024-byte blocks of a large paste, so a 1200-character
+#: telegram message arrives as its last ~200 characters and the agent answers
+#: a question it was never asked. Measured loss is always an exact multiple of
+#: 1024 and occasionally zero, which is a reader that misses bytes while it is
+#: busy rather than a size limit (a raw-mode reader on the same pty gets every
+#: byte). Small pastes spaced apart never lose anything (byte-exact at 1200,
+#: 1700 and 3000 characters), so delivery is paced. Both numbers are empirical,
+#: and both should go away when the harness reads its own input reliably.
+_PASTE_CHUNK_CHARS = 500
+_PASTE_CHUNK_PAUSE = 0.3
+
+#: How long one delivery waits for another delivery *to the same session* to
+#: finish, and how often it re-tries the lock while it waits. Pacing turned a
+#: paste from one syscall into a multi-second sequence, and two deliveries to
+#: one composer can now interleave their chunks and press Enter twice — the
+#: control plane and the chat bot are separate processes, so the lock has to
+#: be a file lock. The timeout is generous next to a 3KB message (~1.5s) and
+#: short next to a human waiting. On expiry the delivery goes ahead anyway:
+#: a rare interleave is recoverable, a dropped message is not.
+_PASTE_LOCK_TIMEOUT = 5.0
+_PASTE_LOCK_POLL = 0.05
+
+
+def _paste_chunks(text: str, size: int = _PASTE_CHUNK_CHARS) -> list[str]:
+    """Split text for paced delivery, preserving it exactly.
+
+    Slicing is by character, never by byte, so no codepoint is ever cut in
+    half, and never by line: the concatenation of the chunks is the input
+    string, newlines and all. Text that fits in one chunk is one chunk, so a
+    short message is delivered exactly as it was before pacing existed.
+
+    One boundary is avoided: a chunk should not *begin* with a line break.
+    `paste-buffer` is sent without `-p`, so no bracketed-paste markers reach
+    the TUI and it can only tell a paste from typing by burst timing — which
+    the inter-chunk pause defeats, leaving the first byte after the gap to be
+    read as a keystroke. A line break read as Enter is an early submit of half
+    a multi-line message. So when the split would land on one the boundary
+    walks *back* to the last character that is neither LF nor CR, leaving the
+    whole run at the tail of the chunk before it. CR counts as well as LF:
+    a CR is the byte a TUI reads as Enter, and CRLF text would otherwise open
+    a chunk on the CR — the more dangerous half of the pair.
+
+    It is a preference, not an invariant. The walk-back cannot cross the start
+    of its own chunk, so a run of `size` or more line breaks exhausts it: the
+    boundary stays where it fell and the next chunk does open on a break.
+    There is nowhere else to put it — every candidate byte in the window is
+    the same byte — and pretending otherwise would mean either an empty chunk
+    or an over-size one. Chunks stay at or below `size` and the concatenation
+    is still the input, byte for byte.
+    """
+    if len(text) <= size:
+        return [text]
+    chunks: list[str] = []
+    at = 0
+    while at < len(text):
+        end = min(at + size, len(text))
+        if end < len(text):
+            back = end
+            while back > at and text[back] in "\r\n":
+                back -= 1
+            # `back == at` is a whole window of line breaks: nothing to move
+            # the boundary to, so take the plain slice rather than loop
+            # forever. The next chunk opens on a break; see the docstring.
+            if back > at:
+                end = back
+        chunks.append(text[at:end])
+        at = end
+    return chunks
+
+
+def _defuse_leading_slash(text: str) -> str:
+    """Keep a long message that starts with "/" from being read as a command.
+
+    Measured live (claude 2.1.x): a composer whose content begins with "/" is
+    dispatched as a slash command on submit no matter how the text got there.
+    A long message beginning with "/not-a-command" printed `Unknown command`
+    and reached the model not at all — silently destroyed. A single leading
+    space makes the composer treat the whole thing as literal text.
+
+    Only long messages are defused. A short one may legitimately *be* a
+    command — a resume prompt of `/compact`, a boot prompt invoking a skill —
+    and demoting those to prose would break a working path. Nothing the colony
+    sends as a command is 500 characters long.
+
+    The residual, stated plainly: a message of 500 characters or fewer that
+    begins with "/" is still destroyed exactly as before. A human typing
+    "/status of the dam?" into telegram gets `Unknown command` in the pane and
+    nothing at all in the transcript — the agent never sees it and never says
+    so. That is knowingly left standing, because the same rung is how
+    `/compact` and every skill boot prompt reach the composer, and a defuse
+    wide enough to save the short prose message would turn those into text.
+    Fixing it properly means the caller declaring whether it is sending a
+    command or a message, which is a change to every call site, not to this
+    function.
+    """
+    return f" {text}" if text.startswith("/") else text
 _SESSION_ENV_KEYS = (
     "HOME",
     "PATH",
@@ -480,32 +584,173 @@ class TmuxSessionRuntime:
         *,
         process_names: Iterable[str] | None = None,
     ) -> None:
+        """Deliver one message into a pane, then submit it.
+
+        The text sits visibly in the composer and a single Enter submits it.
+        A message longer than one chunk goes in as several paced buffer
+        pastes — see `_PASTE_CHUNK_CHARS`: the claude TUI drops the leading
+        blocks of a big paste, and a message must arrive whole or the agent
+        answers half a question. Short messages take exactly the pre-pacing
+        path: one paste, no extra sleeps.
+
+        Copy-mode is cancelled before every chunk, not once up front. With
+        `mouse on`, a phone scroll leaves the pane in copy-mode, where a paste
+        is visible but never reaches the process and the Enter is eaten as a
+        copy-mode command — and a paced paste is now several seconds long, so
+        the scroll can land in the middle of it.
+
+        The whole sequence — first cancel through the Enter — is held under
+        the session's delivery lock, so a second sender cannot thread its
+        chunks between these and submit the mixture. See `_delivery_lock`.
+        """
         exact = self.resolve_delivery_pane(handle, process_names)
         target = exact.pane_id
-        buffer_id = _SAFE_BUFFER.sub("-", exact.woltspace_session_id)
-        buffer_name = f"paste-{buffer_id}"
-        self._run(
-            [self.tmux, "send-keys", "-t", target, "-X", "cancel"],
-            check=False,
-            timeout=_TMUX_TIMEOUT,
-        )
-        self._run(
-            [self.tmux, "set-buffer", "-b", buffer_name, text],
-            check=True,
-            timeout=_TMUX_TIMEOUT,
-        )
-        self._run(
-            [self.tmux, "paste-buffer", "-b", buffer_name, "-d", "-t", target],
-            check=True,
-            timeout=_TMUX_TIMEOUT,
-        )
-        if settle > 0:
-            self._sleep(settle)
-        self._run(
-            [self.tmux, "send-keys", "-t", target, "Enter"],
-            check=True,
-            timeout=_TMUX_TIMEOUT,
-        )
+        if len(text) > _PASTE_CHUNK_CHARS:
+            text = _defuse_leading_slash(text)
+        with self._delivery_lock(exact.woltspace_session_id):
+            self._paste_in_chunks(target, exact.woltspace_session_id, text)
+            if settle > 0:
+                self._sleep(settle)
+            self._run(
+                [self.tmux, "send-keys", "-t", target, "Enter"],
+                check=True,
+                timeout=_TMUX_TIMEOUT,
+            )
+
+    # -- delivery serialisation -------------------------------------------
+
+    def _delivery_lock_path(self, session_id: str) -> Path | None:
+        """The lock file one session's deliveries contend for, or None.
+
+        Named through the same sanitiser as the paste buffer, so the name is
+        derived from the session id and can hold nothing but `[A-Za-z0-9_-]`
+        — a session id is registry-controlled, but a lock *path* built from
+        one is not somewhere to start trusting it.
+        """
+        configured = getattr(self.context, "lock_dir", None)
+        if configured is not None:
+            base = Path(configured)
+        else:
+            try:
+                base = space_locks_dir()
+            except Exception:
+                return None
+        return base / f"paste-{_SAFE_BUFFER.sub('-', session_id)}.lock"
+
+    @contextmanager
+    def _delivery_lock(self, session_id: str) -> Iterator[None]:
+        """Hold one session's delivery slot for a whole paste.
+
+        Two deliveries to the same session used to be one atomic tmux call
+        each; paced, they are a sequence, and the bot process and the control
+        plane can both be in one. Interleaved, their chunks land in the same
+        composer and each presses Enter — two half-messages, both wrong. The
+        contenders are separate processes, so this is `flock` on a file in the
+        colony's `.space/locks/`, not a thread lock.
+
+        Two deliberate softnesses. The wait is bounded (`_PASTE_LOCK_TIMEOUT`)
+        and polled with `LOCK_NB` through `self._sleep`, so a test's fake clock
+        still terminates it and a stuck holder cannot wedge the sender
+        forever. And every failure here — an unwritable lock dir, a holder
+        that never lets go — falls through to delivering *unlocked* with a
+        warning, because a rare interleave is a mess a human can read and
+        re-send past, while a message dropped for want of a lock file is gone
+        silently.
+        """
+        path = self._delivery_lock_path(session_id)
+        handle = None
+        if path is not None:
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                handle = open(path, "a+")
+            except OSError as exc:
+                print(
+                    f"[session-runtime] no delivery lock for {session_id} "
+                    f"({exc}); delivering unlocked",
+                    file=sys.stderr,
+                )
+        if handle is None:
+            yield
+            return
+        held = False
+        try:
+            waited = 0.0
+            while not held:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    held = True
+                except OSError:
+                    if waited >= _PASTE_LOCK_TIMEOUT:
+                        print(
+                            f"[session-runtime] delivery lock for {session_id} "
+                            f"still held after {_PASTE_LOCK_TIMEOUT}s; "
+                            f"delivering anyway",
+                            file=sys.stderr,
+                        )
+                        break
+                    self._sleep(_PASTE_LOCK_POLL)
+                    waited += _PASTE_LOCK_POLL
+            yield
+        finally:
+            if held:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    pass
+            handle.close()
+
+    def _paste_in_chunks(self, target: str, session_id: str, text: str) -> None:
+        """Fill the session's own named buffer, in paced slices.
+
+        The buffer is named for the session so concurrent deliveries to
+        different sessions cannot clobber each other, and `-d` deletes it after
+        each paste. One chunk is one paste, which is the pre-pacing behaviour.
+
+        Copy-mode is cancelled before *each* chunk. Cancelling once at the top
+        was enough when a paste was instantaneous; a 3KB message now spends
+        about a second and a half in here, and with `mouse on` a scroll during
+        that window drops the pane into copy-mode, where every remaining chunk
+        is swallowed without error and the message arrives with a hole in it.
+        The cancel is `check=False` — it fails harmlessly when the pane is in
+        no mode at all, which is almost always.
+
+        Pacing cost this its atomicity: a tmux failure part-way leaves the
+        chunks that did land sitting in the composer. That is survivable only
+        because it is never *submitted* — the exception propagates out of here
+        and `paste` never reaches the Enter, so the half message stays visible
+        and unsent rather than becoming a turn.
+        """
+        buffer_name = f"paste-{_SAFE_BUFFER.sub('-', session_id)}"
+        for index, chunk in enumerate(_paste_chunks(text)):
+            if index:
+                self._sleep(_PASTE_CHUNK_PAUSE)
+            self._run(
+                [self.tmux, "send-keys", "-t", target, "-X", "cancel"],
+                check=False,
+                timeout=_TMUX_TIMEOUT,
+            )
+            # check=True on every chunk, deliberately: a failure here must
+            # reach the caller as a failure. Swallowing it would let `paste`
+            # go on and press Enter, submitting a truncated message as if
+            # delivery had worked — the one outcome pacing exists to prevent.
+            self._run(
+                [self.tmux, "set-buffer", "-b", buffer_name, chunk],
+                check=True,
+                timeout=_TMUX_TIMEOUT,
+            )
+            self._run(
+                # `-r`: paste the buffer's linefeeds as linefeeds. Without it
+                # tmux substitutes a carriage return for every LF on the way
+                # out, so a multi-line message arrives with `\r` wherever it
+                # was written with `\n` — that is what lands in the transcript
+                # and what the agent reads, and a CR is also the byte a TUI
+                # reads as Enter, the same early-submit hazard `_paste_chunks`
+                # walks its boundaries to avoid.
+                [self.tmux, "paste-buffer", "-r",
+                 "-b", buffer_name, "-d", "-t", target],
+                check=True,
+                timeout=_TMUX_TIMEOUT,
+            )
 
     def capture(self, handle: RuntimeHandle, start: str | None = "-30") -> str:
         """Capture a pane's contents.
