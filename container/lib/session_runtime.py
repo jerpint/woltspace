@@ -34,6 +34,73 @@ from runtime_context import RuntimeContext
 
 _TMUX_TIMEOUT = 10
 _SAFE_BUFFER = re.compile(r"[^A-Za-z0-9_-]")
+
+#: How much text goes into one tmux paste, and how long to wait before the
+#: next one. A stopgap for a harness-side ingestion race: the claude TUI drops
+#: whole *leading* 1024-byte blocks of a large paste, so a 1200-character
+#: telegram message arrives as its last ~200 characters and the agent answers
+#: a question it was never asked. Measured loss is always an exact multiple of
+#: 1024 and occasionally zero, which is a reader that misses bytes while it is
+#: busy rather than a size limit (a raw-mode reader on the same pty gets every
+#: byte). Small pastes spaced apart never lose anything (byte-exact at 1200,
+#: 1700 and 3000 characters), so delivery is paced. Both numbers are empirical,
+#: and both should go away when the harness reads its own input reliably.
+_PASTE_CHUNK_CHARS = 500
+_PASTE_CHUNK_PAUSE = 0.3
+
+
+def _paste_chunks(text: str, size: int = _PASTE_CHUNK_CHARS) -> list[str]:
+    """Split text for paced delivery, preserving it exactly.
+
+    Slicing is by character, never by byte, so no codepoint is ever cut in
+    half, and never by line: the concatenation of the chunks is the input
+    string, newlines and all. Text that fits in one chunk is one chunk, so a
+    short message is delivered exactly as it was before pacing existed.
+
+    One boundary is forbidden: a chunk may never *begin* with a newline.
+    `paste-buffer` is sent without `-p`, so no bracketed-paste markers reach
+    the TUI and it can only tell a paste from typing by burst timing — which
+    the inter-chunk pause defeats, leaving the first byte after the gap to be
+    read as a keystroke. A newline read as Enter is an early submit of half a
+    multi-line message. So when the split would land on a newline the boundary
+    walks *back* to the last character that is not one, leaving the whole
+    newline run at the tail of the chunk before it. Chunks stay at or below
+    `size` and the concatenation is still the input, byte for byte.
+    """
+    if len(text) <= size:
+        return [text]
+    chunks: list[str] = []
+    at = 0
+    while at < len(text):
+        end = min(at + size, len(text))
+        if end < len(text):
+            back = end
+            while back > at and text[back] == "\n":
+                back -= 1
+            # `back == at` is a whole window of newlines: nothing to move the
+            # boundary to, so take the plain slice rather than loop forever.
+            if back > at:
+                end = back
+        chunks.append(text[at:end])
+        at = end
+    return chunks
+
+
+def _defuse_leading_slash(text: str) -> str:
+    """Keep a long message that starts with "/" from being read as a command.
+
+    Measured live (claude 2.1.x): a composer whose content begins with "/" is
+    dispatched as a slash command on submit no matter how the text got there.
+    A long message beginning with "/not-a-command" printed `Unknown command`
+    and reached the model not at all — silently destroyed. A single leading
+    space makes the composer treat the whole thing as literal text.
+
+    Only long messages are defused. A short one may legitimately *be* a
+    command — a resume prompt of `/compact`, a boot prompt invoking a skill —
+    and demoting those to prose would break a working path. Nothing the colony
+    sends as a command is 500 characters long.
+    """
+    return f" {text}" if text.startswith("/") else text
 _SESSION_ENV_KEYS = (
     "HOME",
     "PATH",
@@ -480,25 +547,29 @@ class TmuxSessionRuntime:
         *,
         process_names: Iterable[str] | None = None,
     ) -> None:
+        """Deliver one message into a pane, then submit it.
+
+        The text sits visibly in the composer and a single Enter submits it.
+        A message longer than one chunk goes in as several paced buffer
+        pastes — see `_PASTE_CHUNK_CHARS`: the claude TUI drops the leading
+        blocks of a big paste, and a message must arrive whole or the agent
+        answers half a question. Short messages take exactly the pre-pacing
+        path: one paste, no extra sleeps.
+
+        Copy-mode is cancelled once up front. With `mouse on`, a phone scroll
+        leaves the pane in copy-mode, where a paste is visible but never
+        reaches the process and the Enter is eaten as a copy-mode command.
+        """
         exact = self.resolve_delivery_pane(handle, process_names)
         target = exact.pane_id
-        buffer_id = _SAFE_BUFFER.sub("-", exact.woltspace_session_id)
-        buffer_name = f"paste-{buffer_id}"
         self._run(
             [self.tmux, "send-keys", "-t", target, "-X", "cancel"],
             check=False,
             timeout=_TMUX_TIMEOUT,
         )
-        self._run(
-            [self.tmux, "set-buffer", "-b", buffer_name, text],
-            check=True,
-            timeout=_TMUX_TIMEOUT,
-        )
-        self._run(
-            [self.tmux, "paste-buffer", "-b", buffer_name, "-d", "-t", target],
-            check=True,
-            timeout=_TMUX_TIMEOUT,
-        )
+        if len(text) > _PASTE_CHUNK_CHARS:
+            text = _defuse_leading_slash(text)
+        self._paste_in_chunks(target, exact.woltspace_session_id, text)
         if settle > 0:
             self._sleep(settle)
         self._run(
@@ -506,6 +577,46 @@ class TmuxSessionRuntime:
             check=True,
             timeout=_TMUX_TIMEOUT,
         )
+
+    def _paste_in_chunks(self, target: str, session_id: str, text: str) -> None:
+        """Fill the session's own named buffer, in paced slices.
+
+        The buffer is named for the session so concurrent deliveries to
+        different sessions cannot clobber each other, and `-d` deletes it after
+        each paste. One chunk is one paste, which is the pre-pacing behaviour.
+
+        Pacing cost this its atomicity: a tmux failure part-way leaves the
+        chunks that did land sitting in the composer. That is survivable only
+        because it is never *submitted* — the exception propagates out of here
+        and `paste` never reaches the Enter, so the half message stays visible
+        and unsent rather than becoming a turn.
+        """
+        buffer_name = f"paste-{_SAFE_BUFFER.sub('-', session_id)}"
+        for index, chunk in enumerate(_paste_chunks(text)):
+            if index:
+                self._sleep(_PASTE_CHUNK_PAUSE)
+            # check=True on every chunk, deliberately: a failure here must
+            # reach the caller as a failure. Swallowing it would let `paste`
+            # go on and press Enter, submitting a truncated message as if
+            # delivery had worked — the one outcome pacing exists to prevent.
+            self._run(
+                [self.tmux, "set-buffer", "-b", buffer_name, chunk],
+                check=True,
+                timeout=_TMUX_TIMEOUT,
+            )
+            self._run(
+                # `-r`: paste the buffer's linefeeds as linefeeds. Without it
+                # tmux substitutes a carriage return for every LF on the way
+                # out, so a multi-line message arrives with `\r` wherever it
+                # was written with `\n` — that is what lands in the transcript
+                # and what the agent reads, and a CR is also the byte a TUI
+                # reads as Enter, the same early-submit hazard `_paste_chunks`
+                # walks its boundaries to avoid.
+                [self.tmux, "paste-buffer", "-r",
+                 "-b", buffer_name, "-d", "-t", target],
+                check=True,
+                timeout=_TMUX_TIMEOUT,
+            )
 
     def capture(self, handle: RuntimeHandle, start: str | None = "-30") -> str:
         """Capture a pane's contents.

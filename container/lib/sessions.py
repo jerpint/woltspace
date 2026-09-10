@@ -658,8 +658,12 @@ def _tmux_paste(target: str | dict | RuntimeHandle, text: str, settle: float = 0
     Uses set-buffer + paste-buffer instead of send-keys -l.
     send-keys -l sends each character as an individual keystroke which
     blocks on long messages (the pane input buffer backs up). Buffer
-    paste delivers the entire text atomically — same as a clipboard
-    paste from a human.
+    paste delivers the text the way a clipboard paste from a human does.
+
+    A long message goes in as several paced buffer pastes rather than one:
+    the harness on the other end drops the leading blocks of a big paste.
+    See `_PASTE_CHUNK_CHARS` in session_runtime. The text itself is
+    untouched, and short messages still take the single-paste path.
 
     Enter is sent as a separate send-keys call after the paste. Claude
     Code's TUI has paste-aware input: a \\n inside a paste is treated
