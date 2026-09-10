@@ -4,7 +4,6 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import os from 'node:os';
 import { Box, Text, useApp, useInput } from 'ink';
 import * as api from '../api.js';
-import { detachLabel } from '../attach.js';
 import { color, creatureGlyph, lore, age, clock } from '../theme.js';
 import { agentAlive, inactiveCount, sessionPolicy, sessionWorkdir, spawnTarget } from '../session-view.js';
 import { createWoltAction, validateWoltName, woltTypes } from '../create-wolt.js';
@@ -390,7 +389,7 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
       lines.push(h(Text, { key: 'cc5', color: color.dim }, '   y confirm · n/esc back'));
     } else {
       lines.push(h(Text, { key: 'k1', color: color.dim },
-        `j/k move  enter attach${selected && !agentAlive(selected) ? ' (wakes it)' : ''} (${detachLabel()} comes back)  n session  c wolt`));
+        `j/k move  enter attach${selected && !agentAlive(selected) ? ' (wakes it)' : ''} (quit claude to end)  n session  c wolt`));
       lines.push(h(Text, { key: 'k2', color: color.dim },
         's send  x stop  r refresh  / find  tab/shift-tab match  a all  q quit'));
       if (hidden && view.length) {

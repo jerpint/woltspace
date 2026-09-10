@@ -22,8 +22,8 @@ node src/main.js       # node >= 18 or bun, host or in-container
 | key | action |
 | --- | --- |
 | `j/k` `gg/G` `ctrl-d/u` | move / jump top-bottom / half-page |
-| `enter` | attach to the session's real tmux |
-| `ctrl-\` (or `C-b d`) | detach from an attached session — back to the list. Rebind with `WOLTSPACE_TUI_DETACH` (any tmux key name: `C-]`, `F9`, …). Avoid ctrl-arrows — macOS Mission Control swallows them by default |
+| `enter` | attach to the session's real tmux. Inside your own tmux the wolt renders in the pane you are in - the session stays where it is, your prefix and pane keys keep working |
+| — | there is no key to leave a session, because tmux already has one for each case. Quit claude to end it and fall back to the list; `prefix c` to leave it running and work elsewhere; `prefix &` to take the pane back, which kills the viewer and never the wolt |
 | `n` | start a session for an existing wolt |
 | `c` | create a wolt, confirm cwd/policy, and start its first session |
 | `s` | send an attributed message into the selected session |
