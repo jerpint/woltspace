@@ -1,4 +1,11 @@
-"""Resolve and launch the one exactly compatible TUI artifact."""
+"""Resolve and launch the TUI artifact.
+
+The two halves ship on their own cadence. The tui declares the minimum
+`woltspace` version it needs and checks it itself at startup; nothing here
+inspects the tui's version. This resolver only asks a candidate binary to prove
+it is the `@woltspace/tui` bin it claims to be, and otherwise hands over to
+`npx` with `@latest`.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping
 
-from .compatibility import TUI_BINARY, TUI_PACKAGE, TUI_VERSION, tui_spec
+from .compatibility import TUI_BINARY, TUI_PACKAGE, tui_spec
 
 
 class TuiResolutionError(RuntimeError):
@@ -26,10 +33,13 @@ class TuiResolution:
     local_probe: dict | None = None
 
     def to_record(self) -> dict:
+        """What resolved, not what was pinned — there is no pin any more."""
+        probed = self.local_probe or {}
         return {
             "source": self.source,
             "package": TUI_PACKAGE,
-            "version": TUI_VERSION,
+            "spec": tui_spec(),
+            "version": probed.get("version") if self.source == "local" else None,
             "command": list(self.command),
             "local_probe": self.local_probe,
         }
@@ -55,9 +65,10 @@ def _probe(
         payload = json.loads(result.stdout) if result.returncode == 0 else {}
     except (json.JSONDecodeError, TypeError):
         payload = {}
+    # Identity only: the right package, and the right bin of it. Any version of
+    # that bin is accepted — the tui is what knows which lodges it can talk to.
     valid = (
         payload.get("name") == TUI_PACKAGE
-        and payload.get("version") == TUI_VERSION
         and payload.get("binary") == expected_binary
     )
     record = {
@@ -65,11 +76,13 @@ def _probe(
         "valid": valid,
         "name": payload.get("name"),
         "version": payload.get("version"),
+        "binary": payload.get("binary"),
     }
     if not valid:
         record["error"] = (
-            f"expected {tui_spec()}, got "
-            f"{payload.get('name') or 'unknown'}@{payload.get('version') or 'unknown'}"
+            f"expected the {expected_binary} bin of {TUI_PACKAGE}, got "
+            f"{payload.get('name') or 'unknown'} "
+            f"{payload.get('binary') or 'unknown'}"
         )
     return record
 
@@ -110,7 +123,7 @@ def resolve_tui(
     if not npx:
         mismatch = f" Local candidate: {probe['error']}." if probe else ""
         raise TuiResolutionError(
-            f"No exact {tui_spec()} TUI is installed and npx is unavailable."
+            f"No {TUI_PACKAGE} TUI is installed and npx is unavailable."
             f"{mismatch} Install npm with npx, then rerun `woltspace tui` — or, "
             f"while {TUI_PACKAGE} is unpublished, install from a checkout: "
             f"{local_tarball_recipe()}"
@@ -126,12 +139,12 @@ def local_tarball_recipe() -> str:
     """How to install both artifacts from a checkout, before either is published."""
     return (
         "uv tool install . && cd tui && npm pack && "
-        f"npm install -g ./{TUI_BINARY}-{TUI_VERSION}.tgz"
+        f"npm install -g ./{TUI_BINARY}-*.tgz"
     )
 
 
 def fallback_notices(resolution: TuiResolution) -> list[str]:
-    """One line each, for stderr, when the exact local binary was not used.
+    """One line each, for stderr, when a local binary was not used.
 
     `@woltspace/tui` is not published yet, so the npx fallback cannot resolve
     and npm's own error reads as a network failure. Say what happened and name
@@ -143,7 +156,7 @@ def fallback_notices(resolution: TuiResolution) -> list[str]:
     probe = resolution.local_probe
     if probe and probe.get("path"):
         notices.append(
-            f"woltspace: ignoring {probe['path']} — {probe.get('error', 'version mismatch')}; "
+            f"woltspace: ignoring {probe['path']} — {probe.get('error', 'identity mismatch')}; "
             f"resolving {tui_spec()} through npx instead."
         )
     else:

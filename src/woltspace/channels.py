@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Protocol, runtime_checkable
 
+from . import __version__
 from .compatibility import TUI_SERVICE_BINARY, tui_spec
 from .config import channel_config, config_path
 from .envvars import export_both
@@ -322,9 +323,10 @@ def resolve_tui_service(
 
     Order: an explicit `WOLTSPACE_TUI_SERVICE_BIN`; the checkout's own
     `tui/src/tui-service.js` when the install root is a source tree with node
-    modules beside it (dev checkouts and the container); the exactly matching
-    `woltspace-tui-service` that `npm install -g @woltspace/tui` puts on PATH.
-    An empty command means "not found", and the third element says why.
+    modules beside it (dev checkouts and the container); the `woltspace-tui-service`
+    that `npm install -g @woltspace/tui` puts on PATH, whatever its version —
+    the probe checks identity, not version. An empty command means "not found",
+    and the third element says why.
     """
     from .tui import _probe
 
@@ -350,7 +352,7 @@ def resolve_tui_service(
         probe = _probe(binary, expected_binary=TUI_SERVICE_BINARY, runner=runner)
         if probe["valid"]:
             return (str(Path(binary)),), f"{TUI_SERVICE_BINARY} at {binary}", ""
-        return (), "", f"{binary}: {probe.get('error', 'version mismatch')}"
+        return (), "", f"{binary}: {probe.get('error', 'identity mismatch')}"
     return (), "", f"no {TUI_SERVICE_BINARY} on PATH and no checkout tui/src beside {layout.install_root}"
 
 
@@ -408,8 +410,12 @@ class TuiBridgeConnector:
                 self.name, False, f"pty bridge not found: {why_not}",
                 remedy=TUI_BRIDGE_INSTALL_REMEDY,
             )
+        # The bridge declares the minimum lodge version it needs and checks it
+        # itself at startup — the only version conversation between the halves,
+        # and it only happens because we tell it who is launching it.
         child_env = export_both({
             "TUI_PORT": port,
+            "WOLTSPACE_VERSION": __version__,
             "WOLTSPACE_WOLT_DIR": str(layout.wolts_dir),
             "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
         })

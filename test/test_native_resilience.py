@@ -653,22 +653,24 @@ class TestPrePublishTuiRemedy:
     """@woltspace/tui is not on the registry yet, so npx cannot resolve it."""
 
     def test_the_npx_fallback_names_the_from_checkout_recipe(self):
-        from woltspace.compatibility import TUI_BINARY, TUI_PACKAGE, TUI_VERSION, tui_spec
+        from woltspace.compatibility import TUI_BINARY, TUI_PACKAGE, tui_spec
         from woltspace.tui import TuiResolution, fallback_notices, local_tarball_recipe
 
         resolution = TuiResolution(
             "npx", ("npx", "--yes", f"--package={tui_spec()}", TUI_BINARY),
             {"path": f"/usr/local/bin/{TUI_BINARY}", "valid": False,
-             "error": f"expected {tui_spec()}, got {TUI_PACKAGE}@0.1.0"},
+             "error": f"expected the {TUI_BINARY} bin of {TUI_PACKAGE}, got tui unknown"},
         )
         notices = fallback_notices(resolution)
         assert any(f"ignoring /usr/local/bin/{TUI_BINARY}" in line for line in notices)
         assert any("not published yet" in line for line in notices)
         assert any(local_tarball_recipe() in line for line in notices)
         assert "npm pack" in local_tarball_recipe()
-        assert f"{TUI_BINARY}-{TUI_VERSION}.tgz" in local_tarball_recipe()
+        # The tarball carries whatever version the manifest has; nothing here
+        # knows it, so the recipe globs.
+        assert f"{TUI_BINARY}-*.tgz" in local_tarball_recipe()
 
-    def test_an_exact_local_binary_prints_nothing(self):
+    def test_a_local_binary_prints_nothing(self):
         from woltspace.tui import TuiResolution, fallback_notices
 
         assert fallback_notices(TuiResolution("local", ("/usr/local/bin/woltspace-tui",))) == []
@@ -692,20 +694,25 @@ class TestDocsStayTrue:
 
     DOC = ROOT / "docs" / "native-and-container.md"
 
-    def test_the_release_checklist_names_every_pinned_file(self):
+    def test_the_release_checklist_names_every_versioned_file(self):
+        """Each artifact carries its own version; the checklist names all of them."""
         text = self.DOC.read_text()
-        for path in ("tui/package.json", "tui/src/version.js",
-                     "src/woltspace/compatibility.py"):
+        for path in ("pyproject.toml", "tui/package.json", "tui/src/version.js"):
             assert path in text, path
             assert (ROOT / path).is_file(), path
 
     def test_the_pre_publish_recipe_matches_the_one_the_cli_prints(self):
-        from woltspace.compatibility import TUI_VERSION
         from woltspace.tui import local_tarball_recipe
 
         text = self.DOC.read_text()
-        assert f"woltspace-tui-{TUI_VERSION}.tgz" in text
-        assert f"woltspace-tui-{TUI_VERSION}.tgz" in local_tarball_recipe()
+        assert "woltspace-tui-*.tgz" in text
+        assert "woltspace-tui-*.tgz" in local_tarball_recipe()
+
+    def test_the_doc_states_which_half_checks_which(self):
+        """The rule that replaced the pin has to survive in prose too."""
+        text = self.DOC.read_text().lower()
+        assert "minimum woltspace version" in text
+        assert "lockstep" not in text
 
     def test_the_config_example_is_the_shape_the_connector_reads(self, tmp_path):
         import re

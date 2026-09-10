@@ -458,7 +458,11 @@ def _tui(args) -> int:
             print(json.dumps(record, indent=2))
         else:
             print(f"source: {record['source']}")
-            print(f"package: {record['package']}@{record['version']}")
+            label = (
+                f"{record['package']}@{record['version']}"
+                if record.get("version") else record["spec"]
+            )
+            print(f"package: {label}")
             print(f"command: {' '.join(record['command'])}")
             for notice in record["notices"]:
                 print(notice)
@@ -664,7 +668,7 @@ def build_parser() -> argparse.ArgumentParser:
     auto_list.add_argument("--json", action="store_true")
     auto_list.set_defaults(func=_auto_list)
 
-    tui = sub.add_parser("tui", help="open the exactly compatible terminal UI")
+    tui = sub.add_parser("tui", help="open the terminal UI")
     tui.add_argument("--dry-run", action="store_true", help="show resolution without launching")
     tui.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
     tui.add_argument("tui_args", nargs=argparse.REMAINDER)

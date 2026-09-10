@@ -400,7 +400,7 @@ class TestOptInTierIsRunnable:
     def test_the_release_checklist_runs_it(self):
         doc = (TEST_DIR.parent / "docs" / "native-and-container.md").read_text()
         assert "run-tests.sh opt-in" in doc
-        assert doc.index("run-tests.sh opt-in") < doc.index("Publish PyPI and npm together")
+        assert doc.index("run-tests.sh opt-in") < doc.index("Publish whichever halves changed")
 
 
 class TestFirstRunDocIsHonest:
@@ -467,10 +467,12 @@ class TestFirstRunDocIsHonest:
             "the doc quotes this remedy verbatim; they have drifted apart"
         )
 
-    def test_the_pre_publish_tarball_name_matches_the_pinned_version(self):
-        from woltspace.compatibility import TUI_VERSION
+    def test_the_pre_publish_tarball_name_is_the_glob_the_cli_prints(self):
+        """No patch version in the recipe — the two halves version separately."""
+        from woltspace.tui import local_tarball_recipe
 
-        assert f"woltspace-tui-{TUI_VERSION}.tgz" in self.DOC.read_text()
+        assert "woltspace-tui-*.tgz" in self.DOC.read_text()
+        assert "woltspace-tui-*.tgz" in local_tarball_recipe()
 
     def test_it_is_linked_from_the_readme(self):
         assert "docs/native-first-run.md" in (TEST_DIR.parent / "README.md").read_text()

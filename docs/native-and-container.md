@@ -106,14 +106,19 @@ back — your tmux sessions survive the restart and are re-adopted. In a
 container it hands you the host commands instead of pretending it can reach
 docker.
 
-The manual fallback is the same two commands, in lockstep, followed by a
-restart:
+The manual fallback is the same two commands, followed by a restart. The tui
+declares the minimum woltspace version it needs; woltspace does not check the
+tui's version. Install or upgrade each on its own:
 
 ```bash
-uv tool install --force 'woltspace[connectors]==<version>'
-npm install -g @woltspace/tui@<version>
+uv tool install --force 'woltspace[connectors]'
+npm install -g @woltspace/tui@latest
 woltspace stop && woltspace start
 ```
+
+If the pair is too far apart the tui says so and names the fix: the cockpit
+prints one advisory line over the session list, and the pty bridge refuses to
+start against a lodge below its minimum.
 
 Migrations for a release ship inside the wheel at
 `<install_root>/container/migrations/` — the path `woltspace paths` prints —
@@ -131,13 +136,13 @@ first release, install both artifacts from a checkout:
 
 ```bash
 uv tool install .
-cd tui && npm pack && npm install -g ./woltspace-tui-0.5.0.tgz
+cd tui && npm pack && npm install -g ./woltspace-tui-*.tgz
 ```
 
-The Python package embeds the exact TUI version it accepts, so a locally
-installed binary is used only when its name and version match exactly. When it
-does not match, `woltspace tui` says so on stderr and names this recipe before
-handing over to `npx`.
+The Python side accepts a local binary on identity alone — the right bin of
+`@woltspace/tui`, whatever its version. When what it finds is something else
+wearing the name, `woltspace tui` says so on stderr and names this recipe
+before handing over to `npx`.
 
 ---
 
@@ -162,6 +167,10 @@ artifacts a native install uses**:
 uv tool install 'woltspace[connectors]==<WOLTSPACE_PYPI_VERSION>'   # the control plane
 npm  install -g '@woltspace/tui@<WOLTSPACE_TUI_VERSION>'            # tui + pty bridge
 ```
+
+`WOLTSPACE_TUI_VERSION` defaults to `latest`: the two artifacts are versioned
+independently, and the tui is the half that knows which lodges it can talk to.
+Pass an explicit version to reproduce an older image.
 
 Everything else in the Dockerfile is environment and isolation: the OS, the
 harness CLIs (claude, codex, opencode), tmux, `cloudflared`, worktui, a non-root
@@ -410,17 +419,19 @@ human go-ahead.
    run. Every message goes to the chat you named: the suite never discovers a
    chat id from live state, so an unset `TEST_CHAT_ID` skips rather than
    guesses.
-2. **Bump the version in all three places** — they are pinned exactly, and the
-   cross-manifest tests fail on drift:
-   - `tui/package.json`
-   - `tui/src/version.js`
-   - `src/woltspace/compatibility.py`
+2. **Bump whichever artifact you are releasing.** They no longer move
+   together — the wheel's version lives in `pyproject.toml`, and the tui's in
+   both `tui/package.json` and `tui/src/version.js`, which the cross-manifest
+   test keeps equal. If the tui has started needing something only a newer
+   lodge serves, raise `minLodgeVersion` in `tui/src/version.js` too — that is
+   the only compatibility statement either half makes.
 3. Build both artifacts and clean-install them **outside the checkout**: wheel
    and sdist into fresh venvs, `npm pack` tarball into an isolated npm prefix.
    Check both bins answer: `woltspace-tui --version --json` and
    `woltspace-tui-service --version --json`.
-4. **Publish PyPI and npm together.** The Python package embeds the exact npm
-   version, so a half-published release is a broken `woltspace tui`.
+4. **Publish whichever halves changed.** They can ship apart: the wheel never
+   checks the tui's version, and the tui refuses only a lodge below the
+   minimum it declares.
 5. **Build the OCI image from the released artifacts** — not from a checkout —
    so the container ships the same bytes as the native install.
 6. Remove the pre-publish install recipe above once `npx` can resolve

@@ -19,8 +19,9 @@ The platform is two published packages, not a checkout:
   skills (they ship inside the wheel).
 - `@woltspace/tui` on npm — the terminal cockpit and the pty bridge.
 
-The wheel pins the exact TUI version it accepts, so the two move **in lockstep**. Updating
-one alone leaves `woltspace tui` refusing to start.
+They are versioned **independently**. The tui declares the minimum `woltspace` version it
+needs and checks it at startup; woltspace does not check the tui's version. Update each on
+its own — and if the tui says the lodge is too old, updating the wheel is the fix.
 
 ## Step 1 — name the runtime
 
@@ -108,16 +109,16 @@ still show the status block from Step 3 first, so they know what they agreed to.
 
 ## Step 5a — native update (on GO)
 
-Both packages, same version, in this order:
+Each package to its own latest, in this order:
 
 ```bash
 uv tool install --force 'woltspace[connectors]==<latest>'
-npm install -g @woltspace/tui@<latest>
+npm install -g @woltspace/tui@latest
 ```
 
 The `connectors` extra carries the Telegram dependencies; dropping it takes chat dark.
-The TUI install is not optional — the wheel pins that exact version and refuses a
-mismatch.
+The versions need not match — but the tui refuses a lodge older than the minimum it
+declares, so an updated tui on a stale wheel is the one pairing that breaks.
 
 Then the restart. **Tell the human before you run it**, because this kills the control
 plane your own session is talking to:
