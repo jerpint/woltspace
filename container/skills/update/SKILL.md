@@ -195,8 +195,9 @@ Flag anything you could not verify rather than rounding it up to success.
 - The platform is an installed package. There is no clone to pull, no branch to track, and
   no platform source on disk to edit — a wolt that finds itself reaching for git here has
   the wrong model of the world.
-- Two artifacts, one version. If you ever see them disagree, that is the bug: reinstall the
-  pair rather than patching one.
+- Two artifacts, two versions. The wheel and the tui release on their own and need not
+  match; the tui declares the minimum woltspace it needs and says so at startup when the
+  lodge is below it. A disagreement is only a bug when one of them tells you it is.
 - Skills are read live from the installed bundle, so upgrading the wheel upgrades every
   platform skill at once. Sessions already running keep the bodies they started with.
 - When unsure whether something is breaking, flag it. A false alarm costs a sentence; a
