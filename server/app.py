@@ -686,13 +686,20 @@ async def session_message(session_id: str, request: Request):
     When from_wolt is given, the message is prepended with sender attribution
     + a reply instruction (the wolt-to-wolt relay contract). Delivery is
     harness-aware (paste-buffer + per-harness settle) via deliver_message.
+
+    Off the event loop, for the same reason resume is: deliver_message paces
+    a long message into 500-character pastes 0.3s apart (~1.5s for 3KB) and
+    may wait on the session's delivery lock on top of that. Inline, that
+    freezes every other request, the /tui socket proxy and viewport
+    livereload for the whole delivery.
     """
     safe = sanitize_session(session_id)
     body = await request.json()
     text = body.get("text")
     if not text:
         return JSONResponse({"error": "text required"}, status_code=400)
-    result = deliver_message(
+    result = await asyncio.to_thread(
+        deliver_message,
         safe, text,
         from_wolt=body.get("from_wolt", "") or "",
         from_session=body.get("from_session", "") or "",
@@ -714,6 +721,9 @@ async def wolt_message(name: str, request: Request):
 
     Same body as /sessions/{id}/message. 404 if the wolt has no live session.
     This is the ergonomic entry point: senders address `codexw`, not a slug.
+
+    Delivery goes to a thread for the same reason as the route above — a
+    paced paste is seconds of blocking work.
     """
     safe_wolt = "".join(c for c in name if c.isalnum() or c in "-_")
     session_id = resolve_active_session(safe_wolt)
@@ -727,7 +737,8 @@ async def wolt_message(name: str, request: Request):
     text = body.get("text")
     if not text:
         return JSONResponse({"error": "text required"}, status_code=400)
-    result = deliver_message(
+    result = await asyncio.to_thread(
+        deliver_message,
         session_id, text,
         from_wolt=body.get("from_wolt", "") or "",
         from_session=body.get("from_session", "") or "",
