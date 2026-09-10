@@ -1,19 +1,35 @@
 // Attach to a session's real tmux. The tui suspends, the terminal belongs to
-// tmux until detach (C-b d), then the list re-renders with a fresh fetch.
+// the session until it ends, then the list re-renders with a fresh fetch.
 //
-// native host:    tmux attach -t <slug>
-//                 — unless we are already inside tmux on the SAME server, where
-//                   attach would nest a client inside a pane (two status bars,
-//                   fighting prefixes): then switch-client moves this client to
-//                   the session instead, and the detach key switches back.
-// container:      tmux attach -t <slug>  (TMUX cleared so nested attach works)
-// external host:  docker exec -it -u node <container> tmux attach -t <slug>
-//                 (different tmux server — nesting is the only option there)
+// outside tmux:  tmux attach -t <slug> - the classic client.
+// inside tmux:   the same client, nested, so the wolt renders IN THE PANE you
+//                are in. The wolt's session stays where it is - telegram
+//                delivery, the web tui and the vulture all address it by
+//                session name - and this pane holds a viewer onto it.
+// container:     same two modes. external host: same two modes over
+//                `docker exec` into the lodge container.
+//
+// There is no woltspace key here, and the tui binds nothing on your tmux
+// server. Once the wolt renders in a pane, your own tmux is the navigation:
+//
+//   done with it            quit claude - the session ends and the pane falls
+//                           back to the list, since claude IS the session's
+//                           process (spawned with no remain-on-exit)
+//   look away, keep it      prefix c / prefix n, like any other pane
+//   want the pane back      prefix & - that kills the viewer, never the wolt,
+//                           which is a session of its own
+//
+// Earlier versions moved your whole client with switch-client and then bound a
+// detach key on your server to undo it. Both are gone: the rebinding ate the
+// root binding of the person who reported the teleport, and the interception
+// that replaced it would have swallowed a key claude itself uses.
 
 import { existsSync } from 'node:fs';
 import { spawnSync, execSync } from 'node:child_process';
 
 export const inContainer = () => existsSync('/workspace/woltspace/server');
+
+export const insideTmux = (env = process.env) => Boolean(env.TMUX);
 
 export function containerName() {
   if (process.env.WOLTSPACE_CONTAINER) return process.env.WOLTSPACE_CONTAINER;
@@ -45,21 +61,6 @@ export function attachCommand(slug, options = {}) {
        options.container || containerName(), 'tmux', '-u', 'attach', '-t', slug];
 }
 
-// One obvious way home: a detach key bound on the tmux server idempotently
-// before each attach (C-b d always works too, for tmux hands). It is nothing
-// more than `tmux bind-key -n <key> detach-client`. Override with
-// WOLTSPACE_TUI_DETACH (any tmux key name: 'C-]', 'F9', ...).
-// Default C-\: single-key, not swallowed by macOS (ctrl-arrows are Mission
-// Control shortcuts by default and never reach the terminal).
-export const detachKey = () => process.env.WOLTSPACE_TUI_DETACH || 'C-\\';
-
-export const detachLabel = () =>
-  detachKey()
-    .replace(/^C-/, 'ctrl-')
-    .replace(/^M-/, 'alt-')
-    .replace(/Left$/, '←')
-    .replace(/Right$/, '→');
-
 function tmuxCmd(args, options = {}) {
   const insideContainer = options.insideContainer ?? inContainer();
   const direct = insideContainer || options.isolation === 'host';
@@ -68,52 +69,46 @@ function tmuxCmd(args, options = {}) {
     : ['docker', 'exec', '-u', 'node', options.container || containerName(), 'tmux', ...args];
 }
 
-// Moving this client to the session on the same server. `=` forces an exact
-// session-name match — bare -t prefix-matches, and a slug that prefixes
-// another session's name would switch to the wrong one.
-export const switchCommand = (slug) => ['tmux', 'switch-client', '-t', `=${slug}`];
+// A wolt shown inside someone's pane should read as the agent, not as a second
+// tmux: its own status bar would otherwise paint at the foot of the pane, an
+// inch above the user's. `status` is a session option, so this touches only the
+// wolt's session (`slug:` = that session, never a prefix match). It is sticky -
+// the bar stays off for later attaches, including classic ones - and that is
+// the same barless view the web tui already gives that session.
+export const statusOffCommand = (slug, options = {}) =>
+  tmuxCmd(['set-option', '-t', `${slug}:`, 'status', 'off'], options);
 
-// Bind ONLY the current detach key - never unbind others. Users bind their own
-// root keys in tmux.conf.local (e.g. vim-tmux-navigator's C-h/j/k/l/C-\), and
-// a hardcoded "retired defaults" unbind list would silently eat them.
-// The key's action matches how the session was entered: a nested-free
-// switch-client is left with `switch-client -l` (back to where the tui lives),
-// a real attach with `detach-client`. Rebound before every entry, so the
-// binding always matches the most recent gesture.
-function ensureDetachKey(options, action = ['detach-client']) {
-  const cmd = tmuxCmd(['bind-key', '-n', detachKey(), ...action], options);
+// Runs with the same TMUX-free environment as the client, and for the same
+// reason: with $TMUX still set, tmux talks to the server the USER is sitting
+// in, not the one the wolt lives on. On the socket the tui was launched from
+// the slug is simply not a session (the bar stays on, silently); on a server
+// where some session of the user's happened to share the name, it would have
+// turned that one's status bar off instead.
+function quietStatus(slug, options, env) {
+  const [cmd, ...args] = statusOffCommand(slug, options);
   try {
-    spawnSync(cmd[0], cmd.slice(1), { stdio: 'ignore' });
+    // Timed: a docker exec against a wedged daemon must not hold the keystroke.
+    spawnSync(cmd, args, { stdio: 'ignore', env, timeout: 5000 });
   } catch {
-    /* non-fatal - C-b d always works */
-  }
-}
-
-// True when the caller is inside tmux and <slug> lives on that same server —
-// the case where attach would nest. has-session runs with $TMUX intact, so it
-// asks the server this client belongs to, the one switch-client would act on.
-function sameServerSession(slug) {
-  if (!process.env.TMUX) return false;
-  try {
-    const r = spawnSync('tmux', ['has-session', '-t', `=${slug}`], { stdio: 'ignore' });
-    return r.status === 0;
-  } catch {
-    return false;
+    /* cosmetic - the session still works with a bar */
   }
 }
 
 export function attach(slug, options = {}) {
   const [cmd, ...args] = attachCommand(slug, options);
-  if (cmd === 'tmux' && sameServerSession(slug)) {
-    ensureDetachKey(options, ['switch-client', '-l']);
-    const [sw, ...swArgs] = switchCommand(slug);
-    const r = spawnSync(sw, swArgs, { stdio: 'inherit' });
-    if (r.error) throw new Error(`switch failed: ${r.error.message}`);
-    return r.status ?? 1;
-  }
-  ensureDetachKey(options);
   const env = { ...process.env };
-  delete env.TMUX; // allow attach from inside another tmux
+  // Nesting is the point when we are inside tmux, and outside it this is a
+  // no-op - either way tmux's own "sessions should be nested with care" guard
+  // has nothing to refuse.
+  delete env.TMUX;
+
+  // Only when nesting: standing alone, a wolt should keep the bar it came with.
+  if (insideTmux()) quietStatus(slug, options, env);
+
+  // Inherited stdio, so the client owns the terminal directly: it sees SIGWINCH
+  // on a resize, restores the screen it borrowed when it leaves, and speaks
+  // mouse reporting to the real terminal. Nothing of ours sits in the middle,
+  // which is also why every key reaches the outer tmux first.
   const r = spawnSync(cmd, args, { stdio: 'inherit', env });
   if (r.error?.code === 'ENOENT') {
     if (cmd === 'tmux') {
