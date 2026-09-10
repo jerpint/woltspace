@@ -111,7 +111,6 @@ lists in the host `woltspace` launcher.
 | `WOLTSPACE_TUI_PORT` | Port for the pty bridge. `TUI_PORT` is honoured as a second-choice source. | `channels.py` | API port + 1 |
 | `WOLTSPACE_TUI_SERVICE_BIN` | Path to the `woltspace-tui-service` binary, when it is not on `PATH`. | `channels.py` | resolved from `PATH` |
 | `WOLTSPACE_TUI_BIN` | Path to the terminal cockpit binary. | `src/woltspace/tui.py` | resolved from `PATH` |
-| `WOLTSPACE_TUI_DETACH` | Detach key for the cockpit's tmux attach. | `tui/src/attach.js` | `C-\` |
 | `WOLTSPACE_WOLF` | Enable or disable the cron scheduler connector. | `channels.py` | enabled for the entrypoint |
 | `WOLTSPACE_SHARING_ENABLED` | Whether apps may be given public tunnels. | `container/lib/apps.py` | on |
 | `WOLTSPACE_USER` | Display name for the human in the cockpit. `HUMAN_NAME` is honoured as a second-choice source. | `tui/src/ui/App.js` | the OS username |
@@ -133,7 +132,7 @@ by the platform runtime.
 | `WOLTSPACE_INIT_WOLT_NAME` | Which wolt a fresh non-interactive `init` should **create**. A different question from `WOLTSPACE_WOLT_NAME`, which names the wolt a shell already belongs to — see the note below. | the host launcher | unset (the lodge asks) |
 | `WOLTSPACE_BRANCH` | Build arg naming the branch the image installs from. | `container/Dockerfile` | `main` |
 | `WOLTSPACE_PYPI_VERSION` | Build arg: the `woltspace` version the image installs. | `container/Dockerfile` | the release being built |
-| `WOLTSPACE_TUI_VERSION` | Build arg: the `@woltspace/tui` version the image installs. | `container/Dockerfile` | the release being built |
+| `WOLTSPACE_TUI_VERSION` | Build arg: the `@woltspace/tui` version the image installs. The tui declares the minimum `woltspace` version it needs; woltspace does not check the tui's version, so the two are installed and upgraded on their own. | `container/Dockerfile` | `latest` |
 | `HOST_UID` / `HOST_GID` | The host user the container's `node` user is matched to, so files a wolt writes are readable on the host. | `container_entrypoint.run_root_phase` | the invoking user |
 
 ### Creating a wolt vs. being one
