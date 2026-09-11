@@ -105,7 +105,7 @@ The agent loop is multi-turn — Haiku can chain tool calls. Tools live in `core
 ### Notify back: Claude → user
 
 ```
-Claude in session calls: notify "done, check it out"
+Claude in session passes the message through a single-quoted heredoc to: notify
   → bin/notify                                     wolt-facing helper
   → POST /notify on FastAPI
   → server reads session routing from registry

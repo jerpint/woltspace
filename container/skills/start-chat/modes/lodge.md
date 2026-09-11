@@ -6,7 +6,7 @@ You were started from the lodge — the woltspace home page. The developer click
 
 The developer is watching this terminal directly — you do NOT need to use `notify`. Just talk normally in the terminal. They can see everything you type and do.
 
-If they step away and ask you to notify them, then pass the message on stdin to `notify --stdin` — but default to terminal conversation.
+If they step away and ask you to notify them, then pass the message to `notify` with a single-quoted heredoc and a fresh random delimiter — but default to terminal conversation.
 
 ## Viewport
 

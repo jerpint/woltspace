@@ -11,22 +11,28 @@ Sessions can send messages back to the user at any time. Use this when you finis
 
 ```bash
 # Default — auto-routes via session registry, falls back to Telegram
-notify --stdin
+notify <<'WOLTSPACE_NOTIFY_7F3A91C2'
+your message here
+WOLTSPACE_NOTIFY_7F3A91C2
 
 # Explicit Slack — send to a specific Slack channel + thread
-notify --slack CHANNEL THREAD_TS --stdin
+notify --slack CHANNEL THREAD_TS <<'WOLTSPACE_NOTIFY_4D8E20B1'
+your message here
+WOLTSPACE_NOTIFY_4D8E20B1
 
 # Explicit Telegram — send to a specific Telegram chat
-notify --telegram CHAT_ID --stdin
+notify --telegram CHAT_ID <<'WOLTSPACE_NOTIFY_A6C195E4'
+your message here
+WOLTSPACE_NOTIFY_A6C195E4
 ```
 
-Start the command, then pass the exact message through your execution tool's
-stdin input. Never interpolate generated or user-controlled message text into a
-shell command string: the shell would expand backticks, `$()`, quotes, and
-other metacharacters before `notify` receives them.
+Use a fresh random suffix in the delimiter for every message, and quote the
+opening delimiter exactly as shown. Put the closing delimiter on a line by
+itself. A single-quoted heredoc passes its body literally: the shell does not
+expand backticks, `$()`, variables, quotes, or other metacharacters.
 
-The legacy `notify "static message"` form remains available for compatibility,
-but do not use it for generated or user-controlled text.
+`notify` accepts no message argument. This keeps message text out of the shell
+command itself on every harness.
 
 ## Explicit routing
 
@@ -34,12 +40,12 @@ When your session receives a message from Slack or Telegram, the prepended conte
 
 ```
 [slack message from human, channel=C0123ABC, thread=1711234567.890123]: hey do the thing
-Reply by passing message text on stdin to: notify --slack C0123ABC 1711234567.890123 --stdin
+Reply using a single-quoted heredoc with: notify --slack C0123ABC 1711234567.890123
 ```
 
 ```
 [telegram message from human, chat_id=98765432]: hey do the thing
-Reply by passing message text on stdin to: notify --telegram 98765432 --stdin
+Reply using a single-quoted heredoc with: notify --telegram 98765432
 ```
 
 **Use the exact command from the prepended context.** This ensures your reply goes to the right place — the specific Slack thread or Telegram chat the message came from.
@@ -55,16 +61,24 @@ Reply by passing message text on stdin to: notify --telegram 98765432 --stdin
 
 ```bash
 # Task done
-notify --stdin
+notify <<'WOLTSPACE_NOTIFY_08D741BE'
+playlist built — 12 tracks, Karkwa + kin. https://open.spotify.com/playlist/xyz
+WOLTSPACE_NOTIFY_08D741BE
 
 # Blocked
-notify --stdin
+notify <<'WOLTSPACE_NOTIFY_B2A563F9'
+hit a rate limit on Spotify API — should I retry in 30s or skip?
+WOLTSPACE_NOTIFY_B2A563F9
 
 # Explicit Slack reply
-notify --slack C0123ABC 1711234567.890123 --stdin
+notify --slack C0123ABC 1711234567.890123 <<'WOLTSPACE_NOTIFY_94C8D130'
+done — PR opened at github.com/...
+WOLTSPACE_NOTIFY_94C8D130
 
 # Explicit Telegram reply
-notify --telegram 98765432 --stdin
+notify --telegram 98765432 <<'WOLTSPACE_NOTIFY_E70A249C'
+found the bug, fix pushed
+WOLTSPACE_NOTIFY_E70A249C
 ```
 
 ## How it works

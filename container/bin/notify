@@ -2,10 +2,12 @@
 # Send a notification to the originating chat (Telegram/Slack)
 #
 # Usage:
-#   notify "message"                                  — auto-route via session registry (default: telegram)
-#   notify --stdin                                     — read the message literally from standard input
-#   notify --slack CHANNEL THREAD_TS "message"        — send to specific Slack thread
-#   notify --telegram CHAT_ID --stdin                  — safely read a Telegram message from stdin
+#   notify                                             — auto-route via session registry (default: telegram)
+#   notify --slack CHANNEL THREAD_TS                   — send to a specific Slack thread
+#   notify --telegram CHAT_ID                          — send to a specific Telegram chat
+#
+# Message text is always read literally from standard input. Agents should use
+# a single-quoted heredoc with a fresh delimiter so the shell cannot expand it.
 #
 # The --slack and --telegram flags let rodents explicitly target where to send,
 # based on the adapter info in their prepended message context.
@@ -19,11 +21,11 @@ TELEGRAM_CHAT_ID=""
 usage() {
   printf '%s\n' \
     'Usage:' \
-    '  notify [--stdin | "message"]' \
-    '  notify --telegram CHAT_ID [--stdin | "message"]' \
-    '  notify --slack CHANNEL THREAD_TS [--stdin | "message"]' \
+    '  notify' \
+    '  notify --telegram CHAT_ID' \
+    '  notify --slack CHANNEL THREAD_TS' \
     '' \
-    'Use --stdin for generated or user-controlled text so the shell never parses the message.'
+    'Message text is read from standard input. Use a single-quoted heredoc.'
 }
 
 fail_usage() {
@@ -42,6 +44,8 @@ case "${1:-}" in
     ADAPTER="slack"
     SLACK_CHANNEL="$2"
     SLACK_THREAD="$3"
+    [[ "$SLACK_CHANNEL" =~ ^[A-Za-z0-9_-]+$ ]] || fail_usage "CHANNEL has invalid characters"
+    [[ "$SLACK_THREAD" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail_usage "THREAD_TS must be numeric"
     shift 3
     ;;
   --telegram)
@@ -59,30 +63,11 @@ case "${1:-}" in
     ;;
 esac
 
-case "${1:-}" in
-  -h|--help)
-    usage
-    exit 0
-    ;;
-  --stdin)
-    [ "$#" -eq 1 ] || fail_usage "--stdin does not accept a message argument"
-    # The sentinel prevents command substitution from stripping trailing newlines.
-    MESSAGE="$(cat; printf '\034')"
-    MESSAGE="${MESSAGE%$'\034'}"
-    ;;
-  --)
-    shift
-    [ "$#" -eq 1 ] || fail_usage "expected exactly one message after --"
-    MESSAGE="$1"
-    ;;
-  --*)
-    fail_usage "unknown option: $1"
-    ;;
-  *)
-    [ "$#" -eq 1 ] || fail_usage "expected exactly one message or --stdin"
-    MESSAGE="${1:-}"
-    ;;
-esac
+[ "$#" -eq 0 ] || fail_usage "message arguments are not supported; pass message text on stdin"
+
+# The sentinel prevents command substitution from stripping trailing newlines.
+MESSAGE="$(cat; printf '\034')"
+MESSAGE="${MESSAGE%$'\034'}"
 
 if [ -z "$MESSAGE" ]; then
   fail_usage "message must not be empty"

@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 
 
@@ -51,7 +52,7 @@ def test_stdin_preserves_shell_metacharacters_and_multiline_text(tmp_path):
     )
 
     result = subprocess.run(
-        [NOTIFY, "--telegram", "-100123", "--stdin"],
+        [NOTIFY, "--telegram", "-100123"],
         input=message,
         text=True,
         capture_output=True,
@@ -65,18 +66,44 @@ def test_stdin_preserves_shell_metacharacters_and_multiline_text(tmp_path):
     assert payload["message"] == f"🦫 testwolt: {message}"
 
 
-def test_legacy_single_argument_form_remains_supported(tmp_path):
+def test_quoted_heredoc_keeps_command_looking_text_literal(tmp_path):
     env, capture = _environment(tmp_path)
+    marker = tmp_path / "must-not-exist"
+    delimiter = "WOLTSPACE_NOTIFY_7F3A91C2"
+    message = (
+        f"do not run `touch {marker}` or $(touch {marker})\n"
+        'formatting stays intact: *bold-ish* `code` "quotes"\n'
+    )
+    command = (
+        f"{shlex.quote(str(NOTIFY))} --telegram 123 <<'{delimiter}'\n"
+        f"{message}{delimiter}\n"
+    )
 
     result = subprocess.run(
-        [NOTIFY, "legacy static message"],
+        ["sh", "-c", command],
         text=True,
         capture_output=True,
         env=env,
     )
 
     assert result.returncode == 0, result.stderr
-    assert json.loads(capture.read_text())["message"] == "🦫 testwolt: legacy static message"
+    assert not marker.exists()
+    assert json.loads(capture.read_text())["message"] == f"🦫 testwolt: {message}"
+
+
+def test_rejects_message_arguments_without_sending(tmp_path):
+    env, capture = _environment(tmp_path)
+
+    result = subprocess.run(
+        [NOTIFY, "legacy message argument"],
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+
+    assert result.returncode == 2
+    assert "message arguments are not supported" in result.stderr
+    assert not capture.exists()
 
 
 def test_help_prints_usage_without_sending(tmp_path):
@@ -94,7 +121,7 @@ def test_help_prints_usage_without_sending(tmp_path):
     assert not capture.exists()
 
 
-def test_rejects_extra_message_arguments_without_sending(tmp_path):
+def test_rejects_extra_arguments_without_sending(tmp_path):
     env, capture = _environment(tmp_path)
 
     result = subprocess.run(
@@ -105,7 +132,7 @@ def test_rejects_extra_message_arguments_without_sending(tmp_path):
     )
 
     assert result.returncode == 2
-    assert "expected exactly one message or --stdin" in result.stderr
+    assert "message arguments are not supported" in result.stderr
     assert not capture.exists()
 
 
@@ -113,14 +140,14 @@ def test_rejects_empty_stdin_and_invalid_chat_id(tmp_path):
     env, capture = _environment(tmp_path)
 
     empty = subprocess.run(
-        [NOTIFY, "--stdin"],
+        [NOTIFY],
         input="",
         text=True,
         capture_output=True,
         env=env,
     )
     invalid_chat = subprocess.run(
-        [NOTIFY, "--telegram", "not-a-chat", "--stdin"],
+        [NOTIFY, "--telegram", "not-a-chat"],
         input="hello",
         text=True,
         capture_output=True,
@@ -132,7 +159,7 @@ def test_rejects_empty_stdin_and_invalid_chat_id(tmp_path):
     assert not capture.exists()
 
 
-def test_session_context_recommends_stdin_for_explicit_routes():
+def test_session_context_recommends_quoted_heredocs_for_explicit_routes():
     from sessions import _adapter_context
 
     telegram = _adapter_context(
@@ -151,6 +178,6 @@ def test_session_context_recommends_stdin_for_explicit_routes():
         }
     )
 
-    assert "notify --telegram 123 --stdin" in telegram
-    assert "notify --slack C123 123.456 --stdin" in slack
+    assert "single-quoted heredoc to: notify --telegram 123" in telegram
+    assert "single-quoted heredoc to: notify --slack C123 123.456" in slack
     assert '"your message"' not in telegram + slack

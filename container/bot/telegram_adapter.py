@@ -345,7 +345,7 @@ async def _route_to_session(update: Update, session_name: str, wolt: str, text: 
 
     session_msg = (
         f"[telegram message from human, chat_id={chat_id}]: {text}\n"
-        f"Reply by passing message text on stdin to: notify --telegram {chat_id} --stdin"
+        f"Reply using a single-quoted heredoc with: notify --telegram {chat_id}"
     )
     # message_session → resume_session blocks for as long as the agent takes
     # to come up (up to 12s). On the bot's event loop that stalls every other

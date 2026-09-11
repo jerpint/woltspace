@@ -218,7 +218,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         den_msg = (
             f"[telegram message from {human_name}, chat_id={chat_id}]: {text}\n"
-            f"Reply by passing message text on stdin to: notify --telegram {chat_id} --stdin"
+            f"Reply using a single-quoted heredoc with: notify --telegram {chat_id}"
         )
         result = await asyncio.to_thread(message_session, den_session, den_msg)
         _bot_log("den_reply", {"session": den_session, "text": text[:200], "result": result})
@@ -336,7 +336,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         voice_chat_id = update.effective_chat.id
         den_msg = (
             f"[telegram voice from {human_name}, chat_id={voice_chat_id}]: {text}\n"
-            f"Reply by passing message text on stdin to: notify --telegram {voice_chat_id} --stdin"
+            f"Reply using a single-quoted heredoc with: notify --telegram {voice_chat_id}"
         )
         result = await asyncio.to_thread(message_session, den_session, den_msg)
         _bot_log("den_reply_voice", {"session": den_session, "text": text[:200], "result": result})
@@ -520,7 +520,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         human_name = "human"
         den_msg = (
             f"[telegram file from {human_name}, chat_id={chat_id}]: {user_message}\n"
-            f"Reply by passing message text on stdin to: notify --telegram {chat_id} --stdin"
+            f"Reply using a single-quoted heredoc with: notify --telegram {chat_id}"
         )
         result = await asyncio.to_thread(message_session, den_session, den_msg)
         _bot_log("den_reply_file", {"session": den_session, "file": file_name, "path": str(saved_path), "result": result})

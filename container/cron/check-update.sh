@@ -53,7 +53,7 @@ fi
 
 # Update available — notify once, then stamp the new version so we don't spam
 MESSAGE="a woltspace update is available ($LOCAL_VERSION -> $LATEST_TAG). to find out what changed, ask: \"can you update woltspace?\""
-notify "$MESSAGE"
+printf '%s' "$MESSAGE" | notify
 
 # Stamp the new remote tag so we only notify once per release
 echo "$LATEST_TAG" > "$VERSION_FILE"

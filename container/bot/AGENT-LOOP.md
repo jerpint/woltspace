@@ -51,11 +51,11 @@ from tools, not from its own knowledge.
 
 ### Flow 2: Den reports back (claude code -> human, haiku is spectator)
 
-When a Claude Code session passes a message on stdin to `notify --stdin`, it goes directly to the
+When a Claude Code session passes a message to `notify` through a single-quoted heredoc, it goes directly to the
 human. Haiku is not involved but gets the message as context.
 
 ```
-Claude Code session: notify --stdin (message supplied through the process's stdin)
+Claude Code session: notify (message supplied through a single-quoted heredoc)
   |
   v
 container/bin/notify (formats message with session URL)

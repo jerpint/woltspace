@@ -312,10 +312,13 @@ identity, memory, and site. The platform provides shared infrastructure; you pro
 
 Use the `notify` command to message the user on Telegram/Slack:
 ```bash
-notify --stdin
+notify <<'WOLTSPACE_NOTIFY_7F3A91C2'
+your message here
+WOLTSPACE_NOTIFY_7F3A91C2
 ```
-Pass the exact message through the execution tool's stdin input. Never embed
-generated or user-controlled message text in a shell command.
+Use a fresh random delimiter each time. Keep the opening delimiter single-quoted
+and the closing delimiter on a line by itself so the shell treats the message
+body literally. Never pass message text as a command argument.
 
 ## Your Site
 
