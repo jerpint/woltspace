@@ -517,10 +517,9 @@ class TestE2EAppLifecycle:
         assert app["url"] == "/app/e2e-test-app/"
 
     def test_app_session_scoping_creates_dir(self, shadow_wolt):
-        """start_session with app= creates the app directory under the wolt."""
+        """start_session with app= targets the colony's shared apps directory."""
         wolt_name = shadow_wolt
-        wolt_dir = self.WOLTS_DIR / wolt_name
-        test_app = wolt_dir / "wolt" / "apps" / "e2e-auto-created"
+        test_app = self.WOLTS_DIR / "apps" / "e2e-auto-created"
         try:
             if test_app.exists():
                 import shutil

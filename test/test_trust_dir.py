@@ -379,7 +379,7 @@ class TestSpawnPathTrustsWorkdir:
         result = self._start(app="dashboard")
         prepare_session_command(result["name"], "spawn", "hello")
 
-        assert result["workdir"].endswith("/wolt/apps/dashboard")
+        assert result["workdir"].endswith("/apps/dashboard")
         assert result["workdir"] in read_claude_json(claude_trust_home)["projects"]
 
     def test_codex_sessions_do_not_touch_claudes_config(self, fake_runtime, claude_trust_home):

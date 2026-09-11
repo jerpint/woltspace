@@ -42,10 +42,15 @@ export const sessionPolicy = (session) => {
 // signature for that future opt-in.
 export function spawnTarget(capabilities, wolt, launchCwd) {
   const native = capabilities?.supports_host_workdirs === true;
+  const harness = wolt?.harness || capabilities?.default_harness;
+  const policy = wolt?.execution_policy
+    || capabilities?.default_execution_policies?.[harness]
+    || capabilities?.default_execution_policy
+    || (native ? 'prompt' : 'auto');
   return {
     workdir: null,
     displayWorkdir: wolt?.home || 'wolt home',
-    executionPolicy: capabilities?.default_execution_policy || (native ? 'prompt' : 'auto'),
+    executionPolicy: policy,
     supportsHostWorkdirs: native,
   };
 }

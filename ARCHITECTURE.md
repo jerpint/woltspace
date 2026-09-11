@@ -168,7 +168,7 @@ macOS native shell. See [Client surfaces and navigation](docs/client-surfaces.md
 for the cross-client ownership and navigation contract.
 
 - **Sites** (`wolts/{wolt}/site/`) — lightweight per-wolt workspace. Static HTML/CSS/JS served directly from disk by the FastAPI server, with livereload baked in via an injected client wired to a server-side file watcher. No per-site process or port. Code: `container/lib/sites.py`, served at `/wolt/{name}/site/`.
-- **Apps** (`wolts/apps/{name}/`) — full programs with their own server, deps, and `woltspace.json` manifest. The server starts/stops them; their ports are tracked in `.space/apps/`. Apps that set `public: true` get a Cloudflare tunnel automatically and survive container restarts via apps autorestore. Code: `container/lib/apps.py`.
+- **Apps** (`wolts/apps/{name}/`) — full programs with their own server, deps, and `woltspace.json` manifest. The server starts/stops them; their ports are tracked in `.space/apps/`. Apps that set `public: true` get a Cloudflare tunnel automatically and survive container restarts via apps autorestore. App-scoped agent sessions use this same shared path. Native Codex Guarded mode adds `wolts/apps/` as a writable root without granting sibling wolt homes or `.space`. A wolt's optional `execution_policy` in `wolt/wolt.json` is its persistent, self-managed default for future sessions; explicit per-spawn overrides still win. Code: `container/lib/apps.py` and `container/lib/execution_policy.py`.
 
 ### Subdomain proxy
 

@@ -39,9 +39,25 @@ def test_runtime_capabilities_distinguish_host_from_external(monkeypatch):
     assert response.json() == {
         "isolation": "host",
         "supports_host_workdirs": True,
+        "default_harness": "claude",
         "default_execution_policy": "prompt",
-        "policy_version": 1,
+        "default_execution_policies": {
+            "claude": "prompt",
+            "codex": "guarded",
+            "opencode": "prompt",
+        },
+        "policy_version": 2,
     }
+
+
+def test_runtime_capabilities_follow_a_codex_lodge_default(monkeypatch):
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", "host")
+    monkeypatch.setattr(app_module, "get_default_harness", lambda: "codex")
+    response = asyncio.run(_request("GET", "/runtime/capabilities"))
+    assert response.status_code == 200
+    assert response.json()["default_harness"] == "codex"
+    assert response.json()["default_execution_policy"] == "guarded"
+    assert response.json()["default_execution_policies"]["claude"] == "prompt"
 
 
 def test_health_identifies_the_exact_control_plane(monkeypatch):

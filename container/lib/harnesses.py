@@ -28,7 +28,7 @@ from pathlib import Path
 
 from env_compat import get_env
 from session_runtime import RuntimeHandle, get_runtime
-from execution_policy import policy_mode
+from execution_policy import ExecutionPolicy, policy_mode
 from skills_sync import COPY_DELIVERY, PLUGIN_DELIVERY
 
 DEFAULT_HARNESS = "claude"
@@ -76,7 +76,7 @@ def _claude_command(entry: dict, mode: str, *, session_id: str = "",
 def _codex_command(entry: dict, mode: str, *, session_id: str = "",
                    session_name: str = "", model: str = "", prompt: str = "",
                    resume_id: str = "", execution_policy=None) -> str:
-    """Build a Codex CLI command line (verified against codex-cli 0.144).
+    """Build a Codex CLI command line (verified against codex-cli 0.153.4).
 
     Codex can't preset a session id at spawn — run-session.sh discovers the
     rollout id after launch (see discover_session_id). A resume without a
@@ -93,10 +93,26 @@ def _codex_command(entry: dict, mode: str, *, session_id: str = "",
     parts = [wrapper]
     if mode == "resume" and resume_id:
         parts += ["resume", resume_id]
-    # Codex's own help: "Intended solely for running in environments that are
-    # externally sandboxed" — which is exactly the woltspace container.
-    if policy_mode(execution_policy) == "auto":
+    policy = ExecutionPolicy.from_record(execution_policy)
+    # Full Auto remains for externally isolated containers and exact native
+    # grants. Guarded is the native default: the cwd is Codex's primary
+    # workspace, and Woltspace adds only the owning den + shared apps.
+    if policy.mode == "auto":
         parts.append("--dangerously-bypass-approvals-and-sandbox")
+    elif policy.mode == "guarded":
+        parts += [
+            "--sandbox", "workspace-write",
+            "--ask-for-approval", "on-request",
+            "-c", f"approvals_reviewer={policy.approvals_reviewer}",
+            "-c",
+            f"sandbox_workspace_write.network_access={str(policy.network_access).lower()}",
+        ]
+        if policy.writable_roots:
+            parts += [
+                "-c",
+                "sandbox_workspace_write.writable_roots="
+                + json.dumps(list(policy.writable_roots)),
+            ]
     if model:
         parts += ["-m", model]
     if prompt:

@@ -12,6 +12,7 @@ if (root) {
       input.closest('.ds-choice-card').querySelector('.ds-choice-title').textContent.trim(),
     ]),
   );
+  const policyDefaults = JSON.parse(root.dataset.policyDefaults || '{}');
   let toastTimer;
 
   function setGlobalState(kind, message) {
@@ -44,6 +45,25 @@ if (root) {
     document.querySelectorAll('[data-wolt-status][data-following="true"]').forEach(status => {
       status.textContent = `Follows lodge · ${defaultHarness}`;
     });
+  }
+
+  function refreshPolicyHarness(wolt, harness) {
+    const row = document.querySelector(
+      `[data-wolt-policy-row][data-wolt="${CSS.escape(wolt)}"]`,
+    );
+    if (!row) return;
+    const select = row.querySelector('[data-policy-select]');
+    const status = row.querySelector('[data-policy-status]');
+    const defaultOption = select.querySelector('[data-default-option]');
+    const guardedOption = select.querySelector('[value="guarded"]');
+    const defaultPolicy = policyDefaults[harness] || 'prompt';
+    row.dataset.harness = harness;
+    row.dataset.defaultPolicy = defaultPolicy;
+    defaultOption.textContent = `Follow ${harness} default · ${defaultPolicy}`;
+    guardedOption.disabled = harness !== 'codex' && select.value !== 'guarded';
+    if (!select.value) {
+      status.textContent = `Follows ${harness} default · ${defaultPolicy}`;
+    }
   }
 
   document.querySelector('[data-default-form]')?.addEventListener('change', async event => {
@@ -83,8 +103,45 @@ if (root) {
         row.dataset.savedValue = requested || '';
         status.dataset.following = String(!data.pinned);
         status.textContent = data.pinned ? `Pinned · ${data.harness}` : `Follows lodge · ${data.harness}`;
+        refreshPolicyHarness(row.dataset.wolt, data.harness);
         setGlobalState('saved', `${row.dataset.wolt} saved`);
         showToast(`${row.dataset.wolt} will use ${harnessLabels.get(data.harness) || data.harness}.`);
+      } catch (error) {
+        select.value = previous;
+        setGlobalState('error', 'Could not save');
+        showToast(error.message, 'error');
+      } finally {
+        select.disabled = false;
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-policy-select]').forEach(select => {
+    select.addEventListener('change', async () => {
+      const row = select.closest('[data-wolt-policy-row]');
+      const status = row.querySelector('[data-policy-status]');
+      const previous = row.dataset.savedValue;
+      const requested = select.value || null;
+      if (requested === 'auto' && !window.confirm(
+        `Give ${row.dataset.wolt} Full Auto on future sessions? This removes approval prompts and the agent sandbox.`,
+      )) {
+        select.value = previous;
+        return;
+      }
+      select.disabled = true;
+      setGlobalState('saving', `Saving ${row.dataset.wolt} permissions…`);
+      try {
+        const data = await save(
+          `/wolts/${encodeURIComponent(row.dataset.wolt)}/execution-policy`,
+          { execution_policy: requested },
+        );
+        row.dataset.savedValue = requested || '';
+        status.dataset.following = String(!data.pinned);
+        status.textContent = data.pinned
+          ? `Pinned · ${data.execution_policy}`
+          : `Follows ${row.dataset.harness} default · ${data.execution_policy}`;
+        setGlobalState('saved', `${row.dataset.wolt} saved`);
+        showToast(`${row.dataset.wolt} will use ${data.execution_policy} on future sessions.`);
       } catch (error) {
         select.value = previous;
         setGlobalState('error', 'Could not save');

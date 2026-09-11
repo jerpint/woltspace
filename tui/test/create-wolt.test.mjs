@@ -17,14 +17,16 @@ test('native create action starts the new wolt in its own home', () => {
     'maple', 'raccoon', {
       isolation: 'host',
       supports_host_workdirs: true,
-      default_execution_policy: 'prompt',
+      default_harness: 'codex',
+      default_execution_policy: 'guarded',
+      default_execution_policies: { claude: 'prompt', codex: 'guarded' },
     }, '/src/project',
   ), {
     type: 'create',
     name: 'maple',
     woltType: 'raccoon',
     workdir: null,
-    executionPolicy: 'prompt',
+    executionPolicy: 'guarded',
     isolation: 'host',
   });
 });

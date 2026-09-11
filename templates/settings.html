@@ -4,7 +4,10 @@
 {% block title %}Settings · Woltspace{% endblock %}
 
 {% block content %}
-<div class="ds-page settings-page" data-settings-root data-default-harness="{{ harness_default }}">
+<div class="ds-page settings-page"
+     data-settings-root
+     data-default-harness="{{ harness_default }}"
+     data-policy-defaults='{{ execution_policy_defaults | tojson }}'>
   {% call page_header('Lodge controls', 'Settings', 'Shape how the lodge behaves without reaching for a config file.') %}
     <span class="ds-save-state" data-global-state role="status" aria-live="polite">
       <span class="ds-save-dot"></span><span data-global-message>Changes save here</span>
@@ -15,6 +18,7 @@
     <nav class="settings-index" aria-label="Settings sections">
       <p class="settings-index-label">Configuration</p>
       {{ tab_link('#agent-engines', 'Agent engines', 'defaults + overrides', active=true) }}
+      {{ tab_link('#session-permissions', 'Session permissions', 'per-wolt defaults') }}
       {{ tab_link('', 'Notifications', 'coming down the trail', disabled=true) }}
       {{ tab_link('', 'Desktop', 'after the Mac build', disabled=true) }}
     </nav>
@@ -70,6 +74,49 @@
           {{ empty_state('🪵', 'No wolts to configure yet', 'Create a wolt and it will settle in here.') }}
         {% endif %}
       {% endcall %}
+
+      <div id="session-permissions">
+        {% call panel('Session permissions', 'Choose what each wolt uses on every future wake.', (wolts|length ~ ' wolts')) %}
+          {% if wolts %}
+            <div class="ds-field-list">
+              {% for wolt in wolts %}
+                {% set wolt_name = wolt.name or wolt.dir %}
+                {% set wolt_type = wolt.type or 'rodent' %}
+                {% set selected = wolt.execution_policy or '' %}
+                {% set effective_harness = wolt.harness or harness_default %}
+                {% set default_policy = execution_policy_defaults.get(effective_harness, execution_policy_defaults[harness_default]) %}
+                {% set effective = selected or default_policy %}
+                {% set field_id = 'wolt-policy-' ~ loop.index %}
+                {% call select_field(field_id, wolt_name, wolt_type ~ ' · ' ~ effective_harness) %}
+                  <div class="ds-select-stack"
+                       data-wolt-policy-row
+                       data-wolt="{{ wolt.dir or wolt_name }}"
+                       data-harness="{{ effective_harness }}"
+                       data-default-policy="{{ default_policy }}"
+                       data-saved-value="{{ selected }}">
+                    <select class="ds-select" id="{{ field_id }}" aria-describedby="{{ field_id }}-help" data-policy-select>
+                      <option value="" data-default-option{% if not selected %} selected{% endif %}>Follow {{ effective_harness }} default · {{ default_policy }}</option>
+                      <option value="prompt"{% if selected == 'prompt' %} selected{% endif %}>Prompt for approval</option>
+                      <option value="guarded"{% if selected == 'guarded' %} selected{% endif %}{% if effective_harness != 'codex' and selected != 'guarded' %} disabled{% endif %}>Guarded auto-review · Codex</option>
+                      <option value="auto"{% if selected == 'auto' %} selected{% endif %}>Full Auto · YOLO</option>
+                    </select>
+                    <span class="ds-pill ds-pill-subtle" data-policy-status data-following="{{ 'true' if not selected else 'false' }}">
+                      {{ ('Follows ' ~ effective_harness ~ ' default') if not selected else 'Pinned' }} · {{ effective }}
+                    </span>
+                  </div>
+                {% endcall %}
+              {% endfor %}
+            </div>
+          {% else %}
+            {{ empty_state('🪵', 'No wolts to configure yet', 'Create a wolt and it will settle in here.') }}
+          {% endif %}
+        {% endcall %}
+      </div>
+
+      <div class="ds-callout" role="note">
+        <span class="ds-callout-icon" aria-hidden="true">⚠️</span>
+        <div><strong>Full Auto means full runtime access</strong><p>The wolt can run commands without approval or an agent sandbox. The setting persists in its wolt.json until changed here or by the wolt.</p></div>
+      </div>
     </div>
   </div>
 </div>

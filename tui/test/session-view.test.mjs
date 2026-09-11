@@ -23,15 +23,32 @@ test('legacy session view keeps old dir and implicit Auto visible', () => {
 
 test('native spawn roots the wolt in its own home, not the launch directory', () => {
   assert.deepEqual(
-    spawnTarget({ supports_host_workdirs: true, default_execution_policy: 'prompt' },
-      { home: '/wolts/maple' }, '/src/project'),
+    spawnTarget({
+      supports_host_workdirs: true,
+      default_harness: 'claude',
+      default_execution_policy: 'prompt',
+      default_execution_policies: { claude: 'prompt', codex: 'guarded' },
+    }, { home: '/wolts/maple', harness: 'codex' }, '/src/project'),
     {
       workdir: null,
       displayWorkdir: '/wolts/maple',
-      executionPolicy: 'prompt',
+      executionPolicy: 'guarded',
       supportsHostWorkdirs: true,
     },
   );
+});
+
+test('a wolt policy pin wins over the harness default on every future spawn', () => {
+  const target = spawnTarget({
+    supports_host_workdirs: true,
+    default_harness: 'codex',
+    default_execution_policy: 'guarded',
+    default_execution_policies: { claude: 'prompt', codex: 'guarded' },
+  }, {
+    home: '/wolts/maple', harness: 'codex', execution_policy: 'auto',
+  }, '/src/project');
+
+  assert.equal(target.executionPolicy, 'auto');
 });
 
 test('container spawn keeps the existing wolt-home default', () => {
@@ -50,7 +67,12 @@ test('container spawn keeps the existing wolt-home default', () => {
 // Two wolts woken from the same terminal must not share a root. Before this,
 // native handed both of them the one directory the TUI was launched from.
 test('two wolts woken from one launch directory land in their own homes', () => {
-  const caps = { supports_host_workdirs: true, default_execution_policy: 'prompt' };
+  const caps = {
+    supports_host_workdirs: true,
+    default_harness: 'codex',
+    default_execution_policy: 'guarded',
+    default_execution_policies: { claude: 'prompt', codex: 'guarded' },
+  };
   const a = spawnTarget(caps, { home: '/wolts/maple' }, '/wolts/birch');
   const b = spawnTarget(caps, { home: '/wolts/birch' }, '/wolts/birch');
   assert.equal(a.workdir, null);

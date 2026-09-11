@@ -63,7 +63,12 @@ from sessions import (
 )
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
-from execution_policy import AutoGrantStore, POLICY_VERSION
+from execution_policy import (
+    AutoGrantStore,
+    POLICY_VERSION,
+    VALID_MODES,
+    default_execution_mode,
+)
 from runtime_context import RuntimeContext
 from harness_auth import auth_source, claude_authenticated
 from skills_sync import wolt_skills_delivery
@@ -1118,6 +1123,20 @@ async def set_harness_default(request: Request):
     name = (body.get("harness") or "").strip()
     if name not in HARNESSES:
         return JSONResponse({"error": f"unknown harness: {name}"}, status_code=400)
+    if name != "codex":
+        blocked = [
+            wolt.get("name") or wolt.get("dir")
+            for wolt in _configured_wolts()
+            if not wolt.get("harness") and wolt.get("execution_policy") == "guarded"
+        ]
+        if blocked:
+            return JSONResponse(
+                {
+                    "error": "Guarded is Codex-only; change the execution policy "
+                    "for these wolts first: " + ", ".join(blocked)
+                },
+                status_code=409,
+            )
     set_default_harness(name)
     return {"ok": True, "default": name}
 
@@ -1152,10 +1171,85 @@ async def set_wolt_harness(name: str, request: Request):
     else:
         return JSONResponse({"error": f"unknown harness: {requested}"}, status_code=400)
 
+    if cfg.get("execution_policy") == "guarded" and effective != "codex":
+        return JSONResponse(
+            {"error": "Guarded execution is available only for Codex wolts"},
+            status_code=409,
+        )
+
     tmp = wolt_json.with_suffix(".tmp")
     tmp.write_text(json.dumps(cfg, indent=2) + "\n")
     tmp.rename(wolt_json)
     return {"ok": True, "wolt": safe, "harness": effective, "pinned": pinned}
+
+
+@app.post("/wolts/{name}/execution-policy")
+async def set_wolt_execution_policy(name: str, request: Request):
+    """Pin or clear a wolt's policy for every future session.
+
+    The preference lives in wolt.json and is itself authoritative, like the
+    existing per-wolt harness setting. Exact-target grants remain available
+    for one-off Auto launches that do not change this durable preference.
+    """
+    body = await request.json()
+    requested = body.get("execution_policy")
+
+    safe = "".join(c for c in name if c.isalnum() or c in "-_")
+    wolt_json = WOLTS_DIR / safe / "wolt" / "wolt.json"
+    if not wolt_json.exists():
+        return JSONResponse({"error": f"wolt not found: {safe}"}, status_code=404)
+
+    try:
+        cfg = json.loads(wolt_json.read_text())
+    except (json.JSONDecodeError, OSError):
+        return JSONResponse({"error": "wolt.json unreadable"}, status_code=500)
+
+    if requested in (None, ""):
+        selected = None
+    elif isinstance(requested, str) and requested in VALID_MODES:
+        selected = requested
+    else:
+        return JSONResponse(
+            {"error": f"unknown execution policy: {requested}"}, status_code=400
+        )
+
+    effective_harness = resolve_harness(cfg.get("harness") or get_default_harness())
+    if selected == "guarded" and effective_harness != "codex":
+        return JSONResponse(
+            {"error": "Guarded execution is available only for Codex wolts"},
+            status_code=409,
+        )
+
+    try:
+        target = SessionTarget.resolve(safe, None, wolts_dir=WOLTS_DIR)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    if selected is None:
+        cfg.pop("execution_policy", None)
+    else:
+        cfg["execution_policy"] = selected
+
+    tmp = wolt_json.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, indent=2) + "\n")
+    tmp.rename(wolt_json)
+
+    # Moving away from persistent Auto also withdraws any old one-off grant
+    # for the wolt's default home. Grants for explicit app/repository targets
+    # remain independently scoped.
+    if selected != "auto":
+        AutoGrantStore(WOLTS_DIR).revoke(target)
+
+    default = default_execution_mode(
+        isolation=RuntimeContext.from_env().isolation,
+        harness=effective_harness,
+    )
+    return {
+        "ok": True,
+        "wolt": safe,
+        "execution_policy": selected or default,
+        "pinned": selected is not None,
+        "source": "wolt.json" if selected is not None else "harness_default",
+    }
 
 
 # --- Runtime capabilities and repository-scoped Auto consent ---
@@ -1163,12 +1257,19 @@ async def set_wolt_harness(name: str, request: Request):
 @app.get("/runtime/capabilities")
 async def runtime_capabilities():
     context = RuntimeContext.from_env()
+    default_harness = get_default_harness()
+    policies = {
+        harness: default_execution_mode(
+            isolation=context.isolation, harness=harness
+        )
+        for harness in HARNESSES
+    }
     return {
         "isolation": context.isolation,
         "supports_host_workdirs": context.isolation == "host",
-        "default_execution_policy": (
-            "prompt" if context.isolation == "host" else "auto"
-        ),
+        "default_harness": default_harness,
+        "default_execution_policy": policies[default_harness],
+        "default_execution_policies": policies,
         "policy_version": POLICY_VERSION,
     }
 
@@ -1757,11 +1858,17 @@ async def settings_page(request: Request):
         wolt for wolt in _configured_wolts()
         if wolt.get("type", "rodent") in configurable_types
     ]
+    isolation = RuntimeContext.from_env().isolation
+    execution_policy_defaults = {
+        harness: default_execution_mode(isolation=isolation, harness=harness)
+        for harness in HARNESSES
+    }
     return templates.TemplateResponse(request, "settings.html", context={
         "active_nav": "settings",
         "cache_bust": int(time.time()),
         "harness_default": get_default_harness(),
         "harnesses": harness_metadata(),
+        "execution_policy_defaults": execution_policy_defaults,
         "wolts": wolts,
     })
 
