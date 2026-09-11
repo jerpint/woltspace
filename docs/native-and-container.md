@@ -80,11 +80,34 @@ Claude and opencode remain in prompt mode on a native host because Woltspace
 does not pretend their permission systems provide Codex's Auto-review contract.
 Containers retain full Auto because Docker is their external boundary.
 
-### Full Auto — explicit, exact, and exceptional
+### Per-wolt permission settings
+
+The Settings page exposes the policy used whenever each wolt wakes. It writes
+the preference alongside that wolt's other self-managed configuration:
+
+```json
+{
+  "harness": "codex",
+  "execution_policy": "auto"
+}
+```
+
+The supported values are `prompt`, `guarded`, and `auto`. Omitting the field
+means “follow the harness default”: Guarded for native Codex, prompt for the
+other native harnesses, and Auto in an externally isolated container. An
+explicit policy passed for one spawn wins over the saved preference.
+
+This is intentionally the same ownership model as the per-wolt `harness`
+field: a wolt may update its own setting, and the next session honors it.
+Selecting Full Auto in Settings warns before saving; changing away from it
+takes effect on the next wake. A running process always keeps the policy it
+started with.
+
+### One-off Full Auto — explicit, exact, and exceptional
 
 Full Auto removes the Codex sandbox. Native Woltspace therefore requires a
 standing grant for one wolt *and* one exact directory before a caller may
-explicitly request it:
+explicitly request it without changing the wolt's durable setting:
 
 ```bash
 woltspace auto grant mossy                 # its own wolt directory
@@ -94,10 +117,9 @@ woltspace auto revoke mossy --workdir ~/src/api
 ```
 
 A grant names one wolt and one canonical directory — symlinks resolved, so the
-path recorded is the path a session actually runs in. The grant authorizes
-Full Auto but does not silently select it: an omitted policy still resolves to
-Guarded for Codex. This keeps an old consent record from turning a routine wake
-into an unrestricted host process.
+path recorded is the path a session actually runs in. The grant authorizes a
+one-off Full Auto request but does not silently select it or change
+`wolt.json`. This keeps an old consent record from changing routine wakes.
 
 After granting, request the override on the spawn itself:
 
@@ -105,9 +127,10 @@ After granting, request the override on the spawn itself:
 woltspace session spawn mossy "work unattended" --auto
 ```
 
-An explicit prompt-mode session still asks, and an explicit Auto request with
-no matching grant is refused rather than quietly downgraded — you find out at
-spawn, not three commands into the transcript.
+An explicit prompt-mode session still asks. If the wolt has no persistent
+`auto` preference, an explicit Auto request with no matching grant is refused
+rather than quietly downgraded — you find out at spawn, not three commands
+into the transcript.
 
 Grants live in `<wolts>/.space/auto-grants.json`, owner-readable only, and
 `woltspace auto revoke` takes one back. Policy version 2 invalidates the old

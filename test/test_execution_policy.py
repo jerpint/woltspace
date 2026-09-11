@@ -93,6 +93,22 @@ def test_host_auto_grant_authorizes_but_does_not_select_full_auto(tmp_path):
     assert grant is not None
 
 
+def test_persistent_wolt_preference_selects_full_auto_without_a_launch_grant(tmp_path):
+    target, wolts = _target(tmp_path)
+
+    policy, grant = resolve_execution_policy(
+        "auto",
+        isolation="host",
+        harness="codex",
+        target=target,
+        grants=AutoGrantStore(wolts),
+        persistent=True,
+    )
+
+    assert policy == ExecutionPolicy(mode="auto", isolation="host")
+    assert grant is None
+
+
 def test_a_grant_elsewhere_does_not_relax_this_target(tmp_path):
     """The default is decided by the exact pair, like the enforcement is."""
     granted, wolts = _target(tmp_path, repo="repo-a")
@@ -254,3 +270,58 @@ def test_start_session_native_policy_and_grant_are_persisted(
     assert implicit["auto_grant"] is None
     assert "--sandbox workspace-write" in sessions.prepare_session_command(
         implicit["name"], "spawn")
+
+
+def test_start_session_honors_persistent_wolt_json_policy(
+    tmp_path, monkeypatch, fake_runtime
+):
+    import paths
+    import sessions
+
+    wolts = tmp_path / "wolts"
+    home = wolts / "testwolt"
+    (home / "wolt" / "site").mkdir(parents=True)
+    (home / "wolt" / "wolt.json").write_text(json.dumps({
+        "name": "testwolt",
+        "type": "raccoon",
+        "harness": "codex",
+        "execution_policy": "auto",
+    }))
+    monkeypatch.setattr(sessions, "WOLTS_DIR", wolts)
+    monkeypatch.setattr(paths, "WOLTS_DIR", wolts)
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", "host")
+
+    persistent = sessions.start_session(wolt="testwolt")
+    assert persistent["execution_policy"]["mode"] == "auto"
+    assert persistent["auto_grant"] is None
+    assert "--dangerously-bypass-approvals-and-sandbox" in (
+        sessions.prepare_session_command(persistent["name"], "spawn")
+    )
+
+    overridden = sessions.start_session(
+        wolt="testwolt", execution_policy="prompt"
+    )
+    assert overridden["execution_policy"]["mode"] == "prompt"
+
+
+def test_start_session_rejects_invalid_wolt_json_policy(
+    tmp_path, monkeypatch, fake_runtime
+):
+    import paths
+    import sessions
+
+    wolts = tmp_path / "wolts"
+    home = wolts / "testwolt"
+    (home / "wolt" / "site").mkdir(parents=True)
+    (home / "wolt" / "wolt.json").write_text(json.dumps({
+        "name": "testwolt",
+        "type": "raccoon",
+        "harness": "codex",
+        "execution_policy": "reckless-ish",
+    }))
+    monkeypatch.setattr(sessions, "WOLTS_DIR", wolts)
+    monkeypatch.setattr(paths, "WOLTS_DIR", wolts)
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", "host")
+
+    with pytest.raises(ValueError, match="unknown execution policy in"):
+        sessions.start_session(wolt="testwolt")

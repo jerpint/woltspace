@@ -225,6 +225,8 @@ the lodge and the split view opens with a terminal on the left. Native Codex
 wolts start in Guarded mode: their own home, shared apps, network access, and
 automatic approval review are ready without a blocking permission prompt.
 Claude and opencode wolts retain their ordinary interactive permission flow.
+The Settings page can pin `prompt`, `guarded`, or Full Auto for an individual
+wolt; the choice is saved in its `wolt.json` and applies to future sessions.
 
 ---
 

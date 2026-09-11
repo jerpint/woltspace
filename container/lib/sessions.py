@@ -54,6 +54,7 @@ from session_targets import SessionTarget, normalize_session_target
 from execution_policy import (
     AutoGrantStore,
     ExecutionPolicy,
+    VALID_MODES,
     resolve_execution_policy,
 )
 from runtime_context import RuntimeContext
@@ -1342,6 +1343,9 @@ def start_session(
     app: optional app name — session runs in the shared wolts/apps/{name}/.
     harness: optional harness override (per-session). Falls back to the wolt's
         wolt.json "harness" field, then the platform default (claude).
+    execution_policy: optional per-session override. Falls back to the wolt's
+        wolt.json "execution_policy" field, then the harness-aware platform
+        default.
 
     Returns dict with session info: name, url, wolt, and optionally app/creature/model.
     Raises ValueError if the wolt directory doesn't exist.
@@ -1354,6 +1358,7 @@ def start_session(
     # The wolt.json may also carry a default harness for new sessions.
     wolt_json_path = wolt_home / "wolt" / "wolt.json"
     pinned_model = ""
+    persistent_policy = False
     if wolt_json_path.exists():
         try:
             wolt_data = json.loads(wolt_json_path.read_text())
@@ -1362,6 +1367,20 @@ def start_session(
                 creature = wolt_type
             if not harness:
                 harness = wolt_data.get("harness", "")
+            configured_policy = wolt_data.get("execution_policy")
+            if configured_policy not in (None, ""):
+                if (
+                    not isinstance(configured_policy, str)
+                    or configured_policy not in VALID_MODES
+                ):
+                    raise ValueError(
+                        "unknown execution policy in "
+                        f"{wolt_json_path}: {configured_policy}"
+                    )
+                if execution_policy is None:
+                    execution_policy = configured_policy
+                if execution_policy == configured_policy:
+                    persistent_policy = True
             # per-wolt model pin (validated against the resolved harness below)
             pinned_model = wolt_data.get("model", "") or ""
         except (json.JSONDecodeError, OSError):
@@ -1398,6 +1417,7 @@ def start_session(
         harness=harness,
         target=target,
         grants=AutoGrantStore(WOLTS_DIR),
+        persistent=persistent_policy,
     )
 
     name = session_name(wolt)

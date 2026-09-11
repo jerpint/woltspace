@@ -43,7 +43,8 @@ export const sessionPolicy = (session) => {
 export function spawnTarget(capabilities, wolt, launchCwd) {
   const native = capabilities?.supports_host_workdirs === true;
   const harness = wolt?.harness || capabilities?.default_harness;
-  const policy = capabilities?.default_execution_policies?.[harness]
+  const policy = wolt?.execution_policy
+    || capabilities?.default_execution_policies?.[harness]
     || capabilities?.default_execution_policy
     || (native ? 'prompt' : 'auto');
   return {

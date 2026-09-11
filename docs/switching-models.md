@@ -1,9 +1,9 @@
-# Switching a wolt's engine and model
+# Switching a wolt's engine, model, and permissions
 
-A wolt runs on a **harness** (the engine — Claude Code, Codex, …) and a **model**
-(the specific model that engine uses). Both are chosen when a session spawns and are
-**frozen for that session's life** — switching changes the *next* session, never a
-running one.
+A wolt runs on a **harness** (the engine — Claude Code, Codex, …), a **model**
+(the specific model that engine uses), and an **execution policy**. All three
+are chosen when a session spawns and are **frozen for that session's life** —
+switching changes the *next* session, never a running one.
 
 This is a per-wolt setting: change it and every new session for that wolt picks it up.
 
@@ -15,7 +15,8 @@ Edit the wolt's `wolt/wolt.json`:
 {
   "type": "raccoon",        // the creature tier — lore/identity, do not change to switch models
   "harness": "codex",       // OPTIONAL engine override; omit to follow the lodge default
-  "model": "gpt-5.6-sol"    // OPTIONAL model pin; omit to use the tier's default model
+  "model": "gpt-5.6-sol",   // OPTIONAL model pin; omit to use the tier's default model
+  "execution_policy": "auto" // OPTIONAL permission pin; omit to follow the harness default
 }
 ```
 
@@ -23,6 +24,10 @@ Edit the wolt's `wolt/wolt.json`:
   field entirely to follow the lodge-wide default.
 - **Change the model** — set `"model"` to a valid id for that engine. Omit it to fall back
   to the engine's default model for the wolt's tier.
+- **Change permissions** — set `"execution_policy"` to `prompt`, `guarded`, or
+  `auto`. Guarded is available only for Codex. Omit it to use the harness-aware
+  default: Guarded for native Codex, prompt for other native harnesses, and
+  Auto in a container.
 
 The change takes effect on the wolt's **next** session. A wolt can do this to itself, or
 do it on a user's behalf — it's just a config edit.

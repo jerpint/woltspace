@@ -38,6 +38,19 @@ test('native spawn roots the wolt in its own home, not the launch directory', ()
   );
 });
 
+test('a wolt policy pin wins over the harness default on every future spawn', () => {
+  const target = spawnTarget({
+    supports_host_workdirs: true,
+    default_harness: 'codex',
+    default_execution_policy: 'guarded',
+    default_execution_policies: { claude: 'prompt', codex: 'guarded' },
+  }, {
+    home: '/wolts/maple', harness: 'codex', execution_policy: 'auto',
+  }, '/src/project');
+
+  assert.equal(target.executionPolicy, 'auto');
+});
+
 test('container spawn keeps the existing wolt-home default', () => {
   assert.deepEqual(
     spawnTarget({ supports_host_workdirs: false, default_execution_policy: 'auto' },

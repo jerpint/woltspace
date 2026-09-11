@@ -189,6 +189,7 @@ def resolve_execution_policy(
     harness: str = "",
     target: SessionTarget,
     grants: AutoGrantStore,
+    persistent: bool = False,
 ) -> tuple[ExecutionPolicy, AutoGrant | None]:
     """Resolve harness-aware defaults and enforce host Auto consent.
 
@@ -197,17 +198,17 @@ def resolve_execution_policy(
     and shared apps directory are additional writable roots. Network is on for
     normal development and Codex's reviewer handles eligible escalations.
 
-    Full Auto remains an explicit override. A standing grant authorizes it but
-    no longer silently selects it; callers must request ``auto`` for the exact
-    wolt/workdir pair. Containers keep their historical externally-sandboxed
-    Auto default.
+    Full Auto may be a wolt's persistent, self-managed preference. One-off
+    launch overrides remain exact-target grants: a standing grant authorizes
+    Auto but never silently selects it. Containers keep their historical
+    externally-sandboxed Auto default.
     """
     grant = grants.find(target) if isolation == "host" else None
     default = default_execution_mode(isolation=isolation, harness=harness)
     mode = requested or default
     if mode == "guarded" and harness != "codex":
         raise ValueError("guarded execution policy is supported only by the codex harness")
-    if mode == "auto" and isolation == "host" and grant is None:
+    if mode == "auto" and isolation == "host" and grant is None and not persistent:
         raise PermissionError(
             "Auto is not approved for "
             f"wolt '{target.wolt_id}' in '{target.canonical_workdir}'. "
@@ -233,8 +234,9 @@ def resolve_execution_policy(
         policy = ExecutionPolicy(mode=mode, isolation=isolation)
 
     # The registry says what actually ran, not what a standing grant could
-    # have allowed. Only explicit Full Auto carries the grant on the record.
-    return policy, grant if mode == "auto" else None
+    # have allowed. Persistent Auto cites wolt.json by its resolved mode;
+    # one-off Auto also carries its exact grant on the record.
+    return policy, grant if mode == "auto" and not persistent else None
 
 
 def default_execution_mode(*, isolation: str, harness: str = "") -> str:
