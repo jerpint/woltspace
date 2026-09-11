@@ -971,16 +971,16 @@ def _adapter_context(data: dict) -> str:
         thread_ts = data.get("thread_ts", "")
         if channel and thread_ts:
             return (
-                f"\nThis session was started from Slack. Send messages with: "
-                f'notify --slack {channel} {thread_ts} "your message"\n'
+                f"\nThis session was started from Slack. Pass message text on stdin to: "
+                f"notify --slack {channel} {thread_ts} --stdin\n"
                 f"Session link: {session_url}"
             )
     elif adapter == "telegram":
         chat_id = data.get("chat_id", "")
         if chat_id:
             return (
-                f"\nThis session was started from Telegram. Send messages with: "
-                f'notify --telegram {chat_id} "your message"\n'
+                f"\nThis session was started from Telegram. Pass message text on stdin to: "
+                f"notify --telegram {chat_id} --stdin\n"
                 f"Session link: {session_url}"
             )
     return ""

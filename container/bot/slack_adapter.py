@@ -352,7 +352,7 @@ async def _route_to_session(client, channel: str, thread_ts: str, owner: dict, t
 
     session_msg = (
         f"[slack message from human, channel={channel}, thread={thread_ts}]: {text}\n"
-        f"Reply back to them with: notify --slack {channel} {thread_ts} \"your message\""
+        f"Reply by passing message text on stdin to: notify --slack {channel} {thread_ts} --stdin"
     )
     # Blocking resume wait — off the event loop, or the whole Slack app stops
     # answering while one session boots.

@@ -135,11 +135,11 @@ class TestDenReplyMessageFormat:
         text = "hey can you check the logs?"
         den_msg = (
             f"[telegram message from {human_name}]: {text}\n"
-            f"Reply back to them with: notify \"your message\""
+            f"Reply by passing message text on stdin to: notify --stdin"
         )
         assert "[telegram message from jerpint]" in den_msg
         assert text in den_msg
-        assert 'notify "your message"' in den_msg
+        assert "notify --stdin" in den_msg
 
     def test_voice_reply_format(self):
         """Voice reply should include origin and notify instruction."""
@@ -147,11 +147,11 @@ class TestDenReplyMessageFormat:
         text = "transcribed voice message"
         den_msg = (
             f"[telegram voice from {human_name}]: {text}\n"
-            f"Reply back to them with: notify \"your message\""
+            f"Reply by passing message text on stdin to: notify --stdin"
         )
         assert "[telegram voice from jerpint]" in den_msg
         assert text in den_msg
-        assert 'notify "your message"' in den_msg
+        assert "notify --stdin" in den_msg
 
 
 # ---------------------------------------------------------------------------

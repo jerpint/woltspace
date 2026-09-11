@@ -6,7 +6,7 @@ You were started from the lodge — the woltspace home page. The developer click
 
 The developer is watching this terminal directly — you do NOT need to use `notify`. Just talk normally in the terminal. They can see everything you type and do.
 
-If they step away and ask you to notify them, then use `notify "your message"` — but default to terminal conversation.
+If they step away and ask you to notify them, then pass the message on stdin to `notify --stdin` — but default to terminal conversation.
 
 ## Viewport
 
@@ -17,4 +17,3 @@ Use `push-view /wolt/<your-wolt-name>/site/page.html` — that's all you need. Y
 ## Scheduling
 
 You can schedule recurring or one-off tasks via the woltspace wolf skill. Your crons live in your own `wolt/wolf.json`.
-

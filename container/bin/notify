@@ -3,8 +3,9 @@
 #
 # Usage:
 #   notify "message"                                  — auto-route via session registry (default: telegram)
+#   notify --stdin                                     — read the message literally from standard input
 #   notify --slack CHANNEL THREAD_TS "message"        — send to specific Slack thread
-#   notify --telegram CHAT_ID "message"               — send to specific Telegram chat
+#   notify --telegram CHAT_ID --stdin                  — safely read a Telegram message from stdin
 #
 # The --slack and --telegram flags let rodents explicitly target where to send,
 # based on the adapter info in their prepended message context.
@@ -15,24 +16,76 @@ SLACK_CHANNEL=""
 SLACK_THREAD=""
 TELEGRAM_CHAT_ID=""
 
-case "$1" in
+usage() {
+  printf '%s\n' \
+    'Usage:' \
+    '  notify [--stdin | "message"]' \
+    '  notify --telegram CHAT_ID [--stdin | "message"]' \
+    '  notify --slack CHANNEL THREAD_TS [--stdin | "message"]' \
+    '' \
+    'Use --stdin for generated or user-controlled text so the shell never parses the message.'
+}
+
+fail_usage() {
+  echo "notify: $1" >&2
+  usage >&2
+  exit 2
+}
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
   --slack)
+    [ "$#" -ge 3 ] || fail_usage "--slack requires CHANNEL and THREAD_TS"
     ADAPTER="slack"
-    SLACK_CHANNEL="${2:-}"
-    SLACK_THREAD="${3:-}"
-    shift 3 2>/dev/null || { echo "Usage: notify --slack CHANNEL THREAD_TS \"message\"" >&2; exit 1; }
+    SLACK_CHANNEL="$2"
+    SLACK_THREAD="$3"
+    shift 3
     ;;
   --telegram)
+    [ "$#" -ge 2 ] || fail_usage "--telegram requires CHAT_ID"
     ADAPTER="telegram"
-    TELEGRAM_CHAT_ID="${2:-}"
-    shift 2 2>/dev/null || { echo "Usage: notify --telegram CHAT_ID \"message\"" >&2; exit 1; }
+    TELEGRAM_CHAT_ID="$2"
+    [[ "$TELEGRAM_CHAT_ID" =~ ^-?[0-9]+$ ]] || fail_usage "CHAT_ID must be an integer"
+    shift 2
+    ;;
+  --)
+    shift
+    ;;
+  --*)
+    fail_usage "unknown option: $1"
     ;;
 esac
 
-MESSAGE="${1:-}"
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  --stdin)
+    [ "$#" -eq 1 ] || fail_usage "--stdin does not accept a message argument"
+    # The sentinel prevents command substitution from stripping trailing newlines.
+    MESSAGE="$(cat; printf '\034')"
+    MESSAGE="${MESSAGE%$'\034'}"
+    ;;
+  --)
+    shift
+    [ "$#" -eq 1 ] || fail_usage "expected exactly one message after --"
+    MESSAGE="$1"
+    ;;
+  --*)
+    fail_usage "unknown option: $1"
+    ;;
+  *)
+    [ "$#" -eq 1 ] || fail_usage "expected exactly one message or --stdin"
+    MESSAGE="${1:-}"
+    ;;
+esac
+
 if [ -z "$MESSAGE" ]; then
-  echo "Usage: notify [--slack CHANNEL THREAD_TS | --telegram CHAT_ID] \"message\"" >&2
-  exit 1
+  fail_usage "message must not be empty"
 fi
 
 # Both spellings: the platform stamps WOLTSPACE_WOLT_SESSION, older shells

@@ -6,10 +6,10 @@ Think of it like messaging a dev colleague on Slack: you do the work here, then 
 
 ## Notifications
 
-Use `notify "your message"` to send messages. When the prepended message context includes Slack channel and thread IDs, use the explicit form:
+Use `notify --stdin` and pass the message through your execution tool's stdin input. When the prepended message context includes Slack channel and thread IDs, use the explicit form:
 
 ```bash
-notify --slack CHANNEL THREAD_TS "your message"
+notify --slack CHANNEL THREAD_TS --stdin
 ```
 
 This ensures your reply lands in the right Slack thread. The prepended context will tell you exactly which flags to use.
@@ -30,9 +30,8 @@ Use `push-view /your-page.html` — that's all you need. Load the woltspace view
 
 Rule of thumb: if you created an artifact someone would want to look at, push it to the viewport.
 
-**IMPORTANT**: To send a message to the developer, ALWAYS use `notify "your message"`. Never call the notify endpoint via curl directly — the notify script handles session routing, emoji prefix, and delivery correctly.
+**IMPORTANT**: To send a message to the developer, ALWAYS pass it on stdin to `notify --stdin`. Never embed generated or user-controlled text in a shell command, and never call the notify endpoint via curl directly — the notify script handles session routing, emoji prefix, and delivery correctly.
 
 ## Scheduling
 
 You can schedule recurring or one-off tasks via the woltspace wolf skill. Your crons live in your own `wolt/wolf.json`.
-
