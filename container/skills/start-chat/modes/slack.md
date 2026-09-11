@@ -14,7 +14,9 @@ your message here
 WOLTSPACE_NOTIFY_7F3A91C2
 ```
 
-This ensures your reply lands in the right Slack thread. The prepended context will tell you exactly which flags to use.
+This ensures your reply lands in the right Slack thread. Each incoming message
+includes a complete heredoc with the correct route and a fresh delimiter; replace
+only `YOUR_REPLY` and run it. You do not need to load the notify skill first.
 
 **When you start**: one-liner ack. "on it — reviewing the loop" or "got it, digging in."
 

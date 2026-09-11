@@ -1,8 +1,10 @@
 import json
 import os
 from pathlib import Path
-import shlex
+import re
+import runpy
 import subprocess
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).parents[1]
@@ -28,6 +30,7 @@ printf '%s\\n' '{\"ok\":true,\"adapter\":\"telegram\"}'
 """
     )
     curl.chmod(0o755)
+    (bin_dir / "notify").symlink_to(NOTIFY)
 
     env = os.environ.copy()
     env.update(
@@ -67,16 +70,17 @@ def test_stdin_preserves_shell_metacharacters_and_multiline_text(tmp_path):
 
 
 def test_quoted_heredoc_keeps_command_looking_text_literal(tmp_path):
+    from notify_prompt import notify_heredoc
+
     env, capture = _environment(tmp_path)
     marker = tmp_path / "must-not-exist"
-    delimiter = "WOLTSPACE_NOTIFY_7F3A91C2"
+    delimiter = "WOLTSPACE_NOTIFY_7F3A91C2D4E5B607"
     message = (
         f"do not run `touch {marker}` or $(touch {marker})\n"
         'formatting stays intact: *bold-ish* `code` "quotes"\n'
     )
-    command = (
-        f"{shlex.quote(str(NOTIFY))} --telegram 123 <<'{delimiter}'\n"
-        f"{message}{delimiter}\n"
+    command = notify_heredoc(
+        "--telegram", "123", body=message, delimiter=delimiter
     )
 
     result = subprocess.run(
@@ -89,6 +93,32 @@ def test_quoted_heredoc_keeps_command_looking_text_literal(tmp_path):
     assert result.returncode == 0, result.stderr
     assert not marker.exists()
     assert json.loads(capture.read_text())["message"] == f"🦫 testwolt: {message}"
+
+
+def test_notify_prompt_uses_fresh_delimiter_and_quotes_route_arguments():
+    from notify_prompt import notify_heredoc
+
+    first = notify_heredoc("--slack", "channel with spaces", "123.456")
+    second = notify_heredoc("--slack", "channel with spaces", "123.456")
+
+    assert first != second
+    assert "notify --slack 'channel with spaces' 123.456" in first
+
+
+def test_create_creature_wolt_passes_message_on_stdin():
+    script = ROOT / "container" / "bin" / "create-creature-wolt"
+    notify = runpy.run_path(str(script))["_notify"]
+
+    with patch("subprocess.run") as run:
+        notify("singleton changed")
+
+    run.assert_called_once_with(
+        ["notify"],
+        input="singleton changed",
+        text=True,
+        timeout=10,
+        capture_output=True,
+    )
 
 
 def test_rejects_message_arguments_without_sending(tmp_path):
@@ -159,7 +189,7 @@ def test_rejects_empty_stdin_and_invalid_chat_id(tmp_path):
     assert not capture.exists()
 
 
-def test_session_context_recommends_quoted_heredocs_for_explicit_routes():
+def test_session_context_inlines_complete_heredocs_for_explicit_routes():
     from sessions import _adapter_context
 
     telegram = _adapter_context(
@@ -178,6 +208,18 @@ def test_session_context_recommends_quoted_heredocs_for_explicit_routes():
         }
     )
 
-    assert "single-quoted heredoc to: notify --telegram 123" in telegram
-    assert "single-quoted heredoc to: notify --slack C123 123.456" in slack
+    telegram_match = re.search(
+        r"notify --telegram 123 <<'(WOLTSPACE_NOTIFY_[A-F0-9]{16})'\n"
+        r"YOUR_REPLY\n\1",
+        telegram,
+    )
+    slack_match = re.search(
+        r"notify --slack C123 123[.]456 <<'(WOLTSPACE_NOTIFY_[A-F0-9]{16})'\n"
+        r"YOUR_REPLY\n\1",
+        slack,
+    )
+
+    assert telegram_match
+    assert slack_match
+    assert "replacing YOUR_REPLY" in telegram + slack
     assert '"your message"' not in telegram + slack

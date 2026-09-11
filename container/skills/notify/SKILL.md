@@ -40,15 +40,24 @@ When your session receives a message from Slack or Telegram, the prepended conte
 
 ```
 [slack message from human, channel=C0123ABC, thread=1711234567.890123]: hey do the thing
-Reply using a single-quoted heredoc with: notify --slack C0123ABC 1711234567.890123
+Reply by replacing YOUR_REPLY in this exact single-quoted heredoc, then run it:
+notify --slack C0123ABC 1711234567.890123 <<'WOLTSPACE_NOTIFY_4D8E20B1'
+YOUR_REPLY
+WOLTSPACE_NOTIFY_4D8E20B1
 ```
 
 ```
 [telegram message from human, chat_id=98765432]: hey do the thing
-Reply using a single-quoted heredoc with: notify --telegram 98765432
+Reply by replacing YOUR_REPLY in this exact single-quoted heredoc, then run it:
+notify --telegram 98765432 <<'WOLTSPACE_NOTIFY_A6C195E4'
+YOUR_REPLY
+WOLTSPACE_NOTIFY_A6C195E4
 ```
 
-**Use the exact command from the prepended context.** This ensures your reply goes to the right place — the specific Slack thread or Telegram chat the message came from.
+**Use the exact heredoc from the prepended context and replace only `YOUR_REPLY`.**
+Woltspace generates a fresh delimiter every time. This ensures the message stays
+literal and goes to the specific Slack thread or Telegram chat it came from;
+you do not need to load this skill merely to reply.
 
 ## When to use it
 

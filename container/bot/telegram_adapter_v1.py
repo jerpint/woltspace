@@ -24,6 +24,7 @@ from wolts import get_active_creature
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from env_compat import get_env
 from paths import wolt_state_dir, wolt_chat_dir, wolt_uploads_dir
+from notify_prompt import notify_reply_instruction
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -218,7 +219,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         den_msg = (
             f"[telegram message from {human_name}, chat_id={chat_id}]: {text}\n"
-            f"Reply using a single-quoted heredoc with: notify --telegram {chat_id}"
+            f"{notify_reply_instruction('--telegram', chat_id)}"
         )
         result = await asyncio.to_thread(message_session, den_session, den_msg)
         _bot_log("den_reply", {"session": den_session, "text": text[:200], "result": result})
@@ -336,7 +337,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         voice_chat_id = update.effective_chat.id
         den_msg = (
             f"[telegram voice from {human_name}, chat_id={voice_chat_id}]: {text}\n"
-            f"Reply using a single-quoted heredoc with: notify --telegram {voice_chat_id}"
+            f"{notify_reply_instruction('--telegram', voice_chat_id)}"
         )
         result = await asyncio.to_thread(message_session, den_session, den_msg)
         _bot_log("den_reply_voice", {"session": den_session, "text": text[:200], "result": result})
@@ -520,7 +521,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         human_name = "human"
         den_msg = (
             f"[telegram file from {human_name}, chat_id={chat_id}]: {user_message}\n"
-            f"Reply using a single-quoted heredoc with: notify --telegram {chat_id}"
+            f"{notify_reply_instruction('--telegram', chat_id)}"
         )
         result = await asyncio.to_thread(message_session, den_session, den_msg)
         _bot_log("den_reply_file", {"session": den_session, "file": file_name, "path": str(saved_path), "result": result})
