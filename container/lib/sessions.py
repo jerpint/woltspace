@@ -1339,7 +1339,7 @@ def start_session(
     prompt: opening message for the session.
     creature: optional "raccoon"/"beaver"/"otter" to pick the model.
     routing: adapter routing info (adapter, chat_id, etc.) for notifications.
-    app: optional app name — session runs in wolt/apps/{name}/.
+    app: optional app name — session runs in the shared wolts/apps/{name}/.
     harness: optional harness override (per-session). Falls back to the wolt's
         wolt.json "harness" field, then the platform default (claude).
 
@@ -1374,7 +1374,17 @@ def start_session(
     if app:
         if workdir is not None:
             raise ValueError("workdir cannot be combined with an app session")
-        apps_work_dir = wolt_home / "wolt" / "apps" / app
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", app):
+            raise ValueError(f"invalid app name: {app}")
+        # Apps are colony-level shipped work, not private wolt state. Keep the
+        # session target aligned with discovery, serving, and the apps skills.
+        primary_app_dir = WOLTS_DIR / "apps" / app
+        legacy_app_dir = WOLTS_DIR / "projects" / app
+        apps_work_dir = (
+            legacy_app_dir
+            if legacy_app_dir.exists() and not primary_app_dir.exists()
+            else primary_app_dir
+        )
         apps_work_dir.mkdir(parents=True, exist_ok=True)
         workdir = apps_work_dir
 
@@ -1385,6 +1395,7 @@ def start_session(
     policy, grant = resolve_execution_policy(
         execution_policy,
         isolation=isolation,
+        harness=harness,
         target=target,
         grants=AutoGrantStore(WOLTS_DIR),
     )

@@ -6,7 +6,7 @@ identity, memory, and site. The platform provides shared infrastructure; you pro
 
 ## Rules
 
-- **DO NOT edit files outside your wolt directory** — no touching `/workspace/woltspace/`, other wolts, or system files
+- **Edit only your wolt home, the session's explicit workdir, and user-approved shared apps** — no touching the Woltspace platform, other wolt homes, `.space`, or system files
 - **DO NOT restart the woltspace server** (FastAPI, port 7777) — it runs the tunnel, viewport, and session routing
 - **DO NOT modify `woltspace-*` skills** in `.claude/skills/` — they are synced from the platform on every boot and will be overwritten
 - **DO NOT use built-in Claude Code memory** — write to `wolt/memory/` instead
@@ -27,6 +27,7 @@ Edit files and changes appear instantly. Use `push-view` to show a specific page
 ## Apps
 
 Apps live in `wolts/apps/` and have their own server and dependencies.
+They are shared colony work: edit one only when the user places that app in scope.
 Don't create apps without user permission — load the woltspace new-app skill when ready.
 <!-- WOLTSPACE:END -->
 

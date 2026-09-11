@@ -1,8 +1,7 @@
-"""`woltspace auto` — issuing the consent that makes native Auto reachable.
+"""`woltspace auto` — issuing the consent that makes native Full Auto reachable.
 
-The grant is the only thing standing between a native wolt and unattended
-work, and until this command existed nothing on a host could issue one without
-a running control plane to POST to. So these tests care about two things:
+The grant is the only thing standing between a native wolt and explicit Full
+Auto. Guarded mode does not consume it. These tests care about two things:
 
 * the CLI writes the *same* grant the runtime reads — same store, same
   canonicalization, no second answer to "is this directory approved?";
@@ -25,7 +24,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "container" / "lib"))
 
-from execution_policy import AutoGrantStore, resolve_execution_policy  # noqa: E402
+from execution_policy import (  # noqa: E402
+    AutoGrantStore,
+    POLICY_VERSION,
+    resolve_execution_policy,
+)
 from session_targets import SessionTarget  # noqa: E402
 from woltspace.cli import main as cli_main  # noqa: E402
 
@@ -78,27 +81,33 @@ class TestGrant:
         # And nothing else. Consent is per directory, not per wolt.
         assert _store(colony).find(_target(colony)) is None
 
-    def test_the_grant_is_the_one_a_spawn_actually_reads(self, colony, tmp_path):
-        """The point of the whole feature: after this, a host session that
-        asks for no particular policy runs Auto instead of waiting for a human
-        who is not there."""
+    def test_the_grant_is_the_one_an_explicit_auto_spawn_reads(
+        self, colony, tmp_path
+    ):
+        """A grant authorizes Full Auto without silently making it the default."""
         repo = tmp_path / "repo"
         repo.mkdir()
         target = _target(colony, repo)
         store = _store(colony)
 
         before, _ = resolve_execution_policy(
-            None, isolation="host", target=target, grants=store
+            None, isolation="host", harness="codex", target=target, grants=store
         )
-        assert before.mode == "prompt"
+        assert before.mode == "guarded"
 
         assert cli_main(["auto", "grant", "testwolt", "--workdir", str(repo)]) == 0
 
         after, grant = resolve_execution_policy(
-            None, isolation="host", target=target, grants=store
+            "auto", isolation="host", harness="codex", target=target, grants=store
         )
         assert after.mode == "auto"
         assert grant is not None
+
+        default_after_grant, default_grant = resolve_execution_policy(
+            None, isolation="host", harness="codex", target=target, grants=store
+        )
+        assert default_after_grant.mode == "guarded"
+        assert default_grant is None
 
     def test_granting_twice_leaves_one_grant(self, colony):
         cli_main(["auto", "grant", "testwolt"])
@@ -167,7 +176,7 @@ class TestList:
         assert cli_main(["auto", "list"]) == 0
         out = capsys.readouterr().out
         assert "no auto grants" in out
-        assert "asks before it acts" in out
+        assert "Guarded default" in out
 
     def test_the_listed_lines_carry_both_facts(self, colony, tmp_path, capsys):
         repo = tmp_path / "repo"
@@ -189,7 +198,7 @@ class TestList:
         grants = json.loads(capsys.readouterr().out)["grants"]
 
         assert [g["wolt_id"] for g in grants] == ["testwolt"]
-        assert grants[0]["policy_version"] == 1
+        assert grants[0]["policy_version"] == POLICY_VERSION
 
     def test_listing_never_creates_the_colony_it_was_pointed_at(
         self, tmp_path, monkeypatch, capsys

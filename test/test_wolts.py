@@ -481,9 +481,27 @@ class TestStartSession:
         with patch("sessions.WOLTS_DIR", tmp_path):
             result = start_session(wolt="mywolt", app="myapp")
             assert result["app"] == "myapp"
-            assert (tmp_path / "mywolt" / "wolt" / "apps" / "myapp").is_dir()
+            assert (tmp_path / "apps" / "myapp").is_dir()
             # the app session runs inside the app subdir, not the wolt root
-            assert fake_runtime.last_spawn[1] == str(tmp_path / "mywolt" / "wolt" / "apps" / "myapp")
+            assert fake_runtime.last_spawn[1] == str(tmp_path / "apps" / "myapp")
+
+    def test_app_name_cannot_escape_shared_apps(self, tmp_path, fake_runtime):
+        from sessions import start_session
+        (tmp_path / "mywolt").mkdir()
+        with patch("sessions.WOLTS_DIR", tmp_path), pytest.raises(
+            ValueError, match="invalid app name"
+        ):
+            start_session(wolt="mywolt", app="../otherwolt")
+
+    def test_legacy_project_app_keeps_its_existing_directory(self, tmp_path, fake_runtime):
+        from sessions import start_session
+        (tmp_path / "mywolt").mkdir()
+        legacy = tmp_path / "projects" / "old-app"
+        legacy.mkdir(parents=True)
+        with patch("sessions.WOLTS_DIR", tmp_path):
+            result = start_session(wolt="mywolt", app="old-app")
+        assert result["workdir"] == str(legacy.resolve())
+        assert not (tmp_path / "apps" / "old-app").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -626,7 +644,7 @@ class TestSyncClaudeMdPlatformSection:
 
         content = (wolt / "CLAUDE.md").read_text()
         assert "OLD STUFF" not in content
-        assert "DO NOT edit files outside" in content
+        assert "Edit only your wolt home" in content
         assert "# Alpha" in content
 
     def test_skips_wolts_without_claude_md(self, tmp_path):

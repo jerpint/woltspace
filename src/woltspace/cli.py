@@ -521,7 +521,7 @@ def _auto_grant(args) -> int:
         print(json.dumps({"ok": True, "grant": grant.to_record()}, indent=2))
         return 0
     lore.headline(lore.SUN, f"auto approved: {target.wolt_id}")
-    lore.subtitle("it works here without asking")
+    lore.subtitle("Full Auto may be requested here")
     lore.labelled("workdir", str(target.canonical_workdir))
     return 0
 
@@ -542,7 +542,7 @@ def _auto_revoke(args) -> int:
         lore.MOON,
         f"auto {'revoked' if revoked else 'was not granted'}: {target.wolt_id}",
     )
-    lore.subtitle("it asks again from here on")
+    lore.subtitle("Full Auto is unavailable here")
     lore.labelled("workdir", str(target.canonical_workdir))
     return 0
 
@@ -557,10 +557,10 @@ def _auto_list(args) -> int:
         return 0
     if not grants:
         lore.headline(lore.TRACKS, "no auto grants")
-        lore.subtitle("every native session asks before it acts")
+        lore.subtitle("native Codex still uses the Guarded default")
         return 0
     lore.headline(lore.TRACKS, f"auto grants: {len(grants)}")
-    lore.subtitle("these wolts work unattended in these directories")
+    lore.subtitle("these exact targets may explicitly request Full Auto")
     for grant in grants:
         lore.labelled(grant.wolt_id, str(grant.canonical_workdir))
     return 0
@@ -645,7 +645,7 @@ def build_parser() -> argparse.ArgumentParser:
     auto_sub = auto.add_subparsers(dest="verb")
 
     auto_grant = auto_sub.add_parser(
-        "grant", help="let a wolt work unattended in one exact directory"
+        "grant", help="allow explicit Full Auto in one exact directory"
     )
     auto_grant.add_argument("wolt")
     auto_grant.add_argument(

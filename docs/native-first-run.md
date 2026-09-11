@@ -221,11 +221,10 @@ The tunnel is **off** by default natively; nothing is published. To expose the
 lodge deliberately, `WOLTSPACE_PUBLIC_TUNNEL=true woltspace start`.
 
 Open <http://127.0.0.1:7777> and the lodge should be there. Create a wolt from
-the lodge and the split view opens with a terminal on the left. The first
-thing you will see in it is Claude Code's own **workspace trust prompt** for
-the new wolt directory — native sessions run bare `claude` (the container
-pre-trusts with `wclaude`), and prompt mode is the point. Accept it and the
-session continues; it has not hung.
+the lodge and the split view opens with a terminal on the left. Native Codex
+wolts start in Guarded mode: their own home, shared apps, network access, and
+automatic approval review are ready without a blocking permission prompt.
+Claude and opencode wolts retain their ordinary interactive permission flow.
 
 ---
 

@@ -34,32 +34,63 @@ def test_external_isolation_defaults_to_auto(tmp_path):
     assert grant is None
 
 
-def test_host_defaults_to_prompt_without_a_grant(tmp_path):
+def test_host_claude_defaults_to_prompt_without_a_grant(tmp_path):
     target, wolts = _target(tmp_path)
     policy, grant = resolve_execution_policy(
-        None, isolation="host", target=target, grants=AutoGrantStore(wolts)
+        None, isolation="host", harness="claude",
+        target=target, grants=AutoGrantStore(wolts)
     )
     assert policy == ExecutionPolicy(mode="prompt", isolation="host")
     assert grant is None
 
 
-def test_host_defaults_to_auto_where_the_grant_already_says_so(tmp_path):
-    """The grant *is* the consent, so it decides the default too.
+def test_host_codex_defaults_to_guarded_with_wolt_and_apps_roots(tmp_path):
+    target, wolts = _target(tmp_path)
+    (wolts / "apps").mkdir()
+    (wolts / "otherwolt").mkdir()
+    policy, grant = resolve_execution_policy(
+        None, isolation="host", harness="codex",
+        target=target, grants=AutoGrantStore(wolts)
+    )
+    assert policy.mode == "guarded"
+    assert policy.network_access is True
+    assert policy.approvals_reviewer == "auto_review"
+    assert set(policy.writable_roots) == {
+        str((wolts / "testwolt").resolve()),
+        str((wolts / "apps").resolve()),
+    }
+    assert str((wolts / "otherwolt").resolve()) not in policy.writable_roots
+    assert str((wolts / ".space").resolve()) not in policy.writable_roots
+    assert grant is None
 
-    Nothing on the spawn path asks for Auto by name — not the bot, not the
-    lodge — so a host default of prompt regardless of the grant meant every
-    unattended native session sat waiting for a human who was not there.
-    """
+
+def test_guarded_policy_round_trips_its_codex_settings():
+    policy = ExecutionPolicy(
+        mode="guarded",
+        isolation="host",
+        writable_roots=("/wolts/apps", "/wolts/maple"),
+        network_access=True,
+        approvals_reviewer="auto_review",
+    )
+    assert ExecutionPolicy.from_record(policy.to_record()) == policy
+
+
+def test_host_auto_grant_authorizes_but_does_not_select_full_auto(tmp_path):
     target, wolts = _target(tmp_path)
     store = AutoGrantStore(wolts)
     store.grant(target)
 
     policy, grant = resolve_execution_policy(
-        None, isolation="host", target=target, grants=store
+        None, isolation="host", harness="codex", target=target, grants=store
+    )
+    assert policy.mode == "guarded"
+    assert grant is None
+
+    policy, grant = resolve_execution_policy(
+        "auto", isolation="host", harness="codex", target=target, grants=store
     )
     assert policy == ExecutionPolicy(mode="auto", isolation="host")
     assert grant is not None
-    assert grant.canonical_workdir == target.canonical_workdir
 
 
 def test_a_grant_elsewhere_does_not_relax_this_target(tmp_path):
@@ -70,9 +101,9 @@ def test_a_grant_elsewhere_does_not_relax_this_target(tmp_path):
     store.grant(granted)
 
     policy, grant = resolve_execution_policy(
-        None, isolation="host", target=other, grants=store
+        None, isolation="host", harness="codex", target=other, grants=store
     )
-    assert policy.mode == "prompt"
+    assert policy.mode == "guarded"
     assert grant is None
 
 
@@ -83,7 +114,7 @@ def test_explicit_prompt_is_honored_even_where_auto_is_approved(tmp_path):
     store.grant(target)
 
     policy, grant = resolve_execution_policy(
-        "prompt", isolation="host", target=target, grants=store
+        "prompt", isolation="host", harness="codex", target=target, grants=store
     )
     assert policy == ExecutionPolicy(mode="prompt", isolation="host")
     assert grant is None
@@ -126,6 +157,15 @@ def test_host_auto_requires_exact_wolt_and_path(tmp_path):
         )
 
 
+def test_guarded_is_rejected_for_non_codex_harnesses(tmp_path):
+    target, wolts = _target(tmp_path)
+    with pytest.raises(ValueError, match="only by the codex"):
+        resolve_execution_policy(
+            "guarded", isolation="host", harness="claude",
+            target=target, grants=AutoGrantStore(wolts),
+        )
+
+
 def test_grant_for_same_path_does_not_cross_wolts(tmp_path):
     target_a, wolts = _target(tmp_path, wolt="alpha")
     target_b, _ = _target(tmp_path, wolt="beta")
@@ -149,6 +189,26 @@ def test_grant_store_is_versioned_private_and_revocable(tmp_path):
     assert store.revoke(target) is False
 
 
+def test_old_implicit_auto_grants_are_inactive_and_replaced(tmp_path):
+    target, wolts = _target(tmp_path)
+    store = AutoGrantStore(wolts)
+    store.path.parent.mkdir(parents=True)
+    store.path.write_text(json.dumps({"grants": [{
+        "wolt_id": target.wolt_id,
+        "canonical_workdir": str(target.canonical_workdir),
+        "policy_version": 1,
+        "approved_at": 1,
+    }]}) + "\n")
+
+    assert store.find(target) is None
+    assert store.list() == []
+    fresh = store.grant(target)
+    assert fresh.policy_version == POLICY_VERSION
+    payload = json.loads(store.path.read_text())
+    assert len(payload["grants"]) == 1
+    assert payload["grants"][0]["policy_version"] == POLICY_VERSION
+
+
 def test_start_session_native_policy_and_grant_are_persisted(
     tmp_path, monkeypatch, fake_runtime
 ):
@@ -159,7 +219,7 @@ def test_start_session_native_policy_and_grant_are_persisted(
     home = wolts / "testwolt"
     (home / "wolt" / "site").mkdir(parents=True)
     (home / "wolt" / "wolt.json").write_text(
-        json.dumps({"name": "testwolt", "type": "raccoon"})
+        json.dumps({"name": "testwolt", "type": "raccoon", "harness": "codex"})
     )
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -168,9 +228,15 @@ def test_start_session_native_policy_and_grant_are_persisted(
     monkeypatch.setenv("WOLTSPACE_ISOLATION", "host")
 
     default = sessions.start_session(wolt="testwolt", workdir=repo)
-    assert default["execution_policy"]["mode"] == "prompt"
+    assert default["execution_policy"]["mode"] == "guarded"
+    assert default["execution_policy"]["network_access"] is True
+    assert str(home.resolve()) in default["execution_policy"]["writable_roots"]
+    assert str((wolts / "apps").resolve()) in default["execution_policy"]["writable_roots"]
     default_cmd = sessions.prepare_session_command(default["name"], "spawn")
-    assert "--dangerously-skip-permissions" not in default_cmd
+    assert "--sandbox workspace-write" in default_cmd
+    assert "--ask-for-approval on-request" in default_cmd
+    assert "approvals_reviewer=auto_review" in default_cmd
+    assert "--dangerously-bypass-approvals-and-sandbox" not in default_cmd
 
     target = SessionTarget.resolve("testwolt", repo, wolts_dir=wolts)
     AutoGrantStore(wolts).grant(target)
@@ -180,13 +246,11 @@ def test_start_session_native_policy_and_grant_are_persisted(
     assert automated["execution_policy"]["mode"] == "auto"
     assert automated["auto_grant"]["canonical_workdir"] == str(repo.resolve())
     auto_cmd = sessions.prepare_session_command(automated["name"], "spawn")
-    assert "--dangerously-skip-permissions" in auto_cmd
+    assert "--dangerously-bypass-approvals-and-sandbox" in auto_cmd
 
-    # And the caller that asks for nothing — every real spawn path — now gets
-    # the same Auto, because the grant is already there to say so.
+    # A standing grant authorizes Full Auto but never silently selects it.
     implicit = sessions.start_session(wolt="testwolt", workdir=repo)
-    assert implicit["execution_policy"]["mode"] == "auto"
-    assert implicit["auto_grant"]["canonical_workdir"] == str(repo.resolve())
-    assert "--dangerously-skip-permissions" in sessions.prepare_session_command(
-        implicit["name"], "spawn"
-    )
+    assert implicit["execution_policy"]["mode"] == "guarded"
+    assert implicit["auto_grant"] is None
+    assert "--sandbox workspace-write" in sessions.prepare_session_command(
+        implicit["name"], "spawn")

@@ -6,9 +6,9 @@ implementations of it — they are two answers to a single question:
 > **Whose machine takes the risk when a wolt runs a command?**
 
 - **Native** — the control plane runs on your machine, in your shell, with the
-  harness you already logged into. A wolt working in one of your repos touches
-  your files, so it asks before it acts. Nothing copies your credentials
-  anywhere.
+  harness you already logged into. Codex defaults to a workspace sandbox with
+  automatic approval review; other harnesses keep their normal prompt mode.
+  Nothing copies your credentials anywhere.
 - **Container** — Docker is *Auto wolts in a box*. The wolt can run without
   asking because the blast radius is a disposable container and one mounted
   directory.
@@ -19,7 +19,7 @@ is the same code either way. Choose by how much you want to be asked.
 | | Native | Container |
 |---|---|---|
 | Harness auth | your own, reused in place | seeded into the image |
-| Default permission | prompt, auto where you granted it | auto (opt-in per wolt) |
+| Default permission | Codex guarded; other harnesses prompt | auto inside the external sandbox |
 | Session working dir | any repo on your machine | the mounted wolts directory |
 | Survives a platform update | yes — tmux outlives the control plane | container rebuild ends sessions |
 | Public URL | tunnel **off** by default | tunnel on by default |
@@ -34,7 +34,7 @@ uv tool install 'woltspace[connectors]'
 woltspace start          # runs doctor, takes the data-root lock, serves the lodge
 woltspace tui            # the terminal UI
 woltspace status         # who owns the data root, which sessions were adopted
-woltspace auto list      # which wolts may work unattended, and where
+woltspace auto list      # which exact targets may explicitly use Full Auto
 woltspace stop           # stops the control plane — never touches tmux
 ```
 
@@ -51,14 +51,40 @@ The `connectors` extra brings the Telegram dependencies. Without it the
 Telegram connector reports itself disabled with that remedy instead of
 crash-looping.
 
-### Auto — letting a wolt work unattended
+### Guarded — native Codex without the prompt treadmill
 
-A native session asks before it acts. That is the right default for a machine
-with your repos on it, but it also means nobody is home: a wolt woken by
-Telegram, or by the wolf at 6am, stops at the first permission prompt and waits
-for a human who is asleep.
+Every native Codex session defaults to **Guarded**. Woltspace launches Codex in
+`workspace-write` mode with network access and `approvals_reviewer=auto_review`,
+so ordinary development continues without waiting for a human while Codex's
+reviewer evaluates actions that need escalation. Review failures and timeouts
+fail closed; Guarded is not the same thing as bypassing the sandbox. Reviewed
+escalations use additional model calls.
 
-**Auto** is the other posture, and it is granted per wolt *and* per directory:
+The writable set is derived for every session instead of being saved in the
+user's global Codex config:
+
+- the exact session workdir is Codex's primary workspace;
+- the owning wolt home is an additional root, so identity and memory survive
+  even when the session works in another repository;
+- `<wolts>/apps` is an additional shared root, because apps are colony-level
+  shipped work rather than one wolt's private memory;
+- legacy `<wolts>/projects` is included only while that migrated directory
+  still exists.
+
+The whole `<wolts>` directory is deliberately not writable. A wolt does not
+gain sibling wolt homes or `<wolts>/.space` merely because it can work on shared
+apps. An app-scoped session runs in the canonical `<wolts>/apps/<name>` path;
+this is the same path app discovery, serving, and the apps skills use.
+
+Claude and opencode remain in prompt mode on a native host because Woltspace
+does not pretend their permission systems provide Codex's Auto-review contract.
+Containers retain full Auto because Docker is their external boundary.
+
+### Full Auto — explicit, exact, and exceptional
+
+Full Auto removes the Codex sandbox. Native Woltspace therefore requires a
+standing grant for one wolt *and* one exact directory before a caller may
+explicitly request it:
 
 ```bash
 woltspace auto grant mossy                 # its own wolt directory
@@ -68,25 +94,29 @@ woltspace auto revoke mossy --workdir ~/src/api
 ```
 
 A grant names one wolt and one canonical directory — symlinks resolved, so the
-path recorded is the path a session actually runs in. It is not a mode you
-switch on; it is consent you gave to a specific pair, and it is the whole of the
-consent: **once a grant exists, sessions for that wolt in that directory
-default to Auto**, and everything else keeps asking. That is what makes an
-unattended wolt possible without a flag on every spawn — nothing in the lodge,
-the bot, or the wolf asks for Auto by name.
+path recorded is the path a session actually runs in. The grant authorizes
+Full Auto but does not silently select it: an omitted policy still resolves to
+Guarded for Codex. This keeps an old consent record from turning a routine wake
+into an unrestricted host process.
 
-The explicit forms still win in both directions. A session started in prompt
-mode on purpose keeps asking even where Auto is approved, and asking for Auto
-where no grant exists is refused rather than quietly downgraded — you find out
-at spawn, not three commands into the transcript.
+After granting, request the override on the spawn itself:
+
+```bash
+woltspace session spawn mossy "work unattended" --auto
+```
+
+An explicit prompt-mode session still asks, and an explicit Auto request with
+no matching grant is refused rather than quietly downgraded — you find out at
+spawn, not three commands into the transcript.
 
 Grants live in `<wolts>/.space/auto-grants.json`, owner-readable only, and
-`woltspace auto revoke` takes one back. Revoking does not touch a session
-already running under it: a live agent keeps the permissions it started with
-until it exits.
+`woltspace auto revoke` takes one back. Policy version 2 invalidates the old
+implicit-Auto grants; re-grant only the exact targets that should retain Full
+Auto. Changing a grant does not touch a live process: every session keeps the
+permissions it started with until it exits.
 
 Containers do not use grants. Their whole isolation argument is the disposable
-box, so Auto is their default and the grant store is ignored.
+box, so Auto remains their default and the grant store is ignored.
 
 > Two programs answer to `woltspace auto` — see the shadowing note further
 > down. The native CLI's `auto` reads and writes the grant file directly, so it

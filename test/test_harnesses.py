@@ -146,6 +146,23 @@ class TestBuildCommandCodex:
         cmd = build_command("codex", "spawn", execution_policy="prompt")
         assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
 
+    def test_guarded_policy_uses_workspace_and_auto_review(self):
+        cmd = build_command("codex", "spawn", execution_policy={
+            "mode": "guarded",
+            "isolation": "host",
+            "writable_roots": ["/wolts/apps", "/wolts/maple"],
+            "network_access": True,
+            "approvals_reviewer": "auto_review",
+        })
+        assert "--sandbox workspace-write" in cmd
+        assert "--ask-for-approval on-request" in cmd
+        assert "approvals_reviewer=auto_review" in cmd
+        assert "sandbox_workspace_write.network_access=true" in cmd
+        assert "sandbox_workspace_write.writable_roots=" in cmd
+        assert "/wolts/apps" in cmd
+        assert "/wolts/maple" in cmd
+        assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
+
     def test_codex_tier_models(self):
         """Mapped from the live /model picker (2026-07 lineup)."""
         assert creature_model("codex", "raccoon") == "gpt-5.5"

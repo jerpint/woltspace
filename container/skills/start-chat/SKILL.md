@@ -34,10 +34,11 @@ Do NOT summarize what you read. Just absorb the context and be ready to work.
 
 **NEVER restart, kill, or modify the woltspace server (FastAPI, port 7777)** — it runs the tunnel, split view, and all session routing. Restarting it breaks everything for everyone. If something seems wrong with the server, notify the developer and stop.
 
-**You can ONLY edit files inside your wolt directory.** Never edit, create, or delete files in:
+**Only edit files in the session's authorized workspaces:** your own wolt directory, the session's explicit work directory, and a shared app the user has put in scope. Never edit, create, or delete files in:
 - `/workspace/woltspace/` — this is the platform code. Editing it breaks updates.
-- Other wolts' directories
-- System files outside your wolt
+- Other wolts' home directories
+- Woltspace's private `.space/` state
+- System files outside the authorized workspaces
 
 **Your site (`wolt/site/`) is your private workspace.** Use it freely — static HTML/CSS/JS, scratch pages, personal dashboards, anything lightweight. It's always live in the viewport with livereload. This is your desk.
 

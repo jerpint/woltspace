@@ -63,7 +63,7 @@ from sessions import (
 )
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
-from execution_policy import AutoGrantStore, POLICY_VERSION
+from execution_policy import AutoGrantStore, POLICY_VERSION, default_execution_mode
 from runtime_context import RuntimeContext
 from harness_auth import auth_source, claude_authenticated
 from skills_sync import wolt_skills_delivery
@@ -1163,12 +1163,19 @@ async def set_wolt_harness(name: str, request: Request):
 @app.get("/runtime/capabilities")
 async def runtime_capabilities():
     context = RuntimeContext.from_env()
+    default_harness = get_default_harness()
+    policies = {
+        harness: default_execution_mode(
+            isolation=context.isolation, harness=harness
+        )
+        for harness in HARNESSES
+    }
     return {
         "isolation": context.isolation,
         "supports_host_workdirs": context.isolation == "host",
-        "default_execution_policy": (
-            "prompt" if context.isolation == "host" else "auto"
-        ),
+        "default_harness": default_harness,
+        "default_execution_policy": policies[default_harness],
+        "default_execution_policies": policies,
         "policy_version": POLICY_VERSION,
     }
 
