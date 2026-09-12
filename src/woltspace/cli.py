@@ -311,6 +311,8 @@ def _start(args) -> int:
             lore.note(f"logs: {result['log']}")
         if result.get("skills_sync_error"):
             lore.note(f"skills: not synced ({result['skills_sync_error']})")
+        if result.get("platform_docs_sync_error"):
+            lore.note(f"instructions: not synced ({result['platform_docs_sync_error']})")
         if result.get("hooks_normalize_error"):
             lore.note(f"hooks: not normalized ({result['hooks_normalize_error']})")
         lore.note("status: woltspace status")

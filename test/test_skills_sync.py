@@ -337,6 +337,7 @@ class TestStartSyncsSkills:
             patch("woltspace.lifecycle.run_doctor", return_value=[]),
             patch("woltspace.lifecycle.doctor_ok", return_value=True),
             patch("woltspace.lifecycle.sync_platform_skills") as sync,
+            patch("woltspace.lifecycle.sync_claude_md_platform_section") as sync_docs,
             patch("woltspace.lifecycle.subprocess.Popen") as popen,
             patch("woltspace.lifecycle.read_health", return_value=None),
         ):
@@ -345,6 +346,7 @@ class TestStartSyncsSkills:
 
         assert code == 1
         sync.assert_called_once_with(layout)
+        sync_docs.assert_called_once_with(layout.wolts_dir, layout.install_root)
 
     def test_a_failed_sync_is_reported_not_raised(self, tmp_path):
         layout = _layout(tmp_path)
@@ -371,6 +373,35 @@ class TestStartSyncsSkills:
         assert code == 0
         assert result["state"] == "healthy"
         assert result["skills_sync_error"] == "PermissionError: skills unreadable"
+
+    def test_a_failed_platform_docs_sync_is_reported_not_raised(self, tmp_path):
+        layout = _layout(tmp_path)
+        stopped = {"state": "stopped", "owner": {}, "health": None}
+
+        with (
+            patch("woltspace.lifecycle.inspect_instance", return_value=stopped),
+            patch("woltspace.lifecycle.run_doctor", return_value=[]),
+            patch("woltspace.lifecycle.doctor_ok", return_value=True),
+            patch("woltspace.lifecycle.sync_platform_skills"),
+            patch(
+                "woltspace.lifecycle.sync_claude_md_platform_section",
+                side_effect=PermissionError("instructions locked"),
+            ),
+            patch("woltspace.lifecycle.subprocess.Popen") as popen,
+            patch("woltspace.lifecycle.read_health") as read_health,
+        ):
+            popen.return_value.pid = 4242
+            popen.return_value.poll.return_value = None
+            read_health.side_effect = lambda endpoint: {
+                "instance_id": _captured_instance_id(popen)
+            }
+            code, result = start(layout, timeout=1.0)
+
+        assert code == 0
+        assert result["state"] == "healthy"
+        assert result["platform_docs_sync_error"] == (
+            "PermissionError: instructions locked"
+        )
 
 
 def _captured_instance_id(popen) -> str:
