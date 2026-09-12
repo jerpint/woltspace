@@ -6,6 +6,8 @@ import runpy
 import subprocess
 from unittest.mock import patch
 
+import pytest
+
 
 ROOT = Path(__file__).parents[1]
 NOTIFY = ROOT / "container" / "bin" / "notify"
@@ -95,14 +97,21 @@ def test_quoted_heredoc_keeps_command_looking_text_literal(tmp_path):
     assert json.loads(capture.read_text())["message"] == f"🦫 testwolt: {message}"
 
 
-def test_notify_prompt_uses_fresh_delimiter_and_quotes_route_arguments():
+def test_notify_prompt_uses_fresh_delimiter_for_valid_route():
     from notify_prompt import notify_heredoc
 
-    first = notify_heredoc("--slack", "channel with spaces", "123.456")
-    second = notify_heredoc("--slack", "channel with spaces", "123.456")
+    first = notify_heredoc("--slack", "C0123ABC", "123.456")
+    second = notify_heredoc("--slack", "C0123ABC", "123.456")
 
     assert first != second
-    assert "notify --slack 'channel with spaces' 123.456" in first
+    assert "notify --slack C0123ABC 123.456" in first
+
+
+def test_notify_prompt_rejects_channel_the_cli_would_reject():
+    from notify_prompt import notify_heredoc
+
+    with pytest.raises(ValueError, match="channel has invalid characters"):
+        notify_heredoc("--slack", "channel with spaces", "123.456")
 
 
 def test_create_creature_wolt_passes_message_on_stdin():
@@ -134,6 +143,49 @@ def test_rejects_message_arguments_without_sending(tmp_path):
     assert result.returncode == 2
     assert "message arguments are not supported" in result.stderr
     assert not capture.exists()
+
+
+@pytest.mark.parametrize(
+    ("route_args", "expected_route"),
+    [
+        (["--telegram", "-100123"], {"adapter": "telegram", "chat_id": "-100123"}),
+        (
+            ["--slack", "C0123ABC", "123.456"],
+            {
+                "adapter": "slack",
+                "channel": "C0123ABC",
+                "thread_ts": "123.456",
+            },
+        ),
+    ],
+)
+def test_rejected_message_prints_executable_route_preserving_recovery(
+    tmp_path, route_args, expected_route
+):
+    env, capture = _environment(tmp_path)
+    message = 'literal `whoami` $(id) $HOME * "quotes"\n\nlast line'
+
+    rejected = subprocess.run(
+        [NOTIFY, *route_args, message],
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+
+    assert rejected.returncode == 2
+    recovery = rejected.stderr.split("Run this instead:\n\n", 1)[1]
+    rerun = subprocess.run(
+        ["sh", "-c", recovery],
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+
+    assert rerun.returncode == 0, rerun.stderr
+    payload = json.loads(capture.read_text())
+    for key, value in expected_route.items():
+        assert payload[key] == value
+    assert payload["message"] == f"🦫 testwolt: {message}\n"
 
 
 def test_help_prints_usage_without_sending(tmp_path):

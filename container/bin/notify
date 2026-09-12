@@ -34,6 +34,37 @@ fail_usage() {
   exit 2
 }
 
+fail_message_args() {
+  local body="$*"
+  local delimiter
+
+  while true; do
+    delimiter="WOLTSPACE_NOTIFY_$(python3 -c 'import secrets; print(secrets.token_hex(8).upper())')"
+    if ! printf '%s\n' "$body" | grep -Fqx "$delimiter"; then
+      break
+    fi
+  done
+
+  printf '%s\n\n' \
+    'notify: message arguments are not supported; pass message text on stdin' \
+    'Run this instead:' >&2
+  case "$ADAPTER" in
+    slack)
+      printf "notify --slack %s %s <<'%s'\n" \
+        "$SLACK_CHANNEL" "$SLACK_THREAD" "$delimiter" >&2
+      ;;
+    telegram)
+      printf "notify --telegram %s <<'%s'\n" \
+        "$TELEGRAM_CHAT_ID" "$delimiter" >&2
+      ;;
+    *)
+      printf "notify <<'%s'\n" "$delimiter" >&2
+      ;;
+  esac
+  printf '%s\n%s\n' "$body" "$delimiter" >&2
+  exit 2
+}
+
 case "${1:-}" in
   -h|--help)
     usage
@@ -63,7 +94,7 @@ case "${1:-}" in
     ;;
 esac
 
-[ "$#" -eq 0 ] || fail_usage "message arguments are not supported; pass message text on stdin"
+[ "$#" -eq 0 ] || fail_message_args "$@"
 
 # The sentinel prevents command substitution from stripping trailing newlines.
 MESSAGE="$(cat; printf '\034')"

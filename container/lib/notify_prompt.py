@@ -8,7 +8,26 @@ import shlex
 
 
 _DELIMITER_RE = re.compile(r"WOLTSPACE_NOTIFY_[A-F0-9]{16}")
+_SLACK_CHANNEL_RE = re.compile(r"[A-Za-z0-9_-]+")
+_SLACK_THREAD_RE = re.compile(r"[0-9]+(?:\.[0-9]+)?")
+_TELEGRAM_CHAT_ID_RE = re.compile(r"-?[0-9]+")
 _REPLY_PLACEHOLDER = "YOUR_REPLY"
+
+
+def _validate_route_args(route_args: tuple[str, ...]) -> None:
+    if not route_args:
+        return
+    if route_args[0] == "--slack" and len(route_args) == 3:
+        if _SLACK_CHANNEL_RE.fullmatch(route_args[1]) is None:
+            raise ValueError("Slack channel has invalid characters")
+        if _SLACK_THREAD_RE.fullmatch(route_args[2]) is None:
+            raise ValueError("Slack thread timestamp must be numeric")
+        return
+    if route_args[0] == "--telegram" and len(route_args) == 2:
+        if _TELEGRAM_CHAT_ID_RE.fullmatch(route_args[1]) is None:
+            raise ValueError("Telegram chat ID must be an integer")
+        return
+    raise ValueError("invalid notify route arguments")
 
 
 def notify_heredoc(
@@ -22,6 +41,8 @@ def notify_heredoc(
     message text cannot accidentally terminate the heredoc. ``body`` exists so
     tests can execute the exact formatter used in prompts with adversarial text.
     """
+    route_args = tuple(str(arg) for arg in route_args)
+    _validate_route_args(route_args)
     body = str(body)
     if delimiter is not None:
         if _DELIMITER_RE.fullmatch(delimiter) is None:
@@ -35,7 +56,7 @@ def notify_heredoc(
             if marker not in body.splitlines():
                 break
 
-    command = shlex.join(["notify", *(str(arg) for arg in route_args)])
+    command = shlex.join(["notify", *route_args])
     marker_separator = "" if body.endswith("\n") else "\n"
     return f"{command} <<'{marker}'\n{body}{marker_separator}{marker}"
 

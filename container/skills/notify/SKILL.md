@@ -28,8 +28,10 @@ WOLTSPACE_NOTIFY_A6C195E4
 
 Use a fresh random suffix in the delimiter for every message, and quote the
 opening delimiter exactly as shown. Put the closing delimiter on a line by
-itself. A single-quoted heredoc passes its body literally: the shell does not
-expand backticks, `$()`, variables, quotes, or other metacharacters.
+itself. Never paste the bare closing delimiter on its own line into the message
+body, because that would end the heredoc early. A single-quoted heredoc passes
+its body literally: the shell does not expand backticks, `$()`, variables,
+quotes, or other metacharacters.
 
 `notify` accepts no message argument. This keeps message text out of the shell
 command itself on every harness.
