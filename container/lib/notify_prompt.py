@@ -17,16 +17,21 @@ _SESSION_TARGET_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 _REPLY_PLACEHOLDER = "YOUR_REPLY"
 
 RouteValidator = Callable[[tuple[str, ...]], None]
-_ROUTE_VALIDATORS: dict[str, RouteValidator] = {}
+_ROUTE_VALIDATORS: dict[tuple[str, ...], RouteValidator] = {}
 
 
 class MessageInputError(ValueError):
     """A message body was absent from stdin or supplied through argv."""
 
 
-def register_route_validator(command: str, validator: RouteValidator) -> None:
-    """Register validation for heredocs whose executable is ``command``."""
-    _ROUTE_VALIDATORS[command] = validator
+def register_route_validator(
+    command_path: Sequence[str], validator: RouteValidator
+) -> None:
+    """Register validation for one executable and subcommand path."""
+    path = tuple(command_path)
+    if not path or any(not part for part in path):
+        raise ValueError("message command path must not be empty")
+    _ROUTE_VALIDATORS[path] = validator
 
 
 def validate_argv(argv: Sequence[object]) -> tuple[str, ...]:
@@ -34,9 +39,14 @@ def validate_argv(argv: Sequence[object]) -> tuple[str, ...]:
     normalized = tuple(str(arg) for arg in argv)
     if not normalized or not normalized[0]:
         raise ValueError("message command must not be empty")
-    validator = _ROUTE_VALIDATORS.get(normalized[0])
-    if validator is not None:
-        validator(normalized)
+    matches = (
+        (path, validator)
+        for path, validator in _ROUTE_VALIDATORS.items()
+        if normalized[: len(path)] == path
+    )
+    match = max(matches, key=lambda item: len(item[0]), default=None)
+    if match is not None:
+        match[1](normalized)
     return normalized
 
 
@@ -86,7 +96,7 @@ def reply_instruction(
 
 
 def recovery_message(
-    argv: Sequence[object], rejected_body: str, *, prefix: str = "WOLTSPACE_MSG"
+    argv: Sequence[object], rejected_body: str, *, prefix: str
 ) -> str:
     """Return a self-healing error for a rejected legacy message argument."""
     normalized = validate_argv(argv)
@@ -105,7 +115,8 @@ def read_message_input(
     rejected_args: Sequence[object],
     stream: TextIO,
     *,
-    prefix: str = "WOLTSPACE_MSG",
+    prefix: str,
+    allow_empty: bool = False,
 ) -> str:
     """Read a literal body from stdin or reject a legacy argv body safely."""
     normalized = validate_argv(argv)
@@ -120,7 +131,7 @@ def read_message_input(
             "pass one message body on stdin\n"
         )
     body = stream.read()
-    if not body:
+    if not body and not allow_empty:
         raise MessageInputError(f"{normalized[0]}: message must not be empty\n")
     return body
 
@@ -142,7 +153,7 @@ def _validate_notify_argv(argv: tuple[str, ...]) -> None:
     raise ValueError("invalid notify route arguments")
 
 
-register_route_validator("notify", _validate_notify_argv)
+register_route_validator(("notify",), _validate_notify_argv)
 
 
 def _validate_session_send_argv(argv: tuple[str, ...]) -> None:
@@ -162,7 +173,31 @@ def _validate_session_send_argv(argv: tuple[str, ...]) -> None:
         raise ValueError("invalid session send arguments")
 
 
-register_route_validator("woltspace", _validate_session_send_argv)
+register_route_validator(
+    ("woltspace", "session", "send"), _validate_session_send_argv
+)
+
+
+def _validate_session_spawn_argv(argv: tuple[str, ...]) -> None:
+    if len(argv) < 4 or argv[1:3] != ("session", "spawn"):
+        raise ValueError("invalid session spawn arguments")
+    if _SESSION_TARGET_RE.fullmatch(argv[3]) is None:
+        raise ValueError("wolt name has invalid characters")
+    remaining = list(argv[4:])
+    while remaining:
+        option = remaining.pop(0)
+        if option in {"--json", "--auto"}:
+            continue
+        if option in {"--from", "--workdir"} and remaining:
+            value = remaining.pop(0)
+            if option == "--workdir" or _SESSION_TARGET_RE.fullmatch(value):
+                continue
+        raise ValueError("invalid session spawn arguments")
+
+
+register_route_validator(
+    ("woltspace", "session", "spawn"), _validate_session_spawn_argv
+)
 
 
 def notify_heredoc(
@@ -209,3 +244,25 @@ def session_send_reply_instruction(target: object) -> str:
     return reply_instruction(
         session_send_argv(target), prefix="WOLTSPACE_IWCL"
     )
+
+
+def session_spawn_argv(
+    wolt: object,
+    *,
+    from_wolt: object = "",
+    as_json: bool = False,
+    workdir: object = "",
+    auto: bool = False,
+) -> list[str]:
+    """Return the canonical argv for spawning a wolt session."""
+    argv = ["woltspace", "session", "spawn", str(wolt)]
+    if from_wolt:
+        argv.extend(["--from", str(from_wolt)])
+    if as_json:
+        argv.append("--json")
+    if workdir:
+        argv.extend(["--workdir", str(workdir)])
+    if auto:
+        argv.append("--auto")
+    validate_argv(argv)
+    return argv

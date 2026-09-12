@@ -52,7 +52,9 @@ delimiter on its own line into the message body.
 To delegate work to a wolt that has no live session (or needs a fresh one), spawn it:
 
 ```bash
-woltspace session spawn <wolt> "seed prompt"
+woltspace session spawn <wolt> <<'WOLTSPACE_IWCL_<16_RANDOM_HEX>'
+seed prompt
+WOLTSPACE_IWCL_<16_RANDOM_HEX>
 ```
 
 On success it prints parse-friendly `KEY=VALUE` lines:
@@ -66,7 +68,10 @@ The child boots with a `[spawned by <you>, session=<your-session>]` header on it
 it knows its parent and can IWCL back without being told. The canonical delegation loop:
 
 ```bash
-out=$(woltspace session spawn beaverwolt "read /workspace/wolts/uxwolt/wolt/drafts/task-spec.md and build it")
+out=$(woltspace session spawn beaverwolt <<'WOLTSPACE_IWCL_B2A563F908D741BE'
+read /workspace/wolts/uxwolt/wolt/drafts/task-spec.md and build it
+WOLTSPACE_IWCL_B2A563F908D741BE
+)
 session=$(echo "$out" | sed -n 's/^SESSION=//p')
 # ...later, follow up in the same conversation:
 woltspace session send "$session" <<'WOLTSPACE_IWCL_E70A249C4D8E20B1'
@@ -97,5 +102,6 @@ woltspace session list --wolt codexw    # a specific wolt's sessions
 
 - The human can jump into any conversation too — their messages arrive as `[message from jerpint]`.
 - Delivery is into the target's terminal; if the wolt is mid-response it lands when it settles.
-- If a send fails with `no-session`, that wolt has no live session — `woltspace session spawn <wolt> "..."` one, or pick another wolt.
+- If a send fails with `no-session`, that wolt has no live session — spawn one
+  with the stdin form above, or pick another wolt.
 - IWCL is for wolt-to-wolt communication. To message the human, use `notify` instead.

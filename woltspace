@@ -16,8 +16,8 @@
 #
 # Control commands (forwarded to the running lodge — same as inside a wolt):
 #   woltspace session list [--alive]           — list sessions
-#   woltspace session send <wolt|session> "…"  — message a wolt/session
-#   woltspace session spawn <wolt> ["…"]       — spawn a new session for a wolt
+#   woltspace session send <wolt|session>       — message body on stdin
+#   woltspace session spawn <wolt>              — optional seed prompt on stdin
 #
 # Flags:
 #   --version <ver>   — build the image on a specific published release

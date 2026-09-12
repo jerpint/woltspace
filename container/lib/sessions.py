@@ -19,6 +19,7 @@ import random
 import re
 import shlex
 import subprocess
+import sys
 import time
 import uuid
 from contextlib import contextmanager
@@ -776,6 +777,21 @@ def _guard_paste_text(harness: str | None, text: str) -> str:
 # _tmux_paste + paste_settle).
 # ---------------------------------------------------------------------------
 
+def _iwcl_reply_instruction(from_session: str) -> str:
+    """Return a safe reply heredoc, or log why corrupt metadata was omitted."""
+    if not from_session:
+        return ""
+    try:
+        return f"\n{session_send_reply_instruction(from_session)}"
+    except ValueError as exc:
+        print(
+            f"[sessions] omitted IWCL reply for invalid sender session "
+            f"{from_session!r}: {exc}",
+            file=sys.stderr,
+        )
+        return ""
+
+
 def format_attributed_message(text: str, from_wolt: str = "",
                               from_session: str = "") -> str:
     """Wrap a message with sender attribution + a reply instruction.
@@ -790,14 +806,7 @@ def format_attributed_message(text: str, from_wolt: str = "",
     if from_session:
         header += f", session={from_session}"
     header += "]"
-    reply = ""
-    if from_session:
-        try:
-            reply = f"\n{session_send_reply_instruction(from_session)}"
-        except ValueError:
-            # Corrupt sender metadata must not prevent the message itself from
-            # reaching the target session.
-            pass
+    reply = _iwcl_reply_instruction(from_session)
     return f"{header}\n{text}{reply}"
 
 
@@ -817,13 +826,7 @@ def format_spawned_prompt(text: str, from_wolt: str = "",
     if from_session:
         header += f", session={from_session}"
     header += "]"
-    reply = ""
-    if from_session:
-        try:
-            reply = f"\n{session_send_reply_instruction(from_session)}"
-        except ValueError:
-            # Corrupt sender metadata must not prevent the spawn itself.
-            pass
+    reply = _iwcl_reply_instruction(from_session)
     body = f"\n{text}" if text else ""
     return f"{header}{body}{reply}"
 

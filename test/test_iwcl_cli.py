@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import runpy
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -128,3 +129,120 @@ def test_session_send_rejects_ambiguous_or_empty_message(monkeypatch, capsys):
         client["cmd_session_send"](argparse.Namespace(**base, message=[]))
     assert empty.value.code == 2
     assert "message must not be empty" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    ["inspect `code` and $(literal)\n\nthen report\n", ""],
+)
+def test_session_spawn_reads_optional_seed_prompt_from_stdin(monkeypatch, prompt):
+    client = _load_client()
+    sent = {}
+    monkeypatch.setenv("WOLTSPACE_WOLT_NAME", "sender")
+    monkeypatch.setenv("WOLTSPACE_WOLT_SESSION", "sender-maple-a1b2c3")
+
+    def fake_req(method, path, body=None):
+        sent.update(method=method, path=path, body=body)
+        return 200, {"name": "target-maple-d4e5f6", "url": "https://lodge.test"}
+
+    client["cmd_session_spawn"].__globals__["_req"] = fake_req
+    monkeypatch.setattr("sys.stdin", io.StringIO(prompt))
+    args = argparse.Namespace(
+        wolt="target",
+        prompt=[],
+        from_="",
+        json=False,
+        workdir="/tmp/work tree",
+        auto=True,
+    )
+
+    client["cmd_session_spawn"](args)
+
+    assert sent["method"] == "POST"
+    assert sent["path"] == "/sessions/new/lodge"
+    assert sent["body"] == {
+        "wolt": "target",
+        "prompt": prompt,
+        "from_wolt": "sender",
+        "from_session": "sender-maple-a1b2c3",
+        "workdir": "/tmp/work tree",
+        "execution_policy": "auto",
+    }
+
+
+def test_session_spawn_rejects_legacy_prompt_with_recovery():
+    prompt = 'read `date` and $HOME, then say "done"'
+    rejected = subprocess.run(
+        [
+            WOLTSPACE,
+            "session",
+            "spawn",
+            "target",
+            prompt,
+            "--from",
+            "sender",
+            "--json",
+            "--workdir",
+            "/tmp/work tree",
+            "--auto",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert rejected.returncode == 2
+    error = rejected.stderr
+    assert "only what survived shell expansion" in error
+    assert "woltspace session spawn target --from sender --json" in error
+    assert "--workdir '/tmp/work tree' --auto <<'WOLTSPACE_IWCL_" in error
+    assert prompt in error
+
+
+def test_native_cli_delegates_whole_session_noun(tmp_path, monkeypatch):
+    from woltspace import cli
+
+    client = tmp_path / "container" / "bin" / "woltspace"
+    client.parent.mkdir(parents=True)
+    client.write_text("#!/usr/bin/env python3\n")
+    layout = SimpleNamespace(
+        install_root=tmp_path,
+        endpoint="http://127.0.0.1:8123",
+    )
+    monkeypatch.setattr(cli.RuntimeLayout, "from_env", lambda: layout)
+    monkeypatch.delenv("WOLTSPACE_API", raising=False)
+    executed = {}
+    monkeypatch.setattr(
+        cli.os,
+        "execv",
+        lambda executable, argv: executed.update(
+            executable=executable, argv=argv
+        ),
+    )
+
+    result = cli._session(
+        argparse.Namespace(
+            session_args=["send", "target-maple-a1b2c3", "--json"]
+        )
+    )
+
+    assert result == 0
+    assert executed == {
+        "executable": str(client),
+        "argv": [
+            str(client),
+            "session",
+            "send",
+            "target-maple-a1b2c3",
+            "--json",
+        ],
+    }
+    assert os.environ["WOLTSPACE_API"] == "http://127.0.0.1:8123"
+
+
+def test_native_parser_passes_session_help_to_bundled_client():
+    from woltspace.cli import build_parser
+
+    args = build_parser().parse_args(["session", "send", "--help"])
+
+    assert args.session_args == ["send", "--help"]

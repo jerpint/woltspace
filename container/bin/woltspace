@@ -11,7 +11,7 @@ Grammar: `woltspace <noun> <verb> [args] [--flags]` (docker/git style).
 Phase 1 nouns:
   session list [--wolt X] [--alive] [--json]
   session send <wolt|session> [--from <wolt>]  # message on stdin
-  session spawn <wolt> ["seed prompt"] [--from <wolt>]
+  session spawn <wolt> [--from <wolt>]  # optional seed prompt on stdin
 
 A wolt self-identifies as the sender via $WOLTSPACE_WOLT_NAME /
 $WOLTSPACE_WOLT_SESSION (exported
@@ -35,6 +35,7 @@ from notify_prompt import (  # noqa: E402
     MessageInputError,
     read_message_input,
     session_send_argv,
+    session_spawn_argv,
 )
 
 API = os.environ.get("WOLTSPACE_API", "http://localhost:7777")
@@ -142,8 +143,27 @@ MAX_SPAWN_PROMPT = 4000
 
 
 def cmd_session_spawn(args):
-    if len(args.prompt) > MAX_SPAWN_PROMPT:
-        print(f"seed prompt too large ({len(args.prompt)} chars, max {MAX_SPAWN_PROMPT}). "
+    try:
+        command = session_spawn_argv(
+            args.wolt,
+            from_wolt=args.from_,
+            as_json=args.json,
+            workdir=args.workdir,
+            auto=args.auto,
+        )
+        prompt = read_message_input(
+            command,
+            args.prompt,
+            sys.stdin,
+            prefix="WOLTSPACE_IWCL",
+            allow_empty=True,
+        )
+    except (MessageInputError, ValueError) as exc:
+        end = "" if isinstance(exc, MessageInputError) else "\n"
+        print(str(exc), file=sys.stderr, end=end)
+        raise SystemExit(2)
+    if len(prompt) > MAX_SPAWN_PROMPT:
+        print(f"seed prompt too large ({len(prompt)} chars, max {MAX_SPAWN_PROMPT}). "
               f"Put the work order in a file the new session can read and pass a short pointer.",
               file=sys.stderr)
         sys.exit(1)
@@ -151,7 +171,7 @@ def cmd_session_spawn(args):
     # A human spawner (--from) has no session to reply into — omit it so the
     # child doesn't get a bogus `session send <name>` reply line.
     from_session = "" if args.from_ else get_env("WOLTSPACE_WOLT_SESSION", "")
-    payload = {"wolt": args.wolt, "prompt": args.prompt,
+    payload = {"wolt": args.wolt, "prompt": prompt,
                "from_wolt": from_wolt, "from_session": from_session}
     if args.workdir:
         payload["workdir"] = args.workdir
@@ -366,8 +386,8 @@ def main():
 
     sp = ssub.add_parser("spawn", help="spawn a new session for a wolt")
     sp.add_argument("wolt", help="wolt name to spawn a session for")
-    sp.add_argument("prompt", nargs="?", default="",
-                    help="seed prompt for the new session (a briefing, not a payload)")
+    sp.add_argument("prompt", nargs="*",
+                    help="legacy seed prompt argument (rejected; use stdin)")
     sp.add_argument("--from", dest="from_", default="",
                     help="spawner identity (default: $WOLTSPACE_WOLT_NAME); use --from jerpint as a human")
     sp.add_argument("--json", action="store_true", help="raw JSON output")

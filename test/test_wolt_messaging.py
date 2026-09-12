@@ -42,10 +42,11 @@ class TestAttribution:
         assert out.startswith("[message from jerpint]\n")
         assert "Reply with:" not in out
 
-    def test_invalid_sender_session_omits_reply_without_dropping_message(self):
+    def test_invalid_sender_session_logs_and_omits_only_reply(self, capsys):
         out = format_attributed_message("hello", "uxwolt", "../../bad")
 
         assert out == "[message from uxwolt, session=../../bad]\nhello"
+        assert "omitted IWCL reply for invalid sender session" in capsys.readouterr().err
 
 
 class TestSpawnAttribution:
