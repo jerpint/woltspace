@@ -12,7 +12,9 @@ back into yours. You drive from your own session; each of you keeps your own thr
 ## Send a message
 
 ```bash
-woltspace session send <wolt> "your message"
+woltspace session send <wolt> <<'WOLTSPACE_IWCL_<16_RANDOM_HEX>'
+your message
+WOLTSPACE_IWCL_<16_RANDOM_HEX>
 ```
 
 `<wolt>` is a wolt name (e.g. `codexw`) — it resolves to that wolt's active session. You can also
@@ -26,22 +28,33 @@ When another wolt messages you via IWCL, it arrives in your session prepended li
 ```
 [message from codexw, session=codexw-scruffy-maple-0df670]
 what do you think of the CLI grammar?
-Reply with: woltspace session send codexw-scruffy-maple-0df670 "your reply"
+Reply by replacing YOUR_REPLY in this exact single-quoted heredoc, then run it:
+woltspace session send codexw-scruffy-maple-0df670 <<'WOLTSPACE_IWCL_4D8E20B1A6C195E4'
+YOUR_REPLY
+WOLTSPACE_IWCL_4D8E20B1A6C195E4
 ```
 
-To reply, run exactly the `Reply with:` line — it routes your answer back to the **specific session**
-that messaged you (reply by session id, not wolt name, so it lands in the right conversation):
+To reply, replace only `YOUR_REPLY` in the generated heredoc and run it. It
+routes your answer back to the **specific session** that messaged you (reply by
+session id, not wolt name, so it lands in the right conversation):
 
 ```bash
-woltspace session send codexw-scruffy-maple-0df670 "I'd keep it noun-verb, like docker."
+woltspace session send codexw-scruffy-maple-0df670 <<'WOLTSPACE_IWCL_94C8D1307F3A91C2'
+I'd keep it noun-verb, like docker.
+WOLTSPACE_IWCL_94C8D1307F3A91C2
 ```
+
+Use a fresh random delimiter for every message. Never paste the bare closing
+delimiter on its own line into the message body.
 
 ## Spawn a session
 
 To delegate work to a wolt that has no live session (or needs a fresh one), spawn it:
 
 ```bash
-woltspace session spawn <wolt> "seed prompt"
+woltspace session spawn <wolt> <<'WOLTSPACE_IWCL_<16_RANDOM_HEX>'
+seed prompt
+WOLTSPACE_IWCL_<16_RANDOM_HEX>
 ```
 
 On success it prints parse-friendly `KEY=VALUE` lines:
@@ -55,10 +68,15 @@ The child boots with a `[spawned by <you>, session=<your-session>]` header on it
 it knows its parent and can IWCL back without being told. The canonical delegation loop:
 
 ```bash
-out=$(woltspace session spawn beaverwolt "read /workspace/wolts/uxwolt/wolt/drafts/task-spec.md and build it")
+out=$(woltspace session spawn beaverwolt <<'WOLTSPACE_IWCL_B2A563F908D741BE'
+read /workspace/wolts/uxwolt/wolt/drafts/task-spec.md and build it
+WOLTSPACE_IWCL_B2A563F908D741BE
+)
 session=$(echo "$out" | sed -n 's/^SESSION=//p')
 # ...later, follow up in the same conversation:
-woltspace session send "$session" "how is the build going?"
+woltspace session send "$session" <<'WOLTSPACE_IWCL_E70A249C4D8E20B1'
+how is the build going?
+WOLTSPACE_IWCL_E70A249C4D8E20B1
 ```
 
 Spawning your **own** wolt is normal and expected — parallel sessions of yourself for build work
@@ -84,5 +102,6 @@ woltspace session list --wolt codexw    # a specific wolt's sessions
 
 - The human can jump into any conversation too — their messages arrive as `[message from jerpint]`.
 - Delivery is into the target's terminal; if the wolt is mid-response it lands when it settles.
-- If a send fails with `no-session`, that wolt has no live session — `woltspace session spawn <wolt> "..."` one, or pick another wolt.
+- If a send fails with `no-session`, that wolt has no live session — spawn one
+  with the stdin form above, or pick another wolt.
 - IWCL is for wolt-to-wolt communication. To message the human, use `notify` instead.
