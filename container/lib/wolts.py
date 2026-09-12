@@ -312,9 +312,9 @@ identity, memory, and site. The platform provides shared infrastructure; you pro
 
 Use the `notify` command to message the user on Telegram/Slack:
 ```bash
-notify <<'WOLTSPACE_NOTIFY_7F3A91C2'
+notify <<'WOLTSPACE_NOTIFY_<16_RANDOM_HEX>'
 your message here
-WOLTSPACE_NOTIFY_7F3A91C2
+WOLTSPACE_NOTIFY_<16_RANDOM_HEX>
 ```
 Use a fresh random delimiter each time. Keep the opening delimiter single-quoted
 and the closing delimiter on a line by itself so the shell treats the message
