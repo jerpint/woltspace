@@ -130,6 +130,13 @@ def read_message_input(
             f"{normalized[0]}: message arguments are not supported; "
             "pass one message body on stdin\n"
         )
+    if stream.isatty():
+        if allow_empty:
+            return ""
+        raise MessageInputError(
+            f"{normalized[0]}: message text must be provided on stdin; "
+            "use a single-quoted heredoc\n"
+        )
     body = stream.read()
     if not body and not allow_empty:
         raise MessageInputError(f"{normalized[0]}: message must not be empty\n")

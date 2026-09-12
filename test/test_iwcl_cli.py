@@ -16,8 +16,44 @@ ROOT = Path(__file__).parents[1]
 WOLTSPACE = ROOT / "container" / "bin" / "woltspace"
 
 
+class UnreadableTty(io.StringIO):
+    def isatty(self):
+        return True
+
+    def read(self, *args, **kwargs):
+        raise AssertionError("TTY input must not be read")
+
+
 def _load_client():
     return runpy.run_path(str(WOLTSPACE))
+
+
+def test_shared_input_never_blocks_reading_a_tty():
+    from notify_prompt import MessageInputError, read_message_input
+
+    assert read_message_input(
+        ["woltspace", "session", "spawn", "target"],
+        [],
+        UnreadableTty(),
+        prefix="WOLTSPACE_IWCL",
+        allow_empty=True,
+    ) == ""
+
+    with pytest.raises(MessageInputError, match="use a single-quoted heredoc"):
+        read_message_input(
+            ["woltspace", "session", "send", "target"],
+            [],
+            UnreadableTty(),
+            prefix="WOLTSPACE_IWCL",
+        )
+
+    with pytest.raises(MessageInputError, match="use a single-quoted heredoc"):
+        read_message_input(
+            ["notify"],
+            [],
+            UnreadableTty(),
+            prefix="WOLTSPACE_NOTIFY",
+        )
 
 
 def test_session_send_reads_multiline_message_from_stdin(monkeypatch):
