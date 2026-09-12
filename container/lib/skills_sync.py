@@ -469,16 +469,14 @@ def _remove_stale_copies(skills_dir: Path, sources: list[Path]) -> None:
             shutil.rmtree(stale, ignore_errors=True)
 
 
-def _ensure_agents_bridge(wolt_dir: Path) -> None:
+def _ensure_agent_skills_bridge(wolt_dir: Path) -> None:
     """Point codex's skills directory at the wolt's claude one.
 
-    codex reads `$HOME/.agents/skills`, not `.claude/skills`. In container mode
-    the wcodex wrapper lays this bridge on every launch — but it exits early in
-    host isolation, so a native codex wolt never gets one and sees no skills at
-    all. Same shape wcodex writes (a relative link, so the wolt directory stays
-    movable), same real-directory guard: something that is not our symlink is
-    not ours to replace.
+    The relative link keeps the wolt directory movable. A real directory is
+    user-owned and is never replaced.
     """
+    if not (wolt_dir / ".claude" / "skills").is_dir():
+        return
     agents = wolt_dir / ".agents"
     link = agents / "skills"
     if link.is_symlink():
@@ -490,6 +488,29 @@ def _ensure_agents_bridge(wolt_dir: Path) -> None:
         return
     agents.mkdir(parents=True, exist_ok=True)
     os.symlink("../.claude/skills", link, target_is_directory=True)
+
+
+def _ensure_agent_instructions_bridge(wolt_dir: Path) -> None:
+    """Point AGENTS.md at the platform-managed CLAUDE.md when safe."""
+    source = wolt_dir / "CLAUDE.md"
+    link = wolt_dir / "AGENTS.md"
+    if not source.is_file():
+        return
+    if link.is_symlink():
+        if Path(os.readlink(link)) != Path("CLAUDE.md"):
+            _warn(f"{link} is not the platform symlink — leaving it alone")
+        return
+    if link.exists():
+        _warn(f"{link} exists and is not a symlink — leaving it alone")
+        return
+    os.symlink("CLAUDE.md", link)
+
+
+def ensure_agent_bridges(wolt_dir: Path) -> None:
+    """Expose one wolt's instructions and synced skills to agent harnesses."""
+    wolt_dir = Path(wolt_dir)
+    _ensure_agent_instructions_bridge(wolt_dir)
+    _ensure_agent_skills_bridge(wolt_dir)
 
 
 def ensure_platform_skills(wolt_dir: Path, harness: str, source_dir: Path) -> bool:
@@ -514,7 +535,7 @@ def ensure_platform_skills(wolt_dir: Path, harness: str, source_dir: Path) -> bo
 
     if not _ensure_symlink(skills_dir / PLUGIN_LINK_NAME, source_dir):
         return False
-    _ensure_agents_bridge(wolt_dir)
+    ensure_agent_bridges(wolt_dir)
 
     if harness == "claude":
         _merge_plugin_settings(wolt_dir / ".claude", source_dir)
@@ -597,6 +618,7 @@ def sync_all_wolt_skills(woltspace_dir: Path, wolts_dir: Path):
             # Skip wolts without .claude/skills/ (non-rodents, etc.)
             continue
 
+        ensure_agent_bridges(wolt)
         config = _wolt_config(wolt)
         if wolt_skills_delivery(wolt) == PLUGIN_DELIVERY:
             ensure_platform_skills(wolt, _wolt_harness(config, wolts_dir), source_dir)
@@ -621,3 +643,4 @@ def seed_wolt_skills(woltspace_dir: Path, wolt_dir: Path):
     skills_dir = Path(wolt_dir) / ".claude" / "skills"
     skills_dir.mkdir(parents=True, exist_ok=True)
     sync_wolt_skills(sources, skills_dir)
+    ensure_agent_bridges(wolt_dir)
