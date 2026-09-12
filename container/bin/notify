@@ -35,7 +35,11 @@ fail_usage() {
 }
 
 fail_message_args() {
-  local body="$*"
+  if [ "$#" -ne 1 ]; then
+    fail_usage "message arguments are not supported; pass one message body on stdin"
+  fi
+
+  local body="$1"
   local delimiter
 
   while true; do
@@ -45,8 +49,9 @@ fail_message_args() {
     fi
   done
 
-  printf '%s\n\n' \
+  printf '%s\n%s\n\n' \
     'notify: message arguments are not supported; pass message text on stdin' \
+    'Caution: this body is only what survived shell expansion; check it before sending.' \
     'Run this instead:' >&2
   case "$ADAPTER" in
     slack)

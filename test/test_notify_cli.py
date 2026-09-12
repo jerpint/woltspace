@@ -114,6 +114,17 @@ def test_notify_prompt_rejects_channel_the_cli_would_reject():
         notify_heredoc("--slack", "channel with spaces", "123.456")
 
 
+def test_reply_instruction_falls_back_to_session_routing_for_invalid_route():
+    from notify_prompt import notify_reply_instruction
+
+    instruction = notify_reply_instruction(
+        "--slack", "channel with spaces", "123.456"
+    )
+
+    assert "\nnotify <<'WOLTSPACE_NOTIFY_" in instruction
+    assert "notify --slack" not in instruction
+
+
 def test_create_creature_wolt_passes_message_on_stdin():
     script = ROOT / "container" / "bin" / "create-creature-wolt"
     notify = runpy.run_path(str(script))["_notify"]
@@ -173,6 +184,7 @@ def test_rejected_message_prints_executable_route_preserving_recovery(
     )
 
     assert rejected.returncode == 2
+    assert "only what survived shell expansion" in rejected.stderr
     recovery = rejected.stderr.split("Run this instead:\n\n", 1)[1]
     rerun = subprocess.run(
         ["sh", "-c", recovery],
@@ -215,6 +227,7 @@ def test_rejects_extra_arguments_without_sending(tmp_path):
 
     assert result.returncode == 2
     assert "message arguments are not supported" in result.stderr
+    assert "Run this instead:" not in result.stderr
     assert not capture.exists()
 
 

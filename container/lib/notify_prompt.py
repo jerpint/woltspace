@@ -63,8 +63,14 @@ def notify_heredoc(
 
 def notify_reply_instruction(*route_args: object) -> str:
     """Tell an agent exactly how to send a reply without loading a skill."""
+    try:
+        heredoc = notify_heredoc(*route_args)
+    except ValueError:
+        # Bad adapter metadata should not break message routing. The unrouted
+        # command can still resolve the destination through the session registry.
+        heredoc = notify_heredoc()
     return (
         f"Reply by replacing {_REPLY_PLACEHOLDER} in this exact single-quoted "
         "heredoc, then run it:\n"
-        f"{notify_heredoc(*route_args)}"
+        f"{heredoc}"
     )
