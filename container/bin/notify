@@ -2,9 +2,12 @@
 # Send a notification to the originating chat (Telegram/Slack)
 #
 # Usage:
-#   notify "message"                                  — auto-route via session registry (default: telegram)
-#   notify --slack CHANNEL THREAD_TS "message"        — send to specific Slack thread
-#   notify --telegram CHAT_ID "message"               — send to specific Telegram chat
+#   notify                                             — auto-route via session registry (default: telegram)
+#   notify --slack CHANNEL THREAD_TS                   — send to a specific Slack thread
+#   notify --telegram CHAT_ID                          — send to a specific Telegram chat
+#
+# Message text is always read literally from standard input. Agents should use
+# a single-quoted heredoc with a fresh delimiter so the shell cannot expand it.
 #
 # The --slack and --telegram flags let rodents explicitly target where to send,
 # based on the adapter info in their prepended message context.
@@ -15,24 +18,95 @@ SLACK_CHANNEL=""
 SLACK_THREAD=""
 TELEGRAM_CHAT_ID=""
 
-case "$1" in
+usage() {
+  printf '%s\n' \
+    'Usage:' \
+    '  notify' \
+    '  notify --telegram CHAT_ID' \
+    '  notify --slack CHANNEL THREAD_TS' \
+    '' \
+    'Message text is read from standard input. Use a single-quoted heredoc.'
+}
+
+fail_usage() {
+  echo "notify: $1" >&2
+  usage >&2
+  exit 2
+}
+
+fail_message_args() {
+  if [ "$#" -ne 1 ]; then
+    fail_usage "message arguments are not supported; pass one message body on stdin"
+  fi
+
+  local body="$1"
+  local delimiter
+
+  while true; do
+    delimiter="WOLTSPACE_NOTIFY_$(python3 -c 'import secrets; print(secrets.token_hex(8).upper())')"
+    if ! printf '%s\n' "$body" | grep -Fqx "$delimiter"; then
+      break
+    fi
+  done
+
+  printf '%s\n%s\n\n' \
+    'notify: message arguments are not supported; pass message text on stdin' \
+    'Caution: this body is only what survived shell expansion; check it before sending.' \
+    'Run this instead:' >&2
+  case "$ADAPTER" in
+    slack)
+      printf "notify --slack %s %s <<'%s'\n" \
+        "$SLACK_CHANNEL" "$SLACK_THREAD" "$delimiter" >&2
+      ;;
+    telegram)
+      printf "notify --telegram %s <<'%s'\n" \
+        "$TELEGRAM_CHAT_ID" "$delimiter" >&2
+      ;;
+    *)
+      printf "notify <<'%s'\n" "$delimiter" >&2
+      ;;
+  esac
+  printf '%s\n%s\n' "$body" "$delimiter" >&2
+  exit 2
+}
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
   --slack)
+    [ "$#" -ge 3 ] || fail_usage "--slack requires CHANNEL and THREAD_TS"
     ADAPTER="slack"
-    SLACK_CHANNEL="${2:-}"
-    SLACK_THREAD="${3:-}"
-    shift 3 2>/dev/null || { echo "Usage: notify --slack CHANNEL THREAD_TS \"message\"" >&2; exit 1; }
+    SLACK_CHANNEL="$2"
+    SLACK_THREAD="$3"
+    [[ "$SLACK_CHANNEL" =~ ^[A-Za-z0-9_-]+$ ]] || fail_usage "CHANNEL has invalid characters"
+    [[ "$SLACK_THREAD" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail_usage "THREAD_TS must be numeric"
+    shift 3
     ;;
   --telegram)
+    [ "$#" -ge 2 ] || fail_usage "--telegram requires CHAT_ID"
     ADAPTER="telegram"
-    TELEGRAM_CHAT_ID="${2:-}"
-    shift 2 2>/dev/null || { echo "Usage: notify --telegram CHAT_ID \"message\"" >&2; exit 1; }
+    TELEGRAM_CHAT_ID="$2"
+    [[ "$TELEGRAM_CHAT_ID" =~ ^-?[0-9]+$ ]] || fail_usage "CHAT_ID must be an integer"
+    shift 2
+    ;;
+  --)
+    shift
+    ;;
+  --*)
+    fail_usage "unknown option: $1"
     ;;
 esac
 
-MESSAGE="${1:-}"
+[ "$#" -eq 0 ] || fail_message_args "$@"
+
+# The sentinel prevents command substitution from stripping trailing newlines.
+MESSAGE="$(cat; printf '\034')"
+MESSAGE="${MESSAGE%$'\034'}"
+
 if [ -z "$MESSAGE" ]; then
-  echo "Usage: notify [--slack CHANNEL THREAD_TS | --telegram CHAT_ID] \"message\"" >&2
-  exit 1
+  fail_usage "message must not be empty"
 fi
 
 # Both spellings: the platform stamps WOLTSPACE_WOLT_SESSION, older shells

@@ -58,6 +58,7 @@ from execution_policy import (
 )
 from runtime_context import RuntimeContext
 from trust import ensure_claude_dir_trusted, ensure_codex_dir_trusted
+from notify_prompt import notify_reply_instruction
 
 _UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
@@ -971,16 +972,16 @@ def _adapter_context(data: dict) -> str:
         thread_ts = data.get("thread_ts", "")
         if channel and thread_ts:
             return (
-                f"\nThis session was started from Slack. Send messages with: "
-                f'notify --slack {channel} {thread_ts} "your message"\n'
+                "\nThis session was started from Slack.\n"
+                f"{notify_reply_instruction('--slack', channel, thread_ts)}\n"
                 f"Session link: {session_url}"
             )
     elif adapter == "telegram":
         chat_id = data.get("chat_id", "")
         if chat_id:
             return (
-                f"\nThis session was started from Telegram. Send messages with: "
-                f'notify --telegram {chat_id} "your message"\n'
+                "\nThis session was started from Telegram.\n"
+                f"{notify_reply_instruction('--telegram', chat_id)}\n"
                 f"Session link: {session_url}"
             )
     return ""

@@ -31,6 +31,7 @@ from wolts import get_active_creature
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from env_compat import get_env
 from paths import wolt_state_dir, wolt_chat_dir
+from notify_prompt import notify_reply_instruction
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -352,7 +353,7 @@ async def _route_to_session(client, channel: str, thread_ts: str, owner: dict, t
 
     session_msg = (
         f"[slack message from human, channel={channel}, thread={thread_ts}]: {text}\n"
-        f"Reply back to them with: notify --slack {channel} {thread_ts} \"your message\""
+        f"{notify_reply_instruction('--slack', channel, thread_ts)}"
     )
     # Blocking resume wait — off the event loop, or the whole Slack app stops
     # answering while one session boots.
