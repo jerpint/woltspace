@@ -35,6 +35,7 @@ from pathlib import Path
 
 from .envvars import export_both, get_env, warn_legacy_once
 from .layout import resolve_install_root
+from .platform_docs import sync_claude_md_platform_section
 
 # The per-wolt HOME the image builds. Containers are the only isolation mode
 # that owns a home directory outright, so this is a constant rather than $HOME:
@@ -307,48 +308,6 @@ def resolve_bot_module(wolt_dir: Path, woltspace_dir: Path, adapter: str) -> tup
     if custom.is_file():
         return str(wolt_dir), f"wolt.bot.{adapter}_adapter"
     return str(woltspace_dir / "container"), f"bot.{adapter}_adapter"
-
-
-PLATFORM_SECTION_START = "<!-- WOLTSPACE:BEGIN — auto-managed, do not edit -->"
-PLATFORM_SECTION_END = "<!-- WOLTSPACE:END -->"
-
-
-def sync_claude_md_platform_section(wolts_dir: Path, woltspace_dir: Path):
-    """Regenerate the platform section at the top of every wolt's CLAUDE.md.
-
-    Preserves everything after the WOLTSPACE:END marker (the wolt's own content).
-    If no markers exist, prepends the platform section to the existing content.
-    """
-    # Import the canonical platform section from wolts.py
-    runtime_lib_on_path(woltspace_dir)
-    try:
-        from wolts import _platform_claude_md_section
-        platform_block = _platform_claude_md_section()
-    except ImportError:
-        return  # wolts.py not available yet (first-ever boot)
-
-    for wolt in sorted(wolts_dir.iterdir()):
-        if not wolt.is_dir() or wolt.name.startswith("."):
-            continue
-        claude_md = wolt / "CLAUDE.md"
-        if not claude_md.exists():
-            continue
-
-        content = claude_md.read_text()
-
-        if PLATFORM_SECTION_START in content and PLATFORM_SECTION_END in content:
-            # Replace existing platform section
-            before = content[:content.index(PLATFORM_SECTION_START)]
-            after = content[content.index(PLATFORM_SECTION_END) + len(PLATFORM_SECTION_END):]
-            # Strip leading newlines from after to avoid double-spacing
-            after = after.lstrip("\n")
-            new_content = before + platform_block + "\n" + after
-        else:
-            # No markers — prepend platform section
-            new_content = platform_block + "\n" + content
-
-        if new_content != content:
-            claude_md.write_text(new_content)
 
 
 # ---------------------------------------------------------------------------

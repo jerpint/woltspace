@@ -21,6 +21,7 @@ from .instance import (
     read_owner,
 )
 from .layout import RuntimeLayout
+from .platform_docs import sync_claude_md_platform_section
 from .skills import sync_platform_skills
 
 
@@ -143,9 +144,15 @@ def start(layout: RuntimeLayout, *, timeout: float = 15.0) -> tuple[int, dict]:
             "checks": [check.to_record() for check in checks],
         }
 
-    # The container refreshes every wolt's woltspace-* skills on boot, and a
-    # native start is that boot. Skills going stale is worth saying out loud;
-    # it is never worth refusing to start over.
+    # The container refreshes every wolt's managed instructions and skills on
+    # boot, and a native start is that boot. Stale platform guidance is worth
+    # saying out loud; it is never worth refusing to start over.
+    platform_docs_error = None
+    try:
+        sync_claude_md_platform_section(layout.wolts_dir, layout.install_root)
+    except Exception as error:  # noqa: BLE001 — a broken sync must not block start
+        platform_docs_error = f"{type(error).__name__}: {error}"
+
     skills_error = None
     try:
         sync_platform_skills(layout)
@@ -217,6 +224,8 @@ def start(layout: RuntimeLayout, *, timeout: float = 15.0) -> tuple[int, dict]:
             }
             if skills_error:
                 started["skills_sync_error"] = skills_error
+            if platform_docs_error:
+                started["platform_docs_sync_error"] = platform_docs_error
             if hooks_error:
                 started["hooks_normalize_error"] = hooks_error
             return 0, started
