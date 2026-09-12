@@ -10,7 +10,7 @@ Grammar: `woltspace <noun> <verb> [args] [--flags]` (docker/git style).
 
 Phase 1 nouns:
   session list [--wolt X] [--alive] [--json]
-  session send <wolt|session> "message" [--from <wolt>]
+  session send <wolt|session> [--from <wolt>]  # message on stdin
   session spawn <wolt> ["seed prompt"] [--from <wolt>]
 
 A wolt self-identifies as the sender via $WOLTSPACE_WOLT_NAME /
@@ -31,6 +31,11 @@ from pathlib import Path
 # its own copy. Nothing else here needs the runtime tree.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from env_compat import get_env  # noqa: E402
+from notify_prompt import (  # noqa: E402
+    MessageInputError,
+    read_message_input,
+    session_send_argv,
+)
 
 API = os.environ.get("WOLTSPACE_API", "http://localhost:7777")
 # Session slugs end in "-<6 hex>" (see SESSION_NOUNS naming). Anything else is
@@ -94,9 +99,26 @@ def cmd_status(args):
 
 
 def cmd_session_send(args):
+    try:
+        command = session_send_argv(
+            args.target, from_wolt=args.from_, as_json=args.json
+        )
+    except ValueError as exc:
+        print(f"woltspace: {exc}", file=sys.stderr)
+        raise SystemExit(2)
+    try:
+        message = read_message_input(
+            command,
+            args.message,
+            sys.stdin,
+            prefix="WOLTSPACE_IWCL",
+        )
+    except MessageInputError as exc:
+        print(str(exc), file=sys.stderr, end="")
+        raise SystemExit(2)
     from_wolt = args.from_ or get_env("WOLTSPACE_WOLT_NAME", "")
     from_session = get_env("WOLTSPACE_WOLT_SESSION", "") if not args.from_ else "human"
-    payload = {"text": args.message, "from_wolt": from_wolt, "from_session": from_session}
+    payload = {"text": message, "from_wolt": from_wolt, "from_session": from_session}
     target = args.target
     if _SESSION_RE.search(target):
         path = f"/sessions/{target}/message"
@@ -336,7 +358,7 @@ def main():
 
     ss = ssub.add_parser("send", help="message a wolt or session")
     ss.add_argument("target", help="wolt name (resolves to active session) or a session id")
-    ss.add_argument("message", help="the message text")
+    ss.add_argument("message", nargs="*", help="legacy message argument (rejected; use stdin)")
     ss.add_argument("--from", dest="from_", default="",
                     help="sender identity (default: $WOLTSPACE_WOLT_NAME); use --from jerpint as a human")
     ss.add_argument("--json", action="store_true", help="raw JSON output")

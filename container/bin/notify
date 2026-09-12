@@ -1,166 +1,136 @@
-#!/bin/bash
-# Send a notification to the originating chat (Telegram/Slack)
-#
-# Usage:
-#   notify                                             — auto-route via session registry (default: telegram)
-#   notify --slack CHANNEL THREAD_TS                   — send to a specific Slack thread
-#   notify --telegram CHAT_ID                          — send to a specific Telegram chat
-#
-# Message text is always read literally from standard input. Agents should use
-# a single-quoted heredoc with a fresh delimiter so the shell cannot expand it.
-#
-# The --slack and --telegram flags let rodents explicitly target where to send,
-# based on the adapter info in their prepended message context.
+#!/usr/bin/env python3
+"""Send a notification to the originating Telegram or Slack conversation."""
 
-# --- Parse args ---
-ADAPTER=""
-SLACK_CHANNEL=""
-SLACK_THREAD=""
-TELEGRAM_CHAT_ID=""
+from __future__ import annotations
 
-usage() {
-  printf '%s\n' \
-    'Usage:' \
-    '  notify' \
-    '  notify --telegram CHAT_ID' \
-    '  notify --slack CHANNEL THREAD_TS' \
-    '' \
-    'Message text is read from standard input. Use a single-quoted heredoc.'
-}
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
 
-fail_usage() {
-  echo "notify: $1" >&2
-  usage >&2
-  exit 2
-}
 
-fail_message_args() {
-  if [ "$#" -ne 1 ]; then
-    fail_usage "message arguments are not supported; pass one message body on stdin"
-  fi
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from env_compat import get_env  # noqa: E402
+from notify_prompt import (  # noqa: E402
+    MessageInputError,
+    read_message_input,
+    validate_argv,
+)
 
-  local body="$1"
-  local delimiter
 
-  while true; do
-    delimiter="WOLTSPACE_NOTIFY_$(python3 -c 'import secrets; print(secrets.token_hex(8).upper())')"
-    if ! printf '%s\n' "$body" | grep -Fqx "$delimiter"; then
-      break
-    fi
-  done
+USAGE = """Usage:
+  notify
+  notify --telegram CHAT_ID
+  notify --slack CHANNEL THREAD_TS
 
-  printf '%s\n%s\n\n' \
-    'notify: message arguments are not supported; pass message text on stdin' \
-    'Caution: this body is only what survived shell expansion; check it before sending.' \
-    'Run this instead:' >&2
-  case "$ADAPTER" in
-    slack)
-      printf "notify --slack %s %s <<'%s'\n" \
-        "$SLACK_CHANNEL" "$SLACK_THREAD" "$delimiter" >&2
-      ;;
-    telegram)
-      printf "notify --telegram %s <<'%s'\n" \
-        "$TELEGRAM_CHAT_ID" "$delimiter" >&2
-      ;;
-    *)
-      printf "notify <<'%s'\n" "$delimiter" >&2
-      ;;
-  esac
-  printf '%s\n%s\n' "$body" "$delimiter" >&2
-  exit 2
-}
+Message text is read from standard input. Use a single-quoted heredoc."""
 
-case "${1:-}" in
-  -h|--help)
-    usage
-    exit 0
-    ;;
-  --slack)
-    [ "$#" -ge 3 ] || fail_usage "--slack requires CHANNEL and THREAD_TS"
-    ADAPTER="slack"
-    SLACK_CHANNEL="$2"
-    SLACK_THREAD="$3"
-    [[ "$SLACK_CHANNEL" =~ ^[A-Za-z0-9_-]+$ ]] || fail_usage "CHANNEL has invalid characters"
-    [[ "$SLACK_THREAD" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail_usage "THREAD_TS must be numeric"
-    shift 3
-    ;;
-  --telegram)
-    [ "$#" -ge 2 ] || fail_usage "--telegram requires CHAT_ID"
-    ADAPTER="telegram"
-    TELEGRAM_CHAT_ID="$2"
-    [[ "$TELEGRAM_CHAT_ID" =~ ^-?[0-9]+$ ]] || fail_usage "CHAT_ID must be an integer"
-    shift 2
-    ;;
-  --)
-    shift
-    ;;
-  --*)
-    fail_usage "unknown option: $1"
-    ;;
-esac
 
-[ "$#" -eq 0 ] || fail_message_args "$@"
+def fail_usage(message: str) -> int:
+    print(f"notify: {message}", file=sys.stderr)
+    print(USAGE, file=sys.stderr)
+    return 2
 
-# The sentinel prevents command substitution from stripping trailing newlines.
-MESSAGE="$(cat; printf '\034')"
-MESSAGE="${MESSAGE%$'\034'}"
 
-if [ -z "$MESSAGE" ]; then
-  fail_usage "message must not be empty"
-fi
+def _parse_route(argv: list[str]) -> tuple[list[str], str, str, str, list[str]]:
+    adapter = route_id = slack_thread = ""
+    if argv and argv[0] in {"-h", "--help"}:
+        print(USAGE)
+        raise SystemExit(0)
+    if argv[:1] == ["--slack"]:
+        if len(argv) < 3:
+            raise ValueError("--slack requires CHANNEL and THREAD_TS")
+        adapter, route_id, slack_thread = "slack", argv[1], argv[2]
+        route_argv, remaining = ["notify", *argv[:3]], argv[3:]
+    elif argv[:1] == ["--telegram"]:
+        if len(argv) < 2:
+            raise ValueError("--telegram requires CHAT_ID")
+        adapter, route_id = "telegram", argv[1]
+        route_argv, remaining = ["notify", *argv[:2]], argv[2:]
+    elif argv[:1] == ["--"]:
+        route_argv, remaining = ["notify"], argv[1:]
+    elif argv and argv[0].startswith("--"):
+        raise ValueError(f"unknown option: {argv[0]}")
+    else:
+        route_argv, remaining = ["notify"], argv
+    validate_argv(route_argv)
+    return route_argv, adapter, route_id, slack_thread, remaining
 
-# Both spellings: the platform stamps WOLTSPACE_WOLT_SESSION, older shells
-# and skills still carry WOLT_SESSION. See docs/environment.md.
-SESSION="${WOLTSPACE_WOLT_SESSION:-${WOLT_SESSION:-}}"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SESSION_REG="$SCRIPT_DIR/session-reg"
 
-# Build message — footer (session URL + reply hint) is added by server
-WOLT_NAME="${WOLTSPACE_WOLT_NAME:-${WOLT_NAME:-wolt}}"
+def _creature_emoji(session: str, session_reg: Path) -> str:
+    if not session:
+        return "🦫"
+    result = subprocess.run(
+        [session_reg, "get-field", session, "creature"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return {
+        "raccoon": "🦝",
+        "beaver": "🦫",
+        "otter": "🦦",
+        "wolf": "🐺",
+    }.get(result.stdout.strip(), "🦫")
 
-# Read creature from session registry
-EMOJI="🦫"
-if [ -n "$SESSION" ]; then
-  CREATURE=$($SESSION_REG get-field "$SESSION" creature 2>/dev/null || echo "")
-  case "$CREATURE" in
-    raccoon) EMOJI="🦝" ;;
-    beaver)  EMOJI="🦫" ;;
-    otter)   EMOJI="🦦" ;;
-    wolf)    EMOJI="🐺" ;;
-  esac
-fi
-FULL_MESSAGE="${EMOJI} ${WOLT_NAME}: $MESSAGE"
 
-# Build JSON payload
-PAYLOAD=$(python3 -c "
-import json, sys
-d = {'session': sys.argv[1], 'message': sys.argv[2]}
-adapter = sys.argv[3]
-if adapter == 'slack':
-    d['adapter'] = 'slack'
-    d['channel'] = sys.argv[4]
-    d['thread_ts'] = sys.argv[5]
-elif adapter == 'telegram':
-    d['adapter'] = 'telegram'
-    d['chat_id'] = sys.argv[4]
-print(json.dumps(d))
-" "$SESSION" "$FULL_MESSAGE" "$ADAPTER" "${SLACK_CHANNEL:-${TELEGRAM_CHAT_ID:-}}" "${SLACK_THREAD:-}")
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    try:
+        route_argv, adapter, route_id, slack_thread, remaining = _parse_route(argv)
+    except ValueError as exc:
+        return fail_usage(str(exc))
 
-# The control plane that owns this session. Stamped into the session's
-# environment at spawn (RuntimeLayout.apply_environment → _SESSION_ENV_KEYS);
-# the literal below is only the container's baked-in default, for a shell that
-# predates the stamp.
-API="${WOLTSPACE_API:-http://localhost:7777}"
+    try:
+        message = read_message_input(
+            route_argv,
+            remaining,
+            sys.stdin,
+            prefix="WOLTSPACE_NOTIFY",
+        )
+    except MessageInputError as exc:
+        print(str(exc), file=sys.stderr, end="")
+        return 2
 
-RESPONSE=$(curl -s -X POST "${API}/notify" \
-  -H "Content-Type: application/json" \
-  -d "$PAYLOAD")
+    session = get_env("WOLTSPACE_WOLT_SESSION", "")
+    wolt_name = get_env("WOLTSPACE_WOLT_NAME", "wolt")
+    session_reg = Path(__file__).resolve().parent / "session-reg"
+    full_message = f"{_creature_emoji(session, session_reg)} {wolt_name}: {message}"
+    payload: dict[str, str] = {"session": session, "message": full_message}
+    if adapter == "slack":
+        payload.update(adapter="slack", channel=route_id, thread_ts=slack_thread)
+    elif adapter == "telegram":
+        payload.update(adapter="telegram", chat_id=route_id)
 
-if echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get('ok') else 1)" 2>/dev/null; then
-  RESP_ADAPTER=$(echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('adapter','?'))")
-  echo "[notify] → $RESP_ADAPTER: $MESSAGE"
-else
-  ERROR=$(echo "$RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('error','unknown error'))" 2>/dev/null || echo "$RESPONSE")
-  echo "[notify] failed: $ERROR" >&2
-  exit 1
-fi
+    api = os.environ.get("WOLTSPACE_API", "http://localhost:7777")
+    response = subprocess.run(
+        [
+            "curl",
+            "-s",
+            "-X",
+            "POST",
+            f"{api}/notify",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            json.dumps(payload),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    try:
+        result = json.loads(response)
+    except json.JSONDecodeError:
+        print(f"notify: failed: {response or 'unknown error'}", file=sys.stderr)
+        return 1
+    if result.get("ok"):
+        print(f"[notify] → {result.get('adapter', '?')}: {message}")
+        return 0
+    print(f"notify: failed: {result.get('error', 'unknown error')}", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

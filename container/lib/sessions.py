@@ -58,7 +58,7 @@ from execution_policy import (
 )
 from runtime_context import RuntimeContext
 from trust import ensure_claude_dir_trusted, ensure_codex_dir_trusted
-from notify_prompt import notify_reply_instruction
+from notify_prompt import notify_reply_instruction, session_send_reply_instruction
 
 _UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 
@@ -790,10 +790,14 @@ def format_attributed_message(text: str, from_wolt: str = "",
     if from_session:
         header += f", session={from_session}"
     header += "]"
-    reply = (
-        f'\nReply with: woltspace session send {from_session} "your reply"'
-        if from_session else ""
-    )
+    reply = ""
+    if from_session:
+        try:
+            reply = f"\n{session_send_reply_instruction(from_session)}"
+        except ValueError:
+            # Corrupt sender metadata must not prevent the message itself from
+            # reaching the target session.
+            pass
     return f"{header}\n{text}{reply}"
 
 
@@ -813,10 +817,13 @@ def format_spawned_prompt(text: str, from_wolt: str = "",
     if from_session:
         header += f", session={from_session}"
     header += "]"
-    reply = (
-        f'\nReply with: woltspace session send {from_session} "your reply"'
-        if from_session else ""
-    )
+    reply = ""
+    if from_session:
+        try:
+            reply = f"\n{session_send_reply_instruction(from_session)}"
+        except ValueError:
+            # Corrupt sender metadata must not prevent the spawn itself.
+            pass
     body = f"\n{text}" if text else ""
     return f"{header}{body}{reply}"
 
