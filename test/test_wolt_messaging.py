@@ -31,7 +31,8 @@ class TestAttribution:
         assert out.startswith("[message from uxwolt, session=uxwolt-bushy-fur-224aa5]\n")
         assert "hello" in out
         # reply routes back by SESSION ID, not wolt name
-        assert 'Reply with: woltspace session send uxwolt-bushy-fur-224aa5 "your reply"' in out
+        assert "woltspace session send uxwolt-bushy-fur-224aa5 <<'WOLTSPACE_IWCL_" in out
+        assert "YOUR_REPLY" in out
 
     def test_no_sender_returns_text_unchanged(self):
         assert format_attributed_message("plain nudge", "", "") == "plain nudge"
@@ -41,6 +42,12 @@ class TestAttribution:
         assert out.startswith("[message from jerpint]\n")
         assert "Reply with:" not in out
 
+    def test_invalid_sender_session_logs_and_omits_only_reply(self, capsys):
+        out = format_attributed_message("hello", "uxwolt", "../../bad")
+
+        assert out == "[message from uxwolt, session=../../bad]\nhello"
+        assert "omitted IWCL reply for invalid sender session" in capsys.readouterr().err
+
 
 class TestSpawnAttribution:
     def test_full_attribution_has_header_and_reply(self):
@@ -48,7 +55,8 @@ class TestSpawnAttribution:
         assert out.startswith("[spawned by uxwolt, session=uxwolt-bushy-fur-224aa5]\n")
         assert "build the thing" in out
         # child replies to the SPAWNER'S session, by session id
-        assert 'Reply with: woltspace session send uxwolt-bushy-fur-224aa5 "your reply"' in out
+        assert "woltspace session send uxwolt-bushy-fur-224aa5 <<'WOLTSPACE_IWCL_" in out
+        assert "YOUR_REPLY" in out
 
     def test_no_spawner_returns_prompt_unchanged(self):
         # lodge UI / wolf scheduler spawns pass no attribution
@@ -62,7 +70,8 @@ class TestSpawnAttribution:
     def test_empty_prompt_still_gets_header(self):
         out = format_spawned_prompt("", "uxwolt", "uxwolt-bushy-fur-224aa5")
         assert out.startswith("[spawned by uxwolt, session=uxwolt-bushy-fur-224aa5]")
-        assert 'Reply with: woltspace session send uxwolt-bushy-fur-224aa5 "your reply"' in out
+        assert "woltspace session send uxwolt-bushy-fur-224aa5 <<'WOLTSPACE_IWCL_" in out
+        assert "YOUR_REPLY" in out
         # no stray blank body line between header and reply
         assert "]\n\n" not in out
 

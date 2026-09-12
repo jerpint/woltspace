@@ -91,7 +91,7 @@ def _fake_bundle(tmp_path, *, cli_body=None, interpreter=True):
     repo_lib = CLIENT.resolve().parents[1] / "lib"
     fake_lib = bundle / "container" / "lib"
     fake_lib.mkdir(parents=True, exist_ok=True)
-    for module in ("env_compat.py",):
+    for module in ("env_compat.py", "notify_prompt.py"):
         source = repo_lib / module
         if source.exists():
             (fake_lib / module).write_text(source.read_text())

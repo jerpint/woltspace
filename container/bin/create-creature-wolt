@@ -24,7 +24,9 @@ from sites import ensure_site
 def _notify(message: str) -> None:
     """Send a notification via the notify script if available."""
     try:
-        subprocess.run(["notify", message], timeout=10, capture_output=True)
+        subprocess.run(
+            ["notify"], input=message, text=True, timeout=10, capture_output=True
+        )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
 

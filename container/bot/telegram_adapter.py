@@ -41,6 +41,7 @@ from session_runtime import RuntimeHandle, get_runtime
 from sessions import resolve_active_session, wolt_harness
 from harnesses import platform_skill_invoke
 from skills_sync import wolt_skills_delivery
+from notify_prompt import notify_reply_instruction
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -345,7 +346,7 @@ async def _route_to_session(update: Update, session_name: str, wolt: str, text: 
 
     session_msg = (
         f"[telegram message from human, chat_id={chat_id}]: {text}\n"
-        f"Reply back to them with: notify --telegram {chat_id} \"your message\""
+        f"{notify_reply_instruction('--telegram', chat_id)}"
     )
     # message_session → resume_session blocks for as long as the agent takes
     # to come up (up to 12s). On the bot's event loop that stalls every other

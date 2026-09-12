@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import skills_sync  # noqa: E402
 from skills_sync import (  # noqa: E402
     _recover_interrupted_sync,
+    ensure_agent_bridges,
     ensure_platform_skills,
     seed_wolt_skills,
     sync_all_wolt_skills,
@@ -337,6 +338,7 @@ class TestStartSyncsSkills:
             patch("woltspace.lifecycle.run_doctor", return_value=[]),
             patch("woltspace.lifecycle.doctor_ok", return_value=True),
             patch("woltspace.lifecycle.sync_platform_skills") as sync,
+            patch("woltspace.lifecycle.sync_claude_md_platform_section") as sync_docs,
             patch("woltspace.lifecycle.subprocess.Popen") as popen,
             patch("woltspace.lifecycle.read_health", return_value=None),
         ):
@@ -345,6 +347,7 @@ class TestStartSyncsSkills:
 
         assert code == 1
         sync.assert_called_once_with(layout)
+        sync_docs.assert_called_once_with(layout.wolts_dir, layout.install_root)
 
     def test_a_failed_sync_is_reported_not_raised(self, tmp_path):
         layout = _layout(tmp_path)
@@ -371,6 +374,35 @@ class TestStartSyncsSkills:
         assert code == 0
         assert result["state"] == "healthy"
         assert result["skills_sync_error"] == "PermissionError: skills unreadable"
+
+    def test_a_failed_platform_docs_sync_is_reported_not_raised(self, tmp_path):
+        layout = _layout(tmp_path)
+        stopped = {"state": "stopped", "owner": {}, "health": None}
+
+        with (
+            patch("woltspace.lifecycle.inspect_instance", return_value=stopped),
+            patch("woltspace.lifecycle.run_doctor", return_value=[]),
+            patch("woltspace.lifecycle.doctor_ok", return_value=True),
+            patch("woltspace.lifecycle.sync_platform_skills"),
+            patch(
+                "woltspace.lifecycle.sync_claude_md_platform_section",
+                side_effect=PermissionError("instructions locked"),
+            ),
+            patch("woltspace.lifecycle.subprocess.Popen") as popen,
+            patch("woltspace.lifecycle.read_health") as read_health,
+        ):
+            popen.return_value.pid = 4242
+            popen.return_value.poll.return_value = None
+            read_health.side_effect = lambda endpoint: {
+                "instance_id": _captured_instance_id(popen)
+            }
+            code, result = start(layout, timeout=1.0)
+
+        assert code == 0
+        assert result["state"] == "healthy"
+        assert result["platform_docs_sync_error"] == (
+            "PermissionError: instructions locked"
+        )
 
 
 def _captured_instance_id(popen) -> str:
@@ -886,9 +918,58 @@ class TestPluginInstallSequence:
 
 
 class TestTheAgentsBridge:
-    """codex reads $HOME/.agents/skills. The wcodex wrapper lays that bridge in
-    container mode and exits early in host mode, so native codex wolts had
-    nothing."""
+    """Agent-facing instruction and skill names resolve inside every wolt."""
+
+    @pytest.mark.parametrize("harness", ["codex", "opencode"])
+    def test_copy_sync_repairs_native_agent_scaffolding(self, tmp_path, harness):
+        install = tmp_path / "install"
+        _platform_skill(install, "notify", "fresh\n")
+        wolts = tmp_path / "wolts"
+        wolt = wolts / "nw"
+        (wolt / ".claude" / "skills").mkdir(parents=True)
+        (wolt / "CLAUDE.md").write_text("platform instructions\n")
+        (wolt / "wolt").mkdir()
+        (wolt / "wolt" / "wolt.json").write_text(json.dumps({
+            "name": "nw", "type": "raccoon", "harness": harness,
+        }))
+
+        sync_all_wolt_skills(install, wolts)
+
+        instructions = wolt / "AGENTS.md"
+        skills = wolt / ".agents" / "skills"
+        assert instructions.is_symlink()
+        assert os.readlink(instructions) == "CLAUDE.md"
+        assert instructions.read_text() == "platform instructions\n"
+        assert skills.is_symlink()
+        assert os.readlink(skills) == "../.claude/skills"
+        assert (skills / "woltspace-notify" / "SKILL.md").read_text() == "fresh\n"
+
+    def test_new_wolt_seeding_lays_both_bridges(self, tmp_path):
+        install = tmp_path / "install"
+        _platform_skill(install, "notify", "fresh\n")
+        wolt = tmp_path / "wolts" / "new"
+        wolt.mkdir(parents=True)
+        (wolt / "CLAUDE.md").write_text("instructions\n")
+
+        seed_wolt_skills(install, wolt)
+
+        assert os.readlink(wolt / "AGENTS.md") == "CLAUDE.md"
+        assert os.readlink(wolt / ".agents" / "skills") == "../.claude/skills"
+
+    def test_user_owned_agent_paths_are_preserved(self, tmp_path, capsys):
+        wolt = tmp_path / "wolt"
+        (wolt / ".claude" / "skills").mkdir(parents=True)
+        (wolt / "CLAUDE.md").write_text("platform\n")
+        (wolt / "AGENTS.md").write_text("mine\n")
+        skills = wolt / ".agents" / "skills"
+        skills.mkdir(parents=True)
+        (skills / "mine.md").write_text("mine\n")
+
+        ensure_agent_bridges(wolt)
+
+        assert (wolt / "AGENTS.md").read_text() == "mine\n"
+        assert (skills / "mine.md").read_text() == "mine\n"
+        assert capsys.readouterr().err.count("leaving it alone") == 2
 
     def test_delivery_lays_the_bridge(self, tmp_path):
         source = tmp_path / "install" / "container" / "skills"

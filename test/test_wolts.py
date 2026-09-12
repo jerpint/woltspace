@@ -627,6 +627,8 @@ class TestSyncClaudeMdPlatformSection:
         content = (wolt / "CLAUDE.md").read_text()
         assert "OLD STUFF" not in content
         assert "DO NOT edit files outside" in content
+        assert "WOLTSPACE_NOTIFY_<16_RANDOM_HEX>" in content
+        assert "WOLTSPACE_NOTIFY_7F3A91C2" not in content
         assert "# Alpha" in content
 
     def test_skips_wolts_without_claude_md(self, tmp_path):

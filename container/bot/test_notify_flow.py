@@ -131,27 +131,35 @@ class TestDenReplyMessageFormat:
 
     def test_text_reply_format(self):
         """Text reply should include origin and notify instruction."""
+        from notify_prompt import notify_reply_instruction
+
         human_name = "jerpint"
         text = "hey can you check the logs?"
         den_msg = (
             f"[telegram message from {human_name}]: {text}\n"
-            f"Reply back to them with: notify \"your message\""
+            f"{notify_reply_instruction('--telegram', 123)}"
         )
         assert "[telegram message from jerpint]" in den_msg
         assert text in den_msg
-        assert 'notify "your message"' in den_msg
+        assert "single-quoted heredoc" in den_msg
+        assert "notify --telegram 123 <<'" in den_msg
+        assert "YOUR_REPLY" in den_msg
 
     def test_voice_reply_format(self):
         """Voice reply should include origin and notify instruction."""
+        from notify_prompt import notify_reply_instruction
+
         human_name = "jerpint"
         text = "transcribed voice message"
         den_msg = (
             f"[telegram voice from {human_name}]: {text}\n"
-            f"Reply back to them with: notify \"your message\""
+            f"{notify_reply_instruction('--telegram', 123)}"
         )
         assert "[telegram voice from jerpint]" in den_msg
         assert text in den_msg
-        assert 'notify "your message"' in den_msg
+        assert "single-quoted heredoc" in den_msg
+        assert "notify --telegram 123 <<'" in den_msg
+        assert "YOUR_REPLY" in den_msg
 
 
 # ---------------------------------------------------------------------------

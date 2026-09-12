@@ -162,9 +162,9 @@ class RuntimeLayout:
         os.environ["WOLTSPACE_HOST"] = self.host
         os.environ["PORT"] = str(self.port)
         os.environ["WOLTSPACE_PORT"] = str(self.port)
-        # The one address every child is told. `notify`, `push-view`,
-        # `send-to-session` and the in-container `woltspace` CLI all used to
-        # bake in http://localhost:7777, which is a lie on any instance started
+        # The one address every child is told. `notify`, `push-view` and the
+        # bundled `woltspace` client all used to bake in http://localhost:7777,
+        # which is a lie on any instance started
         # with `--port 8080`: the call either reached the *wrong* colony or
         # nothing at all. Stamped here, inherited by sessions (see
         # `_SESSION_ENV_KEYS` in session_runtime) and by connectors.

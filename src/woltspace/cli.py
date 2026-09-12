@@ -220,6 +220,18 @@ _STATE_STYLES = {
 }
 
 
+def _session(args) -> int:
+    """Delegate the whole session noun to the bundled control client."""
+    layout = RuntimeLayout.from_env()
+    client = layout.install_root / "container" / "bin" / "woltspace"
+    if not client.is_file():
+        print(f"bundled session client not found: {client}", file=sys.stderr)
+        return 2
+    os.environ.setdefault("WOLTSPACE_API", layout.endpoint)
+    os.execv(str(client), [str(client), "session", *args.session_args])
+    return 0
+
+
 def _connector_line_style(line: str) -> str:
     """Colour a connector line by what it says, without rewriting a word."""
     stripped = line.strip()
@@ -311,6 +323,8 @@ def _start(args) -> int:
             lore.note(f"logs: {result['log']}")
         if result.get("skills_sync_error"):
             lore.note(f"skills: not synced ({result['skills_sync_error']})")
+        if result.get("platform_docs_sync_error"):
+            lore.note(f"instructions: not synced ({result['platform_docs_sync_error']})")
         if result.get("hooks_normalize_error"):
             lore.note(f"hooks: not normalized ({result['hooks_normalize_error']})")
         lore.note("status: woltspace status")
@@ -580,6 +594,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command")
+    session = sub.add_parser(
+        "session",
+        help="sessions (delegated to the bundled control client)",
+        add_help=False,
+    )
+    session.add_argument("session_args", nargs=argparse.REMAINDER)
+    session.set_defaults(func=_session)
+
     paths = sub.add_parser("paths", help="show resolved native runtime paths")
     paths.add_argument("--json", action="store_true")
     paths.set_defaults(func=_paths)
