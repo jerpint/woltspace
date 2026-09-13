@@ -47,7 +47,11 @@ class FakeRunner:
 
 
 def context(tmp_path=None, tmux_bin="tmux"):
-    return RuntimeContext(tmux_bin=tmux_bin)
+    # lock_dir keeps the delivery lock (see TmuxSessionRuntime._delivery_lock)
+    # inside the test's own tmp dir. Left unset it resolves to the colony's
+    # .space/locks — a unit test running a fake tmux has no business creating
+    # files there.
+    return RuntimeContext(tmux_bin=tmux_bin, lock_dir=tmp_path)
 
 
 class TestRuntimeContext:
@@ -266,9 +270,361 @@ class TestTmuxSessionRuntime:
         commands = [call[0] for call in runner.calls]
         assert commands[0] == ["tmux", "send-keys", "-t", "%17", "-X", "cancel"]
         assert commands[1] == ["tmux", "set-buffer", "-b", "paste-named-session", "hello\nworld"]
-        assert commands[2] == ["tmux", "paste-buffer", "-b", "paste-named-session", "-d", "-t", "%17"]
+        assert commands[2] == ["tmux", "paste-buffer", "-r", "-b", "paste-named-session",
+                               "-d", "-t", "%17"]
         assert commands[3] == ["tmux", "send-keys", "-t", "%17", "Enter"]
+        # Four calls, no fifth: the per-chunk cancel must not put a second one
+        # anywhere in a one-chunk delivery.
+        assert len(commands) == 4, commands
         assert sleeps == [0.5]
+
+    def test_a_long_paste_is_paced_and_arrives_byte_for_byte(self, tmp_path):
+        """The claude TUI drops the *leading* 1024-byte blocks of a big paste,
+        so a 2200-character message showed up as its last 147 characters. Until
+        the harness reads its own input reliably, delivery is paced: small
+        pastes, a beat apart, and the text itself untouched."""
+        runner = FakeRunner()
+        sleeps = []
+        runtime = TmuxSessionRuntime(
+            context(tmp_path), runner=runner, sleeper=sleeps.append
+        )
+        # Newlines and a multi-byte codepoint on purpose: chunking may not
+        # split on lines, and may not cut a character in half.
+        text = ("a" * 499 + "\n" + "🦫 bark\n") * 3
+
+        runtime.paste(RuntimeHandle("s", "s", "%17"), text, settle=0.4)
+
+        commands = runner.commands()
+        buffers = [c[-1] for c in commands if c[1] == "set-buffer"]
+        pastes = [c for c in commands if c[1] == "paste-buffer"]
+        assert "".join(buffers) == text
+        assert len(buffers) == 4
+        assert all(len(chunk) <= 500 for chunk in buffers)
+        assert len(pastes) == len(buffers)
+        # One cancel per chunk, one Enter at the end. Pacing added no Enter;
+        # it did add cancels, on purpose — see the copy-mode test below.
+        cancel = ["tmux", "send-keys", "-t", "%17", "-X", "cancel"]
+        assert commands[0] == cancel
+        assert [c for c in commands if c == cancel] == [cancel] * len(buffers)
+        assert [c for c in commands if c[-1] == "Enter"] == [
+            ["tmux", "send-keys", "-t", "%17", "Enter"]
+        ]
+        assert commands[-1][-1] == "Enter"
+        # One pause between chunks, never before the first, then the settle.
+        assert sleeps == [0.3, 0.3, 0.3, 0.4]
+
+    def test_copy_mode_is_cancelled_before_every_chunk(self, tmp_path):
+        """The pane can enter copy-mode *during* a paced paste.
+
+        One cancel up front was enough when a paste was a single instant
+        call. A 3KB message now spends ~1.5s in delivery, and with `mouse on`
+        a phone scroll anywhere in that window drops the pane into copy-mode
+        — where paste-buffer inserts text that never reaches the process and
+        no error is raised. The chunks that follow are swallowed silently and
+        the agent reads a message with a hole in it. So the cancel rides in
+        front of each chunk, in lockstep, and the order is what matters:
+        cancel, set-buffer, paste, cancel, set-buffer, paste, …
+        """
+        runner = FakeRunner()
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner,
+                                     sleeper=lambda _: None)
+
+        runtime.paste(RuntimeHandle("s", "s", "%17"), "z" * 1600)
+
+        verbs = [c[1] if c[1] != "send-keys" else ("cancel" if "-X" in c else "Enter")
+                 for c in runner.commands()]
+        assert verbs == ["cancel", "set-buffer", "paste-buffer"] * 4 + ["Enter"]
+
+    def test_a_chunk_sized_paste_is_delivered_exactly_as_before(self, tmp_path):
+        """Every message the lodge sends today is short. Nothing about those
+        may change: one buffer, one paste, no inter-chunk pause."""
+        runner = FakeRunner()
+        sleeps = []
+        runtime = TmuxSessionRuntime(
+            context(tmp_path), runner=runner, sleeper=sleeps.append
+        )
+        text = "x" * 500
+
+        runtime.paste(RuntimeHandle("s", "s", "%17"), text)
+
+        assert runner.commands() == [
+            ["tmux", "send-keys", "-t", "%17", "-X", "cancel"],
+            ["tmux", "set-buffer", "-b", "paste-s", text],
+            ["tmux", "paste-buffer", "-r", "-b", "paste-s", "-d", "-t", "%17"],
+            ["tmux", "send-keys", "-t", "%17", "Enter"],
+        ]
+        assert sleeps == []
+
+    def test_paste_chunks_never_reorder_or_pad_the_text(self, tmp_path):
+        """The splitter alone, over the sizes that were measured losing bytes."""
+        from session_runtime import _paste_chunks
+
+        for length in (0, 1, 499, 500, 501, 1200, 1700, 3000):
+            text = "".join(chr(0x2000 + (i % 64)) for i in range(length))
+            chunks = _paste_chunks(text)
+            assert "".join(chunks) == text
+            assert all(len(chunk) <= 500 for chunk in chunks)
+            assert len(chunks) == max(1, -(-length // 500))
+
+    def test_every_paste_keeps_its_linefeeds(self, tmp_path):
+        """`-r`, on every paste-buffer, or multi-line messages arrive mangled.
+
+        tmux replaces every LF in a buffer with a separator on the way out, and
+        the default separator is CR. Without `-r` an IWCL envelope delivered on
+        this rung reaches the agent with `\\r` wherever it was written with
+        `\\n` — measured in the delivery-integrity matrix, which read back 2598
+        bytes that differed from the 2598 sent at every line break. A CR is
+        also exactly the byte a TUI reads as Enter, so the substitution is what
+        made a newline at a chunk boundary dangerous in the first place.
+        """
+        runner = FakeRunner()
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner,
+                                     sleeper=lambda _: None)
+
+        runtime.paste(RuntimeHandle("s", "s", "%17"), "one\ntwo\n" * 200)
+
+        pastes = [c for c in runner.commands() if "paste-buffer" in c]
+        assert pastes, "nothing was pasted"
+        for paste in pastes:
+            assert "-r" in paste, (
+                f"paste-buffer without -r: {paste!r} — tmux will turn every "
+                f"linefeed in this chunk into a carriage return"
+            )
+
+    def test_no_chunk_ever_begins_with_a_newline(self, tmp_path):
+        """A chunk that opens on a newline is one Enter away from being half a
+        message. `paste-buffer` is sent without `-p`, so nothing tells the TUI
+        a paste is a paste — it guesses from burst timing, and the 0.3s pause
+        between chunks defeats the guess, leaving the first byte after the gap
+        to be read as a keystroke. `-r` (see above) means that byte is now an
+        LF rather than the CR tmux used to substitute, and claude's composer
+        takes an LF as a literal newline — but codex and opencode ride this
+        same rung with their own readlines, and the boundary rule costs
+        nothing. CR counts too, and counts more: it is the byte a TUI reads
+        as Enter outright, so CRLF and bare-CR text get the same walk-back.
+        Every case here puts a line break exactly on, or immediately around, a
+        500-character boundary.
+
+        It is a preference, not an invariant, and the guard says so exactly.
+        The walk-back cannot cross the start of its own chunk, so a run of 500
+        or more line breaks exhausts it and the next chunk *does* open on one.
+        The only chunk exempted here is one whose whole preceding window was
+        line breaks — the case where there was nowhere else for the boundary
+        to go. Any other chunk opening on a break is a real bug."""
+        from session_runtime import _paste_chunks
+
+        payloads = [
+            "a" * 500 + "\n" + "b" * 900,          # newline first byte of #2
+            "a" * 499 + "\n" + "b" * 900,          # newline last byte of #1
+            "a" * 500 + "\n\n\n" + "b" * 900,      # a run astride the boundary
+            "a" * 498 + "\n\n\n\n" + "b" * 900,    # run starting inside #1
+            "line\n" * 400,                        # newlines everywhere
+            "\n" * 1200,                           # nothing but newlines
+            "\n" + "a" * 1200,                     # a leading newline stays put
+            "a" * 500 + "\r\n" + "b" * 900,        # CRLF astride the boundary
+            "a" * 499 + "\r\n" + "b" * 900,        # the CR is the last byte of #1
+            "line\r\n" * 300,                      # CRLF throughout
+            "a" * 500 + "\r" + "b" * 900,          # a bare CR, old-mac style
+            "a" * 10 + "\n" * 600 + "b" * 600,     # the walk-back is exhausted
+        ]
+        for text in payloads:
+            chunks = _paste_chunks(text)
+            assert "".join(chunks) == text, "the text is never altered"
+            assert all(len(chunk) <= 500 for chunk in chunks)
+            assert all(chunk for chunk in chunks), "no empty chunk"
+            # The first chunk keeps whatever the message starts with; it is not
+            # preceded by a pause. Every *later* one must not open on Enter —
+            # unless its whole preceding window was line breaks, in which case
+            # the walk-back had nowhere to land.
+            for index, chunk in enumerate(chunks[1:], start=1):
+                if chunk[0] not in "\r\n":
+                    continue
+                before = chunks[index - 1]
+                assert len(before) == 500 and not before[1:].strip("\r\n"), (
+                    f"chunk {index} of {text[:12]!r}… opens on a line break "
+                    f"with somewhere to walk back to: {before[-8:]!r}"
+                )
+
+        # And the exhausted case really does happen — the guard above must be
+        # exempting something, or it is passing for the wrong reason.
+        exhausted = _paste_chunks("a" * 10 + "\n" * 600 + "b" * 600)
+        assert any(chunk[0] == "\n" for chunk in exhausted[1:]), (
+            "600 newlines in a row should outrun the walk-back"
+        )
+
+    def test_a_mid_sequence_tmux_failure_never_reaches_the_submit(self, tmp_path):
+        """Pacing cost chunked paste its atomicity: a tmux failure part-way
+        leaves what landed sitting in the composer. That is survivable only
+        because it is never *submitted* — a truncated message pressed with
+        Enter is a question the agent answers wrong, and delivery would have
+        reported success."""
+        class Flaky(FakeRunner):
+            def __call__(self, command, **kwargs):
+                if command[1] == "set-buffer" and command[-1].startswith("b"):
+                    raise subprocess.CalledProcessError(1, command)
+                return super().__call__(command, **kwargs)
+
+        runner = Flaky()
+        runtime = TmuxSessionRuntime(
+            context(tmp_path), runner=runner, sleeper=lambda _s: None
+        )
+
+        with pytest.raises(subprocess.CalledProcessError):
+            runtime.paste(RuntimeHandle("s", "s", "%17"), "a" * 500 + "b" * 500)
+
+        assert not [c for c in runner.commands() if c[-1] == "Enter"], \
+            "a half-delivered message must not be submitted"
+
+    def test_a_long_message_starting_with_a_slash_is_defused(self, tmp_path):
+        """claude dispatches composer content beginning with "/" as a slash
+        command however it got there, and a long one is silently destroyed
+        (`Unknown command`, no transcript record). A leading space makes it
+        prose. Short messages are left alone: `/compact` must stay a command."""
+        runner = FakeRunner()
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner,
+                                     sleeper=lambda _: None)
+        long = "/not-a-command " + "x" * 600
+        runtime.paste(RuntimeHandle("s", "s", "%17"), long)
+        buffers = [c[-1] for c in runner.commands() if c[1] == "set-buffer"]
+        assert "".join(buffers) == " " + long
+
+        runner = FakeRunner()
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner,
+                                     sleeper=lambda _: None)
+        runtime.paste(RuntimeHandle("s", "s", "%17"), "/compact")
+        buffers = [c[-1] for c in runner.commands() if c[1] == "set-buffer"]
+        assert buffers == ["/compact"]
+
+    # -- concurrent deliveries --------------------------------------------
+
+    def test_two_deliveries_to_one_session_take_turns(self, tmp_path):
+        """A paced paste is a sequence, so it can be walked into.
+
+        Before pacing, a delivery was one set-buffer and one paste-buffer:
+        two senders raced but neither could land *inside* the other. Now a
+        3KB message is a dozen calls over a second and a half, and the two
+        processes that deliver — the control plane and the chat bot — would
+        thread their chunks into the same composer and each press Enter. The
+        agent reads one turn made of both halves and answers neither. The
+        lock is a real flock, held from the first cancel to the Enter, which
+        is why this test uses threads and a real file rather than a stub.
+        """
+        import threading
+
+        order = []
+        guard = threading.Lock()
+
+        class Tracing(FakeRunner):
+            def __init__(self, tag):
+                super().__init__()
+                self.tag = tag
+
+            def __call__(self, command, **kwargs):
+                if command[1] == "set-buffer" or command[-1] == "Enter":
+                    with guard:
+                        order.append(self.tag)
+                    # Widen the window an interleave would slip through, so a
+                    # missing lock fails this loudly rather than sometimes.
+                    time.sleep(0.01)
+                return super().__call__(command, **kwargs)
+
+        def deliver(tag):
+            runtime = TmuxSessionRuntime(
+                context(tmp_path), runner=Tracing(tag),
+                sleeper=lambda _s: time.sleep(0.001),
+            )
+            runtime.paste(RuntimeHandle("s", "s", "%17"), "z" * 1600)
+
+        threads = [threading.Thread(target=deliver, args=(tag,))
+                   for tag in ("A", "B")]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        assert not any(thread.is_alive() for thread in threads), "a paste hung"
+
+        # Four chunks and an Enter each, and every one of A's before any of
+        # B's (or the other way round): exactly one changeover in the log.
+        assert order.count("A") == 5 and order.count("B") == 5, order
+        turns = sum(1 for before, after in zip(order, order[1:])
+                    if before != after)
+        assert turns == 1, f"the two deliveries interleaved: {''.join(order)}"
+        assert (tmp_path / "paste-s.lock").exists(), (
+            "the lock file belongs under the context's lock_dir"
+        )
+
+    def test_different_sessions_never_wait_on_each_other(self, tmp_path):
+        """One lock per session, not one for the colony.
+
+        A shared lock would be correct and unusable: every wolt's delivery
+        would queue behind every other wolt's, and a message to a session
+        nobody is watching would hold up the one someone is. Both threads
+        here must be able to stand inside a paste at the same moment — the
+        barrier is what proves it, and it breaks rather than hangs.
+        """
+        import threading
+
+        rendezvous = threading.Barrier(2, timeout=5)
+        failures = []
+
+        class Meeting(FakeRunner):
+            met = False
+
+            def __call__(self, command, **kwargs):
+                if command[1] == "set-buffer" and not self.met:
+                    self.met = True
+                    rendezvous.wait()
+                return super().__call__(command, **kwargs)
+
+        def deliver(session):
+            try:
+                runtime = TmuxSessionRuntime(
+                    context(tmp_path), runner=Meeting(), sleeper=lambda _s: None
+                )
+                runtime.paste(RuntimeHandle(session, session, "%17"), "z" * 1600)
+            except Exception as exc:  # BrokenBarrierError, if they serialised
+                failures.append(exc)
+
+        threads = [threading.Thread(target=deliver, args=(name,))
+                   for name in ("one", "two")]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+
+        assert not any(thread.is_alive() for thread in threads)
+        assert failures == [], f"two sessions blocked each other: {failures}"
+        assert {p.name for p in tmp_path.glob("paste-*.lock")} == {
+            "paste-one.lock", "paste-two.lock"
+        }
+
+    def test_a_stuck_lock_delays_the_message_but_never_drops_it(self, tmp_path):
+        """Losing a message is worse than a rare interleave.
+
+        The lock is a courtesy between deliverers, not a gate on delivery. If
+        the holder never lets go — a crashed process on a filesystem that
+        kept the lock, a delivery genuinely taking longer than the budget —
+        the wait expires, a warning goes to stderr and the message is
+        delivered anyway. The alternative is a message that silently never
+        arrives, which is the bug this whole branch exists to fix.
+        """
+        import fcntl
+
+        squatter = open(tmp_path / "paste-s.lock", "a+")
+        fcntl.flock(squatter.fileno(), fcntl.LOCK_EX)
+        try:
+            runner = FakeRunner()
+            sleeps = []
+            runtime = TmuxSessionRuntime(context(tmp_path), runner=runner,
+                                         sleeper=sleeps.append)
+            runtime.paste(RuntimeHandle("s", "s", "%17"), "hello")
+        finally:
+            fcntl.flock(squatter.fileno(), fcntl.LOCK_UN)
+            squatter.close()
+
+        assert runner.commands()[-1] == ["tmux", "send-keys", "-t", "%17", "Enter"]
+        # It waited its whole budget before giving up on the lock.
+        assert sum(sleeps) >= 4.9, sleeps
 
     def test_legacy_paste_resolves_the_only_pane(self, tmp_path):
         """A record with no persisted pane — i.e. every session already on
