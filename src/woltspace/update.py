@@ -17,6 +17,7 @@ from packaging.version import Version, InvalidVersion
 from . import __version__
 from .layout import RuntimeLayout
 from .instance import inspect_instance
+from .update_worker import SUPPORTED_VERSION
 
 API = 'https://api.github.com/repos/jerpint/woltspace'
 
@@ -62,15 +63,21 @@ def native_install():
     # Verify uv is addressing this very tool directory, including custom roots.
     if Path(run([uv, 'tool', 'dir'])).resolve() != prefix.parent.resolve():
         raise UpdateError('uv tool dir differs from this installation; use the matching UV_TOOL_DIR.')
+    if not stable(__version__):
+        raise UpdateError('Updates support stable three-part release versions only; upgrade prerelease/custom versions manually.')
+    python = Path(sys.base_prefix) / 'bin' / f'python{sys.version_info.major}.{sys.version_info.minor}'
+    if not python.is_file() or not os.access(python, os.X_OK):
+        raise UpdateError('The base Python interpreter could not be located outside the tool environment.')
     return {'cli': entries[0]['install-path'], 'uv': uv,
             'extras': req.get('extras', []), 'tool_root': str(prefix.parent),
-            'python': str(Path(sys._base_executable).resolve())}
+            'python': str(python.resolve())}
 
 
 def stable(value):
     try:
         version = Version(value)
-        return None if version.is_prerelease or version.is_devrelease else version
+        return None if (version.is_prerelease or version.is_devrelease
+                        or not SUPPORTED_VERSION.fullmatch(str(version))) else version
     except InvalidVersion:
         return None
 
@@ -101,7 +108,14 @@ def release_notes(components):
         raise UpdateError('Release history is too large to review completely.')
     for component in changed:
         if not any(n['component'] == component['name'] and n['version'] == component['target'] for n in notes):
-            raise UpdateError(f"Release notes missing for {component['name']} {component['target']}; refusing an unreviewed update.")
+            if component['name'] == '@woltspace/tui':
+                component['changed'] = False
+                component['skipped'] = (f"TUI {component['target']} skipped: missing GitHub release notes. "
+                    f"Publish/review the tui-v{component['target']} release, then check again. "
+                    "The installed TUI is retained; a reviewed wheel update may proceed.")
+            else:
+                raise UpdateError(f"Release notes missing for {component['name']} {component['target']}; "
+                    f"publish/review the v{component['target']} GitHub release before applying.")
     return sorted(notes, key=lambda n: (n['component'], Version(n['version'])))
 
 
@@ -180,6 +194,8 @@ def print_plan(plan):
     for component in plan['components']:
         print(f"{component['name']}: {component['current']} → {component['target']}" +
               (' (update)' if component['changed'] else ' (unchanged)'))
+        if component.get('skipped'):
+            print(component['skipped'])
     if len(plan['components']) == 1:
         print('TUI: no managed global installation; no TUI will be installed.')
     for note in plan['notes']:
@@ -190,11 +206,14 @@ def print_plan(plan):
         print('\n' + plan['impact'])
         if plan['migrations']:
             print('Migration instructions require separate review; no migration script runs automatically.')
+    elif any(c.get('skipped') for c in plan['components']):
+        print('No reviewed updates to apply. Skipped components remain at installed versions.')
     else:
         print('Already current. Nothing changed.')
 
 
 def command(args):
+    directory = None
     try:
         if args.apply_plan:
             plan = json.loads(Path(args.apply_plan).read_text())
@@ -228,6 +247,7 @@ def command(args):
         # The helper uses only stdlib and the base interpreter. exec discards this
         # process before uv replaces the environment that loaded these modules.
         directory = Path(tempfile.mkdtemp(prefix='woltspace-update-'))
+        (directory / '.owned-update-stage').touch()
         worker = directory / 'worker.py'
         shutil.copyfile(Path(__file__).with_name('update_worker.py'), worker)
         path = directory / 'plan.json'
@@ -236,5 +256,7 @@ def command(args):
         sys.stdout.flush()
         os.execv(plan['install']['python'], [plan['install']['python'], str(worker), str(path)])
     except (UpdateError, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+        if directory is not None:
+            shutil.rmtree(directory)
         print(f'Update failed before handoff: {exc}', file=sys.stderr)
         return 1

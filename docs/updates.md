@@ -9,8 +9,15 @@ woltspace update
 The command checks Woltspace on PyPI and the optional global `@woltspace/tui`
 on npm independently. It prints all crossed release notes, migrations and
 session impact, asks once, stages exact versions and dependencies, then applies
-from the warmed caches. Only changed components are installed. The Python
+from the warmed caches. Only changed components are installed. A TUI target
+without matching GitHub release notes is skipped and reported; it cannot block a
+reviewed Python update. A missing Python release note blocks that update. The Python
 installation preserves its existing extras, including `connectors`.
+
+TUI staging rehearses native/lifecycle build scripts in an isolated global npm
+prefix before the control plane stops. The final installation still runs its
+scripts, so staging reduces build surprises but cannot guarantee the live install
+will succeed.
 
 A small standalone updater runs under the base Python interpreter before uv
 replaces its tool environment. It stops only a previously running control plane
@@ -25,7 +32,9 @@ sessions load the updated platform instructions and skills.
 Migration instructions are reviewed before applying and compared with the staged
 wheel. They are not run automatically. The final report lists pending migration
 actions separately. Failure reports list completed installs and recovery results;
-there is no automatic rollback. The private result file path is printed.
+there is no automatic rollback. The private result file path under `.space/platform/updates/` is printed.
+Owned temporary environments and caches are removed on completion or failure;
+reports remain. A hard process kill can still leave temporary staging files.
 
 ## Ask a wolt
 
@@ -61,7 +70,8 @@ fresh installation.
 
 ## Supported installations
 
-Native uv tool installs using ordinary registry requirements are supported.
+Native uv tool installs using ordinary registry requirements and stable
+three-part release versions (optionally `.postN`) are supported.
 Custom uv sources, options, additional requirements, pip/source installs and
 TUI installations outside npm global management need manual upgrades. The updater
 does not install a missing TUI. It does not use sudo or change the user's shell.

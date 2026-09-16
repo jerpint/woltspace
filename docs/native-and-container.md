@@ -102,6 +102,9 @@ reviews independent Python/TUI versions, crossed release notes and migrations,
 stages exact artifacts, updates only changed components and verifies recovery.
 The platform update skill reviews the same plan and handles applicable approval.
 
+The tui declares the minimum woltspace version it needs and checks it at startup;
+woltspace does not check the tui's version. The two artifacts release independently.
+
 See [updates.md](updates.md) for the complete workflow, agent controls,
 limitations and the one-time manual upgrade for releases without this command.
 Live native tmux sessions survive; existing sessions retain loaded instructions.

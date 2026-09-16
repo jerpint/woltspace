@@ -18,7 +18,10 @@ inside the wolt's private workspace. If the CLI is unavailable, explain the
 [one-time manual bootstrap](../../../docs/updates.md); do not
 silently implement another update procedure.
 
-If `changed` is false, report current versions and finish. Otherwise summarize
+Report every component marked `skipped` and its reason; do not call a skipped
+TUI current or updated. Missing TUI notes retain that installed version while
+a reviewed wheel update may proceed. Missing wheel notes still refuse.
+If `changed` is false, report installed versions and any skipped update, then finish. Otherwise summarize
 both components, every crossed release note and every migration in the plan.
 Do not infer safety or migration absence from a patch version. Explain any
 breaking behavior and outstanding manual actions. The migration prose comes

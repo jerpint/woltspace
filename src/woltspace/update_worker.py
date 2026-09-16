@@ -9,9 +9,14 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import shutil
+import uuid
 import sys
 import time
 import urllib.request
+
+
+SUPPORTED_VERSION = re.compile(r"\d+\.\d+\.\d+(?:\.post\d+)?")
 
 
 class Failure(RuntimeError):
@@ -40,8 +45,10 @@ def same_instance(before, after):
 
 def validate_versions(plan):
     for component in plan['components']:
+        if component.get('skipped') and component['changed']:
+            raise Failure('A skipped TUI cannot be applied without a newly reviewed release plan.')
         for key in ('current', 'target'):
-            if not re.fullmatch(r'\d+\.\d+\.\d+(?:\.post\d+)?', component[key]):
+            if not SUPPORTED_VERSION.fullmatch(component[key]):
                 raise Failure(f'Unsupported release version: {component[key]}')
     for extra in plan['install']['extras']:
         if not re.fullmatch(r'[a-zA-Z0-9_-]+', extra):
@@ -96,8 +103,10 @@ def stage(plan, directory, env):
             raise Failure('TUI tarball integrity mismatch or missing SHA-512.')
         tarball.write_bytes(data)
         cache = str(directory / 'npm-cache')
-        run([tui['npm'], 'install', '--prefix', str(directory / 'npm-stage'),
-             '--ignore-scripts', '--cache', cache, str(tarball)], env)
+        # Rehearse the global layout and lifecycle/native build scripts in an
+        # isolated prefix while the real control plane is still serving.
+        run([tui['npm'], 'install', '--global', '--prefix', str(directory / 'npm-stage'),
+             '--cache', cache, str(tarball)], env)
         command = [tui['npm'], 'install', '--global', '--offline', '--cache', cache, str(tarball)]
         run([*command, '--dry-run', '--ignore-scripts'], env)
         tui['install_command'] = command
@@ -143,7 +152,9 @@ def verify(plan, env, *, running):
 
 def apply(plan, directory, env):
     validate_versions(plan)
-    report = {'ok': False, 'completed': [], 'error': None, 'recovery': None}
+    report = {'ok': False, 'completed': [], 'error': None, 'recovery': None,
+              'skipped': [{'name': c['name'], 'target': c['target'], 'reason': c['skipped']}
+                          for c in plan['components'] if c.get('skipped')]}
     cli = plan['install']['cli']
     running = plan['instance']['state'] == 'healthy'
     stopped = False
@@ -201,23 +212,32 @@ def main(path):
     env.update({'UV_TOOL_DIR': plan['install']['tool_root'], 'UV_CACHE_DIR': str(directory / 'uv-cache'),
                 'WOLTSPACE_WOLTS_DIR': plan['layout']['wolts_dir'], 'WOLTS_DIR': plan['layout']['wolts_dir'],
                 'WOLTSPACE_HOST': plan['layout']['host'], 'WOLTSPACE_PORT': str(plan['layout']['port']),
-                'WOLTSPACE_ISOLATION': 'host'})
+                'WOLTSPACE_ISOLATION': 'host',
+                'npm_config_devdir': str(directory / 'node-gyp')})
     lock_path = Path(plan['install']['tool_root']) / '.woltspace-update.lock'
-    with lock_path.open('a') as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            print('Another update is running; nothing changed.', file=sys.stderr)
-            return 1
-        result = apply(plan, directory, env)
-        output = directory / 'result.json'
-        output.write_text(json.dumps(result, indent=2) + '\n')
-        output.chmod(0o600)
-        print(json.dumps(result, indent=2))
-        print(f'Update report: {output}')
-        if result['ok'] and result.get('migration_actions'):
-            print('Package update verified. Reviewed migration instructions remain for the user/wolt to carry out; no migration script was executed.')
-        return 0 if result['ok'] else 1
+    try:
+        with lock_path.open('a') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                print('Another update is running; nothing changed.', file=sys.stderr)
+                return 1
+            result = apply(plan, directory, env)
+            report_dir = Path(plan['layout']['wolts_dir']) / '.space' / 'platform' / 'updates'
+            report_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            output = report_dir / (time.strftime('%Y%m%dT%H%M%S') + '-' + uuid.uuid4().hex + '.json')
+            output.write_text(json.dumps(result, indent=2) + '\n')
+            output.chmod(0o600)
+            print(json.dumps(result, indent=2))
+            print(f'Update report: {output}')
+            if result['ok'] and result.get('migration_actions'):
+                print('Package update verified. Reviewed migration instructions remain for the user/wolt to carry out; no migration script was executed.')
+            return 0 if result['ok'] else 1
+    finally:
+        # Never remove an arbitrary plan's parent. Only our handoff creates
+        # this marker, and reports have already moved into lodge state.
+        if (directory / '.owned-update-stage').is_file():
+            shutil.rmtree(directory)
 
 
 if __name__ == '__main__':

@@ -223,3 +223,103 @@ def test_changed_npm_root_blocks_before_install(monkeypatch, plan, tmp_path):
     monkeypatch.setattr(worker, 'run', lambda *a: str(tmp_path / 'different-root'))
     with pytest.raises(worker.Failure, match='npm global root changed'):
         worker.stage(plan, tmp_path, {})
+
+
+def test_missing_tui_notes_skips_only_tui_and_prints_reason(monkeypatch, capsys):
+    components = [{'name': 'woltspace', 'current': '0.5.0', 'target': '0.5.1', 'tag_prefix': 'v', 'changed': True},
+                  {'name': '@woltspace/tui', 'current': '0.5.1', 'target': '0.5.2', 'tag_prefix': 'tui-v', 'changed': True}]
+    monkeypatch.setattr(planner, 'get_json', lambda url: [{'tag_name': 'v0.5.1', 'html_url': 'wheel-notes', 'body': 'Reviewed'}])
+    notes = planner.release_notes(components)
+    assert components[0]['changed'] and not components[1]['changed']
+    assert 'tui-v0.5.2' in components[1]['skipped']
+    serialized = json.loads(json.dumps(components))
+    assert serialized[1]['skipped']
+    planner.print_plan({'components': components, 'notes': notes, 'migrations': [], 'changed': True, 'impact': 'brief restart'})
+    assert 'TUI 0.5.2 skipped' in capsys.readouterr().out
+
+
+def test_skipped_tui_cannot_be_reenabled_without_review(plan):
+    plan['components'].append({'name': '@woltspace/tui', 'current': '0.5.1', 'target': '0.5.2',
+                               'changed': True, 'skipped': 'Missing release notes'})
+    with pytest.raises(worker.Failure, match='newly reviewed'):
+        worker.validate_versions(plan)
+
+
+@pytest.mark.parametrize('value', ['1.2', '1.2.3.4', '1!1.2.3', '1.2.3+local', '1.2.3rc1', '1.2.3.dev1'])
+def test_planner_rejects_versions_worker_cannot_apply(value):
+    assert planner.stable(value) is None
+
+
+@pytest.mark.parametrize('value', ['0.5.2', '1.2.3.post4'])
+def test_planner_accepted_versions_are_accepted_by_worker(plan, value):
+    version = planner.stable(value)
+    assert version is not None
+    plan['components'][0]['target'] = str(version)
+    worker.validate_versions(plan)
+
+
+def test_tui_native_scripts_rehearsed_in_isolated_global_prefix(monkeypatch, plan, tmp_path):
+    import base64
+    import hashlib
+    import io
+    plan['components'][0]['changed'] = False
+    root = tmp_path / 'real-global'
+    metadata = root / '@woltspace' / 'tui' / 'package.json'; metadata.parent.mkdir(parents=True)
+    metadata.write_text(json.dumps({'version': '0.5.1'}))
+    data = b'test-tarball'
+    plan['components'].append({'name':'@woltspace/tui', 'current':'0.5.1', 'target':'0.5.2',
+        'changed':True, 'npm':'npm', 'root':str(root), 'dist':{'tarball':'https://example.org/tui.tgz',
+        'integrity':'sha512-'+base64.b64encode(hashlib.sha512(data).digest()).decode()}})
+    monkeypatch.setattr(worker.urllib.request, 'urlopen', lambda *a, **k: io.BytesIO(data))
+    calls=[]
+    def run(command, env, **kw):
+        calls.append(command)
+        return str(root) if command[1:]==['root','-g'] else ''
+    monkeypatch.setattr(worker,'run',run)
+    worker.stage(plan,tmp_path,{})
+    rehearsal = next(c for c in calls if '--prefix' in c)
+    assert '--global' in rehearsal and '--ignore-scripts' not in rehearsal
+    assert rehearsal[rehearsal.index('--prefix')+1] == str(tmp_path/'npm-stage')
+    assert str(root) not in rehearsal
+
+
+def test_completed_handoff_cleans_staging_and_preserves_report(monkeypatch, plan, tmp_path):
+    stage_dir=tmp_path/'stage';stage_dir.mkdir()
+    (stage_dir/'.owned-update-stage').touch()
+    path=stage_dir/'plan.json';path.write_text(json.dumps(plan))
+    monkeypatch.setattr(worker,'apply',lambda *a:{'ok':True,'completed':[]})
+    assert worker.main(str(path))==0
+    assert not stage_dir.exists()
+    reports=list((Path(plan['layout']['wolts_dir'])/'.space/platform/updates').glob('*.json'))
+    assert len(reports)==1 and json.loads(reports[0].read_text())['ok']
+
+
+def test_native_build_failure_during_rehearsal_never_stops_lodge(monkeypatch, plan, tmp_path):
+    import base64
+    import hashlib
+    import io
+    plan['components'][0]['changed'] = False
+    root = tmp_path / 'real-global'
+    metadata = root / '@woltspace' / 'tui' / 'package.json'; metadata.parent.mkdir(parents=True)
+    metadata.write_text(json.dumps({'version': '0.5.1'}))
+    data = b'test-tarball'
+    plan['components'].append({'name':'@woltspace/tui', 'current':'0.5.1', 'target':'0.5.2',
+        'changed':True, 'npm':'npm', 'root':str(root), 'dist':{'tarball':'https://example.org/tui.tgz',
+        'integrity':'sha512-'+base64.b64encode(hashlib.sha512(data).digest()).decode()}})
+    monkeypatch.setattr(worker.urllib.request, 'urlopen', lambda *a, **k: io.BytesIO(data))
+    monkeypatch.setattr(worker, 'status', lambda *a: copy.deepcopy(plan['instance']))
+    calls=[]
+    def run(command, env, **kw):
+        calls.append(command)
+        if '--prefix' in command:
+            raise worker.Failure('node-gyp: C++ toolchain unavailable')
+        if command[1:] == ['root','-g']:
+            return str(root)
+        return 'woltspace '+planner.__version__
+    monkeypatch.setattr(worker,'run',run)
+    result=worker.apply(plan,tmp_path,{})
+    assert not result['ok'] and result['completed']==[]
+    assert 'toolchain unavailable' in result['error']
+    assert not any('stop' in c or 'start' in c for c in calls)
+    assert not any(c[:2]==['npm','install'] and '--prefix' not in c for c in calls)
+    assert json.loads(metadata.read_text())['version']=='0.5.1'
