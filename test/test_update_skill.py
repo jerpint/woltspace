@@ -44,10 +44,10 @@ def test_no_container_era_mechanics(body, banned, why):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("needle, why", [
-    ("uv tool install", "the python half is installed with uv"),
+    ("woltspace update", "the CLI owns installation"),
     ("@woltspace/tui", "the tui half is its own install and must be named"),
-    ("woltspace stop", "the update stops the control plane"),
-    ("woltspace start", "and starts it again — that is where skills resync"),
+    ("--apply-plan", "agents apply the reviewed plan"),
+    ("--check", "checks do not apply updates"),
 ])
 def test_names_the_real_mechanics(body, needle, why):
     assert needle in body, f"update skill never mentions {needle!r}: {why}"
@@ -92,5 +92,5 @@ def test_wheel_force_include_covers_container():
 
 def test_skill_reads_migrations_from_the_install_root(body):
     """After the install, from the path the CLI reports — not from a checkout."""
-    assert "woltspace paths" in body
-    assert "install_root" in body
+    assert "staged wheel" in body
+    assert "reviewed release commit" in body

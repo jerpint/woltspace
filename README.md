@@ -10,3 +10,8 @@ give your wolt space to build.
 | First native run on a Mac | [docs/native-first-run.md](docs/native-first-run.md) |
 
 The Tauri 2 desktop shell, browser preview, and build instructions live in [desktop/](desktop/README.md).
+
+## Updates
+
+Native uv installs use `woltspace update`, directly or through a wolt.
+See [the update workflow and older-version bootstrap](docs/updates.md).
