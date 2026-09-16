@@ -1,7 +1,6 @@
 """Standalone stdlib updater. Copied out before replacing the uv environment."""
 from __future__ import annotations
 
-import base64
 import fcntl
 import hashlib
 import json
@@ -13,7 +12,6 @@ import shutil
 import uuid
 import sys
 import time
-import urllib.request
 
 
 SUPPORTED_VERSION = re.compile(r"\d+\.\d+\.\d+(?:\.post\d+)?")
@@ -44,9 +42,9 @@ def same_instance(before, after):
 
 
 def validate_versions(plan):
+    if plan.get('schema') != 2 or len(plan['components']) != 1 or plan['components'][0]['name'] != 'woltspace':
+        raise Failure('Only Python-only update plans (schema 2) are supported; create a new plan.')
     for component in plan['components']:
-        if component.get('skipped') and component['changed']:
-            raise Failure('A skipped TUI cannot be applied without a newly reviewed release plan.')
         for key in ('current', 'target'):
             if not SUPPORTED_VERSION.fullmatch(component[key]):
                 raise Failure(f'Unsupported release version: {component[key]}')
@@ -85,31 +83,6 @@ def stage(plan, directory, env):
              '--constraint', str(constraints), spec], env)
         wheel['install_command'] = [uv, 'tool', 'install', '--force', '--offline',
             '--python', install['python'], '--constraint', str(constraints), spec]
-    for tui in plan['components'][1:]:
-        if Path(run([tui['npm'], 'root', '-g'], env)).resolve() != Path(tui['root']).resolve():
-            raise Failure('npm global root changed since review; nothing stopped.')
-        metadata = Path(tui['root']) / '@woltspace' / 'tui' / 'package.json'
-        if json.loads(metadata.read_text())['version'] != tui['current']:
-            raise Failure('TUI changed since review; nothing stopped.')
-        if not tui['changed']:
-            continue
-        tarball = directory / 'tui.tgz'
-        with urllib.request.urlopen(tui['dist']['tarball'], timeout=30) as response:
-            data = response.read()
-        integrity = tui['dist'].get('integrity', '')
-        candidates = integrity.split()
-        if not any(value.startswith('sha512-') and value[7:] ==
-                   base64.b64encode(hashlib.sha512(data).digest()).decode() for value in candidates):
-            raise Failure('TUI tarball integrity mismatch or missing SHA-512.')
-        tarball.write_bytes(data)
-        cache = str(directory / 'npm-cache')
-        # Rehearse the global layout and lifecycle/native build scripts in an
-        # isolated prefix while the real control plane is still serving.
-        run([tui['npm'], 'install', '--global', '--prefix', str(directory / 'npm-stage'),
-             '--cache', cache, str(tarball)], env)
-        command = [tui['npm'], 'install', '--global', '--offline', '--cache', cache, str(tarball)]
-        run([*command, '--dry-run', '--ignore-scripts'], env)
-        tui['install_command'] = command
 
 
 def verify(plan, env, *, running):
@@ -119,11 +92,6 @@ def verify(plan, env, *, running):
     expected = wheel['target'] if wheel['changed'] else wheel['current']
     if actual != f'woltspace {expected}':
         raise Failure(f'Expected woltspace {expected}, got {actual}.')
-    for tui in plan['components'][1:]:
-        actual_tui = json.loads((Path(tui['root']) / '@woltspace' / 'tui' / 'package.json').read_text())
-        expected_tui = tui['target'] if tui['changed'] else tui['current']
-        if actual_tui['version'] != expected_tui:
-            raise Failure('TUI version verification failed.')
     deadline = time.monotonic() + 30
     while True:
         report = status(cli, env)
@@ -152,9 +120,7 @@ def verify(plan, env, *, running):
 
 def apply(plan, directory, env):
     validate_versions(plan)
-    report = {'ok': False, 'completed': [], 'error': None, 'recovery': None,
-              'skipped': [{'name': c['name'], 'target': c['target'], 'reason': c['skipped']}
-                          for c in plan['components'] if c.get('skipped')]}
+    report = {'ok': False, 'completed': [], 'error': None, 'recovery': None}
     cli = plan['install']['cli']
     running = plan['instance']['state'] == 'healthy'
     stopped = False
@@ -194,11 +160,6 @@ def apply(plan, directory, env):
         observed['woltspace'] = run([cli, '--version'], env, timeout=30)
     except Exception as exc:
         observed['woltspace'] = {'error': str(exc)}
-    for tui in plan['components'][1:]:
-        try:
-            observed[tui['name']] = json.loads((Path(tui['root']) / '@woltspace' / 'tui' / 'package.json').read_text())['version']
-        except Exception as exc:
-            observed[tui['name']] = {'error': str(exc)}
     report['observed_versions'] = observed
     return report
 
@@ -212,8 +173,7 @@ def main(path):
     env.update({'UV_TOOL_DIR': plan['install']['tool_root'], 'UV_CACHE_DIR': str(directory / 'uv-cache'),
                 'WOLTSPACE_WOLTS_DIR': plan['layout']['wolts_dir'], 'WOLTS_DIR': plan['layout']['wolts_dir'],
                 'WOLTSPACE_HOST': plan['layout']['host'], 'WOLTSPACE_PORT': str(plan['layout']['port']),
-                'WOLTSPACE_ISOLATION': 'host',
-                'npm_config_devdir': str(directory / 'node-gyp')})
+                'WOLTSPACE_ISOLATION': 'host'})
     lock_path = Path(plan['install']['tool_root']) / '.woltspace-update.lock'
     try:
         with lock_path.open('a') as lock:

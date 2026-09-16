@@ -98,8 +98,10 @@ box, so Auto is their default and the grant store is ignored.
 ### Upgrading
 
 Run `woltspace update`, or ask any wolt to invoke it on your behalf. The CLI
-reviews independent Python/TUI versions, crossed release notes and migrations,
-stages exact artifacts, updates only changed components and verifies recovery.
+reviews the Python version, crossed release notes and migrations,
+stages the exact Python package and dependencies, then verifies recovery.
+The separately distributed TUI is updated independently; this command does not
+inspect or modify it.
 The platform update skill reviews the same plan and handles applicable approval.
 
 The tui declares the minimum woltspace version it needs and checks it at startup;

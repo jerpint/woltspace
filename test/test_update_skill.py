@@ -3,7 +3,7 @@
 The skill body is prose, so nothing but a test stops it drifting back to the
 container era — a wolt reading it will happily follow whatever it says. These
 are the assertions that would have caught the old body the moment the platform
-stopped being a checkout: no clone to pull, both published artifacts named,
+stopped being a checkout: no clone to pull, the Python update boundary named,
 the control-plane restart spelled out, and the migration directory sitting
 where the wheel can carry it.
 
@@ -45,7 +45,7 @@ def test_no_container_era_mechanics(body, banned, why):
 
 @pytest.mark.parametrize("needle, why", [
     ("woltspace update", "the CLI owns installation"),
-    ("@woltspace/tui", "the tui half is its own install and must be named"),
+    ("@woltspace/tui", "the separate TUI distribution must be identified as outside the workflow"),
     ("--apply-plan", "agents apply the reviewed plan"),
     ("--check", "checks do not apply updates"),
 ])

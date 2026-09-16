@@ -7,8 +7,9 @@ user_invocable: true
 # Update Woltspace
 
 Use the installed `woltspace update` CLI. It owns version resolution, staging,
-installation, control-plane restart and verification. The `woltspace` wheel and
-optional globally installed `@woltspace/tui` have independent versions.
+installation, control-plane restart and verification for the Python package only.
+The separately distributed npm `@woltspace/tui` is outside this workflow; do not check or
+update it as part of a Woltspace update.
 
 ## Check and review
 
@@ -18,11 +19,8 @@ inside the wolt's private workspace. If the CLI is unavailable, explain the
 [one-time manual bootstrap](../../../docs/updates.md); do not
 silently implement another update procedure.
 
-Report every component marked `skipped` and its reason; do not call a skipped
-TUI current or updated. Missing TUI notes retain that installed version while
-a reviewed wheel update may proceed. Missing wheel notes still refuse.
-If `changed` is false, report installed versions and any skipped update, then finish. Otherwise summarize
-both components, every crossed release note and every migration in the plan.
+If `changed` is false, report the installed Python version and finish. Otherwise
+summarize the Python target, every crossed release note and every migration.
 Do not infer safety or migration absence from a patch version. Explain any
 breaking behavior and outstanding manual actions. The migration prose comes
 from `container/migrations/` at the reviewed release commit and is checked
@@ -49,7 +47,7 @@ new plan and review the difference before retrying.
 
 ## Report
 
-Report the exact installed versions, health, connectors and session adoption
+Report the exact installed Python version, health, connectors and session adoption
 from the updater's result. A nonzero exit or partial failure is not success;
 name what completed, what failed and the recorded recovery result. Do not
 blindly retry an installation or claim rollback happened.

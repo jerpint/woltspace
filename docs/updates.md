@@ -6,24 +6,22 @@ For native uv tool installations, run:
 woltspace update
 ```
 
-The command checks Woltspace on PyPI and the optional global `@woltspace/tui`
-on npm independently. It prints all crossed release notes, migrations and
-session impact, asks once, stages exact versions and dependencies, then applies
-from the warmed caches. Only changed components are installed. A TUI target
-without matching GitHub release notes is skipped and reported; it cannot block a
-reviewed Python update. A missing Python release note blocks that update. The Python
-installation preserves its existing extras, including `connectors`.
-
-TUI staging rehearses native/lifecycle build scripts in an isolated global npm
-prefix before the control plane stops. The final installation still runs its
-scripts, so staging reduces build surprises but cannot guarantee the live install
-will succeed.
+The command updates only the Woltspace Python package from PyPI. It prints
+all crossed Python release notes, migrations and session impact, asks once,
+stages the exact version and dependencies, then applies from warmed caches.
+Missing Python release notes block the update. Existing extras, including
+`connectors`, are preserved. The separately distributed npm TUI is not checked
+or updated; TUI updates remain a separate manual operation for now. The user
+owns that separate npm upgrade. Review its release notes and minimum lodge
+version first: a newer TUI can refuse to start against an older lodge. Update
+the lodge to the required minimum before using that TUI. The existing TUI
+checks its minimum lodge version; the lodge does not enforce a TUI version.
 
 A small standalone updater runs under the base Python interpreter before uv
 replaces its tool environment. It stops only a previously running control plane
 when the Python package changes, restarts it, and checks versions, health,
 previously running connectors and session adoption. An initially stopped lodge
-stays stopped. A TUI-only update leaves the control plane running.
+stays stopped.
 
 The tunnel and chat connectors are unavailable during the restart. tmux sessions
 survive; existing sessions keep the instructions they loaded at startup. New
@@ -50,7 +48,8 @@ woltspace update --check --json --plan ./update-plan.json
 woltspace update --apply-plan ./update-plan.json --yes
 ```
 
-A saved plan pins versions. Applying it does not fetch a new latest version.
+A saved plan pins the Python version. Plans from the earlier combined Python/TUI
+format are rejected; create a new plan. Applying it does not fetch a new latest version.
 Changed installation or control-plane identity invalidates the plan. Keep plan
 and result files private; they include local runtime metadata.
 
@@ -72,9 +71,8 @@ fresh installation.
 
 Native uv tool installs using ordinary registry requirements and stable
 three-part release versions (optionally `.postN`) are supported.
-Custom uv sources, options, additional requirements, pip/source installs and
-TUI installations outside npm global management need manual upgrades. The updater
-does not install a missing TUI. It does not use sudo or change the user's shell.
+Custom uv sources, options, additional requirements and pip/source installs
+need manual upgrades. The updater does not inspect or modify TUI installations. It does not use sudo or change the user's shell.
 
 In external/container isolation, native lifecycle commands including `update`
 are absent. Update the container through host-side container tooling. Native

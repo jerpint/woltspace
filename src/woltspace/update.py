@@ -17,7 +17,7 @@ from packaging.version import Version, InvalidVersion
 from . import __version__
 from .layout import RuntimeLayout
 from .instance import inspect_instance
-from .update_worker import SUPPORTED_VERSION
+from .update_worker import SUPPORTED_VERSION, validate_versions, Failure
 
 API = 'https://api.github.com/repos/jerpint/woltspace'
 
@@ -83,7 +83,7 @@ def stable(value):
 
 
 def release_notes(components):
-    """Page through both tag streams; review every published crossed release."""
+    """Review every published crossed Python release."""
     changed = [c for c in components if c['changed']]
     if not changed:
         return []
@@ -108,14 +108,8 @@ def release_notes(components):
         raise UpdateError('Release history is too large to review completely.')
     for component in changed:
         if not any(n['component'] == component['name'] and n['version'] == component['target'] for n in notes):
-            if component['name'] == '@woltspace/tui':
-                component['changed'] = False
-                component['skipped'] = (f"TUI {component['target']} skipped: missing GitHub release notes. "
-                    f"Publish/review the tui-v{component['target']} release, then check again. "
-                    "The installed TUI is retained; a reviewed wheel update may proceed.")
-            else:
-                raise UpdateError(f"Release notes missing for {component['name']} {component['target']}; "
-                    f"publish/review the v{component['target']} GitHub release before applying.")
+            raise UpdateError(f"Release notes missing for {component['name']} {component['target']}; "
+                f"publish/review the v{component['target']} GitHub release before applying.")
     return sorted(notes, key=lambda n: (n['component'], Version(n['version'])))
 
 
@@ -156,34 +150,12 @@ def build_plan(layout):
     wheel = {'name': 'woltspace', 'current': __version__, 'target': target,
              'tag_prefix': 'v', 'changed': Version(target) > Version(__version__)}
     components = [wheel]
-    npm = shutil.which('npm')
-    tui = None
-    if npm:
-        root = Path(run([npm, 'root', '-g']))
-        metadata = root / '@woltspace' / 'tui' / 'package.json'
-        if metadata.is_file():
-            installed = json.loads(metadata.read_text())
-            if installed.get('name') != '@woltspace/tui':
-                raise UpdateError('Global TUI package identity mismatch.')
-            registry = get_json('https://registry.npmjs.org/@woltspace%2Ftui/latest')
-            target_tui = str(stable(registry['version']) or '')
-            if not target_tui:
-                raise UpdateError('npm did not return a stable TUI release.')
-            tui = {'name': '@woltspace/tui', 'current': installed['version'],
-                   'target': target_tui, 'tag_prefix': 'tui-v',
-                   'changed': Version(target_tui) > Version(installed['version']),
-                   'dist': registry['dist'], 'npm': npm,
-                   'root': str(root)}
-            components.append(tui)
-    local_tui = shutil.which('woltspace-tui-service')
-    if local_tui and not tui:
-        raise UpdateError('TUI is installed outside npm global management; update it manually.')
     notes = release_notes(components)
     migration = migrations(__version__, target) if wheel['changed'] else []
     current = inspect_instance(layout)
     if current['state'] not in {'healthy', 'stopped'}:
         raise UpdateError(f"Control plane is {current['state']}; resolve it before updating.")
-    return {'schema': 1, 'install': install, 'components': components, 'notes': notes,
+    return {'schema': 2, 'install': install, 'components': components, 'notes': notes,
             'migrations': migration, 'layout': {'wolts_dir': str(layout.wolts_dir),
             'host': layout.host, 'port': layout.port}, 'instance': current,
             'changed': any(c['changed'] for c in components),
@@ -194,10 +166,6 @@ def print_plan(plan):
     for component in plan['components']:
         print(f"{component['name']}: {component['current']} → {component['target']}" +
               (' (update)' if component['changed'] else ' (unchanged)'))
-        if component.get('skipped'):
-            print(component['skipped'])
-    if len(plan['components']) == 1:
-        print('TUI: no managed global installation; no TUI will be installed.')
     for note in plan['notes']:
         print(f"\n{note['component']} {note['version']}: {note['url']}\n{note['body']}")
     for migration in plan['migrations']:
@@ -206,8 +174,6 @@ def print_plan(plan):
         print('\n' + plan['impact'])
         if plan['migrations']:
             print('Migration instructions require separate review; no migration script runs automatically.')
-    elif any(c.get('skipped') for c in plan['components']):
-        print('No reviewed updates to apply. Skipped components remain at installed versions.')
     else:
         print('Already current. Nothing changed.')
 
@@ -217,8 +183,8 @@ def command(args):
     try:
         if args.apply_plan:
             plan = json.loads(Path(args.apply_plan).read_text())
-            if plan.get('schema') != 1:
-                raise UpdateError('Unsupported update plan schema.')
+            if plan.get('schema') != 2:
+                raise UpdateError('Unsupported update plan schema; regenerate with woltspace update --check --json --plan <path>.')
             # Re-plan exact versions only through saved plan; never resolve latest on apply.
             install = native_install()
             if plan['install'] != install or plan['components'][0]['current'] != __version__:
@@ -228,6 +194,7 @@ def command(args):
                 raise UpdateError('Plan belongs to another lodge endpoint.')
         else:
             plan = build_plan(RuntimeLayout.from_env())
+        validate_versions(plan)
         if args.json:
             print(json.dumps(plan, indent=2))
         else:
@@ -255,7 +222,7 @@ def command(args):
         path.chmod(0o600)
         sys.stdout.flush()
         os.execv(plan['install']['python'], [plan['install']['python'], str(worker), str(path)])
-    except (UpdateError, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+    except (UpdateError, Failure, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
         if directory is not None:
             shutil.rmtree(directory)
         print(f'Update failed before handoff: {exc}', file=sys.stderr)
