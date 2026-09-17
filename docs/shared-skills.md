@@ -1,0 +1,69 @@
+# Shared lodge skills
+
+Teach a local workflow once and make it available to every wolt in your lodge.
+Shared skills live in your lodge data, alongside your wolts, rather than inside
+Woltspace's installed package. They are local to this lodge: Woltspace does not
+publish, upload, fetch or distribute them.
+
+## Add a skill
+
+The source folder is `$WOLTSPACE_WOLTS_DIR/.space/shared-skills/` (normally
+`~/.woltspace/wolts/.space/shared-skills/` on native installs and
+`/workspace/wolts/.space/shared-skills/` in containers). Woltspace creates this
+folder during skill refresh.
+
+Each skill is a folder named `lodge-<name>` containing a standard `SKILL.md`:
+
+```text
+.space/shared-skills/
+  lodge-github-practice/
+    SKILL.md
+    references/             # optional
+    scripts/                # optional
+```
+
+```markdown
+---
+name: lodge-github-practice
+description: Use this lodge's GitHub bot identity for commits and pull requests.
+---
+
+Follow the lodge's reviewed GitHub workflow and verify commit attribution.
+```
+
+The directory and frontmatter name must match. Use lowercase letters, numbers
+and single dashes, starting with `lodge-`, with at most 64 characters total.
+Bare names and single/double-quoted name values are supported. Invalid or missing
+names are skipped with a warning; Woltspace never rewrites your shared files.
+Skill directories must be real local directories, not symlinks. `SKILL.md` must
+remain inside its skill directory.
+
+## Discovery and ownership
+
+Woltspace refreshes links at lodge startup, when creating a wolt, and before
+launching or resuming a platform-managed agent session. A new session discovers
+new skills without a lodge restart. Already running sessions can retain their
+loaded skill lists and instructions; start a new session after changing skills.
+Directly launching a harness outside Woltspace does not run this refresh.
+
+Each skill gets a relative link in the wolt's `.claude/skills/`. Claude and
+OpenCode use that path; Codex uses the existing `.agents/skills` bridge. If the
+wolt owns a separate `.agents/skills` directory, links are added there too.
+This works independently of platform copy/plugin skill delivery.
+
+A real skill directory or unrelated symlink at the same name is a per-wolt
+override and is preserved with a warning. In a separately owned `.agents/skills`
+directory, that directory's override applies to harnesses using it. Remove the
+override to receive the shared version on the next refresh. To customize a linked
+skill for one wolt, replace the link with a local copy first; editing through the
+link changes the shared source for everyone.
+
+Removing or renaming a shared skill removes only Woltspace's matching links on
+next refresh, including dangling links. Wolt-owned files are never deleted.
+Platform upgrades update platform skills and leave shared source contents alone.
+The folder is part of your lodge data and normal data backups; “local” does not
+exclude a backup you explicitly create.
+
+Shared skill discovery does not grant permission to edit outside a wolt's own
+workspace or access credentials. Lodge owners manage these shared files, and
+agents still follow their existing workspace and consent rules.
