@@ -36,6 +36,13 @@ stub external processes or HTTP calls unless that behavior is the test subject.
 Site and onboarding probes disable the public tunnel; tunnel configuration and
 process behavior have separate tests.
 
+The livereload subprocess probe explicitly closes its websocket and waits for
+the ASGI handler to finish before leaving TestClient's websocket context.
+TestClient otherwise cancels that handler immediately after sending the
+disconnect, which can leave a native file-watch worker running at interpreter
+exit. The probe still requires a clean subprocess exit; it does not bypass
+shutdown. This exercises graceful disconnect, not forced server cancellation.
+
 The historical suite can be investigated with `python -m pytest test -q` in an
 isolated checkout/environment. Some groups depend on a running lodge, Telegram
 configuration, or authenticated agents. Existing `requires_*` markers and

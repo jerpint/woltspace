@@ -109,15 +109,30 @@ class TestSitePathsResolveFromTheLayout:
             from starlette.testclient import TestClient
             import server.app as app_module
             page = layout.wolts_dir / "sitewolt" / "wolt" / "site" / "index.html"
-            with TestClient(app_module.app) as client:
+            disconnected = threading.Event()
+            async def observed_app(scope, receive, send):
+                try:
+                    await app_module.app(scope, receive, send)
+                finally:
+                    if scope["type"] == "websocket":
+                        disconnected.set()
+            with TestClient(observed_app) as client:
                 with client.websocket_connect(
                     "/wolt/sitewolt/site/livereload"
                 ) as socket:
                     def edit():
                         time.sleep(1.0)
                         page.write_text("<html><body>edited</body></html>")
-                    threading.Thread(target=edit, daemon=True).start()
+                    editor = threading.Thread(target=edit)
+                    editor.start()
                     message = socket.receive_text()
+                    editor.join(timeout=5)
+                    assert not editor.is_alive()
+                    # TestClient's context exit closes the socket and immediately
+                    # cancels its ASGI scope. Let the real disconnect finish the
+                    # watcher first, as a browser disconnect would.
+                    socket.close()
+                    assert disconnected.wait(timeout=10), "livereload did not disconnect"
             print(json.dumps({"message": message}))
             """,
             {"WOLTSPACE_WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
