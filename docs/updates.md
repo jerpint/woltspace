@@ -55,6 +55,14 @@ attempts to start the lodge again. Reports include completed actions, observed
 version and recovery results; there is no automatic rollback. A verified package
 update does not imply migrations are complete.
 
+There is no rollback through this command, including after a successful update
+to a faulty release. A rollback requires a manual pinned
+`uv tool install --force 'woltspace[connectors]==OLDER_VERSION'`, preserving your
+installed extras and stopping/restarting the control plane around replacement.
+First verify the older code can read the current on-disk state; migrations may
+require restoring a compatible backup. Installing an older package alone does
+not reverse a migration.
+
 Private reports remain under `.space/platform/updates/`, with their paths printed.
 Owned staging environments/caches are removed on completion or failure; a hard
 process kill can leave temporary files. Internal worker handoff files are not a
