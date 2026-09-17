@@ -38,7 +38,8 @@ administration access or add any bot as an environment reviewer.
    Only after registry trust and approval settings are correct, set repository
    Actions variable **`TRUSTED_PUBLISHING_ENABLED=true`** in
    [Actions variables](https://github.com/jerpint/woltspace/settings/variables/actions).
-   Until then, a manual publish run fails before entering publishing jobs.
+   Until then, a real publish run fails before entering publishing jobs.
+   Dry-run gate rehearsals do not need this variable or registry trust.
 
 The workflow rechecks both approval environments before staging artifacts in
 publishing jobs. Missing, unreadable, or insufficient protection is a failure,
@@ -50,7 +51,11 @@ promise depends on preserving those settings and workflow review rules.
 
 Merge the reviewed release preparation and workflow changes into `main`, then
 open Actions → **Publish reviewed release pair** → Run workflow. Select `main`
-and enter the exact Python and TUI versions declared by that commit. Inspect
+and enter the exact Python and TUI versions declared by that commit.
+**Dry run defaults to true**: leave it on first to exercise both approval waits
+with no OIDC permission, registry publishing or GitHub release writes. After the
+rehearsal verifies the gate, turn dry run off only for an explicitly authorized
+release with registry trust configured and the owner enable variable set. Inspect
 the commit, versions and artifact digests in the summary, then use **Review
 deployments** to approve `pypi`. After Python is published and downloaded back
 successfully, approve the `npm` deployment separately. There is no automatic

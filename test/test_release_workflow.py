@@ -248,3 +248,25 @@ def test_release_asset_mismatch_does_not_publish_draft(artifacts, monkeypatch):
         release.finalize()
     assert releases['tui-v0.5.2']['draft']
     assert not any(call[:2] == ('release', 'edit') for call in calls)
+
+
+@pytest.mark.parametrize('status', [401, 403, 429, 500])
+def test_registry_read_errors_never_become_publish_permission(monkeypatch, status):
+    import urllib.error
+    def fail(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, status, 'registry unavailable', {}, None)
+    monkeypatch.setattr(release.urllib.request, 'urlopen', fail)
+    with pytest.raises(urllib.error.HTTPError):
+        release.get_json('https://registry.npmjs.org/example/1.0.0', missing_ok=True)
+
+
+@pytest.mark.parametrize('registry', ['python', 'npm'])
+def test_prepare_rejects_version_confirmation_for_another_commit(artifacts, monkeypatch, registry):
+    monkeypatch.setattr(release, 'check_environments', lambda: None)
+    (release.ROOT / 'pyproject.toml').write_text('[project]\nversion="0.5.5"\n')
+    (release.ROOT / 'tui').mkdir()
+    (release.ROOT / 'tui/package.json').write_text('{"version":"0.5.2"}')
+    monkeypatch.setenv('EXPECTED_PYTHON', '0.5.5' if registry == 'npm' else '0.5.4')
+    monkeypatch.setenv('EXPECTED_TUI', '0.5.2' if registry == 'python' else '0.5.1')
+    with pytest.raises(RuntimeError, match='Confirm'):
+        release.prepare()
