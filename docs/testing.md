@@ -14,7 +14,7 @@ For checkout tests, install Python and both Node dependency sets:
 python -m pip install '.[test]'
 npm ci
 npm ci --prefix tui
-export PYTHONPATH="$PWD/src:$PWD/container/lib"
+export PYTHONPATH="$PWD:$PWD/src:$PWD/container/lib"
 export WOLTSPACE_DIR="$PWD"
 python -m pytest -q test/test_lodge_skills.py test/test_skills_sync.py \
   test/test_session_target_api.py test/test_execution_policy.py \

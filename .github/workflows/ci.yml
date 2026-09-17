@@ -22,7 +22,7 @@ jobs:
       matrix:
         python: ['3.11', '3.13']
     env:
-      PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/container/lib
+      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src:${{ github.workspace }}/container/lib
       WOLTSPACE_DIR: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
