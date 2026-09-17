@@ -1,66 +1,89 @@
 ---
 name: update
-description: Check or update native Woltspace; review release context and invoke the Python-only update CLI on the user's behalf. Container lifecycle belongs to host tooling.
+description: Check or upgrade native Woltspace from a running lodge session using uv; review releases, handle consent, stop/start and verify recovery. Container lifecycle belongs to host tooling.
 user_invocable: true
 ---
 
 # Update Woltspace
 
-The skill owns release context and consent. The CLI performs the mechanical
-Python update: stop a running control plane, install through uv, attempt restart
-even on install failure, and check the installed version. Downloads happen during
-downtime; a failed install can also leave the CLI unable to restart.
-The separate npm `@woltspace/tui` is outside this workflow.
+Use standard uv commands, not a self-update engine. This workflow updates the
+Python package only; the separate npm `@woltspace/tui` is outside its scope.
+See [manual update instructions](../../../docs/updates.md).
 
-Run `woltspace update --check` to inspect the installed and available Python
-versions without applying. Routine checks need no install consent. If the
-command is unavailable, explain the [one-time bootstrap](../../../docs/updates.md).
-Do not substitute a hand-written installer/restart sequence.
+## Review and authorize
 
-Before applying, choose one exact stable three-part target. Review its published
-GitHub release notes and every crossed Python release (`vVERSION` tags), including
-breaking behavior and migrations under `container/migrations/` at the reviewed release commit. Do not infer migration absence from patch versions. If notes or
-migration context cannot be verified, explain what is missing and stop before
-installation. Remember the chosen version; do not switch to latest at apply time.
-Use `woltspace update --check --to VERSION` to inspect that exact target without
-applying, when confirming its availability.
+Check the installed version with `woltspace --version` and choose an exact
+published Python release. Review its PyPI availability/withdrawal status, all
+crossed GitHub release notes (`vVERSION`) and migrations under
+`container/migrations/` at the reviewed release commit. Do not infer migration
+absence from a patch version. Confirm the target is not yanked/withdrawn before
+installing: an exact pin can select a release that was pulled for being broken.
+Never install a version lower than the installed one in this update workflow;
+a package downgrade cannot reverse a migration. If context cannot be verified, report the gap
+before installing. If already current, say so and finish.
 
-A check request is not installation consent. Obtain authorization covering that
-version, downtime and required manual actions unless existing session or standing
-permission already covers them. Do not ask again when authorization suffices.
-New incompatible requirements need human input. Do not create a schedule unless
-requested.
+A check request is not installation consent. Summarize the chosen version,
+breaking behavior, migration actions and downtime. Obtain approval unless
+session or applicable standing permission already covers them; do not ask again
+when it suffices. New incompatible requirements need human input. Do not create
+a schedule unless requested.
 
-Tell the user the control plane, tunnel and connectors briefly go offline.
-tmux sessions survive, but existing sessions keep loaded instructions; new
-sessions load updated skills and prompts.
+## Upgrade from the session
 
-Before applying, run `woltspace status --json` and retain the connector diagnostics
-(`state`, `restarts`, `last_exit_code`, `started_at`, `error`) and session adoption.
-Report any pre-existing non-running/degraded connector as a known prior condition.
-These fields are reported diagnostics: `state` and recorded errors can be stale,
-even when messaging works. Do not treat state alone as proof of an outage or
-silently ignore it. If the baseline is unavailable, report that verification gap.
+Ensure commands address the installed native CLI and same lodge environment,
+not a checkout launcher or a container runtime. Confirm uv manages this install
+and preserve its extras/installation recipe. Source/pip installations need their
+own upgrade workflow; do not convert them with uv tool install.
+Custom sources/options must not be silently replaced with a registry install; if the recipe is unclear, stop and
+report it. There is no need to install a new update command first.
 
-Run `woltspace update --to VERSION` using the exact reviewed version. This is an
-explicit install instruction and does not prompt; use it only with authorization.
-Do not issue separate installer or restart commands. Bare `woltspace update` is
-the human convenience path: check the latest version, show impact and confirm.
+Run `woltspace status --json` before applying. Record whether it is running and
+retain connector diagnostics (`state`, `restarts`, `last_exit_code`, `started_at`,
+`error`) and session adoption. Report pre-existing degraded conditions. If lodge
+state cannot be established or it is unhealthy/conflicting, resolve that before
+stopping or replacing the package.
 
-Report the observed installed version and any restart failure. After updating,
-run `woltspace status --json` and compare health, all connector diagnostics and
-session adoption with the baseline; the updater does not verify those. A new
-`started_at` is expected after restart; reset counters or a changed state alone
-are not failures. Distinguish prior conditions, transient startup and new errors.
-If a connector is not yet running or adoption is incomplete, re-check at roughly
-5-second intervals for up to 30 seconds before concluding recovery is incomplete.
-Report conditions that persist, including their diagnostics and any uncertainty
-about actual messaging availability; do not call a sticky flag proof of failure.
-If status cannot be obtained, explicitly report incomplete verification. A nonzero exit is not success. Do not blindly retry
-or claim rollback. Migration instructions are not executed by the CLI: carry
-out only actions covered by user permission and workspace rules, otherwise
-report them as pending. Package verification does not mean migrations are done.
+Warn that the control plane, tunnel and connectors go offline during installation,
+including downloads. The native tmux session survives and can execute uv and
+start the lodge again; browser/chat routing returns after restart. Existing
+sessions retain loaded instructions; new sessions load newly synced skills.
 
-In external/container isolation, native lifecycle commands are absent; hand
-updates to host-side container tooling. Native start syncs the platform skill;
+If running, run `woltspace stop`; confirm it succeeded before installing.
+Install the exact reviewed version using the ordinary uv command, for example:
+
+```sh
+uv tool install --force 'woltspace[connectors]==VERSION'
+```
+
+Replace VERSION with the reviewed version and preserve all installed extras.
+Do not resolve latest again after authorization. `uv tool upgrade woltspace` is
+the ordinary latest-upgrade command, but respects installed version constraints;
+use the exact install command for this reviewed-version workflow.
+
+If you stopped the lodge, attempt `woltspace start` even when installation fails.
+An initially stopped lodge stays stopped. If replacement damaged the CLI and
+start fails, report both failures and the need for manual uv repair. Do not
+blindly retry or claim rollback. A nonzero installer exit is not success.
+
+## Check and report
+
+Run `woltspace --version` and `woltspace status --json` afterwards. Confirm the
+observed version matches the chosen release and compare health, connector
+diagnostics and adoption with the baseline. New `started_at` and reset counters
+are expected after restart; state/errors can be stale even while messaging
+works. Distinguish prior conditions, transient startup and new errors.
+
+For incomplete startup, re-check about every 5 seconds for up to 30 seconds.
+Report persistent conditions with diagnostics and uncertainty about messaging;
+do not treat a sticky flag alone as proof of an outage or silently ignore it.
+If status is unavailable, explicitly report incomplete verification. Do not
+report a stopped lodge as failed recovery when it was stopped initially.
+
+Migration instructions are not executed by uv. Carry out only actions covered
+by user permission and workspace rules; report others as pending. Package
+installation does not mean migrations are done. Native start syncs skills;
 there is no separate skill installation step.
+
+For external/container lodges, hand updates to host-side container tooling.
+Do not run native stop/install/start against a container lodge or live host
+from inside the container.

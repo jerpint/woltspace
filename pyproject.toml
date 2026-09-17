@@ -18,7 +18,6 @@ dependencies = [
     # makes the lodge palette safe: it drops every escape when stdout is not a
     # terminal, so `woltspace status | cat` stays plain parseable text.
     "rich",
-    "packaging",
 ]
 
 [project.scripts]

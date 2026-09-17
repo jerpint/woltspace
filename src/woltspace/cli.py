@@ -594,7 +594,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command")
-    native = os.environ.get("WOLTSPACE_ISOLATION", "host") != "external"
     session = sub.add_parser(
         "session",
         help="sessions (delegated to the bundled control client)",
@@ -607,14 +606,13 @@ def build_parser() -> argparse.ArgumentParser:
     paths.add_argument("--json", action="store_true")
     paths.set_defaults(func=_paths)
 
-    if native:
-        doctor = sub.add_parser("doctor", help="check native runtime prerequisites")
-        doctor.add_argument("--json", action="store_true")
-        doctor.add_argument("--host", default="")
-        doctor.add_argument("--port", type=int, default=0)
-        doctor.add_argument("--isolation", choices=("host", "external"), default="host")
-        doctor.add_argument("--no-port", action="store_true", help=argparse.SUPPRESS)
-        doctor.set_defaults(func=_doctor)
+    doctor = sub.add_parser("doctor", help="check native runtime prerequisites")
+    doctor.add_argument("--json", action="store_true")
+    doctor.add_argument("--host", default="")
+    doctor.add_argument("--port", type=int, default=0)
+    doctor.add_argument("--isolation", choices=("host", "external"), default="host")
+    doctor.add_argument("--no-port", action="store_true", help=argparse.SUPPRESS)
+    doctor.set_defaults(func=_doctor)
 
     serve = sub.add_parser("serve", help="run the control plane in the foreground")
     serve.add_argument("--host", default="")
@@ -626,23 +624,22 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--instance-id", default="", help=argparse.SUPPRESS)
     serve.set_defaults(func=_serve)
 
-    if native:
-        start = sub.add_parser("start", help="start the native control plane")
-        start.add_argument("--host", default="")
-        start.add_argument("--port", type=int, default=0)
-        start.add_argument("--timeout", type=float, default=15.0)
-        start.add_argument("--json", action="store_true")
-        start.set_defaults(func=_start)
+    start = sub.add_parser("start", help="start the native control plane")
+    start.add_argument("--host", default="")
+    start.add_argument("--port", type=int, default=0)
+    start.add_argument("--timeout", type=float, default=15.0)
+    start.add_argument("--json", action="store_true")
+    start.set_defaults(func=_start)
 
-        status = sub.add_parser("status", help="inspect native control-plane ownership")
-        status.add_argument("--json", action="store_true")
-        status.add_argument("--isolation", choices=("host", "external"), default="host")
-        status.set_defaults(func=_status)
+    status = sub.add_parser("status", help="inspect native control-plane ownership")
+    status.add_argument("--json", action="store_true")
+    status.add_argument("--isolation", choices=("host", "external"), default="host")
+    status.set_defaults(func=_status)
 
-        stop = sub.add_parser("stop", help="stop only the native control plane")
-        stop.add_argument("--timeout", type=float, default=10.0)
-        stop.add_argument("--json", action="store_true")
-        stop.set_defaults(func=_stop)
+    stop = sub.add_parser("stop", help="stop only the native control plane")
+    stop.add_argument("--timeout", type=float, default=10.0)
+    stop.add_argument("--json", action="store_true")
+    stop.set_defaults(func=_stop)
 
     entrypoint = sub.add_parser(
         "container-entrypoint",
@@ -663,48 +660,41 @@ def build_parser() -> argparse.ArgumentParser:
     restore.add_argument("--json", action="store_true")
     restore.set_defaults(func=_restore)
 
-    if native:
-        auto = sub.add_parser(
-            "auto", help="manage repository-scoped Auto consent for native sessions"
-        )
-        auto.set_defaults(func=_auto, auto_parser=auto)
-        auto_sub = auto.add_subparsers(dest="verb")
+    auto = sub.add_parser(
+        "auto", help="manage repository-scoped Auto consent for native sessions"
+    )
+    auto.set_defaults(func=_auto, auto_parser=auto)
+    auto_sub = auto.add_subparsers(dest="verb")
 
-        auto_grant = auto_sub.add_parser(
-            "grant", help="let a wolt work unattended in one exact directory"
-        )
-        auto_grant.add_argument("wolt")
-        auto_grant.add_argument(
-            "--workdir", default="", help="directory to approve (default: the wolt's home)"
-        )
-        auto_grant.add_argument("--json", action="store_true")
-        auto_grant.set_defaults(func=_auto_grant)
+    auto_grant = auto_sub.add_parser(
+        "grant", help="let a wolt work unattended in one exact directory"
+    )
+    auto_grant.add_argument("wolt")
+    auto_grant.add_argument(
+        "--workdir", default="", help="directory to approve (default: the wolt's home)"
+    )
+    auto_grant.add_argument("--json", action="store_true")
+    auto_grant.set_defaults(func=_auto_grant)
 
-        auto_revoke = auto_sub.add_parser(
-            "revoke", help="withdraw one wolt's Auto consent for a directory"
-        )
-        auto_revoke.add_argument("wolt")
-        auto_revoke.add_argument(
-            "--workdir", default="", help="directory to revoke (default: the wolt's home)"
-        )
-        auto_revoke.add_argument("--json", action="store_true")
-        auto_revoke.set_defaults(func=_auto_revoke)
+    auto_revoke = auto_sub.add_parser(
+        "revoke", help="withdraw one wolt's Auto consent for a directory"
+    )
+    auto_revoke.add_argument("wolt")
+    auto_revoke.add_argument(
+        "--workdir", default="", help="directory to revoke (default: the wolt's home)"
+    )
+    auto_revoke.add_argument("--json", action="store_true")
+    auto_revoke.set_defaults(func=_auto_revoke)
 
-        auto_list = auto_sub.add_parser("list", help="show every standing Auto grant")
-        auto_list.add_argument("--json", action="store_true")
-        auto_list.set_defaults(func=_auto_list)
+    auto_list = auto_sub.add_parser("list", help="show every standing Auto grant")
+    auto_list.add_argument("--json", action="store_true")
+    auto_list.set_defaults(func=_auto_list)
 
     tui = sub.add_parser("tui", help="open the terminal UI")
     tui.add_argument("--dry-run", action="store_true", help="show resolution without launching")
     tui.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
     tui.add_argument("tui_args", nargs=argparse.REMAINDER)
     tui.set_defaults(func=_tui)
-    if native:
-        from .update import command as update_command
-        update = sub.add_parser("update", help="update the native uv-installed Python package")
-        update.add_argument("--check", action="store_true", help="check without applying")
-        update.add_argument("--to", metavar="VERSION", help="install this exact stable version without prompting")
-        update.set_defaults(func=update_command)
     return parser
 
 

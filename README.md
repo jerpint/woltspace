@@ -13,5 +13,5 @@ The Tauri 2 desktop shell, browser preview, and build instructions live in [desk
 
 ## Updates
 
-Native uv installs use `woltspace update`, directly or through a wolt.
-See [the update workflow and older-version bootstrap](docs/updates.md).
+Ask your wolt to update a native lodge, or use the standard uv upgrade workflow.
+See [the update instructions](docs/updates.md).

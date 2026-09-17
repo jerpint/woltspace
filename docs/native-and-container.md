@@ -97,21 +97,17 @@ box, so Auto is their default and the grant store is ignored.
 
 ### Upgrading
 
-Run `woltspace update` to check the Python release, confirm and mechanically
-update the native uv installation. `--check` only inspects; `--to VERSION`
-installs an exact published target without prompting. A wolt's update skill
-handles release notes, migration context and user authorization before invoking
-that exact target. The command stops a running control plane, installs through
-uv, attempts a restart even on installation failure, and checks the installed
-version. Check connector recovery separately with `woltspace status`. The separately distributed TUI is not
-inspected or modified.
+Ask a wolt to update the lodge, or follow the documented manual uv workflow.
+The update skill reviews release notes and migrations, obtains applicable
+consent, stops a running control plane, installs the exact reviewed version
+through uv, starts it again and checks recovery. There is no self-update CLI.
 
 The tui declares the minimum woltspace version it needs and checks it at startup;
 woltspace does not check the tui's version. The two artifacts release independently.
+TUI upgrades remain separate; a newer TUI can refuse to start against an older lodge.
 
-See [updates.md](updates.md) for the complete workflow, agent controls,
-limitations and the one-time manual upgrade for releases without this command.
-Live native tmux sessions survive; existing sessions retain loaded instructions.
+See [updates.md](updates.md) for commands and limitations. Native tmux sessions
+survive the control-plane restart; existing sessions retain loaded instructions.
 Container updates belong to host-side container tooling.
 
 ### Installing before the packages are published

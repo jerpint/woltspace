@@ -44,10 +44,10 @@ def test_no_container_era_mechanics(body, banned, why):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("needle, why", [
-    ("woltspace update", "the CLI owns installation"),
+    ("uv tool install", "uv installs the exact reviewed Python release"),
     ("@woltspace/tui", "the separate TUI distribution must be identified as outside the workflow"),
-    ("--to", "agents apply an exact reviewed version"),
-    ("--check", "checks do not apply updates"),
+    ("woltspace stop", "stop the native control plane before replacing its package"),
+    ("woltspace start", "restart is also where skills sync"),
 ])
 def test_names_the_real_mechanics(body, needle, why):
     assert needle in body, f"update skill never mentions {needle!r}: {why}"

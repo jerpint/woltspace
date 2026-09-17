@@ -778,7 +778,7 @@ RESTORE
     fi
     ;;
   update)
-    echo "Use the installed native CLI: ~/.local/bin/woltspace update" >&2
+    echo "For native uv installs, ask your wolt to update or follow docs/updates.md (stop, uv upgrade/install, start)." >&2
     echo "Container updates use host-side container tooling; this legacy launcher does not update the platform." >&2
     exit 2
     ;;
