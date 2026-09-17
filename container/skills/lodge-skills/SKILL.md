@@ -46,6 +46,14 @@ the skill directory when useful. Skill directories cannot be symlinks, and
 `SKILL.md` must remain inside its own skill directory. Invalid/mismatched names
 are warned about and skipped, never silently renamed.
 
+## Shared-edit notice
+
+Refresh automatically adds a marked notice after each shared skill’s frontmatter,
+pointing at its shared source and explaining that edits persist for all linked
+wolts. Woltspace maintains only that block, preserving workflow instructions.
+Read a refresh warning as incomplete notice installation, not proof of success.
+Private per-wolt skills do not receive this notice.
+
 ## Discover and verify
 
 Links refresh during lodge startup, wolt creation, and before a platform-managed
@@ -65,6 +73,7 @@ through a link edits the shared source for everyone. Removing an override lets
 the next refresh deliver the shared version. Removal/rename of a shared source
 removes only Woltspace-owned links on next refresh, not wolt-owned overrides.
 
-Platform upgrades leave shared source contents alone. They remain part of lodge
+Platform upgrades leave shared workflow instructions alone; the generated notice
+is maintained during refresh. They remain part of lodge
 data backups, which does not make them a distributed skill collection.
 For details, read `docs/shared-skills.md` under `install_root` from `woltspace paths`.

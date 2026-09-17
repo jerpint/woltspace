@@ -38,9 +38,19 @@ Follow the lodge's reviewed GitHub workflow and verify commit attribution.
 The directory and frontmatter name must match. Use lowercase letters, numbers
 and single dashes, starting with `lodge-`, with at most 64 characters total.
 Bare names and single/double-quoted name values are supported. Invalid or missing
-names are skipped with a warning; Woltspace never rewrites your shared files.
+names are skipped with a warning; Woltspace never renames your skills or rewrites their workflow instructions.
 Skill directories must be real local directories, not symlinks. `SKILL.md` must
 remain inside its skill directory.
+
+## Shared-edit notice
+
+During refresh, Woltspace automatically adds a marked notice to each valid shared
+`SKILL.md`, after the frontmatter. It identifies the shared source, tells wolts
+not to edit through their local link, and explains that shared edits persist for
+all linked wolts. The notice is maintained in the source so every link sees the
+same warning; workflow instructions remain intact. It is not added to private
+per-wolt skills. If the source cannot be updated, Woltspace warns rather than
+claiming the notice was installed.
 
 ## Discovery and ownership
 
@@ -64,7 +74,8 @@ link changes the shared source for everyone.
 
 Removing or renaming a shared skill removes only Woltspace's matching links on
 next refresh, including dangling links. Wolt-owned files are never deleted.
-Platform upgrades update platform skills and leave shared source contents alone.
+Platform upgrades update platform skills and leave shared workflow instructions
+alone; shared refresh maintains only the marked notice.
 The folder is part of your lodge data and normal data backups; “local” does not
 exclude a backup you explicitly create.
 

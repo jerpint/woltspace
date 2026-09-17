@@ -3,6 +3,8 @@
 import os
 import re
 import sys
+import stat
+import tempfile
 from pathlib import Path
 
 NAME = re.compile(r"lodge-[a-z0-9]+(?:-[a-z0-9]+)*\Z")
@@ -14,6 +16,55 @@ def shared_skills_dir(wolts_dir: Path) -> Path:
 
 def _warn(message: str) -> None:
     print(f"⚠️  lodge skills: {message}", file=sys.stderr)
+
+
+NOTICE_BEGIN = "<!-- WOLTSPACE:LODGE-SKILL-NOTICE:BEGIN -->"
+NOTICE_END = "<!-- WOLTSPACE:LODGE-SKILL-NOTICE:END -->"
+
+
+def _ensure_notice(skill: Path, text: str, frontmatter_end: int) -> None:
+    """Add/update only the generated body notice, preserving owner instructions."""
+    notice = (
+        f"{NOTICE_BEGIN}\n"
+        "**Shared lodge skill — changes apply to all linked wolts.**\n\n"
+        "Do not edit this skill through a wolt-local skill link. Resolve `wolts_dir`\n"
+        "with `woltspace paths` and edit the shared source at\n"
+        f"`<wolts_dir>/.space/shared-skills/{skill.name}/SKILL.md`.\n"
+        "Edits there persist for every wolt using the shared version; existing\n"
+        "sessions may retain loaded instructions. For a private change, replace\n"
+        "only your wolt's link with a local copy first.\n"
+        f"{NOTICE_END}"
+    )
+    block = re.compile(re.escape(NOTICE_BEGIN) + r".*?" + re.escape(NOTICE_END), re.S)
+    if NOTICE_BEGIN in text and not block.search(text):
+        _warn(f"{skill}: incomplete generated notice — leaving the source alone")
+        return
+    if block.search(text):
+        updated = block.sub(lambda match: notice, text, count=1)
+    else:
+        lines = text.splitlines(keepends=True)
+        header = "".join(lines[:frontmatter_end + 1])
+        updated = header.rstrip("\r\n") + "\n\n" + notice + "\n" + "".join(lines[frontmatter_end + 1:])
+    if updated == text:
+        return
+    path = (skill / "SKILL.md").resolve()
+    staged = None
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=".lodge-skill-notice-", delete=False) as out:
+            staged = Path(out.name)
+            out.write(updated)
+        staged.chmod(mode)
+        if path.read_text() != text:
+            _warn(f"{path} changed during refresh — deferring its notice")
+            return
+        os.replace(staged, path)
+    except OSError as exc:
+        _warn(f"could not add shared-edit notice to {path}: {exc}")
+    finally:
+        if staged is not None:
+            staged.unlink(missing_ok=True)
 
 
 def _sources(root: Path) -> dict[str, Path]:
@@ -47,6 +98,7 @@ def _sources(root: Path) -> dict[str, Path]:
         except (OSError, UnicodeError, ValueError) as exc:
             _warn(f"skipping {skill}: {exc}")
             continue
+        _ensure_notice(skill, text, end)
         sources[skill.name] = skill
     return sources
 
@@ -83,7 +135,7 @@ def _sync_directory(directory: Path, root: Path, sources: dict[str, Path]) -> No
 
 
 def sync_lodge_skills(wolts_dir: Path, wolt_dir: Path) -> None:
-    """Refresh links only; never copy, download or modify shared skill contents.
+    """Refresh links and the shared-edit notice; never copy or download skills.
 
     Missing sources remove only our own links. Real directories and unrelated
     symlinks are per-wolt overrides. Codex normally uses the existing .agents

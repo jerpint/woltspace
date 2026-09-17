@@ -151,3 +151,39 @@ def test_platform_helper_is_delivered_separately_from_shared_skills(tmp_path):
     assert (p / '.agents/skills/lodge-example').resolve() == source.resolve()
     original = repo / 'container/skills/lodge-skills/SKILL.md'
     assert 'name: lodge-skills\n' in original.read_text()
+
+
+def test_notice_is_shared_idempotent_and_does_not_touch_private_skills(tmp_path):
+    from lodge_skills import NOTICE_BEGIN
+    wolts = tmp_path / 'wolts';source = skill(wolts);first = wolt(wolts, 'first');second = wolt(wolts, 'second')
+    original = (source / 'SKILL.md').read_text()
+    private = first / '.claude/skills/private/SKILL.md';private.parent.mkdir(parents=True)
+    private.write_text('Personal instructions')
+    sync_lodge_skills(wolts, first)
+    decorated = (source / 'SKILL.md').read_text()
+    assert decorated.startswith(original.split('---\nOriginal')[0] + '---\n')
+    assert decorated.endswith('\nOriginal\n')
+    assert decorated.count(NOTICE_BEGIN) == 1
+    assert '.space/shared-skills/lodge-example/SKILL.md' in decorated
+    stamp = (source / 'SKILL.md').stat().st_mtime_ns
+    sync_lodge_skills(wolts, second)
+    assert (source / 'SKILL.md').stat().st_mtime_ns == stamp
+    assert (first / '.claude/skills/lodge-example/SKILL.md').read_text() == decorated
+    assert (second / '.agents/skills/lodge-example/SKILL.md').read_text() == decorated
+    assert private.read_text() == 'Personal instructions'
+    (source / 'SKILL.md').write_text(decorated.replace('Original', 'New workflow'))
+    sync_lodge_skills(wolts, first)
+    assert 'New workflow' in (second / '.agents/skills/lodge-example/SKILL.md').read_text()
+
+
+def test_renaming_updates_only_generated_notice_and_preserves_mode(tmp_path):
+    wolts = tmp_path / 'wolts';source = skill(wolts);p = wolt(wolts)
+    (source / 'SKILL.md').chmod(0o640)
+    sync_lodge_skills(wolts, p)
+    new = source.with_name('lodge-new');source.rename(new)
+    md = new / 'SKILL.md';md.write_text(md.read_text().replace('name: lodge-example', 'name: lodge-new'))
+    sync_lodge_skills(wolts, p)
+    assert '.space/shared-skills/lodge-new/SKILL.md' in md.read_text()
+    assert '.space/shared-skills/lodge-example/SKILL.md' not in md.read_text()
+    assert md.read_text().endswith('Original\n')
+    assert md.stat().st_mode & 0o777 == 0o640
