@@ -377,7 +377,7 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
       const target = spawnTarget(capabilities, wolt, launchCwd);
       lines.push(h(Text, { key: 'sc1', color: color.amber }, `start ${wolt.name}?`));
       lines.push(h(Text, { key: 'sc2' }, `   cwd: ${target.displayWorkdir}`));
-      lines.push(h(Text, { key: 'sc3' }, `   policy: ${target.executionPolicy}`));
+      lines.push(h(Text, { key: 'sc3' }, `   policy: ${target.executionPolicy || 'server default (uses Auto grants)'}`));
       lines.push(h(Text, { key: 'sc4', color: color.dim }, '   y confirm · n/esc back'));
     } else if (mode === 'create-name') {
       lines.push(h(Text, { key: 'cn1', color: color.amber }, 'name the new wolt'));
@@ -394,7 +394,7 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
       lines.push(h(Text, { key: 'cc1', color: color.amber }, `create ${createName}?`));
       lines.push(h(Text, { key: 'cc2' }, `   type: ${woltTypes[createTypeCursor]}`));
       lines.push(h(Text, { key: 'cc3' }, `   cwd: ${target.displayWorkdir}`));
-      lines.push(h(Text, { key: 'cc4' }, `   policy: ${target.executionPolicy}`));
+      lines.push(h(Text, { key: 'cc4' }, `   policy: ${target.executionPolicy || 'server default (uses Auto grants)'}`));
       lines.push(h(Text, { key: 'cc5', color: color.dim }, '   y confirm · n/esc back'));
     } else {
       lines.push(h(Text, { key: 'k1', color: color.dim },
