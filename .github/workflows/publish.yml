@@ -1,0 +1,173 @@
+name: Publish reviewed release pair
+
+on:
+  workflow_dispatch:
+    inputs:
+      python_version:
+        description: Python version declared on main (for example 0.5.5)
+        required: true
+        type: string
+      tui_version:
+        description: TUI version declared on main (for example 0.5.2)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publishing-woltspace
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require main and owner-enabled publishing
+        env:
+          ENABLED: ${{ vars.TRUSTED_PUBLISHING_ENABLED }}
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          test "$REF" = refs/heads/main
+          test "$REPOSITORY" = jerpint/woltspace
+          test "$ENABLED" = true
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Verify settings enforce owner approval and main only
+        run: python scripts/release.py environments
+
+  validation:
+    needs: guard
+    uses: ./.github/workflows/ci.yml
+
+  prepare:
+    needs: validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: packages-${{ github.sha }}
+          path: dist
+      - name: Recheck artifacts and record approved release identity
+        env:
+          EXPECTED_PYTHON: ${{ inputs.python_version }}
+          EXPECTED_TUI: ${{ inputs.tui_version }}
+        run: |
+          python scripts/verify-packages.py
+          python scripts/release.py prepare
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: approved-release-${{ github.sha }}
+          path: |
+            dist/*
+            release-manifest.json
+          if-no-files-found: error
+          retention-days: 30
+
+  pypi:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/woltspace/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: approved-release-${{ github.sha }}
+          path: .
+      - name: Verify settings and check exact registry contents
+        id: registry
+        run: |
+          python scripts/release.py environments
+          python scripts/release.py check python
+      - name: Publish only missing Python artifacts with OIDC
+        if: steps.registry.outputs.missing == 'true'
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          packages-dir: publish-dist/
+      - name: Verify Python registry downloads
+        run: python scripts/release.py verify python
+
+  npm:
+    needs: pypi
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@woltspace/tui
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install a pinned OIDC-capable npm CLI
+        run: npm install --global npm@11.5.1
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: approved-release-${{ github.sha }}
+          path: .
+      - name: Verify settings and Python availability; check npm contents
+        id: registry
+        run: |
+          python scripts/release.py environments
+          python scripts/release.py verify python
+          python scripts/release.py check npm
+      - name: Publish the approved tarball with OIDC
+        if: steps.registry.outputs.missing == 'true'
+        run: npm publish publish-dist/*.tgz --access public --ignore-scripts --registry https://registry.npmjs.org
+      - name: Verify npm registry download
+        run: python scripts/release.py verify npm
+
+  releases:
+    needs: npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: approved-release-${{ github.sha }}
+          path: .
+      - name: Verify both registries and finalize tags and releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/release.py finalize

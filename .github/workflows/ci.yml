@@ -1,6 +1,7 @@
 name: Tests and packages
 
 on:
+  workflow_call:
   pull_request:
   push:
     branches: [main]
@@ -48,6 +49,7 @@ jobs:
       - name: Focused release checks
         run: >-
           python -m pytest -q
+          test/test_release_workflow.py
           test/test_lodge_skills.py
           test/test_skills_sync.py
           test/test_session_target_api.py
