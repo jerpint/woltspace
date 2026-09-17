@@ -1116,6 +1116,10 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
     wolt = data.get("wolt", "")
     model = data.get("model", "")
 
+    if wolt and (WOLTS_DIR / wolt / "wolt" / "wolt.json").is_file():
+        from lodge_skills import sync_lodge_skills
+        sync_lodge_skills(WOLTS_DIR, WOLTS_DIR / wolt)
+
     # Claude and codex both refuse to start in a directory they have not been
     # trusted for, and a headless spawn has nobody to answer the dialog. This
     # is the one seam both modes pass through on their way to run-session.sh —

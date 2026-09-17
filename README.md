@@ -18,3 +18,5 @@ See [the update instructions](docs/updates.md).
 
 Since 0.5.4, `uv tool install woltspace` includes all Telegram and Slack connector
 dependencies. Channels still run only when enabled in your configuration.
+
+For local workflows shared by every wolt, see [Shared lodge skills](docs/shared-skills.md).
