@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -15,7 +16,7 @@ from packaging.version import Version, InvalidVersion
 from . import __version__
 from .layout import RuntimeLayout
 from .instance import inspect_instance
-from .update_worker import SUPPORTED_VERSION
+SUPPORTED_VERSION = re.compile(r"\d+\.\d+\.\d+(?:\.post\d+)?")
 
 
 class UpdateError(RuntimeError):

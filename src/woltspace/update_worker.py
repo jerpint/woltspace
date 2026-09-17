@@ -5,12 +5,9 @@ import fcntl
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
-
-SUPPORTED_VERSION = re.compile(r"\d+\.\d+\.\d+(?:\.post\d+)?")
 
 
 class Failure(RuntimeError):

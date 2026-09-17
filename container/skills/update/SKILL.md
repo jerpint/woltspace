@@ -35,9 +35,12 @@ Tell the user the control plane, tunnel and connectors briefly go offline.
 tmux sessions survive, but existing sessions keep loaded instructions; new
 sessions load updated skills and prompts.
 
-Before applying, run `woltspace status --json` and remember the running connectors
-and session adoption so you can compare them afterwards. If that baseline cannot
-be obtained, report the missing verification before proceeding.
+Before applying, run `woltspace status --json` and retain the connector diagnostics
+(`state`, `restarts`, `last_exit_code`, `started_at`, `error`) and session adoption.
+Report any pre-existing non-running/degraded connector as a known prior condition.
+These fields are reported diagnostics: `state` and recorded errors can be stale,
+even when messaging works. Do not treat state alone as proof of an outage or
+silently ignore it. If the baseline is unavailable, report that verification gap.
 
 Run `woltspace update --to VERSION` using the exact reviewed version. This is an
 explicit install instruction and does not prompt; use it only with authorization.
@@ -45,9 +48,15 @@ Do not issue separate installer or restart commands. Bare `woltspace update` is
 the human convenience path: check the latest version, show impact and confirm.
 
 Report the observed installed version and any restart failure. After updating,
-run `woltspace status --json` and inspect health, configured connectors and
-session adoption, comparing with the baseline; the updater does not verify those. If unavailable, report that
-verification is incomplete. A nonzero exit is not success. Do not blindly retry
+run `woltspace status --json` and compare health, all connector diagnostics and
+session adoption with the baseline; the updater does not verify those. A new
+`started_at` is expected after restart; reset counters or a changed state alone
+are not failures. Distinguish prior conditions, transient startup and new errors.
+If a connector is not yet running or adoption is incomplete, re-check at roughly
+5-second intervals for up to 30 seconds before concluding recovery is incomplete.
+Report conditions that persist, including their diagnostics and any uncertainty
+about actual messaging availability; do not call a sticky flag proof of failure.
+If status cannot be obtained, explicitly report incomplete verification. A nonzero exit is not success. Do not blindly retry
 or claim rollback. Migration instructions are not executed by the CLI: carry
 out only actions covered by user permission and workspace rules, otherwise
 report them as pending. Package verification does not mean migrations are done.

@@ -60,7 +60,9 @@ repair the package with uv and then run `woltspace start` manually.
 The command checks uv's exit result, the restart command's result and the observed
 Python version. It does not verify connector recovery or session adoption.
 A successful exit is not proof that every bot connector resumed: check
-`woltspace status` and your messaging channel afterwards. tmux sessions survive
+`woltspace status` and your messaging channel afterwards. Connector status/errors
+can retain old diagnostics; compare the full diagnostics and allow startup time
+before concluding recovery failed. tmux sessions survive
 a control-plane stop; existing sessions retain loaded instructions. New sessions
 load updated skills after native start syncs them.
 
