@@ -8,6 +8,9 @@ import zipfile
 from email.parser import Parser
 from pathlib import Path
 
+if not __debug__:
+    raise RuntimeError('Package verification requires Python without -O or PYTHONOPTIMIZE.')
+
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / 'dist'
 python_version = tomllib.loads((ROOT / 'pyproject.toml').read_text())['project']['version']
@@ -17,8 +20,10 @@ tui_version = npm_manifest['version']
 with zipfile.ZipFile(DIST / f'woltspace-{python_version}-py3-none-any.whl') as wheel:
     metadata = next(name for name in wheel.namelist() if name.endswith('.dist-info/METADATA'))
     assert Parser().parsestr(wheel.read(metadata).decode())['Version'] == python_version
-    required = [*ROOT.glob('container/lib/*.py'),
-                *ROOT.glob('container/skills/*/SKILL.md'),
+    required = [*ROOT.glob('container/lib/**/*.py'),
+                *(path for path in (ROOT / 'container/skills').rglob('*')
+                  if path.is_file() and '__pycache__' not in path.parts
+                  and path.suffix != '.pyc'),
                 ROOT / 'docs/shared-skills.md', ROOT / 'container/bin/notify']
     for source in required:
         relative = source.relative_to(ROOT).as_posix()

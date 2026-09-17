@@ -18,7 +18,13 @@ export PYTHONPATH="$PWD/src:$PWD/container/lib"
 export WOLTSPACE_DIR="$PWD"
 python -m pytest -q test/test_lodge_skills.py test/test_skills_sync.py \
   test/test_session_target_api.py test/test_execution_policy.py \
-  test/test_auto_grants_cli.py test/test_backup.py test/test_native_doctor.py
+  test/test_auto_grants_cli.py test/test_backup.py test/test_native_doctor.py \
+  test/test_closed_loop.py::TestRegressions::test_notify_footer_appended \
+  test/test_closed_loop.py::TestRegressions::test_notify_script_executable \
+  test/test_closed_loop.py::TestRegressions::test_den_reply_footer_consistent \
+  test/test_native_resilience.py \
+  test/test_native_surfaces.py test/test_telegram_loop.py \
+  test/test_wolts.py::TestCredentials
 npm test
 ```
 
@@ -37,3 +43,11 @@ explicit live-send/real-spawn opt-ins guard those groups. Do not enable those
 opt-ins against personal services for an ordinary CI run. The clean-environment
 baseline and targeted checks are different claims: a successful focused run
 does not establish that the full suite or live agent flows passed.
+
+CI selects the repaired source-contract cases from `test_closed_loop.py` and the
+credential fixture group from `test_wolts.py`. Other closed-loop cases still
+assume a writable deployed `/workspace/wolts` environment. The full wolts file
+also has a pre-existing assertion that a raccoon resolves to literal `opus`,
+which disagrees with the current model catalog in observed runs. Those groups
+remain part of the parked historical suite; expanding the focused selection
+requires resolving those environment and model assumptions first.

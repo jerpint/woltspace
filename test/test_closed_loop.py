@@ -225,12 +225,6 @@ class TestNotifySeam:
         )
         assert found, f"notify marker not found in bot log (checked last 30 entries)"
 
-    def test_notify_footer_appended(self):
-        """notify.py appends the DEN_REPLY_FOOTER to notify messages."""
-        notify_py = (Path(__file__).resolve().parents[1] / "server/notify.py")
-        source = notify_py.read_text()
-        assert "DEN_REPLY_FOOTER" in source
-        assert "message + footer" in source
 
 
 # ---------------------------------------------------------------------------
@@ -459,6 +453,13 @@ class TestFullRoundTrip:
 # ---------------------------------------------------------------------------
 
 class TestRegressions:
+    def test_notify_footer_appended(self):
+        """notify.py appends the DEN_REPLY_FOOTER to notify messages."""
+        notify_py = (Path(__file__).resolve().parents[1] / "server/notify.py")
+        source = notify_py.read_text()
+        assert "DEN_REPLY_FOOTER" in source
+        assert "message + footer" in source
+
     """Guard against previously-fixed bugs."""
 
     def test_exclamation_in_prompt_doesnt_expand(self):
