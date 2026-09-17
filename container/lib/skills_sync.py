@@ -599,23 +599,24 @@ def sync_all_wolt_skills(woltspace_dir: Path, wolts_dir: Path):
     plugin delivery; everyone else gets the copy sync, under the historical
     `woltspace-` names. Wolt-owned skills are never modified either way.
 
-    A source with no platform skills at all is a no-op for the whole colony.
+    A source with no platform skills at all leaves platform delivery alone.
+    Lodge-owned skills are delivered independently from the local lodge folder.
     That reading is deliberate: an install root pointing somewhere stale is
     far likelier than a real platform that genuinely ships zero skills, and
     the cost of guessing wrong is every wolt losing every platform skill at
     once.
     """
     sources = platform_skill_sources(woltspace_dir)
-    if not sources:
-        return
     source_dir = platform_skills_dir(woltspace_dir)
 
     for wolt in sorted(Path(wolts_dir).iterdir()):
         if not wolt.is_dir() or wolt.name.startswith("."):
             continue
         skills_dir = wolt / ".claude" / "skills"
-        if not skills_dir.exists():
-            # Skip wolts without .claude/skills/ (non-rodents, etc.)
+        if skills_dir.is_dir() or (wolt / "wolt" / "wolt.json").is_file():
+            from lodge_skills import sync_lodge_skills
+            sync_lodge_skills(wolts_dir, wolt)
+        if not skills_dir.is_dir() or not sources:
             continue
 
         ensure_agent_bridges(wolt)
@@ -629,13 +630,12 @@ def sync_all_wolt_skills(woltspace_dir: Path, wolts_dir: Path):
 def seed_wolt_skills(woltspace_dir: Path, wolt_dir: Path):
     """Give a newly created wolt its .claude/skills/.
 
-    sync_all_wolt_skills deliberately skips wolts that have no skills
-    directory, so a wolt that is never seeded is never synced either. When the
-    source has no woltspace-* skills the wolt is left unseeded rather than
-    handed an empty directory: an empty skills dir is no more useful than none,
-    and leaving it absent keeps a later sync from a healthy install honest —
-    it will still skip this wolt, and the next seed can do the job properly.
+    Lodge skills are linked first, independently of platform sources. An install
+    with no platform sources never clears existing skills or invents an empty
+    platform skills directory.
     """
+    from lodge_skills import sync_lodge_skills
+    sync_lodge_skills(Path(wolt_dir).parent, wolt_dir)
     sources = platform_skill_sources(woltspace_dir)
     if not sources:
         return
