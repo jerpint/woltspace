@@ -40,7 +40,7 @@ settings. If pinned to an older version, or choosing a specific reviewed release
 replace the upgrade step with:
 
 ```sh
-uv tool install --force 'woltspace[connectors]==VERSION'
+uv tool install --force 'woltspace==VERSION'
 ```
 
 Replace VERSION with the reviewed published version, preserving your installed

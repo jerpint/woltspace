@@ -3,7 +3,7 @@
 # The image does NOT bake the source tree any more. It installs the same two
 # published artifacts a native install uses:
 #
-#   PyPI  woltspace[connectors]==<WOLTSPACE_PYPI_VERSION>   → the control plane,
+#   PyPI  woltspace==<WOLTSPACE_PYPI_VERSION>   → the control plane,
 #         whose wheel carries the whole runtime in its `_bundle` (server,
 #         container/lib, container/bin, skills, templates)
 #   npm   @woltspace/tui@<WOLTSPACE_TUI_VERSION>            → woltspace-tui and
@@ -113,7 +113,7 @@ RUN git clone https://github.com/jerpint/worktui.git /home/node/worktui \
 ENV WORKTUI_DIR="/workspace/wolts/.worktui"
 
 # --- The woltspace runtime, from the registries ---
-ARG WOLTSPACE_PYPI_VERSION=0.5.1
+ARG WOLTSPACE_PYPI_VERSION=0.5.4
 # `latest`, not a pin — the two artifacts are versioned independently. Pass an
 # explicit version to reproduce an older image.
 ARG WOLTSPACE_TUI_VERSION=latest
@@ -157,13 +157,13 @@ COPY . /tmp/local-src/
 RUN set -eux; \
     if [ "$USE_LOCAL" = "true" ]; then \
       echo "installing woltspace from the local tree"; \
-      uv tool install --python "$(command -v python3)" "/tmp/local-src[connectors]"; \
+      uv tool install --python "$(command -v python3)" "/tmp/local-src"; \
       (cd /tmp/local-src/tui && npm pack --pack-destination /tmp); \
       npm install -g /tmp/woltspace-tui-*.tgz; \
       rm -f /tmp/woltspace-tui-*.tgz; \
     else \
       echo "installing woltspace==${WOLTSPACE_PYPI_VERSION} + @woltspace/tui@${WOLTSPACE_TUI_VERSION}"; \
-      uv tool install --python "$(command -v python3)" "woltspace[connectors]==${WOLTSPACE_PYPI_VERSION}"; \
+      uv tool install --python "$(command -v python3)" "woltspace==${WOLTSPACE_PYPI_VERSION}"; \
       npm install -g "@woltspace/tui@${WOLTSPACE_TUI_VERSION}"; \
     fi; \
     npm cache clean --force; \

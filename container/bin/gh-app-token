@@ -104,8 +104,8 @@ def _get_env(key: str) -> str:
     except ImportError:
         _die(
             "python-dotenv is missing, so the .env fallback is unavailable. "
-            "Install woltspace with its connectors extra "
-            "(`uv tool install 'woltspace[connectors]'`), or export "
+            "Reinstall woltspace "
+            "(`uv tool install --force woltspace`), or export "
             f"{key} directly."
         )
     for candidate in _env_files():
@@ -127,8 +127,8 @@ def _make_jwt(app_id: str, private_key: str) -> str:
     except ImportError:
         _die(
             "PyJWT is missing — this script is running on an interpreter that "
-            "does not own woltspace's dependencies. Install woltspace with its "
-            "connectors extra (`uv tool install 'woltspace[connectors]'`), or "
+            "does not own woltspace's dependencies. Reinstall woltspace "
+            "(`uv tool install --force woltspace`), or "
             "point WOLTSPACE_PYTHON at an interpreter that has PyJWT."
         )
     now = int(time.time())

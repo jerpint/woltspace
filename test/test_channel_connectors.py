@@ -117,7 +117,7 @@ class TestTelegramPlan:
         )
 
     def test_the_container_runs_the_adapter_on_the_installed_interpreter(self, layout):
-        """The slim image installs `woltspace[connectors]`, so this one owns it.
+        """The slim image installs `woltspace`, so this one owns it.
 
         The `bot` uv project now lives inside the installed wheel, where
         syncing a venv would mean writing into site-packages. When the
@@ -136,7 +136,7 @@ class TestTelegramPlan:
         assert plan.command[0] == sys.executable
         assert plan.command[-2:] == ("-m", "bot.telegram_adapter")
 
-    def test_an_image_without_the_extra_falls_back_to_the_bot_project(self, layout, monkeypatch):
+    def test_an_image_missing_dependencies_falls_back_to_the_bot_project(self, layout, monkeypatch):
         """A container built some other way keeps the uv project it always had."""
         monkeypatch.setattr(channels, "_module_available", lambda name: False)
         plan = TelegramConnector().plan(self._container(layout), {
@@ -169,7 +169,7 @@ class TestTelegramPlan:
         """A wolt's own adapter lives at <wolt>/wolt/bot, not <wolt>/bot.
 
         Probing only the latter fell through to an interpreter without
-        python-telegram-bot and then blamed a missing extra. Only reachable in
+        python-telegram-bot and then reported a missing dependency. Only reachable in
         an image whose own environment lacks the dependency.
         """
         monkeypatch.setattr(channels, "_module_available", lambda name: False)

@@ -47,7 +47,7 @@ that CLI first.
 The published packages are the way to install:
 
 ```bash
-uv tool install 'woltspace[connectors]'
+uv tool install 'woltspace'
 npm install -g @woltspace/tui
 ```
 
@@ -273,18 +273,8 @@ long-polled by one process; the second poller gets `409 Conflict` from
 Telegram and goes deaf while still looking alive. Make a second bot with
 BotFather for native testing.
 
-The Telegram dependencies come from an extra. From the checkout — the same
-place step 2 installed from, and the only place it can resolve before the
-package is published:
-
-```bash
-cd /path/to/woltspace
-uv tool install '.[connectors]'
-```
-
-That replaces the step 2 install rather than adding to it. (Plain
-`uv tool install 'woltspace[connectors]'` resolves from PyPI, where nothing is
-published yet.)
+Telegram and Slack dependencies are included in the default package since 0.5.4.
+The install in step 2 already includes them; no extra install is needed.
 
 Then write `$WOLTSPACE_WOLTS_DIR/.space/platform/config.json`:
 
@@ -314,7 +304,7 @@ installed`, you skipped the extra — this is the exact output when that happens
 
 ```console
 connector telegram: disabled · enabled but python-telegram-bot is not installed
-  fix: Reinstall with the connectors extra — from a checkout while the package is unpublished: `uv tool install '.[connectors]'` (after release: `uv tool install 'woltspace[connectors]'`), then `woltspace start`.
+  fix: Reinstall woltspace to restore its dependencies: `uv tool install --force woltspace` (from a checkout: `uv tool install --force .`), then `woltspace start`.
 ```
 
 **Leave the tunnel off.** Native defaults to no tunnel, and you should not

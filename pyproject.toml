@@ -1,6 +1,6 @@
 [project]
 name = "woltspace"
-version = "0.5.3"
+version = "0.5.4"
 description = "A persistent lodge for local AI agent sessions"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -18,29 +18,21 @@ dependencies = [
     # makes the lodge palette safe: it drops every escape when stdout is not a
     # terminal, so `woltspace status | cat` stays plain parseable text.
     "rich",
+    "litellm",
+    "openai",
+    "python-telegram-bot",
+    "slack-bolt",
+    "slack-sdk",
+    "pyjwt[crypto]>=2.12.1",
 ]
 
 [project.scripts]
 woltspace = "woltspace.cli:main"
 
 [project.optional-dependencies]
-connectors = [
-    "litellm",
-    "openai",
-    "python-telegram-bot",
-    "slack-bolt",
-    "slack-sdk",
-    "pyjwt[crypto]>=2.12.1",
-]
 test = [
     "pytest",
     "pytest-asyncio",
-    "litellm",
-    "openai",
-    "python-telegram-bot",
-    "slack-bolt",
-    "slack-sdk",
-    "pyjwt[crypto]>=2.12.1",
 ]
 
 [build-system]

@@ -80,12 +80,12 @@ def _interpreter(
     """The interpreter that owns the adapter's dependencies.
 
     This interpreter wins whenever it already has them: the slim container
-    installs `woltspace[connectors]`, so its own environment owns
+    installs `woltspace`, so its own environment owns
     python-telegram-bot exactly as a native install does — and the `bot` uv
     project it would otherwise use now lives *inside* the installed wheel,
     where syncing a venv means writing a `.venv` into site-packages.
 
-    A container built some other way (a checkout with no connectors extra)
+    A container built some other way (a checkout with missing dependencies)
     still falls back to that uv project, which is what it has always used.
     """
     if isolation != "host" and not _module_available("telegram"):
@@ -227,8 +227,8 @@ class TelegramConnector:
 
         # In the container the adapter has always run from the `bot` uv project,
         # which owns python-telegram-bot. Natively that dependency comes from
-        # the `connectors` extra of this very interpreter — check it here so a
-        # missing extra is a named remedy instead of a crash loop.
+        # this very interpreter — check it here so missing dependencies
+        # have a named remedy instead of a crash loop.
         interpreter = _interpreter(bot_dir, layout.isolation, layout.install_root)
         if interpreter == (sys.executable,) and not _module_available("telegram"):
             return ConnectorPlan(
@@ -236,9 +236,9 @@ class TelegramConnector:
                 False,
                 "enabled but python-telegram-bot is not installed",
                 remedy=(
-                    "Reinstall with the connectors extra — from a checkout while "
-                    "the package is unpublished: `uv tool install '.[connectors]'` "
-                    "(after release: `uv tool install 'woltspace[connectors]'`), "
+                    "Reinstall woltspace to restore its dependencies: "
+                    "`uv tool install --force woltspace` "
+                    "(from a checkout: `uv tool install --force .`), "
                     "then `woltspace start`."
                 ),
             )
