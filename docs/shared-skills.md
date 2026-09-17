@@ -54,7 +54,9 @@ claiming the notice was installed.
 
 ## Discovery and ownership
 
-Woltspace refreshes links at lodge startup, when creating a wolt, and before
+After installing a version with shared-skill support, lodge startup refreshes
+links for all existing wolts as well as newly created ones. Woltspace refreshes
+links at lodge startup, when creating a wolt, and before
 launching or resuming a platform-managed agent session. A new session discovers
 new skills without a lodge restart. Already running sessions can retain their
 loaded skill lists and instructions; start a new session after changing skills.
@@ -68,10 +70,15 @@ This works independently of platform copy/plugin skill delivery.
 A real skill directory or unrelated symlink at the same name is a per-wolt
 override and is preserved with a warning. In a separately owned `.agents/skills`
 directory, that directory's override applies to harnesses using it. Remove the
-override to receive the shared version on the next refresh. To customize a linked
-skill for one wolt, replace the link with a local copy first and remove the marked shared-edit
-notice from that private copy; editing through the
-link changes the shared source for everyone.
+override to receive the shared version on the next refresh.
+
+For a private variant, copy the source into your wolt's own skill folder under a
+name without `lodge-` (for example `lodge-github-practice` → `github-practice`).
+Update its frontmatter `name` to match and remove the marked shared-edit notice.
+Keep the shared link: the private variant is a separate skill, not an override.
+Editing through the shared link changes the source for everyone. Existing
+same-name overrides are preserved for compatibility, but new private variants
+should use their own unprefixed names.
 
 Removing or renaming a shared skill removes only Woltspace's matching links on
 next refresh, including dangling links. Wolt-owned files are never deleted.

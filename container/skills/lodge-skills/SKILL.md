@@ -56,7 +56,8 @@ Private per-wolt skills do not receive this notice.
 
 ## Discover and verify
 
-Links refresh during lodge startup, wolt creation, and before a platform-managed
+After an upgrade installs this feature, lodge startup applies shared links to
+all existing wolts too. Links refresh during lodge startup, wolt creation, and before a platform-managed
 agent launch/resume. Start a new session to discover added skills; do not restart
 the lodge just to add one. Existing sessions may retain old skill lists/content.
 Direct harness launches do not refresh links.
@@ -68,10 +69,14 @@ directories receive their own links. Verify actual discovery in the target fresh
 session before claiming success, especially when its workdir is outside the wolt.
 
 A real same-name skill or unrelated symlink is a preserved per-wolt override.
-To customize one wolt, replace its shared link with a local copy and remove the
-marked shared-edit notice from that private copy first: editing
-through a link edits the shared source for everyone. Removing an override lets
-the next refresh deliver the shared version. Removal/rename of a shared source
+For a private variant, copy the source into that wolt's own skill folder with the
+`lodge-` prefix removed from both directory and frontmatter name, and remove the
+marked shared-edit notice. For example `lodge-github-practice` becomes
+`github-practice`. Keep the shared link intact: these are two distinct skills,
+not a same-name override. Editing through the shared link changes the source for
+everyone. Preserve pre-existing overrides, but use unprefixed names for new
+private variants. Removing an override lets the next refresh deliver the shared
+version. Removal/rename of a shared source
 removes only Woltspace-owned links on next refresh, not wolt-owned overrides.
 
 Platform upgrades leave shared workflow instructions alone; the generated notice
