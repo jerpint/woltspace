@@ -2,8 +2,12 @@
 
 import asyncio
 import json
+import shutil
+import subprocess
+from pathlib import Path
 
 import httpx
+import pytest
 
 from server import app as app_module
 
@@ -137,3 +141,67 @@ def test_create_wolt_passes_confirmed_target_and_policy(tmp_path, monkeypatch):
     assert seen["wolt"] == "newmaple"
     assert seen["workdir"] == str(repo)
     assert seen["execution_policy"] == "prompt"
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="TUI requires Node")
+@pytest.mark.parametrize("harness", ["claude", "codex"])
+@pytest.mark.parametrize("approved, override, expected", [
+    (False, None, "prompt"),
+    (True, None, "auto"),
+    (True, "prompt", "prompt"),
+    (False, "auto", None),
+    (True, "auto", "auto"),
+])
+def test_tui_payload_through_api_resolves_grants_and_harness_command(
+    tmp_path, monkeypatch, fake_runtime, harness, approved, override, expected,
+):
+    """Run the TUI request builder, real API and session policy resolution.
+
+    Only the process runtime is faked: no agent or live lodge is started.
+    """
+    import sessions
+    from execution_policy import AutoGrantStore
+    from session_targets import SessionTarget
+
+    wolts, home, _ = _layout(tmp_path, monkeypatch)
+    (home / "wolt" / "wolt.json").write_text(json.dumps({
+        "name": "maple", "type": "raccoon", "harness": harness,
+        "model": "sonnet" if harness == "claude" else "gpt-5.6-sol",
+    }))
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", "host")
+    if approved:
+        AutoGrantStore(wolts).grant(SessionTarget.resolve("maple", home, wolts_dir=wolts))
+
+    # Capture exactly what the JS API sends from a default TUI spawn target.
+    script = """
+        import { spawnTarget } from './src/session-view.js';
+        import { spawnSession } from './src/api.js';
+        globalThis.fetch = async (_url, options) => {
+            console.log(options.body);
+            return { ok: true, json: async () => ({}) };
+        };
+        const target = spawnTarget({
+            supports_host_workdirs: true, default_execution_policy: 'prompt',
+        }, { home: process.argv[1] }, '/unrelated-launch-dir');
+        await spawnSession('maple', target.workdir,
+            process.argv[2] || target.executionPolicy);
+    """
+    result = subprocess.run([
+        "node", "--input-type=module", "-e", script, str(home), override or "",
+    ], cwd=Path(__file__).resolve().parents[1] / "tui",
+        capture_output=True, text=True, check=True)
+    payload = json.loads(result.stdout)
+    if override is None:
+        assert "execution_policy" not in payload
+    response = asyncio.run(_request("POST", "/sessions/new/lodge", json=payload))
+    if expected is None:
+        assert response.status_code == 403
+        return
+    assert response.status_code == 200, response.text
+    session = response.json()
+    assert session["execution_policy"]["mode"] == expected
+    assert session["target"]["canonical_workdir"] == str(home.resolve())
+    command = sessions.prepare_session_command(session["name"], "spawn")
+    auto_flag = ("--dangerously-skip-permissions" if harness == "claude"
+                 else "--dangerously-bypass-approvals-and-sandbox")
+    assert (auto_flag in command) == (expected == "auto")
