@@ -97,32 +97,18 @@ box, so Auto is their default and the grant store is ignored.
 
 ### Upgrading
 
-**Ask any wolt to update the lodge.** The `update` platform skill is the
-gatekeeper: it reads the published versions off PyPI and npm, summarizes the
-release notes in plain words, names anything breaking and any migration that
-ships with the new version, and installs nothing until you say go. Then it
-reinstalls both packages, restarts the control plane, and confirms what came
-back — your tmux sessions survive the restart and are re-adopted. In a
-container it hands you the host commands instead of pretending it can reach
-docker.
+Ask a wolt to update the lodge, or follow the documented manual uv workflow.
+The update skill reviews release notes and migrations, obtains applicable
+consent, stops a running control plane, installs the exact reviewed version
+through uv, starts it again and checks recovery. There is no self-update CLI.
 
-The manual fallback is the same two commands, followed by a restart. The tui
-declares the minimum woltspace version it needs; woltspace does not check the
-tui's version. Install or upgrade each on its own:
+The tui declares the minimum woltspace version it needs and checks it at startup;
+woltspace does not check the tui's version. The two artifacts release independently.
+TUI upgrades remain separate; a newer TUI can refuse to start against an older lodge.
 
-```bash
-uv tool install --force 'woltspace[connectors]'
-npm install -g @woltspace/tui@latest
-woltspace stop && woltspace start
-```
-
-If the pair is too far apart the tui says so and names the fix: the cockpit
-prints one advisory line over the session list, and the pty bridge refuses to
-start against a lodge below its minimum.
-
-Migrations for a release ship inside the wheel at
-`<install_root>/container/migrations/` — the path `woltspace paths` prints —
-so they arrive with the code that needs them. Patch bumps never carry one.
+See [updates.md](updates.md) for commands and limitations. Native tmux sessions
+survive the control-plane restart; existing sessions retain loaded instructions.
+Container updates belong to host-side container tooling.
 
 ### Installing before the packages are published
 

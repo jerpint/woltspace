@@ -3,7 +3,7 @@
 The skill body is prose, so nothing but a test stops it drifting back to the
 container era — a wolt reading it will happily follow whatever it says. These
 are the assertions that would have caught the old body the moment the platform
-stopped being a checkout: no clone to pull, both published artifacts named,
+stopped being a checkout: no clone to pull, the Python update boundary named,
 the control-plane restart spelled out, and the migration directory sitting
 where the wheel can carry it.
 
@@ -44,10 +44,10 @@ def test_no_container_era_mechanics(body, banned, why):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("needle, why", [
-    ("uv tool install", "the python half is installed with uv"),
-    ("@woltspace/tui", "the tui half is its own install and must be named"),
-    ("woltspace stop", "the update stops the control plane"),
-    ("woltspace start", "and starts it again — that is where skills resync"),
+    ("uv tool install", "uv installs the exact reviewed Python release"),
+    ("@woltspace/tui", "the separate TUI distribution must be identified as outside the workflow"),
+    ("woltspace stop", "stop the native control plane before replacing its package"),
+    ("woltspace start", "restart is also where skills sync"),
 ])
 def test_names_the_real_mechanics(body, needle, why):
     assert needle in body, f"update skill never mentions {needle!r}: {why}"
@@ -90,7 +90,7 @@ def test_wheel_force_include_covers_container():
         f"a build exclude would drop the migrations: {excluded}"
 
 
-def test_skill_reads_migrations_from_the_install_root(body):
-    """After the install, from the path the CLI reports — not from a checkout."""
-    assert "woltspace paths" in body
-    assert "install_root" in body
+def test_skill_reviews_migrations_at_the_chosen_release(body):
+    """The wolt reviews migration context before invoking the mechanical updater."""
+    assert "release notes" in body
+    assert "reviewed release commit" in body

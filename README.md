@@ -10,3 +10,8 @@ give your wolt space to build.
 | First native run on a Mac | [docs/native-first-run.md](docs/native-first-run.md) |
 
 The Tauri 2 desktop shell, browser preview, and build instructions live in [desktop/](desktop/README.md).
+
+## Updates
+
+Ask your wolt to update a native lodge, or use the standard uv upgrade workflow.
+See [the update instructions](docs/updates.md).

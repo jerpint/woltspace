@@ -63,6 +63,7 @@ packages = ["src/woltspace"]
 "public" = "woltspace/_bundle/public"
 "template" = "woltspace/_bundle/template"
 "templates" = "woltspace/_bundle/templates"
+"docs/updates.md" = "woltspace/_bundle/docs/updates.md"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -73,5 +74,6 @@ include = [
     "/template",
     "/templates",
     "/README.md",
+    "/docs/updates.md",
     "/LICENSE",
 ]
