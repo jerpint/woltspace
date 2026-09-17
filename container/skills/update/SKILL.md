@@ -7,7 +7,9 @@ user_invocable: true
 # Update Woltspace
 
 The skill owns release context and consent. The CLI performs the mechanical
-Python update, stages before downtime, restarts and verifies the lodge.
+Python update: stop a running control plane, install through uv, attempt restart
+even on install failure, and check the installed version. Downloads happen during
+downtime; a failed install can also leave the CLI unable to restart.
 The separate npm `@woltspace/tui` is outside this workflow.
 
 Run `woltspace update --check` to inspect the installed and available Python
@@ -33,13 +35,19 @@ Tell the user the control plane, tunnel and connectors briefly go offline.
 tmux sessions survive, but existing sessions keep loaded instructions; new
 sessions load updated skills and prompts.
 
+Before applying, run `woltspace status --json` and remember the running connectors
+and session adoption so you can compare them afterwards. If that baseline cannot
+be obtained, report the missing verification before proceeding.
+
 Run `woltspace update --to VERSION` using the exact reviewed version. This is an
 explicit install instruction and does not prompt; use it only with authorization.
 Do not issue separate installer or restart commands. Bare `woltspace update` is
 the human convenience path: check the latest version, show impact and confirm.
 
-Report the observed installed version, health, connector/session verification
-and any recovery outcome. A nonzero exit is not success. Do not blindly retry
+Report the observed installed version and any restart failure. After updating,
+run `woltspace status --json` and inspect health, configured connectors and
+session adoption, comparing with the baseline; the updater does not verify those. If unavailable, report that
+verification is incomplete. A nonzero exit is not success. Do not blindly retry
 or claim rollback. Migration instructions are not executed by the CLI: carry
 out only actions covered by user permission and workspace rules, otherwise
 report them as pending. Package verification does not mean migrations are done.

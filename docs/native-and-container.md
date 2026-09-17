@@ -101,8 +101,9 @@ Run `woltspace update` to check the Python release, confirm and mechanically
 update the native uv installation. `--check` only inspects; `--to VERSION`
 installs an exact published target without prompting. A wolt's update skill
 handles release notes, migration context and user authorization before invoking
-that exact target. The command stages dependencies before stopping the control
-plane, restarts it and verifies recovery. The separately distributed TUI is not
+that exact target. The command stops a running control plane, installs through
+uv, attempts a restart even on installation failure, and checks the installed
+version. Check connector recovery separately with `woltspace status`. The separately distributed TUI is not
 inspected or modified.
 
 The tui declares the minimum woltspace version it needs and checks it at startup;

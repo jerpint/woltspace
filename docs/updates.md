@@ -38,35 +38,39 @@ Required manual actions remain separate from package installation.
 
 ## Installation and restart
 
-A standalone updater runs under base Python before uv replaces its environment.
-It stages the target package/dependencies in an isolated environment while the
-lodge is still running, freezes dependency constraints, and preflights offline
-resolution. It serializes updates and rechecks the control-plane identity before
-stopping. It preserves installed extras and installs from warmed caches.
+The command wraps the ordinary package upgrade sequence:
 
-Only a previously running control plane is stopped and restarted. An initially
-stopped lodge stays stopped. The tunnel and connectors briefly go offline;
-tmux sessions survive. Existing sessions retain loaded instructions; new sessions
-load the new skills and prompts after native start syncs platform skills.
+1. Stop a running lodge's control plane.
+2. Run `uv tool install --force --python BASE_PYTHON 'woltspace[EXTRAS]==VERSION'`,
+   preserving the installed extras and using uv's normal dependency resolution
+   and cache.
+3. Attempt to start the control plane again, even if installation failed.
 
-Verification checks the observed Python version, health, previously running
-connectors and session adoption. If an install fails after stopping, the updater
-attempts to start the lodge again. Reports include completed actions, observed
-version and recovery results; there is no automatic rollback. A verified package
-update does not imply migrations are complete.
+A previously stopped lodge stays stopped. A small helper runs under base Python
+outside the tool environment being replaced; it is temporary process plumbing,
+not a staging environment or saved-plan interface. Concurrent updates are refused.
+The helper is cleaned up when it exits.
 
-There is no rollback through this command, including after a successful update
-to a faulty release. A rollback requires a manual pinned
+The tunnel and connectors are offline during installation, including downloads.
+There is no pre-download rehearsal, frozen dependency set or offline install
+mode. A network/dependency failure can happen while the lodge is stopped. If a
+failed install leaves the CLI unusable, the automatic restart can fail too;
+repair the package with uv and then run `woltspace start` manually.
+
+The command checks uv's exit result, the restart command's result and the observed
+Python version. It does not verify connector recovery or session adoption.
+A successful exit is not proof that every bot connector resumed: check
+`woltspace status` and your messaging channel afterwards. tmux sessions survive
+a control-plane stop; existing sessions retain loaded instructions. New sessions
+load updated skills after native start syncs them.
+
+There are no durable updater reports or automatic rollback. Migration actions
+are separate. A rollback requires a manual pinned
 `uv tool install --force 'woltspace[connectors]==OLDER_VERSION'`, preserving your
 installed extras and stopping/restarting the control plane around replacement.
 First verify the older code can read the current on-disk state; migrations may
-require restoring a compatible backup. Installing an older package alone does
-not reverse a migration.
-
-Private reports remain under `.space/platform/updates/`, with their paths printed.
-Owned staging environments/caches are removed on completion or failure; a hard
-process kill can leave temporary files. Internal worker handoff files are not a
-public saved-plan interface.
+require restoring a compatible backup. An older package alone does not reverse
+migrations.
 
 ## TUI updates are separate
 

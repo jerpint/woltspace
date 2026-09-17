@@ -15,7 +15,7 @@ from packaging.version import Version, InvalidVersion
 from . import __version__
 from .layout import RuntimeLayout
 from .instance import inspect_instance
-from .update_worker import SUPPORTED_VERSION, validate_versions, Failure
+from .update_worker import SUPPORTED_VERSION
 
 
 class UpdateError(RuntimeError):
@@ -78,7 +78,7 @@ def stable(value):
         return None
 
 
-def build_plan(layout, target=None):
+def resolve_update(layout, target=None):
     if layout.isolation != 'host':
         raise UpdateError('Container updates belong to host-side container tooling.')
     install = native_install()
@@ -95,33 +95,24 @@ def build_plan(layout, target=None):
     target = published
     if Version(target) < Version(__version__):
         raise UpdateError('Downgrades are not supported by update; choose the installed version or a newer release.')
-    wheel = {'name': 'woltspace', 'current': __version__, 'target': target,
-             'changed': Version(target) > Version(__version__)}
     current = inspect_instance(layout)
     if current['state'] not in {'healthy', 'stopped'}:
         raise UpdateError(f"Control plane is {current['state']}; resolve it before updating.")
-    return {'install': install, 'components': [wheel], 'layout': {'wolts_dir': str(layout.wolts_dir),
-            'host': layout.host, 'port': layout.port}, 'instance': current,
-            'changed': wheel['changed'],
+    return {'install': install, 'current': __version__, 'target': target, 'layout': {'wolts_dir': str(layout.wolts_dir),
+            'host': layout.host, 'port': layout.port},
+            'changed': Version(target) > Version(__version__),
             'impact': 'Control plane, tunnel and connectors briefly stop; tmux sessions survive. Existing sessions keep loaded instructions.'}
-
-
-def print_plan(plan):
-    for component in plan['components']:
-        print(f"{component['name']}: {component['current']} → {component['target']}" +
-              (' (update)' if component['changed'] else ' (unchanged)'))
-    if plan['changed']:
-        print('\n' + plan['impact'])
-    else:
-        print('Already current. Nothing changed.')
 
 
 def command(args):
     directory = None
     try:
-        plan = build_plan(RuntimeLayout.from_env(), args.to)
-        validate_versions(plan)
-        print_plan(plan)
+        plan = resolve_update(RuntimeLayout.from_env(), args.to)
+        print(f"woltspace: {plan['current']} → {plan['target']}")
+        if not plan['changed']:
+            print('Already current. Nothing changed.')
+        else:
+            print(plan['impact'])
         if args.check or not plan['changed']:
             return 0
         # An explicit target is the caller's instruction to install that exact
@@ -138,12 +129,12 @@ def command(args):
         (directory / '.owned-update-stage').touch()
         worker = directory / 'worker.py'
         shutil.copyfile(Path(__file__).with_name('update_worker.py'), worker)
-        path = directory / 'plan.json'
+        path = directory / 'update.json'
         path.write_text(json.dumps(plan))
         path.chmod(0o600)
         sys.stdout.flush()
         os.execv(plan['install']['python'], [plan['install']['python'], str(worker), str(path)])
-    except (UpdateError, Failure, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+    except (UpdateError, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
         if directory is not None:
             shutil.rmtree(directory)
         print(f'Update failed before handoff: {exc}', file=sys.stderr)
