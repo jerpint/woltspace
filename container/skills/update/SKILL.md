@@ -55,10 +55,18 @@ Install the exact reviewed version using the ordinary uv command, for example:
 uv tool install --force 'woltspace[connectors]==VERSION'
 ```
 
-Replace VERSION with the reviewed version and preserve all installed extras.
+Replace VERSION with the reviewed version. **The extras in that example are
+illustrative of one install — take the real ones from the uv recipe you inspected
+above, and preserve them exactly.** A lodge installed without `connectors` must not
+silently gain it.
 Do not resolve latest again after authorization. `uv tool upgrade woltspace` is
 the ordinary latest-upgrade command, but respects installed version constraints;
 use the exact install command for this reviewed-version workflow.
+
+`notify` reaches the user through the lodge API, so it stops working the moment the
+control plane does. Expect sends to fail between `woltspace stop` and a successful
+`woltspace start`; that is the outage, not a fault. Hold the report until the lodge
+is back rather than reading the failure as something broken.
 
 If you stopped the lodge, attempt `woltspace start` even when installation fails.
 An initially stopped lodge stays stopped. If replacement damaged the CLI and
