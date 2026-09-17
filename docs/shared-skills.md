@@ -5,6 +5,10 @@ Shared skills live in your lodge data, alongside your wolts, rather than inside
 Woltspace's installed package. They are local to this lodge: Woltspace does not
 publish, upload, fetch or distribute them.
 
+Use the Woltspace-owned `lodge-skills` helper for setup and troubleshooting.
+On copy delivery it is named `woltspace-lodge-skills`; on plugin delivery it
+uses the platform skill namespace for your harness.
+
 ## Add a skill
 
 The source folder is `$WOLTSPACE_WOLTS_DIR/.space/shared-skills/` (normally

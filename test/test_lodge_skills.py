@@ -139,3 +139,15 @@ def test_platform_refresh_preserves_shared_sources(tmp_path):
     assert (p / '.claude/skills/lodge-example').resolve() == source.resolve()
     assert (source / 'SKILL.md').read_text().endswith('Original\n')
     assert (p / '.claude/skills/woltspace-notify/SKILL.md').read_text() == 'Updated platform'
+
+
+def test_platform_helper_is_delivered_separately_from_shared_skills(tmp_path):
+    repo = Path(__file__).resolve().parents[1]
+    wolts = tmp_path / 'wolts';source = skill(wolts);p = wolt(wolts)
+    sync_all_wolt_skills(repo, wolts)
+    helper = p / '.claude/skills/woltspace-lodge-skills/SKILL.md'
+    assert 'name: woltspace-lodge-skills\n' in helper.read_text()
+    assert not helper.parent.is_symlink()
+    assert (p / '.agents/skills/lodge-example').resolve() == source.resolve()
+    original = repo / 'container/skills/lodge-skills/SKILL.md'
+    assert 'name: lodge-skills\n' in original.read_text()
