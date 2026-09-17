@@ -274,3 +274,13 @@ def test_exact_target_check_never_handoffs(monkeypatch, plan):
     monkeypatch.setattr(planner,'build_plan',lambda layout,target:plan if target=='0.6.0' else pytest.fail('unexpected target'))
     monkeypatch.setattr(planner.os,'execv',lambda *a:pytest.fail('check must not install'))
     assert planner.command(SimpleNamespace(to='0.6.0',check=True))==0
+
+
+@pytest.mark.parametrize('target', [None, '0.6.0'])
+def test_yanked_release_refuses_before_lodge_inspection(monkeypatch, plan, tmp_path, target):
+    monkeypatch.setattr(planner, 'native_install', lambda: plan['install'])
+    monkeypatch.setattr(planner, 'get_json', lambda url: {'info': {
+        'version': '0.6.0', 'yanked': True, 'yanked_reason': 'Broken release'}})
+    monkeypatch.setattr(planner, 'inspect_instance', lambda *a: pytest.fail('yanked release reached lodge inspection'))
+    with pytest.raises(planner.UpdateError, match='yanked: Broken release.*non-yanked'):
+        planner.build_plan(RuntimeLayout(tmp_path/'wolts',tmp_path),target)

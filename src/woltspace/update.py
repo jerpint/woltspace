@@ -86,6 +86,9 @@ def build_plan(layout, target=None):
         raise UpdateError('Use an exact stable three-part version, for example --to 0.5.4.')
     url = f'https://pypi.org/pypi/woltspace/{target}/json' if target else 'https://pypi.org/pypi/woltspace/json'
     package = get_json(url)
+    if package['info'].get('yanked'):
+        reason = package['info'].get('yanked_reason') or 'no withdrawal reason provided'
+        raise UpdateError(f'PyPI release is yanked: {reason}. Choose a non-yanked release.')
     published = str(stable(package['info']['version']) or '')
     if not published or (target is not None and published != target):
         raise UpdateError('PyPI did not return the requested stable release; check the version on PyPI.')

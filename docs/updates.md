@@ -18,7 +18,7 @@ woltspace update --check --to 0.5.4  # inspect that exact version without applyi
 
 `--to VERSION` is an explicit installation instruction and does not prompt.
 It validates a stable three-part version (optionally `.postN`), confirms that
-version exists on PyPI and never resolves latest instead. Downgrades are refused.
+version exists on PyPI and never resolves latest instead. Downgrades and releases marked yanked on PyPI are refused.
 Bare update requires interactive confirmation when a change is available; in
 noninteractive use, choose a target explicitly. The separate npm TUI is not
 inspected or modified.
