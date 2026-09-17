@@ -505,7 +505,7 @@ def own_owner(layout, **overrides):
         "instance_id": "incumbent",
         "pid": 4711,
         "started_at": 0,
-        "endpoint": "http://127.0.0.1:7777",
+        "endpoint": layout.endpoint,
         "isolation": "external",
         "hostname": "some-container",
     }
@@ -513,6 +513,13 @@ def own_owner(layout, **overrides):
     return InstanceOwner(**values)
 
 
+@pytest.fixture
+def owner_health_unreachable(monkeypatch):
+    # These cases exercise recorded PID/state evidence, not a real HTTP server.
+    monkeypatch.setattr("woltspace.instance.read_health", lambda *_args, **_kwargs: None)
+
+
+@pytest.mark.usefixtures("owner_health_unreachable")
 class TestSharedDataRootWarning:
     def test_a_live_container_control_plane_stops_a_native_run(self, tmp_path):
         from woltspace.doctor import shared_data_root_check
@@ -555,6 +562,7 @@ class TestSharedDataRootWarning:
         assert shared_data_root_check(_layout(tmp_path)) is None
 
 
+@pytest.mark.usefixtures("owner_health_unreachable")
 class TestEntrypointsAreNotExempt:
     """R1: being the entrypoint means being deliberate, not being alone.
 
@@ -741,6 +749,7 @@ class TestDocsStayTrue:
         assert "docs/native-and-container.md" in (ROOT / "README.md").read_text()
 
 
+@pytest.mark.usefixtures("owner_health_unreachable")
 class TestAStrayServeCannotTakeOverALiveDataRoot:
     """F0: `woltspace serve` typed in a worktree inside the running container.
 

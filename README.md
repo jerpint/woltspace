@@ -20,3 +20,12 @@ Since 0.5.4, `uv tool install woltspace` includes all Telegram and Slack connect
 dependencies. Channels still run only when enabled in your configuration.
 
 For local workflows shared by every wolt, see [Shared lodge skills](docs/shared-skills.md).
+
+For focused CI coverage and checkout test setup, see [Testing](docs/testing.md).
+
+`woltspace backup` creates a verified data archive; `woltspace restore` extracts
+into a new directory. When moving backups across filesystems, an archive with
+names differing only by case (for example `Notes.md` and `notes.md`) restores
+both on a case-sensitive target. On a case-insensitive target, restore refuses
+those collisions with an error before extraction. This includes typical macOS
+volumes; the actual target filesystem determines the behavior.

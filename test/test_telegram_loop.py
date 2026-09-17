@@ -370,7 +370,7 @@ class TestSessionsAliveFilter:
             await handle_sessions(update, context)
 
         reply_text = update.message.reply_text.call_args[0][0]
-        assert "No active sessions" in reply_text
+        assert reply_text == "no active sessions."
 
 
 class TestErrorHandler:
@@ -409,7 +409,7 @@ class TestNotifyRoundTrip:
 
     def test_notify_script_exists(self):
         """The notify binary should be on PATH or at the known location."""
-        notify_path = Path("/workspace/woltspace/container/bin/notify")
+        notify_path = (Path(__file__).resolve().parents[1] / "container/bin/notify")
         assert notify_path.exists(), "notify script missing"
         assert os.access(notify_path, os.X_OK), "notify not executable"
 

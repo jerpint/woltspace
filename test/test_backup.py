@@ -630,6 +630,7 @@ def test_case_folding_collision_is_refused_or_kept_distinct(tmp_path):
     archive = tmp_path / "case.tar.gz"
 
     def build(tar):
+        _add_bytes(tar, "backup-manifest.json", b'{"archive_root": "wolts"}')
         _add_bytes(tar, "wolts/Notes.md", b"upper")
         _add_bytes(tar, "wolts/notes.md", b"lower")
 

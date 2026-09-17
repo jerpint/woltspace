@@ -227,7 +227,7 @@ class TestNotifySeam:
 
     def test_notify_footer_appended(self):
         """notify.py appends the DEN_REPLY_FOOTER to notify messages."""
-        notify_py = Path("/workspace/woltspace/server/notify.py")
+        notify_py = (Path(__file__).resolve().parents[1] / "server/notify.py")
         source = notify_py.read_text()
         assert "DEN_REPLY_FOOTER" in source
         assert "message + footer" in source
@@ -495,14 +495,14 @@ class TestRegressions:
 
     def test_notify_script_executable(self):
         """The notify script must be executable."""
-        notify = Path("/workspace/woltspace/container/bin/notify")
+        notify = (Path(__file__).resolve().parents[1] / "container/bin/notify")
         assert notify.exists()
         assert os.access(notify, os.X_OK)
 
     def test_den_reply_footer_consistent(self):
         """Footer constant must match between server/config.py and telegram_adapter.py."""
-        config_src = Path("/workspace/woltspace/server/config.py").read_text()
-        adapter_src = Path("/workspace/woltspace/container/bot/telegram_adapter.py").read_text()
+        config_src = (Path(__file__).resolve().parents[1] / "server/config.py").read_text()
+        adapter_src = (Path(__file__).resolve().parents[1] / "container/bot/telegram_adapter.py").read_text()
 
         # Both should contain the exact same sentinel string
         sentinel = "↩️ reply to this message to talk to this session directly"

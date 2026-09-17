@@ -30,6 +30,9 @@ def run_in_clean_process(script: str, env_extra: dict) -> dict:
         if not key.startswith(("WOLTS_", "WOLTSPACE_", "WOLT_"))
     }
     env["PYTHONPATH"] = str(ROOT / "src")
+    # These HTTP/livereload probes exercise a private native server, no tunnel.
+    env["WOLTSPACE_PUBLIC_TUNNEL"] = "false"
+    env["WOLTSPACE_ISOLATION"] = "host"
     env.update(env_extra)
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(script)],
