@@ -52,13 +52,12 @@ If running, run `woltspace stop`; confirm it succeeded before installing.
 Install the exact reviewed version using the ordinary uv command, for example:
 
 ```sh
-uv tool install --force 'woltspace[connectors]==VERSION'
+uv tool install --force 'woltspace==VERSION'
 ```
 
-Replace VERSION with the reviewed version. **The extras in that example are
-illustrative of one install — take the real ones from the uv recipe you inspected
-above, and preserve them exactly.** A lodge installed without `connectors` must not
-silently gain it.
+Replace VERSION with the reviewed version and preserve any installed extras and
+custom installation options from the uv recipe inspected above. Since 0.5.4,
+all connector dependencies are included in the base package; no extra is needed.
 Do not resolve latest again after authorization. `uv tool upgrade woltspace` is
 the ordinary latest-upgrade command, but respects installed version constraints;
 use the exact install command for this reviewed-version workflow.

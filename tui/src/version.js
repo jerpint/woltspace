@@ -48,7 +48,7 @@ export const lodgeSatisfies = (lodgeVersion, min = minLodgeVersion) => {
 export const versionBanner = (lodgeVersion, tuiVersion = packageVersion) => {
   if (!lodgeSatisfies(lodgeVersion)) {
     const seen = lodgeVersion || `pre-${ASSUMED_LODGE_VERSION}`;
-    return `this tui needs woltspace >= ${minLodgeVersion}, lodge is ${seen} — run: uv tool install 'woltspace[connectors]'`;
+    return `this tui needs woltspace >= ${minLodgeVersion}, lodge is ${seen} — run: uv tool install 'woltspace'`;
   }
   const [lodgeMajor, lodgeMinor] = parseVersion(lodgeVersion || ASSUMED_LODGE_VERSION);
   const [tuiMajor, tuiMinor] = parseVersion(tuiVersion);

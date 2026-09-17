@@ -175,7 +175,7 @@ the venv beside this bundle, the `woltspace` console script's own interpreter,
 and any python3 that could import them.
 
 Fix it with either:
-  uv tool install 'woltspace[connectors]'
+  uv tool install 'woltspace'
   export WOLTSPACE_PYTHON=/path/to/python
 EOF
 exit 1

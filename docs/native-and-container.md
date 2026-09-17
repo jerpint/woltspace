@@ -30,7 +30,7 @@ is the same code either way. Choose by how much you want to be asked.
 ## Native
 
 ```bash
-uv tool install 'woltspace[connectors]'
+uv tool install 'woltspace'
 woltspace start          # runs doctor, takes the data-root lock, serves the lodge
 woltspace tui            # the terminal UI
 woltspace status         # who owns the data root, which sessions were adopted
@@ -150,7 +150,7 @@ The image no longer bakes the source tree. It installs **the same two published
 artifacts a native install uses**:
 
 ```dockerfile
-uv tool install 'woltspace[connectors]==<WOLTSPACE_PYPI_VERSION>'   # the control plane
+uv tool install 'woltspace==<WOLTSPACE_PYPI_VERSION>'   # the control plane
 npm  install -g '@woltspace/tui@<WOLTSPACE_TUI_VERSION>'            # tui + pty bridge
 ```
 
@@ -374,7 +374,6 @@ live with it.
 | Wolt `CLAUDE.md` / memory files mention `/workspace/wolts/...` | Written from inside the container. Registry records are normalized on adoption; prose is not. | Cosmetic. | — |
 | Old wolts' skills refer to `/workspace/woltspace` | Same. | Cosmetic until a skill shells out to that path. | Skills should use `$WOLTSPACE_DIR`. |
 | `WOLTSPACE_PUBLIC_TUNNEL` reads as "expose me to the internet" | It is the historical on/off switch for ANY tunnel. With `CLOUDFLARE_TUNNEL_TOKEN`+`URL` set it runs the NAMED tunnel — login-gated by Cloudflare Access at the edge, not public at all. The name genuinely alarmed the first native operator. | Know that token+URL present ⇒ named/Access-gated; the random public trycloudflare URL happens only with NO token. | Rename (e.g. `WOLTSPACE_TUNNEL=off\|named\|quick`) with the old var honored as an alias. |
-| A plain `uv tool install -e .` silently drops the telegram connector | The bot needs the `connectors` extra; without it the connector reports "python-telegram-bot is not installed" and chat goes dark. | Always install `-e '.[connectors]'` from a checkout. | `status`/`doctor` already print the exact remedy — maybe `start` should refuse loudly when config enables a channel the install cannot run. |
 | Entering a session from the tui inside your own tmux used to move your whole client there | The tui was designed to own the terminal; same-server entry did a `switch-client`, and the usual prefix + d then detached the outer client. | The tui renders the wolt in the pane you are in - a nested client, status bar off for that session - and binds no keys on your server. Quitting claude ends the session and drops the pane back to the list; your own prefix keys do the rest. | Nothing - the pane is the unit people already think in. |
 
 Pivoting between the two is safe as long as only one runs at a time (same

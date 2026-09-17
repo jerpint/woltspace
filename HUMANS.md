@@ -31,7 +31,7 @@ curl -fsSL https://woltspace.com/install.sh | bash -s -- --native
 Or by hand:
 
 ```bash
-uv tool install 'woltspace[connectors]'
+uv tool install 'woltspace'
 npm install -g @woltspace/tui
 woltspace doctor
 woltspace start

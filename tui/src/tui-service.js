@@ -19,7 +19,7 @@ if (!lodgeSatisfies(lodgeVersion)) {
   console.error(
     `woltspace-tui-service ${packageVersion} needs woltspace >= ${minLodgeVersion}, ` +
       `lodge is ${lodgeVersion || 'older than 0.5.0'} — upgrade it with ` +
-      `\`uv tool install 'woltspace[connectors]'\`, then restart the control plane.`,
+      `\`uv tool install 'woltspace'\`, then restart the control plane.`,
   );
   process.exit(1);
 }

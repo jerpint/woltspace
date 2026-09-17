@@ -445,7 +445,7 @@ class TestFirstRunDocIsHonest:
         )
         import woltspace.channels as channels
 
-        # Force the missing-extra branch: it is what a fresh native install
+        # Force missing dependencies, as in an incomplete native install
         # hits, and the suite's own venv always has the dependency.
         original = channels._module_available
         channels._module_available = lambda name: name != "telegram"
@@ -460,8 +460,8 @@ class TestFirstRunDocIsHonest:
             channels._module_available = original
 
         assert "python-telegram-bot is not installed" in plan.detail
-        assert "'.[connectors]'" in plan.remedy, (
-            "pre-publish, the PyPI form is a dead end — name the checkout first"
+        assert "uv tool install --force ." in plan.remedy, (
+            "dependency repair must include a checkout install option"
         )
         assert plan.remedy in self.DOC.read_text(), (
             "the doc quotes this remedy verbatim; they have drifted apart"
