@@ -1,63 +1,49 @@
 ---
 name: update
-description: Check or update native Woltspace on the user's behalf through woltspace update, including routine checks and authorized application. Container lifecycle belongs to host tooling.
+description: Check or update native Woltspace; review release context and invoke the Python-only update CLI on the user's behalf. Container lifecycle belongs to host tooling.
 user_invocable: true
 ---
 
 # Update Woltspace
 
-Use the installed `woltspace update` CLI. It owns version resolution, staging,
-installation, control-plane restart and verification for the Python package only.
-The separately distributed npm `@woltspace/tui` is outside this workflow; do not check or
-update it as part of a Woltspace update.
+The skill owns release context and consent. The CLI performs the mechanical
+Python update, stages before downtime, restarts and verifies the lodge.
+The separate npm `@woltspace/tui` is outside this workflow.
 
-## Check and review
+Run `woltspace update --check` to inspect the installed and available Python
+versions without applying. Routine checks need no install consent. If the
+command is unavailable, explain the [one-time bootstrap](../../../docs/updates.md).
+Do not substitute a hand-written installer/restart sequence.
 
-Run `woltspace update --check --json --plan <private-plan-path>` to inspect and
-save a plan without applying. Routine checks need no update consent. Use a path
-inside the wolt's private workspace. If the CLI is unavailable, explain the
-[one-time manual bootstrap](../../../docs/updates.md); do not
-silently implement another update procedure.
+Before applying, choose one exact stable three-part target. Review its published
+GitHub release notes and every crossed Python release (`vVERSION` tags), including
+breaking behavior and migrations under `container/migrations/` at the reviewed release commit. Do not infer migration absence from patch versions. If notes or
+migration context cannot be verified, explain what is missing and stop before
+installation. Remember the chosen version; do not switch to latest at apply time.
+Use `woltspace update --check --to VERSION` to inspect that exact target without
+applying, when confirming its availability.
 
-If `changed` is false, report the installed Python version and finish. Otherwise
-summarize the Python target, every crossed release note and every migration.
-Do not infer safety or migration absence from a patch version. Explain any
-breaking behavior and outstanding manual actions. The migration prose comes
-from `container/migrations/` at the reviewed release commit and is checked
-against the staged wheel before stopping anything.
+A check request is not installation consent. Obtain authorization covering that
+version, downtime and required manual actions unless existing session or standing
+permission already covers them. Do not ask again when authorization suffices.
+New incompatible requirements need human input. Do not create a schedule unless
+requested.
 
-## Apply the reviewed plan
+Tell the user the control plane, tunnel and connectors briefly go offline.
+tmux sessions survive, but existing sessions keep loaded instructions; new
+sessions load updated skills and prompts.
 
-A request to check is not a request to apply. Obtain approval for the reviewed
-plan unless this session already has explicit authorization covering the update
-or the user has given applicable standing update permission. Do not ask again
-when existing authorization is sufficient. Standing permission must cover the
-plan's disruption and migration requirements; a new incompatible requirement
-needs human input. Do not create a schedule unless requested.
+Run `woltspace update --to VERSION` using the exact reviewed version. This is an
+explicit install instruction and does not prompt; use it only with authorization.
+Do not issue separate installer or restart commands. Bare `woltspace update` is
+the human convenience path: check the latest version, show impact and confirm.
 
-Tell the user that the control plane, tunnel and connectors will briefly go
-quiet. tmux sessions survive. Sessions already running retain their loaded
-instructions; start a new session to use changed instruction bodies.
+Report the observed installed version, health, connector/session verification
+and any recovery outcome. A nonzero exit is not success. Do not blindly retry
+or claim rollback. Migration instructions are not executed by the CLI: carry
+out only actions covered by user permission and workspace rules, otherwise
+report them as pending. Package verification does not mean migrations are done.
 
-Run `woltspace update --apply-plan <private-plan-path> --yes`. This is the same
-engine as the human's bare `woltspace update`, with approval already handled.
-Do not issue separate installer or restart commands. Apply never resolves
-`latest` again. If installation or lodge identity changed since review, make a
-new plan and review the difference before retrying.
-
-## Report
-
-Report the exact installed Python version, health, connectors and session adoption
-from the updater's result. A nonzero exit or partial failure is not success;
-name what completed, what failed and the recorded recovery result. Do not
-blindly retry an installation or claim rollback happened.
-
-Migration documents are instructions, not automatically executed scripts.
-After package verification, carry out only actions covered by the user's
-permission and allowed by the wolt's workspace rules. Otherwise clearly report
-them as pending; a verified package update does not mean migrations are done.
-
-In external/container isolation, hand lifecycle work to host-side container
-tooling. Do not use a legacy rebuild/latest command or attempt a native update
-inside the container. The platform skill sync happens during native start;
+In external/container isolation, native lifecycle commands are absent; hand
+updates to host-side container tooling. Native start syncs the platform skill;
 there is no separate skill installation step.

@@ -46,7 +46,7 @@ def test_no_container_era_mechanics(body, banned, why):
 @pytest.mark.parametrize("needle, why", [
     ("woltspace update", "the CLI owns installation"),
     ("@woltspace/tui", "the separate TUI distribution must be identified as outside the workflow"),
-    ("--apply-plan", "agents apply the reviewed plan"),
+    ("--to", "agents apply an exact reviewed version"),
     ("--check", "checks do not apply updates"),
 ])
 def test_names_the_real_mechanics(body, needle, why):
@@ -90,7 +90,7 @@ def test_wheel_force_include_covers_container():
         f"a build exclude would drop the migrations: {excluded}"
 
 
-def test_skill_reads_migrations_from_the_install_root(body):
-    """After the install, from the path the CLI reports — not from a checkout."""
-    assert "staged wheel" in body
+def test_skill_reviews_migrations_at_the_chosen_release(body):
+    """The wolt reviews migration context before invoking the mechanical updater."""
+    assert "release notes" in body
     assert "reviewed release commit" in body

@@ -701,12 +701,9 @@ def build_parser() -> argparse.ArgumentParser:
     tui.set_defaults(func=_tui)
     if native:
         from .update import command as update_command
-        update = sub.add_parser("update", help="review and update the native uv installation")
-        update.add_argument("--check", action="store_true", help="review without applying")
-        update.add_argument("--json", action="store_true", help="print the machine-readable plan")
-        update.add_argument("--plan", default="", help="save the reviewed plan")
-        update.add_argument("--apply-plan", default="", help="apply a saved plan without resolving latest")
-        update.add_argument("--yes", action="store_true", help="apply with prior authorization, without prompting")
+        update = sub.add_parser("update", help="update the native uv-installed Python package")
+        update.add_argument("--check", action="store_true", help="check without applying")
+        update.add_argument("--to", metavar="VERSION", help="install this exact stable version without prompting")
         update.set_defaults(func=update_command)
     return parser
 

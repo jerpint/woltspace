@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import fcntl
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -42,8 +41,8 @@ def same_instance(before, after):
 
 
 def validate_versions(plan):
-    if plan.get('schema') != 2 or len(plan['components']) != 1 or plan['components'][0]['name'] != 'woltspace':
-        raise Failure('Only Python-only update plans (schema 2) are supported; create a new plan.')
+    if len(plan['components']) != 1 or plan['components'][0]['name'] != 'woltspace':
+        raise Failure('Only the Woltspace Python package can be updated.')
     for component in plan['components']:
         for key in ('current', 'target'):
             if not SUPPORTED_VERSION.fullmatch(component[key]):
@@ -67,17 +66,10 @@ def stage(plan, directory, env):
         frozen = run([uv, 'pip', 'freeze', '--python', str(python)], env)
         constraints = directory / 'constraints.txt'
         constraints.write_text(frozen + '\n')
-        # Compare the migration content actually shipping to the reviewed prose.
-        staged_info = json.loads(run([str(python), '-c',
-            'import json; from importlib.metadata import version; from woltspace.layout import installation_root; '
-            'print(json.dumps({"version":version("woltspace"),"root":str(installation_root())}))'], env))
-        if staged_info['version'] != wheel['target']:
-            raise Failure('Staged wheel version differs from reviewed target.')
-        root = Path(staged_info['root'])
-        for migration in plan['migrations']:
-            path = root / 'container' / 'migrations' / migration['name']
-            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != migration['sha256']:
-                raise Failure('Wheel migration content differs from review; nothing stopped.')
+        staged_version = run([str(python), '-c',
+            'from importlib.metadata import version; print(version("woltspace"))'], env)
+        if staged_version != wheel['target']:
+            raise Failure('Staged wheel version differs from requested target.')
         # Offline resolution preflight exercises the same pins while still live.
         run([uv, 'pip', 'install', '--dry-run', '--offline', '--python', str(python),
              '--constraint', str(constraints), spec], env)
@@ -143,7 +135,6 @@ def apply(plan, directory, env):
             report['restart'] = json.loads(run([cli, 'start', '--json'], env, timeout=60))
             stopped = False
         report['status'] = verify(plan, env, running=running)
-        report['migration_actions'] = plan['migrations']
         report['ok'] = True
     except (Exception, KeyboardInterrupt) as exc:
         report['error'] = str(exc) or type(exc).__name__
@@ -190,8 +181,6 @@ def main(path):
             output.chmod(0o600)
             print(json.dumps(result, indent=2))
             print(f'Update report: {output}')
-            if result['ok'] and result.get('migration_actions'):
-                print('Package update verified. Reviewed migration instructions remain for the user/wolt to carry out; no migration script was executed.')
             return 0 if result['ok'] else 1
     finally:
         # Never remove an arbitrary plan's parent. Only our handoff creates

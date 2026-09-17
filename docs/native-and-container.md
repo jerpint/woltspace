@@ -97,12 +97,13 @@ box, so Auto is their default and the grant store is ignored.
 
 ### Upgrading
 
-Run `woltspace update`, or ask any wolt to invoke it on your behalf. The CLI
-reviews the Python version, crossed release notes and migrations,
-stages the exact Python package and dependencies, then verifies recovery.
-The separately distributed TUI is updated independently; this command does not
-inspect or modify it.
-The platform update skill reviews the same plan and handles applicable approval.
+Run `woltspace update` to check the Python release, confirm and mechanically
+update the native uv installation. `--check` only inspects; `--to VERSION`
+installs an exact published target without prompting. A wolt's update skill
+handles release notes, migration context and user authorization before invoking
+that exact target. The command stages dependencies before stopping the control
+plane, restarts it and verifies recovery. The separately distributed TUI is not
+inspected or modified.
 
 The tui declares the minimum woltspace version it needs and checks it at startup;
 woltspace does not check the tui's version. The two artifacts release independently.
