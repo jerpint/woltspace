@@ -68,7 +68,8 @@ directories receive their own links. Verify actual discovery in the target fresh
 session before claiming success, especially when its workdir is outside the wolt.
 
 A real same-name skill or unrelated symlink is a preserved per-wolt override.
-To customize one wolt, replace its shared link with a local copy first: editing
+To customize one wolt, replace its shared link with a local copy and remove the
+marked shared-edit notice from that private copy first: editing
 through a link edits the shared source for everyone. Removing an override lets
 the next refresh deliver the shared version. Removal/rename of a shared source
 removes only Woltspace-owned links on next refresh, not wolt-owned overrides.

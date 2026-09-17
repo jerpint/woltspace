@@ -69,7 +69,8 @@ A real skill directory or unrelated symlink at the same name is a per-wolt
 override and is preserved with a warning. In a separately owned `.agents/skills`
 directory, that directory's override applies to harnesses using it. Remove the
 override to receive the shared version on the next refresh. To customize a linked
-skill for one wolt, replace the link with a local copy first; editing through the
+skill for one wolt, replace the link with a local copy first and remove the marked shared-edit
+notice from that private copy; editing through the
 link changes the shared source for everyone.
 
 Removing or renaming a shared skill removes only Woltspace's matching links on

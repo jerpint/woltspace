@@ -32,7 +32,8 @@ def _ensure_notice(skill: Path, text: str, frontmatter_end: int) -> None:
         f"`<wolts_dir>/.space/shared-skills/{skill.name}/SKILL.md`.\n"
         "Edits there persist for every wolt using the shared version; existing\n"
         "sessions may retain loaded instructions. For a private change, replace\n"
-        "only your wolt's link with a local copy first.\n"
+        "only your wolt's link with a local copy first, then remove this notice\n"
+        "from that private copy.\n"
         f"{NOTICE_END}"
     )
     block = re.compile(re.escape(NOTICE_BEGIN) + r".*?" + re.escape(NOTICE_END), re.S)
