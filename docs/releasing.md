@@ -3,10 +3,11 @@
 `.github/workflows/publish.yml` is manually started on `main`. It runs the same
 focused Python/Node and package checks as pull-request CI, downloads those exact
 artifacts, and records their commit and SHA256 digests in the run summary. It
-then waits for **jerpint's separate approval** at each registry's environment:
-first `pypi`, then `npm`. PR approval or merging does not approve publication.
+plans publication before requesting **jerpint's separate approval** for each
+registry that needs files: `pypi` first when needed, then `npm`. PR approval or merging does not approve publication.
 The workflow uses OIDC Trusted Publishing, without persistent upload secrets.
-Tags and GitHub releases are created only after both registry downloads match.
+Tags and GitHub releases are created only after both pinned registry versions
+are available and their downloads verify.
 The TUI release is created first without becoming Latest; the primary Python
 release becomes Latest last, because lodge update checks read releases/latest.
 
@@ -51,8 +52,15 @@ promise depends on preserving those settings and workflow review rules.
 
 Merge the reviewed release preparation and workflow changes into `main`, then
 open Actions → **Publish reviewed release pair** → Run workflow. Select `main`
-and enter the exact Python and TUI versions declared by that commit.
-**Dry run defaults to true**: leave it on first to exercise both approval waits
+and enter the exact Python and TUI versions declared by that commit. Select
+`registry=python`, `npm`, or `both`. Versions advance independently: a Python
+release can keep the existing TUI version, and vice versa. The unselected
+registry version must already exist; its download is verified against registry
+integrity, rather than an unused freshly rebuilt artifact. Only selected
+registries with missing files request publishing approval. Selected versions
+that already exist must match the approved artifacts exactly. Independent
+releases leave the other registry's GitHub tags and assets untouched.
+**Dry run defaults to true**: leave it on first to exercise the selected approval waits
 with no OIDC permission, registry publishing or GitHub release writes. After the
 rehearsal verifies the gate, turn dry run off only for an explicitly authorized
 release with registry trust configured and the owner enable variable set.
@@ -72,6 +80,25 @@ real approval wait must be exercised on an explicitly authorized release; unit
 and ordinary CI success do not prove registry trust or approval configuration.
 
 ## Recovering a partial release
+
+If the workflow itself needs fixing, rerunning the old job would run the old
+broken workflow again. Merge a reviewed workflow fix, then dispatch the fixed
+workflow on `main` with **resume_run_id set to the original publishing run ID**.
+Select the remaining registry and confirm the original versions. Recovery
+admits only a completed main publishing run from this repository with successful
+validation and artifact preparation. It downloads that run's retained approved
+manifest and artifacts instead of rebuilding. The source commit and digests
+remain those originally approved, even when the recovery workflow is newer.
+Artifact verification must still match the current source's shipped contents.
+A recovery cannot substitute a new version or changed package contents.
+
+Use the original build run ID, not a subsequent recovery run ID. Recovery keeps
+all pending GitHub release targets from the original manifest: an npm-only
+recovery of a failed paired release also finalizes the already-published Python
+release after both registries verify. It requests no new Python publishing
+approval when Python already matches. Both registries are checked before any
+tag or release is created. The retained artifacts must still be available;
+expiration is a hard failure, never permission to rebuild published bytes.
 
 Both registries reserve versions permanently. Use **Re-run failed jobs** on the
 original run so the existing approved artifact remains the source of truth.

@@ -1,8 +1,10 @@
 """Prepare, verify and resume a paired release; publishing stays in gated jobs."""
 import argparse
+import base64
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -37,10 +39,10 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def remote_digest(url):
+def remote_digest(url, algorithm='sha256'):
     require(url.startswith('https://'), 'Registry download must use HTTPS')
     with urllib.request.urlopen(url, timeout=60) as response:
-        return hashlib.sha256(response.read()).hexdigest()
+        return hashlib.new(algorithm, response.read()).hexdigest()
 
 
 def check_environments():
@@ -72,9 +74,40 @@ def output(key, value):
             handle.write(f'{key}={value}\n')
 
 
+def source_run():
+    """Admit retained artifacts only from a validated main publishing run."""
+    run_id = os.environ.get('RESUME_RUN_ID', '')
+    if not run_id:
+        output('release_commit', os.environ['GITHUB_SHA'])
+        return
+    require(re.fullmatch(r'[0-9]+', run_id) is not None, 'Original run ID must be numeric')
+    base = f'https://api.github.com/repos/{REPO}/actions/runs/{run_id}'
+    run = get_json(base)
+    require(run['head_repository']['full_name'] == REPO and run['head_branch'] == 'main'
+            and run['path'] == '.github/workflows/publish.yml'
+            and run['event'] == 'workflow_dispatch' and run['status'] == 'completed',
+            'Resume requires a completed main publishing run from this repository')
+    sha = run['head_sha']
+    require(re.fullmatch(r'[0-9a-f]{40}', sha) is not None, 'Original commit is invalid')
+    required = {'guard', 'validation / tests (3.11)', 'validation / tests (3.13)',
+                'validation / packages', 'prepare'}
+    successful = set()
+    page = 1
+    while True:
+        jobs = get_json(f'{base}/jobs?filter=all&per_page=100&page={page}')['jobs']
+        successful.update(job['name'] for job in jobs if job['conclusion'] == 'success')
+        if len(jobs) < 100:
+            break
+        page += 1
+    require(required <= successful, 'Original run did not validate and prepare release artifacts')
+    output('release_commit', sha)
+    print(f'Resuming original artifacts from run {run_id}, commit {sha}; do not rebuild.')
+
+
 def load_manifest():
     manifest = json.loads((ROOT / 'release-manifest.json').read_text())
-    require(manifest['commit'] == os.environ['GITHUB_SHA'], 'Artifact commit differs from workflow commit')
+    expected_commit = os.environ.get('RELEASE_COMMIT') or os.environ['GITHUB_SHA']
+    require(manifest['commit'] == expected_commit, 'Artifact commit differs from approved source run')
     for name, sha in manifest['files'].items():
         require(Path(name).name == name, 'Unsafe artifact filename')
         require(digest(ROOT / 'dist' / name) == sha, f'Artifact digest mismatch: {name}')
@@ -94,10 +127,32 @@ def prepare():
              f'woltspace-{versions["python"]}.tar.gz',
              f'woltspace-tui-{versions["npm"]}.tgz']
     require({p.name for p in (ROOT / 'dist').iterdir()} == set(files), 'Unexpected or missing artifacts')
-    manifest = {'commit': os.environ['GITHUB_SHA'], 'versions': versions,
+    source_commit = os.environ.get('RELEASE_COMMIT') or os.environ['GITHUB_SHA']
+    manifest = {'commit': source_commit, 'versions': versions,
                 'files': {name: digest(ROOT / 'dist' / name) for name in files}}
+    previous_release_targets = []
+    if os.environ.get('RESUME_RUN_ID'):
+        retained = load_manifest()
+        require({key: retained[key] for key in manifest} == manifest,
+                'Retained release manifest differs; do not rebuild or substitute artifacts')
+        previous_release_targets = retained.get('release_targets', retained.get('targets', ['python', 'npm']))
+    target = os.environ.get('REGISTRY_TARGET', 'both')
+    require(target in ('python', 'npm', 'both'), 'Choose python, npm or both')
+    manifest['targets'] = ['python', 'npm'] if target == 'both' else [target]
+    manifest['release_targets'] = [registry for registry in ('python', 'npm')
+                                   if registry in manifest['targets'] or registry in previous_release_targets]
+    manifest['verify_targets'] = manifest['release_targets']
+    # Plan before approval. An unchanged registry gets verified, never staged.
+    # Dry runs deliberately avoid registry access and only rehearse selected gates.
+    for registry in ('python', 'npm'):
+        missing = registry_state(registry, manifest) if os.environ.get('DRY_RUN') == 'false' else []
+        if registry not in manifest['targets']:
+            require(not missing,
+                    f'Unselected {registry} version must already be available; choose both to publish it')
+        output(f'publish_{registry}', 'true' if registry in manifest['targets'] and missing else 'false')
     (ROOT / 'release-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     summary = f'Commit: `{manifest["commit"]}`\n\nPython: **{versions["python"]}**; TUI: **{versions["npm"]}**\n\n'
+    summary += f'Publish targets: **{", ".join(manifest["targets"])}**\n\n'
     summary += '\n'.join(f'- `{name}` SHA256 `{sha}`' for name, sha in manifest['files'].items())
     summary += '\n\nPublication still requires jerpint approval for each registry.\n'
     if os.environ.get('GITHUB_STEP_SUMMARY'):
@@ -108,6 +163,7 @@ def prepare():
 
 def registry_state(registry, manifest):
     version = manifest['versions'][registry]
+    selected = registry in manifest.get('verify_targets', manifest.get('targets', ['python', 'npm']))
     if registry == 'python':
         wanted = {name: sha for name, sha in manifest['files'].items() if not name.endswith('.tgz')}
         data = get_json(f'https://pypi.org/pypi/woltspace/{version}/json', missing_ok=True)
@@ -116,8 +172,9 @@ def registry_state(registry, manifest):
         found = {item['filename']: item for item in data['urls']}
         require(set(found) <= set(wanted), 'PyPI version contains unexpected artifacts')
         for name, item in found.items():
-            require(item['digests']['sha256'] == wanted[name], f'PyPI digest mismatch: {name}. Version exists with different bytes; reuse the original run artifacts, or investigate another publisher.')
-            require(remote_digest(item['url']) == wanted[name], f'PyPI download mismatch: {name}')
+            sha = wanted[name] if selected else item['digests']['sha256']
+            require(item['digests']['sha256'] == sha, f'PyPI digest mismatch: {name}. Version exists with different bytes; reuse the original run artifacts, or investigate another publisher.')
+            require(remote_digest(item['url']) == sha, f'PyPI download mismatch: {name}')
         return [name for name in wanted if name not in found]
     name = next(name for name in manifest['files'] if name.endswith('.tgz'))
     package = urllib.parse.quote('@woltspace/tui', safe='')
@@ -125,16 +182,26 @@ def registry_state(registry, manifest):
     if data is None:
         return [name]
     require(data['name'] == '@woltspace/tui' and data['version'] == version, 'npm identity mismatch')
-    require(remote_digest(data['dist']['tarball']) == manifest['files'][name], 'npm tarball differs from approved artifact. Version exists with different bytes; reuse the original run artifacts, or investigate another publisher.')
+    if selected:
+        require(remote_digest(data['dist']['tarball']) == manifest['files'][name], 'npm tarball differs from approved artifact. Version exists with different bytes; reuse the original run artifacts, or investigate another publisher.')
+    else:
+        integrity = data['dist']['integrity']
+        require(integrity.startswith('sha512-'), 'Existing npm package must have SHA512 integrity')
+        sha = base64.b64decode(integrity.removeprefix('sha512-'), validate=True).hex()
+        require(remote_digest(data['dist']['tarball'], 'sha512') == sha, 'Pinned npm download integrity mismatch')
     return []
 
 
 def check(registry, verify=False):
     manifest = load_manifest()
+    selected = registry in manifest.get('targets', ['python', 'npm'])
+    require(verify or selected, 'An unselected registry must never stage files for publishing')
     for attempt in range(12 if verify else 1):
         missing = registry_state(registry, manifest)
         if not missing:
-            print(f'Verified {registry} {manifest["versions"][registry]}: exact approved bytes are available.')
+            exact = registry in manifest.get('verify_targets', manifest.get('targets', ['python', 'npm']))
+            description = 'exact approved bytes' if exact else 'existing pinned registry files and their integrity'
+            print(f'Verified {registry} {manifest["versions"][registry]}: {description} are available.')
             output('missing', 'false')
             return
         if verify:
@@ -175,6 +242,9 @@ def finalize():
     require(notes.is_file(), 'Review docs/release-notes.md before publishing')
     for registry, tag in [('npm', f'tui-v{manifest["versions"]["npm"]}'),
                           ('python', f'v{manifest["versions"]["python"]}')]:
+        if registry not in manifest.get('release_targets', manifest.get('targets', ['python', 'npm'])):
+            # Preserve an independently released registry's tags and assets.
+            continue
         existing_commit = tag_commit(tag)
         releases = json.loads(gh('api', '--paginate', '--slurp', f'repos/{REPO}/releases?per_page=100'))
         release = next((r for page in releases for r in page if r['tag_name'] == tag), None)
@@ -204,11 +274,12 @@ def finalize():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=['environments', 'prepare', 'check', 'verify', 'finalize'])
+    parser.add_argument('command', choices=['environments', 'source-run', 'prepare', 'check', 'verify', 'finalize'])
     parser.add_argument('registry', nargs='?', choices=['python', 'npm'])
     args = parser.parse_args()
     if args.command in ('check', 'verify'):
         require(args.registry is not None, 'Registry required')
         check(args.registry, verify=args.command == 'verify')
     else:
-        {'environments': check_environments, 'prepare': prepare, 'finalize': finalize}[args.command]()
+        {'environments': check_environments, 'source-run': source_run,
+         'prepare': prepare, 'finalize': finalize}[args.command]()

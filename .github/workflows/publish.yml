@@ -11,8 +11,22 @@ on:
         description: TUI version declared on main (for example 0.5.2)
         required: true
         type: string
+      registry:
+        description: Registry to publish (the other pinned version must already exist)
+        required: true
+        type: choice
+        options:
+          - python
+          - npm
+          - both
+        default: both
+      resume_run_id:
+        description: Optional original validated publishing run ID; reuse its retained artifacts
+        required: false
+        type: string
+        default: ""
       dry_run:
-        description: Exercise both approval gates without publishing anything
+        description: Exercise selected approval gates without publishing anything
         required: true
         type: boolean
         default: true
@@ -26,6 +40,8 @@ concurrency:
 
 jobs:
   guard:
+    outputs:
+      release_commit: ${{ steps.source.outputs.release_commit }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -47,13 +63,31 @@ jobs:
           python-version: '3.13'
       - name: Verify settings enforce owner approval and main only
         run: python scripts/release.py environments
+      - name: Admit original artifact source for recovery
+        id: source
+        env:
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+        run: python scripts/release.py source-run
 
   validation:
+    if: inputs.resume_run_id == ''
     needs: guard
     uses: ./.github/workflows/ci.yml
 
   prepare:
-    needs: validation
+    outputs:
+      publish_python: ${{ steps.plan.outputs.publish_python }}
+      publish_npm: ${{ steps.plan.outputs.publish_npm }}
+    if: ${{ always() && needs.guard.result == 'success' && (needs.validation.result == 'success' || (inputs.resume_run_id != '' && needs.validation.result == 'skipped')) }}
+    needs: [guard, validation]
+    permissions:
+      contents: read
+      actions: read
+    env:
+      RELEASE_COMMIT: ${{ needs.guard.outputs.release_commit }}
+      RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+      REGISTRY_TARGET: ${{ inputs.registry }}
+      DRY_RUN: ${{ inputs.dry_run }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -64,10 +98,20 @@ jobs:
         with:
           python-version: '3.13'
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        if: inputs.resume_run_id == ''
         with:
           name: packages-${{ github.sha }}
           path: dist
+      - name: Download the original immutable approved artifacts
+        if: inputs.resume_run_id != ''
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: approved-release-${{ needs.guard.outputs.release_commit }}
+          run-id: ${{ inputs.resume_run_id }}
+          github-token: ${{ github.token }}
+          path: .
       - name: Recheck artifacts and record approved release identity
+        id: plan
         env:
           EXPECTED_PYTHON: ${{ inputs.python_version }}
           EXPECTED_TUI: ${{ inputs.tui_version }}
@@ -84,7 +128,7 @@ jobs:
           retention-days: 30
 
   approve-pypi-dry-run:
-    if: inputs.dry_run
+    if: ${{ !cancelled() && inputs.dry_run && inputs.registry != 'npm' && needs.prepare.result == 'success' }}
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -104,8 +148,8 @@ jobs:
           echo 'PyPI approval received. Dry run: no publishing.' >> "$GITHUB_STEP_SUMMARY"
 
   approve-npm-dry-run:
-    if: inputs.dry_run
-    needs: approve-pypi-dry-run
+    if: ${{ !cancelled() && inputs.dry_run && inputs.registry != 'python' && needs.prepare.result == 'success' && (needs.approve-pypi-dry-run.result == 'success' || needs.approve-pypi-dry-run.result == 'skipped') }}
+    needs: [prepare, approve-pypi-dry-run]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: npm
@@ -124,8 +168,10 @@ jobs:
           echo 'npm approval received. Dry run: no publishing.' >> "$GITHUB_STEP_SUMMARY"
 
   pypi:
-    if: ${{ !inputs.dry_run }}
-    needs: prepare
+    if: ${{ !cancelled() && !inputs.dry_run && needs.guard.result == 'success' && needs.prepare.result == 'success' && needs.prepare.outputs.publish_python == 'true' }}
+    needs: [guard, prepare]
+    env:
+      RELEASE_COMMIT: ${{ needs.guard.outputs.release_commit }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -159,7 +205,10 @@ jobs:
         run: python scripts/release.py verify python
 
   npm:
-    needs: pypi
+    if: ${{ !cancelled() && !inputs.dry_run && needs.guard.result == 'success' && needs.prepare.result == 'success' && needs.prepare.outputs.publish_npm == 'true' && (needs.pypi.result == 'success' || needs.pypi.result == 'skipped') }}
+    needs: [guard, prepare, pypi]
+    env:
+      RELEASE_COMMIT: ${{ needs.guard.outputs.release_commit }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -193,12 +242,15 @@ jobs:
           python scripts/release.py check npm
       - name: Publish the approved tarball with OIDC
         if: steps.registry.outputs.missing == 'true'
-        run: npm publish publish-dist/*.tgz --access public --ignore-scripts --registry https://registry.npmjs.org
+        run: npm publish ./publish-dist/*.tgz --access public --ignore-scripts --registry https://registry.npmjs.org
       - name: Verify npm registry download
         run: python scripts/release.py verify npm
 
   releases:
-    needs: npm
+    if: ${{ !cancelled() && !inputs.dry_run && needs.guard.result == 'success' && needs.prepare.result == 'success' && (needs.pypi.result == 'success' || needs.pypi.result == 'skipped') && (needs.npm.result == 'success' || needs.npm.result == 'skipped') }}
+    needs: [guard, prepare, pypi, npm]
+    env:
+      RELEASE_COMMIT: ${{ needs.guard.outputs.release_commit }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
