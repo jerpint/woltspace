@@ -119,7 +119,9 @@ the same manifest, and GitHub approval applies to retried publishing jobs.
 
 Finalization verifies both registries again, checks new/Python tags point at the
 approved commit, and verifies release asset bytes. It resumes an existing draft
-without replacing assets. An unchanged TUI version can reuse its already public
+without replacing assets. A draft may exist without its Git tag. After checking
+its target commit and asset bytes, finalization creates the missing tag explicitly
+and verifies it before publishing; existing tags are never moved. An unchanged TUI version can reuse its already public
 GitHub release at its original commit if its asset bytes match; mismatched or
 unpublished tags still fail. Update `docs/release-notes.md` in each reviewed
 release preparation. The primary release is published only after its
