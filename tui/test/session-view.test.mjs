@@ -28,7 +28,7 @@ test('native spawn roots the wolt in its own home, not the launch directory', ()
     {
       workdir: null,
       displayWorkdir: '/wolts/maple',
-      executionPolicy: 'prompt',
+      executionPolicy: undefined,
       supportsHostWorkdirs: true,
     },
   );
@@ -41,7 +41,7 @@ test('container spawn keeps the existing wolt-home default', () => {
     {
       workdir: null,
       displayWorkdir: '/workspace/wolts/maple',
-      executionPolicy: 'auto',
+      executionPolicy: undefined,
       supportsHostWorkdirs: false,
     },
   );

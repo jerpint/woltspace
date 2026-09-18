@@ -33,6 +33,11 @@ node src/main.js       # node >= 18 or bun, host or in-container
 | `a` | toggle dead sessions |
 | `q` | quit |
 
+New sessions start in the wolt's home and use the server's permission default.
+On a native lodge, an existing Auto grant for that exact wolt and directory
+selects Auto; without a matching grant, the session uses Prompt. The confirmation
+shows "server default" because the lodge resolves the grant when it spawns.
+
 ## Design
 
 - **Request/response only, no polling.** Fetches on launch, after every action, and on `r`.

@@ -24,7 +24,7 @@ test('native create action starts the new wolt in its own home', () => {
     name: 'maple',
     woltType: 'raccoon',
     workdir: null,
-    executionPolicy: 'prompt',
+    executionPolicy: undefined,
     isolation: 'host',
   });
 });

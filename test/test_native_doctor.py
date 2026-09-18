@@ -44,6 +44,7 @@ def test_doctor_discovers_existing_host_auth_without_copying_it(tmp_path, monkey
     auth = host_home / ".codex" / "auth.json"
     auth.parent.mkdir(parents=True)
     auth.write_text("{}")
+    monkeypatch.setenv("CODEX_HOME", str(auth.parent))
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: host_home))
 
     def which(name):

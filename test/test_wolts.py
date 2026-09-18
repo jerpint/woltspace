@@ -303,8 +303,9 @@ class TestCredentials:
         assert not (wolt_dir / ".claude").exists()
         assert not (wolt_dir / ".claude.json").exists()
 
-    def test_copies_shared_credentials(self, tmp_path):
+    def test_copies_shared_credentials(self, tmp_path, monkeypatch):
         """Fresh wolt gets a copy (not symlink) of shared creds."""
+        monkeypatch.setenv("WOLTSPACE_ISOLATION", "external")
         from wolts import setup_wolt_claude_config
         shared_claude = tmp_path / ".claude"
         shared_claude.mkdir()
@@ -321,8 +322,9 @@ class TestCredentials:
         assert not wolt_creds.is_symlink()
         assert wolt_creds.read_text() == '{"token": "test"}'
 
-    def test_replaces_legacy_symlink_with_copy(self, tmp_path):
+    def test_replaces_legacy_symlink_with_copy(self, tmp_path, monkeypatch):
         """Legacy symlink gets replaced with a real file."""
+        monkeypatch.setenv("WOLTSPACE_ISOLATION", "external")
         from wolts import setup_wolt_claude_config
         shared_claude = tmp_path / ".claude"
         shared_claude.mkdir()

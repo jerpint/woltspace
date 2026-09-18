@@ -45,7 +45,8 @@ export function spawnTarget(capabilities, wolt, launchCwd) {
   return {
     workdir: null,
     displayWorkdir: wolt?.home || 'wolt home',
-    executionPolicy: capabilities?.default_execution_policy || (native ? 'prompt' : 'auto'),
+    // No user override: let the server apply exact-target Auto grants.
+    executionPolicy: undefined,
     supportsHostWorkdirs: native,
   };
 }

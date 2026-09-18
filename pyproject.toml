@@ -1,6 +1,6 @@
 [project]
 name = "woltspace"
-version = "0.5.4"
+version = "0.5.5"
 description = "A persistent lodge for local AI agent sessions"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -56,6 +56,7 @@ packages = ["src/woltspace"]
 "template" = "woltspace/_bundle/template"
 "templates" = "woltspace/_bundle/templates"
 "docs/updates.md" = "woltspace/_bundle/docs/updates.md"
+"docs/shared-skills.md" = "woltspace/_bundle/docs/shared-skills.md"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -67,5 +68,6 @@ include = [
     "/templates",
     "/README.md",
     "/docs/updates.md",
+    "/docs/shared-skills.md",
     "/LICENSE",
 ]
