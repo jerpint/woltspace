@@ -49,6 +49,9 @@ def check_environments():
         require(env.get('can_admins_bypass') is False, f'{name}: disable administrator bypass')
         rules = [r for r in env['protection_rules'] if r['type'] == 'required_reviewers']
         require(len(rules) == 1, f'{name}: required reviewer protection missing')
+        # The sole reviewer must be able to approve a run they started.
+        require(rules[0].get('prevent_self_review') is False,
+                f'{name}: allow self-review so the sole owner can approve their run')
         reviewers = rules[0]['reviewers']
         require(len(reviewers) == 1 and reviewers[0]['type'] == 'User'
                 and reviewers[0]['reviewer']['login'] == OWNER,

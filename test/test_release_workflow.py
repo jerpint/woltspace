@@ -12,18 +12,20 @@ spec.loader.exec_module(release)
 
 def environment():
     return {'can_admins_bypass': False,
-            'protection_rules': [{'type': 'required_reviewers', 'reviewers': [
+            'protection_rules': [{'type': 'required_reviewers', 'prevent_self_review': False, 'reviewers': [
                 {'type': 'User', 'reviewer': {'login': 'jerpint'}}]}],
             'deployment_branch_policy': {'custom_branch_policies': True, 'protected_branches': False}}
 
 
 @pytest.mark.parametrize('change', ['bypass', 'no_reviewers', 'bot_reviewer', 'additional_reviewer',
-                                     'all_branches', 'protected_branches', 'tag', 'other_branch', 'extra_branch'])
+                                     'self_review_blocked', 'all_branches', 'protected_branches', 'tag', 'other_branch', 'extra_branch'])
 def test_release_refuses_inadequate_environment_protection(monkeypatch, change):
     env = environment()
     branches = [{'name': 'main', 'type': 'branch'}]
     if change == 'bypass':
         env['can_admins_bypass'] = True
+    elif change == 'self_review_blocked':
+        env['protection_rules'][0]['prevent_self_review'] = True
     elif change == 'no_reviewers':
         env['protection_rules'] = []
     elif change == 'bot_reviewer':
