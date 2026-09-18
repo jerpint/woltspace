@@ -166,9 +166,16 @@ def fake_releases(monkeypatch, artifacts, existing=None):
     """Model GitHub draft recovery and asset downloads; no network or writes."""
     releases = existing or {}
     calls = []
+    tags = {tag: value['commit'] for tag, value in releases.items() if value.get('tag_exists', True)}
     def fake_gh(*args):
         calls.append(args)
         if args[:1] == ('api',):
+            if args[1].endswith('/git/refs'):
+                fields = dict(arg.split('=', 1) for arg in args if arg.startswith(('ref=', 'sha=')))
+                tag = fields['ref'].removeprefix('refs/tags/')
+                assert tag not in tags, 'existing tags must never be overwritten'
+                tags[tag] = fields['sha']
+                return '{}'
             return json.dumps([[{'tag_name': tag, 'draft': value['draft']}
                                 for tag, value in releases.items()]])
         action, tag = args[1:3]
@@ -176,7 +183,7 @@ def fake_releases(monkeypatch, artifacts, existing=None):
             releases[tag] = {'draft': True, 'commit': artifacts['commit'], 'assets': []}
         elif action == 'view':
             value = releases[tag]
-            return json.dumps({'isDraft': value['draft'], 'assets': [{'name': n} for n in value['assets']]})
+            return json.dumps({'isDraft': value['draft'], 'targetCommitish': value['commit'], 'assets': [{'name': n} for n in value['assets']]})
         elif action == 'upload':
             releases[tag]['assets'].append(Path(args[3]).name)
         elif action == 'download':
@@ -187,7 +194,7 @@ def fake_releases(monkeypatch, artifacts, existing=None):
             releases[tag]['draft'] = False
         return ''
     monkeypatch.setattr(release, 'gh', fake_gh)
-    monkeypatch.setattr(release, 'tag_commit', lambda tag: releases.get(tag, {}).get('commit'))
+    monkeypatch.setattr(release, 'tag_commit', lambda tag: tags.get(tag))
     monkeypatch.setattr(release, 'registry_state', lambda registry, manifest: [])
     (release.ROOT / 'docs').mkdir()
     (release.ROOT / 'docs/release-notes.md').write_text('Reviewed release changes')
@@ -430,7 +437,65 @@ def test_workflow_npm_command_accepts_local_tarball_without_git_lookup(tmp_path)
         info = tarfile.TarInfo('package/package.json')
         info.size = len(payload)
         archive.addfile(info, io.BytesIO(payload))
-    result = subprocess.run(['bash', '-c', command + ' --dry-run --json --cache ./npm-cache'],
-                            cwd=tmp_path, capture_output=True, text=True, timeout=30)
+    # npm's dry run can query package metadata. Keep this contract independent
+    # of whether the real version has since been published.
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+    class Registry(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(404)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"error":"not found"}')
+        def log_message(self, *args):
+            pass
+    with ThreadingHTTPServer(('127.0.0.1', 0), Registry) as registry:
+        thread = threading.Thread(target=registry.serve_forever)
+        thread.start()
+        try:
+            arguments = f' --dry-run --json --cache ./npm-cache --registry http://127.0.0.1:{registry.server_port}'
+            result = subprocess.run(['bash', '-c', command + arguments], cwd=tmp_path,
+                                    capture_output=True, text=True, timeout=30)
+        finally:
+            registry.shutdown()
+            thread.join()
+
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)['id'] == '@woltspace/tui@0.5.2'
+
+
+def test_existing_untagged_draft_creates_verified_ref_before_publication(artifacts, monkeypatch):
+    existing = {'tui-v0.5.2': {'draft': True, 'commit': artifacts['commit'],
+                'assets': ['woltspace-tui-0.5.2.tgz'], 'tag_exists': False}}
+    calls, releases = fake_releases(monkeypatch, artifacts, existing)
+    release.finalize()
+    create = next(i for i, call in enumerate(calls) if call[:2] == ('api', f'repos/{release.REPO}/git/refs'))
+    verify_asset = next(i for i, call in enumerate(calls) if call[:3] == ('release', 'download', 'tui-v0.5.2'))
+    publish = next(i for i, call in enumerate(calls) if call[:3] == ('release', 'edit', 'tui-v0.5.2'))
+    assert verify_asset < create < publish
+    assert f'sha={artifacts["commit"]}' in calls[create]
+    assert not releases['tui-v0.5.2']['draft']
+    assert not any(call[:3] == ('release', 'upload', 'tui-v0.5.2') for call in calls)
+
+
+def test_untagged_draft_with_wrong_target_is_not_published(artifacts, monkeypatch):
+    existing = {'tui-v0.5.2': {'draft': True, 'commit': 'wrong-commit',
+                'assets': ['woltspace-tui-0.5.2.tgz'], 'tag_exists': False}}
+    calls, _ = fake_releases(monkeypatch, artifacts, existing)
+    with pytest.raises(RuntimeError, match='untagged draft'):
+        release.finalize()
+    assert not any(call[:2] == ('release', 'edit') or call[:2] == ('api', f'repos/{release.REPO}/git/refs') for call in calls)
+
+
+def test_failed_tag_creation_keeps_release_draft(artifacts, monkeypatch):
+    calls, releases = fake_releases(monkeypatch, artifacts)
+    original = release.gh
+    def reject_ref(*args):
+        if args[:2] == ('api', f'repos/{release.REPO}/git/refs'):
+            raise RuntimeError('ref creation denied')
+        return original(*args)
+    monkeypatch.setattr(release, 'gh', reject_ref)
+    with pytest.raises(RuntimeError, match='ref creation denied'):
+        release.finalize()
+    assert releases['tui-v0.5.2']['draft']
+    assert not any(call[:2] == ('release', 'edit') for call in calls)

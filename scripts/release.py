@@ -256,7 +256,7 @@ def finalize():
                '--draft', '--latest=false', '--title', tag, '--notes-file', str(notes))
         wanted = {name: sha for name, sha in manifest['files'].items()
                   if name.endswith('.tgz') == (registry == 'npm')}
-        release = json.loads(gh('release', 'view', tag, '--repo', REPO, '--json', 'assets,isDraft'))
+        release = json.loads(gh('release', 'view', tag, '--repo', REPO, '--json', 'assets,isDraft,targetCommitish'))
         assets = {asset['name'] for asset in release['assets']}
         require(assets <= set(wanted), f'{tag}: unexpected release assets')
         for name, sha in wanted.items():
@@ -265,6 +265,13 @@ def finalize():
             with tempfile.TemporaryDirectory() as temp:
                 gh('release', 'download', tag, '--pattern', name, '--dir', temp, '--repo', REPO)
                 require(digest(Path(temp) / name) == sha, f'{tag}: release asset mismatch: {name}')
+        if existing_commit is None:
+            # GitHub can retain a draft without creating its tag. Create the
+            # ref explicitly after verifying assets, before publishing it.
+            require(release['isDraft'] and release['targetCommitish'] == manifest['commit'],
+                    f'{tag}: untagged draft must target the approved commit')
+            gh('api', f'repos/{REPO}/git/refs', '-f', f'ref=refs/tags/{tag}',
+               '-f', f'sha={manifest["commit"]}')
         require(tag_commit(tag) == (existing_commit or manifest['commit']), f'{tag}: tag commit mismatch')
         if release['isDraft']:
             gh('release', 'edit', tag, '--repo', REPO, '--draft=false',
