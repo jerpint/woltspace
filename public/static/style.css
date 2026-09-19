@@ -962,6 +962,13 @@ body {
   margin-bottom: 6px;
   display: block;
 }
+.modal-label-hint {
+  font-family: var(--font-body);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-3);
+}
 .modal-input {
   width: 100%;
   font-family: var(--font-mono);

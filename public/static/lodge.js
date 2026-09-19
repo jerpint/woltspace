@@ -670,12 +670,6 @@ function selectCreateHarness(id) {
 }
 
 function renderCreateHarness() {
-  const harness = harnessInfo(createSelectedHarness);
-  const summary = document.getElementById('create-harness-summary');
-  if (summary) {
-    const name = harness.label || harness.id;
-    summary.textContent = `This wolt will use ${name}. You can change it later in Settings.`;
-  }
   document.querySelectorAll('.type-card').forEach(card => {
     const hint = card.querySelector('.type-card-hint');
     const model = card.querySelector('.type-card-model');

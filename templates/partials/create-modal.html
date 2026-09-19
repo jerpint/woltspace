@@ -6,9 +6,8 @@
         <input type="text" class="modal-input" id="create-name" placeholder="e.g. chip" maxlength="20" autocomplete="off" spellcheck="false" oninput="updateCreatePreview()">
       </div>
       <div class="modal-field">
-        <label class="modal-label" for="create-harness">Harness</label>
+        <label class="modal-label" for="create-harness">Harness <span class="modal-label-hint">(you can change it later in Settings)</span></label>
         <select class="modal-input" id="create-harness" onchange="selectCreateHarness(this.value)"></select>
-        <div class="create-harness-summary" id="create-harness-summary"></div>
       </div>
       <div class="modal-field">
         <label class="modal-label">Working style</label>
