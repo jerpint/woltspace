@@ -21,6 +21,11 @@ dependencies. Channels still run only when enabled in your configuration.
 
 For local workflows shared by every wolt, see [Shared lodge skills](docs/shared-skills.md).
 
+To publish a tiny starter team rather than private lodge history, see
+[Colony seeds](docs/colony-seeds.md). Colony seeds are ordinary Git
+repositories containing selected wolt identities, authored rules, explicit
+skills, and app source or pinned HTTPS Git references.
+
 For focused CI coverage and checkout test setup, see [Testing](docs/testing.md).
 
 `woltspace backup` creates a verified data archive; `woltspace restore` extracts

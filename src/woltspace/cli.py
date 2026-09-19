@@ -580,6 +580,91 @@ def _auto_list(args) -> int:
     return 0
 
 
+def _seed(args) -> int:
+    args.seed_parser.print_help()
+    return 1
+
+
+def _seed_create(args) -> int:
+    from .seed import SeedError, create_seed
+
+    layout = RuntimeLayout.from_env()
+    try:
+        summary = create_seed(
+            wolts_dir=layout.wolts_dir,
+            output=args.output,
+            name=args.name,
+            wolt_names=args.wolt,
+            app_names=args.app,
+            skills=args.skill,
+        )
+    except SeedError as exc:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        else:
+            lore.failure(f"colony seed creation failed: {exc}")
+        return 1
+    payload = {"ok": True, **summary.to_record()}
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        lore.headline(lore.TRACKS, f"colony seed ready: {summary.name}")
+        lore.labelled("path", str(summary.root))
+        lore.labelled("wolts", ", ".join(summary.wolts))
+        lore.labelled("apps", ", ".join(summary.apps) or "none")
+        lore.labelled("size", f"{summary.bytes:,} bytes in {summary.files} files")
+    return 0
+
+
+def _seed_inspect(args) -> int:
+    from .seed import SeedError, inspect_seed
+
+    try:
+        summary = inspect_seed(args.source)
+    except SeedError as exc:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        else:
+            lore.failure(f"colony seed is invalid: {exc}")
+        return 1
+    payload = {"ok": True, **summary.to_record()}
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        lore.headline(lore.TRACKS, f"colony seed: {summary.name}")
+        lore.labelled("wolts", ", ".join(summary.wolts))
+        lore.labelled("apps", ", ".join(summary.apps) or "none")
+        lore.labelled("size", f"{summary.bytes:,} bytes in {summary.files} files")
+        lore.labelled("sha256", summary.digest)
+    return 0
+
+
+def _seed_install(args) -> int:
+    from .seed import SeedError, install_seed
+
+    layout = RuntimeLayout.from_env()
+    try:
+        result = install_seed(
+            source=args.source,
+            wolts_dir=layout.wolts_dir,
+            install_root=layout.install_root,
+        )
+    except SeedError as exc:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        else:
+            lore.failure(f"colony seed install failed: {exc}")
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        lore.headline(lore.SUN, f"colony seed installed: {result['seed']}")
+        lore.labelled("wolts", ", ".join(result["wolts"]))
+        lore.labelled("apps", ", ".join(result["apps"]) or "none")
+        lore.subtitle("fresh independent copies; lived memory starts here")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="woltspace",
@@ -689,6 +774,44 @@ def build_parser() -> argparse.ArgumentParser:
     auto_list = auto_sub.add_parser("list", help="show every standing Auto grant")
     auto_list.add_argument("--json", action="store_true")
     auto_list.set_defaults(func=_auto_list)
+
+    seed = sub.add_parser(
+        "seed", help="create, inspect, and install shareable colony seeds"
+    )
+    seed.set_defaults(func=_seed, seed_parser=seed)
+    seed_sub = seed.add_subparsers(dest="verb")
+
+    seed_create = seed_sub.add_parser(
+        "create", help="create a shareable colony seed (not a stateful backup)"
+    )
+    seed_create.add_argument("output", help="new directory to create")
+    seed_create.add_argument("--name", required=True, help="portable seed name")
+    seed_create.add_argument(
+        "--wolt", action="append", required=True, help="wolt to include (repeatable)"
+    )
+    seed_create.add_argument(
+        "--app", action="append", default=[], help="tracked app source to include (repeatable)"
+    )
+    seed_create.add_argument(
+        "--skill", action="append", default=[], metavar="WOLT:SKILL",
+        help="explicit user-owned skill to include (repeatable)",
+    )
+    seed_create.add_argument("--json", action="store_true")
+    seed_create.set_defaults(func=_seed_create)
+
+    seed_inspect = seed_sub.add_parser(
+        "inspect", help="validate and summarize a colony seed"
+    )
+    seed_inspect.add_argument("source")
+    seed_inspect.add_argument("--json", action="store_true")
+    seed_inspect.set_defaults(func=_seed_inspect)
+
+    seed_install = seed_sub.add_parser(
+        "install", help="install independent starter copies from a directory or Git URL"
+    )
+    seed_install.add_argument("source")
+    seed_install.add_argument("--json", action="store_true")
+    seed_install.set_defaults(func=_seed_install)
 
     tui = sub.add_parser("tui", help="open the terminal UI")
     tui.add_argument("--dry-run", action="store_true", help="show resolution without launching")
