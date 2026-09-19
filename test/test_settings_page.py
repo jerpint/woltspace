@@ -31,7 +31,6 @@ def test_settings_page_renders_defaults_and_overrides(tmp_path, monkeypatch):
 
     monkeypatch.setattr(app_module, "WOLTS_DIR", tmp_path)
     monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
-    monkeypatch.setattr(app_module, "harness_installed", lambda name: name != "opencode")
 
     response = asyncio.run(_request("GET", "/settings"))
     body = response.text
@@ -43,7 +42,9 @@ def test_settings_page_renders_defaults_and_overrides(tmp_path, monkeypatch):
     assert "brook" in body
     assert "Uses · Codex" in body
     assert "Use lodge default (Claude Code)" in body
-    assert "opencode (not installed)" in body
+    assert ">opencode<" in body
+    assert "Available" not in body
+    assert "Not installed" not in body
     assert "GPT-5.5" not in body
     assert "GPT-4o" not in body
     assert 'data-wolt="fang"' not in body
@@ -56,7 +57,6 @@ def test_settings_assets_and_mutations_are_wired(tmp_path, monkeypatch):
     _write_wolt(tmp_path, "maple", "raccoon")
     monkeypatch.setattr(app_module, "WOLTS_DIR", tmp_path)
     monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
-    monkeypatch.setattr(app_module, "harness_installed", lambda name: True)
 
     css = asyncio.run(_request("GET", "/static/design-system.css"))
     script = asyncio.run(_request("GET", "/static/settings.js"))
@@ -73,18 +73,17 @@ def test_settings_assets_and_mutations_are_wired(tmp_path, monkeypatch):
     assert json.loads((tmp_path / "maple" / "wolt" / "wolt.json").read_text())["harness"] == "claude"
 
 
-def test_settings_rejects_an_unavailable_harness(tmp_path, monkeypatch):
+def test_settings_accepts_any_registered_harness(tmp_path, monkeypatch):
     _write_wolt(tmp_path, "maple", "raccoon")
     monkeypatch.setattr(app_module, "WOLTS_DIR", tmp_path)
     monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
-    monkeypatch.setattr(app_module, "harness_installed", lambda name: name != "opencode")
-
     default = asyncio.run(_request("POST", "/harness/default", json={"harness": "opencode"}))
     override = asyncio.run(_request("POST", "/wolts/maple/harness", json={"harness": "opencode"}))
 
-    assert default.status_code == 409
-    assert override.status_code == 409
-    assert "harness" not in json.loads((tmp_path / "maple" / "wolt" / "wolt.json").read_text())
+    assert default.status_code == 200
+    assert override.status_code == 200
+    assert json.loads((tmp_path / "woltspace.json").read_text())["harness"]["default"] == "opencode"
+    assert json.loads((tmp_path / "maple" / "wolt" / "wolt.json").read_text())["harness"] == "opencode"
 
 
 def test_configured_wolts_skips_broken_entries(tmp_path, monkeypatch):

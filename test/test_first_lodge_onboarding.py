@@ -63,7 +63,6 @@ def test_an_existing_unmarked_wolt_migrates_as_user_owned(tmp_path, monkeypatch)
 
 def test_picker_selection_is_one_atomic_product_action(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
-    monkeypatch.setattr(app_module, "harness_installed", lambda name: True)
 
     response = client.post("/onboarding/harness", json={"harness": "codex"})
 
@@ -74,13 +73,12 @@ def test_picker_selection_is_one_atomic_product_action(tmp_path, monkeypatch):
     assert config["onboarding"]["harness_selected"] is True
 
 
-def test_missing_harness_cannot_complete_first_run(tmp_path, monkeypatch):
+def test_unknown_harness_cannot_complete_first_run(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
-    monkeypatch.setattr(app_module, "harness_installed", lambda name: False)
 
-    response = client.post("/onboarding/harness", json={"harness": "codex"})
+    response = client.post("/onboarding/harness", json={"harness": "unknown"})
 
-    assert response.status_code == 409
+    assert response.status_code == 400
     assert not (tmp_path / "woltspace.json").exists()
 
 

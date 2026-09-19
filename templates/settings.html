@@ -28,11 +28,10 @@
               'default-harness',
               harness.id,
               harness.label,
-              'Available' if harness.installed else 'Not installed',
+              '',
               '',
               harness.id == harness_default,
-              harness.emoji,
-              not harness.installed
+              harness.emoji
             ) }}
           {% endfor %}
         </fieldset>
@@ -43,7 +42,7 @@
         <div><strong>New sessions only</strong><p>Sessions already running keep the harness they started with.</p></div>
       </div>
 
-      {% call panel('Wolt harnesses', 'Each wolt can follow the lodge or use another available harness.', (wolts|length ~ ' wolts')) %}
+      {% call panel('Wolt harnesses', 'Each wolt can follow the lodge or use another harness.', (wolts|length ~ ' wolts')) %}
         {% if wolts %}
           <div class="ds-field-list">
             {% for wolt in wolts %}
@@ -57,7 +56,7 @@
                   <select class="ds-select" id="{{ field_id }}" aria-describedby="{{ field_id }}-help" data-wolt-select>
                     <option value=""{% if not selected %} selected{% endif %}>Use lodge default ({{ harness_labels[harness_default] }})</option>
                     {% for harness in harnesses %}
-                      <option value="{{ harness.id }}"{% if selected == harness.id %} selected{% endif %}{% if not harness.installed %} disabled{% endif %}>{{ harness.label }}{% if not harness.installed %} (not installed){% endif %}</option>
+                      <option value="{{ harness.id }}"{% if selected == harness.id %} selected{% endif %}>{{ harness.label }}</option>
                     {% endfor %}
                   </select>
                   <span class="ds-pill ds-pill-subtle" data-wolt-status data-following="{{ 'true' if not selected else 'false' }}">

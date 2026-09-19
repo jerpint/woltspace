@@ -135,19 +135,10 @@ function renderFirstRunHarnessChoice() {
   harnessList.forEach(h => {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = `home-harness-option${h.installed === false ? ' unavailable' : ''}`;
+    button.className = 'home-harness-option';
     const name = `${h.emoji || ''} ${h.label || h.id}`.trim();
-    button.innerHTML = `<span>${name}</span>${h.installed === false ? '<small>not installed</small>' : ''}`;
-    button.onclick = () => {
-      if (h.installed === false) {
-        document.querySelectorAll('.home-harness-option').forEach(el =>
-          el.classList.toggle('selected', el === button));
-        document.getElementById('home-harness-status').textContent =
-          `Install ${h.label || h.id} from your terminal, then refresh this page.`;
-        return;
-      }
-      chooseHomeHarness(h.id, button);
-    };
+    button.innerHTML = `<span>${name}</span>`;
+    button.onclick = () => chooseHomeHarness(h.id, button);
     options.appendChild(button);
   });
 }
@@ -648,15 +639,13 @@ function renderCreateHarnessOptions() {
     const option = document.createElement('option');
     option.value = harness.id;
     option.textContent = `${harness.label || harness.id}`
-      + (harness.id === harnessDefault ? ' (lodge default)' : '')
-      + (harness.installed === false ? ' (not installed)' : '');
-    option.disabled = harness.installed === false;
+      + (harness.id === harnessDefault ? ' (lodge default)' : '');
     option.selected = harness.id === createSelectedHarness;
     select.appendChild(option);
   });
   // A stale/default id absent from the registry should never submit silently.
-  if (!harnessList.some(h => h.id === createSelectedHarness && h.installed !== false)) {
-    const first = harnessList.find(h => h.installed !== false);
+  if (!harnessList.some(h => h.id === createSelectedHarness)) {
+    const first = harnessList[0];
     createSelectedHarness = first ? first.id : '';
     select.value = createSelectedHarness;
   }

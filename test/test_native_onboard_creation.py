@@ -51,7 +51,6 @@ def test_create_route_uses_default_or_explicit_harness(
         return {'name': 'fixture-session', 'harness': calls[-1][0]}
 
     monkeypatch.setattr(server_app, 'start_session', start)
-    monkeypatch.setattr(server_app, 'harness_installed', lambda name: True)
     client = TestClient(server_app.app)
     assert get_default_harness() == 'claude'
     assert client.post('/onboarding/harness', json={'harness': 'codex'}).status_code == 200
