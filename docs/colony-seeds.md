@@ -30,7 +30,8 @@ woltspace seed install https://github.com/example/my-seed.git
 - each selected wolt's portable `wolt.json` fields, `identity.md`, and the
   human-authored portion of `CLAUDE.md`;
 - user-owned skills selected explicitly with `--skill WOLT:SKILL`;
-- selected app source already tracked in the app's own Git repository; or,
+- selected app source committed in a clean, standalone Git repository, including
+  its `woltspace.json`; or,
   when the app has a credential-free HTTPS origin, its URL and exact commit
   SHA. Private origins work when the receiving machine has access.
 
@@ -43,10 +44,17 @@ current copies.
 
 The seed creator rejects secret-shaped paths, credential-like content,
 machine-specific home paths, symlinks, files over 5 MiB, and packages over
-50 MiB. This is a safety boundary, not a substitute for reviewing the small
-result before publishing: authored identity and rules can intentionally name
+50 MiB. It also rejects apps with uncommitted tracked changes so executable
+configuration and source always come from the same commit. This is a safety
+boundary, not a substitute for reviewing the small result before publishing:
+authored identity and rules can intentionally name
 people, organizations, URLs, or other shareable details that software cannot
 classify for you.
+
+Ask a wolt to run the bundled `woltspace-seed-review` skill before the first
+push or any visibility change. It pairs the structural CLI inspection with a
+semantic review of the deliberately selected content and reports blocked,
+owner-confirmation, or ready without granting itself permission to publish.
 
 ## Installation semantics
 
@@ -64,6 +72,12 @@ Apps are private and stopped after install. Ports are assigned from the
 receiving lodge's available range. Bundled source is copied; pinned HTTPS Git
 apps are cloned and checked out at the recorded commit. Dependencies and app
 data remain derived local state and are not included in the colony repository.
+
+Installation rolls back paths it created after ordinary failures and Ctrl-C.
+Like most filesystem installers, it cannot promise atomicity across sudden
+process or machine death. A later retry refuses any names left behind instead
+of overwriting them; inspect and remove only those partial starter directories
+before retrying.
 
 ## Seed or backup?
 

@@ -176,8 +176,27 @@ def test_seed_rejects_secret_shaped_tracked_app_path(tmp_path):
     app = make_app(wolts)
     (app / ".env.production").write_text("TOKEN=secret")
     subprocess.run(["git", "-C", str(app), "add", "-f", ".env.production"], check=True)
+    subprocess.run([
+        "git", "-C", str(app), "-c", "user.name=Test",
+        "-c", "user.email=test@example.invalid", "commit", "-qm", "add fixture",
+    ], check=True)
 
     with pytest.raises(SeedError, match="secret-shaped"):
+        create_seed(
+            wolts_dir=wolts, output=tmp_path / "out", name="starter",
+            wolt_names=["raccoon"], app_names=["tiny-app"],
+        )
+
+
+def test_seed_rejects_dirty_tracked_app_manifest(tmp_path):
+    wolts = tmp_path / "wolts"
+    make_wolt(wolts)
+    app = make_app(wolts)
+    manifest = json.loads((app / "woltspace.json").read_text())
+    manifest["start"] = "python unexpected.py"
+    write_json(app / "woltspace.json", manifest)
+
+    with pytest.raises(SeedError, match="uncommitted tracked changes"):
         create_seed(
             wolts_dir=wolts, output=tmp_path / "out", name="starter",
             wolt_names=["raccoon"], app_names=["tiny-app"],
@@ -236,6 +255,71 @@ def test_https_git_app_is_a_pinned_reference_not_a_copy(tmp_path):
     assert reference["revision"] == revision
     assert not (summary.root / "apps/tiny-app/server.mjs").exists()
     assert inspect_seed(summary.root).apps == ("tiny-app",)
+
+
+def test_seed_rejects_git_url_query_or_fragment(tmp_path):
+    wolts = tmp_path / "wolts"
+    make_wolt(wolts)
+    app = make_app(wolts)
+    subprocess.run([
+        "git", "-C", str(app), "remote", "add", "origin",
+        "https://example.com/tiny-app.git?token=not-safe",
+    ], check=True)
+
+    with pytest.raises(SeedError, match="credential-free HTTPS"):
+        create_seed(
+            wolts_dir=wolts, output=tmp_path / "out", name="starter",
+            wolt_names=["raccoon"], app_names=["tiny-app"],
+        )
+
+
+def test_install_rejects_apps_symlink_without_touching_target(tmp_path):
+    source_wolts = tmp_path / "source-wolts"
+    make_wolt(source_wolts)
+    make_app(source_wolts)
+    package = tmp_path / "package"
+    create_seed(
+        wolts_dir=source_wolts, output=package, name="starter",
+        wolt_names=["raccoon"], app_names=["tiny-app"],
+    )
+    install_root = make_template(tmp_path)
+    target = tmp_path / "new-lodge"
+    target.mkdir()
+    external = tmp_path / "external-apps"
+    external.mkdir()
+    (target / "apps").symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(SeedError, match="real directory"):
+        install_seed(source=package, wolts_dir=target, install_root=install_root)
+
+    assert list(external.iterdir()) == []
+    assert not (target / "raccoon").exists()
+
+
+def test_install_rolls_back_on_keyboard_interrupt(tmp_path, monkeypatch):
+    source_wolts = tmp_path / "source-wolts"
+    make_wolt(source_wolts, "first")
+    make_wolt(source_wolts, "second")
+    package = tmp_path / "package"
+    create_seed(
+        wolts_dir=source_wolts, output=package, name="starter",
+        wolt_names=["first", "second"],
+    )
+    install_root = make_template(tmp_path)
+    target = tmp_path / "new-lodge"
+    original_rename = Path.rename
+
+    def interrupt_second(source, destination):
+        if source.name == "second" and source.parent.name.startswith(".seed-install-"):
+            raise KeyboardInterrupt
+        return original_rename(source, destination)
+
+    monkeypatch.setattr(Path, "rename", interrupt_second)
+    with pytest.raises(KeyboardInterrupt):
+        install_seed(source=package, wolts_dir=target, install_root=install_root)
+
+    assert not (target / "first").exists()
+    assert not (target / "second").exists()
 
 
 def test_seed_and_backup_are_distinct_top_level_commands():

@@ -34,6 +34,9 @@ SECRET_PARTS = {
 SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
 SECRET_CONTENT = re.compile(
     rb"(?:gh[ps]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{20,}|"
+    rb"npm_[A-Za-z0-9]{20,}|pypi-[A-Za-z0-9_-]{20,}|"
+    rb"xox(?:a|b|p|r|s)-[A-Za-z0-9-]{20,}|glpat-[A-Za-z0-9_-]{20,}|"
+    rb"AKIA[0-9A-Z]{16}|"
     rb"-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----)"
 )
 ABSOLUTE_HOME = re.compile(rb"(?:/Users/[^/\s]+/|/home/[^/\s]+/)")
@@ -140,7 +143,7 @@ def create_seed(
         inspect_seed(staging)
         staging.rename(output)
         return inspect_seed(output)
-    except Exception:
+    except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
 
@@ -269,12 +272,13 @@ def install_seed(
         summary = inspect_seed(package)
         manifest = _read_json(package / "seed.json")
         wolts_dir = Path(wolts_dir).resolve()
+        wolts_dir.mkdir(parents=True, exist_ok=True)
         apps_dir = wolts_dir / "apps"
-        conflicts = [name for name in summary.wolts if (wolts_dir / name).exists()]
-        conflicts += [name for name in summary.apps if (apps_dir / name).exists()]
+        _validate_apps_destination(apps_dir, bool(summary.apps))
+        conflicts = [name for name in summary.wolts if _path_occupied(wolts_dir / name)]
+        conflicts += [name for name in summary.apps if _path_occupied(apps_dir / name)]
         if conflicts:
             raise SeedError(f"install would overwrite existing names: {', '.join(conflicts)}")
-        wolts_dir.mkdir(parents=True, exist_ok=True)
         stage = Path(tempfile.mkdtemp(prefix=".seed-install-", dir=wolts_dir))
         moved: list[Path] = []
         try:
@@ -324,12 +328,17 @@ def install_seed(
 
             for name in summary.wolts:
                 target = wolts_dir / name
+                if _path_occupied(target):
+                    raise SeedError(f"install destination appeared during commit: {target}")
                 (stage / name).rename(target)
                 moved.append(target)
             if summary.apps:
+                _validate_apps_destination(apps_dir, True)
                 apps_dir.mkdir(exist_ok=True)
             for name in summary.apps:
                 target = apps_dir / name
+                if _path_occupied(target):
+                    raise SeedError(f"install destination appeared during commit: {target}")
                 (stage / "apps" / name).rename(target)
                 moved.append(target)
             return {
@@ -339,7 +348,7 @@ def install_seed(
                 "apps": list(summary.apps),
                 "source": provenance,
             }
-        except Exception:
+        except BaseException:
             for path in reversed(moved):
                 shutil.rmtree(path, ignore_errors=True)
             raise
@@ -399,10 +408,19 @@ def _export_app(source: Path, target: Path, selected_wolts: list[str]) -> dict:
     if listed.returncode:
         raise SeedError(f"could not list tracked app source: {source.name}")
     files = sorted(filter(None, listed.stdout.decode().split("\0")))
-    manifest_path = source / "woltspace.json"
-    if not manifest_path.is_file():
-        raise SeedError(f"app manifest missing: {source.name}")
-    manifest = _read_json(manifest_path)
+    if "woltspace.json" not in files:
+        raise SeedError(f"app manifest must be tracked: {source.name}")
+    dirty = subprocess.run(
+        ["git", "-C", str(source), "status", "--porcelain", "--untracked-files=no"],
+        capture_output=True, text=True,
+    )
+    if dirty.returncode:
+        raise SeedError(f"could not inspect app worktree: {source.name}")
+    if dirty.stdout.strip():
+        raise SeedError(
+            f"app has uncommitted tracked changes; commit or discard them first: {source.name}"
+        )
+    manifest = _read_git_json(source, "woltspace.json")
     if manifest.get("name") != source.name:
         raise SeedError(f"app directory/manifest name mismatch: {source.name}")
     keeper = manifest.get("keeper")
@@ -432,8 +450,6 @@ def _export_app(source: Path, target: Path, selected_wolts: list[str]) -> dict:
         _write_json(target / "app.json", reference)
         return {"keeper": keeper, "distribution": "git"}
 
-    if "woltspace.json" not in files:
-        raise SeedError(f"bundled app manifest must be tracked: {source.name}")
     for rel in files:
         _audit_relative_path(rel)
         src = source / rel
@@ -443,12 +459,7 @@ def _export_app(source: Path, target: Path, selected_wolts: list[str]) -> dict:
             continue
         dst = target / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
-        content = subprocess.run(
-            ["git", "-C", str(source), "show", f"HEAD:{rel}"], capture_output=True,
-        )
-        if content.returncode:
-            raise SeedError(f"could not read tracked app source: {source.name}/{rel}")
-        dst.write_bytes(content.stdout)
+        dst.write_bytes(_read_git_file(source, rel))
     _write_json(target / "woltspace.json", manifest)
     return {"keeper": keeper, "distribution": "bundled"}
 
@@ -461,7 +472,10 @@ def _validate_git_reference(reference: dict) -> None:
     if not isinstance(url, str):
         raise SeedError("Git app reference has no URL")
     parsed = urlsplit(url)
-    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+    if (
+        parsed.scheme != "https" or not parsed.hostname or parsed.username
+        or parsed.password or parsed.query or parsed.fragment
+    ):
         raise SeedError("Git app references must use a credential-free HTTPS URL")
     if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise SeedError("Git app reference must pin a full commit SHA")
@@ -476,6 +490,25 @@ def _audit_checkout(root: Path) -> None:
         _audit_relative_path(rel.as_posix())
         if path.is_symlink():
             raise SeedError(f"Git app contains a non-portable symlink: {rel.as_posix()}")
+
+
+def _read_git_file(source: Path, rel: str) -> bytes:
+    result = subprocess.run(
+        ["git", "-C", str(source), "show", f"HEAD:{rel}"], capture_output=True,
+    )
+    if result.returncode:
+        raise SeedError(f"could not read tracked app source: {source.name}/{rel}")
+    return result.stdout
+
+
+def _read_git_json(source: Path, rel: str) -> dict:
+    try:
+        value = json.loads(_read_git_file(source, rel).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SeedError(f"invalid JSON in tracked app source: {source.name}/{rel}") from exc
+    if not isinstance(value, dict):
+        raise SeedError(f"JSON object required in tracked app source: {source.name}/{rel}")
+    return value
 
 
 def _parse_skills(values: Iterable[str], wolts: list[str]) -> dict[str, list[str]]:
@@ -587,6 +620,20 @@ def _used_ports(apps_dir: Path) -> set[int]:
             except SeedError:
                 continue
     return used
+
+
+def _path_occupied(path: Path) -> bool:
+    """Treat broken symlinks as occupied too."""
+    return path.exists() or path.is_symlink()
+
+
+def _validate_apps_destination(apps_dir: Path, needed: bool) -> None:
+    if not _path_occupied(apps_dir):
+        return
+    if apps_dir.is_symlink() or not apps_dir.is_dir():
+        if needed:
+            raise SeedError(f"apps destination must be a real directory: {apps_dir}")
+        return
 
 
 def _read_json(path: Path) -> dict:
