@@ -40,12 +40,6 @@ if (root) {
     return data;
   }
 
-  function refreshFollowingStatuses(defaultHarness) {
-    document.querySelectorAll('[data-wolt-status][data-following="true"]').forEach(status => {
-      status.textContent = `Follows lodge · ${harnessLabels.get(defaultHarness) || defaultHarness}`;
-    });
-  }
-
   document.querySelector('[data-default-form]')?.addEventListener('change', async event => {
     const input = event.target.closest('[name="default-harness"]');
     if (!input) return;
@@ -57,7 +51,6 @@ if (root) {
       const data = await save('/harness/default', { harness: input.value });
       group.dataset.savedValue = data.default;
       root.dataset.defaultHarness = data.default;
-      refreshFollowingStatuses(data.default);
       setGlobalState('saved', 'Lodge default saved');
       showToast(`${harnessLabels.get(data.default) || data.default} is now the lodge default.`);
     } catch (error) {
@@ -73,7 +66,6 @@ if (root) {
   document.querySelectorAll('[data-wolt-select]').forEach(select => {
     select.addEventListener('change', async () => {
       const row = select.closest('[data-wolt-row]');
-      const status = row.querySelector('[data-wolt-status]');
       const previous = row.dataset.savedValue;
       const requested = select.value || null;
       select.disabled = true;
@@ -81,9 +73,6 @@ if (root) {
       try {
         const data = await save(`/wolts/${encodeURIComponent(row.dataset.wolt)}/harness`, { harness: requested });
         row.dataset.savedValue = requested || '';
-        status.dataset.following = String(!data.pinned);
-        const label = harnessLabels.get(data.harness) || data.harness;
-        status.textContent = data.pinned ? `Uses · ${label}` : `Follows lodge · ${label}`;
         setGlobalState('saved', `${row.dataset.wolt} saved`);
         showToast(`${row.dataset.wolt} will use ${harnessLabels.get(data.harness) || data.harness}.`);
       } catch (error) {

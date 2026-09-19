@@ -40,8 +40,9 @@ def test_settings_page_renders_defaults_and_overrides(tmp_path, monkeypatch):
     assert "Harnesses" in body
     assert "maple" in body
     assert "brook" in body
-    assert "Uses · Codex" in body
     assert "Use lodge default (Claude Code)" in body
+    assert "Uses ·" not in body
+    assert "Follows lodge ·" not in body
     assert ">opencode<" in body
     assert "Available" not in body
     assert "Not installed" not in body

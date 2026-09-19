@@ -49,7 +49,6 @@
               {% set wolt_name = wolt.name or wolt.dir %}
               {% set wolt_type = wolt.type or 'rodent' %}
               {% set selected = wolt.harness or '' %}
-              {% set effective = selected or harness_default %}
               {% set field_id = 'wolt-harness-' ~ loop.index %}
               {% call select_field(field_id, wolt_name, wolt_type) %}
                 <div class="ds-select-stack" data-wolt-row data-wolt="{{ wolt.dir or wolt_name }}" data-saved-value="{{ selected }}">
@@ -59,9 +58,6 @@
                       <option value="{{ harness.id }}"{% if selected == harness.id %} selected{% endif %}>{{ harness.label }}</option>
                     {% endfor %}
                   </select>
-                  <span class="ds-pill ds-pill-subtle" data-wolt-status data-following="{{ 'true' if not selected else 'false' }}">
-                    {{ 'Follows lodge' if not selected else 'Uses' }} · {{ harness_labels.get(effective, effective) }}
-                  </span>
                 </div>
               {% endcall %}
             {% endfor %}
