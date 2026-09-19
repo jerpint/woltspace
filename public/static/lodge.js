@@ -54,6 +54,13 @@ function modelFor(harnessId, tier) {
   return m[tier] || m.raccoon || '';
 }
 
+function modelLabelFor(harnessId, tier) {
+  const harness = harnessInfo(harnessId);
+  const model = modelFor(harnessId, tier);
+  const catalogEntry = (harness.catalog || []).find(entry => entry.id === model);
+  return catalogEntry ? catalogEntry.label : model;
+}
+
 // ── Helpers ──
 function timeAgo(ts) {
   const s = Math.floor((Date.now() / 1000) - ts);
@@ -640,9 +647,9 @@ function renderCreateHarnessOptions() {
   harnessList.forEach(harness => {
     const option = document.createElement('option');
     option.value = harness.id;
-    option.textContent = `${harness.emoji || ''} ${harness.label || harness.id}`.trim()
-      + (harness.id === harnessDefault ? ' · lodge default' : '')
-      + (harness.installed === false ? ' · not installed' : '');
+    option.textContent = `${harness.label || harness.id}`
+      + (harness.id === harnessDefault ? ' (lodge default)' : '')
+      + (harness.installed === false ? ' (not installed)' : '');
     option.disabled = harness.installed === false;
     option.selected = harness.id === createSelectedHarness;
     select.appendChild(option);
@@ -666,15 +673,14 @@ function renderCreateHarness() {
   const harness = harnessInfo(createSelectedHarness);
   const summary = document.getElementById('create-harness-summary');
   if (summary) {
-    const name = `${harness.emoji || ''} ${harness.label || harness.id}`.trim();
-    summary.textContent = `${name} will power this wolt. You can switch it later in Settings.`;
+    const name = harness.label || harness.id;
+    summary.textContent = `This wolt will use ${name}. You can change it later in Settings.`;
   }
   document.querySelectorAll('.type-card').forEach(card => {
     const hint = card.querySelector('.type-card-hint');
-    if (!hint) return;
-    const pace = hint.dataset.pace || '';
-    const model = modelFor(createSelectedHarness, card.dataset.type);
-    hint.textContent = [pace, model].filter(Boolean).join(' · ');
+    const model = card.querySelector('.type-card-model');
+    if (hint) hint.textContent = hint.dataset.pace || '';
+    if (model) model.textContent = modelLabelFor(createSelectedHarness, card.dataset.type);
   });
 }
 

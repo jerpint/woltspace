@@ -974,6 +974,11 @@ body {
   outline: none;
 }
 .modal-input:focus { border-color: var(--border-2); }
+.create-name-field .modal-input {
+  font-family: var(--font-display);
+  font-size: 17px;
+  padding: 12px 14px;
+}
 
 /* ── Type picker (create wolt) ── */
 .type-grid {
@@ -1003,10 +1008,17 @@ body {
   color: var(--ink);
 }
 .type-card-hint {
+  font-size: 12px;
+  color: var(--ink-2);
+  margin-top: 3px;
+}
+.type-card-model {
+  min-height: 14px;
+  margin-top: 7px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9px;
+  line-height: 1.35;
   color: var(--ink-3);
-  margin-top: 2px;
 }
 .modal-error {
   font-family: var(--font-mono);
