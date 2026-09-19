@@ -1,15 +1,22 @@
-Python **0.5.5** and **@woltspace/tui 0.5.2** ship shared lodge skills and a fix
-for terminal TUI sessions ignoring existing Auto grants.
+Python **0.5.6** ships harness-first onboarding and Git-friendly Colony Seeds.
+The separately distributed **@woltspace/tui remains at 0.5.2**.
 
-- Add local `.space/shared-skills/` with mandatory `lodge-` names, per-wolt
-  overrides, lifecycle refresh and a bundled setup guide.
-- Let the server resolve execution policy when the terminal TUI caller has not
-  explicitly chosen one, so approved Auto grants apply.
-- Pin the Python/TUI version pair in Docker builds.
-- Add focused Python 3.11/3.13 and Node CI, package-content verification, and
-  owner-approved OIDC publishing for both registries.
+- Choose any registered harness when opening a new lodge or creating a wolt,
+  with lodge defaults and per-wolt overrides available in Settings. Harness
+  authentication remains the responsibility of its normal CLI flow.
+- Create, inspect, and install portable starter colonies with `woltspace seed`.
+  Seeds carry selected identity, authored rules, user skills, and clean tracked
+  app source while excluding sessions, lived memory, credentials, app data,
+  caches, builds, ports, and other machine state.
+- Install seeds as independent `origin: starter` wolts with fresh memory,
+  private app ports, provenance, collision protection, and pinned Git app
+  revisions.
+- Add the native `woltspace-seed-review` skill for semantic privacy, secret,
+  portability, history, redistribution, and prompt-injection review before a
+  seed is shared. A successful review does not authorize publishing.
 
-The TUI is distributed separately: upgrading Python alone does not install the
-terminal fix. Review shared-skill ownership in `docs/shared-skills.md` and release
-approval/recovery in `docs/releasing.md`. The full historical test suite remains
-outside the release gate while its environment assumptions are refactored.
+Colony Seeds are intentionally separate from stateful `backup` and `restore`.
+Start with a private seed repository and review all authored content before any
+visibility change. See `docs/colony-seeds.md` for the data boundary and install
+semantics. The full historical test suite remains outside the release gate while
+its environment assumptions are refactored.
