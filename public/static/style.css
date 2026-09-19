@@ -151,16 +151,38 @@ body {
   align-items: center;
   justify-content: space-between;
 }
-.sidebar-section-label a {
-  color: rgba(255,255,255,0.35);
-  text-decoration: none;
-  font-weight: 500;
+.sidebar-create-wolt {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #fff;
+  background: var(--green);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 7px;
+  padding: 5px 9px;
+  font-family: var(--font-body);
+  font-weight: 600;
   font-size: 11px;
   letter-spacing: 0;
   text-transform: none;
-  transition: color 0.15s;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+  transition: background 0.15s, transform 0.15s, box-shadow 0.15s;
 }
-.sidebar-section-label a:hover { color: rgba(255,255,255,0.7); }
+.sidebar-create-wolt span {
+  font-size: 15px;
+  line-height: 0.8;
+  font-weight: 500;
+}
+.sidebar-create-wolt:hover {
+  background: #477a52;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.24);
+}
+.sidebar-create-wolt:focus-visible {
+  outline: 2px solid var(--green-light);
+  outline-offset: 2px;
+}
 
 /* ── Wolt cards (sidebar) ── */
 .wolt-card {
@@ -962,6 +984,13 @@ body {
   margin-bottom: 6px;
   display: block;
 }
+.modal-label-hint {
+  font-family: var(--font-body);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-3);
+}
 .modal-input {
   width: 100%;
   font-family: var(--font-mono);
@@ -974,6 +1003,11 @@ body {
   outline: none;
 }
 .modal-input:focus { border-color: var(--border-2); }
+.create-name-field .modal-input {
+  font-family: var(--font-display);
+  font-size: 17px;
+  padding: 12px 14px;
+}
 
 /* ── Type picker (create wolt) ── */
 .type-grid {
@@ -1003,10 +1037,17 @@ body {
   color: var(--ink);
 }
 .type-card-hint {
+  font-size: 12px;
+  color: var(--ink-2);
+  margin-top: 3px;
+}
+.type-card-model {
+  min-height: 14px;
+  margin-top: 7px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9px;
+  line-height: 1.35;
   color: var(--ink-3);
-  margin-top: 2px;
 }
 .modal-error {
   font-family: var(--font-mono);

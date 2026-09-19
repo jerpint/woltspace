@@ -6,7 +6,6 @@ import time
 from pathlib import Path
 
 from .config import (
-    CONTAINER_HOME,
     STATE_DIR,
     VIEWS_HISTORY_FILE,
     BOT_LOG_DIR,
@@ -20,7 +19,6 @@ _lib_path = WOLTSPACE_DIR / "container" / "lib"
 if str(_lib_path) not in sys.path:
     sys.path.insert(0, str(_lib_path))
 
-from harness_auth import claude_authenticated  # noqa: E402
 from sessions import SessionRegistry  # noqa: E402
 
 
@@ -38,14 +36,71 @@ def sanitize_session(name: str) -> str:
 # Viewport — stored in session JSON, not in separate files
 # ---------------------------------------------------------------------------
 
-def _is_onboarding() -> bool:
-    """True when Claude Code hasn't been authenticated yet.
+def has_user_created_wolt() -> bool:
+    """Whether this lodge contains a user-owned wolt.
 
-    A token in the environment counts — see `container/lib/harness_auth.py`.
-    Testing only for the credentials file sent an authenticated colony's
-    viewport to /onboard.
+    Future bundled wolts declare ``origin: starter`` and do not satisfy the
+    "create your first wolt" milestone. Existing wolts predate this field and
+    therefore count as user-owned, which keeps upgrades out of first-run UI.
     """
-    return not claude_authenticated(CONTAINER_HOME)
+    try:
+        configs = WOLTS_DIR.glob("*/wolt/wolt.json")
+        for path in configs:
+            try:
+                if json.loads(path.read_text()).get("origin") != "starter":
+                    return True
+            except (json.JSONDecodeError, OSError):
+                continue
+    except OSError:
+        pass
+    return False
+
+
+def _lodge_config() -> dict:
+    try:
+        data = json.loads((WOLTS_DIR / "woltspace.json").read_text())
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def has_selected_default_harness() -> bool:
+    """Whether the owner explicitly answered the first-open harness prompt."""
+    return _lodge_config().get("onboarding", {}).get("harness_selected") is True
+
+
+def select_onboarding_harness(name: str) -> None:
+    """Persist the default harness and first-run completion in one write.
+
+    The API validates ``name`` against the harness registry before calling.
+    Keeping this write beside the reader makes first-open state independent of
+    harness implementation details and authentication.
+    """
+    path = WOLTS_DIR / "woltspace.json"
+    config = _lodge_config()
+    config.setdefault("harness", {})["default"] = name
+    config.setdefault("onboarding", {})["harness_selected"] = True
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(config, indent=2) + "\n")
+    tmp.rename(path)
+
+
+def onboarding_status() -> dict:
+    """Small, durable first-run state; harness authentication is unrelated."""
+    has_user_wolt = has_user_created_wolt()
+    selected = has_selected_default_harness()
+    return {
+        # Existing lodges without the new marker migrate safely: their
+        # user-owned wolt proves setup already happened.
+        "needs_harness_choice": not selected and not has_user_wolt,
+        "harness_selected": selected,
+        "has_user_wolt": has_user_wolt,
+    }
+
+
+def _is_onboarding() -> bool:
+    return onboarding_status()["needs_harness_choice"]
 
 
 def get_current_url(session: str = "main") -> str | None:
@@ -53,9 +108,9 @@ def get_current_url(session: str = "main") -> str | None:
     data = reg.get(sanitize_session(session), check_alive=False)
     if data:
         return data.get("viewport_url") or None
-    # No session found — show onboard page if not authenticated
+    # No session found — show the lodge, whose home owns the first-run picker.
     if _is_onboarding():
-        return "/onboard"
+        return "/"
     return None
 
 
@@ -73,7 +128,7 @@ def get_current_meta(session: str = "main") -> dict:
     data = reg.get(name, check_alive=False)
     if not data:
         if _is_onboarding():
-            return {"url": "/onboard", "updated": 0}
+            return {"url": "/", "updated": 0}
         return {"url": None, "updated": 0}
     meta = {
         "url": data.get("viewport_url") or None,
@@ -161,4 +216,3 @@ def bot_log(event: str, data: dict):
             f.write(entry + "\n")
     except Exception:
         pass
-

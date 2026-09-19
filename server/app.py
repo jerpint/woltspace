@@ -97,6 +97,8 @@ from .state import (
     read_views_history,
     sanitize_session,
     set_current_url,
+    onboarding_status,
+    select_onboarding_harness,
 )
 
 # --- Live reload ---
@@ -761,6 +763,8 @@ async def session_new_create(request: Request):
     body = await request.json()
     wolt_name = (body.get("name") or "").strip().lower()
     wolt_type = (body.get("type") or "").strip().lower()
+    requested_harness = (body.get("harness") or "").strip()
+    selected_harness = requested_harness or get_default_harness()
 
     # Validate name
     if not wolt_name:
@@ -774,11 +778,15 @@ async def session_new_create(request: Request):
     # Validate type — only rodent types can be created from the lodge
     if wolt_type not in ("otter", "beaver", "raccoon"):
         return JSONResponse({"detail": "type must be otter, beaver, or raccoon"}, status_code=400)
+    if selected_harness not in HARNESSES:
+        return JSONResponse({"detail": f"unknown harness: {selected_harness}"}, status_code=400)
 
     try:
         # Step 1: Scaffold the wolt with environment-appropriate harness config.
         from wolts import create_creature_wolt
-        create_creature_wolt(wolt_name, wolt_type)
+        # Only an explicit request becomes a durable per-wolt override. An API
+        # caller that omits harness keeps following the lodge default later.
+        create_creature_wolt(wolt_name, wolt_type, harness=requested_harness)
         print(f"[sessions/create] scaffolded wolt '{wolt_name}' ({wolt_type})")
 
         # Step 2: Start a session — full isolation, site auto-start, viewport
@@ -788,8 +796,9 @@ async def session_new_create(request: Request):
             # skills delivery — a freshly scaffolded wolt is on the copy path,
             # so it gets the copy path's names.
             prompt=platform_skill_invoke(
-                wolt_harness(wolt_name), "create-wolt",
+                selected_harness, "create-wolt",
                 delivery=wolt_skills_delivery(WOLTS_DIR / wolt_name)),
+            harness=selected_harness,
             workdir=body.get("workdir"),
             execution_policy=body.get("execution_policy"),
             routing={"adapter": "lodge"},
@@ -1107,8 +1116,25 @@ def wolf_fires(limit: int = 50, cron: str = "", wolt: str = ""):
 
 @app.get("/harnesses")
 async def list_harnesses():
-    """Available engines (id, label, emoji, per-tier models) + the lodge default."""
+    """Registered engines (id, label, emoji, per-tier models) + lodge default."""
     return {"default": get_default_harness(), "harnesses": harness_metadata()}
+
+
+@app.get("/onboarding/status")
+async def get_onboarding_status():
+    """First-run UI state, independent of every harness's authentication."""
+    return onboarding_status()
+
+
+@app.post("/onboarding/harness")
+async def choose_onboarding_harness(request: Request):
+    """Choose the lodge default and complete the first-open prompt."""
+    body = await request.json()
+    name = (body.get("harness") or "").strip()
+    if name not in HARNESSES:
+        return JSONResponse({"error": f"unknown harness: {name}"}, status_code=400)
+    select_onboarding_harness(name)
+    return {"ok": True, "default": name, **onboarding_status()}
 
 
 @app.post("/harness/default")
@@ -1757,11 +1783,13 @@ async def settings_page(request: Request):
         wolt for wolt in _configured_wolts()
         if wolt.get("type", "rodent") in configurable_types
     ]
+    harnesses = harness_metadata()
     return templates.TemplateResponse(request, "settings.html", context={
         "active_nav": "settings",
         "cache_bust": int(time.time()),
         "harness_default": get_default_harness(),
-        "harnesses": harness_metadata(),
+        "harnesses": harnesses,
+        "harness_labels": {harness["id"]: harness["label"] for harness in harnesses},
         "wolts": wolts,
     })
 
@@ -1769,8 +1797,8 @@ async def settings_page(request: Request):
 # jerpint: this one will be important to nail we might review onboarding flow
 @app.get("/onboard")
 async def onboard_page():
-    resp = await _serve_platform_file("onboard.html")
-    return resp or PlainTextResponse("onboard.html not found", status_code=500)
+    """Compatibility route: first-run setup now lives in the lodge itself."""
+    return RedirectResponse("/", status_code=307)
 
 
 @app.get("/placeholder.html")

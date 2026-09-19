@@ -220,9 +220,78 @@
   transition: opacity 0.4s ease;
 }
 
-/* ── Create wolt CTA (shown when no wolts exist) ── */
+/* ── First lodge setup ── */
+.home-harness-choice {
+  width: min(440px, 100%);
+  margin-top: 24px;
+  padding: 20px;
+  background: rgba(245,241,232,0.92);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  backdrop-filter: blur(6px);
+  animation: fadeUp 0.5s ease;
+}
+.home-harness-title {
+  font-family: var(--font-display);
+  font-size: 17px;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+.home-harness-copy {
+  max-width: 360px;
+  margin: 0 auto 14px;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.home-harness-options {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.home-harness-option {
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--surface-2, #FAF7F0);
+  border: 1px solid var(--border-2);
+  border-radius: 9px;
+  padding: 11px 18px;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s, background 0.15s;
+}
+.home-harness-option:hover,
+.home-harness-option.selected {
+  border-color: var(--amber);
+  background: var(--amber-light);
+  transform: translateY(-1px);
+}
+.home-harness-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.home-harness-option small {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+.home-harness-option.unavailable {
+  color: var(--ink-3);
+  background: rgba(250,247,240,0.65);
+}
+.home-harness-status {
+  min-height: 20px;
+  margin-top: 13px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+/* ── Create wolt CTA (shown until the first user-owned wolt exists) ── */
 .home-create-cta {
-  margin-top: 32px;
+  margin-top: 20px;
   animation: fadeUp 0.5s ease;
 }
 @keyframes fadeUp {

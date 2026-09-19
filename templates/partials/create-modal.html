@@ -1,27 +1,34 @@
 {% from 'components/ui.html' import dialog %}
-{% call dialog('create-modal', 'New wolt', 'Choose a name and the pace this wolt brings to the lodge.', 'closeCreateWolt()') %}
+{% call dialog('create-modal', 'Create a wolt', 'Start with a name, then choose how this wolt works.', 'closeCreateWolt()') %}
     <div class="modal-body">
-      <div class="modal-field">
-        <label class="modal-label">Name</label>
-        <input type="text" class="modal-input" id="create-name" placeholder="e.g. chip, luna, fang..." maxlength="20" autocomplete="off" spellcheck="false" oninput="updateCreatePreview()">
+      <div class="modal-field create-name-field">
+        <label class="modal-label" for="create-name">Wolt name</label>
+        <input type="text" class="modal-input" id="create-name" placeholder="e.g. chip" maxlength="20" autocomplete="off" spellcheck="false" oninput="updateCreatePreview()">
       </div>
       <div class="modal-field">
-        <label class="modal-label">Type</label>
+        <label class="modal-label" for="create-harness">Harness <span class="modal-label-hint">(you can change it later in Settings)</span></label>
+        <select class="modal-input" id="create-harness" onchange="selectCreateHarness(this.value)"></select>
+      </div>
+      <div class="modal-field">
+        <label class="modal-label">Working style</label>
         <div class="type-grid">
           <div class="type-card" data-type="otter" onclick="pickType(this)">
             <div class="type-card-emoji">🦦</div>
-            <div class="type-card-name">otter</div>
-            <div class="type-card-hint">quick - haiku</div>
+            <div class="type-card-name">Otter</div>
+            <div class="type-card-hint" data-pace="Quick">Quick</div>
+            <div class="type-card-model"></div>
           </div>
           <div class="type-card" data-type="beaver" onclick="pickType(this)">
             <div class="type-card-emoji">🦫</div>
-            <div class="type-card-name">beaver</div>
-            <div class="type-card-hint">builder - sonnet</div>
+            <div class="type-card-name">Beaver</div>
+            <div class="type-card-hint" data-pace="Builder">Builder</div>
+            <div class="type-card-model"></div>
           </div>
           <div class="type-card" data-type="raccoon" onclick="pickType(this)">
             <div class="type-card-emoji">🦝</div>
-            <div class="type-card-name">raccoon</div>
-            <div class="type-card-hint">thinker - opus</div>
+            <div class="type-card-name">Raccoon</div>
+            <div class="type-card-hint" data-pace="Thinker">Thinker</div>
+            <div class="type-card-model"></div>
           </div>
         </div>
       </div>

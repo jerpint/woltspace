@@ -22,9 +22,9 @@
 </section>
 {%- endmacro %}
 
-{% macro choice_card(name, value, title, description, meta='', checked=false, emoji='') -%}
-<label class="ds-choice-card">
-  <input class="ds-choice-input" type="radio" name="{{ name }}" value="{{ value }}"{% if checked %} checked{% endif %}>
+{% macro choice_card(name, value, title, description, meta='', checked=false, emoji='', disabled=false) -%}
+<label class="ds-choice-card{% if disabled %} disabled{% endif %}">
+  <input class="ds-choice-input" type="radio" name="{{ name }}" value="{{ value }}"{% if checked %} checked{% endif %}{% if disabled %} disabled{% endif %}>
   <span class="ds-choice-indicator" aria-hidden="true"></span>
   {% if emoji %}<span class="ds-choice-emoji" aria-hidden="true">{{ emoji }}</span>{% endif %}
   <span class="ds-choice-copy">

@@ -30,7 +30,9 @@
   <div class="sidebar-section" id="sidebar-team-section">
     <div class="sidebar-section-label">
       Team <span id="sidebar-team-count" style="color:rgba(255,255,255,0.4)"></span>
-      <a href="#" onclick="openCreateWolt(event)">+ add wolt</a>
+      <button type="button" class="sidebar-create-wolt" onclick="openCreateWolt(event)">
+        <span aria-hidden="true">+</span> Create wolt
+      </button>
     </div>
     <div id="sidebar-wolts"></div>
   </div>
@@ -58,7 +60,6 @@
 
     <div class="sidebar-footer">
       <a href="/tui">terminal</a>
-      <a href="#" onclick="openOnboard();return false">onboard</a>
     </div>
   </div>
 </aside>

@@ -36,11 +36,18 @@ def test_settings_page_renders_defaults_and_overrides(tmp_path, monkeypatch):
     body = response.text
 
     assert response.status_code == 200
-    assert "Lodge default" in body
-    assert "Agent engines" in body
+    assert "Lodge harness" in body
+    assert "Harnesses" in body
     assert "maple" in body
     assert "brook" in body
-    assert "Pinned · codex" in body
+    assert "Use lodge default (Claude Code)" in body
+    assert "Uses ·" not in body
+    assert "Follows lodge ·" not in body
+    assert ">opencode<" in body
+    assert "Available" not in body
+    assert "Not installed" not in body
+    assert "GPT-5.5" not in body
+    assert "GPT-4o" not in body
     assert 'data-wolt="fang"' not in body
     assert 'name="default-harness"' in body
     assert 'role="dialog"' in body
@@ -65,6 +72,19 @@ def test_settings_assets_and_mutations_are_wired(tmp_path, monkeypatch):
     assert override.json() == {"ok": True, "wolt": "maple", "harness": "claude", "pinned": True}
     assert json.loads((tmp_path / "woltspace.json").read_text())["harness"]["default"] == "codex"
     assert json.loads((tmp_path / "maple" / "wolt" / "wolt.json").read_text())["harness"] == "claude"
+
+
+def test_settings_accepts_any_registered_harness(tmp_path, monkeypatch):
+    _write_wolt(tmp_path, "maple", "raccoon")
+    monkeypatch.setattr(app_module, "WOLTS_DIR", tmp_path)
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+    default = asyncio.run(_request("POST", "/harness/default", json={"harness": "opencode"}))
+    override = asyncio.run(_request("POST", "/wolts/maple/harness", json={"harness": "opencode"}))
+
+    assert default.status_code == 200
+    assert override.status_code == 200
+    assert json.loads((tmp_path / "woltspace.json").read_text())["harness"]["default"] == "opencode"
+    assert json.loads((tmp_path / "maple" / "wolt" / "wolt.json").read_text())["harness"] == "opencode"
 
 
 def test_configured_wolts_skips_broken_entries(tmp_path, monkeypatch):

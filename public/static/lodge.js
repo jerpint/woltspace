@@ -11,6 +11,12 @@ let currentView = 'home';
 // ── Harnesses (agent engines: claude, codex, …) ──
 let harnessList = [];          // [{id,label,emoji,models}]
 let harnessDefault = 'claude'; // lodge default (woltspace.json harness.default)
+let homeHarnessSelected = '';
+let firstRun = {
+  needs_harness_choice: false,
+  harness_selected: false,
+  has_user_wolt: true,
+};
 
 async function loadHarnesses() {
   try {
@@ -46,6 +52,13 @@ function woltHarness(w) {
 function modelFor(harnessId, tier) {
   const m = harnessInfo(harnessId).models || {};
   return m[tier] || m.raccoon || '';
+}
+
+function modelLabelFor(harnessId, tier) {
+  const harness = harnessInfo(harnessId);
+  const model = modelFor(harnessId, tier);
+  const catalogEntry = (harness.catalog || []).find(entry => entry.id === model);
+  return catalogEntry ? catalogEntry.label : model;
 }
 
 // ── Helpers ──
@@ -88,15 +101,74 @@ function toggleCreatures() {
 // ── Load wolts ──
 async function loadWolts() {
   try {
-    const res = await fetch('/wolts');
-    allWolts = await res.json();
+    const [woltsResponse, onboardingResponse] = await Promise.all([
+      fetch('/wolts'),
+      fetch('/onboarding/status'),
+    ]);
+    allWolts = await woltsResponse.json();
+    firstRun = await onboardingResponse.json();
     renderSidebarWolts();
   } catch {
     document.getElementById('sidebar-wolts').innerHTML = '';
   }
-  // Show "create your first wolt" CTA when no wolts exist
+  renderFirstRunHarnessChoice();
+}
+
+function renderFirstRunHarnessChoice() {
+  const panel = document.getElementById('home-harness-choice');
+  const options = document.getElementById('home-harness-options');
+  if (!panel || !options) return;
+  const needsChoice = firstRun.needs_harness_choice === true;
+  panel.style.display = needsChoice ? '' : 'none';
   const cta = document.getElementById('home-create-cta');
-  if (cta) cta.style.display = allWolts.length === 0 ? '' : 'none';
+  if (cta) {
+    cta.style.display = !needsChoice && firstRun.has_user_wolt === false ? '' : 'none';
+  }
+  if (!needsChoice) return;
+
+  options.innerHTML = '';
+  if (!harnessList.length) {
+    document.getElementById('home-harness-status').textContent =
+      'No supported harness is available yet.';
+    return;
+  }
+  harnessList.forEach(h => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'home-harness-option';
+    const name = `${h.emoji || ''} ${h.label || h.id}`.trim();
+    button.innerHTML = `<span>${name}</span>`;
+    button.onclick = () => chooseHomeHarness(h.id, button);
+    options.appendChild(button);
+  });
+}
+
+async function chooseHomeHarness(id, button) {
+  homeHarnessSelected = id;
+  document.querySelectorAll('.home-harness-option').forEach(el =>
+    el.classList.toggle('selected', el === button));
+  const status = document.getElementById('home-harness-status');
+  status.textContent = 'saving…';
+  document.querySelectorAll('.home-harness-option').forEach(el => { el.disabled = true; });
+
+  try {
+    const save = await fetch('/onboarding/harness', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ harness: id }),
+    });
+    const result = await save.json();
+    if (!save.ok) throw new Error(result.error || 'could not save that choice');
+    harnessDefault = id;
+    if (homeHarnessSelected !== id) return;
+    firstRun = result;
+    renderFirstRunHarnessChoice();
+  } catch (error) {
+    if (homeHarnessSelected === id) {
+      status.textContent = error.message || 'try again';
+      document.querySelectorAll('.home-harness-option').forEach(el => { el.disabled = false; });
+    }
+  }
 }
 
 function renderSidebarWolts() {
@@ -532,16 +604,19 @@ function openApp(appName, keeper) {
 
 // ── Create wolt modal ──
 let createSelectedType = null;
+let createSelectedHarness = '';
 
 function openCreateWolt(e) {
   if (e) e.preventDefault();
   document.getElementById('create-modal').classList.add('open');
   document.getElementById('create-name').value = '';
   createSelectedType = null;
+  createSelectedHarness = harnessDefault;
   document.querySelectorAll('.type-card').forEach(c => c.classList.remove('selected'));
   document.getElementById('create-submit').disabled = true;
   document.getElementById('create-submit').textContent = 'Create';
   document.getElementById('create-error').style.display = 'none';
+  renderCreateHarnessOptions();
   setTimeout(() => document.getElementById('create-name').focus(), 50);
 }
 
@@ -556,16 +631,52 @@ function pickType(el) {
   updateCreatePreview();
 }
 
+function renderCreateHarnessOptions() {
+  const select = document.getElementById('create-harness');
+  if (!select) return;
+  select.innerHTML = '';
+  harnessList.forEach(harness => {
+    const option = document.createElement('option');
+    option.value = harness.id;
+    option.textContent = `${harness.label || harness.id}`
+      + (harness.id === harnessDefault ? ' (lodge default)' : '');
+    option.selected = harness.id === createSelectedHarness;
+    select.appendChild(option);
+  });
+  // A stale/default id absent from the registry should never submit silently.
+  if (!harnessList.some(h => h.id === createSelectedHarness)) {
+    const first = harnessList[0];
+    createSelectedHarness = first ? first.id : '';
+    select.value = createSelectedHarness;
+  }
+  renderCreateHarness();
+}
+
+function selectCreateHarness(id) {
+  createSelectedHarness = id;
+  renderCreateHarness();
+  updateCreatePreview();
+}
+
+function renderCreateHarness() {
+  document.querySelectorAll('.type-card').forEach(card => {
+    const hint = card.querySelector('.type-card-hint');
+    const model = card.querySelector('.type-card-model');
+    if (hint) hint.textContent = hint.dataset.pace || '';
+    if (model) model.textContent = modelLabelFor(createSelectedHarness, card.dataset.type);
+  });
+}
+
 function updateCreatePreview() {
   const name = document.getElementById('create-name').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
   const submit = document.getElementById('create-submit');
   document.getElementById('create-error').style.display = 'none';
-  submit.disabled = !(name && createSelectedType);
+  submit.disabled = !(name && createSelectedType && createSelectedHarness);
 }
 
 async function submitCreateWolt() {
   const name = document.getElementById('create-name').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
-  if (!name || !createSelectedType) return;
+  if (!name || !createSelectedType || !createSelectedHarness) return;
 
   const submit = document.getElementById('create-submit');
   const error = document.getElementById('create-error');
@@ -577,7 +688,11 @@ async function submitCreateWolt() {
     const res = await fetch('/sessions/new/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, type: createSelectedType }),
+      body: JSON.stringify({
+        name,
+        type: createSelectedType,
+        harness: createSelectedHarness,
+      }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -598,23 +713,12 @@ async function submitCreateWolt() {
   }
 }
 
-// ── Onboard ──
-async function openOnboard() {
-  // The entrypoint already started a bare Claude session in 'main' with
-  // the onboard page as viewport when no auth is detected. Just go there.
-  location.href = '/tui';
-}
-
 // ── Keyboard ──
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeCreateWolt();
 });
 
 // ── Init ──
-fetch('/onboard-status').then(r => r.json()).then(d => {
-  if (!d.has_oauth) document.getElementById('onboard-banner').style.display = '';
-}).catch(() => {});
-
 // Replace type card emoji with pixel art sprites
 document.querySelectorAll('.type-card').forEach(card => {
   const type = card.dataset.type;
