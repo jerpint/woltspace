@@ -580,6 +580,91 @@ def _auto_list(args) -> int:
     return 0
 
 
+def _colony(args) -> int:
+    args.colony_parser.print_help()
+    return 1
+
+
+def _colony_export(args) -> int:
+    from .public_colony import ColonyError, export_public_colony
+
+    layout = RuntimeLayout.from_env()
+    try:
+        summary = export_public_colony(
+            wolts_dir=layout.wolts_dir,
+            output=args.output,
+            name=args.name,
+            wolt_names=args.wolt,
+            app_names=args.app,
+            skills=args.skill,
+        )
+    except ColonyError as exc:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        else:
+            lore.failure(f"public colony export failed: {exc}")
+        return 1
+    payload = {"ok": True, **summary.to_record()}
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        lore.headline(lore.TRACKS, f"public colony ready: {summary.name}")
+        lore.labelled("path", str(summary.root))
+        lore.labelled("wolts", ", ".join(summary.wolts))
+        lore.labelled("apps", ", ".join(summary.apps) or "none")
+        lore.labelled("size", f"{summary.bytes:,} bytes in {summary.files} files")
+    return 0
+
+
+def _colony_inspect(args) -> int:
+    from .public_colony import ColonyError, inspect_public_colony
+
+    try:
+        summary = inspect_public_colony(args.source)
+    except ColonyError as exc:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        else:
+            lore.failure(f"public colony is invalid: {exc}")
+        return 1
+    payload = {"ok": True, **summary.to_record()}
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        lore.headline(lore.TRACKS, f"public colony: {summary.name}")
+        lore.labelled("wolts", ", ".join(summary.wolts))
+        lore.labelled("apps", ", ".join(summary.apps) or "none")
+        lore.labelled("size", f"{summary.bytes:,} bytes in {summary.files} files")
+        lore.labelled("sha256", summary.digest)
+    return 0
+
+
+def _colony_install(args) -> int:
+    from .public_colony import ColonyError, install_public_colony
+
+    layout = RuntimeLayout.from_env()
+    try:
+        result = install_public_colony(
+            source=args.source,
+            wolts_dir=layout.wolts_dir,
+            install_root=layout.install_root,
+        )
+    except ColonyError as exc:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        else:
+            lore.failure(f"public colony install failed: {exc}")
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        lore.headline(lore.SUN, f"starter colony installed: {result['colony']}")
+        lore.labelled("wolts", ", ".join(result["wolts"]))
+        lore.labelled("apps", ", ".join(result["apps"]) or "none")
+        lore.subtitle("fresh independent copies; lived memory starts here")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="woltspace",
@@ -689,6 +774,44 @@ def build_parser() -> argparse.ArgumentParser:
     auto_list = auto_sub.add_parser("list", help="show every standing Auto grant")
     auto_list.add_argument("--json", action="store_true")
     auto_list.set_defaults(func=_auto_list)
+
+    colony = sub.add_parser(
+        "colony", help="export, inspect, and install Git-friendly public colonies"
+    )
+    colony.set_defaults(func=_colony, colony_parser=colony)
+    colony_sub = colony.add_subparsers(dest="verb")
+
+    colony_export = colony_sub.add_parser(
+        "export", help="create a public starter colony (not a backup)"
+    )
+    colony_export.add_argument("output", help="new directory to create")
+    colony_export.add_argument("--name", required=True, help="portable colony name")
+    colony_export.add_argument(
+        "--wolt", action="append", required=True, help="wolt to include (repeatable)"
+    )
+    colony_export.add_argument(
+        "--app", action="append", default=[], help="tracked app source to include (repeatable)"
+    )
+    colony_export.add_argument(
+        "--skill", action="append", default=[], metavar="WOLT:SKILL",
+        help="explicit user-owned skill to include (repeatable)",
+    )
+    colony_export.add_argument("--json", action="store_true")
+    colony_export.set_defaults(func=_colony_export)
+
+    colony_inspect = colony_sub.add_parser(
+        "inspect", help="validate and summarize a public colony"
+    )
+    colony_inspect.add_argument("source")
+    colony_inspect.add_argument("--json", action="store_true")
+    colony_inspect.set_defaults(func=_colony_inspect)
+
+    colony_install = colony_sub.add_parser(
+        "install", help="install independent starter copies from a directory or Git URL"
+    )
+    colony_install.add_argument("source")
+    colony_install.add_argument("--json", action="store_true")
+    colony_install.set_defaults(func=_colony_install)
 
     tui = sub.add_parser("tui", help="open the terminal UI")
     tui.add_argument("--dry-run", action="store_true", help="show resolution without launching")
