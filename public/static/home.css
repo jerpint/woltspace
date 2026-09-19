@@ -316,3 +316,10 @@
   transform: translateY(-1px);
   box-shadow: 0 4px 16px rgba(58, 102, 68, 0.3);
 }
+
+.create-harness-summary {
+  margin: -2px 0 12px;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.45;
+}

@@ -54,5 +54,6 @@ def test_selected_codex_drives_native_create_route(tmp_path, monkeypatch):
     assert wolt_config['origin'] == 'user'
     assert json.loads((root / 'woltspace.json').read_text())['onboarding']['harness_selected'] is True
     assert calls[0][0] == 'codex'
+    assert calls[0][1]['harness'] == 'codex'
     assert calls[0][1]['prompt'] == platform_skill_invoke('codex', 'create-wolt', delivery='copy')
     assert not (root / 'fresh/.codex/auth.json').exists()

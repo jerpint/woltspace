@@ -779,6 +779,10 @@ async def session_new_create(request: Request):
         return JSONResponse({"detail": "type must be otter, beaver, or raccoon"}, status_code=400)
 
     try:
+        # Resolve once so the creation prompt and spawned session cannot split
+        # across harnesses if the lodge default changes during this request.
+        selected_harness = get_default_harness()
+
         # Step 1: Scaffold the wolt with environment-appropriate harness config.
         from wolts import create_creature_wolt
         create_creature_wolt(wolt_name, wolt_type)
@@ -791,8 +795,9 @@ async def session_new_create(request: Request):
             # skills delivery — a freshly scaffolded wolt is on the copy path,
             # so it gets the copy path's names.
             prompt=platform_skill_invoke(
-                wolt_harness(wolt_name), "create-wolt",
+                selected_harness, "create-wolt",
                 delivery=wolt_skills_delivery(WOLTS_DIR / wolt_name)),
+            harness=selected_harness,
             workdir=body.get("workdir"),
             execution_policy=body.get("execution_policy"),
             routing={"adapter": "lodge"},

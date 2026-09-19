@@ -103,3 +103,15 @@ def test_home_picker_is_registry_driven_and_auth_agnostic(tmp_path, monkeypatch)
     assert "/onboarding/harness" in script
     assert "/onboard-status" not in script
     assert "id === 'claude'" not in script
+
+
+def test_create_modal_uses_the_selected_harness_models():
+    modal = (ROOT / "templates" / "partials" / "create-modal.html").read_text()
+    script = (ROOT / "public" / "static" / "lodge.js").read_text()
+
+    assert "opus" not in modal.lower()
+    assert "sonnet" not in modal.lower()
+    assert "haiku" not in modal.lower()
+    assert 'id="create-harness-summary"' in modal
+    assert "modelFor(harnessDefault, card.dataset.type)" in script
+    assert "your lodge default" in script

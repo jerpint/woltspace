@@ -616,6 +616,7 @@ function openCreateWolt(e) {
   document.getElementById('create-submit').disabled = true;
   document.getElementById('create-submit').textContent = 'Create';
   document.getElementById('create-error').style.display = 'none';
+  renderCreateHarness();
   setTimeout(() => document.getElementById('create-name').focus(), 50);
 }
 
@@ -628,6 +629,22 @@ function pickType(el) {
   el.classList.add('selected');
   createSelectedType = el.dataset.type;
   updateCreatePreview();
+}
+
+function renderCreateHarness() {
+  const harness = harnessInfo(harnessDefault);
+  const summary = document.getElementById('create-harness-summary');
+  if (summary) {
+    const name = `${harness.emoji || ''} ${harness.label || harness.id}`.trim();
+    summary.textContent = `Using ${name}, your lodge default. Change it anytime in Settings.`;
+  }
+  document.querySelectorAll('.type-card').forEach(card => {
+    const hint = card.querySelector('.type-card-hint');
+    if (!hint) return;
+    const pace = hint.dataset.pace || '';
+    const model = modelFor(harnessDefault, card.dataset.type);
+    hint.textContent = [pace, model].filter(Boolean).join(' · ');
+  });
 }
 
 function updateCreatePreview() {
