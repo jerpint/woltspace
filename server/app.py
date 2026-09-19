@@ -763,7 +763,8 @@ async def session_new_create(request: Request):
     body = await request.json()
     wolt_name = (body.get("name") or "").strip().lower()
     wolt_type = (body.get("type") or "").strip().lower()
-    selected_harness = (body.get("harness") or get_default_harness()).strip()
+    requested_harness = (body.get("harness") or "").strip()
+    selected_harness = requested_harness or get_default_harness()
 
     # Validate name
     if not wolt_name:
@@ -783,7 +784,9 @@ async def session_new_create(request: Request):
     try:
         # Step 1: Scaffold the wolt with environment-appropriate harness config.
         from wolts import create_creature_wolt
-        create_creature_wolt(wolt_name, wolt_type, harness=selected_harness)
+        # Only an explicit request becomes a durable per-wolt override. An API
+        # caller that omits harness keeps following the lodge default later.
+        create_creature_wolt(wolt_name, wolt_type, harness=requested_harness)
         print(f"[sessions/create] scaffolded wolt '{wolt_name}' ({wolt_type})")
 
         # Step 2: Start a session — full isolation, site auto-start, viewport

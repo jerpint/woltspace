@@ -146,7 +146,8 @@ def test_create_wolt_passes_confirmed_target_and_policy(tmp_path, monkeypatch):
     assert seen["wolt"] == "newmaple"
     assert seen["workdir"] == str(repo)
     assert seen["execution_policy"] == "prompt"
-    assert seen["scaffold_harness"] == seen["harness"]
+    assert seen["scaffold_harness"] == ""
+    assert seen["harness"] == "claude"
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="TUI requires Node")

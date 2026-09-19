@@ -248,10 +248,9 @@ def _write_seed_claude_md(wolt_dir: Path, name: str, creature_type: str) -> None
     if claude_md.exists():
         return
 
-    tier = {"raccoon": "Opus", "beaver": "Sonnet", "otter": "Haiku"}.get(creature_type, creature_type.title())
     wolt_section = f"""# {name}
 
-{creature_type.title()} wolt ({tier}). Just born.
+{creature_type.title()} wolt. Just born.
 
 ## Project Structure
 
