@@ -42,7 +42,7 @@ if (root) {
 
   function refreshFollowingStatuses(defaultHarness) {
     document.querySelectorAll('[data-wolt-status][data-following="true"]').forEach(status => {
-      status.textContent = `Follows lodge · ${defaultHarness}`;
+      status.textContent = `Follows lodge · ${harnessLabels.get(defaultHarness) || defaultHarness}`;
     });
   }
 
@@ -82,7 +82,8 @@ if (root) {
         const data = await save(`/wolts/${encodeURIComponent(row.dataset.wolt)}/harness`, { harness: requested });
         row.dataset.savedValue = requested || '';
         status.dataset.following = String(!data.pinned);
-        status.textContent = data.pinned ? `Pinned · ${data.harness}` : `Follows lodge · ${data.harness}`;
+        const label = harnessLabels.get(data.harness) || data.harness;
+        status.textContent = data.pinned ? `Uses · ${label}` : `Follows lodge · ${label}`;
         setGlobalState('saved', `${row.dataset.wolt} saved`);
         showToast(`${row.dataset.wolt} will use ${harnessLabels.get(data.harness) || data.harness}.`);
       } catch (error) {

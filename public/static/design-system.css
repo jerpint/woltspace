@@ -203,6 +203,9 @@
 .ds-choice-card:hover { transform: translateY(-1px); border-color: var(--border-2); box-shadow: var(--shadow-sm); }
 .ds-choice-card:has(.ds-choice-input:checked) { border-color: var(--green); background: #f3f7f1; box-shadow: 0 0 0 1px rgba(58, 102, 68, .08); }
 .ds-choice-card:has(.ds-choice-input:focus-visible) { outline: 2px solid var(--amber); outline-offset: 2px; box-shadow: var(--focus-ring); }
+.ds-choice-card:not(:has(.ds-choice-meta)) { min-height: 92px; }
+.ds-choice-card.disabled { cursor: default; opacity: .5; }
+.ds-choice-card.disabled:hover { transform: none; border-color: var(--border); box-shadow: none; }
 
 .ds-choice-input { position: absolute; opacity: 0; pointer-events: none; }
 .ds-choice-indicator {

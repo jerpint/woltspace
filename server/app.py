@@ -1118,15 +1118,20 @@ def harness_installed(name: str) -> bool:
     """The registry id is also the underlying CLI executable name."""
     return shutil.which(name) is not None
 
-@app.get("/harnesses")
-async def list_harnesses():
-    """Available engines (id, label, emoji, per-tier models) + the lodge default."""
+def _harness_options() -> list[dict]:
+    """Registry metadata plus live CLI availability for every harness picker."""
     harnesses = harness_metadata()
     for harness in harnesses:
         # Wrapper scripts ship with Woltspace; the underlying CLI is what the
         # user must have installed before selecting this harness.
         harness["installed"] = harness_installed(harness["id"])
-    return {"default": get_default_harness(), "harnesses": harnesses}
+    return harnesses
+
+
+@app.get("/harnesses")
+async def list_harnesses():
+    """Available engines (id, label, emoji, per-tier models) + the lodge default."""
+    return {"default": get_default_harness(), "harnesses": _harness_options()}
 
 
 @app.get("/onboarding/status")
@@ -1155,6 +1160,8 @@ async def set_harness_default(request: Request):
     name = (body.get("harness") or "").strip()
     if name not in HARNESSES:
         return JSONResponse({"error": f"unknown harness: {name}"}, status_code=400)
+    if not harness_installed(name):
+        return JSONResponse({"error": f"{name} is not installed"}, status_code=409)
     set_default_harness(name)
     return {"ok": True, "default": name}
 
@@ -1183,6 +1190,8 @@ async def set_wolt_harness(name: str, request: Request):
         effective = get_default_harness()
         pinned = False
     elif requested in HARNESSES:
+        if not harness_installed(requested):
+            return JSONResponse({"error": f"{requested} is not installed"}, status_code=409)
         cfg["harness"] = requested
         effective = requested
         pinned = True
@@ -1794,11 +1803,13 @@ async def settings_page(request: Request):
         wolt for wolt in _configured_wolts()
         if wolt.get("type", "rodent") in configurable_types
     ]
+    harnesses = _harness_options()
     return templates.TemplateResponse(request, "settings.html", context={
         "active_nav": "settings",
         "cache_bust": int(time.time()),
         "harness_default": get_default_harness(),
-        "harnesses": harness_metadata(),
+        "harnesses": harnesses,
+        "harness_labels": {harness["id"]: harness["label"] for harness in harnesses},
         "wolts": wolts,
     })
 

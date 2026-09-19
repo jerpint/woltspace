@@ -14,13 +14,13 @@
   <div class="settings-layout">
     <nav class="settings-index" aria-label="Settings sections">
       <p class="settings-index-label">Configuration</p>
-      {{ tab_link('#agent-engines', 'Agent engines', 'defaults + overrides', active=true) }}
+      {{ tab_link('#harnesses', 'Harnesses', 'lodge + wolts', active=true) }}
       {{ tab_link('', 'Notifications', 'coming down the trail', disabled=true) }}
       {{ tab_link('', 'Desktop', 'after the Mac build', disabled=true) }}
     </nav>
 
-    <div class="settings-content" id="agent-engines">
-      {% call panel('Lodge default', 'Every wolt follows this engine unless it has an override.', 'applies to new sessions') %}
+    <div class="settings-content" id="harnesses">
+      {% call panel('Lodge harness', 'Used when a wolt follows the lodge setting.', 'new sessions') %}
         <fieldset class="ds-choice-group" data-default-form data-saved-value="{{ harness_default }}">
           <legend class="sr-only">Default agent engine</legend>
           {% for harness in harnesses %}
@@ -28,10 +28,11 @@
               'default-harness',
               harness.id,
               harness.label,
-              'The standard engine for wolts without a pin.',
-              harness.models.raccoon,
+              'Available' if harness.installed else 'Not installed',
+              '',
               harness.id == harness_default,
-              harness.emoji
+              harness.emoji,
+              not harness.installed
             ) }}
           {% endfor %}
         </fieldset>
@@ -39,10 +40,10 @@
 
       <div class="ds-callout" role="note">
         <span class="ds-callout-icon" aria-hidden="true">🌿</span>
-        <div><strong>A quiet handoff</strong><p>Engine changes affect the next den you open. Sessions already running keep the engine they started with.</p></div>
+        <div><strong>New sessions only</strong><p>Sessions already running keep the harness they started with.</p></div>
       </div>
 
-      {% call panel('Wolt overrides', 'Pin a particular wolt, or let it wander with the lodge default.', (wolts|length ~ ' wolts')) %}
+      {% call panel('Wolt harnesses', 'Each wolt can follow the lodge or use another available harness.', (wolts|length ~ ' wolts')) %}
         {% if wolts %}
           <div class="ds-field-list">
             {% for wolt in wolts %}
@@ -51,16 +52,16 @@
               {% set selected = wolt.harness or '' %}
               {% set effective = selected or harness_default %}
               {% set field_id = 'wolt-harness-' ~ loop.index %}
-              {% call select_field(field_id, wolt_name, wolt_type ~ ' · ' ~ ('pinned override' if selected else 'follows lodge')) %}
+              {% call select_field(field_id, wolt_name, wolt_type) %}
                 <div class="ds-select-stack" data-wolt-row data-wolt="{{ wolt.dir or wolt_name }}" data-saved-value="{{ selected }}">
                   <select class="ds-select" id="{{ field_id }}" aria-describedby="{{ field_id }}-help" data-wolt-select>
-                    <option value=""{% if not selected %} selected{% endif %}>Follow lodge default</option>
+                    <option value=""{% if not selected %} selected{% endif %}>Use lodge default ({{ harness_labels[harness_default] }})</option>
                     {% for harness in harnesses %}
-                      <option value="{{ harness.id }}"{% if selected == harness.id %} selected{% endif %}>{{ harness.label }}</option>
+                      <option value="{{ harness.id }}"{% if selected == harness.id %} selected{% endif %}{% if not harness.installed %} disabled{% endif %}>{{ harness.label }}{% if not harness.installed %} (not installed){% endif %}</option>
                     {% endfor %}
                   </select>
                   <span class="ds-pill ds-pill-subtle" data-wolt-status data-following="{{ 'true' if not selected else 'false' }}">
-                    {{ 'Follows lodge' if not selected else 'Pinned' }} · {{ effective }}
+                    {{ 'Follows lodge' if not selected else 'Uses' }} · {{ harness_labels.get(effective, effective) }}
                   </span>
                 </div>
               {% endcall %}
