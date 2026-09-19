@@ -477,8 +477,6 @@ def _render_sprite_svg(creature_type: str, size: int = 112) -> str:
     )
 
 
-_TIER = {"raccoon": "opus", "beaver": "sonnet", "otter": "haiku"}
-
 # Creature-themed accent colors — so each type looks distinct from birth
 _ACCENT = {
     "raccoon": "#5C6B7A",  # cool slate
@@ -495,13 +493,12 @@ def scaffold_starter_site(site_dir: Path, name: str, creature_type: str) -> None
     inherits the "site = pages, linked" pattern from minute zero.
     """
     sprite_svg = _render_sprite_svg(creature_type if creature_type in _SPRITE_DATA else "raccoon")
-    tier = _TIER.get(creature_type, creature_type)
     species = creature_type if creature_type != "rodent" else "raccoon"
     accent = _ACCENT.get(species, _ACCENT["beaver"])
 
     (site_dir / "style.css").write_text(_STARTER_CSS.replace("{accent}", accent))
     (site_dir / "index.html").write_text(
-        _STARTER_INDEX.format(name=name, sprite=sprite_svg, species=species, tier=tier)
+        _STARTER_INDEX.format(name=name, sprite=sprite_svg, species=species)
     )
 
 
@@ -534,7 +531,7 @@ _STARTER_INDEX = """<!DOCTYPE html>
 <main class="page">
   <header class="hero">
     <div class="sprite">{sprite}</div>
-    <p class="role">{species} · {tier}</p>
+    <p class="role">{species}</p>
   </header>
 
   <section class="intro">
