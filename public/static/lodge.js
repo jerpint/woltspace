@@ -11,6 +11,12 @@ let currentView = 'home';
 // ── Harnesses (agent engines: claude, codex, …) ──
 let harnessList = [];          // [{id,label,emoji,models}]
 let harnessDefault = 'claude'; // lodge default (woltspace.json harness.default)
+let homeHarnessSelected = '';
+let firstRun = {
+  needs_harness_choice: false,
+  harness_selected: false,
+  has_user_wolt: true,
+};
 
 async function loadHarnesses() {
   try {
@@ -88,15 +94,83 @@ function toggleCreatures() {
 // ── Load wolts ──
 async function loadWolts() {
   try {
-    const res = await fetch('/wolts');
-    allWolts = await res.json();
+    const [woltsResponse, onboardingResponse] = await Promise.all([
+      fetch('/wolts'),
+      fetch('/onboarding/status'),
+    ]);
+    allWolts = await woltsResponse.json();
+    firstRun = await onboardingResponse.json();
     renderSidebarWolts();
   } catch {
     document.getElementById('sidebar-wolts').innerHTML = '';
   }
-  // Show "create your first wolt" CTA when no wolts exist
+  renderFirstRunHarnessChoice();
+}
+
+function renderFirstRunHarnessChoice() {
+  const panel = document.getElementById('home-harness-choice');
+  const options = document.getElementById('home-harness-options');
+  if (!panel || !options) return;
+  const needsChoice = firstRun.needs_harness_choice === true;
+  panel.style.display = needsChoice ? '' : 'none';
   const cta = document.getElementById('home-create-cta');
-  if (cta) cta.style.display = allWolts.length === 0 ? '' : 'none';
+  if (cta) {
+    cta.style.display = !needsChoice && firstRun.has_user_wolt === false ? '' : 'none';
+  }
+  if (!needsChoice) return;
+
+  options.innerHTML = '';
+  if (!harnessList.length) {
+    document.getElementById('home-harness-status').textContent =
+      'No supported harness is available yet.';
+    return;
+  }
+  harnessList.forEach(h => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `home-harness-option${h.installed === false ? ' unavailable' : ''}`;
+    const name = `${h.emoji || ''} ${h.label || h.id}`.trim();
+    button.innerHTML = `<span>${name}</span>${h.installed === false ? '<small>not installed</small>' : ''}`;
+    button.onclick = () => {
+      if (h.installed === false) {
+        document.querySelectorAll('.home-harness-option').forEach(el =>
+          el.classList.toggle('selected', el === button));
+        document.getElementById('home-harness-status').textContent =
+          `Install ${h.label || h.id} from your terminal, then refresh this page.`;
+        return;
+      }
+      chooseHomeHarness(h.id, button);
+    };
+    options.appendChild(button);
+  });
+}
+
+async function chooseHomeHarness(id, button) {
+  homeHarnessSelected = id;
+  document.querySelectorAll('.home-harness-option').forEach(el =>
+    el.classList.toggle('selected', el === button));
+  const status = document.getElementById('home-harness-status');
+  status.textContent = 'saving…';
+  document.querySelectorAll('.home-harness-option').forEach(el => { el.disabled = true; });
+
+  try {
+    const save = await fetch('/onboarding/harness', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ harness: id }),
+    });
+    const result = await save.json();
+    if (!save.ok) throw new Error(result.error || 'could not save that choice');
+    harnessDefault = id;
+    if (homeHarnessSelected !== id) return;
+    firstRun = result;
+    renderFirstRunHarnessChoice();
+  } catch (error) {
+    if (homeHarnessSelected === id) {
+      status.textContent = error.message || 'try again';
+      document.querySelectorAll('.home-harness-option').forEach(el => { el.disabled = false; });
+    }
+  }
 }
 
 function renderSidebarWolts() {
@@ -598,23 +672,12 @@ async function submitCreateWolt() {
   }
 }
 
-// ── Onboard ──
-async function openOnboard() {
-  // The entrypoint already started a bare Claude session in 'main' with
-  // the onboard page as viewport when no auth is detected. Just go there.
-  location.href = '/tui';
-}
-
 // ── Keyboard ──
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeCreateWolt();
 });
 
 // ── Init ──
-fetch('/onboard-status').then(r => r.json()).then(d => {
-  if (!d.has_oauth) document.getElementById('onboard-banner').style.display = '';
-}).catch(() => {});
-
 // Replace type card emoji with pixel art sprites
 document.querySelectorAll('.type-card').forEach(card => {
   const type = card.dataset.type;

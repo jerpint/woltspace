@@ -364,19 +364,19 @@ def runtime_lib_on_path(woltspace_dir: Path) -> None:
         sys.path.insert(0, lib_dir)
 
 
-def claude_authenticated() -> bool:
-    """Whether the human's window will land on a prompt or on a login screen.
-
-    Deliberately not just "is there a credentials file": a colony handed a
-    `CLAUDE_CODE_OAUTH_TOKEN` is authenticated too, and greeting it with
-    `wclaude /login` invited the user to replace a working token with nothing.
-    The predicate is shared with the server (`/onboard-status`, the viewport's
-    onboarding fallback) so all three cannot drift apart again.
-    """
+def _boot_harness(wolt_name: str, wolts_dir: Path) -> str:
+    """Resolve the lodge default or an existing wolt's explicit override."""
     runtime_lib_on_path(resolve_install_root(os.environ.get("WOLTSPACE_DIR")))
-    from harness_auth import claude_authenticated as _authenticated
-
-    return _authenticated(HOME)
+    from harnesses import get_default_harness, resolve_harness
+    if not wolt_name:
+        return get_default_harness()
+    wolt_json = Path(wolts_dir) / wolt_name / "wolt" / "wolt.json"
+    pinned = ""
+    try:
+        pinned = json.loads(wolt_json.read_text()).get("harness", "") or ""
+    except (json.JSONDecodeError, OSError):
+        pass
+    return resolve_harness(pinned or get_default_harness())
 
 
 def open_tmux_window(wolt_name: str, wolt_dir: Path, wolts_dir: Path) -> None:
@@ -396,15 +396,16 @@ def open_tmux_window(wolt_name: str, wolt_dir: Path, wolts_dir: Path) -> None:
     )
     subprocess.run(["tmux", "set", "-g", "mouse", "on"], check=True)
 
-    has_auth = claude_authenticated()
+    runtime_lib_on_path(resolve_install_root(os.environ.get("WOLTSPACE_DIR")))
+    from harnesses import build_command, platform_skill_invoke
+
+    harness = _boot_harness(wolt_name, wolts_dir)
     first_run = HOME / ".claude" / ".first-run"
 
-    if not wolt_name or not has_auth:
-        # No wolt or no auth — onboard mode: bare Claude for /login
-        # Viewport falls back to /onboard via server when no session is registered
-        print(f"onboard mode: has_auth={'true' if has_auth else 'false'} "
-              f"wolt_name={wolt_name or '<none>'}")
-        send_keys("wclaude /login")
+    if not wolt_name:
+        # The lodge home owns first-run harness selection. No harness process
+        # starts until there is a wolt to run, and every CLI owns its own login.
+        print(f"onboard mode: wolt_name=<none> harness={harness}")
     elif first_run.is_file():
         first_run.unlink()
         sweep_node_modules(wolts_dir)
@@ -413,13 +414,13 @@ def open_tmux_window(wolt_name: str, wolt_dir: Path, wolts_dir: Path) -> None:
         # skills directory holds `woltspace-create-wolt`, not a plugin. The
         # copy-path spelling is also the safe default anywhere the delivery
         # cannot be read: it is what every un-ratcheted wolt understands.
-        send_keys("export WOLTSPACE_WOLT_SESSION=main WOLT_SESSION=main && "
-                  "wclaude --dangerously-skip-permissions "
-                  "/woltspace-create-wolt")
+        skill = platform_skill_invoke(harness, "create-wolt")
+        command = build_command(harness, "spawn", prompt=skill)
+        send_keys(f"export WOLTSPACE_WOLT_SESSION=main WOLT_SESSION=main && {command}")
     else:
         # TODO: replace with a /wake skill — check for recent sessions, offer
         # resume or fresh start
-        send_keys(f'wclaude --dangerously-skip-permissions "hey {wolt_name}"')
+        send_keys(build_command(harness, "spawn", prompt=f"hey {wolt_name}"))
 
 
 def send_keys(keys: str) -> None:

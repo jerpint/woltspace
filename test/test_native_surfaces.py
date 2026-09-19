@@ -141,13 +141,12 @@ class TestSitePathsResolveFromTheLayout:
 
 
 class TestOnboardingReadsTheRealHome:
-    """The false "Claude Code isn't authenticated yet." banner, end to end.
+    """Native status may report auth, but it no longer controls first run.
 
     Nothing on the native start path set WOLTSPACE_CONTAINER_HOME, so the
-    server kept `server/config.py`'s container default and probed
-    /home/node/.claude/.credentials.json — a path no Mac has. A logged-in
-    native colony was told to log in, and its viewport fell through to
-    /onboard.
+    The server still reports legacy auth status for diagnostics. The lodge's
+    harness prompt is driven by explicit setup state instead, so credentials
+    neither skip nor trigger it.
     """
 
     @pytest.fixture
@@ -187,7 +186,7 @@ class TestOnboardingReadsTheRealHome:
             },
         )
 
-    def test_a_native_colony_with_credentials_is_not_asked_to_log_in(
+    def test_credentials_are_reported_but_an_empty_lodge_still_needs_a_choice(
         self, native_root, logged_in_home
     ):
         payload = self.probe(native_root, logged_in_home)
@@ -195,7 +194,7 @@ class TestOnboardingReadsTheRealHome:
         assert payload["container_home"] == str(logged_in_home)
         assert payload["has_oauth"] is True
         assert payload["auth_source"] == "credentials-file"
-        assert payload["onboarding"] is False
+        assert payload["onboarding"] is True
 
     def test_a_native_colony_without_credentials_still_onboards(
         self, native_root, tmp_path

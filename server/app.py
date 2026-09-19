@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -97,6 +98,8 @@ from .state import (
     read_views_history,
     sanitize_session,
     set_current_url,
+    onboarding_status,
+    select_onboarding_harness,
 )
 
 # --- Live reload ---
@@ -1105,10 +1108,38 @@ def wolf_fires(limit: int = 50, cron: str = "", wolt: str = ""):
 # The agent engine a wolt runs on (claude, codex, …). Pickers/badges read
 # /harnesses; the two POSTs set the lodge default and per-wolt overrides.
 
+def harness_installed(name: str) -> bool:
+    """The registry id is also the underlying CLI executable name."""
+    return shutil.which(name) is not None
+
 @app.get("/harnesses")
 async def list_harnesses():
     """Available engines (id, label, emoji, per-tier models) + the lodge default."""
-    return {"default": get_default_harness(), "harnesses": harness_metadata()}
+    harnesses = harness_metadata()
+    for harness in harnesses:
+        # Wrapper scripts ship with Woltspace; the underlying CLI is what the
+        # user must have installed before selecting this harness.
+        harness["installed"] = harness_installed(harness["id"])
+    return {"default": get_default_harness(), "harnesses": harnesses}
+
+
+@app.get("/onboarding/status")
+async def get_onboarding_status():
+    """First-run UI state, independent of every harness's authentication."""
+    return onboarding_status()
+
+
+@app.post("/onboarding/harness")
+async def choose_onboarding_harness(request: Request):
+    """Choose the lodge default and complete the first-open prompt."""
+    body = await request.json()
+    name = (body.get("harness") or "").strip()
+    if name not in HARNESSES:
+        return JSONResponse({"error": f"unknown harness: {name}"}, status_code=400)
+    if not harness_installed(name):
+        return JSONResponse({"error": f"{name} is not installed"}, status_code=409)
+    select_onboarding_harness(name)
+    return {"ok": True, "default": name, **onboarding_status()}
 
 
 @app.post("/harness/default")
@@ -1769,8 +1800,8 @@ async def settings_page(request: Request):
 # jerpint: this one will be important to nail we might review onboarding flow
 @app.get("/onboard")
 async def onboard_page():
-    resp = await _serve_platform_file("onboard.html")
-    return resp or PlainTextResponse("onboard.html not found", status_code=500)
+    """Compatibility route: first-run setup now lives in the lodge itself."""
+    return RedirectResponse("/", status_code=307)
 
 
 @app.get("/placeholder.html")

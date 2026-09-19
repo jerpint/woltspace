@@ -18,8 +18,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "container" / "lib"))
 
 from woltspace import container_entrypoint as boot  # noqa: E402
+from harnesses import build_command, platform_skill_invoke  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +144,10 @@ def fake_tmux(tmp_path, monkeypatch):
     monkeypatch.setattr(boot.subprocess, "run", run)
     monkeypatch.setattr(boot, "HOME", tmp_path / "home")
     (tmp_path / "home" / ".claude").mkdir(parents=True)
+    wolts = tmp_path / "wolts"
+    wolts.mkdir(exist_ok=True)
+    (wolts / "woltspace.json").write_text('{"harness": {"default": "claude"}}')
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(wolts))
     return calls
 
 
@@ -150,18 +156,18 @@ def _sent(calls):
 
 
 class TestGreetingBranches:
-    def test_no_auth_boots_onboard_mode(self, tmp_path, fake_tmux, capsys):
+    def test_harness_cli_owns_auth_when_a_wolt_exists(self, tmp_path, fake_tmux, capsys):
         boot.open_tmux_window("mywolt", tmp_path / "wolt", tmp_path / "wolts")
 
-        assert _sent(fake_tmux) == ["wclaude /login"]
-        assert "onboard mode: has_auth=false wolt_name=mywolt" in capsys.readouterr().out
+        assert _sent(fake_tmux) == [build_command("claude", "spawn", prompt="hey mywolt")]
+        assert "onboard mode" not in capsys.readouterr().out
 
     def test_no_wolt_boots_onboard_mode(self, tmp_path, fake_tmux, capsys):
         (tmp_path / "home" / ".claude" / ".credentials.json").write_text("{}")
 
         boot.open_tmux_window("", tmp_path / "wolt", tmp_path / "wolts")
 
-        assert _sent(fake_tmux) == ["wclaude /login"]
+        assert _sent(fake_tmux) == []
         assert "wolt_name=<none>" in capsys.readouterr().out
 
     def test_first_run_launches_creation_and_clears_the_marker(self, tmp_path, fake_tmux):
@@ -177,8 +183,10 @@ class TestGreetingBranches:
         # read the canonical one, an un-updated skill still reads the old one.
         assert _sent(fake_tmux) == [
             "export WOLTSPACE_WOLT_SESSION=main WOLT_SESSION=main && "
-            "wclaude --dangerously-skip-permissions "
-            "/woltspace-create-wolt"
+            + build_command(
+                "claude", "spawn",
+                prompt=platform_skill_invoke("claude", "create-wolt"),
+            )
         ]
         assert not (claude / ".first-run").exists()
 
@@ -187,9 +195,7 @@ class TestGreetingBranches:
 
         boot.open_tmux_window("mywolt", tmp_path / "wolt", tmp_path / "wolts")
 
-        assert _sent(fake_tmux) == [
-            'wclaude --dangerously-skip-permissions "hey mywolt"'
-        ]
+        assert _sent(fake_tmux) == [build_command("claude", "spawn", prompt="hey mywolt")]
 
     def test_an_existing_main_session_is_not_an_error(self, tmp_path, fake_tmux):
         """`2>/dev/null || true` — a restart finds `main` already there."""
@@ -198,7 +204,16 @@ class TestGreetingBranches:
 
         boot.open_tmux_window("mywolt", tmp_path / "wolt", tmp_path / "wolts")
 
-        assert _sent(fake_tmux) == ['wclaude --dangerously-skip-permissions "hey mywolt"']
+        assert _sent(fake_tmux) == [build_command("claude", "spawn", prompt="hey mywolt")]
+
+    def test_lodge_default_can_boot_codex_without_claude_auth(self, tmp_path, fake_tmux):
+        (tmp_path / "wolts" / "woltspace.json").write_text(
+            '{"harness": {"default": "codex"}}'
+        )
+
+        boot.open_tmux_window("mywolt", tmp_path / "wolt", tmp_path / "wolts")
+
+        assert _sent(fake_tmux) == [build_command("codex", "spawn", prompt="hey mywolt")]
 
     def test_an_unreachable_tmux_kills_the_boot(self, tmp_path, fake_tmux):
         """Under `set -e` everything after the create was fatal. Still is.

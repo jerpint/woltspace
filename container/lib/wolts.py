@@ -137,6 +137,7 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "", descript
     wolt_json = {
         "name": name,
         "type": creature_type,
+        "origin": "user",
         "role": role or f"{creature_type.title()} creature",
         "capabilities": [],
         "description": description,
