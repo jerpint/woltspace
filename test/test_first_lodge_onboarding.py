@@ -113,5 +113,7 @@ def test_create_modal_uses_the_selected_harness_models():
     assert "sonnet" not in modal.lower()
     assert "haiku" not in modal.lower()
     assert 'id="create-harness-summary"' in modal
-    assert "modelFor(harnessDefault, card.dataset.type)" in script
-    assert "your lodge default" in script
+    assert 'id="create-harness"' in modal
+    assert "modelFor(createSelectedHarness, card.dataset.type)" in script
+    assert "harness: createSelectedHarness" in script
+    assert "will power this wolt" in script

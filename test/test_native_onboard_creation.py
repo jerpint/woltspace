@@ -14,13 +14,20 @@ sys.path.insert(0, str(ROOT / 'container' / 'lib'))
 
 import harness_auth  # noqa: E402,F401
 import harnesses  # noqa: E402,F401
+import pytest  # noqa: E402
 from harnesses import get_default_harness, platform_skill_invoke  # noqa: E402
 import server.app as server_app  # noqa: E402
 from server import state  # noqa: E402
 from starlette.testclient import TestClient  # noqa: E402
 
 
-def test_selected_codex_drives_native_create_route(tmp_path, monkeypatch):
+@pytest.mark.parametrize(("requested_harness", "expected_harness"), [
+    (None, "codex"),
+    ("claude", "claude"),
+])
+def test_create_route_uses_default_or_explicit_harness(
+    tmp_path, monkeypatch, requested_harness, expected_harness,
+):
     import sessions
     import wolts
 
@@ -48,12 +55,18 @@ def test_selected_codex_drives_native_create_route(tmp_path, monkeypatch):
     client = TestClient(server_app.app)
     assert get_default_harness() == 'claude'
     assert client.post('/onboarding/harness', json={'harness': 'codex'}).status_code == 200
-    response = client.post('/sessions/new/create', json={'name': 'fresh', 'type': 'raccoon'})
+    payload = {'name': 'fresh', 'type': 'raccoon'}
+    if requested_harness:
+        payload['harness'] = requested_harness
+    response = client.post('/sessions/new/create', json=payload)
     assert response.status_code == 200, response.text
     wolt_config = json.loads((root / 'fresh/wolt/wolt.json').read_text())
     assert wolt_config['origin'] == 'user'
+    assert wolt_config['harness'] == expected_harness
     assert json.loads((root / 'woltspace.json').read_text())['onboarding']['harness_selected'] is True
-    assert calls[0][0] == 'codex'
-    assert calls[0][1]['harness'] == 'codex'
-    assert calls[0][1]['prompt'] == platform_skill_invoke('codex', 'create-wolt', delivery='copy')
+    assert calls[0][0] == expected_harness
+    assert calls[0][1]['harness'] == expected_harness
+    assert calls[0][1]['prompt'] == platform_skill_invoke(
+        expected_harness, 'create-wolt', delivery='copy',
+    )
     assert not (root / 'fresh/.codex/auth.json').exists()

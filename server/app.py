@@ -764,6 +764,7 @@ async def session_new_create(request: Request):
     body = await request.json()
     wolt_name = (body.get("name") or "").strip().lower()
     wolt_type = (body.get("type") or "").strip().lower()
+    selected_harness = (body.get("harness") or get_default_harness()).strip()
 
     # Validate name
     if not wolt_name:
@@ -777,15 +778,15 @@ async def session_new_create(request: Request):
     # Validate type — only rodent types can be created from the lodge
     if wolt_type not in ("otter", "beaver", "raccoon"):
         return JSONResponse({"detail": "type must be otter, beaver, or raccoon"}, status_code=400)
+    if selected_harness not in HARNESSES:
+        return JSONResponse({"detail": f"unknown harness: {selected_harness}"}, status_code=400)
+    if not harness_installed(selected_harness):
+        return JSONResponse({"detail": f"{selected_harness} is not installed"}, status_code=409)
 
     try:
-        # Resolve once so the creation prompt and spawned session cannot split
-        # across harnesses if the lodge default changes during this request.
-        selected_harness = get_default_harness()
-
         # Step 1: Scaffold the wolt with environment-appropriate harness config.
         from wolts import create_creature_wolt
-        create_creature_wolt(wolt_name, wolt_type)
+        create_creature_wolt(wolt_name, wolt_type, harness=selected_harness)
         print(f"[sessions/create] scaffolded wolt '{wolt_name}' ({wolt_type})")
 
         # Step 2: Start a session — full isolation, site auto-start, viewport

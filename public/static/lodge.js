@@ -606,17 +606,19 @@ function openApp(appName, keeper) {
 
 // ── Create wolt modal ──
 let createSelectedType = null;
+let createSelectedHarness = '';
 
 function openCreateWolt(e) {
   if (e) e.preventDefault();
   document.getElementById('create-modal').classList.add('open');
   document.getElementById('create-name').value = '';
   createSelectedType = null;
+  createSelectedHarness = harnessDefault;
   document.querySelectorAll('.type-card').forEach(c => c.classList.remove('selected'));
   document.getElementById('create-submit').disabled = true;
   document.getElementById('create-submit').textContent = 'Create';
   document.getElementById('create-error').style.display = 'none';
-  renderCreateHarness();
+  renderCreateHarnessOptions();
   setTimeout(() => document.getElementById('create-name').focus(), 50);
 }
 
@@ -631,18 +633,47 @@ function pickType(el) {
   updateCreatePreview();
 }
 
+function renderCreateHarnessOptions() {
+  const select = document.getElementById('create-harness');
+  if (!select) return;
+  select.innerHTML = '';
+  harnessList.forEach(harness => {
+    const option = document.createElement('option');
+    option.value = harness.id;
+    option.textContent = `${harness.emoji || ''} ${harness.label || harness.id}`.trim()
+      + (harness.id === harnessDefault ? ' · lodge default' : '')
+      + (harness.installed === false ? ' · not installed' : '');
+    option.disabled = harness.installed === false;
+    option.selected = harness.id === createSelectedHarness;
+    select.appendChild(option);
+  });
+  // A stale/default id absent from the registry should never submit silently.
+  if (!harnessList.some(h => h.id === createSelectedHarness && h.installed !== false)) {
+    const first = harnessList.find(h => h.installed !== false);
+    createSelectedHarness = first ? first.id : '';
+    select.value = createSelectedHarness;
+  }
+  renderCreateHarness();
+}
+
+function selectCreateHarness(id) {
+  createSelectedHarness = id;
+  renderCreateHarness();
+  updateCreatePreview();
+}
+
 function renderCreateHarness() {
-  const harness = harnessInfo(harnessDefault);
+  const harness = harnessInfo(createSelectedHarness);
   const summary = document.getElementById('create-harness-summary');
   if (summary) {
     const name = `${harness.emoji || ''} ${harness.label || harness.id}`.trim();
-    summary.textContent = `Using ${name}, your lodge default. Change it anytime in Settings.`;
+    summary.textContent = `${name} will power this wolt. You can switch it later in Settings.`;
   }
   document.querySelectorAll('.type-card').forEach(card => {
     const hint = card.querySelector('.type-card-hint');
     if (!hint) return;
     const pace = hint.dataset.pace || '';
-    const model = modelFor(harnessDefault, card.dataset.type);
+    const model = modelFor(createSelectedHarness, card.dataset.type);
     hint.textContent = [pace, model].filter(Boolean).join(' · ');
   });
 }
@@ -651,12 +682,12 @@ function updateCreatePreview() {
   const name = document.getElementById('create-name').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
   const submit = document.getElementById('create-submit');
   document.getElementById('create-error').style.display = 'none';
-  submit.disabled = !(name && createSelectedType);
+  submit.disabled = !(name && createSelectedType && createSelectedHarness);
 }
 
 async function submitCreateWolt() {
   const name = document.getElementById('create-name').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
-  if (!name || !createSelectedType) return;
+  if (!name || !createSelectedType || !createSelectedHarness) return;
 
   const submit = document.getElementById('create-submit');
   const error = document.getElementById('create-error');
@@ -668,7 +699,11 @@ async function submitCreateWolt() {
     const res = await fetch('/sessions/new/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, type: createSelectedType }),
+      body: JSON.stringify({
+        name,
+        type: createSelectedType,
+        harness: createSelectedHarness,
+      }),
     });
     const data = await res.json();
     if (!res.ok) {

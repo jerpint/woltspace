@@ -6,8 +6,12 @@
         <input type="text" class="modal-input" id="create-name" placeholder="e.g. chip, luna, fang..." maxlength="20" autocomplete="off" spellcheck="false" oninput="updateCreatePreview()">
       </div>
       <div class="modal-field">
-        <label class="modal-label">Type</label>
+        <label class="modal-label" for="create-harness">Harness</label>
+        <select class="modal-input" id="create-harness" onchange="selectCreateHarness(this.value)"></select>
         <div class="create-harness-summary" id="create-harness-summary"></div>
+      </div>
+      <div class="modal-field">
+        <label class="modal-label">Type</label>
         <div class="type-grid">
           <div class="type-card" data-type="otter" onclick="pickType(this)">
             <div class="type-card-emoji">🦦</div>

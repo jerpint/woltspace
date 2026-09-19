@@ -124,7 +124,12 @@ def test_create_wolt_passes_confirmed_target_and_policy(tmp_path, monkeypatch):
 
     _, _, repo = _layout(tmp_path, monkeypatch)
     seen = {}
-    monkeypatch.setattr(wolts, "create_creature_wolt", lambda name, kind: None)
+    monkeypatch.setattr(
+        wolts, "create_creature_wolt",
+        lambda name, kind, **kwargs: seen.update({
+            "scaffold_harness": kwargs.get("harness"),
+        }),
+    )
 
     def fake_start(**kwargs):
         seen.update(kwargs)
@@ -141,6 +146,7 @@ def test_create_wolt_passes_confirmed_target_and_policy(tmp_path, monkeypatch):
     assert seen["wolt"] == "newmaple"
     assert seen["workdir"] == str(repo)
     assert seen["execution_policy"] == "prompt"
+    assert seen["scaffold_harness"] == seen["harness"]
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="TUI requires Node")
