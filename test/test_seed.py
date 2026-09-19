@@ -257,13 +257,14 @@ def test_https_git_app_is_a_pinned_reference_not_a_copy(tmp_path):
     assert inspect_seed(summary.root).apps == ("tiny-app",)
 
 
-def test_seed_rejects_git_url_query_or_fragment(tmp_path):
+@pytest.mark.parametrize("suffix", ["?token=not-safe", "#not-safe"])
+def test_seed_rejects_git_url_query_or_fragment(tmp_path, suffix):
     wolts = tmp_path / "wolts"
     make_wolt(wolts)
     app = make_app(wolts)
     subprocess.run([
         "git", "-C", str(app), "remote", "add", "origin",
-        "https://example.com/tiny-app.git?token=not-safe",
+        f"https://example.com/tiny-app.git{suffix}",
     ], check=True)
 
     with pytest.raises(SeedError, match="credential-free HTTPS"):
@@ -271,6 +272,26 @@ def test_seed_rejects_git_url_query_or_fragment(tmp_path):
             wolts_dir=wolts, output=tmp_path / "out", name="starter",
             wolt_names=["raccoon"], app_names=["tiny-app"],
         )
+
+
+@pytest.mark.parametrize("credential", [
+    "npm_abcdefghijklmnopqrstuvwxyz",
+    "pypi-abcdefghijklmnopqrstuvwxyz",
+    "xoxb-123456789012-abcdefghijklmnop",
+    "glpat-abcdefghijklmnopqrstuvwx",
+    "AKIA1234567890ABCDEF",
+])
+def test_inspect_rejects_common_credential_families(tmp_path, credential):
+    wolts = tmp_path / "wolts"
+    make_wolt(wolts)
+    package = tmp_path / "package"
+    create_seed(
+        wolts_dir=wolts, output=package, name="starter", wolt_names=["raccoon"],
+    )
+    (package / "wolts/raccoon/identity.md").write_text(f"credential {credential}\n")
+
+    with pytest.raises(SeedError, match="credential-like"):
+        inspect_seed(package)
 
 
 def test_install_rejects_apps_symlink_without_touching_target(tmp_path):
