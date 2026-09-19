@@ -22,9 +22,9 @@ dependencies. Channels still run only when enabled in your configuration.
 For local workflows shared by every wolt, see [Shared lodge skills](docs/shared-skills.md).
 
 To publish a tiny starter team rather than private lodge history, see
-[Public colonies](docs/public-colonies.md). Public colonies are ordinary Git
+[Colony seeds](docs/colony-seeds.md). Colony seeds are ordinary Git
 repositories containing selected wolt identities, authored rules, explicit
-skills, and app source or pinned public Git references.
+skills, and app source or pinned HTTPS Git references.
 
 For focused CI coverage and checkout test setup, see [Testing](docs/testing.md).
 

@@ -1,33 +1,33 @@
-# Public colonies
+# Colony seeds
 
-A public colony is a shareable starter, not a backup. It is designed to fit in
-an ordinary public Git repository and to install as fresh, independently owned
-wolts and apps.
+A colony seed is a shareable starter, not a backup. It is designed to fit in
+an ordinary Git repository and to install as fresh, independently owned wolts
+and apps.
 
-"Public" describes the deliberately publishable data boundary, not repository
+“Seed” describes the deliberately shareable data boundary, not repository
 visibility. Start in a private repository, test with trusted recipients, and
 only make that repository public after reviewing every authored identity and
 rule. Woltspace never creates or changes the repository's visibility.
 
 ```sh
-woltspace colony export ./my-colony \
-  --name my-colony \
+woltspace seed create ./my-seed \
+  --name my-seed \
   --wolt scribe \
   --wolt bloggo \
   --app scribe \
   --app blog
 
-woltspace colony inspect ./my-colony
-git -C ./my-colony init
+woltspace seed inspect ./my-seed
+git -C ./my-seed init
 
 # On another machine:
-woltspace colony install https://github.com/example/my-colony.git
+woltspace seed install https://github.com/example/my-seed.git
 ```
 
-`export` refuses an existing output path. It writes a deterministic
-`colony.json`, a readable README, and only the following allowlisted material:
+`seed create` refuses an existing output path. It writes a deterministic
+`seed.json`, a readable README, and only the following allowlisted material:
 
-- each selected wolt's public `wolt.json` fields, `identity.md`, and the
+- each selected wolt's portable `wolt.json` fields, `identity.md`, and the
   human-authored portion of `CLAUDE.md`;
 - user-owned skills selected explicitly with `--skill WOLT:SKILL`;
 - selected app source already tracked in the app's own Git repository; or,
@@ -41,11 +41,11 @@ internals, ports, and public tunnel state. Platform-managed rules and skills
 are also omitted because the receiving Woltspace install supplies its own
 current copies.
 
-The exporter rejects secret-shaped paths, credential-like content,
+The seed creator rejects secret-shaped paths, credential-like content,
 machine-specific home paths, symlinks, files over 5 MiB, and packages over
 50 MiB. This is a safety boundary, not a substitute for reviewing the small
 result before publishing: authored identity and rules can intentionally name
-people, organizations, URLs, or other public details that software cannot
+people, organizations, URLs, or other shareable details that software cannot
 classify for you.
 
 ## Installation semantics
@@ -61,9 +61,21 @@ writing. It refuses to overwrite an existing wolt or app. Installed wolts get:
 - fresh, empty context and learnings.
 
 Apps are private and stopped after install. Ports are assigned from the
-receiving lodge's available range. Bundled source is copied; pinned public Git
+receiving lodge's available range. Bundled source is copied; pinned HTTPS Git
 apps are cloned and checked out at the recorded commit. Dependencies and app
 data remain derived local state and are not included in the colony repository.
+
+## Seed or backup?
+
+These are separate safety lanes, not modes of one export command:
+
+| Need | Use | Contains | Intended home |
+| --- | --- | --- | --- |
+| Share or recreate a starter colony | `woltspace seed create` | Selected identity, rules, skills, and app source | A reviewable private or public Git repository |
+| Recover this lived-in lodge | `woltspace backup` | Stateful history, owner data, sessions, and unique work according to backup policy | A private backup archive |
+
+Install a seed with `woltspace seed install`; recover a backup with
+`woltspace restore`. There is no flag that silently turns one into the other.
 
 Updates are deliberately outside the v1 contract. An installed starter is an
 independent copy: a later upstream version must never overwrite its lived

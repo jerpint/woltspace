@@ -580,17 +580,17 @@ def _auto_list(args) -> int:
     return 0
 
 
-def _colony(args) -> int:
-    args.colony_parser.print_help()
+def _seed(args) -> int:
+    args.seed_parser.print_help()
     return 1
 
 
-def _colony_export(args) -> int:
-    from .public_colony import ColonyError, export_public_colony
+def _seed_create(args) -> int:
+    from .seed import SeedError, create_seed
 
     layout = RuntimeLayout.from_env()
     try:
-        summary = export_public_colony(
+        summary = create_seed(
             wolts_dir=layout.wolts_dir,
             output=args.output,
             name=args.name,
@@ -598,17 +598,17 @@ def _colony_export(args) -> int:
             app_names=args.app,
             skills=args.skill,
         )
-    except ColonyError as exc:
+    except SeedError as exc:
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         else:
-            lore.failure(f"public colony export failed: {exc}")
+            lore.failure(f"colony seed creation failed: {exc}")
         return 1
     payload = {"ok": True, **summary.to_record()}
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
-        lore.headline(lore.TRACKS, f"public colony ready: {summary.name}")
+        lore.headline(lore.TRACKS, f"colony seed ready: {summary.name}")
         lore.labelled("path", str(summary.root))
         lore.labelled("wolts", ", ".join(summary.wolts))
         lore.labelled("apps", ", ".join(summary.apps) or "none")
@@ -616,22 +616,22 @@ def _colony_export(args) -> int:
     return 0
 
 
-def _colony_inspect(args) -> int:
-    from .public_colony import ColonyError, inspect_public_colony
+def _seed_inspect(args) -> int:
+    from .seed import SeedError, inspect_seed
 
     try:
-        summary = inspect_public_colony(args.source)
-    except ColonyError as exc:
+        summary = inspect_seed(args.source)
+    except SeedError as exc:
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         else:
-            lore.failure(f"public colony is invalid: {exc}")
+            lore.failure(f"colony seed is invalid: {exc}")
         return 1
     payload = {"ok": True, **summary.to_record()}
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
-        lore.headline(lore.TRACKS, f"public colony: {summary.name}")
+        lore.headline(lore.TRACKS, f"colony seed: {summary.name}")
         lore.labelled("wolts", ", ".join(summary.wolts))
         lore.labelled("apps", ", ".join(summary.apps) or "none")
         lore.labelled("size", f"{summary.bytes:,} bytes in {summary.files} files")
@@ -639,26 +639,26 @@ def _colony_inspect(args) -> int:
     return 0
 
 
-def _colony_install(args) -> int:
-    from .public_colony import ColonyError, install_public_colony
+def _seed_install(args) -> int:
+    from .seed import SeedError, install_seed
 
     layout = RuntimeLayout.from_env()
     try:
-        result = install_public_colony(
+        result = install_seed(
             source=args.source,
             wolts_dir=layout.wolts_dir,
             install_root=layout.install_root,
         )
-    except ColonyError as exc:
+    except SeedError as exc:
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         else:
-            lore.failure(f"public colony install failed: {exc}")
+            lore.failure(f"colony seed install failed: {exc}")
         return 1
     if args.json:
         print(json.dumps(result, indent=2))
     else:
-        lore.headline(lore.SUN, f"starter colony installed: {result['colony']}")
+        lore.headline(lore.SUN, f"colony seed installed: {result['seed']}")
         lore.labelled("wolts", ", ".join(result["wolts"]))
         lore.labelled("apps", ", ".join(result["apps"]) or "none")
         lore.subtitle("fresh independent copies; lived memory starts here")
@@ -775,43 +775,43 @@ def build_parser() -> argparse.ArgumentParser:
     auto_list.add_argument("--json", action="store_true")
     auto_list.set_defaults(func=_auto_list)
 
-    colony = sub.add_parser(
-        "colony", help="export, inspect, and install Git-friendly public colonies"
+    seed = sub.add_parser(
+        "seed", help="create, inspect, and install shareable colony seeds"
     )
-    colony.set_defaults(func=_colony, colony_parser=colony)
-    colony_sub = colony.add_subparsers(dest="verb")
+    seed.set_defaults(func=_seed, seed_parser=seed)
+    seed_sub = seed.add_subparsers(dest="verb")
 
-    colony_export = colony_sub.add_parser(
-        "export", help="create a public starter colony (not a backup)"
+    seed_create = seed_sub.add_parser(
+        "create", help="create a shareable colony seed (not a stateful backup)"
     )
-    colony_export.add_argument("output", help="new directory to create")
-    colony_export.add_argument("--name", required=True, help="portable colony name")
-    colony_export.add_argument(
+    seed_create.add_argument("output", help="new directory to create")
+    seed_create.add_argument("--name", required=True, help="portable seed name")
+    seed_create.add_argument(
         "--wolt", action="append", required=True, help="wolt to include (repeatable)"
     )
-    colony_export.add_argument(
+    seed_create.add_argument(
         "--app", action="append", default=[], help="tracked app source to include (repeatable)"
     )
-    colony_export.add_argument(
+    seed_create.add_argument(
         "--skill", action="append", default=[], metavar="WOLT:SKILL",
         help="explicit user-owned skill to include (repeatable)",
     )
-    colony_export.add_argument("--json", action="store_true")
-    colony_export.set_defaults(func=_colony_export)
+    seed_create.add_argument("--json", action="store_true")
+    seed_create.set_defaults(func=_seed_create)
 
-    colony_inspect = colony_sub.add_parser(
-        "inspect", help="validate and summarize a public colony"
+    seed_inspect = seed_sub.add_parser(
+        "inspect", help="validate and summarize a colony seed"
     )
-    colony_inspect.add_argument("source")
-    colony_inspect.add_argument("--json", action="store_true")
-    colony_inspect.set_defaults(func=_colony_inspect)
+    seed_inspect.add_argument("source")
+    seed_inspect.add_argument("--json", action="store_true")
+    seed_inspect.set_defaults(func=_seed_inspect)
 
-    colony_install = colony_sub.add_parser(
+    seed_install = seed_sub.add_parser(
         "install", help="install independent starter copies from a directory or Git URL"
     )
-    colony_install.add_argument("source")
-    colony_install.add_argument("--json", action="store_true")
-    colony_install.set_defaults(func=_colony_install)
+    seed_install.add_argument("source")
+    seed_install.add_argument("--json", action="store_true")
+    seed_install.set_defaults(func=_seed_install)
 
     tui = sub.add_parser("tui", help="open the terminal UI")
     tui.add_argument("--dry-run", action="store_true", help="show resolution without launching")

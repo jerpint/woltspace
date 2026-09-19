@@ -1,6 +1,6 @@
-"""Git-friendly public colony packages.
+"""Git-friendly colony seed packages.
 
-A public colony is deliberately not a backup.  It contains authored identity,
+A colony seed is deliberately not a backup.  It contains authored identity,
 rules, explicitly selected skills, and tracked app source.  Lived state is
 never traversed, so sessions, memory, artifacts, caches, and credentials cannot
 enter a package by accident.
@@ -20,13 +20,13 @@ from typing import Iterable
 from urllib.parse import urlsplit
 
 
-FORMAT = "woltspace.public-colony/v1"
+FORMAT = "woltspace.colony-seed/v1"
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_PACKAGE_BYTES = 50 * 1024 * 1024
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 MANAGED_START = "<!-- WOLTSPACE:BEGIN"
 MANAGED_END = "<!-- WOLTSPACE:END -->"
-PUBLIC_WOLT_FIELDS = ("name", "type", "role", "capabilities", "description")
+SEED_WOLT_FIELDS = ("name", "type", "role", "capabilities", "description")
 SECRET_PARTS = {
     ".env", ".credentials.json", "credentials.json", "secrets.json",
     "id_rsa", "id_ed25519", "auth.json", "token.json",
@@ -39,12 +39,12 @@ SECRET_CONTENT = re.compile(
 ABSOLUTE_HOME = re.compile(rb"(?:/Users/[^/\s]+/|/home/[^/\s]+/)")
 
 
-class ColonyError(ValueError):
-    """A public package is unsafe, invalid, or cannot be installed."""
+class SeedError(ValueError):
+    """A colony seed is unsafe, invalid, or cannot be installed."""
 
 
 @dataclass(frozen=True)
-class ColonySummary:
+class SeedSummary:
     root: Path
     name: str
     wolts: tuple[str, ...]
@@ -66,20 +66,20 @@ class ColonySummary:
         }
 
 
-def export_public_colony(
+def create_seed(
     *, wolts_dir: Path, output: Path, name: str, wolt_names: Iterable[str],
     app_names: Iterable[str] = (), skills: Iterable[str] = (),
-) -> ColonySummary:
-    """Create one deterministic, allowlisted public colony directory."""
+) -> SeedSummary:
+    """Create one deterministic, allowlisted colony seed directory."""
     wolts_dir = Path(wolts_dir).resolve()
     output = Path(output).expanduser().resolve(strict=False)
-    _valid_name(name, "colony")
+    _valid_name(name, "seed")
     selected_wolts = _unique(wolt_names)
     selected_apps = _unique(app_names)
     if not selected_wolts:
-        raise ColonyError("select at least one wolt")
+        raise SeedError("select at least one wolt")
     if output.exists():
-        raise ColonyError(f"output already exists: {output}")
+        raise SeedError(f"output already exists: {output}")
     skill_map = _parse_skills(skills, selected_wolts)
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -92,16 +92,16 @@ def export_public_colony(
             config_path = source / "wolt" / "wolt.json"
             identity_path = source / "wolt" / "memory" / "identity.md"
             if not config_path.is_file() or not identity_path.is_file():
-                raise ColonyError(f"wolt is missing identity/config: {wolt_name}")
+                raise SeedError(f"wolt is missing identity/config: {wolt_name}")
             config = _read_json(config_path)
-            public_config = {
-                key: config[key] for key in PUBLIC_WOLT_FIELDS if key in config
+            seed_config = {
+                key: config[key] for key in SEED_WOLT_FIELDS if key in config
             }
-            public_config["name"] = wolt_name
+            seed_config["name"] = wolt_name
             target = staging / "wolts" / wolt_name
             target.mkdir(parents=True)
-            _write_json(target / "wolt.json", public_config)
-            _copy_public_text(identity_path, target / "identity.md")
+            _write_json(target / "wolt.json", seed_config)
+            _copy_seed_text(identity_path, target / "identity.md")
             rules = _authored_rules(source / "CLAUDE.md")
             (target / "rules.md").write_text(rules, encoding="utf-8")
 
@@ -109,7 +109,7 @@ def export_public_colony(
             for skill_name in skill_map.get(wolt_name, ()):
                 _valid_name(skill_name, "skill")
                 if skill_name.startswith("woltspace-"):
-                    raise ColonyError(f"platform skill cannot be exported: {skill_name}")
+                    raise SeedError(f"platform skill cannot be exported: {skill_name}")
                 skill_source = source / ".claude" / "skills" / skill_name
                 skill_target = target / "skills" / skill_name
                 _copy_explicit_tree(skill_source, skill_target)
@@ -134,64 +134,64 @@ def export_public_colony(
             "wolts": manifest_wolts,
             "apps": manifest_apps,
         }
-        _write_json(staging / "colony.json", manifest)
+        _write_json(staging / "seed.json", manifest)
         (staging / "README.md").write_text(_readme(manifest), encoding="utf-8")
         _write_gitignore(staging / ".gitignore")
-        inspect_public_colony(staging)
+        inspect_seed(staging)
         staging.rename(output)
-        return inspect_public_colony(output)
+        return inspect_seed(output)
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
 
 
-def inspect_public_colony(root: Path) -> ColonySummary:
-    """Validate a public colony without modifying it."""
+def inspect_seed(root: Path) -> SeedSummary:
+    """Validate a colony seed without modifying it."""
     root = Path(root).resolve()
-    manifest_path = root / "colony.json"
+    manifest_path = root / "seed.json"
     if manifest_path.is_symlink():
-        raise ColonyError("colony.json must not be a symlink")
+        raise SeedError("seed.json must not be a symlink")
     if not manifest_path.is_file():
-        raise ColonyError(f"not a public colony (missing colony.json): {root}")
+        raise SeedError(f"not a colony seed (missing seed.json): {root}")
     manifest = _read_json(manifest_path)
     if manifest.get("format") != FORMAT:
-        raise ColonyError(f"unsupported colony format: {manifest.get('format')!r}")
+        raise SeedError(f"unsupported seed format: {manifest.get('format')!r}")
     for path in root.rglob("*"):
         rel = path.relative_to(root)
         if rel.parts and rel.parts[0] == ".git":
             continue
         if path.is_symlink():
-            raise ColonyError(f"symlinks are not portable: {rel.as_posix()}")
-    _valid_name(manifest.get("name", ""), "colony")
+            raise SeedError(f"symlinks are not portable: {rel.as_posix()}")
+    _valid_name(manifest.get("name", ""), "seed")
     wolts = tuple(_manifest_names(manifest, "wolts"))
     apps = tuple(_manifest_names(manifest, "apps"))
     if not wolts:
-        raise ColonyError("public colony has no wolts")
+        raise SeedError("colony seed has no wolts")
 
-    expected_roots = {"colony.json", "README.md", ".gitignore", "wolts", "apps"}
+    expected_roots = {"seed.json", "README.md", ".gitignore", "wolts", "apps"}
     for child in root.iterdir():
         if child.name == ".git":
             continue
         if child.name not in expected_roots:
-            raise ColonyError(f"unexpected top-level path: {child.name}")
+            raise SeedError(f"unexpected top-level path: {child.name}")
 
     for entry in manifest["wolts"]:
         name = entry["name"]
         base = root / "wolts" / name
         for required in ("wolt.json", "identity.md", "rules.md"):
             if not (base / required).is_file():
-                raise ColonyError(f"wolt {name} is missing {required}")
+                raise SeedError(f"wolt {name} is missing {required}")
         config = _read_json(base / "wolt.json")
-        unexpected = set(config) - set(PUBLIC_WOLT_FIELDS)
+        unexpected = set(config) - set(SEED_WOLT_FIELDS)
         if unexpected:
-            raise ColonyError(f"wolt {name} has non-public config: {sorted(unexpected)}")
+            raise SeedError(f"wolt {name} has non-seed config: {sorted(unexpected)}")
         if config.get("name") != name:
-            raise ColonyError(f"wolt directory/config name mismatch: {name}")
+            raise SeedError(f"wolt directory/config name mismatch: {name}")
         declared_skills = set(entry.get("skills", []))
         skills_dir = base / "skills"
         actual_skills = {p.name for p in skills_dir.iterdir()} if skills_dir.is_dir() else set()
         if declared_skills != actual_skills:
-            raise ColonyError(f"wolt {name} skill manifest does not match files")
+            raise SeedError(f"wolt {name} skill manifest does not match files")
 
     for entry in manifest["apps"]:
         name = entry["name"]
@@ -203,15 +203,15 @@ def inspect_public_colony(root: Path) -> ColonySummary:
             _validate_git_reference(reference)
             app_manifest = reference.get("manifest")
             if not isinstance(app_manifest, dict):
-                raise ColonyError(f"app {name} Git reference has no manifest")
+                raise SeedError(f"app {name} Git reference has no manifest")
         else:
-            raise ColonyError(f"app {name} has unknown distribution: {distribution}")
+            raise SeedError(f"app {name} has unknown distribution: {distribution}")
         if app_manifest.get("name") != name or app_manifest.get("keeper") != entry.get("keeper"):
-            raise ColonyError(f"app manifest does not match colony.json: {name}")
+            raise SeedError(f"app manifest does not match seed.json: {name}")
         if "port" in app_manifest or app_manifest.get("public") is not False:
-            raise ColonyError(f"app {name} contains live deployment state")
+            raise SeedError(f"app {name} contains live deployment state")
         if entry.get("keeper") not in wolts:
-            raise ColonyError(f"app {name} keeper is not included")
+            raise SeedError(f"app {name} keeper is not included")
 
     file_count = 0
     total = 0
@@ -220,25 +220,25 @@ def inspect_public_colony(root: Path) -> ColonySummary:
         rel = path.relative_to(root).as_posix()
         _audit_relative_path(rel)
         if path.is_symlink():
-            raise ColonyError(f"symlinks are not portable: {rel}")
+            raise SeedError(f"symlinks are not portable: {rel}")
         size = path.stat().st_size
         if size > MAX_FILE_BYTES:
-            raise ColonyError(f"file exceeds 5 MiB public limit: {rel}")
+            raise SeedError(f"file exceeds 5 MiB seed limit: {rel}")
         total += size
         file_count += 1
         content = path.read_bytes()
         if SECRET_CONTENT.search(content):
-            raise ColonyError(f"credential-like content is not public: {rel}")
+            raise SeedError(f"credential-like content is not seed-safe: {rel}")
         if ABSOLUTE_HOME.search(content):
-            raise ColonyError(f"machine-specific home path is not portable: {rel}")
+            raise SeedError(f"machine-specific home path is not portable: {rel}")
         digest.update(rel.encode() + b"\0")
         digest.update(content)
         if total > MAX_PACKAGE_BYTES:
-            raise ColonyError("public colony exceeds 50 MiB review limit")
-    return ColonySummary(root, manifest["name"], wolts, apps, file_count, total, digest.hexdigest())
+            raise SeedError("colony seed exceeds 50 MiB review limit")
+    return SeedSummary(root, manifest["name"], wolts, apps, file_count, total, digest.hexdigest())
 
 
-def install_public_colony(
+def install_seed(
     *, source: str | Path, wolts_dir: Path, install_root: Path,
 ) -> dict:
     """Install independent starter copies from a local directory or Git URL."""
@@ -249,7 +249,7 @@ def install_public_colony(
         package = local.resolve()
         provenance = {"source": source_text, "format": FORMAT}
     else:
-        cleanup = Path(tempfile.mkdtemp(prefix="woltspace-colony-source-"))
+        cleanup = Path(tempfile.mkdtemp(prefix="woltspace-seed-source-"))
         package = cleanup / "repo"
         result = subprocess.run(
             ["git", "clone", "--depth", "1", "--", source_text, str(package)],
@@ -257,7 +257,7 @@ def install_public_colony(
         )
         if result.returncode:
             shutil.rmtree(cleanup, ignore_errors=True)
-            raise ColonyError(f"could not clone colony: {result.stderr.strip()}")
+            raise SeedError(f"could not clone colony seed: {result.stderr.strip()}")
         provenance = {"source": source_text, "format": FORMAT}
         revision = subprocess.run(
             ["git", "-C", str(package), "rev-parse", "HEAD"],
@@ -266,16 +266,16 @@ def install_public_colony(
         if revision.returncode == 0:
             provenance["revision"] = revision.stdout.strip()
     try:
-        summary = inspect_public_colony(package)
-        manifest = _read_json(package / "colony.json")
+        summary = inspect_seed(package)
+        manifest = _read_json(package / "seed.json")
         wolts_dir = Path(wolts_dir).resolve()
         apps_dir = wolts_dir / "apps"
         conflicts = [name for name in summary.wolts if (wolts_dir / name).exists()]
         conflicts += [name for name in summary.apps if (apps_dir / name).exists()]
         if conflicts:
-            raise ColonyError(f"install would overwrite existing names: {', '.join(conflicts)}")
+            raise SeedError(f"install would overwrite existing names: {', '.join(conflicts)}")
         wolts_dir.mkdir(parents=True, exist_ok=True)
-        stage = Path(tempfile.mkdtemp(prefix=".colony-install-", dir=wolts_dir))
+        stage = Path(tempfile.mkdtemp(prefix=".seed-install-", dir=wolts_dir))
         moved: list[Path] = []
         try:
             for entry in manifest["wolts"]:
@@ -301,13 +301,13 @@ def install_public_colony(
                         capture_output=True, text=True,
                     )
                     if clone.returncode:
-                        raise ColonyError(f"could not clone app {name}: {clone.stderr.strip()}")
+                        raise SeedError(f"could not clone app {name}: {clone.stderr.strip()}")
                     checkout = subprocess.run(
                         ["git", "-C", str(target), "checkout", "--quiet", reference["revision"]],
                         capture_output=True, text=True,
                     )
                     if checkout.returncode:
-                        raise ColonyError(f"could not check out app {name}: {checkout.stderr.strip()}")
+                        raise SeedError(f"could not check out app {name}: {checkout.stderr.strip()}")
                     _audit_checkout(target)
                     app_manifest = reference["manifest"]
                 while next_port in ports:
@@ -334,7 +334,7 @@ def install_public_colony(
                 moved.append(target)
             return {
                 "ok": True,
-                "colony": summary.name,
+                "seed": summary.name,
                 "wolts": list(summary.wolts),
                 "apps": list(summary.apps),
                 "source": provenance,
@@ -352,7 +352,7 @@ def install_public_colony(
 
 def _stage_wolt(source: Path, target: Path, name: str, template: Path, provenance: dict) -> None:
     if not template.is_dir():
-        raise ColonyError(f"Woltspace template not found: {template}")
+        raise SeedError(f"Woltspace template not found: {template}")
     shutil.copytree(template, target)
     config = _read_json(source / "wolt.json")
     config["name"] = name
@@ -385,29 +385,29 @@ def _stage_wolt(source: Path, target: Path, name: str, template: Path, provenanc
 
 def _export_app(source: Path, target: Path, selected_wolts: list[str]) -> dict:
     if not source.is_dir():
-        raise ColonyError(f"app not found: {source.name}")
+        raise SeedError(f"app not found: {source.name}")
     top = subprocess.run(
         ["git", "-C", str(source), "rev-parse", "--show-toplevel"],
         capture_output=True, text=True,
     )
     if top.returncode or Path(top.stdout.strip()).resolve() != source.resolve():
-        raise ColonyError(f"app must be its own Git repository: {source.name}")
+        raise SeedError(f"app must be its own Git repository: {source.name}")
     listed = subprocess.run(
         ["git", "-C", str(source), "ls-files", "-z"],
         capture_output=True,
     )
     if listed.returncode:
-        raise ColonyError(f"could not list tracked app source: {source.name}")
+        raise SeedError(f"could not list tracked app source: {source.name}")
     files = sorted(filter(None, listed.stdout.decode().split("\0")))
     manifest_path = source / "woltspace.json"
     if not manifest_path.is_file():
-        raise ColonyError(f"app manifest missing: {source.name}")
+        raise SeedError(f"app manifest missing: {source.name}")
     manifest = _read_json(manifest_path)
     if manifest.get("name") != source.name:
-        raise ColonyError(f"app directory/manifest name mismatch: {source.name}")
+        raise SeedError(f"app directory/manifest name mismatch: {source.name}")
     keeper = manifest.get("keeper")
     if keeper not in selected_wolts:
-        raise ColonyError(f"app {source.name} keeper {keeper!r} is not selected")
+        raise SeedError(f"app {source.name} keeper {keeper!r} is not selected")
     manifest.pop("port", None)
     manifest["public"] = False
     manifest["source"] = None
@@ -433,12 +433,12 @@ def _export_app(source: Path, target: Path, selected_wolts: list[str]) -> dict:
         return {"keeper": keeper, "distribution": "git"}
 
     if "woltspace.json" not in files:
-        raise ColonyError(f"bundled app manifest must be tracked: {source.name}")
+        raise SeedError(f"bundled app manifest must be tracked: {source.name}")
     for rel in files:
         _audit_relative_path(rel)
         src = source / rel
         if src.is_symlink() or not src.is_file():
-            raise ColonyError(f"app tracked path is not a regular file: {rel}")
+            raise SeedError(f"app tracked path is not a regular file: {rel}")
         if rel == "woltspace.json":
             continue
         dst = target / rel
@@ -447,7 +447,7 @@ def _export_app(source: Path, target: Path, selected_wolts: list[str]) -> dict:
             ["git", "-C", str(source), "show", f"HEAD:{rel}"], capture_output=True,
         )
         if content.returncode:
-            raise ColonyError(f"could not read tracked app source: {source.name}/{rel}")
+            raise SeedError(f"could not read tracked app source: {source.name}/{rel}")
         dst.write_bytes(content.stdout)
     _write_json(target / "woltspace.json", manifest)
     return {"keeper": keeper, "distribution": "bundled"}
@@ -455,16 +455,16 @@ def _export_app(source: Path, target: Path, selected_wolts: list[str]) -> dict:
 
 def _validate_git_reference(reference: dict) -> None:
     if reference.get("distribution") != "git":
-        raise ColonyError("invalid Git app reference")
+        raise SeedError("invalid Git app reference")
     url = reference.get("url")
     revision = reference.get("revision")
     if not isinstance(url, str):
-        raise ColonyError("Git app reference has no URL")
+        raise SeedError("Git app reference has no URL")
     parsed = urlsplit(url)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
-        raise ColonyError("Git app references must use a credential-free HTTPS URL")
+        raise SeedError("Git app references must use a credential-free HTTPS URL")
     if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
-        raise ColonyError("Git app reference must pin a full commit SHA")
+        raise SeedError("Git app reference must pin a full commit SHA")
 
 
 def _audit_checkout(root: Path) -> None:
@@ -475,17 +475,17 @@ def _audit_checkout(root: Path) -> None:
             continue
         _audit_relative_path(rel.as_posix())
         if path.is_symlink():
-            raise ColonyError(f"Git app contains a non-portable symlink: {rel.as_posix()}")
+            raise SeedError(f"Git app contains a non-portable symlink: {rel.as_posix()}")
 
 
 def _parse_skills(values: Iterable[str], wolts: list[str]) -> dict[str, list[str]]:
     result: dict[str, list[str]] = {}
     for value in values:
         if ":" not in value:
-            raise ColonyError("skills must be selected as WOLT:SKILL")
+            raise SeedError("skills must be selected as WOLT:SKILL")
         wolt, skill = value.split(":", 1)
         if wolt not in wolts:
-            raise ColonyError(f"skill selects an unselected wolt: {wolt}")
+            raise SeedError(f"skill selects an unselected wolt: {wolt}")
         result.setdefault(wolt, []).append(skill)
     return {key: _unique(values) for key, values in result.items()}
 
@@ -499,7 +499,7 @@ def _authored_rules(path: Path) -> str:
     start = text.index(MANAGED_START)
     end = text.find(MANAGED_END, start)
     if end < 0:
-        raise ColonyError(f"managed rules block is malformed: {path}")
+        raise SeedError(f"managed rules block is malformed: {path}")
     return (text[:start] + text[end + len(MANAGED_END):]).strip() + "\n"
 
 
@@ -507,60 +507,60 @@ def _managed_rules(text: str) -> str:
     start = text.find(MANAGED_START)
     end = text.find(MANAGED_END, start)
     if start < 0 or end < 0:
-        raise ColonyError("installed Woltspace template has no managed rules block")
+        raise SeedError("installed Woltspace template has no managed rules block")
     return text[start:end + len(MANAGED_END)]
 
 
 def _copy_explicit_tree(source: Path, target: Path) -> None:
     if not source.is_dir() or source.is_symlink():
-        raise ColonyError(f"selected public directory is missing or a symlink: {source}")
+        raise SeedError(f"selected seed directory is missing or a symlink: {source}")
     for path in sorted(source.rglob("*")):
         if path.is_dir():
             continue
         rel = path.relative_to(source).as_posix()
         _audit_relative_path(rel)
         if path.is_symlink() or not path.is_file():
-            raise ColonyError(f"selected public path is not a regular file: {rel}")
+            raise SeedError(f"selected seed path is not a regular file: {rel}")
         destination = target / rel
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, destination)
 
 
-def _copy_public_text(source: Path, target: Path) -> None:
+def _copy_seed_text(source: Path, target: Path) -> None:
     try:
         text = source.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
-        raise ColonyError(f"public identity must be UTF-8 text: {source}") from exc
+        raise SeedError(f"seed identity must be UTF-8 text: {source}") from exc
     target.write_text(text, encoding="utf-8")
 
 
 def _audit_relative_path(value: str) -> None:
     path = PurePosixPath(value)
     if path.is_absolute() or ".." in path.parts or not path.parts:
-        raise ColonyError(f"unsafe package path: {value}")
+        raise SeedError(f"unsafe package path: {value}")
     lower_parts = [part.lower() for part in path.parts]
     for part in lower_parts:
         if part == ".git" or part == "node_modules" or part == "__pycache__":
-            raise ColonyError(f"generated/private path is not public: {value}")
+            raise SeedError(f"generated/private path is not seed-safe: {value}")
         if part in SECRET_PARTS or part.startswith(".env.") and not part.endswith((".example", ".sample")):
-            raise ColonyError(f"secret-shaped path is not public: {value}")
+            raise SeedError(f"secret-shaped path is not seed-safe: {value}")
         if part.endswith(SECRET_SUFFIXES):
-            raise ColonyError(f"key-shaped path is not public: {value}")
+            raise SeedError(f"key-shaped path is not seed-safe: {value}")
 
 
 def _manifest_names(manifest: dict, key: str) -> list[str]:
     entries = manifest.get(key)
     if not isinstance(entries, list):
-        raise ColonyError(f"colony.json {key} must be a list")
+        raise SeedError(f"seed.json {key} must be a list")
     names = []
     for entry in entries:
         if not isinstance(entry, dict):
-            raise ColonyError(f"colony.json {key} entries must be objects")
+            raise SeedError(f"seed.json {key} entries must be objects")
         name = entry.get("name", "")
         _valid_name(name, key[:-1])
         names.append(name)
     if len(names) != len(set(names)):
-        raise ColonyError(f"colony.json has duplicate {key}")
+        raise SeedError(f"seed.json has duplicate {key}")
     return names
 
 
@@ -584,7 +584,7 @@ def _used_ports(apps_dir: Path) -> set[int]:
                 port = _read_json(manifest).get("port")
                 if isinstance(port, int):
                     used.add(port)
-            except ColonyError:
+            except SeedError:
                 continue
     return used
 
@@ -593,9 +593,9 @@ def _read_json(path: Path) -> dict:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ColonyError(f"invalid JSON: {path}") from exc
+        raise SeedError(f"invalid JSON: {path}") from exc
     if not isinstance(value, dict):
-        raise ColonyError(f"JSON object required: {path}")
+        raise SeedError(f"JSON object required: {path}")
     return value
 
 
@@ -606,7 +606,7 @@ def _write_json(path: Path, value: dict) -> None:
 
 def _valid_name(value: str, kind: str) -> None:
     if not isinstance(value, str) or not NAME_RE.fullmatch(value):
-        raise ColonyError(f"invalid {kind} name: {value!r}")
+        raise SeedError(f"invalid {kind} name: {value!r}")
 
 
 def _unique(values: Iterable[str]) -> list[str]:
@@ -626,11 +626,11 @@ def _readme(manifest: dict) -> str:
     apps = ", ".join(entry["name"] for entry in manifest["apps"]) or "none"
     return (
         f"# {manifest['name']}\n\n"
-        "A public Woltspace colony: portable starter identity and source, not a backup.\n\n"
+        "A Woltspace colony seed: portable starter identity and source, not a backup.\n\n"
         f"- Wolts: {wolts}\n- Apps: {apps}\n\n"
         "```sh\n"
-        "woltspace colony inspect .\n"
-        "woltspace colony install .\n"
+        "woltspace seed inspect .\n"
+        "woltspace seed install .\n"
         "```\n\n"
         "Installing creates independent starter copies. Sessions, lived memory, app data, "
         "credentials, dependencies, and build artifacts are not included.\n"

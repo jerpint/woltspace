@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from woltspace.public_colony import (
-    ColonyError,
-    export_public_colony,
-    inspect_public_colony,
-    install_public_colony,
+from woltspace.seed import (
+    SeedError,
+    create_seed,
+    inspect_seed,
+    install_seed,
 )
 
 
@@ -94,13 +94,13 @@ def make_app(root: Path, name: str = "tiny-app", keeper: str = "raccoon") -> Pat
     return app
 
 
-def test_export_is_small_allowlisted_and_deterministic(tmp_path):
+def test_seed_is_small_allowlisted_and_deterministic(tmp_path):
     wolts = tmp_path / "wolts"
     wolt = make_wolt(wolts)
     make_skill(wolt)
     make_app(wolts)
 
-    first = export_public_colony(
+    first = create_seed(
         wolts_dir=wolts,
         output=tmp_path / "one",
         name="starter-colony",
@@ -108,7 +108,7 @@ def test_export_is_small_allowlisted_and_deterministic(tmp_path):
         app_names=["tiny-app"],
         skills=["raccoon:public-craft"],
     )
-    second = export_public_colony(
+    second = create_seed(
         wolts_dir=wolts,
         output=tmp_path / "two",
         name="starter-colony",
@@ -141,7 +141,7 @@ def test_install_creates_fresh_independent_starters(tmp_path):
     make_wolt(source_wolts)
     make_app(source_wolts)
     package = tmp_path / "package"
-    export_public_colony(
+    create_seed(
         wolts_dir=source_wolts, output=package, name="starter-colony",
         wolt_names=["raccoon"], app_names=["tiny-app"],
     )
@@ -149,14 +149,15 @@ def test_install_creates_fresh_independent_starters(tmp_path):
     install_root = make_template(tmp_path)
     target = tmp_path / "new-lodge"
 
-    result = install_public_colony(
+    result = install_seed(
         source=package, wolts_dir=target, install_root=install_root,
     )
 
+    assert result["seed"] == "starter-colony"
     assert result["wolts"] == ["raccoon"]
     config = json.loads((target / "raccoon/wolt/wolt.json").read_text())
     assert config["origin"] == "starter"
-    assert config["provenance"]["format"] == "woltspace.public-colony/v1"
+    assert config["provenance"]["format"] == "woltspace.colony-seed/v1"
     assert "private current work" not in (target / "raccoon/wolt/memory/context.md").read_text()
     assert "Always be useful" in (target / "raccoon/CLAUDE.md").read_text()
     assert "# Platform rules" in (target / "raccoon/CLAUDE.md").read_text()
@@ -165,19 +166,19 @@ def test_install_creates_fresh_independent_starters(tmp_path):
     assert installed_app["public"] is False
     assert (target / "raccoon/.git").is_dir()
 
-    with pytest.raises(ColonyError, match="overwrite"):
-        install_public_colony(source=package, wolts_dir=target, install_root=install_root)
+    with pytest.raises(SeedError, match="overwrite"):
+        install_seed(source=package, wolts_dir=target, install_root=install_root)
 
 
-def test_export_rejects_secret_shaped_tracked_app_path(tmp_path):
+def test_seed_rejects_secret_shaped_tracked_app_path(tmp_path):
     wolts = tmp_path / "wolts"
     make_wolt(wolts)
     app = make_app(wolts)
     (app / ".env.production").write_text("TOKEN=secret")
     subprocess.run(["git", "-C", str(app), "add", "-f", ".env.production"], check=True)
 
-    with pytest.raises(ColonyError, match="secret-shaped"):
-        export_public_colony(
+    with pytest.raises(SeedError, match="secret-shaped"):
+        create_seed(
             wolts_dir=wolts, output=tmp_path / "out", name="starter",
             wolt_names=["raccoon"], app_names=["tiny-app"],
         )
@@ -187,32 +188,32 @@ def test_inspect_rejects_credentials_and_absolute_home_paths(tmp_path):
     wolts = tmp_path / "wolts"
     make_wolt(wolts)
     package = tmp_path / "package"
-    export_public_colony(
+    create_seed(
         wolts_dir=wolts, output=package, name="starter", wolt_names=["raccoon"],
     )
     (package / "wolts/raccoon/identity.md").write_text(
         "token ghs_abcdefghijklmnopqrstuvwxyz123456\n"
     )
-    with pytest.raises(ColonyError, match="credential-like"):
-        inspect_public_colony(package)
+    with pytest.raises(SeedError, match="credential-like"):
+        inspect_seed(package)
 
     (package / "wolts/raccoon/identity.md").write_text("See /Users/alice/private/file\n")
-    with pytest.raises(ColonyError, match="home path"):
-        inspect_public_colony(package)
+    with pytest.raises(SeedError, match="home path"):
+        inspect_seed(package)
 
 
-def test_platform_skills_are_never_exported(tmp_path):
+def test_platform_skills_are_never_seeded(tmp_path):
     wolts = tmp_path / "wolts"
     wolt = make_wolt(wolts)
     make_skill(wolt, "woltspace-notify")
-    with pytest.raises(ColonyError, match="platform skill"):
-        export_public_colony(
+    with pytest.raises(SeedError, match="platform skill"):
+        create_seed(
             wolts_dir=wolts, output=tmp_path / "out", name="starter",
             wolt_names=["raccoon"], skills=["raccoon:woltspace-notify"],
         )
 
 
-def test_public_git_app_is_a_pinned_reference_not_a_copy(tmp_path):
+def test_https_git_app_is_a_pinned_reference_not_a_copy(tmp_path):
     wolts = tmp_path / "wolts"
     make_wolt(wolts)
     app = make_app(wolts)
@@ -225,7 +226,7 @@ def test_public_git_app_is_a_pinned_reference_not_a_copy(tmp_path):
         check=True, capture_output=True, text=True,
     ).stdout.strip()
 
-    summary = export_public_colony(
+    summary = create_seed(
         wolts_dir=wolts, output=tmp_path / "out", name="starter",
         wolt_names=["raccoon"], app_names=["tiny-app"],
     )
@@ -234,4 +235,23 @@ def test_public_git_app_is_a_pinned_reference_not_a_copy(tmp_path):
     assert reference["url"] == "https://github.com/example/tiny-app.git"
     assert reference["revision"] == revision
     assert not (summary.root / "apps/tiny-app/server.mjs").exists()
-    assert inspect_public_colony(summary.root).apps == ("tiny-app",)
+    assert inspect_seed(summary.root).apps == ("tiny-app",)
+
+
+def test_seed_and_backup_are_distinct_top_level_commands():
+    from woltspace.cli import build_parser
+
+    parser = build_parser()
+    top_level = next(
+        action for action in parser._actions if getattr(action, "choices", None)
+    ).choices
+    assert "seed" in top_level
+    assert "backup" in top_level
+    assert "restore" in top_level
+    assert "colony" not in top_level
+
+    seed_parser = top_level["seed"]
+    seed_verbs = next(
+        action for action in seed_parser._actions if getattr(action, "choices", None)
+    ).choices
+    assert set(seed_verbs) == {"create", "inspect", "install"}
