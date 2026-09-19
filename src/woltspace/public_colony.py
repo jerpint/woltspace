@@ -462,7 +462,7 @@ def _validate_git_reference(reference: dict) -> None:
         raise ColonyError("Git app reference has no URL")
     parsed = urlsplit(url)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
-        raise ColonyError("Git app references must use a credential-free public HTTPS URL")
+        raise ColonyError("Git app references must use a credential-free HTTPS URL")
     if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise ColonyError("Git app reference must pin a full commit SHA")
 

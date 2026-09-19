@@ -4,6 +4,11 @@ A public colony is a shareable starter, not a backup. It is designed to fit in
 an ordinary public Git repository and to install as fresh, independently owned
 wolts and apps.
 
+"Public" describes the deliberately publishable data boundary, not repository
+visibility. Start in a private repository, test with trusted recipients, and
+only make that repository public after reviewing every authored identity and
+rule. Woltspace never creates or changes the repository's visibility.
+
 ```sh
 woltspace colony export ./my-colony \
   --name my-colony \
@@ -26,8 +31,8 @@ woltspace colony install https://github.com/example/my-colony.git
   human-authored portion of `CLAUDE.md`;
 - user-owned skills selected explicitly with `--skill WOLT:SKILL`;
 - selected app source already tracked in the app's own Git repository; or,
-  when the app has a credential-free HTTPS origin, its public URL and exact
-  commit SHA.
+  when the app has a credential-free HTTPS origin, its URL and exact commit
+  SHA. Private origins work when the receiving machine has access.
 
 Machine-selected harnesses and models are omitted. So are sessions,
 transcripts, context, learnings, archives, drafts, sparks, sites, application
