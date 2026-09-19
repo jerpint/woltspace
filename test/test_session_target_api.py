@@ -124,6 +124,9 @@ def test_create_wolt_passes_confirmed_target_and_policy(tmp_path, monkeypatch):
 
     _, _, repo = _layout(tmp_path, monkeypatch)
     seen = {}
+    # This test exercises target/policy forwarding rather than host CLI
+    # discovery. CI intentionally has no agent harness installed.
+    monkeypatch.setattr(app_module, "harness_installed", lambda name: True)
     monkeypatch.setattr(
         wolts, "create_creature_wolt",
         lambda name, kind, **kwargs: seen.update({
