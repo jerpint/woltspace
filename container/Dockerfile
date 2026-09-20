@@ -113,7 +113,7 @@ RUN git clone https://github.com/jerpint/worktui.git /home/node/worktui \
 ENV WORKTUI_DIR="/workspace/wolts/.worktui"
 
 # --- The woltspace runtime, from the registries ---
-ARG WOLTSPACE_PYPI_VERSION=0.5.6
+ARG WOLTSPACE_PYPI_VERSION=0.5.7
 # `latest`, not a pin — the two artifacts are versioned independently. Pass an
 # explicit version to reproduce an older image.
 ARG WOLTSPACE_TUI_VERSION=0.5.2
