@@ -80,8 +80,8 @@ those separately when access itself should end.
 
 ## Later: paired-colony visits
 
-Wire carries the request, destination approval, callback, and result. The
-destination-owned authorization kernel in this branch belongs here.
+Wire could later carry the request, destination approval, callback, and result.
+That authorization layer is deliberately not part of this SSH v0.
 
 Cross-tunnel IWCL, a visiting-wolt identity bridge, callbacks, and ongoing
 collaboration are explicitly out of v0. Real digging experience should tell us
@@ -108,7 +108,7 @@ flow is not a new-deployment target; evaluate Access for Infrastructure instead.
 This is unnecessary for two local users on one Mac. A future non-network
 local-user transport would be a smaller solution for that case.
 
-## V1 human experience
+## Possible V1 human experience
 
 1. Alice asks to dig to Bobeaver Colony with a short task description and a
    destination-relative disposable workspace.
@@ -149,12 +149,6 @@ a prerequisite for the general digging concept.
 
 ## Current implementation
 
-`container/lib/digging.py` provides strict request parsing and a private durable
-state machine: `pending -> approved -> active -> completed`, with `revoked` and
-`expired` terminal paths. Capabilities are stored only as SHA-256 digests and
-removed on redemption. `verified_peer` is an input from the future Wire adapter,
-not a claim accepted from the request body.
-
-This is not yet a usable remote-access feature. The next implementation gate is
-the simpler SSH v0. The Wire state machine remains isolated V1 groundwork until
-the SSH setup/access experience and its audit boundary are proven.
+SSH v0 is the only implemented path. Wire authorization, cross-tunnel IWCL,
+local-user switching, Cloudflare transport, and short-lived infrastructure
+credentials remain design notes, not shipped capability.
