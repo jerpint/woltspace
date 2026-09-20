@@ -33,6 +33,22 @@ def test_resolve_ssh_uses_config_without_a_shell():
     assert calls[0][0] == ["ssh", "-G", "--", "my-colony"]
 
 
+def test_isolated_ssh_config_can_be_selected_from_environment(monkeypatch):
+    calls = []
+    monkeypatch.setenv("WOLTSPACE_DIG_SSH_CONFIG", "/tmp/isolated config")
+
+    def runner(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(
+            argv, 0, "hostname server.example\nuser colony\nport 22\n", ""
+        )
+
+    resolve_ssh("my-colony", runner=runner)
+    assert calls == [[
+        "ssh", "-F", "/tmp/isolated config", "-G", "--", "my-colony"
+    ]]
+
+
 @pytest.mark.parametrize("destination", ["-oProxyCommand=oops", "host name", "host;id", ""])
 def test_destination_cannot_inject_ssh_options(destination):
     with pytest.raises(DigError):
@@ -70,7 +86,7 @@ def test_connect_rechecks_resolution_uses_strict_host_key_and_audits(tmp_path):
     assert code == 7
     assert calls == [([
         "ssh", "-o", "StrictHostKeyChecking=yes", "--", "my-colony",
-        "woltspace", "status", "--json",
+        "woltspace status --json",
     ], {"check": False})]
     audited = store.get("new-colony")
     assert audited["connect_count"] == 1
@@ -139,3 +155,22 @@ def test_store_contains_no_credentials_or_command_bodies(tmp_path):
     assert "PRIVATE KEY" not in text
     assert "remote_command" not in text
     assert payload["version"] == "woltspace.digs/v0"
+
+
+def test_remote_command_arguments_are_shell_quoted(tmp_path):
+    store = DigStore(tmp_path / ".space")
+    grant(store)
+    calls = []
+
+    def runner(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0)
+
+    connect(
+        store,
+        "new-colony",
+        command=("printf", "%s", "hello; not a second command"),
+        resolver=lambda _: resolved(),
+        runner=runner,
+    )
+    assert calls[0][-1] == "printf %s 'hello; not a second command'"

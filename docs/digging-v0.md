@@ -78,6 +78,21 @@ the setup task explicitly authorizes replacing them.
 account, SSH key, agent, or server-side authorization; the owner must remove
 those separately when access itself should end.
 
+### Disposable installed-wheel proof
+
+Reviewers with Docker can run the complete loopback-only SSH proof:
+
+```console
+uv run python test/e2e/dig_ssh_container/run.py
+```
+
+It builds the candidate wheel, installs it on both client and disposable SSH
+target, publishes the target only on a random `127.0.0.1` port, uses isolated
+temporary keys/config/known-hosts/state, pins the generated host key, and proves
+grant, installed CLI connection, a separate Unix home, colony bootstrap files,
+handoff persistence after reconnect, audit, revoke, refusal after revoke, and
+cleanup. It never uses the host's normal SSH configuration or Woltspace state.
+
 ## Later: paired-colony visits
 
 Wire could later carry the request, destination approval, callback, and result.

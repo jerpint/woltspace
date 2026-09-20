@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import subprocess
 import time
 from contextlib import contextmanager
@@ -65,8 +66,10 @@ def resolve_ssh(
     runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> ResolvedSSH:
     destination = _validate_destination(destination)
+    ssh_config = os.environ.get("WOLTSPACE_DIG_SSH_CONFIG", "").strip()
+    config_args = ["-F", ssh_config] if ssh_config else []
     result = runner(
-        ["ssh", "-G", "--", destination],
+        ["ssh", *config_args, "-G", "--", destination],
         capture_output=True,
         text=True,
         check=False,
@@ -221,12 +224,21 @@ def connect(
         raise DigError("SSH destination no longer resolves to the approved host, user, and port")
     argv = [
         "ssh",
+        *(
+            ["-F", os.environ["WOLTSPACE_DIG_SSH_CONFIG"]]
+            if os.environ.get("WOLTSPACE_DIG_SSH_CONFIG", "").strip()
+            else []
+        ),
         "-o", "StrictHostKeyChecking=yes",
         "--",
         grant["destination"],
     ]
     if command:
-        argv.extend(command)
+        # OpenSSH concatenates every remaining local argv item into one remote
+        # shell command without preserving argument boundaries. Quote once
+        # here so spaces and metacharacters inside an intended argument remain
+        # data when the remote login shell parses it.
+        argv.append(shlex.join(command))
     try:
         result = runner(argv, check=False)
     except KeyboardInterrupt:
