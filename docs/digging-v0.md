@@ -19,19 +19,18 @@ transport. Pairing colonies does not grant remote execution.
 Digging is not teleportation, installation, migration, or cloning. A visiting
 wolt does not become a resident of the destination colony.
 
-## User story
+## V0 user story
 
-A wolt proposes setting up another colony in a particular way. Its human asks
-the destination to allow a dig. After the destination human reviews and allows
-the exact visit, Woltspace creates a bounded guest session on the remote server
-under the visiting wolt's home identity. The visitor performs only the approved
-work and uses local IWCL to explain the resulting setup to the resident/main
-wolt. It returns its result home and the guest session is destroyed.
+A human lets a wolt dig into a machine they control. The wolt connects through
+ordinary SSH, installs or configures what the machine needs, and leaves durable
+local handoff files for the new colony's wolts to find when they wake up. It
+disconnects and reports home what it changed and verified.
 
-The resident wolt or human may later call the visitor's home colony over Wire.
-The original wolt can answer remotely or request a fresh dig. Periodic check-ins
-are scheduled Wire callbacks/status exchanges or newly approved short visits,
-not a forgotten permanent shell or a dormant copy of the visiting wolt.
+The handoff may contain a bootstrap note, setup manifest, decisions, next steps,
+and verification results. It belongs in an intentionally designated shared
+bootstrap location, never another wolt's private memory.
+
+In short: **connect -> set up -> leave a local handoff -> return**.
 
 ## Runnable v0: owner-provisioned SSH
 
@@ -52,13 +51,14 @@ user, handle remote PATH and TTY behavior, distinguish home-wolt context from
 remote resident files, report interrupted setup honestly, and provide a clear
 way to remove both the Woltspace grant and underlying SSH access.
 
-## V1: paired-colony visit
+## Later: paired-colony visits
 
 Wire carries the request, destination approval, callback, and result. The
-destination-owned authorization kernel in this branch belongs here. A later V1
-may let the visiting session coordinate with the resident/main wolt over local
-IWCL. That requires an explicit identity/context bridge so the visitor never
-adopts the resident wolt's memory or becomes a remote clone.
+destination-owned authorization kernel in this branch belongs here.
+
+Cross-tunnel IWCL, a visiting-wolt identity bridge, callbacks, and ongoing
+collaboration are explicitly out of v0. Real digging experience should tell us
+whether they are needed and what identity and consent model they require.
 
 ## V1 human experience
 
