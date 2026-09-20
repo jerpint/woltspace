@@ -1,4 +1,4 @@
-# Wolt digging v0: local experimental boundary
+# Wolt digging: product model and experimental roadmap
 
 Digging is a Woltspace feature that lets a wolt request a temporary guest work
 session in another colony. Woltspace Wire is only the authenticated, encrypted
@@ -33,11 +33,34 @@ The original wolt can answer remotely or request a fresh dig. Periodic check-ins
 are scheduled Wire callbacks/status exchanges or newly approved short visits,
 not a forgotten permanent shell or a dormant copy of the visiting wolt.
 
-This first slice freezes the destination-owned authorization lifecycle. It does
-not open SSH, expose a listener, start a remote agent, or protect production
-secrets.
+## Runnable v0: owner-provisioned SSH
 
-## Human experience
+The owner configures ordinary SSH access using their existing OS user,
+`~/.ssh/config`, agent, and keys. Woltspace records which wolt may dig to the
+exact SSH host/user (and optionally a working directory), invokes normal SSH,
+and gives the wolt the same remote shell and Woltspace CLI access that owner has
+already authorized. The wolt can inspect or set up the machine, disconnect, and
+report what changed.
+
+V0 does not create a guest Unix account, transport private SSH keys over Wire,
+require a remote Woltspace agent, or provide IWCL across the colony boundary.
+The SSH user's existing authority is the real authority; the Woltspace record
+is an understandable local consent and audit boundary, not a sandbox.
+
+V0 must still pin or verify the SSH host key, bind consent to the exact host and
+user, handle remote PATH and TTY behavior, distinguish home-wolt context from
+remote resident files, report interrupted setup honestly, and provide a clear
+way to remove both the Woltspace grant and underlying SSH access.
+
+## V1: paired-colony visit
+
+Wire carries the request, destination approval, callback, and result. The
+destination-owned authorization kernel in this branch belongs here. A later V1
+may let the visiting session coordinate with the resident/main wolt over local
+IWCL. That requires an explicit identity/context bridge so the visitor never
+adopts the resident wolt's memory or becomes a remote clone.
+
+## V1 human experience
 
 1. Alice asks to dig to Bobeaver Colony with a short task description and a
    destination-relative disposable workspace.
@@ -84,7 +107,6 @@ state machine: `pending -> approved -> active -> completed`, with `revoked` and
 removed on redemption. `verified_peer` is an input from the future Wire adapter,
 not a claim accepted from the request body.
 
-This is not yet a usable remote-access feature. The next gate is a disposable
-two-colony runner with a fake/in-memory Wire adapter. Only after lifecycle,
-termination, audit redaction, and hostile-request tests pass should an actual
-private transport be considered.
+This is not yet a usable remote-access feature. The next implementation gate is
+the simpler SSH v0. The Wire state machine remains isolated V1 groundwork until
+the SSH setup/access experience and its audit boundary are proven.
