@@ -9,28 +9,46 @@ Digging means temporarily using the owner's existing SSH access. The wolt stays
 resident in its home colony: connect, do the authorized work, leave a local
 handoff for future wolts on that machine, disconnect, and report home.
 
+Prefer `woltspace dig` over invoking `ssh` directly whenever the digging command
+is available. The wrapper makes the intended wolt and destination visible,
+rechecks the resolved target, preserves the handoff convention, and records a
+small non-secret audit trail. It does not create a security boundary against a
+wolt running as the same Unix user.
+
 ## Find or create the approval
 
 Run `woltspace dig list --json`. Use an existing grant only when its wolt and
 destination match the human's request.
 
-If none matches, an explicit instruction such as “dig into `newbox` and set up
-the colony” authorizes creating that local grant for the current wolt when
-`newbox` is an unambiguous existing SSH alias:
+If none matches and the named destination is an unambiguous existing SSH alias,
+set up the dig grant yourself rather than asking the human to remember CLI
+syntax. Choose a short lowercase grant name and run:
 
 ```sh
 woltspace dig grant newbox newbox --wolt "$WOLTSPACE_WOLT_NAME"
 ```
 
-If the destination, wolt, or intended work is ambiguous, ask before granting or
-connecting. Never guess a hostname or broaden an instruction about one machine
-to another.
+Creating the grant only records a pointer to existing SSH access; it copies no
+key, certificate, agent credential, or token. If the destination, wolt, or
+intended work is ambiguous, ask before granting. Never guess a hostname or
+browse unrelated SSH destinations looking for somewhere to connect.
 
 The grant records Woltspace consent; the SSH user's actual permissions remain
 the authority. Do not create accounts, keys, tunnels, or broader server access
 unless the human separately asks for that work.
 
 ## Connect safely
+
+Immediately before the first connection in a task, show the human the grant
+name and resolved `user@host:port`, briefly state the intended work, and ask for
+confirmation. A stored grant is not standing permission to connect.
+
+Skip that confirmation only when the human's current instruction explicitly
+says that permission is not required, says to proceed without asking, or gives
+equally clear authorization to connect immediately. Do not infer a permanent
+waiver from an earlier task or from the mere existence of SSH access. Once the
+human confirms a task, do not repeatedly ask for every bounded command needed
+to complete that same task unless the target or scope changes.
 
 Start with a small read-only probe appropriate to the request, for example:
 
