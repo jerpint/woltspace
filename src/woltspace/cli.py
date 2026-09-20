@@ -8,7 +8,7 @@ import os
 import sys
 
 from . import __version__, lore
-from .envvars import warn_legacy_once
+from .envvars import get_env, warn_legacy_once
 from .layout import RuntimeLayout
 
 
@@ -585,6 +585,103 @@ def _seed(args) -> int:
     return 1
 
 
+def _dig(args) -> int:
+    args.dig_parser.print_help()
+    return 1
+
+
+def _dig_store():
+    from .dig import DigStore
+
+    return DigStore(RuntimeLayout.from_env().state_root)
+
+
+def _dig_grant(args) -> int:
+    from .dig import DigError, resolve_ssh
+
+    layout = RuntimeLayout.from_env()
+    if not (layout.wolts_dir / args.wolt).is_dir():
+        lore.failure(f"dig grant failed: unknown wolt: {args.wolt}")
+        return 1
+    try:
+        resolved = resolve_ssh(args.destination)
+        grant = _dig_store().grant(
+            name=args.name,
+            wolt=args.wolt,
+            destination=args.destination,
+            resolved=resolved,
+            bootstrap_dir=args.bootstrap_dir,
+        )
+    except DigError as exc:
+        lore.failure(f"dig grant failed: {exc}")
+        return 1
+    if args.json:
+        print(json.dumps({"ok": True, "grant": grant}, indent=2))
+    else:
+        lore.headline(lore.TRACKS, f"dig approved: {grant['name']}")
+        lore.labelled("wolt", grant["wolt"])
+        lore.labelled("ssh", grant["destination"])
+        lore.labelled("resolved", f"{resolved.user}@{resolved.hostname}:{resolved.port}")
+        lore.labelled("handoff", grant["bootstrap_dir"])
+        lore.subtitle("this records consent; the SSH user's real permissions still apply")
+    return 0
+
+
+def _dig_list(args) -> int:
+    grants = sorted(_dig_store().list(), key=lambda item: item["name"])
+    if args.json:
+        print(json.dumps({"grants": grants}, indent=2))
+    elif not grants:
+        lore.headline(lore.TRACKS, "no approved digs")
+    else:
+        lore.headline(lore.TRACKS, f"approved digs: {len(grants)}")
+        for grant in grants:
+            lore.labelled(grant["name"], f"{grant['wolt']} -> {grant['destination']}")
+    return 0
+
+
+def _dig_revoke(args) -> int:
+    from .dig import DigError
+
+    try:
+        revoked = _dig_store().revoke(args.name)
+    except DigError as exc:
+        lore.failure(f"dig revoke failed: {exc}")
+        return 1
+    if args.json:
+        print(json.dumps({"ok": True, "revoked": revoked, "name": args.name}, indent=2))
+    else:
+        lore.headline(lore.MOON, f"dig {'revoked' if revoked else 'was not approved'}: {args.name}")
+        lore.subtitle("remove the SSH key/config separately if access itself must end")
+    return 0
+
+
+def _dig_connect(args) -> int:
+    from .dig import DigError, connect
+
+    try:
+        grant = _dig_store().get(args.name)
+        if not args.json:
+            lore.headline(lore.TRACKS, f"digging: {args.name}")
+            lore.labelled("wolt", grant["wolt"])
+            lore.labelled("handoff", grant["bootstrap_dir"])
+        remote_command = list(args.remote_command)
+        if remote_command[:1] == ["--"]:
+            remote_command = remote_command[1:]
+        return connect(
+            _dig_store(),
+            args.name,
+            command=remote_command,
+            actor_wolt=get_env("WOLTSPACE_WOLT_NAME", ""),
+        )
+    except DigError as exc:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        else:
+            lore.failure(f"dig failed: {exc}")
+        return 1
+
+
 def _seed_create(args) -> int:
     from .seed import SeedError, create_seed
 
@@ -812,6 +909,33 @@ def build_parser() -> argparse.ArgumentParser:
     seed_install.add_argument("source")
     seed_install.add_argument("--json", action="store_true")
     seed_install.set_defaults(func=_seed_install)
+
+    dig = sub.add_parser("dig", help="let a wolt visit an owner-approved SSH host")
+    dig.set_defaults(func=_dig, dig_parser=dig)
+    dig_sub = dig.add_subparsers(dest="dig_command")
+
+    dig_grant = dig_sub.add_parser("grant", help="approve an exact SSH destination")
+    dig_grant.add_argument("name")
+    dig_grant.add_argument("destination", help="SSH host or alias from ~/.ssh/config")
+    dig_grant.add_argument("--wolt", required=True)
+    dig_grant.add_argument("--bootstrap-dir", default=".woltspace/bootstrap")
+    dig_grant.add_argument("--json", action="store_true")
+    dig_grant.set_defaults(func=_dig_grant)
+
+    dig_list = dig_sub.add_parser("list", help="show approved SSH destinations")
+    dig_list.add_argument("--json", action="store_true")
+    dig_list.set_defaults(func=_dig_list)
+
+    dig_revoke = dig_sub.add_parser("revoke", help="remove a Woltspace dig approval")
+    dig_revoke.add_argument("name")
+    dig_revoke.add_argument("--json", action="store_true")
+    dig_revoke.set_defaults(func=_dig_revoke)
+
+    dig_connect = dig_sub.add_parser("connect", help="open the approved SSH destination")
+    dig_connect.add_argument("name")
+    dig_connect.add_argument("remote_command", nargs=argparse.REMAINDER)
+    dig_connect.add_argument("--json", action="store_true")
+    dig_connect.set_defaults(func=_dig_connect)
 
     tui = sub.add_parser("tui", help="open the terminal UI")
     tui.add_argument("--dry-run", action="store_true", help="show resolution without launching")
