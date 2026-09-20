@@ -51,6 +51,33 @@ user, handle remote PATH and TTY behavior, distinguish home-wolt context from
 remote resident files, report interrupted setup honestly, and provide a clear
 way to remove both the Woltspace grant and underlying SSH access.
 
+### CLI
+
+```console
+woltspace dig grant next-colony my-ssh-alias --wolt n00b
+woltspace dig list
+woltspace dig connect next-colony
+woltspace dig connect next-colony -- woltspace status --json
+woltspace dig revoke next-colony
+```
+
+`grant` resolves `my-ssh-alias` through the owner's existing OpenSSH config and
+records the resulting host, user, and port. Every connection resolves it again
+and refuses a changed tuple. SSH runs with `StrictHostKeyChecking=yes`, so an
+unknown or changed server key fails instead of prompting the wolt to trust it.
+The destination alias is passed as an argument, never through a local shell.
+
+The default remote handoff location is `.woltspace/bootstrap`, relative to the
+remote SSH user's home. The command prints this location for the visiting wolt;
+v0 intentionally leaves the contents human-readable rather than imposing a
+protocol. A useful handoff includes what was installed, paths changed, checks
+run, open questions, and next steps. Existing files should be preserved unless
+the setup task explicitly authorizes replacing them.
+
+`revoke` removes Woltspace's local consent record. It cannot revoke the Unix
+account, SSH key, agent, or server-side authorization; the owner must remove
+those separately when access itself should end.
+
 ## Later: paired-colony visits
 
 Wire carries the request, destination approval, callback, and result. The

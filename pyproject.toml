@@ -58,6 +58,7 @@ packages = ["src/woltspace"]
 "docs/updates.md" = "woltspace/_bundle/docs/updates.md"
 "docs/shared-skills.md" = "woltspace/_bundle/docs/shared-skills.md"
 "docs/colony-seeds.md" = "woltspace/_bundle/docs/colony-seeds.md"
+"docs/digging-v0.md" = "woltspace/_bundle/docs/digging-v0.md"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -71,5 +72,6 @@ include = [
     "/docs/updates.md",
     "/docs/shared-skills.md",
     "/docs/colony-seeds.md",
+    "/docs/digging-v0.md",
     "/LICENSE",
 ]
