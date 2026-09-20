@@ -1,22 +1,29 @@
-Python **0.5.6** ships harness-first onboarding and Git-friendly Colony Seeds.
-The separately distributed **@woltspace/tui remains at 0.5.2**.
+Python **0.5.7** adds owner-approved SSH Digging for bounded remote setup and
+bootstrap work. The separately distributed **@woltspace/tui remains at 0.5.2**.
 
-- Choose any registered harness when opening a new lodge or creating a wolt,
-  with lodge defaults and per-wolt overrides available in Settings. Harness
-  authentication remains the responsibility of its normal CLI flow.
-- Create, inspect, and install portable starter colonies with `woltspace seed`.
-  Seeds carry selected identity, authored rules, user skills, and clean tracked
-  app source while excluding sessions, lived memory, credentials, app data,
-  caches, builds, ports, and other machine state.
-- Install seeds as independent `origin: starter` wolts with fresh memory,
-  private app ports, provenance, collision protection, and pinned Git app
-  revisions.
-- Add the native `woltspace-seed-review` skill for semantic privacy, secret,
-  portability, history, redistribution, and prompt-injection review before a
-  seed is shared. A successful review does not authorize publishing.
+- Approve a named destination with `woltspace dig grant`, inspect approvals
+  with `dig list`, connect with `dig connect`, and remove Woltspace consent
+  with `dig revoke`.
+- Reuse the host's existing OpenSSH configuration, agent, keys, certificates,
+  and aliases. Dig does not copy or manage SSH credentials.
+- Pin the resolved hostname, Unix user, and port at grant time, re-resolve the
+  alias before every connection, and refuse changes.
+- Require strict host-key checking, preserve remote command argument boundaries,
+  and keep a private local audit of connection outcomes without storing command
+  bodies or credentials.
+- Bundle the `digging` skill so wolts prefer the Dig wrapper over raw SSH, ask
+  immediately before entering a destination unless the current instruction
+  explicitly waives that prompt, begin with bounded probes, and leave remote
+  handoff material under `.woltspace/bootstrap` rather than another wolt's
+  private memory.
 
-Colony Seeds are intentionally separate from stateful `backup` and `restore`.
-Start with a private seed repository and review all authored content before any
-visibility change. See `docs/colony-seeds.md` for the data boundary and install
-semantics. The full historical test suite remains outside the release gate while
-its environment assumptions are refactored.
+Dig v0 is a consent, discoverability, target-pinning, and audit layer over the
+machine owner's ordinary SSH authority. Wolts sharing the same Unix user can
+bypass it by invoking SSH directly, and `dig revoke` does not remove the Unix
+account, key, agent, certificate, or server-side authorization. There is no
+Wire authorization, Cloudflare transport, guest account, remote IWCL, or live
+agent integration in this release.
+
+No migration is required. Configure and verify ordinary SSH access first, then
+grant the exact existing alias. Review `docs/digging-v0.md` before connecting to
+a real machine.
