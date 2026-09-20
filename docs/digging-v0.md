@@ -87,6 +87,27 @@ Cross-tunnel IWCL, a visiting-wolt identity bridge, callbacks, and ongoing
 collaboration are explicitly out of v0. Real digging experience should tell us
 whether they are needed and what identity and consent model they require.
 
+### Candidate v1 transport: Cloudflare
+
+For machine-to-machine digging, a destination-owned `cloudflared` connector can
+reach Cloudflare over outbound-only connections, avoiding a public origin IP or
+inbound router port. The durable tunnel is transport; per-dig authorization is
+the ephemeral part.
+
+Two increments are possible:
+
+1. Reuse owner-managed SSH keys through a private Cloudflare Tunnel/WARP route.
+2. Use Cloudflare Access for Infrastructure for short-lived SSH certificates,
+   exact user/port policy, and access or command auditing.
+
+The destination owns its tunnel token and never sends it to the visiting wolt.
+Direct SSH exposure must still be blocked at the origin if Cloudflare-only
+access is intended. The legacy Cloudflare short-lived-certificate application
+flow is not a new-deployment target; evaluate Access for Infrastructure instead.
+
+This is unnecessary for two local users on one Mac. A future non-network
+local-user transport would be a smaller solution for that case.
+
 ## V1 human experience
 
 1. Alice asks to dig to Bobeaver Colony with a short task description and a
