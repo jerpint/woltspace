@@ -4,6 +4,35 @@ Digging is a Woltspace feature that lets a wolt request a temporary guest work
 session in another colony. Woltspace Wire is only the authenticated, encrypted
 transport. Pairing colonies does not grant remote execution.
 
+## Beginner model
+
+- **Home** is the one colony where the wolt exists and keeps its identity,
+  memory, configuration, and long-lived session history.
+- **Wire** lets paired colonies identify and call one another. It carries dig
+  requests, grants, callbacks, and results, but grants no execution authority.
+- **Dig** is an explicitly approved temporary visit into a destination. SSH may
+  carry that visit, but SSH is an implementation detail rather than the product
+  concept.
+- **IWCL** lets the temporary visiting session explain and coordinate with the
+  destination's resident wolts while it is there.
+
+Digging is not teleportation, installation, migration, or cloning. A visiting
+wolt does not become a resident of the destination colony.
+
+## User story
+
+A wolt proposes setting up another colony in a particular way. Its human asks
+the destination to allow a dig. After the destination human reviews and allows
+the exact visit, Woltspace creates a bounded guest session on the remote server
+under the visiting wolt's home identity. The visitor performs only the approved
+work and uses local IWCL to explain the resulting setup to the resident/main
+wolt. It returns its result home and the guest session is destroyed.
+
+The resident wolt or human may later call the visitor's home colony over Wire.
+The original wolt can answer remotely or request a fresh dig. Periodic check-ins
+are scheduled Wire callbacks/status exchanges or newly approved short visits,
+not a forgotten permanent shell or a dormant copy of the visiting wolt.
+
 This first slice freezes the destination-owned authorization lifecycle. It does
 not open SSH, expose a listener, start a remote agent, or protect production
 secrets.
@@ -23,6 +52,11 @@ secrets.
 6. Completion, expiry, or revocation closes the dig. Results and an inert audit
    summary may return over Wire.
 
+The same lifecycle may begin without Wire: an owner can manually grant a wolt a
+temporary visit to a server they control, with SSH or another Woltspace adapter
+providing transport. Wire is the preferred paired-colony convenience path, not
+a prerequisite for the general digging concept.
+
 ## Security invariants
 
 - A Wire peer is a messenger, not a local authority.
@@ -33,6 +67,9 @@ secrets.
   created disposable workspace.
 - No host path, standing account, SSH private key, relay read capability, or
   permanent shell credential crosses colonies.
+- The home colony remains authoritative for the visitor's identity and memory.
+  The destination stores only bounded visit/audit records and never materializes
+  a second resident wolt.
 - The destination can revoke before or during a dig. Active-session termination
   is a required integration gate, not yet implemented by the kernel.
 - The guest session receives a purpose-built policy and cannot inherit the
