@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Chat · Woltspace</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <meta name="theme-color" content="#17231b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="stylesheet" href="/static/chat.css?v={{ cache_bust }}">
+</head>
+<body>
+<div class="shell">
+  <nav class="rail"><a class="brand" href="/chat">W</a><span></span><a href="/">⌂</a></nav>
+  <aside class="sidebar" id="sidebar">
+    <header><div><small>YOUR LODGE</small><h1>Woltspace</h1></div><button id="nav-close">×</button></header>
+    <label class="search">⌕ <input id="search" placeholder="Find a wolt"></label>
+    <p class="section-label">WOLTS</p><div id="wolt-list" class="wolt-list">Waking the lodge…</div>
+    <footer><a href="/settings">Settings</a><a href="/tui">Terminal</a></footer>
+  </aside>
+  <main class="chat">
+    <header class="chat-head">
+      <button id="nav-open" class="mobile">☰</button><div class="avatar" id="avatar">🦝</div>
+      <div><strong id="wolt-name">n00b</strong><small><i></i><span id="connection">Matrix preview</span></small></div>
+      <span class="grow"></span><button id="matrix-connect">Connect Matrix</button><button id="details-open">Details</button><a id="terminal" class="advanced" href="/tui">Advanced ↗</a>
+    </header>
+    <section class="timeline" id="timeline">
+      <div class="day"><span>Today</span></div>
+      <article class="welcome"><div class="welcome-avatar">🦝</div><div><small>PRIVATE ENCRYPTED ROOM</small><h2>Chat with n00b</h2><p>This room stays in sync across Woltspace and Element. The terminal is nearby when you want the workshop.</p></div></article>
+      <div id="messages"></div>
+    </section>
+    <div class="commands" id="commands" hidden>
+      <button data-command="/help"><b>?</b><span><strong>/help</strong><small>See what this wolt can do</small></span></button>
+      <button data-command="/terminal"><b>›_</b><span><strong>/terminal</strong><small>Open the advanced terminal</small></span></button>
+    </div>
+    <form class="composer-wrap" id="composer"><div class="composer"><button type="button" disabled>＋</button><textarea id="input" rows="1" placeholder="Message n00b"></textarea><button class="send" type="submit">↑</button></div><small><kbd>/</kbd> commands · Preview data stays in this browser</small></form>
+  </main>
+  <aside class="details" id="details">
+    <header><strong>Details</strong><button id="details-close">×</button></header>
+    <div class="profile"><div id="detail-avatar">🦝</div><strong id="detail-name">n00b</strong><small>raccoon · your lodge</small></div>
+    <dl><div><dt>Room</dt><dd id="room-detail">Preview only</dd></div><div><dt>Encryption</dt><dd class="secure">● End-to-end encrypted</dd></div><div><dt>This device</dt><dd id="device-detail">Not connected</dd></div><div><dt>Session</dt><dd>Not connected</dd></div></dl>
+    <p class="note">Matrix keeps the room portable. Woltspace adds sessions, approvals, artifacts, and the advanced terminal.</p>
+  </aside>
+</div>
+<div class="preview">UI preview · Matrix adapter next</div>
+<dialog id="matrix-dialog">
+  <form id="matrix-form">
+    <div class="dialog-head"><div><small>MATRIX DEVICE</small><h2>Connect this Woltspace</h2></div><button type="button" id="matrix-close">×</button></div>
+    <p>Use the same human Matrix account as Element. This PWA becomes another encrypted device; the password is exchanged for a device token and is never stored.</p>
+    <label>Homeserver<input id="matrix-homeserver" type="url" placeholder="https://matrix.example.com" required></label>
+    <label>Matrix ID<input id="matrix-user" placeholder="@you:example.com" required></label>
+    <label>Password<input id="matrix-password" type="password" autocomplete="current-password" required></label>
+    <label>Encrypted room ID<input id="matrix-room" placeholder="!room:example.com" required></label>
+    <div id="matrix-error" class="dialog-error" role="alert"></div>
+    <div class="dialog-actions"><button type="button" id="preview-mode">Keep previewing</button><button class="connect" type="submit">Connect securely</button></div>
+  </form>
+</dialog>
+<script type="module" src="/static/chat.js?v={{ cache_bust }}"></script>
+</body>
+</html>

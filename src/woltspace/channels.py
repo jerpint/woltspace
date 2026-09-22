@@ -268,6 +268,91 @@ class TelegramConnector:
         )
 
 
+class MatrixConnector:
+    """One E2EE Matrix device for the deliberately narrow chat MVP."""
+
+    name = "matrix"
+
+    def plan(
+        self, layout: RuntimeLayout, env: Mapping[str, str] | None = None
+    ) -> ConnectorPlan:
+        values = dict(os.environ if env is None else env)
+        settings = channel_config(layout, self.name, values)
+        path = config_path(layout, values)
+        raw = values.get("WOLTSPACE_MATRIX")
+        enabled = _truthy(raw) if raw is not None else bool(settings.get("enabled", False))
+        remedy = (
+            f"Install the Matrix extra, then set channels.matrix in {path} with "
+            "homeserver, user_id, device_id, access_token, room_id, wolt, and "
+            "allowed_users. The MVP accepts one encrypted room and one wolt account."
+        )
+        if not enabled:
+            return ConnectorPlan(self.name, False, "disabled", remedy=remedy)
+        if not _truthy(values.get("WOLTSPACE_ENTRYPOINT", "")):
+            return ConnectorPlan(
+                self.name, False,
+                "not the platform entrypoint; a guest never starts a second Matrix device",
+                remedy="Run the control plane through `woltspace start`.",
+            )
+        if not _module_available("nio"):
+            return ConnectorPlan(
+                self.name, False, "enabled but matrix-nio E2EE support is not installed",
+                remedy="Reinstall with the Matrix extra: `uv tool install --force 'woltspace[matrix]'`.",
+            )
+
+        fields = {
+            "MATRIX_HOMESERVER": values.get("MATRIX_HOMESERVER") or settings.get("homeserver"),
+            "MATRIX_USER_ID": values.get("MATRIX_USER_ID") or settings.get("user_id"),
+            "MATRIX_DEVICE_ID": values.get("MATRIX_DEVICE_ID") or settings.get("device_id"),
+            "MATRIX_ACCESS_TOKEN": values.get("MATRIX_ACCESS_TOKEN") or settings.get("access_token"),
+            "MATRIX_ROOM_ID": values.get("MATRIX_ROOM_ID") or settings.get("room_id"),
+            "MATRIX_WOLT": values.get("MATRIX_WOLT") or settings.get("wolt"),
+        }
+        allowed = values.get("MATRIX_ALLOWED_USERS") or settings.get("allowed_users")
+        if isinstance(allowed, (list, tuple)):
+            allowed = ",".join(str(item) for item in allowed)
+        fields["MATRIX_ALLOWED_USERS"] = allowed
+        trusted = values.get("MATRIX_TRUSTED_DEVICES") or settings.get("trusted_devices")
+        if isinstance(trusted, (list, tuple)):
+            trusted = ",".join(str(item) for item in trusted)
+        fields["MATRIX_TRUSTED_DEVICES"] = trusted
+        missing = [key.removeprefix("MATRIX_").lower() for key, value in fields.items() if not value]
+        if missing:
+            return ConnectorPlan(
+                self.name, False,
+                f"enabled with incomplete configuration: missing {', '.join(missing)}",
+                remedy=remedy,
+            )
+
+        safe_user = "".join(char if char.isalnum() else "_" for char in str(fields["MATRIX_USER_ID"]))
+        fields.update({
+            "MATRIX_STORE_PATH": str(layout.state_root / "matrix" / "crypto" / safe_user),
+            "MATRIX_OUTBOX": str(layout.state_root / "matrix" / "outbox"),
+            "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
+            "WOLTSPACE_DIR": str(layout.install_root),
+            "WOLTSPACE_ISOLATION": layout.isolation,
+            "WOLTSPACE_API": layout.endpoint,
+            "PYTHONPATH": os.pathsep.join(
+                part for part in (
+                    str(layout.install_root / "container"),
+                    str(layout.runtime_lib),
+                    values.get("PYTHONPATH", ""),
+                ) if part
+            ),
+        })
+        module = "bot.matrix_adapter"
+        return ConnectorPlan(
+            name=self.name,
+            enabled=True,
+            detail=f"E2EE room {fields['MATRIX_ROOM_ID']} as {fields['MATRIX_USER_ID']}",
+            command=(sys.executable, "-m", module),
+            cwd=str(layout.install_root / "container"),
+            env=export_both({key: str(value) for key, value in fields.items()}),
+            remedy=remedy,
+            process_signature=("-m", module),
+        )
+
+
 TOKEN_BUSY_DETAIL = "another process is already polling this bot token"
 TOKEN_BUSY_REMEDY = (
     "One bot token can only be polled by one process. Stop the other poller, or "
@@ -535,7 +620,7 @@ class WolfConnector:
 
 
 CONNECTORS: tuple[ChannelConnector, ...] = (
-    TelegramConnector(), TuiBridgeConnector(), WolfConnector(),
+    TelegramConnector(), MatrixConnector(), TuiBridgeConnector(), WolfConnector(),
 )
 
 

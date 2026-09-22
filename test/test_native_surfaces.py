@@ -52,6 +52,39 @@ def native_root(tmp_path):
 
 
 class TestSitePathsResolveFromTheLayout:
+    def test_chat_shell_and_local_assets_are_packaged_surfaces(self, native_root):
+        payload = run_in_clean_process(
+            """
+            import json
+            from woltspace.layout import RuntimeLayout
+            RuntimeLayout.from_env().apply_environment()
+            from starlette.testclient import TestClient
+            import server.app as app_module
+            with TestClient(app_module.app) as client:
+                chat = client.get("/chat")
+                css = client.get("/static/chat.css")
+                js = client.get("/static/chat.js")
+                wasm = client.get("/static/pkg/matrix_sdk_crypto_wasm_bg.wasm")
+            print(json.dumps({
+                "chat_status": chat.status_code,
+                "chat_body": chat.text,
+                "css_status": css.status_code,
+                "js_status": js.status_code,
+                "wasm_status": wasm.status_code,
+                "wasm_type": wasm.headers.get("content-type"),
+            }))
+            """,
+            {"WOLTSPACE_WOLTS_DIR": str(native_root), "WOLTSPACE_DIR": str(ROOT)},
+        )
+        assert payload["chat_status"] == 200
+        assert "Chat with n00b" in payload["chat_body"]
+        assert 'href="/tui"' in payload["chat_body"]
+        assert 'type="module"' in payload["chat_body"]
+        assert payload["css_status"] == 200
+        assert payload["js_status"] == 200
+        assert payload["wasm_status"] == 200
+        assert payload["wasm_type"] == "application/wasm"
+
     def test_site_modules_follow_the_data_root(self, native_root):
         payload = run_in_clean_process(
             """

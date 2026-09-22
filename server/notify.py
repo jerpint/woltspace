@@ -9,6 +9,8 @@ from pathlib import Path
 
 import httpx
 
+from woltspace.matrix_outbox import enqueue as enqueue_matrix
+
 from .config import (
     STATE_DIR,
     SPACE_PLATFORM_DIR,
@@ -131,6 +133,24 @@ async def _send_slack(message: str, channel: str, thread_ts: str | None = None) 
     return {"adapter": "slack", "channel": channel}
 
 
+async def _send_matrix(session: str, message: str, room_id: str) -> dict:
+    """Queue plaintext locally for the connector that owns Matrix encryption."""
+    if not room_id:
+        raise RuntimeError("no Matrix room provided")
+    path = enqueue_matrix(
+        SPACE_PLATFORM_DIR.parent / "matrix" / "outbox",
+        room_id=room_id,
+        message=message,
+        session=session,
+    )
+    return {
+        "adapter": "matrix",
+        "room_id": room_id,
+        "delivery": "queued",
+        "outbox_id": path.stem,
+    }
+
+
 async def send_notification(session: str, message: str, explicit: dict | None = None) -> dict:
     """Send a notification. Explicit routing takes priority over session lookup.
 
@@ -148,6 +168,10 @@ async def send_notification(session: str, message: str, explicit: dict | None = 
             chat_id = explicit.get("chat_id", "")
             if chat_id:
                 return await _send_telegram(session, message, str(chat_id))
+        if adapter == "matrix":
+            room_id = explicit.get("room_id", "")
+            if room_id:
+                return await _send_matrix(session, message, room_id)
 
     # 2. Session registry lookup — find routing from session metadata
     if session:
@@ -164,6 +188,10 @@ async def send_notification(session: str, message: str, explicit: dict | None = 
                 chat_id = routing.get("chat_id")
                 if chat_id:
                     return await _send_telegram(session, message, str(chat_id))
+            if adapter == "matrix":
+                room_id = routing.get("room_id") or routing.get("chat_id")
+                if room_id:
+                    return await _send_matrix(session, message, str(room_id))
 
     # 3. Telegram default — fall back to first allowed user
     telegram_token = dotenv_env("TELEGRAM_BOT_TOKEN")

@@ -13,6 +13,7 @@ _PREFIX_RE = re.compile(r"[A-Z][A-Z0-9_]*")
 _SLACK_CHANNEL_RE = re.compile(r"[A-Za-z0-9_-]+")
 _SLACK_THREAD_RE = re.compile(r"[0-9]+(?:\.[0-9]+)?")
 _TELEGRAM_CHAT_ID_RE = re.compile(r"-?[0-9]+")
+_MATRIX_ROOM_ID_RE = re.compile(r"![^/\\\x00\r\n]{1,511}")
 _SESSION_TARGET_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 _REPLY_PLACEHOLDER = "YOUR_REPLY"
 
@@ -156,6 +157,10 @@ def _validate_notify_argv(argv: tuple[str, ...]) -> None:
     if route_args[0] == "--telegram" and len(route_args) == 2:
         if _TELEGRAM_CHAT_ID_RE.fullmatch(route_args[1]) is None:
             raise ValueError("Telegram chat ID must be an integer")
+        return
+    if route_args[0] == "--matrix" and len(route_args) == 2:
+        if _MATRIX_ROOM_ID_RE.fullmatch(route_args[1]) is None or ":" not in route_args[1]:
+            raise ValueError("Matrix room ID is invalid")
         return
     raise ValueError("invalid notify route arguments")
 
