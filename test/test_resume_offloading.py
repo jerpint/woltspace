@@ -68,6 +68,47 @@ def test_a_slow_resume_leaves_the_control_plane_answering(monkeypatch):
     assert resumed.json()["status"] == "respawned"
 
 
+@pytest.mark.parametrize("route", [
+    "/sessions/somewolt-abc123/message",
+    "/wolts/somewolt/message",
+])
+def test_a_paced_delivery_leaves_the_control_plane_answering(monkeypatch, route):
+    """Delivery used to be one tmux call; now it is a paced sequence.
+
+    A long message goes into the composer as 500-character pastes 0.3s apart
+    — about 1.5s for 3KB, plus whatever the session's delivery lock costs.
+    Called inline from an `async def` that is 1.5s in which nothing else in
+    the colony is served: not /health, not the /tui socket proxy, not
+    viewport livereload. Both message routes hand it to a thread.
+    """
+    def slow_delivery(session_id, text, from_wolt="", from_session=""):
+        time.sleep(0.5)
+        return {"status": "delivered", "session": session_id, "harness": "claude"}
+
+    monkeypatch.setattr(app_module, "deliver_message", slow_delivery)
+    monkeypatch.setattr(app_module, "resolve_active_session",
+                        lambda wolt: "somewolt-abc123")
+
+    async def scenario():
+        transport = httpx.ASGITransport(app=app_module.app)
+        async with httpx.AsyncClient(transport=transport,
+                                     base_url="http://testserver") as client:
+            started = time.monotonic()
+            delivery = asyncio.create_task(
+                client.post(route, json={"text": "a long one " * 300})
+            )
+            await asyncio.sleep(0.05)
+            health = await client.get("/health")
+            return time.monotonic() - started, health, await delivery
+
+    answered_in, health, delivered = asyncio.run(scenario())
+
+    assert health.status_code == 200
+    assert answered_in < 0.3, f"/health waited {answered_in:.2f}s on a paste"
+    assert delivered.status_code == 200
+    assert delivered.json()["ok"] is True
+
+
 ADAPTERS = [
     "container/bot/telegram_adapter.py",
     "container/bot/telegram_adapter_v1.py",
@@ -106,3 +147,30 @@ def test_the_adapters_do_hand_those_calls_to_a_thread(monkeypatch):
     for relative in ADAPTERS:
         source = (ROOT / relative).read_text()
         assert "asyncio.to_thread(message_session" in source, relative
+
+
+def test_the_control_plane_never_delivers_on_its_event_loop():
+    """Same guard, on the server's own handlers.
+
+    `deliver_message` joined `resume_session` on the blocking list the day a
+    long message started arriving as several paced pastes. The AST check is
+    what stops the next route from being written the quick way.
+    """
+    tree = ast.parse((ROOT / "server" / "app.py").read_text())
+    offenders = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.AsyncFunctionDef):
+            continue
+        for call in ast.walk(node):
+            if (isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Name)
+                    and call.func.id in {"deliver_message", "resume_session"}):
+                offenders.append(f"{node.name}:{call.lineno}")
+    assert offenders == [], (
+        f"server/app.py: blocking session call(s) on the event loop at "
+        f"{offenders} — wrap them in asyncio.to_thread"
+    )
+    source = (ROOT / "server" / "app.py").read_text()
+    assert source.count("asyncio.to_thread(\n        deliver_message") == 2, (
+        "both message routes should still be delivering, just off the loop"
+    )
