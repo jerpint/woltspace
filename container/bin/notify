@@ -23,6 +23,7 @@ USAGE = """Usage:
   notify
   notify --telegram CHAT_ID
   notify --slack CHANNEL THREAD_TS
+  notify --matrix ROOM_ID
 
 Message text is read from standard input. Use a single-quoted heredoc."""
 
@@ -47,6 +48,11 @@ def _parse_route(argv: list[str]) -> tuple[list[str], str, str, str, list[str]]:
         if len(argv) < 2:
             raise ValueError("--telegram requires CHAT_ID")
         adapter, route_id = "telegram", argv[1]
+        route_argv, remaining = ["notify", *argv[:2]], argv[2:]
+    elif argv[:1] == ["--matrix"]:
+        if len(argv) < 2:
+            raise ValueError("--matrix requires ROOM_ID")
+        adapter, route_id = "matrix", argv[1]
         route_argv, remaining = ["notify", *argv[:2]], argv[2:]
     elif argv[:1] == ["--"]:
         route_argv, remaining = ["notify"], argv[1:]
@@ -102,6 +108,8 @@ def main(argv: list[str] | None = None) -> int:
         payload.update(adapter="slack", channel=route_id, thread_ts=slack_thread)
     elif adapter == "telegram":
         payload.update(adapter="telegram", chat_id=route_id)
+    elif adapter == "matrix":
+        payload.update(adapter="matrix", room_id=route_id)
 
     api = os.environ.get("WOLTSPACE_API", "http://localhost:7777")
     response = subprocess.run(

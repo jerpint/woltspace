@@ -21,6 +21,7 @@ from woltspace.channel_supervisor import (  # noqa: E402
 )
 from woltspace.channels import (  # noqa: E402
     ConnectorPlan,
+    MatrixConnector,
     TelegramConnector,
     connector_secrets,
     plan_connectors,
@@ -30,6 +31,7 @@ from woltspace.layout import RuntimeLayout  # noqa: E402
 from woltspace.supervisor import Supervisor  # noqa: E402
 
 TOKEN = "123456:configured-telegram-token"
+MATRIX_TOKEN = "secret-matrix-access-token"
 
 
 @pytest.fixture
@@ -185,6 +187,87 @@ class TestTelegramPlan:
         assert plan.command[-1] == "wolt.bot.telegram_adapter"
         # Falls back to the platform's bot project, which owns the dependency.
         assert str(ROOT / "container" / "bot") in plan.command
+
+
+class TestMatrixPlan:
+    CONFIG = {
+        "enabled": True,
+        "homeserver": "https://matrix.example.test",
+        "user_id": "@n00b:example.test",
+        "device_id": "WOLTDEVICE",
+        "access_token": MATRIX_TOKEN,
+        "room_id": "!room:example.test",
+        "wolt": "n00b",
+        "allowed_users": ["@owner:example.test"],
+        "trusted_devices": ["@owner:example.test|OWNERDEVICE"],
+    }
+
+    def test_disabled_by_default(self, layout):
+        plan = MatrixConnector().plan(layout, {})
+        assert plan.enabled is False
+        assert "channels.matrix" in plan.remedy
+
+    def test_guest_never_starts_a_second_device(self, layout, monkeypatch):
+        monkeypatch.setattr(channels, "_module_available", lambda name: True)
+        write_config(layout, {"channels": {"matrix": self.CONFIG}})
+        plan = MatrixConnector().plan(layout, {})
+        assert plan.enabled is False
+        assert "guest" in plan.detail
+
+    def test_entrypoint_gets_one_private_e2ee_plan(self, layout, monkeypatch):
+        monkeypatch.setattr(channels, "_module_available", lambda name: True)
+        write_config(layout, {"channels": {"matrix": self.CONFIG}})
+        plan = MatrixConnector().plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"})
+        assert plan.enabled is True
+        assert plan.command[-2:] == ("-m", "bot.matrix_adapter")
+        assert plan.env["MATRIX_ROOM_ID"] == "!room:example.test"
+        assert plan.env["MATRIX_ALLOWED_USERS"] == "@owner:example.test"
+        assert plan.env["MATRIX_TRUSTED_DEVICES"] == "@owner:example.test|OWNERDEVICE"
+        assert plan.env["MATRIX_STORE_PATH"].startswith(str(layout.state_root))
+        assert MATRIX_TOKEN not in json.dumps(plan.to_record())
+
+    def test_incomplete_or_missing_extra_has_a_named_remedy(self, layout, monkeypatch):
+        write_config(layout, {"channels": {"matrix": {"enabled": True}}})
+        monkeypatch.setattr(channels, "_module_available", lambda name: True)
+        incomplete = MatrixConnector().plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"})
+        assert incomplete.enabled is False
+        assert "missing" in incomplete.detail
+        monkeypatch.setattr(channels, "_module_available", lambda name: False)
+        absent = MatrixConnector().plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"})
+        assert absent.enabled is False
+        assert "matrix-nio" in absent.detail
+
+    @pytest.mark.parametrize(
+        ("field", "value", "problem"),
+        [
+            ("homeserver", "http://matrix.example.test", "HTTPS"),
+            ("homeserver", "https://user:pass@matrix.example.test", "credential-free"),
+            ("user_id", "n00b", "user_id"),
+            ("room_id", "room", "room_id"),
+            ("device_id", "bad device", "device_id"),
+            ("allowed_users", ["owner"], "allowed_users"),
+            ("trusted_devices", ["@stranger:example.test|PHONE"], "allowed_users"),
+        ],
+    )
+    def test_unsafe_matrix_identity_or_transport_is_refused(
+        self, layout, monkeypatch, field, value, problem
+    ):
+        monkeypatch.setattr(channels, "_module_available", lambda name: True)
+        config = dict(self.CONFIG)
+        config[field] = value
+        write_config(layout, {"channels": {"matrix": config}})
+        plan = MatrixConnector().plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"})
+        assert plan.enabled is False
+        assert "unsafe configuration" in plan.detail
+        assert problem in plan.detail
+
+    def test_loopback_http_remains_available_for_disposable_proofs(self, layout, monkeypatch):
+        monkeypatch.setattr(channels, "_module_available", lambda name: True)
+        config = dict(self.CONFIG)
+        config["homeserver"] = "http://127.0.0.1:8008"
+        write_config(layout, {"channels": {"matrix": config}})
+        plan = MatrixConnector().plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"})
+        assert plan.enabled is True
 
 
 class TestAmbientEnvironmentIsNeverEnough:

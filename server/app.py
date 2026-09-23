@@ -640,6 +640,8 @@ async def post_notify(request: Request):
             explicit["thread_ts"] = body.get("thread_ts")
         elif body["adapter"] == "telegram":
             explicit["chat_id"] = body.get("chat_id", "")
+        elif body["adapter"] == "matrix":
+            explicit["room_id"] = body.get("room_id", "")
     try:
         result = await send_notification(session, message, explicit=explicit or None)
         print(f"[notify] → {result.get('adapter')} | {message[:80]}")
@@ -1771,6 +1773,14 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
 @app.get("/tui")
 async def tui_page(request: Request):
     return templates.TemplateResponse(request, "tui.html", context={
+        "cache_bust": int(time.time()),
+    })
+
+
+@app.get("/chat")
+async def chat_page(request: Request):
+    """Messenger-shaped shell for the deliberately small Matrix chat MVP."""
+    return templates.TemplateResponse(request, "chat.html", context={
         "cache_bust": int(time.time()),
     })
 

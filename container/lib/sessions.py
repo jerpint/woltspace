@@ -994,6 +994,14 @@ def _adapter_context(data: dict) -> str:
                 f"{notify_reply_instruction('--telegram', chat_id)}\n"
                 f"Session link: {session_url}"
             )
+    elif adapter == "matrix":
+        room_id = data.get("room_id") or data.get("chat_id", "")
+        if room_id:
+            return (
+                "\nThis session was started from an encrypted Matrix room.\n"
+                f"{notify_reply_instruction('--matrix', room_id)}\n"
+                f"Session link: {session_url}"
+            )
     return ""
 
 

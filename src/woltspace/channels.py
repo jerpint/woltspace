@@ -16,13 +16,16 @@ This is a seam, not a plugin framework: adding another means adding a class to
 from __future__ import annotations
 
 import importlib.util
+import ipaddress
 import os
+import re
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Protocol, runtime_checkable
+from urllib.parse import urlparse
 
 from . import __version__
 from .compatibility import TUI_SERVICE_BINARY, tui_spec
@@ -52,6 +55,61 @@ def _module_available(name: str) -> bool:
         return importlib.util.find_spec(name) is not None
     except (ImportError, ValueError):
         return False
+
+
+_MATRIX_USER_RE = re.compile(r"^@[^\s:]+:[^\s:]+$")
+_MATRIX_ROOM_RE = re.compile(r"^![^\s:]+:[^\s:]+$")
+
+
+def _loopback_host(host: str | None) -> bool:
+    if not host:
+        return False
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def matrix_config_errors(fields: Mapping[str, str]) -> list[str]:
+    """Validate the security-relevant shape before starting a Matrix device."""
+    errors: list[str] = []
+    parsed = urlparse(fields["MATRIX_HOMESERVER"])
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        errors.append("homeserver must be an absolute credential-free HTTP(S) URL")
+    elif parsed.scheme != "https" and not _loopback_host(parsed.hostname):
+        errors.append("homeserver must use HTTPS unless it is loopback-only")
+    if not _MATRIX_USER_RE.fullmatch(fields["MATRIX_USER_ID"]):
+        errors.append("user_id must be a full Matrix user ID")
+    if not _MATRIX_ROOM_RE.fullmatch(fields["MATRIX_ROOM_ID"]):
+        errors.append("room_id must be a full Matrix room ID")
+    if not fields["MATRIX_DEVICE_ID"].strip() or any(
+        char.isspace() for char in fields["MATRIX_DEVICE_ID"]
+    ):
+        errors.append("device_id must be a non-empty token without whitespace")
+    allowed = {
+        item.strip() for item in fields["MATRIX_ALLOWED_USERS"].split(",") if item.strip()
+    }
+    if not allowed or any(not _MATRIX_USER_RE.fullmatch(item) for item in allowed):
+        errors.append("allowed_users must contain exact full Matrix user IDs")
+    trusted_users: set[str] = set()
+    for pin in fields["MATRIX_TRUSTED_DEVICES"].split(","):
+        parts = pin.strip().split("|", 1)
+        if len(parts) != 2 or not _MATRIX_USER_RE.fullmatch(parts[0]) or not parts[1]:
+            errors.append("trusted_devices must use @user:server|DEVICE entries")
+            break
+        trusted_users.add(parts[0])
+    if trusted_users - allowed:
+        errors.append("every trusted device owner must also be in allowed_users")
+    return errors
 
 
 def _bot_project(bot_dir: str, install_root: Path) -> Path | None:
@@ -264,6 +322,99 @@ class TelegramConnector:
             remedy=remedy,
             # `-m <module>` is present as an adjacent pair in both the plain
             # and the dev-reload argv, and no filename can produce it.
+            process_signature=("-m", module),
+        )
+
+
+class MatrixConnector:
+    """One E2EE Matrix device for the deliberately narrow chat MVP."""
+
+    name = "matrix"
+
+    def plan(
+        self, layout: RuntimeLayout, env: Mapping[str, str] | None = None
+    ) -> ConnectorPlan:
+        values = dict(os.environ if env is None else env)
+        settings = channel_config(layout, self.name, values)
+        path = config_path(layout, values)
+        raw = values.get("WOLTSPACE_MATRIX")
+        enabled = _truthy(raw) if raw is not None else bool(settings.get("enabled", False))
+        remedy = (
+            f"Install the Matrix extra, then set channels.matrix in {path} with "
+            "homeserver, user_id, device_id, access_token, room_id, wolt, and "
+            "allowed_users. The MVP accepts one encrypted room and one wolt account."
+        )
+        if not enabled:
+            return ConnectorPlan(self.name, False, "disabled", remedy=remedy)
+        if not _truthy(values.get("WOLTSPACE_ENTRYPOINT", "")):
+            return ConnectorPlan(
+                self.name, False,
+                "not the platform entrypoint; a guest never starts a second Matrix device",
+                remedy="Run the control plane through `woltspace start`.",
+            )
+        if not _module_available("nio"):
+            return ConnectorPlan(
+                self.name, False, "enabled but matrix-nio E2EE support is not installed",
+                remedy="Reinstall with the Matrix extra: `uv tool install --force 'woltspace[matrix]'`.",
+            )
+
+        fields = {
+            "MATRIX_HOMESERVER": values.get("MATRIX_HOMESERVER") or settings.get("homeserver"),
+            "MATRIX_USER_ID": values.get("MATRIX_USER_ID") or settings.get("user_id"),
+            "MATRIX_DEVICE_ID": values.get("MATRIX_DEVICE_ID") or settings.get("device_id"),
+            "MATRIX_ACCESS_TOKEN": values.get("MATRIX_ACCESS_TOKEN") or settings.get("access_token"),
+            "MATRIX_ROOM_ID": values.get("MATRIX_ROOM_ID") or settings.get("room_id"),
+            "MATRIX_WOLT": values.get("MATRIX_WOLT") or settings.get("wolt"),
+        }
+        allowed = values.get("MATRIX_ALLOWED_USERS") or settings.get("allowed_users")
+        if isinstance(allowed, (list, tuple)):
+            allowed = ",".join(str(item) for item in allowed)
+        fields["MATRIX_ALLOWED_USERS"] = allowed
+        trusted = values.get("MATRIX_TRUSTED_DEVICES") or settings.get("trusted_devices")
+        if isinstance(trusted, (list, tuple)):
+            trusted = ",".join(str(item) for item in trusted)
+        fields["MATRIX_TRUSTED_DEVICES"] = trusted
+        missing = [key.removeprefix("MATRIX_").lower() for key, value in fields.items() if not value]
+        if missing:
+            return ConnectorPlan(
+                self.name, False,
+                f"enabled with incomplete configuration: missing {', '.join(missing)}",
+                remedy=remedy,
+            )
+
+        invalid = matrix_config_errors({key: str(value) for key, value in fields.items()})
+        if invalid:
+            return ConnectorPlan(
+                self.name, False,
+                "enabled with unsafe configuration: " + "; ".join(invalid),
+                remedy=remedy,
+            )
+
+        safe_user = "".join(char if char.isalnum() else "_" for char in str(fields["MATRIX_USER_ID"]))
+        fields.update({
+            "MATRIX_STORE_PATH": str(layout.state_root / "matrix" / "crypto" / safe_user),
+            "MATRIX_OUTBOX": str(layout.state_root / "matrix" / "outbox"),
+            "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
+            "WOLTSPACE_DIR": str(layout.install_root),
+            "WOLTSPACE_ISOLATION": layout.isolation,
+            "WOLTSPACE_API": layout.endpoint,
+            "PYTHONPATH": os.pathsep.join(
+                part for part in (
+                    str(layout.install_root / "container"),
+                    str(layout.runtime_lib),
+                    values.get("PYTHONPATH", ""),
+                ) if part
+            ),
+        })
+        module = "bot.matrix_adapter"
+        return ConnectorPlan(
+            name=self.name,
+            enabled=True,
+            detail=f"E2EE room {fields['MATRIX_ROOM_ID']} as {fields['MATRIX_USER_ID']}",
+            command=(sys.executable, "-m", module),
+            cwd=str(layout.install_root / "container"),
+            env=export_both({key: str(value) for key, value in fields.items()}),
+            remedy=remedy,
             process_signature=("-m", module),
         )
 
@@ -535,7 +686,7 @@ class WolfConnector:
 
 
 CONNECTORS: tuple[ChannelConnector, ...] = (
-    TelegramConnector(), TuiBridgeConnector(), WolfConnector(),
+    TelegramConnector(), MatrixConnector(), TuiBridgeConnector(), WolfConnector(),
 )
 
 

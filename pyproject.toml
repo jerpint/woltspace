@@ -30,6 +30,9 @@ dependencies = [
 woltspace = "woltspace.cli:main"
 
 [project.optional-dependencies]
+matrix = [
+    "matrix-nio[e2e]>=0.26,<0.27",
+]
 test = [
     "pytest",
     "pytest-asyncio",
@@ -59,6 +62,7 @@ packages = ["src/woltspace"]
 "docs/shared-skills.md" = "woltspace/_bundle/docs/shared-skills.md"
 "docs/colony-seeds.md" = "woltspace/_bundle/docs/colony-seeds.md"
 "docs/digging-v0.md" = "woltspace/_bundle/docs/digging-v0.md"
+"docs/matrix-chat-mvp.md" = "woltspace/_bundle/docs/matrix-chat-mvp.md"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -73,5 +77,6 @@ include = [
     "/docs/shared-skills.md",
     "/docs/colony-seeds.md",
     "/docs/digging-v0.md",
+    "/docs/matrix-chat-mvp.md",
     "/LICENSE",
 ]
