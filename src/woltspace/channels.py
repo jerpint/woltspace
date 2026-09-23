@@ -16,13 +16,16 @@ This is a seam, not a plugin framework: adding another means adding a class to
 from __future__ import annotations
 
 import importlib.util
+import ipaddress
 import os
+import re
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Protocol, runtime_checkable
+from urllib.parse import urlparse
 
 from . import __version__
 from .compatibility import TUI_SERVICE_BINARY, tui_spec
@@ -52,6 +55,61 @@ def _module_available(name: str) -> bool:
         return importlib.util.find_spec(name) is not None
     except (ImportError, ValueError):
         return False
+
+
+_MATRIX_USER_RE = re.compile(r"^@[^\s:]+:[^\s:]+$")
+_MATRIX_ROOM_RE = re.compile(r"^![^\s:]+:[^\s:]+$")
+
+
+def _loopback_host(host: str | None) -> bool:
+    if not host:
+        return False
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def matrix_config_errors(fields: Mapping[str, str]) -> list[str]:
+    """Validate the security-relevant shape before starting a Matrix device."""
+    errors: list[str] = []
+    parsed = urlparse(fields["MATRIX_HOMESERVER"])
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        errors.append("homeserver must be an absolute credential-free HTTP(S) URL")
+    elif parsed.scheme != "https" and not _loopback_host(parsed.hostname):
+        errors.append("homeserver must use HTTPS unless it is loopback-only")
+    if not _MATRIX_USER_RE.fullmatch(fields["MATRIX_USER_ID"]):
+        errors.append("user_id must be a full Matrix user ID")
+    if not _MATRIX_ROOM_RE.fullmatch(fields["MATRIX_ROOM_ID"]):
+        errors.append("room_id must be a full Matrix room ID")
+    if not fields["MATRIX_DEVICE_ID"].strip() or any(
+        char.isspace() for char in fields["MATRIX_DEVICE_ID"]
+    ):
+        errors.append("device_id must be a non-empty token without whitespace")
+    allowed = {
+        item.strip() for item in fields["MATRIX_ALLOWED_USERS"].split(",") if item.strip()
+    }
+    if not allowed or any(not _MATRIX_USER_RE.fullmatch(item) for item in allowed):
+        errors.append("allowed_users must contain exact full Matrix user IDs")
+    trusted_users: set[str] = set()
+    for pin in fields["MATRIX_TRUSTED_DEVICES"].split(","):
+        parts = pin.strip().split("|", 1)
+        if len(parts) != 2 or not _MATRIX_USER_RE.fullmatch(parts[0]) or not parts[1]:
+            errors.append("trusted_devices must use @user:server|DEVICE entries")
+            break
+        trusted_users.add(parts[0])
+    if trusted_users - allowed:
+        errors.append("every trusted device owner must also be in allowed_users")
+    return errors
 
 
 def _bot_project(bot_dir: str, install_root: Path) -> Path | None:
@@ -321,6 +379,14 @@ class MatrixConnector:
             return ConnectorPlan(
                 self.name, False,
                 f"enabled with incomplete configuration: missing {', '.join(missing)}",
+                remedy=remedy,
+            )
+
+        invalid = matrix_config_errors({key: str(value) for key, value in fields.items()})
+        if invalid:
+            return ConnectorPlan(
+                self.name, False,
+                "enabled with unsafe configuration: " + "; ".join(invalid),
                 remedy=remedy,
             )
 

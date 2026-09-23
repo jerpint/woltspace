@@ -69,7 +69,9 @@ class TestSitePathsResolveFromTheLayout:
                 "chat_status": chat.status_code,
                 "chat_body": chat.text,
                 "css_status": css.status_code,
+                "css_body": css.text,
                 "js_status": js.status_code,
+                "js_body": js.text,
                 "wasm_status": wasm.status_code,
                 "wasm_type": wasm.headers.get("content-type"),
             }))
@@ -81,7 +83,14 @@ class TestSitePathsResolveFromTheLayout:
         assert 'href="/tui"' in payload["chat_body"]
         assert 'type="module"' in payload["chat_body"]
         assert payload["css_status"] == 200
+        assert "@media(max-width:760px){.shell{display:block;position:relative}" in payload["css_body"]
+        assert ".chat{position:absolute;inset:0;width:100%}" in payload["css_body"]
+        assert ".details{display:none}" in payload["css_body"]
+        assert ".composer-wrap{flex:0 0 auto}" in payload["css_body"]
         assert payload["js_status"] == 200
+        assert "MatrixEventEvent.Decrypted" in payload["js_body"]
+        assert "getLiveTimeline().getEvents()" in payload["js_body"]
+        assert "clearStores" in payload["js_body"]
         assert payload["wasm_status"] == 200
         assert payload["wasm_type"] == "application/wasm"
 

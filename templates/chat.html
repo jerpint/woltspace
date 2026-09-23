@@ -52,7 +52,7 @@
     <label>Password<input id="matrix-password" type="password" autocomplete="current-password" required></label>
     <label>Encrypted room ID<input id="matrix-room" placeholder="!room:example.com" required></label>
     <div id="matrix-error" class="dialog-error" role="alert"></div>
-    <div class="dialog-actions"><button type="button" id="preview-mode">Keep previewing</button><button class="connect" type="submit">Connect securely</button></div>
+    <div class="dialog-actions"><button class="disconnect" type="button" id="matrix-disconnect" hidden>Disconnect this device</button><span></span><button type="button" id="preview-mode">Keep previewing</button><button class="connect" type="submit">Connect securely</button></div>
   </form>
 </dialog>
 <script type="module" src="/static/chat.js?v={{ cache_bust }}"></script>

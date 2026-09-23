@@ -237,6 +237,38 @@ class TestMatrixPlan:
         assert absent.enabled is False
         assert "matrix-nio" in absent.detail
 
+    @pytest.mark.parametrize(
+        ("field", "value", "problem"),
+        [
+            ("homeserver", "http://matrix.example.test", "HTTPS"),
+            ("homeserver", "https://user:pass@matrix.example.test", "credential-free"),
+            ("user_id", "n00b", "user_id"),
+            ("room_id", "room", "room_id"),
+            ("device_id", "bad device", "device_id"),
+            ("allowed_users", ["owner"], "allowed_users"),
+            ("trusted_devices", ["@stranger:example.test|PHONE"], "allowed_users"),
+        ],
+    )
+    def test_unsafe_matrix_identity_or_transport_is_refused(
+        self, layout, monkeypatch, field, value, problem
+    ):
+        monkeypatch.setattr(channels, "_module_available", lambda name: True)
+        config = dict(self.CONFIG)
+        config[field] = value
+        write_config(layout, {"channels": {"matrix": config}})
+        plan = MatrixConnector().plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"})
+        assert plan.enabled is False
+        assert "unsafe configuration" in plan.detail
+        assert problem in plan.detail
+
+    def test_loopback_http_remains_available_for_disposable_proofs(self, layout, monkeypatch):
+        monkeypatch.setattr(channels, "_module_available", lambda name: True)
+        config = dict(self.CONFIG)
+        config["homeserver"] = "http://127.0.0.1:8008"
+        write_config(layout, {"channels": {"matrix": config}})
+        plan = MatrixConnector().plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"})
+        assert plan.enabled is True
+
 
 class TestAmbientEnvironmentIsNeverEnough:
     """A stray `woltspace serve` in the container must not spawn a rival bot.

@@ -70315,6 +70315,7 @@ var active;
 var client;
 var roomId = "";
 var timelineListener;
+var decryptedListener;
 var escapeText = (value) => {
   const node = document.createElement("span");
   node.textContent = String(value ?? "");
@@ -70376,6 +70377,12 @@ function addMatrixEvent(event) {
     eventId: event.getId()
   });
 }
+function renderMatrixTimeline() {
+  const room = client?.getRoom(roomId);
+  if (!room) return;
+  messages.innerHTML = "";
+  room.getLiveTimeline().getEvents().forEach(addMatrixEvent);
+}
 async function startMatrix(auth) {
   client = createClient({
     baseUrl: auth.homeserver,
@@ -70398,18 +70405,53 @@ async function startMatrix(auth) {
   const room = client.getRoom(roomId);
   if (!room) throw new Error("That room is not joined on this account. Join it in Element first.");
   if (!client.isRoomEncrypted(roomId)) throw new Error("That Matrix room is not encrypted.");
-  messages.innerHTML = "";
-  room.getLiveTimeline().getEvents().forEach(addMatrixEvent);
+  renderMatrixTimeline();
   timelineListener = (event, eventRoom, toStart) => {
     if (!toStart && eventRoom?.roomId === roomId) addMatrixEvent(event);
   };
+  decryptedListener = (event) => {
+    if (event.getRoomId() === roomId) renderMatrixTimeline();
+  };
   client.on(RoomEvent.Timeline, timelineListener);
+  client.on(MatrixEventEvent.Decrypted, decryptedListener);
   q("#connection").textContent = "Encrypted Matrix room";
   q("#room-detail").textContent = roomId;
   q("#device-detail").textContent = client.getDeviceId();
   q("#matrix-connect").textContent = "Connected";
+  q("#matrix-disconnect").hidden = false;
   q(".preview").hidden = true;
   renderWolts();
+}
+async function disconnectMatrix() {
+  const error = q("#matrix-error");
+  error.textContent = "";
+  if (!window.confirm("Disconnect this Woltspace Matrix device and remove its local encryption store?")) return;
+  const current = client;
+  if (current) {
+    try {
+      if (timelineListener) current.off(RoomEvent.Timeline, timelineListener);
+      if (decryptedListener) current.off(MatrixEventEvent.Decrypted, decryptedListener);
+      await current.logout(true);
+      await current.clearStores();
+    } catch (failure) {
+      error.textContent = `Could not revoke this Matrix device: ${failure?.message || failure}`;
+      return;
+    }
+  }
+  localStorage.removeItem(AUTH_KEY);
+  client = void 0;
+  roomId = "";
+  timelineListener = void 0;
+  decryptedListener = void 0;
+  q("#connection").textContent = "Matrix preview";
+  q("#room-detail").textContent = "Preview only";
+  q("#device-detail").textContent = "Not connected";
+  q("#matrix-connect").textContent = "Connect Matrix";
+  q("#matrix-disconnect").hidden = true;
+  q(".preview").hidden = false;
+  showPreview();
+  renderWolts();
+  dialog.close();
 }
 async function login(event) {
   event.preventDefault();
@@ -70455,6 +70497,7 @@ async function boot() {
   showPreview();
   const stored = localStorage.getItem(AUTH_KEY);
   if (stored) {
+    q("#matrix-disconnect").hidden = false;
     try {
       await startMatrix(JSON.parse(stored));
     } catch (failure) {
@@ -70512,6 +70555,7 @@ q("#nav-open").onclick = () => shell.classList.add("sidebar-open");
 q("#nav-close").onclick = () => shell.classList.remove("sidebar-open");
 q("#matrix-connect").onclick = () => dialog.showModal();
 q("#matrix-close").onclick = q("#preview-mode").onclick = () => dialog.close();
+q("#matrix-disconnect").onclick = disconnectMatrix;
 q("#matrix-form").onsubmit = login;
 boot();
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {
