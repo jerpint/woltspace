@@ -1,8 +1,10 @@
 """Fail-closed Slack DM admission and response transport."""
 
+import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -18,6 +20,8 @@ def isolated_admission(monkeypatch, tmp_path):
     monkeypatch.setattr(slack, "CHAT_DIR", tmp_path)
     monkeypatch.setattr(slack, "OWNER_SELECTIONS_FILE", tmp_path / "owners.json")
     monkeypatch.setattr(slack, "THREAD_SESSIONS_FILE", tmp_path / "threads.json")
+    monkeypatch.setattr(slack, "PENDING_MESSAGES_FILE", tmp_path / "pending.json")
+    monkeypatch.setattr(slack, "PENDING_LOCK_FILE", tmp_path / "pending.lock")
     slack._seen_event_ids.clear()
     slack._seen_event_order.clear()
     slack._owner_selections.clear()
@@ -145,6 +149,7 @@ async def test_every_rejected_surface_returns_before_history_or_session_work(mon
 @pytest.mark.asyncio
 async def test_streaming_success_stops_the_stream_without_posting_fallback():
     client = AsyncMock()
+    client.chat_postMessage.return_value = {"ok": True, "ts": "2000.1"}
     client.chat_startStream.return_value = {"ok": True, "ts": "2000.1"}
 
     await slack._post_text(client, "D1", "1000.1", "U12345678", "answer")
@@ -167,40 +172,6 @@ async def test_streaming_failure_uses_plain_postmessage_fallback():
 
 
 @pytest.mark.asyncio
-async def test_progress_prefers_one_native_stream():
-    client = AsyncMock()
-    client.chat_startStream.return_value = {"ok": True, "ts": "2000.1"}
-
-    progress = await slack._start_progress(
-        client, "D1", "1000.1", "U12345678"
-    )
-
-    assert progress == {"mode": "stream", "ts": "2000.1"}
-    client.chat_startStream.assert_awaited_once_with(
-        channel="D1", thread_ts="1000.1", recipient_user_id="U12345678",
-        markdown_text="🦫 gnawing…",
-    )
-    client.chat_postMessage.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_progress_uses_one_static_message_when_streaming_is_unavailable():
-    client = AsyncMock()
-    client.chat_startStream.side_effect = RuntimeError("not an agent app")
-    client.chat_postMessage.return_value = {"ok": True, "ts": "2000.2"}
-
-    progress = await slack._start_progress(
-        client, "D1", "1000.1", "U12345678"
-    )
-
-    assert progress == {"mode": "message", "ts": "2000.2"}
-    client.chat_postMessage.assert_awaited_once_with(
-        channel="D1", thread_ts="1000.1", text="🦫 gnawing…"
-    )
-    assert client.chat_update.await_count == 0
-
-
-@pytest.mark.asyncio
 async def test_session_route_reports_successful_revival(monkeypatch, tmp_path):
     async def revived(*args):
         return {"ok": True, "status": "revived", "url": "https://session.test"}
@@ -208,6 +179,7 @@ async def test_session_route_reports_successful_revival(monkeypatch, tmp_path):
     monkeypatch.setattr(slack.asyncio, "to_thread", revived)
     monkeypatch.setattr(slack, "CHAT_DIR", tmp_path)
     client = AsyncMock()
+    client.chat_postMessage.return_value = {"ok": True, "ts": "2000.1"}
     owner = {"session": "n00b-old-1", "wolt": "n00b", "creature": "raccoon"}
 
     await slack._route_to_session(client, "D1", "1000.1", owner, "continue")
@@ -259,6 +231,66 @@ def test_picker_caps_static_select_deterministically_but_text_lists_all():
     assert "105. wolt-104" in slack._picker_text(wolts)
 
 
+def test_pending_storage_is_private_atomic_and_claim_removes_plaintext():
+    slack._pending_create("U12345678", "D1", "1000.1", "Ev1", "private task", now=1)
+    slack._pending_set_picker("D1", "1000.1", "2000.1")
+
+    claimed = slack._pending_claim("U12345678", "D1", "2000.1", "n00b", now=2)
+    stored = json.loads(slack.PENDING_MESSAGES_FILE.read_text())["D1:1000.1"]
+
+    assert claimed["text"] == "private task"
+    assert stored["state"] == "claimed"
+    assert "text" not in stored
+    assert slack.PENDING_MESSAGES_FILE.stat().st_mode & 0o777 == 0o600
+    assert slack.PENDING_LOCK_FILE.stat().st_mode & 0o777 == 0o600
+    assert list(slack.CHAT_DIR.glob("*.tmp")) == []
+
+
+def test_pending_claim_expires_and_rejects_wrong_binding():
+    slack._pending_create("U12345678", "D1", "1000.1", "Ev1", "task", now=1)
+    slack._pending_set_picker("D1", "1000.1", "2000.1")
+
+    assert slack._pending_claim("U-other", "D1", "2000.1", "n00b", now=2) is None
+    assert slack._pending_claim("U12345678", "D-other", "2000.1", "n00b", now=2) is None
+    assert slack._pending_claim("U12345678", "D1", "wrong", "n00b", now=2) is None
+    assert slack._pending_claim("U12345678", "D1", "2000.1", "n00b", now=602) is None
+    stored = json.loads(slack.PENDING_MESSAGES_FILE.read_text())["D1:1000.1"]
+    assert stored["state"] == "expired"
+    assert "text" not in stored
+
+
+def test_pending_claim_race_has_one_winner_and_never_replays():
+    slack._pending_create("U12345678", "D1", "1000.1", "Ev1", "task", now=1)
+    slack._pending_set_picker("D1", "1000.1", "2000.1")
+
+    def claim(_):
+        return slack._pending_claim("U12345678", "D1", "2000.1", "n00b", now=2)
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        results = list(pool.map(claim, range(12)))
+
+    assert sum(result is not None for result in results) == 1
+    assert slack._pending_claim("U12345678", "D1", "2000.1", "n00b", now=3) is None
+
+
+def test_ambiguous_pending_recovery_never_replays():
+    slack.PENDING_MESSAGES_FILE.write_text('{"D1:1000.1":')
+
+    assert slack._pending_claim("U12345678", "D1", "2000.1", "n00b", now=2) is None
+    assert json.loads(slack.PENDING_MESSAGES_FILE.read_text()) == {}
+
+
+def test_pending_caps_and_message_size_are_bounded():
+    for index in range(slack.PENDING_MAX_PER_OWNER):
+        slack._pending_create(
+            "U12345678", "D1", f"1000.{index}", f"Ev{index}", "task", now=1
+        )
+    with pytest.raises(ValueError, match="too many pending"):
+        slack._pending_create("U12345678", "D1", "2000.1", "EvX", "task", now=2)
+    with pytest.raises(ValueError, match="1..32768"):
+        slack._pending_create("U-other", "D1", "3000.1", "EvY", "x" * 32769, now=2)
+
+
 @pytest.mark.asyncio
 async def test_no_selection_shows_picker_without_replaying_or_agent_work(monkeypatch):
     app = install_fake_app(monkeypatch)
@@ -271,6 +303,7 @@ async def test_no_selection_shows_picker_without_replaying_or_agent_work(monkeyp
     monkeypatch.setattr(slack, "start_claude_session", start)
     monkeypatch.setattr(slack, "_build_thread_context", history)
     client = AsyncMock()
+    client.chat_postMessage.return_value = {"ok": True, "ts": "2000.1"}
 
     await app.handlers["message"](
         event(text="private first message"), client, {}, {"event_id": "EvPicker"}
@@ -332,7 +365,7 @@ async def test_bare_wolt_inside_owned_thread_stays_with_historical_session(monke
 
 
 @pytest.mark.asyncio
-async def test_selected_top_level_dm_starts_exactly_the_chosen_wolt(monkeypatch):
+async def test_prior_selection_still_opens_picker_without_starting(monkeypatch):
     app = install_fake_app(monkeypatch)
     slack._owner_selections["U12345678"] = "builder"
     monkeypatch.setattr(slack, "_eligible_wolts", lambda: {
@@ -340,40 +373,23 @@ async def test_selected_top_level_dm_starts_exactly_the_chosen_wolt(monkeypatch)
         "other": {"name": "other", "type": "raccoon"},
     })
     monkeypatch.setattr(slack, "_extract_image", lambda incoming: None)
-    calls = []
-
-    async def run_in_thread(function, *args, **kwargs):
-        calls.append((function, args, kwargs))
-        return {"name": "builder-busy-dam-123", "url": "https://session.test"}
-
-    monkeypatch.setattr(slack.asyncio, "to_thread", run_in_thread)
-    monkeypatch.setattr(slack, "_save_active_threads", lambda: None)
-    monkeypatch.setattr(slack, "_save_thread_sessions", lambda: None)
+    start = Mock(side_effect=AssertionError("must wait for selection"))
+    monkeypatch.setattr(slack, "start_claude_session", start)
     client = AsyncMock()
-    client.chat_startStream.return_value = {"ok": True, "ts": "2000.1"}
-    monkeypatch.setattr(slack, "_watch_progress_failure", AsyncMock())
+    client.chat_postMessage.return_value = {"ok": True, "ts": "2000.1"}
 
     await app.handlers["message"](
         event(text="do the work"), client, {}, {"event_id": "EvStart"}
     )
 
-    assert len(calls) == 2
-    assert calls[0][0] is slack.start_claude_session
-    assert calls[0][1] == ("do the work",)
-    assert calls[0][2]["wolt"] == "builder"
-    assert calls[1][0] == slack.registry.update
-    assert calls[1][1] == ("builder-busy-dam-123",)
-    assert calls[1][2] == {
-        "wolt": "builder",
-        "slack_progress_mode": "stream",
-        "slack_progress_ts": "2000.1",
-    }
-    assert "gnawing" not in str(calls[1])
-    assert slack._thread_sessions["D12345678:1234.5678"]["wolt"] == "builder"
+    start.assert_not_called()
+    assert "Choose your wolt" in client.chat_postMessage.await_args.kwargs["text"]
+    pending = json.loads(slack.PENDING_MESSAGES_FILE.read_text())
+    assert pending["D12345678:1234.5678"]["text"] == "do the work"
 
 
 @pytest.mark.asyncio
-async def test_selected_wolt_spawn_failure_never_opens_progress(monkeypatch):
+async def test_attachment_is_explicitly_deferred(monkeypatch):
     app = install_fake_app(monkeypatch)
     slack._owner_selections["U12345678"] = "builder"
     monkeypatch.setattr(slack, "_eligible_wolts", lambda: {
@@ -381,19 +397,15 @@ async def test_selected_wolt_spawn_failure_never_opens_progress(monkeypatch):
     })
     monkeypatch.setattr(slack, "_extract_image", lambda incoming: None)
 
-    async def fail_spawn(function, *args, **kwargs):
-        raise RuntimeError("spawn failed")
-
-    monkeypatch.setattr(slack.asyncio, "to_thread", fail_spawn)
     client = AsyncMock()
 
     await app.handlers["message"](
-        event(text="do the work"), client, {}, {"event_id": "EvFailedStart"}
+        event(text="see file", files=[{"id": "F1"}]), client, {}, {"event_id": "EvFile"}
     )
 
-    client.chat_startStream.assert_not_awaited()
     assert client.chat_postMessage.await_count == 1
-    assert "broke" in client.chat_postMessage.await_args.kwargs["text"]
+    assert "Attachments are not supported" in client.chat_postMessage.await_args.kwargs["text"]
+    assert not slack.PENDING_MESSAGES_FILE.exists()
 
 
 @pytest.mark.asyncio
@@ -406,7 +418,7 @@ async def test_failed_session_watcher_deletes_and_clears_progress(monkeypatch):
     monkeypatch.setattr(slack.registry, "update", update)
     client = AsyncMock()
 
-    await slack._watch_progress_failure(
+    await slack._watch_progress(
         client, "builder-session-1", "builder", "D123"
     )
 
@@ -415,6 +427,54 @@ async def test_failed_session_watcher_deletes_and_clears_progress(monkeypatch):
         "builder-session-1", wolt="builder",
         slack_progress_mode="", slack_progress_ts="",
     )
+
+
+@pytest.mark.asyncio
+async def test_progress_heartbeat_is_bounded_to_thirty_second_cadence(monkeypatch):
+    sleep = AsyncMock()
+    monkeypatch.setattr(slack.asyncio, "sleep", sleep)
+    monkeypatch.setattr(slack.registry, "get", Mock(return_value={
+        "status": "running", "slack_progress_ts": "2000.1"
+    }))
+    client = AsyncMock()
+    client.chat_update.side_effect = RuntimeError("rate limited")
+
+    await slack._watch_progress(client, "builder-session-1", "builder", "D123")
+
+    sleep.assert_awaited_once_with(30)
+    client.chat_update.assert_awaited_once_with(
+        channel="D123", ts="2000.1", text="🦫 Still working… 30s"
+    )
+
+
+@pytest.mark.asyncio
+async def test_spawn_pending_delivers_original_and_pins_root(monkeypatch):
+    session = {"name": "n00b-session-1"}
+    start = Mock(return_value=session)
+    update = Mock()
+    watcher = AsyncMock()
+    monkeypatch.setattr(slack, "start_claude_session", start)
+    monkeypatch.setattr(slack.registry, "update", update)
+    monkeypatch.setattr(slack, "_watch_progress", watcher)
+    client = AsyncMock()
+    selected = {"name": "n00b", "type": "raccoon"}
+    claimed = {
+        "user": "U12345678", "channel": "D1", "root_ts": "1000.1",
+        "picker_ts": "2000.1", "text": "original task",
+    }
+
+    await slack._spawn_pending(client, selected, claimed)
+
+    start.assert_called_once()
+    first = start.call_args
+    assert first.args == ("original task",)
+    assert first.kwargs["wolt"] == "n00b"
+    assert first.kwargs["routing"] == {
+        "adapter": "slack", "chat_id": "D1", "thread_ts": "1000.1"
+    }
+    assert slack._thread_sessions["D1:1000.1"]["session"] == "n00b-session-1"
+    assert client.chat_update.await_args_list[0].kwargs["text"].startswith("✅ Accepted")
+    assert "🦫 Working" in client.chat_update.await_args_list[1].kwargs["text"]
 
 
 @pytest.mark.asyncio
@@ -447,15 +507,27 @@ async def test_static_select_revalidates_owner_and_live_option(monkeypatch):
     handler = app.handlers["action:select_wolt"]
     ack = AsyncMock()
     client = AsyncMock()
+    spawn = AsyncMock()
+    monkeypatch.setattr(slack, "_spawn_pending", spawn)
+    slack._pending_create(
+        "U12345678", "D12345678", "1000.1", "EvPending", "original task", now=1
+    )
+    slack._pending_set_picker("D12345678", "1000.1", "2000.1")
     base = {
         "user": {"id": "U12345678"},
         "channel": {"id": "D12345678"},
+        "message": {"ts": "2000.1"},
         "actions": [{"selected_option": {"value": "n00b"}}],
     }
 
-    await handler(ack, base, client)
+    with patch.object(slack.time, "time", return_value=2):
+        await handler(ack, base, client)
     assert slack._owner_selections == {"U12345678": "n00b"}
+    assert spawn.await_args.args[2]["text"] == "original task"
     ack.assert_awaited_once()
+
+    await handler(AsyncMock(), base, client)
+    assert spawn.await_count == 1
 
     slack._owner_selections.clear()
     await handler(AsyncMock(), {**base, "user": {"id": "U87654321"}}, AsyncMock())

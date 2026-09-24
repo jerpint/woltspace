@@ -10,15 +10,24 @@ and duplicate events are rejected before history, attachment, model or session
 work. Existing persisted Slack thread-to-session ownership remains the routing
 model.
 
-The first DM with no valid identity-bound selection shows one Block Kit
-`static_select` plus an exact-name text fallback. The choice persists for the
-owner, is revalidated against the live rodent-wolt roster on every use, and
-opens a session for exactly that wolt on the next message. Removed or ineligible
-selections reopen the picker. Historical owned threads keep their original
-session even after a later selection change.
+Every fresh top-level text DM starts a new conversation by showing one Block Kit
+`static_select` plus an exact-name text fallback. The original text is held in a
+private, size-capped, ten-minute pending record. A valid owner selection claims
+it atomically, removes the stored plaintext, and delivers it exactly once to a
+new session for that wolt. Duplicate, stale, expired, forged or ambiguously
+recovered claims never replay it. A prior selection is displayed only as a
+convenience; it does not bypass the picker. Historical owned threads remain
+pinned to their original session. Attachments receive an explicit deferred
+response rather than being silently dropped.
 
-Status, native Stop, streaming session output and customized per-wolt sender
-identity are not enabled by this slice.
+The picker message becomes the single temporary progress surface: accepted,
+starting, session ready/working, then at most one honest liveness update every
+30 seconds. The final `/notify` replaces that same message with the existing
+formatted response and session footer. Failures clean it up idempotently. The
+surface uses stock Unicode emoji only; richer animation is future polish.
+
+Native Agent status, Stop, streaming session output and customized per-wolt
+sender identity are not enabled by this slice.
 
 ## Reusable private-lodge manifest
 
@@ -67,10 +76,9 @@ member ID (starts with `U` or `W`):
 
 The first live acceptance is deliberately separate: confirm the member ID with
 the owner, start the lodge, verify Slack is healthy, send one owner DM, choose a
-wolt, resend the message, and observe the exact chosen-wolt session handoff.
+wolt, and observe the original message start the exact chosen-wolt session once.
 Verify a non-owner DM and a channel mention cause no work, restart, then confirm
-the same thread and owner selection recover. Never infer the owner from the
-first sender and never replay the pre-selection message.
+the same owned thread recovers. Never infer the owner from the first sender.
 
 ## Modern Slack UX and command inventory
 
