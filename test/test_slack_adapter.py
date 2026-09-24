@@ -167,6 +167,40 @@ async def test_streaming_failure_uses_plain_postmessage_fallback():
 
 
 @pytest.mark.asyncio
+async def test_progress_prefers_one_native_stream():
+    client = AsyncMock()
+    client.chat_startStream.return_value = {"ok": True, "ts": "2000.1"}
+
+    progress = await slack._start_progress(
+        client, "D1", "1000.1", "U12345678"
+    )
+
+    assert progress == {"mode": "stream", "ts": "2000.1"}
+    client.chat_startStream.assert_awaited_once_with(
+        channel="D1", thread_ts="1000.1", recipient_user_id="U12345678",
+        markdown_text="🦫 gnawing…",
+    )
+    client.chat_postMessage.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_progress_uses_one_static_message_when_streaming_is_unavailable():
+    client = AsyncMock()
+    client.chat_startStream.side_effect = RuntimeError("not an agent app")
+    client.chat_postMessage.return_value = {"ok": True, "ts": "2000.2"}
+
+    progress = await slack._start_progress(
+        client, "D1", "1000.1", "U12345678"
+    )
+
+    assert progress == {"mode": "message", "ts": "2000.2"}
+    client.chat_postMessage.assert_awaited_once_with(
+        channel="D1", thread_ts="1000.1", text="🦫 gnawing…"
+    )
+    assert client.chat_update.await_count == 0
+
+
+@pytest.mark.asyncio
 async def test_session_route_reports_successful_revival(monkeypatch, tmp_path):
     async def revived(*args):
         return {"ok": True, "status": "revived", "url": "https://session.test"}
@@ -316,16 +350,71 @@ async def test_selected_top_level_dm_starts_exactly_the_chosen_wolt(monkeypatch)
     monkeypatch.setattr(slack, "_save_active_threads", lambda: None)
     monkeypatch.setattr(slack, "_save_thread_sessions", lambda: None)
     client = AsyncMock()
+    client.chat_startStream.return_value = {"ok": True, "ts": "2000.1"}
+    monkeypatch.setattr(slack, "_watch_progress_failure", AsyncMock())
 
     await app.handlers["message"](
         event(text="do the work"), client, {}, {"event_id": "EvStart"}
     )
 
-    assert len(calls) == 1
+    assert len(calls) == 2
     assert calls[0][0] is slack.start_claude_session
     assert calls[0][1] == ("do the work",)
     assert calls[0][2]["wolt"] == "builder"
+    assert calls[1][0] == slack.registry.update
+    assert calls[1][1] == ("builder-busy-dam-123",)
+    assert calls[1][2] == {
+        "wolt": "builder",
+        "slack_progress_mode": "stream",
+        "slack_progress_ts": "2000.1",
+    }
+    assert "gnawing" not in str(calls[1])
     assert slack._thread_sessions["D12345678:1234.5678"]["wolt"] == "builder"
+
+
+@pytest.mark.asyncio
+async def test_selected_wolt_spawn_failure_never_opens_progress(monkeypatch):
+    app = install_fake_app(monkeypatch)
+    slack._owner_selections["U12345678"] = "builder"
+    monkeypatch.setattr(slack, "_eligible_wolts", lambda: {
+        "builder": {"name": "builder", "type": "beaver"}
+    })
+    monkeypatch.setattr(slack, "_extract_image", lambda incoming: None)
+
+    async def fail_spawn(function, *args, **kwargs):
+        raise RuntimeError("spawn failed")
+
+    monkeypatch.setattr(slack.asyncio, "to_thread", fail_spawn)
+    client = AsyncMock()
+
+    await app.handlers["message"](
+        event(text="do the work"), client, {}, {"event_id": "EvFailedStart"}
+    )
+
+    client.chat_startStream.assert_not_awaited()
+    assert client.chat_postMessage.await_count == 1
+    assert "broke" in client.chat_postMessage.await_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_failed_session_watcher_deletes_and_clears_progress(monkeypatch):
+    monkeypatch.setattr(slack.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(slack.registry, "get", Mock(return_value={
+        "status": "failed", "slack_progress_ts": "2000.1"
+    }))
+    update = Mock()
+    monkeypatch.setattr(slack.registry, "update", update)
+    client = AsyncMock()
+
+    await slack._watch_progress_failure(
+        client, "builder-session-1", "builder", "D123"
+    )
+
+    client.chat_delete.assert_awaited_once_with(channel="D123", ts="2000.1")
+    update.assert_called_once_with(
+        "builder-session-1", wolt="builder",
+        slack_progress_mode="", slack_progress_ts="",
+    )
 
 
 @pytest.mark.asyncio

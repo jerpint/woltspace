@@ -23,7 +23,7 @@ from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 import sys
 from bot.core import (
-    message_session, start_claude_session, _bot_log, build_ack_text,
+    message_session, start_claude_session, _bot_log, build_ack_text, registry,
     _sanitize_history,
 )
 from wolts import get_active_creature, list_wolts
@@ -225,6 +225,7 @@ SLACK_USER_ID_RE = re.compile(r"^[UW][A-Z0-9]{8,}$")
 _SEEN_EVENT_LIMIT = 2048
 _seen_event_ids: set[str] = set()
 _seen_event_order: deque[str] = deque()
+_progress_watchers: set[asyncio.Task] = set()
 
 
 # --- Helpers ---
@@ -452,6 +453,52 @@ async def _post_text(client, channel: str, thread_ts: str, user: str, text: str)
     await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=text)
 
 
+async def _start_progress(client, channel: str, thread_ts: str, user: str) -> dict:
+    """Open one temporary native stream, or one updatable fallback message."""
+    text = "🦫 gnawing…"
+    try:
+        started = await client.chat_startStream(
+            channel=channel,
+            thread_ts=thread_ts,
+            recipient_user_id=user,
+            markdown_text=text,
+        )
+        if started.get("ts"):
+            return {"mode": "stream", "ts": started["ts"]}
+        raise RuntimeError("chat.startStream returned no message timestamp")
+    except Exception as exc:
+        logger.info("Slack progress streaming unavailable; using message: %s", exc)
+    posted = await client.chat_postMessage(
+        channel=channel, thread_ts=thread_ts, text=text
+    )
+    if not posted.get("ts"):
+        raise RuntimeError("Slack progress message returned no timestamp")
+    return {"mode": "message", "ts": posted["ts"]}
+
+
+async def _watch_progress_failure(client, session_name: str, wolt: str, channel: str):
+    """Remove a temporary indicator if the agent exits before `/notify`."""
+    while True:
+        await asyncio.sleep(2)
+        record = await asyncio.to_thread(registry.get, session_name, check_alive=False)
+        if not record or not record.get("slack_progress_ts"):
+            return
+        if record.get("status") == "running":
+            continue
+        try:
+            await client.chat_delete(channel=channel, ts=record["slack_progress_ts"])
+        except Exception as exc:
+            logger.info("Could not remove failed Slack progress message: %s", exc)
+        await asyncio.to_thread(
+            registry.update,
+            session_name,
+            wolt=wolt,
+            slack_progress_mode="",
+            slack_progress_ts="",
+        )
+        return
+
+
 async def _post_result(client, channel: str, thread_ts: str, user: str, result: dict):
     """Post a result to Slack — handles text, session, and image types.
     Sends tool call logs before the final response."""
@@ -674,13 +721,27 @@ def create_app():
         _set_session_owner(
             channel, thread_ts, session["name"], selected["name"], selected.get("type", "")
         )
-        await client.chat_postMessage(
-            channel=channel,
-            thread_ts=thread_ts,
-            text=build_ack_text(
-                session.get("url"), session["name"], "slack", selected.get("type", "")
-            ),
-        )
+        try:
+            progress = await _start_progress(client, channel, thread_ts, user)
+        except Exception as exc:
+            # Progress is enhancement-only. The agent's eventual notify still
+            # posts normally when no progress record exists.
+            logger.info("Could not open Slack progress surface: %s", exc)
+        else:
+            await asyncio.to_thread(
+                registry.update,
+                session["name"],
+                wolt=selected["name"],
+                slack_progress_mode=progress["mode"],
+                slack_progress_ts=progress["ts"],
+            )
+            watcher = asyncio.create_task(
+                _watch_progress_failure(
+                    client, session["name"], selected["name"], channel
+                )
+            )
+            _progress_watchers.add(watcher)
+            watcher.add_done_callback(_progress_watchers.discard)
 
     return app
 

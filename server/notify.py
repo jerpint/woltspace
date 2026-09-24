@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 import httpx
+from sessions import SessionRegistry
 
 from .config import (
     STATE_DIR,
@@ -93,6 +94,43 @@ async def slack_send(token: str, channel: str, thread_ts: str | None, text: str)
         return data
 
 
+async def slack_finish_progress(
+    token: str, channel: str, message_ts: str, mode: str, text: str
+) -> dict:
+    async with httpx.AsyncClient() as client:
+        headers = {"Authorization": f"Bearer {token}"}
+        if mode == "stream":
+            stopped = await client.post(
+                "https://slack.com/api/chat.stopStream",
+                json={"channel": channel, "ts": message_ts},
+                headers=headers,
+            )
+            stopped_data = stopped.json()
+            if not stopped_data.get("ok"):
+                raise RuntimeError(stopped_data.get("error", "chat.stopStream error"))
+        # stopStream's markdown_text is an additional final chunk. Always use
+        # chat.update after stopping so the temporary `gnawing…` bytes are
+        # replaced, not retained above the persisted final answer.
+        updated = await client.post(
+            "https://slack.com/api/chat.update",
+            json={"channel": channel, "ts": message_ts, "text": text},
+            headers=headers,
+        )
+        updated_data = updated.json()
+        if not updated_data.get("ok"):
+            raise RuntimeError(updated_data.get("error", "chat.update error"))
+        return updated_data
+
+
+async def slack_delete(token: str, channel: str, message_ts: str) -> None:
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            "https://slack.com/api/chat.delete",
+            json={"channel": channel, "ts": message_ts},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+
 async def _send_telegram(session: str, message: str, chat_id: str) -> dict:
     """Send a notification via Telegram with den-reply footer."""
     token = dotenv_env("TELEGRAM_BOT_TOKEN")
@@ -117,7 +155,14 @@ async def _send_telegram(session: str, message: str, chat_id: str) -> dict:
     return {"adapter": "telegram", "chat_id": chat_id}
 
 
-async def _send_slack(message: str, channel: str, thread_ts: str | None = None) -> dict:
+async def _send_slack(
+    message: str,
+    channel: str,
+    thread_ts: str | None = None,
+    *,
+    session: str = "",
+    routing: dict | None = None,
+) -> dict:
     """Send a notification via Slack to a specific channel/thread."""
     token = dotenv_env("SLACK_BOT_TOKEN")
     if not token:
@@ -126,7 +171,26 @@ async def _send_slack(message: str, channel: str, thread_ts: str | None = None) 
         channel = dotenv_env("SLACK_NOTIFY_CHANNEL")
     if not channel:
         raise RuntimeError("no slack channel provided and SLACK_NOTIFY_CHANNEL not set")
-    await slack_send(token, channel, thread_ts, message)
+    progress_ts = (routing or {}).get("slack_progress_ts", "")
+    progress_mode = (routing or {}).get("slack_progress_mode", "")
+    if progress_ts and progress_mode in {"stream", "message"}:
+        try:
+            await slack_finish_progress(
+                token, channel, progress_ts, progress_mode, message
+            )
+        except Exception:
+            await slack_delete(token, channel, progress_ts)
+            raise
+        finally:
+            if session and routing:
+                SessionRegistry(WOLTS_DIR).update(
+                    session,
+                    wolt=routing.get("wolt", ""),
+                    slack_progress_mode="",
+                    slack_progress_ts="",
+                )
+    else:
+        await slack_send(token, channel, thread_ts, message)
     append_chat_history("slack", channel, message)
     return {"adapter": "slack", "channel": channel}
 
@@ -139,11 +203,27 @@ async def send_notification(session: str, message: str, explicit: dict | None = 
       {"adapter": "telegram", "chat_id": "98765"}
     """
 
-    # 1. Explicit routing — caller knows exactly where to send
+    routing = read_session_registry(session) if session else None
+
+    # 1. Explicit routing — caller knows exactly where to send. A temporary
+    # progress surface is usable only when the explicit route exactly matches
+    # the authoritative session record.
     if explicit and explicit.get("adapter"):
         adapter = explicit["adapter"]
         if adapter == "slack":
-            return await _send_slack(message, explicit.get("channel", ""), explicit.get("thread_ts"))
+            channel = explicit.get("channel", "")
+            thread_ts = explicit.get("thread_ts")
+            exact = bool(
+                routing
+                and routing.get("adapter") == "slack"
+                and routing.get("chat_id") == channel
+                and routing.get("thread_ts") == thread_ts
+            )
+            return await _send_slack(
+                message, channel, thread_ts,
+                session=session if exact else "",
+                routing=routing if exact else None,
+            )
         if adapter == "telegram":
             chat_id = explicit.get("chat_id", "")
             if chat_id:
@@ -151,7 +231,6 @@ async def send_notification(session: str, message: str, explicit: dict | None = 
 
     # 2. Session registry lookup — find routing from session metadata
     if session:
-        routing = read_session_registry(session)
         if routing:
             adapter = routing.get("adapter")
             if adapter == "slack":
@@ -159,6 +238,8 @@ async def send_notification(session: str, message: str, explicit: dict | None = 
                     message,
                     routing.get("chat_id", ""),
                     routing.get("thread_ts"),
+                    session=session,
+                    routing=routing,
                 )
             if adapter == "telegram":
                 chat_id = routing.get("chat_id")
