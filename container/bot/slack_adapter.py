@@ -166,10 +166,12 @@ def _select_wolt(user: str, name: str) -> dict | None:
     return selected
 
 
-def _picker_text(wolts: dict[str, dict]) -> str:
+def _picker_text(wolts: dict[str, dict], current: str = "") -> str:
     if not wolts:
         return "No eligible wolts are available. Create a rodent wolt in the lodge first."
     lines = ["Choose your wolt:"]
+    if current:
+        lines.append(f"Current selection: `{current}`")
     lines.extend(f"{index}. {name}" for index, name in enumerate(wolts, 1))
     lines.append("\nIf the menu is unavailable, send `wolt <exact-name>`." )
     return "\n".join(lines)
@@ -198,6 +200,10 @@ def _picker_blocks(wolts: dict[str, dict]) -> list[dict]:
 def _text_selection(text: str) -> str | None:
     match = re.fullmatch(r"/?wolt\s+(\S+)\s*", text, flags=re.IGNORECASE)
     return match.group(1) if match else None
+
+
+def _picker_request(text: str) -> bool:
+    return re.fullmatch(r"/?wolt\s*", text, flags=re.IGNORECASE) is not None
 
 
 # --- Dog ack messages ---
@@ -605,6 +611,20 @@ def create_app():
                     thread_ts=thread_ts,
                     text=f"Selected {requested}. Send your message again to start a session.",
                 )
+            return
+
+        # A bare top-level `wolt` is a navigation command, never session input.
+        # Inside an existing thread it remains ordinary conversation so the
+        # historical thread owner cannot be bypassed or retargeted.
+        if not event.get("thread_ts") and _picker_request(user_message):
+            wolts = _eligible_wolts()
+            current = _selected_wolt(user)
+            await client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text=_picker_text(wolts, current.get("name", "") if current else ""),
+                blocks=_picker_blocks(wolts),
+            )
             return
 
         # --- Session-owned thread: route directly to session ---

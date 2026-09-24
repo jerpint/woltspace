@@ -251,6 +251,53 @@ async def test_no_selection_shows_picker_without_replaying_or_agent_work(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_bare_top_level_wolt_reopens_picker_without_spawning_or_replaying(monkeypatch):
+    app = install_fake_app(monkeypatch)
+    slack._owner_selections["U12345678"] = "n00b"
+    eligible = {"n00b": {"name": "n00b", "type": "raccoon"}}
+    monkeypatch.setattr(slack, "_eligible_wolts", lambda: eligible)
+    start = Mock(side_effect=AssertionError("session work must not run"))
+    extract = Mock(side_effect=AssertionError("attachment work must not run"))
+    history = AsyncMock(side_effect=AssertionError("history must not run"))
+    monkeypatch.setattr(slack, "start_claude_session", start)
+    monkeypatch.setattr(slack, "_extract_image", extract)
+    monkeypatch.setattr(slack, "_build_thread_context", history)
+    client = AsyncMock()
+
+    await app.handlers["message"](
+        event(text="wolt"), client, {}, {"event_id": "EvReopenPicker"}
+    )
+
+    sent = client.chat_postMessage.await_args.kwargs
+    assert "Choose your wolt" in sent["text"]
+    assert "Current selection: `n00b`" in sent["text"]
+    assert sent["blocks"] == slack._picker_blocks(eligible)
+    start.assert_not_called()
+    extract.assert_not_called()
+    history.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bare_wolt_inside_owned_thread_stays_with_historical_session(monkeypatch):
+    app = install_fake_app(monkeypatch)
+    slack._thread_sessions["D12345678:1000.1"] = {
+        "session": "old-session-1", "wolt": "old-wolt", "creature": "otter"
+    }
+    routed = AsyncMock()
+    monkeypatch.setattr(slack, "_route_to_session", routed)
+    client = AsyncMock()
+
+    await app.handlers["message"](
+        event(text="wolt", thread_ts="1000.1", event_ts="2000.1", ts="2000.1"),
+        client, {}, {"event_id": "EvThreadWolt"},
+    )
+
+    routed.assert_awaited_once()
+    assert routed.await_args.args[3]["session"] == "old-session-1"
+    client.chat_postMessage.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_selected_top_level_dm_starts_exactly_the_chosen_wolt(monkeypatch):
     app = install_fake_app(monkeypatch)
     slack._owner_selections["U12345678"] = "builder"
