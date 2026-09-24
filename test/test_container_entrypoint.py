@@ -285,61 +285,6 @@ class TestFirstRunSweep:
 
 
 # ---------------------------------------------------------------------------
-# Slack — the one process boot still starts by hand
-# ---------------------------------------------------------------------------
-
-class TestSlackBot:
-    BASE = {
-        "ENABLE_SLACK_BOT": "true",
-        "SLACK_BOT_TOKEN": "xoxb-token",
-        "SLACK_APP_TOKEN": "xapp-token",
-        "SLACK_BOT_DIR": "/bundle/container",
-        "SLACK_BOT_MODULE": "bot.slack_adapter",
-        "DEV_MODE": "false",
-        "PYTHONPATH": "/bundle/container/lib:",
-    }
-
-    def _launch(self, env):
-        with patch.object(boot.subprocess, "Popen") as popen:
-            boot.start_slack_bot(env)
-        return popen
-
-    def test_not_started_without_both_tokens(self):
-        for missing in ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"):
-            env = dict(self.BASE, **{missing: ""})
-            assert self._launch(env).call_count == 0
-
-    def test_not_started_unless_enabled(self):
-        assert self._launch(dict(self.BASE, ENABLE_SLACK_BOT="false")).call_count == 0
-
-    def test_runs_on_the_installed_interpreter_detached(self):
-        popen = self._launch(dict(self.BASE))
-
-        args, kwargs = popen.call_args
-        assert args[0] == ["woltspace-python", "-m", "bot.slack_adapter"]
-        assert kwargs["cwd"] == "/bundle/container"
-        assert kwargs["start_new_session"] is True
-        assert kwargs["env"]["BOT_ADAPTER"] == "slack"
-        assert kwargs["env"]["PYTHONPATH"] == "/bundle/container:/bundle/container/lib:"
-
-    def test_a_bot_that_cannot_start_is_a_warning_not_a_dead_colony(self, capsys):
-        """Bash backgrounded this; the failure cost one line and nothing else."""
-        with patch.object(boot.subprocess, "Popen",
-                          side_effect=FileNotFoundError(2, "no woltspace-python")):
-            assert boot.start_slack_bot(dict(self.BASE)) is None
-
-        assert "slack bot failed to start:" in capsys.readouterr().out
-
-    def test_dev_mode_wraps_it_in_watchfiles(self):
-        popen = self._launch(dict(self.BASE, DEV_MODE="true"))
-
-        assert popen.call_args.args[0] == [
-            "woltspace-python", "-m", "watchfiles", "--filter", "python",
-            "python -m bot.slack_adapter", "bot/",
-        ]
-
-
-# ---------------------------------------------------------------------------
 # Tunnel reporting
 # ---------------------------------------------------------------------------
 

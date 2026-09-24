@@ -1,14 +1,10 @@
-"""
-Slack adapter — thin layer over core.
-Responds to @mentions, reads full thread context, follows up in threads.
-Uses Socket Mode (no public HTTP endpoint needed).
+"""Owner-only Slack DM adapter over Socket Mode.
 
 Thread ownership model:
-  - @bot in channel → new thread, dog (Haiku) responds
+  - owner starts a DM thread → dog responds
   - Dog spawns a session → thread becomes session-owned
   - Messages in session-owned thread → routed directly to Claude Code session
-  - @bot in session-owned thread → escape hatch back to dog
-  - Dead session → error message, @bot to recover
+  - Dead session → ownership clears so the dog can recover in that thread
 """
 
 import os
@@ -19,13 +15,13 @@ import logging
 import asyncio
 import random
 import urllib.request
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
-from collections import defaultdict
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 import sys
-from bot.core import get_response, message_session, list_sessions, kill_session, get_tunnel_url, switch_wolt, list_wolts, _bot_log, build_ack_text, _sanitize_history
+from bot.core import get_response, message_session, _bot_log, build_ack_text, _sanitize_history
 from wolts import get_active_creature
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
@@ -117,6 +113,11 @@ DOG_ACK_MESSAGES = [
     "🐶 *full body wiggle*",
 ]
 
+SLACK_USER_ID_RE = re.compile(r"^[UW][A-Z0-9]{8,}$")
+_SEEN_EVENT_LIMIT = 2048
+_seen_event_ids: set[str] = set()
+_seen_event_order: deque[str] = deque()
+
 
 # --- Helpers ---
 
@@ -163,9 +164,43 @@ def _strip_mention(text: str, bot_user_id: str) -> str:
     return re.sub(rf"<@{bot_user_id}>", "", text).strip()
 
 
-def _has_mention(text: str, bot_user_id: str) -> bool:
-    """Check if text contains an @mention of the bot."""
-    return bool(bot_user_id) and f"<@{bot_user_id}>" in text
+def _owner_user_id() -> str | None:
+    """Return the explicitly configured owner, never an inferred user."""
+    value = os.environ.get("SLACK_OWNER_USER", "").strip()
+    return value if SLACK_USER_ID_RE.fullmatch(value) else None
+
+
+def _event_identity(body: dict, event: dict) -> str:
+    return str(
+        body.get("event_id")
+        or event.get("client_msg_id")
+        or event.get("event_ts")
+        or event.get("ts")
+        or ""
+    )
+
+
+def _accept_owner_dm(event: dict, body: dict) -> tuple[bool, str]:
+    """Fail closed before history, downloads, model calls, or session routing."""
+    owner = _owner_user_id()
+    if owner is None:
+        return False, "owner_not_configured"
+    if event.get("bot_id") or event.get("subtype"):
+        return False, "non_human_event"
+    if event.get("channel_type") != "im":
+        return False, "not_dm"
+    if event.get("user") != owner:
+        return False, "not_owner"
+    event_id = _event_identity(body, event)
+    if not event_id:
+        return False, "missing_event_id"
+    if event_id in _seen_event_ids:
+        return False, "duplicate"
+    _seen_event_ids.add(event_id)
+    _seen_event_order.append(event_id)
+    if len(_seen_event_order) > _SEEN_EVENT_LIMIT:
+        _seen_event_ids.discard(_seen_event_order.popleft())
+    return True, "accepted"
 
 
 def _extract_image(event: dict) -> tuple[bytes, str] | None:
@@ -275,13 +310,6 @@ def _set_session_owner(channel: str, thread_ts: str, session_name: str, wolt_nam
     _save_thread_sessions()
 
 
-def _clear_session_owner(channel: str, thread_ts: str):
-    """Release thread ownership (back to dog)."""
-    key = _thread_key(channel, thread_ts)
-    _thread_sessions.pop(key, None)
-    _save_thread_sessions()
-
-
 def _extract_session_info(result: dict) -> dict | None:
     """Extract session name, wolt, and creature from a get_response result."""
     if result.get("type") != "session":
@@ -297,7 +325,26 @@ def _extract_session_info(result: dict) -> dict | None:
 
 # --- Posting results ---
 
-async def _post_result(client, channel: str, thread_ts: str, result: dict):
+async def _post_text(client, channel: str, thread_ts: str, user: str, text: str):
+    """Prefer Slack's agent stream surface, with a plain-message fallback."""
+    try:
+        started = await client.chat_startStream(
+            channel=channel,
+            thread_ts=thread_ts,
+            recipient_user_id=user,
+            markdown_text=text,
+        )
+        stream_ts = started.get("ts")
+        if not stream_ts:
+            raise RuntimeError("chat.startStream returned no message timestamp")
+        await client.chat_stopStream(channel=channel, ts=stream_ts)
+        return
+    except Exception as exc:
+        logger.info("Slack streaming unavailable; using chat.postMessage: %s", exc)
+    await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=text)
+
+
+async def _post_result(client, channel: str, thread_ts: str, user: str, result: dict):
     """Post a result to Slack — handles text, session, and image types.
     Sends tool call logs before the final response."""
     for tc in result.get("tool_calls_log", []):
@@ -321,11 +368,7 @@ async def _post_result(client, channel: str, thread_ts: str, result: dict):
                 initial_comment=caption or None,
             )
     else:
-        await client.chat_postMessage(
-            channel=channel,
-            thread_ts=thread_ts,
-            text=format_response(result),
-        )
+        await _post_text(client, channel, thread_ts, user, format_response(result))
 
     # If a session was spawned, take ownership of the thread
     session_info = _extract_session_info(result)
@@ -382,11 +425,13 @@ async def _route_to_session(client, channel: str, thread_ts: str, owner: dict, t
         })
     else:
         error = result.get("error", "unknown error")
-        # Session is dead — tell user how to recover
+        # Return the thread to the dog so the next owner message can recover.
+        _thread_sessions.pop(_thread_key(channel, thread_ts), None)
+        _save_thread_sessions()
         await client.chat_postMessage(
             channel=channel,
             thread_ts=thread_ts,
-            text=f"session {session_name} is no longer active — @mention me to start a new conversation",
+            text=f"session {session_name} is no longer active — send again to start a new conversation",
         )
         _append_message(channel, thread_ts, {
             "role": "assistant",
@@ -397,108 +442,22 @@ async def _route_to_session(client, channel: str, thread_ts: str, owner: dict, t
 # --- Main app ---
 
 def create_app():
-    """Create and configure the Slack Bolt app."""
+    """Create the owner-only DM app; channel mentions are intentionally absent."""
     app = AsyncApp(token=os.environ["SLACK_BOT_TOKEN"])
 
-    @app.event("app_mention")
-    async def handle_mention(event, client, context):
-        """Handle @mentions — always goes to dog (Haiku).
-
-        This is the entry point for new conversations and the escape hatch
-        from session-owned threads.
-        """
-        channel = event["channel"]
-        user = event.get("user", "unknown")
-        text = event.get("text", "")
-        thread_ts = event.get("thread_ts", event["ts"])
-
-        bot_user_id = context.get("bot_user_id", "")
-        user_message = _strip_mention(text, bot_user_id)
-
-        # Check for image attachment
-        image_result = await asyncio.get_event_loop().run_in_executor(None, _extract_image, event)
-        user_content = None
-        if image_result:
-            image_bytes, mime_type = image_result
-            user_content = _image_content(image_bytes, mime_type, user_message)
-            user_message = f"[image] {user_message}" if user_message else "[image]"
-
-        if not user_message and user_content is None:
-            return
-
-        logger.info(f"Mention from user={user} in channel={channel} thread={thread_ts}")
-
-        # If this thread was session-owned, release it back to dog
-        owner = _get_session_owner(channel, thread_ts)
-        if owner:
-            _clear_session_owner(channel, thread_ts)
-            await client.chat_postMessage(
-                channel=channel,
-                thread_ts=thread_ts,
-                text=f"🐶 dog is back in this thread",
-            )
-
-        # Mark thread as active
-        _active_threads.add(_thread_key(channel, thread_ts))
-        _save_active_threads()
-
-        # Immediate ack
-        try:
-            await client.chat_postMessage(
-                channel=channel,
-                thread_ts=thread_ts,
-                text=random.choice(DOG_ACK_MESSAGES),
-            )
-        except Exception:
-            pass
-
-        # Build context from full thread
-        history = await _build_thread_context(client, channel, thread_ts, bot_user_id)
-        if history and history[-1]["role"] == "user":
-            history = history[:-1]
-
-        routing = {"adapter": "slack", "chat_id": channel, "thread_ts": thread_ts}
-        try:
-            result = get_response(user_message, conversation_history=list(history), routing=routing, user_content=user_content)
-        except Exception as e:
-            logger.error(f"Error getting response: {e}")
-            await client.chat_postMessage(channel=channel, thread_ts=thread_ts,
-                                          text="Something broke on my end. Try again in a sec.")
-            return
-
-        _append_history(channel, thread_ts, "user", user_message)
-        for msg in result["history_messages"]:
-            _append_message(channel, thread_ts, msg)
-
-        await _post_result(client, channel, thread_ts, result)
-
     @app.event("message")
-    async def handle_message(event, client, context):
-        """Handle follow-up messages in active threads.
-
-        If thread is session-owned → route directly to Claude Code session.
-        If thread is dog-owned → route to dog (Haiku).
-        Skip if message contains @mention (handled by handle_mention).
-        """
-        if event.get("bot_id") or event.get("subtype"):
+    async def handle_message(event, client, context, body):
+        """Start or continue one owner DM thread."""
+        accepted, reason = _accept_owner_dm(event, body)
+        if not accepted:
+            logger.info("Ignoring Slack event: %s", reason)
             return
 
         channel = event["channel"]
-        thread_ts = event.get("thread_ts")
-
-        if not thread_ts:
-            return
-        if _thread_key(channel, thread_ts) not in _active_threads:
-            return
-
-        user = event.get("user", "unknown")
+        thread_ts = event.get("thread_ts") or event["ts"]
+        user = event["user"]
         text = event.get("text", "")
         bot_user_id = context.get("bot_user_id", "")
-
-        # Skip if this is an @mention (handled by handle_mention)
-        if _has_mention(text, bot_user_id):
-            return
-
         user_message = _strip_mention(text, bot_user_id)
 
         # Check for image attachment
@@ -511,6 +470,11 @@ def create_app():
 
         if not user_message and user_content is None:
             return
+
+        key = _thread_key(channel, thread_ts)
+        if key not in _active_threads:
+            _active_threads.add(key)
+            _save_active_threads()
 
         # --- Session-owned thread: route directly to session ---
         owner = _get_session_owner(channel, thread_ts)
@@ -549,7 +513,7 @@ def create_app():
         for msg in result["history_messages"]:
             _append_message(channel, thread_ts, msg)
 
-        await _post_result(client, channel, thread_ts, result)
+        await _post_result(client, channel, thread_ts, user, result)
 
     return app
 

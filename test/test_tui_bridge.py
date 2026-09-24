@@ -42,8 +42,8 @@ def _wheel_root(tmp_path):
     return root
 
 
-def test_the_bridge_is_the_second_connector_and_telegram_stays_first():
-    assert [connector.name for connector in CONNECTORS] == ["telegram", "tui", "wolf"]
+def test_the_bridge_follows_chat_connectors_and_telegram_stays_first():
+    assert [connector.name for connector in CONNECTORS] == ["telegram", "slack", "tui", "wolf"]
 
 
 class TestResolution:
@@ -180,7 +180,7 @@ class TestPlan:
 
     def test_plan_connectors_keeps_telegram_at_index_zero(self, tmp_path):
         plans = plan_connectors(_layout(tmp_path), {})
-        assert [plan.name for plan in plans] == ["telegram", "tui", "wolf"]
+        assert [plan.name for plan in plans] == ["telegram", "slack", "tui", "wolf"]
 
 
 class TestSupervisorWiring:

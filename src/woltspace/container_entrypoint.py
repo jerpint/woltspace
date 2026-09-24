@@ -460,53 +460,6 @@ def preload_viewport(wolt_name: str, state_dir: Path) -> str:
     return url
 
 
-def start_slack_bot(env: dict[str, str]) -> subprocess.Popen | None:
-    """Slack has no connector yet, so it is still launched by hand.
-
-    Telegram, the wolf scheduler and the TUI pty bridge are all supervised
-    children of the control plane (ChannelConnector — see
-    src/woltspace/channels.py). Starting any of them here would give the colony
-    two of it: two pollers on one bot token, two schedulers firing every cron
-    twice. Inspect them with:  curl -s localhost:7777/health | jq .connectors
-    (NOT `woltspace status` — inside the container that name resolves to
-     container/bin/woltspace, a different CLI which knows nothing about
-     connectors.)
-
-    Slack runs on the installed interpreter, which owns slack-bolt via the
-    `connectors` extra.
-    """
-    if not (env.get("ENABLE_SLACK_BOT") == "true"
-            and env.get("SLACK_BOT_TOKEN") and env.get("SLACK_APP_TOKEN")):
-        return None
-
-    bot_dir = env["SLACK_BOT_DIR"]
-    module = env["SLACK_BOT_MODULE"]
-    dev_mode = env.get("DEV_MODE") == "true"
-    print(f"starting slack bot ({bot_dir}, dev={env.get('DEV_MODE')})...")
-
-    if dev_mode:
-        command = ["woltspace-python", "-m", "watchfiles", "--filter", "python",
-                   f"python -m {module}", "bot/"]
-    else:
-        command = ["woltspace-python", "-m", module]
-
-    child_env = dict(env)
-    child_env["BOT_ADAPTER"] = "slack"
-    child_env["PYTHONPATH"] = f"{bot_dir}:{env.get('PYTHONPATH', '')}"
-    try:
-        # start_new_session is bash's `disown`: the bot outlives nothing here,
-        # but it must not take a terminal signal meant for the control plane.
-        return subprocess.Popen(command, cwd=bot_dir, env=child_env,
-                                start_new_session=True)
-    except OSError as exc:
-        # A missing interpreter or an unusable cwd raises here, in the boot
-        # process. Bash launched this in a backgrounded subshell, where the same
-        # failure cost one line of stderr and nothing else — a chat adapter that
-        # cannot start is not a reason to withhold the whole colony.
-        print(f"slack bot failed to start: {exc}")
-        return None
-
-
 def report_tunnel_url(wolts_dir: Path) -> None:
     """Report the tunnel URL once it lands, without standing in the way.
 
@@ -592,10 +545,11 @@ def run_node_phase() -> int:
         parents=True, exist_ok=True)
 
     open_tmux_window(wolt_name, wolt_dir, wolts_dir)
-    start_slack_bot(dict(os.environ))
     start_tunnel_report(wolts_dir, dict(os.environ))
 
     # ── The control plane ──
+    # Every chat adapter is now a supervised ChannelConnector; boot must not
+    # launch a detached duplicate before handing ownership to `serve`.
     # The same supervisor a native user runs, from the same installed package,
     # in this very process: docker's SIGTERM reaches the owner of the connectors
     # instead of a shell that would leave them orphaned.

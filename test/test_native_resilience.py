@@ -871,7 +871,7 @@ class TestAStrayServeCannotTakeOverALiveDataRoot:
 
         layout = _layout(tmp_path, isolation="external")
         plans = {plan.name: plan for plan in plan_connectors(layout)}
-        assert [plan.enabled for plan in plans.values()] == [False, False, False]
+        assert [plan.enabled for plan in plans.values()] == [False, False, False, False]
         assert "ambient environment" in plans["telegram"].detail
         assert plans["telegram"].command == ()
         # The pty bridge is a guest here too: the real instance owns that port.
