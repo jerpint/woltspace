@@ -254,6 +254,53 @@ def test_rejects_empty_stdin_and_invalid_chat_id(tmp_path):
     assert not capture.exists()
 
 
+def test_transport_failure_reports_curl_diagnosis_without_secrets(tmp_path):
+    env, capture = _environment(tmp_path)
+    curl = Path(env["PATH"].split(":", 1)[0]) / "curl"
+    message = "harmless but private delivery text"
+    token = "xoxb-test-secret-token"
+    curl.write_text(
+        f"""#!/bin/bash
+printf '%s\\n' 'curl: (7) could not connect; {message}; {token}' >&2
+exit 7
+"""
+    )
+    env["SLACK_BOT_TOKEN"] = token
+
+    result = subprocess.run(
+        [NOTIFY, "--slack", "C0123ABC", "123.456"],
+        input=message,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+
+    assert result.returncode == 1
+    assert "transport failed (curl exit 7)" in result.stderr
+    assert "could not connect" in result.stderr
+    assert "<redacted>" in result.stderr
+    assert message not in result.stderr
+    assert token not in result.stderr
+    assert not capture.exists()
+
+
+def test_empty_successful_transport_response_is_diagnosed(tmp_path):
+    env, _ = _environment(tmp_path)
+    curl = Path(env["PATH"].split(":", 1)[0]) / "curl"
+    curl.write_text("#!/bin/bash\nexit 0\n")
+
+    result = subprocess.run(
+        [NOTIFY, "--telegram", "123"],
+        input="delivery text",
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+
+    assert result.returncode == 1
+    assert "invalid or empty API response" in result.stderr
+
+
 def test_session_context_inlines_complete_heredocs_for_explicit_routes():
     from sessions import _adapter_context
 
