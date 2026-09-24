@@ -13,10 +13,16 @@ from bot import slack_adapter as slack  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def isolated_admission(monkeypatch):
+def isolated_admission(monkeypatch, tmp_path):
     monkeypatch.setenv("SLACK_OWNER_USER", "U12345678")
+    monkeypatch.setattr(slack, "CHAT_DIR", tmp_path)
+    monkeypatch.setattr(slack, "OWNER_SELECTIONS_FILE", tmp_path / "owners.json")
+    monkeypatch.setattr(slack, "THREAD_SESSIONS_FILE", tmp_path / "threads.json")
     slack._seen_event_ids.clear()
     slack._seen_event_order.clear()
+    slack._owner_selections.clear()
+    slack._thread_sessions.clear()
+    slack._active_threads.clear()
 
 
 def event(**changes):
@@ -30,6 +36,27 @@ def event(**changes):
         "text": "hello",
     }
     return {**base, **changes}
+
+
+class FakeApp:
+    def __init__(self):
+        self.handlers = {}
+
+    def event(self, event_type):
+        def register(handler):
+            self.handlers[event_type] = handler
+            return handler
+        return register
+
+    def action(self, action_id):
+        return self.event(f"action:{action_id}")
+
+
+def install_fake_app(monkeypatch):
+    app = FakeApp()
+    monkeypatch.setattr(slack, "AsyncApp", lambda **kwargs: app)
+    slack.create_app()
+    return app
 
 
 class TestOwnerDmAdmission:
@@ -76,6 +103,9 @@ async def test_every_rejected_surface_returns_before_history_or_session_work(mon
                 return handler
             return register
 
+        def action(self, action_id):
+            return self.event(f"action:{action_id}")
+
     fake_app = FakeApp()
     monkeypatch.setattr(slack, "AsyncApp", lambda **kwargs: fake_app)
     extract = Mock(side_effect=AssertionError("attachment work must not run"))
@@ -83,10 +113,10 @@ async def test_every_rejected_surface_returns_before_history_or_session_work(mon
     response = Mock(side_effect=AssertionError("model/session work must not run"))
     monkeypatch.setattr(slack, "_extract_image", extract)
     monkeypatch.setattr(slack, "_build_thread_context", history)
-    monkeypatch.setattr(slack, "get_response", response)
+    monkeypatch.setattr(slack, "start_claude_session", response)
     slack.create_app()
 
-    assert set(fake_app.handlers) == {"message"}  # no app_mention listener
+    assert set(fake_app.handlers) == {"message", "action:select_wolt"}
     handler = fake_app.handlers["message"]
     rejected = [
         (event(user="U87654321"), {"event_id": "EvOther"}),
@@ -170,3 +200,132 @@ async def test_dead_session_releases_thread_back_to_dog(monkeypatch, tmp_path):
 
     assert "D1:1000.1" not in slack._thread_sessions
     assert "send again" in client.chat_postMessage.await_args.kwargs["text"]
+
+
+def test_selection_storage_is_atomic_private_and_owner_keyed(monkeypatch, tmp_path):
+    monkeypatch.setattr(slack, "CHAT_DIR", tmp_path)
+    path = tmp_path / "_owner_selections.json"
+    monkeypatch.setattr(slack, "OWNER_SELECTIONS_FILE", path)
+
+    slack._save_owner_selections({"U12345678": "n00b"})
+
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert path.read_text() == '{"U12345678": "n00b"}\n'
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_picker_caps_static_select_deterministically_but_text_lists_all():
+    wolts = {f"wolt-{index:03}": {"name": f"wolt-{index:03}"} for index in range(105)}
+    blocks = slack._picker_blocks(wolts)
+    options = blocks[0]["elements"][0]["options"]
+
+    assert len(options) == 100
+    assert options[0]["value"] == "wolt-000"
+    assert options[-1]["value"] == "wolt-099"
+    assert "105. wolt-104" in slack._picker_text(wolts)
+
+
+@pytest.mark.asyncio
+async def test_no_selection_shows_picker_without_replaying_or_agent_work(monkeypatch):
+    app = install_fake_app(monkeypatch)
+    eligible = {"n00b": {"name": "n00b", "type": "raccoon"}}
+    monkeypatch.setattr(slack, "_eligible_wolts", lambda: eligible)
+    extract = Mock(side_effect=AssertionError("attachment work must not run"))
+    start = Mock(side_effect=AssertionError("session work must not run"))
+    history = AsyncMock(side_effect=AssertionError("history must not run"))
+    monkeypatch.setattr(slack, "_extract_image", extract)
+    monkeypatch.setattr(slack, "start_claude_session", start)
+    monkeypatch.setattr(slack, "_build_thread_context", history)
+    client = AsyncMock()
+
+    await app.handlers["message"](
+        event(text="private first message"), client, {}, {"event_id": "EvPicker"}
+    )
+
+    sent = client.chat_postMessage.await_args.kwargs
+    assert "Choose your wolt" in sent["text"]
+    assert "private first message" not in str(sent)
+    extract.assert_not_called()
+    start.assert_not_called()
+    history.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_selected_top_level_dm_starts_exactly_the_chosen_wolt(monkeypatch):
+    app = install_fake_app(monkeypatch)
+    slack._owner_selections["U12345678"] = "builder"
+    monkeypatch.setattr(slack, "_eligible_wolts", lambda: {
+        "builder": {"name": "builder", "type": "beaver"},
+        "other": {"name": "other", "type": "raccoon"},
+    })
+    monkeypatch.setattr(slack, "_extract_image", lambda incoming: None)
+    calls = []
+
+    async def run_in_thread(function, *args, **kwargs):
+        calls.append((function, args, kwargs))
+        return {"name": "builder-busy-dam-123", "url": "https://session.test"}
+
+    monkeypatch.setattr(slack.asyncio, "to_thread", run_in_thread)
+    monkeypatch.setattr(slack, "_save_active_threads", lambda: None)
+    monkeypatch.setattr(slack, "_save_thread_sessions", lambda: None)
+    client = AsyncMock()
+
+    await app.handlers["message"](
+        event(text="do the work"), client, {}, {"event_id": "EvStart"}
+    )
+
+    assert len(calls) == 1
+    assert calls[0][0] is slack.start_claude_session
+    assert calls[0][1] == ("do the work",)
+    assert calls[0][2]["wolt"] == "builder"
+    assert slack._thread_sessions["D12345678:1234.5678"]["wolt"] == "builder"
+
+
+@pytest.mark.asyncio
+async def test_historical_owned_thread_is_not_retargeted_after_selection(monkeypatch):
+    app = install_fake_app(monkeypatch)
+    slack._owner_selections["U12345678"] = "new-wolt"
+    slack._thread_sessions["D12345678:1000.1"] = {
+        "session": "old-wolt-session-1", "wolt": "old-wolt", "creature": "otter"
+    }
+    routed = AsyncMock()
+    monkeypatch.setattr(slack, "_route_to_session", routed)
+    monkeypatch.setattr(
+        slack, "start_claude_session", Mock(side_effect=AssertionError("must not retarget"))
+    )
+
+    await app.handlers["message"](
+        event(thread_ts="1000.1", event_ts="2000.1", ts="2000.1"),
+        AsyncMock(), {}, {"event_id": "EvOldThread"},
+    )
+
+    assert routed.await_args.args[3]["wolt"] == "old-wolt"
+
+
+@pytest.mark.asyncio
+async def test_static_select_revalidates_owner_and_live_option(monkeypatch):
+    app = install_fake_app(monkeypatch)
+    monkeypatch.setattr(slack, "_eligible_wolts", lambda: {
+        "n00b": {"name": "n00b", "type": "raccoon"}
+    })
+    handler = app.handlers["action:select_wolt"]
+    ack = AsyncMock()
+    client = AsyncMock()
+    base = {
+        "user": {"id": "U12345678"},
+        "channel": {"id": "D12345678"},
+        "actions": [{"selected_option": {"value": "n00b"}}],
+    }
+
+    await handler(ack, base, client)
+    assert slack._owner_selections == {"U12345678": "n00b"}
+    ack.assert_awaited_once()
+
+    slack._owner_selections.clear()
+    await handler(AsyncMock(), {**base, "user": {"id": "U87654321"}}, AsyncMock())
+    assert slack._owner_selections == {}
+
+    await handler(AsyncMock(), {
+        **base, "actions": [{"selected_option": {"value": "removed-wolt"}}]
+    }, AsyncMock())
+    assert slack._owner_selections == {}

@@ -14,6 +14,7 @@ import base64
 import logging
 import asyncio
 import random
+import tempfile
 import urllib.request
 from collections import deque
 from datetime import datetime, timezone
@@ -21,8 +22,11 @@ from pathlib import Path
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 import sys
-from bot.core import get_response, message_session, _bot_log, build_ack_text, _sanitize_history
-from wolts import get_active_creature
+from bot.core import (
+    message_session, start_claude_session, _bot_log, build_ack_text,
+    _sanitize_history,
+)
+from wolts import get_active_creature, list_wolts
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from env_compat import get_env
@@ -51,6 +55,7 @@ CREATURE_EMOJIS = {"raccoon": "🦝", "beaver": "🦫", "otter": "🦦", "dog": 
 
 ACTIVE_THREADS_FILE = CHAT_DIR / "_active_threads.json"
 THREAD_SESSIONS_FILE = CHAT_DIR / "_thread_sessions.json"
+OWNER_SELECTIONS_FILE = CHAT_DIR / "_owner_selections.json"
 
 
 def _dog_name() -> str:
@@ -96,6 +101,103 @@ def _save_thread_sessions():
 
 _active_threads: set[str] = _load_active_threads()
 _thread_sessions: dict[str, dict] = _load_thread_sessions()
+
+RODENT_WOLT_TYPES = {"raccoon", "beaver", "otter", "rodent"}
+
+
+def _load_owner_selections() -> dict[str, str]:
+    try:
+        data = json.loads(OWNER_SELECTIONS_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return {
+        str(user): str(wolt) for user, wolt in data.items()
+        if isinstance(user, str) and isinstance(wolt, str)
+    } if isinstance(data, dict) else {}
+
+
+def _save_owner_selections(selections: dict[str, str]) -> None:
+    CHAT_DIR.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=CHAT_DIR, prefix=".owner-selections-", suffix=".tmp", text=True
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w") as handle:
+            handle.write(json.dumps(selections, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, OWNER_SELECTIONS_FILE)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+_owner_selections: dict[str, str] = _load_owner_selections()
+
+
+def _eligible_wolts() -> dict[str, dict]:
+    eligible = {}
+    for wolt in sorted(list_wolts(), key=lambda item: item.get("name", "").casefold()):
+        name = wolt.get("name", "")
+        if name and wolt.get("type") in RODENT_WOLT_TYPES:
+            eligible[name] = wolt
+    return eligible
+
+
+def _selected_wolt(user: str) -> dict | None:
+    name = _owner_selections.get(user)
+    if not name:
+        return None
+    selected = _eligible_wolts().get(name)
+    if selected is not None:
+        return selected
+    _owner_selections.pop(user, None)
+    _save_owner_selections(_owner_selections)
+    return None
+
+
+def _select_wolt(user: str, name: str) -> dict | None:
+    selected = _eligible_wolts().get(name)
+    if selected is None:
+        return None
+    _owner_selections[user] = name
+    _save_owner_selections(_owner_selections)
+    return selected
+
+
+def _picker_text(wolts: dict[str, dict]) -> str:
+    if not wolts:
+        return "No eligible wolts are available. Create a rodent wolt in the lodge first."
+    lines = ["Choose your wolt:"]
+    lines.extend(f"{index}. {name}" for index, name in enumerate(wolts, 1))
+    lines.append("\nIf the menu is unavailable, send `wolt <exact-name>`." )
+    return "\n".join(lines)
+
+
+def _picker_blocks(wolts: dict[str, dict]) -> list[dict]:
+    # Slack static_select accepts at most 100 options. Text fallback above lists
+    # the complete roster, so every eligible wolt remains reachable.
+    options = [
+        {"text": {"type": "plain_text", "text": name[:75]}, "value": name}
+        for name in list(wolts)[:100]
+    ]
+    if not options:
+        return []
+    return [{
+        "type": "actions",
+        "elements": [{
+            "type": "static_select",
+            "action_id": "select_wolt",
+            "placeholder": {"type": "plain_text", "text": "Choose your wolt"},
+            "options": options,
+        }],
+    }]
+
+
+def _text_selection(text: str) -> str | None:
+    match = re.fullmatch(r"/?wolt\s+(\S+)\s*", text, flags=re.IGNORECASE)
+    return match.group(1) if match else None
 
 
 # --- Dog ack messages ---
@@ -445,6 +547,32 @@ def create_app():
     """Create the owner-only DM app; channel mentions are intentionally absent."""
     app = AsyncApp(token=os.environ["SLACK_BOT_TOKEN"])
 
+    @app.action("select_wolt")
+    async def handle_select_wolt(ack, body, client):
+        await ack()
+        owner = _owner_user_id()
+        user = (body.get("user") or {}).get("id")
+        channel = (body.get("channel") or {}).get("id", "")
+        actions = body.get("actions")
+        action = actions[0] if isinstance(actions, list) and len(actions) == 1 else {}
+        option = action.get("selected_option") if isinstance(action, dict) else None
+        name = option.get("value") if isinstance(option, dict) else None
+        if user != owner or not channel.startswith("D") or not isinstance(name, str):
+            logger.info("Ignoring unauthorized or malformed Slack wolt selection")
+            return
+        selected = _select_wolt(user, name)
+        if selected is None:
+            logger.info("Ignoring stale Slack wolt selection")
+            await client.chat_postMessage(
+                channel=channel,
+                text="That wolt is no longer available. Send any DM to choose again.",
+            )
+            return
+        await client.chat_postMessage(
+            channel=channel,
+            text=f"Selected {name}. Send your message again to start a session.",
+        )
+
     @app.event("message")
     async def handle_message(event, client, context, body):
         """Start or continue one owner DM thread."""
@@ -460,21 +588,24 @@ def create_app():
         bot_user_id = context.get("bot_user_id", "")
         user_message = _strip_mention(text, bot_user_id)
 
-        # Check for image attachment
-        image_result = await asyncio.get_event_loop().run_in_executor(None, _extract_image, event)
-        user_content = None
-        if image_result:
-            image_bytes, mime_type = image_result
-            user_content = _image_content(image_bytes, mime_type, user_message)
-            user_message = f"[image] {user_message}" if user_message else "[image]"
-
-        if not user_message and user_content is None:
-            return
-
         key = _thread_key(channel, thread_ts)
-        if key not in _active_threads:
-            _active_threads.add(key)
-            _save_active_threads()
+
+        requested = _text_selection(user_message)
+        if requested is not None:
+            selected = _select_wolt(user, requested)
+            if selected is None:
+                await client.chat_postMessage(
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    text=f"No eligible wolt named `{requested}`. Send any DM to see the picker.",
+                )
+            else:
+                await client.chat_postMessage(
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    text=f"Selected {requested}. Send your message again to start a session.",
+                )
+            return
 
         # --- Session-owned thread: route directly to session ---
         owner = _get_session_owner(channel, thread_ts)
@@ -483,37 +614,53 @@ def create_app():
             await _route_to_session(client, channel, thread_ts, owner, user_message)
             return
 
-        # --- Dog-owned thread: route to Haiku ---
-        logger.info(f"Thread follow-up from user={user} in channel={channel} thread={thread_ts}")
-
-        # Immediate ack
-        try:
+        selected = _selected_wolt(user)
+        if selected is None:
+            wolts = _eligible_wolts()
             await client.chat_postMessage(
                 channel=channel,
                 thread_ts=thread_ts,
-                text=random.choice(DOG_ACK_MESSAGES),
+                text=_picker_text(wolts),
+                blocks=_picker_blocks(wolts),
             )
-        except Exception:
-            pass
+            return
 
-        history = await _build_thread_context(client, channel, thread_ts, bot_user_id)
-        if history and history[-1]["role"] == "user":
-            history = history[:-1]
+        if not user_message and not event.get("files"):
+            return
+        if key not in _active_threads:
+            _active_threads.add(key)
+            _save_active_threads()
+
+        image_result = await asyncio.get_event_loop().run_in_executor(
+            None, _extract_image, event
+        )
+        if image_result:
+            user_message = f"[image] {user_message}" if user_message else "[image]"
 
         routing = {"adapter": "slack", "chat_id": channel, "thread_ts": thread_ts}
         try:
-            result = get_response(user_message, conversation_history=list(history), routing=routing, user_content=user_content)
+            session = await asyncio.to_thread(
+                start_claude_session,
+                user_message,
+                wolt=selected["name"],
+                creature=selected.get("type", ""),
+                routing=routing,
+            )
         except Exception as e:
-            logger.error(f"Error getting response: {e}")
+            logger.error("Error starting selected Slack wolt: %s", e)
             await client.chat_postMessage(channel=channel, thread_ts=thread_ts,
                                           text="Something broke on my end. Try again in a sec.")
             return
-
-        _append_history(channel, thread_ts, "user", user_message)
-        for msg in result["history_messages"]:
-            _append_message(channel, thread_ts, msg)
-
-        await _post_result(client, channel, thread_ts, user, result)
+        _set_session_owner(
+            channel, thread_ts, session["name"], selected["name"], selected.get("type", "")
+        )
+        await client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text=build_ack_text(
+                session.get("url"), session["name"], "slack", selected.get("type", "")
+            ),
+        )
 
     return app
 

@@ -10,8 +10,14 @@ and duplicate events are rejected before history, attachment, model or session
 work. Existing persisted Slack thread-to-session ownership remains the routing
 model.
 
-Final text prefers `chat.startStream`/`chat.stopStream` and independently falls
-back to `chat.postMessage`. Status, native Stop and customized per-wolt sender
+The first DM with no valid identity-bound selection shows one Block Kit
+`static_select` plus an exact-name text fallback. The choice persists for the
+owner, is revalidated against the live rodent-wolt roster on every use, and
+opens a session for exactly that wolt on the next message. Removed or ineligible
+selections reopen the picker. Historical owned threads keep their original
+session even after a later selection change.
+
+Status, native Stop, streaming session output and customized per-wolt sender
 identity are not enabled by this slice.
 
 ## Reusable private-lodge manifest
@@ -37,7 +43,7 @@ settings:
     bot_events:
       - message.im
   interactivity:
-    is_enabled: false
+    is_enabled: true
   org_deploy_enabled: false
   socket_mode_enabled: true
   token_rotation_enabled: false
@@ -60,10 +66,11 @@ member ID (starts with `U` or `W`):
 ```
 
 The first live acceptance is deliberately separate: confirm the member ID with
-the owner, start the lodge, verify Slack is healthy, send one owner DM, observe
-one threaded response and session handoff, verify a non-owner DM and a channel
-mention cause no work, restart, then confirm the same thread still routes to
-its session. Never infer the owner from the first sender.
+the owner, start the lodge, verify Slack is healthy, send one owner DM, choose a
+wolt, resend the message, and observe the exact chosen-wolt session handoff.
+Verify a non-owner DM and a channel mention cause no work, restart, then confirm
+the same thread and owner selection recover. Never infer the owner from the
+first sender and never replay the pre-selection message.
 
 ## Modern Slack UX and command inventory
 
@@ -73,10 +80,11 @@ These are follow-ups, not current behavior:
 |---|---|---|
 | Slash commands | Yes | Declare each command and its request URL; Socket Mode can receive interactive payloads. |
 | Global/message shortcuts | Yes | Enable Interactivity and declare callbacks. |
-| Buttons, selects and modals | Yes, via Block Kit | Enable Interactivity; validate action/view payloads and preserve the owner gate. |
+| Static select | Yes, via Block Kit | Implemented for owner-scoped wolt selection; Interactivity must be enabled. |
+| Buttons, shortcuts and modals | Yes, via Block Kit | Future callbacks must preserve the same owner gate. |
 | Suggested prompts | Yes, in Slack's agent/assistant UI | Add `assistant:write` and Agent View handlers. |
 | Processing/active status | Yes | Add `assistant:write`; explicitly return status to `active`. |
-| Streaming responses | Yes | Implemented opportunistically with `chat:write`; plain message fallback remains required. |
+| Streaming responses | Yes | Deferred; plain session replies remain the acceptance path. |
 | Native Stop | Yes, through `agent_session_stopped` | Convert the app to Agent View, subscribe to the event, and map it to real session interruption. |
 | Per-wolt name/icon | Yes | Add `chat:write.customize`; keep sender identity auditable and owner-controlled. |
 
@@ -93,6 +101,15 @@ app-level token through an owner-controlled setup step. The reusable manifest
 remains the source of truth for scopes and subscriptions. OAuth must not turn
 "installer" into ambient multi-user authority: each lodge still pins one owner
 and rejects every other inbound identity by default.
+
+## Cross-channel follow-up
+
+Telegram must adopt the same identity-bound selection invariant after this
+Slack slice: when the allowed Telegram identity has no valid selected wolt,
+show **Choose your wolt**; never silently fall back to `active_dog`. Keep each
+channel's selection scoped to its authenticated owner identity, revalidate it
+against the live eligible-wolt roster, and reopen the picker if it disappears
+or becomes ineligible. This is roadmap scope only and is not implemented here.
 
 Official references: Slack's `chat.startStream`, `assistant.threads.setStatus`,
 `agent_session_stopped`, app manifests, Socket Mode and OAuth v2 documentation.
