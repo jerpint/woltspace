@@ -21,10 +21,13 @@ pinned to their original session. Attachments receive an explicit deferred
 response rather than being silently dropped.
 
 The picker message becomes the single temporary progress surface: accepted,
-starting, session ready/working, then at most one honest liveness update every
-30 seconds. The final `/notify` replaces that same message with the existing
-formatted response and session footer. Failures clean it up idempotently. The
-surface uses stock Unicode emoji only; richer animation is future polish.
+starting, then session ready/working with a validated link to the exact spawned
+session when the platform supplies its HTTPS lodge URL. Four conservative
+four-second stock-Unicode pulse frames provide a brief sign of life before the
+surface returns to at most one honest liveness update every 30 seconds. The
+final `/notify` replaces that same message with the existing formatted response
+and session footer. Final/error clearing stops further updates and failures
+clean up idempotently. No custom emoji, assets, scopes or hostnames are added.
 
 Native Agent status, Stop, streaming session output and customized per-wolt
 sender identity are not enabled by this slice.

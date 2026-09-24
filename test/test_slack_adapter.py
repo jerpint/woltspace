@@ -430,26 +430,68 @@ async def test_failed_session_watcher_deletes_and_clears_progress(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_progress_heartbeat_is_bounded_to_thirty_second_cadence(monkeypatch):
+async def test_progress_pulses_four_times_then_uses_thirty_second_heartbeat(monkeypatch):
     sleep = AsyncMock()
     monkeypatch.setattr(slack.asyncio, "sleep", sleep)
     monkeypatch.setattr(slack.registry, "get", Mock(return_value={
         "status": "running", "slack_progress_ts": "2000.1"
     }))
     client = AsyncMock()
-    client.chat_update.side_effect = RuntimeError("rate limited")
+    client.chat_update.side_effect = [None, None, None, None, RuntimeError("rate limited")]
 
-    await slack._watch_progress(client, "builder-session-1", "builder", "D123")
-
-    sleep.assert_awaited_once_with(30)
-    client.chat_update.assert_awaited_once_with(
-        channel="D123", ts="2000.1", text="🦫 Still working… 30s"
+    await slack._watch_progress(
+        client, "builder-session-1", "builder", "D123",
+        "https://lodge.test/tui?session=builder-session-1",
     )
+
+    assert [call.args[0] for call in sleep.await_args_list] == [4, 4, 4, 4, 30]
+    assert client.chat_update.await_count == 5
+    texts = [call.kwargs["text"] for call in client.chat_update.await_args_list]
+    assert texts[:4] == [
+        "🦫 Working ·  <https://lodge.test/tui?session=builder-session-1|Open session>",
+        "🦫 Working ··  <https://lodge.test/tui?session=builder-session-1|Open session>",
+        "🦫 Working ···  <https://lodge.test/tui?session=builder-session-1|Open session>",
+        "🦫 Working ··  <https://lodge.test/tui?session=builder-session-1|Open session>",
+    ]
+    assert texts[4] == (
+        "🦫 Still working…  "
+        "<https://lodge.test/tui?session=builder-session-1|Open session>"
+    )
+
+
+@pytest.mark.parametrize("session, expected", [
+    ({"name": "n00b-1", "url": "https://lodge.test/tui?session=n00b-1"},
+     "https://lodge.test/tui?session=n00b-1"),
+    ({"name": "n00b-1", "url": "http://lodge.test/tui?session=n00b-1"}, ""),
+    ({"name": "n00b-1", "url": "https://evil.test/tui?session=other"}, ""),
+    ({"name": "n00b-1", "url": "https://u:p@evil.test/tui?session=n00b-1"}, ""),
+    ({"name": "n00b-1", "url": "https://lodge.test/tui?session=n00b-1#x"}, ""),
+    ({"name": "n00b-1", "url": None}, ""),
+])
+def test_session_link_accepts_only_exact_platform_https_url(session, expected):
+    assert slack._session_link(session) == expected
+
+
+@pytest.mark.asyncio
+async def test_progress_pulse_stops_when_final_callback_clears_binding(monkeypatch):
+    monkeypatch.setattr(slack.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(slack.registry, "get", Mock(return_value={
+        "status": "running", "slack_progress_ts": ""
+    }))
+    client = AsyncMock()
+
+    await slack._watch_progress(client, "n00b-session-1", "n00b", "D1")
+
+    client.chat_update.assert_not_awaited()
+    client.chat_delete.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_spawn_pending_delivers_original_and_pins_root(monkeypatch):
-    session = {"name": "n00b-session-1"}
+    session = {
+        "name": "n00b-session-1",
+        "url": "https://lodge.test/tui?session=n00b-session-1",
+    }
     start = Mock(return_value=session)
     update = Mock()
     watcher = AsyncMock()
@@ -475,6 +517,9 @@ async def test_spawn_pending_delivers_original_and_pins_root(monkeypatch):
     assert slack._thread_sessions["D1:1000.1"]["session"] == "n00b-session-1"
     assert client.chat_update.await_args_list[0].kwargs["text"].startswith("✅ Accepted")
     assert "🦫 Working" in client.chat_update.await_args_list[1].kwargs["text"]
+    assert "<https://lodge.test/tui?session=n00b-session-1|Open session>" in (
+        client.chat_update.await_args_list[1].kwargs["text"]
+    )
 
 
 @pytest.mark.asyncio

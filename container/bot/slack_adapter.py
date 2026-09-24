@@ -18,6 +18,7 @@ import tempfile
 import time
 import fcntl
 import urllib.request
+import urllib.parse
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
@@ -63,6 +64,13 @@ PENDING_LOCK_FILE = CHAT_DIR / "_pending_messages.lock"
 PENDING_TTL_SECONDS = 600
 PENDING_MAX_PER_OWNER = 5
 PENDING_MAX_BYTES = 32 * 1024
+PROGRESS_PULSE_INTERVAL_SECONDS = 4
+PROGRESS_PULSE_FRAMES = (
+    "🦫 Working ·",
+    "🦫 Working ··",
+    "🦫 Working ···",
+    "🦫 Working ··",
+)
 
 
 def _dog_name() -> str:
@@ -551,35 +559,78 @@ async def _post_text(client, channel: str, thread_ts: str, user: str, text: str)
     await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=text)
 
 
-async def _watch_progress(client, session_name: str, wolt: str, channel: str):
+def _session_link(session: dict) -> str:
+    """Return only an exact platform-created HTTPS link for this session."""
+    url = session.get("url") or ""
+    name = session.get("name") or ""
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        query = urllib.parse.parse_qs(parsed.query, strict_parsing=True)
+    except (TypeError, ValueError):
+        return ""
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or
+            parsed.password or parsed.path != "/tui" or parsed.fragment or
+            query != {"session": [name]}):
+        return ""
+    return url
+
+
+async def _progress_record(session_name: str) -> dict | None:
+    record = await asyncio.to_thread(registry.get, session_name, check_alive=False)
+    if not record or not record.get("slack_progress_ts"):
+        return None
+    return record
+
+
+async def _clear_failed_progress(client, session_name: str, wolt: str,
+                                 channel: str, record: dict) -> None:
+    try:
+        await client.chat_delete(channel=channel, ts=record["slack_progress_ts"])
+    except Exception as exc:
+        logger.info("Could not remove failed Slack progress message: %s", exc)
+    await asyncio.to_thread(
+        registry.update, session_name, wolt=wolt,
+        slack_progress_mode="", slack_progress_ts="",
+    )
+
+
+async def _watch_progress(client, session_name: str, wolt: str, channel: str,
+                          session_link: str = ""):
     """Bounded honest liveness updates; final `/notify` owns completion."""
-    for count in range(1, 11):
+    suffix = f"  <{session_link}|Open session>" if session_link else ""
+    for frame in PROGRESS_PULSE_FRAMES:
+        await asyncio.sleep(PROGRESS_PULSE_INTERVAL_SECONDS)
+        record = await _progress_record(session_name)
+        if not record:
+            return
+        if record.get("status") != "running":
+            await _clear_failed_progress(client, session_name, wolt, channel, record)
+            return
+        try:
+            await client.chat_update(
+                channel=channel, ts=record["slack_progress_ts"],
+                text=f"{frame}{suffix}",
+            )
+        except Exception as exc:
+            logger.info("Stopping Slack progress pulse: %s", exc)
+            return
+    for _ in range(10):
         await asyncio.sleep(30)
-        record = await asyncio.to_thread(registry.get, session_name, check_alive=False)
-        if not record or not record.get("slack_progress_ts"):
+        record = await _progress_record(session_name)
+        if not record:
             return
         if record.get("status") == "running":
             try:
                 await client.chat_update(
                     channel=channel,
                     ts=record["slack_progress_ts"],
-                    text=f"🦫 Still working… {count * 30}s",
+                    text=f"🦫 Still working…{suffix}",
                 )
             except Exception as exc:
                 logger.info("Stopping Slack progress heartbeat: %s", exc)
                 return
             continue
-        try:
-            await client.chat_delete(channel=channel, ts=record["slack_progress_ts"])
-        except Exception as exc:
-            logger.info("Could not remove failed Slack progress message: %s", exc)
-        await asyncio.to_thread(
-            registry.update,
-            session_name,
-            wolt=wolt,
-            slack_progress_mode="",
-            slack_progress_ts="",
-        )
+        await _clear_failed_progress(client, session_name, wolt, channel, record)
         return
 
 
@@ -609,12 +660,16 @@ async def _spawn_pending(client, selected: dict, claimed: dict) -> None:
         slack_progress_mode="message", slack_progress_ts=picker_ts,
     )
     _pending_finish(channel, root_ts, "consumed", session["name"])
+    session_link = _session_link(session)
+    link_suffix = f"  <{session_link}|Open session>" if session_link else ""
     await client.chat_update(
         channel=channel, ts=picker_ts,
-        text=f"🌱 {selected['name']} session ready. 🦫 Working…", blocks=[],
+        text=f"🌱 {selected['name']} session ready. 🦫 Working…{link_suffix}", blocks=[],
     )
     watcher = asyncio.create_task(
-        _watch_progress(client, session["name"], selected["name"], channel)
+        _watch_progress(
+            client, session["name"], selected["name"], channel, session_link
+        )
     )
     _progress_watchers.add(watcher)
     watcher.add_done_callback(_progress_watchers.discard)
