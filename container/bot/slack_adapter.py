@@ -64,12 +64,12 @@ PENDING_LOCK_FILE = CHAT_DIR / "_pending_messages.lock"
 PENDING_TTL_SECONDS = 600
 PENDING_MAX_PER_OWNER = 5
 PENDING_MAX_BYTES = 32 * 1024
-PROGRESS_PULSE_INTERVAL_SECONDS = 4
+PROGRESS_PULSE_INTERVAL_SECONDS = 2
 PROGRESS_PULSE_FRAMES = (
-    "🦫 Working ·",
-    "🦫 Working ··",
-    "🦫 Working ···",
-    "🦫 Working ··",
+    "🦫 Gnawing ·",
+    "🦫 Gnawing ··",
+    "🦫 Gnawing ···",
+    "🦫 Gnawing ··",
 )
 
 
@@ -596,10 +596,16 @@ async def _clear_failed_progress(client, session_name: str, wolt: str,
     )
 
 
-async def _watch_progress(client, session_name: str, wolt: str, channel: str,
-                          session_link: str = ""):
+def _progress_link(session_name: str, record: dict) -> str:
+    """Revalidate the latest link so a pulse never restores stale link state."""
+    return _session_link({
+        "name": session_name,
+        "url": record.get("slack_session_link", ""),
+    })
+
+
+async def _watch_progress(client, session_name: str, wolt: str, channel: str):
     """Bounded honest liveness updates; final `/notify` owns completion."""
-    suffix = f"  <{session_link}|Open session>" if session_link else ""
     for frame in PROGRESS_PULSE_FRAMES:
         await asyncio.sleep(PROGRESS_PULSE_INTERVAL_SECONDS)
         record = await _progress_record(session_name)
@@ -608,6 +614,8 @@ async def _watch_progress(client, session_name: str, wolt: str, channel: str,
         if record.get("status") != "running":
             await _clear_failed_progress(client, session_name, wolt, channel, record)
             return
+        session_link = _progress_link(session_name, record)
+        suffix = f"  <{session_link}|Open session>" if session_link else ""
         try:
             await client.chat_update(
                 channel=channel, ts=record["slack_progress_ts"],
@@ -622,11 +630,13 @@ async def _watch_progress(client, session_name: str, wolt: str, channel: str,
         if not record:
             return
         if record.get("status") == "running":
+            session_link = _progress_link(session_name, record)
+            suffix = f"  <{session_link}|Open session>" if session_link else ""
             try:
                 await client.chat_update(
                     channel=channel,
                     ts=record["slack_progress_ts"],
-                    text=f"🦫 Still working…{suffix}",
+                    text=f"🦫 Still gnawing…{suffix}",
                 )
             except Exception as exc:
                 logger.info("Stopping Slack progress heartbeat: %s", exc)
@@ -668,12 +678,10 @@ async def _spawn_pending(client, selected: dict, claimed: dict) -> None:
     link_suffix = f"  <{session_link}|Open session>" if session_link else ""
     await client.chat_update(
         channel=channel, ts=picker_ts,
-        text=f"🌱 {selected['name']} session ready. 🦫 Working…{link_suffix}", blocks=[],
+        text=f"🌱 {selected['name']} session ready. 🦫 Gnawing…{link_suffix}", blocks=[],
     )
     watcher = asyncio.create_task(
-        _watch_progress(
-            client, session["name"], selected["name"], channel, session_link
-        )
+        _watch_progress(client, session["name"], selected["name"], channel)
     )
     _progress_watchers.add(watcher)
     watcher.add_done_callback(_progress_watchers.discard)
@@ -736,7 +744,7 @@ async def _route_to_session(client, channel: str, thread_ts: str, owner: dict, t
     progress = await client.chat_postMessage(
         channel=channel,
         thread_ts=thread_ts,
-        text=f"🦫 Working…{link_suffix}",
+        text=f"🦫 Gnawing…{link_suffix}",
     )
     progress_ts = progress.get("ts", "")
     if progress_ts:
@@ -746,7 +754,7 @@ async def _route_to_session(client, channel: str, thread_ts: str, owner: dict, t
             slack_session_link=session_link,
         )
         watcher = asyncio.create_task(
-            _watch_progress(client, session_name, wolt, channel, session_link)
+            _watch_progress(client, session_name, wolt, channel)
         )
         _progress_watchers.add(watcher)
         watcher.add_done_callback(_progress_watchers.discard)
@@ -779,7 +787,7 @@ async def _route_to_session(client, channel: str, thread_ts: str, owner: dict, t
                 )
                 await client.chat_update(
                     channel=channel, ts=progress_ts,
-                    text=f"🦫 Working…  <{session_link}|Open session>",
+                    text=f"🦫 Gnawing…  <{session_link}|Open session>",
                 )
         _append_message(channel, thread_ts, {
             "role": "assistant",

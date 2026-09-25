@@ -191,13 +191,13 @@ async def test_session_route_posts_fresh_progress_without_sent_receipt(monkeypat
     await slack._route_to_session(client, "D1", "1000.1", owner, "continue")
 
     client.chat_postMessage.assert_awaited_once_with(
-        channel="D1", thread_ts="1000.1", text="🦫 Working…"
+        channel="D1", thread_ts="1000.1", text="🦫 Gnawing…"
     )
     assert all("sent" not in str(call) for call in client.method_calls)
     client.chat_update.assert_awaited_once_with(
         channel="D1", ts="2000.1",
         text=(
-            "🦫 Working…  "
+            "🦫 Gnawing…  "
             "<https://lodge.test/tui?session=n00b-old-1|Open session>"
         ),
     )
@@ -228,7 +228,7 @@ async def test_session_route_keeps_known_link_on_fresh_bottom_progress(monkeypat
     client.chat_postMessage.assert_awaited_once_with(
         channel="D1", thread_ts="1000.1",
         text=(
-            "🦫 Working…  "
+            "🦫 Gnawing…  "
             "<https://lodge.test/tui?session=n00b-old-1|Open session>"
         ),
     )
@@ -484,29 +484,57 @@ async def test_progress_pulses_four_times_then_uses_thirty_second_heartbeat(monk
     sleep = AsyncMock()
     monkeypatch.setattr(slack.asyncio, "sleep", sleep)
     monkeypatch.setattr(slack.registry, "get", Mock(return_value={
-        "status": "running", "slack_progress_ts": "2000.1"
+        "status": "running", "slack_progress_ts": "2000.1",
+        "slack_session_link": "https://lodge.test/tui?session=builder-session-1",
     }))
     client = AsyncMock()
     client.chat_update.side_effect = [None, None, None, None, RuntimeError("rate limited")]
 
-    await slack._watch_progress(
-        client, "builder-session-1", "builder", "D123",
-        "https://lodge.test/tui?session=builder-session-1",
-    )
+    await slack._watch_progress(client, "builder-session-1", "builder", "D123")
 
-    assert [call.args[0] for call in sleep.await_args_list] == [4, 4, 4, 4, 30]
+    assert [call.args[0] for call in sleep.await_args_list] == [2, 2, 2, 2, 30]
     assert client.chat_update.await_count == 5
     texts = [call.kwargs["text"] for call in client.chat_update.await_args_list]
     assert texts[:4] == [
-        "🦫 Working ·  <https://lodge.test/tui?session=builder-session-1|Open session>",
-        "🦫 Working ··  <https://lodge.test/tui?session=builder-session-1|Open session>",
-        "🦫 Working ···  <https://lodge.test/tui?session=builder-session-1|Open session>",
-        "🦫 Working ··  <https://lodge.test/tui?session=builder-session-1|Open session>",
+        "🦫 Gnawing ·  <https://lodge.test/tui?session=builder-session-1|Open session>",
+        "🦫 Gnawing ··  <https://lodge.test/tui?session=builder-session-1|Open session>",
+        "🦫 Gnawing ···  <https://lodge.test/tui?session=builder-session-1|Open session>",
+        "🦫 Gnawing ··  <https://lodge.test/tui?session=builder-session-1|Open session>",
     ]
     assert texts[4] == (
-        "🦫 Still working…  "
+        "🦫 Still gnawing…  "
         "<https://lodge.test/tui?session=builder-session-1|Open session>"
     )
+
+
+@pytest.mark.asyncio
+async def test_progress_reads_newly_discovered_link_on_every_frame(monkeypatch):
+    monkeypatch.setattr(slack.asyncio, "sleep", AsyncMock())
+    records = [
+        {
+            "status": "running", "slack_progress_ts": "2000.1",
+            "slack_session_link": "",
+        },
+        {
+            "status": "running", "slack_progress_ts": "2000.1",
+            "slack_session_link": (
+                "https://lodge.test/tui?session=builder-session-1"
+            ),
+        },
+    ]
+    monkeypatch.setattr(
+        slack.registry, "get",
+        Mock(side_effect=[records[0], records[1], records[1]]),
+    )
+    client = AsyncMock()
+    client.chat_update.side_effect = [None, None, RuntimeError("stop")]
+
+    await slack._watch_progress(client, "builder-session-1", "builder", "D123")
+
+    texts = [call.kwargs["text"] for call in client.chat_update.await_args_list]
+    assert "Open session" not in texts[0]
+    assert "<https://lodge.test/tui?session=builder-session-1|Open session>" in texts[1]
+    assert "<https://lodge.test/tui?session=builder-session-1|Open session>" in texts[2]
 
 
 @pytest.mark.parametrize("session, expected", [
@@ -566,7 +594,7 @@ async def test_spawn_pending_delivers_original_and_pins_root(monkeypatch):
     }
     assert slack._thread_sessions["D1:1000.1"]["session"] == "n00b-session-1"
     assert client.chat_update.await_args_list[0].kwargs["text"].startswith("✅ Accepted")
-    assert "🦫 Working" in client.chat_update.await_args_list[1].kwargs["text"]
+    assert "🦫 Gnawing" in client.chat_update.await_args_list[1].kwargs["text"]
     assert "<https://lodge.test/tui?session=n00b-session-1|Open session>" in (
         client.chat_update.await_args_list[1].kwargs["text"]
     )
