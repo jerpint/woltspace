@@ -41,6 +41,19 @@ part of this work.
   were loaded.
 - Containers, candidate images and disposable session data were removed after
   inspection. The live lodge and its sessions were untouched.
+- A follow-up disposable wolt loaded the real copied-skill tree through
+  `.agents/skills`, expanded `/skill:woltspace-start-chat`, read the Slack mode
+  and its own identity, and successfully invoked the real `notify` binary into
+  the originating Slack thread. A fresh process then reopened the exact same
+  session and expanded `/skill:woltspace-notify`, producing a second successful
+  Slack notification while retaining its probewolt identity.
+- The skill/conversation proof used five assistant model steps and cost
+  $0.0363831 total, calculated by summing every assistant message's usage. This
+  matters for tool loops: the final assistant message's cost is only the last
+  request, not the whole turn. The persisted file was one 29,739-byte JSONL;
+  both skill expansions and both successful notify results are recorded there.
+- The disposable skill wolt was moved to Trash (recoverable); its container and
+  image were removed and zero matching Docker remnants remained.
 
 ## Gates before a live Woltspace session
 
