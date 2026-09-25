@@ -70,6 +70,21 @@ part of this work.
   and clean Ctrl-D exit printed the exact resumable session command. This is
   strong evidence for the tmux path, but does not yet prove Woltspace session
   registry creation, browser attachment, Stop, or vulture behavior.
+- A four-model, one-disposable-wolt-per-model comparison then ran the identical
+  interactive-TUI task: discover the IWCL skill and deliver one exact message.
+  DeepSeek V4 Pro 0813 passed in 5 seconds (3 assistant steps, $0.00416042),
+  DeepSeek V4.1 Flash in 6 seconds (3 steps, $0.000984162), and GLM 5.3 Flash
+  in 6 seconds (3 steps, $0.00163805). GLM coerced requested thinking-off to
+  its supported low setting.
+- MiMo V2.6 Pro is a qualified failure despite eventually delivering the right
+  text: it invented separate random opening and closing heredoc delimiters,
+  causing a malformed first delivery containing the stray closing marker, then
+  retried and delivered a duplicate. It was interrupted after 19 seconds and
+  5 assistant steps at $0.0026587674. This is exactly-once/tool-discipline
+  evidence, not a transport failure.
+- Combined reported model cost for the four runs was $0.0094413994. Every
+  disposable auth file was mode 0600 and exactly `{}`; no credential marker
+  appeared in persisted state.
 
 ## Gates before a live Woltspace session
 
