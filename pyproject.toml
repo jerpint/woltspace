@@ -43,7 +43,6 @@ build-backend = "hatchling.build"
 exclude = [
     "**/__pycache__/**",
     "**/*.pyc",
-    "container/bot/test_*.py",
 ]
 
 [tool.hatch.build.targets.wheel]
