@@ -35,6 +35,7 @@ class TestResolveHarness:
 
     def test_known_passes_through(self):
         assert resolve_harness("claude") == "claude"
+        assert resolve_harness("pi") == "pi"
 
 
 class TestCreatureModel:
@@ -207,6 +208,60 @@ class TestBuildCommandOpencode:
     def test_prompt_policy_omits_auto(self):
         cmd = build_command("opencode", "spawn", execution_policy="prompt")
         assert "--auto" not in cmd
+
+
+class TestBuildCommandPi:
+    """Offline contract for the experimental Pi 0.87.1 adapter."""
+
+    SESSION_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+    def test_spawn_uses_owned_session_id_name_model_and_prompt(self):
+        cmd = build_command(
+            "pi", "spawn", session_id=self.SESSION_ID,
+            session_name="testwolt-chompy-dam-abc123",
+            model="openrouter/auto", prompt="hey testwolt",
+        )
+        assert "wpi" in cmd
+        assert "--approve" in cmd
+        assert f"--session-id {self.SESSION_ID}" in cmd
+        assert "--name testwolt-chompy-dam-abc123" in cmd
+        assert "--model openrouter/auto" in cmd
+        assert cmd.endswith("'hey testwolt'")
+
+    def test_resume_uses_exact_session_not_picker_or_continue(self):
+        cmd = build_command(
+            "pi", "resume", resume_id=self.SESSION_ID,
+            model="openrouter/auto", prompt="continue",
+        )
+        assert f"--session {self.SESSION_ID}" in cmd
+        assert "--session-id" not in cmd
+        assert "--continue" not in cmd
+        assert "--resume" not in cmd
+
+    def test_resume_without_id_never_guesses(self):
+        cmd = build_command("pi", "resume", prompt="continue")
+        assert "--session" not in cmd
+        assert "--continue" not in cmd
+        assert "--resume" not in cmd
+
+    def test_login_opens_plain_tui(self):
+        cmd = build_command("pi", "login")
+        assert cmd.endswith("wpi")
+        assert "/login" not in cmd
+
+    def test_prompt_is_shell_quoted(self):
+        cmd = build_command("pi", "spawn", prompt='say "hi"; rm -rf /')
+        assert "'say \"hi\"; rm -rf /'" in cmd
+
+    def test_unknown_mode_raises(self):
+        with pytest.raises(ValueError, match="unknown mode"):
+            build_command("pi", "teleport")
+
+    def test_openrouter_groundwork_defaults(self):
+        model = "openrouter/anthropic/claude-sonnet-5"
+        assert creature_model("pi", "raccoon") == model
+        assert creature_model("pi", "beaver") == model
+        assert creature_model("pi", "otter") == model
 
 
 class TestCodexDiscovery:
@@ -411,7 +466,7 @@ class TestHarnessMetadata:
         from harnesses import harness_metadata
         meta = harness_metadata()
         ids = {m["id"] for m in meta}
-        assert {"claude", "codex"} <= ids
+        assert {"claude", "codex", "opencode", "pi"} <= ids
         for m in meta:
             assert m["label"] and m["emoji"]
             assert set(m["models"]) == {"raccoon", "beaver", "otter"}
@@ -950,6 +1005,9 @@ class TestIsValidModel:
         # ...but empty is still invalid even for freeform harnesses
         assert not is_valid_model("opencode", "")
         assert not is_valid_model("opencode", None)
+        assert is_valid_model("pi", "openrouter/anthropic/claude-sonnet-5")
+        assert not is_valid_model("pi", "")
+        assert not is_valid_model("pi", "openai/gpt-5.5")
 
 
 class TestResolveModel:
@@ -981,3 +1039,9 @@ class TestResolveModel:
 
     def test_freeform_no_pin_still_uses_tier_default(self):
         assert resolve_model("opencode", "raccoon", None) == "openai/gpt-4o"
+        assert resolve_model("pi", "raccoon", None) == \
+            "openrouter/anthropic/claude-sonnet-5"
+
+    def test_pi_honors_explicit_openrouter_pin(self):
+        model = "openrouter/deepseek/deepseek-v4.1-flash"
+        assert resolve_model("pi", "raccoon", model) == model

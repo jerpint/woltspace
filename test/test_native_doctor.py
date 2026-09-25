@@ -60,6 +60,29 @@ def test_doctor_discovers_existing_host_auth_without_copying_it(tmp_path, monkey
     assert not layout.wolts_dir.exists()
 
 
+def test_doctor_honors_pi_agent_dir_for_auth(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    host_home = tmp_path / "home"
+    pi_dir = tmp_path / "custom-pi-agent"
+    auth = pi_dir / "auth.json"
+    pi_dir.mkdir()
+    auth.write_text("{}")
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_dir))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: host_home))
+
+    def which(name):
+        return f"/usr/bin/{name}" if name in {"tmux", "pi"} else None
+
+    with patch("woltspace.doctor.shutil.which", side_effect=which):
+        checks = run_doctor(layout, check_port=False)
+
+    by_name = {check.name: check for check in checks}
+    assert by_name["host-auth"].status == "pass"
+    assert by_name["host-auth"].detail == "pi"
+    assert auth.read_text() == "{}"
+    assert not layout.wolts_dir.exists()
+
+
 def _restore_env(snapshot: dict):
     for key, value in snapshot.items():
         if value is None:

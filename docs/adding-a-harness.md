@@ -1,6 +1,6 @@
 # Adding a Harness
 
-A **harness** is the CLI coding agent a session runs on — Claude Code, Codex, and opencode today. This guide is for contributors bringing their own. If you can drive an agent from a terminal, keep per-agent state under a directory, and resume a past conversation, it can be a woltspace harness.
+A **harness** is the CLI coding agent a session runs on — Claude Code, Codex, opencode, and experimental Pi today. This guide is for contributors bringing their own. If you can drive an agent from a terminal, keep per-agent state under a directory, and resume a past conversation, it can be a woltspace harness.
 
 ## The mental model
 
