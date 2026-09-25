@@ -5,6 +5,7 @@ Falls back to session registry lookup, then Telegram default.
 """
 
 import json
+import urllib.parse
 from pathlib import Path
 
 import httpx
@@ -27,6 +28,21 @@ class NoNotificationTarget(RuntimeError):
     is the user's next step, and a 500 tells them woltspace is broken. The
     agent that hit this had to guess which it was.
     """
+
+
+def _slack_session_link(session: str, routing: dict | None) -> str:
+    """Return only the adapter-validated link bound to this exact session."""
+    url = (routing or {}).get("slack_session_link", "")
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        query = urllib.parse.parse_qs(parsed.query, strict_parsing=True)
+    except (TypeError, ValueError):
+        return ""
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or
+            parsed.password or parsed.path != "/tui" or parsed.fragment or
+            query != {"session": [session]}):
+        return ""
+    return url
 
 
 
@@ -173,10 +189,14 @@ async def _send_slack(
         raise RuntimeError("no slack channel provided and SLACK_NOTIFY_CHANNEL not set")
     progress_ts = (routing or {}).get("slack_progress_ts", "")
     progress_mode = (routing or {}).get("slack_progress_mode", "")
+    session_link = _slack_session_link(session, routing)
+    final_message = message
+    if session_link:
+        final_message += f"\n\n<{session_link}|Open session>"
     if progress_ts and progress_mode in {"stream", "message"}:
         try:
             await slack_finish_progress(
-                token, channel, progress_ts, progress_mode, message
+                token, channel, progress_ts, progress_mode, final_message
             )
         except Exception:
             await slack_delete(token, channel, progress_ts)
@@ -190,7 +210,7 @@ async def _send_slack(
                     slack_progress_ts="",
                 )
     else:
-        await slack_send(token, channel, thread_ts, message)
+        await slack_send(token, channel, thread_ts, final_message)
     append_chat_history("slack", channel, message)
     return {"adapter": "slack", "channel": channel}
 

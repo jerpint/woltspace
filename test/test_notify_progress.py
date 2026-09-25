@@ -16,6 +16,7 @@ def route(**changes):
         "thread_ts": "1000.1",
         "slack_progress_mode": "stream",
         "slack_progress_ts": "2000.1",
+        "slack_session_link": "https://lodge.test/tui?session=n00b-session-1",
         **changes,
     }
 
@@ -71,13 +72,39 @@ async def test_exact_session_route_replaces_progress_once_and_clears(
 
     assert result["adapter"] == "slack"
     finish.assert_awaited_once_with(
-        "xoxb-test", "D123", "2000.1", mode, "🦝 n00b: final answer"
+        "xoxb-test", "D123", "2000.1", mode,
+        "🦝 n00b: final answer\n\n"
+        "<https://lodge.test/tui?session=n00b-session-1|Open session>"
     )
     update.assert_called_once_with(
         "n00b-session-1", wolt="n00b",
         slack_progress_mode="", slack_progress_ts="",
     )
     assert "final answer" not in str(update.call_args)
+
+
+@pytest.mark.asyncio
+async def test_invalid_or_cross_session_link_is_not_attached(monkeypatch):
+    routing = route(
+        slack_progress_mode="message",
+        slack_session_link="https://evil.test/tui?session=other-session",
+    )
+    monkeypatch.setattr(notify, "dotenv_env", lambda key: "xoxb-test")
+    finish = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr(notify, "slack_finish_progress", finish)
+    monkeypatch.setattr(notify, "append_chat_history", Mock())
+    monkeypatch.setattr(
+        notify, "SessionRegistry", lambda root: Mock(update=Mock())
+    )
+
+    await notify._send_slack(
+        "final", "D123", "1000.1",
+        session="n00b-session-1", routing=routing,
+    )
+
+    finish.assert_awaited_once_with(
+        "xoxb-test", "D123", "2000.1", "message", "final"
+    )
 
 
 @pytest.mark.asyncio

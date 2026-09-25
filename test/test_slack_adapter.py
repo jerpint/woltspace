@@ -172,11 +172,17 @@ async def test_streaming_failure_uses_plain_postmessage_fallback():
 
 
 @pytest.mark.asyncio
-async def test_session_route_reports_successful_revival(monkeypatch, tmp_path):
+async def test_session_route_posts_fresh_progress_without_sent_receipt(monkeypatch, tmp_path):
     async def revived(*args):
-        return {"ok": True, "status": "revived", "url": "https://session.test"}
+        return {
+            "ok": True,
+            "status": "revived",
+            "url": "https://lodge.test/tui?session=n00b-old-1",
+        }
 
-    monkeypatch.setattr(slack.asyncio, "to_thread", revived)
+    monkeypatch.setattr(slack, "message_session", Mock(return_value=await revived()))
+    monkeypatch.setattr(slack.registry, "update", Mock())
+    monkeypatch.setattr(slack, "_watch_progress", AsyncMock())
     monkeypatch.setattr(slack, "CHAT_DIR", tmp_path)
     client = AsyncMock()
     client.chat_postMessage.return_value = {"ok": True, "ts": "2000.1"}
@@ -184,8 +190,49 @@ async def test_session_route_reports_successful_revival(monkeypatch, tmp_path):
 
     await slack._route_to_session(client, "D1", "1000.1", owner, "continue")
 
-    sent = client.chat_postMessage.await_args.kwargs["text"]
-    assert "revived and delivered" in sent
+    client.chat_postMessage.assert_awaited_once_with(
+        channel="D1", thread_ts="1000.1", text="🦫 Working…"
+    )
+    assert all("sent" not in str(call) for call in client.method_calls)
+    client.chat_update.assert_awaited_once_with(
+        channel="D1", ts="2000.1",
+        text=(
+            "🦫 Working…  "
+            "<https://lodge.test/tui?session=n00b-old-1|Open session>"
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_session_route_keeps_known_link_on_fresh_bottom_progress(monkeypatch, tmp_path):
+    async def delivered(*args):
+        return {
+            "ok": True,
+            "status": "delivered",
+            "url": "https://lodge.test/tui?session=n00b-old-1",
+        }
+
+    monkeypatch.setattr(slack, "message_session", Mock(return_value=await delivered()))
+    monkeypatch.setattr(slack.registry, "update", Mock())
+    monkeypatch.setattr(slack, "_watch_progress", AsyncMock())
+    monkeypatch.setattr(slack, "CHAT_DIR", tmp_path)
+    client = AsyncMock()
+    client.chat_postMessage.return_value = {"ok": True, "ts": "2000.1"}
+    owner = {
+        "session": "n00b-old-1", "wolt": "n00b", "creature": "raccoon",
+        "session_link": "https://lodge.test/tui?session=n00b-old-1",
+    }
+
+    await slack._route_to_session(client, "D1", "1000.1", owner, "continue")
+
+    client.chat_postMessage.assert_awaited_once_with(
+        channel="D1", thread_ts="1000.1",
+        text=(
+            "🦫 Working…  "
+            "<https://lodge.test/tui?session=n00b-old-1|Open session>"
+        ),
+    )
+    client.chat_update.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -193,13 +240,16 @@ async def test_dead_session_releases_thread_back_to_dog(monkeypatch, tmp_path):
     async def dead(*args):
         return {"ok": False, "error": "gone"}
 
-    monkeypatch.setattr(slack.asyncio, "to_thread", dead)
+    monkeypatch.setattr(slack, "message_session", Mock(return_value=await dead()))
+    monkeypatch.setattr(slack.registry, "update", Mock())
+    monkeypatch.setattr(slack, "_watch_progress", AsyncMock())
     monkeypatch.setattr(slack, "CHAT_DIR", tmp_path)
     monkeypatch.setattr(slack, "THREAD_SESSIONS_FILE", tmp_path / "owners.json")
     monkeypatch.setattr(slack, "_thread_sessions", {
         "D1:1000.1": {"session": "n00b-old-1", "wolt": "n00b", "creature": "raccoon"}
     })
     client = AsyncMock()
+    client.chat_postMessage.return_value = {"ok": True, "ts": "2000.1"}
     owner = slack._thread_sessions["D1:1000.1"]
 
     await slack._route_to_session(client, "D1", "1000.1", owner, "continue")

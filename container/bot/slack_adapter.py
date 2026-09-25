@@ -514,13 +514,15 @@ def _get_session_owner(channel: str, thread_ts: str) -> dict | None:
     return _thread_sessions.get(key)
 
 
-def _set_session_owner(channel: str, thread_ts: str, session_name: str, wolt_name: str, creature: str):
+def _set_session_owner(channel: str, thread_ts: str, session_name: str, wolt_name: str,
+                       creature: str, session_link: str = ""):
     """Mark a thread as owned by a session."""
     key = _thread_key(channel, thread_ts)
     _thread_sessions[key] = {
         "session": session_name,
         "wolt": wolt_name,
         "creature": creature,
+        "session_link": session_link,
     }
     _save_thread_sessions()
 
@@ -652,15 +654,17 @@ async def _spawn_pending(client, selected: dict, claimed: dict) -> None:
         await client.chat_delete(channel=channel, ts=picker_ts)
         logger.exception("Error starting selected Slack wolt")
         return
+    session_link = _session_link(session)
     _set_session_owner(
-        channel, root_ts, session["name"], selected["name"], selected.get("type", "")
+        channel, root_ts, session["name"], selected["name"], selected.get("type", ""),
+        session_link,
     )
     await asyncio.to_thread(
         registry.update, session["name"], wolt=selected["name"],
         slack_progress_mode="message", slack_progress_ts=picker_ts,
+        slack_session_link=session_link,
     )
     _pending_finish(channel, root_ts, "consumed", session["name"])
-    session_link = _session_link(session)
     link_suffix = f"  <{session_link}|Open session>" if session_link else ""
     await client.chat_update(
         channel=channel, ts=picker_ts,
@@ -723,7 +727,29 @@ async def _route_to_session(client, channel: str, thread_ts: str, owner: dict, t
     session_name = owner["session"]
     wolt = owner["wolt"]
     creature = owner["creature"]
-    emoji = CREATURE_EMOJIS.get(creature, "🐾")
+    session_link = owner.get("session_link", "")
+    link_suffix = f"  <{session_link}|Open session>" if session_link else ""
+
+    # Every human turn gets a fresh bottom-of-thread surface. The session's
+    # final /notify replaces this exact message, so liveness never drifts away
+    # from the newest turn and the thread does not accumulate status chatter.
+    progress = await client.chat_postMessage(
+        channel=channel,
+        thread_ts=thread_ts,
+        text=f"🦫 Working…{link_suffix}",
+    )
+    progress_ts = progress.get("ts", "")
+    if progress_ts:
+        await asyncio.to_thread(
+            registry.update, session_name, wolt=wolt,
+            slack_progress_mode="message", slack_progress_ts=progress_ts,
+            slack_session_link=session_link,
+        )
+        watcher = asyncio.create_task(
+            _watch_progress(client, session_name, wolt, channel, session_link)
+        )
+        _progress_watchers.add(watcher)
+        watcher.add_done_callback(_progress_watchers.discard)
 
     session_msg = (
         f"[slack message from human, channel={channel}, thread={thread_ts}]: {text}\n"
@@ -737,25 +763,39 @@ async def _route_to_session(client, channel: str, thread_ts: str, owner: dict, t
     _append_history(channel, thread_ts, "user", text)
 
     if result.get("ok"):
-        session_link = result.get("url") or session_name
-        if result.get("status") == "revived":
-            await client.chat_postMessage(
-                channel=channel,
-                thread_ts=thread_ts,
-                text=f"{emoji} {wolt}: → session had exited — revived and delivered\n{session_link}",
+        refreshed_link = _session_link({
+            "name": session_name,
+            "url": result.get("url") or "",
+        })
+        if refreshed_link and refreshed_link != session_link:
+            session_link = refreshed_link
+            _set_session_owner(
+                channel, thread_ts, session_name, wolt, creature, session_link
             )
-        else:
-            await client.chat_postMessage(
-                channel=channel,
-                thread_ts=thread_ts,
-                text=f"🪵 sent\n{session_link}",
-            )
+            if progress_ts:
+                await asyncio.to_thread(
+                    registry.update, session_name, wolt=wolt,
+                    slack_session_link=session_link,
+                )
+                await client.chat_update(
+                    channel=channel, ts=progress_ts,
+                    text=f"🦫 Working…  <{session_link}|Open session>",
+                )
         _append_message(channel, thread_ts, {
             "role": "assistant",
             "content": f"[delivered to session {session_name}]",
         })
     else:
         error = result.get("error", "unknown error")
+        if progress_ts:
+            try:
+                await client.chat_delete(channel=channel, ts=progress_ts)
+            except Exception as exc:
+                logger.info("Could not remove failed Slack progress message: %s", exc)
+            await asyncio.to_thread(
+                registry.update, session_name, wolt=wolt,
+                slack_progress_mode="", slack_progress_ts="",
+            )
         # Return the thread to the dog so the next owner message can recover.
         _thread_sessions.pop(_thread_key(channel, thread_ts), None)
         _save_thread_sessions()
