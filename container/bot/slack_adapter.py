@@ -585,7 +585,7 @@ async def _progress_record(session_name: str) -> dict | None:
 
 
 async def _set_agent_status(client, channel: str, thread_ts: str,
-                            status: str) -> bool:
+                            status: str, *, title: str = "") -> bool:
     """Use Slack's native Agent Session status when the app is configured.
 
     Agent View is an external app setting. Fail soft so the same candidate
@@ -593,10 +593,15 @@ async def _set_agent_status(client, channel: str, thread_ts: str,
     temporarily unable to create the native session.
     """
     try:
+        arguments = {
+            "channel_id": channel,
+            "thread_ts": thread_ts,
+            "status": status,
+        }
+        if title:
+            arguments["title"] = title
         response = await client.agents_sessions_setStatus(
-            channel_id=channel,
-            thread_ts=thread_ts,
-            status=status,
+            **arguments,
         )
         return bool(response.get("ok", True))
     except Exception as exc:
@@ -691,7 +696,9 @@ async def _spawn_pending(client, selected: dict, claimed: dict) -> None:
     )
     _pending_finish(channel, root_ts, "consumed", session["name"])
     link_suffix = f"  <{session_link}|Open session>" if session_link else ""
-    if await _set_agent_status(client, channel, root_ts, "processing"):
+    if await _set_agent_status(
+        client, channel, root_ts, "processing", title=session["name"]
+    ):
         await asyncio.to_thread(
             registry.update, session["name"], wolt=selected["name"],
             slack_progress_mode="agent", slack_progress_ts="",

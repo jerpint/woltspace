@@ -638,6 +638,33 @@ async def test_spawn_pending_delivers_original_and_pins_root(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_native_session_creation_uses_exact_woltspace_slug_as_title(monkeypatch):
+    session = {
+        "name": "n00b-muddy-pine-211c27",
+        "url": "https://lodge.test/tui?session=n00b-muddy-pine-211c27",
+    }
+    monkeypatch.setattr(slack, "start_claude_session", Mock(return_value=session))
+    monkeypatch.setattr(slack.registry, "update", Mock())
+    client = AsyncMock()
+    client.agents_sessions_setStatus.return_value = {"ok": True}
+    selected = {"name": "n00b", "type": "raccoon"}
+    claimed = {
+        "user": "U12345678", "channel": "D1", "root_ts": "1000.1",
+        "picker_ts": "2000.1", "text": "original task",
+    }
+
+    await slack._spawn_pending(client, selected, claimed)
+
+    client.agents_sessions_setStatus.assert_awaited_once_with(
+        channel_id="D1",
+        thread_ts="1000.1",
+        status="processing",
+        title="n00b-muddy-pine-211c27",
+    )
+    assert "Gnawing" not in client.chat_update.await_args_list[1].kwargs["text"]
+
+
+@pytest.mark.asyncio
 async def test_historical_owned_thread_is_not_retargeted_after_selection(monkeypatch):
     app = install_fake_app(monkeypatch)
     slack._owner_selections["U12345678"] = "new-wolt"
