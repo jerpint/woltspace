@@ -64,10 +64,12 @@ def _claude_token_in_env() -> bool:
 def _auth_paths(home: Path) -> dict[str, Path]:
     codex_home = Path(os.environ.get("CODEX_HOME", home / ".codex"))
     xdg_data = Path(os.environ.get("XDG_DATA_HOME", home / ".local" / "share"))
+    pi_home = Path(os.environ.get("PI_CODING_AGENT_DIR", home / ".pi" / "agent"))
     return {
         "claude": home / ".claude" / ".credentials.json",
         "codex": codex_home / "auth.json",
         "opencode": xdg_data / "opencode" / "auth.json",
+        "pi": pi_home / "auth.json",
     }
 
 
@@ -358,13 +360,13 @@ def run_doctor(
         "Install tmux and ensure it is on PATH." if not tmux else "",
     ))
 
-    harnesses = {name: shutil.which(name) for name in ("claude", "codex", "opencode")}
+    harnesses = {name: shutil.which(name) for name in ("claude", "codex", "opencode", "pi")}
     installed = {name: path for name, path in harnesses.items() if path}
     checks.append(DoctorCheck(
         "harness",
         "pass" if installed else "fail",
         ", ".join(f"{name}={path}" for name, path in installed.items()) or "none found",
-        "Install at least one supported CLI: claude, codex, or opencode." if not installed else "",
+        "Install at least one supported CLI: claude, codex, opencode, or pi." if not installed else "",
     ))
 
     home = Path.home()

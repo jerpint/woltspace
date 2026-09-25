@@ -39,6 +39,7 @@ _BIN_DIR = Path(__file__).resolve().parent.parent / "bin"
 WCLAUDE = str(_BIN_DIR / "wclaude")
 WCODEX = str(_BIN_DIR / "wcodex")
 WOPENCODE = str(_BIN_DIR / "wopencode")
+WPI = str(_BIN_DIR / "wpi")
 
 _ROLLOUT_UUID_RE = re.compile(
     r"rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$"
@@ -260,6 +261,43 @@ def _opencode_discover_session_id(data: dict, since: float) -> str | None:
     return after[0]["id"]
 
 
+def _pi_command(entry: dict, mode: str, *, session_id: str = "",
+                session_name: str = "", model: str = "", prompt: str = "",
+                resume_id: str = "", execution_policy=None) -> str:
+    """Build a Pi CLI command line (groundwork against Pi 0.87.1).
+
+    Pi accepts a caller-supplied UUID, so Woltspace owns the session identity
+    from first spawn and never has to discover it from Pi's JSONL store.
+    `--approve` trusts project-local resources for this run; it is not a tool
+    permission or sandbox flag. Pi deliberately has no built-in tool approval
+    system, so isolation remains the launcher's responsibility.
+
+    This command shape is covered offline only. A live TUI/model bench is a
+    separate, owner-approved gate before Pi is considered production-ready.
+    """
+    wrapper = entry["wrapper"]
+    if mode == "login":
+        # Login is a slash command inside Pi's interactive UI. Starting the TUI
+        # without injecting `/login` avoids treating an unverified argv command
+        # path as a prompt (and cannot contact a provider by itself).
+        return wrapper
+    if mode not in ("spawn", "resume"):
+        raise ValueError(f"unknown mode: {mode}")
+
+    parts = [wrapper, "--approve"]
+    if mode == "spawn" and session_id:
+        parts += ["--session-id", session_id]
+    elif mode == "resume" and resume_id:
+        parts += ["--session", resume_id]
+    if session_name and mode == "spawn":
+        parts += ["--name", session_name]
+    if model:
+        parts += ["--model", model]
+    if prompt:
+        parts.append(prompt)
+    return " ".join(shlex.quote(p) for p in parts)
+
+
 HARNESSES = {
     "claude": {
         "wrapper": WCLAUDE,
@@ -419,6 +457,41 @@ HARNESSES = {
         # to 0.0 if live IWCL delivery proves it submits cleanly.
         "paste_settle": 0.5,
     },
+    "pi": {
+        "wrapper": WPI,
+        "command": _pi_command,
+        "label": "Pi",
+        "emoji": "🥧",
+        "process_names": {"pi"},
+        # First exploration is deliberately OpenRouter-only. `openrouter/auto`
+        # is stable while individual routed model ids evolve; all three tiers
+        # remain identical until a no-model-call catalog review chooses explicit
+        # defaults. Woltspace still permits an explicit OpenRouter model pin.
+        "freeform_model": True,
+        "model_prefixes": ("openrouter/",),
+        "models": {
+            "raccoon": "openrouter/auto",
+            "beaver": "openrouter/auto",
+            "otter": "openrouter/auto",
+            "rodent": "openrouter/auto",
+            "wolf": "openrouter/auto",
+        },
+        "model_catalog": [
+            {"id": "openrouter/auto", "label": "OpenRouter Auto"},
+        ],
+        # Pi implements Agent Skills and explicitly invokes them as
+        # `/skill:<frontmatter-name>`. It recursively discovers .agents/skills,
+        # so the existing Woltspace bridge works for copied and plugin delivery.
+        "skill_invoke": "/skill:{name}",
+        # Like opencode, Pi does not namespace the platform symlink tree.
+        "platform_skill_invoke": "/skill:{name}",
+        "instructions_file": "AGENTS.md",
+        "auth_file": ".pi/agent/auth.json",
+        "preset_session_id": True,
+        "discover_session_id": None,
+        # UNVERIFIED live: tune if Pi's TUI folds immediate Enter into a paste.
+        "paste_settle": 0.5,
+    },
 }
 
 # Process names that mean "still launching" — the wrapper chain before the
@@ -520,14 +593,17 @@ def model_catalog(harness: str | None) -> list[dict]:
 def is_valid_model(harness: str | None, model: str | None) -> bool:
     """True if `model` is usable for this harness.
 
-    Freeform harnesses (freeform_model=True, e.g. opencode) accept ANY non-empty
-    provider/model string — their catalog is suggestions, not a whitelist.
+    Freeform harnesses (freeform_model=True, e.g. opencode) accept non-empty
+    provider/model strings — their catalog is suggestions, not a whitelist.
+    An optional model_prefixes tuple can bound that freedom to selected providers.
     Catalog-gated harnesses (claude, codex) require catalog membership.
     """
     if not model:
         return False
-    if get_harness(harness).get("freeform_model"):
-        return True
+    entry = get_harness(harness)
+    if entry.get("freeform_model"):
+        prefixes = entry.get("model_prefixes")
+        return not prefixes or model.startswith(tuple(prefixes))
     return any(m["id"] == model for m in model_catalog(harness))
 
 
