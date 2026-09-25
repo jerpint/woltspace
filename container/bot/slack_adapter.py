@@ -64,13 +64,6 @@ PENDING_LOCK_FILE = CHAT_DIR / "_pending_messages.lock"
 PENDING_TTL_SECONDS = 600
 PENDING_MAX_PER_OWNER = 5
 PENDING_MAX_BYTES = 32 * 1024
-PROGRESS_PULSE_INTERVAL_SECONDS = 2
-PROGRESS_PULSE_FRAMES = (
-    "🦫 Gnawing ·",
-    "🦫 Gnawing ··",
-    "🦫 Gnawing ···",
-    "🦫 Gnawing ··",
-)
 
 
 def _dog_name() -> str:
@@ -331,7 +324,6 @@ SLACK_USER_ID_RE = re.compile(r"^[UW][A-Z0-9]{8,}$")
 _SEEN_EVENT_LIMIT = 2048
 _seen_event_ids: set[str] = set()
 _seen_event_order: deque[str] = deque()
-_progress_watchers: set[asyncio.Task] = set()
 
 
 # --- Helpers ---
@@ -577,21 +569,9 @@ def _session_link(session: dict) -> str:
     return url
 
 
-async def _progress_record(session_name: str) -> dict | None:
-    record = await asyncio.to_thread(registry.get, session_name, check_alive=False)
-    if not record or not record.get("slack_progress_ts"):
-        return None
-    return record
-
-
 async def _set_agent_status(client, channel: str, thread_ts: str,
                             status: str, *, title: str = "") -> bool:
-    """Use Slack's native Agent Session status when the app is configured.
-
-    Agent View is an external app setting. Fail soft so the same candidate
-    keeps working before the owner enables/reinstalls it, or if Slack is
-    temporarily unable to create the native session.
-    """
+    """Set the supported native Slack Agent Session status."""
     try:
         arguments = {
             "channel_id": channel,
@@ -605,70 +585,8 @@ async def _set_agent_status(client, channel: str, thread_ts: str,
         )
         return bool(response.get("ok", True))
     except Exception as exc:
-        logger.info("Slack native agent status unavailable; using message progress: %s", exc)
+        logger.error("Slack native agent status unavailable: %s", exc)
         return False
-
-
-async def _clear_failed_progress(client, session_name: str, wolt: str,
-                                 channel: str, record: dict) -> None:
-    try:
-        await client.chat_delete(channel=channel, ts=record["slack_progress_ts"])
-    except Exception as exc:
-        logger.info("Could not remove failed Slack progress message: %s", exc)
-    await asyncio.to_thread(
-        registry.update, session_name, wolt=wolt,
-        slack_progress_mode="", slack_progress_ts="",
-    )
-
-
-def _progress_link(session_name: str, record: dict) -> str:
-    """Revalidate the latest link so a pulse never restores stale link state."""
-    return _session_link({
-        "name": session_name,
-        "url": record.get("slack_session_link", ""),
-    })
-
-
-async def _watch_progress(client, session_name: str, wolt: str, channel: str):
-    """Bounded honest liveness updates; final `/notify` owns completion."""
-    for frame in PROGRESS_PULSE_FRAMES:
-        await asyncio.sleep(PROGRESS_PULSE_INTERVAL_SECONDS)
-        record = await _progress_record(session_name)
-        if not record:
-            return
-        if record.get("status") != "running":
-            await _clear_failed_progress(client, session_name, wolt, channel, record)
-            return
-        session_link = _progress_link(session_name, record)
-        suffix = f"  <{session_link}|Open session>" if session_link else ""
-        try:
-            await client.chat_update(
-                channel=channel, ts=record["slack_progress_ts"],
-                text=f"{frame}{suffix}",
-            )
-        except Exception as exc:
-            logger.info("Stopping Slack progress pulse: %s", exc)
-            return
-    for _ in range(10):
-        await asyncio.sleep(30)
-        record = await _progress_record(session_name)
-        if not record:
-            return
-        if record.get("status") == "running":
-            session_link = _progress_link(session_name, record)
-            suffix = f"  <{session_link}|Open session>" if session_link else ""
-            try:
-                await client.chat_update(
-                    channel=channel,
-                    ts=record["slack_progress_ts"],
-                    text=f"🦫 Still gnawing…{suffix}",
-                )
-            except Exception as exc:
-                logger.info("Stopping Slack progress heartbeat: %s", exc)
-                return
-            continue
-        await _clear_failed_progress(client, session_name, wolt, channel, record)
-        return
 
 
 async def _spawn_pending(client, selected: dict, claimed: dict) -> None:
@@ -711,18 +629,15 @@ async def _spawn_pending(client, selected: dict, claimed: dict) -> None:
         return
     await asyncio.to_thread(
         registry.update, session["name"], wolt=selected["name"],
-        slack_progress_mode="message", slack_progress_ts=picker_ts,
+        slack_progress_mode="", slack_progress_ts="",
         slack_session_link=session_link,
     )
     await client.chat_update(
         channel=channel, ts=picker_ts,
-        text=f"🌱 {selected['name']} session ready. 🦫 Gnawing…{link_suffix}", blocks=[],
+        text=(f"🌱 {selected['name']} session ready, but Slack Agent View is not "
+              f"authorized. Reinstall with `assistant:write`.{link_suffix}"),
+        blocks=[],
     )
-    watcher = asyncio.create_task(
-        _watch_progress(client, session["name"], selected["name"], channel)
-    )
-    _progress_watchers.add(watcher)
-    watcher.add_done_callback(_progress_watchers.discard)
 
 
 async def _post_result(client, channel: str, thread_ts: str, user: str, result: dict):
@@ -779,7 +694,6 @@ async def _route_to_session(client, channel: str, thread_ts: str, owner: dict, t
     native_agent_status = await _set_agent_status(
         client, channel, thread_ts, "processing"
     )
-    progress_ts = ""
     if native_agent_status:
         await asyncio.to_thread(
             registry.update, session_name, wolt=wolt,
@@ -787,25 +701,13 @@ async def _route_to_session(client, channel: str, thread_ts: str, owner: dict, t
             slack_session_link=session_link,
         )
     else:
-        # Every human turn gets a fresh bottom-of-thread fallback. The final
-        # /notify replaces this exact message when Agent View is unavailable.
-        progress = await client.chat_postMessage(
+        await client.chat_postMessage(
             channel=channel,
             thread_ts=thread_ts,
-            text=f"🦫 Gnawing…{link_suffix}",
+            text=("Slack Agent View is not authorized. Reinstall with "
+                  f"`assistant:write` before retrying.{link_suffix}"),
         )
-        progress_ts = progress.get("ts", "")
-        if progress_ts:
-            await asyncio.to_thread(
-                registry.update, session_name, wolt=wolt,
-                slack_progress_mode="message", slack_progress_ts=progress_ts,
-                slack_session_link=session_link,
-            )
-            watcher = asyncio.create_task(
-                _watch_progress(client, session_name, wolt, channel)
-            )
-            _progress_watchers.add(watcher)
-            watcher.add_done_callback(_progress_watchers.discard)
+        return
 
     session_msg = (
         f"[slack message from human, channel={channel}, thread={thread_ts}]: {text}\n"
@@ -828,41 +730,21 @@ async def _route_to_session(client, channel: str, thread_ts: str, owner: dict, t
             _set_session_owner(
                 channel, thread_ts, session_name, wolt, creature, session_link
             )
-            if native_agent_status:
-                await asyncio.to_thread(
-                    registry.update, session_name, wolt=wolt,
-                    slack_session_link=session_link,
-                )
-            elif progress_ts:
-                await asyncio.to_thread(
-                    registry.update, session_name, wolt=wolt,
-                    slack_session_link=session_link,
-                )
-                await client.chat_update(
-                    channel=channel, ts=progress_ts,
-                    text=f"🦫 Gnawing…  <{session_link}|Open session>",
-                )
+            await asyncio.to_thread(
+                registry.update, session_name, wolt=wolt,
+                slack_session_link=session_link,
+            )
         _append_message(channel, thread_ts, {
             "role": "assistant",
             "content": f"[delivered to session {session_name}]",
         })
     else:
         error = result.get("error", "unknown error")
-        if native_agent_status:
-            await _set_agent_status(client, channel, thread_ts, "active")
-            await asyncio.to_thread(
-                registry.update, session_name, wolt=wolt,
-                slack_progress_mode="", slack_progress_ts="",
-            )
-        elif progress_ts:
-            try:
-                await client.chat_delete(channel=channel, ts=progress_ts)
-            except Exception as exc:
-                logger.info("Could not remove failed Slack progress message: %s", exc)
-            await asyncio.to_thread(
-                registry.update, session_name, wolt=wolt,
-                slack_progress_mode="", slack_progress_ts="",
-            )
+        await _set_agent_status(client, channel, thread_ts, "active")
+        await asyncio.to_thread(
+            registry.update, session_name, wolt=wolt,
+            slack_progress_mode="", slack_progress_ts="",
+        )
         # Return the thread to the dog so the next owner message can recover.
         _thread_sessions.pop(_thread_key(channel, thread_ts), None)
         _save_thread_sessions()

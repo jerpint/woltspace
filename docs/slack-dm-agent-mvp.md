@@ -20,45 +20,56 @@ convenience; it does not bypass the picker. Historical owned threads remain
 pinned to their original session. Attachments receive an explicit deferred
 response rather than being silently dropped.
 
-The picker message becomes the single temporary progress surface: accepted,
-starting, then session ready/working with a validated link to the exact spawned
-session when the platform supplies its HTTPS lodge URL. Four conservative
-four-second stock-Unicode pulse frames provide a brief sign of life before the
-surface returns to at most one honest liveness update every 30 seconds. The
-final `/notify` replaces that same message with the existing formatted response
-and session footer. Final/error clearing stops further updates and failures
-clean up idempotently. No custom emoji, assets, scopes or hostnames are added.
+The picker is replaced by a ready acknowledgement after selection. Slack's
+native Agent Session becomes `processing`, receives the exact Woltspace session
+slug as its title, and returns to `active` after the final reply. Each final
+reply includes a validated **Open session** link to the exact spawned session
+when the platform supplies its HTTPS lodge URL. Follow-ups stay pinned to the
+same Slack thread and Woltspace session.
 
-Native Agent status, Stop, streaming session output and customized per-wolt
-sender identity are not enabled by this slice.
+The earlier custom `Gnawing` progress-message surface is deprecated. Agent View
+plus `assistant:write` is the only supported setup. Native Stop and customized
+per-wolt sender identity remain future work.
 
 ## Reusable private-lodge manifest
 
-Create one Slack app per lodge from a manifest like this, then create an
-app-level token with `connections:write` and install the app to the workspace.
-Do not add `app_mentions:read` or channel message events for this DM-only MVP.
+Create one Slack app per lodge from this manifest, then create an app-level
+token with `connections:write` and install the app to the workspace. Do not add
+`app_mentions:read`, channel/group scopes, or channel/group message events.
 
-```yaml
-display_information:
-  name: Woltspace
-features:
-  bot_user:
-    display_name: Woltspace
-    always_online: false
-oauth_config:
-  scopes:
-    bot:
-      - chat:write
-      - im:history
-settings:
-  event_subscriptions:
-    bot_events:
-      - message.im
-  interactivity:
-    is_enabled: true
-  org_deploy_enabled: false
-  socket_mode_enabled: true
-  token_rotation_enabled: false
+```json
+{
+  "display_information": {
+    "name": "Woltspace",
+    "description": "Woltspace",
+    "background_color": "#3A6644"
+  },
+  "features": {
+    "agent_view": {
+      "agent_description": "gnaw. build. repeat"
+    },
+    "bot_user": {
+      "display_name": "Woltspace",
+      "always_online": false
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": ["assistant:write", "chat:write", "im:history"]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": ["app_home_opened", "message.im"]
+    },
+    "interactivity": {"is_enabled": true},
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false,
+    "app_level_token_rotation_enabled": false,
+    "is_mcp_enabled": false
+  }
+}
 ```
 
 Configure the lodge only after copying the intended human's immutable Slack
@@ -83,9 +94,7 @@ wolt, and observe the original message start the exact chosen-wolt session once.
 Verify a non-owner DM and a channel mention cause no work, restart, then confirm
 the same owned thread recovers. Never infer the owner from the first sender.
 
-## Modern Slack UX and command inventory
-
-These are follow-ups, not current behavior:
+## Current and future Slack surfaces
 
 | Surface | Slack support | Additional app work |
 |---|---|---|
@@ -93,14 +102,17 @@ These are follow-ups, not current behavior:
 | Global/message shortcuts | Yes | Enable Interactivity and declare callbacks. |
 | Static select | Yes, via Block Kit | Implemented for owner-scoped wolt selection; Interactivity must be enabled. |
 | Buttons, shortcuts and modals | Yes, via Block Kit | Future callbacks must preserve the same owner gate. |
-| Suggested prompts | Yes, in Slack's agent/assistant UI | Add `assistant:write` and Agent View handlers. |
-| Processing/active status | Yes | Add `assistant:write`; explicitly return status to `active`. |
-| Streaming responses | Yes | Deferred; plain session replies remain the acceptance path. |
+| Suggested prompts | Yes, in Slack's Agent View | Future handler and product work. |
+| Processing/active status | Implemented | Agent View plus `assistant:write`; final delivery returns status to `active`. |
+| Agent Session title | Implemented | Exact Woltspace slug today; human-friendly Woltspace-owned names later. |
+| Streaming responses | Partially | Uses Slack's stream API when available, with a plain final-message fallback. |
 | Native Stop | Yes, through `agent_session_stopped` | Convert the app to Agent View, subscribe to the event, and map it to real session interruption. |
 | Per-wolt name/icon | Yes | Add `chat:write.customize`; keep sender identity auditable and owner-controlled. |
 
 Switching an existing Slack app to Agent View and adding scopes/events are
 external app mutations and require explicit owner approval plus reinstall.
+Do not retain the old channel/mention manifest or custom progress-message setup
+as an alternate supported mode.
 
 ## From private setup to OAuth installation
 
@@ -124,3 +136,10 @@ or becomes ineligible. This is roadmap scope only and is not implemented here.
 
 Official references: Slack's `chat.startStream`, `assistant.threads.setStatus`,
 `agent_session_stopped`, app manifests, Socket Mode and OAuth v2 documentation.
+
+## Session naming follow-up
+
+The exact Woltspace session slug is the stable Agent Session title for this
+MVP. The intended browsing UX is a later Woltspace-owned human-friendly session
+name that is synchronized into Slack. Slack must not become the source of truth
+for session identity or naming.

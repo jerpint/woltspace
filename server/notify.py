@@ -113,43 +113,6 @@ async def slack_send(token: str, channel: str, thread_ts: str | None, text: str)
         return data
 
 
-async def slack_finish_progress(
-    token: str, channel: str, message_ts: str, mode: str, text: str
-) -> dict:
-    async with httpx.AsyncClient() as client:
-        headers = {"Authorization": f"Bearer {token}"}
-        if mode == "stream":
-            stopped = await client.post(
-                "https://slack.com/api/chat.stopStream",
-                json={"channel": channel, "ts": message_ts},
-                headers=headers,
-            )
-            stopped_data = stopped.json()
-            if not stopped_data.get("ok"):
-                raise RuntimeError(stopped_data.get("error", "chat.stopStream error"))
-        # stopStream's markdown_text is an additional final chunk. Always use
-        # chat.update after stopping so the temporary `gnawing…` bytes are
-        # replaced, not retained above the persisted final answer.
-        updated = await client.post(
-            "https://slack.com/api/chat.update",
-            json={"channel": channel, "ts": message_ts, "text": text},
-            headers=headers,
-        )
-        updated_data = updated.json()
-        if not updated_data.get("ok"):
-            raise RuntimeError(updated_data.get("error", "chat.update error"))
-        return updated_data
-
-
-async def slack_delete(token: str, channel: str, message_ts: str) -> None:
-    async with httpx.AsyncClient() as client:
-        await client.post(
-            "https://slack.com/api/chat.delete",
-            json={"channel": channel, "ts": message_ts},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-
-
 async def slack_set_agent_status(
     token: str, channel: str, thread_ts: str, status: str
 ) -> dict:
@@ -209,7 +172,6 @@ async def _send_slack(
         channel = dotenv_env("SLACK_NOTIFY_CHANNEL")
     if not channel:
         raise RuntimeError("no slack channel provided and SLACK_NOTIFY_CHANNEL not set")
-    progress_ts = (routing or {}).get("slack_progress_ts", "")
     progress_mode = (routing or {}).get("slack_progress_mode", "")
     session_link = _slack_session_link(session, routing)
     final_message = message
@@ -225,22 +187,6 @@ async def _send_slack(
                 )
             except Exception as exc:
                 logger.warning("Could not clear Slack native agent status: %s", exc)
-            if session and routing:
-                SessionRegistry(WOLTS_DIR).update(
-                    session,
-                    wolt=routing.get("wolt", ""),
-                    slack_progress_mode="",
-                    slack_progress_ts="",
-                )
-    elif progress_ts and progress_mode in {"stream", "message"}:
-        try:
-            await slack_finish_progress(
-                token, channel, progress_ts, progress_mode, final_message
-            )
-        except Exception:
-            await slack_delete(token, channel, progress_ts)
-            raise
-        finally:
             if session and routing:
                 SessionRegistry(WOLTS_DIR).update(
                     session,

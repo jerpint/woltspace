@@ -173,69 +173,22 @@ async def test_streaming_failure_uses_plain_postmessage_fallback():
 
 
 @pytest.mark.asyncio
-async def test_session_route_posts_fresh_progress_without_sent_receipt(monkeypatch, tmp_path):
-    async def revived(*args):
-        return {
-            "ok": True,
-            "status": "revived",
-            "url": "https://lodge.test/tui?session=n00b-old-1",
-        }
-
-    monkeypatch.setattr(slack, "message_session", Mock(return_value=await revived()))
-    monkeypatch.setattr(slack.registry, "update", Mock())
-    monkeypatch.setattr(slack, "_watch_progress", AsyncMock())
+async def test_session_route_requires_native_agent_view(monkeypatch, tmp_path):
+    deliver = Mock(side_effect=AssertionError("must not deliver without Agent View"))
+    monkeypatch.setattr(slack, "message_session", deliver)
     monkeypatch.setattr(slack, "CHAT_DIR", tmp_path)
     client = AsyncMock()
     client.agents_sessions_setStatus.side_effect = RuntimeError("not an agent app")
-    client.chat_postMessage.return_value = {"ok": True, "ts": "2000.1"}
     owner = {"session": "n00b-old-1", "wolt": "n00b", "creature": "raccoon"}
 
     await slack._route_to_session(client, "D1", "1000.1", owner, "continue")
 
     client.chat_postMessage.assert_awaited_once_with(
-        channel="D1", thread_ts="1000.1", text="🦫 Gnawing…"
-    )
-    assert all("sent" not in str(call) for call in client.method_calls)
-    client.chat_update.assert_awaited_once_with(
-        channel="D1", ts="2000.1",
-        text=(
-            "🦫 Gnawing…  "
-            "<https://lodge.test/tui?session=n00b-old-1|Open session>"
-        ),
-    )
-
-
-@pytest.mark.asyncio
-async def test_session_route_keeps_known_link_on_fresh_bottom_progress(monkeypatch, tmp_path):
-    async def delivered(*args):
-        return {
-            "ok": True,
-            "status": "delivered",
-            "url": "https://lodge.test/tui?session=n00b-old-1",
-        }
-
-    monkeypatch.setattr(slack, "message_session", Mock(return_value=await delivered()))
-    monkeypatch.setattr(slack.registry, "update", Mock())
-    monkeypatch.setattr(slack, "_watch_progress", AsyncMock())
-    monkeypatch.setattr(slack, "CHAT_DIR", tmp_path)
-    client = AsyncMock()
-    client.agents_sessions_setStatus.side_effect = RuntimeError("not an agent app")
-    client.chat_postMessage.return_value = {"ok": True, "ts": "2000.1"}
-    owner = {
-        "session": "n00b-old-1", "wolt": "n00b", "creature": "raccoon",
-        "session_link": "https://lodge.test/tui?session=n00b-old-1",
-    }
-
-    await slack._route_to_session(client, "D1", "1000.1", owner, "continue")
-
-    client.chat_postMessage.assert_awaited_once_with(
         channel="D1", thread_ts="1000.1",
-        text=(
-            "🦫 Gnawing…  "
-            "<https://lodge.test/tui?session=n00b-old-1|Open session>"
-        ),
+        text=("Slack Agent View is not authorized. Reinstall with "
+              "`assistant:write` before retrying."),
     )
-    client.chat_update.assert_not_awaited()
+    deliver.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -245,14 +198,13 @@ async def test_dead_session_releases_thread_back_to_dog(monkeypatch, tmp_path):
 
     monkeypatch.setattr(slack, "message_session", Mock(return_value=await dead()))
     monkeypatch.setattr(slack.registry, "update", Mock())
-    monkeypatch.setattr(slack, "_watch_progress", AsyncMock())
     monkeypatch.setattr(slack, "CHAT_DIR", tmp_path)
     monkeypatch.setattr(slack, "THREAD_SESSIONS_FILE", tmp_path / "owners.json")
     monkeypatch.setattr(slack, "_thread_sessions", {
         "D1:1000.1": {"session": "n00b-old-1", "wolt": "n00b", "creature": "raccoon"}
     })
     client = AsyncMock()
-    client.agents_sessions_setStatus.side_effect = RuntimeError("not an agent app")
+    client.agents_sessions_setStatus.return_value = {"ok": True}
     client.chat_postMessage.return_value = {"ok": True, "ts": "2000.1"}
     owner = slack._thread_sessions["D1:1000.1"]
 
@@ -494,85 +446,6 @@ async def test_attachment_is_explicitly_deferred(monkeypatch):
     assert not slack.PENDING_MESSAGES_FILE.exists()
 
 
-@pytest.mark.asyncio
-async def test_failed_session_watcher_deletes_and_clears_progress(monkeypatch):
-    monkeypatch.setattr(slack.asyncio, "sleep", AsyncMock())
-    monkeypatch.setattr(slack.registry, "get", Mock(return_value={
-        "status": "failed", "slack_progress_ts": "2000.1"
-    }))
-    update = Mock()
-    monkeypatch.setattr(slack.registry, "update", update)
-    client = AsyncMock()
-
-    await slack._watch_progress(
-        client, "builder-session-1", "builder", "D123"
-    )
-
-    client.chat_delete.assert_awaited_once_with(channel="D123", ts="2000.1")
-    update.assert_called_once_with(
-        "builder-session-1", wolt="builder",
-        slack_progress_mode="", slack_progress_ts="",
-    )
-
-
-@pytest.mark.asyncio
-async def test_progress_pulses_four_times_then_uses_thirty_second_heartbeat(monkeypatch):
-    sleep = AsyncMock()
-    monkeypatch.setattr(slack.asyncio, "sleep", sleep)
-    monkeypatch.setattr(slack.registry, "get", Mock(return_value={
-        "status": "running", "slack_progress_ts": "2000.1",
-        "slack_session_link": "https://lodge.test/tui?session=builder-session-1",
-    }))
-    client = AsyncMock()
-    client.chat_update.side_effect = [None, None, None, None, RuntimeError("rate limited")]
-
-    await slack._watch_progress(client, "builder-session-1", "builder", "D123")
-
-    assert [call.args[0] for call in sleep.await_args_list] == [2, 2, 2, 2, 30]
-    assert client.chat_update.await_count == 5
-    texts = [call.kwargs["text"] for call in client.chat_update.await_args_list]
-    assert texts[:4] == [
-        "🦫 Gnawing ·  <https://lodge.test/tui?session=builder-session-1|Open session>",
-        "🦫 Gnawing ··  <https://lodge.test/tui?session=builder-session-1|Open session>",
-        "🦫 Gnawing ···  <https://lodge.test/tui?session=builder-session-1|Open session>",
-        "🦫 Gnawing ··  <https://lodge.test/tui?session=builder-session-1|Open session>",
-    ]
-    assert texts[4] == (
-        "🦫 Still gnawing…  "
-        "<https://lodge.test/tui?session=builder-session-1|Open session>"
-    )
-
-
-@pytest.mark.asyncio
-async def test_progress_reads_newly_discovered_link_on_every_frame(monkeypatch):
-    monkeypatch.setattr(slack.asyncio, "sleep", AsyncMock())
-    records = [
-        {
-            "status": "running", "slack_progress_ts": "2000.1",
-            "slack_session_link": "",
-        },
-        {
-            "status": "running", "slack_progress_ts": "2000.1",
-            "slack_session_link": (
-                "https://lodge.test/tui?session=builder-session-1"
-            ),
-        },
-    ]
-    monkeypatch.setattr(
-        slack.registry, "get",
-        Mock(side_effect=[records[0], records[1], records[1]]),
-    )
-    client = AsyncMock()
-    client.chat_update.side_effect = [None, None, RuntimeError("stop")]
-
-    await slack._watch_progress(client, "builder-session-1", "builder", "D123")
-
-    texts = [call.kwargs["text"] for call in client.chat_update.await_args_list]
-    assert "Open session" not in texts[0]
-    assert "<https://lodge.test/tui?session=builder-session-1|Open session>" in texts[1]
-    assert "<https://lodge.test/tui?session=builder-session-1|Open session>" in texts[2]
-
-
 @pytest.mark.parametrize("session, expected", [
     ({"name": "n00b-1", "url": "https://lodge.test/tui?session=n00b-1"},
      "https://lodge.test/tui?session=n00b-1"),
@@ -587,20 +460,6 @@ def test_session_link_accepts_only_exact_platform_https_url(session, expected):
 
 
 @pytest.mark.asyncio
-async def test_progress_pulse_stops_when_final_callback_clears_binding(monkeypatch):
-    monkeypatch.setattr(slack.asyncio, "sleep", AsyncMock())
-    monkeypatch.setattr(slack.registry, "get", Mock(return_value={
-        "status": "running", "slack_progress_ts": ""
-    }))
-    client = AsyncMock()
-
-    await slack._watch_progress(client, "n00b-session-1", "n00b", "D1")
-
-    client.chat_update.assert_not_awaited()
-    client.chat_delete.assert_not_awaited()
-
-
-@pytest.mark.asyncio
 async def test_spawn_pending_delivers_original_and_pins_root(monkeypatch):
     session = {
         "name": "n00b-session-1",
@@ -608,10 +467,8 @@ async def test_spawn_pending_delivers_original_and_pins_root(monkeypatch):
     }
     start = Mock(return_value=session)
     update = Mock()
-    watcher = AsyncMock()
     monkeypatch.setattr(slack, "start_claude_session", start)
     monkeypatch.setattr(slack.registry, "update", update)
-    monkeypatch.setattr(slack, "_watch_progress", watcher)
     client = AsyncMock()
     client.agents_sessions_setStatus.side_effect = RuntimeError("not an agent app")
     selected = {"name": "n00b", "type": "raccoon"}
@@ -631,7 +488,10 @@ async def test_spawn_pending_delivers_original_and_pins_root(monkeypatch):
     }
     assert slack._thread_sessions["D1:1000.1"]["session"] == "n00b-session-1"
     assert client.chat_update.await_args_list[0].kwargs["text"].startswith("✅ Accepted")
-    assert "🦫 Gnawing" in client.chat_update.await_args_list[1].kwargs["text"]
+    assert "Slack Agent View is not authorized" in (
+        client.chat_update.await_args_list[1].kwargs["text"]
+    )
+    assert "Gnawing" not in client.chat_update.await_args_list[1].kwargs["text"]
     assert "<https://lodge.test/tui?session=n00b-session-1|Open session>" in (
         client.chat_update.await_args_list[1].kwargs["text"]
     )
