@@ -1,7 +1,8 @@
 # Pi harness roadmap
 
-Status: **experimental POC**. The disposable print-mode lifecycle is proven;
-the interactive Woltspace TUI/session path is not yet live-certified.
+Status: **experimental POC**. The disposable print-mode lifecycle and a
+containerized interactive-TUI/IWCL roundtrip are proven; native supervisor
+registration and browser attachment are not yet live-certified.
 
 ## Chosen first path
 
@@ -54,13 +55,28 @@ part of this work.
   both skill expansions and both successful notify results are recorded there.
 - The disposable skill wolt was moved to Trash (recoverable); its container and
   image were removed and zero matching Docker remnants remained.
+- A subsequent disposable run launched Pi's real interactive TUI on a PTY. Pi
+  discovered `woltspace-iwcl`, sent a heredoc message through the live lodge to
+  the exact current n00b session, accepted an IWCL-shaped inbound prompt in the
+  same TUI, and sent the exact reply back through the lodge. Both deliveries
+  were observed with the `probewolt` identity and exact source session.
+- The interactive proof used 12 assistant steps and $0.0521424 total. Its
+  first attempt exposed a packaging-fixture detail: the isolated `pi` Docker
+  build stage contains Node and Pi but not Python, so the Python control CLI
+  cannot run there until Python is supplied. The composed Woltspace runtime
+  must be the acceptance target; a bare harness stage is insufficient for
+  connector/IWCL tests.
+- The PTY accepted normal typed prompts and multi-line IWCL prompt injection,
+  and clean Ctrl-D exit printed the exact resumable session command. This is
+  strong evidence for the tmux path, but does not yet prove Woltspace session
+  registry creation, browser attachment, Stop, or vulture behavior.
 
 ## Gates before a live Woltspace session
 
 1. Review the diff and dependency/package payload. Confirm the pinned npm
    artifact and Node runtime on both target architectures.
-2. Exercise the interactive TUI through tmux: boot prompt/skill invocation,
-   readiness marker if needed, paste/Enter timing, Stop and liveness detection.
+2. Exercise the interactive TUI through the actual Woltspace tmux supervisor:
+   registry/browser attachment, readiness timing, Stop and liveness detection.
 3. Keep the owner-controlled OpenRouter credential in the existing secret
    boundary; never commit it or copy it into fixtures/logs.
 
