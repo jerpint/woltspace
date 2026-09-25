@@ -463,20 +463,21 @@ HARNESSES = {
         "label": "Pi",
         "emoji": "🥧",
         "process_names": {"pi"},
-        # First exploration is deliberately OpenRouter-only. `openrouter/auto`
-        # is stable while individual routed model ids evolve; all three tiers
-        # remain identical until a no-model-call catalog review chooses explicit
-        # defaults. Woltspace still permits an explicit OpenRouter model pin.
+        # First exploration is deliberately OpenRouter-only. Sonnet 5 is the
+        # explicit model proven by the disposable spawn/resume POC (2026-09-25).
+        # All tiers remain identical until atomic harness/provider/model config
+        # lets the product express reviewed tier choices without mixed pairs.
         "freeform_model": True,
         "model_prefixes": ("openrouter/",),
         "models": {
-            "raccoon": "openrouter/auto",
-            "beaver": "openrouter/auto",
-            "otter": "openrouter/auto",
-            "rodent": "openrouter/auto",
-            "wolf": "openrouter/auto",
+            "raccoon": "openrouter/anthropic/claude-sonnet-5",
+            "beaver": "openrouter/anthropic/claude-sonnet-5",
+            "otter": "openrouter/anthropic/claude-sonnet-5",
+            "rodent": "openrouter/anthropic/claude-sonnet-5",
+            "wolf": "openrouter/anthropic/claude-sonnet-5",
         },
         "model_catalog": [
+            {"id": "openrouter/anthropic/claude-sonnet-5", "label": "Claude Sonnet 5"},
             {"id": "openrouter/auto", "label": "OpenRouter Auto"},
         ],
         # Pi implements Agent Skills and explicitly invokes them as
@@ -489,7 +490,7 @@ HARNESSES = {
         "auth_file": ".pi/agent/auth.json",
         "preset_session_id": True,
         "discover_session_id": None,
-        # UNVERIFIED live: tune if Pi's TUI folds immediate Enter into a paste.
+        # UNVERIFIED interactive TUI: tune if Pi folds immediate Enter into a paste.
         "paste_settle": 0.5,
     },
 }

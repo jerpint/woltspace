@@ -258,9 +258,10 @@ class TestBuildCommandPi:
             build_command("pi", "teleport")
 
     def test_openrouter_groundwork_defaults(self):
-        assert creature_model("pi", "raccoon") == "openrouter/auto"
-        assert creature_model("pi", "beaver") == "openrouter/auto"
-        assert creature_model("pi", "otter") == "openrouter/auto"
+        model = "openrouter/anthropic/claude-sonnet-5"
+        assert creature_model("pi", "raccoon") == model
+        assert creature_model("pi", "beaver") == model
+        assert creature_model("pi", "otter") == model
 
 
 class TestCodexDiscovery:
@@ -1038,7 +1039,8 @@ class TestResolveModel:
 
     def test_freeform_no_pin_still_uses_tier_default(self):
         assert resolve_model("opencode", "raccoon", None) == "openai/gpt-4o"
-        assert resolve_model("pi", "raccoon", None) == "openrouter/auto"
+        assert resolve_model("pi", "raccoon", None) == \
+            "openrouter/anthropic/claude-sonnet-5"
 
     def test_pi_honors_explicit_openrouter_pin(self):
         model = "openrouter/deepseek/deepseek-v4.1-flash"
