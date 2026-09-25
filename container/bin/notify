@@ -75,6 +75,15 @@ def _creature_emoji(session: str, session_reg: Path) -> str:
     }.get(result.stdout.strip(), "🦫")
 
 
+def _safe_transport_detail(stderr: str, secrets: tuple[str, ...]) -> str:
+    """Keep curl's diagnosis while withholding request credentials/content."""
+    detail = " ".join(stderr.split())
+    for secret in sorted((value for value in secrets if value), key=len, reverse=True):
+        detail = detail.replace(secret, "<redacted>")
+    # Curl diagnostics are short. Bound untrusted output from wrappers/proxies.
+    return detail[:300] or "no curl diagnostic"
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
@@ -104,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
         payload.update(adapter="telegram", chat_id=route_id)
 
     api = os.environ.get("WOLTSPACE_API", "http://localhost:7777")
-    response = subprocess.run(
+    request = subprocess.run(
         [
             "curl",
             "-s",
@@ -119,11 +128,28 @@ def main(argv: list[str] | None = None) -> int:
         capture_output=True,
         text=True,
         check=False,
-    ).stdout
+    )
+    if request.returncode != 0:
+        detail = _safe_transport_detail(
+            request.stderr,
+            (
+                message,
+                full_message,
+                os.environ.get("SLACK_BOT_TOKEN", ""),
+                os.environ.get("SLACK_APP_TOKEN", ""),
+                os.environ.get("TELEGRAM_BOT_TOKEN", ""),
+            ),
+        )
+        print(
+            f"notify: transport failed (curl exit {request.returncode}): {detail}",
+            file=sys.stderr,
+        )
+        return 1
+    response = request.stdout
     try:
         result = json.loads(response)
     except json.JSONDecodeError:
-        print(f"notify: failed: {response or 'unknown error'}", file=sys.stderr)
+        print("notify: failed: invalid or empty API response", file=sys.stderr)
         return 1
     if result.get("ok"):
         print(f"[notify] → {result.get('adapter', '?')}: {message}")

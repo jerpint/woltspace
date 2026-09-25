@@ -21,6 +21,7 @@ from woltspace.channel_supervisor import (  # noqa: E402
 )
 from woltspace.channels import (  # noqa: E402
     ConnectorPlan,
+    SlackConnector,
     TelegramConnector,
     connector_secrets,
     plan_connectors,
@@ -73,7 +74,72 @@ class TestTelegramPlan:
         plan = TelegramConnector().plan(layout, {})
         assert plan.enabled is False
         assert plan.command == ()
-        assert "config.json" in plan.remedy
+
+
+class TestSlackPlan:
+    BASE = {
+        "ENABLE_SLACK_BOT": "true",
+        "SLACK_BOT_TOKEN": "xoxb-test",
+        "SLACK_APP_TOKEN": "xapp-test",
+        "SLACK_OWNER_USER": "U12345678",
+        "WOLTSPACE_ENTRYPOINT": "1",
+    }
+
+    def test_disabled_without_an_explicit_owner(self, layout):
+        env = dict(self.BASE)
+        env.pop("SLACK_OWNER_USER")
+        plan = SlackConnector().plan(layout, env)
+        assert plan.enabled is False
+        assert "owner user ID" in plan.detail
+
+    @pytest.mark.parametrize("owner", ["", "jerpint", "C12345678", "U12 345678"])
+    def test_malformed_owner_configuration_fails_closed(self, layout, owner):
+        plan = SlackConnector().plan(layout, dict(self.BASE, SLACK_OWNER_USER=owner))
+        assert plan.enabled is False
+
+    def test_enabled_plan_carries_private_credentials_only_in_child_env(self, layout):
+        plan = SlackConnector().plan(layout, self.BASE)
+        assert plan.enabled is True
+        assert plan.command[-2:] == ("-m", "bot.slack_adapter")
+        assert plan.env["SLACK_OWNER_USER"] == "U12345678"
+        assert plan.env["SLACK_BOT_TOKEN"] == "xoxb-test"
+        public = json.dumps(plan.to_record())
+        assert "xoxb-test" not in public
+        assert "xapp-test" not in public
+        assert "U12345678" not in public
+
+    def test_custom_adapter_environment_cannot_replace_owner_dm_runtime(self, layout):
+        plan = SlackConnector().plan(layout, {
+            **self.BASE,
+            "SLACK_BOT_DIR": "/tmp/legacy-slack",
+            "SLACK_BOT_MODULE": "legacy.slack_adapter",
+        })
+
+        assert plan.cwd == str(layout.install_root / "container")
+        assert plan.command[-2:] == ("-m", "bot.slack_adapter")
+        assert "legacy" not in plan.detail
+
+    def test_config_shape_and_all_three_secrets_are_resolved(self, layout):
+        write_config(layout, {"channels": {"slack": {
+            "enabled": True,
+            "bot_token": "xoxb-config",
+            "app_token": "xapp-config",
+            "owner_user": "U87654321",
+        }}})
+        plan = SlackConnector().plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"})
+        assert plan.enabled is True
+        assert connector_secrets([plan]) == {
+            "SLACK_BOT_TOKEN": "xoxb-config",
+            "SLACK_APP_TOKEN": "xapp-config",
+            "SLACK_OWNER_USER": "U87654321",
+        }
+
+    def test_ambient_tokens_never_start_a_guest(self, layout):
+        env = dict(self.BASE)
+        env.pop("WOLTSPACE_ENTRYPOINT")
+        plan = SlackConnector().plan(layout, env)
+        assert plan.enabled is False
+        assert "not the platform entrypoint" in plan.detail
 
     def test_enabled_from_data_root_config(self, layout):
         write_config(layout, {
@@ -593,10 +659,10 @@ class TestContainerEntrypoint:
             dev_mode=False, env={},
         )
         assert env["TELEGRAM_BOT_MODULE"] == "bot.telegram_adapter"
-        # ...and the only process boot starts by hand is slack, which has no
-        # connector yet. A second telegram poller on one token is the bug.
+        # No chat adapter is launched by hand; the connector supervisor owns
+        # both Telegram and Slack. A second poller on one token is the bug.
         launchers = [name for name in vars(container_entrypoint)
-                     if name.startswith("start_") and "slack" not in name]
+                     if name.startswith("start_")]
         assert launchers == ["start_tunnel_report"]
 
     def test_boot_runs_the_installed_control_plane_in_its_own_process(self):

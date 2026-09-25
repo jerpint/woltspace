@@ -5,9 +5,12 @@ Falls back to session registry lookup, then Telegram default.
 """
 
 import json
+import logging
+import urllib.parse
 from pathlib import Path
 
 import httpx
+from sessions import SessionRegistry
 
 from .config import (
     STATE_DIR,
@@ -18,6 +21,8 @@ from .config import (
 )
 from .state import sanitize_session
 
+logger = logging.getLogger(__name__)
+
 
 class NoNotificationTarget(RuntimeError):
     """Nowhere to deliver to — a configuration gap, not a platform failure.
@@ -26,6 +31,21 @@ class NoNotificationTarget(RuntimeError):
     is the user's next step, and a 500 tells them woltspace is broken. The
     agent that hit this had to guess which it was.
     """
+
+
+def _slack_session_link(session: str, routing: dict | None) -> str:
+    """Return only the adapter-validated link bound to this exact session."""
+    url = (routing or {}).get("slack_session_link", "")
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        query = urllib.parse.parse_qs(parsed.query, strict_parsing=True)
+    except (TypeError, ValueError):
+        return ""
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or
+            parsed.password or parsed.path != "/tui" or parsed.fragment or
+            query != {"session": [session]}):
+        return ""
+    return url
 
 
 
@@ -93,6 +113,25 @@ async def slack_send(token: str, channel: str, thread_ts: str | None, text: str)
         return data
 
 
+async def slack_set_agent_status(
+    token: str, channel: str, thread_ts: str, status: str
+) -> dict:
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://slack.com/api/agents.sessions.setStatus",
+            json={
+                "channel_id": channel,
+                "thread_ts": thread_ts,
+                "status": status,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        data = response.json()
+        if not data.get("ok"):
+            raise RuntimeError(data.get("error", "agents.sessions.setStatus error"))
+        return data
+
+
 async def _send_telegram(session: str, message: str, chat_id: str) -> dict:
     """Send a notification via Telegram with den-reply footer."""
     token = dotenv_env("TELEGRAM_BOT_TOKEN")
@@ -117,7 +156,14 @@ async def _send_telegram(session: str, message: str, chat_id: str) -> dict:
     return {"adapter": "telegram", "chat_id": chat_id}
 
 
-async def _send_slack(message: str, channel: str, thread_ts: str | None = None) -> dict:
+async def _send_slack(
+    message: str,
+    channel: str,
+    thread_ts: str | None = None,
+    *,
+    session: str = "",
+    routing: dict | None = None,
+) -> dict:
     """Send a notification via Slack to a specific channel/thread."""
     token = dotenv_env("SLACK_BOT_TOKEN")
     if not token:
@@ -126,7 +172,30 @@ async def _send_slack(message: str, channel: str, thread_ts: str | None = None) 
         channel = dotenv_env("SLACK_NOTIFY_CHANNEL")
     if not channel:
         raise RuntimeError("no slack channel provided and SLACK_NOTIFY_CHANNEL not set")
-    await slack_send(token, channel, thread_ts, message)
+    progress_mode = (routing or {}).get("slack_progress_mode", "")
+    session_link = _slack_session_link(session, routing)
+    final_message = message
+    if session_link:
+        final_message += f"\n\n<{session_link}|Open session>"
+    if progress_mode == "agent" and thread_ts:
+        try:
+            await slack_send(token, channel, thread_ts, final_message)
+        finally:
+            try:
+                await slack_set_agent_status(
+                    token, channel, thread_ts, "active"
+                )
+            except Exception as exc:
+                logger.warning("Could not clear Slack native agent status: %s", exc)
+            if session and routing:
+                SessionRegistry(WOLTS_DIR).update(
+                    session,
+                    wolt=routing.get("wolt", ""),
+                    slack_progress_mode="",
+                    slack_progress_ts="",
+                )
+    else:
+        await slack_send(token, channel, thread_ts, final_message)
     append_chat_history("slack", channel, message)
     return {"adapter": "slack", "channel": channel}
 
@@ -139,11 +208,27 @@ async def send_notification(session: str, message: str, explicit: dict | None = 
       {"adapter": "telegram", "chat_id": "98765"}
     """
 
-    # 1. Explicit routing — caller knows exactly where to send
+    routing = read_session_registry(session) if session else None
+
+    # 1. Explicit routing — caller knows exactly where to send. A temporary
+    # progress surface is usable only when the explicit route exactly matches
+    # the authoritative session record.
     if explicit and explicit.get("adapter"):
         adapter = explicit["adapter"]
         if adapter == "slack":
-            return await _send_slack(message, explicit.get("channel", ""), explicit.get("thread_ts"))
+            channel = explicit.get("channel", "")
+            thread_ts = explicit.get("thread_ts")
+            exact = bool(
+                routing
+                and routing.get("adapter") == "slack"
+                and routing.get("chat_id") == channel
+                and routing.get("thread_ts") == thread_ts
+            )
+            return await _send_slack(
+                message, channel, thread_ts,
+                session=session if exact else "",
+                routing=routing if exact else None,
+            )
         if adapter == "telegram":
             chat_id = explicit.get("chat_id", "")
             if chat_id:
@@ -151,7 +236,6 @@ async def send_notification(session: str, message: str, explicit: dict | None = 
 
     # 2. Session registry lookup — find routing from session metadata
     if session:
-        routing = read_session_registry(session)
         if routing:
             adapter = routing.get("adapter")
             if adapter == "slack":
@@ -159,6 +243,8 @@ async def send_notification(session: str, message: str, explicit: dict | None = 
                     message,
                     routing.get("chat_id", ""),
                     routing.get("thread_ts"),
+                    session=session,
+                    routing=routing,
                 )
             if adapter == "telegram":
                 chat_id = routing.get("chat_id")

@@ -59,6 +59,8 @@ packages = ["src/woltspace"]
 "docs/shared-skills.md" = "woltspace/_bundle/docs/shared-skills.md"
 "docs/colony-seeds.md" = "woltspace/_bundle/docs/colony-seeds.md"
 "docs/digging-v0.md" = "woltspace/_bundle/docs/digging-v0.md"
+"docs/slack-dm-agent-mvp.md" = "woltspace/_bundle/docs/slack-dm-agent-mvp.md"
+"docs/sandboxed-adapter-callbacks.md" = "woltspace/_bundle/docs/sandboxed-adapter-callbacks.md"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -73,5 +75,7 @@ include = [
     "/docs/shared-skills.md",
     "/docs/colony-seeds.md",
     "/docs/digging-v0.md",
+    "/docs/slack-dm-agent-mvp.md",
+    "/docs/sandboxed-adapter-callbacks.md",
     "/LICENSE",
 ]
