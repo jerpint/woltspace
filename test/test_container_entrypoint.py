@@ -80,14 +80,12 @@ class TestEnvironmentAssembly:
         assert not boot.is_truthy("") and not boot.is_truthy(None)
         assert not boot.is_truthy("false")
 
-    def test_bot_modules_fall_back_to_the_platform_adapters(self, tmp_path):
+    def test_telegram_module_falls_back_to_the_platform_adapter(self, tmp_path):
         env = self._env(tmp_path)
         bundle = tmp_path / "bundle"
 
         assert env["TELEGRAM_BOT_MODULE"] == "bot.telegram_adapter"
         assert env["TELEGRAM_BOT_DIR"] == str(bundle / "container")
-        assert env["SLACK_BOT_MODULE"] == "bot.slack_adapter"
-        assert env["SLACK_BOT_DIR"] == str(bundle / "container")
 
     def test_a_wolt_owned_adapter_wins(self, tmp_path):
         wolt_dir = tmp_path / "wolts" / "mywolt"
@@ -98,8 +96,8 @@ class TestEnvironmentAssembly:
 
         assert env["TELEGRAM_BOT_DIR"] == str(wolt_dir)
         assert env["TELEGRAM_BOT_MODULE"] == "wolt.bot.telegram_adapter"
-        # Slack has no override, so it still points at the platform's copy
-        assert env["SLACK_BOT_MODULE"] == "bot.slack_adapter"
+        assert "SLACK_BOT_MODULE" not in env
+        assert "SLACK_BOT_DIR" not in env
 
     def test_nothing_is_written_to_the_real_environment(self, tmp_path):
         import os

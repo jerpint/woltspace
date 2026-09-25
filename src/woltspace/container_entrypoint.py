@@ -330,7 +330,6 @@ def build_environment(
     """
     source = os.environ if env is None else env
     tg_dir, tg_mod = resolve_bot_module(wolt_dir, woltspace_dir, "telegram")
-    slack_dir, slack_mod = resolve_bot_module(wolt_dir, woltspace_dir, "slack")
     return export_both({
         "WOLTSPACE_WOLT_NAME": wolt_name,
         "WOLTSPACE_WOLT_DIR": str(wolt_dir),
@@ -338,8 +337,6 @@ def build_environment(
         "DEV_MODE": "true" if dev_mode else "false",
         "TELEGRAM_BOT_DIR": tg_dir,
         "TELEGRAM_BOT_MODULE": tg_mod,
-        "SLACK_BOT_DIR": slack_dir,
-        "SLACK_BOT_MODULE": slack_mod,
         "PYTHONPATH": f"{woltspace_dir}/container/lib:{source.get('PYTHONPATH', '')}",
         "PATH": f"{woltspace_dir}/container/bin:{source.get('PATH', '')}",
         "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",

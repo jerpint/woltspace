@@ -108,6 +108,17 @@ class TestSlackPlan:
         assert "xapp-test" not in public
         assert "U12345678" not in public
 
+    def test_custom_adapter_environment_cannot_replace_owner_dm_runtime(self, layout):
+        plan = SlackConnector().plan(layout, {
+            **self.BASE,
+            "SLACK_BOT_DIR": "/tmp/legacy-slack",
+            "SLACK_BOT_MODULE": "legacy.slack_adapter",
+        })
+
+        assert plan.cwd == str(layout.install_root / "container")
+        assert plan.command[-2:] == ("-m", "bot.slack_adapter")
+        assert "legacy" not in plan.detail
+
     def test_config_shape_and_all_three_secrets_are_resolved(self, layout):
         write_config(layout, {"channels": {"slack": {
             "enabled": True,
@@ -648,10 +659,10 @@ class TestContainerEntrypoint:
             dev_mode=False, env={},
         )
         assert env["TELEGRAM_BOT_MODULE"] == "bot.telegram_adapter"
-        # ...and the only process boot starts by hand is slack, which has no
-        # connector yet. A second telegram poller on one token is the bug.
+        # No chat adapter is launched by hand; the connector supervisor owns
+        # both Telegram and Slack. A second poller on one token is the bug.
         launchers = [name for name in vars(container_entrypoint)
-                     if name.startswith("start_") and "slack" not in name]
+                     if name.startswith("start_")]
         assert launchers == ["start_tunnel_report"]
 
     def test_boot_runs_the_installed_control_plane_in_its_own_process(self):

@@ -172,11 +172,12 @@ These keep the names their own platform gave them, and are configured in
 
 **Chat platforms** — `ENABLE_TELEGRAM_BOT`, `TELEGRAM_BOT_TOKEN`,
 `TELEGRAM_ALLOWED_USERS`, `TELEGRAM_CHAT_ID`, `ENABLE_SLACK_BOT`,
-`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_NOTIFY_CHANNEL`. Read by
+`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_OWNER_USER`,
+`SLACK_NOTIFY_CHANNEL`. Read by
 `src/woltspace/channels.py` when planning connectors and by the adapters in
-`container/bot/`. `TELEGRAM_BOT_DIR` / `TELEGRAM_BOT_MODULE` and the `SLACK_*`
-equivalents point a connector at the adapter to run, and are derived by
-`container_entrypoint.build_environment` rather than set by hand.
+`container/bot/`. `TELEGRAM_BOT_DIR` / `TELEGRAM_BOT_MODULE` point its
+connector at an owner-customized Telegram adapter. Slack always uses the
+platform's owner-DM Agent View adapter; there is no custom Slack module path.
 `BOT_ADAPTER` names which adapter a bot process is.
 
 **Models** — `LLM_MODEL` picks the bot brain's model;

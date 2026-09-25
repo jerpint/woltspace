@@ -315,8 +315,8 @@ class SlackConnector:
                 self.name, False, "enabled with a malformed owner user ID", remedy=remedy
             )
 
-        bot_dir = values.get("SLACK_BOT_DIR") or str(layout.install_root / "container")
-        module = values.get("SLACK_BOT_MODULE") or "bot.slack_adapter"
+        bot_dir = str(layout.install_root / "container")
+        module = "bot.slack_adapter"
         child_env = export_both({
             "SLACK_BOT_TOKEN": bot_token,
             "SLACK_APP_TOKEN": app_token,
