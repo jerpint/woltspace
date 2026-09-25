@@ -149,6 +149,7 @@ async def test_every_rejected_surface_returns_before_history_or_session_work(mon
 @pytest.mark.asyncio
 async def test_streaming_success_stops_the_stream_without_posting_fallback():
     client = AsyncMock()
+    client.agents_sessions_setStatus.side_effect = RuntimeError("not an agent app")
     client.chat_postMessage.return_value = {"ok": True, "ts": "2000.1"}
     client.chat_startStream.return_value = {"ok": True, "ts": "2000.1"}
 
@@ -185,6 +186,7 @@ async def test_session_route_posts_fresh_progress_without_sent_receipt(monkeypat
     monkeypatch.setattr(slack, "_watch_progress", AsyncMock())
     monkeypatch.setattr(slack, "CHAT_DIR", tmp_path)
     client = AsyncMock()
+    client.agents_sessions_setStatus.side_effect = RuntimeError("not an agent app")
     client.chat_postMessage.return_value = {"ok": True, "ts": "2000.1"}
     owner = {"session": "n00b-old-1", "wolt": "n00b", "creature": "raccoon"}
 
@@ -217,6 +219,7 @@ async def test_session_route_keeps_known_link_on_fresh_bottom_progress(monkeypat
     monkeypatch.setattr(slack, "_watch_progress", AsyncMock())
     monkeypatch.setattr(slack, "CHAT_DIR", tmp_path)
     client = AsyncMock()
+    client.agents_sessions_setStatus.side_effect = RuntimeError("not an agent app")
     client.chat_postMessage.return_value = {"ok": True, "ts": "2000.1"}
     owner = {
         "session": "n00b-old-1", "wolt": "n00b", "creature": "raccoon",
@@ -249,6 +252,7 @@ async def test_dead_session_releases_thread_back_to_dog(monkeypatch, tmp_path):
         "D1:1000.1": {"session": "n00b-old-1", "wolt": "n00b", "creature": "raccoon"}
     })
     client = AsyncMock()
+    client.agents_sessions_setStatus.side_effect = RuntimeError("not an agent app")
     client.chat_postMessage.return_value = {"ok": True, "ts": "2000.1"}
     owner = slack._thread_sessions["D1:1000.1"]
 
@@ -256,6 +260,38 @@ async def test_dead_session_releases_thread_back_to_dog(monkeypatch, tmp_path):
 
     assert "D1:1000.1" not in slack._thread_sessions
     assert "send again" in client.chat_postMessage.await_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_native_agent_status_replaces_custom_progress(monkeypatch, tmp_path):
+    result = {
+        "ok": True,
+        "status": "delivered",
+        "url": "https://lodge.test/tui?session=n00b-old-1",
+    }
+    monkeypatch.setattr(slack, "message_session", Mock(return_value=result))
+    update = Mock()
+    monkeypatch.setattr(slack.registry, "update", update)
+    monkeypatch.setattr(slack, "CHAT_DIR", tmp_path)
+    client = AsyncMock()
+    client.agents_sessions_setStatus.return_value = {
+        "ok": True, "status": "processing", "agent_status": "processing"
+    }
+    owner = {
+        "session": "n00b-old-1", "wolt": "n00b", "creature": "raccoon",
+        "session_link": "https://lodge.test/tui?session=n00b-old-1",
+    }
+
+    await slack._route_to_session(client, "D1", "1000.1", owner, "continue")
+
+    client.agents_sessions_setStatus.assert_awaited_once_with(
+        channel_id="D1", thread_ts="1000.1", status="processing"
+    )
+    client.chat_postMessage.assert_not_awaited()
+    assert any(
+        call.kwargs.get("slack_progress_mode") == "agent"
+        for call in update.call_args_list
+    )
 
 
 def test_selection_storage_is_atomic_private_and_owner_keyed(monkeypatch, tmp_path):
@@ -577,6 +613,7 @@ async def test_spawn_pending_delivers_original_and_pins_root(monkeypatch):
     monkeypatch.setattr(slack.registry, "update", update)
     monkeypatch.setattr(slack, "_watch_progress", watcher)
     client = AsyncMock()
+    client.agents_sessions_setStatus.side_effect = RuntimeError("not an agent app")
     selected = {"name": "n00b", "type": "raccoon"}
     claimed = {
         "user": "U12345678", "channel": "D1", "root_ts": "1000.1",

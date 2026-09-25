@@ -5,6 +5,7 @@ Falls back to session registry lookup, then Telegram default.
 """
 
 import json
+import logging
 import urllib.parse
 from pathlib import Path
 
@@ -19,6 +20,8 @@ from .config import (
     dotenv_env,
 )
 from .state import sanitize_session
+
+logger = logging.getLogger(__name__)
 
 
 class NoNotificationTarget(RuntimeError):
@@ -147,6 +150,25 @@ async def slack_delete(token: str, channel: str, message_ts: str) -> None:
         )
 
 
+async def slack_set_agent_status(
+    token: str, channel: str, thread_ts: str, status: str
+) -> dict:
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://slack.com/api/agents.sessions.setStatus",
+            json={
+                "channel_id": channel,
+                "thread_ts": thread_ts,
+                "status": status,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        data = response.json()
+        if not data.get("ok"):
+            raise RuntimeError(data.get("error", "agents.sessions.setStatus error"))
+        return data
+
+
 async def _send_telegram(session: str, message: str, chat_id: str) -> dict:
     """Send a notification via Telegram with den-reply footer."""
     token = dotenv_env("TELEGRAM_BOT_TOKEN")
@@ -193,7 +215,24 @@ async def _send_slack(
     final_message = message
     if session_link:
         final_message += f"\n\n<{session_link}|Open session>"
-    if progress_ts and progress_mode in {"stream", "message"}:
+    if progress_mode == "agent" and thread_ts:
+        try:
+            await slack_send(token, channel, thread_ts, final_message)
+        finally:
+            try:
+                await slack_set_agent_status(
+                    token, channel, thread_ts, "active"
+                )
+            except Exception as exc:
+                logger.warning("Could not clear Slack native agent status: %s", exc)
+            if session and routing:
+                SessionRegistry(WOLTS_DIR).update(
+                    session,
+                    wolt=routing.get("wolt", ""),
+                    slack_progress_mode="",
+                    slack_progress_ts="",
+                )
+    elif progress_ts and progress_mode in {"stream", "message"}:
         try:
             await slack_finish_progress(
                 token, channel, progress_ts, progress_mode, final_message
