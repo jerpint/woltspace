@@ -680,9 +680,13 @@ def _tmux_paste(target: str | dict | RuntimeHandle, text: str, settle: float = 0
     to different sessions don't clobber each other.  The -d flag on
     paste-buffer deletes the named buffer after pasting.
 
+    The paste is bracketed (paste-buffer -p), so a TUI that enabled
+    bracketed paste sees exactly where the message ends and the Enter
+    submits it. See TmuxSessionRuntime.paste.
+
     settle: seconds to wait between the paste and the Enter keystroke.
-    Codex's TUI folds an immediate Enter into the paste (message stays in
-    the composer) — its harness entry sets paste_settle=0.5. Claude takes 0.
+    Codex's TUI folded an immediate Enter into an unbracketed paste — its
+    harness entry keeps paste_settle=0.5. Claude takes 0.
     """
     _runtime().paste(_runtime_handle(target), text, settle=settle)
 
