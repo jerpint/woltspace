@@ -494,8 +494,15 @@ class TmuxSessionRuntime:
             check=True,
             timeout=_TMUX_TIMEOUT,
         )
+        # -p = bracketed paste: tmux wraps the text in ESC[200~ ... ESC[201~
+        # when the pane's program asked for it (claude and codex both do).
+        # Without it the TUI sees a burst of keystrokes and has to guess where
+        # the paste ends; claude folded the Enter below into its guessed paste
+        # as a newline and left most messages sitting unsent in the composer.
+        # A program that never enabled bracketed paste gets the raw text, as
+        # before.
         self._run(
-            [self.tmux, "paste-buffer", "-b", buffer_name, "-d", "-t", target],
+            [self.tmux, "paste-buffer", "-p", "-b", buffer_name, "-d", "-t", target],
             check=True,
             timeout=_TMUX_TIMEOUT,
         )
