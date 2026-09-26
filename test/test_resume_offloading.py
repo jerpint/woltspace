@@ -43,7 +43,7 @@ def test_a_slow_resume_leaves_the_control_plane_answering(monkeypatch):
     async def scenario():
         transport = httpx.ASGITransport(app=app_module.app)
         async with httpx.AsyncClient(transport=transport,
-                                     base_url="http://testserver") as client:
+                                     base_url="http://localhost:7777") as client:
             # Timed from before the resume starts, on purpose: if the resume
             # holds the loop, even this sleep does not come back until it is
             # over, and a clock started after it would measure nothing.

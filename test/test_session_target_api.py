@@ -14,7 +14,10 @@ from server import app as app_module
 
 async def _request(method, path, **kwargs):
     transport = httpx.ASGITransport(app=app_module.app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://localhost:7777",
+    ) as client:
         return await client.request(method, path, **kwargs)
 
 

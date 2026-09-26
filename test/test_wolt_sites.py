@@ -40,7 +40,7 @@ def tmp_wolts(tmp_path, monkeypatch):
 
 @pytest.fixture
 def client():
-    return TestClient(server_app.app)
+    return TestClient(server_app.app, base_url="http://localhost:7777")
 
 
 class TestSiteDir:
@@ -113,13 +113,13 @@ class TestServeSite:
         assert resp.status_code == 404
         assert "location.reload" in resp.text
 
-    def test_scaffolds_on_first_request(self, client, tmp_wolts):
+    def test_read_does_not_scaffold_a_missing_site(self, client, tmp_wolts):
         wolt = tmp_wolts / "freshwolt" / "wolt"
         wolt.mkdir(parents=True)
         (wolt / "wolt.json").write_text(json.dumps({"name": "freshwolt", "type": "otter"}))
         resp = client.get("/wolt/freshwolt/site/")
-        assert resp.status_code == 200
-        assert "freshwolt" in resp.text
+        assert resp.status_code == 404
+        assert not (wolt / "site").exists()
 
 
 class TestPathTraversal:

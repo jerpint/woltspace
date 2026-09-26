@@ -109,12 +109,12 @@ class TestTheAuthSourceIsVisible:
         monkeypatch.setattr(server_app, "CONTAINER_HOME", Path("/nonexistent-home"))
         for name in CLAUDE_TOKEN_VARS:
             monkeypatch.delenv(name, raising=False)
-        body = TestClient(server_app.app).get("/onboard-status").json()
+        body = TestClient(server_app.app, base_url="http://localhost:7777").get("/onboard-status").json()
         assert body["auth_source"] == "none"
         assert body["has_oauth"] is False
 
         monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok")
-        body = TestClient(server_app.app).get("/onboard-status").json()
+        body = TestClient(server_app.app, base_url="http://localhost:7777").get("/onboard-status").json()
         assert body["auth_source"] == "env-token"
         assert body["has_oauth"] is True
 
@@ -175,7 +175,7 @@ class TestPlatformFilesGetRealMimeTypes:
         from starlette.testclient import TestClient
 
         monkeypatch.setattr(server_app, "PUBLIC_DIR", tmp_path)
-        return TestClient(server_app.app)
+        return TestClient(server_app.app, base_url="http://localhost:7777")
 
     def test_the_service_worker_is_javascript(self, tmp_path, monkeypatch):
         (tmp_path / "sw.js").write_text("self.addEventListener('install', () => {});\n")
@@ -343,7 +343,11 @@ class TestNotifyWithNowhereToSend:
     def _client(self):
         from starlette.testclient import TestClient
 
-        return TestClient(server_app.app, raise_server_exceptions=False)
+        return TestClient(
+            server_app.app,
+            base_url="http://localhost:7777",
+            raise_server_exceptions=False,
+        )
 
     def test_an_unconfigured_channel_is_409_not_500(self, monkeypatch):
         from server import app as server_app
@@ -437,7 +441,7 @@ class TestWolfObservabilityApi:
                         "action": "session", "event": "started", "owner": "beta"}) + "\n"
         )
         monkeypatch.setattr(server_app, "WOLTS_DIR", wolts)
-        return TestClient(server_app.app)
+        return TestClient(server_app.app, base_url="http://localhost:7777")
 
     def test_schedules_lists_every_wolts_crons_with_last_run(self, colony):
         body = colony.get("/wolf/schedules").json()
@@ -481,14 +485,14 @@ class TestWolfObservabilityApi:
         empty = tmp_path / "empty"
         empty.mkdir()
         monkeypatch.setattr(server_app, "WOLTS_DIR", empty)
-        client = TestClient(server_app.app)
+        client = TestClient(server_app.app, base_url="http://localhost:7777")
 
         assert client.get("/wolf/fires").json() == {"count": 0, "fires": []}
         assert client.get("/wolf/schedules").json()["schedules"] == []
 
     def test_the_crons_own_words_are_never_served(self, colony):
-        """No auth, and `Access-Control-Allow-Origin: *`. What a cron is told to
-        do is the user's private business; when it runs is the observability."""
+        """What a cron is told to do is the user's private business; when it
+        runs is the observability."""
         raw = colony.get("/wolf/schedules").text
 
         assert "/digest" not in raw          # the prompt
@@ -514,7 +518,10 @@ class TestWolfObservabilityApi:
         ]}))
         monkeypatch.setattr(server_app, "WOLTS_DIR", wolts)
 
-        body = TestClient(server_app.app).get("/wolf/schedules")
+        body = TestClient(
+            server_app.app,
+            base_url="http://localhost:7777",
+        ).get("/wolf/schedules")
 
         assert "SECRET-CONTENT" not in body.text
         assert all(cron["last_run"] is None for cron in body.json()["schedules"][0]["crons"])
