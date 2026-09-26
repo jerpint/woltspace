@@ -6,8 +6,8 @@
 #   PyPI  woltspace==<WOLTSPACE_PYPI_VERSION>   → the control plane,
 #         whose wheel carries the whole runtime in its `_bundle` (server,
 #         container/lib, container/bin, skills, templates)
-#   npm   @woltspace/tui@<WOLTSPACE_TUI_VERSION>            → woltspace-tui and
-#         the woltspace-tui-service pty bridge the control plane supervises.
+#   npm   @woltspace/tui@<WOLTSPACE_TUI_VERSION>            → the optional
+#         terminal cockpit. The browser PTY bridge lives in the Python wheel.
 #         Defaults to `latest`: the tui declares the minimum woltspace it needs
 #         and checks it at startup, so the wheel never pins a tui version
 #
@@ -113,7 +113,7 @@ RUN git clone https://github.com/jerpint/worktui.git /home/node/worktui \
 ENV WORKTUI_DIR="/workspace/wolts/.worktui"
 
 # --- The woltspace runtime, from the registries ---
-ARG WOLTSPACE_PYPI_VERSION=0.5.7
+ARG WOLTSPACE_PYPI_VERSION=0.5.8
 # `latest`, not a pin — the two artifacts are versioned independently. Pass an
 # explicit version to reproduce an older image.
 ARG WOLTSPACE_TUI_VERSION=0.5.2

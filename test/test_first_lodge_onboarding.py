@@ -30,7 +30,7 @@ def _client(root: Path, monkeypatch) -> TestClient:
     monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(root))
     monkeypatch.setattr(state, "WOLTS_DIR", root)
     monkeypatch.setattr(app_module, "WOLTS_DIR", root)
-    return TestClient(app_module.app)
+    return TestClient(app_module.app, base_url="http://localhost:7777")
 
 
 def test_empty_lodge_requires_an_explicit_harness_choice(tmp_path, monkeypatch):

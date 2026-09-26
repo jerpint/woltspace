@@ -1,8 +1,4 @@
-"""Woltspace server — FastAPI replacement for server.js.
-
-All endpoints except /tui WebSocket, which is proxied to the Node pty bridge
-(`woltspace-tui-service` from @woltspace/tui, supervised by the control plane).
-"""
+"""Woltspace server — FastAPI replacement for server.js."""
 
 import asyncio
 import json
@@ -15,6 +11,7 @@ import contextlib
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -42,7 +39,6 @@ from .config import (
     SITE_DIR,
     SPARKS_DIR,
     STATE_DIR,
-    TUI_PORT,
     WOLT_DIR,
     WOLT_NAME,
     WOLTS_DIR,
@@ -52,6 +48,11 @@ from .config import (
 from . import tunnel as tunnel_mgr
 from .notify import NoNotificationTarget, send_notification
 from .sparks import get_spark_with_chain, list_sparks
+from .pty_bridge import (
+    PtyBridgeError,
+    PtyTextDecoder,
+    attach_tmux,
+)
 
 # Session spawning — shared with bot
 import sys as _sys
@@ -219,7 +220,7 @@ async def lifespan(app: FastAPI):
     print(f"""
   woltspace server (python) · http://localhost:{PORT}
   wolt: {WOLT_NAME}
-  tui proxy → localhost:{TUI_PORT}
+  browser terminal: embedded Python PTY bridge
   tunnel: {tunnel_mgr.get_tunnel_url() or 'disabled'}
     """)
     yield
@@ -263,17 +264,72 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
-# --- Middleware: CORS ---
+_APP_HOST_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]*$")
 
-# jerpint: nice well need some proper auth layers to separate /public/ from the rest
 
-@app.middleware("http")
-async def cors_middleware(request: Request, call_next):
-    response = await call_next(request)
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, DELETE"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
-    return response
+def _split_host(host_header: str) -> tuple[str, int | None]:
+    """Return a normalized hostname and optional port from an HTTP Host value."""
+    try:
+        parsed = urlsplit(f"//{host_header.strip()}")
+        return (parsed.hostname or "").lower().rstrip("."), parsed.port
+    except ValueError:
+        return "", None
+
+
+def _allowed_http_hostname(hostname: str) -> bool:
+    """Allow only the lodge's loopback/tunnel names and valid app subdomains."""
+    if hostname in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    if hostname.endswith(".localhost"):
+        return bool(_APP_HOST_RE.fullmatch(hostname.removesuffix(".localhost")))
+
+    tunnel_hostname = tunnel_mgr.get_tunnel_hostname().lower().rstrip(".")
+    if tunnel_hostname and hostname == tunnel_hostname:
+        return True
+    # Quick tunnels have no wildcard app domain, so tunnel.py intentionally
+    # does not derive one from configuration. Their exact runtime URL is still
+    # a valid lodge host.
+    try:
+        current_tunnel_hostname = (
+            urlsplit(tunnel_mgr.get_tunnel_url()).hostname or ""
+        ).lower().rstrip(".")
+    except ValueError:
+        current_tunnel_hostname = ""
+    if current_tunnel_hostname and hostname == current_tunnel_hostname:
+        return True
+    tunnel_domain = tunnel_mgr.get_tunnel_domain().lower().rstrip(".")
+    if tunnel_domain and hostname.endswith(f".{tunnel_domain}"):
+        app_name = hostname.removesuffix(f".{tunnel_domain}")
+        return bool(_APP_HOST_RE.fullmatch(app_name))
+    return False
+
+
+def _same_http_authority(origin: str, host_header: str) -> bool:
+    """Require a browser write's Origin to name the exact request authority."""
+    try:
+        parsed = urlsplit(origin)
+        origin_host = (parsed.hostname or "").lower().rstrip(".")
+        origin_port = parsed.port
+    except ValueError:
+        return False
+    request_host, request_port = _split_host(host_header)
+    return (
+        parsed.scheme in {"http", "https"}
+        and origin_host == request_host
+        and origin_port == request_port
+    )
+
+
+def _websocket_request_allowed(ws: WebSocket) -> bool:
+    """Apply the localhost/tunnel authority boundary before WS acceptance."""
+    host_header = ws.headers.get("host") or ""
+    hostname, _port = _split_host(host_header)
+    if not _allowed_http_hostname(hostname):
+        return False
+    origin = ws.headers.get("origin")
+    # Browser WebSocket handshakes always carry Origin. Keeping an Origin-less
+    # path permits native clients only after their Host passed the allowlist.
+    return not origin or _same_http_authority(origin, host_header)
 
 def _extract_app_subdomain(host_header: str) -> str | None:
     """Extract app name from subdomain hostname, or None if not an app subdomain.
@@ -281,7 +337,7 @@ def _extract_app_subdomain(host_header: str) -> str | None:
     Matches: corework.localhost, corework.woltspace.com
     Excludes: localhost, jerpint.woltspace.com (the lodge itself)
     """
-    host = host_header.split(":")[0]
+    host, _port = _split_host(host_header)
     if host.endswith(".localhost") and host != "localhost":
         return host.removesuffix(".localhost")
     td = tunnel_mgr.get_tunnel_domain()
@@ -358,6 +414,31 @@ async def subdomain_proxy(request: Request, call_next):
             )
         except Exception as e:
             return HTMLResponse(f"<h1>Proxy error: {e}</h1>", status_code=502)
+    return await call_next(request)
+
+
+# Security boundary for the localhost control plane. Host is checked on every
+# request, even when Origin is absent: a DNS-rebinding page sees itself as
+# same-origin and browsers therefore omit Origin on its reads. Browser writes
+# additionally have to be same-authority and not cross-site. Native CLI and
+# connector clients send no browser provenance headers and keep working.
+_READ_ONLY_HTTP_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+@app.middleware("http")
+async def request_origin_guard(request: Request, call_next):
+    host_header = request.headers.get("host") or ""
+    hostname, _port = _split_host(host_header)
+    if not _allowed_http_hostname(hostname):
+        return JSONResponse({"error": "untrusted request host"}, status_code=403)
+
+    if request.method.upper() not in _READ_ONLY_HTTP_METHODS:
+        if request.headers.get("sec-fetch-site", "").lower() == "cross-site":
+            return JSONResponse({"error": "cross-site request rejected"}, status_code=403)
+        origin = request.headers.get("origin")
+        if origin and not _same_http_authority(origin, host_header):
+            return JSONResponse({"error": "cross-origin request rejected"}, status_code=403)
+
     return await call_next(request)
 
 
@@ -1003,11 +1084,12 @@ async def list_wolts():
 # from inside the container, and the source pointed at the wrong directory
 # while doing it. No new daemon, no new writer: just the files, served.
 #
-# Observability, and nothing more. These routes need no auth and the server
-# answers them with `Access-Control-Allow-Origin: *`, so what they may say is
-# *when* a cron is scheduled and *whether* it fired — never what it asks the
-# wolt to do. A cron's `prompt` and `notify` are the user's own words, often
-# about private work, and they are deliberately not in the response.
+# Observability, and nothing more. These routes need no additional auth, but
+# they remain same-origin like the rest of the lodge: arbitrary websites must
+# not be able to read localhost state. What they may say is *when* a cron is
+# scheduled and *whether* it fired — never what it asks the wolt to do. A
+# cron's `prompt` and `notify` are the user's own words, often about private
+# work, and they are deliberately not in the response.
 
 # The scheduler stamps last-run state as `<cron name>.last`, so the name is a
 # filename. Anything outside this shape is not looked up at all.
@@ -1439,7 +1521,11 @@ async def serve_wolt_site(wolt_name: str, request: Request, path: str = ""):
             status_code=404,
         )
 
-    sdir = ensure_site(wolt_name)
+    # HTTP GET stays read-only. Session creation/resume owns site scaffolding;
+    # merely requesting a guessed wolt URL must never create files.
+    sdir = site_dir(wolt_name)
+    if not sdir.is_dir():
+        return PlainTextResponse("Site not found", status_code=404)
 
     target = (sdir / path) if path else sdir
     # Security: stay inside the site dir (also catches symlinks pointing out)
@@ -1670,41 +1756,67 @@ async def livereload_ws(ws: WebSocket):
         _livereload_clients.discard(ws)
 
 
-# --- WebSocket: TUI proxy to Node service ---
+# --- WebSocket: browser terminal ---
 
 @app.websocket("/tui")
 async def tui_proxy(ws: WebSocket):
-    """Proxy TUI WebSocket to the Node pty service on TUI_PORT."""
-    import asyncio
-    import websockets
-
+    """Attach the browser terminal directly to the requested tmux session."""
+    if not _websocket_request_allowed(ws):
+        await ws.close(code=1008)
+        return
     session = ws.query_params.get("session", "main")
     await ws.accept()
-
     try:
-        async with websockets.connect(f"ws://localhost:{TUI_PORT}/tui?session={session}") as node_ws:
-            async def client_to_node():
-                try:
-                    while True:
-                        data = await ws.receive_text()
-                        await node_ws.send(data)
-                except WebSocketDisconnect:
-                    pass
-
-            async def node_to_client():
-                try:
-                    async for msg in node_ws:
-                        await ws.send_text(msg)
-                except Exception:
-                    pass
-
-            await asyncio.gather(client_to_node(), node_to_client())
-    except Exception as e:
+        attachment = await attach_tmux(session, WOLTS_DIR)
+    except PtyBridgeError as error:
         try:
-            await ws.send_text(f"\r\n[tui] connection failed: {e}\r\n")
+            await ws.send_text(f"\r\n[tui] connection failed: {error}\r\n")
             await ws.close()
         except Exception:
             pass
+        return
+
+    async def client_to_pty():
+        while True:
+            data = await ws.receive_text()
+            if data.startswith("{"):
+                try:
+                    message = json.loads(data)
+                    if message.get("type") == "resize":
+                        attachment.resize(int(message["cols"]), int(message["rows"]))
+                        continue
+                except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+                    pass
+            await attachment.write(data)
+
+    async def pty_to_client():
+        decoder = PtyTextDecoder()
+        while True:
+            data = await attachment.read()
+            if not data:
+                tail = decoder.feed(b"", final=True)
+                if tail:
+                    await ws.send_text(tail)
+                return
+            text = decoder.feed(data)
+            if text:
+                await ws.send_text(text)
+
+    tasks = {
+        asyncio.create_task(client_to_pty()),
+        asyncio.create_task(pty_to_client()),
+    }
+    try:
+        _done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        for task in tasks:
+            task.cancel()
+        await attachment.close()
 
 
 @app.websocket("/{path:path}")
@@ -1716,6 +1828,10 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
     """
     import asyncio
     import websockets
+
+    if not _websocket_request_allowed(ws):
+        await ws.close(code=1008)
+        return
 
     host = ws.headers.get("host") or ""
     app_name = _extract_app_subdomain(host)

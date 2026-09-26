@@ -82,7 +82,7 @@ class TestSitePathsResolveFromTheLayout:
             RuntimeLayout.from_env().apply_environment()
             from starlette.testclient import TestClient
             import server.app as app_module
-            with TestClient(app_module.app) as client:
+            with TestClient(app_module.app, base_url="http://localhost:7777") as client:
                 response = client.get("/wolt/sitewolt/site/")
                 listing = client.get("/sites").json()
             print(json.dumps({
@@ -116,7 +116,7 @@ class TestSitePathsResolveFromTheLayout:
                 finally:
                     if scope["type"] == "websocket":
                         disconnected.set()
-            with TestClient(observed_app) as client:
+            with TestClient(observed_app, base_url="http://localhost:7777") as client:
                 with client.websocket_connect(
                     "/wolt/sitewolt/site/livereload"
                 ) as socket:
@@ -166,7 +166,7 @@ class TestOnboardingReadsTheRealHome:
             from starlette.testclient import TestClient
             import server.app as app_module
             from server import config, state
-            with TestClient(app_module.app) as client:
+            with TestClient(app_module.app, base_url="http://localhost:7777") as client:
                 status = client.get("/onboard-status").json()
             print(json.dumps({
                 "container_home": str(config.CONTAINER_HOME),
