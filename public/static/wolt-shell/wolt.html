@@ -4,12 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>wolt</title>
-<link href="https://fonts.googleapis.com/css2?family=Preahvihear&family=DM+Sans:wght@400;500&family=JetBrains+Mono&display=swap" rel="stylesheet">
 <style>
   /* Built-in pages (About / Memory / Settings). Lodge-owned, same for every
      wolt, skinned by the wolt's site.json tokens like the drawer. */
   :root { --s-accent:#C4531E; --s-bg:#F6F2EA; --s-ink:#2a2622; --s-muted:#6b645b; --s-line:#d9d2c4;
-          --s-display:"Preahvihear",Georgia,serif; --s-body:"DM Sans",system-ui,sans-serif; }
+          --s-display:"Preahvihear",ui-serif,Georgia,serif; --s-body:"DM Sans",system-ui,-apple-system,"Segoe UI",sans-serif; }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--s-bg); color: var(--s-ink); font: 16px/1.55 var(--s-body); }
   main { max-width: 760px; margin: 0 auto; padding: 22px 16px 110px; }
@@ -26,7 +25,7 @@
   .tabs a.on { color: var(--s-accent); border-color: var(--s-accent); font-weight: 500; }
   .md h1, .md h2, .md h3 { font-family: var(--s-display); font-weight: 400; color: var(--s-accent); line-height: 1.25; }
   .md h1 { font-size: 23px; } .md h2 { font-size: 19px; margin-top: 24px; } .md h3 { font-size: 16.5px; }
-  .md code { font-family: "JetBrains Mono", monospace; font-size: .86em; background: color-mix(in srgb, var(--s-ink) 7%, transparent); padding: 1px 5px; border-radius: 4px; }
+  .md code { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: .86em; background: color-mix(in srgb, var(--s-ink) 7%, transparent); padding: 1px 5px; border-radius: 4px; }
   .md li, .md p { overflow-wrap: anywhere; }
   .md li { margin: 3px 0; }
   .md a { color: var(--s-accent); }
@@ -49,6 +48,7 @@
   var EMOJI = { raccoon: '🦝', beaver: '🦫', otter: '🦦', wolf: '🐺', dog: '🐶', rodent: '🐿️' };
   var map = { accent: '--s-accent', bg: '--s-bg', ink: '--s-ink', muted: '--s-muted', line: '--s-line', display_font: '--s-display', body_font: '--s-body' };
   for (var k in map) if (t[k]) document.documentElement.style.setProperty(map[k], t[k]);
+  if (site.fonts_href) { var f = document.createElement('link'); f.rel = 'stylesheet'; f.href = site.fonts_href; document.head.appendChild(f); }
   var emoji = t.emoji || EMOJI[w.type] || '🌲';
   var name = site.title || w.name;
 

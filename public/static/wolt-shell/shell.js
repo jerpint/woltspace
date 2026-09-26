@@ -26,6 +26,8 @@
     return n;
   }
   function norm(p) { return p.replace(/index\.html?$/, ''); }
+  // Filenames are data: a '#', '?' or '%' in one must not turn into URL syntax.
+  function enc(p) { return String(p).split('/').map(encodeURIComponent).join('/'); }
 
   function start(m) {
     if (document.body) mount(m);
@@ -43,10 +45,12 @@
     var title = site.title || w.name;
     var emoji = t.emoji || EMOJI[w.type] || '🌲';
 
-    // @font-face does not apply inside a shadow root, so fonts go on the document.
-    var fonts = site.fonts_href || 'https://fonts.googleapis.com/css2?family=Preahvihear&family=DM+Sans:wght@400;500&display=swap';
-    if (!document.querySelector('link[data-wolt-shell-fonts]')) {
-      document.head.appendChild(el('link', { rel: 'stylesheet', href: fonts, 'data-wolt-shell-fonts': '' }));
+    // No third-party fonts by default: the stacks below use the lodge fonts
+    // when the page already has them and system fonts otherwise. A wolt opts
+    // into web fonts with site.json "fonts_href". (@font-face does not apply
+    // inside a shadow root, so that link goes on the document.)
+    if (site.fonts_href && !document.querySelector('link[data-wolt-shell-fonts]')) {
+      document.head.appendChild(el('link', { rel: 'stylesheet', href: site.fonts_href, 'data-wolt-shell-fonts': '' }));
     }
 
     var host = el('div', { id: 'wolt-shell-host' });
@@ -60,28 +64,28 @@
       '--s-ink:' + (t.ink || '#2a2622') + ';' +
       '--s-muted:' + (t.muted || '#6b645b') + ';' +
       '--s-line:' + (t.line || '#d9d2c4') + ';' +
-      '--s-display:' + (t.display_font || '"Preahvihear", Georgia, serif') + ';' +
-      '--s-body:' + (t.body_font || '"DM Sans", system-ui, sans-serif') + ';}';
+      '--s-display:' + (t.display_font || '"Preahvihear", ui-serif, Georgia, serif') + ';' +
+      '--s-body:' + (t.body_font || '"DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif') + ';}';
     root.appendChild(el('style', { text: vars }));
     var css = el('link', { rel: 'stylesheet', href: ASSETS + 'shell.css' });
     css.addEventListener('load', function () { host.style.visibility = ''; });
     css.addEventListener('error', function () { host.style.visibility = ''; });
     root.appendChild(css);
-    if (site.custom_css) root.appendChild(el('link', { rel: 'stylesheet', href: m.base + site.custom_css }));
+    if (site.custom_css) root.appendChild(el('link', { rel: 'stylesheet', href: m.base + enc(site.custom_css) }));
 
     var here = norm(location.pathname);
     var onBuiltin = location.pathname.indexOf(m.builtin) === 0;
     var tabHere = onBuiltin ? (location.pathname.slice(m.builtin.length).split('/')[0] || 'about') : '';
 
     function link(item) {
-      var href = m.base + item.path;
+      var href = m.base + enc(item.path);
       return el('a', { href: href, class: norm(href) === here ? 'active' : '' }, [el('span', { text: item.title })]);
     }
     function branch(items, depth) {
       var ul = el('ul', { class: 'tree' });
       items.forEach(function (it) {
         if (it.children) {
-          var open = here.indexOf(m.base + it.path) === 0 || (depth === 0 && it.children.length < 6);
+          var open = here.indexOf(m.base + enc(it.path)) === 0 || (depth === 0 && it.children.length < 6);
           ul.appendChild(el('li', {}, [el('details', open ? { open: '' } : {}, [
             el('summary', { text: it.dir + '/' }), branch(it.children, depth + 1)
           ])]));
@@ -92,7 +96,7 @@
     function slot(file) {
       if (!file) return null;
       var box = el('div', { class: 'slot' });
-      fetch(m.base + file).then(function (r) { return r.ok ? r.text() : ''; }).then(function (h) { box.innerHTML = h; }).catch(function () {});
+      fetch(m.base + enc(file)).then(function (r) { return r.ok ? r.text() : ''; }).then(function (h) { box.innerHTML = h; }).catch(function () {});
       return box;
     }
 

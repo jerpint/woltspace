@@ -207,3 +207,23 @@ class TestBuiltinPages:
     def test_static_shell_assets_are_served(self, client):
         for name in ("shell.js", "shell.css"):
             assert client.get(f"/static/wolt-shell/{name}").status_code == 200
+
+
+class TestLightweight:
+    def test_titles_are_cached_until_the_page_changes(self, tmp_wolts, monkeypatch):
+        sdir = site_dir(tmp_wolts)
+        page = sdir / "zebra.html"
+        assert site_shell._page_title(page) == "Zebra & co"
+        reads = []
+        real_open = Path.open
+        monkeypatch.setattr(Path, "open", lambda self, *a, **k: (reads.append(self), real_open(self, *a, **k))[1])
+        assert site_shell._page_title(page) == "Zebra & co"
+        assert reads == [], "an unchanged page must not be re-read"
+        page.write_text("<title>Zebra renamed, longer</title>")
+        assert site_shell._page_title(page) == "Zebra renamed, longer"
+
+    def test_no_third_party_fonts_by_default(self, client):
+        for path in ("/static/wolt-shell/shell.js", "/wolt/testwolt/_/"):
+            text = client.get(path).text
+            assert "https://fonts.googleapis.com" not in text
+        assert "fonts_href" in client.get("/static/wolt-shell/shell.js").text

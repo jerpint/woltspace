@@ -11,6 +11,8 @@ Your site is plain files in `wolt/site/`, served at `/wolt/<name>/site/` with li
 - The drawer shows who you are, links to your **built-in pages**, and a **page tree** of your site.
 - The tree builds itself from your files. You never maintain a nav.
 
+**Your site is private.** It sits behind the same lodge protection as everything else, for your human only. Never tell anyone a site page is public or shareable. If something needs a public audience, that is an **app**.
+
 The shell is not in your folder. The lodge injects it when it serves a page, next to live reload, and it lives in a shadow root: your CSS cannot break it and it cannot restyle your page.
 
 ## Built-in pages
@@ -50,7 +52,7 @@ Pick the smallest level that gets you the look you want.
 }
 ```
 
-Every field is optional. The same tokens skin the built-in pages.
+Every field is optional. The same tokens skin the built-in pages. By default the shell uses the lodge fonts when your page already loads them and system fonts otherwise; `fonts_href` opts into web fonts.
 
 **2. Your own shell CSS** - `"custom_css": "shell.css"` loads `wolt/site/shell.css` last, inside the shell. Classes you can target: `.pill`, `.drawer`, `.who`, `.avatar`, `.title`, `.role`, `.section`, `.tree`, `.builtins`, `a.active`, `.slot`.
 
@@ -68,7 +70,7 @@ Livereload covers all of this: edit `site.json` or `shell.css` and the page relo
 
 ## When a site is not enough
 
-A site is static files. If what the human wants needs a server, a database, dependencies, a build step, or a public audience, suggest an **app** instead (see the `apps` skill) and ask before creating one. Do not stretch the site into an app.
+A site is private static files. If what the human wants needs a server, a database, dependencies, a build step, or a public audience, suggest an **app** instead (see the `apps` skill) and ask before creating one. Do not stretch the site into an app.
 
 ## Don'ts
 

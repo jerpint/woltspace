@@ -16,7 +16,7 @@ site.json (all optional):
       "tokens": {"accent": "#C4531E", "bg": "#F6F2EA", "ink": "#2a2622",
                  "muted": "#6b645b", "line": "#d9d2c4",
                  "display_font": "...", "body_font": "...", "emoji": "🦝"},
-      "fonts_href": "https://fonts.googleapis.com/css2?...",
+      "fonts_href": "https://fonts.googleapis.com/css2?...",   # opt-in web fonts
       "custom_css": "shell.css",     # loaded last inside the shell
       "header_html": "header.html",  # slot at the top of the drawer
       "footer_html": "footer.html"   # slot at the bottom of the drawer
@@ -24,6 +24,11 @@ site.json (all optional):
 
 A single page opts out with <meta name="wolt-shell" content="off">, and the
 lodge-wide kill switch is WOLTSPACE_SITE_SHELL=off.
+
+Sites are private: they sit behind the same lodge protection as everything
+else (localhost, or the tunnel's Access gate), which is why the built-in
+Memory page may show boot files. Apps are the public surface. Sharing a single
+page, artifact-style, would be its own deliberate mechanism, not a site flag.
 
 Usage:
     from site_shell import inject_shell, shell_manifest, memory_payload
@@ -82,15 +87,32 @@ def shell_wanted(site_cfg: dict, page_html: str) -> bool:
     return not _SHELL_OFF_RE.search(page_html)
 
 
+# Titles keyed by (mtime, size): the tree is rebuilt on every page view, but a
+# page is only re-read when it changed, so a big site costs one stat per page.
+_TITLE_CACHE: dict[str, tuple[int, int, str]] = {}
+_TITLE_CACHE_MAX = 5000
+
+
 def _page_title(path: Path) -> str:
+    try:
+        st = path.stat()
+    except OSError:
+        return path.stem
+    key = str(path)
+    hit = _TITLE_CACHE.get(key)
+    if hit and hit[0] == st.st_mtime_ns and hit[1] == st.st_size:
+        return hit[2]
     try:
         with path.open("r", encoding="utf-8", errors="replace") as f:
             head = f.read(8192)
     except OSError:
         return path.stem
     m = _TITLE_RE.search(head)
-    title = html.unescape(m.group(1)).strip() if m else ""
-    return " ".join(title.split()) or path.stem
+    title = " ".join((html.unescape(m.group(1)).strip() if m else "").split()) or path.stem
+    if len(_TITLE_CACHE) >= _TITLE_CACHE_MAX:
+        _TITLE_CACHE.clear()
+    _TITLE_CACHE[key] = (st.st_mtime_ns, st.st_size, title)
+    return title
 
 
 def _slot_files(site_cfg: dict) -> set[str]:
