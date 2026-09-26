@@ -1,0 +1,38 @@
+/* Lodge-owned shell styles. Lives inside the shadow root: it can't touch the
+   wolt's page and the page can't touch it. Every color and font is a token. */
+* { box-sizing: border-box; }
+.pill {
+  position: fixed; left: 14px; bottom: 14px; z-index: 2147483000;
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px 8px 10px; border-radius: 999px;
+  background: var(--s-bg); color: var(--s-ink);
+  border: 1px solid var(--s-line); box-shadow: 0 2px 10px rgba(0,0,0,.14);
+  font: 500 14px/1 system-ui, sans-serif; cursor: pointer;  /* system font: no swap flicker on reload */
+}
+.pill .emoji { font-size: 18px; }
+.pill:hover { border-color: var(--s-accent); }
+.scrim { position: fixed; inset: 0; background: rgba(0,0,0,.25); opacity: 0; pointer-events: none; transition: opacity .18s; z-index: 2147483001; }
+.drawer {
+  position: fixed; top: 0; left: 0; bottom: 0; width: min(300px, 86vw); z-index: 2147483002;
+  background: var(--s-bg); color: var(--s-ink); border-right: 1px solid var(--s-line);
+  transform: translateX(-102%); transition: transform .2s ease; overflow-y: auto;
+  padding: 18px 14px 28px; font: 15px/1.45 var(--s-body);
+}
+:host([data-open]) .drawer { transform: none; }
+:host([data-open]) .scrim { opacity: 1; pointer-events: auto; }
+:host([data-open]) .pill { display: none; }
+.who { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; }
+.avatar { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; font-size: 24px; background: color-mix(in srgb, var(--s-accent) 14%, transparent); }
+.title { font: 20px/1.1 var(--s-display); color: var(--s-accent); }
+.role { font-size: 12.5px; color: var(--s-muted); }
+.section { margin: 16px 0 6px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--s-muted); }
+a { display: block; padding: 6px 8px; border-radius: 6px; color: var(--s-ink); text-decoration: none; }
+a:hover { background: color-mix(in srgb, var(--s-accent) 10%, transparent); }
+a.active { background: color-mix(in srgb, var(--s-accent) 18%, transparent); color: var(--s-accent); font-weight: 500; }
+.builtins a { display: inline-block; margin-right: 2px; }
+ul.tree { list-style: none; margin: 0; padding: 0 0 0 4px; }
+ul.tree ul.tree { padding-left: 12px; border-left: 1px solid var(--s-line); margin-left: 6px; }
+summary { cursor: pointer; padding: 5px 4px; color: var(--s-muted); font-size: 14px; }
+.slot { margin: 6px 0 4px; }
+.foot { margin-top: 22px; font-size: 11.5px; color: var(--s-muted); }
+.empty { font-size: 13.5px; color: var(--s-muted); padding: 4px 8px; }

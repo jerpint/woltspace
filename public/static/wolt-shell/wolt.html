@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wolt</title>
+<link href="https://fonts.googleapis.com/css2?family=Preahvihear&family=DM+Sans:wght@400;500&family=JetBrains+Mono&display=swap" rel="stylesheet">
+<style>
+  /* Built-in pages (About / Memory / Settings). Lodge-owned, same for every
+     wolt, skinned by the wolt's site.json tokens like the drawer. */
+  :root { --s-accent:#C4531E; --s-bg:#F6F2EA; --s-ink:#2a2622; --s-muted:#6b645b; --s-line:#d9d2c4;
+          --s-display:"Preahvihear",Georgia,serif; --s-body:"DM Sans",system-ui,sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--s-bg); color: var(--s-ink); font: 16px/1.55 var(--s-body); }
+  main { max-width: 760px; margin: 0 auto; padding: 22px 16px 110px; }
+  .card { display: flex; gap: 14px; align-items: center; padding: 16px; border: 1px solid var(--s-line); border-radius: 14px;
+          background: color-mix(in srgb, var(--s-accent) 5%, var(--s-bg)); }
+  .card .avatar { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; font-size: 36px; flex: none;
+                  background: color-mix(in srgb, var(--s-accent) 16%, transparent); }
+  .card h1 { margin: 0; font: 400 28px/1.1 var(--s-display); color: var(--s-accent); overflow-wrap: anywhere; }
+  .card .role { color: var(--s-muted); font-size: 14.5px; }
+  .chips { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font-size: 12.5px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--s-line); color: var(--s-muted); }
+  .tabs { display: flex; gap: 4px; margin: 18px 0 10px; border-bottom: 1px solid var(--s-line); overflow-x: auto; }
+  .tabs a { padding: 9px 14px; color: var(--s-muted); text-decoration: none; border-bottom: 2px solid transparent; white-space: nowrap; }
+  .tabs a.on { color: var(--s-accent); border-color: var(--s-accent); font-weight: 500; }
+  .md h1, .md h2, .md h3 { font-family: var(--s-display); font-weight: 400; color: var(--s-accent); line-height: 1.25; }
+  .md h1 { font-size: 23px; } .md h2 { font-size: 19px; margin-top: 24px; } .md h3 { font-size: 16.5px; }
+  .md code { font-family: "JetBrains Mono", monospace; font-size: .86em; background: color-mix(in srgb, var(--s-ink) 7%, transparent); padding: 1px 5px; border-radius: 4px; }
+  .md li, .md p { overflow-wrap: anywhere; }
+  .md li { margin: 3px 0; }
+  .md a { color: var(--s-accent); }
+  details.mem { border: 1px solid var(--s-line); border-radius: 10px; padding: 4px 14px; margin: 10px 0; }
+  details.mem > summary { cursor: pointer; padding: 8px 0; font-weight: 500; }
+  .meta { color: var(--s-muted); font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  td { padding: 9px 6px; border-bottom: 1px solid var(--s-line); vertical-align: top; overflow-wrap: anywhere; }
+  td:first-child { color: var(--s-muted); width: 34%; }
+  .note { margin-top: 14px; padding: 12px 14px; border-radius: 10px; border: 1px dashed var(--s-line); color: var(--s-muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<main id="app"></main>
+<!--WOLT_SHELL-->
+<script>
+(function () {
+  var m = window.__WOLT_SHELL__, w = m.wolt, site = m.site || {}, t = site.tokens || {};
+  var tab = location.pathname.slice(m.builtin.length).split('/')[0] || 'about';
+  var EMOJI = { raccoon: '🦝', beaver: '🦫', otter: '🦦', wolf: '🐺', dog: '🐶', rodent: '🐿️' };
+  var map = { accent: '--s-accent', bg: '--s-bg', ink: '--s-ink', muted: '--s-muted', line: '--s-line', display_font: '--s-display', body_font: '--s-body' };
+  for (var k in map) if (t[k]) document.documentElement.style.setProperty(map[k], t[k]);
+  var emoji = t.emoji || EMOJI[w.type] || '🌲';
+  var name = site.title || w.name;
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function inline(s) {
+    return esc(s)
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+      .replace(/\[([^\]]+)\]\((https?:[^)\s"]+)\)/g, '<a href="$2">$1</a>');
+  }
+  // Tiny markdown: headings, bullets (with indented continuations), paragraphs.
+  function md(src) {
+    var out = [], list = false, para = [];
+    function flushP() { if (para.length) { out.push('<p>' + inline(para.join(' ')) + '</p>'); para = []; } }
+    function closeL() { if (list) { out.push('</ul>'); list = false; } }
+    String(src || '').split('\n').forEach(function (line) {
+      var h = /^(#{1,3})\s+(.*)/.exec(line), b = /^\s*[-*]\s+(.*)/.exec(line);
+      if (h) { flushP(); closeL(); out.push('<h' + h[1].length + '>' + inline(h[2]) + '</h' + h[1].length + '>'); }
+      else if (b) { flushP(); if (!list) { out.push('<ul>'); list = true; } out.push('<li>' + inline(b[1]) + '</li>'); }
+      else if (!line.trim()) { flushP(); closeL(); }
+      else if (list && /^\s{2,}/.test(line)) { out[out.length - 1] = out[out.length - 1].replace(/<\/li>$/, ' ' + inline(line.trim()) + '</li>'); }
+      else { closeL(); para.push(line.trim()); }
+    });
+    flushP(); closeL();
+    return out.join('\n');
+  }
+
+  var chips = [['type', w.type], ['engine', w.harness], ['model', w.model]].filter(function (c) { return c[1]; });
+  var card = '<div class="card"><div class="avatar">' + esc(emoji) + '</div><div><h1>' + esc(name) + '</h1>' +
+    '<div class="role">' + esc(w.role || '') + '</div><div class="chips">' +
+    chips.map(function (c) { return '<span class="chip">' + esc(c[0] + ': ' + c[1]) + '</span>'; }).join('') + '</div></div></div>';
+  var tabs = '<nav class="tabs">' + [['about', 'About'], ['memory', 'Memory'], ['settings', 'Settings']].map(function (p) {
+    return '<a class="' + (p[0] === tab ? 'on' : '') + '" href="' + m.builtin + (p[0] === 'about' ? '' : p[0]) + '">' + p[1] + '</a>'; }).join('') + '</nav>';
+  var app = document.getElementById('app');
+  document.title = name + (tab === 'about' ? '' : ' - ' + tab);
+
+  function render(body) { app.innerHTML = card + tabs + body; }
+
+  if (tab === 'settings') {
+    var rows = [
+      ['name', w.name], ['creature', w.type], ['engine', w.harness || 'lodge default'], ['model', w.model || 'tier default'],
+      ['role', w.role], ['capabilities', (w.capabilities || []).join(', ')],
+      ['site shell', document.querySelector('script[src$="shell.js"]') ? 'on' : 'off (the wolt owns its site)'], ['site title', site.title], ['custom css', site.custom_css], ['header slot', site.header_html], ['footer slot', site.footer_html]
+    ];
+    render('<table>' + rows.map(function (r) { return '<tr><td>' + esc(r[0]) + '</td><td>' + esc(r[1] || '-') + '</td></tr>'; }).join('') + '</table>' +
+      '<div class="note">Read-only for now. Engine and model live in <code>wolt/wolt.json</code>; the look lives in <code>wolt/site/site.json</code>.</div>');
+    return;
+  }
+
+  render('<p class="meta">loading...</p>');
+  fetch(m.builtin + 'memory.json').then(function (r) { return r.json(); }).then(function (mem) {
+    if (tab === 'about') {
+      render((w.description ? '<p>' + esc(w.description) + '</p>' : '') +
+        '<div class="md">' + (mem.identity ? md(mem.identity) : '<p class="meta">No identity.md yet.</p>') + '</div>');
+    } else {
+      render('<p class="meta">The boot files, windowed the way a session reads them at start.</p>' +
+        '<details class="mem" open><summary>context.md <span class="meta">(first ' + mem.context_window + ' of ' + mem.context_lines + ' lines)</span></summary><div class="md">' + md(mem.context) + '</div></details>' +
+        '<details class="mem"><summary>learnings.md <span class="meta">(first ' + mem.learnings_window + ' of ' + mem.learnings_lines + ' lines)</span></summary><div class="md">' + md(mem.learnings) + '</div></details>' +
+        '<details class="mem"><summary>identity.md</summary><div class="md">' + md(mem.identity) + '</div></details>' +
+        '<details class="mem"><summary>archive/ <span class="meta">(' + mem.archive.length + ' files)</span></summary><ul>' +
+        mem.archive.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul></details>');
+    }
+  }).catch(function () { render('<p class="meta">Could not load memory.</p>'); });
+})();
+</script>
+</body>
+</html>

@@ -26,7 +26,7 @@ You were invoked with two arguments: `<mode> <wolt-name>`.
 
 5. **Greet the user** according to your mode. Keep it short — one line is fine.
 
-6. **If this is your first session** and you are a rodent (identity.md is minimal or context.md just says "Just created"), make your site yours. Rewrite `wolt/site/index.html` into a real home page — your name, your personality, what you do. The user is watching the viewport, so they'll see it update live. This is your first impression — make it count.
+6. **If this is your first session** and you are a rodent (identity.md is minimal or context.md just says "Just created"), make your site yours. Rewrite `wolt/site/index.html` into a real home page — your name, your personality, what you do. For the look of the whole site (colors, fonts, emoji in the nav drawer), set `wolt/site/site.json` — load the woltspace site skill. The user is watching the viewport, so they'll see it update live. This is your first impression — make it count.
 
 Do NOT summarize what you read. Just absorb the context and be ready to work.
 
