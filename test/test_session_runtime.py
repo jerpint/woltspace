@@ -266,7 +266,7 @@ class TestTmuxSessionRuntime:
         commands = [call[0] for call in runner.calls]
         assert commands[0] == ["tmux", "send-keys", "-t", "%17", "-X", "cancel"]
         assert commands[1] == ["tmux", "set-buffer", "-b", "paste-named-session", "hello\nworld"]
-        assert commands[2] == ["tmux", "paste-buffer", "-b", "paste-named-session", "-d", "-t", "%17"]
+        assert commands[2] == ["tmux", "paste-buffer", "-p", "-b", "paste-named-session", "-d", "-t", "%17"]
         assert commands[3] == ["tmux", "send-keys", "-t", "%17", "Enter"]
         assert sleeps == [0.5]
 
@@ -597,3 +597,67 @@ def test_host_tmux_legacy_multi_window_delivers_to_the_agent_pane(tmp_path):
         assert marker not in runtime.capture(legacy.at_pane(other), start="-20")
     finally:
         runtime.stop(legacy)
+
+
+_BRACKETED_READER = r'''
+import os, select, sys, termios, tty
+out = sys.argv[1]
+fd = sys.stdin.fileno()
+tty.setraw(fd)
+# Ask the terminal for bracketed paste, the way claude and codex do.
+sys.stdout.write("\x1b[?2004hREADY\r\n")
+sys.stdout.flush()
+buf = b""
+while not buf.endswith(b"\r") or b"\x1b[201~" not in buf:
+    ready, _, _ = select.select([fd], [], [], 10)
+    if not ready:
+        break
+    buf += os.read(fd, 65536)
+with open(out, "wb") as f:
+    f.write(buf)
+select.select([], [], [], 30)
+'''
+
+
+@requires_tmux
+def test_host_tmux_paste_is_bracketed_then_submitted(tmp_path):
+    """The paste reaches a bracketed-paste TUI wrapped in ESC[200~/ESC[201~,
+    whole, with the submit Enter arriving AFTER the closing bracket.
+
+    Unbracketed, a TUI has to guess where a paste ends from input timing.
+    Claude guessed wrong and folded the Enter into the paste as a newline,
+    so IWCL messages sat unsent in its composer (benched on claude 2.1.283:
+    14/18 stuck unbracketed, 0/20 bracketed). This pins the transport half:
+    tmux must actually emit the brackets, and the Enter must come after them.
+    """
+    script = tmp_path / "reader.py"
+    script.write_text(_BRACKETED_READER)
+    out = tmp_path / "received.bin"
+    runtime = TmuxSessionRuntime(context(tmp_path))
+    name = f"test-bracket-{uuid.uuid4().hex[:10]}"
+    handle = None
+    try:
+        handle = runtime.spawn(name, str(tmp_path), f"{sys.executable} {script} {out}")
+        deadline = time.time() + 5
+        while time.time() < deadline and "READY" not in runtime.capture(handle, start="-5"):
+            time.sleep(0.05)
+
+        message = "[message from a, session=b]\nline two\n" + "x" * 3000 + "\nend"
+        runtime.paste(handle, message)
+
+        deadline = time.time() + 5
+        while time.time() < deadline and not out.exists():
+            time.sleep(0.05)
+        received = out.read_bytes()
+    finally:
+        if handle is not None:
+            runtime.stop(handle)
+        else:
+            subprocess.run(["tmux", "kill-session", "-t", f"={name}"], capture_output=True)
+
+    start, end = b"\x1b[200~", b"\x1b[201~"
+    assert received.startswith(start), received[:40]
+    assert received.endswith(end + b"\r"), received[-40:]
+    body = received[len(start):-len(end + b"\r")]
+    # tmux turns LF into CR inside a paste; inside brackets that is text, not submit.
+    assert body.replace(b"\r", b"\n") == message.encode()
