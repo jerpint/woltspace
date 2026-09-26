@@ -27,8 +27,9 @@ lodge-wide kill switch is WOLTSPACE_SITE_SHELL=off.
 
 Sites are private: they sit behind the same lodge protection as everything
 else (localhost, or the tunnel's Access gate), which is why the built-in
-Memory page may show boot files. Apps are the public surface. Sharing a single
-page, artifact-style, would be its own deliberate mechanism, not a site flag.
+Memory page may show boot files. Sites are never shared. Apps are private by
+default too; anything meant for someone else goes through the lodge's one
+deliberate sharing mechanism (sparks and apps), never through a site flag.
 
 Usage:
     from site_shell import inject_shell, shell_manifest, memory_payload
