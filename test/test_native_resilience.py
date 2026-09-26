@@ -8,6 +8,7 @@ disturbing the tmux sessions the registry already owns.
 
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -263,6 +264,65 @@ class TestUpgradePath:
         assert "upgrade-session" in json.dumps(report)
         record = registry.get("upgrade-session", wolt="testwolt", check_alive=False)
         assert record["runtime"]["tmux_session_name"] == "upgrade-tmux"
+
+    def test_new_runtime_reaps_a_running_legacy_tui_bridge_and_ignores_stale_triggers(
+        self, tmp_path, monkeypatch
+    ):
+        """An upgrade removes the old :port+1 process, not merely its launch plan."""
+        layout = _layout(tmp_path, port=18831)
+        marker = f"legacy-woltspace-tui-{os.getpid()}"
+        bridge_port = layout.port + 1
+        bridge = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import socket,sys,time; "
+                    "s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); "
+                    "s.bind(('127.0.0.1',int(sys.argv[1]))); s.listen(); time.sleep(60)"
+                ),
+                str(bridge_port),
+                marker,
+            ],
+            start_new_session=True,
+        )
+        try:
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                with socket.socket() as probe:
+                    if probe.connect_ex(("127.0.0.1", bridge_port)) == 0:
+                        break
+                time.sleep(0.05)
+            else:
+                pytest.fail("legacy bridge did not bind its port")
+
+            layout.platform_state.mkdir(parents=True, exist_ok=True)
+            (layout.platform_state / "config.json").write_text(json.dumps({
+                "channels": {"tui": {"enabled": True}},
+            }))
+            monkeypatch.setenv("WOLTSPACE_TUI_SERVICE_BIN", "/stale/woltspace-tui-service")
+            (layout.platform_state / "connectors.json").write_text(json.dumps({
+                "connectors": [{
+                    "name": "tui",
+                    "state": "running",
+                    "pid": bridge.pid,
+                    "command": ["woltspace-tui-service", str(bridge_port), marker],
+                    "process_signature": [marker],
+                }],
+            }))
+
+            # The process predates the candidate runtime. Candidate startup
+            # must reap it from the old PID record and must not reconstruct a
+            # TUI connector from either stale configuration source.
+            candidate = Supervisor(layout).channel_supervisor()
+            assert "tui" not in candidate.states
+            assert not _alive(bridge.pid)
+            with socket.socket() as probe:
+                assert probe.connect_ex(("127.0.0.1", bridge_port)) != 0
+        finally:
+            if _alive(bridge.pid):
+                os.killpg(os.getpgid(bridge.pid), 9)
+            bridge.wait(timeout=5)
 
 
 class TestMissingContainerMounts:
@@ -871,12 +931,9 @@ class TestAStrayServeCannotTakeOverALiveDataRoot:
 
         layout = _layout(tmp_path, isolation="external")
         plans = {plan.name: plan for plan in plan_connectors(layout)}
-        assert [plan.enabled for plan in plans.values()] == [False, False, False, False]
+        assert [plan.enabled for plan in plans.values()] == [False, False, False]
         assert "ambient environment" in plans["telegram"].detail
         assert plans["telegram"].command == ()
-        # The pty bridge is a guest here too: the real instance owns that port.
-        assert "not the platform entrypoint" in plans["tui"].detail
-        assert plans["tui"].command == ()
         # And the wolf: two schedulers on one data root fire every cron twice.
         assert "not the platform entrypoint" in plans["wolf"].detail
         assert plans["wolf"].command == ()

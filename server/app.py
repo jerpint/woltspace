@@ -1,8 +1,4 @@
-"""Woltspace server — FastAPI replacement for server.js.
-
-All endpoints except /tui WebSocket, which is proxied to the Node pty bridge
-(`woltspace-tui-service` from @woltspace/tui, supervised by the control plane).
-"""
+"""Woltspace server — FastAPI replacement for server.js."""
 
 import asyncio
 import json
@@ -43,7 +39,6 @@ from .config import (
     SITE_DIR,
     SPARKS_DIR,
     STATE_DIR,
-    TUI_PORT,
     WOLT_DIR,
     WOLT_NAME,
     WOLTS_DIR,
@@ -53,6 +48,11 @@ from .config import (
 from . import tunnel as tunnel_mgr
 from .notify import NoNotificationTarget, send_notification
 from .sparks import get_spark_with_chain, list_sparks
+from .pty_bridge import (
+    PtyBridgeError,
+    PtyTextDecoder,
+    attach_tmux,
+)
 
 # Session spawning — shared with bot
 import sys as _sys
@@ -220,7 +220,7 @@ async def lifespan(app: FastAPI):
     print(f"""
   woltspace server (python) · http://localhost:{PORT}
   wolt: {WOLT_NAME}
-  tui proxy → localhost:{TUI_PORT}
+  browser terminal: embedded Python PTY bridge
   tunnel: {tunnel_mgr.get_tunnel_url() or 'disabled'}
     """)
     yield
@@ -1756,44 +1756,67 @@ async def livereload_ws(ws: WebSocket):
         _livereload_clients.discard(ws)
 
 
-# --- WebSocket: TUI proxy to Node service ---
+# --- WebSocket: browser terminal ---
 
 @app.websocket("/tui")
 async def tui_proxy(ws: WebSocket):
-    """Proxy TUI WebSocket to the Node pty service on TUI_PORT."""
-    import asyncio
-    import websockets
-
+    """Attach the browser terminal directly to the requested tmux session."""
     if not _websocket_request_allowed(ws):
         await ws.close(code=1008)
         return
     session = ws.query_params.get("session", "main")
     await ws.accept()
-
     try:
-        async with websockets.connect(f"ws://localhost:{TUI_PORT}/tui?session={session}") as node_ws:
-            async def client_to_node():
-                try:
-                    while True:
-                        data = await ws.receive_text()
-                        await node_ws.send(data)
-                except WebSocketDisconnect:
-                    pass
-
-            async def node_to_client():
-                try:
-                    async for msg in node_ws:
-                        await ws.send_text(msg)
-                except Exception:
-                    pass
-
-            await asyncio.gather(client_to_node(), node_to_client())
-    except Exception as e:
+        attachment = await attach_tmux(session, WOLTS_DIR)
+    except PtyBridgeError as error:
         try:
-            await ws.send_text(f"\r\n[tui] connection failed: {e}\r\n")
+            await ws.send_text(f"\r\n[tui] connection failed: {error}\r\n")
             await ws.close()
         except Exception:
             pass
+        return
+
+    async def client_to_pty():
+        while True:
+            data = await ws.receive_text()
+            if data.startswith("{"):
+                try:
+                    message = json.loads(data)
+                    if message.get("type") == "resize":
+                        attachment.resize(int(message["cols"]), int(message["rows"]))
+                        continue
+                except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+                    pass
+            await attachment.write(data)
+
+    async def pty_to_client():
+        decoder = PtyTextDecoder()
+        while True:
+            data = await attachment.read()
+            if not data:
+                tail = decoder.feed(b"", final=True)
+                if tail:
+                    await ws.send_text(tail)
+                return
+            text = decoder.feed(data)
+            if text:
+                await ws.send_text(text)
+
+    tasks = {
+        asyncio.create_task(client_to_pty()),
+        asyncio.create_task(pty_to_client()),
+    }
+    try:
+        _done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        for task in tasks:
+            task.cancel()
+        await attachment.close()
 
 
 @app.websocket("/{path:path}")
@@ -1805,6 +1828,10 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
     """
     import asyncio
     import websockets
+
+    if not _websocket_request_allowed(ws):
+        await ws.close(code=1008)
+        return
 
     host = ws.headers.get("host") or ""
     app_name = _extract_app_subdomain(host)

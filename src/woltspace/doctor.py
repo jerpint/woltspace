@@ -386,16 +386,11 @@ def run_doctor(
         if not authenticated else "",
     ))
 
-    # The browser terminal needs the pty bridge. Plan it as the entrypoint
-    # would, so doctor reports what `woltspace start` will actually do.
-    from .channels import TuiBridgeConnector
-
-    bridge = TuiBridgeConnector().plan(layout, {**os.environ, "WOLTSPACE_ENTRYPOINT": "1"})
     checks.append(DoctorCheck(
-        "tui-bridge",
-        "pass" if bridge.enabled else "warn",
-        bridge.detail,
-        "" if bridge.enabled else bridge.remedy,
+        "browser-terminal",
+        "pass" if tmux else "fail",
+        "embedded Python PTY bridge" if tmux else "tmux unavailable",
+        "Install tmux so browser sessions can attach." if not tmux else "",
     ))
 
     if layout.isolation != "host":

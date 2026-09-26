@@ -131,12 +131,6 @@ class Supervisor:
         for key, value in connector_secrets(plans).items():
             if key not in os.environ or key in env_file_keys:
                 os.environ[key] = value
-        for plan in plans:
-            # The server proxies `/tui` to whatever port the bridge binds, and
-            # `server.config` reads TUI_PORT at import — so it must be in the
-            # environment before `server.app` is imported in run().
-            if plan.name == "tui" and plan.enabled:
-                os.environ["TUI_PORT"] = plan.env["TUI_PORT"]
         return ChannelSupervisor(self.layout, plans, already_reaped=True)
 
     def _refuse_busy_token(self, plan: ConnectorPlan) -> ConnectorPlan:

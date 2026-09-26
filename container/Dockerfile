@@ -6,8 +6,8 @@
 #   PyPI  woltspace==<WOLTSPACE_PYPI_VERSION>   → the control plane,
 #         whose wheel carries the whole runtime in its `_bundle` (server,
 #         container/lib, container/bin, skills, templates)
-#   npm   @woltspace/tui@<WOLTSPACE_TUI_VERSION>            → woltspace-tui and
-#         the woltspace-tui-service pty bridge the control plane supervises.
+#   npm   @woltspace/tui@<WOLTSPACE_TUI_VERSION>            → the optional
+#         terminal cockpit. The browser PTY bridge lives in the Python wheel.
 #         Defaults to `latest`: the tui declares the minimum woltspace it needs
 #         and checks it at startup, so the wheel never pins a tui version
 #
