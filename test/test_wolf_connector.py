@@ -100,7 +100,7 @@ class TestPlan:
 
     def test_plan_connectors_carries_the_wolf(self, tmp_path):
         plans = plan_connectors(_layout(tmp_path), ENTRY)
-        assert [plan.name for plan in plans] == ["telegram", "slack", "tui", "wolf"]
+        assert [plan.name for plan in plans] == ["telegram", "slack", "wolf"]
 
 
 class TestSupervision:

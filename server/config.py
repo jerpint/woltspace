@@ -55,11 +55,6 @@ SPACE_PLATFORM_DIR = SPACE_DIR / "platform"
 SPACE_LOGS_DIR = SPACE_DIR / "logs"
 
 PORT = int(os.environ.get("PORT", "7777"))
-# `woltspace serve` exports TUI_PORT from the connector plan before this
-# module is imported; the fallback only covers a server started by hand, and
-# has to derive the port the same way the plan does or the /tui proxy dials a
-# bridge that is not there.
-TUI_PORT = int(os.environ.get("TUI_PORT") or PORT + 1)
 
 # --- State files ---
 

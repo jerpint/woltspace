@@ -169,3 +169,17 @@ def test_originless_native_websocket_still_requires_an_allowed_host():
         headers = {"host": "127.0.0.1:7777"}
 
     assert server_app._websocket_request_allowed(Socket()) is True
+
+
+def test_app_websocket_rejects_a_foreign_origin():
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with _client().websocket_connect(
+            "/vite-hmr",
+            headers={
+                "host": "notes.localhost:7777",
+                "origin": "https://evil.example",
+            },
+        ):
+            pass
+
+    assert exc.value.code == 1008

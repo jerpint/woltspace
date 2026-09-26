@@ -151,7 +151,7 @@ artifacts a native install uses**:
 
 ```dockerfile
 uv tool install 'woltspace==<WOLTSPACE_PYPI_VERSION>'   # the control plane
-npm  install -g '@woltspace/tui@<WOLTSPACE_TUI_VERSION>'            # tui + pty bridge
+npm  install -g '@woltspace/tui@<WOLTSPACE_TUI_VERSION>'            # optional terminal cockpit
 ```
 
 `WOLTSPACE_TUI_VERSION` defaults to `latest`: the two artifacts are versioned
@@ -212,13 +212,10 @@ Telegram runs as a **channel connector**: a child process the control plane
 starts with the API, stops with the API, restarts (bounded) when it dies, and
 reports through `woltspace status` and `GET /health`.
 
-The browser terminal's **pty bridge** is a connector too (`tui`). It is the
-Node service (`woltspace-tui-service`, shipped inside `@woltspace/tui`) that
-`server/app.py` proxies `/tui` websockets to, and it is enabled by default in
-both modes — the container no longer starts it by hand. A guest never binds
-its port. Switch it off with `channels.tui.enabled = false` or
-`WOLTSPACE_TUI_BRIDGE=false`; move it with `channels.tui.port` or
-`WOLTSPACE_TUI_PORT`.
+The browser terminal's **PTY bridge** is embedded in the Python server and
+attaches each `/tui` WebSocket directly to tmux. It has no separate process,
+port, Node dependency or connector lifecycle. The npm TUI remains an optional
+terminal cockpit with its own release cadence.
 
 > **Three programs are called `woltspace`.** On the host, the bash launcher that
 > drives Docker. Inside the container, `container/bin/woltspace` — a thin HTTP

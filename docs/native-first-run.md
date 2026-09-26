@@ -42,14 +42,16 @@ that CLI first.
 
 ---
 
-## 2. Install both artifacts
+## 2. Install Woltspace
 
 The published packages are the way to install:
 
 ```bash
 uv tool install 'woltspace'
-npm install -g @woltspace/tui
 ```
+
+The browser terminal is part of the Python package. Install the optional
+`@woltspace/tui` npm package only if you want the separate terminal cockpit.
 
 ### From a checkout (developing the platform)
 
@@ -59,27 +61,15 @@ so you pick up local changes:
 ```bash
 cd /path/to/woltspace
 uv tool install .
-cd tui && npm pack && npm install -g ./woltspace-tui-*.tgz
 ```
 
-`npm pack` prints the file list and leaves a `woltspace-tui-<version>.tgz` in
-`tui/` — the glob above is what installs it whatever the version says; delete
-it afterwards if you do not want it lying in the checkout.
-
-Check both halves agree:
+Check the installed package:
 
 ```console
 $ woltspace --version
 woltspace 0.5.1
 
-$ woltspace-tui --version --json
-{"name":"@woltspace/tui","version":"0.5.1","binary":"woltspace-tui"}
 ```
-
-The two versions do not have to match. The Python side accepts a local binary
-on identity alone — this package, this bin — and the tui is the half that
-checks compatibility: it declares the minimum woltspace it needs and says so if
-the lodge is below it.
 
 > If `uv tool install` warns that its bin directory is not on your PATH, follow
 > the `export PATH=...` line it prints (or run `uv tool update-shell`) and open
@@ -104,14 +94,6 @@ the lodge is below it.
 >
 > `which -a woltspace` shows the order. If a checkout is winning, drop that
 > `export PATH` line from your shell rc, or move it after `~/.local/bin`.
-
-The TUI install also brings `woltspace-tui-service`, the pty bridge behind the
-browser terminal. Check it landed too:
-
-```console
-$ woltspace-tui-service --version --json
-{"name":"@woltspace/tui","version":"0.5.1","binary":"woltspace-tui-service"}
-```
 
 ---
 
@@ -150,7 +132,7 @@ $ woltspace doctor
 ✓ tmux: /usr/bin/tmux
 ✓ harness: claude=/Users/you/.local/bin/claude, codex=/usr/local/bin/codex
 ✓ host-auth: claude, codex
-✓ tui-bridge: pty bridge on 127.0.0.1:7778 · node /path/to/woltspace/tui/src/tui-service.js
+✓ browser-terminal: embedded Python PTY bridge
 ✓ port: 127.0.0.1:7777 is available
 ```
 
@@ -165,10 +147,8 @@ Two checks worth understanding:
 - **data-root-sharing** only appears if the directory is already claimed by
   another instance, including a running container. If you see it, stop that
   instance or pick a different `WOLTSPACE_WOLTS_DIR`.
-- **tui-bridge** is what the browser's terminal pane connects through. From a
-  checkout it is the checkout's own `tui/src/tui-service.js`; from a wheel it
-  is the `woltspace-tui-service` that came with the TUI. A warning here means
-  the lodge will load but every terminal pane will say *connection failed*.
+- **browser-terminal** confirms that tmux is available to the embedded Python
+  PTY bridge. Node, npm and the optional terminal cockpit are not involved.
 
 ---
 
@@ -207,15 +187,14 @@ endpoint: http://127.0.0.1:7777
 
   🐶 connector telegram: disabled · disabled
      fix: Set channels.telegram = {"enabled": true, "token": "<bot token>"} in /Users/you/.woltspace/native-wolts/.space/platform/config.json (or export TELEGRAM_BOT_TOKEN).
-  🦫 connector tui: running · pty bridge on 127.0.0.1:7778 · woltspace-tui-service at /opt/homebrew/bin/woltspace-tui-service
 ```
 
 `state:` and `endpoint:` sit at column 0 on purpose — those two lines are what
 scripts grep for, and `--json` carries everything else, including the pid and
 instance id the human read leaves out. `adoption: 0 live` is right on a first
 run — there are no sessions to adopt yet. On later restarts this is how you see
-that live sessions were picked back up. `connector tui: running` is the pty
-bridge — without it the split view's terminal pane cannot attach.
+that live sessions were picked back up. The browser terminal is served inside
+the control plane and therefore has no separate connector status.
 
 The tunnel is **off** by default natively; nothing is published. To expose the
 lodge deliberately, `WOLTSPACE_PUBLIC_TUNNEL=true woltspace start`.
@@ -353,9 +332,8 @@ most of it.
 | `serve failed: … is not mounted` | Container mode without the wolts mount. Not applicable to a native run. |
 | Connector `degraded` with a 409 | Another process is polling that bot token. |
 | Connector `failed` after several restarts | It could not stay up; read `.space/logs/connector-<name>.log`. |
-| Terminal pane says `[tui] connection failed: … Connection refused` | The pty bridge is not running. `woltspace status` names it (`connector tui`); `woltspace doctor` says what is missing. |
-| `connector tui: failed` and its log says `EADDRINUSE` | Something else holds the bridge port (the API port + 1 unless you set one) — a hand-started `tui-service.js`, perhaps. Stop it, or set `WOLTSPACE_TUI_PORT`. |
-| Pane opens then closes, log says `posix_spawnp failed` | node-pty's `spawn-helper` lost its exec bit in the npm tarball. The bridge fixes this itself on start; if you see it, `chmod +x` the `prebuilds/darwin-*/spawn-helper` under your node-pty. |
+| Terminal pane says `[tui] connection failed: tmux is not installed` | Install tmux, then restart Woltspace. `woltspace doctor` reports the same missing prerequisite. |
+| Terminal pane says its named tmux session does not exist | The browser will ask the lodge to resume that session and reconnect; if it repeats, inspect the session record and control-plane log. |
 
 The control plane's own log is `$WOLTSPACE_WOLTS_DIR/.space/logs/control-plane.log`.
 

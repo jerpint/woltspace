@@ -5,10 +5,9 @@ an outside channel and this control plane. The supervisor owns its lifetime;
 the connector only has to describe how it starts and why it is (or is not)
 enabled.
 
-There are three: Telegram, which carries chat; the TUI bridge, which carries
-the browser terminal's keystrokes to tmux; and the wolf, which carries the
-clock. The last one talks to no outside channel — but it is a long-running
-child with exactly the same lifetime, and one supervisor is better than two.
+Telegram and Slack carry chat; the wolf carries the clock. The last one talks
+to no outside channel — but it is a long-running child with exactly the same
+lifetime, and one supervisor is better than two.
 This is a seam, not a plugin framework: adding another means adding a class to
 `CONNECTORS`.
 """
@@ -25,23 +24,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Mapping, Protocol, runtime_checkable
 
-from . import __version__
-from .compatibility import TUI_SERVICE_BINARY, tui_spec
 from .config import channel_config, config_path
 from .envvars import export_both
 from .layout import RuntimeLayout
-
-
-def default_tui_port(layout: RuntimeLayout) -> str:
-    """The bridge follows the instance it serves.
-
-    A fixed 3001 meant every control plane on a machine wanted the same pty
-    port, so a second instance (`--port 7778` beside the colony on 7777)
-    crash-looped its bridge forever on EADDRINUSE. Deriving it from the API
-    port gives each instance its own by default; every explicit knob still
-    wins, so a colony that already configured one is untouched.
-    """
-    return str(layout.port + 1)
 
 
 def _truthy(value: str) -> bool:
@@ -396,139 +381,6 @@ def telegram_token_is_busy(token: str, *, timeout: float = 3.0, opener=None) -> 
         return False
 
 
-TUI_BRIDGE_INSTALL_REMEDY = (
-    f"Install {tui_spec()} so `{TUI_SERVICE_BINARY}` is on PATH — from a checkout "
-    "while it is unpublished: `cd tui && npm pack && npm install -g "
-    "./woltspace-tui-<version>.tgz` — or run from a checkout that has `tui/node_modules` "
-    "(`cd tui && npm install`). Then `woltspace start`."
-)
-
-
-def resolve_tui_service(
-    layout: RuntimeLayout,
-    values: Mapping[str, str],
-    *,
-    which: Callable[[str], str | None] = shutil.which,
-    runner: Callable = subprocess.run,
-) -> tuple[tuple[str, ...], str, str]:
-    """Find the pty bridge: (command, detail, why-not).
-
-    Order: an explicit `WOLTSPACE_TUI_SERVICE_BIN`; the checkout's own
-    `tui/src/tui-service.js` when the install root is a source tree with node
-    modules beside it (dev checkouts and the container); the `woltspace-tui-service`
-    that `npm install -g @woltspace/tui` puts on PATH, whatever its version —
-    the probe checks identity, not version. An empty command means "not found",
-    and the third element says why.
-    """
-    from .tui import _probe
-
-    configured = values.get("WOLTSPACE_TUI_SERVICE_BIN", "").strip()
-    if configured:
-        return (configured,), f"{TUI_SERVICE_BINARY} from WOLTSPACE_TUI_SERVICE_BIN", ""
-
-    node = which("node")
-    script = layout.install_root / "tui" / "src" / "tui-service.js"
-    if script.is_file():
-        modules = (
-            layout.install_root / "tui" / "node_modules" / "node-pty",
-            layout.install_root / "node_modules" / "node-pty",
-        )
-        if not node:
-            return (), "", f"{script} needs node on PATH"
-        if any(path.is_dir() for path in modules):
-            return (node, str(script)), f"node {script}", ""
-        return (), "", f"{script} has no node-pty beside it"
-
-    binary = which(TUI_SERVICE_BINARY)
-    if binary:
-        probe = _probe(binary, expected_binary=TUI_SERVICE_BINARY, runner=runner)
-        if probe["valid"]:
-            return (str(Path(binary)),), f"{TUI_SERVICE_BINARY} at {binary}", ""
-        return (), "", f"{binary}: {probe.get('error', 'identity mismatch')}"
-    return (), "", f"no {TUI_SERVICE_BINARY} on PATH and no checkout tui/src beside {layout.install_root}"
-
-
-class TuiBridgeConnector:
-    """The browser terminal's pty bridge.
-
-    `server/app.py` proxies every `/tui` websocket to a small Node service that
-    attaches to the session's tmux through node-pty. The container's boot used
-    to launch it by hand, so a native control plane served a split view whose
-    terminal pane could only ever say "Connection refused". Now it is a
-    supervised child like Telegram: starts with the API, restarts if it dies,
-    reports through `woltspace status`.
-
-    Enabled by default. A guest never binds the pty port — the real instance
-    already has it.
-    """
-
-    name = "tui"
-
-    def plan(
-        self,
-        layout: RuntimeLayout,
-        env: Mapping[str, str] | None = None,
-        *,
-        which: Callable[[str], str | None] = shutil.which,
-        runner: Callable = subprocess.run,
-    ) -> ConnectorPlan:
-        values = dict(os.environ if env is None else env)
-        settings = channel_config(layout, self.name, values)
-        path = config_path(layout, values)
-
-        raw = values.get("WOLTSPACE_TUI_BRIDGE")
-        enabled = _truthy(raw) if raw is not None else bool(settings.get("enabled", True))
-        port = str(
-            values.get("WOLTSPACE_TUI_PORT") or values.get("TUI_PORT")
-            or settings.get("port") or default_tui_port(layout)
-        )
-        enable_remedy = (
-            f'Set channels.tui = {{"enabled": true}} in {path} '
-            "(or unset WOLTSPACE_TUI_BRIDGE). Without it the split view's terminal pane cannot connect."
-        )
-        if not enabled:
-            return ConnectorPlan(self.name, False, "disabled", remedy=enable_remedy)
-        if not _truthy(values.get("WOLTSPACE_ENTRYPOINT", "")):
-            return ConnectorPlan(
-                self.name,
-                False,
-                "not the platform entrypoint; a guest never binds the pty port",
-                remedy="Run the control plane through `woltspace start` to own the browser terminal.",
-            )
-
-        command, detail, why_not = resolve_tui_service(layout, values, which=which, runner=runner)
-        if not command:
-            return ConnectorPlan(
-                self.name, False, f"pty bridge not found: {why_not}",
-                remedy=TUI_BRIDGE_INSTALL_REMEDY,
-            )
-        # The bridge declares the minimum lodge version it needs and checks it
-        # itself at startup — the only version conversation between the halves,
-        # and it only happens because we tell it who is launching it.
-        child_env = export_both({
-            "TUI_PORT": port,
-            "WOLTSPACE_VERSION": __version__,
-            "WOLTSPACE_WOLT_DIR": str(layout.wolts_dir),
-            "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
-        })
-        return ConnectorPlan(
-            name=self.name,
-            enabled=True,
-            detail=f"pty bridge on 127.0.0.1:{port} · {detail}",
-            command=command,
-            env=child_env,
-            remedy=(
-                f"Something else holds port {port}; pick another with WOLTSPACE_TUI_PORT "
-                f"or channels.tui.port in {path}, or read {layout.logs_dir / 'connector-tui.log'}. "
-                f"The default is the API port + 1 ({layout.port} + 1), so an instance started "
-                f"one port above another lands on that one's bridge — give it an explicit port."
-            ),
-            # The script or binary path is one argv token no other process
-            # reproduces; `node` alone would match every Node program.
-            process_signature=(command[-1],),
-        )
-
-
 WOLF_MODULE = "creatures.wolf"
 
 
@@ -627,7 +479,7 @@ class WolfConnector:
 
 
 CONNECTORS: tuple[ChannelConnector, ...] = (
-    TelegramConnector(), SlackConnector(), TuiBridgeConnector(), WolfConnector(),
+    TelegramConnector(), SlackConnector(), WolfConnector(),
 )
 
 
