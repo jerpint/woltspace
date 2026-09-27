@@ -14,6 +14,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Preahvihear&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<style>@font-face{font-family:'Symbols Nerd Font Mono';font-display:block;src:url('/static/SymbolsNerdFontMono-Regular.woff2') format('woff2')}</style>
 <style>
   :root {
     --bg:         #EDE8DE;
@@ -348,7 +349,7 @@
   const statusText = document.getElementById('tui-status-text');
   const term = new Terminal({
     cursorBlink: true, fontSize: 13, unicodeVersion: '11',
-    fontFamily: "'JetBrains Mono','SF Mono','Fira Code','Consolas',monospace",
+    fontFamily: "'JetBrains Mono','Symbols Nerd Font Mono','SF Mono','Fira Code','Consolas',monospace",
     theme: {
       background: '#1a1612',
       foreground: '#E8E0D4',
