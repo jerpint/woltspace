@@ -31,6 +31,7 @@ from fastapi.templating import Jinja2Templates
 from . import tools as tool_registry
 from .config import (
     APP_MIME_TYPES,
+    dotenv_env,
     CONTAINER_HOME,
     DEN_REPLY_FOOTER,
     MIME_TYPES,
@@ -1237,6 +1238,17 @@ def _wolf_entry(payload: dict) -> dict:
             if payload.get(k) is not None and payload.get(k) != ""}
 
 
+def _wolf_channels() -> list[str]:
+    """The ping channels this lodge can actually deliver on, for a picker to
+    offer. Slack needs a notify channel as well as a token: a wolf ping has no
+    thread to answer in."""
+    ready = {
+        "telegram": dotenv_env("TELEGRAM_BOT_TOKEN") and dotenv_env("TELEGRAM_ALLOWED_USERS"),
+        "slack": dotenv_env("SLACK_BOT_TOKEN") and dotenv_env("SLACK_NOTIFY_CHANNEL"),
+    }
+    return [c for c in wolfcore.NOTIFY_CHANNELS if ready[c]]
+
+
 @app.get("/wolf/crons")
 def wolf_crons():
     """Every cron in the lodge, soonest first, with its words and its times.
@@ -1252,6 +1264,7 @@ def wolf_crons():
     out.sort(key=lambda c: datetime.fromisoformat(c["next_run"]) if c["next_run"] else far)
     return {
         "tz": wolfcore.local_tz_name(),
+        "channels": _wolf_channels(),
         "crons": out,
         "errors": [{"wolt": wolt, "error": error} for wolt, error in errors],
     }
@@ -1330,6 +1343,8 @@ def wolf_cron_update(wolt: str, name: str, payload: dict | None = Body(None)):
         if path is None:
             return data
         entry = dict(data["crons"][index])
+        if entry.get("notify"):  # an old free-text notify is written back as its channel
+            entry["notify"] = wolfcore.notify_channel(entry["notify"])
         for kind, other in (("schedule", "at"), ("at", "schedule")):
             if payload.get(kind):
                 entry[kind] = payload[kind]

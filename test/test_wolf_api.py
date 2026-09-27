@@ -70,10 +70,18 @@ class TestList:
         [cron] = body["crons"]
         assert cron["wolt"] == "alpha" and cron["name"] == "digest"
         assert cron["schedule"] == "0 6 * * *" and "at" not in cron
-        assert cron["prompt"] == "/digest" and cron["notify"] == "digest time"
+        # the fixture's old free-text notify is shown as the channel it always used
+        assert cron["prompt"] == "/digest" and cron["notify"] == "telegram"
         assert cron["catch_up"] is True
         assert datetime.fromisoformat(cron["next_run"]).tzinfo is not None
         assert cron["last_run"].startswith("2026-03-15T06:00:00")
+
+    def test_offers_only_channels_that_can_deliver(self, client, monkeypatch):
+        monkeypatch.setattr(server_app, "dotenv_env", lambda key: {
+            "TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_ALLOWED_USERS": "1",
+            "SLACK_BOT_TOKEN": "s",  # no SLACK_NOTIFY_CHANNEL: a ping would have nowhere to land
+        }.get(key, ""))
+        assert client.get("/wolf/crons").json()["channels"] == ["telegram"]
 
     def test_sorted_by_next_run_and_bad_entries_are_shown_not_fatal(self, client, wolts):
         (wolts / "beta" / "wolt" / "wolf.json").write_text(json.dumps({"crons": [
@@ -107,14 +115,19 @@ class TestAdd:
         names = [c["name"] for c in _file(wolts, "alpha")["crons"]]
         assert names == ["digest", "digest-2", "digest-3"]
 
+    def test_notify_takes_a_channel_not_free_text(self, client, wolts):
+        r = client.post("/wolf/crons", json={
+            "wolt": "beta", "schedule": "0 9 * * *", "prompt": "hi", "notify": "heads up"})
+        assert r.status_code == 400 and r.json()["field"] == "notify"
+
     def test_one_off_with_options(self, client, wolts):
         at = _future()
         r = client.post("/wolf/crons", json={
             "wolt": "beta", "name": "remind", "at": at, "prompt": "ping",
-            "notify": "heads up", "catch_up": False})
+            "notify": "telegram", "catch_up": False})
         assert r.status_code == 201
         assert _file(wolts, "beta")["crons"] == [{"name": "remind", "at": at, "prompt": "ping",
-                                                  "notify": "heads up", "catch_up": False}]
+                                                  "notify": "telegram", "catch_up": False}]
         assert r.json()["next_run"].startswith(at)
 
     def test_dry_run_writes_nothing(self, client, wolts):
@@ -171,8 +184,9 @@ class TestUpdate:
         r = client.put("/wolf/crons/alpha/digest", json={"schedule": "30 7 * * 1-5"})
         assert r.status_code == 200, r.text
         [cron] = _file(wolts, "alpha")["crons"]
+        # an old free-text notify is written back as the channel it always meant
         assert cron == {"name": "digest", "schedule": "30 7 * * 1-5", "prompt": "/digest",
-                        "notify": "digest time", "timezone": "kept-as-is"}
+                        "notify": "telegram", "timezone": "kept-as-is"}
 
     def test_switch_kind_and_clear_notify(self, client, wolts):
         at = _future()

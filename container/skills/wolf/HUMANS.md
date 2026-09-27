@@ -20,7 +20,8 @@ if it dies, and shows up in `woltspace status`.
 ┌──────────────────────┐      ┌────────────────────────┐     ┌──────────────────┐
 │ {"crons": [          │─────▶│ every 30s: load, check │────▶│ start a session  │
 │   {name, schedule|at,│      │ due (lib/wolfcore.py), │     │ for the owning   │
-│    prompt, notify?,  │      │ stamp, dispatch, notify│     │ wolt; 🐺 notify  │
+│    prompt, notify?,  │      │ stamp, dispatch, ping? │     │ wolt; 🐺 ping on │
+│                      │      │                        │     │ notify's channel │
 │    catch_up?}        │      └────────────────────────┘     └──────────────────┘
 │ ]}                   │                 │
 └──────────────────────┘                 ▼
@@ -41,7 +42,7 @@ woltspace wolf add --wolt W --cron '0 9 * * 1-5' <<'WOLF_MSG'
 Write the standup notes.
 WOLF_MSG
 woltspace wolf add --wolt W --at 2026-03-22T14:30 --message 'check the deploy'
-woltspace wolf set W NAME [--cron EXPR | --at TIME] [--message TEXT|-] [--notify TEXT] [--move-to WOLT]
+woltspace wolf set W NAME [--cron EXPR | --at TIME] [--message TEXT|-] [--notify telegram|slack|''] [--move-to WOLT]
 woltspace wolf rm W NAME
 woltspace wolf run W NAME          # run now; schedule untouched, journaled "manual"
 woltspace wolf runs [--wolt W] [--limit N]
@@ -68,7 +69,7 @@ and keep any extra keys you added.
 
 | Route | Does |
 |-------|------|
-| `GET /wolf/crons` | every cron with prompt, next/last run, and the lodge's zone |
+| `GET /wolf/crons` | every cron with prompt, next/last run, the lodge's zone, and the ping `channels` that can deliver |
 | `POST /wolf/crons[?dry_run=1]` | add (`{wolt, schedule\|at, prompt, name?, notify?, catch_up?}`) |
 | `PUT /wolf/crons/<wolt>/<name>` | partial update; `wolt` in the body moves it |
 | `DELETE /wolf/crons/<wolt>/<name>` | remove |

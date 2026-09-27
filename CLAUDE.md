@@ -201,7 +201,7 @@ Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select v
 No-LLM update checker. Compares stored version (`.state/woltspace-version`) against remote HEAD via `git ls-remote`. Available for on-demand use but not registered as a default wolf cron — wolves are loud, update checking is quiet surveillance.
 
 ### `container/creatures/wolf.py` (Wolf Scheduler 🐺)
-Background cron service, run as the `wolf` connector. Every 30s it reads each wolt's `wolt/wolf.json`, fires due crons by starting a session for the owning wolt, and sends 🐺 notifications. Times are the lodge machine's local time. The rules (strict cron parsing, the one due check, next run, locked wolf.json writes) live in `container/lib/wolfcore.py`, shared with the lodge's `/wolf/crons` API. Last-run stamps (`<wolt>/<name>.last`) and the `jobs.jsonl` journal are lodge-global in `.space/wolf/`. See the `/wolf` skill.
+Background cron service, run as the `wolf` connector. Every 30s it reads each wolt's `wolt/wolf.json`, fires due crons by starting a session for the owning wolt, and pings the human on the channel a cron names in `notify` (telegram or slack; none = quiet). Times are the lodge machine's local time. The rules (strict cron parsing, the one due check, next run, locked wolf.json writes) live in `container/lib/wolfcore.py`, shared with the lodge's `/wolf/crons` API. Last-run stamps (`<wolt>/<name>.last`) and the `jobs.jsonl` journal are lodge-global in `.space/wolf/`. See the `/wolf` skill.
 
 CLI: `woltspace wolf list|add|set|rm|run|runs` — a thin client of `/wolf/crons`.
 

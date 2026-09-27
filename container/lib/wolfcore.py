@@ -315,6 +315,19 @@ def unique_name(base: str, taken: set[str]) -> str:
     return f"{base}-{n}"
 
 
+# Where a cron may ping its human after it runs. Missing = nowhere: a wolf is
+# quiet unless asked. Any other text is the old free-text notify, which always
+# went to Telegram, so it still means Telegram.
+NOTIFY_CHANNELS = ("telegram", "slack")
+
+
+def notify_channel(value) -> str | None:
+    """The channel a cron's `notify` asks for, or None for no ping."""
+    if not value or not isinstance(value, str):
+        return None
+    return value if value in NOTIFY_CHANNELS else "telegram"
+
+
 def validate_entry(entry: dict, now: datetime) -> dict:
     """Strict check of a cron about to be written. Returns it, or raises CronError.
 
@@ -337,8 +350,9 @@ def validate_entry(entry: dict, now: datetime) -> dict:
     if not isinstance(prompt, str) or not prompt.strip():
         raise CronError("prompt must not be empty", "prompt")
     notify = entry.get("notify")
-    if notify is not None and not isinstance(notify, str):
-        raise CronError("notify must be text", "notify")
+    if notify is not None and notify not in NOTIFY_CHANNELS:
+        raise CronError(f"notify must be one of {', '.join(NOTIFY_CHANNELS)}, or left out for no ping",
+                        "notify")
     if "catch_up" in entry and not isinstance(entry["catch_up"], bool):
         raise CronError("catch_up must be true or false", "catch_up")
     return entry
@@ -556,7 +570,7 @@ def describe(entry: dict, wolt: str, state_dir: Path, now: datetime) -> dict:
     out[kind] = entry.get(kind, "")
     out.update({
         "prompt": entry.get("prompt", ""),
-        "notify": entry.get("notify"),
+        "notify": notify_channel(entry.get("notify")),
         "catch_up": entry.get("catch_up") is not False,
         "next_run": None,
         "last_run": stamp_to_iso(read_last_run(state_dir, wolt, name)),

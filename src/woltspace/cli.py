@@ -1164,7 +1164,8 @@ def build_parser() -> argparse.ArgumentParser:
     when.add_argument("--cron", metavar="EXPR", help="recurring: 'min hour day month weekday'")
     when.add_argument("--at", metavar="YYYY-MM-DDTHH:MM", help="once, in lodge local time")
     wolf_add.add_argument("--name", default="", help="default: from the message's first words")
-    wolf_add.add_argument("--notify", default="", help="text for the fire notification")
+    wolf_add.add_argument("--notify", default="", choices=["telegram", "slack"],
+                          help="also ping you on this channel when it runs (default: no ping)")
     wolf_add.add_argument("--message", default=None, help="the prompt, instead of stdin")
     wolf_add.add_argument("--dry-run", action="store_true", help="show it, write nothing")
     wolf_add.add_argument("--json", action="store_true")
@@ -1177,7 +1178,8 @@ def build_parser() -> argparse.ArgumentParser:
     set_when.add_argument("--cron", metavar="EXPR", default=None)
     set_when.add_argument("--at", metavar="YYYY-MM-DDTHH:MM", default=None)
     wolf_set.add_argument("--message", default=None, help="new prompt; '-' reads stdin")
-    wolf_set.add_argument("--notify", default=None, help="'' clears it")
+    wolf_set.add_argument("--notify", default=None, choices=["telegram", "slack", ""],
+                          help="ping channel when it runs; '' turns the ping off")
     wolf_set.add_argument("--move-to", metavar="WOLT", default=None)
     wolf_set.add_argument("--json", action="store_true")
     wolf_set.set_defaults(func=_wolf_set)

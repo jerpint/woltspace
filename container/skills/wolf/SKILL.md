@@ -26,7 +26,7 @@ The message (what the session is told to do) is read from stdin. Use a
 single-quoted heredoc so the shell leaves it alone:
 
 ```bash
-woltspace wolf add --cron '0 9 * * 1-5' --notify 'standup notes' <<'WOLF_MSG'
+woltspace wolf add --cron '0 9 * * 1-5' --notify telegram <<'WOLF_MSG'
 Write today's standup notes from yesterday's commits.
 WOLF_MSG
 ```
@@ -41,7 +41,7 @@ WOLF_MSG
 
 - `--wolt` defaults to you (`$WOLTSPACE_WOLT_NAME`); pass it to schedule for another wolt.
 - `--name` defaults to the message's first few words (`write-today-s-standup`), made unique in that wolt.
-- `--notify TEXT` is the line in the fire notification.
+- `--notify telegram|slack` also pings your human there when it runs ("🐺 <wolt> woke up: <first line>" + session link). Leave it out and the wolf is quiet; the run still shows in `woltspace wolf runs` and on the lodge's wolves page. Slack needs `SLACK_NOTIFY_CHANNEL` set.
 - `--message TEXT` instead of stdin for a one-liner.
 - `--dry-run` shows the entry and the resulting file, writes nothing.
 - `--json` on any command for machine-readable output.
@@ -55,7 +55,7 @@ woltspace wolf set <wolt> <name> --at 2026-03-23T10:00      # switch to a one-of
 woltspace wolf set <wolt> <name> --message - <<'WOLF_MSG'   # new message from stdin
 New instructions.
 WOLF_MSG
-woltspace wolf set <wolt> <name> --notify ''                 # clear the notification text
+woltspace wolf set <wolt> <name> --notify ''                 # stop pinging (telegram|slack to turn it on)
 woltspace wolf set <wolt> <name> --move-to <other-wolt>
 woltspace wolf rm  <wolt> <name>
 woltspace wolf run <wolt> <name>                             # run now; schedule untouched
@@ -100,7 +100,7 @@ and skipped, never fatal — but only the CLI checks your work before it lands.
       "name": "standup",
       "schedule": "0 9 * * 1-5",
       "prompt": "Write today's standup notes from yesterday's commits.",
-      "notify": "standup notes"
+      "notify": "telegram"
     },
     {
       "name": "deploy-check",
@@ -118,7 +118,7 @@ and skipped, never fatal — but only the CLI checks your work before it lands.
 | `schedule` | recurring | Cron expression, lodge local time |
 | `at` | one-off | `YYYY-MM-DDTHH:MM`, lodge local time — fires once, then is removed |
 | `prompt` | yes | What the session is told — plain text or a `/skill` |
-| `notify` | no | Text for the fire notification |
+| `notify` | no | `telegram` or `slack`: ping your human there after each run. Missing = quiet. (Older free text still means telegram.) |
 | `catch_up` | no | `false` = don't fire a run missed while the wolf was down |
 
 Exactly one of `schedule` or `at`.

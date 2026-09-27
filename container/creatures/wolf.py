@@ -137,12 +137,19 @@ def migrate_stamps(crons: list[dict]):
 
 # ── Actions ─────────────────────────────────────────────────────────
 
-def send_wolf_notify(message: str):
-    """Send a 🐺 wolf notification via the server."""
+def send_wolf_notify(message: str, channel: str | None = None):
+    """Send a 🐺 wolf notification via the server.
+
+    `channel` names the adapter (telegram, slack); without one the lodge's own
+    default applies, which is what failures use: those always reach someone.
+    """
     full_message = f"🐺 *Howl*\n\n{message}"
 
     # Use the notify endpoint directly (no session context needed)
-    payload = json.dumps({"message": full_message, "session": ""})
+    body = {"message": full_message, "session": ""}
+    if channel:
+        body["adapter"] = channel
+    payload = json.dumps(body)
     try:
         result = subprocess.run(
             ["curl", "-s", "-X", "POST", server_url("/notify"),
@@ -229,7 +236,9 @@ def _get_wolt_emoji(wolt_name: str) -> str:
 
 
 def fire_cron(entry: dict):
-    """Execute a cron entry — dispatch session, then always notify with link."""
+    """Execute a cron entry — dispatch a session, then ping the human on the
+    channel the cron names in `notify`, if it names one. No channel = quiet:
+    the run is in the journal (and on the lodge's wolves page) either way."""
     name = entry.get("name", "unnamed")
     owner = entry.get("_owner", "?")
 
@@ -240,16 +249,18 @@ def fire_cron(entry: dict):
 
     _log_job(name, "session", event="dispatched", owner=owner, link=link)
 
-    # Build notification message
+    channel = wolfcore.notify_channel(entry.get("notify"))
+    if not channel:
+        return
     emoji = _get_wolt_emoji(owner)
-    custom_msg = entry.get("notify")
-    if custom_msg:
-        notify_body = f'{emoji} {owner} has been notified: "{custom_msg}"'
-    else:
-        notify_body = f"{emoji} {owner} has been woken up"
+    lines = (entry.get("prompt") or "").strip().splitlines()
+    first = lines[0] if lines else ""
+    if len(first) > 80:
+        first = first[:79] + "…"
+    notify_body = f"{emoji} {owner} woke up" + (f": {first}" if first else "")
     if link:
         notify_body = f"{notify_body}\n{link}"
-    send_wolf_notify(notify_body)
+    send_wolf_notify(notify_body, channel)
 
 
 # ── Main loop ───────────────────────────────────────────────────────

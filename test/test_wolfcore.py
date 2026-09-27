@@ -437,6 +437,7 @@ class TestValidateEntry:
         ({"schedule": "0 6 * * *", "prompt": "  "}, "prompt"),
         ({"schedule": "0 6 * * *", "name": "no spaces"}, "name"),
         ({"schedule": "0 6 * * *", "notify": 5}, "notify"),
+        ({"schedule": "0 6 * * *", "notify": "heads up"}, "notify"),
         ({"schedule": "0 6 * * *", "catch_up": "no"}, "catch_up"),
     ])
     def test_errors_name_their_field(self, entry, field):
@@ -446,7 +447,14 @@ class TestValidateEntry:
 
     def test_accepts_good_entries(self):
         assert self._check(schedule="0 6 * * *")
-        assert self._check(at="2027-01-01T09:00", catch_up=False, notify="hi")
+        assert self._check(at="2027-01-01T09:00", catch_up=False, notify="telegram")
+        assert self._check(schedule="0 6 * * *", notify="slack")
+
+    def test_notify_channel_reads_old_text_as_telegram(self):
+        assert wolfcore.notify_channel(None) is None
+        assert wolfcore.notify_channel("") is None
+        assert wolfcore.notify_channel("slack") == "slack"
+        assert wolfcore.notify_channel("digest time") == "telegram"
 
     def test_slug_and_unique_names(self):
         assert wolfcore.slugify("Check if PR #215 passed CI!") == "check-if-pr-215"

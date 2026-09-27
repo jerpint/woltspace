@@ -92,9 +92,9 @@ class TestAdd:
         calls, replies = api
         replies.append((201, CRON))
         assert run("add", "--wolt", "alpha", "--at", "2026-10-01T09:30",
-                   "--message", "ping", "--name", "remind", "--notify", "heads up") == 0
+                   "--message", "ping", "--name", "remind", "--notify", "telegram") == 0
         assert calls[0][2] == {"wolt": "alpha", "prompt": "ping", "at": "2026-10-01T09:30",
-                               "name": "remind", "notify": "heads up"}
+                               "name": "remind", "notify": "telegram"}
 
     def test_wolt_defaults_to_the_calling_wolt(self, api, monkeypatch):
         calls, replies = api

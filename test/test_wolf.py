@@ -358,16 +358,16 @@ class TestFireCron:
     def test_dispatches_then_notifies(self):
         from creatures.wolf import fire_cron
         call_order = []
-        entry = {"name": "t", "prompt": "do stuff", "_owner": "nunu", "notify": "heads up"}
-        with patch("creatures.wolf.send_wolf_notify", side_effect=lambda m: call_order.append("notify")), \
+        entry = {"name": "t", "prompt": "do stuff", "_owner": "nunu", "notify": "telegram"}
+        with patch("creatures.wolf.send_wolf_notify", side_effect=lambda *a: call_order.append("notify")), \
              patch("creatures.wolf.dispatch_session", side_effect=lambda e: call_order.append("session")), \
              patch("creatures.wolf.get_state_dir", return_value=Path("/tmp")), \
              patch("creatures.wolf._log_job"):
             fire_cron(entry)
         assert call_order == ["session", "notify"]
 
-    def test_always_notifies(self):
-        """Even without explicit notify field, fire_cron sends a default notification."""
+    def test_quiet_without_a_notify_channel(self):
+        """No `notify` = no ping: the run is in the journal, nobody is messaged."""
         from creatures.wolf import fire_cron
         entry = {"name": "t", "prompt": "do stuff", "_owner": "nunu"}
         with patch("creatures.wolf.send_wolf_notify") as mock_notify, \
@@ -375,11 +375,21 @@ class TestFireCron:
              patch("creatures.wolf.get_state_dir", return_value=Path("/tmp")), \
              patch("creatures.wolf._log_job"):
             fire_cron(entry)
-            mock_notify.assert_called_once()
+            mock_notify.assert_not_called()
+
+    def test_pings_on_the_channel_it_names(self):
+        from creatures.wolf import fire_cron
+        entry = {"name": "t", "prompt": "do stuff", "_owner": "nunu", "notify": "slack"}
+        with patch("creatures.wolf.send_wolf_notify") as mock_notify, \
+             patch("creatures.wolf.dispatch_session", return_value=None), \
+             patch("creatures.wolf.get_state_dir", return_value=Path("/tmp")), \
+             patch("creatures.wolf._log_job"):
+            fire_cron(entry)
+            assert mock_notify.call_args[0][1] == "slack"
 
     def test_notify_includes_link(self):
         from creatures.wolf import fire_cron
-        entry = {"name": "t", "prompt": "do stuff", "_owner": "nunu", "notify": "test"}
+        entry = {"name": "t", "prompt": "do stuff", "_owner": "nunu", "notify": "telegram"}
         with patch("creatures.wolf.send_wolf_notify") as mock_notify, \
              patch("creatures.wolf.dispatch_session", return_value="https://example.com/tui?session=nunu-abc"), \
              patch("creatures.wolf.get_state_dir", return_value=Path("/tmp")), \
@@ -890,7 +900,7 @@ class TestWoltEmoji:
 class TestHowlNotification:
     """Unit: fire_cron builds the correct notification message."""
 
-    def test_notify_with_custom_message(self, tmp_path):
+    def test_old_free_text_notify_still_pings_telegram(self, tmp_path):
         from creatures.wolf import fire_cron
         # Setup wolt.json for emoji resolution
         wolt_dir = tmp_path / "nunu" / "wolt"
@@ -903,24 +913,25 @@ class TestHowlNotification:
              patch("creatures.wolf.dispatch_session", return_value="https://example.com/tui?session=nunu-abc"), \
              patch("creatures.wolf.send_wolf_notify") as mock_notify:
             fire_cron(entry)
-        msg = mock_notify.call_args[0][0]
-        assert '🦫 nunu has been notified: "morning playlist time"' in msg
+        msg, channel = mock_notify.call_args[0]
+        assert channel == "telegram"
+        assert "🦫 nunu woke up: /music" in msg
         assert "https://example.com/tui?session=nunu-abc" in msg
 
-    def test_notify_without_custom_message(self, tmp_path):
+    def test_the_ping_names_the_wolt_and_the_first_line(self, tmp_path):
         from creatures.wolf import fire_cron
         wolt_dir = tmp_path / "nunu" / "wolt"
         wolt_dir.mkdir(parents=True)
         (wolt_dir / "wolt.json").write_text(json.dumps({"name": "nunu", "type": "beaver"}))
 
-        entry = {"name": "test", "prompt": "do stuff", "_owner": "nunu"}
+        entry = {"name": "test", "prompt": "do stuff\nand more", "_owner": "nunu", "notify": "telegram"}
         with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
              patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
              patch("creatures.wolf.dispatch_session", return_value=None), \
              patch("creatures.wolf.send_wolf_notify") as mock_notify:
             fire_cron(entry)
         msg = mock_notify.call_args[0][0]
-        assert "🦫 nunu has been woken up" in msg
+        assert msg == "🦫 nunu woke up: do stuff"
 
     def test_send_wolf_notify_format(self):
         """send_wolf_notify wraps message with nameless wolf header."""
@@ -931,3 +942,12 @@ class TestHowlNotification:
         payload = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("-d") + 1])
         assert payload["message"].startswith("🐺 *Howl*")
         assert "test message" in payload["message"]
+        assert "adapter" not in payload  # no channel = the lodge's default route
+
+    def test_send_wolf_notify_names_the_adapter(self):
+        from creatures.wolf import send_wolf_notify
+        mock_result = MagicMock(stdout='{"ok": true, "adapter": "slack"}', returncode=0)
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            send_wolf_notify("m", "slack")
+        payload = json.loads(mock_run.call_args[0][0][mock_run.call_args[0][0].index("-d") + 1])
+        assert payload["adapter"] == "slack"
