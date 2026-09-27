@@ -799,6 +799,33 @@ async def session_message(session_id: str, request: Request):
     return JSONResponse({"ok": False, **result}, status_code=code)
 
 
+@app.post("/sessions/{session_id}/describe")
+async def session_describe(session_id: str, request: Request):
+    """Give a session a concise title and one-line summary."""
+    from sessions import SessionRegistry
+
+    safe = sanitize_session(session_id)
+    if not safe or safe != session_id:
+        return JSONResponse({"error": "invalid session id"}, status_code=400)
+    body = await request.json()
+    title = body.get("title")
+    summary = body.get("summary")
+    if not isinstance(title, str) or not title.strip():
+        return JSONResponse({"error": "title required"}, status_code=400)
+    if not isinstance(summary, str) or not summary.strip():
+        return JSONResponse({"error": "summary required"}, status_code=400)
+    title = " ".join(title.split())
+    summary = " ".join(summary.split())
+    if len(title) > 80:
+        return JSONResponse({"error": "title must be 80 characters or fewer"}, status_code=400)
+    if len(summary) > 240:
+        return JSONResponse({"error": "summary must be 240 characters or fewer"}, status_code=400)
+    described = SessionRegistry(WOLTS_DIR).describe(safe, title, summary)
+    if described is None:
+        return JSONResponse({"error": "session not found"}, status_code=404)
+    return described
+
+
 @app.post("/wolts/{name}/message")
 async def wolt_message(name: str, request: Request):
     """Message a wolt by NAME — resolves to its most-recently-active live session.

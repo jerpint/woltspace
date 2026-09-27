@@ -101,6 +101,32 @@ class TestSessionRegistry:
         long_prompt = "x" * 1000
         data = reg.create("truncate-test", wolt="neowolt", prompt=long_prompt)
         assert len(data["prompt"]) == 500
+        assert data["prompt_preview"] == data["prompt"]
+
+    def test_legacy_prompt_becomes_preview_without_becoming_title(self, tmp_registry):
+        reg = tmp_registry
+        reg.create("legacy-description", wolt="neowolt", prompt="Build the lodge")
+        path = reg._path("neowolt", "legacy-description")
+        raw = json.loads(path.read_text())
+        raw.pop("prompt_preview")
+        raw.pop("summary")
+        path.write_text(json.dumps(raw))
+
+        fetched = reg.get("legacy-description", wolt="neowolt", check_alive=False)
+
+        assert fetched["prompt_preview"] == "Build the lodge"
+        assert fetched["title"] == ""
+        assert fetched["summary"] == ""
+
+    def test_describe_preserves_prompt_preview(self, tmp_registry):
+        reg = tmp_registry
+        reg.create("describe-me", wolt="neowolt", prompt="Original request")
+
+        described = reg.describe("describe-me", "Lodge redesign", "Wiring session titles")
+
+        assert described["title"] == "Lodge redesign"
+        assert described["summary"] == "Wiring session titles"
+        assert described["prompt_preview"] == "Original request"
 
     def test_atomic_write(self, tmp_registry):
         """Write uses tmp + rename for atomicity — no partial reads."""
