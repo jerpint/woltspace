@@ -1,6 +1,7 @@
 """Woltspace server — FastAPI replacement for server.js."""
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -61,9 +62,11 @@ import sys as _sys
 _sys.path.insert(0, str(WOLTSPACE_DIR / "container" / "lib"))
 from sessions import (
     resume_session, start_session, stop_session,
-    deliver_message, resolve_active_session, format_spawned_prompt,
+    deliver_message, resolve_active_session, format_attributed_message,
+    format_spawned_prompt,
     wolt_harness, ResumeUnavailable, ResumeFailed,
 )
+from session_expiry import get_idle_timeout, get_pane_activity, set_idle_timeout
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
 from execution_policy import AutoGrantStore, POLICY_VERSION
@@ -769,22 +772,11 @@ async def memory_read(request: Request):
 
 # --- Session messaging ---
 
-@app.post("/sessions/{session_id}/message")
-async def session_message(session_id: str, request: Request):
-    """Deliver a message into a running session.
-
-    Body: {"text": "...", "from_wolt"?: "...", "from_session"?: "..."}.
-    When from_wolt is given, the message is prepended with sender attribution
-    + a reply instruction (the wolt-to-wolt relay contract). Delivery is
-    harness-aware (paste-buffer + per-harness settle) via deliver_message.
-    """
-    safe = sanitize_session(session_id)
-    body = await request.json()
-    text = body.get("text")
-    if not text:
-        return JSONResponse({"error": "text required"}, status_code=400)
-    result = deliver_message(
-        safe, text,
+async def _deliver_or_resume(safe: str, text: str, body: dict):
+    result = await asyncio.to_thread(
+        deliver_message,
+        safe,
+        text,
         from_wolt=body.get("from_wolt", "") or "",
         from_session=body.get("from_session", "") or "",
     )
@@ -792,11 +784,83 @@ async def session_message(session_id: str, request: Request):
     if status == "delivered":
         print(f"[message] → {safe}: {text[:80]}")
         return {"ok": True, **result}
-    # 409 for session-dead and agent-gone alike: the request was well
-    # formed, the session just cannot receive right now. agent-gone carries a
-    # detail saying to resume and retry.
+    if status in {"session-dead", "agent-gone"}:
+        from sessions import SessionRegistry
+        record = SessionRegistry(WOLTS_DIR).get(safe, check_alive=False)
+        if not record or record.get("status") not in {"running", "resting"}:
+            return JSONResponse({"ok": False, **result}, status_code=409)
+        prompt = format_attributed_message(
+            text,
+            body.get("from_wolt", "") or "",
+            body.get("from_session", "") or "",
+        )
+        try:
+            resumed = await asyncio.to_thread(resume_session, safe, prompt)
+            print(f"[message] resumed → {safe}: {text[:80]}")
+            return {"ok": True, **resumed, "status": "resumed", "session": safe}
+        except (ValueError, ResumeUnavailable, ResumeFailed, subprocess.CalledProcessError) as exc:
+            return JSONResponse(
+                {"ok": False, "status": status, "session": safe, "error": str(exc)},
+                status_code=409,
+            )
     code = 404 if status == "no-session" else 409
     return JSONResponse({"ok": False, **result}, status_code=code)
+
+
+@app.post("/sessions/{session_id}/message")
+async def session_message(session_id: str, request: Request):
+    """Deliver to a running session, or resume a resting one on contact."""
+    safe = sanitize_session(session_id)
+    body = await request.json()
+    text = body.get("text")
+    if not text:
+        return JSONResponse({"error": "text required"}, status_code=400)
+    return await _deliver_or_resume(safe, text, body)
+
+
+def _rest_session_locked(safe: str, expected_digest: str):
+    """Verify and stop one session without blocking the server event loop."""
+    from sessions import SessionRegistry
+    registry = SessionRegistry(WOLTS_DIR)
+    data = registry.get(safe, check_alive=False)
+    if data is None:
+        return JSONResponse({"error": "session not found"}, status_code=404)
+    wolt = data.get("wolt", "")
+    with registry._lock(wolt, safe):
+        data = registry.get(safe, wolt=wolt, check_alive=False)
+        if data is None:
+            return JSONResponse({"error": "session not found"}, status_code=404)
+        if data.get("status") != "running":
+            return {"ok": True, "status": data.get("status"), "session": safe}
+        try:
+            pane = get_runtime().capture(RuntimeHandle.from_record(data), start=None)
+        except Exception:
+            return JSONResponse({"error": "session activity could not be verified"}, status_code=409)
+        current_digest = hashlib.sha256(pane.encode("utf-8")).hexdigest()
+        if current_digest != expected_digest:
+            return JSONResponse({"error": "session became active; rest aborted"}, status_code=409)
+        get_runtime().stop(RuntimeHandle.from_record(data))
+        now = int(time.time())
+        data["status"] = "resting"
+        data["rested_at"] = now
+        registry._write(wolt, safe, data)
+        return {"ok": True, "status": "resting", "session": safe, "rested_at": now}
+
+
+@app.post("/sessions/{session_id}/rest")
+async def rest_session(session_id: str, request: Request):
+    """Stop one idle runtime while keeping its conversation resumable."""
+    safe = sanitize_session(session_id)
+    if safe == "main":
+        return JSONResponse({"error": "main session cannot rest"}, status_code=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    expected_digest = body.get("pane_digest") if isinstance(body, dict) else None
+    if not isinstance(expected_digest, str) or len(expected_digest) != 64:
+        return JSONResponse({"error": "pane_digest required"}, status_code=400)
+    return await asyncio.to_thread(_rest_session_locked, safe, expected_digest)
 
 
 @app.post("/wolts/{name}/message")
@@ -807,7 +871,13 @@ async def wolt_message(name: str, request: Request):
     This is the ergonomic entry point: senders address `codexw`, not a slug.
     """
     safe_wolt = "".join(c for c in name if c.isalnum() or c in "-_")
-    session_id = resolve_active_session(safe_wolt)
+    from sessions import SessionRegistry
+    registry = SessionRegistry(WOLTS_DIR)
+    session_id = resolve_active_session(safe_wolt, registry=registry)
+    if not session_id:
+        resting = [s for s in registry.list(wolt=safe_wolt) if s.get("status") == "resting"]
+        resting.sort(key=lambda s: (s.get("last_activity") or 0, s.get("created_at") or 0), reverse=True)
+        session_id = resting[0]["name"] if resting else None
     if not session_id:
         return JSONResponse(
             {"ok": False, "status": "no-session", "wolt": safe_wolt,
@@ -818,16 +888,10 @@ async def wolt_message(name: str, request: Request):
     text = body.get("text")
     if not text:
         return JSONResponse({"error": "text required"}, status_code=400)
-    result = deliver_message(
-        session_id, text,
-        from_wolt=body.get("from_wolt", "") or "",
-        from_session=body.get("from_session", "") or "",
-    )
-    result["wolt"] = safe_wolt
-    if result.get("status") == "delivered":
-        print(f"[message] → {safe_wolt} ({session_id}): {text[:80]}")
-        return {"ok": True, **result}
-    return JSONResponse({"ok": False, **result}, status_code=409)
+    result = await _deliver_or_resume(session_id, text, body)
+    if isinstance(result, dict):
+        result["wolt"] = safe_wolt
+    return result
 
 
 # --- Session spawning ---
@@ -1009,6 +1073,15 @@ async def list_sessions():
     from sessions import SessionRegistry
     reg = SessionRegistry(WOLTS_DIR)
     sessions = reg.list()
+    timeout = get_idle_timeout()
+    observations = get_pane_activity() if timeout is not None else {}
+    now = int(time.time())
+    for session in sessions:
+        session["idle_timeout_seconds"] = timeout
+        observed = observations.get(session.get("name", ""), {}).get("unchanged_since")
+        if timeout is not None and isinstance(observed, int) and session.get("status") == "running":
+            session["idle_seconds"] = max(0, now - observed)
+            session["closes_in_seconds"] = max(0, timeout - session["idle_seconds"])
     sessions.sort(key=lambda s: (0 if s.get("status") == "running" else 1, -(s.get("created_at") or 0)))
     return sessions
 
@@ -1435,6 +1508,29 @@ def wolf_cron_fire(wolt: str, name: str):
 async def list_harnesses():
     """Registered engines (id, label, emoji, per-tier models) + lodge default."""
     return {"default": get_default_harness(), "harnesses": harness_metadata()}
+
+
+@app.get("/settings/session-expiry")
+async def get_session_expiry_setting():
+    return {"idle_timeout_seconds": get_idle_timeout()}
+
+
+@app.post("/settings/session-expiry")
+async def set_session_expiry_setting(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if set(body) != {"idle_timeout_seconds"}:
+        return JSONResponse({"error": "idle_timeout_seconds required"}, status_code=400)
+    value = body.get("idle_timeout_seconds")
+    try:
+        saved = set_idle_timeout(value)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return {"ok": True, "idle_timeout_seconds": saved}
 
 
 @app.get("/onboarding/status")
@@ -2199,6 +2295,7 @@ async def settings_page(request: Request):
         "harness_default": get_default_harness(),
         "harnesses": harnesses,
         "harness_labels": {harness["id"]: harness["label"] for harness in harnesses},
+        "idle_timeout": get_idle_timeout(),
         "wolts": wolts,
     })
 
