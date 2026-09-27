@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { chromium } = require('playwright');
 const base = process.env.BASE_URL || 'http://127.0.0.1:17799';
-const wolt = process.env.WOLT_NAME || 'n00b';
+const wolt = process.env.TEST_WOLT || 'n00b';
 (async () => {
   const browser = await chromium.launch({ headless: true });
   try {
