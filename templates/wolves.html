@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+{% from 'components/ui.html' import page_header %}
+
+{% block title %}Wolves · Woltspace{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="/static/wolves.css?v={{ cache_bust }}">
+{% endblock %}
+
+{% block content %}
+<div class="ds-page wolves-page" data-wolves-root>
+  {% call page_header('Scheduler', 'Wolves', 'A wolf wakes up one of your wolts at a time you pick, and tells it what to do. Tap anything to change it.') %}
+    <span class="ds-save-state" data-global-state role="status" aria-live="polite">
+      <span class="ds-save-dot"></span><span data-global-message>Changes apply instantly</span>
+    </span>
+  {% endcall %}
+
+  <section class="wolves-list" data-list aria-label="Scheduled wolves">
+    <p class="wolves-quiet">Loading the wolves…</p>
+  </section>
+
+  <h2 class="wolves-heading">Recent runs</h2>
+  <div class="wolves-card wolves-runs" data-runs></div>
+</div>
+
+<script type="application/json" id="wolves-wolts">{{ wolts | tojson }}</script>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="/static/wolves.js?v={{ cache_bust }}"></script>
+{% endblock %}

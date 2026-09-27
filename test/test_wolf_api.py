@@ -315,3 +315,19 @@ def test_schedules_reads_per_wolt_stamps(client, wolts):
     [alpha] = [s for s in client.get("/wolf/schedules").json()["schedules"] if s["wolt"] == "alpha"]
     assert alpha["crons"][0]["last_run"] == "2026-03-15-06:00"
     assert set(alpha["crons"][0]) == {"name", "schedule", "at", "last_run"}
+
+
+def test_the_wolves_page_renders_with_every_wolt_to_pick_from(client):
+    page = client.get("/wolves")
+    assert page.status_code == 200
+    assert "data-wolves-root" in page.text
+    assert "/static/wolves.js" in page.text
+    assert 'id="nav-wolves"' in page.text
+    picker = page.text.split('id="wolves-wolts">', 1)[1].split("</script>", 1)[0]
+    assert {w["name"] for w in json.loads(picker)} == {"alpha", "beta"}
+
+
+def test_the_wolves_page_does_not_embed_cron_prompts(client):
+    # The page reads crons through the API; nothing a wolf says is baked
+    # into the HTML, so a cached page never shows a stale or removed prompt.
+    assert "/digest" not in client.get("/wolves").text
