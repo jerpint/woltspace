@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from env_compat import get_env
-from sessions import SessionRegistry
+from sessions import SessionRegistry, stored_resume_id
 from harnesses import session_has_agent_process
 from paths import space_vulture_dir
 from session_runtime import RuntimeHandle, get_runtime
@@ -157,6 +157,9 @@ def _rest_idle_sessions(reg: SessionRegistry, live_tmux: set[str], now: int,
                 or data.get("status") != "running"):
             continue
         if now - (data.get("created_at") or now) < GRACE_PERIOD_SECONDS:
+            continue
+        # Resting must be reversible: never stop a session resume_session could not bring back.
+        if not stored_resume_id(data):
             continue
         try:
             pane = runtime.capture(RuntimeHandle.from_record(data), start=None)
