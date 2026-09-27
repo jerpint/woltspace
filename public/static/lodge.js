@@ -363,8 +363,8 @@ function renderApps() {
             </div>
           </div>
           <div class="app-actions">
-            ${canToggle ? `<button class="ma-btn ${p.running ? 'stop' : 'start'}" title="${p.running ? 'Stop' : 'Start'}" onclick="event.stopPropagation();toggleApp(decodeURIComponent('${encodeURIComponent(p.name)}'), ${p.running})">${p.running ? '■ Stop' : '▶ Start'}</button>` : ''}
-            <a class="ma-btn gear" href="/a/${encodeURIComponent(p.name)}" onclick="event.stopPropagation()" aria-label="${escapeHtml(p.name)} settings">⚙</a>
+            ${canToggle ? `<button class="tool-button ${p.running ? 'danger' : 'primary'}" title="${p.running ? 'Stop' : 'Start'}" onclick="event.stopPropagation();toggleApp(decodeURIComponent('${encodeURIComponent(p.name)}'), ${p.running})">${p.running ? '■ Stop' : '▶ Start'}</button>` : ''}
+            <a class="tool-button icon-button" href="/a/${encodeURIComponent(p.name)}" onclick="event.stopPropagation()" aria-label="${escapeHtml(p.name)} settings">⚙</a>
           </div>
         </div>
       </div>

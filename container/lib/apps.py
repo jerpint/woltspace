@@ -15,6 +15,7 @@ import json
 import os
 import signal
 import subprocess
+import time
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -353,8 +354,18 @@ def restart_app(name: str) -> dict:
     """Restart an app through the same lifecycle primitives as start/stop."""
     if not get_app(name):
         raise ValueError(f"App {name} not found")
+    previous = _read_state(name) or {}
+    previous_pid = previous.get("pid", 0)
     stop_app(name)
-    return start_app(name)
+    deadline = time.monotonic() + 5
+    while previous_pid and _is_pid_alive(previous_pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if previous_pid and _is_pid_alive(previous_pid):
+        raise RuntimeError(f"App {name} is still stopping")
+    state = start_app(name)
+    if not _is_pid_alive(state.get("pid", 0)):
+        raise RuntimeError(f"App {name} failed to stay running")
+    return state
 
 
 def set_app_keeper(name: str, keeper: str) -> WoltspaceApp:
