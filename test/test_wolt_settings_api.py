@@ -132,3 +132,10 @@ def test_lodge_settings_no_longer_edits_individual_wolts():
     script = (ROOT / "public" / "static" / "settings.js").read_text()
     assert "Wolt harnesses" not in template
     assert "data-wolt-select" not in script
+
+
+def test_wolt_settings_tab_uses_atomic_api_and_one_tap_choices():
+    source = (ROOT / "public" / "static" / "wolt-page.js").read_text()
+    assert "method: 'PATCH'" in source
+    assert "wolt-choice" in source
+    assert "applies from the next session" in source

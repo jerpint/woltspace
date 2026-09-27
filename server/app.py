@@ -1601,7 +1601,9 @@ async def set_wolt_harness(name: str, request: Request):
     if not isinstance(body, dict) or set(body) != {"harness"}:
         return JSONResponse({"error": "harness is required"}, status_code=400)
     try:
-        return _update_wolt_settings(name, body)
+        result = _update_wolt_settings(name, body)
+        result["pinned"] = body["harness"] not in (None, "")
+        return result
     except (ValueError, FileNotFoundError, RuntimeError) as exc:
         return _wolt_settings_error(exc)
 
