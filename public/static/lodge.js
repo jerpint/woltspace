@@ -214,7 +214,7 @@ function renderSidebarWolts() {
     card.className = `wolt-card${viewing === name ? ' active' : ''}${open.length ? '' : ' resting'}`;
     card.tabIndex = 0;
     card.onclick = () => { window.location.href = `/w/${encodeURIComponent(name)}`; };
-    card.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') card.click(); };
+    card.onkeydown = e => { if (e.target === card && (e.key === 'Enter' || e.key === ' ')) card.click(); };
     const avatar = document.createElement('div'); avatar.className = 'wolt-avatar';
     const sprite = woltSpriteAvatar(w.type, 36);
     if (sprite) avatar.innerHTML = sprite; else avatar.textContent = WOLT_EMOJI[w.type] || '🦫';
@@ -231,7 +231,7 @@ function renderSidebarWolts() {
     const info = document.createElement('div'); info.className = 'wolt-info';
     const nameEl = document.createElement('div'); nameEl.className = 'wolt-name'; nameEl.textContent = name;
     const sub = document.createElement('div'); sub.className = 'wolt-type';
-    sub.textContent = everyone ? w.type : open.length ? (working ? 'working' : 'awake') : `resting · ${compactAge(now - last)}`;
+    sub.textContent = everyone ? w.type : open.length ? (working ? 'working' : 'awake') : last ? `resting · ${compactAge(now - last)}` : 'never chatted';
     info.append(nameEl, sub); card.append(avatar, info);
     if (RODENT_TYPES.has(w.type)) { const add = document.createElement('button'); add.className = 'wolt-quick-session'; add.textContent = '+'; add.title = `New session with ${name}`; add.setAttribute('aria-label', add.title); add.onclick = e => { e.stopPropagation(); startSession(name); }; card.appendChild(add); }
     container.appendChild(card);

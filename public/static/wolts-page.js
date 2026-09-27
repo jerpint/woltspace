@@ -21,6 +21,7 @@
       if (Number.isFinite(s.closes_in_seconds)) return `open · closes in ${compactAge(s.closes_in_seconds)}`;
       return 'open';
     }
+    if (s.status === 'resting') return 'resume anytime';
     return s.status === 'failed' ? 'failed' : when(stamp(s));
   };
 
