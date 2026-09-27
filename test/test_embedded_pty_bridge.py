@@ -112,6 +112,47 @@ async def test_attach_resize_disconnect_preserves_tmux_session(tmp_path, monkeyp
         subprocess.run(["tmux", "kill-session", "-t", name], capture_output=True)
 
 
+def _client_size(name):
+    return subprocess.run(
+        ["tmux", "list-clients", "-t", name, "-F", "#{client_width}x#{client_height}"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+@pytest.mark.asyncio
+async def test_resize_after_attach_settles_reaches_tmux(tmp_path):
+    """Over a tunnel the browser's first resize lands after tmux has started.
+
+    The tmux client has no controlling terminal, so the kernel never delivers
+    SIGWINCH for it; the bridge must, or tmux keeps its startup size forever.
+    """
+    name = f"bridge-{uuid.uuid4().hex[:12]}"
+    subprocess.run(
+        ["tmux", "new-session", "-d", "-s", name, "-c", str(tmp_path)],
+        check=True,
+    )
+    attachment = None
+    try:
+        attachment = await attach_tmux(name, tmp_path)
+        async with asyncio.timeout(5):
+            while _client_size(name) == "":
+                await attachment.read()
+        await asyncio.sleep(0.3)
+        assert _client_size(name) == "80x24"
+
+        for cols, rows in ((147, 68), (120, 40)):
+            attachment.resize(cols, rows)
+            async with asyncio.timeout(5):
+                while _client_size(name) != f"{cols}x{rows}":
+                    await asyncio.sleep(0.05)
+    finally:
+        if attachment is not None:
+            await attachment.close()
+        subprocess.run(["tmux", "kill-session", "-t", name], capture_output=True)
+
+
 @pytest.mark.asyncio
 async def test_two_browser_attachments_do_not_cross_sessions(tmp_path):
     names = [f"bridge-{uuid.uuid4().hex[:12]}" for _ in range(2)]
