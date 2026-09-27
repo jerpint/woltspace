@@ -1,9 +1,12 @@
+import asyncio
 import json
 import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import ANY, Mock
 
+import httpx
 from starlette.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -115,6 +118,28 @@ def test_running_session_with_dead_tmux_is_resumed_on_contact(monkeypatch):
     assert response.status_code == 200
     assert response.json()["status"] == "resumed"
     resumed.assert_called_once()
+
+
+def test_message_lock_wait_does_not_block_the_event_loop(monkeypatch):
+    def held_lock(*_args, **_kwargs):
+        time.sleep(0.5)
+        return {"status": "delivered", "session": "friend"}
+
+    monkeypatch.setattr(server_app, "deliver_message", held_lock)
+
+    async def scenario():
+        transport = httpx.ASGITransport(app=server_app.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost:7777") as client:
+            started = time.monotonic()
+            delivery = asyncio.create_task(client.post("/sessions/friend/message", json={"text": "hello"}))
+            await asyncio.sleep(0.05)
+            health = await client.get("/health")
+            return time.monotonic() - started, health, await delivery
+
+    answered_in, health, delivery = asyncio.run(scenario())
+    assert health.status_code == 200
+    assert answered_in < 0.3, f"/health waited {answered_in:.2f}s on the session lock"
+    assert delivery.status_code == 200
 
 
 def test_by_name_message_falls_back_to_latest_resting_session(monkeypatch):
