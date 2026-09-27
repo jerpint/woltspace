@@ -67,7 +67,37 @@
 
   function memorySection(title, text, note = '') { const d = el('details','wolt-memory'); const s = el('summary','', title + (note ? ` · ${note}` : '')); const c = el('div','wolt-memory-content', text || '_empty_'); d.append(s,c); return d; }
   function renderAbout() { const box = el('div','wolt-about'); const description = (manifest.wolt || {}).description || config.description; if (description) box.appendChild(el('p','wolt-lede',description)); box.append(memorySection('Identity',(memory.identity || '').replace(/^# .*\n+/,'')), el('div','wolt-colhead','Memory'), memorySection('Context',memory.context, memory.context_lines ? `${memory.context_lines} lines` : ''), memorySection('Learnings',memory.learnings,memory.learnings_lines ? `${memory.learnings_lines} lines` : ''), memorySection('Archive',(memory.archive || []).join('\n'),`${(memory.archive || []).length} files`)); body.replaceChildren(box); }
-  function renderSettings() { const box = el('div','wolt-card-panel'), eng = effective(); [['Engine',eng.id + (config.harness ? '' : ' (lodge default)')],['Model',eng.model || 'tier default'],['Creature',`${config.type || 'rodent'} · permanent`]].forEach(([k,v]) => { const r=el('div','wolt-setting');r.append(el('b','',k),el('span','',v));box.appendChild(r);}); box.appendChild(el('p','wolt-quiet','Editing arrives with the wolt settings API. Changes apply from the next session.')); body.replaceChildren(box); }
+  async function saveSettings(patch, status) {
+    status.textContent = 'Saving…';
+    try {
+      const response = await fetch(`/wolts/${encodeURIComponent(name)}/settings`, {
+        method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(patch),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Could not save settings.');
+      config.harness = data.configured.harness || '';
+      config.model = data.configured.model || '';
+      renderHeader();
+      renderSettings('Saved · applies from the next session');
+    } catch (error) {
+      status.textContent = error.message;
+      status.classList.add('error');
+    }
+  }
+  function choiceGroup(label, choices, selected, onChoose) {
+    const section = el('section','wolt-choice-section'), title = el('div','wolt-colhead',label), pills = el('div','wolt-choices');
+    choices.forEach(choice => { const button = el('button',`wolt-choice${choice.id === selected ? ' active' : ''}`,choice.label); button.type='button'; button.onclick=()=>onChoose(choice.id); pills.appendChild(button); });
+    section.append(title,pills); return section;
+  }
+  function renderSettings(message = 'Changes apply from the next session.') {
+    const box = el('div','wolt-card-panel'), eng = effective(), status = el('p','wolt-settings-status',message);
+    const engines = (harnesses.harnesses || []).map(h => ({id:h.id,label:`${h.emoji || ''} ${h.label}`.trim()}));
+    box.appendChild(choiceGroup('Engine',engines,eng.id,id=>saveSettings({harness:id},status)));
+    const selected = (harnesses.harnesses || []).find(h=>h.id===eng.id) || {};
+    const models = (selected.catalog || []).map(model=>({id:model.id,label:model.label || model.id}));
+    box.appendChild(choiceGroup('Model',models,eng.model,id=>saveSettings({model:id},status)));
+    const creature=el('div','wolt-setting');creature.append(el('b','','Creature'),el('span','',`${config.type || 'rodent'} · permanent`));box.appendChild(creature,status);body.replaceChildren(box);
+  }
   function renderSite() { const wrap=el('div');const bar=el('div','wolt-sitebar');bar.append(el('span','',`${name}'s site`),link('⤢ Expand',`/wolt/${encodeURIComponent(name)}/site/`,'btn btn-ghost'));const frame=el('iframe','wolt-site');frame.src=`/wolt/${encodeURIComponent(name)}/site/`;frame.title=`${name}'s site`;wrap.append(bar,frame);body.replaceChildren(wrap); }
   function switchTab(next) { tab = ['overview','about','settings','site'].includes(next) ? next : 'overview'; root.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active',b.dataset.tab===tab)); history.replaceState(null,'',`/w/${encodeURIComponent(name)}${tab==='overview'?'':`?tab=${tab}`}`); ({overview:renderOverview,about:renderAbout,settings:renderSettings,site:renderSite}[tab])(); }
   root.querySelectorAll('[data-tab]').forEach(b => b.onclick=()=>switchTab(b.dataset.tab));

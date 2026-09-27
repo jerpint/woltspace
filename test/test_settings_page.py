@@ -26,7 +26,7 @@ def _write_wolt(root, name, creature, harness=None):
     (config_dir / "wolt.json").write_text(json.dumps(config))
 
 
-def test_settings_page_renders_defaults_and_overrides(tmp_path, monkeypatch):
+def test_settings_page_keeps_only_lodge_wide_harness_controls(tmp_path, monkeypatch):
     _write_wolt(tmp_path, "maple", "raccoon")
     _write_wolt(tmp_path, "brook", "beaver", "codex")
     _write_wolt(tmp_path, "fang", "dog")
@@ -41,9 +41,9 @@ def test_settings_page_renders_defaults_and_overrides(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert "Lodge harness" in body
     assert "Harnesses" in body
-    assert "maple" in body
-    assert "brook" in body
-    assert "Use lodge default (Claude Code)" in body
+    assert "maple" not in body
+    assert "brook" not in body
+    assert "Use lodge default (Claude Code)" not in body
     assert "Uses ·" not in body
     assert "Follows lodge ·" not in body
     assert ">opencode<" in body
@@ -51,7 +51,7 @@ def test_settings_page_renders_defaults_and_overrides(tmp_path, monkeypatch):
     assert "Not installed" not in body
     assert "GPT-5.5" not in body
     assert "GPT-4o" not in body
-    assert 'data-wolt="fang"' not in body
+    assert 'data-wolt=' not in body
     assert 'name="default-harness"' in body
     assert 'role="dialog"' in body
     assert 'aria-labelledby="create-modal-title"' in body
@@ -72,7 +72,9 @@ def test_settings_assets_and_mutations_are_wired(tmp_path, monkeypatch):
     assert script.status_code == 200
     assert "data-default-form" in script.text
     assert default.json() == {"ok": True, "default": "codex"}
-    assert override.json() == {"ok": True, "wolt": "maple", "harness": "claude", "pinned": True}
+    assert override.json()["configured"] == {"harness": "claude", "model": "opus"}
+    assert override.json()["applies"] == "next session"
+    assert override.json()["pinned"] is True
     assert json.loads((tmp_path / "woltspace.json").read_text())["harness"]["default"] == "codex"
     assert json.loads((tmp_path / "maple" / "wolt" / "wolt.json").read_text())["harness"] == "claude"
 
