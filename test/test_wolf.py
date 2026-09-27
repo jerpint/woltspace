@@ -1,7 +1,7 @@
 """Wolf scheduler unit tests — pure Python, no server or tmux required.
 
-Tests the cron parser, schedule loading, state tracking, and CLI dispatch
-in container/creatures/wolf.py.
+Tests the cron parser, schedule loading, state tracking, and dispatch in
+container/creatures/wolf.py (logic shared via container/lib/wolfcore.py).
 
 Usage: uv run pytest test/test_wolf.py -v
 """
@@ -169,31 +169,30 @@ class TestServerUrl:
 # ---------------------------------------------------------------------------
 
 class TestParseField:
-    """Unit: individual cron field parsing."""
+    """Unit: individual cron field parsing (now via wolfcore.parse_cron)."""
+
+    @staticmethod
+    def _minutes(field):
+        from wolfcore import parse_cron
+        return set(parse_cron(f"{field} * * * *").minutes)
 
     def test_wildcard(self):
-        from creatures.wolf import _parse_field
-        assert _parse_field("*", 0, 59) == set(range(0, 60))
+        assert self._minutes("*") == set(range(0, 60))
 
     def test_single_value(self):
-        from creatures.wolf import _parse_field
-        assert _parse_field("5", 0, 59) == {5}
+        assert self._minutes("5") == {5}
 
     def test_range(self):
-        from creatures.wolf import _parse_field
-        assert _parse_field("1-5", 0, 59) == {1, 2, 3, 4, 5}
+        assert self._minutes("1-5") == {1, 2, 3, 4, 5}
 
     def test_step(self):
-        from creatures.wolf import _parse_field
-        assert _parse_field("*/15", 0, 59) == {0, 15, 30, 45}
+        assert self._minutes("*/15") == {0, 15, 30, 45}
 
     def test_list(self):
-        from creatures.wolf import _parse_field
-        assert _parse_field("1,3,5", 0, 59) == {1, 3, 5}
+        assert self._minutes("1,3,5") == {1, 3, 5}
 
     def test_combined_list_and_range(self):
-        from creatures.wolf import _parse_field
-        assert _parse_field("1-3,7", 0, 59) == {1, 2, 3, 7}
+        assert self._minutes("1-3,7") == {1, 2, 3, 7}
 
 
 # ---------------------------------------------------------------------------
@@ -269,18 +268,18 @@ class TestStateTracking:
     def test_get_set_last_run(self, tmp_path):
         from creatures.wolf import get_last_run, set_last_run
         with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
-            assert get_last_run("test") is None
-            set_last_run("test", datetime(2026, 3, 15, 6, 0))
-            assert get_last_run("test") == "2026-03-15-06:00"
+            assert get_last_run("nunu", "test") is None
+            set_last_run("nunu", "test", datetime(2026, 3, 15, 6, 0))
+            assert get_last_run("nunu", "test") == "2026-03-15-06:00"
 
     def test_idempotent_check(self, tmp_path):
         """Same minute stamp should prevent re-firing."""
         from creatures.wolf import get_last_run, set_last_run
         with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
             dt = datetime(2026, 3, 15, 6, 0)
-            set_last_run("x", dt)
+            set_last_run("nunu", "x", dt)
             stamp = dt.strftime("%Y-%m-%d-%H:%M")
-            assert get_last_run("x") == stamp  # already fired
+            assert get_last_run("nunu", "x") == stamp  # already fired
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +322,7 @@ class TestCheckAndFire:
 
         with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
             # Pre-mark as fired
-            set_last_run("test", now)
+            set_last_run("nunu", "test", now)
             with patch("creatures.wolf.fire_cron") as mock_fire:
                 check_and_fire(crons, now)
                 mock_fire.assert_not_called()
@@ -694,51 +693,6 @@ class TestJobLogging:
         events = [json.loads(l)["event"] for l in lines]
         assert "started" in events
         assert "dispatched" in events
-
-
-# ---------------------------------------------------------------------------
-# show_jobs CLI output
-# ---------------------------------------------------------------------------
-
-class TestShowJobs:
-    """Unit: --jobs CLI output."""
-
-    def test_no_log_file(self, tmp_path, capsys):
-        from creatures.wolf import show_jobs
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
-            show_jobs()
-        assert "No job log yet" in capsys.readouterr().out
-
-    def test_shows_recent_entries(self, tmp_path, capsys):
-        from creatures.wolf import show_jobs
-        log_file = tmp_path / "jobs.jsonl"
-        entries = [
-            json.dumps({"ts": "2026-03-15T06:00:00", "cron": "digest", "event": "started"}),
-            json.dumps({"ts": "2026-03-15T06:00:01", "cron": "digest", "event": "dispatched", "session": "wolf-digest-abc"}),
-        ]
-        log_file.write_text("\n".join(entries))
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
-            show_jobs(count=5)
-        out = capsys.readouterr().out
-        assert "digest" in out
-        assert "started" in out
-        assert "dispatched" in out
-
-    def test_respects_count_limit(self, tmp_path, capsys):
-        from creatures.wolf import show_jobs
-        log_file = tmp_path / "jobs.jsonl"
-        entries = [
-            json.dumps({"ts": f"2026-03-15T0{i}:00:00", "cron": f"job-{i}", "event": "started"})
-            for i in range(5)
-        ]
-        log_file.write_text("\n".join(entries))
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
-            show_jobs(count=2)
-        out = capsys.readouterr().out
-        # Should show only the last 2
-        assert "job-3" in out
-        assert "job-4" in out
-        assert "job-0" not in out
 
 
 # ---------------------------------------------------------------------------
