@@ -57,6 +57,15 @@ def test_logs_are_bounded_and_unknown_app_is_404(tmp_path, monkeypatch):
     assert client.get("/apps/missing/logs").status_code == 404
 
 
+def test_app_detail_keeps_configured_port_when_stopped(monkeypatch):
+    manifest = apps.WoltspaceApp(name="notes", keeper="n00b", port=4321)
+    monkeypatch.setattr(server_app, "get_app", lambda name: manifest)
+    monkeypatch.setattr(server_app, "running_apps", lambda: [])
+    payload = TestClient(server_app.app, base_url="http://localhost:7777").get("/apps/notes").json()
+    assert payload["configured_port"] == 4321
+    assert payload["port"] is None
+
+
 def test_app_cli_twins_only_call_api(capsys):
     client = runpy.run_path(str(ROOT / "container" / "bin" / "woltspace"))
     calls = []

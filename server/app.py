@@ -1593,6 +1593,7 @@ async def list_apps_api():
     result = []
     for a in apps:
         entry = a.model_dump()
+        entry["configured_port"] = a.port
         run_state = running.get(a.name)
         entry["running"] = run_state is not None
         entry["port"] = run_state["port"] if run_state else None
@@ -1611,6 +1612,7 @@ async def app_detail(name: str):
         return JSONResponse({"error": f"app {name} not found"}, status_code=404)
     running = {r["name"]: r for r in running_apps()}
     entry = app_obj.model_dump()
+    entry["configured_port"] = app_obj.port
     run_state = running.get(name)
     entry["running"] = run_state is not None
     entry["port"] = run_state["port"] if run_state else None
