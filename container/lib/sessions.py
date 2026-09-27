@@ -189,6 +189,8 @@ class SessionRegistry:
             data["prompt_preview"] = str(data.get("prompt") or "")[:500]
         data.setdefault("title", "")
         data.setdefault("summary", "")
+        if not data["summary"] and data["title"] == _title_from_prompt(data.get("prompt") or ""):
+            data["title"] = ""
         return data
 
     def create(
@@ -1134,7 +1136,8 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
     """Build the full agent command for a session — the run-session.sh backend.
 
     Everything comes from the registry. Spawn also stamps harness_session_id
-    (used later for --resume) and a title derived from the prompt.
+    (used later for --resume). A session describes itself separately once its
+    focus is clear; the opening prompt remains the untitled preview.
 
     Raises ValueError if the session isn't in the registry.
     """
@@ -1169,7 +1172,7 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
         # one generated and stamped now. Others (codex) assign their own —
         # run-session.sh discovers it after launch via discover-id.
         session_id = ""
-        updates = {"title": _title_from_prompt(prompt)}
+        updates = {}
         if get_harness(harness).get("preset_session_id"):
             session_id = str(uuid.uuid4())
             updates["harness_session_id"] = session_id

@@ -473,7 +473,8 @@ function filterSessions() {
   if (search) filtered = filtered.filter(s =>
     (s.name || '').toLowerCase().includes(search) ||
     (s.wolt || '').toLowerCase().includes(search) ||
-    (s.title || '').toLowerCase().includes(search)
+    (s.title || '').toLowerCase().includes(search) ||
+    (s.prompt_preview || s.prompt || '').toLowerCase().includes(search)
   );
 
   if (sort === 'name') {
