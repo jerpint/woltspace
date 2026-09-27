@@ -16,6 +16,7 @@ import os
 import pty
 import re
 import shutil
+import signal
 import struct
 import termios
 from pathlib import Path
@@ -24,6 +25,8 @@ from pathlib import Path
 SESSION_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 MIN_COLS = 20
 MIN_ROWS = 5
+DEFAULT_COLS = 80
+DEFAULT_ROWS = 24
 
 
 class PtyBridgeError(RuntimeError):
@@ -69,6 +72,10 @@ async def _ensure_session(name: str, cwd: Path) -> None:
         raise PtyBridgeError("could not create the main tmux session")
 
 
+def _set_winsize(fd: int, cols: int, rows: int) -> None:
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+
+
 class TmuxAttachment:
     """One disposable PTY client attached to a durable tmux session."""
 
@@ -112,8 +119,12 @@ class TmuxAttachment:
     def resize(self, cols: int, rows: int) -> None:
         if self._closed or cols < MIN_COLS or rows < MIN_ROWS:
             return
-        dimensions = struct.pack("HHHH", rows, cols, 0, 0)
-        fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, dimensions)
+        _set_winsize(self.master_fd, cols, rows)
+        # The tmux client runs in its own session without a controlling
+        # terminal, so the kernel has no foreground group to send SIGWINCH to.
+        # Tell the client directly, or it keeps the size it read at startup.
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(self.process.pid, signal.SIGWINCH)
 
     async def close(self) -> None:
         if self._closed:
@@ -143,6 +154,9 @@ async def attach_tmux(name: str, cwd: Path) -> TmuxAttachment:
         raise PtyBridgeError("tmux is not installed")
 
     master_fd, slave_fd = pty.openpty()
+    # A fresh PTY is 0x0; give tmux a sane size until the browser's first
+    # resize arrives (which can lag behind the attach over a tunnel).
+    _set_winsize(master_fd, DEFAULT_COLS, DEFAULT_ROWS)
     os.set_blocking(master_fd, False)
     child_env = {**os.environ, "TERM": "xterm-256color"}
     # The control plane can itself be started from a tmux-hosted wolt. A child
