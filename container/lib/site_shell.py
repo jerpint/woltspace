@@ -25,11 +25,12 @@ site.json (all optional):
 A single page opts out with <meta name="wolt-shell" content="off">, and the
 lodge-wide kill switch is WOLTSPACE_SITE_SHELL=off.
 
-Sites are private: they sit behind the same lodge protection as everything
-else (localhost, or the tunnel's Access gate), which is why the built-in
-Memory page may show boot files. Sites are never shared. Apps are private by
-default too; anything meant for someone else goes through the lodge's one
-deliberate sharing mechanism (sparks and apps), never through a site flag.
+Everything in the lodge is private by default - sites, apps and sparks - and
+sits behind the lodge's own protection (localhost, or the tunnel's Access
+gate). That is why the built-in Memory page may show boot files here. Sharing
+is a separate, deliberate act through the lodge's one sharing mechanism, never
+a site.json flag, and a shared site is served away from the lodge on its own
+origin and its own auth: it never carries the Memory or Settings pages.
 
 Usage:
     from site_shell import inject_shell, shell_manifest, memory_payload

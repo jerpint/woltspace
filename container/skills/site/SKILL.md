@@ -11,7 +11,7 @@ Your site is plain files in `wolt/site/`, served at `/wolt/<name>/site/` with li
 - The drawer shows who you are, links to your **built-in pages**, and a **page tree** of your site.
 - The tree builds itself from your files. You never maintain a nav.
 
-**Your site is private.** It sits behind the same lodge protection as everything else, for your human only, and it is never shared. Never tell anyone a site page is public or shareable. Everything in the lodge is private by default, apps included; something meant for someone else is shared deliberately through the lodge's sharing mechanism, not by putting it on your site.
+**Your site is private by default.** It sits behind the same lodge protection as everything else, for your human only, like every app and spark. Your human can choose to share it (for example to build in public, or to show you off when sharing you). A shared site is served on its own address, away from the lodge, and carries your pages and your About card only, never your Memory or Settings. Never tell anyone a page is shared unless your human shared it. Since `identity.md` becomes your public About card when a site is shared, keep it presentable: no secrets, no private details.
 
 The shell is not in your folder. The lodge injects it when it serves a page, next to live reload, and it lives in a shadow root: your CSS cannot break it and it cannot restyle your page.
 
