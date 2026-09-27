@@ -13,6 +13,8 @@ const wolt = process.env.WOLT_NAME || 'n00b';
       created_at: Date.now() / 1000, title: '<img src=x onerror=alert(1)>', summary: '<script>alert(2)</script>',
     }]) }));
     await page.goto(`${base}/w/${encodeURIComponent(wolt)}`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(1000);
+    assert.equal(await page.locator('#bg-nature svg').count(), 1);
     assert.equal(await page.locator('.wolt-session-list img').count(), 0);
     assert.equal(await page.locator('.session-title').first().textContent(), '<img src=x onerror=alert(1)>');
   } finally { await browser.close(); }
