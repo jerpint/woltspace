@@ -36,6 +36,7 @@ setInterval(rotateQuote, 8000);
 (function() {
   const h = new Date().getHours();
   const el = document.getElementById('home-greeting');
+  if (!el) return;
   if (h < 6) el.textContent = 'the lodge never sleeps.';
   else if (h < 12) el.textContent = 'good morning.';
   else if (h < 18) el.textContent = 'the lodge';

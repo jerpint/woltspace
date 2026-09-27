@@ -84,10 +84,13 @@ from apps import (
     discover_apps,
     get_app,
     app_dir,
+    app_log_file,
     running_apps,
     share_app,
     start_app,
     stop_app,
+    restart_app,
+    set_app_keeper,
     unshare_all_apps,
     unshare_app,
 )
@@ -1574,6 +1577,22 @@ async def auto_grant_revoke(request: Request):
 # Centralized app management. Uses woltspace.json manifests.
 # App names are globally unique. Keeper (owning wolt) is in woltspace.json.
 
+_APP_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
+
+
+def _invalid_app_name(name: str) -> JSONResponse | None:
+    if not _APP_NAME_RE.fullmatch(name):
+        return JSONResponse({"error": "invalid app name"}, status_code=400)
+    return None
+
+@app.get("/tunnel")
+async def tunnel_status():
+    """Describe the lodge tunnel without exposing credentials or process state."""
+    url = tunnel_mgr.get_tunnel_url()
+    if not url:
+        return {"mode": "off", "url": ""}
+    return {"mode": tunnel_mgr.get_tunnel_mode(), "url": url}
+
 @app.get("/apps")
 async def list_apps_api():
     """List all apps that have woltspace.json."""
@@ -1582,6 +1601,7 @@ async def list_apps_api():
     result = []
     for a in apps:
         entry = a.model_dump()
+        entry["configured_port"] = a.port
         run_state = running.get(a.name)
         entry["running"] = run_state is not None
         entry["port"] = run_state["port"] if run_state else None
@@ -1595,11 +1615,14 @@ async def list_apps_api():
 @app.get("/apps/{name}")
 async def app_detail(name: str):
     """Get a single app's manifest and running state."""
+    if invalid := _invalid_app_name(name):
+        return invalid
     app_obj = get_app(name)
     if not app_obj:
         return JSONResponse({"error": f"app {name} not found"}, status_code=404)
     running = {r["name"]: r for r in running_apps()}
     entry = app_obj.model_dump()
+    entry["configured_port"] = app_obj.port
     run_state = running.get(name)
     entry["running"] = run_state is not None
     entry["port"] = run_state["port"] if run_state else None
@@ -1612,8 +1635,10 @@ async def app_detail(name: str):
 @app.post("/apps/{name}/start")
 async def app_start(name: str):
     """Start an app's dev server."""
+    if invalid := _invalid_app_name(name):
+        return invalid
     try:
-        state = start_app(name)
+        state = await asyncio.to_thread(start_app, name)
         print(f"[apps] started {name} on port {state['port']}")
         return state
     except ValueError as e:
@@ -1625,16 +1650,101 @@ async def app_start(name: str):
 @app.post("/apps/{name}/stop")
 async def app_stop(name: str):
     """Stop a running app."""
-    was_running = stop_app(name)
+    if invalid := _invalid_app_name(name):
+        return invalid
+    was_running = await asyncio.to_thread(stop_app, name)
     if was_running:
         print(f"[apps] stopped {name}")
         return {"ok": True, "name": name}
     return JSONResponse({"error": f"{name} is not running"}, status_code=404)
 
 
+@app.post("/apps/{name}/restart")
+async def app_restart(name: str):
+    if invalid := _invalid_app_name(name):
+        return invalid
+    try:
+        return await asyncio.to_thread(restart_app, name)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=404)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
+
+
+@app.get("/apps/{name}/logs")
+async def app_logs(name: str, tail: int = 200, stream: bool = False):
+    if invalid := _invalid_app_name(name):
+        return invalid
+    if not get_app(name):
+        return JSONResponse({"error": f"app {name} not found"}, status_code=404)
+    tail = max(1, min(tail, 2000))
+    path = app_log_file(name)
+
+    def read_tail() -> list[str]:
+        try:
+            with path.open("rb") as handle:
+                handle.seek(0, 2)
+                size = handle.tell()
+                handle.seek(max(0, size - 65536))
+                chunk = handle.read(65536)
+            return chunk.decode("utf-8", errors="replace").splitlines()[-tail:]
+        except FileNotFoundError:
+            return []
+
+    if not stream:
+        return {"name": name, "lines": read_tail()}
+
+    async def events():
+        position = path.stat().st_size if path.exists() else 0
+        for line in read_tail():
+            yield f"data: {json.dumps(line)}\n\n"
+        while True:
+            await asyncio.sleep(1)
+            if not path.exists():
+                continue
+            size = path.stat().st_size
+            if size < position:
+                position = 0
+            if size == position:
+                yield ": keepalive\n\n"
+                continue
+            with path.open("r", errors="replace") as handle:
+                handle.seek(position)
+                chunk = handle.read()
+                position = handle.tell()
+            for line in chunk.splitlines():
+                yield f"data: {json.dumps(line)}\n\n"
+
+    return StreamingResponse(events(), media_type="text/event-stream")
+
+
+@app.put("/apps/{name}")
+async def app_update(name: str, request: Request):
+    if invalid := _invalid_app_name(name):
+        return invalid
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if set(body) != {"keeper"}:
+        return JSONResponse({"error": "keeper is the only editable field"}, status_code=400)
+    keeper = body.get("keeper")
+    known = {w["dir"] for w in _configured_wolts()}
+    if not isinstance(keeper, str) or keeper not in known:
+        return JSONResponse({"error": "keeper must name an existing wolt"}, status_code=400)
+    try:
+        return set_app_keeper(name, keeper).model_dump()
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=404)
+
+
 @app.post("/apps/{name}/share")
 async def app_share(name: str):
     """Start a cloudflared tunnel to the app port and return the public URL."""
+    if invalid := _invalid_app_name(name):
+        return invalid
     import asyncio
     try:
         # share_app blocks (polls cloudflared log up to 30s) — run in thread
@@ -1650,6 +1760,8 @@ async def app_share(name: str):
 @app.post("/apps/{name}/unshare")
 async def app_unshare(name: str):
     """Stop the cloudflared tunnel for an app."""
+    if invalid := _invalid_app_name(name):
+        return invalid
     was_sharing = unshare_app(name)
     if was_sharing:
         print(f"[apps] unshared {name}")
@@ -2184,6 +2296,13 @@ async def tui_page(request: Request):
     })
 
 
+@app.get("/terminal")
+async def terminal_page(request: Request):
+    return templates.TemplateResponse(request, "terminal.html", context={
+        "cache_bust": int(time.time()),
+    })
+
+
 @app.get("/settings")
 async def settings_page(request: Request):
     """Shared configuration surface for the lodge and desktop shell."""
@@ -2203,6 +2322,30 @@ async def settings_page(request: Request):
     })
 
 
+@app.get("/w/{wolt_name}")
+async def lodge_wolt_page(request: Request, wolt_name: str):
+    """The lodge-native page for one persistent collaborator."""
+    wolt_dir = _builtin_wolt_dir(wolt_name)
+    if wolt_dir is None:
+        return PlainTextResponse("Not found", status_code=404)
+    config = next((w for w in _configured_wolts() if w.get("dir") == wolt_name), {})
+    return templates.TemplateResponse(request, "wolt.html", context={
+        "active_nav": "",
+        "cache_bust": int(time.time()),
+        "wolt_name": wolt_name,
+        "wolt": config,
+    })
+
+
+@app.get("/connectors")
+async def connectors_page(request: Request):
+    """Show lodge address and messaging connector health."""
+    return templates.TemplateResponse(request, "connectors.html", context={
+        "active_nav": "connectors",
+        "cache_bust": int(time.time()),
+    })
+
+
 @app.get("/wolves")
 async def wolves_page(request: Request):
     """The wolves: every scheduled wake-up in the lodge, editable in place.
@@ -2218,6 +2361,17 @@ async def wolves_page(request: Request):
         "active_nav": "wolves",
         "cache_bust": int(time.time()),
         "wolts": wolts,
+    })
+
+
+@app.get("/a/{app_name}")
+async def app_page(app_name: str, request: Request):
+    if not get_app(app_name):
+        return PlainTextResponse("App not found", status_code=404)
+    return templates.TemplateResponse(request, "app.html", context={
+        "active_nav": "apps",
+        "app_name": app_name,
+        "cache_bust": int(time.time()),
     })
 
 

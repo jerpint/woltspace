@@ -41,6 +41,14 @@ def get_tunnel_hostname() -> str:
     return _tunnel_hostname
 
 
+def get_tunnel_mode() -> str:
+    """Return the public lifecycle kind without exposing tunnel state details."""
+    if not _tunnel_url:
+        return "off"
+    mode = _read_state().get("type")
+    return mode if mode in {"named", "quick"} else "quick"
+
+
 def _parse_tunnel_domain(url: str):
     """Extract parent domain from tunnel URL for wildcard subdomain routing.
 

@@ -15,6 +15,7 @@ import json
 import os
 import signal
 import subprocess
+import time
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -122,6 +123,11 @@ def get_app(name: str) -> WoltspaceApp | None:
 
 def _state_file(name: str) -> Path:
     return _RUNNING_STATE_DIR / f"{name}.json"
+
+
+def app_log_file(name: str) -> Path:
+    """Return the package-owned log path for an app process."""
+    return _RUNNING_STATE_DIR / f"{name}.log"
 
 
 def _read_state(name: str) -> dict | None:
@@ -236,15 +242,20 @@ def start_app(name: str) -> dict:
 
     # Start the process with PORT env var
     env = {**os.environ, "PORT": str(port)}
-    proc = subprocess.Popen(
-        app.start,
-        shell=True,
-        cwd=str(work_dir),
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    _RUNNING_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    log_handle = app_log_file(name).open("ab", buffering=0)
+    try:
+        proc = subprocess.Popen(
+            app.start,
+            shell=True,
+            cwd=str(work_dir),
+            env=env,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    finally:
+        log_handle.close()
 
     state = {
         "name": name,
@@ -337,6 +348,43 @@ def stop_app(name: str) -> bool:
                 pass
     _clear_state(name)
     return True
+
+
+def restart_app(name: str) -> dict:
+    """Restart an app through the same lifecycle primitives as start/stop."""
+    if not get_app(name):
+        raise ValueError(f"App {name} not found")
+    previous = _read_state(name) or {}
+    previous_pid = previous.get("pid", 0)
+    stop_app(name)
+    deadline = time.monotonic() + 5
+    while previous_pid and _is_pid_alive(previous_pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if previous_pid and _is_pid_alive(previous_pid):
+        raise RuntimeError(f"App {name} is still stopping")
+    state = start_app(name)
+    if not _is_pid_alive(state.get("pid", 0)):
+        raise RuntimeError(f"App {name} failed to stay running")
+    return state
+
+
+def set_app_keeper(name: str, keeper: str) -> WoltspaceApp:
+    """Atomically update the keeper in an app manifest."""
+    path = app_dir(name) / MANIFEST
+    app = get_app(name)
+    if not app:
+        raise ValueError(f"App {name} not found")
+    data = json.loads(path.read_text())
+    data["keeper"] = keeper
+    updated = WoltspaceApp(**data)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(updated.model_dump(), indent=2) + "\n")
+    os.replace(tmp, path)
+    state = _read_state(name)
+    if state:
+        state["keeper"] = keeper
+        _write_state(name, state)
+    return updated
 
 
 # --- Sharing (cloudflared tunnels) ---

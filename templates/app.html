@@ -1,0 +1,7 @@
+{% extends 'base.html' %}
+{% block title %}{{ app_name }} · Woltspace{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/lodge-tools.css?v={{ cache_bust }}">{% endblock %}
+{% block content %}
+<div id="app-page" class="ds-page app-detail" data-app-name="{{ app_name|e }}" aria-live="polite"><p>loading…</p></div>
+{% endblock %}
+{% block scripts %}<script src="/static/app-page.js?v={{ cache_bust }}"></script>{% endblock %}

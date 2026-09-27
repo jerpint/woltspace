@@ -99,6 +99,39 @@ def cmd_status(args):
     _print_sessions(sessions, as_json=args.json)
 
 
+def cmd_app_action(args):
+    status, result = _req("POST", f"/apps/{args.name}/{args.verb}")
+    if args.json:
+        print(json.dumps(result, indent=2))
+    elif status < 300:
+        print(f"{args.name}: {args.verb} ok")
+    else:
+        print(result.get("error", f"HTTP {status}"), file=sys.stderr)
+        raise SystemExit(1)
+
+
+def cmd_app_logs(args):
+    status, result = _req("GET", f"/apps/{args.name}/logs?tail={args.tail}")
+    if status >= 300:
+        print(result.get("error", f"HTTP {status}"), file=sys.stderr)
+        raise SystemExit(1)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print("\n".join(result.get("lines", [])))
+
+
+def cmd_app_keeper(args):
+    status, result = _req("PUT", f"/apps/{args.name}", {"keeper": args.keeper})
+    if args.json:
+        print(json.dumps(result, indent=2))
+    elif status < 300:
+        print(f"{args.name}: kept by {args.keeper}")
+    else:
+        print(result.get("error", f"HTTP {status}"), file=sys.stderr)
+        raise SystemExit(1)
+
+
 def cmd_session_send(args):
     try:
         command = session_send_argv(
@@ -244,7 +277,7 @@ LIFECYCLE = {"start", "stop", "rebuild", "backup", "shell", "chat", "logs", "ini
 # the real CLI — `doctor`, `paths`, `serve`, `restore`, and the whole lifecycle
 # set. In the container "elsewhere" means the host; natively it means the python
 # CLI sitting a few directories up from this script.
-LOCAL_NOUNS = {"session", "status", "auto", "tui"}
+LOCAL_NOUNS = {"session", "status", "auto", "app", "tui"}
 
 # Nouns the python CLI serves that only talk to this lodge's API, so they
 # belong to it in the container too — there is no host to send them to.
@@ -405,6 +438,24 @@ def main():
     status = sub.add_parser("status", help="show sessions with workdir and policy")
     status.add_argument("--json", action="store_true", help="raw JSON output")
     status.set_defaults(func=cmd_status)
+
+    apps = sub.add_parser("app", help="manage lodge apps")
+    app_sub = apps.add_subparsers(dest="verb")
+    for verb in ("start", "stop", "restart"):
+        action = app_sub.add_parser(verb)
+        action.add_argument("name")
+        action.add_argument("--json", action="store_true")
+        action.set_defaults(func=cmd_app_action)
+    logs = app_sub.add_parser("logs")
+    logs.add_argument("name")
+    logs.add_argument("--tail", type=int, default=200)
+    logs.add_argument("--json", action="store_true")
+    logs.set_defaults(func=cmd_app_logs)
+    keeper = app_sub.add_parser("keeper")
+    keeper.add_argument("name")
+    keeper.add_argument("keeper")
+    keeper.add_argument("--json", action="store_true")
+    keeper.set_defaults(func=cmd_app_keeper)
 
     auto = sub.add_parser("auto", help="manage repository-scoped Auto consent")
     asub = auto.add_subparsers(dest="verb")

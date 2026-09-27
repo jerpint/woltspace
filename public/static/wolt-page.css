@@ -1,0 +1,25 @@
+.wolt-page { padding-bottom: 60px; }
+.wolt-page .filter-chip.active { background:var(--ink); border-color:var(--ink); color:#fff; }
+.wolt-heading { display:flex; gap:14px; align-items:center; min-width:0; }
+.wolt-page-avatar { width:52px; height:52px; display:grid; place-items:center; flex:none; }
+.wolt-role { font-size:13.5px; color:var(--ink-2); margin-top:2px; min-height:1.4em; }
+.wolt-resume { display:inline-block; background:var(--green); color:#fff; border:1px solid var(--green); text-decoration:none; }
+.wolt-resume:hover { background:#2f5738; border-color:#2f5738; }
+.wolt-page-body { padding:0 32px; }
+.wolt-overview { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:20px; align-items:start; }
+.wolt-main { min-width:0; }.wolt-side { display:flex; flex-direction:column; gap:12px; position:sticky; top:16px; }
+.wolt-card-panel { background:rgba(250,247,240,.92); border:1px solid var(--border); border-radius:12px; padding:12px 16px; font-size:13.5px; }
+.wolt-colhead,.wolt-day { font:600 11px var(--font-mono); text-transform:uppercase; letter-spacing:.08em; color:var(--ink-3); margin:10px 2px 8px; }
+.wolt-session-list { display:flex; flex-direction:column; gap:6px; }
+.wolt-session-summary { font-size:12.5px; color:var(--ink-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wolt-untitled { font-style:italic; color:var(--ink-2); font-weight:400; }
+.wolt-kv { display:flex; justify-content:space-between; gap:10px; padding:5px 0; color:var(--ink); text-decoration:none; }
+.wolt-kv b { font-weight:500; color:var(--ink-2); white-space:nowrap; font-size:12.5px; }
+.wolt-quiet { color:var(--ink-3); }.wolt-on { color:var(--green)!important; }.wolt-link { display:inline-block; margin-top:6px; padding:0; border:0; background:none; color:var(--green); font:600 13px var(--font-sans); cursor:pointer; text-decoration:none; }.wolt-link:hover{text-decoration:underline}
+.wolt-about { background:rgba(250,247,240,.92); border:1px solid var(--border); border-radius:12px; padding:18px 22px; font-size:14.5px; line-height:1.55; }
+.wolt-lede { font-family:var(--font-display); font-size:18px; line-height:1.35; margin:2px 0 16px; }
+.wolt-memory { border-top:1px solid var(--border); }.wolt-memory summary { cursor:pointer; padding:12px 2px; font-weight:600; }.wolt-memory summary:hover { color:var(--green); }
+.wolt-memory-content { padding:0 4px 14px 22px; white-space:pre-wrap; overflow-wrap:anywhere; }
+.wolt-sitebar { display:flex; justify-content:space-between; align-items:center; margin:4px 2px 8px; }.wolt-site { width:100%; height:72vh; border:1px solid var(--border); border-radius:12px; background:#fff; }
+.wolt-setting { display:flex; justify-content:space-between; padding:12px 0; border-top:1px solid var(--border); }.wolt-setting:first-child{border-top:0}
+@media(max-width:1000px){.wolt-overview{grid-template-columns:1fr}.wolt-side{position:static}}@media(max-width:620px){.wolt-page-body{padding:0 16px}.wolt-page-header{flex-direction:column;align-items:stretch;gap:12px}.wolt-page-header .header-actions{display:flex;gap:8px}.wolt-page-header .header-actions>*{flex:1;text-align:center}}

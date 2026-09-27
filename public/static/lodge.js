@@ -69,6 +69,9 @@ function timeAgo(ts) {
   if (s < 86400) return Math.floor(s / 3600) + 'h ago';
   return Math.floor(s / 86400) + 'd ago';
 }
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 
 // ── View switching ──
 function showView(name) {
@@ -93,11 +96,6 @@ function toggleSidebar() {
 function closeSidebar() {
   document.getElementById('sidebar').classList.remove('mobile-open');
 }
-function toggleCreatures() {
-  document.getElementById('creatures-list').classList.toggle('open');
-  document.getElementById('creatures-chevron').classList.toggle('open');
-}
-
 // ── Load wolts ──
 async function loadWolts() {
   try {
@@ -108,6 +106,7 @@ async function loadWolts() {
     allWolts = await woltsResponse.json();
     firstRun = await onboardingResponse.json();
     renderSidebarWolts();
+    if (allApps.length) renderApps();
   } catch {
     document.getElementById('sidebar-wolts').innerHTML = '';
   }
@@ -184,36 +183,30 @@ function renderSidebarWolts() {
     return;
   }
 
-  const woltsWithSessions = new Set();
-  allSessions.forEach(s => {
-    if (s.status === 'running' && s.wolt) woltsWithSessions.add(s.wolt);
-  });
-
-  container.innerHTML = chatWolts.map(w => {
-    const emoji = WOLT_EMOJI[w.type] || '🦫';
+  container.replaceChildren();
+  chatWolts.forEach(w => {
     const name = w.name || w.dir;
-    const isRunning = woltsWithSessions.has(w.dir || name);
-    const statusClass = isRunning ? 'running' : '';
+    const sessions = allSessions.filter(s => s.wolt === (w.dir || name));
+    const open = sessions.filter(s => s.status === 'running' && s.alive !== false);
+    const working = open.some(s => Date.now() / 1000 - (s.last_activity || s.created_at || 0) < 180);
     const isRodent = RODENT_TYPES.has(w.type);
-    const eng = woltHarness(w);
-    const spriteHtml = woltSpriteAvatar(w.type, 36);
-    // Engine chip: a small mono tag, hidden at rest and revealed on card hover;
-    // a pinned override stays visible (a deliberate divergence is worth surfacing).
-    const engChip = isRodent
-      ? `<button class="wolt-engine-btn${eng.pinned ? ' pinned' : ''}" title="${eng.label}${eng.model ? ' · ' + eng.model : ''}${eng.pinned ? '' : ' (lodge default)'} — change" aria-label="Change engine for ${name}" onclick="engineChipClick(event, this, '${name}')"><span class="eng-name">${eng.id}</span>${eng.model ? `<span class="eng-model">${eng.model}</span>` : ''}</button>`
-      : '';
-    return `<div class="wolt-card" onclick="${isRodent ? `startSession('${name}')` : ''}">
-      <div class="wolt-avatar">
-        ${spriteHtml || emoji}
-        <div class="wolt-status-dot ${statusClass}"></div>
-      </div>
-      <div class="wolt-info">
-        <div class="wolt-name">${name}</div>
-        <div class="wolt-type">${w.type}</div>
-      </div>
-      ${engChip}
-    </div>`;
-  }).join('');
+    const card = document.createElement('div');
+    card.className = `wolt-card${document.body.dataset.wolt === name ? ' active' : ''}`;
+    card.tabIndex = 0;
+    card.onclick = () => { window.location.href = `/w/${encodeURIComponent(name)}`; };
+    card.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') card.click(); };
+    const avatar = document.createElement('div'); avatar.className = 'wolt-avatar';
+    const sprite = woltSpriteAvatar(w.type, 36);
+    if (sprite) avatar.innerHTML = sprite; else avatar.textContent = WOLT_EMOJI[w.type] || '🦫';
+    const dot = document.createElement('div'); dot.className = `wolt-status-dot${working ? ' running' : ''}`; avatar.appendChild(dot);
+    const info = document.createElement('div'); info.className = 'wolt-info';
+    const label = document.createElement('div'); label.className = 'wolt-name'; label.textContent = name;
+    const type = document.createElement('div'); type.className = 'wolt-type'; type.textContent = w.type;
+    info.append(label, type); card.append(avatar, info);
+    if (open.length) { const badge = document.createElement('span'); badge.className = `wolt-session-badge${working ? ' working' : ''}`; badge.textContent = open.length; card.appendChild(badge); }
+    if (isRodent) { const add = document.createElement('button'); add.className = 'wolt-quick-session'; add.textContent = '+'; add.title = `New session with ${name}`; add.setAttribute('aria-label', add.title); add.onclick = e => { e.stopPropagation(); startSession(name); }; card.appendChild(add); }
+    container.appendChild(card);
+  });
 }
 
 // ── Engine picker (per-wolt harness override) ──
@@ -329,50 +322,49 @@ function renderApps() {
   }
 
   grid.innerHTML = filtered.map(p => {
-    const emoji = p.emoji || '📦';
-    const desc = p.description || 'No description';
+    const emoji = escapeHtml(p.emoji || '📦');
+    const desc = escapeHtml(p.description || 'No description');
     const status = p.running ? 'running' : 'stopped';
     const canToggle = !!p.start;
     const keeper = p.keeper || 'unassigned';
     const keeperWolt = allWolts.find(w => (w.name || w.dir) === keeper);
     const keeperEmoji = keeperWolt ? (WOLT_EMOJI[keeperWolt.type] || '🦫') : '📦';
     const keeperSprite = keeperWolt ? woltSpriteAvatar(keeperWolt.type, 24) : null;
-    const stackTags = p.stack ? `<span class="stack-tag">${p.stack}</span>` : '';
-    const sourceLink = p.source ? `<a class="app-source-link" href="${p.source}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">⎋ ${p.source.replace('https://github.com/', '')}</a>` : '';
+    const stackTags = p.stack ? `<span class="stack-tag">${escapeHtml(p.stack)}</span>` : '';
+    const sourceLink = p.source ? `<span class="app-source-link">⎋ ${escapeHtml(p.source.replace('https://github.com/', ''))}</span>` : '';
 
     // The API owns app routing. Its relative /app/:name URL works against the
     // local Docker origin and can redirect through a configured tunnel.
     const appUrl = WoltspaceNavigation.appDestination(p);
     const appUrlData = encodeURIComponent(appUrl);
     const appUrlHref = appUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-    const cardNavigation = p.running
-      ? `role="link" tabindex="0" data-app-url="${appUrlData}" onclick="openAppCard(this)" onkeydown="openAppCardKey(event, this)"`
-      : '';
+    const cardNavigation = `role="link" tabindex="0" data-app-url="${p.running ? appUrlData : '/a/' + encodeURIComponent(p.name)}" onclick="openAppCard(this)" onkeydown="openAppCardKey(event, this)"`;
 
     return `<div class="app-card" ${cardNavigation}>
       <div class="app-card-body">
         <div class="app-card-top">
           <span class="app-emoji">${emoji}</span>
-          <div class="app-status ${status}">
+          <div class="ma-topright"><span class="ma-share">🔒 Just me</span><div class="app-status ${status}">
             <div class="app-status-dot"></div>
             ${status}
-          </div>
+          </div></div>
         </div>
         ${p.running
-          ? `<a class="app-name-link" href="${appUrlHref}" onclick="event.stopPropagation()">${p.name}</a>`
-          : `<div class="app-name-link">${p.name}</div>`}
+          ? `<a class="app-name-link" href="${appUrlHref}" onclick="event.stopPropagation()">${escapeHtml(p.name)}</a>`
+          : `<div class="app-name-link">${escapeHtml(p.name)}</div>`}
         ${stackTags ? `<div class="app-stack">${stackTags}</div>` : ''}
         <div class="app-desc">${desc}</div>
         <div class="app-card-footer">
-          <div class="app-wolt keeper-btn" title="open with ${keeper}" onclick="event.stopPropagation();openApp('${p.name}','${keeper}')">
+          <div class="app-wolt keeper-btn" title="open with ${escapeHtml(keeper)}" onclick="event.stopPropagation();openApp(decodeURIComponent('${encodeURIComponent(p.name)}'),decodeURIComponent('${encodeURIComponent(keeper)}'))">
             <div class="app-wolt-avatar">${keeperSprite || keeperEmoji}</div>
             <div>
-              <div class="app-wolt-name">${keeper}</div>
+              <div class="app-wolt-name">${escapeHtml(keeper)}</div>
               <div class="app-wolt-assign">${sourceLink || 'keeper'}</div>
             </div>
           </div>
           <div class="app-actions">
-            ${canToggle ? `<button class="action-btn ${p.running ? 'stop' : 'start'}" title="${p.running ? 'Stop' : 'Start'}" onclick="event.stopPropagation();toggleApp('${p.name}', ${p.running})">${p.running ? '■' : '▶'}</button>` : ''}
+            ${canToggle ? `<button class="tool-button ${p.running ? 'danger' : 'primary'}" title="${p.running ? 'Stop' : 'Start'}" onclick="event.stopPropagation();toggleApp(decodeURIComponent('${encodeURIComponent(p.name)}'), ${p.running})">${p.running ? '■ Stop' : '▶ Start'}</button>` : ''}
+            <a class="tool-button icon-button" href="/a/${encodeURIComponent(p.name)}" onclick="event.stopPropagation()" aria-label="${escapeHtml(p.name)} settings">⚙</a>
           </div>
         </div>
       </div>
@@ -433,12 +425,14 @@ async function loadSessions() {
     renderSessions();
     renderSidebarWolts();
   } catch {
-    document.getElementById('sessions-list').innerHTML =
+    const list = document.getElementById('sessions-list');
+    if (list) list.innerHTML =
       '<div class="empty-state"><div class="empty-state-icon">🌿</div><div class="empty-state-text">failed to load sessions</div></div>';
   }
 }
 
 function renderSessions() {
+  if (!document.getElementById('sessions-list')) return;
   const running = allSessions.filter(s => s.name !== 'main' && s.status === 'running');
   document.getElementById('sessions-subtitle').textContent =
     `${running.length} running · ${allSessions.length} total`;
@@ -728,7 +722,7 @@ document.querySelectorAll('.type-card').forEach(card => {
 
 loadHarnesses().finally(loadWolts);
 if (document.getElementById('app-grid')) loadApps();
-if (document.getElementById('sessions-list')) loadSessions();
+loadSessions();
 
 const requestedView = new URLSearchParams(window.location.search).get('view');
 if (requestedView && ['home', 'apps', 'sessions'].includes(requestedView)) showView(requestedView);
