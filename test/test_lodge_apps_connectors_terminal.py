@@ -3,6 +3,7 @@ import json
 import runpy
 import sys
 from pathlib import Path
+from unittest.mock import Mock
 
 from starlette.testclient import TestClient
 
@@ -55,6 +56,75 @@ def test_logs_are_bounded_and_unknown_app_is_404(tmp_path, monkeypatch):
     client = TestClient(server_app.app, base_url="http://localhost:7777")
     assert client.get("/apps/notes/logs?tail=2").json()["lines"] == ["two", "three"]
     assert client.get("/apps/missing/logs").status_code == 404
+
+
+def test_logs_read_only_the_last_64k_of_a_multi_megabyte_file(tmp_path, monkeypatch):
+    log = tmp_path / "notes.log"
+    with log.open("wb") as handle:
+        handle.write(b"old-secret-line\n" + b"x" * (3 * 1024 * 1024) + b"\nlast-line\n")
+    monkeypatch.setattr(server_app, "get_app", lambda name: object())
+    monkeypatch.setattr(server_app, "app_log_file", lambda name: log)
+    payload = TestClient(server_app.app, base_url="http://localhost:7777").get(
+        "/apps/notes/logs?tail=2000"
+    ).json()
+    rendered = "\n".join(payload["lines"])
+    assert "old-secret-line" not in rendered
+    assert rendered.endswith("last-line")
+    assert len(rendered.encode()) <= 65536
+
+
+def test_app_routes_reject_bad_names_before_filesystem_helpers(monkeypatch):
+    get = Mock()
+    monkeypatch.setattr(server_app, "get_app", get)
+    response = TestClient(server_app.app, base_url="http://localhost:7777").get("/apps/bad.name")
+    assert response.status_code == 400
+    assert response.json() == {"error": "invalid app name"}
+    get.assert_not_called()
+
+
+def test_keeper_update_failure_paths_are_400(monkeypatch):
+    monkeypatch.setattr(server_app, "_configured_wolts", lambda: [{"dir": "n00b"}])
+    client = TestClient(server_app.app, base_url="http://localhost:7777")
+    assert client.put("/apps/notes", content="not-json", headers={"content-type": "application/json"}).status_code == 400
+    response = client.put("/apps/notes", json=[])
+    assert response.status_code == 400
+    assert response.json() == {"error": "JSON object body required"}
+    response = client.put("/apps/notes", json={"keeper": "missing"})
+    assert response.status_code == 400
+    assert response.json() == {"error": "keeper must name an existing wolt"}
+
+
+def test_restart_waits_for_old_pid_and_verifies_new_one(monkeypatch):
+    monkeypatch.setattr(apps, "get_app", lambda name: object())
+    monkeypatch.setattr(apps, "_read_state", lambda name: {"pid": 7})
+    stop = Mock(return_value=True)
+    start = Mock(return_value={"pid": 8, "name": "notes"})
+    monkeypatch.setattr(apps, "stop_app", stop)
+    monkeypatch.setattr(apps, "start_app", start)
+    monkeypatch.setattr(apps, "_is_pid_alive", Mock(side_effect=[True, False, False, True]))
+    monkeypatch.setattr(apps.time, "sleep", lambda _seconds: None)
+    assert apps.restart_app("notes")["pid"] == 8
+    stop.assert_called_once_with("notes")
+    start.assert_called_once_with("notes")
+
+
+def test_restart_refuses_to_spawn_while_old_pid_lives(monkeypatch):
+    monkeypatch.setattr(apps, "get_app", lambda name: object())
+    monkeypatch.setattr(apps, "_read_state", lambda name: {"pid": 7})
+    monkeypatch.setattr(apps, "stop_app", Mock(return_value=True))
+    start = Mock()
+    monkeypatch.setattr(apps, "start_app", start)
+    monkeypatch.setattr(apps, "_is_pid_alive", lambda pid: True)
+    ticks = iter([0, 6])
+    monkeypatch.setattr(apps.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(apps.time, "sleep", lambda _seconds: None)
+    try:
+        apps.restart_app("notes")
+    except RuntimeError as exc:
+        assert "still stopping" in str(exc)
+    else:
+        raise AssertionError("restart spawned over a live old pid")
+    start.assert_not_called()
 
 
 def test_app_detail_keeps_configured_port_when_stopped(monkeypatch):

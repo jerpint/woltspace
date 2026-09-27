@@ -1577,6 +1577,14 @@ async def auto_grant_revoke(request: Request):
 # Centralized app management. Uses woltspace.json manifests.
 # App names are globally unique. Keeper (owning wolt) is in woltspace.json.
 
+_APP_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
+
+
+def _invalid_app_name(name: str) -> JSONResponse | None:
+    if not _APP_NAME_RE.fullmatch(name):
+        return JSONResponse({"error": "invalid app name"}, status_code=400)
+    return None
+
 @app.get("/tunnel")
 async def tunnel_status():
     """Describe the lodge tunnel without exposing credentials or process state."""
@@ -1607,6 +1615,8 @@ async def list_apps_api():
 @app.get("/apps/{name}")
 async def app_detail(name: str):
     """Get a single app's manifest and running state."""
+    if invalid := _invalid_app_name(name):
+        return invalid
     app_obj = get_app(name)
     if not app_obj:
         return JSONResponse({"error": f"app {name} not found"}, status_code=404)
@@ -1625,6 +1635,8 @@ async def app_detail(name: str):
 @app.post("/apps/{name}/start")
 async def app_start(name: str):
     """Start an app's dev server."""
+    if invalid := _invalid_app_name(name):
+        return invalid
     try:
         state = start_app(name)
         print(f"[apps] started {name} on port {state['port']}")
@@ -1638,6 +1650,8 @@ async def app_start(name: str):
 @app.post("/apps/{name}/stop")
 async def app_stop(name: str):
     """Stop a running app."""
+    if invalid := _invalid_app_name(name):
+        return invalid
     was_running = stop_app(name)
     if was_running:
         print(f"[apps] stopped {name}")
@@ -1647,6 +1661,8 @@ async def app_stop(name: str):
 
 @app.post("/apps/{name}/restart")
 async def app_restart(name: str):
+    if invalid := _invalid_app_name(name):
+        return invalid
     try:
         return restart_app(name)
     except ValueError as exc:
@@ -1657,6 +1673,8 @@ async def app_restart(name: str):
 
 @app.get("/apps/{name}/logs")
 async def app_logs(name: str, tail: int = 200, stream: bool = False):
+    if invalid := _invalid_app_name(name):
+        return invalid
     if not get_app(name):
         return JSONResponse({"error": f"app {name} not found"}, status_code=404)
     tail = max(1, min(tail, 2000))
@@ -1664,7 +1682,12 @@ async def app_logs(name: str, tail: int = 200, stream: bool = False):
 
     def read_tail() -> list[str]:
         try:
-            return path.read_text(errors="replace").splitlines()[-tail:]
+            with path.open("rb") as handle:
+                handle.seek(0, 2)
+                size = handle.tell()
+                handle.seek(max(0, size - 65536))
+                chunk = handle.read(65536)
+            return chunk.decode("utf-8", errors="replace").splitlines()[-tail:]
         except FileNotFoundError:
             return []
 
@@ -1697,11 +1720,15 @@ async def app_logs(name: str, tail: int = 200, stream: bool = False):
 
 @app.put("/apps/{name}")
 async def app_update(name: str, request: Request):
+    if invalid := _invalid_app_name(name):
+        return invalid
     try:
         body = await request.json()
     except (json.JSONDecodeError, ValueError):
         return JSONResponse({"error": "JSON object body required"}, status_code=400)
-    if not isinstance(body, dict) or set(body) != {"keeper"}:
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if set(body) != {"keeper"}:
         return JSONResponse({"error": "keeper is the only editable field"}, status_code=400)
     keeper = body.get("keeper")
     known = {w["dir"] for w in _configured_wolts()}
@@ -1716,6 +1743,8 @@ async def app_update(name: str, request: Request):
 @app.post("/apps/{name}/share")
 async def app_share(name: str):
     """Start a cloudflared tunnel to the app port and return the public URL."""
+    if invalid := _invalid_app_name(name):
+        return invalid
     import asyncio
     try:
         # share_app blocks (polls cloudflared log up to 30s) — run in thread
@@ -1731,6 +1760,8 @@ async def app_share(name: str):
 @app.post("/apps/{name}/unshare")
 async def app_unshare(name: str):
     """Stop the cloudflared tunnel for an app."""
+    if invalid := _invalid_app_name(name):
+        return invalid
     was_sharing = unshare_app(name)
     if was_sharing:
         print(f"[apps] unshared {name}")
