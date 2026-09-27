@@ -246,6 +246,10 @@ LIFECYCLE = {"start", "stop", "rebuild", "backup", "shell", "chat", "logs", "ini
 # CLI sitting a few directories up from this script.
 LOCAL_NOUNS = {"session", "status", "auto", "tui"}
 
+# Nouns the python CLI serves that only talk to this lodge's API, so they
+# belong to it in the container too — there is no host to send them to.
+PLANE_NOUNS = {"wolf"}
+
 
 def _running_in_container():
     """Whether this process is inside the woltspace image.
@@ -344,7 +348,8 @@ def _delegate(argv):
             print(f"'{verb}' is a host lifecycle command — run it on the host "
                   f"where docker lives, not inside the container.", file=sys.stderr)
             sys.exit(2)
-        return
+        if verb not in PLANE_NOUNS:
+            return
     cli = _native_cli()
     if cli:
         os.execv(cli[0], [*cli, *argv])

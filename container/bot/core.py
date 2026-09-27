@@ -775,16 +775,13 @@ def _tool_wolf_schedules(args: dict, routing: dict | None) -> str:
     """List all wolf cron schedules across all wolts."""
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-        from creatures.wolf import load_schedule, get_state_dir
+        from creatures.wolf import load_schedule, get_last_run
         crons = load_schedule()
         if not crons:
             return json.dumps({"crons": [], "count": 0, "note": "no crons registered"})
-        # Enrich with last-run info
-        state_dir = get_state_dir()
+        # Enrich with last-run info (stamps are per wolt + cron name)
         for entry in crons:
-            name = entry.get("name", "")
-            last_file = state_dir / f"{name}.last"
-            entry["last_run"] = last_file.read_text().strip() if last_file.exists() else "never"
+            entry["last_run"] = get_last_run(entry.get("_owner", ""), entry.get("name", "")) or "never"
         return json.dumps({"crons": crons, "count": len(crons)})
     except Exception as e:
         return json.dumps({"error": str(e)})

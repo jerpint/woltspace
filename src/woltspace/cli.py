@@ -762,6 +762,216 @@ def _seed_install(args) -> int:
     return 0
 
 
+# --- wolf --------------------------------------------------------------------
+# A thin client of the lodge's /wolf/crons API: every rule (validation, naming,
+# locking) lives server-side, so a hand edit, the CLI and the lodge page all
+# land on the same wolf.json the same way. Times are shown as the lodge gives
+# them — its own local time, which is when the wolf fires.
+
+WOLF = "🐺"
+
+
+def _wolf_api() -> str:
+    api = (os.environ.get("WOLTSPACE_API") or "").strip().rstrip("/")
+    return api or RuntimeLayout.from_env().endpoint.rstrip("/")
+
+
+def _wolf_request(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+    """(status, json) from the lodge. An unreachable lodge exits 2."""
+    import urllib.error
+    import urllib.request
+
+    url = f"{_wolf_api()}{path}"
+    data = json.dumps(body).encode() if body is not None else None
+    request = urllib.request.Request(url, data=data, method=method)
+    if data is not None:
+        request.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, json.loads(response.read().decode() or "{}")
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.code, json.loads(exc.read().decode() or "{}")
+        except ValueError:
+            return exc.code, {"error": str(exc)}
+    except urllib.error.URLError as exc:
+        lore.failure(f"cannot reach the lodge at {_wolf_api()}: {exc.reason}",
+                     subtitle_text="is it running? woltspace status")
+        raise SystemExit(2)
+
+
+def _wolf_time(iso: str | None) -> str:
+    """`2026-03-22T06:00:00-04:00` → `2026-03-22 06:00`, the lodge's wall clock."""
+    if not iso:
+        return "-"
+    return iso[:16].replace("T", " ")
+
+
+def _wolf_done(status: int, body: dict, as_json: bool) -> bool:
+    """Print a failed call and say so; a success is left to the caller."""
+    if status < 400:
+        return False
+    if as_json:
+        print(json.dumps(body, indent=2))
+    else:
+        field = f" ({body['field']})" if body.get("field") else ""
+        lore.failure(f"{body.get('error', f'HTTP {status}')}{field}", subtitle_text="")
+    return True
+
+
+def _wolf_message(args, *, required: bool) -> str | None:
+    """The prompt: `--message TEXT`, `--message -` or piped stdin (a heredoc)."""
+    if args.message not in (None, "-"):
+        return args.message
+    if args.message == "-" or (required and not sys.stdin.isatty()):
+        return sys.stdin.read().strip()
+    return None
+
+
+def _wolf_line(cron: dict) -> None:
+    when = cron.get("schedule") or f"at {cron.get('at', '')}"
+    lore.labelled(
+        f"{cron['wolt']}/{cron['name']}",
+        f"{when}  ·  next {_wolf_time(cron.get('next_run'))}"
+        f"  ·  last {_wolf_time(cron.get('last_run'))}",
+    )
+    if cron.get("error"):
+        lore.plain(f"{lore.SUBINDENT}{cron['error']}", lore.TERRA)
+    prompt = " ".join((cron.get("prompt") or "").split())
+    lore.plain(f"{lore.SUBINDENT}{prompt[:72]}{'…' if len(prompt) > 72 else ''}", lore.BARK)
+
+
+def _wolf(args) -> int:
+    args.wolf_parser.print_help()
+    return 1
+
+
+def _wolf_list(args) -> int:
+    status, body = _wolf_request("GET", "/wolf/crons")
+    if _wolf_done(status, body, args.json):
+        return 1
+    crons = [c for c in body.get("crons", []) if not args.wolt or c["wolt"] == args.wolt]
+    if args.json:
+        print(json.dumps({"tz": body.get("tz"), "crons": crons}, indent=2))
+        return 0
+    if not crons:
+        lore.headline(WOLF, "no crons")
+        lore.subtitle("the wolf is idle")
+        return 0
+    lore.headline(WOLF, f"crons: {len(crons)}")
+    lore.subtitle(f"lodge time · {body.get('tz', 'local')}")
+    for cron in crons:
+        _wolf_line(cron)
+    return 0
+
+
+def _wolf_add(args) -> int:
+    wolt = args.wolt or get_env("WOLTSPACE_WOLT_NAME", "")
+    if not wolt:
+        lore.failure("which wolt? pass --wolt", subtitle_text="")
+        return 2
+    prompt = _wolf_message(args, required=True)
+    if not prompt:
+        lore.failure("the message is empty: pipe it on stdin (heredoc) or pass --message",
+                     subtitle_text="")
+        return 2
+    body = {"wolt": wolt, "prompt": prompt}
+    for key, value in (("schedule", args.cron), ("at", args.at),
+                       ("name", args.name), ("notify", args.notify)):
+        if value:
+            body[key] = value
+    path = "/wolf/crons?dry_run=1" if args.dry_run else "/wolf/crons"
+    status, result = _wolf_request("POST", path, body)
+    if _wolf_done(status, result, args.json):
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2))
+    elif args.dry_run:
+        lore.headline(WOLF, f"dry run: would add {wolt}/{result['entry']['name']}")
+        lore.subtitle("nothing written")
+        lore.plain(json.dumps(result["entry"], indent=2))
+    else:
+        lore.headline(WOLF, f"added {wolt}/{result['name']}")
+        lore.labelled("next", _wolf_time(result.get("next_run")))
+    return 0
+
+
+def _wolf_set(args) -> int:
+    body = {}
+    for key, value in (("schedule", args.cron), ("at", args.at),
+                       ("notify", args.notify), ("wolt", args.move_to)):
+        if value is not None:
+            body[key] = value
+    prompt = _wolf_message(args, required=False)
+    if prompt is not None:
+        body["prompt"] = prompt
+    if not body:
+        lore.failure("nothing to change: --cron, --at, --message, --notify or --move-to",
+                     subtitle_text="")
+        return 2
+    status, result = _wolf_request("PUT", f"/wolf/crons/{args.wolt}/{args.name}", body)
+    if _wolf_done(status, result, args.json):
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        lore.headline(WOLF, f"updated {result['wolt']}/{result['name']}")
+        _wolf_line(result)
+    return 0
+
+
+def _wolf_rm(args) -> int:
+    status, result = _wolf_request("DELETE", f"/wolf/crons/{args.wolt}/{args.name}")
+    if _wolf_done(status, result, args.json):
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        lore.headline(lore.MOON, f"removed {args.wolt}/{args.name}")
+    return 0
+
+
+def _wolf_run(args) -> int:
+    status, result = _wolf_request("POST", f"/wolf/crons/{args.wolt}/{args.name}/fire")
+    if _wolf_done(status, result, args.json):
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        lore.headline(WOLF, f"running {args.wolt}/{args.name} now")
+        lore.labelled("session", result.get("session") or "-")
+        if result.get("url"):
+            lore.link(result["url"])
+    return 0
+
+
+def _wolf_runs(args) -> int:
+    from urllib.parse import urlencode
+
+    query = {"limit": args.limit}
+    if args.wolt:
+        query["wolt"] = args.wolt
+    status, result = _wolf_request("GET", f"/wolf/fires?{urlencode(query)}")
+    if _wolf_done(status, result, args.json):
+        return 1
+    fires = result.get("fires", [])
+    if args.json:
+        print(json.dumps(fires, indent=2))
+        return 0
+    if not fires:
+        lore.headline(WOLF, "no runs yet")
+        return 0
+    lore.headline(WOLF, f"last {len(fires)} wolf events")
+    for fire in fires:
+        extra = fire.get("session") or fire.get("missed") or fire.get("error") or ""
+        lore.plain(
+            f"{lore.INDENT}{_wolf_time(fire.get('ts'))}  "
+            f"{fire.get('owner', '?')}/{fire.get('cron', '?'):<24} "
+            f"{fire.get('event', '?'):<11} {extra}".rstrip()
+        )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="woltspace",
@@ -936,6 +1146,61 @@ def build_parser() -> argparse.ArgumentParser:
     dig_connect.add_argument("remote_command", nargs=argparse.REMAINDER)
     dig_connect.add_argument("--json", action="store_true")
     dig_connect.set_defaults(func=_dig_connect)
+
+    wolf = sub.add_parser("wolf", help="scheduled runs: list, add, change, remove, run now")
+    wolf.set_defaults(func=_wolf, wolf_parser=wolf)
+    wolf_sub = wolf.add_subparsers(dest="wolf_command")
+
+    wolf_list = wolf_sub.add_parser("list", help="every cron, soonest first")
+    wolf_list.add_argument("--wolt", default="")
+    wolf_list.add_argument("--json", action="store_true")
+    wolf_list.set_defaults(func=_wolf_list)
+
+    wolf_add = wolf_sub.add_parser(
+        "add", help="add a cron; the message is read from stdin (heredoc)"
+    )
+    wolf_add.add_argument("--wolt", default="", help="owning wolt (default: $WOLTSPACE_WOLT_NAME)")
+    when = wolf_add.add_mutually_exclusive_group(required=True)
+    when.add_argument("--cron", metavar="EXPR", help="recurring: 'min hour day month weekday'")
+    when.add_argument("--at", metavar="YYYY-MM-DDTHH:MM", help="once, in lodge local time")
+    wolf_add.add_argument("--name", default="", help="default: from the message's first words")
+    wolf_add.add_argument("--notify", default="", choices=["telegram", "slack"],
+                          help="also ping you on this channel when it runs (default: no ping)")
+    wolf_add.add_argument("--message", default=None, help="the prompt, instead of stdin")
+    wolf_add.add_argument("--dry-run", action="store_true", help="show it, write nothing")
+    wolf_add.add_argument("--json", action="store_true")
+    wolf_add.set_defaults(func=_wolf_add)
+
+    wolf_set = wolf_sub.add_parser("set", help="change a cron in place, or move it")
+    wolf_set.add_argument("wolt")
+    wolf_set.add_argument("name")
+    set_when = wolf_set.add_mutually_exclusive_group()
+    set_when.add_argument("--cron", metavar="EXPR", default=None)
+    set_when.add_argument("--at", metavar="YYYY-MM-DDTHH:MM", default=None)
+    wolf_set.add_argument("--message", default=None, help="new prompt; '-' reads stdin")
+    wolf_set.add_argument("--notify", default=None, choices=["telegram", "slack", ""],
+                          help="ping channel when it runs; '' turns the ping off")
+    wolf_set.add_argument("--move-to", metavar="WOLT", default=None)
+    wolf_set.add_argument("--json", action="store_true")
+    wolf_set.set_defaults(func=_wolf_set)
+
+    wolf_rm = wolf_sub.add_parser("rm", help="remove a cron")
+    wolf_rm.add_argument("wolt")
+    wolf_rm.add_argument("name")
+    wolf_rm.add_argument("--json", action="store_true")
+    wolf_rm.set_defaults(func=_wolf_rm)
+
+    wolf_run = wolf_sub.add_parser("run", help="run a cron now; its schedule is untouched")
+    wolf_run.add_argument("wolt")
+    wolf_run.add_argument("name")
+    wolf_run.add_argument("--json", action="store_true")
+    wolf_run.set_defaults(func=_wolf_run)
+
+    wolf_runs = wolf_sub.add_parser("runs", help="recent fires, newest first")
+    wolf_runs.add_argument("--wolt", default="")
+    wolf_runs.add_argument("--limit", type=int, default=20)
+    wolf_runs.add_argument("--json", action="store_true")
+    wolf_runs.set_defaults(func=_wolf_runs)
 
     tui = sub.add_parser("tui", help="open the terminal UI")
     tui.add_argument("--dry-run", action="store_true", help="show resolution without launching")

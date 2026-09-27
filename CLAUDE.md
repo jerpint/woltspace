@@ -202,9 +202,9 @@ Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select v
 No-LLM update checker. Compares stored version (`.state/woltspace-version`) against remote HEAD via `git ls-remote`. Available for on-demand use but not registered as a default wolf cron — wolves are loud, update checking is quiet surveillance.
 
 ### `container/creatures/wolf.py` (Wolf Scheduler 🐺)
-Background cron service. Reads `wolt/wolf.json` for scheduled tasks, fires them on time, sends 🐺 notifications. Actions: `script` (shell command), `session` (Claude Code session), `skill` (invoke a skill). Tracks last-run per cron entry in `.state/wolf/`. Auto-starts when `wolf.json` exists. See `/wolf` skill for full config format.
+Background cron service, run as the `wolf` connector. Every 30s it reads each wolt's `wolt/wolf.json`, fires due crons by starting a session for the owning wolt, and pings the human on the channel a cron names in `notify` (telegram or slack; none = quiet). Times are the lodge machine's local time. The rules (strict cron parsing, the one due check, next run, locked wolf.json writes) live in `container/lib/wolfcore.py`, shared with the lodge's `/wolf/crons` API. Last-run stamps (`<wolt>/<name>.last`) and the `jobs.jsonl` journal are lodge-global in `.space/wolf/`. See the `/wolf` skill.
 
-CLI: `--list` (show crons), `--once` (fire due crons and exit), `--fire NAME` (trigger a specific cron by name, ignoring schedule — great for debugging).
+CLI: `woltspace wolf list|add|set|rm|run|runs` — a thin client of `/wolf/crons`.
 
 ### `container/creatures/vulture.py` (Vulture Reaper 🦅)
 Background session reaper. Cleans up dead sessions — reconciles registry, kills zombie tmux sessions. Platform-level, always on, not wolf-managed.
@@ -373,6 +373,7 @@ bash test/run-tests.sh -k "pattern" # pass any pytest args
 - `test_closed_loop.py` — full seam tests: Telegram API → notify pipeline → session creation → den reply → round-trip
 - `test_agent_loop.py` — haiku decision tests (mocked tools), conversation simulator, live session spawn, true e2e (haiku → beaver → file on disk → viewport)
 - `test_wolf.py` — wolf scheduler: cron parser, schedule loading, state tracking, dispatch routing, fire-by-name, wolf_schedules/fire_wolf/check_update tools, notify footer logic
+- `test_wolfcore.py` / `test_wolf_api.py` / `test_wolf_cli.py` — shared cron core (parser, DST, due check, stamp migration, locked writes), the `/wolf/crons` routes, and `woltspace wolf`
 - `test_wolts.py` — wolt discovery, creature-type system, creature-wolt creation, singleton demotion, dog identity loading
 
 **CLI smoke tests** (`test/test-cli.sh`) — full cycle: init → start → stop → rebuild → backup → reconcile → idempotent init → shell → version check. Run from host:
