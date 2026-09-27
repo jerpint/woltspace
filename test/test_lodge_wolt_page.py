@@ -46,11 +46,7 @@ def test_sidebar_has_product_nav_and_quiet_footer():
     assert "terminal" in sidebar and "⚙ settings" in sidebar
 
 
-def test_wolt_page_uses_text_nodes_for_session_descriptions():
-    script = (ROOT / "public" / "static" / "wolt-page.js").read_text()
-
-    assert "s.title || s.prompt_preview || s.prompt" in script
-    assert "s.summary ?" in script
-    assert "textContent = text" in script
-    assert "innerHTML = s.title" not in script
-    assert "innerHTML = s.summary" not in script
+def test_wolt_page_has_render_level_xss_acceptance_check():
+    browser_check = ROOT / "test" / "browser" / "lodge_wolt_page.cjs"
+    assert browser_check.exists()
+    assert "locator('.wolt-session-list img').count()" in browser_check.read_text()
