@@ -773,10 +773,12 @@ async def memory_read(request: Request):
 # --- Session messaging ---
 
 async def _deliver_or_resume(safe: str, text: str, body: dict):
-    result = deliver_message(
-        safe, text,
-        from_wolt=body.get("from_wolt", "") or "",
-        from_session=body.get("from_session", "") or "",
+    result = await asyncio.to_thread(
+        deliver_message,
+        safe,
+        text,
+        body.get("from_wolt", "") or "",
+        body.get("from_session", "") or "",
     )
     status = result.get("status")
     if status == "delivered":
@@ -816,19 +818,8 @@ async def session_message(session_id: str, request: Request):
     return await _deliver_or_resume(safe, text, body)
 
 
-@app.post("/sessions/{session_id}/rest")
-async def rest_session(session_id: str, request: Request):
-    """Stop one idle runtime while keeping its conversation resumable."""
-    safe = sanitize_session(session_id)
-    if safe == "main":
-        return JSONResponse({"error": "main session cannot rest"}, status_code=403)
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse({"error": "JSON object body required"}, status_code=400)
-    expected_digest = body.get("pane_digest") if isinstance(body, dict) else None
-    if not isinstance(expected_digest, str) or len(expected_digest) != 64:
-        return JSONResponse({"error": "pane_digest required"}, status_code=400)
+def _rest_session_locked(safe: str, expected_digest: str):
+    """Verify and stop one session without blocking the server event loop."""
     from sessions import SessionRegistry
     registry = SessionRegistry(WOLTS_DIR)
     data = registry.get(safe, check_alive=False)
@@ -854,6 +845,22 @@ async def rest_session(session_id: str, request: Request):
         data["rested_at"] = now
         registry._write(wolt, safe, data)
         return {"ok": True, "status": "resting", "session": safe, "rested_at": now}
+
+
+@app.post("/sessions/{session_id}/rest")
+async def rest_session(session_id: str, request: Request):
+    """Stop one idle runtime while keeping its conversation resumable."""
+    safe = sanitize_session(session_id)
+    if safe == "main":
+        return JSONResponse({"error": "main session cannot rest"}, status_code=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    expected_digest = body.get("pane_digest") if isinstance(body, dict) else None
+    if not isinstance(expected_digest, str) or len(expected_digest) != 64:
+        return JSONResponse({"error": "pane_digest required"}, status_code=400)
+    return await asyncio.to_thread(_rest_session_locked, safe, expected_digest)
 
 
 @app.post("/wolts/{name}/message")
