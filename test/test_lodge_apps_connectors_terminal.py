@@ -1,7 +1,9 @@
 import argparse
+import asyncio
 import json
 import runpy
 import sys
+import time
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -125,6 +127,35 @@ def test_restart_refuses_to_spawn_while_old_pid_lives(monkeypatch):
     else:
         raise AssertionError("restart spawned over a live old pid")
     start.assert_not_called()
+
+
+def test_slow_restart_does_not_block_the_event_loop(monkeypatch):
+    order = []
+
+    def slow_restart(name):
+        order.append("restart-started")
+        time.sleep(0.12)
+        order.append("restart-finished")
+        return {"name": name, "pid": 8}
+
+    monkeypatch.setattr(server_app, "restart_app", slow_restart)
+
+    async def exercise():
+        async def ticker():
+            await asyncio.sleep(0.01)
+            order.append("loop-responsive")
+
+        result, _ = await asyncio.gather(server_app.app_restart("notes"), ticker())
+        return result
+
+    assert asyncio.run(exercise()) == {"name": "notes", "pid": 8}
+    assert order == ["restart-started", "loop-responsive", "restart-finished"]
+
+
+def test_start_and_stop_routes_offload_lifecycle_calls():
+    source = (ROOT / "server" / "app.py").read_text()
+    assert "await asyncio.to_thread(start_app, name)" in source
+    assert "await asyncio.to_thread(stop_app, name)" in source
 
 
 def test_app_detail_keeps_configured_port_when_stopped(monkeypatch):
