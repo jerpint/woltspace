@@ -1110,6 +1110,23 @@ def stored_resume_id(data: dict) -> str:
     return legacy if _UUID_RE.match(legacy) else ""
 
 
+def taken_resume_ids(records: list[dict], exclude: str = "") -> set[str]:
+    """Conversation ids already owned by some session, so recovery never shares one."""
+    return {rid for d in records if d.get("name") != exclude for rid in [stored_resume_id(d)] if rid}
+
+
+def recover_resume_id(data: dict, taken: set[str]) -> str:
+    """The stored id, or one recovered from the harness's own files, or "".
+
+    Read-only: callers that act on it stamp harness_session_id themselves.
+    """
+    existing = stored_resume_id(data)
+    if existing:
+        return existing
+    recover = get_harness(resolve_harness(data.get("harness"))).get("recover_session_id")
+    return (recover(data, taken) or "") if recover else ""
+
+
 def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
     """Build the full agent command for a session — the run-session.sh backend.
 
@@ -1573,6 +1590,11 @@ def resume_session(name: str, prompt: str = "") -> dict:
     # to spawn a fresh agent into the old session's slot and report success.
     # Refuse here, before any tmux is touched, so the caller gets the real
     # reason rather than a blank agent wearing the session's name.
+    if not stored_resume_id(data):
+        recovered = recover_resume_id(data, taken_resume_ids(registry.list(), exclude=name))
+        if recovered:
+            registry.update(name, wolt=wolt, harness_session_id=recovered)
+            data["harness_session_id"] = recovered
     if not stored_resume_id(data):
         raise ResumeUnavailable(
             f"session '{name}' has no {harness} conversation id on record "

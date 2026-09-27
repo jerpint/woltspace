@@ -65,6 +65,7 @@ from sessions import (
     deliver_message, resolve_active_session, format_attributed_message,
     format_spawned_prompt,
     wolt_harness, ResumeUnavailable, ResumeFailed,
+    stored_resume_id, recover_resume_id, taken_resume_ids,
 )
 from session_expiry import get_idle_timeout, get_pane_activity, set_idle_timeout
 from session_runtime import RuntimeHandle, get_runtime
@@ -832,6 +833,12 @@ def _rest_session_locked(safe: str, expected_digest: str):
             return JSONResponse({"error": "session not found"}, status_code=404)
         if data.get("status") != "running":
             return {"ok": True, "status": data.get("status"), "session": safe}
+        # Resting must be reversible: stamp a recoverable id, or refuse.
+        if not stored_resume_id(data):
+            recovered = recover_resume_id(data, taken_resume_ids(registry.list(), exclude=safe))
+            if not recovered:
+                return JSONResponse({"error": "session has no conversation to resume; not resting it"}, status_code=409)
+            data["harness_session_id"] = recovered
         try:
             pane = get_runtime().capture(RuntimeHandle.from_record(data), start=None)
         except Exception:
@@ -2285,7 +2292,7 @@ async def tui_page(request: Request):
         if record and record.get("status") == "resting":
             try:
                 await asyncio.to_thread(resume_session, safe, "")
-            except (ValueError, ResumeUnavailable, ResumeFailed, subprocess.CalledProcessError) as exc:
+            except Exception as exc:  # a failed wake must never stop the page from rendering
                 print(f"[tui] could not resume resting session {safe}: {exc}")
     return templates.TemplateResponse(request, "tui.html", context={
         "cache_bust": int(time.time()),

@@ -192,7 +192,7 @@ def test_main_session_can_never_rest():
 
 
 def test_rest_aborts_if_pane_changed_after_idle_observation(monkeypatch):
-    record = {"name": "friend", "wolt": "pal", "status": "running"}
+    record = {"name": "friend", "wolt": "pal", "status": "running", "harness_session_id": "conv-1"}
     registry = _registry_mock(); registry.get.return_value = record
     monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
     runtime = Mock(); runtime.capture.return_value = "new output"
@@ -204,7 +204,7 @@ def test_rest_aborts_if_pane_changed_after_idle_observation(monkeypatch):
 
 
 def test_rest_aborts_if_recapture_fails(monkeypatch):
-    record = {"name": "friend", "wolt": "pal", "status": "running"}
+    record = {"name": "friend", "wolt": "pal", "status": "running", "harness_session_id": "conv-1"}
     registry = _registry_mock(); registry.get.return_value = record
     monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
     runtime = Mock(); runtime.capture.side_effect = RuntimeError("tmux unavailable")
@@ -286,3 +286,16 @@ def test_opening_a_running_session_does_not_resume(monkeypatch):
     monkeypatch.setattr(server_app, "resume_session", resumed)
     assert _client().get("/tui?session=friend").status_code == 200
     resumed.assert_not_called()
+
+
+def test_rest_refuses_a_session_that_could_not_come_back(monkeypatch):
+    record = {"name": "friend", "wolt": "pal", "status": "running", "harness": "codex"}
+    registry = _registry_mock(); registry.get.return_value = record; registry.list.return_value = [record]
+    monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
+    monkeypatch.setattr(server_app, "recover_resume_id", Mock(return_value=""))
+    runtime = Mock()
+    monkeypatch.setattr(server_app, "get_runtime", Mock(return_value=runtime))
+    response = _client().post("/sessions/friend/rest", json={"pane_digest": "0" * 64})
+    assert response.status_code == 409
+    runtime.stop.assert_not_called()
+    registry._write.assert_not_called()
