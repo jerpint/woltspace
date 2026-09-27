@@ -131,7 +131,7 @@ if (root) {
         ? `${pingLine(e)}<div class="wolves-newfoot"><button class="primary" type="button" data-add>Add</button><button type="button" data-cancel>Cancel</button></div>`
         : `<div class="wolves-foot"><span class="meta">${esc(nextLine(e))}</span><span class="wolves-acts"><button class="run" type="button" data-run>▶ Run now</button><button class="icon" type="button" data-remove aria-label="Remove this wolf" title="Remove">${TRASH}</button></span></div>`}
       <div class="wolves-status${e.err ? ' err' : ''}">${e.status || ''}</div>
-      ${e.isNew ? '' : pingLine(e)}
+      ${e.isNew ? '' : pingLine(e) + runsHtml(e)}
     </div>`;
   }
   function grow(ta) { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }
@@ -170,19 +170,18 @@ if (root) {
     L.querySelectorAll('textarea').forEach(grow);
   }
 
-  // ---------- recent runs: every fire, newest first, each with the session it started ----------
+  // ---------- recent runs: each wolf keeps its own, collapsed until asked for ----------
   let runs = [];
-  const promptOf = (wolt, name) => { const e = entries.find((x) => x.wolt === wolt && x.c.name === name); return e ? e.c.prompt : ''; };
-  function renderRuns() {
-    const R = $('[data-runs]', root);
-    if (!runs.length) { R.innerHTML = '<div class="wolves-quiet">Nothing has run yet. Each run shows up here with a link to the session it started.</div>'; return; }
-    R.innerHTML = runs.slice(0, 12).map((r) => {
-      const msg = r.prompt ?? promptOf(r.wolt, r.name);
-      const when = r.fresh ? 'just now, run by hand' : (isNaN(r.t) ? '' : friendly(r.t)) + (r.manual ? ', run by hand' : '');
-      return `<div class="r${r.fresh ? ' fresh' : ''}"><span class="what">${esc(EMOJI[r.wolt] || '🐾')} ${esc(r.wolt)}
-        <small>${esc(when)}${msg ? ' · ' + esc(msg.length > 70 ? msg.slice(0, 68) + '…' : msg) : ''}</small></span>
+  const runsFor = (e) => runs.filter((r) => r.wolt === e.wolt && r.name === e.c.name);
+  function runsHtml(e) {
+    const mine = runsFor(e);
+    if (!mine.length) return '';
+    const rows = mine.slice(0, 5).map((r) => {
+      const when = r.fresh ? 'just now' : isNaN(r.t) ? 'earlier' : friendly(r.t);
+      return `<div class="r${r.fresh ? ' fresh' : ''}"><span>${esc(when)}${r.manual ? ' <small>by hand</small>' : ''}</span>
         ${r.link ? `<a href="${esc(r.link)}" target="_blank" rel="noopener">open session</a>` : '<span class="wolves-quiet">no session</span>'}</div>`;
     }).join('');
+    return `<details class="wolves-runs"${e.runsOpen ? ' open' : ''}><summary>Recent runs · ${mine.length}</summary>${rows}</details>`;
   }
 
   // ---------- apply: every change goes straight to the lodge, one at a time per wolf ----------
@@ -240,6 +239,10 @@ if (root) {
     if (!card || !t.dataset.f) return;
     onChange(byId(card.dataset.id), t.dataset.f, t.value);
   });
+  L.addEventListener('toggle', (ev) => {
+    const card = ev.target.closest && ev.target.closest('[data-id]');
+    if (card && ev.target.matches('details.wolves-runs')) byId(card.dataset.id).runsOpen = ev.target.open;
+  }, true);
   L.addEventListener('input', (ev) => { if (ev.target.matches('textarea')) grow(ev.target); });
   L.addEventListener('keydown', (ev) => { // Enter in the message = done (Shift+Enter for a new line)
     if (ev.target.matches('textarea') && ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ev.target.blur(); }
@@ -263,11 +266,9 @@ if (root) {
       return queue(e, async () => {
         try {
           const started = await api('POST', cronUrl(e.wolt, e.c.name, '/fire'));
-          runs.unshift({ wolt: e.wolt, name: e.c.name, prompt: e.c.prompt, t: Date.now(), link: started.url, fresh: true });
-          renderRuns();
-          e.status = `▶ ${esc(e.wolt)} is waking up now with this message. Its schedule stays the same.`
-            + (started.url ? ` <a href="${esc(started.url)}" target="_blank" rel="noopener">Open the session</a>` : '');
-          e.err = false;
+          runs.forEach((r) => { r.fresh = false; });
+          runs.unshift({ wolt: e.wolt, name: e.c.name, t: Date.now(), link: started.url, manual: true, fresh: true });
+          e.runsOpen = true; e.status = ''; e.err = false;
         } catch (error) {
           e.status = esc(error.message); e.err = true;
         }
@@ -335,7 +336,7 @@ if (root) {
       runs = (fires.fires || [])
         .filter((f) => f.event === 'dispatched' || (f.event === 'manual' && !f.error))
         .map((f) => ({ wolt: f.owner, name: f.cron, t: localEpoch(f.ts), link: f.link, manual: f.event === 'manual' }));
-      render(); renderRuns();
+      render();
     } catch (error) {
       L.innerHTML = `<div class="wolves-card"><div class="wolves-status err">Could not reach the wolves: ${esc(error.message)}</div></div>`;
     }

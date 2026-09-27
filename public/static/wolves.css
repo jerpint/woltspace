@@ -3,14 +3,6 @@
 .wolves-page { max-width: 680px; }
 .wolves-page .ds-page-header { margin-bottom: var(--space-5); }
 
-.wolves-heading {
-  font-family: var(--font-display);
-  font-weight: 400;
-  font-size: 20px;
-  color: var(--green);
-  margin: var(--space-8) 0 var(--space-2);
-}
-
 .wolves-card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -103,12 +95,14 @@ select.wolves-mini.on { color: var(--green); border-bottom-color: var(--green); 
 .wolves-add button { width: 100%; }
 .wolves-quiet { color: var(--ink-2); font-size: 15px; }
 
-.wolves-runs .r { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 15px; }
-.wolves-runs .r:last-child { border-bottom: 0; }
-.wolves-runs .what { min-width: 0; overflow-wrap: anywhere; }
-.wolves-runs .what small { display: block; color: var(--ink-2); font-size: 13.5px; }
+details.wolves-runs { margin-top: 8px; font-size: 14px; }
+details.wolves-runs summary { cursor: pointer; color: var(--ink-2); width: fit-content; padding: 2px 0; }
+details.wolves-runs summary:hover { color: var(--green); }
+.wolves-runs .r { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 7px 0; border-top: 1px solid var(--border); }
+.wolves-runs .r:first-of-type { margin-top: 6px; }
+.wolves-runs .r small { color: var(--ink-3); margin-left: 4px; }
 .wolves-runs a { white-space: nowrap; color: var(--green); }
-.wolves-runs .r.fresh { background: var(--success-soft); margin: 0 -16px; padding: 9px 16px; }
+.wolves-runs .r.fresh { background: var(--success-soft); margin: 0 -16px; padding: 7px 16px; }
 
 .wolves-empty { text-align: center; padding: 28px 18px; }
 .wolves-empty .big { font-size: 42px; line-height: 1; }
