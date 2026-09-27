@@ -93,11 +93,6 @@ function toggleSidebar() {
 function closeSidebar() {
   document.getElementById('sidebar').classList.remove('mobile-open');
 }
-function toggleCreatures() {
-  document.getElementById('creatures-list').classList.toggle('open');
-  document.getElementById('creatures-chevron').classList.toggle('open');
-}
-
 // ── Load wolts ──
 async function loadWolts() {
   try {
@@ -427,7 +422,8 @@ async function loadSessions() {
     renderSessions();
     renderSidebarWolts();
   } catch {
-    document.getElementById('sessions-list').innerHTML =
+    const list = document.getElementById('sessions-list');
+    if (list) list.innerHTML =
       '<div class="empty-state"><div class="empty-state-icon">🌿</div><div class="empty-state-text">failed to load sessions</div></div>';
   }
 }

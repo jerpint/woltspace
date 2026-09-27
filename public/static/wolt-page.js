@@ -24,7 +24,7 @@
     if (sprite) avatar.innerHTML = sprite; else avatar.textContent = WOLT_EMOJI[config.type] || '🦫';
     root.querySelector('[data-name]').textContent = name;
     root.querySelector('[data-meta]').textContent = `${config.type || 'rodent'} · ${eng.id}${eng.model ? ` · ${eng.model}` : ''} · ${open.length} open`;
-    root.querySelector('[data-role]').textContent = (manifest.wolt || {}).role || config.role || '';
+    root.querySelector('[data-role]').textContent = (manifest.wolt || {}).description || config.description || (manifest.wolt || {}).role || config.role || '';
     const resume = root.querySelector('[data-resume]');
     if (own[0]) { resume.hidden = false; resume.href = `/tui?session=${encodeURIComponent(own[0].name)}`; resume.title = own[0].title || own[0].prompt_preview || own[0].name; }
     root.querySelector('[data-new]').onclick = () => startSession(name);
