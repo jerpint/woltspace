@@ -110,16 +110,16 @@ def cmd_wolt_set(args):
     if args.model is not None:
         body["model"] = args.model
     status, result = _req("PATCH", f"/wolts/{quote(args.name, safe='')}/settings", body)
+    if status >= 300:
+        print(result.get("error", f"HTTP {status}"), file=sys.stderr)
+        raise SystemExit(1)
     if args.json:
         print(json.dumps(result, indent=2))
-    elif status < 300:
+    else:
         print(
             f"{result['wolt']}: {result['harness']} / {result.get('model') or 'default'} "
             f"(applies from the next session)"
         )
-    else:
-        print(result.get("error", f"HTTP {status}"), file=sys.stderr)
-        raise SystemExit(1)
 
 
 def cmd_session_send(args):
