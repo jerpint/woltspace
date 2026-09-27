@@ -2203,6 +2203,30 @@ async def settings_page(request: Request):
     })
 
 
+@app.get("/w/{wolt_name}")
+async def lodge_wolt_page(request: Request, wolt_name: str):
+    """The lodge-native page for one persistent collaborator."""
+    wolt_dir = _builtin_wolt_dir(wolt_name)
+    if wolt_dir is None:
+        return PlainTextResponse("Not found", status_code=404)
+    config = next((w for w in _configured_wolts() if w.get("dir") == wolt_name), {})
+    return templates.TemplateResponse(request, "wolt.html", context={
+        "active_nav": "",
+        "cache_bust": int(time.time()),
+        "wolt_name": wolt_name,
+        "wolt": config,
+    })
+
+
+@app.get("/connectors")
+async def connectors_page_placeholder(request: Request):
+    """Keep the redesigned navigation whole while PR2b wires connector state."""
+    return templates.TemplateResponse(request, "connectors.html", context={
+        "active_nav": "connectors",
+        "cache_bust": int(time.time()),
+    })
+
+
 @app.get("/wolves")
 async def wolves_page(request: Request):
     """The wolves: every scheduled wake-up in the lodge, editable in place.
