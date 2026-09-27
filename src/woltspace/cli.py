@@ -714,25 +714,44 @@ def _seed_create(args) -> int:
 
 
 def _seed_inspect(args) -> int:
-    from .seed import SeedError, inspect_seed
+    from .seed import SeedError, inspect_seed_source
 
     try:
-        summary = inspect_seed(args.source)
+        payload = inspect_seed_source(args.source, ref=args.ref or None)
     except SeedError as exc:
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         else:
             lore.failure(f"colony seed is invalid: {exc}")
         return 1
-    payload = {"ok": True, **summary.to_record()}
+    payload = {"ok": True, **payload}
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
-        lore.headline(lore.TRACKS, f"colony seed: {summary.name}")
-        lore.labelled("wolts", ", ".join(summary.wolts))
-        lore.labelled("apps", ", ".join(summary.apps) or "none")
-        lore.labelled("size", f"{summary.bytes:,} bytes in {summary.files} files")
-        lore.labelled("sha256", summary.digest)
+        lore.headline(lore.TRACKS, f"colony seed: {payload['name']}")
+        source = payload.get("source") or {}
+        if source.get("resolved_commit"):
+            lore.labelled("commit", source["resolved_commit"])
+        lore.labelled("wolts", ", ".join(payload["wolts"]))
+        lore.labelled("apps", ", ".join(payload["apps"]) or "none")
+        lore.labelled("size", f"{payload['bytes']:,} bytes in {payload['files']} files")
+        lore.labelled("sha256", payload["sha256"])
+        lore.subtitle(payload["trust"])
+        for component in payload["components"]:
+            lore.labelled(component["id"], component["kind"])
+            if component["kind"] == "wolt":
+                lore.labelled("initial identity", "")
+                print(component["identity"].rstrip())
+                lore.labelled("authored rules", "")
+                print(component["rules"].rstrip())
+                for skill in component["skill_files"]:
+                    suffix = " (executable)" if skill["executable"] else ""
+                    print(f"  {skill['path']}{suffix}")
+            else:
+                for path in component["files"]:
+                    print(f"  {path}")
+        for warning in payload.get("warnings", []):
+            lore.note(warning)
     return 0
 
 
@@ -745,20 +764,57 @@ def _seed_install(args) -> int:
             source=args.source,
             wolts_dir=layout.wolts_dir,
             install_root=layout.install_root,
+            ref=args.ref or None,
+            wolt_names=args.wolt,
+            app_names=args.app,
         )
     except SeedError as exc:
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         else:
-            lore.failure(f"colony seed install failed: {exc}")
+            lore.failure(f"colony seed import failed: {exc}")
         return 1
     if args.json:
         print(json.dumps(result, indent=2))
     else:
-        lore.headline(lore.SUN, f"colony seed installed: {result['seed']}")
+        lore.headline(lore.SUN, f"colony seed imported: {result['seed']}")
+        lore.labelled("install", result["install_id"])
         lore.labelled("wolts", ", ".join(result["wolts"]))
         lore.labelled("apps", ", ".join(result["apps"]) or "none")
         lore.subtitle("fresh independent copies; lived memory starts here")
+    return 0
+
+
+def _seed_status(args) -> int:
+    from .seed import SeedError, seed_status
+
+    layout = RuntimeLayout.from_env()
+    try:
+        result = seed_status(
+            wolts_dir=layout.wolts_dir,
+            wolt=args.wolt or None,
+            install_id=args.install_id or None,
+            to_ref=args.to or None,
+        )
+    except SeedError as exc:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        else:
+            lore.failure(f"seed status failed: {exc}")
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        lore.headline(lore.TRACKS, f"seed install: {result['install_id']}")
+        if result["candidate_tags"]:
+            lore.labelled("newer tags", ", ".join(result["candidate_tags"]))
+        if result["candidate"]:
+            lore.labelled("candidate", result["candidate"]["resolved_commit"])
+            lore.labelled("changes", str(len(result["changes"])))
+            for change in result["changes"]:
+                lore.labelled(change["component"], change.get("path", change["kind"]))
+        for warning in result["warnings"]:
+            lore.note(warning)
     return 0
 
 
@@ -873,7 +929,7 @@ def build_parser() -> argparse.ArgumentParser:
     auto_list.set_defaults(func=_auto_list)
 
     seed = sub.add_parser(
-        "seed", help="create, inspect, and install shareable colony seeds"
+        "seed", help="create, inspect, import, and track shareable colony seeds"
     )
     seed.set_defaults(func=_seed, seed_parser=seed)
     seed_sub = seed.add_subparsers(dest="verb")
@@ -900,15 +956,31 @@ def build_parser() -> argparse.ArgumentParser:
         "inspect", help="validate and summarize a colony seed"
     )
     seed_inspect.add_argument("source")
+    seed_inspect.add_argument("--ref", default="", help="exact tag or full commit for a remote")
     seed_inspect.add_argument("--json", action="store_true")
     seed_inspect.set_defaults(func=_seed_inspect)
 
-    seed_install = seed_sub.add_parser(
-        "install", help="install independent starter copies from a directory or Git URL"
+    for verb, help_text in (
+        ("import", "import independent starter copies into this lodge"),
+        ("install", "legacy alias for seed import"),
+    ):
+        seed_install = seed_sub.add_parser(verb, help=help_text)
+        seed_install.add_argument("source")
+        seed_install.add_argument("--ref", default="", help="exact tag or full commit for a remote")
+        seed_install.add_argument("--wolt", action="append", default=[], help="wolt to import (repeatable)")
+        seed_install.add_argument("--app", action="append", default=[], help="app to import (repeatable)")
+        seed_install.add_argument("--json", action="store_true")
+        seed_install.set_defaults(func=_seed_install)
+
+    seed_status_parser = seed_sub.add_parser(
+        "status", help="read seed lineage and compare an exact upstream revision"
     )
-    seed_install.add_argument("source")
-    seed_install.add_argument("--json", action="store_true")
-    seed_install.set_defaults(func=_seed_install)
+    status_target = seed_status_parser.add_mutually_exclusive_group(required=True)
+    status_target.add_argument("--wolt", default="")
+    status_target.add_argument("--install-id", default="")
+    seed_status_parser.add_argument("--to", default="", help="exact upstream tag or commit to diff")
+    seed_status_parser.add_argument("--json", action="store_true")
+    seed_status_parser.set_defaults(func=_seed_status)
 
     dig = sub.add_parser("dig", help="let a wolt visit an owner-approved SSH host")
     dig.set_defaults(func=_dig, dig_parser=dig)

@@ -1,5 +1,9 @@
 import json
+import hashlib
+import shutil
+import stat
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -7,8 +11,10 @@ import pytest
 from woltspace.seed import (
     SeedError,
     create_seed,
+    inspect_seed_source,
     inspect_seed,
     install_seed,
+    seed_status,
 )
 
 
@@ -157,7 +163,15 @@ def test_install_creates_fresh_independent_starters(tmp_path):
     assert result["wolts"] == ["raccoon"]
     config = json.loads((target / "raccoon/wolt/wolt.json").read_text())
     assert config["origin"] == "starter"
-    assert config["provenance"]["format"] == "woltspace.colony-seed/v1"
+    assert "provenance" not in config
+    assert config["seed"]["install_id"] == result["install_id"]
+    assert config["seed"]["component_id"] == "wolt:raccoon"
+    receipt = json.loads(Path(result["receipt"]).read_text())
+    assert receipt["format"] == "woltspace.seed-install/v1"
+    assert receipt["seed"]["digest"] == config["seed"]["digest"]
+    assert (Path(result["receipt"]).parent / "base/wolts/raccoon/rules.md").is_file()
+    assert stat.S_IMODE(Path(result["receipt"]).stat().st_mode) == 0o600
+    assert stat.S_IMODE(Path(result["receipt"]).parent.stat().st_mode) == 0o700
     assert "private current work" not in (target / "raccoon/wolt/memory/context.md").read_text()
     assert "Always be useful" in (target / "raccoon/CLAUDE.md").read_text()
     assert "# Platform rules" in (target / "raccoon/CLAUDE.md").read_text()
@@ -331,7 +345,7 @@ def test_install_rolls_back_on_keyboard_interrupt(tmp_path, monkeypatch):
     original_rename = Path.rename
 
     def interrupt_second(source, destination):
-        if source.name == "second" and source.parent.name.startswith(".seed-install-"):
+        if source.name == "second" and source.parent.name.startswith(".seed-import-"):
             raise KeyboardInterrupt
         return original_rename(source, destination)
 
@@ -359,4 +373,215 @@ def test_seed_and_backup_are_distinct_top_level_commands():
     seed_verbs = next(
         action for action in seed_parser._actions if getattr(action, "choices", None)
     ).choices
-    assert set(seed_verbs) == {"create", "inspect", "install"}
+    assert set(seed_verbs) == {"create", "inspect", "import", "install", "status"}
+
+
+def test_seed_digest_includes_executable_mode(tmp_path):
+    wolts = tmp_path / "wolts"
+    wolt = make_wolt(wolts)
+    make_skill(wolt)
+    script = wolt / ".claude/skills/public-craft/run.sh"
+    script.write_text("#!/bin/sh\necho safe\n")
+    script.chmod(0o644)
+    first = create_seed(
+        wolts_dir=wolts, output=tmp_path / "first", name="starter",
+        wolt_names=["raccoon"], skills=["raccoon:public-craft"],
+    )
+    script.chmod(0o755)
+    second = create_seed(
+        wolts_dir=wolts, output=tmp_path / "second", name="starter",
+        wolt_names=["raccoon"], skills=["raccoon:public-craft"],
+    )
+    assert first.digest != second.digest
+
+
+def test_pinned_local_git_inspect_reads_committed_blobs(tmp_path):
+    wolts = tmp_path / "wolts"
+    make_wolt(wolts)
+    package = tmp_path / "package"
+    create_seed(
+        wolts_dir=wolts, output=package, name="starter", wolt_names=["raccoon"],
+    )
+    subprocess.run(["git", "init", "-q", str(package)], check=True)
+    subprocess.run(["git", "-C", str(package), "add", "."], check=True)
+    subprocess.run([
+        "git", "-C", str(package), "-c", "user.name=Test",
+        "-c", "user.email=test@example.invalid", "commit", "-qm", "seed",
+    ], check=True)
+    subprocess.run(["git", "-C", str(package), "tag", "v0.1.0"], check=True)
+    committed = inspect_seed_source(package, ref="v0.1.0")
+    (package / "wolts/raccoon/rules.md").write_text("hostile dirty change\n")
+    pinned = inspect_seed_source(package, ref="v0.1.0")
+    assert pinned["sha256"] == committed["sha256"]
+    assert pinned["components"][0]["rules"] != "hostile dirty change\n"
+
+
+def test_selective_import_adds_keeper_and_preserves_base_without_source(tmp_path):
+    source_wolts = tmp_path / "source-wolts"
+    make_wolt(source_wolts, "keeper")
+    make_wolt(source_wolts, "other")
+    make_app(source_wolts, keeper="keeper")
+    package = tmp_path / "package"
+    create_seed(
+        wolts_dir=source_wolts, output=package, name="team",
+        wolt_names=["keeper", "other"], app_names=["tiny-app"],
+    )
+    target = tmp_path / "lodge"
+    result = install_seed(
+        source=package, wolts_dir=target, install_root=make_template(tmp_path),
+        app_names=["tiny-app"],
+    )
+    assert result["wolts"] == ["keeper"]
+    assert result["required"] == ["keeper"]
+    assert not (target / "other").exists()
+    install_id = result["install_id"]
+    shutil.rmtree(package)
+    status = seed_status(wolts_dir=target, install_id=install_id)
+    assert status["install_id"] == install_id
+    assert status["candidate_tags"] == []
+    assert status["warnings"] == []
+
+
+def test_importer_rejects_spoofed_lineage_and_writes_its_own(tmp_path):
+    wolts = tmp_path / "wolts"
+    make_wolt(wolts)
+    package = tmp_path / "package"
+    create_seed(
+        wolts_dir=wolts, output=package, name="starter", wolt_names=["raccoon"],
+    )
+    portable = json.loads((package / "wolts/raccoon/wolt.json").read_text())
+    portable["seed"] = {"install_id": "attacker"}
+    write_json(package / "wolts/raccoon/wolt.json", portable)
+    with pytest.raises(SeedError, match="non-seed config"):
+        install_seed(
+            source=package, wolts_dir=tmp_path / "target",
+            install_root=make_template(tmp_path),
+        )
+
+
+@pytest.mark.parametrize("source", [
+    "ssh://git@example.com/team.git",
+    "https://user@example.com/team.git",
+    "https://example.com/team.git?token=x",
+])
+def test_remote_seed_source_is_https_without_credentials(source):
+    with pytest.raises(SeedError, match="credential-free HTTPS"):
+        inspect_seed_source(source, ref="v0.1.0")
+
+
+def test_status_diffs_exact_candidate_without_writing(tmp_path, monkeypatch):
+    import woltspace.seed as seed_module
+
+    source_wolts = tmp_path / "source-v1"
+    make_wolt(source_wolts)
+    package_v1 = tmp_path / "package-v1"
+    create_seed(
+        wolts_dir=source_wolts, output=package_v1, name="starter",
+        wolt_names=["raccoon"],
+    )
+    target = tmp_path / "lodge"
+    result = install_seed(
+        source=package_v1, wolts_dir=target, install_root=make_template(tmp_path),
+    )
+    receipt_path = Path(result["receipt"])
+    receipt = json.loads(receipt_path.read_text())
+    receipt["source"].update({
+        "url": "https://example.com/starter.git",
+        "requested_ref": "v0.1.0",
+        "resolved_commit": "1" * 40,
+    })
+    write_json(receipt_path, receipt)
+
+    source_v2 = tmp_path / "source-v2"
+    wolt_v2 = make_wolt(source_v2)
+    (wolt_v2 / "CLAUDE.md").write_text(
+        "<!-- WOLTSPACE:BEGIN — auto-managed, do not edit -->\nplatform\n"
+        "<!-- WOLTSPACE:END -->\n\n# raccoon\n\nUse the improved method.\n"
+    )
+    package_v2 = tmp_path / "package-v2"
+    summary_v2 = create_seed(
+        wolts_dir=source_v2, output=package_v2, name="starter",
+        wolt_names=["raccoon"],
+    )
+
+    @contextmanager
+    def fake_resolved(source, *, ref=None):
+        assert source == "https://example.com/starter.git"
+        assert ref == "v0.2.0"
+        yield package_v2, summary_v2, {
+            "url": source, "requested_ref": ref, "resolved_commit": "2" * 40,
+            "tracking_ref": None, "seed_digest": summary_v2.digest, "warnings": [],
+        }
+
+    monkeypatch.setattr(seed_module, "resolved_seed", fake_resolved)
+    status = seed_status(
+        wolts_dir=target, install_id=result["install_id"], to_ref="v0.2.0",
+    )
+    assert status["candidate"]["resolved_commit"] == "2" * 40
+    rule_change = next(change for change in status["changes"] if change.get("path") == "rules.md")
+    assert "Use the improved method" in rule_change["diff"]
+    assert json.loads(receipt_path.read_text())["source"]["resolved_commit"] == "1" * 40
+
+
+@pytest.mark.parametrize("moving_ref", ["HEAD", "refs/pull/1/head"])
+def test_remote_ref_allowlist_rejects_non_tags(monkeypatch, moving_ref):
+    import woltspace.seed as seed_module
+
+    monkeypatch.setattr(
+        seed_module, "_git",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "", ""),
+    )
+    with pytest.raises(SeedError, match="moving refs"):
+        seed_module._remote_fetch_ref("https://example.com/team.git", moving_ref)
+
+
+def test_remote_ref_allowlist_accepts_exact_tag(monkeypatch):
+    import woltspace.seed as seed_module
+
+    def fake_git(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args[0], 0, "a" * 40 + "\trefs/tags/v0.1.0\n", "",
+        )
+
+    monkeypatch.setattr(seed_module, "_git", fake_git)
+    assert seed_module._remote_fetch_ref(
+        "https://example.com/team.git", "v0.1.0"
+    ) == "refs/tags/v0.1.0"
+
+
+def test_digest_uses_posix_byte_path_order(tmp_path):
+    import woltspace.seed as seed_module
+
+    (tmp_path / "a/b").mkdir(parents=True)
+    (tmp_path / "a-b").mkdir()
+    (tmp_path / "a/b/value").write_bytes(b"slash")
+    (tmp_path / "a-b/x").write_bytes(b"dash")
+    digest = hashlib.sha256()
+    for rel, content in (("a-b/x", b"dash"), ("a/b/value", b"slash")):
+        digest.update(rel.encode() + b"\0" + b"100644" + b"\0" + content)
+    assert seed_module._digest_tree(tmp_path) == digest.hexdigest()
+
+
+def test_status_rejects_manifest_path_traversal(tmp_path):
+    target = tmp_path / "lodge"
+    write_json(target / "friend/wolt/wolt.json", {
+        "name": "friend", "seed": {"install_id": "../../outside"},
+    })
+    with pytest.raises(SeedError, match="invalid seed install id"):
+        seed_status(wolts_dir=target, wolt="friend")
+    with pytest.raises(SeedError, match="invalid wolt"):
+        seed_status(wolts_dir=target, wolt="../friend")
+
+
+def test_inspect_rejects_nested_git_internals(tmp_path):
+    wolts = tmp_path / "wolts"
+    make_wolt(wolts)
+    package = tmp_path / "package"
+    create_seed(
+        wolts_dir=wolts, output=package, name="starter", wolt_names=["raccoon"],
+    )
+    hook = package / "wolts/raccoon/skills/hostile/.git/hooks/post-checkout"
+    hook.parent.mkdir(parents=True)
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    with pytest.raises(SeedError, match="nested Git internals"):
+        inspect_seed(package)
