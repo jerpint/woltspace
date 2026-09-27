@@ -131,7 +131,10 @@ class SessionRegistry:
         return self._sessions_dir(wolt) / f"{name}.json"
 
     def _read(self, wolt: str, name: str) -> dict | None:
-        path = self._path(wolt, name)
+        return self._read_path(wolt, self._path(wolt, name))
+
+    def _read_path(self, wolt: str, path: Path) -> dict | None:
+        """Read and normalize one registry record from an already-known path."""
         if not path.exists():
             return None
         try:
@@ -484,15 +487,8 @@ class SessionRegistry:
             for path in sessions_dir.glob("*.json"):
                 if path.suffix == ".tmp":
                     continue
-                try:
-                    raw = json.loads(path.read_text())
-                    self._normalize_description(raw)
-                    data = normalize_session_target(
-                        raw,
-                        wolts_dir=self.wolts_dir,
-                        fallback_wolt=w,
-                    )
-                except (json.JSONDecodeError, OSError):
+                data = self._read_path(w, path)
+                if data is None:
                     continue
                 name = data.get("name", path.stem)
                 tmux_name = RuntimeHandle.from_record(data).tmux_session_name or name

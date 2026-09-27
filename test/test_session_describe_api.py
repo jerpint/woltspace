@@ -25,7 +25,10 @@ def test_describe_updates_session_and_get_sessions_exposes_fields(tmp_path, monk
 
     response = client.post(
         "/sessions/n00b-maple-a1b2c3/describe",
-        json={"title": "  Lodge   redesign  ", "summary": "  Wiring\n session titles  "},
+        json={
+            "title": "  Lodge\x00   redesign\x1b  ",
+            "summary": "  Wiring\n session\x00 titles\x1b  ",
+        },
     )
 
     assert response.status_code == 200
@@ -35,6 +38,27 @@ def test_describe_updates_session_and_get_sessions_exposes_fields(tmp_path, monk
     assert listed[0]["title"] == "Lodge redesign"
     assert listed[0]["summary"] == "Wiring session titles"
     assert listed[0]["prompt_preview"] == "Original request"
+
+
+def test_describe_rejects_invalid_json_and_non_object_body(tmp_path, monkeypatch):
+    registry = SessionRegistry(tmp_path)
+    registry.create("n00b-maple-a1b2c3", wolt="n00b")
+    client = _client(tmp_path, monkeypatch)
+
+    invalid = client.post(
+        "/sessions/n00b-maple-a1b2c3/describe",
+        content=b"{not-json",
+        headers={"content-type": "application/json"},
+    )
+    non_object = client.post(
+        "/sessions/n00b-maple-a1b2c3/describe",
+        json=["Title", "Summary"],
+    )
+
+    assert invalid.status_code == 400
+    assert invalid.json() == {"error": "JSON object body required"}
+    assert non_object.status_code == 400
+    assert non_object.json() == {"error": "JSON object body required"}
 
 
 def test_describe_rejects_missing_long_and_unknown_sessions(tmp_path, monkeypatch):

@@ -199,8 +199,7 @@ def cmd_session_spawn(args):
 
 
 def cmd_session_describe(args):
-    session = args.session or get_env("WOLTSPACE_WOLT_SESSION", "") or \
-        get_env("WOLT_SESSION", "")
+    session = args.session or get_env("WOLTSPACE_WOLT_SESSION", "")
     if not session:
         print("session id required: run inside a session or pass --session", file=sys.stderr)
         sys.exit(2)

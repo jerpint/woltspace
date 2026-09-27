@@ -8,6 +8,7 @@ import subprocess
 import threading
 import time
 import contextlib
+import unicodedata
 from collections import deque
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
@@ -807,7 +808,12 @@ async def session_describe(session_id: str, request: Request):
     safe = sanitize_session(session_id)
     if not safe or safe != session_id:
         return JSONResponse({"error": "invalid session id"}, status_code=400)
-    body = await request.json()
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
     title = body.get("title")
     summary = body.get("summary")
     if not isinstance(title, str) or not title.strip():
@@ -816,6 +822,12 @@ async def session_describe(session_id: str, request: Request):
         return JSONResponse({"error": "summary required"}, status_code=400)
     title = " ".join(title.split())
     summary = " ".join(summary.split())
+    title = "".join(c for c in title if not unicodedata.category(c).startswith("C"))
+    summary = "".join(c for c in summary if not unicodedata.category(c).startswith("C"))
+    if not title:
+        return JSONResponse({"error": "title required"}, status_code=400)
+    if not summary:
+        return JSONResponse({"error": "summary required"}, status_code=400)
     if len(title) > 80:
         return JSONResponse({"error": "title must be 80 characters or fewer"}, status_code=400)
     if len(summary) > 240:
