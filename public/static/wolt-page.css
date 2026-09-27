@@ -1,4 +1,5 @@
 .wolt-page { padding-bottom: 60px; }
+.wolt-page .filter-chip.active { background:var(--ink); border-color:var(--ink); color:#fff; }
 .wolt-heading { display:flex; gap:14px; align-items:center; min-width:0; }
 .wolt-page-avatar { width:52px; height:52px; display:grid; place-items:center; flex:none; }
 .wolt-role { font-size:13.5px; color:var(--ink-2); margin-top:2px; min-height:1.4em; }
