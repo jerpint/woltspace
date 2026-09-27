@@ -131,11 +131,15 @@ class SessionRegistry:
         return self._sessions_dir(wolt) / f"{name}.json"
 
     def _read(self, wolt: str, name: str) -> dict | None:
-        path = self._path(wolt, name)
+        return self._read_path(wolt, self._path(wolt, name))
+
+    def _read_path(self, wolt: str, path: Path) -> dict | None:
+        """Read and normalize one registry record from an already-known path."""
         if not path.exists():
             return None
         try:
             data = json.loads(path.read_text())
+            self._normalize_description(data)
             return normalize_session_target(
                 data, wolts_dir=self.wolts_dir, fallback_wolt=wolt
             )
@@ -171,6 +175,24 @@ class SessionRegistry:
 
     # --- Core API ---
 
+    @staticmethod
+    def _normalize_description(data: dict) -> dict:
+        """Expose the original opening prompt separately from a description.
+
+        Existing records stored the opening prompt only as ``prompt``.  Keep
+        that field for compatibility, while giving the lodge a stable field it
+        can use as the italic fallback when a session has not described itself.
+        This is deliberately a read-compatible migration: records are updated
+        on their next ordinary write, with no eager colony-wide rewrite.
+        """
+        if "prompt_preview" not in data:
+            data["prompt_preview"] = str(data.get("prompt") or "")[:500]
+        data.setdefault("title", "")
+        data.setdefault("summary", "")
+        if not data["summary"] and data["title"] == _title_from_prompt(data.get("prompt") or ""):
+            data["title"] = ""
+        return data
+
     def create(
         self,
         name: str,
@@ -182,6 +204,7 @@ class SessionRegistry:
         dir: str = "",
         app: str = "",
         title: str = "",
+        summary: str = "",
         prompt: str = "",
         adapter: str = "",
         chat_id: str = "",
@@ -225,6 +248,8 @@ class SessionRegistry:
             ).to_record(),
             "auto_grant": auto_grant,
             "title": title,
+            "summary": summary,
+            "prompt_preview": prompt[:500],
             "prompt": prompt[:500],
             "last_activity": now,
             # routing — array for multi-adapter support
@@ -255,6 +280,15 @@ class SessionRegistry:
 
         self._write(wolt, name, data)
         return data
+
+    def describe(self, name: str, title: str, summary: str, *, wolt: str = None) -> dict | None:
+        """Set the short, human-facing description for a session."""
+        return self.update(
+            name,
+            wolt=wolt,
+            title=title,
+            summary=summary,
+        )
 
     @contextmanager
     def _lock(self, wolt: str, name: str):
@@ -455,13 +489,8 @@ class SessionRegistry:
             for path in sessions_dir.glob("*.json"):
                 if path.suffix == ".tmp":
                     continue
-                try:
-                    data = normalize_session_target(
-                        json.loads(path.read_text()),
-                        wolts_dir=self.wolts_dir,
-                        fallback_wolt=w,
-                    )
-                except (json.JSONDecodeError, OSError):
+                data = self._read_path(w, path)
+                if data is None:
                     continue
                 name = data.get("name", path.stem)
                 tmux_name = RuntimeHandle.from_record(data).tmux_session_name or name
@@ -1107,7 +1136,8 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
     """Build the full agent command for a session — the run-session.sh backend.
 
     Everything comes from the registry. Spawn also stamps harness_session_id
-    (used later for --resume) and a title derived from the prompt.
+    (used later for --resume). A session describes itself separately once its
+    focus is clear; the opening prompt remains the untitled preview.
 
     Raises ValueError if the session isn't in the registry.
     """
@@ -1142,7 +1172,7 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
         # one generated and stamped now. Others (codex) assign their own —
         # run-session.sh discovers it after launch via discover-id.
         session_id = ""
-        updates = {"title": _title_from_prompt(prompt)}
+        updates = {}
         if get_harness(harness).get("preset_session_id"):
             session_id = str(uuid.uuid4())
             updates["harness_session_id"] = session_id

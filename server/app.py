@@ -8,6 +8,7 @@ import subprocess
 import threading
 import time
 import contextlib
+import unicodedata
 from collections import deque
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
@@ -797,6 +798,44 @@ async def session_message(session_id: str, request: Request):
     # detail saying to resume and retry.
     code = 404 if status == "no-session" else 409
     return JSONResponse({"ok": False, **result}, status_code=code)
+
+
+@app.post("/sessions/{session_id}/describe")
+async def session_describe(session_id: str, request: Request):
+    """Give a session a concise title and one-line summary."""
+    from sessions import SessionRegistry
+
+    safe = sanitize_session(session_id)
+    if not safe or safe != session_id:
+        return JSONResponse({"error": "invalid session id"}, status_code=400)
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    title = body.get("title")
+    summary = body.get("summary")
+    if not isinstance(title, str) or not title.strip():
+        return JSONResponse({"error": "title required"}, status_code=400)
+    if not isinstance(summary, str) or not summary.strip():
+        return JSONResponse({"error": "summary required"}, status_code=400)
+    title = " ".join(title.split())
+    summary = " ".join(summary.split())
+    title = "".join(c for c in title if not unicodedata.category(c).startswith("C"))
+    summary = "".join(c for c in summary if not unicodedata.category(c).startswith("C"))
+    if not title:
+        return JSONResponse({"error": "title required"}, status_code=400)
+    if not summary:
+        return JSONResponse({"error": "summary required"}, status_code=400)
+    if len(title) > 80:
+        return JSONResponse({"error": "title must be 80 characters or fewer"}, status_code=400)
+    if len(summary) > 240:
+        return JSONResponse({"error": "summary must be 240 characters or fewer"}, status_code=400)
+    described = SessionRegistry(WOLTS_DIR).describe(safe, title, summary)
+    if described is None:
+        return JSONResponse({"error": "session not found"}, status_code=404)
+    return described
 
 
 @app.post("/wolts/{name}/message")
