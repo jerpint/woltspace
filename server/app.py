@@ -1677,7 +1677,7 @@ async def app_start(name: str):
     if invalid := _invalid_app_name(name):
         return invalid
     try:
-        state = start_app(name)
+        state = await asyncio.to_thread(start_app, name)
         print(f"[apps] started {name} on port {state['port']}")
         return state
     except ValueError as e:
@@ -1691,7 +1691,7 @@ async def app_stop(name: str):
     """Stop a running app."""
     if invalid := _invalid_app_name(name):
         return invalid
-    was_running = stop_app(name)
+    was_running = await asyncio.to_thread(stop_app, name)
     if was_running:
         print(f"[apps] stopped {name}")
         return {"ok": True, "name": name}
@@ -1703,7 +1703,7 @@ async def app_restart(name: str):
     if invalid := _invalid_app_name(name):
         return invalid
     try:
-        return restart_app(name)
+        return await asyncio.to_thread(restart_app, name)
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=404)
     except RuntimeError as exc:
