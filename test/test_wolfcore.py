@@ -232,7 +232,7 @@ class TestTheSchedulerUsesTheOneCheck:
              patch("creatures.wolf.remove_cron") as remove:
             wolf.check_and_fire(crons, datetime(2026, 3, 21, 21, 0).astimezone())
         fire.assert_called_once()
-        remove.assert_called_once_with("nunu", "o")
+        remove.assert_called_once_with("nunu", "o", "2026-03-21T20:00")
 
     def test_a_bad_entry_is_skipped_and_the_rest_still_fire(self, tmp_path, capsys):
         from creatures import wolf
@@ -360,6 +360,25 @@ class TestWolfJson:
         assert data["crons"] == [{"name": "keep", "schedule": "0 6 * * *", "prompt": "p",
                                   "timezone": "x", "extra": [1]}]
         assert wolfcore.remove_entry(tmp_path, "nunu", "drop") is False
+
+    def test_a_one_off_rescheduled_while_firing_is_not_removed(self, tmp_path):
+        # The wolf fired the 20:00 one-off; before it removed it, the API moved
+        # it to next year. Removing by name alone would drop the new schedule.
+        path = tmp_path / "nunu" / "wolt" / "wolf.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"crons": [
+            {"name": "once", "at": "2031-01-01T09:00", "prompt": "p"},
+        ]}))
+        assert wolfcore.remove_entry(tmp_path, "nunu", "once", "2026-03-21T20:00") is False
+        assert json.loads(path.read_text())["crons"][0]["at"] == "2031-01-01T09:00"
+        assert wolfcore.remove_entry(tmp_path, "nunu", "once", "2031-01-01T09:00") is True
+
+    def test_atomic_write_keeps_the_file_permissions(self, tmp_path):
+        target = tmp_path / "wolf.json"
+        target.write_text("{}\n")
+        target.chmod(0o600)
+        wolfcore.atomic_write(target, '{"crons": []}\n')
+        assert target.stat().st_mode & 0o777 == 0o600
 
     def test_atomic_write_leaves_no_temp_file(self, tmp_path):
         target = tmp_path / "wolf.json"

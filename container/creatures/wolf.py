@@ -203,10 +203,11 @@ def dispatch_session(entry: dict) -> Optional[str]:
         return None
 
 
-def remove_cron(wolt_name: str, cron_name: str):
-    """Delete a one-off cron from the wolt's wolf.json after firing."""
+def remove_cron(wolt_name: str, cron_name: str, at: str | None = None):
+    """Delete a one-off cron from the wolt's wolf.json after firing — only if
+    it still carries the `at` that fired (see wolfcore.remove_entry)."""
     try:
-        if wolfcore.remove_entry(WOLTS_DIR, wolt_name, cron_name):
+        if wolfcore.remove_entry(WOLTS_DIR, wolt_name, cron_name, at):
             print(f"[wolf] removed one-off cron '{cron_name}' from {wolt_name}/wolt/wolf.json")
     except Exception as e:
         print(f"[wolf] failed to remove cron '{cron_name}' from {wolt_name}: {e}", file=sys.stderr)
@@ -302,7 +303,7 @@ def check_and_fire(crons: list[dict], now: datetime, *, catching_up: bool = Fals
                      missed=slot.strftime(STAMP_FORMAT))
         fire_cron(entry)
         if one_off:
-            remove_cron(owner, name)
+            remove_cron(owner, name, entry["at"])
 
 
 def catch_up(crons: list[dict], now: datetime):

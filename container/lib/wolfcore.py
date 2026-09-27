@@ -371,12 +371,20 @@ def read_wolf_json(path: Path) -> dict:
 
 
 def atomic_write(path: Path, text: str) -> None:
-    """Write beside the target, then rename over it: never a half-written file."""
+    """Write beside the target, then rename over it: never a half-written file.
+
+    The replacement keeps the permissions the file already had: a cron's words
+    are the user's own, and a wolf.json someone locked down stays locked down.
+    """
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     with open(tmp, "w") as handle:
         handle.write(text)
         handle.flush()
         os.fsync(handle.fileno())
+    try:
+        os.chmod(tmp, path.stat().st_mode & 0o7777)
+    except FileNotFoundError:
+        pass  # a new file keeps the umask default
     os.replace(tmp, path)
 
 
@@ -401,12 +409,22 @@ def wolf_json_lock(wolts_dir: Path, wolt: str) -> Iterator[None]:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def remove_entry(wolts_dir: Path, wolt: str, name: str) -> bool:
-    """Drop the named cron from a wolt's wolf.json. True if one was removed."""
+def remove_entry(wolts_dir: Path, wolt: str, name: str, at: str | None = None) -> bool:
+    """Drop the named cron from a wolt's wolf.json. True if one was removed.
+
+    `at` narrows it to the one-off that actually fired: if the entry was
+    rescheduled while it was firing, the new time no longer matches and the
+    entry stays, to fire when it is next due.
+    """
     path = wolf_json_path(wolts_dir, wolt)
+
+    def fired(c) -> bool:
+        return (isinstance(c, dict) and c.get("name") == name
+                and (at is None or c.get("at") == at))
+
     with wolf_json_lock(wolts_dir, wolt):
         data = read_wolf_json(path)
-        kept = [c for c in data["crons"] if not (isinstance(c, dict) and c.get("name") == name)]
+        kept = [c for c in data["crons"] if not fired(c)]
         if len(kept) == len(data["crons"]):
             return False
         data["crons"] = kept
