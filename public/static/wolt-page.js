@@ -96,6 +96,14 @@
     const selected = (harnesses.harnesses || []).find(h=>h.id===eng.id) || {};
     const models = (selected.catalog || []).map(model=>({id:model.id,label:model.label || model.id}));
     box.appendChild(choiceGroup('Model',models,eng.model,id=>saveSettings({model:id},status)));
+    if (selected.freeform_model) {
+      const freeform = el('form','wolt-model-form'), input = el('input','wolt-model-input');
+      input.type='text'; input.placeholder='provider/model'; input.value=eng.model || '';
+      input.setAttribute('aria-label','Custom provider/model');
+      const save = el('button','wolt-choice','Save model'); save.type='submit';
+      freeform.onsubmit=event=>{event.preventDefault();const model=input.value.trim();if(model)saveSettings({model},status);};
+      freeform.append(input,save); box.appendChild(freeform);
+    }
     const creature=el('div','wolt-setting');creature.append(el('b','','Creature'),el('span','',`${config.type || 'rodent'} · permanent`));box.appendChild(creature,status);body.replaceChildren(box);
   }
   function renderSite() { const wrap=el('div');const bar=el('div','wolt-sitebar');bar.append(el('span','',`${name}'s site`),link('⤢ Expand',`/wolt/${encodeURIComponent(name)}/site/`,'btn btn-ghost'));const frame=el('iframe','wolt-site');frame.src=`/wolt/${encodeURIComponent(name)}/site/`;frame.title=`${name}'s site`;wrap.append(bar,frame);body.replaceChildren(wrap); }

@@ -1656,17 +1656,23 @@ def _update_wolt_settings(name: str, body: dict) -> dict:
         raise ValueError(f"unknown harness: {requested_harness}")
     creature = cfg.get("type") or "raccoon"
     harness_changed = "harness" in body and chosen_harness != (cfg.get("harness") or get_default_harness())
+    tier_model = tier_default_model(chosen_harness, creature)
     if "model" in body:
         requested_model = body.get("model")
+        model_is_tier_default = requested_model in (None, "")
     elif harness_changed:
-        requested_model = tier_default_model(chosen_harness, creature)
+        requested_model = tier_model
+        model_is_tier_default = True
     else:
-        requested_model = cfg.get("model") or tier_default_model(chosen_harness, creature)
+        requested_model = cfg.get("model") or tier_model
+        model_is_tier_default = not cfg.get("model")
     valid = [entry["id"] for entry in model_catalog(chosen_harness)]
     if requested_model in (None, ""):
-        chosen_model = tier_default_model(chosen_harness, creature)
+        chosen_model = tier_model
         pin_model = None
-    elif isinstance(requested_model, str) and requested_model in valid:
+    elif (model_is_tier_default
+          or (isinstance(requested_model, str)
+              and is_valid_model(chosen_harness, requested_model))):
         chosen_model = requested_model
         pin_model = requested_model
     else:
