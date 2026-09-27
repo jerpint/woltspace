@@ -127,10 +127,3 @@ def test_pane_change_resets_idle_window(tmp_path, monkeypatch):
     vulture._rest_idle_sessions(registry, {"friend"}, 4600, 3600, False)
     assert vulture._rest_idle_sessions(registry, {"friend"}, 8199, 3600, False) == []
     rest.assert_not_called()
-
-
-def test_wolt_page_uses_provable_session_states():
-    source = (ROOT / "public" / "static" / "wolt-page.js").read_text()
-    assert "resume anytime" in source
-    assert "closes in" in source
-    assert "waiting on you" not in source.lower()

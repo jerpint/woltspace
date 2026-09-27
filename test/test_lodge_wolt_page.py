@@ -50,3 +50,10 @@ def test_wolt_page_has_render_level_xss_acceptance_check():
     browser_check = ROOT / "test" / "browser" / "lodge_wolt_page.cjs"
     assert browser_check.exists()
     assert "locator('.wolt-session-list img').count()" in browser_check.read_text()
+
+
+def test_wolt_page_uses_provable_session_states():
+    source = (ROOT / "public" / "static" / "wolt-page.js").read_text()
+    assert "resume anytime" in source
+    assert "closes in" in source
+    assert "waiting on you" not in source.lower()
