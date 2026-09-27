@@ -69,6 +69,9 @@ function timeAgo(ts) {
   if (s < 86400) return Math.floor(s / 3600) + 'h ago';
   return Math.floor(s / 86400) + 'd ago';
 }
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 
 // ── View switching ──
 function showView(name) {
@@ -108,6 +111,7 @@ async function loadWolts() {
     allWolts = await woltsResponse.json();
     firstRun = await onboardingResponse.json();
     renderSidebarWolts();
+    if (allApps.length) renderApps();
   } catch {
     document.getElementById('sidebar-wolts').innerHTML = '';
   }
@@ -323,50 +327,49 @@ function renderApps() {
   }
 
   grid.innerHTML = filtered.map(p => {
-    const emoji = p.emoji || '📦';
-    const desc = p.description || 'No description';
+    const emoji = escapeHtml(p.emoji || '📦');
+    const desc = escapeHtml(p.description || 'No description');
     const status = p.running ? 'running' : 'stopped';
     const canToggle = !!p.start;
     const keeper = p.keeper || 'unassigned';
     const keeperWolt = allWolts.find(w => (w.name || w.dir) === keeper);
     const keeperEmoji = keeperWolt ? (WOLT_EMOJI[keeperWolt.type] || '🦫') : '📦';
     const keeperSprite = keeperWolt ? woltSpriteAvatar(keeperWolt.type, 24) : null;
-    const stackTags = p.stack ? `<span class="stack-tag">${p.stack}</span>` : '';
-    const sourceLink = p.source ? `<a class="app-source-link" href="${p.source}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">⎋ ${p.source.replace('https://github.com/', '')}</a>` : '';
+    const stackTags = p.stack ? `<span class="stack-tag">${escapeHtml(p.stack)}</span>` : '';
+    const sourceLink = p.source ? `<span class="app-source-link">⎋ ${escapeHtml(p.source.replace('https://github.com/', ''))}</span>` : '';
 
     // The API owns app routing. Its relative /app/:name URL works against the
     // local Docker origin and can redirect through a configured tunnel.
     const appUrl = WoltspaceNavigation.appDestination(p);
     const appUrlData = encodeURIComponent(appUrl);
     const appUrlHref = appUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-    const cardNavigation = p.running
-      ? `role="link" tabindex="0" data-app-url="${appUrlData}" onclick="openAppCard(this)" onkeydown="openAppCardKey(event, this)"`
-      : '';
+    const cardNavigation = `role="link" tabindex="0" data-app-url="${p.running ? appUrlData : '/a/' + encodeURIComponent(p.name)}" onclick="openAppCard(this)" onkeydown="openAppCardKey(event, this)"`;
 
     return `<div class="app-card" ${cardNavigation}>
       <div class="app-card-body">
         <div class="app-card-top">
           <span class="app-emoji">${emoji}</span>
-          <div class="app-status ${status}">
+          <div class="ma-topright"><span class="ma-share">🔒 Just me</span><div class="app-status ${status}">
             <div class="app-status-dot"></div>
             ${status}
-          </div>
+          </div></div>
         </div>
         ${p.running
-          ? `<a class="app-name-link" href="${appUrlHref}" onclick="event.stopPropagation()">${p.name}</a>`
-          : `<div class="app-name-link">${p.name}</div>`}
+          ? `<a class="app-name-link" href="${appUrlHref}" onclick="event.stopPropagation()">${escapeHtml(p.name)}</a>`
+          : `<div class="app-name-link">${escapeHtml(p.name)}</div>`}
         ${stackTags ? `<div class="app-stack">${stackTags}</div>` : ''}
         <div class="app-desc">${desc}</div>
         <div class="app-card-footer">
-          <div class="app-wolt keeper-btn" title="open with ${keeper}" onclick="event.stopPropagation();openApp('${p.name}','${keeper}')">
+          <div class="app-wolt keeper-btn" title="open with ${escapeHtml(keeper)}" onclick="event.stopPropagation();openApp('${encodeURIComponent(p.name)}','${encodeURIComponent(keeper)}')">
             <div class="app-wolt-avatar">${keeperSprite || keeperEmoji}</div>
             <div>
-              <div class="app-wolt-name">${keeper}</div>
+              <div class="app-wolt-name">${escapeHtml(keeper)}</div>
               <div class="app-wolt-assign">${sourceLink || 'keeper'}</div>
             </div>
           </div>
           <div class="app-actions">
-            ${canToggle ? `<button class="action-btn ${p.running ? 'stop' : 'start'}" title="${p.running ? 'Stop' : 'Start'}" onclick="event.stopPropagation();toggleApp('${p.name}', ${p.running})">${p.running ? '■' : '▶'}</button>` : ''}
+            ${canToggle ? `<button class="ma-btn ${p.running ? 'stop' : 'start'}" title="${p.running ? 'Stop' : 'Start'}" onclick="event.stopPropagation();toggleApp('${escapeHtml(p.name)}', ${p.running})">${p.running ? '■ Stop' : '▶ Start'}</button>` : ''}
+            <a class="ma-btn gear" href="/a/${encodeURIComponent(p.name)}" onclick="event.stopPropagation()" aria-label="${escapeHtml(p.name)} settings">⚙</a>
           </div>
         </div>
       </div>

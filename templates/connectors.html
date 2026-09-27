@@ -1,5 +1,10 @@
 {% extends 'base.html' %}
 {% block title %}Connectors · Woltspace{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/lodge-tools.css?v={{ cache_bust }}">{% endblock %}
 {% block content %}
-<div class="ds-page"><header class="main-header"><div><h1 class="main-title">Connectors</h1><p class="main-subtitle">Reach your wolts from outside the lodge.</p></div></header><div class="empty-state"><div class="empty-state-icon">🔌</div><div class="empty-state-text">Connector controls arrive in the next lodge integration slice.</div></div></div>
+<div class="ds-page connectors-page">
+  <header class="main-header"><div><h1 class="main-title">Connectors</h1><p class="main-subtitle">Reach your wolts from outside the lodge.</p></div></header>
+  <div id="connector-list" class="connector-list" aria-live="polite"><p>loading…</p></div>
+</div>
 {% endblock %}
+{% block scripts %}<script src="/static/connectors.js?v={{ cache_bust }}"></script>{% endblock %}
