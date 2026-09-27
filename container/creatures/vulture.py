@@ -127,11 +127,12 @@ def _save_activity(data: dict) -> None:
     tmp.replace(ACTIVITY_FILE)
 
 
-def _rest_via_api(session_name: str) -> bool:
+def _rest_via_api(session_name: str, pane_digest: str) -> bool:
     """Ask the FastAPI authority to perform the lifecycle/state change."""
     base = os.environ.get("WOLTSPACE_API", "http://localhost:7777").rstrip("/")
     req = urlrequest.Request(
-        f"{base}/sessions/{session_name}/rest", data=b"{}", method="POST",
+        f"{base}/sessions/{session_name}/rest",
+        data=json.dumps({"pane_digest": pane_digest}).encode(), method="POST",
         headers={"Content-Type": "application/json"},
     )
     try:
@@ -174,7 +175,7 @@ def _rest_idle_sessions(reg: SessionRegistry, live_tmux: set[str], now: int,
         if dry_run:
             log(f"[dry-run] would rest idle session: {name}")
             rested.append(name)
-        elif _rest_via_api(name):
+        elif _rest_via_api(name, digest):
             log(f"🦅 rested idle session: {name}")
             rested.append(name)
             activity.pop(name, None)

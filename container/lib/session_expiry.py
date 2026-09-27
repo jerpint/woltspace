@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 from env_compat import get_env
+from paths import space_vulture_dir
 
 
 ALLOWED_IDLE_TIMEOUTS = {None, 3600, 14400, 86400}
@@ -46,7 +47,7 @@ def set_idle_timeout(value: int | None) -> int | None:
 
 
 def get_pane_activity() -> dict:
-    path = _config_path().parent / ".space" / "vulture" / "pane-activity.json"
+    path = space_vulture_dir(_config_path().parent) / "pane-activity.json"
     try:
         data = json.loads(path.read_text())
         return data if isinstance(data, dict) else {}

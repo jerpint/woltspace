@@ -887,33 +887,40 @@ def deliver_message(session_id: str, text: str, from_wolt: str = "",
     paste_settle (codex needs a settle before Enter; claude takes 0).
     """
     reg = registry or SessionRegistry()
-    data = reg.get(session_id)
-    if data is None:
+    existing = reg.get(session_id, check_alive=False)
+    if existing is None:
         return {"status": "no-session", "session": session_id}
-    if not data.get("tmux_alive", data.get("alive")):
-        return {"status": "session-dead", "session": session_id}
-    harness = resolve_harness(data.get("harness"))
-    if data.get("agent_alive") is not True:
-        return {
-            "status": "agent-gone",
-            "session": session_id,
-            "detail": (
-                "tmux session is up but could not be confirmed to hold a live "
-                f"{harness} agent — resume it and retry"
-            ),
-        }
-    target = resolve_agent_handle(data, harness, include_launching=False)
-    if target is None:
-        return {
-            "status": "agent-gone",
-            "session": session_id,
-            "detail": f"the {harness} agent is still booting — retry shortly",
-        }
-    settle = get_harness(harness).get("paste_settle", 0.0)
-    body = format_attributed_message(text, from_wolt, from_session)
-    _tmux_paste(target, _guard_paste_text(harness, body), settle=settle)
-    reg.touch(session_id)
-    return {"status": "delivered", "session": session_id, "harness": harness}
+    wolt = existing.get("wolt", "")
+    with reg._lock(wolt, session_id):
+        data = reg.get(session_id, wolt=wolt)
+        if data is None:
+            return {"status": "no-session", "session": session_id}
+        if not data.get("tmux_alive", data.get("alive")):
+            return {"status": "session-dead", "session": session_id}
+        harness = resolve_harness(data.get("harness"))
+        if data.get("agent_alive") is not True:
+            return {
+                "status": "agent-gone",
+                "session": session_id,
+                "detail": (
+                    "tmux session is up but could not be confirmed to hold a live "
+                    f"{harness} agent — resume it and retry"
+                ),
+            }
+        target = resolve_agent_handle(data, harness, include_launching=False)
+        if target is None:
+            return {
+                "status": "agent-gone",
+                "session": session_id,
+                "detail": f"the {harness} agent is still booting — retry shortly",
+            }
+        settle = get_harness(harness).get("paste_settle", 0.0)
+        body = format_attributed_message(text, from_wolt, from_session)
+        _tmux_paste(target, _guard_paste_text(harness, body), settle=settle)
+        current = reg._read(wolt, session_id) or existing
+        current["last_activity"] = int(time.time())
+        reg._write(wolt, session_id, current)
+        return {"status": "delivered", "session": session_id, "harness": harness}
 
 
 # ---------------------------------------------------------------------------
