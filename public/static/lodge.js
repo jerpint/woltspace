@@ -482,8 +482,8 @@ async function loadSessions() {
   try {
     const res = await fetch('/sessions');
     allSessions = await res.json();
-    renderSessions();
     renderSidebarWolts();
+    renderSessions();
   } catch {
     const list = document.getElementById('sessions-list');
     if (list) list.innerHTML =
@@ -496,12 +496,10 @@ function renderSessions() {
   const running = allSessions.filter(s => s.name !== 'main' && s.status === 'running');
   document.getElementById('sessions-subtitle').textContent =
     `${running.length} running · ${allSessions.length} total`;
-  const badge = document.getElementById('sessions-badge');
-  if (running.length > 0) {
-    badge.textContent = running.length;
-    badge.classList.add('visible');
-  } else {
-    badge.classList.remove('visible');
+  const badge = document.getElementById('sessions-badge');  // gone from the sidebar since the wolt pages
+  if (badge) {
+    badge.textContent = running.length || '';
+    badge.classList.toggle('visible', running.length > 0);
   }
 
   const woltNames = [...new Set(allSessions.map(s => s.wolt).filter(Boolean))];
