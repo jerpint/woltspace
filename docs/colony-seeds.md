@@ -20,8 +20,9 @@ woltspace seed create ./my-seed \
 woltspace seed inspect ./my-seed
 git -C ./my-seed init
 
-# On another machine:
-woltspace seed install https://github.com/example/my-seed.git
+# At any time in another lodge, pinned to an immutable revision:
+woltspace seed inspect https://github.com/example/my-seed.git --ref v0.1.0
+woltspace seed import https://github.com/example/my-seed.git --ref v0.1.0
 ```
 
 `seed create` refuses an existing output path. It writes a deterministic
@@ -56,24 +57,24 @@ push or any visibility change. It pairs the structural CLI inspection with a
 semantic review of the deliberately selected content and reports blocked,
 owner-confirmation, or ready without granting itself permission to publish.
 
-## Installation semantics
+## Import semantics
 
-`install` validates the whole package and checks every destination name before
-writing. It refuses to overwrite an existing wolt or app. Installed wolts get:
+`import` validates the whole package and checks every destination name before
+writing. It refuses to overwrite an existing wolt or app. Imported wolts get:
 
 - `origin: starter`, so they do not masquerade as a user-created first wolt;
-- provenance pointing back to the colony source (and Git revision for a remote
-  colony);
+- a source-awareness block with the seed component, receipt, remote URL,
+  requested ref, resolved commit, and digest;
 - the receiving installation's current platform-managed rules;
 - the published identity, authored rules, and explicitly selected skills;
 - fresh, empty context and learnings.
 
-Apps are private and stopped after install. Ports are assigned from the
+Apps are private and stopped after import. Ports are assigned from the
 receiving lodge's available range. Bundled source is copied; pinned HTTPS Git
 apps are cloned and checked out at the recorded commit. Dependencies and app
 data remain derived local state and are not included in the colony repository.
 
-Installation rolls back paths it created after ordinary failures and Ctrl-C.
+Import rolls back paths it created after ordinary failures and Ctrl-C.
 Like most filesystem installers, it cannot promise atomicity across sudden
 process or machine death. A later retry refuses any names left behind instead
 of overwriting them; inspect and remove only those partial starter directories
@@ -88,9 +89,19 @@ These are separate safety lanes, not modes of one export command:
 | Share or recreate a starter colony | `woltspace seed create` | Selected identity, rules, skills, and app source | A reviewable private or public Git repository |
 | Recover this lived-in lodge | `woltspace backup` | Stateful history, owner data, sessions, and unique work according to backup policy | A private backup archive |
 
-Install a seed with `woltspace seed install`; recover a backup with
+Import a seed with `woltspace seed import`; recover a backup with
 `woltspace restore`. There is no flag that silently turns one into the other.
 
-Updates are deliberately outside the v1 contract. An installed starter is an
+Remote inspection and import require `--ref` with an exact tag or full commit.
+The resolved commit and digest are recorded in a private lodge receipt and in a
+compact source-awareness block in each imported wolt's manifest. Use
+`woltspace seed status --wolt NAME` to list newer semantic-version tags, or add
+`--to TAG` for a read-only component/file diff. Status never applies an update.
+
+Use repeatable `--wolt NAME` and `--app NAME` flags to import only selected
+components. Selecting an app also selects its keeper. Any local name collision
+refuses the entire import; the MVP does not rename components.
+
+Update application is deliberately outside this MVP. An imported starter is an
 independent copy: a later upstream version must never overwrite its lived
 memory, data, or customization without a separate reviewed update design.
