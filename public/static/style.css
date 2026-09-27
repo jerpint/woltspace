@@ -197,6 +197,13 @@ body {
   position: relative;
 }
 .wolt-card:hover { background: rgba(255,255,255,0.06); }
+.wolt-card.active { background: rgba(255,255,255,0.08); }
+.wolt-session-badge { margin-left:auto; min-width:20px; height:20px; padding:0 6px; border-radius:999px; background:rgba(255,255,255,.14); color:#fff; font:600 11px var(--font-mono); display:grid; place-items:center; }
+.wolt-session-badge.working { background:var(--green); }
+.wolt-quick-session { margin-left:6px; width:24px; height:24px; flex:none; border-radius:7px; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.06); color:#fff; cursor:pointer; opacity:0; }
+.wolt-card:hover .wolt-quick-session,.wolt-quick-session:focus-visible { opacity:1; }
+.wolt-quick-session:hover { background:var(--green); border-color:var(--green); }
+@media (hover:none) { .wolt-quick-session { opacity:1; } }
 .wolt-avatar {
   position: relative;
   width: 36px; height: 36px;
@@ -374,6 +381,7 @@ body {
   gap: 16px;
   padding: 10px 20px;
 }
+.sidebar-footer { display:flex; justify-content:center; gap:18px; }
 .sidebar-footer a {
   font-family: var(--font-mono);
   font-size: 10px;
