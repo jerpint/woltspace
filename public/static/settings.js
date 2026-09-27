@@ -84,4 +84,25 @@ if (root) {
       }
     });
   });
+
+  document.querySelector('[data-expiry-select]')?.addEventListener('change', async event => {
+    const select = event.currentTarget;
+    const row = select.closest('[data-expiry-row]');
+    const previous = row.dataset.savedValue;
+    const value = select.value ? Number(select.value) : null;
+    select.disabled = true;
+    setGlobalState('saving', 'Saving session policy…');
+    try {
+      const data = await save('/settings/session-expiry', { idle_timeout_seconds: value });
+      row.dataset.savedValue = data.idle_timeout_seconds ?? '';
+      setGlobalState('saved', 'Session policy saved');
+      showToast(value ? `Idle sessions will rest after ${select.options[select.selectedIndex].text}.` : 'Idle sessions will stay open.');
+    } catch (error) {
+      select.value = previous;
+      setGlobalState('error', 'Could not save');
+      showToast(error.message, 'error');
+    } finally {
+      select.disabled = false;
+    }
+  });
 }
