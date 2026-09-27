@@ -586,6 +586,7 @@ def harness_metadata() -> list[dict]:
             "models": {tier: tier_default_model(hid, tier) for tier, _ in PICKER_TIERS},
             # full selectable list for the model picker (merged view)
             "catalog": model_catalog(hid),
+            "freeform_model": bool(entry.get("freeform_model")),
         })
     return out
 

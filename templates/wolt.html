@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block title %}{{ wolt_name }} · Woltspace{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/home.css?v={{ cache_bust }}"><link rel="stylesheet" href="/static/wolt-page.css?v={{ cache_bust }}">{% endblock %}
+{% block before_sidebar %}{% include 'partials/forest-scene.html' %}{% endblock %}
+{% block content %}
+<div class="wolt-page" id="wolt-page" data-wolt-name="{{ wolt_name }}">
+  <header class="main-header wolt-page-header">
+    <div class="wolt-heading"><div class="wolt-page-avatar" data-avatar></div><div><h1 class="main-title" data-name></h1><div class="main-subtitle" data-meta></div><div class="wolt-role" data-role></div></div></div>
+    <div class="header-actions"><a class="btn wolt-resume" data-resume hidden>▶ Resume</a><button class="btn btn-ghost" data-new>+ New session</button></div>
+  </header>
+  <nav class="filter-strip" aria-label="Wolt sections">
+    <button class="filter-chip active" data-tab="overview">Overview</button><button class="filter-chip" data-tab="about">About</button><button class="filter-chip" data-tab="settings">Settings</button><button class="filter-chip" data-tab="site">Site</button>
+  </nav>
+  <div class="wolt-page-body" data-body><div class="empty-state"><div class="empty-state-text">loading…</div></div></div>
+</div>
+<script type="application/json" id="wolt-config">{{ wolt | tojson }}</script>
+{% endblock %}
+{% block scripts %}<script src="/static/home-scene.js?v={{ cache_bust }}"></script><script src="/static/wolt-page.js?v={{ cache_bust }}"></script>{% endblock %}

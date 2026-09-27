@@ -93,11 +93,6 @@ function toggleSidebar() {
 function closeSidebar() {
   document.getElementById('sidebar').classList.remove('mobile-open');
 }
-function toggleCreatures() {
-  document.getElementById('creatures-list').classList.toggle('open');
-  document.getElementById('creatures-chevron').classList.toggle('open');
-}
-
 // ── Load wolts ──
 async function loadWolts() {
   try {
@@ -184,36 +179,30 @@ function renderSidebarWolts() {
     return;
   }
 
-  const woltsWithSessions = new Set();
-  allSessions.forEach(s => {
-    if (s.status === 'running' && s.wolt) woltsWithSessions.add(s.wolt);
-  });
-
-  container.innerHTML = chatWolts.map(w => {
-    const emoji = WOLT_EMOJI[w.type] || '🦫';
+  container.replaceChildren();
+  chatWolts.forEach(w => {
     const name = w.name || w.dir;
-    const isRunning = woltsWithSessions.has(w.dir || name);
-    const statusClass = isRunning ? 'running' : '';
+    const sessions = allSessions.filter(s => s.wolt === (w.dir || name));
+    const open = sessions.filter(s => s.status === 'running' && s.alive !== false);
+    const working = open.some(s => Date.now() / 1000 - (s.last_activity || s.created_at || 0) < 180);
     const isRodent = RODENT_TYPES.has(w.type);
-    const eng = woltHarness(w);
-    const spriteHtml = woltSpriteAvatar(w.type, 36);
-    // Engine chip: a small mono tag, hidden at rest and revealed on card hover;
-    // a pinned override stays visible (a deliberate divergence is worth surfacing).
-    const engChip = isRodent
-      ? `<button class="wolt-engine-btn${eng.pinned ? ' pinned' : ''}" title="${eng.label}${eng.model ? ' · ' + eng.model : ''}${eng.pinned ? '' : ' (lodge default)'} — change" aria-label="Change engine for ${name}" onclick="engineChipClick(event, this, '${name}')"><span class="eng-name">${eng.id}</span>${eng.model ? `<span class="eng-model">${eng.model}</span>` : ''}</button>`
-      : '';
-    return `<div class="wolt-card" onclick="${isRodent ? `startSession('${name}')` : ''}">
-      <div class="wolt-avatar">
-        ${spriteHtml || emoji}
-        <div class="wolt-status-dot ${statusClass}"></div>
-      </div>
-      <div class="wolt-info">
-        <div class="wolt-name">${name}</div>
-        <div class="wolt-type">${w.type}</div>
-      </div>
-      ${engChip}
-    </div>`;
-  }).join('');
+    const card = document.createElement('div');
+    card.className = `wolt-card${document.body.dataset.wolt === name ? ' active' : ''}`;
+    card.tabIndex = 0;
+    card.onclick = () => { window.location.href = `/w/${encodeURIComponent(name)}`; };
+    card.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') card.click(); };
+    const avatar = document.createElement('div'); avatar.className = 'wolt-avatar';
+    const sprite = woltSpriteAvatar(w.type, 36);
+    if (sprite) avatar.innerHTML = sprite; else avatar.textContent = WOLT_EMOJI[w.type] || '🦫';
+    const dot = document.createElement('div'); dot.className = `wolt-status-dot${working ? ' running' : ''}`; avatar.appendChild(dot);
+    const info = document.createElement('div'); info.className = 'wolt-info';
+    const label = document.createElement('div'); label.className = 'wolt-name'; label.textContent = name;
+    const type = document.createElement('div'); type.className = 'wolt-type'; type.textContent = w.type;
+    info.append(label, type); card.append(avatar, info);
+    if (open.length) { const badge = document.createElement('span'); badge.className = `wolt-session-badge${working ? ' working' : ''}`; badge.textContent = open.length; card.appendChild(badge); }
+    if (isRodent) { const add = document.createElement('button'); add.className = 'wolt-quick-session'; add.textContent = '+'; add.title = `New session with ${name}`; add.setAttribute('aria-label', add.title); add.onclick = e => { e.stopPropagation(); startSession(name); }; card.appendChild(add); }
+    container.appendChild(card);
+  });
 }
 
 // ── Engine picker (per-wolt harness override) ──
@@ -433,12 +422,14 @@ async function loadSessions() {
     renderSessions();
     renderSidebarWolts();
   } catch {
-    document.getElementById('sessions-list').innerHTML =
+    const list = document.getElementById('sessions-list');
+    if (list) list.innerHTML =
       '<div class="empty-state"><div class="empty-state-icon">🌿</div><div class="empty-state-text">failed to load sessions</div></div>';
   }
 }
 
 function renderSessions() {
+  if (!document.getElementById('sessions-list')) return;
   const running = allSessions.filter(s => s.name !== 'main' && s.status === 'running');
   document.getElementById('sessions-subtitle').textContent =
     `${running.length} running · ${allSessions.length} total`;
@@ -728,7 +719,7 @@ document.querySelectorAll('.type-card').forEach(card => {
 
 loadHarnesses().finally(loadWolts);
 if (document.getElementById('app-grid')) loadApps();
-if (document.getElementById('sessions-list')) loadSessions();
+loadSessions();
 
 const requestedView = new URLSearchParams(window.location.search).get('view');
 if (requestedView && ['home', 'apps', 'sessions'].includes(requestedView)) showView(requestedView);

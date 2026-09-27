@@ -76,6 +76,9 @@ from harnesses import (
     set_default_harness,
     resolve_harness,
     platform_skill_invoke,
+    is_valid_model,
+    model_catalog,
+    tier_default_model,
     HARNESSES,
 )
 from apps import (
@@ -1465,40 +1468,150 @@ async def set_harness_default(request: Request):
     return {"ok": True, "default": name}
 
 
-@app.post("/wolts/{name}/harness")
-async def set_wolt_harness(name: str, request: Request):
-    """Pin or clear a wolt's engine override (wolt.json "harness").
-
-    Body {"harness": "codex"} pins; {"harness": null} clears (follow default).
-    """
-    body = await request.json()
-    requested = body.get("harness")
-
+def _wolt_settings_path(name: str) -> tuple[str, Path]:
     safe = "".join(c for c in name if c.isalnum() or c in "-_")
-    wolt_json = WOLTS_DIR / safe / "wolt" / "wolt.json"
-    if not wolt_json.exists():
-        return JSONResponse({"error": f"wolt not found: {safe}"}, status_code=404)
+    if not safe or safe != name:
+        raise ValueError("invalid wolt name")
+    return safe, WOLTS_DIR / safe / "wolt" / "wolt.json"
 
+
+def _load_wolt_settings(name: str) -> tuple[str, Path, dict]:
+    safe, wolt_json = _wolt_settings_path(name)
+    if not wolt_json.exists():
+        raise FileNotFoundError(f"wolt not found: {safe}")
     try:
         cfg = json.loads(wolt_json.read_text())
     except (json.JSONDecodeError, OSError):
-        return JSONResponse({"error": "wolt.json unreadable"}, status_code=500)
+        raise RuntimeError("wolt.json unreadable")
+    if not isinstance(cfg, dict):
+        raise RuntimeError("wolt.json unreadable")
+    return safe, wolt_json, cfg
 
-    if requested in (None, ""):
-        cfg.pop("harness", None)          # follow the lodge default
-        effective = get_default_harness()
-        pinned = False
-    elif requested in HARNESSES:
-        cfg["harness"] = requested
-        effective = requested
-        pinned = True
+
+def _wolt_settings_response(safe: str, cfg: dict) -> dict:
+    harness = cfg.get("harness") or get_default_harness()
+    creature = cfg.get("type") or "raccoon"
+    pinned_model = cfg.get("model") or ""
+    model = pinned_model if is_valid_model(harness, pinned_model) else tier_default_model(harness, creature)
+    return {
+        "wolt": safe,
+        "harness": harness,
+        "model": model,
+        "configured": {
+            "harness": cfg.get("harness"),
+            "model": cfg.get("model"),
+        },
+        "applies": "next session",
+        "note": "Applies from the next session.",
+    }
+
+
+def _update_wolt_settings(name: str, body: dict) -> dict:
+    if not body or not set(body).issubset({"harness", "model"}):
+        raise ValueError("body must contain harness and/or model only")
+    safe, wolt_json, cfg = _load_wolt_settings(name)
+
+    requested_harness = body.get("harness", cfg.get("harness"))
+    if requested_harness in (None, ""):
+        chosen_harness = get_default_harness()
+        pin_harness = None
+    elif isinstance(requested_harness, str) and requested_harness in HARNESSES:
+        chosen_harness = requested_harness
+        pin_harness = requested_harness
     else:
-        return JSONResponse({"error": f"unknown harness: {requested}"}, status_code=400)
+        raise ValueError(f"unknown harness: {requested_harness}")
 
+    creature = cfg.get("type") or "raccoon"
+    harness_changed = "harness" in body and chosen_harness != (cfg.get("harness") or get_default_harness())
+    tier_model = tier_default_model(chosen_harness, creature)
+    if "model" in body:
+        requested_model = body.get("model")
+        model_is_tier_default = requested_model in (None, "")
+    elif harness_changed:
+        requested_model = tier_model
+        model_is_tier_default = True
+    else:
+        requested_model = cfg.get("model") or tier_model
+        model_is_tier_default = not cfg.get("model")
+
+    valid = [entry["id"] for entry in model_catalog(chosen_harness)]
+    if requested_model in (None, ""):
+        chosen_model = tier_model
+        pin_model = None
+    elif (model_is_tier_default
+          or (isinstance(requested_model, str)
+              and is_valid_model(chosen_harness, requested_model))):
+        chosen_model = requested_model
+        pin_model = requested_model
+    else:
+        raise ValueError(
+            f"model {requested_model!r} is not valid for {chosen_harness}; "
+            f"valid options: {', '.join(valid)}"
+        )
+
+    # All validation finishes before this single atomic replacement.
+    if pin_harness is None:
+        cfg.pop("harness", None)
+    else:
+        cfg["harness"] = pin_harness
+    if pin_model is None:
+        cfg.pop("model", None)
+    else:
+        cfg["model"] = pin_model
     tmp = wolt_json.with_suffix(".tmp")
     tmp.write_text(json.dumps(cfg, indent=2) + "\n")
-    tmp.rename(wolt_json)
-    return {"ok": True, "wolt": safe, "harness": effective, "pinned": pinned}
+    tmp.replace(wolt_json)
+    result = _wolt_settings_response(safe, cfg)
+    result.update({"ok": True, "harness": chosen_harness, "model": chosen_model})
+    return result
+
+
+def _wolt_settings_error(exc: Exception) -> JSONResponse:
+    if isinstance(exc, FileNotFoundError):
+        return JSONResponse({"error": str(exc)}, status_code=404)
+    if isinstance(exc, ValueError):
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/wolts/{name}/settings")
+async def get_wolt_settings(name: str):
+    try:
+        safe, _path, cfg = _load_wolt_settings(name)
+        return _wolt_settings_response(safe, cfg)
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
+        return _wolt_settings_error(exc)
+
+
+@app.patch("/wolts/{name}/settings")
+async def patch_wolt_settings(name: str, request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    try:
+        return _update_wolt_settings(name, body)
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
+        return _wolt_settings_error(exc)
+
+
+@app.post("/wolts/{name}/harness")
+async def set_wolt_harness(name: str, request: Request):
+    """Compatibility alias for the atomic settings writer."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict) or set(body) != {"harness"}:
+        return JSONResponse({"error": "harness is required"}, status_code=400)
+    try:
+        result = _update_wolt_settings(name, body)
+        result["pinned"] = body["harness"] not in (None, "")
+        return result
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
+        return _wolt_settings_error(exc)
 
 
 # --- Runtime capabilities and repository-scoped Auto consent ---
@@ -2187,11 +2300,6 @@ async def tui_page(request: Request):
 @app.get("/settings")
 async def settings_page(request: Request):
     """Shared configuration surface for the lodge and desktop shell."""
-    configurable_types = {"raccoon", "rodent", "beaver", "otter"}
-    wolts = [
-        wolt for wolt in _configured_wolts()
-        if wolt.get("type", "rodent") in configurable_types
-    ]
     harnesses = harness_metadata()
     return templates.TemplateResponse(request, "settings.html", context={
         "active_nav": "settings",
@@ -2199,7 +2307,30 @@ async def settings_page(request: Request):
         "harness_default": get_default_harness(),
         "harnesses": harnesses,
         "harness_labels": {harness["id"]: harness["label"] for harness in harnesses},
-        "wolts": wolts,
+    })
+
+
+@app.get("/w/{wolt_name}")
+async def lodge_wolt_page(request: Request, wolt_name: str):
+    """The lodge-native page for one persistent collaborator."""
+    wolt_dir = _builtin_wolt_dir(wolt_name)
+    if wolt_dir is None:
+        return PlainTextResponse("Not found", status_code=404)
+    config = next((w for w in _configured_wolts() if w.get("dir") == wolt_name), {})
+    return templates.TemplateResponse(request, "wolt.html", context={
+        "active_nav": "",
+        "cache_bust": int(time.time()),
+        "wolt_name": wolt_name,
+        "wolt": config,
+    })
+
+
+@app.get("/connectors")
+async def connectors_page_placeholder(request: Request):
+    """Keep the redesigned navigation whole while PR2b wires connector state."""
+    return templates.TemplateResponse(request, "connectors.html", context={
+        "active_nav": "connectors",
+        "cache_bust": int(time.time()),
     })
 
 
