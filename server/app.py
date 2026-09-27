@@ -9,12 +9,13 @@ import threading
 import time
 import contextlib
 from collections import deque
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -90,6 +91,7 @@ from apps import (
     unshare_app,
 )
 from sites import ensure_site, site_dir
+import wolfcore
 from .state import (
     bot_log,
     get_current_meta,
@@ -1091,9 +1093,6 @@ async def list_wolts():
 # cron's `prompt` and `notify` are the user's own words, often about private
 # work, and they are deliberately not in the response.
 
-# The scheduler stamps last-run state as `<cron name>.last`, so the name is a
-# filename. Anything outside this shape is not looked up at all.
-_WOLF_CRON_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 _WOLF_FIRES_MAX = 500
 # Enough of the journal's tail to satisfy the largest allowed page even when
 # every line is filtered out; the file is append-only and never rewritten.
@@ -1106,25 +1105,16 @@ def _wolf_state_dir() -> Path:
     return space_wolf_dir(WOLTS_DIR)
 
 
-def _wolf_last_run(state_dir: Path, cron_name: str) -> str | None:
+def _wolf_last_run(state_dir: Path, wolt: str, cron_name: str) -> str | None:
     """The `YYYY-MM-DD-HH:MM` stamp the scheduler writes after each fire.
 
     A cron name comes from a wolt's own `wolf.json`, which is a file a wolt can
     write — so it is untrusted input on the way to a path join. `../../secret`
-    reads outside the state dir otherwise. Two gates: the name must look like a
-    plain identifier, and the resolved path must still be inside the state dir.
+    reads outside the state dir otherwise. `wolfcore.stamp_path` holds both
+    gates: wolt and name must look like plain identifiers, and the resolved
+    path must still be inside the state dir.
     """
-    if not _WOLF_CRON_NAME.match(cron_name or ""):
-        return None
-    stamp = (state_dir / f"{cron_name}.last").resolve()
-    try:
-        stamp.relative_to(state_dir.resolve())
-    except ValueError:
-        return None
-    try:
-        return stamp.read_text().strip() or None
-    except OSError:
-        return None
+    return wolfcore.read_last_run(state_dir, wolt, cron_name)
 
 
 @app.get("/wolf/schedules")
@@ -1151,7 +1141,7 @@ def wolf_schedules():
                 # recurring crons carry `schedule`, one-offs carry `at`
                 "schedule": cron.get("schedule", ""),
                 "at": cron.get("at", ""),
-                "last_run": _wolf_last_run(state_dir, cron.get("name", "")),
+                "last_run": _wolf_last_run(state_dir, wolt, cron.get("name", "")),
             } for cron in crons],
         })
     return {"wolts_dir": str(WOLTS_DIR), "schedules": schedules}
@@ -1190,6 +1180,235 @@ def wolf_fires(limit: int = 50, cron: str = "", wolt: str = ""):
         fires.append(entry)
     fires.reverse()
     return {"count": len(fires), "fires": fires[:limit]}
+
+
+# --- Wolf crons: the management API ---
+# What `woltspace wolf ...` (and later the lodge page) drives. Unlike the two
+# observability routes above, these serve and take a cron's `prompt` and
+# `notify` — editing a cron means seeing what it says. They sit behind the same
+# lodge host/origin guard as every other write here, and add nothing past it.
+#
+# Every write goes through `wolfcore`: strict validation, the per-wolt
+# wolf.json lock the scheduler also takes, tmp+rename writes. The scheduler
+# stays the only thing that fires on schedule; `/fire` is a manual run that
+# leaves the schedule and the last-run stamp alone.
+
+_WOLF_ENTRY_KEYS = ("name", "schedule", "at", "prompt", "notify", "catch_up")
+
+
+def _wolf_error(status: int, message: str, field: str | None = None) -> JSONResponse:
+    return JSONResponse({"error": message, "field": field}, status_code=status)
+
+
+def _wolf_wolt_error(wolt, field: str = "wolt") -> JSONResponse | None:
+    """400 for a malformed wolt name, 404 for one that is not a wolt here."""
+    if not isinstance(wolt, str) or not wolfcore.NAME_RE.match(wolt):
+        return _wolf_error(400, "wolt must be a wolt name", field)
+    if not (WOLTS_DIR / wolt / "wolt" / "wolt.json").is_file():
+        return _wolf_error(404, f"no wolt named '{wolt}'", field)
+    return None
+
+
+def _wolf_read(wolt: str):
+    """(path, data, before-text) for a wolt's wolf.json, or a 409 when it is
+    not valid JSON — a hand edit gone wrong is for a human to fix, not us."""
+    path = wolfcore.wolf_json_path(WOLTS_DIR, wolt)
+    try:
+        before = path.read_text() if path.exists() else ""
+        return path, wolfcore.read_wolf_json(path), before
+    except (ValueError, OSError) as exc:
+        return None, _wolf_error(409, f"{wolt}/wolt/wolf.json is unreadable: {exc}"), None
+
+
+def _wolf_index(data: dict, name: str) -> int:
+    for i, cron in enumerate(data["crons"]):
+        if isinstance(cron, dict) and cron.get("name") == name:
+            return i
+    return -1
+
+
+def _wolf_names(data: dict) -> set[str]:
+    return {c.get("name") for c in data["crons"] if isinstance(c, dict)}
+
+
+def _wolf_entry(payload: dict) -> dict:
+    """The recognised fields, in the order wolf.json has always been written."""
+    return {k: payload[k] for k in _WOLF_ENTRY_KEYS
+            if payload.get(k) is not None and payload.get(k) != ""}
+
+
+@app.get("/wolf/crons")
+def wolf_crons():
+    """Every cron in the lodge, soonest first, with its words and its times.
+
+    Times are ISO 8601 in the lodge's local zone, which is named in `tz`: the
+    wolf fires on the clock of the machine the lodge runs on.
+    """
+    now = wolfcore.now_local()
+    state_dir = _wolf_state_dir()
+    crons, errors = wolfcore.load_all(WOLTS_DIR)
+    out = [wolfcore.describe(c, c["_owner"], state_dir, now) for c in crons]
+    far = datetime.max.replace(tzinfo=timezone.utc)
+    out.sort(key=lambda c: datetime.fromisoformat(c["next_run"]) if c["next_run"] else far)
+    return {
+        "tz": wolfcore.local_tz_name(),
+        "crons": out,
+        "errors": [{"wolt": wolt, "error": error} for wolt, error in errors],
+    }
+
+
+@app.post("/wolf/crons")
+def wolf_cron_add(payload: dict | None = Body(None), dry_run: bool = False):
+    """Add a cron to a wolt. `name` defaults to a slug of the prompt.
+
+    `?dry_run=1` answers with exactly what would be written — the entry and
+    the file before and after — and writes nothing.
+    """
+    payload = payload or {}
+    wolt = payload.get("wolt")
+    if error := _wolf_wolt_error(wolt):
+        return error
+    entry = _wolf_entry(payload)
+    now = wolfcore.now_local()
+    with wolfcore.wolf_json_lock(WOLTS_DIR, wolt):
+        path, data, before = _wolf_read(wolt)
+        if path is None:
+            return data
+        taken = _wolf_names(data)
+        if "name" not in entry:
+            entry = {"name": wolfcore.unique_name(
+                wolfcore.slugify(entry.get("prompt", "")), taken), **entry}
+        try:
+            wolfcore.validate_entry(entry, now)
+        except wolfcore.CronError as exc:
+            return _wolf_error(400, str(exc), exc.field)
+        if entry["name"] in taken:
+            return _wolf_error(409, f"{wolt} already has a cron named '{entry['name']}'", "name")
+        data["crons"].append(entry)
+        after = wolfcore.dump_wolf_json(data)
+        if dry_run:
+            return {"dry_run": True, "wolt": wolt, "entry": entry,
+                    "before": before, "after": after}
+        wolfcore.atomic_write(path, after)
+    print(f"[wolf] added {wolt}/{entry['name']}")
+    return JSONResponse(
+        wolfcore.describe(entry, wolt, _wolf_state_dir(), now), status_code=201)
+
+
+def _wolf_find(wolt: str, name: str):
+    """(path, data, index) of an existing cron, or (None, error response, None)."""
+    if error := _wolf_wolt_error(wolt):
+        return None, error, None
+    path, data, _before = _wolf_read(wolt)
+    if path is None:
+        return None, data, None
+    index = _wolf_index(data, name)
+    if index < 0:
+        return None, _wolf_error(404, f"{wolt} has no cron named '{name}'", "name"), None
+    return path, data, index
+
+
+@app.put("/wolf/crons/{wolt}/{name}")
+def wolf_cron_update(wolt: str, name: str, payload: dict | None = Body(None)):
+    """Change a cron in place: any of schedule | at (switching kind is fine),
+    prompt, notify, catch_up — and `wolt` to move it to another wolt, its
+    last-run stamp going with it. Keys this API does not know are kept.
+    """
+    payload = payload or {}
+    if payload.get("schedule") and payload.get("at"):
+        return _wolf_error(400, "give exactly one of schedule (recurring) or at (one-off)",
+                           "schedule")
+    target = payload.get("wolt") or wolt
+    if error := _wolf_wolt_error(wolt) or _wolf_wolt_error(target):
+        return error
+    # Two files, two locks, always taken in the same order.
+    locks = sorted({wolt, target})
+    with contextlib.ExitStack() as stack:
+        for held in locks:
+            stack.enter_context(wolfcore.wolf_json_lock(WOLTS_DIR, held))
+        path, data, index = _wolf_find(wolt, name)
+        if path is None:
+            return data
+        entry = dict(data["crons"][index])
+        for kind, other in (("schedule", "at"), ("at", "schedule")):
+            if payload.get(kind):
+                entry[kind] = payload[kind]
+                entry.pop(other, None)
+        if "prompt" in payload:
+            entry["prompt"] = payload["prompt"]
+        for optional in ("notify", "catch_up"):
+            if optional in payload:
+                if payload[optional] is None or payload[optional] == "":
+                    entry.pop(optional, None)
+                else:
+                    entry[optional] = payload[optional]
+        try:
+            wolfcore.validate_entry(entry, wolfcore.now_local())
+        except wolfcore.CronError as exc:
+            return _wolf_error(400, str(exc), exc.field)
+
+        if target == wolt:
+            data["crons"][index] = entry
+            wolfcore.atomic_write(path, wolfcore.dump_wolf_json(data))
+        else:
+            target_path, target_data, _before = _wolf_read(target)
+            if target_path is None:
+                return target_data
+            if name in _wolf_names(target_data):
+                return _wolf_error(409, f"{target} already has a cron named '{name}'", "name")
+            target_data["crons"].append(entry)
+            wolfcore.atomic_write(target_path, wolfcore.dump_wolf_json(target_data))
+            del data["crons"][index]
+            wolfcore.atomic_write(path, wolfcore.dump_wolf_json(data))
+            wolfcore.move_last_run(_wolf_state_dir(), wolt, name, target, name)
+    print(f"[wolf] updated {wolt}/{name}" + (f" → {target}" if target != wolt else ""))
+    return wolfcore.describe(entry, target, _wolf_state_dir(), wolfcore.now_local())
+
+
+@app.delete("/wolf/crons/{wolt}/{name}")
+def wolf_cron_delete(wolt: str, name: str):
+    """Remove a cron, and its last-run stamp with it."""
+    if error := _wolf_wolt_error(wolt):
+        return error
+    with wolfcore.wolf_json_lock(WOLTS_DIR, wolt):
+        path, data, index = _wolf_find(wolt, name)
+        if path is None:
+            return data
+        del data["crons"][index]
+        wolfcore.atomic_write(path, wolfcore.dump_wolf_json(data))
+    stamp = wolfcore.stamp_path(_wolf_state_dir(), wolt, name)
+    if stamp is not None:
+        stamp.unlink(missing_ok=True)
+    print(f"[wolf] deleted {wolt}/{name}")
+    return {"deleted": True, "wolt": wolt, "name": name}
+
+
+@app.post("/wolf/crons/{wolt}/{name}/fire")
+def wolf_cron_fire(wolt: str, name: str):
+    """Run a cron now. Its schedule and last-run stamp are untouched; the
+    journal records it as a `manual` event. Same in-process session start as
+    the lodge's own spawn route, not an HTTP call back into this server."""
+    path, data, index = _wolf_find(wolt, name)
+    if path is None:
+        return data
+    entry = data["crons"][index]
+    state_dir = _wolf_state_dir()
+    try:
+        result = start_session(
+            wolt=wolt,
+            prompt=entry.get("prompt", ""),
+            routing={"adapter": "lodge"},
+        )
+    except Exception as exc:
+        wolfcore.append_journal(state_dir, name, "session", event="manual",
+                                owner=wolt, error=str(exc))
+        status = 403 if isinstance(exc, PermissionError) else 500
+        return _wolf_error(status, str(exc))
+    session, url = result.get("name"), result.get("url")
+    wolfcore.append_journal(state_dir, name, "session", event="manual",
+                            owner=wolt, session=session, link=url)
+    print(f"[wolf] manual run {wolt}/{name} → {session}")
+    return {"session": session, "url": url}
 
 
 # --- Harnesses ---
