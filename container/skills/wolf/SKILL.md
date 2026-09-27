@@ -5,97 +5,128 @@ description: Set up and manage scheduled cron jobs. Use when the user wants to r
 
 # Wolf — Cron Scheduler
 
-The wolf is a background scheduler. Each wolt owns its own crons in `wolt/wolf.json`. The wolf scans all wolts, fires crons on schedule, and spawns sessions for the owning wolt.
+The wolf is the lodge's scheduler. Each wolt owns its crons in its own
+`wolt/wolf.json`; the wolf scans every wolt every 30 seconds, and when a cron is
+due it starts a session for the owning wolt with the cron's message as the
+prompt, then sends a 🐺 notification.
 
-## Your wolf.json
+Manage crons with `woltspace wolf`. It talks to the lodge, which validates
+everything before writing `wolf.json`, so a mistake comes back as an error
+instead of a cron that silently never fires.
 
-Your cron file lives at your own `wolt/wolf.json`:
+## Time zone
+
+**The wolf fires in the lodge machine's local time.** `0 9 * * *` means 09:00 on
+the clock of the machine the lodge runs on — no UTC conversion. `woltspace wolf
+list` prints the zone it is using, and every time it shows is in that zone.
+
+## Add
+
+The message (what the session is told to do) is read from stdin. Use a
+single-quoted heredoc so the shell leaves it alone:
+
+```bash
+woltspace wolf add --cron '0 9 * * 1-5' --notify 'standup notes' <<'WOLF_MSG'
+Write today's standup notes from yesterday's commits.
+WOLF_MSG
+```
+
+One-off, fires once at a lodge-local time and then removes itself:
+
+```bash
+woltspace wolf add --at 2026-03-22T14:30 <<'WOLF_MSG'
+Check whether the deploy went through and tell jerpint.
+WOLF_MSG
+```
+
+- `--wolt` defaults to you (`$WOLTSPACE_WOLT_NAME`); pass it to schedule for another wolt.
+- `--name` defaults to the message's first few words (`write-today-s-standup`), made unique in that wolt.
+- `--notify TEXT` is the line in the fire notification.
+- `--message TEXT` instead of stdin for a one-liner.
+- `--dry-run` shows the entry and the resulting file, writes nothing.
+- `--json` on any command for machine-readable output.
+
+## List, change, remove, run
+
+```bash
+woltspace wolf list [--wolt W] [--json]      # soonest first: schedule, next run, last run
+woltspace wolf set <wolt> <name> --cron '30 7 * * *'
+woltspace wolf set <wolt> <name> --at 2026-03-23T10:00      # switch to a one-off
+woltspace wolf set <wolt> <name> --message - <<'WOLF_MSG'   # new message from stdin
+New instructions.
+WOLF_MSG
+woltspace wolf set <wolt> <name> --notify ''                 # clear the notification text
+woltspace wolf set <wolt> <name> --move-to <other-wolt>
+woltspace wolf rm  <wolt> <name>
+woltspace wolf run <wolt> <name>                             # run now; schedule untouched
+woltspace wolf runs [--wolt W] [--limit N]                   # recent fires, newest first
+```
+
+Cron names are unique per wolt; two wolts can each have a `digest`.
+
+## Cron expressions
+
+```
+minute hour day-of-month month day-of-week
+  0     9        *         *       *        daily at 09:00
+  0     9        *         *      1-5       weekdays at 09:00
+ */15   *        *         *       *        every 15 minutes
+  0   9,17       *         *       1        Mondays at 09:00 and 17:00
+  0     9       13         *       5        Friday the 13th only
+```
+
+- `*`, lists `1,3,5`, ranges `1-5`, steps `*/15`, `5/10`, `1-10/2`. Day of week: 0 or 7 = Sunday.
+- Numbers only (no `MON`/`JAN`), and out-of-range values (`61 * * * *`) are rejected.
+- When both day-of-month and day-of-week are set, **both must match** (unlike classic cron, which fires on either).
+- A schedule must fire at least once within a year.
+
+## When crons fire
+
+- The wolf checks every 30 seconds and fires a cron once in the minute it matches.
+- If the wolf was down, on start it fires each recurring cron's most recent missed run within the last 24 hours — once. Set `"catch_up": false` on a cron to skip that.
+- A one-off whose time has passed fires as soon as the wolf sees it, then is removed from `wolf.json`.
+- Each fire and each manual run is journaled; see `woltspace wolf runs`.
+
+## wolf.json
+
+`woltspace wolf` edits this file for you; hand-editing it still works, and the
+wolf picks up changes within 30 seconds. An entry the wolf cannot read is logged
+and skipped, never fatal — but only the CLI checks your work before it lands.
 
 ```json
 {
   "crons": [
     {
-      "name": "morning-playlist",
-      "schedule": "0 10 * * *",
-      "prompt": "/music",
-      "notify": "morning playlist time"
+      "name": "standup",
+      "schedule": "0 9 * * 1-5",
+      "prompt": "Write today's standup notes from yesterday's commits.",
+      "notify": "standup notes"
+    },
+    {
+      "name": "deploy-check",
+      "at": "2026-03-22T14:30",
+      "prompt": "Check whether the deploy went through.",
+      "catch_up": false
     }
   ]
 }
 ```
 
-To add a cron, edit your `wolt/wolf.json` directly. The wolf picks up changes every 30 seconds.
-
-## Cron entry fields
-
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | yes | Unique identifier for this cron |
-| `schedule` | for recurring | Cron expression: `minute hour day month weekday` |
-| `at` | for one-offs | ISO timestamp (e.g. `2026-03-22T10:30`) — fires once, then auto-deletes |
-| `prompt` | yes | What the session runs — can be a `/skill` or plain text |
-| `notify` | no | Message sent as notification when cron fires |
+| `name` | yes | Unique within this wolt: letters, digits, `-`, `_` |
+| `schedule` | recurring | Cron expression, lodge local time |
+| `at` | one-off | `YYYY-MM-DDTHH:MM`, lodge local time — fires once, then is removed |
+| `prompt` | yes | What the session is told — plain text or a `/skill` |
+| `notify` | no | Text for the fire notification |
+| `catch_up` | no | `false` = don't fire a run missed while the wolf was down |
 
-Every cron needs either `schedule` (recurring) or `at` (one-off), not both.
+Exactly one of `schedule` or `at`.
 
-## Cron expression format
+## Where state lives
 
-```
-minute hour day month weekday
-  0     10    *   *     *       = daily at 10:00 UTC
-  0     10    *   *     1       = Mondays at 10:00 UTC
- */15    *    *   *     *       = every 15 minutes
-  0    9,17   *   *    1-5      = 9am and 5pm weekdays
-```
-
-**Important:** The server runs on UTC. Convert your local time accordingly.
-
-## One-off crons
-
-Use `"at"` instead of `"schedule"` for tasks that should fire once:
-
-```json
-{
-  "name": "quick-check",
-  "at": "2026-03-22T14:30",
-  "prompt": "check if the deploy went through",
-  "notify": "running deploy check"
-}
-```
-
-The wolf auto-deletes one-off entries from your wolf.json after they fire.
-
-## Examples
-
-**Daily digest at 6am Montreal (10:00 UTC):**
-```json
-{ "name": "digest", "schedule": "0 10 * * *", "prompt": "/digest", "notify": "digest time" }
-```
-
-**Weekly review on Mondays:**
-```json
-{ "name": "weekly-review", "schedule": "0 14 * * 1", "prompt": "Write a weekly review of what we shipped", "notify": "weekly review time" }
-```
-
-**One-off reminder in 30 minutes:**
-```json
-{ "name": "reminder", "at": "2026-03-22T11:00", "prompt": "Remind jerpint to review the PR", "notify": "reminder" }
-```
-
-## How it works
-
-- Wolf scans `wolts/*/wolt/wolf.json` every 30 seconds
-- When a cron matches, wolf spawns a session for the owning wolt via `/sessions/new/lodge`
-- A notification is sent: `🐺 *Howl* — 🦫 nunu has been notified: "morning playlist time"`
-- Won't double-fire within the same minute (idempotent)
-- Last-run timestamps and the job journal are lodge-global, in `.space/wolf/`
-- Read them without shelling in: `GET /wolf/schedules` and `GET /wolf/fires`
-
-## CLI (for debugging)
-
-```bash
-python -m creatures.wolf --list         # Show all crons + last run times
-python -m creatures.wolf --once         # Fire any due crons now and exit
-python -m creatures.wolf --fire NAME    # Fire a specific cron by name (ignores schedule)
-python -m creatures.wolf                # Run as background service
-```
+- Schedules: each wolt's own `wolt/wolf.json`
+- Last-run stamps and the job journal are lodge-global, in `.space/wolf/`
+  (`<wolt>/<name>.last`, `jobs.jsonl`)
+- Lodge API behind the CLI: `GET/POST /wolf/crons`, `PUT/DELETE /wolf/crons/<wolt>/<name>`,
+  `POST /wolf/crons/<wolt>/<name>/fire`; read-only views: `GET /wolf/schedules`, `GET /wolf/fires`
