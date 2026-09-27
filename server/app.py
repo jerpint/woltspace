@@ -784,8 +784,8 @@ async def _deliver_or_resume(safe: str, text: str, body: dict):
         deliver_message,
         safe,
         text,
-        body.get("from_wolt", "") or "",
-        body.get("from_session", "") or "",
+        from_wolt=body.get("from_wolt", "") or "",
+        from_session=body.get("from_session", "") or "",
     )
     status = result.get("status")
     if status == "delivered":
