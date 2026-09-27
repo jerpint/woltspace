@@ -15,6 +15,7 @@
     <nav class="settings-index" aria-label="Settings sections">
       <p class="settings-index-label">Configuration</p>
       {{ tab_link('#harnesses', 'Harnesses', 'lodge + wolts', active=true) }}
+      {{ tab_link('#sessions', 'Sessions', 'idle resting') }}
       {{ tab_link('', 'Notifications', 'coming down the trail', disabled=true) }}
       {{ tab_link('', 'Desktop', 'after the Mac build', disabled=true) }}
     </nav>
@@ -66,6 +67,21 @@
           {{ empty_state('🪵', 'No wolts to configure yet', 'Create a wolt and it will settle in here.') }}
         {% endif %}
       {% endcall %}
+
+      <div id="sessions">
+      {% call panel('Idle sessions', 'Rest unchanged sessions to free resources. Their conversation stays resumable.', 'lodge-wide') %}
+        {% call select_field('idle-session-timeout', 'Close idle sessions after', 'Activity means the terminal pane changed. Working sessions are never closed.') %}
+          <div class="ds-select-stack" data-expiry-row data-saved-value="{{ idle_timeout if idle_timeout is not none else '' }}">
+            <select class="ds-select" id="idle-session-timeout" data-expiry-select>
+              <option value=""{% if idle_timeout is none %} selected{% endif %}>Never</option>
+              <option value="3600"{% if idle_timeout == 3600 %} selected{% endif %}>1 hour</option>
+              <option value="14400"{% if idle_timeout == 14400 %} selected{% endif %}>4 hours</option>
+              <option value="86400"{% if idle_timeout == 86400 %} selected{% endif %}>1 day</option>
+            </select>
+          </div>
+        {% endcall %}
+      {% endcall %}
+      </div>
     </div>
   </div>
 </div>

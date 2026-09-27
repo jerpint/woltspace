@@ -61,9 +61,11 @@ import sys as _sys
 _sys.path.insert(0, str(WOLTSPACE_DIR / "container" / "lib"))
 from sessions import (
     resume_session, start_session, stop_session,
-    deliver_message, resolve_active_session, format_spawned_prompt,
+    deliver_message, resolve_active_session, format_attributed_message,
+    format_spawned_prompt,
     wolt_harness, ResumeUnavailable, ResumeFailed,
 )
+from session_expiry import get_idle_timeout, get_pane_activity, set_idle_timeout
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
 from execution_policy import AutoGrantStore, POLICY_VERSION
@@ -792,11 +794,42 @@ async def session_message(session_id: str, request: Request):
     if status == "delivered":
         print(f"[message] → {safe}: {text[:80]}")
         return {"ok": True, **result}
-    # 409 for session-dead and agent-gone alike: the request was well
-    # formed, the session just cannot receive right now. agent-gone carries a
-    # detail saying to resume and retry.
+    if status in {"session-dead", "agent-gone"}:
+        prompt = format_attributed_message(
+            text,
+            body.get("from_wolt", "") or "",
+            body.get("from_session", "") or "",
+        )
+        try:
+            resumed = await asyncio.to_thread(resume_session, safe, prompt)
+            print(f"[message] resumed → {safe}: {text[:80]}")
+            return {"ok": True, **resumed, "status": "resumed", "session": safe}
+        except (ValueError, ResumeUnavailable, ResumeFailed, subprocess.CalledProcessError) as exc:
+            return JSONResponse(
+                {"ok": False, "status": status, "session": safe, "error": str(exc)},
+                status_code=409,
+            )
     code = 404 if status == "no-session" else 409
     return JSONResponse({"ok": False, **result}, status_code=code)
+
+
+@app.post("/sessions/{session_id}/rest")
+async def rest_session(session_id: str):
+    """Stop one idle runtime while keeping its conversation resumable."""
+    safe = sanitize_session(session_id)
+    if safe == "main":
+        return JSONResponse({"error": "main session cannot rest"}, status_code=403)
+    from sessions import SessionRegistry
+    registry = SessionRegistry(WOLTS_DIR)
+    data = registry.get(safe, check_alive=False)
+    if data is None:
+        return JSONResponse({"error": "session not found"}, status_code=404)
+    if data.get("status") != "running":
+        return {"ok": True, "status": data.get("status"), "session": safe}
+    get_runtime().stop(RuntimeHandle.from_record(data))
+    now = int(time.time())
+    registry.update(safe, wolt=data.get("wolt", ""), status="resting", rested_at=now)
+    return {"ok": True, "status": "resting", "session": safe, "rested_at": now}
 
 
 @app.post("/wolts/{name}/message")
@@ -1009,6 +1042,15 @@ async def list_sessions():
     from sessions import SessionRegistry
     reg = SessionRegistry(WOLTS_DIR)
     sessions = reg.list()
+    timeout = get_idle_timeout()
+    observations = get_pane_activity() if timeout is not None else {}
+    now = int(time.time())
+    for session in sessions:
+        session["idle_timeout_seconds"] = timeout
+        observed = observations.get(session.get("name", ""), {}).get("unchanged_since")
+        if timeout is not None and isinstance(observed, int) and session.get("status") == "running":
+            session["idle_seconds"] = max(0, now - observed)
+            session["closes_in_seconds"] = max(0, timeout - session["idle_seconds"])
     sessions.sort(key=lambda s: (0 if s.get("status") == "running" else 1, -(s.get("created_at") or 0)))
     return sessions
 
@@ -1435,6 +1477,27 @@ def wolf_cron_fire(wolt: str, name: str):
 async def list_harnesses():
     """Registered engines (id, label, emoji, per-tier models) + lodge default."""
     return {"default": get_default_harness(), "harnesses": harness_metadata()}
+
+
+@app.get("/settings/session-expiry")
+async def get_session_expiry_setting():
+    return {"idle_timeout_seconds": get_idle_timeout()}
+
+
+@app.post("/settings/session-expiry")
+async def set_session_expiry_setting(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    value = body.get("idle_timeout_seconds")
+    try:
+        saved = set_idle_timeout(value)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return {"ok": True, "idle_timeout_seconds": saved}
 
 
 @app.get("/onboarding/status")
@@ -2199,6 +2262,7 @@ async def settings_page(request: Request):
         "harness_default": get_default_harness(),
         "harnesses": harnesses,
         "harness_labels": {harness["id"]: harness["label"] for harness in harnesses},
+        "idle_timeout": get_idle_timeout(),
         "wolts": wolts,
     })
 

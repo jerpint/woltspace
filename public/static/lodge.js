@@ -70,6 +70,21 @@ function timeAgo(ts) {
   return Math.floor(s / 86400) + 'd ago';
 }
 
+function compactDuration(seconds) {
+  if (seconds < 3600) return `${Math.max(1, Math.floor(seconds / 60))}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
+}
+
+function sessionActivityText(session) {
+  if (session.status === 'resting') return 'resume anytime';
+  if (session.status === 'running' && Number.isFinite(session.closes_in_seconds)) {
+    return `idle ${compactDuration(session.idle_seconds || 0)} · closes in ${compactDuration(session.closes_in_seconds)}`;
+  }
+  if (session.status === 'running') return 'working';
+  return session.last_activity ? timeAgo(session.last_activity) : (session.created_at ? timeAgo(session.created_at) : '');
+}
+
 // ── View switching ──
 function showView(name) {
   const target = document.getElementById(name + '-view');
@@ -509,7 +524,7 @@ function filterSessions() {
       ? `${runCount} running · ${sessions.length} total`
       : `${sessions.length} session${sessions.length !== 1 ? 's' : ''}`;
     const rows = sessions.map(s => {
-      const time = s.last_activity ? timeAgo(s.last_activity) : (s.created_at ? timeAgo(s.created_at) : '');
+      const time = sessionActivityText(s);
       const label = s.name;
       const isAlive = s.status === 'running' && s.alive !== false;
       const dotClass = isAlive ? 'running' : 'stopped';
