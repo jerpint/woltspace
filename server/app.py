@@ -93,6 +93,7 @@ from apps import (
 )
 from sites import ensure_site, site_dir
 import wolfcore
+from site_shell import inject_shell, load_site_config, memory_payload, shell_manifest, shell_tags, shell_wanted
 from .state import (
     bot_log,
     get_current_meta,
@@ -1773,6 +1774,10 @@ async def serve_wolt_site(wolt_name: str, request: Request, path: str = ""):
         # links inside index.html resolve against the directory.
         if not request.url.path.endswith("/"):
             return RedirectResponse(request.url.path + "/", status_code=308)
+        # A site with no home page yet lands on the wolt's About page, which
+        # the lodge renders from identity.md - a real page from minute zero.
+        if not path and not (target / "index.html").is_file():
+            return RedirectResponse(f"/wolt/{wolt_name}/_/", status_code=307)
         target = target / "index.html"
     if not target.is_file():
         return PlainTextResponse("Not found", status_code=404)
@@ -1792,12 +1797,66 @@ async def serve_wolt_site(wolt_name: str, request: Request, path: str = ""):
             text = text.replace('</body>', reload_script + '</body>')
         else:
             text += reload_script
+        # The site shell: nav drawer + built-in pages, owned by the lodge and
+        # skinned by the wolt's site.json. See container/lib/site_shell.py.
+        site_cfg = load_site_config(sdir)
+        if shell_wanted(site_cfg, text):
+            text = inject_shell(text, shell_manifest(wolt_name, wolt_dir, sdir, site_cfg))
         return HTMLResponse(
             text, headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
         )
     return FileResponse(
         target, headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
     )
+
+
+_WOLT_NAME_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9_-]*")
+_BUILTIN_TABS = ("about", "memory", "settings")
+
+
+def _builtin_wolt_dir(wolt_name: str) -> Path | None:
+    if not _WOLT_NAME_RE.fullmatch(wolt_name):
+        return None
+    wolt_dir = WOLTS_DIR / wolt_name
+    return wolt_dir if (wolt_dir / "wolt").is_dir() else None
+
+
+@app.get("/wolt/{wolt_name}/_/memory.json")
+async def wolt_builtin_memory(wolt_name: str):
+    """The boot files for the built-in Memory page, windowed like a session boot."""
+    wolt_dir = _builtin_wolt_dir(wolt_name)
+    if wolt_dir is None:
+        return JSONResponse({"error": "no such wolt"}, status_code=404)
+    return JSONResponse(memory_payload(wolt_dir), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/wolt/{wolt_name}/_/manifest.json")
+async def wolt_builtin_manifest(wolt_name: str):
+    """What the shell draws: public wolt fields, site.json look, the page tree."""
+    wolt_dir = _builtin_wolt_dir(wolt_name)
+    if wolt_dir is None:
+        return JSONResponse({"error": "no such wolt"}, status_code=404)
+    return JSONResponse(shell_manifest(wolt_name, wolt_dir, site_dir(wolt_name)),
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/wolt/{wolt_name}/_/")
+@app.get("/wolt/{wolt_name}/_/{tab}")
+async def wolt_builtin_page(wolt_name: str, tab: str = "about"):
+    """About / Memory / Settings: the same page for every wolt, drawn by the lodge."""
+    wolt_dir = _builtin_wolt_dir(wolt_name)
+    if wolt_dir is None:
+        return PlainTextResponse("Not found", status_code=404)
+    if tab not in _BUILTIN_TABS:
+        return PlainTextResponse("Not found", status_code=404)
+    sdir = site_dir(wolt_name)
+    site_cfg = load_site_config(sdir)
+    manifest = shell_manifest(wolt_name, wolt_dir, sdir, site_cfg)
+    page = (STATIC_DIR / "wolt-shell" / "wolt.html").read_text(encoding="utf-8")
+    # The built-in page always needs the manifest; the drawer only when the
+    # wolt has not switched the shell off.
+    page = page.replace("<!--WOLT_SHELL-->", shell_tags(manifest, drawer=shell_wanted(site_cfg, "")))
+    return HTMLResponse(page, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 @app.websocket("/wolt/{wolt_name}/site/livereload")
