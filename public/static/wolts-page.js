@@ -17,7 +17,7 @@
   };
   const sessionState = s => {
     if (s.status === 'running' && s.alive !== false) {
-      if (Date.now() / 1000 - stamp(s) < 180) return 'working';
+      if (sessionIsWorking(s)) return 'working';
       if (Number.isFinite(s.closes_in_seconds)) return `open · closes in ${compactAge(s.closes_in_seconds)}`;
       return 'open';
     }

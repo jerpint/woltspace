@@ -191,13 +191,20 @@ async function chooseHomeHarness(id, button) {
 const SIDEBAR_ALL_UP_TO = 8;
 const SIDEBAR_RECENT_SECONDS = 86400;
 
+// Working = the pane changed in the last 3 minutes. idle_seconds comes from the reaper's pane
+// tracking (on while an idle timeout is set); without it, fall back to the registry's last touch.
+function sessionIsWorking(s) {
+  if (s.status !== 'running' || s.alive === false) return false;
+  const quiet = Number.isFinite(s.idle_seconds) ? s.idle_seconds : Date.now() / 1000 - (s.last_activity || s.created_at || 0);
+  return quiet < 180;
+}
+
 function woltSessionSummary(w) {
   const name = w.name || w.dir;
   const sessions = allSessions.filter(s => s.wolt === (w.dir || name))
     .sort((a, b) => (b.last_activity || b.created_at || 0) - (a.last_activity || a.created_at || 0));
   const open = sessions.filter(s => s.status === 'running' && s.alive !== false);
-  const now = Date.now() / 1000;
-  const working = open.some(s => now - (s.last_activity || s.created_at || 0) < 180);
+  const working = open.some(sessionIsWorking);
   const last = sessions.length ? (sessions[0].last_activity || sessions[0].created_at || 0) : 0;
   return { w, name, sessions, open, working, last };
 }
@@ -782,6 +789,8 @@ document.querySelectorAll('.type-card').forEach(card => {
 loadHarnesses().finally(loadWolts);
 if (document.getElementById('app-grid')) loadApps();
 loadSessions();
+// keep the sidebar's signals fresh; skip while the tab is hidden
+setInterval(() => { if (!document.hidden) loadSessions(); }, 15000);
 
 const requestedView = new URLSearchParams(window.location.search).get('view');
 if (requestedView && ['home', 'apps', 'sessions', 'wolts'].includes(requestedView)) showView(requestedView);
