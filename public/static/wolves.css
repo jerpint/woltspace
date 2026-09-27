@@ -1,0 +1,115 @@
+/* The wolves page: each wolf is one sentence of pills you tap to change. */
+
+.wolves-page { max-width: 680px; }
+.wolves-page .ds-page-header { margin-bottom: var(--space-5); }
+
+.wolves-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  margin: 12px 0;
+  font-size: 16px;
+  line-height: 1.5;
+}
+.wolves-card.new { border: 1.5px dashed var(--green); }
+.wolves-card.gone { color: var(--ink-2); font-size: 15px; }
+.wolves-card.error { border-color: var(--terra-light); }
+
+.wolves-page button {
+  font: inherit;
+  font-size: 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--ink);
+  padding: 10px 18px;
+  cursor: pointer;
+  min-height: 44px;
+}
+.wolves-page button.primary { background: var(--green); border-color: var(--green); color: #fff; }
+.wolves-page button.link { border: 0; background: none; color: var(--ink-2); padding: 4px 0; min-height: 0; font-size: 14.5px; text-decoration: underline; }
+.wolves-page button.run { font-size: 14.5px; padding: 4px 13px; min-height: 34px; color: var(--green); font-weight: 500; background: #fff; }
+.wolves-page button.icon {
+  width: 36px; height: 36px; min-height: 0; padding: 0;
+  display: inline-grid; place-items: center;
+  color: var(--ink-3); background: transparent; border-color: transparent;
+}
+.wolves-page button.icon:hover,
+.wolves-page button.icon:focus-visible { color: var(--danger); background: var(--danger-soft); }
+.wolves-page button:disabled { opacity: .55; cursor: default; }
+
+/* the sentence: plain words + pills */
+.wolves-sentence { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 17px; }
+.wolves-pill {
+  font: inherit; font-size: 16px; color: var(--green); font-weight: 500;
+  background: #fff; border: 1px solid var(--border); border-radius: 999px;
+  padding: 5px 12px; min-height: 38px; width: auto; max-width: 100%;
+  cursor: pointer; -webkit-appearance: none; appearance: none;
+}
+select.wolves-pill {
+  padding-right: 26px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--green) 50%), linear-gradient(135deg, var(--green) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 55%, calc(100% - 9px) 55%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+input.wolves-pill[type=time], input.wolves-pill[type=date] { padding: 5px 10px; }
+
+.wolves-days { display: inline-flex; gap: 3px; }
+.wolves-page .wolves-days button {
+  min-height: 34px; min-width: 34px; padding: 0; font-size: 14px; font-weight: 500;
+  background: #fff; color: var(--ink-2);
+}
+.wolves-page .wolves-days button[aria-pressed="true"] { background: var(--green); border-color: var(--green); color: #fff; }
+
+textarea.wolves-msg {
+  font: inherit; font-size: 16.5px; width: 100%; margin: 10px 0 6px; padding: 8px 10px;
+  border: 1px solid transparent; border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, .035); color: var(--ink);
+  resize: none; overflow: hidden; min-height: 44px; line-height: 1.45;
+}
+textarea.wolves-msg:hover { border-color: var(--border); }
+textarea.wolves-msg:focus { border-color: var(--green); background: #fff; outline: none; }
+
+.wolves-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px 12px; flex-wrap: wrap; font-size: 14.5px; color: var(--ink-2); }
+.wolves-acts { display: flex; gap: 6px; align-items: center; }
+.wolves-newfoot { display: flex; gap: 8px; margin-top: 6px; }
+
+.wolves-ping {
+  font-size: 13.5px; color: var(--ink-2); margin: 10px 0 0; padding-top: 8px;
+  border-top: 1px dashed var(--border); display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+}
+select.wolves-mini {
+  font: inherit; font-size: 13.5px; color: var(--ink-2); background: transparent;
+  border: 0; border-bottom: 1px dashed var(--border); padding: 0 2px; min-height: 0;
+  width: auto; cursor: pointer; -webkit-appearance: none; appearance: none;
+}
+select.wolves-mini.on { color: var(--green); border-bottom-color: var(--green); }
+
+.wolves-status { font-size: 13.5px; color: var(--green); margin-top: 4px; }
+.wolves-status:empty { display: none; }
+.wolves-status.err { color: var(--danger); }
+.wolves-status a { color: var(--green); }
+
+.wolves-add button { width: 100%; }
+.wolves-quiet { color: var(--ink-2); font-size: 15px; }
+
+details.wolves-runs { margin-top: 8px; font-size: 14px; }
+details.wolves-runs summary { cursor: pointer; color: var(--ink-2); width: fit-content; padding: 2px 0; }
+details.wolves-runs summary:hover { color: var(--green); }
+.wolves-runs .r { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 7px 0; border-top: 1px solid var(--border); }
+.wolves-runs .r:first-of-type { margin-top: 6px; }
+.wolves-runs .r small { color: var(--ink-3); margin-left: 4px; }
+.wolves-runs a { white-space: nowrap; color: var(--green); }
+.wolves-runs .r.fresh { background: var(--success-soft); margin: 0 -16px; padding: 7px 16px; }
+
+.wolves-empty { text-align: center; padding: 28px 18px; }
+.wolves-empty .big { font-size: 42px; line-height: 1; }
+.wolves-empty p { color: var(--ink-2); margin: 10px auto 18px; max-width: 380px; }
+.wolves-ideas { margin-top: 22px; font-size: 15px; color: var(--ink-2); }
+.wolves-page .wolves-ideas button { display: block; width: 100%; margin: 8px 0 0; font-size: 15px; text-align: left; }
+
+@media (max-width: 620px) {
+  .wolves-page .ds-page-header { flex-direction: column; gap: var(--space-3); }
+}

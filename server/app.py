@@ -2203,6 +2203,24 @@ async def settings_page(request: Request):
     })
 
 
+@app.get("/wolves")
+async def wolves_page(request: Request):
+    """The wolves: every scheduled wake-up in the lodge, editable in place.
+
+    The page renders the wolt picker from disk and reads everything else from
+    the /wolf/crons API, the same one `woltspace wolf` drives.
+    """
+    wolts = [
+        {"name": wolt["dir"], "type": wolt.get("type", "rodent")}
+        for wolt in _configured_wolts()
+    ]
+    return templates.TemplateResponse(request, "wolves.html", context={
+        "active_nav": "wolves",
+        "cache_bust": int(time.time()),
+        "wolts": wolts,
+    })
+
+
 # jerpint: this one will be important to nail we might review onboarding flow
 @app.get("/onboard")
 async def onboard_page():
