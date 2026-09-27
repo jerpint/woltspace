@@ -250,6 +250,20 @@ def test_container_is_detected_from_mount_points_without_any_environment(tmp_pat
     assert "is a host lifecycle command" in result.stderr
 
 
+@pytest.mark.parametrize("isolation", ["host", "external"])
+def test_wolf_goes_to_the_python_cli_natively_and_in_the_container(isolation, tmp_path):
+    """`woltspace wolf` only talks to the lodge API, so even inside the image
+    it belongs to the installed python CLI, not to the host."""
+    client, _ = _fake_bundle(tmp_path)
+    result = subprocess.run(
+        [sys.executable, str(client), "wolf", "list", "--json"],
+        capture_output=True, text=True, timeout=30,
+        env=_clean_env(tmp_path, WOLTSPACE_ISOLATION=isolation),
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"native": True, "argv": "wolf list --json"}
+
+
 def test_control_nouns_stay_local_and_never_delegate(tmp_path):
     """`session send` is how wolts talk to each other; it must keep working.
 
