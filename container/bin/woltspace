@@ -198,6 +198,25 @@ def cmd_session_spawn(args):
     sys.exit(1)
 
 
+def cmd_session_describe(args):
+    session = args.session or get_env("WOLTSPACE_WOLT_SESSION", "") or \
+        get_env("WOLT_SESSION", "")
+    if not session:
+        print("session id required: run inside a session or pass --session", file=sys.stderr)
+        sys.exit(2)
+    status, result = _req("POST", f"/sessions/{session}/describe", {
+        "title": args.title,
+        "summary": args.summary,
+    })
+    if status != 200:
+        print(result.get("error", f"HTTP {status}"), file=sys.stderr)
+        sys.exit(1)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"described → {session}")
+
+
 def cmd_auto_check(args):
     _, result = _req("POST", "/auto-grants/check", {
         "wolt_id": args.wolt, "workdir": args.workdir,
@@ -401,6 +420,13 @@ def main():
     sp.add_argument("--auto", action="store_true",
                     help="request Auto policy (host requires an exact-path grant)")
     sp.set_defaults(func=cmd_session_spawn)
+
+    sd = ssub.add_parser("describe", help="set this session's title and one-line summary")
+    sd.add_argument("title")
+    sd.add_argument("summary")
+    sd.add_argument("--session", default="", help="session id (default: current session)")
+    sd.add_argument("--json", action="store_true", help="raw JSON output")
+    sd.set_defaults(func=cmd_session_describe)
 
     status = sub.add_parser("status", help="show sessions with workdir and policy")
     status.add_argument("--json", action="store_true", help="raw JSON output")

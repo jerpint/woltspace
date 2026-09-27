@@ -136,6 +136,7 @@ class SessionRegistry:
             return None
         try:
             data = json.loads(path.read_text())
+            self._normalize_description(data)
             return normalize_session_target(
                 data, wolts_dir=self.wolts_dir, fallback_wolt=wolt
             )
@@ -171,6 +172,22 @@ class SessionRegistry:
 
     # --- Core API ---
 
+    @staticmethod
+    def _normalize_description(data: dict) -> dict:
+        """Expose the original opening prompt separately from a description.
+
+        Existing records stored the opening prompt only as ``prompt``.  Keep
+        that field for compatibility, while giving the lodge a stable field it
+        can use as the italic fallback when a session has not described itself.
+        This is deliberately a read-compatible migration: records are updated
+        on their next ordinary write, with no eager colony-wide rewrite.
+        """
+        if "prompt_preview" not in data:
+            data["prompt_preview"] = str(data.get("prompt") or "")[:500]
+        data.setdefault("title", "")
+        data.setdefault("summary", "")
+        return data
+
     def create(
         self,
         name: str,
@@ -182,6 +199,7 @@ class SessionRegistry:
         dir: str = "",
         app: str = "",
         title: str = "",
+        summary: str = "",
         prompt: str = "",
         adapter: str = "",
         chat_id: str = "",
@@ -225,6 +243,8 @@ class SessionRegistry:
             ).to_record(),
             "auto_grant": auto_grant,
             "title": title,
+            "summary": summary,
+            "prompt_preview": prompt[:500],
             "prompt": prompt[:500],
             "last_activity": now,
             # routing — array for multi-adapter support
@@ -255,6 +275,15 @@ class SessionRegistry:
 
         self._write(wolt, name, data)
         return data
+
+    def describe(self, name: str, title: str, summary: str, *, wolt: str = None) -> dict | None:
+        """Set the short, human-facing description for a session."""
+        return self.update(
+            name,
+            wolt=wolt,
+            title=title,
+            summary=summary,
+        )
 
     @contextmanager
     def _lock(self, wolt: str, name: str):
@@ -456,8 +485,10 @@ class SessionRegistry:
                 if path.suffix == ".tmp":
                     continue
                 try:
+                    raw = json.loads(path.read_text())
+                    self._normalize_description(raw)
                     data = normalize_session_target(
-                        json.loads(path.read_text()),
+                        raw,
                         wolts_dir=self.wolts_dir,
                         fallback_wolt=w,
                     )
