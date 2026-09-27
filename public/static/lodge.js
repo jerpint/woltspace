@@ -355,7 +355,7 @@ function renderApps() {
         ${stackTags ? `<div class="app-stack">${stackTags}</div>` : ''}
         <div class="app-desc">${desc}</div>
         <div class="app-card-footer">
-          <div class="app-wolt keeper-btn" title="open with ${escapeHtml(keeper)}" onclick="event.stopPropagation();openApp('${encodeURIComponent(p.name)}','${encodeURIComponent(keeper)}')">
+          <div class="app-wolt keeper-btn" title="open with ${escapeHtml(keeper)}" onclick="event.stopPropagation();openApp(decodeURIComponent('${encodeURIComponent(p.name)}'),decodeURIComponent('${encodeURIComponent(keeper)}'))">
             <div class="app-wolt-avatar">${keeperSprite || keeperEmoji}</div>
             <div>
               <div class="app-wolt-name">${escapeHtml(keeper)}</div>
@@ -363,7 +363,7 @@ function renderApps() {
             </div>
           </div>
           <div class="app-actions">
-            ${canToggle ? `<button class="ma-btn ${p.running ? 'stop' : 'start'}" title="${p.running ? 'Stop' : 'Start'}" onclick="event.stopPropagation();toggleApp('${escapeHtml(p.name)}', ${p.running})">${p.running ? '■ Stop' : '▶ Start'}</button>` : ''}
+            ${canToggle ? `<button class="ma-btn ${p.running ? 'stop' : 'start'}" title="${p.running ? 'Stop' : 'Start'}" onclick="event.stopPropagation();toggleApp(decodeURIComponent('${encodeURIComponent(p.name)}'), ${p.running})">${p.running ? '■ Stop' : '▶ Start'}</button>` : ''}
             <a class="ma-btn gear" href="/a/${encodeURIComponent(p.name)}" onclick="event.stopPropagation()" aria-label="${escapeHtml(p.name)} settings">⚙</a>
           </div>
         </div>
