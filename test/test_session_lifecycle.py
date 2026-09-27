@@ -118,6 +118,21 @@ class TestSessionRegistry:
         assert fetched["title"] == ""
         assert fetched["summary"] == ""
 
+    def test_legacy_auto_title_is_treated_as_undescribed(self, tmp_registry):
+        reg = tmp_registry
+        prompt = "Fix the thing on the lodge page!"
+        reg.create(
+            "legacy-auto-title",
+            wolt="neowolt",
+            prompt=prompt,
+            title="fix the thing on the lodge page",
+        )
+
+        fetched = reg.get("legacy-auto-title", wolt="neowolt", check_alive=False)
+
+        assert fetched["title"] == ""
+        assert fetched["prompt_preview"] == prompt
+
     def test_describe_preserves_prompt_preview(self, tmp_registry):
         reg = tmp_registry
         reg.create("describe-me", wolt="neowolt", prompt="Original request")
