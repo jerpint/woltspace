@@ -227,15 +227,18 @@ function renderSidebarWolts() {
     const sprite = woltSpriteAvatar(w.type, 36);
     if (sprite) avatar.innerHTML = sprite; else avatar.textContent = WOLT_EMOJI[w.type] || '🦫';
     // the open-session count rides on the avatar, so the row keeps a single button (+)
-    if (open.length) {
+    // only working sessions get a number (green); an open-but-quiet wolt shows a plain dot
+    if (working) {
       const badge = document.createElement('span');
-      badge.className = `wolt-session-badge${working ? ' working' : ''}`;
-      // green counts only the sessions working right now; grey counts open ones
-      badge.textContent = working ? x.workingCount : open.length;
-      badge.title = working ? `${x.workingCount} working · ${open.length} open` : `${open.length} open`;
+      badge.className = 'wolt-session-badge working';
+      badge.textContent = x.workingCount;
+      badge.title = `${x.workingCount} working · ${open.length} open`;
       avatar.appendChild(badge);
     } else {
-      const dot = document.createElement('div'); dot.className = 'wolt-status-dot'; avatar.appendChild(dot);
+      const dot = document.createElement('div');
+      dot.className = `wolt-status-dot${open.length ? ' open' : ''}`;
+      if (open.length) dot.title = `${open.length} open`;
+      avatar.appendChild(dot);
     }
     const info = document.createElement('div'); info.className = 'wolt-info';
     const nameEl = document.createElement('div'); nameEl.className = 'wolt-name'; nameEl.textContent = name;
