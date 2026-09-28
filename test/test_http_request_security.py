@@ -236,3 +236,79 @@ def test_app_websocket_rejects_a_foreign_origin():
             pass
 
     assert exc.value.code == 1008
+
+
+@pytest.mark.parametrize("path", ["/tui?session=main", "/livereload", "/wolt/n00b/site/livereload"])
+def test_lodge_websockets_reject_same_origin_app_hosts(path, monkeypatch):
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
+    attach = Mock()
+    monkeypatch.setattr(server_app, "attach_tmux", attach)
+
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with _client().websocket_connect(
+            path,
+            headers={
+                "host": "notes.woltspace.test",
+                "origin": "https://notes.woltspace.test",
+            },
+        ):
+            pass
+
+    assert exc.value.code == 1008
+    attach.assert_not_called()
+
+
+def test_lodge_and_localhost_terminal_websockets_still_attach(monkeypatch):
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
+    attached = []
+
+    class Attachment:
+        async def read(self):
+            return b""
+
+        async def write(self, _data):
+            pass
+
+        async def close(self):
+            pass
+
+        def resize(self, _cols, _rows):
+            pass
+
+    async def attach(session, _root):
+        attached.append(session)
+        return Attachment()
+
+    monkeypatch.setattr(server_app, "attach_tmux", attach)
+    for host, origin in (
+        ("owner.woltspace.test", "https://owner.woltspace.test"),
+        ("localhost:7777", "http://localhost:7777"),
+    ):
+        with _client().websocket_connect(
+            "/tui?session=main", headers={"host": host, "origin": origin},
+        ):
+            pass
+
+    assert attached == ["main", "main"]
+
+
+def test_app_websocket_router_rewrites_before_fastapi_route_selection(monkeypatch):
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
+    seen = []
+
+    async def downstream(scope, _receive, _send):
+        seen.append(scope["path"])
+
+    middleware = server_app.AppWebSocketRoutingMiddleware(downstream)
+    scope = {
+        "type": "websocket",
+        "path": "/tui",
+        "headers": [(b"host", b"notes.woltspace.test")],
+    }
+    import asyncio
+    asyncio.run(middleware(scope, None, None))
+
+    assert seen == ["/__woltspace_app_ws__/tui"]

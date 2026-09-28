@@ -431,6 +431,11 @@ def _websocket_request_allowed(ws: WebSocket) -> bool:
     # path permits native clients only after their Host passed the allowlist.
     return not origin or _same_http_authority(origin, host_header)
 
+
+def _lodge_websocket_request_allowed(ws: WebSocket) -> bool:
+    host_header = ws.headers.get("host") or ""
+    return _websocket_request_allowed(ws) and _extract_app_subdomain(host_header) is None
+
 def _extract_app_subdomain(host_header: str) -> str | None:
     """Extract app name from subdomain hostname, or None if not an app subdomain.
 
@@ -445,6 +450,29 @@ def _extract_app_subdomain(host_header: str) -> str | None:
     if td and host.endswith(f".{td}") and host != th:
         return host.removesuffix(f".{td}")
     return None
+
+
+class AppWebSocketRoutingMiddleware:
+    """Route every app-host websocket to the app proxy before FastAPI routing."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "websocket":
+            headers = {
+                key.decode("latin-1").lower(): value.decode("latin-1")
+                for key, value in scope.get("headers", [])
+            }
+            if _extract_app_subdomain(headers.get("host", "")) is not None:
+                original = scope.get("path", "/")
+                scope = dict(scope)
+                scope["path"] = f"/__woltspace_app_ws__{original}"
+                scope["raw_path"] = scope["path"].encode()
+        await self.inner(scope, receive, send)
+
+
+app.add_middleware(AppWebSocketRoutingMiddleware)
 
 
 @app.middleware("http")
@@ -2461,6 +2489,9 @@ async def wolt_builtin_page(wolt_name: str, tab: str = "about"):
 @app.websocket("/wolt/{wolt_name}/site/livereload")
 async def site_livereload_ws(wolt_name: str, ws: WebSocket):
     """Watch a wolt's site dir for changes and push reload via WebSocket."""
+    if not _lodge_websocket_request_allowed(ws):
+        await ws.close(code=1008)
+        return
     from watchfiles import awatch
 
     sdir = WOLTS_DIR / wolt_name / "wolt" / "site"
@@ -2637,6 +2668,9 @@ async def proxy_tool(tool_name: str, path: str, request: Request):
 
 @app.websocket("/livereload")
 async def livereload_ws(ws: WebSocket):
+    if not _lodge_websocket_request_allowed(ws):
+        await ws.close(code=1008)
+        return
     await ws.accept()
     _livereload_clients.add(ws)
     try:
@@ -2653,7 +2687,7 @@ async def livereload_ws(ws: WebSocket):
 @app.websocket("/tui")
 async def tui_proxy(ws: WebSocket):
     """Attach the browser terminal directly to the requested tmux session."""
-    if not _websocket_request_allowed(ws):
+    if not _lodge_websocket_request_allowed(ws):
         await ws.close(code=1008)
         return
     session = ws.query_params.get("session", "main")
@@ -2711,7 +2745,7 @@ async def tui_proxy(ws: WebSocket):
         await attachment.close()
 
 
-@app.websocket("/{path:path}")
+@app.websocket("/__woltspace_app_ws__/{path:path}")
 async def subdomain_ws_proxy(ws: WebSocket, path: str):
     """Proxy WebSocket connections for subdomain apps (e.g. Vite HMR).
 
@@ -2774,9 +2808,9 @@ async def settings_page(request: Request):
         "harnesses": harnesses,
         "harness_labels": {harness["id"]: harness["label"] for harness in harnesses},
         "idle_timeout": get_idle_timeout(),
+        "access": access_settings_dict(access_settings) or {},
         "apps_domain": get_apps_domain() or "",
         "app_gateway_port": get_app_gateway_port(),
-        "access": access_settings_dict(access_settings) or {},
     })
 
 

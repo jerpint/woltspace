@@ -133,7 +133,6 @@ if (root) {
       button.disabled = input.disabled = false;
     }
   });
-
   document.querySelector('[data-gateway-port-save]')?.addEventListener('click', async event => {
     const button = event.currentTarget;
     const row = button.closest('[data-gateway-port-row]');
