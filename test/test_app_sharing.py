@@ -9,6 +9,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
+import pytest
+from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -111,6 +114,40 @@ def test_app_host_defaults_to_owner_only_when_verification_is_configured(tmp_pat
 
     assert denied.status_code == 403
     assert "not shared with you" in denied.text
+
+
+def test_share_list_applies_to_app_websocket_identity(tmp_path, monkeypatch):
+    write_app_shares(tmp_path, "notes", ["friend@example.com", "@team.example"])
+    monkeypatch.setattr(server_app, "WOLTS_DIR", tmp_path)
+    monkeypatch.setattr(server_app, "_app_access_settings", lambda: SimpleNamespace(
+        owner_email="owner@example.com",
+    ))
+
+    assert server_app._app_identity_allowed("notes", "owner@example.com")
+    assert server_app._app_identity_allowed("notes", "friend@example.com")
+    assert server_app._app_identity_allowed("notes", "anyone@team.example")
+    assert not server_app._app_identity_allowed("notes", "stranger@example.com")
+
+
+def test_app_websocket_without_verified_shared_identity_is_rejected(tmp_path, monkeypatch):
+    monkeypatch.setattr(server_app, "WOLTS_DIR", tmp_path)
+    monkeypatch.setattr(server_app, "_app_access_settings", lambda: SimpleNamespace(
+        owner_email="owner@example.com",
+    ))
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
+
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with TestClient(server_app.app).websocket_connect(
+            "/vite-hmr",
+            headers={
+                "host": "notes.woltspace.test",
+                "origin": "https://notes.woltspace.test",
+            },
+        ):
+            pass
+
+    assert exc.value.code == 1008
 
 
 def test_app_sharing_cli_reads_then_writes_only_through_api(capsys):

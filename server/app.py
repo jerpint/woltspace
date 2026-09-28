@@ -374,15 +374,8 @@ async def subdomain_proxy(request: Request, call_next):
     host = request.headers.get("host") or ""
     app_name = _extract_app_subdomain(host)
     if app_name:
-        access_settings = _app_access_settings()
-        if access_settings is not None:
-            email = getattr(request.state, "access_email", "")
-            try:
-                entries = read_app_shares(WOLTS_DIR, app_name)
-            except RuntimeError:
-                return HTMLResponse(_app_access_denied(), status_code=403)
-            if email != access_settings.owner_email and not email_is_shared(email, entries):
-                return HTMLResponse(_app_access_denied(), status_code=403)
+        if not _app_identity_allowed(app_name, getattr(request.state, "access_email", "")):
+            return HTMLResponse(_app_access_denied(), status_code=403)
         try:
             from apps import running_apps
             running = {r["name"]: r for r in running_apps()}
@@ -452,6 +445,17 @@ def _app_access_settings():
         return load_access_settings(WOLTS_DIR)
     except RuntimeError:
         return None
+
+
+def _app_identity_allowed(app_name: str, email: str) -> bool:
+    settings = _app_access_settings()
+    if settings is None:
+        return True
+    try:
+        entries = read_app_shares(WOLTS_DIR, app_name)
+    except RuntimeError:
+        return False
+    return email == settings.owner_email or email_is_shared(email, entries)
 
 
 def _app_access_denied() -> str:
@@ -2560,6 +2564,9 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
     host = ws.headers.get("host") or ""
     app_name = _extract_app_subdomain(host)
     if not app_name:
+        await ws.close(code=1008)
+        return
+    if not _app_identity_allowed(app_name, getattr(ws.state, "access_email", "")):
         await ws.close(code=1008)
         return
     from apps import running_apps
