@@ -1159,3 +1159,4 @@ body {
 /* ── Z-index layers ── */
 .sidebar { z-index: 2; }
 .main { z-index: 1; position: relative; }
+.wolt-status-dot.open { background: rgba(255,255,255,.7); }
