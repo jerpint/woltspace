@@ -133,6 +133,30 @@ def cmd_app_keeper(args):
         raise SystemExit(1)
 
 
+def cmd_app_sharing(args):
+    path = f"/apps/{quote(args.name, safe='')}/sharing"
+    status, current = _req("GET", path)
+    if status >= 300:
+        print(current.get("error", f"HTTP {status}"), file=sys.stderr)
+        raise SystemExit(1)
+    entries = list(current.get("entries", []))
+    if args.verb == "share":
+        entries.extend(args.entries)
+    elif args.verb == "unshare":
+        wanted = {entry.lower() for entry in args.entries}
+        entries = [entry for entry in entries if entry.lower() not in wanted]
+    if args.verb in {"share", "unshare"}:
+        status, current = _req("PUT", path, {"entries": entries})
+        if status >= 300:
+            print(current.get("error", f"HTTP {status}"), file=sys.stderr)
+            raise SystemExit(1)
+    if args.json:
+        print(json.dumps(current, indent=2))
+    else:
+        values = current.get("entries", [])
+        print("\n".join(values) if values else f"{args.name}: owner only")
+
+
 def cmd_wolt_set(args):
     if args.harness is None and args.model is None:
         print("woltspace: wolt set requires --harness and/or --model", file=sys.stderr)
@@ -504,6 +528,15 @@ def main():
     keeper.add_argument("keeper")
     keeper.add_argument("--json", action="store_true")
     keeper.set_defaults(func=cmd_app_keeper)
+    for verb in ("sharing", "share", "unshare"):
+        sharing = app_sub.add_parser(verb)
+        sharing.add_argument("name")
+        if verb != "sharing":
+            sharing.add_argument("entries", nargs="+")
+        else:
+            sharing.set_defaults(entries=[])
+        sharing.add_argument("--json", action="store_true")
+        sharing.set_defaults(func=cmd_app_sharing)
 
     wolt = sub.add_parser("wolt", help="configure a wolt")
     wsub = wolt.add_subparsers(dest="verb")
