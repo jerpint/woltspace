@@ -22,6 +22,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 
 
+@pytest.fixture(autouse=True)
+def _idle_closing_off():
+    """These tests cover reaping; idle closing (on by default, 24h) has its own tests."""
+    with patch("creatures.vulture.get_idle_timeout", return_value=None):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -259,3 +266,25 @@ class TestDryRun:
         # Original file should still say "running"
         data = _read_wolt_session(tmp_path, "testwolt", "victim-session")
         assert data["status"] == "running"
+
+
+def test_idle_closing_skips_sessions_that_cannot_resume(tmp_path):
+    """A codex session with no stamped conversation id must never be rested: it could not come back."""
+    import creatures.vulture as vulture
+    reg = MagicMock()
+    old = int(time.time()) - 10 * 86400
+    reg.list.return_value = [
+        {"name": "no-id", "wolt": "w", "status": "running", "created_at": old},
+        {"name": "has-id", "wolt": "w", "status": "running", "created_at": old, "harness_session_id": "abc"},
+    ]
+    runtime = MagicMock()
+    runtime.capture.return_value = "same pane"
+    activity = {n: {"digest": __import__("hashlib").sha256(b"same pane").hexdigest(), "unchanged_since": old}
+                for n in ("no-id", "has-id")}
+    with patch.object(vulture, "_load_activity", return_value=activity), \
+         patch.object(vulture, "_save_activity"), \
+         patch.object(vulture, "get_runtime", return_value=runtime), \
+         patch.object(vulture, "_rest_via_api", return_value=True) as rest:
+        rested = vulture._rest_idle_sessions(reg, {"no-id", "has-id"}, int(time.time()), 86400, dry_run=False)
+    assert rested == ["has-id"]
+    rest.assert_called_once()

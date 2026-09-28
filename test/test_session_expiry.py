@@ -33,10 +33,16 @@ def _registry_mock():
     return registry
 
 
-def test_policy_defaults_to_never_and_round_trips(tmp_path, monkeypatch):
+def test_policy_defaults_to_a_day_and_round_trips(tmp_path, monkeypatch):
     path = tmp_path / "woltspace.json"
     monkeypatch.setattr(session_expiry, "_config_path", lambda: path)
-    assert session_expiry.get_idle_timeout() is None
+    assert session_expiry.get_idle_timeout() == 86400
+    path.write_text('{"sessions": {}}')
+    assert session_expiry.get_idle_timeout() == 86400
+    path.write_text('{"other": 1}')
+    assert session_expiry.get_idle_timeout() == 86400
+    assert session_expiry.set_idle_timeout(None) is None
+    assert session_expiry.get_idle_timeout() is None  # an explicit "Never" sticks
     assert session_expiry.set_idle_timeout(14400) == 14400
     assert session_expiry.get_idle_timeout() == 14400
     assert json.loads(path.read_text())["sessions"]["idle_timeout_seconds"] == 14400
@@ -186,7 +192,7 @@ def test_main_session_can_never_rest():
 
 
 def test_rest_aborts_if_pane_changed_after_idle_observation(monkeypatch):
-    record = {"name": "friend", "wolt": "pal", "status": "running"}
+    record = {"name": "friend", "wolt": "pal", "status": "running", "harness_session_id": "conv-1"}
     registry = _registry_mock(); registry.get.return_value = record
     monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
     runtime = Mock(); runtime.capture.return_value = "new output"
@@ -198,7 +204,7 @@ def test_rest_aborts_if_pane_changed_after_idle_observation(monkeypatch):
 
 
 def test_rest_aborts_if_recapture_fails(monkeypatch):
-    record = {"name": "friend", "wolt": "pal", "status": "running"}
+    record = {"name": "friend", "wolt": "pal", "status": "running", "harness_session_id": "conv-1"}
     registry = _registry_mock(); registry.get.return_value = record
     monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
     runtime = Mock(); runtime.capture.side_effect = RuntimeError("tmux unavailable")
@@ -222,7 +228,7 @@ def test_vulture_requires_a_full_unchanged_window(tmp_path, monkeypatch):
     registry = Mock()
     registry.list.return_value = [{
         "name": "friend", "wolt": "pal", "status": "running",
-        "created_at": 1, "runtime": {"tmux_session_name": "friend"},
+        "created_at": 1, "runtime": {"tmux_session_name": "friend"}, "harness_session_id": "conv-1",
     }]
 
     assert vulture._rest_idle_sessions(registry, {"friend"}, 1000, 3600, False) == []
@@ -260,3 +266,54 @@ def test_capture_failure_leaves_session_open(tmp_path, monkeypatch):
     registry = Mock(); registry.list.return_value = [{"name": "friend", "status": "running", "created_at": 1}]
     assert vulture._rest_idle_sessions(registry, {"friend"}, 5000, 3600, False) == []
     rest.assert_not_called()
+
+
+def test_opening_a_resting_session_resumes_it(monkeypatch):
+    registry = _registry_mock()
+    registry.get.return_value = {"name": "friend", "wolt": "pal", "status": "resting"}
+    monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
+    resumed = Mock(return_value={"name": "friend", "status": "resumed"})
+    monkeypatch.setattr(server_app, "resume_session", resumed)
+    assert _client().get("/tui?session=friend").status_code == 200
+    resumed.assert_called_once_with("friend", "")
+
+
+def test_opening_a_running_session_does_not_resume(monkeypatch):
+    registry = _registry_mock()
+    registry.get.return_value = {"name": "friend", "wolt": "pal", "status": "running"}
+    monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
+    resumed = Mock()
+    monkeypatch.setattr(server_app, "resume_session", resumed)
+    assert _client().get("/tui?session=friend").status_code == 200
+    resumed.assert_not_called()
+
+
+def test_rest_refuses_a_session_that_could_not_come_back(monkeypatch):
+    record = {"name": "friend", "wolt": "pal", "status": "running", "harness": "codex"}
+    registry = _registry_mock(); registry.get.return_value = record; registry.list.return_value = [record]
+    monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
+    monkeypatch.setattr(server_app, "claim_resume_id", Mock(return_value=""))
+    runtime = Mock()
+    monkeypatch.setattr(server_app, "get_runtime", Mock(return_value=runtime))
+    response = _client().post("/sessions/friend/rest", json={"pane_digest": "0" * 64})
+    assert response.status_code == 409
+    runtime.stop.assert_not_called()
+    registry._write.assert_not_called()
+
+
+def test_opening_a_stopped_session_resumes_it_too(monkeypatch):
+    registry = _registry_mock()
+    registry.get.return_value = {"name": "friend", "wolt": "pal", "status": "stopped", "harness_session_id": "conv-1"}
+    monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
+    resumed = Mock(return_value={"name": "friend", "status": "resumed"})
+    monkeypatch.setattr(server_app, "resume_session", resumed)
+    assert _client().get("/tui?session=friend").status_code == 200
+    resumed.assert_called_once_with("friend", "")
+
+
+def test_opening_a_session_with_nothing_to_resume_still_renders(monkeypatch):
+    registry = _registry_mock()
+    registry.get.return_value = {"name": "friend", "wolt": "pal", "status": "failed"}
+    monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
+    monkeypatch.setattr(server_app, "resume_session", Mock(side_effect=server_app.ResumeUnavailable("no id")))
+    assert _client().get("/tui?session=friend").status_code == 200

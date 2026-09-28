@@ -12,7 +12,7 @@ It does three things on each pass:
   2. Kills zombie tmux sessions — sessions where the claude process
      has exited but the tmux session lingers.
 
-Config: sessions.idle_timeout_seconds in woltspace.json (default: never).
+Config: sessions.idle_timeout_seconds in woltspace.json (default: 1 day; null = never).
 Logs:   .space/vulture/vulture.log
 State:  .space/vulture/last-run
 
@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from env_compat import get_env
-from sessions import SessionRegistry
+from sessions import SessionRegistry, recover_resume_id, taken_resume_ids
 from harnesses import session_has_agent_process
 from paths import space_vulture_dir
 from session_runtime import RuntimeHandle, get_runtime
@@ -151,12 +151,17 @@ def _rest_idle_sessions(reg: SessionRegistry, live_tmux: set[str], now: int,
     seen = set()
     rested = []
     runtime = get_runtime()
-    for data in reg.list():
+    records = reg.list()
+    taken = taken_resume_ids(records)
+    for data in records:
         name = data.get("name", "")
         if (not name or name in PROTECTED_SESSIONS or name not in live_tmux
                 or data.get("status") != "running"):
             continue
         if now - (data.get("created_at") or now) < GRACE_PERIOD_SECONDS:
+            continue
+        # Resting must be reversible: never stop a session resume_session could not bring back.
+        if not recover_resume_id(data, taken):
             continue
         try:
             pane = runtime.capture(RuntimeHandle.from_record(data), start=None)

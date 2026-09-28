@@ -13,6 +13,8 @@ from paths import space_vulture_dir
 
 
 ALLOWED_IDLE_TIMEOUTS = {None, 3600, 14400, 86400}
+# A lodge nobody has configured closes sessions idle for a day; "Never" is an explicit null.
+DEFAULT_IDLE_TIMEOUT = 86400
 
 
 def _config_path() -> Path:
@@ -20,9 +22,18 @@ def _config_path() -> Path:
 
 
 def get_idle_timeout() -> int | None:
+    path = _config_path()
+    if not path.exists():
+        return DEFAULT_IDLE_TIMEOUT
     try:
-        value = json.loads(_config_path().read_text()).get("sessions", {}).get("idle_timeout_seconds")
-    except (json.JSONDecodeError, OSError, AttributeError):
+        sessions = json.loads(path.read_text()).get("sessions", {})
+        if not isinstance(sessions, dict):
+            return None
+        if "idle_timeout_seconds" not in sessions:
+            return DEFAULT_IDLE_TIMEOUT
+        value = sessions["idle_timeout_seconds"]
+    except (json.JSONDecodeError, OSError, AttributeError, TypeError):
+        # an unreadable config never closes anything
         return None
     return value if value in ALLOWED_IDLE_TIMEOUTS else None
 
