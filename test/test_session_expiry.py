@@ -299,3 +299,21 @@ def test_rest_refuses_a_session_that_could_not_come_back(monkeypatch):
     assert response.status_code == 409
     runtime.stop.assert_not_called()
     registry._write.assert_not_called()
+
+
+def test_opening_a_stopped_session_resumes_it_too(monkeypatch):
+    registry = _registry_mock()
+    registry.get.return_value = {"name": "friend", "wolt": "pal", "status": "stopped", "harness_session_id": "conv-1"}
+    monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
+    resumed = Mock(return_value={"name": "friend", "status": "resumed"})
+    monkeypatch.setattr(server_app, "resume_session", resumed)
+    assert _client().get("/tui?session=friend").status_code == 200
+    resumed.assert_called_once_with("friend", "")
+
+
+def test_opening_a_session_with_nothing_to_resume_still_renders(monkeypatch):
+    registry = _registry_mock()
+    registry.get.return_value = {"name": "friend", "wolt": "pal", "status": "failed"}
+    monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
+    monkeypatch.setattr(server_app, "resume_session", Mock(side_effect=server_app.ResumeUnavailable("no id")))
+    assert _client().get("/tui?session=friend").status_code == 200
