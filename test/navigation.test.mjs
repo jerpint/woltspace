@@ -11,6 +11,10 @@ const lodgeSource = readFileSync(
   new URL('../public/static/lodge.js', import.meta.url),
   'utf8',
 );
+const tuiSource = readFileSync(
+  new URL('../templates/tui.html', import.meta.url),
+  'utf8',
+);
 
 function loadNavigation() {
   const calls = [];
@@ -79,4 +83,12 @@ test('hostile app metadata is assigned as text and never embedded in handlers', 
   assert.doesNotMatch(lodgeSource, /\son(?:click|keydown|change|submit)=/i);
   assert.doesNotMatch(lodgeSource, new RegExp(`on\\w+[^\\n]*${hostile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
   assert.doesNotMatch(lodgeSource, /onclick[^\n]*(?:p\.name|keeper|s\.name|sessionFilterWolt)/);
+});
+
+test('hostile history metadata is text, not executable markup or handler source', () => {
+  assert.match(tuiSource, /title\.textContent = s\.title \|\| ''/);
+  assert.match(tuiSource, /item\.addEventListener\('click', \(\) => loadSpark\(s\.id, s\.title \|\| ''\)\)/);
+  assert.doesNotMatch(tuiSource, /onclick="loadSpark/);
+  assert.doesNotMatch(tuiSource, /histList\.innerHTML/);
+  assert.doesNotMatch(tuiSource, /<span class="hist-title">\$\{s\.title\}/);
 });
