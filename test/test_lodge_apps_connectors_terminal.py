@@ -167,6 +167,17 @@ def test_app_detail_keeps_configured_port_when_stopped(monkeypatch):
     assert payload["port"] is None
 
 
+def test_app_detail_reports_dedicated_address(monkeypatch):
+    manifest = apps.WoltspaceApp(name="notes", keeper="n00b", port=4321)
+    monkeypatch.setattr(server_app, "get_app", lambda name: manifest)
+    monkeypatch.setattr(server_app, "running_apps", lambda: [])
+    monkeypatch.setattr(server_app, "get_apps_domain", lambda: "owner.woltspace.app")
+
+    payload = TestClient(server_app.app, base_url="http://localhost:7777").get("/apps/notes").json()
+
+    assert payload["own_url"] == "https://notes.owner.woltspace.app"
+
+
 def test_app_cli_twins_only_call_api(capsys):
     client = runpy.run_path(str(ROOT / "container" / "bin" / "woltspace"))
     calls = []
