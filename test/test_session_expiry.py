@@ -292,7 +292,7 @@ def test_rest_refuses_a_session_that_could_not_come_back(monkeypatch):
     record = {"name": "friend", "wolt": "pal", "status": "running", "harness": "codex"}
     registry = _registry_mock(); registry.get.return_value = record; registry.list.return_value = [record]
     monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
-    monkeypatch.setattr(server_app, "recover_resume_id", Mock(return_value=""))
+    monkeypatch.setattr(server_app, "claim_resume_id", Mock(return_value=""))
     runtime = Mock()
     monkeypatch.setattr(server_app, "get_runtime", Mock(return_value=runtime))
     response = _client().post("/sessions/friend/rest", json={"pane_digest": "0" * 64})

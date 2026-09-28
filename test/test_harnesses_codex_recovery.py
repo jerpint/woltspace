@@ -76,3 +76,29 @@ def test_per_wolt_home_still_works(tmp_path, monkeypatch):
     _rollout(wolts / "n00b" / ".codex" / "sessions", SID_A, "/somewhere/else", ISO)
     data = {"wolt": "n00b", "dir": str(wolts / "n00b"), "created_at": T0}
     assert harnesses._codex_discover_session_id(data, T0 - 15) == SID_A
+
+
+def test_two_sessions_cannot_claim_the_same_conversation(tmp_path, monkeypatch):
+    """claim_resume_id reads the taken set and writes inside one lock, so a second
+    session recovering into the same window finds the id already owned."""
+    import sessions
+    wolts, shared = _setup(tmp_path, monkeypatch)
+    _rollout(shared, SID_A, str(wolts / "n00b"), ISO)
+    records = {
+        "one": {"name": "one", "wolt": "n00b", "harness": "codex", "dir": str(wolts / "n00b"), "created_at": T0},
+        "two": {"name": "two", "wolt": "n00b", "harness": "codex", "dir": str(wolts / "n00b"), "created_at": T0 + 5},
+    }
+
+    class FakeRegistry:
+        wolts_dir = wolts
+        def list(self):
+            return [dict(r) for r in records.values()]
+
+    def writer(name):
+        return lambda d: records[name].update(harness_session_id=d["harness_session_id"])
+
+    reg = FakeRegistry()
+    assert sessions.claim_resume_id(reg, dict(records["one"]), writer("one")) == SID_A
+    assert sessions.claim_resume_id(reg, dict(records["two"]), writer("two")) == ""
+    assert records["one"]["harness_session_id"] == SID_A
+    assert "harness_session_id" not in records["two"]

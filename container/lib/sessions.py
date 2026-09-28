@@ -1115,6 +1115,41 @@ def taken_resume_ids(records: list[dict], exclude: str = "") -> set[str]:
     return {rid for d in records if d.get("name") != exclude for rid in [stored_resume_id(d)] if rid}
 
 
+@contextmanager
+def _resume_id_recovery_lock(wolts_dir: Path):
+    """One lodge-wide lock around recover-then-write, so two sessions can never
+    claim the same recovered conversation. Best-effort like the session locks."""
+    path = Path(wolts_dir) / ".state" / "resume-id-recovery.lock"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(path, "w")
+    except OSError:
+        yield
+        return
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        except OSError:
+            pass
+        yield
+    finally:
+        handle.close()
+
+
+def claim_resume_id(registry: "SessionRegistry", data: dict, write) -> str:
+    """The stored id, or recover one and persist it with `write(data)` while
+    holding the recovery lock (the taken-set is read inside the same lock)."""
+    existing = stored_resume_id(data)
+    if existing:
+        return existing
+    with _resume_id_recovery_lock(registry.wolts_dir):
+        recovered = recover_resume_id(data, taken_resume_ids(registry.list(), exclude=data.get("name", "")))
+        if recovered:
+            data["harness_session_id"] = recovered
+            write(data)
+    return recovered
+
+
 def recover_resume_id(data: dict, taken: set[str]) -> str:
     """The stored id, or one recovered from the harness's own files, or "".
 
@@ -1590,11 +1625,8 @@ def resume_session(name: str, prompt: str = "") -> dict:
     # to spawn a fresh agent into the old session's slot and report success.
     # Refuse here, before any tmux is touched, so the caller gets the real
     # reason rather than a blank agent wearing the session's name.
-    if not stored_resume_id(data):
-        recovered = recover_resume_id(data, taken_resume_ids(registry.list(), exclude=name))
-        if recovered:
-            registry.update(name, wolt=wolt, harness_session_id=recovered)
-            data["harness_session_id"] = recovered
+    claim_resume_id(registry, data, lambda d: registry.update(
+        name, wolt=wolt, harness_session_id=d["harness_session_id"]))
     if not stored_resume_id(data):
         raise ResumeUnavailable(
             f"session '{name}' has no {harness} conversation id on record "
