@@ -14,24 +14,16 @@
   const time = ts => new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const day = ts => { const d = new Date(ts * 1000), now = new Date(), yesterday = new Date(Date.now() - 86400e3); return d.toDateString() === now.toDateString() ? 'Today' : d.toDateString() === yesterday.toDateString() ? 'Yesterday' : d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }); };
   const effective = () => { const id = config.harness || harnesses.default || 'claude'; const h = (harnesses.harnesses || []).find(x => x.id === id) || {}; const models = h.models || {}; return { id, model: config.model || models[config.type] || models.raccoon || '' }; };
-  const duration = seconds => seconds < 3600 ? `${Math.max(1, Math.floor(seconds / 60))}m` : seconds < 86400 ? `${Math.floor(seconds / 3600)}h` : `${Math.floor(seconds / 86400)}d`;
-  const sessionState = s => {
-    if (s.status === 'resting') return 'resume anytime';
-    if (s.status === 'failed') return 'failed';
-    if (s.status !== 'running' || s.alive === false) return 'resting';
-    if (Date.now() / 1000 - (s.last_activity || s.created_at || 0) < 180) return 'working';
-    if (Number.isFinite(s.closes_in_seconds)) return `idle ${duration(s.idle_seconds || 0)} · closes in ${duration(s.closes_in_seconds)}`;
-    return 'open';
-  };
+  const sessionState = sessionStateText;  // shared with the sidebar and the Wolts page (lodge.js)
 
   function renderHeader() {
     const eng = effective(), own = sessions.filter(s => s.wolt === name).sort((a,b) => (b.last_activity || b.created_at || 0) - (a.last_activity || a.created_at || 0));
-    const open = own.filter(s => s.status === 'running' && s.alive !== false);
+    const open = own.filter(sessionIsOpen), workingCount = open.filter(sessionIsWorking).length;
     const avatar = root.querySelector('[data-avatar]');
     const sprite = woltSpriteAvatar(config.type || 'rodent', 44);
     if (sprite) avatar.innerHTML = sprite; else avatar.textContent = WOLT_EMOJI[config.type] || '🦫';
     root.querySelector('[data-name]').textContent = name;
-    root.querySelector('[data-meta]').textContent = `${config.type || 'rodent'} · ${eng.id}${eng.model ? ` · ${eng.model}` : ''} · ${open.length} open`;
+    root.querySelector('[data-meta]').textContent = `${config.type || 'rodent'} · ${eng.id}${eng.model ? ` · ${eng.model}` : ''} · ${woltStateText({ working: workingCount > 0, workingCount, open })}`;
     root.querySelector('[data-role]').textContent = (manifest.wolt || {}).description || config.description || (manifest.wolt || {}).role || config.role || '';
     const resume = root.querySelector('[data-resume]');
     if (own[0]) { resume.hidden = false; resume.href = `/tui?session=${encodeURIComponent(own[0].name)}`; resume.title = own[0].title || own[0].prompt_preview || own[0].name; }
@@ -51,7 +43,7 @@
       if (group !== currentDay) { currentDay = group; main.appendChild(el('div', 'wolt-day', group)); list = el('div', 'wolt-session-list'); main.appendChild(list); }
       const row = link('', `/tui?session=${encodeURIComponent(s.name)}`, 'session-row');
       const state = sessionState(s);
-      const dot = el('div', `session-dot ${s.status === 'running' && s.alive !== false ? 'running' : 'stopped'}`);
+      const dot = el('div', `session-dot ${sessionIsOpen(s) ? 'running' : 'stopped'}`);
       const text = el('div', 'session-body');
       const title = el('div', `session-title${s.title ? '' : ' wolt-untitled'}`, s.title || s.prompt_preview || s.prompt || 'untitled session');
       const summary = el('div', 'wolt-session-summary', `${s.summary ? `${s.summary} · ` : ''}${state}`);

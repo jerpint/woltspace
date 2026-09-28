@@ -15,15 +15,7 @@
     const t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     return d.toDateString() === today ? t : d.toDateString() === yesterday ? `Yesterday ${t}` : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${t}`;
   };
-  const sessionState = s => {
-    if (s.status === 'running' && s.alive !== false) {
-      if (sessionIsWorking(s)) return 'working';
-      if (Number.isFinite(s.closes_in_seconds)) return `open · closes in ${compactAge(s.closes_in_seconds)}`;
-      return 'open';
-    }
-    if (s.status === 'resting') return 'resume anytime';
-    return s.status === 'failed' ? 'failed' : when(stamp(s));
-  };
+  const sessionState = sessionStateText;
 
   function closeMenu() { document.querySelector('.wolts-menu')?.remove(); }
 
@@ -63,14 +55,13 @@
     const body = el('div', 'wolts-body');
     body.appendChild(el('div', 'wolts-name', name));
     const line = el('div', 'wolts-sub', `${w.type} · `);
-    line.appendChild(open.length ? el('span', 'wolts-on', working ? 'working' : 'awake')
+    line.appendChild(open.length ? el('span', working ? 'wolts-on' : '', woltStateText(x))
       : document.createTextNode(last ? `last chat ${compactAge(Date.now() / 1000 - last)} ago` : 'never chatted'));
     body.appendChild(line);
     const countLine = el('div', 'wolts-sub');
     if (sessions.length) {
       const count = el('button', `wolts-count${isOpen ? ' open' : ''}`);
       count.setAttribute('aria-expanded', String(isOpen));
-      if (open.length) { count.appendChild(el('span', 'wolts-on', `${open.length} open`)); count.appendChild(document.createTextNode(' · ')); }
       count.appendChild(document.createTextNode(`${sessions.length} session${sessions.length === 1 ? '' : 's'} `));
       count.appendChild(el('span', 'wolts-chev', '▾'));
       count.onclick = e => { e.stopPropagation(); expanded.has(name) ? expanded.delete(name) : expanded.add(name); renderWoltsPage(); };
@@ -96,7 +87,7 @@
     if (isOpen) {
       const list = el('div', 'wolts-sessions');
       sessions.slice(0, 8).forEach(s => {
-        const live = s.status === 'running' && s.alive !== false;
+        const live = sessionIsOpen(s);
         // a session opens if it's live or has a conversation to go back to (opening wakes it)
         const openable = live || !!(s.harness_session_id || s.claude_session_id);
         const a = el(openable ? 'a' : 'div', `wolts-session${openable ? '' : ' ended'}`);
