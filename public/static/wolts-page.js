@@ -96,9 +96,12 @@
     if (isOpen) {
       const list = el('div', 'wolts-sessions');
       sessions.slice(0, 8).forEach(s => {
-        const a = el('a', 'wolts-session');
-        a.href = `/tui?session=${encodeURIComponent(s.name)}`;
         const live = s.status === 'running' && s.alive !== false;
+        // only sessions that open into a terminal are links: live ones, and resting ones (opening wakes them)
+        const openable = live || s.status === 'resting';
+        const a = el(openable ? 'a' : 'div', `wolts-session${openable ? '' : ' ended'}`);
+        if (openable) a.href = `/tui?session=${encodeURIComponent(s.name)}`;
+        else a.title = 'This session has ended';
         a.appendChild(el('span', `session-dot ${live ? 'running' : 'stopped'}`));
         a.appendChild(el('span', 'wolts-session-title', (s.title || s.prompt_preview || s.prompt || 'untitled session').trim()));
         a.appendChild(el('span', 'wolts-session-meta', sessionState(s)));

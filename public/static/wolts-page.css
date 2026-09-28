@@ -43,3 +43,5 @@
 .wolts-menu button[disabled] { opacity: .4; cursor: default; }
 .wolts-menu small { font-size: 11px; }
 .wolts-menu hr { border: 0; border-top: 1px solid rgba(24,16,10,.08); margin: 4px 0; }
+.wolts-session.ended { opacity: .55; cursor: default; }
+.wolts-session.ended:hover { background: none; }
