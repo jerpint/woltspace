@@ -287,6 +287,60 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 _APP_HOST_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]*$")
+_DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+def _lodge_config_path() -> Path:
+    return WOLTS_DIR / "woltspace.json"
+
+
+def _load_lodge_config() -> dict:
+    path = _lodge_config_path()
+    try:
+        value = json.loads(path.read_text()) if path.exists() else {}
+    except (json.JSONDecodeError, OSError):
+        raise RuntimeError("woltspace.json unreadable")
+    if not isinstance(value, dict):
+        raise RuntimeError("woltspace.json unreadable")
+    return value
+
+
+def _normalize_apps_domain(value: object) -> str | None:
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str):
+        raise ValueError("apps_domain must be a domain name or null")
+    domain = value.strip().lower().rstrip(".")
+    if (not domain or len(domain) > 253 or "." not in domain
+            or any(not _DNS_LABEL_RE.fullmatch(label) for label in domain.split("."))):
+        raise ValueError("apps_domain must be a valid domain name without a scheme, path, or port")
+    return domain
+
+
+def get_apps_domain() -> str | None:
+    try:
+        return _normalize_apps_domain(_load_lodge_config().get("apps_domain"))
+    except (RuntimeError, ValueError):
+        return None
+
+
+def set_apps_domain(value: object) -> str | None:
+    domain = _normalize_apps_domain(value)
+    if domain is not None:
+        tunnel_hostname = tunnel_mgr.get_tunnel_hostname().lower().rstrip(".")
+        if (domain in {"localhost", "127.0.0.1", "::1"}
+                or tunnel_hostname == domain
+                or (tunnel_hostname and tunnel_hostname.endswith(f".{domain}"))):
+            raise ValueError("apps_domain must not equal or contain the lodge hostname")
+    cfg = _load_lodge_config()
+    if domain is None:
+        cfg.pop("apps_domain", None)
+    else:
+        cfg["apps_domain"] = domain
+    path = _lodge_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wolfcore.atomic_write(path, json.dumps(cfg, indent=2) + "\n")
+    return domain
 
 
 def _split_host(host_header: str) -> tuple[str, int | None]:
@@ -319,6 +373,10 @@ def _allowed_http_hostname(hostname: str) -> bool:
         current_tunnel_hostname = ""
     if current_tunnel_hostname and hostname == current_tunnel_hostname:
         return True
+    apps_domain = get_apps_domain()
+    if apps_domain and hostname.endswith(f".{apps_domain}"):
+        app_name = hostname.removesuffix(f".{apps_domain}")
+        return bool(_APP_HOST_RE.fullmatch(app_name))
     tunnel_domain = tunnel_mgr.get_tunnel_domain().lower().rstrip(".")
     if tunnel_domain and hostname.endswith(f".{tunnel_domain}"):
         app_name = hostname.removesuffix(f".{tunnel_domain}")
@@ -353,6 +411,11 @@ def _websocket_request_allowed(ws: WebSocket) -> bool:
     # path permits native clients only after their Host passed the allowlist.
     return not origin or _same_http_authority(origin, host_header)
 
+
+def _lodge_websocket_request_allowed(ws: WebSocket) -> bool:
+    host_header = ws.headers.get("host") or ""
+    return _websocket_request_allowed(ws) and _extract_app_subdomain(host_header) is None
+
 def _extract_app_subdomain(host_header: str) -> str | None:
     """Extract app name from subdomain hostname, or None if not an app subdomain.
 
@@ -362,11 +425,39 @@ def _extract_app_subdomain(host_header: str) -> str | None:
     host, _port = _split_host(host_header)
     if host.endswith(".localhost") and host != "localhost":
         return host.removesuffix(".localhost")
+    apps_domain = get_apps_domain()
+    th = tunnel_mgr.get_tunnel_hostname().lower().rstrip(".")
+    if apps_domain and host.endswith(f".{apps_domain}") and host != th:
+        app_name = host.removesuffix(f".{apps_domain}")
+        return app_name if _APP_HOST_RE.fullmatch(app_name) else None
     td = tunnel_mgr.get_tunnel_domain()
     th = tunnel_mgr.get_tunnel_hostname()
     if td and host.endswith(f".{td}") and host != th:
         return host.removesuffix(f".{td}")
     return None
+
+
+class AppWebSocketRoutingMiddleware:
+    """Route every app-host websocket to the app proxy before FastAPI routing."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "websocket":
+            headers = {
+                key.decode("latin-1").lower(): value.decode("latin-1")
+                for key, value in scope.get("headers", [])
+            }
+            if _extract_app_subdomain(headers.get("host", "")) is not None:
+                original = scope.get("path", "/")
+                scope = dict(scope)
+                scope["path"] = f"/__woltspace_app_ws__{original}"
+                scope["raw_path"] = scope["path"].encode()
+        await self.inner(scope, receive, send)
+
+
+app.add_middleware(AppWebSocketRoutingMiddleware)
 
 
 @app.middleware("http")
@@ -1679,6 +1770,28 @@ async def set_session_expiry_setting(request: Request):
     return {"ok": True, "idle_timeout_seconds": saved}
 
 
+@app.get("/settings/apps-domain")
+async def get_apps_domain_setting():
+    return {"apps_domain": get_apps_domain()}
+
+
+@app.post("/settings/apps-domain")
+async def set_apps_domain_setting(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict) or set(body) != {"apps_domain"}:
+        return JSONResponse({"error": "apps_domain is required"}, status_code=400)
+    try:
+        domain = set_apps_domain(body["apps_domain"])
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return {"ok": True, "apps_domain": domain}
+
+
 @app.get("/onboarding/status")
 async def get_onboarding_status():
     """First-run UI state, independent of every harness's authentication."""
@@ -1940,6 +2053,7 @@ async def list_apps_api():
     apps = discover_apps()
     running = {r["name"]: r for r in running_apps()}
     result = []
+    apps_domain = get_apps_domain()
     for a in apps:
         entry = a.model_dump()
         entry["configured_port"] = a.port
@@ -1948,6 +2062,7 @@ async def list_apps_api():
         entry["port"] = run_state["port"] if run_state else None
         entry["url"] = f"/app/{a.name}/"
         entry["tunnel_url"] = run_state.get("tunnel_url") if run_state else None
+        entry["own_url"] = f"https://{a.name}.{apps_domain}" if apps_domain else None
         entry["sharing"] = bool(run_state.get("tunnel_pid") and run_state.get("tunnel_url")) if run_state else False
         result.append(entry)
     return result
@@ -1969,6 +2084,8 @@ async def app_detail(name: str):
     entry["port"] = run_state["port"] if run_state else None
     entry["url"] = f"/app/{name}/"
     entry["tunnel_url"] = run_state.get("tunnel_url") if run_state else None
+    apps_domain = get_apps_domain()
+    entry["own_url"] = f"https://{name}.{apps_domain}" if apps_domain else None
     entry["sharing"] = bool(run_state.get("tunnel_pid") and run_state.get("tunnel_url")) if run_state else False
     return entry
 
@@ -2315,6 +2432,9 @@ async def wolt_builtin_page(wolt_name: str, tab: str = "about"):
 @app.websocket("/wolt/{wolt_name}/site/livereload")
 async def site_livereload_ws(wolt_name: str, ws: WebSocket):
     """Watch a wolt's site dir for changes and push reload via WebSocket."""
+    if not _lodge_websocket_request_allowed(ws):
+        await ws.close(code=1008)
+        return
     from watchfiles import awatch
 
     sdir = WOLTS_DIR / wolt_name / "wolt" / "site"
@@ -2397,7 +2517,7 @@ async def serve_app(app_name: str, request: Request, path: str = ""):
     run_state = running.get(app_name)
     if run_state:
         qs = f"?{request.url.query}" if request.url.query else ""
-        td = tunnel_mgr.get_tunnel_domain()
+        td = get_apps_domain() or tunnel_mgr.get_tunnel_domain()
         hostname = request.url.hostname or ""
         is_local = hostname in ("localhost", "127.0.0.1") or hostname.endswith(".localhost")
         if td and not is_local:
@@ -2491,6 +2611,9 @@ async def proxy_tool(tool_name: str, path: str, request: Request):
 
 @app.websocket("/livereload")
 async def livereload_ws(ws: WebSocket):
+    if not _lodge_websocket_request_allowed(ws):
+        await ws.close(code=1008)
+        return
     await ws.accept()
     _livereload_clients.add(ws)
     try:
@@ -2507,7 +2630,7 @@ async def livereload_ws(ws: WebSocket):
 @app.websocket("/tui")
 async def tui_proxy(ws: WebSocket):
     """Attach the browser terminal directly to the requested tmux session."""
-    if not _websocket_request_allowed(ws):
+    if not _lodge_websocket_request_allowed(ws):
         await ws.close(code=1008)
         return
     session = ws.query_params.get("session", "main")
@@ -2565,7 +2688,7 @@ async def tui_proxy(ws: WebSocket):
         await attachment.close()
 
 
-@app.websocket("/{path:path}")
+@app.websocket("/__woltspace_app_ws__/{path:path}")
 async def subdomain_ws_proxy(ws: WebSocket, path: str):
     """Proxy WebSocket connections for subdomain apps (e.g. Vite HMR).
 
@@ -2670,6 +2793,7 @@ async def settings_page(request: Request):
         "harness_labels": {harness["id"]: harness["label"] for harness in harnesses},
         "idle_timeout": get_idle_timeout(),
         "access": access_settings_dict(access_settings) or {},
+        "apps_domain": get_apps_domain() or "",
     })
 
 
