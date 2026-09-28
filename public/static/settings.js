@@ -40,6 +40,35 @@ if (root) {
     return data;
   }
 
+  async function saveAccess(value) {
+    const form = document.querySelector('[data-access-form]');
+    const controls = [...form.querySelectorAll('input, button')];
+    controls.forEach(control => { control.disabled = true; });
+    setGlobalState('saving', 'Saving Access verification…');
+    try {
+      const data = await save('/settings/access', { access: value });
+      const saved = data.access || {};
+      form.dataset.savedValue = JSON.stringify(saved);
+      form.querySelectorAll('[data-access-field]').forEach(input => { input.value = saved[input.dataset.accessField] || ''; });
+      setGlobalState('saved', 'Access verification saved');
+      showToast(data.access ? 'Remote requests will be verified.' : 'Access verification is disabled.');
+    } catch (error) {
+      const previous = JSON.parse(form.dataset.savedValue || '{}');
+      form.querySelectorAll('[data-access-field]').forEach(input => { input.value = previous[input.dataset.accessField] || ''; });
+      setGlobalState('error', 'Could not save');
+      showToast(error.message, 'error');
+    } finally {
+      controls.forEach(control => { control.disabled = false; });
+    }
+  }
+
+  document.querySelector('[data-access-save]')?.addEventListener('click', () => {
+    const values = {};
+    document.querySelectorAll('[data-access-field]').forEach(input => { values[input.dataset.accessField] = input.value.trim(); });
+    saveAccess(values);
+  });
+  document.querySelector('[data-access-clear]')?.addEventListener('click', () => saveAccess(null));
+
   document.querySelector('[data-default-form]')?.addEventListener('change', async event => {
     const input = event.target.closest('[name="default-harness"]');
     if (!input) return;
@@ -81,6 +110,27 @@ if (root) {
       showToast(error.message, 'error');
     } finally {
       select.disabled = false;
+    }
+  });
+
+  document.querySelector('[data-apps-domain-save]')?.addEventListener('click', async event => {
+    const button = event.currentTarget;
+    const row = button.closest('[data-apps-domain-row]');
+    const input = row.querySelector('[data-apps-domain-input]');
+    button.disabled = input.disabled = true;
+    setGlobalState('saving', 'Saving app addresses…');
+    try {
+      const data = await save('/settings/apps-domain', { apps_domain: input.value.trim() || null });
+      input.value = data.apps_domain || '';
+      row.dataset.savedValue = input.value;
+      setGlobalState('saved', 'App addresses saved');
+      showToast(data.apps_domain ? `Apps will use *.${data.apps_domain}.` : 'Apps will keep their current addresses.');
+    } catch (error) {
+      input.value = row.dataset.savedValue;
+      setGlobalState('error', 'Could not save');
+      showToast(error.message, 'error');
+    } finally {
+      button.disabled = input.disabled = false;
     }
   });
 }
