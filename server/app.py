@@ -319,6 +319,12 @@ def get_apps_domain() -> str | None:
 
 def set_apps_domain(value: object) -> str | None:
     domain = _normalize_apps_domain(value)
+    if domain is not None:
+        tunnel_hostname = tunnel_mgr.get_tunnel_hostname().lower().rstrip(".")
+        if (domain in {"localhost", "127.0.0.1", "::1"}
+                or tunnel_hostname == domain
+                or (tunnel_hostname and tunnel_hostname.endswith(f".{domain}"))):
+            raise ValueError("apps_domain must not equal or contain the lodge hostname")
     cfg = _load_lodge_config()
     if domain is None:
         cfg.pop("apps_domain", None)
@@ -408,7 +414,8 @@ def _extract_app_subdomain(host_header: str) -> str | None:
     if host.endswith(".localhost") and host != "localhost":
         return host.removesuffix(".localhost")
     apps_domain = get_apps_domain()
-    if apps_domain and host.endswith(f".{apps_domain}"):
+    th = tunnel_mgr.get_tunnel_hostname().lower().rstrip(".")
+    if apps_domain and host.endswith(f".{apps_domain}") and host != th:
         app_name = host.removesuffix(f".{apps_domain}")
         return app_name if _APP_HOST_RE.fullmatch(app_name) else None
     td = tunnel_mgr.get_tunnel_domain()
@@ -1922,6 +1929,7 @@ async def list_apps_api():
     apps = discover_apps()
     running = {r["name"]: r for r in running_apps()}
     result = []
+    apps_domain = get_apps_domain()
     for a in apps:
         entry = a.model_dump()
         entry["configured_port"] = a.port
@@ -1930,7 +1938,7 @@ async def list_apps_api():
         entry["port"] = run_state["port"] if run_state else None
         entry["url"] = f"/app/{a.name}/"
         entry["tunnel_url"] = run_state.get("tunnel_url") if run_state else None
-        entry["own_url"] = f"https://{a.name}.{get_apps_domain()}" if get_apps_domain() else None
+        entry["own_url"] = f"https://{a.name}.{apps_domain}" if apps_domain else None
         entry["sharing"] = bool(run_state.get("tunnel_pid") and run_state.get("tunnel_url")) if run_state else False
         result.append(entry)
     return result
@@ -1952,7 +1960,8 @@ async def app_detail(name: str):
     entry["port"] = run_state["port"] if run_state else None
     entry["url"] = f"/app/{name}/"
     entry["tunnel_url"] = run_state.get("tunnel_url") if run_state else None
-    entry["own_url"] = f"https://{name}.{get_apps_domain()}" if get_apps_domain() else None
+    apps_domain = get_apps_domain()
+    entry["own_url"] = f"https://{name}.{apps_domain}" if apps_domain else None
     entry["sharing"] = bool(run_state.get("tunnel_pid") and run_state.get("tunnel_url")) if run_state else False
     return entry
 

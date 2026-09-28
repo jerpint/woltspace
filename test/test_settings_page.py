@@ -113,6 +113,20 @@ def test_apps_domain_is_rendered_in_settings(tmp_path, monkeypatch):
     assert "Optionally serve every app on a dedicated domain." in response.text
 
 
+def test_apps_domain_rejects_lodge_hostname_parent_and_loopback(tmp_path, monkeypatch):
+    (tmp_path / "woltspace.json").write_text("{}")
+    monkeypatch.setattr(app_module, "WOLTS_DIR", tmp_path)
+    monkeypatch.setattr(app_module.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
+
+    for domain in ("owner.woltspace.test", "woltspace.test", "localhost", "127.0.0.1"):
+        response = asyncio.run(_request("POST", "/settings/apps-domain", json={
+            "apps_domain": domain,
+        }))
+        assert response.status_code == 400
+
+    assert json.loads((tmp_path / "woltspace.json").read_text()) == {}
+
+
 def test_settings_accepts_any_registered_harness(tmp_path, monkeypatch):
     _write_wolt(tmp_path, "maple", "raccoon")
     monkeypatch.setattr(app_module, "WOLTS_DIR", tmp_path)

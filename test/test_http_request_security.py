@@ -179,6 +179,15 @@ def test_apps_domain_does_not_change_existing_tunnel_host_routing(monkeypatch):
     assert _client().get("/", headers={"host": "notes.woltspace.test"}).status_code == 503
 
 
+def test_lodge_host_is_never_extracted_as_an_app_when_domains_overlap(monkeypatch):
+    monkeypatch.setattr(server_app, "get_apps_domain", lambda: "woltspace.test")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
+
+    assert server_app._extract_app_subdomain("owner.woltspace.test") is None
+    assert _client().get("/sessions", headers={"host": "owner.woltspace.test"}).status_code == 200
+
+
 @pytest.mark.parametrize(
     ("host", "origin"),
     [
