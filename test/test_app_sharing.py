@@ -184,6 +184,15 @@ def test_verified_scope_identity_reaches_http_and_websocket_share_gates(tmp_path
     assert asyncio.run(request_as("stranger@example.com")).status_code == 403
 
     monkeypatch.setattr(apps, "running_apps", lambda: [{"name": "notes", "port": 4321}])
+    try:
+        import server.app_proxy as shared_app_proxy
+    except ImportError:
+        shared_app_proxy = None
+    if shared_app_proxy is not None:
+        monkeypatch.setattr(
+            shared_app_proxy, "running_apps",
+            lambda: [{"name": "notes", "port": 4321}],
+        )
 
     class Upstream:
         async def recv(self):
