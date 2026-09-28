@@ -504,6 +504,8 @@ class AppGatewayConnector:
         port = gateway.get("port", 4444) if isinstance(gateway, dict) else 4444
         if not isinstance(port, int) or isinstance(port, bool) or not 1024 <= port <= 65535:
             port = 4444
+        if port == layout.port:
+            raise ValueError("app gateway port must differ from the lodge port")
         child_env = export_both({
             "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
             "WOLTSPACE_DIR": str(layout.install_root),

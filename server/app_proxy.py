@@ -16,6 +16,17 @@ def running_app(name: str) -> dict | None:
     return next((item for item in running_apps() if item.get("name") == name), None)
 
 
+def _host_only_set_cookie(value: str) -> str:
+    """Remove a cookie Domain attribute so an app cannot affect sibling hosts."""
+    parts = value.split(";")
+    kept = [parts[0]]
+    kept.extend(
+        part for part in parts[1:]
+        if part.strip().partition("=")[0].strip().lower() != "domain"
+    )
+    return ";".join(kept)
+
+
 def missing_app_response(name: str, *, unknown_is_stopped: bool = False):
     if not unknown_is_stopped and get_app(name) is None:
         return HTMLResponse("<h1>App not found</h1>", status_code=404)
@@ -50,7 +61,7 @@ async def proxy_app_http(
     excluded = {"transfer-encoding", "content-encoding"}
     response_headers = {
         key: value for key, value in response.headers.items()
-        if key.lower() not in excluded
+        if key.lower() not in excluded | {"set-cookie"}
     }
 
     async def stream_body():
@@ -61,9 +72,12 @@ async def proxy_app_http(
             await response.aclose()
             await client.aclose()
 
-    return StreamingResponse(
+    downstream = StreamingResponse(
         stream_body(), status_code=response.status_code, headers=response_headers,
     )
+    for cookie in response.headers.get_list("set-cookie"):
+        downstream.headers.append("set-cookie", _host_only_set_cookie(cookie))
+    return downstream
 
 
 async def proxy_app_websocket(ws: WebSocket, app_name: str, path: str):

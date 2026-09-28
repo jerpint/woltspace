@@ -10,6 +10,7 @@ import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi import Request
 from fastapi.responses import PlainTextResponse
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -19,6 +20,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "container" / "lib"))
 
 import server.gateway as gateway
+import server.app_proxy as app_proxy
 from server.access import AccessTokenVerifier, load_access_settings
 from server.gateway_settings import load_gateway_settings
 from server import app as lodge
@@ -197,6 +199,48 @@ def test_stopped_and_unknown_apps_have_bounded_pages(tmp_path, monkeypatch):
     assert unknown.status_code == 404
 
 
+def test_proxy_rewrites_domain_cookies_to_host_only_and_preserves_multiples(monkeypatch):
+    monkeypatch.setattr(app_proxy, "running_app", lambda _name: {"port": 4321})
+    upstream = httpx.Response(
+        200,
+        headers=[
+            ("set-cookie", "wide=1; Domain=.woltspace.app; Path=/; HttpOnly"),
+            ("set-cookie", "plain=2; Path=/; Secure"),
+            ("set-cookie", "parent=3; domain=woltspace.app; SameSite=Lax"),
+        ],
+        content=b"ok",
+        request=httpx.Request("GET", "http://127.0.0.1:4321/"),
+    )
+
+    class Client:
+        def build_request(self, *args, **kwargs):
+            return httpx.Request(*args, **kwargs)
+
+        async def send(self, *_args, **_kwargs):
+            return upstream
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(app_proxy.httpx, "AsyncClient", Client)
+    scope = {
+        "type": "http", "method": "GET", "scheme": "https", "path": "/",
+        "raw_path": b"/", "query_string": b"", "headers": [],
+        "client": ("127.0.0.1", 123), "server": ("notes.example", 443),
+    }
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    response = asyncio.run(app_proxy.proxy_app_http(Request(scope, receive), "notes"))
+
+    assert response.headers.getlist("set-cookie") == [
+        "wide=1; Path=/; HttpOnly",
+        "plain=2; Path=/; Secure",
+        "parent=3; SameSite=Lax",
+    ]
+
+
 def test_gateway_connector_is_always_supervised_on_loopback_port_4444(tmp_path):
     layout = RuntimeLayout(tmp_path, ROOT)
     plan = AppGatewayConnector().plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"})
@@ -216,6 +260,20 @@ def test_gateway_port_is_configurable(tmp_path):
     )
     assert settings.port == 4555
     assert "4555" in plan.command
+
+
+def test_gateway_port_collision_fails_at_settings_load_and_connector_plan(tmp_path):
+    (tmp_path / "woltspace.json").write_text(json.dumps({
+        "app_gateway": {"port": 7777},
+    }))
+    error = "app gateway port must differ from the lodge port"
+    with pytest.raises(ValueError, match=error):
+        load_gateway_settings(tmp_path, lodge_port=7777)
+    with pytest.raises(ValueError, match=error):
+        AppGatewayConnector().plan(
+            RuntimeLayout(tmp_path, ROOT, port=7777),
+            {"WOLTSPACE_ENTRYPOINT": "1"},
+        )
 
 
 def test_gateway_port_changes_only_through_validated_lodge_route(tmp_path, monkeypatch):
