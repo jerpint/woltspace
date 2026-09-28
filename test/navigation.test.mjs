@@ -11,6 +11,14 @@ const lodgeSource = readFileSync(
   new URL('../public/static/lodge.js', import.meta.url),
   'utf8',
 );
+const tuiSource = readFileSync(
+  new URL('../templates/tui.html', import.meta.url),
+  'utf8',
+);
+const wolvesSource = readFileSync(
+  new URL('../public/static/wolves.js', import.meta.url),
+  'utf8',
+);
 
 function loadNavigation() {
   const calls = [];
@@ -70,4 +78,30 @@ test('lodge contains no client-built localhost app address or internal popups', 
   assert.doesNotMatch(lodgeSource, /\.localhost:7777/);
   assert.doesNotMatch(lodgeSource, /window\.open\(\s*['"`]\/tui/);
   assert.match(lodgeSource, /WoltspaceNavigation\.appDestination\(p\)/);
+});
+
+test('hostile app metadata is assigned as text and never embedded in handlers', () => {
+  const hostile = `')-alert(1)-('`;
+  assert.match(lodgeSource, /lodgeElement\(p\.running \? 'a' : 'div', 'app-name-link', p\.name\)/);
+  assert.match(lodgeSource, /element\.textContent = text/);
+  assert.doesNotMatch(lodgeSource, /\son(?:click|keydown|change|submit)=/i);
+  assert.doesNotMatch(lodgeSource, new RegExp(`on\\w+[^\\n]*${hostile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.doesNotMatch(lodgeSource, /onclick[^\n]*(?:p\.name|keeper|s\.name|sessionFilterWolt)/);
+});
+
+test('backend harness labels and wolf status remain data', () => {
+  assert.match(lodgeSource, /button\.appendChild\(lodgeElement\('span', '', name\)\)/);
+  assert.doesNotMatch(lodgeSource, /button\.innerHTML\s*=.*\$\{name\}/);
+  assert.match(wolvesSource, /\$\{esc\(e\.status\)\}/);
+  assert.match(wolvesSource, /st\.textContent = e\.status \|\| ''/);
+  assert.doesNotMatch(wolvesSource, /\$\{e\.status \|\| ''\}/);
+  assert.doesNotMatch(wolvesSource, /st\.innerHTML = e\.status/);
+});
+
+test('hostile history metadata is text, not executable markup or handler source', () => {
+  assert.match(tuiSource, /title\.textContent = s\.title \|\| ''/);
+  assert.match(tuiSource, /item\.addEventListener\('click', \(\) => loadSpark\(s\.id, s\.title \|\| ''\)\)/);
+  assert.doesNotMatch(tuiSource, /onclick="loadSpark/);
+  assert.doesNotMatch(tuiSource, /histList\.innerHTML/);
+  assert.doesNotMatch(tuiSource, /<span class="hist-title">\$\{s\.title\}/);
 });

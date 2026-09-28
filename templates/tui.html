@@ -491,13 +491,20 @@
   let allSparks = [];
 
   function renderHist() {
-    histList.innerHTML = allSparks.map(s => {
+    histList.replaceChildren(...allSparks.map(s => {
       const isCurrent = lastUrl === '/history/' + s.id;
-      return `<div class="hist-item${isCurrent ? ' current' : ''}" onclick="loadSpark('${s.id}', '${(s.title||'').replace(/'/g,"\\'")}')">
-        <span class="hist-title">${s.title}</span>
-        <span class="hist-time">${timeAgo(new Date(s.timestamp).getTime())}</span>
-      </div>`;
-    }).join('');
+      const item = document.createElement('div');
+      item.className = `hist-item${isCurrent ? ' current' : ''}`;
+      const title = document.createElement('span');
+      title.className = 'hist-title';
+      title.textContent = s.title || '';
+      const timestamp = document.createElement('span');
+      timestamp.className = 'hist-time';
+      timestamp.textContent = timeAgo(new Date(s.timestamp).getTime());
+      item.append(title, timestamp);
+      item.addEventListener('click', () => loadSpark(s.id, s.title || ''));
+      return item;
+    }));
   }
 
   window.loadSpark = (id, title) => {
