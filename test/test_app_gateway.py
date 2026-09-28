@@ -258,15 +258,19 @@ def test_gateway_is_absent_without_apps_domain(tmp_path):
     assert read_connector_report(layout)["connectors"] == []
 
 
-def test_gateway_is_supervised_on_loopback_port_7447_with_apps_domain(tmp_path):
+@pytest.mark.parametrize(("lodge_port", "gateway_port"), [(7777, 6667), (7778, 6668)])
+def test_gateway_default_port_tracks_lodge_port(
+    tmp_path, lodge_port, gateway_port,
+):
     (tmp_path / "woltspace.json").write_text(json.dumps({
         "apps_domain": "owner.woltspace.app",
     }))
-    layout = RuntimeLayout(tmp_path, ROOT)
+    layout = RuntimeLayout(tmp_path, ROOT, port=lodge_port)
     plan = AppGatewayConnector().plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"})
     assert plan.enabled
     assert ("--host", "127.0.0.1") == (plan.command[4], plan.command[5])
-    assert ("--port", "7447") == (plan.command[6], plan.command[7])
+    assert ("--port", str(gateway_port)) == (plan.command[6], plan.command[7])
+    assert load_gateway_settings(tmp_path, lodge_port=lodge_port).port == gateway_port
     assert any(item.name == "app-gateway" for item in plan_connectors(
         layout, {"WOLTSPACE_ENTRYPOINT": "1"},
     ))
@@ -326,7 +330,7 @@ def test_app_start_reserves_gateway_port_only_when_apps_domain_is_enabled(
     target = tmp_path / "apps" / "notes"
     target.mkdir(parents=True)
     (target / "woltspace.json").write_text(json.dumps({
-        "name": "notes", "keeper": "n00b", "port": 7447,
+        "name": "notes", "keeper": "n00b", "port": 6667,
         "start": "echo hello", "stack": "html",
     }))
     state = tmp_path / ".space" / "apps"
@@ -336,23 +340,23 @@ def test_app_start_reserves_gateway_port_only_when_apps_domain_is_enabled(
         ("_RUNNING_STATE_DIR", state),
     ):
         monkeypatch.setattr(apps, attr, value)
+    monkeypatch.setenv("WOLTSPACE_PORT", "7777")
     monkeypatch.setattr(apps.subprocess, "Popen", lambda *_args, **_kwargs: type(
         "Process", (), {"pid": 12345},
     )())
 
     (tmp_path / "woltspace.json").write_text(json.dumps({
-        "app_gateway": {"port": 7447},
+        "app_gateway": {"port": 6667},
     }))
-    assert apps.start_app("notes")["port"] == 7447
+    assert apps.start_app("notes")["port"] == 6667
     apps._clear_state("notes")
 
     (tmp_path / "woltspace.json").write_text(json.dumps({
         "apps_domain": "owner.woltspace.app",
-        "app_gateway": {"port": 7447},
     }))
     with pytest.raises(RuntimeError) as exc:
         apps.start_app("notes")
     assert str(exc.value) == (
-        "port 7447 is used by the app gateway; "
+        "port 6667 is used by the app gateway; "
         "change the app's port or the gateway port in Settings"
     )

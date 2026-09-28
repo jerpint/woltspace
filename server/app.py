@@ -346,12 +346,15 @@ def set_apps_domain(value: object) -> str | None:
 
 
 def get_app_gateway_port() -> int:
+    default_port = PORT - 1110
+    if not 1024 <= default_port <= 65535:
+        raise RuntimeError("derived app gateway port must be from 1024 to 65535")
     try:
         gateway = _load_lodge_config().get("app_gateway", {})
     except RuntimeError:
-        return 7447
-    port = gateway.get("port", 7447) if isinstance(gateway, dict) else 7447
-    return port if isinstance(port, int) and not isinstance(port, bool) and 1024 <= port <= 65535 else 7447
+        return default_port
+    port = gateway.get("port", default_port) if isinstance(gateway, dict) else default_port
+    return port if isinstance(port, int) and not isinstance(port, bool) and 1024 <= port <= 65535 else default_port
 
 
 def set_app_gateway_port(value: object) -> int:

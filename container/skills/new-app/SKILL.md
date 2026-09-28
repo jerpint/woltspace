@@ -92,7 +92,7 @@ This is **required** — the platform only discovers apps that have `woltspace.j
 
 ## 5. Configure for serving
 
-Your port is declared in `woltspace.json` and is permanent — it never changes. Check existing apps to avoid conflicts (`ls /workspace/wolts/apps/*/woltspace.json` and look at their ports). Woltspace platform services use the `7**7` pattern: currently `7777` for the lodge and `7447` for the app gateway. Apps must not use those ports and should stay in the **4000-5999** range. Wolt sites have no separate port allocation; the lodge serves them at `/wolt/<name>/site/`.
+Your port is declared in `woltspace.json` and is permanent — it never changes. Check existing apps to avoid conflicts (`ls /workspace/wolts/apps/*/woltspace.json` and look at their ports). The first lodge on a machine uses port `7777`; each additional lodge increments that port by one. Its app gateway follows in step from `6667`, so the last digit matches (`7778` lodge -> `6668` gateway). Apps must stay in the **4000-5999** range and must not use their lodge's gateway port. Wolt sites have no separate port allocation; the lodge serves them at `/wolt/<name>/site/`.
 
 - **Dev servers:** use `$PORT` in your start command — the platform expands it to your manifest port. Add `--host 0.0.0.0` so the server accepts connections from the proxy and tunnels.
 - **No base path needed.** The viewport loads your app directly at its port (e.g. `blog.localhost:7777`). Internal links, WebSockets, and HMR all work naturally.
