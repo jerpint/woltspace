@@ -7,6 +7,7 @@ import json
 import os
 import re
 import time
+import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -17,6 +18,8 @@ from jwt.algorithms import RSAAlgorithm
 
 _DOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$")
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_CONFIG_CACHE: dict[Path, tuple[tuple[int, int] | None, AccessSettings | None | Exception]] = {}
+_CONFIG_CACHE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,30 @@ def _read_root(wolts_dir: Path) -> dict:
 
 
 def load_access_settings(wolts_dir: Path) -> AccessSettings | None:
+    path = _config_path(wolts_dir)
+    try:
+        stat = path.stat()
+        signature = (stat.st_mtime_ns, stat.st_size)
+    except FileNotFoundError:
+        signature = None
+    with _CONFIG_CACHE_LOCK:
+        cached = _CONFIG_CACHE.get(path)
+        if cached and cached[0] == signature:
+            if isinstance(cached[1], Exception):
+                raise RuntimeError(str(cached[1]))
+            return cached[1]
+    try:
+        result = _load_access_settings_uncached(wolts_dir)
+    except RuntimeError as exc:
+        with _CONFIG_CACHE_LOCK:
+            _CONFIG_CACHE[path] = (signature, exc)
+        raise
+    with _CONFIG_CACHE_LOCK:
+        _CONFIG_CACHE[path] = (signature, result)
+    return result
+
+
+def _load_access_settings_uncached(wolts_dir: Path) -> AccessSettings | None:
     raw = _read_root(wolts_dir).get("access")
     if raw in (None, {}):
         return None
@@ -100,15 +127,19 @@ def save_access_settings(wolts_dir: Path, raw: object) -> AccessSettings | None:
     except FileNotFoundError:
         pass
     os.replace(tmp, path)
+    with _CONFIG_CACHE_LOCK:
+        _CONFIG_CACHE.pop(path, None)
     return settings
 
 
 class AccessTokenVerifier:
-    def __init__(self, ttl_seconds: int = 3600):
+    def __init__(self, ttl_seconds: int = 3600, forced_refresh_interval: int = 60):
         self.ttl_seconds = ttl_seconds
+        self.forced_refresh_interval = forced_refresh_interval
         self._team_domain = ""
         self._keys: dict[str, object] = {}
         self._expires_at = 0.0
+        self._last_forced_at = 0.0
         self._lock = asyncio.Lock()
 
     async def _refresh(self, team_domain: str) -> dict[str, object]:
@@ -132,9 +163,15 @@ class AccessTokenVerifier:
                 and time.monotonic() < self._expires_at):
             return self._keys
         async with self._lock:
+            now = time.monotonic()
+            if (force and self._team_domain == team_domain and self._keys
+                    and now - self._last_forced_at < self.forced_refresh_interval):
+                return self._keys
             if (not force and self._team_domain == team_domain and self._keys
                     and time.monotonic() < self._expires_at):
                 return self._keys
+            if force:
+                self._last_forced_at = now
             return await self._refresh(team_domain)
 
     async def verify(self, token: str, settings: AccessSettings, audience: str) -> dict:

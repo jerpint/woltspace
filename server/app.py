@@ -467,35 +467,55 @@ def _loopback_http_hostname(hostname: str) -> bool:
     return hostname in {"localhost", "127.0.0.1", "::1"} or hostname.endswith(".localhost")
 
 
-@app.middleware("http")
-async def access_token_guard(request: Request, call_next):
-    """Verify Cloudflare Access identity before remote lodge or app traffic."""
-    hostname, _port = _split_host(request.headers.get("host") or "")
-    if _loopback_http_hostname(hostname) or not _allowed_http_hostname(hostname):
-        return await call_next(request)
-    try:
-        settings = load_access_settings(WOLTS_DIR)
-    except RuntimeError:
-        return JSONResponse({"error": "Access verification is misconfigured"}, status_code=403)
-    if settings is None:
-        return await call_next(request)
-    token = request.headers.get("cf-access-jwt-assertion", "").strip()
-    if not token:
-        return JSONResponse({"error": "Access token required"}, status_code=403)
-    app_name = _extract_app_subdomain(request.headers.get("host") or "")
-    audience = settings.apps_aud if app_name else settings.lodge_aud
-    try:
-        claims = await access_token_verifier.verify(token, settings, audience)
-    except Exception:
-        return JSONResponse({"error": "invalid Access token"}, status_code=403)
-    email = claims.get("email")
-    if not isinstance(email, str) or not email.strip():
-        return JSONResponse({"error": "Access token has no email"}, status_code=403)
-    email = email.strip().lower()
-    if not app_name and email != settings.owner_email:
-        return JSONResponse({"error": "owner identity required"}, status_code=403)
-    request.state.access_email = email
-    return await call_next(request)
+class AccessTokenMiddleware:
+    """Verify remote HTTP and websocket scopes before either can be routed."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def _reject(self, scope, receive, send, message: str):
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+        else:
+            await JSONResponse({"error": message}, status_code=403)(scope, receive, send)
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") not in {"http", "websocket"}:
+            return await self.inner(scope, receive, send)
+        headers = {
+            key.decode("latin-1").lower(): value.decode("latin-1")
+            for key, value in scope.get("headers", [])
+        }
+        host_header = headers.get("host", "")
+        hostname, _port = _split_host(host_header)
+        if _loopback_http_hostname(hostname) or not _allowed_http_hostname(hostname):
+            return await self.inner(scope, receive, send)
+        try:
+            settings = load_access_settings(WOLTS_DIR)
+        except RuntimeError:
+            return await self._reject(scope, receive, send, "Access verification is misconfigured")
+        if settings is None:
+            return await self.inner(scope, receive, send)
+        token = headers.get("cf-access-jwt-assertion", "").strip()
+        if not token:
+            return await self._reject(scope, receive, send, "Access token required")
+        app_name = _extract_app_subdomain(host_header)
+        audience = settings.apps_aud if app_name else settings.lodge_aud
+        try:
+            claims = await access_token_verifier.verify(token, settings, audience)
+        except Exception:
+            return await self._reject(scope, receive, send, "invalid Access token")
+        email = claims.get("email")
+        if not isinstance(email, str) or not email.strip():
+            return await self._reject(scope, receive, send, "Access token has no email")
+        email = email.strip().lower()
+        if not app_name and email != settings.owner_email:
+            return await self._reject(scope, receive, send, "owner identity required")
+        scope.setdefault("state", {})["access_email"] = email
+        await self.inner(scope, receive, send)
+
+
+app.add_middleware(AccessTokenMiddleware)
 
 
 @app.options("/{path:path}")
@@ -1601,6 +1621,28 @@ async def list_harnesses():
     return {"default": get_default_harness(), "harnesses": harness_metadata()}
 
 
+@app.get("/settings/access")
+async def get_access_setting():
+    return {"access": access_settings_dict(load_access_settings(WOLTS_DIR))}
+
+
+@app.post("/settings/access")
+async def set_access_setting(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict) or set(body) != {"access"}:
+        return JSONResponse({"error": "access is required"}, status_code=400)
+    try:
+        settings = save_access_settings(WOLTS_DIR, body["access"])
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return {"ok": True, "access": access_settings_dict(settings)}
+
+
 @app.get("/settings/session-expiry")
 async def get_session_expiry_setting():
     return {"idle_timeout_seconds": get_idle_timeout()}
@@ -1622,28 +1664,6 @@ async def set_session_expiry_setting(request: Request):
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     return {"ok": True, "idle_timeout_seconds": saved}
-
-
-@app.get("/settings/access")
-async def get_access_setting():
-    return {"access": access_settings_dict(load_access_settings(WOLTS_DIR))}
-
-
-@app.post("/settings/access")
-async def set_access_setting(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse({"error": "JSON object body required"}, status_code=400)
-    if not isinstance(body, dict) or set(body) != {"access"}:
-        return JSONResponse({"error": "access is required"}, status_code=400)
-    try:
-        settings = save_access_settings(WOLTS_DIR, body["access"])
-    except ValueError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=400)
-    except RuntimeError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=500)
-    return {"ok": True, "access": access_settings_dict(settings)}
 
 
 @app.get("/onboarding/status")

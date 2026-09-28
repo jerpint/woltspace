@@ -9,6 +9,9 @@ from pathlib import Path
 import httpx
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
+import pytest
+from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -16,6 +19,7 @@ sys.path.insert(0, str(ROOT / "container" / "lib"))
 
 from server import app as server_app
 from server.access import AccessSettings, AccessTokenVerifier
+import server.access as access_module
 
 
 SETTINGS = AccessSettings(
@@ -161,6 +165,75 @@ def test_same_kid_key_rotation_refreshes_and_retries(monkeypatch):
     assert refreshes == [SETTINGS.team_domain]
 
 
+def test_forced_key_refresh_is_rate_limited(monkeypatch):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    verifier = AccessTokenVerifier(forced_refresh_interval=60)
+    verifier._team_domain = SETTINGS.team_domain
+    verifier._keys = {"known": key.public_key()}
+    verifier._expires_at = time.monotonic() + 3600
+    refreshes = []
+
+    async def refresh(team_domain):
+        refreshes.append(team_domain)
+        return verifier._keys
+
+    monkeypatch.setattr(verifier, "_refresh", refresh)
+    bogus = _token(key, SETTINGS.lodge_aud, kid="unknown")
+    for _ in range(2):
+        with pytest.raises(jwt.InvalidTokenError):
+            asyncio.run(verifier.verify(bogus, SETTINGS, SETTINGS.lodge_aud))
+
+    assert refreshes == [SETTINGS.team_domain]
+
+
+@pytest.mark.parametrize("path,host", [
+    ("/tui?session=main", "owner.woltspace.test"),
+    ("/livereload", "owner.woltspace.test"),
+    ("/wolt/n00b/site/livereload", "owner.woltspace.test"),
+    ("/vite-hmr", "notes.woltspace.test"),
+])
+def test_remote_websockets_require_access_token(path, host, monkeypatch):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _configured(monkeypatch, key.public_key())
+
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with TestClient(server_app.app).websocket_connect(
+            path, headers={"host": host, "origin": f"https://{host}"},
+        ):
+            pass
+
+    assert exc.value.code == 1008
+
+
+def test_valid_owner_token_allows_lodge_terminal_websocket(monkeypatch):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _configured(monkeypatch, key.public_key())
+    attached = []
+
+    class Attachment:
+        async def read(self): return b""
+        async def write(self, _data): pass
+        async def close(self): pass
+        def resize(self, _cols, _rows): pass
+
+    async def attach(session, _root):
+        attached.append(session)
+        return Attachment()
+
+    monkeypatch.setattr(server_app, "attach_tmux", attach)
+    with TestClient(server_app.app).websocket_connect(
+        "/tui?session=main",
+        headers={
+            "host": "owner.woltspace.test",
+            "origin": "https://owner.woltspace.test",
+            "cf-access-jwt-assertion": _token(key, SETTINGS.lodge_aud),
+        },
+    ):
+        pass
+
+    assert attached == ["main"]
+
+
 def test_access_settings_route_validates_and_writes_atomically(tmp_path, monkeypatch):
     (tmp_path / "woltspace.json").write_text(json.dumps({"harness": {"default": "codex"}}))
     monkeypatch.setattr(server_app, "WOLTS_DIR", tmp_path)
@@ -188,3 +261,27 @@ def test_access_settings_route_validates_and_writes_atomically(tmp_path, monkeyp
     assert invalid.status_code == 400
     assert not list(tmp_path.glob("*.tmp"))
     assert json.loads((tmp_path / "woltspace.json").read_text())["harness"] == {"default": "codex"}
+
+
+def test_access_settings_cache_invalidates_on_file_mtime(tmp_path, monkeypatch):
+    path = tmp_path / "woltspace.json"
+    path.write_text("{}")
+    access_module._CONFIG_CACHE.clear()
+    original = access_module._read_root
+    reads = []
+
+    def counted(root):
+        reads.append(root)
+        return original(root)
+
+    monkeypatch.setattr(access_module, "_read_root", counted)
+    assert access_module.load_access_settings(tmp_path) is None
+    assert access_module.load_access_settings(tmp_path) is None
+    path.write_text(json.dumps({"access": {
+        "team_domain": SETTINGS.team_domain,
+        "lodge_aud": SETTINGS.lodge_aud,
+        "apps_aud": SETTINGS.apps_aud,
+        "owner_email": SETTINGS.owner_email,
+    }}))
+    assert access_module.load_access_settings(tmp_path) == SETTINGS
+    assert len(reads) == 2
