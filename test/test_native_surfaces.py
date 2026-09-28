@@ -118,7 +118,7 @@ class TestSitePathsResolveFromTheLayout:
                         disconnected.set()
             with TestClient(observed_app, base_url="http://localhost:7777") as client:
                 with client.websocket_connect(
-                    "/wolt/sitewolt/site/livereload"
+                    "ws://localhost:7777/wolt/sitewolt/site/livereload"
                 ) as socket:
                     def edit():
                         time.sleep(1.0)
