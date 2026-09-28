@@ -130,9 +130,9 @@ def _enabled_app_gateway_port() -> int | None:
     if not isinstance(apps_domain, str) or not apps_domain.strip():
         return None
     gateway = root.get("app_gateway")
-    port = gateway.get("port", 4444) if isinstance(gateway, dict) else 4444
+    port = gateway.get("port", 7447) if isinstance(gateway, dict) else 7447
     if not isinstance(port, int) or isinstance(port, bool) or not 1024 <= port <= 65535:
-        return 4444
+        return 7447
     return port
 
 

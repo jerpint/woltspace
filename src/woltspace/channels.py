@@ -508,9 +508,9 @@ class AppGatewayConnector:
                 remedy=f"Set apps_domain in {path}, then restart the lodge.",
             )
         gateway = root.get("app_gateway") if isinstance(root, dict) else None
-        port = gateway.get("port", 4444) if isinstance(gateway, dict) else 4444
+        port = gateway.get("port", 7447) if isinstance(gateway, dict) else 7447
         if not isinstance(port, int) or isinstance(port, bool) or not 1024 <= port <= 65535:
-            port = 4444
+            port = 7447
         if port == layout.port:
             raise ValueError("app gateway port must differ from the lodge port")
         child_env = export_both({

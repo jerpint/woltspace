@@ -258,7 +258,7 @@ def test_gateway_is_absent_without_apps_domain(tmp_path):
     assert read_connector_report(layout)["connectors"] == []
 
 
-def test_gateway_is_supervised_on_loopback_port_4444_with_apps_domain(tmp_path):
+def test_gateway_is_supervised_on_loopback_port_7447_with_apps_domain(tmp_path):
     (tmp_path / "woltspace.json").write_text(json.dumps({
         "apps_domain": "owner.woltspace.app",
     }))
@@ -266,7 +266,7 @@ def test_gateway_is_supervised_on_loopback_port_4444_with_apps_domain(tmp_path):
     plan = AppGatewayConnector().plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"})
     assert plan.enabled
     assert ("--host", "127.0.0.1") == (plan.command[4], plan.command[5])
-    assert ("--port", "4444") == (plan.command[6], plan.command[7])
+    assert ("--port", "7447") == (plan.command[6], plan.command[7])
     assert any(item.name == "app-gateway" for item in plan_connectors(
         layout, {"WOLTSPACE_ENTRYPOINT": "1"},
     ))
@@ -326,7 +326,7 @@ def test_app_start_reserves_gateway_port_only_when_apps_domain_is_enabled(
     target = tmp_path / "apps" / "notes"
     target.mkdir(parents=True)
     (target / "woltspace.json").write_text(json.dumps({
-        "name": "notes", "keeper": "n00b", "port": 4444,
+        "name": "notes", "keeper": "n00b", "port": 7447,
         "start": "echo hello", "stack": "html",
     }))
     state = tmp_path / ".space" / "apps"
@@ -341,18 +341,18 @@ def test_app_start_reserves_gateway_port_only_when_apps_domain_is_enabled(
     )())
 
     (tmp_path / "woltspace.json").write_text(json.dumps({
-        "app_gateway": {"port": 4444},
+        "app_gateway": {"port": 7447},
     }))
-    assert apps.start_app("notes")["port"] == 4444
+    assert apps.start_app("notes")["port"] == 7447
     apps._clear_state("notes")
 
     (tmp_path / "woltspace.json").write_text(json.dumps({
         "apps_domain": "owner.woltspace.app",
-        "app_gateway": {"port": 4444},
+        "app_gateway": {"port": 7447},
     }))
     with pytest.raises(RuntimeError) as exc:
         apps.start_app("notes")
     assert str(exc.value) == (
-        "port 4444 is used by the app gateway; "
+        "port 7447 is used by the app gateway; "
         "change the app's port or the gateway port in Settings"
     )

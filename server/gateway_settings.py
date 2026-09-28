@@ -12,7 +12,7 @@ from pathlib import Path
 @dataclass(frozen=True)
 class GatewaySettings:
     apps_domain: str | None
-    port: int = 4444
+    port: int = 7447
 
 
 _CACHE: dict[Path, tuple[tuple[int, int] | None, GatewaySettings]] = {}
@@ -54,9 +54,9 @@ def load_gateway_settings(
     domain = root.get("apps_domain")
     domain = domain.strip().lower().rstrip(".") if isinstance(domain, str) else None
     gateway = root.get("app_gateway")
-    port = gateway.get("port", 4444) if isinstance(gateway, dict) else 4444
+    port = gateway.get("port", 7447) if isinstance(gateway, dict) else 7447
     if not isinstance(port, int) or isinstance(port, bool) or not 1024 <= port <= 65535:
-        port = 4444
+        port = 7447
     settings = GatewaySettings(domain or None, port)
     _validate_port(settings, lodge_port)
     with _LOCK:

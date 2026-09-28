@@ -54,7 +54,7 @@ Then write `woltspace.json` — **this is required** for the platform to discove
 | `description` | no | What the app does |
 | `stack` | no | `python`, `vite`, `node`, or `html` |
 | `install` | no | Install command |
-| `port` | yes | Fixed port for this app. Permanent — survives restarts. Avoid 7777 and 3001. |
+| `port` | yes | Fixed app port in the 4000-5999 range. Permanent — survives restarts. Do not use platform service ports. |
 | `start` | no | Start command. Use `$PORT` — the platform expands it. Add `--host 0.0.0.0` for network access. Null = can't start from lodge. |
 | `source` | no | Origin URL if cloned |
 | `emoji` | no | Display emoji (auto-assigned) |
@@ -103,7 +103,7 @@ Use the **subdomain pattern** `http://<app-name>.localhost:7777/` to push an app
 
 Each app declares its own port in `woltspace.json` (required). Use the **4000-5999** range for apps. The port is permanent — it never changes between restarts. Pick one that doesn't conflict with other apps. If two apps claim the same port, the second one to start gets an error — just pick a different port.
 
-Wolt sites auto-allocate in the **6000+** range, so no collisions. The platform also sets the `PORT` env var to match your manifest port when starting. Avoid 7777 (platform server) and 3001 (TUI).
+Woltspace platform services use the `7**7` pattern: currently `7777` for the lodge and `7447` for the app gateway. Apps must not use those ports. The platform sets `PORT` to the app manifest's value when it starts the app. Wolt sites do not allocate their own ports; the lodge serves them at `/wolt/<name>/site/`.
 
 ## Sharing (public access)
 

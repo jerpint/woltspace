@@ -349,9 +349,9 @@ def get_app_gateway_port() -> int:
     try:
         gateway = _load_lodge_config().get("app_gateway", {})
     except RuntimeError:
-        return 4444
-    port = gateway.get("port", 4444) if isinstance(gateway, dict) else 4444
-    return port if isinstance(port, int) and not isinstance(port, bool) and 1024 <= port <= 65535 else 4444
+        return 7447
+    port = gateway.get("port", 7447) if isinstance(gateway, dict) else 7447
+    return port if isinstance(port, int) and not isinstance(port, bool) and 1024 <= port <= 65535 else 7447
 
 
 def set_app_gateway_port(value: object) -> int:
