@@ -118,6 +118,31 @@ def get_app(name: str) -> WoltspaceApp | None:
     return load_app(app_dir(name))
 
 
+def _enabled_app_gateway_port() -> int | None:
+    """Return the reserved gateway port only when a dedicated app domain is enabled."""
+    try:
+        root = json.loads((WOLTS_DIR / "woltspace.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(root, dict):
+        return None
+    apps_domain = root.get("apps_domain")
+    if not isinstance(apps_domain, str) or not apps_domain.strip():
+        return None
+    try:
+        lodge_port = int(os.environ.get("WOLTSPACE_PORT") or os.environ.get("PORT") or "7777")
+    except ValueError:
+        lodge_port = 7777
+    default_port = lodge_port - 1110
+    if not 1024 <= default_port <= 65535:
+        raise RuntimeError("derived app gateway port must be from 1024 to 65535")
+    gateway = root.get("app_gateway")
+    port = gateway.get("port", default_port) if isinstance(gateway, dict) else default_port
+    if not isinstance(port, int) or isinstance(port, bool) or not 1024 <= port <= 65535:
+        return default_port
+    return port
+
+
 # --- Running state ---
 
 
@@ -227,6 +252,12 @@ def start_app(name: str) -> dict:
 
     # Use port from manifest — check for conflicts with running apps
     port = app.port
+    gateway_port = _enabled_app_gateway_port()
+    if port == gateway_port:
+        raise RuntimeError(
+            f"port {port} is used by the app gateway; "
+            "change the app's port or the gateway port in Settings"
+        )
     for r in running_apps():
         if r["port"] == port:
             raise RuntimeError(f"Port {port} already in use by running app '{r['name']}'")

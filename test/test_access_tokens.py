@@ -185,6 +185,23 @@ def test_malformed_present_configuration_fails_closed(monkeypatch):
     assert response.json() == {"error": "Access verification is misconfigured"}
 
 
+def test_unreadable_config_names_the_remote_fix_but_localhost_still_works(monkeypatch):
+    def broken(_root):
+        raise RuntimeError("woltspace.json unreadable")
+
+    monkeypatch.setattr(server_app, "load_access_settings", broken)
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
+    remote = asyncio.run(_request())
+    local = asyncio.run(_request(host="localhost:7777"))
+
+    assert remote.status_code == 403
+    assert remote.json() == {"error": (
+        "woltspace.json is unreadable - fix it or remove the access block; "
+        "localhost still works"
+    )}
+    assert local.status_code == 200
+
+
 def test_same_kid_key_rotation_refreshes_and_retries(monkeypatch):
     old_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     new_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)

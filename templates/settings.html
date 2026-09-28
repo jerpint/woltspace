@@ -82,13 +82,13 @@
 
       <div id="app-addresses">
       {% call panel('App addresses', 'Optionally serve every app on a dedicated domain.', 'lodge-wide') %}
-        {% call select_field('apps-domain', 'Apps domain', 'Enter a domain such as jerpint.woltspace.app. Leave it blank to keep the current addresses.') %}
+        {% call select_field('apps-domain', 'Apps domain', 'Enter a domain such as jerpint.woltspace.app. Leave it blank to keep the current addresses. Changes apply on the next lodge start.') %}
           <div class="ds-select-stack" data-apps-domain-row data-saved-value="{{ apps_domain }}">
             <input class="ds-select" id="apps-domain" data-apps-domain-input type="text" value="{{ apps_domain }}" placeholder="name.woltspace.app" inputmode="url" autocomplete="off" spellcheck="false">
             <button class="tool-button" type="button" data-apps-domain-save>Save</button>
           </div>
         {% endcall %}
-        {% call select_field('app-gateway-port', 'Gateway port', 'Loopback-only port for app traffic. Changes apply on the next lodge start.') %}
+        {% call select_field('app-gateway-port', 'Gateway port', 'Loopback-only port for app traffic. By default it follows the lodge port minus 1110 (7777 → 6667). Changes apply on the next lodge start.') %}
           <div class="ds-select-stack" data-gateway-port-row data-saved-value="{{ app_gateway_port }}">
             <input class="ds-select" id="app-gateway-port" data-gateway-port-input type="number" min="1024" max="65535" value="{{ app_gateway_port }}">
             <button class="tool-button" type="button" data-gateway-port-save>Save port</button>

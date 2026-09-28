@@ -346,12 +346,15 @@ def set_apps_domain(value: object) -> str | None:
 
 
 def get_app_gateway_port() -> int:
+    default_port = PORT - 1110
+    if not 1024 <= default_port <= 65535:
+        raise RuntimeError("derived app gateway port must be from 1024 to 65535")
     try:
         gateway = _load_lodge_config().get("app_gateway", {})
     except RuntimeError:
-        return 4444
-    port = gateway.get("port", 4444) if isinstance(gateway, dict) else 4444
-    return port if isinstance(port, int) and not isinstance(port, bool) and 1024 <= port <= 65535 else 4444
+        return default_port
+    port = gateway.get("port", default_port) if isinstance(gateway, dict) else default_port
+    return port if isinstance(port, int) and not isinstance(port, bool) and 1024 <= port <= 65535 else default_port
 
 
 def set_app_gateway_port(value: object) -> int:
@@ -596,8 +599,14 @@ class AccessTokenMiddleware:
             return await self._reject(scope, receive, send, "untrusted request host")
         try:
             settings = load_access_settings(WOLTS_DIR)
-        except RuntimeError:
-            return await self._reject(scope, receive, send, "Access verification is misconfigured")
+        except RuntimeError as exc:
+            message = "Access verification is misconfigured"
+            if "unreadable" in str(exc).lower():
+                message = (
+                    "woltspace.json is unreadable - fix it or remove the access block; "
+                    "localhost still works"
+                )
+            return await self._reject(scope, receive, send, message)
         if settings is None:
             return await self.inner(scope, receive, send)
         token = headers.get("cf-access-jwt-assertion", "").strip()

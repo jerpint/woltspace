@@ -82,7 +82,7 @@ This is **required** — the platform only discovers apps that have `woltspace.j
 | `description` | no | What the app does |
 | `stack` | no | Tech stack: `python`, `vite`, `node`, `html` |
 | `install` | no | Install command (e.g. `npm install`, `uv sync`) |
-| `port` | yes | Fixed port for this app (use 4000-5999 range). Pick one, it's yours permanently. Avoid 7777 (platform) and 3001 (TUI). Sites use 6000+ so no collisions. |
+| `port` | yes | Fixed port for this app in the 4000-5999 range. Pick one, it's yours permanently. Do not use platform service ports. |
 | `start` | no | Start command. Use `$PORT` — the platform expands it. Add `--host 0.0.0.0` for network access. **Null = app can't be started from the lodge.** |
 | `source` | no | Origin URL if cloned/forked |
 | `emoji` | no | Display emoji (auto-assigned if omitted) |
@@ -92,7 +92,7 @@ This is **required** — the platform only discovers apps that have `woltspace.j
 
 ## 5. Configure for serving
 
-Your port is declared in `woltspace.json` and is permanent — it never changes. Check existing apps to avoid conflicts (`ls /workspace/wolts/apps/*/woltspace.json` and look at their ports). Avoid 7777 and 3001.
+Your port is declared in `woltspace.json` and is permanent — it never changes. Check existing apps to avoid conflicts (`ls /workspace/wolts/apps/*/woltspace.json` and look at their ports). The first lodge on a machine uses port `7777`; each additional lodge increments that port by one. Its app gateway follows in step from `6667`, so the last digit matches (`7778` lodge -> `6668` gateway). Apps must stay in the **4000-5999** range and must not use their lodge's gateway port. Wolt sites have no separate port allocation; the lodge serves them at `/wolt/<name>/site/`.
 
 - **Dev servers:** use `$PORT` in your start command — the platform expands it to your manifest port. Add `--host 0.0.0.0` so the server accepts connections from the proxy and tunnels.
 - **No base path needed.** The viewport loads your app directly at its port (e.g. `blog.localhost:7777`). Internal links, WebSockets, and HMR all work naturally.

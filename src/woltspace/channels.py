@@ -500,10 +500,20 @@ class AppGatewayConnector:
             root = json.loads(path.read_text()) if path.exists() else {}
         except (OSError, json.JSONDecodeError):
             root = {}
+        apps_domain = root.get("apps_domain") if isinstance(root, dict) else None
+        if not isinstance(apps_domain, str) or not apps_domain.strip():
+            return ConnectorPlan(
+                self.name, False,
+                "apps domain not configured; app gateway is not started",
+                remedy=f"Set apps_domain in {path}, then restart the lodge.",
+            )
         gateway = root.get("app_gateway") if isinstance(root, dict) else None
-        port = gateway.get("port", 4444) if isinstance(gateway, dict) else 4444
+        default_port = layout.port - 1110
+        if not 1024 <= default_port <= 65535:
+            raise ValueError("derived app gateway port must be from 1024 to 65535")
+        port = gateway.get("port", default_port) if isinstance(gateway, dict) else default_port
         if not isinstance(port, int) or isinstance(port, bool) or not 1024 <= port <= 65535:
-            port = 4444
+            port = default_port
         if port == layout.port:
             raise ValueError("app gateway port must differ from the lodge port")
         child_env = export_both({
@@ -542,7 +552,14 @@ CONNECTORS: tuple[ChannelConnector, ...] = (
 def plan_connectors(
     layout: RuntimeLayout, env: Mapping[str, str] | None = None
 ) -> list[ConnectorPlan]:
-    return [connector.plan(layout, env) for connector in CONNECTORS]
+    plans = [connector.plan(layout, env) for connector in CONNECTORS]
+    return [
+        plan for plan in plans
+        if not (
+            plan.name == "app-gateway"
+            and plan.detail == "apps domain not configured; app gateway is not started"
+        )
+    ]
 
 
 def connector_secrets(plans: list[ConnectorPlan]) -> dict[str, str]:
