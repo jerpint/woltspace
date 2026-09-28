@@ -59,6 +59,7 @@ from .access import (
 )
 from .notify import NoNotificationTarget, send_notification
 from .app_sharing import email_is_shared, read_app_shares, write_app_shares
+from .app_proxy import proxy_app_http, proxy_app_websocket
 from .sparks import get_spark_with_chain, list_sparks
 from .pty_bridge import (
     PtyBridgeError,
@@ -344,6 +345,28 @@ def set_apps_domain(value: object) -> str | None:
     return domain
 
 
+def get_app_gateway_port() -> int:
+    try:
+        gateway = _load_lodge_config().get("app_gateway", {})
+    except RuntimeError:
+        return 4444
+    port = gateway.get("port", 4444) if isinstance(gateway, dict) else 4444
+    return port if isinstance(port, int) and not isinstance(port, bool) and 1024 <= port <= 65535 else 4444
+
+
+def set_app_gateway_port(value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or not 1024 <= value <= 65535:
+        raise ValueError("port must be an integer from 1024 to 65535")
+    if value == PORT:
+        raise ValueError("app gateway port must differ from the lodge port")
+    cfg = _load_lodge_config()
+    cfg["app_gateway"] = {"port": value}
+    path = _lodge_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wolfcore.atomic_write(path, json.dumps(cfg, indent=2) + "\n")
+    return value
+
+
 def _split_host(host_header: str) -> tuple[str, int | None]:
     """Return a normalized hostname and optional port from an HTTP Host value."""
     try:
@@ -374,10 +397,6 @@ def _allowed_http_hostname(hostname: str) -> bool:
         current_tunnel_hostname = ""
     if current_tunnel_hostname and hostname == current_tunnel_hostname:
         return True
-    apps_domain = get_apps_domain()
-    if apps_domain and hostname.endswith(f".{apps_domain}"):
-        app_name = hostname.removesuffix(f".{apps_domain}")
-        return bool(_APP_HOST_RE.fullmatch(app_name))
     tunnel_domain = tunnel_mgr.get_tunnel_domain().lower().rstrip(".")
     if tunnel_domain and hostname.endswith(f".{tunnel_domain}"):
         app_name = hostname.removesuffix(f".{tunnel_domain}")
@@ -426,11 +445,6 @@ def _extract_app_subdomain(host_header: str) -> str | None:
     host, _port = _split_host(host_header)
     if host.endswith(".localhost") and host != "localhost":
         return host.removesuffix(".localhost")
-    apps_domain = get_apps_domain()
-    th = tunnel_mgr.get_tunnel_hostname().lower().rstrip(".")
-    if apps_domain and host.endswith(f".{apps_domain}") and host != th:
-        app_name = host.removesuffix(f".{apps_domain}")
-        return app_name if _APP_HOST_RE.fullmatch(app_name) else None
     td = tunnel_mgr.get_tunnel_domain()
     th = tunnel_mgr.get_tunnel_hostname()
     if td and host.endswith(f".{td}") and host != th:
@@ -474,62 +488,7 @@ async def subdomain_proxy(request: Request, call_next):
     if app_name:
         if not _app_identity_allowed(app_name, getattr(request.state, "access_email", "")):
             return HTMLResponse(_app_access_denied(), status_code=403)
-        try:
-            from apps import running_apps
-            running = {r["name"]: r for r in running_apps()}
-            run_state = running.get(app_name)
-            if not run_state:
-                return HTMLResponse(
-                    f"<h1>App '{app_name}' is not running</h1>",
-                    status_code=503,
-                )
-            port = run_state["port"]
-            # Build the upstream URL preserving path and query string
-            path = request.url.path
-            qs = f"?{request.url.query}" if request.url.query else ""
-            upstream = f"http://localhost:{port}{path}{qs}"
-            # Use a streaming proxy so SSE/chunked responses (like Vite HMR)
-            # flow through without buffering the entire response first.
-            client = httpx.AsyncClient()
-            headers = dict(request.headers)
-            headers["host"] = f"localhost:{port}"
-            body = await request.body()
-            req = client.build_request(
-                method=request.method,
-                url=upstream,
-                headers=headers,
-                content=body,
-            )
-            resp = await client.send(req, stream=True, follow_redirects=False)
-            # Preserve content-length so 206 Partial Content (video Range requests)
-            # validate correctly in browsers. transfer-encoding/content-encoding
-            # are hop-by-hop and re-added by StreamingResponse.
-            excluded = {"transfer-encoding", "content-encoding"}
-            resp_headers = {
-                k: v for k, v in resp.headers.items()
-                if k.lower() not in excluded
-            }
-
-            async def stream_body():
-                try:
-                    async for chunk in resp.aiter_bytes():
-                        yield chunk
-                finally:
-                    await resp.aclose()
-                    await client.aclose()
-
-            return StreamingResponse(
-                content=stream_body(),
-                status_code=resp.status_code,
-                headers=resp_headers,
-            )
-        except httpx.ConnectError:
-            return HTMLResponse(
-                f"<h1>Cannot reach app '{app_name}' on port {port}</h1>",
-                status_code=502,
-            )
-        except Exception as e:
-            return HTMLResponse(f"<h1>Proxy error: {e}</h1>", status_code=502)
+        return await proxy_app_http(request, app_name, unknown_is_stopped=True)
     return await call_next(request)
 
 
@@ -1833,6 +1792,26 @@ async def set_apps_domain_setting(request: Request):
     return {"ok": True, "apps_domain": domain}
 
 
+@app.get("/settings/app-gateway")
+async def get_app_gateway_setting():
+    return {"port": get_app_gateway_port(), "applies": "next lodge start"}
+
+
+@app.post("/settings/app-gateway")
+async def set_app_gateway_setting(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict) or set(body) != {"port"}:
+        return JSONResponse({"error": "port is required"}, status_code=400)
+    try:
+        port = set_app_gateway_port(body["port"])
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return {"ok": True, "port": port, "applies": "next lodge start"}
+
+
 @app.get("/onboarding/status")
 async def get_onboarding_status():
     """First-run UI state, independent of every harness's authentication."""
@@ -2773,9 +2752,6 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
     blog.localhost:7777/any/path → ws://localhost:{port}/any/path
     corework.woltspace.com/any/path → ws://localhost:{port}/any/path
     """
-    import asyncio
-    import websockets
-
     if not _websocket_request_allowed(ws):
         await ws.close(code=1008)
         return
@@ -2788,48 +2764,7 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
     if not _app_identity_allowed(app_name, getattr(ws.state, "access_email", "")):
         await ws.close(code=1008)
         return
-    from apps import running_apps
-    running = {r["name"]: r for r in running_apps()}
-    run_state = running.get(app_name)
-    if not run_state:
-        await ws.close(code=1008)
-        return
-
-    port = run_state["port"]
-    # Preserve subprotocols (Vite uses "vite-ping" for keep-alive checks)
-    subprotocols = ws.headers.get("sec-websocket-protocol", "").split(", ")
-    subprotocols = [s for s in subprotocols if s]
-    qs = f"?{ws.query_params}" if ws.query_params else ""
-    upstream_url = f"ws://localhost:{port}/{path}{qs}"
-
-    await ws.accept(subprotocol=subprotocols[0] if subprotocols else None)
-    try:
-        async with websockets.connect(
-            upstream_url,
-            subprotocols=subprotocols or None,
-            additional_headers={"host": f"localhost:{port}"},
-        ) as upstream:
-            async def client_to_upstream():
-                try:
-                    while True:
-                        data = await ws.receive_text()
-                        await upstream.send(data)
-                except WebSocketDisconnect:
-                    pass
-
-            async def upstream_to_client():
-                try:
-                    async for msg in upstream:
-                        await ws.send_text(msg)
-                except Exception:
-                    pass
-
-            await asyncio.gather(client_to_upstream(), upstream_to_client())
-    except Exception:
-        try:
-            await ws.close()
-        except Exception:
-            pass
+    await proxy_app_websocket(ws, app_name, path)
 
 
 # --- Pages (HTML) ---
@@ -2875,6 +2810,7 @@ async def settings_page(request: Request):
         "idle_timeout": get_idle_timeout(),
         "access": access_settings_dict(access_settings) or {},
         "apps_domain": get_apps_domain() or "",
+        "app_gateway_port": get_app_gateway_port(),
     })
 
 

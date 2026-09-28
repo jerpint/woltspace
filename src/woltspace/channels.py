@@ -15,6 +15,7 @@ This is a seam, not a plugin framework: adding another means adding a class to
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -478,8 +479,63 @@ class WolfConnector:
         )
 
 
+@dataclass(frozen=True)
+class AppGatewayConnector:
+    """The app-only loopback gateway, supervised like every other child."""
+
+    name: str = "app-gateway"
+
+    def plan(
+        self, layout: RuntimeLayout, env: Mapping[str, str] | None = None,
+    ) -> ConnectorPlan:
+        values = dict(os.environ if env is None else env)
+        if not _truthy(values.get("WOLTSPACE_ENTRYPOINT", "")):
+            return ConnectorPlan(
+                self.name, False,
+                "not the platform entrypoint; a guest never owns the app gateway",
+                remedy="Run the control plane through `woltspace start`.",
+            )
+        path = layout.wolts_dir / "woltspace.json"
+        try:
+            root = json.loads(path.read_text()) if path.exists() else {}
+        except (OSError, json.JSONDecodeError):
+            root = {}
+        gateway = root.get("app_gateway") if isinstance(root, dict) else None
+        port = gateway.get("port", 4444) if isinstance(gateway, dict) else 4444
+        if not isinstance(port, int) or isinstance(port, bool) or not 1024 <= port <= 65535:
+            port = 4444
+        if port == layout.port:
+            raise ValueError("app gateway port must differ from the lodge port")
+        child_env = export_both({
+            "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
+            "WOLTSPACE_DIR": str(layout.install_root),
+            "WOLTSPACE_ISOLATION": layout.isolation,
+            "WOLTSPACE_APP_GATEWAY_PORT": str(port),
+            "PYTHONPATH": os.pathsep.join(
+                part for part in (
+                    str(layout.install_root), str(layout.runtime_lib),
+                    values.get("PYTHONPATH", ""),
+                ) if part
+            ),
+        })
+        return ConnectorPlan(
+            name=self.name,
+            enabled=True,
+            detail=f"app gateway on http://127.0.0.1:{port}",
+            command=(
+                sys.executable, "-m", "uvicorn", "server.gateway:app",
+                "--host", "127.0.0.1", "--port", str(port),
+                "--log-level", "warning",
+            ),
+            cwd=str(layout.install_root),
+            env=child_env,
+            remedy=f"Choose a free app_gateway.port in {path}.",
+            process_signature=("server.gateway:app",),
+        )
+
+
 CONNECTORS: tuple[ChannelConnector, ...] = (
-    TelegramConnector(), SlackConnector(), WolfConnector(),
+    TelegramConnector(), SlackConnector(), WolfConnector(), AppGatewayConnector(),
 )
 
 

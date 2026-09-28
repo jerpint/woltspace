@@ -33,7 +33,9 @@ def _layout(tmp_path, install_root=None, port=7799):
 
 
 def test_the_wolf_joins_the_pack_last():
-    assert CONNECTORS[-1].name == "wolf"
+    assert [connector.name for connector in CONNECTORS] == [
+        "telegram", "slack", "wolf", "app-gateway",
+    ]
 
 
 class TestPlan:
@@ -100,7 +102,9 @@ class TestPlan:
 
     def test_plan_connectors_carries_the_wolf(self, tmp_path):
         plans = plan_connectors(_layout(tmp_path), ENTRY)
-        assert [plan.name for plan in plans] == ["telegram", "slack", "wolf"]
+        assert [plan.name for plan in plans] == [
+            "telegram", "slack", "wolf", "app-gateway",
+        ]
 
 
 class TestSupervision:

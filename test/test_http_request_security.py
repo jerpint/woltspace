@@ -146,7 +146,7 @@ def test_invalid_tunnel_sibling_is_not_treated_as_an_app(monkeypatch):
     assert response.status_code == 403
 
 
-def test_configured_apps_domain_is_explicit_and_never_reaches_lodge_routes(monkeypatch):
+def test_configured_apps_domain_is_refused_by_the_lodge(monkeypatch):
     monkeypatch.setattr(server_app, "get_apps_domain", lambda: "owner.woltspace.app")
     monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
     monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
@@ -164,10 +164,21 @@ def test_configured_apps_domain_is_explicit_and_never_reaches_lodge_routes(monke
         headers={"host": "two.labels.owner.woltspace.app"},
     )
 
-    assert app_route.status_code == 503
-    assert "not running" in app_route.text
+    assert app_route.status_code == 403
+    assert app_route.json() == {"error": "untrusted request host"}
     assert bare_domain.status_code == 403
     assert nested.status_code == 403
+
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with _client().websocket_connect(
+            "/tui?session=main",
+            headers={
+                "host": "notes.owner.woltspace.app",
+                "origin": "https://notes.owner.woltspace.app",
+            },
+        ):
+            pass
+    assert exc.value.code == 1008
 
 
 def test_apps_domain_does_not_change_existing_tunnel_host_routing(monkeypatch):
