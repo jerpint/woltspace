@@ -146,6 +146,48 @@ def test_invalid_tunnel_sibling_is_not_treated_as_an_app(monkeypatch):
     assert response.status_code == 403
 
 
+def test_configured_apps_domain_is_explicit_and_never_reaches_lodge_routes(monkeypatch):
+    monkeypatch.setattr(server_app, "get_apps_domain", lambda: "owner.woltspace.app")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
+
+    app_route = _client().get(
+        "/sessions",
+        headers={"host": "notes.owner.woltspace.app"},
+    )
+    bare_domain = _client().get(
+        "/sessions",
+        headers={"host": "owner.woltspace.app"},
+    )
+    nested = _client().get(
+        "/sessions",
+        headers={"host": "two.labels.owner.woltspace.app"},
+    )
+
+    assert app_route.status_code == 503
+    assert "not running" in app_route.text
+    assert bare_domain.status_code == 403
+    assert nested.status_code == 403
+
+
+def test_apps_domain_does_not_change_existing_tunnel_host_routing(monkeypatch):
+    monkeypatch.setattr(server_app, "get_apps_domain", lambda: "owner.woltspace.app")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
+
+    assert _client().get("/sessions", headers={"host": "owner.woltspace.test"}).status_code == 200
+    assert _client().get("/", headers={"host": "notes.woltspace.test"}).status_code == 503
+
+
+def test_lodge_host_is_never_extracted_as_an_app_when_domains_overlap(monkeypatch):
+    monkeypatch.setattr(server_app, "get_apps_domain", lambda: "woltspace.test")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
+
+    assert server_app._extract_app_subdomain("owner.woltspace.test") is None
+    assert _client().get("/sessions", headers={"host": "owner.woltspace.test"}).status_code == 200
+
+
 @pytest.mark.parametrize(
     ("host", "origin"),
     [
