@@ -83,4 +83,25 @@ if (root) {
       select.disabled = false;
     }
   });
+
+  document.querySelector('[data-apps-domain-save]')?.addEventListener('click', async event => {
+    const button = event.currentTarget;
+    const row = button.closest('[data-apps-domain-row]');
+    const input = row.querySelector('[data-apps-domain-input]');
+    button.disabled = input.disabled = true;
+    setGlobalState('saving', 'Saving app addresses…');
+    try {
+      const data = await save('/settings/apps-domain', { apps_domain: input.value.trim() || null });
+      input.value = data.apps_domain || '';
+      row.dataset.savedValue = input.value;
+      setGlobalState('saved', 'App addresses saved');
+      showToast(data.apps_domain ? `Apps will use *.${data.apps_domain}.` : 'Apps will keep their current addresses.');
+    } catch (error) {
+      input.value = row.dataset.savedValue;
+      setGlobalState('error', 'Could not save');
+      showToast(error.message, 'error');
+    } finally {
+      button.disabled = input.disabled = false;
+    }
+  });
 }
