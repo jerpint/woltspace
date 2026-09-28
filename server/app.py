@@ -66,7 +66,7 @@ from sessions import (
     deliver_message, resolve_active_session, format_attributed_message,
     format_spawned_prompt,
     wolt_harness, ResumeUnavailable, ResumeFailed,
-    stored_resume_id, recover_resume_id, taken_resume_ids,
+    stored_resume_id, recover_resume_id, taken_resume_ids, claim_resume_id,
 )
 from session_expiry import get_idle_timeout, get_pane_activity, set_idle_timeout
 from session_runtime import RuntimeHandle, get_runtime
@@ -879,11 +879,9 @@ def _rest_session_locked(safe: str, expected_digest: str):
         if data.get("status") != "running":
             return {"ok": True, "status": data.get("status"), "session": safe}
         # Resting must be reversible: stamp a recoverable id, or refuse.
-        if not stored_resume_id(data):
-            recovered = recover_resume_id(data, taken_resume_ids(registry.list(), exclude=safe))
-            if not recovered:
-                return JSONResponse({"error": "session has no conversation to resume; not resting it"}, status_code=409)
-            data["harness_session_id"] = recovered
+        # (we already hold this session's lock, so persist with the raw write)
+        if not claim_resume_id(registry, data, lambda d: registry._write(wolt, safe, d)):
+            return JSONResponse({"error": "session has no conversation to resume; not resting it"}, status_code=409)
         try:
             pane = get_runtime().capture(RuntimeHandle.from_record(data), start=None)
         except Exception:
