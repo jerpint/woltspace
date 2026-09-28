@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -467,6 +468,16 @@ def _loopback_http_hostname(hostname: str) -> bool:
     return hostname in {"localhost", "127.0.0.1", "::1"} or hostname.endswith(".localhost")
 
 
+def _loopback_asgi_client(scope: dict) -> bool:
+    client = scope.get("client")
+    if not client or not client[0]:
+        return False
+    try:
+        return ipaddress.ip_address(client[0]).is_loopback
+    except ValueError:
+        return False
+
+
 class AccessTokenMiddleware:
     """Verify remote HTTP and websocket scopes before either can be routed."""
 
@@ -488,8 +499,10 @@ class AccessTokenMiddleware:
         }
         host_header = headers.get("host", "")
         hostname, _port = _split_host(host_header)
-        if _loopback_http_hostname(hostname) or not _allowed_http_hostname(hostname):
+        if _loopback_http_hostname(hostname) and _loopback_asgi_client(scope):
             return await self.inner(scope, receive, send)
+        if not _allowed_http_hostname(hostname):
+            return await self._reject(scope, receive, send, "untrusted request host")
         try:
             settings = load_access_settings(WOLTS_DIR)
         except RuntimeError:
