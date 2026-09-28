@@ -168,7 +168,7 @@ function renderFirstRunHarnessChoice() {
     button.type = 'button';
     button.className = 'home-harness-option';
     const name = `${h.emoji || ''} ${h.label || h.id}`.trim();
-    button.innerHTML = `<span>${name}</span>`;
+    button.appendChild(lodgeElement('span', '', name));
     button.onclick = () => chooseHomeHarness(h.id, button);
     options.appendChild(button);
   });
