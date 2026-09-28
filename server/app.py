@@ -50,6 +50,12 @@ from .config import (
     load_dotenv,
 )
 from . import tunnel as tunnel_mgr
+from .access import (
+    access_settings_dict,
+    access_token_verifier,
+    load_access_settings,
+    save_access_settings,
+)
 from .notify import NoNotificationTarget, send_notification
 from .sparks import get_spark_with_chain, list_sparks
 from .pty_bridge import (
@@ -454,6 +460,41 @@ async def request_origin_guard(request: Request, call_next):
         if origin and not _same_http_authority(origin, host_header):
             return JSONResponse({"error": "cross-origin request rejected"}, status_code=403)
 
+    return await call_next(request)
+
+
+def _loopback_http_hostname(hostname: str) -> bool:
+    return hostname in {"localhost", "127.0.0.1", "::1"} or hostname.endswith(".localhost")
+
+
+@app.middleware("http")
+async def access_token_guard(request: Request, call_next):
+    """Verify Cloudflare Access identity before remote lodge or app traffic."""
+    hostname, _port = _split_host(request.headers.get("host") or "")
+    if _loopback_http_hostname(hostname) or not _allowed_http_hostname(hostname):
+        return await call_next(request)
+    try:
+        settings = load_access_settings(WOLTS_DIR)
+    except RuntimeError:
+        return JSONResponse({"error": "Access verification is misconfigured"}, status_code=403)
+    if settings is None:
+        return await call_next(request)
+    token = request.headers.get("cf-access-jwt-assertion", "").strip()
+    if not token:
+        return JSONResponse({"error": "Access token required"}, status_code=403)
+    app_name = _extract_app_subdomain(request.headers.get("host") or "")
+    audience = settings.apps_aud if app_name else settings.lodge_aud
+    try:
+        claims = await access_token_verifier.verify(token, settings, audience)
+    except Exception:
+        return JSONResponse({"error": "invalid Access token"}, status_code=403)
+    email = claims.get("email")
+    if not isinstance(email, str) or not email.strip():
+        return JSONResponse({"error": "Access token has no email"}, status_code=403)
+    email = email.strip().lower()
+    if not app_name and email != settings.owner_email:
+        return JSONResponse({"error": "owner identity required"}, status_code=403)
+    request.state.access_email = email
     return await call_next(request)
 
 
@@ -1583,6 +1624,28 @@ async def set_session_expiry_setting(request: Request):
     return {"ok": True, "idle_timeout_seconds": saved}
 
 
+@app.get("/settings/access")
+async def get_access_setting():
+    return {"access": access_settings_dict(load_access_settings(WOLTS_DIR))}
+
+
+@app.post("/settings/access")
+async def set_access_setting(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict) or set(body) != {"access"}:
+        return JSONResponse({"error": "access is required"}, status_code=400)
+    try:
+        settings = save_access_settings(WOLTS_DIR, body["access"])
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return {"ok": True, "access": access_settings_dict(settings)}
+
+
 @app.get("/onboarding/status")
 async def get_onboarding_status():
     """First-run UI state, independent of every harness's authentication."""
@@ -2565,6 +2628,7 @@ async def terminal_page(request: Request):
 async def settings_page(request: Request):
     """Shared configuration surface for the lodge and desktop shell."""
     harnesses = harness_metadata()
+    access_settings = load_access_settings(WOLTS_DIR)
     return templates.TemplateResponse(request, "settings.html", context={
         "active_nav": "settings",
         "cache_bust": int(time.time()),
@@ -2572,6 +2636,7 @@ async def settings_page(request: Request):
         "harnesses": harnesses,
         "harness_labels": {harness["id"]: harness["label"] for harness in harnesses},
         "idle_timeout": get_idle_timeout(),
+        "access": access_settings_dict(access_settings) or {},
     })
 
 

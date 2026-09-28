@@ -83,4 +83,33 @@ if (root) {
       select.disabled = false;
     }
   });
+
+  async function saveAccess(value) {
+    const form = document.querySelector('[data-access-form]');
+    const controls = [...form.querySelectorAll('input, button')];
+    controls.forEach(control => { control.disabled = true; });
+    setGlobalState('saving', 'Saving Access verification…');
+    try {
+      const data = await save('/settings/access', { access: value });
+      const saved = data.access || {};
+      form.dataset.savedValue = JSON.stringify(saved);
+      form.querySelectorAll('[data-access-field]').forEach(input => { input.value = saved[input.dataset.accessField] || ''; });
+      setGlobalState('saved', 'Access verification saved');
+      showToast(data.access ? 'Remote requests will be verified.' : 'Access verification is disabled.');
+    } catch (error) {
+      const previous = JSON.parse(form.dataset.savedValue || '{}');
+      form.querySelectorAll('[data-access-field]').forEach(input => { input.value = previous[input.dataset.accessField] || ''; });
+      setGlobalState('error', 'Could not save');
+      showToast(error.message, 'error');
+    } finally {
+      controls.forEach(control => { control.disabled = false; });
+    }
+  }
+
+  document.querySelector('[data-access-save]')?.addEventListener('click', () => {
+    const values = {};
+    document.querySelectorAll('[data-access-field]').forEach(input => { values[input.dataset.accessField] = input.value.trim(); });
+    saveAccess(values);
+  });
+  document.querySelector('[data-access-clear]')?.addEventListener('click', () => saveAccess(null));
 }
