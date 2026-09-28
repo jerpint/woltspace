@@ -157,13 +157,21 @@ def test_unrecognized_host_fails_closed_for_http_and_websocket(monkeypatch):
     assert response.status_code == 403
     assert response.json() == {"error": "untrusted request host"}
 
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with TestClient(server_app.app).websocket_connect(
-            "/tui?session=main",
-            headers={"host": "attacker.example", "origin": "https://attacker.example"},
-        ):
-            pass
-    assert exc.value.code == 1008
+    for path in (
+        "/tui?session=main",
+        "/livereload",
+        "/wolt/n00b/site/livereload",
+    ):
+        with pytest.raises(WebSocketDisconnect) as exc:
+            with TestClient(server_app.app).websocket_connect(
+                path,
+                headers={
+                    "host": "attacker.example",
+                    "origin": "https://attacker.example",
+                },
+            ):
+                pass
+        assert exc.value.code == 1008
 
 
 def test_malformed_present_configuration_fails_closed(monkeypatch):
