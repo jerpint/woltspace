@@ -204,9 +204,10 @@ function woltSessionSummary(w) {
   const sessions = allSessions.filter(s => s.wolt === (w.dir || name))
     .sort((a, b) => (b.last_activity || b.created_at || 0) - (a.last_activity || a.created_at || 0));
   const open = sessions.filter(s => s.status === 'running' && s.alive !== false);
-  const working = open.some(sessionIsWorking);
+  const workingCount = open.filter(sessionIsWorking).length;
+  const working = workingCount > 0;
   const last = sessions.length ? (sessions[0].last_activity || sessions[0].created_at || 0) : 0;
-  return { w, name, sessions, open, working, last };
+  return { w, name, sessions, open, working, workingCount, last };
 }
 
 function compactAge(seconds) {
@@ -248,8 +249,9 @@ function renderSidebarWolts() {
     if (open.length) {
       const badge = document.createElement('span');
       badge.className = `wolt-session-badge${working ? ' working' : ''}`;
-      badge.textContent = open.length;
-      badge.title = `${open.length} open`;
+      // green counts only the sessions working right now; grey counts open ones
+      badge.textContent = working ? x.workingCount : open.length;
+      badge.title = working ? `${x.workingCount} working · ${open.length} open` : `${open.length} open`;
       avatar.appendChild(badge);
     } else {
       const dot = document.createElement('div'); dot.className = 'wolt-status-dot'; avatar.appendChild(dot);
