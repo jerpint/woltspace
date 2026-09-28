@@ -596,8 +596,14 @@ class AccessTokenMiddleware:
             return await self._reject(scope, receive, send, "untrusted request host")
         try:
             settings = load_access_settings(WOLTS_DIR)
-        except RuntimeError:
-            return await self._reject(scope, receive, send, "Access verification is misconfigured")
+        except RuntimeError as exc:
+            message = "Access verification is misconfigured"
+            if "unreadable" in str(exc).lower():
+                message = (
+                    "woltspace.json is unreadable - fix it or remove the access block; "
+                    "localhost still works"
+                )
+            return await self._reject(scope, receive, send, message)
         if settings is None:
             return await self.inner(scope, receive, send)
         token = headers.get("cf-access-jwt-assertion", "").strip()

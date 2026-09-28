@@ -111,6 +111,7 @@ def test_apps_domain_is_rendered_in_settings(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert 'value="owner.woltspace.app"' in response.text
     assert "Optionally serve every app on a dedicated domain." in response.text
+    assert "Changes apply on the next lodge start." in response.text
 
 
 def test_apps_domain_rejects_lodge_hostname_parent_and_loopback(tmp_path, monkeypatch):

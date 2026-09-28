@@ -21,9 +21,11 @@ sys.path.insert(0, str(ROOT / "container" / "lib"))
 
 import server.gateway as gateway
 import server.app_proxy as app_proxy
+import apps
 from server.access import AccessTokenVerifier, load_access_settings
 from server.gateway_settings import load_gateway_settings
 from server import app as lodge
+from woltspace.channel_supervisor import ChannelSupervisor, read_connector_report
 from woltspace.channels import AppGatewayConnector, plan_connectors
 from woltspace.layout import RuntimeLayout
 
@@ -241,7 +243,25 @@ def test_proxy_rewrites_domain_cookies_to_host_only_and_preserves_multiples(monk
     ]
 
 
-def test_gateway_connector_is_always_supervised_on_loopback_port_4444(tmp_path):
+def test_gateway_is_absent_without_apps_domain(tmp_path):
+    layout = RuntimeLayout(tmp_path, ROOT)
+    direct = AppGatewayConnector().plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"})
+    plans = plan_connectors(layout, {"WOLTSPACE_ENTRYPOINT": "1"})
+
+    assert not direct.enabled
+    assert "not started" in direct.detail
+    assert all(plan.name != "app-gateway" for plan in plans)
+    supervisor = ChannelSupervisor(
+        layout, [plan for plan in plans if plan.name == "app-gateway"],
+    )
+    supervisor.start(watch=False)
+    assert read_connector_report(layout)["connectors"] == []
+
+
+def test_gateway_is_supervised_on_loopback_port_4444_with_apps_domain(tmp_path):
+    (tmp_path / "woltspace.json").write_text(json.dumps({
+        "apps_domain": "owner.woltspace.app",
+    }))
     layout = RuntimeLayout(tmp_path, ROOT)
     plan = AppGatewayConnector().plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"})
     assert plan.enabled
@@ -253,7 +273,10 @@ def test_gateway_connector_is_always_supervised_on_loopback_port_4444(tmp_path):
 
 
 def test_gateway_port_is_configurable(tmp_path):
-    (tmp_path / "woltspace.json").write_text(json.dumps({"app_gateway": {"port": 4555}}))
+    (tmp_path / "woltspace.json").write_text(json.dumps({
+        "apps_domain": "owner.woltspace.app",
+        "app_gateway": {"port": 4555},
+    }))
     settings = load_gateway_settings(tmp_path)
     plan = AppGatewayConnector().plan(
         RuntimeLayout(tmp_path, ROOT), {"WOLTSPACE_ENTRYPOINT": "1"},
@@ -264,6 +287,7 @@ def test_gateway_port_is_configurable(tmp_path):
 
 def test_gateway_port_collision_fails_at_settings_load_and_connector_plan(tmp_path):
     (tmp_path / "woltspace.json").write_text(json.dumps({
+        "apps_domain": "owner.woltspace.app",
         "app_gateway": {"port": 7777},
     }))
     error = "app gateway port must differ from the lodge port"
@@ -294,3 +318,41 @@ def test_gateway_port_changes_only_through_validated_lodge_route(tmp_path, monke
     assert json.loads((tmp_path / "woltspace.json").read_text()) == {
         "app_gateway": {"port": 4555},
     }
+
+
+def test_app_start_reserves_gateway_port_only_when_apps_domain_is_enabled(
+    tmp_path, monkeypatch,
+):
+    target = tmp_path / "apps" / "notes"
+    target.mkdir(parents=True)
+    (target / "woltspace.json").write_text(json.dumps({
+        "name": "notes", "keeper": "n00b", "port": 4444,
+        "start": "echo hello", "stack": "html",
+    }))
+    state = tmp_path / ".space" / "apps"
+    for attr, value in (
+        ("WOLTS_DIR", tmp_path), ("APPS_DIR", tmp_path / "apps"),
+        ("LEGACY_PROJECTS_DIR", tmp_path / "projects"),
+        ("_RUNNING_STATE_DIR", state),
+    ):
+        monkeypatch.setattr(apps, attr, value)
+    monkeypatch.setattr(apps.subprocess, "Popen", lambda *_args, **_kwargs: type(
+        "Process", (), {"pid": 12345},
+    )())
+
+    (tmp_path / "woltspace.json").write_text(json.dumps({
+        "app_gateway": {"port": 4444},
+    }))
+    assert apps.start_app("notes")["port"] == 4444
+    apps._clear_state("notes")
+
+    (tmp_path / "woltspace.json").write_text(json.dumps({
+        "apps_domain": "owner.woltspace.app",
+        "app_gateway": {"port": 4444},
+    }))
+    with pytest.raises(RuntimeError) as exc:
+        apps.start_app("notes")
+    assert str(exc.value) == (
+        "port 4444 is used by the app gateway; "
+        "change the app's port or the gateway port in Settings"
+    )

@@ -82,7 +82,7 @@
 
       <div id="app-addresses">
       {% call panel('App addresses', 'Optionally serve every app on a dedicated domain.', 'lodge-wide') %}
-        {% call select_field('apps-domain', 'Apps domain', 'Enter a domain such as jerpint.woltspace.app. Leave it blank to keep the current addresses.') %}
+        {% call select_field('apps-domain', 'Apps domain', 'Enter a domain such as jerpint.woltspace.app. Leave it blank to keep the current addresses. Changes apply on the next lodge start.') %}
           <div class="ds-select-stack" data-apps-domain-row data-saved-value="{{ apps_domain }}">
             <input class="ds-select" id="apps-domain" data-apps-domain-input type="text" value="{{ apps_domain }}" placeholder="name.woltspace.app" inputmode="url" autocomplete="off" spellcheck="false">
             <button class="tool-button" type="button" data-apps-domain-save>Save</button>

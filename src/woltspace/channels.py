@@ -500,6 +500,13 @@ class AppGatewayConnector:
             root = json.loads(path.read_text()) if path.exists() else {}
         except (OSError, json.JSONDecodeError):
             root = {}
+        apps_domain = root.get("apps_domain") if isinstance(root, dict) else None
+        if not isinstance(apps_domain, str) or not apps_domain.strip():
+            return ConnectorPlan(
+                self.name, False,
+                "apps domain not configured; app gateway is not started",
+                remedy=f"Set apps_domain in {path}, then restart the lodge.",
+            )
         gateway = root.get("app_gateway") if isinstance(root, dict) else None
         port = gateway.get("port", 4444) if isinstance(gateway, dict) else 4444
         if not isinstance(port, int) or isinstance(port, bool) or not 1024 <= port <= 65535:
@@ -542,7 +549,14 @@ CONNECTORS: tuple[ChannelConnector, ...] = (
 def plan_connectors(
     layout: RuntimeLayout, env: Mapping[str, str] | None = None
 ) -> list[ConnectorPlan]:
-    return [connector.plan(layout, env) for connector in CONNECTORS]
+    plans = [connector.plan(layout, env) for connector in CONNECTORS]
+    return [
+        plan for plan in plans
+        if not (
+            plan.name == "app-gateway"
+            and plan.detail == "apps domain not configured; app gateway is not started"
+        )
+    ]
 
 
 def connector_secrets(plans: list[ConnectorPlan]) -> dict[str, str]:
