@@ -198,9 +198,18 @@ body {
 }
 .wolt-card:hover { background: rgba(255,255,255,0.06); }
 .wolt-card.active { background: rgba(255,255,255,0.08); }
-.wolt-session-badge { margin-left:auto; min-width:20px; height:20px; padding:0 6px; border-radius:999px; background:rgba(255,255,255,.14); color:#fff; font:600 11px var(--font-mono); display:grid; place-items:center; }
-.wolt-session-badge.working { background:var(--green); }
-.wolt-quick-session { margin-left:6px; width:24px; height:24px; flex:none; border-radius:7px; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.06); color:#fff; cursor:pointer; opacity:0; }
+/* open-session count sits on the avatar corner (where the status dot is when resting) */
+.wolt-session-badge { position:absolute; bottom:-5px; right:-6px; min-width:18px; height:18px; padding:0 4px; box-sizing:border-box; border-radius:999px; border:2px solid var(--ink); background:#5b5147; color:#fff; font:700 10px/14px var(--font-mono); text-align:center; }
+.wolt-session-badge.working { background:var(--green); animation:wolt-badge-pulse 1.6s ease-in-out infinite; }
+@keyframes wolt-badge-pulse { 50% { box-shadow:0 0 0 4px rgba(90,170,110,.25); } }
+@media (prefers-reduced-motion: reduce) { .wolt-session-badge.working { animation:none; } }
+.wolt-card.resting { opacity:.5; }
+.wolt-card.resting .wolt-avatar { filter:grayscale(.7); }
+.wolt-card.resting:hover, .wolt-card.resting.active, .wolt-card.resting:focus-visible { opacity:.9; }
+.sidebar-all-wolts { display:block; margin:6px 10px 2px; padding:8px 10px; border-radius:8px; color:rgba(255,255,255,.6); font-size:13px; text-decoration:none; }
+.sidebar-all-wolts:hover { background:rgba(255,255,255,.08); color:#fff; }
+.sidebar-wolts-quiet { padding:8px 20px; color:rgba(255,255,255,.4); font-size:13px; font-style:italic; }
+.wolt-quick-session { margin-left:auto; width:24px; height:24px; flex:none; border-radius:7px; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.06); color:#fff; cursor:pointer; opacity:0; }
 .wolt-card:hover .wolt-quick-session,.wolt-quick-session:focus-visible { opacity:1; }
 .wolt-quick-session:hover { background:var(--green); border-color:var(--green); }
 @media (hover:none) { .wolt-quick-session { opacity:1; } }
@@ -1150,3 +1159,4 @@ body {
 /* ── Z-index layers ── */
 .sidebar { z-index: 2; }
 .main { z-index: 1; position: relative; }
+.wolt-status-dot.open { background: rgba(255,255,255,.7); }

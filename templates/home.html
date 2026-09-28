@@ -4,6 +4,7 @@
 
 {% block head %}
 <link rel="stylesheet" href="/static/home.css?v={{ cache_bust }}">
+<link rel="stylesheet" href="/static/wolts-page.css?v={{ cache_bust }}">
 {% endblock %}
 
 {% block before_sidebar %}
@@ -28,6 +29,9 @@
       </div>
     </div>
   </div>
+
+  <!-- ── WOLTS VIEW ── (filled by wolts-page.js) -->
+  <div id="wolts-view" class="view"></div>
 
   <!-- ── APPS VIEW ── -->
   <div id="apps-view" class="view">
@@ -92,4 +96,5 @@
 
 {% block scripts %}
 <script src="/static/home-scene.js"></script>
+<script src="/static/wolts-page.js?v={{ cache_bust }}"></script>
 {% endblock %}

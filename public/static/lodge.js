@@ -166,43 +166,100 @@ async function chooseHomeHarness(id, button) {
   }
 }
 
+// Sidebar = the wolts you're likely to want right now. A small lodge lists everyone;
+// past SIDEBAR_ALL_UP_TO wolts it lists who is awake (open sessions), who you talked to
+// in the last day, and the wolt you're on. Everyone else is on the Wolts page.
+const SIDEBAR_ALL_UP_TO = 8;
+const SIDEBAR_RECENT_SECONDS = 86400;
+
+// Working = the pane changed in the last 3 minutes. idle_seconds comes from the reaper's pane
+// tracking (on while an idle timeout is set); without it, fall back to the registry's last touch.
+function sessionIsWorking(s) {
+  if (s.status !== 'running' || s.alive === false) return false;
+  const quiet = Number.isFinite(s.idle_seconds) ? s.idle_seconds : Date.now() / 1000 - (s.last_activity || s.created_at || 0);
+  return quiet < 180;
+}
+
+function woltSessionSummary(w) {
+  const name = w.name || w.dir;
+  const sessions = allSessions.filter(s => s.wolt === (w.dir || name))
+    .sort((a, b) => (b.last_activity || b.created_at || 0) - (a.last_activity || a.created_at || 0));
+  const open = sessions.filter(s => s.status === 'running' && s.alive !== false);
+  const workingCount = open.filter(sessionIsWorking).length;
+  const working = workingCount > 0;
+  const last = sessions.length ? (sessions[0].last_activity || sessions[0].created_at || 0) : 0;
+  return { w, name, sessions, open, working, workingCount, last };
+}
+
+function compactAge(seconds) {
+  if (seconds < 3600) return `${Math.max(1, Math.floor(seconds / 60))}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
+}
+
 function renderSidebarWolts() {
-  const chatWolts = allWolts.filter(w => WOLT_TYPES.has(w.type));
-  const tierOrder = { raccoon: 0, rodent: 0, beaver: 1, otter: 2, dog: 3 };
-  chatWolts.sort((a, b) => (tierOrder[a.type] ?? 99) - (tierOrder[b.type] ?? 99));
-
-  document.getElementById('sidebar-team-count').textContent = chatWolts.length || '';
-
+  const all = allWolts.filter(w => WOLT_TYPES.has(w.type)).map(woltSessionSummary);
   const container = document.getElementById('sidebar-wolts');
-  if (!chatWolts.length) {
-    container.innerHTML = '';
-    return;
+  const label = document.querySelector('#sidebar-team-section .sidebar-section-label');
+  const everyone = all.length <= SIDEBAR_ALL_UP_TO;
+  const now = Date.now() / 1000;
+  const viewing = document.body.dataset.wolt;
+  let shown;
+  if (everyone) {
+    const tierOrder = { raccoon: 0, rodent: 0, beaver: 1, otter: 2, dog: 3 };
+    shown = all.slice().sort((a, b) => (tierOrder[a.w.type] ?? 99) - (tierOrder[b.w.type] ?? 99));
+  } else {
+    shown = all.filter(x => x.open.length || now - x.last < SIDEBAR_RECENT_SECONDS || x.name === viewing)
+      .sort((a, b) => (b.working - a.working) || ((b.open.length > 0) - (a.open.length > 0)) || (b.last - a.last));
   }
+  if (label && label.firstChild && label.firstChild.nodeType === Node.TEXT_NODE) label.firstChild.textContent = everyone ? 'Team ' : 'Recent ';
+  document.getElementById('sidebar-team-count').textContent = everyone ? (all.length || '') : '';
 
   container.replaceChildren();
-  chatWolts.forEach(w => {
-    const name = w.name || w.dir;
-    const sessions = allSessions.filter(s => s.wolt === (w.dir || name));
-    const open = sessions.filter(s => s.status === 'running' && s.alive !== false);
-    const working = open.some(s => Date.now() / 1000 - (s.last_activity || s.created_at || 0) < 180);
-    const isRodent = RODENT_TYPES.has(w.type);
+  shown.forEach(x => {
+    const { w, name, open, working, last } = x;
     const card = document.createElement('div');
-    card.className = `wolt-card${document.body.dataset.wolt === name ? ' active' : ''}`;
+    card.className = `wolt-card${viewing === name ? ' active' : ''}${open.length ? '' : ' resting'}`;
     card.tabIndex = 0;
     card.onclick = () => { window.location.href = `/w/${encodeURIComponent(name)}`; };
-    card.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') card.click(); };
+    card.onkeydown = e => { if (e.target === card && (e.key === 'Enter' || e.key === ' ')) card.click(); };
     const avatar = document.createElement('div'); avatar.className = 'wolt-avatar';
     const sprite = woltSpriteAvatar(w.type, 36);
     if (sprite) avatar.innerHTML = sprite; else avatar.textContent = WOLT_EMOJI[w.type] || '🦫';
-    const dot = document.createElement('div'); dot.className = `wolt-status-dot${working ? ' running' : ''}`; avatar.appendChild(dot);
+    // the open-session count rides on the avatar, so the row keeps a single button (+)
+    // only working sessions get a number (green); an open-but-quiet wolt shows a plain dot
+    if (working) {
+      const badge = document.createElement('span');
+      badge.className = 'wolt-session-badge working';
+      badge.textContent = x.workingCount;
+      badge.title = `${x.workingCount} working · ${open.length} open`;
+      avatar.appendChild(badge);
+    } else {
+      const dot = document.createElement('div');
+      dot.className = `wolt-status-dot${open.length ? ' open' : ''}`;
+      if (open.length) dot.title = `${open.length} open`;
+      avatar.appendChild(dot);
+    }
     const info = document.createElement('div'); info.className = 'wolt-info';
-    const label = document.createElement('div'); label.className = 'wolt-name'; label.textContent = name;
-    const type = document.createElement('div'); type.className = 'wolt-type'; type.textContent = w.type;
-    info.append(label, type); card.append(avatar, info);
-    if (open.length) { const badge = document.createElement('span'); badge.className = `wolt-session-badge${working ? ' working' : ''}`; badge.textContent = open.length; card.appendChild(badge); }
-    if (isRodent) { const add = document.createElement('button'); add.className = 'wolt-quick-session'; add.textContent = '+'; add.title = `New session with ${name}`; add.setAttribute('aria-label', add.title); add.onclick = e => { e.stopPropagation(); startSession(name); }; card.appendChild(add); }
+    const nameEl = document.createElement('div'); nameEl.className = 'wolt-name'; nameEl.textContent = name;
+    const sub = document.createElement('div'); sub.className = 'wolt-type';
+    sub.textContent = everyone ? w.type : open.length ? (working ? 'working' : 'awake') : last ? `resting · ${compactAge(now - last)}` : 'never chatted';
+    info.append(nameEl, sub); card.append(avatar, info);
+    if (RODENT_TYPES.has(w.type)) { const add = document.createElement('button'); add.className = 'wolt-quick-session'; add.textContent = '+'; add.title = `New session with ${name}`; add.setAttribute('aria-label', add.title); add.onclick = e => { e.stopPropagation(); startSession(name); }; card.appendChild(add); }
     container.appendChild(card);
   });
+  if (!everyone) {
+    if (!shown.length) {
+      const quiet = document.createElement('div'); quiet.className = 'sidebar-wolts-quiet'; quiet.textContent = 'Everyone is resting.';
+      container.appendChild(quiet);
+    }
+    const more = document.createElement('a');
+    more.className = 'sidebar-all-wolts'; more.href = '/?view=wolts';
+    more.textContent = `All ${all.length} wolts ›`;
+    more.onclick = e => { if (document.getElementById('wolts-view')) { e.preventDefault(); showView('wolts'); } };
+    container.appendChild(more);
+  }
+  if (typeof renderWoltsPage === 'function') renderWoltsPage();
 }
 
 // ── Engine picker (per-wolt harness override) ──
@@ -419,8 +476,8 @@ async function loadSessions() {
   try {
     const res = await fetch('/sessions');
     allSessions = await res.json();
-    renderSessions();
     renderSidebarWolts();
+    renderSessions();
   } catch {
     const list = document.getElementById('sessions-list');
     if (list) list.innerHTML =
@@ -433,12 +490,10 @@ function renderSessions() {
   const running = allSessions.filter(s => s.name !== 'main' && s.status === 'running');
   document.getElementById('sessions-subtitle').textContent =
     `${running.length} running · ${allSessions.length} total`;
-  const badge = document.getElementById('sessions-badge');
-  if (running.length > 0) {
-    badge.textContent = running.length;
-    badge.classList.add('visible');
-  } else {
-    badge.classList.remove('visible');
+  const badge = document.getElementById('sessions-badge');  // gone from the sidebar since the wolt pages
+  if (badge) {
+    badge.textContent = running.length || '';
+    badge.classList.toggle('visible', running.length > 0);
   }
 
   const woltNames = [...new Set(allSessions.map(s => s.wolt).filter(Boolean))];
@@ -720,9 +775,11 @@ document.querySelectorAll('.type-card').forEach(card => {
 loadHarnesses().finally(loadWolts);
 if (document.getElementById('app-grid')) loadApps();
 loadSessions();
+// keep the sidebar's signals fresh; skip while the tab is hidden
+setInterval(() => { if (!document.hidden) loadSessions(); }, 15000);
 
 const requestedView = new URLSearchParams(window.location.search).get('view');
-if (requestedView && ['home', 'apps', 'sessions'].includes(requestedView)) showView(requestedView);
+if (requestedView && ['home', 'apps', 'sessions', 'wolts'].includes(requestedView)) showView(requestedView);
 
 console.log('%c🦫', 'font-size:3rem');
 console.log('%cwoltspace — the lodge', 'color:#C98B2A;font-family:monospace');
