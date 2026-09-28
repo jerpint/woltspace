@@ -19,6 +19,14 @@ const wolvesSource = readFileSync(
   new URL('../public/static/wolves.js', import.meta.url),
   'utf8',
 );
+const woltsPageSource = readFileSync(
+  new URL('../public/static/wolts-page.js', import.meta.url),
+  'utf8',
+);
+const woltPageSource = readFileSync(
+  new URL('../public/static/wolt-page.js', import.meta.url),
+  'utf8',
+);
 
 function loadNavigation() {
   const calls = [];
@@ -104,4 +112,13 @@ test('hostile history metadata is text, not executable markup or handler source'
   assert.doesNotMatch(tuiSource, /onclick="loadSpark/);
   assert.doesNotMatch(tuiSource, /histList\.innerHTML/);
   assert.doesNotMatch(tuiSource, /<span class="hist-title">\$\{s\.title\}/);
+});
+
+test('lodge session consumers use the cached light projection', () => {
+  assert.match(lodgeSource, /fetch\('\/sessions\?view=lodge'\)/);
+  assert.match(lodgeSource, /sessionStorage\.getItem\(LODGE_SESSIONS_CACHE\)/);
+  assert.match(lodgeSource, /restoreLodgeSessions\(\);\s*loadHarnesses/s);
+  assert.match(woltPageSource, /fetchJSON\('\/sessions\?view=lodge'/);
+  assert.doesNotMatch(woltsPageSource, /prompt_preview|s\.prompt/);
+  assert.doesNotMatch(woltPageSource, /prompt_preview|s\.prompt/);
 });

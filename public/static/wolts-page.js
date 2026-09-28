@@ -40,7 +40,7 @@
   }
 
   function card(x) {
-    const { w, name, sessions, open, working, last } = x;
+    const { w, name, sessions, open, working, last, total } = x;
     const isOpen = expanded.has(name);
     const wrap = el('div', `wolts-card${isOpen ? ' expanded' : ''}`);
     const row = el('div', 'wolts-row');
@@ -59,10 +59,10 @@
       : document.createTextNode(last ? `last chat ${compactAge(Date.now() / 1000 - last)} ago` : 'never chatted'));
     body.appendChild(line);
     const countLine = el('div', 'wolts-sub');
-    if (sessions.length) {
+    if (total) {
       const count = el('button', `wolts-count${isOpen ? ' open' : ''}`);
       count.setAttribute('aria-expanded', String(isOpen));
-      count.appendChild(document.createTextNode(`${sessions.length} session${sessions.length === 1 ? '' : 's'} `));
+      count.appendChild(document.createTextNode(`${total} session${total === 1 ? '' : 's'} `));
       count.appendChild(el('span', 'wolts-chev', '▾'));
       count.onclick = e => { e.stopPropagation(); expanded.has(name) ? expanded.delete(name) : expanded.add(name); renderWoltsPage(); };
       countLine.appendChild(count);
@@ -89,17 +89,17 @@
       sessions.slice(0, 8).forEach(s => {
         const live = sessionIsOpen(s);
         // a session opens if it's live or has a conversation to go back to (opening wakes it)
-        const openable = live || !!(s.harness_session_id || s.claude_session_id);
+        const openable = live || s.openable === true;
         const a = el(openable ? 'a' : 'div', `wolts-session${openable ? '' : ' ended'}`);
         if (openable) a.href = `/tui?session=${encodeURIComponent(s.name)}`;
         else a.title = 'No conversation to reopen';
         a.appendChild(el('span', `session-dot ${live ? 'running' : 'stopped'}`));
-        a.appendChild(el('span', 'wolts-session-title', (s.title || s.prompt_preview || s.prompt || 'untitled session').trim()));
+        a.appendChild(el('span', 'wolts-session-title', (s.title || s.name || 'untitled session').trim()));
         a.appendChild(el('span', 'wolts-session-meta', sessionState(s)));
         list.appendChild(a);
       });
-      if (sessions.length > 8) {
-        const all = el('a', 'wolts-session-all', `All ${sessions.length} on ${name}'s page ›`);
+      if (total > sessions.length) {
+        const all = el('a', 'wolts-session-all', `All ${total} on ${name}'s page ›`);
         all.href = woltUrl(name);
         list.appendChild(all);
       }

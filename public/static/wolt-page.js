@@ -26,7 +26,7 @@
     root.querySelector('[data-meta]').textContent = `${config.type || 'rodent'} · ${eng.id}${eng.model ? ` · ${eng.model}` : ''} · ${woltStateText({ working: workingCount > 0, workingCount, open })}`;
     root.querySelector('[data-role]').textContent = (manifest.wolt || {}).description || config.description || (manifest.wolt || {}).role || config.role || '';
     const resume = root.querySelector('[data-resume]');
-    if (own[0]) { resume.hidden = false; resume.href = `/tui?session=${encodeURIComponent(own[0].name)}`; resume.title = own[0].title || own[0].prompt_preview || own[0].name; }
+    if (own[0]) { resume.hidden = false; resume.href = `/tui?session=${encodeURIComponent(own[0].name)}`; resume.title = own[0].title || own[0].name; }
     root.querySelector('[data-new]').onclick = () => startSession(name);
   }
 
@@ -36,7 +36,7 @@
   function renderOverview() {
     const wrap = el('div', 'wolt-overview'), main = el('section', 'wolt-main'), side = el('aside', 'wolt-side');
     const own = sessions.filter(s => s.wolt === name).sort((a,b) => (b.last_activity || b.created_at || 0) - (a.last_activity || a.created_at || 0));
-    main.appendChild(el('div', 'wolt-colhead', `Sessions · ${own.length}`));
+    main.appendChild(el('div', 'wolt-colhead', `Sessions · ${sessionTotals[name] ?? own.length}`));
     let currentDay = '', list;
     own.slice(0,60).forEach(s => {
       const stamp = s.last_activity || s.created_at || 0, group = day(stamp);
@@ -45,7 +45,7 @@
       const state = sessionState(s);
       const dot = el('div', `session-dot ${sessionIsOpen(s) ? 'running' : 'stopped'}`);
       const text = el('div', 'session-body');
-      const title = el('div', `session-title${s.title ? '' : ' wolt-untitled'}`, s.title || s.prompt_preview || s.prompt || 'untitled session');
+      const title = el('div', `session-title${s.title ? '' : ' wolt-untitled'}`, s.title || s.name || 'untitled session');
       const summary = el('div', 'wolt-session-summary', `${s.summary ? `${s.summary} · ` : ''}${state}`);
       text.append(title, summary); row.append(dot, text, el('div', 'session-date', time(stamp))); list.appendChild(row);
     });
@@ -102,5 +102,5 @@
   function switchTab(next) { tab = ['overview','about','settings','site'].includes(next) ? next : 'overview'; root.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active',b.dataset.tab===tab)); history.replaceState(null,'',`/w/${encodeURIComponent(name)}${tab==='overview'?'':`?tab=${tab}`}`); ({overview:renderOverview,about:renderAbout,settings:renderSettings,site:renderSite}[tab])(); }
   root.querySelectorAll('[data-tab]').forEach(b => b.onclick=()=>switchTab(b.dataset.tab));
 
-  Promise.all([fetchJSON('/sessions',[]),fetchJSON('/apps',[]),fetchJSON('/wolf/crons',{crons:[]}),fetchJSON(`/wolt/${encodeURIComponent(name)}/_/memory.json`,{}),fetchJSON(`/wolt/${encodeURIComponent(name)}/_/manifest.json`,{}),fetchJSON('/harnesses',{default:'claude',harnesses:[]})]).then(values => { [sessions,apps] = values; crons = values[2].crons || []; memory=values[3];manifest=values[4];harnesses=values[5]; allSessions=sessions; renderHeader();renderSidebarWolts();switchTab(tab); });
+  Promise.all([fetchJSON('/sessions?view=lodge',{sessions:[],totals:{}}),fetchJSON('/apps',[]),fetchJSON('/wolf/crons',{crons:[]}),fetchJSON(`/wolt/${encodeURIComponent(name)}/_/memory.json`,{}),fetchJSON(`/wolt/${encodeURIComponent(name)}/_/manifest.json`,{}),fetchJSON('/harnesses',{default:'claude',harnesses:[]})]).then(values => { const sessionPayload=values[0]; sessions=sessionPayload.sessions || []; sessionTotals=sessionPayload.totals || {}; allSessions=sessions; apps=values[1]; crons = values[2].crons || []; memory=values[3];manifest=values[4];harnesses=values[5]; renderHeader();renderSidebarWolts();switchTab(tab); });
 })();
