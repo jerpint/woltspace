@@ -71,11 +71,54 @@ def test_recovery_ignores_conversations_outside_the_window(tmp_path, monkeypatch
     assert harnesses._codex_recover_session_id(data, set()) is None
 
 
-def test_per_wolt_home_still_works(tmp_path, monkeypatch):
+def test_per_wolt_home_never_falls_back_to_a_cwd_mismatch(tmp_path, monkeypatch):
     wolts, _ = _setup(tmp_path, monkeypatch)
     _rollout(wolts / "n00b" / ".codex" / "sessions", SID_A, "/somewhere/else", ISO)
     data = {"wolt": "n00b", "dir": str(wolts / "n00b"), "created_at": T0}
-    assert harnesses._codex_discover_session_id(data, T0 - 15) == SID_A
+    assert harnesses._codex_discover_session_id(data, T0 - 15) is None
+
+
+def test_spawn_discovery_atomically_claims_a_conversation(tmp_path, monkeypatch):
+    """Concurrent spawn pollers may never stamp the same Codex id."""
+    import threading
+    import sessions
+
+    wolts, _ = _setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(sessions, "WOLTS_DIR", wolts)
+    registry = sessions.SessionRegistry(wolts)
+    for name in ("one", "two"):
+        registry.create(
+            name, wolt="n00b", harness="codex", dir=str(wolts / "n00b"),
+        )
+
+    def harness(_name):
+        return {
+            "discover_session_id": lambda _data, _since, taken: (
+                None if SID_A in taken else SID_A
+            ),
+        }
+
+    monkeypatch.setattr(sessions, "get_harness", harness)
+    gate = threading.Barrier(3)
+    results = {}
+
+    def claim(name):
+        gate.wait()
+        results[name] = sessions.discover_session_id_for(name, timeout=1)
+
+    threads = [threading.Thread(target=claim, args=(name,)) for name in ("one", "two")]
+    for thread in threads:
+        thread.start()
+    gate.wait()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert sorted(results.values()) == ["", SID_A]
+    claimed = [
+        row.get("harness_session_id") for row in registry.list()
+        if row.get("harness_session_id")
+    ]
+    assert claimed == [SID_A]
 
 
 def test_two_sessions_cannot_claim_the_same_conversation(tmp_path, monkeypatch):

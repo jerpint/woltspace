@@ -2570,19 +2570,8 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
 
 @app.get("/tui")
 async def tui_page(request: Request):
-    # Opening a session that isn't running wakes it (resting, stopped, orphaned...),
-    # the same resume Telegram and IWCL use, so the terminal attaches to the same
-    # conversation instead of a dead pane. No conversation to go back to = no-op.
-    requested = request.query_params.get("session", "")
-    if requested:
-        safe = sanitize_session(requested)
-        from sessions import SessionRegistry
-        record = SessionRegistry(WOLTS_DIR).get(safe, check_alive=False)
-        if record and safe != "main" and record.get("status") != "running":
-            try:
-                await asyncio.to_thread(resume_session, safe, "")
-            except Exception as exc:  # a failed wake must never stop the page from rendering
-                print(f"[tui] could not resume resting session {safe}: {exc}")
+    # Rendering is read-only. The page wakes a resting session through the
+    # existing same-origin-guarded POST /sessions/{name}/resume route.
     return templates.TemplateResponse(request, "tui.html", context={
         "cache_bust": int(time.time()),
     })

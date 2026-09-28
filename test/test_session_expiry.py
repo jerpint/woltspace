@@ -268,13 +268,37 @@ def test_capture_failure_leaves_session_open(tmp_path, monkeypatch):
     rest.assert_not_called()
 
 
-def test_opening_a_resting_session_resumes_it(monkeypatch):
+def test_rendering_a_resting_session_is_read_only(monkeypatch):
     registry = _registry_mock()
     registry.get.return_value = {"name": "friend", "wolt": "pal", "status": "resting"}
     monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
     resumed = Mock(return_value={"name": "friend", "status": "resumed"})
     monkeypatch.setattr(server_app, "resume_session", resumed)
     assert _client().get("/tui?session=friend").status_code == 200
+    resumed.assert_not_called()
+
+
+def test_cross_site_page_cannot_wake_a_resting_session(monkeypatch):
+    resumed = Mock(return_value={"name": "friend", "status": "resumed"})
+    monkeypatch.setattr(server_app, "resume_session", resumed)
+    response = _client().post(
+        "/sessions/friend/resume",
+        json={"prompt": ""},
+        headers={"origin": "https://evil.example"},
+    )
+    assert response.status_code == 403
+    resumed.assert_not_called()
+
+
+def test_same_origin_page_wakes_a_resting_session_with_post(monkeypatch):
+    resumed = Mock(return_value={"name": "friend", "status": "resumed"})
+    monkeypatch.setattr(server_app, "resume_session", resumed)
+    response = _client().post(
+        "/sessions/friend/resume",
+        json={"prompt": ""},
+        headers={"origin": "http://localhost:7777"},
+    )
+    assert response.status_code == 200
     resumed.assert_called_once_with("friend", "")
 
 
@@ -301,14 +325,14 @@ def test_rest_refuses_a_session_that_could_not_come_back(monkeypatch):
     registry._write.assert_not_called()
 
 
-def test_opening_a_stopped_session_resumes_it_too(monkeypatch):
+def test_rendering_a_stopped_session_is_read_only(monkeypatch):
     registry = _registry_mock()
     registry.get.return_value = {"name": "friend", "wolt": "pal", "status": "stopped", "harness_session_id": "conv-1"}
     monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
     resumed = Mock(return_value={"name": "friend", "status": "resumed"})
     monkeypatch.setattr(server_app, "resume_session", resumed)
     assert _client().get("/tui?session=friend").status_code == 200
-    resumed.assert_called_once_with("friend", "")
+    resumed.assert_not_called()
 
 
 def test_opening_a_session_with_nothing_to_resume_still_renders(monkeypatch):

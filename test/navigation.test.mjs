@@ -71,3 +71,12 @@ test('lodge contains no client-built localhost app address or internal popups', 
   assert.doesNotMatch(lodgeSource, /window\.open\(\s*['"`]\/tui/);
   assert.match(lodgeSource, /WoltspaceNavigation\.appDestination\(p\)/);
 });
+
+test('hostile app metadata is assigned as text and never embedded in handlers', () => {
+  const hostile = `')-alert(1)-('`;
+  assert.match(lodgeSource, /lodgeElement\(p\.running \? 'a' : 'div', 'app-name-link', p\.name\)/);
+  assert.match(lodgeSource, /element\.textContent = text/);
+  assert.doesNotMatch(lodgeSource, /\son(?:click|keydown|change|submit)=/i);
+  assert.doesNotMatch(lodgeSource, new RegExp(`on\\w+[^\\n]*${hostile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.doesNotMatch(lodgeSource, /onclick[^\n]*(?:p\.name|keeper|s\.name|sessionFilterWolt)/);
+});

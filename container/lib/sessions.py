@@ -1312,10 +1312,27 @@ def discover_session_id_for(name: str, timeout: int = 90) -> str:
     since = time.time() - 15
     deadline = time.time() + timeout
     while time.time() < deadline:
-        session_id = discover(data, since)
-        if session_id:
-            registry.update(name, wolt=data.get("wolt", ""), harness_session_id=session_id)
-            return session_id
+        # Discovery and persistence are one lodge-wide claim. Without this,
+        # concurrent Codex pollers can both observe the same newest rollout
+        # before either per-session update becomes visible to the other.
+        with _resume_id_recovery_lock(registry.wolts_dir):
+            current = registry.get(name, check_alive=False)
+            if current is None:
+                return ""
+            existing = stored_resume_id(current)
+            if existing:
+                return existing
+            taken = taken_resume_ids(registry.list(), exclude=name)
+            if resolve_harness(current.get("harness")) == "codex":
+                session_id = discover(current, since, taken)
+            else:
+                session_id = discover(current, since)
+            if session_id:
+                registry.update(
+                    name, wolt=current.get("wolt", ""),
+                    harness_session_id=session_id,
+                )
+                return session_id
         time.sleep(2)
     return ""
 

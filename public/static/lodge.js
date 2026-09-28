@@ -72,6 +72,12 @@ function timeAgo(ts) {
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+function lodgeElement(tag, className = '', text = '') {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text !== '') element.textContent = text;
+  return element;
+}
 
 function compactDuration(seconds) {
   if (seconds < 3600) return `${Math.max(1, Math.floor(seconds / 60))}m`;
@@ -316,29 +322,30 @@ function openEnginePicker(anchorEl, name) {
   if (!w) return;
   const effective = w.harness || harnessDefault;   // engine this wolt runs now
 
-  const row = (id, label, sub, selected) => `
-    <button class="engine-opt${selected ? ' sel' : ''}" onclick="event.stopPropagation();setWoltHarness('${name}', '${id}')">
-      <span class="engine-radio">${selected ? '●' : '○'}</span>
-      <span class="engine-opt-label">${label}</span>
-      ${sub ? `<span class="engine-opt-sub">${sub}</span>` : ''}
-    </button>`;
-
-  const opts = harnessList
-    .map(h => {
-      const model = modelFor(h.id, w.type);
-      const sub = model + (h.id === harnessDefault ? ' · default' : '');
-      return row(h.id, h.label, sub, h.id === effective);
-    })
-    .join('');
-
   const pop = document.createElement('div');
   pop.id = 'engine-pop';
   pop.className = 'engine-pop';
   pop.dataset.wolt = name;
-  pop.innerHTML = `
-    <div class="engine-pop-head">Engine</div>
-    ${opts}
-    <div class="engine-pop-note">Applies to the next session — the one running now keeps its engine.</div>`;
+  pop.appendChild(lodgeElement('div', 'engine-pop-head', 'Engine'));
+  harnessList.forEach(h => {
+    const selected = h.id === effective;
+    const button = lodgeElement('button', `engine-opt${selected ? ' sel' : ''}`);
+    button.type = 'button';
+    button.appendChild(lodgeElement('span', 'engine-radio', selected ? '●' : '○'));
+    button.appendChild(lodgeElement('span', 'engine-opt-label', h.label));
+    const model = modelFor(h.id, w.type);
+    const sub = model + (h.id === harnessDefault ? ' · default' : '');
+    if (sub) button.appendChild(lodgeElement('span', 'engine-opt-sub', sub));
+    button.addEventListener('click', event => {
+      event.stopPropagation();
+      setWoltHarness(name, h.id);
+    });
+    pop.appendChild(button);
+  });
+  pop.appendChild(lodgeElement(
+    'div', 'engine-pop-note',
+    'Applies to the next session — the one running now keeps its engine.',
+  ));
   pop.addEventListener('click', e => e.stopPropagation());
   document.body.appendChild(pop);
 
@@ -404,65 +411,83 @@ function renderApps() {
     return;
   }
 
-  grid.innerHTML = filtered.map(p => {
-    const emoji = escapeHtml(p.emoji || '📦');
-    const desc = escapeHtml(p.description || 'No description');
+  grid.replaceChildren(...filtered.map(p => {
+    const card = lodgeElement('div', 'app-card');
+    card.setAttribute('role', 'link');
+    card.tabIndex = 0;
+    const destination = p.running
+      ? WoltspaceNavigation.appDestination(p)
+      : `/a/${encodeURIComponent(p.name)}`;
+    card.addEventListener('click', () => WoltspaceNavigation.internal(destination));
+    card.addEventListener('keydown', event => {
+      if (event.target !== card || !['Enter', ' '].includes(event.key)) return;
+      event.preventDefault();
+      WoltspaceNavigation.internal(destination);
+    });
+
     const status = p.running ? 'running' : 'stopped';
     const canToggle = !!p.start;
     const keeper = p.keeper || 'unassigned';
     const keeperWolt = allWolts.find(w => (w.name || w.dir) === keeper);
     const keeperEmoji = keeperWolt ? (WOLT_EMOJI[keeperWolt.type] || '🦫') : '📦';
     const keeperSprite = keeperWolt ? woltSpriteAvatar(keeperWolt.type, 24) : null;
-    const stackTags = p.stack ? `<span class="stack-tag">${escapeHtml(p.stack)}</span>` : '';
-    const sourceLink = p.source ? `<span class="app-source-link">⎋ ${escapeHtml(p.source.replace('https://github.com/', ''))}</span>` : '';
+    const body = lodgeElement('div', 'app-card-body');
+    const top = lodgeElement('div', 'app-card-top');
+    top.appendChild(lodgeElement('span', 'app-emoji', p.emoji || '📦'));
+    const topRight = lodgeElement('div', 'ma-topright');
+    topRight.appendChild(lodgeElement('span', 'ma-share', '🔒 Just me'));
+    const statusElement = lodgeElement('div', `app-status ${status}`, status);
+    statusElement.prepend(lodgeElement('div', 'app-status-dot'));
+    topRight.appendChild(statusElement); top.appendChild(topRight); body.appendChild(top);
 
-    // The API owns app routing. Its relative /app/:name URL works against the
-    // local Docker origin and can redirect through a configured tunnel.
-    const appUrl = WoltspaceNavigation.appDestination(p);
-    const appUrlData = encodeURIComponent(appUrl);
-    const appUrlHref = appUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-    const cardNavigation = `role="link" tabindex="0" data-app-url="${p.running ? appUrlData : '/a/' + encodeURIComponent(p.name)}" onclick="openAppCard(this)" onkeydown="openAppCardKey(event, this)"`;
+    const nameElement = lodgeElement(p.running ? 'a' : 'div', 'app-name-link', p.name);
+    if (p.running) nameElement.href = WoltspaceNavigation.appDestination(p);
+    nameElement.addEventListener('click', event => event.stopPropagation());
+    body.appendChild(nameElement);
+    if (p.stack) {
+      const stack = lodgeElement('div', 'app-stack');
+      stack.appendChild(lodgeElement('span', 'stack-tag', p.stack));
+      body.appendChild(stack);
+    }
+    body.appendChild(lodgeElement('div', 'app-desc', p.description || 'No description'));
 
-    return `<div class="app-card" ${cardNavigation}>
-      <div class="app-card-body">
-        <div class="app-card-top">
-          <span class="app-emoji">${emoji}</span>
-          <div class="ma-topright"><span class="ma-share">🔒 Just me</span><div class="app-status ${status}">
-            <div class="app-status-dot"></div>
-            ${status}
-          </div></div>
-        </div>
-        ${p.running
-          ? `<a class="app-name-link" href="${appUrlHref}" onclick="event.stopPropagation()">${escapeHtml(p.name)}</a>`
-          : `<div class="app-name-link">${escapeHtml(p.name)}</div>`}
-        ${stackTags ? `<div class="app-stack">${stackTags}</div>` : ''}
-        <div class="app-desc">${desc}</div>
-        <div class="app-card-footer">
-          <div class="app-wolt keeper-btn" title="open with ${escapeHtml(keeper)}" onclick="event.stopPropagation();openApp(decodeURIComponent('${encodeURIComponent(p.name)}'),decodeURIComponent('${encodeURIComponent(keeper)}'))">
-            <div class="app-wolt-avatar">${keeperSprite || keeperEmoji}</div>
-            <div>
-              <div class="app-wolt-name">${escapeHtml(keeper)}</div>
-              <div class="app-wolt-assign">${sourceLink || 'keeper'}</div>
-            </div>
-          </div>
-          <div class="app-actions">
-            ${canToggle ? `<button class="tool-button ${p.running ? 'danger' : 'primary'}" title="${p.running ? 'Stop' : 'Start'}" onclick="event.stopPropagation();toggleApp(decodeURIComponent('${encodeURIComponent(p.name)}'), ${p.running})">${p.running ? '■ Stop' : '▶ Start'}</button>` : ''}
-            <a class="tool-button icon-button" href="/a/${encodeURIComponent(p.name)}" onclick="event.stopPropagation()" aria-label="${escapeHtml(p.name)} settings">⚙</a>
-          </div>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
-}
+    const footer = lodgeElement('div', 'app-card-footer');
+    const keeperButton = lodgeElement('div', 'app-wolt keeper-btn');
+    keeperButton.title = `open with ${keeper}`;
+    keeperButton.addEventListener('click', event => {
+      event.stopPropagation(); openApp(p.name, keeper);
+    });
+    const avatar = lodgeElement('div', 'app-wolt-avatar');
+    if (keeperSprite) avatar.innerHTML = keeperSprite; else avatar.textContent = keeperEmoji;
+    keeperButton.appendChild(avatar);
+    const keeperText = lodgeElement('div');
+    keeperText.appendChild(lodgeElement('div', 'app-wolt-name', keeper));
+    keeperText.appendChild(lodgeElement(
+      'div', p.source ? 'app-wolt-assign app-source-link' : 'app-wolt-assign',
+      p.source ? `⎋ ${p.source.replace('https://github.com/', '')}` : 'keeper',
+    ));
+    keeperButton.appendChild(keeperText); footer.appendChild(keeperButton);
 
-function openAppCard(card) {
-  WoltspaceNavigation.internal(decodeURIComponent(card.dataset.appUrl || ''));
-}
-
-function openAppCardKey(event, card) {
-  if (event.target !== card || !['Enter', ' '].includes(event.key)) return;
-  event.preventDefault();
-  openAppCard(card);
+    const actions = lodgeElement('div', 'app-actions');
+    if (canToggle) {
+      const toggle = lodgeElement(
+        'button', `tool-button ${p.running ? 'danger' : 'primary'}`,
+        p.running ? '■ Stop' : '▶ Start',
+      );
+      toggle.type = 'button'; toggle.title = p.running ? 'Stop' : 'Start';
+      toggle.addEventListener('click', event => {
+        event.stopPropagation(); toggleApp(p.name, p.running);
+      });
+      actions.appendChild(toggle);
+    }
+    const settings = lodgeElement('a', 'tool-button icon-button', '⚙');
+    settings.href = `/a/${encodeURIComponent(p.name)}`;
+    settings.setAttribute('aria-label', `${p.name} settings`);
+    settings.addEventListener('click', event => event.stopPropagation());
+    actions.appendChild(settings); footer.appendChild(actions); body.appendChild(footer);
+    card.appendChild(body);
+    return card;
+  }));
 }
 
 function filterApps(filter, el) {
@@ -527,11 +552,23 @@ function renderSessions() {
 
   const woltNames = [...new Set(allSessions.map(s => s.wolt).filter(Boolean))];
   const tabs = document.getElementById('sessions-filter-tabs');
-  tabs.innerHTML = `<button class="filter-chip active" onclick="sessionFilterWolt=null;filterSessions();this.parentElement.querySelectorAll('.filter-chip').forEach(c=>c.classList.remove('active'));this.classList.add('active')">All</button>`
-    + woltNames.map(w => {
-      const emoji = WOLT_EMOJI[allWolts.find(wo => (wo.name || wo.dir) === w)?.type] || '🦫';
-      return `<button class="filter-chip" onclick="sessionFilterWolt='${w}';filterSessions();this.parentElement.querySelectorAll('.filter-chip').forEach(c=>c.classList.remove('active'));this.classList.add('active')">${emoji} ${w}</button>`;
-    }).join('');
+  tabs.replaceChildren();
+  const addFilter = (label, wolt) => {
+    const button = lodgeElement('button', `filter-chip${wolt === null ? ' active' : ''}`, label);
+    button.type = 'button';
+    button.addEventListener('click', () => {
+      sessionFilterWolt = wolt;
+      filterSessions();
+      tabs.querySelectorAll('.filter-chip').forEach(chip => chip.classList.remove('active'));
+      button.classList.add('active');
+    });
+    tabs.appendChild(button);
+  };
+  addFilter('All', null);
+  woltNames.forEach(w => {
+    const emoji = WOLT_EMOJI[allWolts.find(wo => (wo.name || wo.dir) === w)?.type] || '🦫';
+    addFilter(`${emoji} ${w}`, w);
+  });
 
   filterSessions();
 }
@@ -576,7 +613,7 @@ function filterSessions() {
     return;
   }
 
-  container.innerHTML = Object.entries(groups).map(([wolt, sessions]) => {
+  container.replaceChildren(...Object.entries(groups).map(([wolt, sessions]) => {
     const woltData = allWolts.find(w => (w.name || w.dir) === wolt);
     const emoji = woltData ? (WOLT_EMOJI[woltData.type] || '🦫') : '🦫';
     const sessionSprite = woltData ? woltSpriteAvatar(woltData.type, 20) : null;
@@ -584,40 +621,48 @@ function filterSessions() {
     const metaText = runCount > 0
       ? `${runCount} awake · ${sessions.length} total`
       : `${sessions.length} session${sessions.length !== 1 ? 's' : ''}`;
-    const rows = sessions.map(s => {
+    const group = lodgeElement('div', 'sessions-group');
+    const header = lodgeElement('div', 'sessions-group-header');
+    const avatar = lodgeElement('div', 'sessions-group-avatar');
+    if (sessionSprite) avatar.innerHTML = sessionSprite; else avatar.textContent = emoji;
+    header.appendChild(avatar);
+    header.appendChild(lodgeElement('span', 'sessions-group-name', wolt));
+    header.appendChild(lodgeElement('span', 'sessions-group-meta', metaText));
+    const chevron = lodgeElement('span', 'sessions-group-chevron');
+    chevron.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>';
+    header.appendChild(chevron);
+    header.addEventListener('click', () => toggleSessionGroup(header));
+    group.appendChild(header);
+    const groupBody = lodgeElement('div', 'sessions-group-body');
+    const inner = lodgeElement('div', 'sessions-group-inner');
+
+    sessions.forEach(s => {
       const time = sessionActivityText(s);
       const label = s.name;
       const isAlive = sessionIsOpen(s);
       const dotClass = isAlive ? 'running' : 'stopped';
-
-      const actionBtn = isAlive
-        ? `<button class="session-action session-action-stop" onclick="event.preventDefault();event.stopPropagation();stopSession('${s.name}')" title="Stop">&#9632;</button>`
-        : `<button class="session-action session-action-resume" onclick="event.preventDefault();event.stopPropagation();resumeSession('${s.name}')" title="Resume">&#9654;</button>`;
-
-      return `<a class="session-row" href="/tui?session=${encodeURIComponent(s.name)}">
-        <div class="session-dot ${dotClass}"></div>
-        <div class="session-body">
-          <div class="session-title">${label}</div>
-        </div>
-        <div class="session-date">${time}</div>
-        <div class="session-actions">${actionBtn}</div>
-      </a>`;
-    }).join('');
-
-    return `<div class="sessions-group">
-      <div class="sessions-group-header" onclick="toggleSessionGroup(this)">
-        <div class="sessions-group-avatar">${sessionSprite || emoji}</div>
-        <span class="sessions-group-name">${wolt}</span>
-        <span class="sessions-group-meta">${metaText}</span>
-        <span class="sessions-group-chevron">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
-        </span>
-      </div>
-      <div class="sessions-group-body">
-        <div class="sessions-group-inner">${rows}</div>
-      </div>
-    </div>`;
-  }).join('');
+      const row = lodgeElement('a', 'session-row');
+      row.href = `/tui?session=${encodeURIComponent(s.name)}`;
+      row.appendChild(lodgeElement('div', `session-dot ${dotClass}`));
+      const body = lodgeElement('div', 'session-body');
+      body.appendChild(lodgeElement('div', 'session-title', label));
+      row.appendChild(body);
+      row.appendChild(lodgeElement('div', 'session-date', time));
+      const actionWrap = lodgeElement('div', 'session-actions');
+      const action = lodgeElement(
+        'button', `session-action session-action-${isAlive ? 'stop' : 'resume'}`,
+        isAlive ? '■' : '▶',
+      );
+      action.type = 'button'; action.title = isAlive ? 'Stop' : 'Resume';
+      action.addEventListener('click', event => {
+        event.preventDefault(); event.stopPropagation();
+        if (isAlive) stopSession(s.name); else resumeSession(s.name);
+      });
+      actionWrap.appendChild(action); row.appendChild(actionWrap); inner.appendChild(row);
+    });
+    groupBody.appendChild(inner); group.appendChild(groupBody);
+    return group;
+  }));
 }
 
 // ── Session group toggle ──

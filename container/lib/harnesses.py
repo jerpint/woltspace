@@ -153,7 +153,9 @@ def _codex_rollouts(data: dict, since: float, until: float | None = None) -> lis
     return sorted(found, reverse=True)
 
 
-def _codex_discover_session_id(data: dict, since: float) -> str | None:
+def _codex_discover_session_id(
+    data: dict, since: float, taken: set[str] | None = None,
+) -> str | None:
     """Find the rollout id codex assigned to a just-spawned session.
 
     Codex writes $CODEX_HOME/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl at
@@ -161,11 +163,17 @@ def _codex_discover_session_id(data: dict, since: float) -> str | None:
     preferring one whose recorded cwd matches the session dir (disambiguates
     concurrent sessions of the same wolt in different dirs).
     """
+    taken = taken or set()
     found = _codex_rollouts(data, since)
     for _, sid, matches in found:
-        if matches:
+        if matches and sid not in taken:
             return sid
-    return found[0][1] if found else None
+    # Old records without a workdir cannot prove a cwd match. Preserve their
+    # per-wolt-home discovery, but never use a cwd-mismatched fallback when the
+    # spawning session has an expected workdir.
+    if not data.get("dir"):
+        return next((sid for _, sid, _ in found if sid not in taken), None)
+    return None
 
 
 def _codex_recover_session_id(data: dict, taken: set[str]) -> str | None:
