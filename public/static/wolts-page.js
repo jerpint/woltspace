@@ -97,11 +97,11 @@
       const list = el('div', 'wolts-sessions');
       sessions.slice(0, 8).forEach(s => {
         const live = s.status === 'running' && s.alive !== false;
-        // only sessions that open into a terminal are links: live ones, and resting ones (opening wakes them)
-        const openable = live || s.status === 'resting';
+        // a session opens if it's live or has a conversation to go back to (opening wakes it)
+        const openable = live || !!(s.harness_session_id || s.claude_session_id);
         const a = el(openable ? 'a' : 'div', `wolts-session${openable ? '' : ' ended'}`);
         if (openable) a.href = `/tui?session=${encodeURIComponent(s.name)}`;
-        else a.title = 'This session has ended';
+        else a.title = 'No conversation to reopen';
         a.appendChild(el('span', `session-dot ${live ? 'running' : 'stopped'}`));
         a.appendChild(el('span', 'wolts-session-title', (s.title || s.prompt_preview || s.prompt || 'untitled session').trim()));
         a.appendChild(el('span', 'wolts-session-meta', sessionState(s)));
