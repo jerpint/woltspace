@@ -150,6 +150,81 @@ def test_app_websocket_without_verified_shared_identity_is_rejected(tmp_path, mo
     assert exc.value.code == 1008
 
 
+def test_verified_scope_identity_reaches_http_and_websocket_share_gates(tmp_path, monkeypatch):
+    """Pin the contract that the outer Access middleware populates scope state."""
+    write_app_shares(tmp_path, "notes", ["friend@example.com"])
+    monkeypatch.setattr(server_app, "WOLTS_DIR", tmp_path)
+    monkeypatch.setattr(server_app, "_app_access_settings", lambda: SimpleNamespace(
+        owner_email="owner@example.com",
+    ))
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
+
+    class VerifiedIdentity:
+        def __init__(self, inner, email):
+            self.inner = inner
+            self.email = email
+
+        async def __call__(self, scope, receive, send):
+            scope.setdefault("state", {})["access_email"] = self.email
+            await self.inner(scope, receive, send)
+
+    async def request_as(email):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(
+                app=VerifiedIdentity(server_app.app, email),
+            ),
+            base_url="https://notes.woltspace.test",
+        ) as client:
+            return await client.get("/", headers={"host": "notes.woltspace.test"})
+
+    # A shared identity passes the share gate and reaches app lookup; an
+    # unlisted identity is denied before lookup.
+    assert asyncio.run(request_as("friend@example.com")).status_code == 503
+    assert asyncio.run(request_as("stranger@example.com")).status_code == 403
+
+    monkeypatch.setattr(apps, "running_apps", lambda: [{"name": "notes", "port": 4321}])
+
+    class Upstream:
+        async def recv(self):
+            await asyncio.Event().wait()
+
+        async def send(self, _message):
+            return None
+
+    class Connection:
+        async def __aenter__(self):
+            return Upstream()
+
+        async def __aexit__(self, *_args):
+            return False
+
+    import websockets
+    monkeypatch.setattr(websockets, "connect", lambda *_args, **_kwargs: Connection())
+
+    with TestClient(VerifiedIdentity(server_app.app, "friend@example.com")) as client:
+        with client.websocket_connect(
+            "/vite-hmr",
+            headers={
+                "host": "notes.woltspace.test",
+                "origin": "https://notes.woltspace.test",
+            },
+        ):
+            pass
+
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with TestClient(VerifiedIdentity(server_app.app, "stranger@example.com")) as client:
+            with client.websocket_connect(
+                "/vite-hmr",
+                headers={
+                    "host": "notes.woltspace.test",
+                    "origin": "https://notes.woltspace.test",
+                },
+            ):
+                pass
+    assert exc.value.code == 1008
+
+
 def test_app_sharing_cli_reads_then_writes_only_through_api(capsys):
     client = runpy.run_path(str(ROOT / "container" / "bin" / "woltspace"))
     calls = []
