@@ -12,6 +12,8 @@ from pathlib import Path
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _DOMAIN_RE = re.compile(r"^@[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
 _LOCK = threading.Lock()
+_CACHE_LOCK = threading.Lock()
+_CACHE: dict[Path, tuple[tuple[int, int] | None, dict]] = {}
 
 
 def _path(wolts_dir: Path) -> Path:
@@ -33,16 +35,32 @@ def normalize_entry(value: object) -> str:
 
 def read_app_shares(wolts_dir: Path, app_name: str) -> list[str]:
     path = _path(wolts_dir)
+    data = _read_state(path)
+    entries = data.get(app_name, [])
+    if not isinstance(entries, list):
+        raise RuntimeError("app sharing state is unreadable")
+    return sorted({normalize_entry(entry) for entry in entries})
+
+
+def _read_state(path: Path) -> dict:
+    try:
+        stat = path.stat()
+        signature = (stat.st_mtime_ns, stat.st_size)
+    except FileNotFoundError:
+        signature = None
+    with _CACHE_LOCK:
+        cached = _CACHE.get(path)
+        if cached and cached[0] == signature:
+            return cached[1]
     try:
         data = json.loads(path.read_text()) if path.exists() else {}
     except (json.JSONDecodeError, OSError) as exc:
         raise RuntimeError("app sharing state is unreadable") from exc
     if not isinstance(data, dict):
         raise RuntimeError("app sharing state is unreadable")
-    entries = data.get(app_name, [])
-    if not isinstance(entries, list):
-        raise RuntimeError("app sharing state is unreadable")
-    return sorted({normalize_entry(entry) for entry in entries})
+    with _CACHE_LOCK:
+        _CACHE[path] = (signature, data)
+    return data
 
 
 def write_app_shares(wolts_dir: Path, app_name: str, values: object) -> list[str]:
@@ -72,6 +90,8 @@ def write_app_shares(wolts_dir: Path, app_name: str, values: object) -> list[str
         except FileNotFoundError:
             pass
         os.replace(tmp, path)
+        with _CACHE_LOCK:
+            _CACHE.pop(path, None)
     return entries
 
 

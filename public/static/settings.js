@@ -133,4 +133,25 @@ if (root) {
       button.disabled = input.disabled = false;
     }
   });
+
+  document.querySelector('[data-gateway-port-save]')?.addEventListener('click', async event => {
+    const button = event.currentTarget;
+    const row = button.closest('[data-gateway-port-row]');
+    const input = row.querySelector('[data-gateway-port-input]');
+    button.disabled = input.disabled = true;
+    setGlobalState('saving', 'Saving gateway port…');
+    try {
+      const data = await save('/settings/app-gateway', { port: Number(input.value) });
+      input.value = data.port;
+      row.dataset.savedValue = data.port;
+      setGlobalState('saved', 'Gateway port saved');
+      showToast(`App gateway will use port ${data.port} after the next lodge start.`);
+    } catch (error) {
+      input.value = row.dataset.savedValue;
+      setGlobalState('error', 'Could not save');
+      showToast(error.message, 'error');
+    } finally {
+      button.disabled = input.disabled = false;
+    }
+  });
 }
