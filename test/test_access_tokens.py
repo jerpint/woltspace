@@ -41,12 +41,15 @@ def _token(private_key, audience, email="owner@example.com", kid="key-1"):
     }, private_key, algorithm="RS256", headers={"kid": kid})
 
 
-async def _request(path="/sessions", *, host="owner.woltspace.test", token=None):
+async def _request(
+    path="/sessions", *, host="owner.woltspace.test", token=None,
+    client=("127.0.0.1", 123),
+):
     headers = {"host": host}
     if token is not None:
         headers["cf-access-jwt-assertion"] = token
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=server_app.app),
+        transport=httpx.ASGITransport(app=server_app.app, client=client),
         base_url="https://owner.woltspace.test",
     ) as client:
         return await client.get(path, headers=headers)
@@ -124,10 +127,51 @@ def test_missing_malformed_and_email_less_tokens_fail_closed(monkeypatch):
     assert asyncio.run(_request(token=no_email)).json() == {"error": "Access token has no email"}
 
 
-def test_loopback_is_exempt_even_when_verification_is_configured(monkeypatch):
+def test_loopback_host_and_peer_are_exempt_when_verification_is_configured(monkeypatch):
     monkeypatch.setattr(server_app, "load_access_settings", lambda _root: SETTINGS)
     response = asyncio.run(_request(host="localhost:7777"))
     assert response.status_code == 200
+
+
+def test_loopback_host_from_lan_peer_requires_access(monkeypatch):
+    monkeypatch.setattr(server_app, "load_access_settings", lambda _root: SETTINGS)
+    response = asyncio.run(_request(
+        host="localhost:7777", client=("192.168.1.50", 123),
+    ))
+    assert response.status_code == 403
+    assert response.json() == {"error": "Access token required"}
+
+
+def test_public_host_from_loopback_peer_requires_access(monkeypatch):
+    monkeypatch.setattr(server_app, "load_access_settings", lambda _root: SETTINGS)
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
+    response = asyncio.run(_request(host="owner.woltspace.test"))
+    assert response.status_code == 403
+    assert response.json() == {"error": "Access token required"}
+
+
+def test_unrecognized_host_fails_closed_for_http_and_websocket(monkeypatch):
+    monkeypatch.setattr(server_app, "load_access_settings", lambda _root: None)
+
+    response = asyncio.run(_request(host="attacker.example"))
+    assert response.status_code == 403
+    assert response.json() == {"error": "untrusted request host"}
+
+    for path in (
+        "/tui?session=main",
+        "/livereload",
+        "/wolt/n00b/site/livereload",
+    ):
+        with pytest.raises(WebSocketDisconnect) as exc:
+            with TestClient(server_app.app).websocket_connect(
+                path,
+                headers={
+                    "host": "attacker.example",
+                    "origin": "https://attacker.example",
+                },
+            ):
+                pass
+        assert exc.value.code == 1008
 
 
 def test_malformed_present_configuration_fails_closed(monkeypatch):
