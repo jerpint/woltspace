@@ -51,6 +51,7 @@ from .config import (
 )
 from . import tunnel as tunnel_mgr
 from .notify import NoNotificationTarget, send_notification
+from .app_sharing import email_is_shared, read_app_shares, write_app_shares
 from .sparks import get_spark_with_chain, list_sparks
 from .pty_bridge import (
     PtyBridgeError,
@@ -373,6 +374,15 @@ async def subdomain_proxy(request: Request, call_next):
     host = request.headers.get("host") or ""
     app_name = _extract_app_subdomain(host)
     if app_name:
+        access_settings = _app_access_settings()
+        if access_settings is not None:
+            email = getattr(request.state, "access_email", "")
+            try:
+                entries = read_app_shares(WOLTS_DIR, app_name)
+            except RuntimeError:
+                return HTMLResponse(_app_access_denied(), status_code=403)
+            if email != access_settings.owner_email and not email_is_shared(email, entries):
+                return HTMLResponse(_app_access_denied(), status_code=403)
         try:
             from apps import running_apps
             running = {r["name"]: r for r in running_apps()}
@@ -430,6 +440,33 @@ async def subdomain_proxy(request: Request, call_next):
         except Exception as e:
             return HTMLResponse(f"<h1>Proxy error: {e}</h1>", status_code=502)
     return await call_next(request)
+
+
+def _app_access_settings():
+    """Return verified-access configuration when that optional feature exists."""
+    try:
+        from .access import load_access_settings
+    except ImportError:
+        return None
+    try:
+        return load_access_settings(WOLTS_DIR)
+    except RuntimeError:
+        return None
+
+
+def _app_access_denied() -> str:
+    return """<!doctype html><html lang="en"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>App access</title><body style="font:16px system-ui;max-width:34rem;margin:12vh auto;padding:2rem">
+<h1>This app is not shared with you</h1><p>Ask the lodge owner to add your email or domain.</p></body></html>"""
+
+
+def _separate_apps_domain_configured() -> bool:
+    try:
+        config = json.loads((WOLTS_DIR / "woltspace.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(config, dict) and bool(config.get("apps_domain"))
 
 
 # Security boundary for the localhost control plane. Host is checked on every
@@ -1874,7 +1911,44 @@ async def app_detail(name: str):
     entry["url"] = f"/app/{name}/"
     entry["tunnel_url"] = run_state.get("tunnel_url") if run_state else None
     entry["sharing"] = bool(run_state.get("tunnel_pid") and run_state.get("tunnel_url")) if run_state else False
+    access_settings = _app_access_settings()
+    entry["share_controls_enabled"] = access_settings is not None
+    entry["share_entries"] = read_app_shares(WOLTS_DIR, name)
+    entry["separate_app_domain"] = _separate_apps_domain_configured()
     return entry
+
+
+@app.get("/apps/{name}/sharing")
+async def app_sharing_get(name: str):
+    if invalid := _invalid_app_name(name):
+        return invalid
+    if not get_app(name):
+        return JSONResponse({"error": f"app {name} not found"}, status_code=404)
+    return {
+        "entries": read_app_shares(WOLTS_DIR, name),
+        "enabled": _app_access_settings() is not None,
+    }
+
+
+@app.put("/apps/{name}/sharing")
+async def app_sharing_put(name: str, request: Request):
+    if invalid := _invalid_app_name(name):
+        return invalid
+    if not get_app(name):
+        return JSONResponse({"error": f"app {name} not found"}, status_code=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict) or set(body) != {"entries"}:
+        return JSONResponse({"error": "entries is required"}, status_code=400)
+    try:
+        entries = write_app_shares(WOLTS_DIR, name, body["entries"])
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    return {"ok": True, "entries": entries, "enabled": _app_access_settings() is not None}
 
 
 @app.post("/apps/{name}/start")

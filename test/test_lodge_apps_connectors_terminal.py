@@ -176,11 +176,12 @@ def test_app_cli_twins_only_call_api(capsys):
     assert "restart ok" in capsys.readouterr().out
 
 
-def test_ui_keeps_sharing_read_only_and_guards_terminal_resize():
+def test_ui_uses_reviewed_sharing_route_and_guards_terminal_resize():
     app_js = (ROOT / "public" / "static" / "app-page.js").read_text()
     terminal_js = (ROOT / "public" / "static" / "terminal.js").read_text()
-    assert "🔒 Just me" in app_js
-    assert "/share" not in app_js and "/unshare" not in app_js
+    assert "/sharing" in app_js
+    assert "share_controls_enabled" in app_js
+    assert "quick-tunnel" not in app_js
     assert "offsetWidth<50" in terminal_js
     assert "term.cols>=20&&term.rows>=5" in terminal_js
     assert (ROOT / "public" / "static" / "SymbolsNerdFontMono-Regular.woff2").stat().st_size > 1000
