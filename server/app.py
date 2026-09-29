@@ -563,7 +563,8 @@ class AccessTokenMiddleware:
         }
         host_header = headers.get("host", "")
         hostname, _port = _split_host(host_header)
-        if owner_local_request(scope, hostname):
+        app_host = _extract_app_subdomain(host_header) is not None
+        if owner_local_request(scope, hostname, allow_localhost_subdomain=app_host):
             return await self.inner(scope, receive, send)
         if not _allowed_http_hostname(hostname):
             return await self._reject(scope, receive, send, "untrusted request host")
