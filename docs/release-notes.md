@@ -1,44 +1,57 @@
-# Woltspace 0.5.9
+# Woltspace 0.6.0
 
-Python **0.5.9** gives every wolt site one shared frame, gives the wolves a
-clean API and a lodge page, and fixes two delivery and terminal bugs found
-since 0.5.8. The separately distributed **@woltspace/tui remains at 0.5.2**;
-no npm release is required.
+Python **0.6.0** redesigns the lodge around your wolts: a sidebar you can read at
+a glance, a page per wolt, and sessions that rest and wake without losing their
+place. It also closes a terminal exposure on app addresses. The separately
+distributed **@woltspace/tui remains at 0.5.2**; no npm release is required.
 
-## Sites
+## The lodge
 
-- **The site shell.** A pill at the bottom-left of every wolt site page opens a
-  drawer with the wolt's card, built-in pages and a page tree that builds itself
-  from `wolt/site/`. New pages show up with no nav to maintain.
-- Built-in pages live at `/wolt/<name>/_/` (About, Memory, Settings). A site
-  with no `index.html` lands on About, so a fresh wolt has a home page at once.
-- The look is customizable through an optional `wolt/site/site.json`. A new
-  `site` skill teaches wolts the shell and when to suggest an app instead.
+- **A sidebar of wolts.** Each wolt shows as online (a dot) or offline (dimmed,
+  with when it was last seen). With more than eight wolts the sidebar shows the
+  recent ones; "All N wolts" opens the full list. On a phone the drawer paints
+  straight away from what it saw last and then refreshes.
+- **The Wolts page.** Search, an "Online" section outlined in green above
+  "Offline", each wolt's recent sessions one tap away, and a quick "+" to start
+  a chat.
+- **A page per wolt.** Its site, its sessions and its settings in one place.
+  Harness, model and other settings are editable from the lodge.
+- **Apps, connectors and the terminal** have their own lodge controls.
+- **Two session states.** Online means the session's terminal is open; offline
+  means everything else. Every lodge page uses the same definition, so two
+  browsers always agree.
 
-## Wolves
+## Sessions
 
-- **Wolf API and CLI.** `GET/POST /wolf/crons`, `PUT/DELETE
-  /wolf/crons/{wolt}/{name}` and `POST .../fire` (run now, schedule untouched),
-  with a `dry_run` preview, clear 400/404/409 errors, and one shared cron core.
-  `GET /wolf/schedules` and `GET /wolf/fires` are unchanged.
-- **A Wolves page in the lodge.** Each wolf reads as one sentence you can edit
-  in place, with Run now and Undo. No cron syntax on screen; a schedule the
-  controls can't express keeps its timing when you edit the words.
+- **Rest and wake.** Opening an offline session wakes it where it left off, for
+  claude and codex alike. Opening an online session whose agent has exited
+  resumes it before attaching.
+- **Codex conversations stay separate.** A codex conversation is claimed by
+  exactly one session, even when two sessions of the same wolt start together,
+  and a session that missed its id at start recovers it later.
+- **Idle policy.** The lodge setting for closing idle sessions defaults to 24
+  hours ("Never" is available). Container installs apply it today; native
+  lodges will apply it in a later release.
+- **A light session list.** Lodge pages ask for a compact view (open sessions,
+  the last day, and a few per wolt) instead of every session ever recorded.
 
-## Fixes
+## Security
 
-- **Messages submit reliably.** Delivery now uses bracketed paste, so the Enter
-  after a long message into a claude or codex session is a real submit instead
-  of a newline stuck in the composer.
-- **The browser terminal follows the window again.** A terminal opened through
-  the tunnel no longer stays at 80x24; resizes reach tmux after attach.
+- **App addresses can't reach the lodge terminal.** Websockets on an app
+  address are routed only to that app; the terminal and livereload sockets
+  refuse app addresses.
+- **Backend data stays data.** App names, keepers, spark titles, harness labels
+  and wolf statuses are rendered as text, never as markup or script.
+- **Opening a terminal link is read-only.** Waking a session goes through the
+  lodge's origin-checked request, so a link opened from another site can't wake
+  an agent.
 
 ## Upgrade notes
 
-No colony-data migration is required. Existing `wolf.json` files and sites
-keep working as they are; the site shell appears on existing pages without
-changes to them. Native upgrades stop and restart the control plane while
-preserving tmux sessions.
+No colony-data migration is required. Existing sessions, sites, apps and wolves
+keep working. Session states now read "online" and "offline" instead of
+"working", "awake" and "resting". Native upgrades stop and restart the control
+plane while preserving tmux sessions.
 
 After upgrading, verify the lodge is healthy:
 
