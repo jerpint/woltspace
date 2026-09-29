@@ -61,6 +61,19 @@ def _claude_token_in_env() -> bool:
     return any((os.environ.get(name) or "").strip() for name in CLAUDE_TOKEN_VARS)
 
 
+def _tunnel_token_present(layout: RuntimeLayout) -> bool:
+    if (os.environ.get("CLOUDFLARE_TUNNEL_TOKEN") or "").strip():
+        return True
+    try:
+        from dotenv import dotenv_values
+
+        return bool((dotenv_values(layout.wolts_dir / ".env").get(
+            "CLOUDFLARE_TUNNEL_TOKEN"
+        ) or "").strip())
+    except (OSError, ImportError):
+        return False
+
+
 def _auth_paths(home: Path) -> dict[str, Path]:
     codex_home = Path(os.environ.get("CODEX_HOME", home / ".codex"))
     xdg_data = Path(os.environ.get("XDG_DATA_HOME", home / ".local" / "share"))
@@ -326,6 +339,15 @@ def run_doctor(
         f"Python {version.major}.{version.minor}.{version.micro}",
         "Install Python 3.11 or newer." if version < (3, 11) else "",
     ))
+
+    from .lifecycle import tunnel_settings
+
+    if _tunnel_token_present(layout) and not tunnel_settings(layout)["enabled"]:
+        checks.append(DoctorCheck(
+            "public-tunnel", "warn",
+            "CLOUDFLARE_TUNNEL_TOKEN is configured but the tunnel is disabled",
+            "Set WOLTSPACE_PUBLIC_TUNNEL=true and restart the lodge.",
+        ))
 
     required_assets = (
         layout.install_root / "server",

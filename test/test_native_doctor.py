@@ -60,6 +60,29 @@ def test_doctor_discovers_existing_host_auth_without_copying_it(tmp_path, monkey
     assert not layout.wolts_dir.exists()
 
 
+def test_doctor_warns_when_env_tunnel_token_is_disabled(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    monkeypatch.setenv("CLOUDFLARE_TUNNEL_TOKEN", "configured-token")
+    monkeypatch.setenv("WOLTSPACE_PUBLIC_TUNNEL", "false")
+
+    check = {item.name: item for item in run_doctor(layout, check_port=False)}[
+        "public-tunnel"
+    ]
+    assert check.status == "warn"
+    assert check.remedy == "Set WOLTSPACE_PUBLIC_TUNNEL=true and restart the lodge."
+
+
+def test_doctor_warns_when_dotenv_tunnel_token_is_disabled(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    layout.wolts_dir.mkdir(parents=True)
+    (layout.wolts_dir / ".env").write_text("CLOUDFLARE_TUNNEL_TOKEN=configured-token\n")
+    monkeypatch.delenv("CLOUDFLARE_TUNNEL_TOKEN", raising=False)
+    monkeypatch.delenv("WOLTSPACE_PUBLIC_TUNNEL", raising=False)
+
+    names = {item.name for item in run_doctor(layout, check_port=False)}
+    assert "public-tunnel" in names
+
+
 def _restore_env(snapshot: dict):
     for key, value in snapshot.items():
         if value is None:
