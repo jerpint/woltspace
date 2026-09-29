@@ -2,7 +2,6 @@
 
 import asyncio
 import hashlib
-import ipaddress
 import json
 import os
 import re
@@ -65,6 +64,7 @@ from .pty_bridge import (
     PtyTextDecoder,
     attach_tmux,
 )
+from .local_request import owner_local_request
 from woltspace.app_gateway_port import resolve_app_gateway_port, validate_gateway_port
 
 # Session spawning — shared with bot
@@ -542,20 +542,6 @@ async def request_origin_guard(request: Request, call_next):
     return await call_next(request)
 
 
-def _loopback_http_hostname(hostname: str) -> bool:
-    return hostname in {"localhost", "127.0.0.1", "::1"} or hostname.endswith(".localhost")
-
-
-def _loopback_asgi_client(scope: dict) -> bool:
-    client = scope.get("client")
-    if not client or not client[0]:
-        return False
-    try:
-        return ipaddress.ip_address(client[0]).is_loopback
-    except ValueError:
-        return False
-
-
 class AccessTokenMiddleware:
     """Verify remote HTTP and websocket scopes before either can be routed."""
 
@@ -577,7 +563,7 @@ class AccessTokenMiddleware:
         }
         host_header = headers.get("host", "")
         hostname, _port = _split_host(host_header)
-        if _loopback_http_hostname(hostname) and _loopback_asgi_client(scope):
+        if owner_local_request(scope, hostname):
             return await self.inner(scope, receive, send)
         if not _allowed_http_hostname(hostname):
             return await self._reject(scope, receive, send, "untrusted request host")

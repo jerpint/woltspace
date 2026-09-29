@@ -286,10 +286,15 @@ def test_container_files_expose_and_publish_gateway_port():
     dockerfile = (ROOT / "container" / "Dockerfile").read_text()
     launcher = (ROOT / "woltspace").read_text()
     assert "EXPOSE 7777 7117" in dockerfile
-    assert '-p "$app_gateway_port:$app_gateway_port"' in launcher
+    assert '-p "127.0.0.1:$app_gateway_port:$app_gateway_port"' in launcher
     assert '-e WOLTSPACE_APP_GATEWAY_PORT="$app_gateway_port"' in launcher
     assert "--entrypoint /usr/bin/python3" not in launcher
     assert "from woltspace.app_gateway_port import resolve_app_gateway_port" in launcher
+    assert 'resolved_gateway_port=""' in launcher
+    assert '|| resolved_gateway_port=""' in launcher
+    assert "-p 127.0.0.1:7117:7117" in launcher
+    assert '-p "127.0.0.1:${WOLTSPACE_PORT:-7777}:7777"' in launcher
+    assert "-p 127.0.0.1:7777:7777" in launcher
 
 
 def test_gateway_port_is_configurable(tmp_path):
@@ -413,8 +418,34 @@ def test_loopback_owner_opens_local_app_with_access_configured(tmp_path, monkeyp
 
 def test_localhost_app_requires_loopback_peer(tmp_path, monkeypatch):
     _configure(tmp_path, monkeypatch)
+    monkeypatch.delenv("WOLTSPACE_ISOLATION", raising=False)
     response = asyncio.run(_get(
         "/", host="notes.localhost:7117", client=("192.0.2.10", 123),
+    ))
+    assert response.status_code == 403
+
+
+def test_container_localhost_app_accepts_docker_bridge_peer(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", "external")
+
+    async def proxy(_request, name):
+        return PlainTextResponse(f"{name}:CONTAINER_OK")
+
+    monkeypatch.setattr(gateway, "proxy_app_http", proxy)
+    response = asyncio.run(_get(
+        "/", host="notes.localhost:7117", client=("192.168.65.1", 123),
+    ))
+    assert response.status_code == 200
+    assert response.text == "notes:CONTAINER_OK"
+
+
+def test_container_forwarded_localhost_is_still_refused(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", "external")
+    response = asyncio.run(_get(
+        "/", host="notes.localhost:7117", client=("192.168.65.1", 123),
+        extra_headers={"x-forwarded-for": "203.0.113.4"},
     ))
     assert response.status_code == 403
 
@@ -480,3 +511,8 @@ def test_gateway_port_resolver_is_shared_by_every_consumer():
     ]
     for source in sources:
         assert "resolve_app_gateway_port" in source.read_text(), source
+
+
+def test_owner_local_rule_is_shared_by_lodge_and_gateway():
+    for source in (ROOT / "server" / "app.py", ROOT / "server" / "gateway.py"):
+        assert "from .local_request import owner_local_request" in source.read_text()

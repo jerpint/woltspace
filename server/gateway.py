@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ipaddress
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +15,7 @@ from .app_proxy import proxy_app_http, proxy_app_websocket
 from .app_sharing import email_is_shared, read_app_shares
 from .config import WOLTS_DIR
 from .gateway_settings import load_gateway_settings
+from .local_request import owner_local_request
 
 
 def _headers(scope) -> dict[str, str]:
@@ -50,25 +50,12 @@ def _app_name(host_header: str, apps_domain: str | None) -> tuple[str | None, bo
     return (name if valid else None), local
 
 
-def _loopback_peer(scope) -> bool:
-    peer = scope.get("client")
-    try:
-        return bool(peer and ipaddress.ip_address(peer[0]).is_loopback)
-    except ValueError:
-        return False
-
-
 async def request_identity(scope, headers, *, local_host: bool, access):
     """Return the provider-neutral request identity and an audit reason."""
     if local_host:
-        if not _loopback_peer(scope):
+        hostname = _host_name(headers.get("host", "")) or ""
+        if not owner_local_request(scope, hostname, allow_localhost_subdomain=True):
             return None, "non-loopback-peer"
-        forwarding_headers = {
-            "cf-connecting-ip", "cf-ray", "x-forwarded-for", "x-forwarded-host",
-            "forwarded", "cf-access-jwt-assertion",
-        }
-        if forwarding_headers.intersection(headers):
-            return None, "forwarded-localhost"
         owner = access.owner_email if access is not None else "owner@localhost"
         return owner, "owner-local"
     if access is None:
