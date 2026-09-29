@@ -19,6 +19,14 @@ const wolvesSource = readFileSync(
   new URL('../public/static/wolves.js', import.meta.url),
   'utf8',
 );
+const woltsPageSource = readFileSync(
+  new URL('../public/static/wolts-page.js', import.meta.url),
+  'utf8',
+);
+const woltPageSource = readFileSync(
+  new URL('../public/static/wolt-page.js', import.meta.url),
+  'utf8',
+);
 
 function loadNavigation() {
   const calls = [];
@@ -104,4 +112,60 @@ test('hostile history metadata is text, not executable markup or handler source'
   assert.doesNotMatch(tuiSource, /onclick="loadSpark/);
   assert.doesNotMatch(tuiSource, /histList\.innerHTML/);
   assert.doesNotMatch(tuiSource, /<span class="hist-title">\$\{s\.title\}/);
+});
+
+test('lodge session consumers use the cached light projection', () => {
+  assert.match(lodgeSource, /fetch\('\/sessions\?view=lodge'\)/);
+  assert.match(lodgeSource, /sessionStorage\.getItem\(LODGE_SESSIONS_CACHE\)/);
+  assert.match(lodgeSource, /restoreLodgeSessions\(\);\s*loadHarnesses/s);
+  assert.match(woltPageSource, /fetchJSON\('\/sessions\?view=lodge'/);
+  assert.doesNotMatch(woltsPageSource, /prompt_preview|s\.prompt/);
+  assert.doesNotMatch(woltPageSource, /prompt_preview|s\.prompt/);
+});
+
+test('terminal opening checks only its session before attach or resume', () => {
+  assert.match(tuiSource, /fetch\('\/sessions\/' \+ encodeURIComponent\(session\)\)/);
+  assert.match(tuiSource, /s\.agent_alive === true/);
+  assert.doesNotMatch(tuiSource, /fetch\('\/sessions'\)/);
+  assert.match(tuiSource, /fetch\('\/sessions\/' \+ encodeURIComponent\(session\) \+ '\/resume'/);
+});
+
+async function runEnsureSessionAlive(record) {
+  const source = tuiSource.match(/async function ensureSessionAlive\(\) \{[\s\S]*?^  \}/m)?.[0];
+  assert.ok(source, 'ensureSessionAlive function found');
+  const calls = [];
+  const context = {
+    session: 'n00b-one',
+    connectTUI: () => calls.push(['attach']),
+    setStatus: (...args) => calls.push(['status', ...args]),
+    encodeURIComponent,
+    setTimeout: callback => { callback(); return 1; },
+    fetch: async (url, options = {}) => {
+      calls.push(['fetch', url, options.method || 'GET']);
+      if (url.endsWith('/resume')) {
+        return { ok: true, json: async () => ({ status: 'running' }) };
+      }
+      return { ok: true, json: async () => record };
+    },
+  };
+  await runInNewContext(`${source}; ensureSessionAlive()`, context);
+  return calls;
+}
+
+test('terminal attaches to a running session with a live agent', async () => {
+  const calls = await runEnsureSessionAlive({ status: 'running', agent_alive: true });
+  assert.deepEqual(calls, [
+    ['fetch', '/sessions/n00b-one', 'GET'],
+    ['attach'],
+  ]);
+});
+
+test('terminal resumes a tmux-alive session whose agent exited', async () => {
+  const calls = await runEnsureSessionAlive({ status: 'running', agent_alive: false });
+  assert.deepEqual(calls, [
+    ['fetch', '/sessions/n00b-one', 'GET'],
+    ['status', 'connecting', 'resuming'],
+    ['fetch', '/sessions/n00b-one/resume', 'POST'],
+    ['attach'],
+  ]);
 });

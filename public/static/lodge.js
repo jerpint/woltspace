@@ -5,8 +5,10 @@
 let allWolts = [];
 let allApps = [];
 let allSessions = [];
+let sessionTotals = {};
 let appFilter = 'all';
 let currentView = 'home';
+const LODGE_SESSIONS_CACHE = 'woltspace:lodge-sessions:v1';
 
 // ── Harnesses (agent engines: claude, codex, …) ──
 let harnessList = [];          // [{id,label,emoji,models}]
@@ -216,7 +218,10 @@ function woltSessionSummary(w) {
   const workingCount = open.filter(sessionIsWorking).length;
   const working = workingCount > 0;
   const last = sessions.length ? (sessions[0].last_activity || sessions[0].created_at || 0) : 0;
-  return { w, name, sessions, open, working, workingCount, last };
+  return {
+    w, name, sessions, open, working, workingCount, last,
+    total: sessionTotals[w.dir || name] ?? sessions.length,
+  };
 }
 
 // a wolt's one-word state, used wherever a wolt is listed
@@ -525,10 +530,9 @@ async function toggleShare(name, isSharing) {
 // ── Load sessions ──
 async function loadSessions() {
   try {
-    const res = await fetch('/sessions');
-    allSessions = await res.json();
-    renderSidebarWolts();
-    renderSessions();
+    const res = await fetch('/sessions?view=lodge');
+    const payload = await res.json();
+    applyLodgeSessions(payload, true);
   } catch {
     const list = document.getElementById('sessions-list');
     if (list) list.innerHTML =
@@ -536,11 +540,37 @@ async function loadSessions() {
   }
 }
 
+function applyLodgeSessions(payload, persist = false) {
+  const sessions = Array.isArray(payload) ? payload : payload?.sessions;
+  if (!Array.isArray(sessions)) return;
+  allSessions = sessions;
+  sessionTotals = payload && !Array.isArray(payload) && payload.totals
+    ? payload.totals : {};
+  if (persist) {
+    try {
+      sessionStorage.setItem(LODGE_SESSIONS_CACHE, JSON.stringify({
+        sessions: allSessions, totals: sessionTotals,
+      }));
+    } catch {}
+  }
+  renderSidebarWolts();
+  renderSessions();
+}
+
+function restoreLodgeSessions() {
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(LODGE_SESSIONS_CACHE) || 'null');
+    applyLodgeSessions(cached);
+  } catch {}
+}
+
 function renderSessions() {
   if (!document.getElementById('sessions-list')) return;
   const running = allSessions.filter(s => s.name !== 'main' && s.status === 'running');
+  const total = Object.values(sessionTotals).reduce((sum, count) => sum + count, 0)
+    || allSessions.length;
   document.getElementById('sessions-subtitle').textContent =
-    `${running.length} running · ${allSessions.length} total`;
+    `${running.length} running · ${total} total`;
   const badge = document.getElementById('sessions-badge');  // gone from the sidebar since the wolt pages
   if (badge) {
     badge.textContent = running.length || '';
@@ -615,9 +645,10 @@ function filterSessions() {
     const emoji = woltData ? (WOLT_EMOJI[woltData.type] || '🦫') : '🦫';
     const sessionSprite = woltData ? woltSpriteAvatar(woltData.type, 20) : null;
     const runCount = sessions.filter(sessionIsOpen).length;
+    const total = sessionTotals[wolt] ?? sessions.length;
     const metaText = runCount > 0
-      ? `${runCount} awake · ${sessions.length} total`
-      : `${sessions.length} session${sessions.length !== 1 ? 's' : ''}`;
+      ? `${runCount} awake · ${total} total`
+      : `${total} session${total !== 1 ? 's' : ''}`;
     const group = lodgeElement('div', 'sessions-group');
     const header = lodgeElement('div', 'sessions-group-header');
     const avatar = lodgeElement('div', 'sessions-group-avatar');
@@ -844,6 +875,7 @@ document.querySelectorAll('.type-card').forEach(card => {
   if (sprite) card.querySelector('.type-card-emoji').innerHTML = sprite;
 });
 
+restoreLodgeSessions();
 loadHarnesses().finally(loadWolts);
 if (document.getElementById('app-grid')) loadApps();
 loadSessions();

@@ -1147,10 +1147,14 @@ async def session_new_slack(request: Request):
 # --- Sessions list ---
 
 @app.get("/sessions")
-async def list_sessions():
+async def list_sessions(view: str = ""):
     from sessions import SessionRegistry
     reg = SessionRegistry(WOLTS_DIR)
-    sessions = reg.list()
+    if view == "lodge":
+        payload = await asyncio.to_thread(reg.list_lodge_view)
+        sessions = payload["sessions"]
+    else:
+        sessions = reg.list()
     timeout = get_idle_timeout()
     observations = get_pane_activity() if timeout is not None else {}
     now = int(time.time())
@@ -1161,7 +1165,22 @@ async def list_sessions():
             session["idle_seconds"] = max(0, now - observed)
             session["closes_in_seconds"] = max(0, timeout - session["idle_seconds"])
     sessions.sort(key=lambda s: (0 if s.get("status") == "running" else 1, -(s.get("created_at") or 0)))
-    return sessions
+    return payload if view == "lodge" else sessions
+
+
+@app.get("/sessions/{name}")
+async def get_session(name: str):
+    """Return one session with its agent-accurate liveness state."""
+    from sessions import SessionRegistry
+    safe = "".join(c for c in name if c.isalnum() or c in "-_")
+    if safe != name:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    session = await asyncio.to_thread(
+        SessionRegistry(WOLTS_DIR).get, safe, check_alive=True,
+    )
+    if session is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return session
 
 
 # --- Sparks ---

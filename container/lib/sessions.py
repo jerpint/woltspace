@@ -22,8 +22,10 @@ import subprocess
 import sys
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
+from threading import Lock
 
 from env_compat import get_env
 from paths import (
@@ -84,6 +86,48 @@ ORPHAN_AGENT_GONE = "agent-process-missing"
 
 # The fields get(check_alive=True) and list() compute rather than read off disk.
 LIVENESS_FIELDS = frozenset({"alive", "tmux_alive", "agent_alive"})
+_LODGE_RECORD_CACHE: dict[Path, tuple[tuple[int, int], dict]] = {}
+_LODGE_RECORD_CACHE_LOCK = Lock()
+
+
+def _read_lodge_record(path: Path, wolt: str) -> dict | None:
+    """Read only the session fields the lodge UI consumes, with mtime caching."""
+    try:
+        stat = path.stat()
+        signature = (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return None
+    with _LODGE_RECORD_CACHE_LOCK:
+        cached = _LODGE_RECORD_CACHE.get(path)
+        if cached and cached[0] == signature:
+            return dict(cached[1])
+    try:
+        raw = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    record = {
+        "name": raw.get("name") or path.stem,
+        "wolt": raw.get("wolt") or wolt,
+        "status": raw.get("status") or "stopped",
+    }
+    if raw.get("last_activity") is not None:
+        record["last_activity"] = raw["last_activity"]
+    elif raw.get("created_at") is not None:
+        record["created_at"] = raw["created_at"]
+    for field in ("title", "summary"):
+        if raw.get(field):
+            record[field] = raw[field]
+    record["openable"] = bool(
+        raw.get("harness_session_id") or raw.get("claude_session_id")
+    )
+    record["_tmux_session_name"] = (
+        RuntimeHandle.from_record(raw).tmux_session_name or record["name"]
+    )
+    with _LODGE_RECORD_CACHE_LOCK:
+        _LODGE_RECORD_CACHE[path] = (signature, record)
+    return dict(record)
 
 
 class ResumeUnavailable(Exception):
@@ -512,6 +556,85 @@ class SessionRegistry:
                 results.append(data)
 
         return sorted(results, key=lambda s: s.get("created_at") or 0, reverse=True)
+
+    def list_lodge_view(
+        self, *, recent_seconds: int = 86400, per_wolt: int = 8,
+    ) -> dict:
+        """Return the small, liveness-aware session projection used by the lodge.
+
+        The full registry remains available through ``list()``. This view reads
+        only display/state fields, keeps the newest rows needed by each wolt
+        expander, and never performs liveness work for terminal records.
+        """
+        paths: list[tuple[Path, str]] = []
+        for wolt in self._all_wolts():
+            sessions_dir = self.wolts_dir / wolt / ".state" / "sessions"
+            if sessions_dir.exists():
+                paths.extend((path, wolt) for path in sessions_dir.glob("*.json"))
+
+        records: list[dict] = []
+        missing: list[tuple[Path, str]] = []
+        for path, wolt in paths:
+            try:
+                stat = path.stat()
+                signature = (stat.st_mtime_ns, stat.st_size)
+            except OSError:
+                continue
+            with _LODGE_RECORD_CACHE_LOCK:
+                cached = _LODGE_RECORD_CACHE.get(path)
+                record = dict(cached[1]) if cached and cached[0] == signature else None
+            if record is None:
+                missing.append((path, wolt))
+            else:
+                records.append(record)
+        if missing:
+            with ThreadPoolExecutor(max_workers=min(64, len(missing))) as pool:
+                loaded = pool.map(lambda item: _read_lodge_record(*item), missing)
+                records.extend(record for record in loaded if record is not None)
+
+        totals: dict[str, int] = {}
+        by_wolt: dict[str, list[dict]] = {}
+        for record in records:
+            wolt = record["wolt"]
+            totals[wolt] = totals.get(wolt, 0) + 1
+            by_wolt.setdefault(wolt, []).append(record)
+
+        now = int(time.time())
+        cutoff = now - recent_seconds
+        selected: list[dict] = []
+        for wolt_records in by_wolt.values():
+            ordered = sorted(
+                wolt_records,
+                key=lambda row: row.get("last_activity") or row.get("created_at") or 0,
+                reverse=True,
+            )
+            newest = {row["name"] for row in ordered[:per_wolt]}
+            selected.extend(
+                row for row in ordered
+                if row.get("status") == "running"
+                or (row.get("last_activity") or row.get("created_at") or 0) >= cutoff
+                or row["name"] in newest
+            )
+
+        # Lodge state has one deliberately lightweight meaning: an "open"
+        # session is a running record whose tmux window still exists. Whether
+        # its agent process survived is checked only when that session is
+        # opened, where a missing agent can be resumed before attachment.
+        live_sessions = _tmux_sessions()
+        for row in selected:
+            tmux_name = row.pop("_tmux_session_name", row["name"])
+            alive = row.get("status") == "running" and tmux_name in live_sessions
+            row["alive"] = alive
+            if row.get("status") == "running" and not alive:
+                row["status"] = "orphaned"
+
+        selected.sort(
+            key=lambda row: (
+                0 if row.get("status") == "running" else 1,
+                -(row.get("last_activity") or row.get("created_at") or 0),
+            )
+        )
+        return {"sessions": selected, "totals": totals}
 
     def reconcile(self) -> list[str]:
         """Check all 'running' sessions against tmux. Mark dead ones as orphaned."""
