@@ -83,6 +83,29 @@ def test_doctor_warns_when_dotenv_tunnel_token_is_disabled(tmp_path, monkeypatch
     assert "public-tunnel" in names
 
 
+def test_doctor_warns_when_running_cli_directory_is_not_on_path(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    monkeypatch.setattr(sys, "argv", [str(tmp_path / ".local" / "bin" / "woltspace")])
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+    check = {item.name: item for item in run_doctor(layout, check_port=False)}["cli-path"]
+
+    assert check.status == "warn"
+    assert str(tmp_path / ".local" / "bin") in check.detail
+    assert check.remedy == "Run `uv tool update-shell`, then open a new terminal."
+
+
+def test_doctor_passes_when_running_cli_directory_is_on_path(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    bin_dir = tmp_path / ".local" / "bin"
+    monkeypatch.setattr(sys, "argv", [str(bin_dir / "woltspace")])
+    monkeypatch.setenv("PATH", f"/usr/bin{os.pathsep}{bin_dir}")
+
+    check = {item.name: item for item in run_doctor(layout, check_port=False)}["cli-path"]
+
+    assert check.status == "pass"
+
+
 def _restore_env(snapshot: dict):
     for key, value in snapshot.items():
         if value is None:

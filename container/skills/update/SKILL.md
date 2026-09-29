@@ -53,6 +53,7 @@ Install the exact reviewed version using the ordinary uv command, for example:
 
 ```sh
 uv tool install --force 'woltspace==VERSION'
+uv tool update-shell
 ```
 
 Replace VERSION with the reviewed version and preserve any installed extras and

@@ -48,6 +48,7 @@ The published packages are the way to install:
 
 ```bash
 uv tool install 'woltspace'
+uv tool update-shell
 ```
 
 The browser terminal is part of the Python package. Install the optional
@@ -61,6 +62,7 @@ so you pick up local changes:
 ```bash
 cd /path/to/woltspace
 uv tool install .
+uv tool update-shell
 ```
 
 Check the installed package:
@@ -71,9 +73,9 @@ woltspace 0.5.1
 
 ```
 
-> If `uv tool install` warns that its bin directory is not on your PATH, follow
-> the `export PATH=...` line it prints (or run `uv tool update-shell`) and open
-> a new shell.
+> `uv tool update-shell` adds uv's tool directory to future shells. Open a new
+> shell after running it. If uv instead prints a specific `export PATH=...`
+> instruction, that works for the current shell only.
 
 > **Three programs are called `woltspace`**, and on a native install two of
 > them can sit ahead of the one you just installed:

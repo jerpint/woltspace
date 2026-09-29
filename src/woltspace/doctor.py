@@ -74,6 +74,33 @@ def _tunnel_token_present(layout: RuntimeLayout) -> bool:
         return False
 
 
+def _cli_path_check() -> DoctorCheck | None:
+    """Warn when this console script will disappear in the next shell."""
+    invoked = Path(sys.argv[0]).expanduser()
+    if invoked.name != "woltspace":
+        return None
+    if not invoked.is_absolute():
+        located = shutil.which(str(invoked))
+        if located:
+            return DoctorCheck("cli-path", "pass", str(Path(located).parent))
+        return None
+
+    executable_dir = invoked.absolute().parent
+    path_dirs = {
+        Path(part).expanduser().absolute()
+        for part in os.environ.get("PATH", "").split(os.pathsep)
+        if part
+    }
+    if executable_dir in path_dirs:
+        return DoctorCheck("cli-path", "pass", f"{executable_dir} is on PATH")
+    return DoctorCheck(
+        "cli-path",
+        "warn",
+        f"running woltspace from {executable_dir}, which is not on PATH",
+        "Run `uv tool update-shell`, then open a new terminal.",
+    )
+
+
 def _auth_paths(home: Path) -> dict[str, Path]:
     codex_home = Path(os.environ.get("CODEX_HOME", home / ".codex"))
     xdg_data = Path(os.environ.get("XDG_DATA_HOME", home / ".local" / "share"))
@@ -339,6 +366,10 @@ def run_doctor(
         f"Python {version.major}.{version.minor}.{version.micro}",
         "Install Python 3.11 or newer." if version < (3, 11) else "",
     ))
+
+    cli_path = _cli_path_check()
+    if cli_path is not None:
+        checks.append(cli_path)
 
     from .lifecycle import tunnel_settings
 

@@ -32,6 +32,7 @@ Or by hand:
 
 ```bash
 uv tool install 'woltspace'
+uv tool update-shell
 npm install -g @woltspace/tui
 woltspace doctor
 woltspace start

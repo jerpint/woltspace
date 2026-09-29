@@ -41,6 +41,7 @@ replace the upgrade step with:
 
 ```sh
 uv tool install --force 'woltspace==VERSION'
+uv tool update-shell
 ```
 
 Replace VERSION with the reviewed published version, preserving your installed
