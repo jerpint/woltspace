@@ -44,8 +44,8 @@
       </div>
 
       <div id="sessions">
-      {% call panel('Idle sessions', 'Close unchanged sessions to free resources. Their conversation stays resumable.', 'lodge-wide') %}
-        {% call select_field('idle-session-timeout', 'Close idle sessions after', 'Activity means the terminal pane changed. Online sessions are never closed.') %}
+      {% call panel('Idle sessions', 'Close sessions nobody has been in touch with, to free resources. Their conversation stays resumable.', 'lodge-wide') %}
+        {% call select_field('idle-session-timeout', 'Close idle sessions after', 'No contact means no message, notify or page update from the session for this long.') %}
           <div class="ds-select-stack" data-expiry-row data-saved-value="{{ idle_timeout if idle_timeout is not none else '' }}">
             <select class="ds-select" id="idle-session-timeout" data-expiry-select>
               <option value=""{% if idle_timeout is none %} selected{% endif %}>Never</option>
