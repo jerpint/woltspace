@@ -49,7 +49,7 @@ echo "ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-NOT SET}"
 Browser → subdomain.domain.com
        → Cloudflare Edge (Access: email OTP)
        → Cloudflare Tunnel (QUIC, auto-reconnect)
-       → localhost:7777 (FastAPI)
+       → $WOLTSPACE_API (FastAPI)
 ```
 
 - **Auth at the edge** — unauthorized requests never reach the container.
