@@ -213,22 +213,14 @@ function renderStarterWelcome() {
 
   const wolt = allWolts[0];
   const name = wolt.name || wolt.dir;
-  const heading = lodgeElement('div', 'home-starter-heading');
-  heading.appendChild(lodgeElement(
-    'span', 'home-starter-emoji', wolt.emoji || WOLT_EMOJI[wolt.type] || '🦫',
-  ));
-  heading.appendChild(lodgeElement('span', 'home-starter-name', name));
-  const button = lodgeElement('button', 'home-starter-button', 'Say hi');
+  const emoji = wolt.emoji || WOLT_EMOJI[wolt.type] || '🦫';
+  const button = lodgeElement('button', 'home-starter-button', `Say hi ${emoji}`);
   button.type = 'button';
   button.addEventListener('click', () => {
     card.style.display = 'none';
     startSession(name);
   });
-  card.replaceChildren(
-    heading,
-    lodgeElement('div', 'home-starter-description', wolt.description || 'Your first lodge companion.'),
-    button,
-  );
+  card.replaceChildren(button);
   card.style.display = '';
   const cta = document.getElementById('home-create-cta');
   if (cta) cta.style.display = 'none';
