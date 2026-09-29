@@ -51,6 +51,28 @@ def write_config(layout, payload):
     return path
 
 
+def test_one_connector_plan_failure_does_not_break_other_plans(layout, monkeypatch):
+    class Broken:
+        name = "broken"
+
+        def plan(self, _layout, _env):
+            raise RuntimeError("bad connector config")
+
+    class Healthy:
+        name = "healthy"
+
+        def plan(self, _layout, _env):
+            return ConnectorPlan("healthy", True, "ready")
+
+    monkeypatch.setattr(channels, "CONNECTORS", (Broken(), Healthy()))
+    plans = plan_connectors(layout, {})
+
+    assert [(plan.name, plan.enabled) for plan in plans] == [
+        ("broken", False), ("healthy", True),
+    ]
+    assert "bad connector config" in plans[0].detail
+
+
 class TestNativeConfig:
     def test_config_lives_in_the_data_root_not_a_dotenv(self, layout):
         assert config_path(layout, {}) == layout.platform_state / "config.json"

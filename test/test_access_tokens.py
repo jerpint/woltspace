@@ -43,11 +43,12 @@ def _token(private_key, audience, email="owner@example.com", kid="key-1"):
 
 async def _request(
     path="/sessions", *, host="owner.woltspace.test", token=None,
-    client=("127.0.0.1", 123),
+    client=("127.0.0.1", 123), extra_headers=None,
 ):
     headers = {"host": host}
     if token is not None:
         headers["cf-access-jwt-assertion"] = token
+    headers.update(extra_headers or {})
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=server_app.app, client=client),
         base_url="https://owner.woltspace.test",
@@ -108,8 +109,8 @@ def test_app_host_requires_apps_audience(monkeypatch):
         token=_token(key, SETTINGS.lodge_aud),
     ))
 
-    assert accepted.status_code == 503
-    assert "not running" in accepted.text
+    assert accepted.status_code == 404
+    assert "Apps are served on the app domain" in accepted.text
     assert lodge_token.status_code == 403
 
 
@@ -137,6 +138,26 @@ def test_loopback_host_from_lan_peer_requires_access(monkeypatch):
     monkeypatch.setattr(server_app, "load_access_settings", lambda _root: SETTINGS)
     response = asyncio.run(_request(
         host="localhost:7777", client=("192.168.1.50", 123),
+    ))
+    assert response.status_code == 403
+    assert response.json() == {"error": "Access token required"}
+
+
+def test_container_loopback_host_accepts_docker_bridge_peer(monkeypatch):
+    monkeypatch.setattr(server_app, "load_access_settings", lambda _root: SETTINGS)
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", "external")
+    response = asyncio.run(_request(
+        host="localhost:7777", client=("192.168.65.1", 123),
+    ))
+    assert response.status_code == 200
+
+
+def test_container_forwarded_loopback_host_requires_access(monkeypatch):
+    monkeypatch.setattr(server_app, "load_access_settings", lambda _root: SETTINGS)
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", "external")
+    response = asyncio.run(_request(
+        host="localhost:7777", client=("192.168.65.1", 123),
+        extra_headers={"cf-connecting-ip": "203.0.113.4"},
     ))
     assert response.status_code == 403
     assert response.json() == {"error": "Access token required"}

@@ -2,7 +2,6 @@
 
 import asyncio
 import hashlib
-import ipaddress
 import json
 import os
 import re
@@ -58,14 +57,15 @@ from .access import (
     save_access_settings,
 )
 from .notify import NoNotificationTarget, send_notification
-from .app_sharing import email_is_shared, read_app_shares, write_app_shares
-from .app_proxy import proxy_app_http, proxy_app_websocket
+from .app_sharing import read_app_shares, write_app_shares
 from .sparks import get_spark_with_chain, list_sparks
 from .pty_bridge import (
     PtyBridgeError,
     PtyTextDecoder,
     attach_tmux,
 )
+from .local_request import owner_local_request
+from woltspace.app_gateway_port import resolve_app_gateway_port, validate_gateway_port
 
 # Session spawning — shared with bot
 import sys as _sys
@@ -346,22 +346,11 @@ def set_apps_domain(value: object) -> str | None:
 
 
 def get_app_gateway_port() -> int:
-    default_port = PORT - 1110
-    if not 1024 <= default_port <= 65535:
-        raise RuntimeError("derived app gateway port must be from 1024 to 65535")
-    try:
-        gateway = _load_lodge_config().get("app_gateway", {})
-    except RuntimeError:
-        return default_port
-    port = gateway.get("port", default_port) if isinstance(gateway, dict) else default_port
-    return port if isinstance(port, int) and not isinstance(port, bool) and 1024 <= port <= 65535 else default_port
+    return resolve_app_gateway_port(WOLTS_DIR, PORT)
 
 
 def set_app_gateway_port(value: object) -> int:
-    if not isinstance(value, int) or isinstance(value, bool) or not 1024 <= value <= 65535:
-        raise ValueError("port must be an integer from 1024 to 65535")
-    if value == PORT:
-        raise ValueError("app gateway port must differ from the lodge port")
+    value = validate_gateway_port(value, PORT)
     cfg = _load_lodge_config()
     cfg["app_gateway"] = {"port": value}
     path = _lodge_config_path()
@@ -455,8 +444,8 @@ def _extract_app_subdomain(host_header: str) -> str | None:
     return None
 
 
-class AppWebSocketRoutingMiddleware:
-    """Route every app-host websocket to the app proxy before FastAPI routing."""
+class RejectAppHostWebSocketMiddleware:
+    """Refuse app-host websockets; apps are served only by the gateway."""
 
     def __init__(self, inner):
         self.inner = inner
@@ -468,30 +457,26 @@ class AppWebSocketRoutingMiddleware:
                 for key, value in scope.get("headers", [])
             }
             if _extract_app_subdomain(headers.get("host", "")) is not None:
-                original = scope.get("path", "/")
-                scope = dict(scope)
-                scope["path"] = f"/__woltspace_app_ws__{original}"
-                scope["raw_path"] = scope["path"].encode()
+                await send({"type": "websocket.close", "code": 1008})
+                return
         await self.inner(scope, receive, send)
 
 
-app.add_middleware(AppWebSocketRoutingMiddleware)
+app.add_middleware(RejectAppHostWebSocketMiddleware)
 
 
 @app.middleware("http")
-async def subdomain_proxy(request: Request, call_next):
-    """Proxy subdomain requests to app ports.
-
-    blog.localhost:7777 → proxy to localhost:{blog's port}
-    corework.woltspace.com → proxy to localhost:{corework's port}
-    Any *.localhost or *.{tunnel_domain} hostname triggers this.
-    """
+async def legacy_app_host_redirect(request: Request, call_next):
+    """Redirect legacy lodge app hosts to the app-only gateway."""
     host = request.headers.get("host") or ""
     app_name = _extract_app_subdomain(host)
     if app_name:
-        if not _app_identity_allowed(app_name, getattr(request.state, "access_email", "")):
-            return HTMLResponse(_app_access_denied(), status_code=403)
-        return await proxy_app_http(request, app_name, unknown_is_stopped=True)
+        target = _gateway_target(app_name, request, request.url.path)
+        if target is None:
+            return HTMLResponse(_apps_domain_required(), status_code=404)
+        if request.url.query:
+            target += f"?{request.url.query}"
+        return RedirectResponse(target, status_code=302)
     return await call_next(request)
 
 
@@ -507,22 +492,21 @@ def _app_access_settings():
         return None
 
 
-def _app_identity_allowed(app_name: str, email: str) -> bool:
-    settings = _app_access_settings()
-    if settings is None:
-        return True
-    try:
-        entries = read_app_shares(WOLTS_DIR, app_name)
-    except RuntimeError:
-        return False
-    return email == settings.owner_email or email_is_shared(email, entries)
-
-
-def _app_access_denied() -> str:
+def _apps_domain_required() -> str:
     return """<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>App access</title><body style="font:16px system-ui;max-width:34rem;margin:12vh auto;padding:2rem">
-<h1>This app is not shared with you</h1><p>Ask the lodge owner to add your email or domain.</p></body></html>"""
+<title>App address</title><body style="font:16px system-ui;max-width:34rem;margin:12vh auto;padding:2rem">
+<h1>Apps are served on the app domain</h1><p>Configure an app domain in Settings, then open the app there.</p></body></html>"""
+
+
+def _gateway_target(app_name: str, request: Request, path: str = "/") -> str | None:
+    hostname = (request.url.hostname or "").lower().rstrip(".")
+    local = hostname in {"localhost", "127.0.0.1", "::1"} or hostname.endswith(".localhost")
+    clean_path = path if path.startswith("/") else f"/{path}"
+    if local:
+        return f"http://{app_name}.localhost:{get_app_gateway_port()}{clean_path}"
+    apps_domain = get_apps_domain()
+    return f"https://{app_name}.{apps_domain}{clean_path}" if apps_domain else None
 
 
 def _separate_apps_domain_configured() -> bool:
@@ -558,20 +542,6 @@ async def request_origin_guard(request: Request, call_next):
     return await call_next(request)
 
 
-def _loopback_http_hostname(hostname: str) -> bool:
-    return hostname in {"localhost", "127.0.0.1", "::1"} or hostname.endswith(".localhost")
-
-
-def _loopback_asgi_client(scope: dict) -> bool:
-    client = scope.get("client")
-    if not client or not client[0]:
-        return False
-    try:
-        return ipaddress.ip_address(client[0]).is_loopback
-    except ValueError:
-        return False
-
-
 class AccessTokenMiddleware:
     """Verify remote HTTP and websocket scopes before either can be routed."""
 
@@ -593,7 +563,7 @@ class AccessTokenMiddleware:
         }
         host_header = headers.get("host", "")
         hostname, _port = _split_host(host_header)
-        if _loopback_http_hostname(hostname) and _loopback_asgi_client(scope):
+        if owner_local_request(scope, hostname):
             return await self.inner(scope, receive, send)
         if not _allowed_http_hostname(hostname):
             return await self._reject(scope, receive, send, "untrusted request host")
@@ -2096,7 +2066,7 @@ async def tunnel_status():
     return {"mode": tunnel_mgr.get_tunnel_mode(), "url": url}
 
 @app.get("/apps")
-async def list_apps_api():
+async def list_apps_api(request: Request):
     """List all apps that have woltspace.json."""
     apps = discover_apps()
     running = {r["name"]: r for r in running_apps()}
@@ -2108,7 +2078,7 @@ async def list_apps_api():
         run_state = running.get(a.name)
         entry["running"] = run_state is not None
         entry["port"] = run_state["port"] if run_state else None
-        entry["url"] = f"/app/{a.name}/"
+        entry["url"] = _gateway_target(a.name, request)
         entry["tunnel_url"] = run_state.get("tunnel_url") if run_state else None
         entry["own_url"] = f"https://{a.name}.{apps_domain}" if apps_domain else None
         entry["sharing"] = bool(run_state.get("tunnel_pid") and run_state.get("tunnel_url")) if run_state else False
@@ -2117,7 +2087,7 @@ async def list_apps_api():
 
 
 @app.get("/apps/{name}")
-async def app_detail(name: str):
+async def app_detail(name: str, request: Request):
     """Get a single app's manifest and running state."""
     if invalid := _invalid_app_name(name):
         return invalid
@@ -2130,7 +2100,7 @@ async def app_detail(name: str):
     run_state = running.get(name)
     entry["running"] = run_state is not None
     entry["port"] = run_state["port"] if run_state else None
-    entry["url"] = f"/app/{name}/"
+    entry["url"] = _gateway_target(name, request)
     entry["tunnel_url"] = run_state.get("tunnel_url") if run_state else None
     apps_domain = get_apps_domain()
     entry["own_url"] = f"https://{name}.{apps_domain}" if apps_domain else None
@@ -2577,12 +2547,7 @@ async def site_livereload_ws(wolt_name: str, ws: WebSocket):
 @app.get("/app/{app_name}/{path:path}")
 @app.get("/app/{app_name}")
 async def serve_app(app_name: str, request: Request, path: str = ""):
-    """Serve an app — static fallback only (dist/ or root files when not running).
-
-    When an app is running, the viewport iframe connects directly to the
-    app port (no proxy). Accessing /app/{name}/ while it's running
-    redirects to the direct port URL so the browser lands on the right origin.
-    """
+    """Redirect the legacy lodge path to the app-only gateway."""
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", app_name):
         return JSONResponse({"error": "invalid app name"}, status_code=400)
     adir = app_dir(app_name)
@@ -2590,62 +2555,12 @@ async def serve_app(app_name: str, request: Request, path: str = ""):
         return HTMLResponse(_app_not_found(app_name), status_code=404)
 
     sub_path = "/" + path if path else "/"
-
-    # When running, redirect to the app's own origin at root. The
-    # subdomain_proxy middleware forwards that host to the app's in-container
-    # port, so the app always sees itself at the root of its own hostname —
-    # identical behavior in a browser, the PWA, the desktop shell, and through
-    # the tunnel. We never redirect to the raw app port: it isn't published to
-    # the host (only 7777 is), so a direct-port redirect is a dead end for
-    # every client except a same-host browser that happens to expose the port.
-    running = {r["name"]: r for r in running_apps()}
-    run_state = running.get(app_name)
-    if run_state:
-        qs = f"?{request.url.query}" if request.url.query else ""
-        td = get_apps_domain() or tunnel_mgr.get_tunnel_domain()
-        hostname = request.url.hostname or ""
-        is_local = hostname in ("localhost", "127.0.0.1") or hostname.endswith(".localhost")
-        if td and not is_local:
-            # Public/tunnel access → app subdomain on the tunnel domain.
-            target = f"{request.url.scheme}://{app_name}.{td}{sub_path}{qs}"
-        else:
-            # Local access (localhost, 127.0.0.1, or the desktop shell) → app
-            # subdomain on .localhost, preserving the lodge's port. *.localhost
-            # resolves to loopback, so WebKit/Chromium reach it without DNS.
-            port_part = f":{request.url.port}" if request.url.port else ""
-            target = f"{request.url.scheme}://{app_name}.localhost{port_part}{sub_path}{qs}"
-        return RedirectResponse(target, status_code=302)
-
-    # Static fallback: serve from dist/ when not running
-    dist_dir = adir / "dist"
-    if dist_dir.exists():
-        candidates = [dist_dir / path, dist_dir / path / "index.html"]
-        for candidate in candidates:
-            resolved = candidate.resolve()
-            if not str(resolved).startswith(str(dist_dir.resolve())):
-                continue
-            if resolved.exists() and resolved.is_file():
-                ext = resolved.suffix
-                mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
-                return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
-        return PlainTextResponse("Not found in app", status_code=404)
-
-    # Static fallback: serve files directly from app root (simple HTML apps)
-    candidates = [adir / path, adir / path / "index.html"]
-    if not path:
-        candidates = [adir / "index.html"]
-    for candidate in candidates:
-        resolved = candidate.resolve()
-        if not str(resolved).startswith(str(adir.resolve())):
-            continue
-        if resolved.exists() and resolved.is_file():
-            ext = resolved.suffix
-            mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
-            return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
-
-    # Off-state placeholder — app exists but has no servable content
-    app_obj = get_app(app_name)
-    return HTMLResponse(_app_placeholder(app_name, app_obj))
+    target = _gateway_target(app_name, request, sub_path)
+    if target is None:
+        return HTMLResponse(_apps_domain_required(), status_code=404)
+    if request.url.query:
+        target += f"?{request.url.query}"
+    return RedirectResponse(target, status_code=302)
 
 
 # --- Tools ---
@@ -2771,28 +2686,6 @@ async def tui_proxy(ws: WebSocket):
         for task in tasks:
             task.cancel()
         await attachment.close()
-
-
-@app.websocket("/__woltspace_app_ws__/{path:path}")
-async def subdomain_ws_proxy(ws: WebSocket, path: str):
-    """Proxy WebSocket connections for subdomain apps (e.g. Vite HMR).
-
-    blog.localhost:7777/any/path → ws://localhost:{port}/any/path
-    corework.woltspace.com/any/path → ws://localhost:{port}/any/path
-    """
-    if not _websocket_request_allowed(ws):
-        await ws.close(code=1008)
-        return
-
-    host = ws.headers.get("host") or ""
-    app_name = _extract_app_subdomain(host)
-    if not app_name:
-        await ws.close(code=1008)
-        return
-    if not _app_identity_allowed(app_name, getattr(ws.state, "access_email", "")):
-        await ws.close(code=1008)
-        return
-    await proxy_app_websocket(ws, app_name, path)
 
 
 # --- Pages (HTML) ---

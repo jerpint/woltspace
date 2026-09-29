@@ -100,33 +100,28 @@ def test_app_detail_exposes_disabled_hint_and_single_domain_hint(tmp_path, monke
     assert payload["separate_app_domain"] is False
 
 
-def test_app_host_defaults_to_owner_only_when_verification_is_configured(tmp_path, monkeypatch):
-    monkeypatch.setattr(server_app, "WOLTS_DIR", tmp_path)
-    monkeypatch.setattr(server_app, "_app_access_settings", lambda: SimpleNamespace(
-        owner_email="owner@example.com",
-    ))
+def test_legacy_remote_app_host_redirects_to_app_domain(tmp_path, monkeypatch):
+    monkeypatch.setattr(server_app, "get_apps_domain", lambda: "owner.woltspace.app")
     monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
     monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
 
-    denied = asyncio.run(_request(
-        "GET", "/", headers={"host": "notes.woltspace.test"},
+    response = asyncio.run(_request(
+        "GET", "/hello?safe=1", headers={"host": "notes.woltspace.test"},
     ))
 
-    assert denied.status_code == 403
-    assert "not shared with you" in denied.text
+    assert response.status_code == 302
+    assert response.headers["location"] == "https://notes.owner.woltspace.app/hello?safe=1"
 
 
-def test_share_list_applies_to_app_websocket_identity(tmp_path, monkeypatch):
-    write_app_shares(tmp_path, "notes", ["friend@example.com", "@team.example"])
-    monkeypatch.setattr(server_app, "WOLTS_DIR", tmp_path)
-    monkeypatch.setattr(server_app, "_app_access_settings", lambda: SimpleNamespace(
-        owner_email="owner@example.com",
-    ))
+def test_legacy_remote_app_host_without_app_domain_has_clear_page(monkeypatch):
+    monkeypatch.setattr(server_app, "get_apps_domain", lambda: None)
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
 
-    assert server_app._app_identity_allowed("notes", "owner@example.com")
-    assert server_app._app_identity_allowed("notes", "friend@example.com")
-    assert server_app._app_identity_allowed("notes", "anyone@team.example")
-    assert not server_app._app_identity_allowed("notes", "stranger@example.com")
+    response = asyncio.run(_request("GET", "/", headers={"host": "notes.woltspace.test"}))
+
+    assert response.status_code == 404
+    assert "Apps are served on the app domain" in response.text
 
 
 def test_app_websocket_without_verified_shared_identity_is_rejected(tmp_path, monkeypatch):
@@ -150,87 +145,21 @@ def test_app_websocket_without_verified_shared_identity_is_rejected(tmp_path, mo
     assert exc.value.code == 1008
 
 
-def test_verified_scope_identity_reaches_http_and_websocket_share_gates(tmp_path, monkeypatch):
-    """Pin the contract that the outer Access middleware populates scope state."""
-    write_app_shares(tmp_path, "notes", ["friend@example.com"])
-    monkeypatch.setattr(server_app, "WOLTS_DIR", tmp_path)
-    monkeypatch.setattr(server_app, "_app_access_settings", lambda: SimpleNamespace(
-        owner_email="owner@example.com",
-    ))
+def test_lodge_app_host_http_redirects_but_websocket_never_proxies(monkeypatch):
+    monkeypatch.setattr(server_app, "get_app_gateway_port", lambda: 7117)
     monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
     monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
 
-    class VerifiedIdentity:
-        def __init__(self, inner, email):
-            self.inner = inner
-            self.email = email
-
-        async def __call__(self, scope, receive, send):
-            scope.setdefault("state", {})["access_email"] = self.email
-            await self.inner(scope, receive, send)
-
-    async def request_as(email):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(
-                app=VerifiedIdentity(server_app.app, email),
-            ),
-            base_url="https://notes.woltspace.test",
-        ) as client:
-            return await client.get("/", headers={"host": "notes.woltspace.test"})
-
-    # A shared identity passes the share gate and reaches app lookup; an
-    # unlisted identity is denied before lookup.
-    assert asyncio.run(request_as("friend@example.com")).status_code == 503
-    assert asyncio.run(request_as("stranger@example.com")).status_code == 403
-
-    monkeypatch.setattr(apps, "running_apps", lambda: [{"name": "notes", "port": 4321}])
-    try:
-        import server.app_proxy as shared_app_proxy
-    except ImportError:
-        shared_app_proxy = None
-    if shared_app_proxy is not None:
-        monkeypatch.setattr(
-            shared_app_proxy, "running_apps",
-            lambda: [{"name": "notes", "port": 4321}],
-        )
-
-    class Upstream:
-        async def recv(self):
-            await asyncio.Event().wait()
-
-        async def send(self, _message):
-            return None
-
-    class Connection:
-        async def __aenter__(self):
-            return Upstream()
-
-        async def __aexit__(self, *_args):
-            return False
-
-    import websockets
-    monkeypatch.setattr(websockets, "connect", lambda *_args, **_kwargs: Connection())
-
-    with TestClient(VerifiedIdentity(server_app.app, "friend@example.com")) as client:
-        with client.websocket_connect(
-            "/vite-hmr",
-            headers={
-                "host": "notes.woltspace.test",
-                "origin": "https://notes.woltspace.test",
+    local = asyncio.run(_request("GET", "/path", headers={"host": "notes.localhost:7777"}))
+    assert local.status_code == 302
+    assert local.headers["location"] == "http://notes.localhost:7117/path"
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with TestClient(server_app.app).websocket_connect(
+            "/vite-hmr", headers={
+                "host": "notes.localhost:7777", "origin": "http://notes.localhost:7777",
             },
         ):
             pass
-
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with TestClient(VerifiedIdentity(server_app.app, "stranger@example.com")) as client:
-            with client.websocket_connect(
-                "/vite-hmr",
-                headers={
-                    "host": "notes.woltspace.test",
-                    "origin": "https://notes.woltspace.test",
-                },
-            ):
-                pass
     assert exc.value.code == 1008
 
 
@@ -262,3 +191,6 @@ def test_app_page_has_editable_sharing_and_clear_consequences_copy():
     assert "Removing an entry immediately removes that access." in source
     assert "For stronger isolation, set an app domain." in source
     assert "/sharing" in source
+    assert "if(app.url)" in source
+    assert "Set an app domain in Settings to open apps remotely" in source
+    assert "open.href=app.url" in source

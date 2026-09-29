@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Protocol, runtime_checkable
 
 from .config import channel_config, config_path
+from .app_gateway_port import resolve_app_gateway_port
 from .envvars import export_both
 from .layout import RuntimeLayout
 
@@ -496,26 +497,7 @@ class AppGatewayConnector:
                 remedy="Run the control plane through `woltspace start`.",
             )
         path = layout.wolts_dir / "woltspace.json"
-        try:
-            root = json.loads(path.read_text()) if path.exists() else {}
-        except (OSError, json.JSONDecodeError):
-            root = {}
-        apps_domain = root.get("apps_domain") if isinstance(root, dict) else None
-        if not isinstance(apps_domain, str) or not apps_domain.strip():
-            return ConnectorPlan(
-                self.name, False,
-                "apps domain not configured; app gateway is not started",
-                remedy=f"Set apps_domain in {path}, then restart the lodge.",
-            )
-        gateway = root.get("app_gateway") if isinstance(root, dict) else None
-        default_port = layout.port - 1110
-        if not 1024 <= default_port <= 65535:
-            raise ValueError("derived app gateway port must be from 1024 to 65535")
-        port = gateway.get("port", default_port) if isinstance(gateway, dict) else default_port
-        if not isinstance(port, int) or isinstance(port, bool) or not 1024 <= port <= 65535:
-            port = default_port
-        if port == layout.port:
-            raise ValueError("app gateway port must differ from the lodge port")
+        port = resolve_app_gateway_port(layout.wolts_dir, layout.port, env=values)
         child_env = export_both({
             "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
             "WOLTSPACE_DIR": str(layout.install_root),
@@ -531,10 +513,11 @@ class AppGatewayConnector:
         return ConnectorPlan(
             name=self.name,
             enabled=True,
-            detail=f"app gateway on http://127.0.0.1:{port}",
+            detail=f"app gateway on http://{'127.0.0.1' if layout.isolation == 'host' else '0.0.0.0'}:{port}",
             command=(
                 sys.executable, "-m", "uvicorn", "server.gateway:app",
-                "--host", "127.0.0.1", "--port", str(port),
+                "--host", "127.0.0.1" if layout.isolation == "host" else "0.0.0.0",
+                "--port", str(port),
                 "--log-level", "warning",
             ),
             cwd=str(layout.install_root),
@@ -552,14 +535,16 @@ CONNECTORS: tuple[ChannelConnector, ...] = (
 def plan_connectors(
     layout: RuntimeLayout, env: Mapping[str, str] | None = None
 ) -> list[ConnectorPlan]:
-    plans = [connector.plan(layout, env) for connector in CONNECTORS]
-    return [
-        plan for plan in plans
-        if not (
-            plan.name == "app-gateway"
-            and plan.detail == "apps domain not configured; app gateway is not started"
-        )
-    ]
+    plans = []
+    for connector in CONNECTORS:
+        try:
+            plans.append(connector.plan(layout, env))
+        except Exception as exc:
+            plans.append(ConnectorPlan(
+                connector.name, False, f"connector planning failed: {exc}",
+                remedy="Fix this connector's configuration, then restart the lodge.",
+            ))
+    return plans
 
 
 def connector_secrets(plans: list[ConnectorPlan]) -> dict[str, str]:

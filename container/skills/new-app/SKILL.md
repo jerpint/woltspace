@@ -83,7 +83,7 @@ This is **required** — the platform only discovers apps that have `woltspace.j
 | `stack` | no | Tech stack: `python`, `vite`, `node`, `html` |
 | `install` | no | Install command (e.g. `npm install`, `uv sync`) |
 | `port` | yes | Fixed port for this app in the 4000-5999 range. Pick one, it's yours permanently. Do not use platform service ports. |
-| `start` | no | Start command. Use `$PORT` — the platform expands it. Add `--host 0.0.0.0` for network access. **Null = app can't be started from the lodge.** |
+| `start` | no | Start command. Use `$PORT` — the platform expands it. **Null = app can't be started from the lodge or served as an app.** |
 | `source` | no | Origin URL if cloned/forked |
 | `emoji` | no | Display emoji (auto-assigned if omitted) |
 | `public` | no | If `true`, the app is shared publicly when started. With a named tunnel: served at `{name}.{domain}` (e.g. `corework.woltspace.com`). Without: a random quick tunnel URL. Default: `false`. |
@@ -92,10 +92,11 @@ This is **required** — the platform only discovers apps that have `woltspace.j
 
 ## 5. Configure for serving
 
-Your port is declared in `woltspace.json` and is permanent — it never changes. Check existing apps to avoid conflicts (`ls /workspace/wolts/apps/*/woltspace.json` and look at their ports). The first lodge on a machine uses port `7777`; each additional lodge increments that port by one. Its app gateway follows in step from `6667`, so the last digit matches (`7778` lodge -> `6668` gateway). Apps must stay in the **4000-5999** range and must not use their lodge's gateway port. Wolt sites have no separate port allocation; the lodge serves them at `/wolt/<name>/site/`.
+Your port is declared in `woltspace.json` and is permanent — it never changes. Check existing apps to avoid conflicts (`ls /workspace/wolts/apps/*/woltspace.json` and look at their ports). The first lodge on a machine uses port `7777`; each additional lodge increments that port by one. Its app gateway follows in step from `7117`, so the last digit matches (`7778` lodge -> `7118` gateway). Apps must stay in the **4000-5999** range and must not use their lodge's gateway port. Wolt sites have no separate port allocation; the lodge serves them at `/wolt/<name>/site/`.
 
-- **Dev servers:** use `$PORT` in your start command — the platform expands it to your manifest port. Add `--host 0.0.0.0` so the server accepts connections from the proxy and tunnels.
-- **No base path needed.** The viewport loads your app directly at its port (e.g. `blog.localhost:7777`). Internal links, WebSockets, and HMR all work naturally.
+- **App servers:** use `$PORT` in your start command — the platform expands it to your manifest port. Bind to `127.0.0.1`; the gateway is the public-facing server.
+- **Static HTML still needs a server.** There is no lodge or gateway static fallback. Use, for example, `"start": "python3 -m http.server $PORT --bind 127.0.0.1"`.
+- **No base path needed.** The gateway gives the app its own origin (the first lodge defaults to `blog.localhost:7117`), so internal links, WebSockets, and HMR work naturally.
 
 ## 6. Start it
 
@@ -107,7 +108,7 @@ curl -s http://localhost:{port}/ | head -20
 ## 7. Push to viewport
 
 ```bash
-push-view /app/{name}/
+push-view http://{name}.localhost:7117/
 ```
 
 ## 8. Notify the user

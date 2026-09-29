@@ -94,6 +94,7 @@ lists in the host `woltspace` launcher.
 | `WOLTSPACE_DIR` | The install root — the source checkout or the wheel's `_bundle`. A value naming a directory that is no longer an install is ignored in favour of the one actually running. | `layout.resolve_install_root`, `server/config.py`, `container/lib/session_runtime.py`, the host launcher | the running install |
 | `WOLTSPACE_HOST` | Bind address for the control plane. Rewritten into a dialable form for anything a child connects to. | `layout.py`, `container/creatures/wolf.py` | `127.0.0.1` |
 | `WOLTSPACE_PORT` | Control-plane port. `PORT` is honoured as a second-choice source. | `layout.py`, the host launcher's port publish | `7777` |
+| `WOLTSPACE_APP_GATEWAY_PORT` | App-only gateway port; overrides `app_gateway.port`. | gateway settings, connector planning, app port reservation | lodge port minus 660 (`7117` for `7777`) |
 | `WOLTSPACE_API` | The full endpoint of the control plane that owns this process. The one address every child is told, so a second instance talks to itself rather than to the first. | `container/bin/notify`, `push-view`, `container/bin/woltspace`, `tui/src/api.js` | stamped from host + port |
 | `WOLTSPACE_URL` | Explicit API base for the terminal cockpit, ahead of `WOLTSPACE_API`. | `tui/src/api.js` | unset |
 | `WOLTSPACE_ISOLATION` | `host` or `external` — whether this runtime owns its own home, and which harness-launch path applies. | `layout.py`, `container/lib/runtime_context.py`, `server/app.py`, the harness wrappers | `host` natively, `external` in the container |
