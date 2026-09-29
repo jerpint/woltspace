@@ -99,6 +99,7 @@ from apps import (
     WoltspaceApp,
     apps_restore,
     discover_apps,
+    discover_apps_with_errors,
     get_app,
     app_dir,
     app_log_file,
@@ -2069,7 +2070,7 @@ async def tunnel_status():
 @app.get("/apps")
 async def list_apps_api(request: Request):
     """List all apps that have woltspace.json."""
-    apps = discover_apps()
+    apps, invalid_apps = discover_apps_with_errors()
     running = {r["name"]: r for r in running_apps()}
     result = []
     apps_domain = get_apps_domain()
@@ -2084,6 +2085,15 @@ async def list_apps_api(request: Request):
         entry["own_url"] = f"https://{a.name}.{apps_domain}" if apps_domain else None
         entry["sharing"] = bool(run_state.get("tunnel_pid") and run_state.get("tunnel_url")) if run_state else False
         result.append(entry)
+    for invalid in invalid_apps:
+        result.append({
+            "name": invalid["name"],
+            "invalid": True,
+            "error": invalid["error"],
+            "running": False,
+            "port": None,
+            "url": None,
+        })
     return result
 
 
