@@ -186,7 +186,7 @@ RUN echo 'export PATH="/workspace/woltspace/container/bin:$PATH"' > /etc/profile
 
 WORKDIR /workspace
 
-EXPOSE 7777
+EXPOSE 7777 7117
 
 # Boot is a subcommand of the installed CLI — the wheel ships no bash. The
 # command runs twice: once as root (uid/gid fixup) and once as node, which it

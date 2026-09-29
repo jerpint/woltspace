@@ -271,6 +271,23 @@ def test_gateway_default_port_tracks_lodge_port(
     ))
 
 
+def test_container_gateway_binds_all_interfaces(tmp_path):
+    plan = AppGatewayConnector().plan(
+        RuntimeLayout(tmp_path, ROOT, isolation="external"),
+        {"WOLTSPACE_ENTRYPOINT": "1"},
+    )
+    assert ("--host", "0.0.0.0") == (plan.command[4], plan.command[5])
+    assert "0.0.0.0:7117" in plan.detail
+
+
+def test_container_files_expose_and_publish_gateway_port():
+    dockerfile = (ROOT / "container" / "Dockerfile").read_text()
+    launcher = (ROOT / "woltspace").read_text()
+    assert "EXPOSE 7777 7117" in dockerfile
+    assert '-p "$app_gateway_port:$app_gateway_port"' in launcher
+    assert '-e WOLTSPACE_APP_GATEWAY_PORT="$app_gateway_port"' in launcher
+
+
 def test_gateway_port_is_configurable(tmp_path):
     (tmp_path / "woltspace.json").write_text(json.dumps({
         "apps_domain": "owner.woltspace.app",

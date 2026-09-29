@@ -534,10 +534,11 @@ class AppGatewayConnector:
         return ConnectorPlan(
             name=self.name,
             enabled=True,
-            detail=f"app gateway on http://127.0.0.1:{port}",
+            detail=f"app gateway on http://{'127.0.0.1' if layout.isolation == 'host' else '0.0.0.0'}:{port}",
             command=(
                 sys.executable, "-m", "uvicorn", "server.gateway:app",
-                "--host", "127.0.0.1", "--port", str(port),
+                "--host", "127.0.0.1" if layout.isolation == "host" else "0.0.0.0",
+                "--port", str(port),
                 "--log-level", "warning",
             ),
             cwd=str(layout.install_root),
