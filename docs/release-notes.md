@@ -1,6 +1,6 @@
-# Woltspace 0.6.0
+# Woltspace 0.5.10
 
-Python **0.6.0** redesigns the lodge around your wolts: a sidebar you can read at
+Python **0.5.10** redesigns the lodge around your wolts: a sidebar you can read at
 a glance, a page per wolt, and sessions that rest and wake without losing their
 place. It also closes a terminal exposure on app addresses. The separately
 distributed **@woltspace/tui remains at 0.5.2**; no npm release is required.
