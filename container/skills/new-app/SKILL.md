@@ -92,7 +92,7 @@ This is **required** — the platform only discovers apps that have `woltspace.j
 
 ## 5. Configure for serving
 
-Your port is declared in `woltspace.json` and is permanent — it never changes. Check existing apps to avoid conflicts (`ls /workspace/wolts/apps/*/woltspace.json` and look at their ports). The first lodge on a machine uses port `7777`; each additional lodge increments that port by one. Its app gateway follows in step from `7117`, so the last digit matches (`7778` lodge -> `7118` gateway). Apps must stay in the **4000-5999** range and must not use their lodge's gateway port. Wolt sites have no separate port allocation; the lodge serves them at `/wolt/<name>/site/`.
+Your port is declared in `woltspace.json` and is permanent — it never changes. Check existing apps to avoid conflicts (`ls /workspace/wolts/apps/*/woltspace.json` and look at their ports). The control plane address is `$WOLTSPACE_API`; never assume its port. The app gateway follows the lodge port minus 660 unless Settings overrides it. Apps must stay in the **4000-5999** range and must not use their lodge's gateway port. Wolt sites have no separate port allocation; the lodge serves them at `/wolt/<name>/site/`.
 
 - **App servers:** use `$PORT` in your start command — the platform expands it to your manifest port. Bind to `127.0.0.1`; the gateway is the public-facing server.
 - **Static HTML still needs a server.** There is no lodge or gateway static fallback. Use, for example, `"start": "python3 -m http.server $PORT --bind 127.0.0.1"`.
@@ -108,7 +108,7 @@ curl -s http://localhost:{port}/ | head -20
 ## 7. Push to viewport
 
 ```bash
-push-view http://{name}.localhost:7117/
+push-view /app/{name}/
 ```
 
 ## 8. Notify the user

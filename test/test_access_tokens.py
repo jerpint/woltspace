@@ -163,6 +163,42 @@ def test_container_forwarded_loopback_host_requires_access(monkeypatch):
     assert response.json() == {"error": "Access token required"}
 
 
+@pytest.mark.parametrize(
+    ("isolation", "peer"),
+    [("host", ("127.0.0.1", 123)), ("external", ("192.168.65.1", 123))],
+)
+def test_owner_local_legacy_app_host_reaches_redirect_with_access(
+    monkeypatch, isolation, peer,
+):
+    monkeypatch.setattr(server_app, "load_access_settings", lambda _root: SETTINGS)
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", isolation)
+    response = asyncio.run(_request(
+        path="/old/path", host="notes.localhost:7777", client=peer,
+    ))
+    assert response.status_code == 302
+    assert response.headers["location"] == "http://notes.localhost:7117/old/path"
+
+
+@pytest.mark.parametrize(
+    ("isolation", "peer"),
+    [("host", ("127.0.0.1", 123)), ("external", ("192.168.65.1", 123))],
+)
+def test_owner_local_legacy_app_websocket_still_closes(
+    monkeypatch, isolation, peer,
+):
+    monkeypatch.setattr(server_app, "load_access_settings", lambda _root: SETTINGS)
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", isolation)
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with TestClient(server_app.app, client=peer).websocket_connect(
+            "/socket", headers={
+                "host": "notes.localhost:7777",
+                "origin": "http://notes.localhost:7777",
+            },
+        ):
+            pass
+    assert exc.value.code == 1008
+
+
 def test_public_host_from_loopback_peer_requires_access(monkeypatch):
     monkeypatch.setattr(server_app, "load_access_settings", lambda _root: SETTINGS)
     monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")

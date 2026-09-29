@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env woltspace-python
 """Send a notification to the originating Telegram or Slack conversation."""
 
 from __future__ import annotations

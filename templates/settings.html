@@ -88,7 +88,7 @@
             <button class="tool-button" type="button" data-apps-domain-save>Save</button>
           </div>
         {% endcall %}
-        {% call select_field('app-gateway-port', 'Gateway port', 'Loopback-only port for app traffic. By default it follows the lodge port minus 1110 (7777 → 6667). Changes apply on the next lodge start.') %}
+        {% call select_field('app-gateway-port', 'Gateway port', 'Loopback-only port for app traffic. By default it follows the lodge port minus 660 (7777 → 7117). Changes apply on the next lodge start.') %}
           <div class="ds-select-stack" data-gateway-port-row data-saved-value="{{ app_gateway_port }}">
             <input class="ds-select" id="app-gateway-port" data-gateway-port-input type="number" min="1024" max="65535" value="{{ app_gateway_port }}">
             <button class="tool-button" type="button" data-gateway-port-save>Save port</button>

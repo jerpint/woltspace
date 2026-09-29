@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import socket
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,6 +60,71 @@ CLAUDE_TOKEN_VARS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 def _claude_token_in_env() -> bool:
     """Whether Claude Code would start logged in from the environment alone."""
     return any((os.environ.get(name) or "").strip() for name in CLAUDE_TOKEN_VARS)
+
+
+def _tunnel_token_present(layout: RuntimeLayout) -> bool:
+    if (os.environ.get("CLOUDFLARE_TUNNEL_TOKEN") or "").strip():
+        return True
+    try:
+        from dotenv import dotenv_values
+
+        return bool((dotenv_values(layout.wolts_dir / ".env").get(
+            "CLOUDFLARE_TUNNEL_TOKEN"
+        ) or "").strip())
+    except (OSError, ImportError):
+        return False
+
+
+def _cli_path_check() -> DoctorCheck | None:
+    """Warn when this console script will disappear in the next shell."""
+    invoked = Path(sys.argv[0]).expanduser()
+    if invoked.name != "woltspace":
+        return None
+    if not invoked.is_absolute():
+        located = shutil.which(str(invoked))
+        if located:
+            return DoctorCheck("cli-path", "pass", str(Path(located).parent))
+        return None
+
+    executable_dir = invoked.absolute().parent
+    path_dirs = {
+        Path(part).expanduser().absolute()
+        for part in os.environ.get("PATH", "").split(os.pathsep)
+        if part
+    }
+    if executable_dir in path_dirs:
+        return DoctorCheck("cli-path", "pass", f"{executable_dir} is on PATH")
+    return DoctorCheck(
+        "cli-path",
+        "warn",
+        f"running woltspace from {executable_dir}, which is not on PATH",
+        "Run `uv tool update-shell`, then open a new terminal.",
+    )
+
+
+def _path_python_check() -> DoctorCheck | None:
+    """Describe an old ambient python without mistaking it for our runtime."""
+    executable = shutil.which("python3")
+    if not executable:
+        return None
+    try:
+        output = subprocess.check_output(
+            [executable, "-c", "import sys; print('.'.join(map(str, sys.version_info[:3])))"],
+            text=True,
+            timeout=5,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        version = tuple(int(part) for part in output.split("."))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    if version >= (3, 11):
+        return DoctorCheck("path-python", "pass", f"{executable} is Python {output}")
+    return DoctorCheck(
+        "path-python",
+        "warn",
+        f"{executable} is Python {output}; platform helpers use {sys.executable}",
+        "Keep WOLTSPACE_PYTHON set to the lodge interpreter; do not use this python3 for platform helpers.",
+    )
 
 
 def _auth_paths(home: Path) -> dict[str, Path]:
@@ -326,6 +392,22 @@ def run_doctor(
         f"Python {version.major}.{version.minor}.{version.micro}",
         "Install Python 3.11 or newer." if version < (3, 11) else "",
     ))
+
+    cli_path = _cli_path_check()
+    if cli_path is not None:
+        checks.append(cli_path)
+    path_python = _path_python_check()
+    if path_python is not None:
+        checks.append(path_python)
+
+    from .lifecycle import tunnel_settings
+
+    if _tunnel_token_present(layout) and not tunnel_settings(layout)["enabled"]:
+        checks.append(DoctorCheck(
+            "public-tunnel", "warn",
+            "CLOUDFLARE_TUNNEL_TOKEN is configured but the tunnel is disabled",
+            "Set WOLTSPACE_PUBLIC_TUNNEL=true and restart the lodge.",
+        ))
 
     required_assets = (
         layout.install_root / "server",

@@ -510,6 +510,12 @@ def test_sessions_inherit_both_spellings_of_every_renamed_variable():
         assert legacy in session_runtime._SESSION_ENV_KEYS
 
 
+def test_sessions_inherit_the_control_plane_python():
+    import session_runtime
+
+    assert "WOLTSPACE_PYTHON" in session_runtime._SESSION_ENV_KEYS
+
+
 def test_launch_command_carries_a_legacy_only_value_under_both_names(monkeypatch):
     """The mirror happens at spawn, not just at control-plane startup.
 

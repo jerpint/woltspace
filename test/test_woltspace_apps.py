@@ -136,6 +136,22 @@ class TestDiscovery:
         (app_dir / "woltspace.json").write_text("not json")
         assert apps.discover_apps() == []
 
+    def test_discover_reports_invalid_manifest_reason(self, wolts_dir):
+        app_dir = wolts_dir / "apps" / "broken"
+        app_dir.mkdir(parents=True)
+        (app_dir / "woltspace.json").write_text(json.dumps({
+            "name": "broken",
+            "port": 4010,
+        }))
+
+        valid, invalid = apps.discover_apps_with_errors()
+
+        assert valid == []
+        assert invalid == [{
+            "name": "broken",
+            "error": "keeper: Field required",
+        }]
+
     def test_discover_skips_missing_manifest(self, wolts_dir):
         app_dir = wolts_dir / "apps" / "nofile"
         app_dir.mkdir(parents=True)

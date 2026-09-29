@@ -60,6 +60,71 @@ def test_doctor_discovers_existing_host_auth_without_copying_it(tmp_path, monkey
     assert not layout.wolts_dir.exists()
 
 
+def test_doctor_warns_when_env_tunnel_token_is_disabled(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    monkeypatch.setenv("CLOUDFLARE_TUNNEL_TOKEN", "configured-token")
+    monkeypatch.setenv("WOLTSPACE_PUBLIC_TUNNEL", "false")
+
+    check = {item.name: item for item in run_doctor(layout, check_port=False)}[
+        "public-tunnel"
+    ]
+    assert check.status == "warn"
+    assert check.remedy == "Set WOLTSPACE_PUBLIC_TUNNEL=true and restart the lodge."
+
+
+def test_doctor_warns_when_dotenv_tunnel_token_is_disabled(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    layout.wolts_dir.mkdir(parents=True)
+    (layout.wolts_dir / ".env").write_text("CLOUDFLARE_TUNNEL_TOKEN=configured-token\n")
+    monkeypatch.delenv("CLOUDFLARE_TUNNEL_TOKEN", raising=False)
+    monkeypatch.delenv("WOLTSPACE_PUBLIC_TUNNEL", raising=False)
+
+    names = {item.name for item in run_doctor(layout, check_port=False)}
+    assert "public-tunnel" in names
+
+
+def test_doctor_warns_when_running_cli_directory_is_not_on_path(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    monkeypatch.setattr(sys, "argv", [str(tmp_path / ".local" / "bin" / "woltspace")])
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+    check = {item.name: item for item in run_doctor(layout, check_port=False)}["cli-path"]
+
+    assert check.status == "warn"
+    assert str(tmp_path / ".local" / "bin") in check.detail
+    assert check.remedy == "Run `uv tool update-shell`, then open a new terminal."
+
+
+def test_doctor_passes_when_running_cli_directory_is_on_path(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    bin_dir = tmp_path / ".local" / "bin"
+    monkeypatch.setattr(sys, "argv", [str(bin_dir / "woltspace")])
+    monkeypatch.setenv("PATH", f"/usr/bin{os.pathsep}{bin_dir}")
+
+    check = {item.name: item for item in run_doctor(layout, check_port=False)}["cli-path"]
+
+    assert check.status == "pass"
+
+
+def test_doctor_warns_about_old_python3_on_path(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    monkeypatch.setattr("woltspace.doctor.shutil.which", lambda name: (
+        "/usr/bin/python3" if name == "python3" else None
+    ))
+    monkeypatch.setattr(
+        "woltspace.doctor.subprocess.check_output",
+        lambda *args, **kwargs: "3.9.6\n",
+    )
+
+    check = {item.name: item for item in run_doctor(layout, check_port=False)}[
+        "path-python"
+    ]
+
+    assert check.status == "warn"
+    assert "/usr/bin/python3 is Python 3.9.6" in check.detail
+    assert str(sys.executable) in check.detail
+
+
 def _restore_env(snapshot: dict):
     for key, value in snapshot.items():
         if value is None:
@@ -75,7 +140,7 @@ def test_supervisor_prepare_freezes_environment_and_creates_only_state(
     keys = (
         "WOLTSPACE_WOLTS_DIR", "WOLTS_DIR", "WOLTSPACE_WOLT_DIR", "WOLT_DIR",
         "WOLTSPACE_DIR", "WOLTSPACE_ISOLATION",
-        "WOLTSPACE_INSTANCE_ID", "WOLTSPACE_PUBLIC_TUNNEL",
+        "WOLTSPACE_INSTANCE_ID", "WOLTSPACE_PUBLIC_TUNNEL", "WOLTSPACE_PYTHON",
     )
     # delenv on an absent variable records nothing to undo, so the values
     # prepare() writes would outlive this test and reconfigure every test after
@@ -94,6 +159,7 @@ def test_supervisor_prepare_freezes_environment_and_creates_only_state(
     assert os.environ["WOLTS_DIR"] == str(layout.wolts_dir)
     assert os.environ["WOLTSPACE_ISOLATION"] == "host"
     assert os.environ["WOLTSPACE_INSTANCE_ID"] == "instance-test"
+    assert os.environ["WOLTSPACE_PYTHON"] == sys.executable
     assert os.environ["WOLTSPACE_PUBLIC_TUNNEL"] == "false"
     assert list(layout.wolts_dir.glob("**/*credentials*")) == []
     assert list(layout.wolts_dir.glob("**/auth.json")) == []

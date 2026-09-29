@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env woltspace-python
 """woltspace — in-container control CLI (thin client over the localhost API).
 
 This is the CONTROL plane. Lifecycle (start/stop/rebuild/backup) lives in the

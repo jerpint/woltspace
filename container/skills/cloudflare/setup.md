@@ -111,7 +111,7 @@ curl -s -X PUT \
   --data "{
     \"config\": {
       \"ingress\": [
-        {\"hostname\": \"<subdomain>.<domain>\", \"service\": \"http://localhost:7777\"},
+        {\"hostname\": \"<subdomain>.<domain>\", \"service\": \"$WOLTSPACE_API\"},
         {\"service\": \"http_status:404\"}
       ]
     }
@@ -207,8 +207,8 @@ curl -s -X PUT \
   --data "{
     \"config\": {
       \"ingress\": [
-        {\"hostname\": \"<subdomain>.<domain>\", \"service\": \"http://localhost:7777\"},
-        {\"hostname\": \"*.<domain>\", \"service\": \"http://localhost:7777\"},
+        {\"hostname\": \"<subdomain>.<domain>\", \"service\": \"$WOLTSPACE_API\"},
+        {\"hostname\": \"*.<domain>\", \"service\": \"$WOLTSPACE_API\"},
         {\"service\": \"http_status:404\"}
       ]
     }
@@ -269,7 +269,7 @@ Explain to the human how to revert:
 
 > To go back to quick tunnels: remove `CLOUDFLARE_TUNNEL_TOKEN` and `CLOUDFLARE_TUNNEL_URL` from `.env` and restart.
 >
-> `localhost:7777` always works regardless of tunnel configuration.
+> `$WOLTSPACE_API` always names the current lodge regardless of tunnel configuration.
 
 ## Troubleshooting
 

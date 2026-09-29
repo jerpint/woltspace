@@ -64,6 +64,7 @@ _SESSION_ENV_KEYS = (
     # instance entirely. Carrying it explicitly is what makes a second
     # instance (`woltspace start --port 8080`) talk to itself.
     "WOLTSPACE_API",
+    "WOLTSPACE_PYTHON",
     "WOLTSPACE_HOST",
     "WOLTSPACE_PORT",
     "WOLTSPACE_TMUX_BIN",

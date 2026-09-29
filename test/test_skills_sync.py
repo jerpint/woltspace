@@ -1067,3 +1067,15 @@ class TestWoltSkillsDelivery:
         assert wolt_skills_delivery(broken) == "copy"
 
         assert wolt_skills_delivery(tmp_path / "wolts" / "nothing-here") == "copy"
+
+
+def test_wolt_facing_instructions_do_not_hardcode_the_default_lodge_port():
+    roots = [ROOT / "container" / "skills", ROOT / "container" / "bot" / "AGENT-LOOP.md"]
+    offenders = []
+    for root in roots:
+        paths = root.rglob("*.md") if root.is_dir() else [root]
+        for path in paths:
+            text = path.read_text()
+            if "localhost:7777" in text or "127.0.0.1:7777" in text:
+                offenders.append(str(path.relative_to(ROOT)))
+    assert offenders == []

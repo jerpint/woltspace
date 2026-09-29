@@ -86,13 +86,13 @@ Running `npm run dev`, `python server.py`, or any start command directly bypasse
 
 ```bash
 # Start an app
-curl -X POST http://localhost:7777/apps/my-app/start
+curl -X POST "$WOLTSPACE_API/apps/my-app/start"
 
 # Stop an app
-curl -X POST http://localhost:7777/apps/my-app/stop
+curl -X POST "$WOLTSPACE_API/apps/my-app/stop"
 
 # List all apps + running state
-curl http://localhost:7777/apps
+curl "$WOLTSPACE_API/apps"
 ```
 
 ## Pushing to the viewport
@@ -107,7 +107,7 @@ Use the app gateway address shown by `GET /apps`. The first lodge defaults to `h
 
 Each app declares its own port in `woltspace.json` (required). Use the **4000-5999** range for apps. The port is permanent — it never changes between restarts. Pick one that doesn't conflict with other apps. If two apps claim the same port, the second one to start gets an error — just pick a different port.
 
-The first lodge on a machine uses port `7777`; each additional lodge increments that port by one. Its app gateway follows in step from `7117`, so the last digit matches (`7778` lodge -> `7118` gateway). Apps must stay in the **4000-5999** range and must not use their lodge's gateway port. The platform sets `PORT` to the app manifest's value when it starts the app. Wolt sites do not allocate their own ports; the lodge serves them at `/wolt/<name>/site/`.
+The control plane address is `$WOLTSPACE_API`; never assume its port. The app gateway follows the lodge port minus 660 unless Settings overrides it. Apps must stay in the **4000-5999** range and must not use their lodge's gateway port. The platform sets `PORT` to the app manifest's value when it starts the app. Wolt sites do not allocate their own ports; the lodge serves them at `/wolt/<name>/site/`.
 
 ## Sharing (public access)
 
@@ -115,13 +115,13 @@ Apps are private by default — only accessible locally. Set `"public": true` in
 
 ```bash
 # Share a running app
-curl -X POST http://localhost:7777/apps/my-app/share
+curl -X POST "$WOLTSPACE_API/apps/my-app/share"
 
 # Unshare
-curl -X POST http://localhost:7777/apps/my-app/unshare
+curl -X POST "$WOLTSPACE_API/apps/my-app/unshare"
 
 # Panic button — unshare ALL apps
-curl -X POST http://localhost:7777/apps/unshare-all
+curl -X POST "$WOLTSPACE_API/apps/unshare-all"
 ```
 
 ### How sharing works
