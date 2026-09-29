@@ -45,6 +45,34 @@ function loadNavigation() {
   return { navigation: window.WoltspaceNavigation, calls, popup };
 }
 
+function functionSource(source, name) {
+  const start = source.indexOf(`function ${name}(`);
+  assert.notEqual(start, -1, `${name} found`);
+  const body = source.indexOf('{', start);
+  let depth = 0;
+  for (let i = body; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    if (source[i] === '}') depth -= 1;
+    if (depth === 0) return source.slice(start, i + 1);
+  }
+  throw new Error(`${name} is incomplete`);
+}
+
+function loadSessionState(nowSeconds) {
+  const context = {
+    Date: class extends Date { static now() { return nowSeconds * 1000; } },
+  };
+  const source = [
+    functionSource(lodgeSource, 'timeAgo'),
+    functionSource(lodgeSource, 'sessionIsOnline'),
+    functionSource(lodgeSource, 'sessionStateText'),
+    functionSource(lodgeSource, 'woltStateText'),
+    'globalThis.state = { sessionIsOnline, sessionStateText, woltStateText };',
+  ].join('\n');
+  runInNewContext(source, context);
+  return context.state;
+}
+
 test('internal navigation reuses the current client', () => {
   const { navigation, calls } = loadNavigation();
   navigation.internal('/tui?session=codexw-123');
@@ -121,6 +149,39 @@ test('lodge session consumers use the cached light projection', () => {
   assert.match(woltPageSource, /fetchJSON\('\/sessions\?view=lodge'/);
   assert.doesNotMatch(woltsPageSource, /prompt_preview|s\.prompt/);
   assert.doesNotMatch(woltPageSource, /prompt_preview|s\.prompt/);
+});
+
+test('session and wolt state is only online or offline', () => {
+  const now = 10_000_000;
+  const { sessionIsOnline, sessionStateText, woltStateText } = loadSessionState(now);
+  const online = { status: 'running', alive: true, last_activity: 1 };
+  const offline = { status: 'failed', alive: false, last_activity: now - 7200 };
+
+  assert.equal(sessionIsOnline(online), true);
+  assert.equal(sessionStateText(online), 'online');
+  assert.equal(sessionStateText(offline), 'offline · 2h ago');
+  assert.equal(woltStateText({ online: [online], last: 1 }), 'online');
+  assert.equal(woltStateText({ online: [], last: now - 7200 }), 'offline · 2h ago');
+  assert.equal(woltStateText({ online: [], last: 0 }), 'offline');
+});
+
+test('a skewed browser clock cannot turn an online session offline', () => {
+  const ancient = { status: 'running', alive: true, last_activity: 1 };
+  assert.equal(loadSessionState(100).sessionStateText(ancient), 'online');
+  assert.equal(loadSessionState(10_000_000_000).sessionStateText(ancient), 'online');
+  const stateSource = [
+    functionSource(lodgeSource, 'sessionIsOnline'),
+    functionSource(lodgeSource, 'sessionStateText'),
+    functionSource(lodgeSource, 'woltStateText'),
+  ].join('\n');
+  assert.doesNotMatch(stateSource, /sessionIsWorking|idle_seconds|\bworking\b|\bawake\b/i);
+});
+
+test('wolt listings use the shared state vocabulary', () => {
+  assert.match(woltsPageSource, /group\('Online', online\)/);
+  assert.match(woltsPageSource, /group\('Offline', offline, false\)/);
+  assert.doesNotMatch(woltsPageSource, /\bAwake\b|\bResting\b/);
+  assert.doesNotMatch(woltPageSource, /sessionIsWorking|\bworking\b|\bawake\b/i);
 });
 
 test('terminal opening checks only its session before attach or resume', () => {

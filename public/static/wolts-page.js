@@ -1,4 +1,4 @@
-// Wolts page (/?view=wolts): every wolt in the lodge, awake ones first, then by last chat.
+// Wolts page (/?view=wolts): every wolt in the lodge, online ones first, then by last chat.
 // Tap a card for the wolt's page, + for a new chat, the session count for its recent sessions,
 // ⋯ for its settings. Reads the same allWolts / allSessions lodge.js already loads.
 (() => {
@@ -40,7 +40,7 @@
   }
 
   function card(x) {
-    const { w, name, sessions, open, working, last, total } = x;
+    const { w, name, sessions, online, last, total } = x;
     const isOpen = expanded.has(name);
     const wrap = el('div', `wolts-card${isOpen ? ' expanded' : ''}`);
     const row = el('div', 'wolts-row');
@@ -55,8 +55,7 @@
     const body = el('div', 'wolts-body');
     body.appendChild(el('div', 'wolts-name', name));
     const line = el('div', 'wolts-sub', `${w.type} · `);
-    line.appendChild(open.length ? el('span', working ? 'wolts-on' : '', woltStateText(x))
-      : document.createTextNode(last ? `last chat ${compactAge(Date.now() / 1000 - last)} ago` : 'never chatted'));
+    line.appendChild(el('span', online.length ? 'wolts-on' : '', woltStateText(x)));
     body.appendChild(line);
     const countLine = el('div', 'wolts-sub');
     if (total) {
@@ -87,7 +86,7 @@
     if (isOpen) {
       const list = el('div', 'wolts-sessions');
       sessions.slice(0, 8).forEach(s => {
-        const live = sessionIsOpen(s);
+        const live = sessionIsOnline(s);
         // a session opens if it's live or has a conversation to go back to (opening wakes it)
         const openable = live || s.openable === true;
         const a = el(openable ? 'a' : 'div', `wolts-session${openable ? '' : ' ended'}`);
@@ -111,10 +110,10 @@
   window.renderWoltsPage = function () {
     if (!view.classList.contains('active')) return;
     const all = allWolts.filter(w => WOLT_TYPES.has(w.type)).map(woltSessionSummary)
-      .sort((a, b) => ((b.open.length > 0) - (a.open.length > 0)) || (b.last - a.last));
+      .sort((a, b) => ((b.online.length > 0) - (a.online.length > 0)) || (b.last - a.last));
     const q = query.trim().toLowerCase();
     const hits = all.filter(x => !q || x.name.toLowerCase().includes(q) || (x.w.type || '').includes(q));
-    const awake = hits.filter(x => x.open.length), resting = hits.filter(x => !x.open.length);
+    const online = hits.filter(x => x.online.length), offline = hits.filter(x => !x.online.length);
     const focused = document.activeElement?.id === 'wolts-search';
 
     const header = el('div', 'main-header');
@@ -131,15 +130,15 @@
     search.id = 'wolts-search'; search.type = 'search'; search.placeholder = 'Find a wolt'; search.autocomplete = 'off'; search.value = query;
     search.oninput = e => { query = e.target.value; renderWoltsPage(); };
     content.appendChild(search);
-    const group = (label, items) => {
+    const group = (label, items, showCount = true) => {
       if (!items.length) return;
-      content.appendChild(el('div', 'wolts-group', `${label} · ${items.length}`));
+      content.appendChild(el('div', 'wolts-group', showCount ? `${label} · ${items.length}` : label));
       const grid = el('div', 'wolts-grid');
       items.forEach(x => grid.appendChild(card(x)));
       content.appendChild(grid);
     };
-    group('Awake', awake);
-    group('Resting', resting);
+    group('Online', online);
+    group('Offline', offline, false);
     if (!hits.length) content.appendChild(el('div', 'wolts-quiet', all.length ? 'No wolt matches.' : 'No wolts yet.'));
 
     view.replaceChildren(header, content);

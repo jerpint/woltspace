@@ -78,32 +78,17 @@ function lodgeElement(tag, className = '', text = '') {
   return element;
 }
 
-function compactDuration(seconds) {
-  if (seconds < 3600) return `${Math.max(1, Math.floor(seconds / 60))}m`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
-  return `${Math.floor(seconds / 86400)}d`;
-}
-
-// One definition of session state, shared by the sidebar, the Wolts page, the wolt page and
-// the Sessions list. open = its agent is running; working = open and active in the last 3 minutes
-// (idle_seconds from the reaper when it runs, else the registry's last contact); awake = open, quiet.
-function sessionIsOpen(s) {
-  return s.status === 'running' && s.alive !== false;
-}
-
-function sessionIsWorking(s) {
-  if (!sessionIsOpen(s)) return false;
-  const quiet = Number.isFinite(s.idle_seconds) ? s.idle_seconds : Date.now() / 1000 - (s.last_activity || s.created_at || 0);
-  return quiet < 180;
+// One definition of session state, shared by the sidebar, Wolts page, wolt page and
+// Sessions list. Online means the registry says running and the lodge view found
+// its tmux window. Everything else is offline; browser time never changes state.
+function sessionIsOnline(s) {
+  return s.status === 'running' && s.alive === true;
 }
 
 function sessionStateText(s) {
-  if (s.status === 'resting') return 'resting · resume anytime';
-  if (s.status === 'failed') return 'failed';
-  if (!sessionIsOpen(s)) return s.last_activity ? timeAgo(s.last_activity) : (s.created_at ? timeAgo(s.created_at) : '');
-  if (sessionIsWorking(s)) return 'working';
-  if (Number.isFinite(s.closes_in_seconds)) return `awake · idle ${compactDuration(s.idle_seconds || 0)} · closes in ${compactDuration(s.closes_in_seconds)}`;
-  return 'awake';
+  if (sessionIsOnline(s)) return 'online';
+  const stamp = s.last_activity || s.created_at || 0;
+  return stamp ? `offline · ${timeAgo(stamp)}` : 'offline';
 }
 const sessionActivityText = sessionStateText;
 
@@ -205,7 +190,7 @@ async function chooseHomeHarness(id, button) {
 }
 
 // Sidebar = the wolts you're likely to want right now. A small lodge lists everyone;
-// past SIDEBAR_ALL_UP_TO wolts it lists who is awake (open sessions), who you talked to
+// past SIDEBAR_ALL_UP_TO wolts it lists who is online, who you talked to
 // in the last day, and the wolt you're on. Everyone else is on the Wolts page.
 const SIDEBAR_ALL_UP_TO = 8;
 const SIDEBAR_RECENT_SECONDS = 86400;
@@ -214,25 +199,18 @@ function woltSessionSummary(w) {
   const name = w.name || w.dir;
   const sessions = allSessions.filter(s => s.wolt === (w.dir || name))
     .sort((a, b) => (b.last_activity || b.created_at || 0) - (a.last_activity || a.created_at || 0));
-  const open = sessions.filter(sessionIsOpen);
-  const workingCount = open.filter(sessionIsWorking).length;
-  const working = workingCount > 0;
+  const online = sessions.filter(sessionIsOnline);
   const last = sessions.length ? (sessions[0].last_activity || sessions[0].created_at || 0) : 0;
   return {
-    w, name, sessions, open, working, workingCount, last,
+    w, name, sessions, online, last,
     total: sessionTotals[w.dir || name] ?? sessions.length,
   };
 }
 
 // a wolt's one-word state, used wherever a wolt is listed
 function woltStateText(x) {
-  return x.working ? `${x.workingCount} working` : x.open.length ? 'awake' : 'resting';
-}
-
-function compactAge(seconds) {
-  if (seconds < 3600) return `${Math.max(1, Math.floor(seconds / 60))}m`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
-  return `${Math.floor(seconds / 86400)}d`;
+  if (x.online.length) return 'online';
+  return x.last ? `offline · ${timeAgo(x.last)}` : 'offline';
 }
 
 function renderSidebarWolts() {
@@ -247,48 +225,40 @@ function renderSidebarWolts() {
     const tierOrder = { raccoon: 0, rodent: 0, beaver: 1, otter: 2, dog: 3 };
     shown = all.slice().sort((a, b) => (tierOrder[a.w.type] ?? 99) - (tierOrder[b.w.type] ?? 99));
   } else {
-    shown = all.filter(x => x.open.length || now - x.last < SIDEBAR_RECENT_SECONDS || x.name === viewing)
-      .sort((a, b) => (b.working - a.working) || ((b.open.length > 0) - (a.open.length > 0)) || (b.last - a.last));
+    shown = all.filter(x => x.online.length || now - x.last < SIDEBAR_RECENT_SECONDS || x.name === viewing)
+      .sort((a, b) => ((b.online.length > 0) - (a.online.length > 0)) || (b.last - a.last));
   }
   if (label && label.firstChild && label.firstChild.nodeType === Node.TEXT_NODE) label.firstChild.textContent = everyone ? 'Team ' : 'Recent ';
   document.getElementById('sidebar-team-count').textContent = everyone ? (all.length || '') : '';
 
   container.replaceChildren();
   shown.forEach(x => {
-    const { w, name, open, working, last } = x;
+    const { w, name, online } = x;
     const card = document.createElement('div');
-    card.className = `wolt-card${viewing === name ? ' active' : ''}${open.length ? '' : ' resting'}`;
+    card.className = `wolt-card${viewing === name ? ' active' : ''}${online.length ? ' online' : ' offline'}`;
     card.tabIndex = 0;
     card.onclick = () => { window.location.href = `/w/${encodeURIComponent(name)}`; };
     card.onkeydown = e => { if (e.target === card && (e.key === 'Enter' || e.key === ' ')) card.click(); };
     const avatar = document.createElement('div'); avatar.className = 'wolt-avatar';
     const sprite = woltSpriteAvatar(w.type, 36);
     if (sprite) avatar.innerHTML = sprite; else avatar.textContent = WOLT_EMOJI[w.type] || '🦫';
-    // the open-session count rides on the avatar, so the row keeps a single button (+)
-    // only working sessions get a number (green); an open-but-quiet wolt shows a plain dot
-    if (working) {
-      const badge = document.createElement('span');
-      badge.className = 'wolt-session-badge working';
-      badge.textContent = x.workingCount;
-      badge.title = `${x.workingCount} working · ${open.length} awake`;
-      avatar.appendChild(badge);
-    } else {
+    if (online.length) {
       const dot = document.createElement('div');
-      dot.className = `wolt-status-dot${open.length ? ' open' : ''}`;
-      if (open.length) dot.title = `${open.length} awake`;
+      dot.className = 'wolt-status-dot running';
+      dot.title = 'online';
       avatar.appendChild(dot);
     }
     const info = document.createElement('div'); info.className = 'wolt-info';
     const nameEl = document.createElement('div'); nameEl.className = 'wolt-name'; nameEl.textContent = name;
     const sub = document.createElement('div'); sub.className = 'wolt-type';
-    sub.textContent = everyone ? w.type : open.length ? woltStateText(x) : last ? `resting · ${compactAge(now - last)}` : 'never chatted';
+    sub.textContent = everyone ? w.type : woltStateText(x);
     info.append(nameEl, sub); card.append(avatar, info);
     if (RODENT_TYPES.has(w.type)) { const add = document.createElement('button'); add.className = 'wolt-quick-session'; add.textContent = '+'; add.title = `New session with ${name}`; add.setAttribute('aria-label', add.title); add.onclick = e => { e.stopPropagation(); startSession(name); }; card.appendChild(add); }
     container.appendChild(card);
   });
   if (!everyone) {
     if (!shown.length) {
-      const quiet = document.createElement('div'); quiet.className = 'sidebar-wolts-quiet'; quiet.textContent = 'Everyone is resting.';
+      const quiet = document.createElement('div'); quiet.className = 'sidebar-wolts-quiet'; quiet.textContent = 'Everyone is offline.';
       container.appendChild(quiet);
     }
     const more = document.createElement('a');
@@ -566,15 +536,15 @@ function restoreLodgeSessions() {
 
 function renderSessions() {
   if (!document.getElementById('sessions-list')) return;
-  const running = allSessions.filter(s => s.name !== 'main' && s.status === 'running');
+  const online = allSessions.filter(s => s.name !== 'main' && sessionIsOnline(s));
   const total = Object.values(sessionTotals).reduce((sum, count) => sum + count, 0)
     || allSessions.length;
   document.getElementById('sessions-subtitle').textContent =
-    `${running.length} running · ${total} total`;
+    `${online.length} online · ${total} total`;
   const badge = document.getElementById('sessions-badge');  // gone from the sidebar since the wolt pages
   if (badge) {
-    badge.textContent = running.length || '';
-    badge.classList.toggle('visible', running.length > 0);
+    badge.textContent = online.length || '';
+    badge.classList.toggle('visible', online.length > 0);
   }
 
   const woltNames = [...new Set(allSessions.map(s => s.wolt).filter(Boolean))];
@@ -607,7 +577,7 @@ function filterSessions() {
   const sort = document.getElementById('sessions-sort').value;
 
   let filtered = allSessions.filter(s => s.name !== 'main');
-  if (runningOnly) filtered = filtered.filter(sessionIsOpen);
+  if (runningOnly) filtered = filtered.filter(sessionIsOnline);
   if (sessionFilterWolt) filtered = filtered.filter(s => s.wolt === sessionFilterWolt);
   if (search) filtered = filtered.filter(s =>
     (s.name || '').toLowerCase().includes(search) ||
@@ -620,8 +590,8 @@ function filterSessions() {
     filtered.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   } else {
     filtered.sort((a, b) => {
-      const aR = a.status === 'running' ? 0 : 1;
-      const bR = b.status === 'running' ? 0 : 1;
+      const aR = sessionIsOnline(a) ? 0 : 1;
+      const bR = sessionIsOnline(b) ? 0 : 1;
       if (aR !== bR) return aR - bR;
       return (b.created_at || 0) - (a.created_at || 0);
     });
@@ -644,10 +614,10 @@ function filterSessions() {
     const woltData = allWolts.find(w => (w.name || w.dir) === wolt);
     const emoji = woltData ? (WOLT_EMOJI[woltData.type] || '🦫') : '🦫';
     const sessionSprite = woltData ? woltSpriteAvatar(woltData.type, 20) : null;
-    const runCount = sessions.filter(sessionIsOpen).length;
+    const runCount = sessions.filter(sessionIsOnline).length;
     const total = sessionTotals[wolt] ?? sessions.length;
     const metaText = runCount > 0
-      ? `${runCount} awake · ${total} total`
+      ? `${runCount} online · ${total} total`
       : `${total} session${total !== 1 ? 's' : ''}`;
     const group = lodgeElement('div', 'sessions-group');
     const header = lodgeElement('div', 'sessions-group-header');
@@ -667,7 +637,7 @@ function filterSessions() {
     sessions.forEach(s => {
       const time = sessionActivityText(s);
       const label = s.name;
-      const isAlive = sessionIsOpen(s);
+      const isAlive = sessionIsOnline(s);
       const dotClass = isAlive ? 'running' : 'stopped';
       const row = lodgeElement('a', 'session-row');
       row.href = `/tui?session=${encodeURIComponent(s.name)}`;
