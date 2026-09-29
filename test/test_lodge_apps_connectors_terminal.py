@@ -165,6 +165,7 @@ def test_app_detail_keeps_configured_port_when_stopped(monkeypatch):
     payload = TestClient(server_app.app, base_url="http://localhost:7777").get("/apps/notes").json()
     assert payload["configured_port"] == 4321
     assert payload["port"] is None
+    assert payload["url"] == "http://notes.localhost:7117/"
 
 
 def test_app_detail_reports_dedicated_address(monkeypatch):
@@ -176,6 +177,20 @@ def test_app_detail_reports_dedicated_address(monkeypatch):
     payload = TestClient(server_app.app, base_url="http://localhost:7777").get("/apps/notes").json()
 
     assert payload["own_url"] == "https://notes.owner.woltspace.app"
+
+
+def test_legacy_app_path_redirects_to_gateway_and_preserves_path_query(tmp_path, monkeypatch):
+    target = tmp_path / "notes"
+    target.mkdir()
+    monkeypatch.setattr(server_app, "app_dir", lambda _name: target)
+    monkeypatch.setattr(server_app, "get_app_gateway_port", lambda: 7117)
+
+    response = TestClient(
+        server_app.app, base_url="http://localhost:7777",
+    ).get("/app/notes/deep/path?mode=1", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "http://notes.localhost:7117/deep/path?mode=1"
 
 
 def test_app_cli_twins_only_call_api(capsys):

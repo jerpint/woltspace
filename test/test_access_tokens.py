@@ -108,8 +108,8 @@ def test_app_host_requires_apps_audience(monkeypatch):
         token=_token(key, SETTINGS.lodge_aud),
     ))
 
-    assert accepted.status_code == 503
-    assert "not running" in accepted.text
+    assert accepted.status_code == 404
+    assert "Apps are served on the app domain" in accepted.text
     assert lodge_token.status_code == 403
 
 
