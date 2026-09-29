@@ -8,6 +8,7 @@
 .wolts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
 .wolts-card { border-radius: 12px; background: rgba(255,255,255,.85); border: 1px solid rgba(24,16,10,.08); transition: border-color .15s; min-width: 0; }
 .wolts-card:hover { border-color: var(--terra); }
+.wolts-card.online, .wolts-card.online:hover { border: 2px solid var(--green); }
 .wolts-card.expanded { grid-column: 1 / -1; }
 .wolts-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; cursor: pointer; border-radius: 12px; }
 .wolts-row:focus-visible { outline: 2px solid var(--terra); outline-offset: -2px; }

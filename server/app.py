@@ -1293,10 +1293,14 @@ async def session_new_slack(request: Request):
 # --- Sessions list ---
 
 @app.get("/sessions")
-async def list_sessions():
+async def list_sessions(view: str = ""):
     from sessions import SessionRegistry
     reg = SessionRegistry(WOLTS_DIR)
-    sessions = reg.list()
+    if view == "lodge":
+        payload = await asyncio.to_thread(reg.list_lodge_view)
+        sessions = payload["sessions"]
+    else:
+        sessions = reg.list()
     timeout = get_idle_timeout()
     observations = get_pane_activity() if timeout is not None else {}
     now = int(time.time())
@@ -1307,7 +1311,22 @@ async def list_sessions():
             session["idle_seconds"] = max(0, now - observed)
             session["closes_in_seconds"] = max(0, timeout - session["idle_seconds"])
     sessions.sort(key=lambda s: (0 if s.get("status") == "running" else 1, -(s.get("created_at") or 0)))
-    return sessions
+    return payload if view == "lodge" else sessions
+
+
+@app.get("/sessions/{name}")
+async def get_session(name: str):
+    """Return one session with its agent-accurate liveness state."""
+    from sessions import SessionRegistry
+    safe = "".join(c for c in name if c.isalnum() or c in "-_")
+    if safe != name:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    session = await asyncio.to_thread(
+        SessionRegistry(WOLTS_DIR).get, safe, check_alive=True,
+    )
+    if session is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return session
 
 
 # --- Sparks ---
@@ -2780,19 +2799,8 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
 
 @app.get("/tui")
 async def tui_page(request: Request):
-    # Opening a session that isn't running wakes it (resting, stopped, orphaned...),
-    # the same resume Telegram and IWCL use, so the terminal attaches to the same
-    # conversation instead of a dead pane. No conversation to go back to = no-op.
-    requested = request.query_params.get("session", "")
-    if requested:
-        safe = sanitize_session(requested)
-        from sessions import SessionRegistry
-        record = SessionRegistry(WOLTS_DIR).get(safe, check_alive=False)
-        if record and safe != "main" and record.get("status") != "running":
-            try:
-                await asyncio.to_thread(resume_session, safe, "")
-            except Exception as exc:  # a failed wake must never stop the page from rendering
-                print(f"[tui] could not resume resting session {safe}: {exc}")
+    # Rendering is read-only. The page wakes a resting session through the
+    # existing same-origin-guarded POST /sessions/{name}/resume route.
     return templates.TemplateResponse(request, "tui.html", context={
         "cache_bust": int(time.time()),
     })

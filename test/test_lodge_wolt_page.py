@@ -54,6 +54,5 @@ def test_wolt_page_has_render_level_xss_acceptance_check():
 
 def test_wolt_page_uses_provable_session_states():
     source = (ROOT / "public" / "static" / "wolt-page.js").read_text()
-    assert "resume anytime" in source
-    assert "closes in" in source
+    assert "const sessionState = sessionStateText" in source
     assert "waiting on you" not in source.lower()

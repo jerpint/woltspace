@@ -8,10 +8,13 @@ const wolt = process.env.TEST_WOLT || 'n00b';
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 844 } });
-    await page.route('**/sessions', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify([{
-      name: `${wolt}-hostile-a1b2c3`, wolt, status: 'running', alive: true,
-      created_at: Date.now() / 1000, title: '<img src=x onerror=alert(1)>', summary: '<script>alert(2)</script>',
-    }]) }));
+    await page.route('**/sessions?view=lodge', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      sessions: [{
+        name: `${wolt}-hostile-a1b2c3`, wolt, status: 'running', alive: true,
+        last_activity: Date.now() / 1000, title: '<img src=x onerror=alert(1)>', summary: '<script>alert(2)</script>',
+      }],
+      totals: { [wolt]: 1 },
+    }) }));
     await page.goto(`${base}/w/${encodeURIComponent(wolt)}`, { waitUntil: 'networkidle' });
     await page.waitForTimeout(1000);
     assert.equal(await page.locator('#bg-nature svg').count(), 1);

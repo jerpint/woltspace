@@ -218,7 +218,10 @@ class TestCodexDiscovery:
         d = wolts_dir / wolt / ".codex" / "sessions" / day
         d.mkdir(parents=True, exist_ok=True)
         f = d / f"rollout-2026-07-14T12-00-00-{uuid_}.jsonl"
-        f.write_text(json.dumps({"cwd": cwd}) + "\n")
+        f.write_text(json.dumps({
+            "type": "session_meta",
+            "payload": {"cwd": cwd},
+        }) + "\n")
         return f
 
     def test_finds_new_rollout(self, tmp_path, monkeypatch):
