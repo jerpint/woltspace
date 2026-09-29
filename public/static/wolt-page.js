@@ -18,12 +18,13 @@
 
   function renderHeader() {
     const eng = effective(), own = sessions.filter(s => s.wolt === name).sort((a,b) => (b.last_activity || b.created_at || 0) - (a.last_activity || a.created_at || 0));
-    const open = own.filter(sessionIsOpen), workingCount = open.filter(sessionIsWorking).length;
+    const online = own.filter(sessionIsOnline);
     const avatar = root.querySelector('[data-avatar]');
     const sprite = woltSpriteAvatar(config.type || 'rodent', 44);
     if (sprite) avatar.innerHTML = sprite; else avatar.textContent = WOLT_EMOJI[config.type] || '🦫';
     root.querySelector('[data-name]').textContent = name;
-    root.querySelector('[data-meta]').textContent = `${config.type || 'rodent'} · ${eng.id}${eng.model ? ` · ${eng.model}` : ''} · ${woltStateText({ working: workingCount > 0, workingCount, open })}`;
+    const last = own.length ? (own[0].last_activity || own[0].created_at || 0) : 0;
+    root.querySelector('[data-meta]').textContent = `${config.type || 'rodent'} · ${eng.id}${eng.model ? ` · ${eng.model}` : ''} · ${woltStateText({ online, last })}`;
     root.querySelector('[data-role]').textContent = (manifest.wolt || {}).description || config.description || (manifest.wolt || {}).role || config.role || '';
     const resume = root.querySelector('[data-resume]');
     if (own[0]) { resume.hidden = false; resume.href = `/tui?session=${encodeURIComponent(own[0].name)}`; resume.title = own[0].title || own[0].name; }
@@ -43,7 +44,7 @@
       if (group !== currentDay) { currentDay = group; main.appendChild(el('div', 'wolt-day', group)); list = el('div', 'wolt-session-list'); main.appendChild(list); }
       const row = link('', `/tui?session=${encodeURIComponent(s.name)}`, 'session-row');
       const state = sessionState(s);
-      const dot = el('div', `session-dot ${sessionIsOpen(s) ? 'running' : 'stopped'}`);
+      const dot = el('div', `session-dot ${sessionIsOnline(s) ? 'running' : 'stopped'}`);
       const text = el('div', 'session-body');
       const title = el('div', `session-title${s.title ? '' : ' wolt-untitled'}`, s.title || s.name || 'untitled session');
       const summary = el('div', 'wolt-session-summary', `${s.summary ? `${s.summary} · ` : ''}${state}`);
