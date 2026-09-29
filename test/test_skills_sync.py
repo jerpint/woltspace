@@ -503,6 +503,16 @@ class TestEnsurePlatformSkills:
         assert link.is_symlink()
         assert link.resolve() == source.resolve()
 
+    def test_plugin_delivery_exposes_start_chat_modes(self, tmp_path):
+        wolt = _plugin_wolt(tmp_path)
+
+        ensure_platform_skills(wolt, "codex", SHIPPED_SKILLS)
+
+        delivered = wolt / ".claude" / "skills" / "woltspace" / "start-chat"
+        assert (delivered / "modes" / "lodge.md").is_file()
+        assert (delivered / "modes" / "telegram.md").is_file()
+        assert (delivered / "modes" / "slack.md").is_file()
+
     def test_a_link_pointing_somewhere_else_is_repointed(self, tmp_path):
         source = tmp_path / "install" / "container" / "skills"
         source.mkdir(parents=True)
@@ -1079,3 +1089,24 @@ def test_wolt_facing_instructions_do_not_hardcode_the_default_lodge_port():
             if "localhost:7777" in text or "127.0.0.1:7777" in text:
                 offenders.append(str(path.relative_to(ROOT)))
     assert offenders == []
+
+
+def test_copy_delivery_carries_start_chat_modes(tmp_path):
+    wolt = tmp_path / "wolts" / "copywolt"
+    wolt.mkdir(parents=True)
+    (wolt / "CLAUDE.md").write_text("instructions\n")
+
+    seed_wolt_skills(ROOT, wolt)
+
+    delivered = wolt / ".claude" / "skills" / "woltspace-start-chat"
+    assert (delivered / "modes" / "lodge.md").is_file()
+    assert (delivered / "modes" / "telegram.md").is_file()
+    assert (delivered / "modes" / "slack.md").is_file()
+
+
+def test_platform_skills_do_not_direct_native_agents_to_container_install_paths():
+    references = []
+    for path in SHIPPED_SKILLS.rglob("*.md"):
+        if "/workspace/woltspace" in path.read_text():
+            references.append(path.relative_to(ROOT).as_posix())
+    assert references == []

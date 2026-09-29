@@ -18,7 +18,7 @@ The Telegram bot is a **dog** — it needs its own wolt identity. Check if one e
 
 ```bash
 python3 -c "
-import sys; sys.path.insert(0, '/workspace/woltspace/container/lib')
+import os, sys; sys.path.insert(0, os.path.join(os.environ['WOLTSPACE_DIR'], 'container', 'lib'))
 from wolts import get_active_creature, find_by_type
 dog = get_active_creature('dog')
 print(f'active dog: {dog}' if dog else 'no active dog')
@@ -36,7 +36,7 @@ Once they give a name, create the dog-wolt:
 create-creature-wolt <name> dog --role "Lodge companion" --description "Guards the Telegram gate, routes tasks, keeps watch"
 ```
 
-Then write a proper identity file at `/workspace/wolts/<name>/wolt/memory/identity.md`:
+Then write a proper identity file at `$WOLTSPACE_WOLTS_DIR/<name>/wolt/memory/identity.md`:
 - First person, in the dog's voice
 - Loyal, constrained, always-on
 - Knows their human's name
@@ -112,11 +112,11 @@ Then try a task — ask the bot to build or search something. It should spawn a 
 
 ## Customizing
 
-The bot code lives at `/workspace/woltspace/container/bot/` in the container (platform default). To customize:
+The bot code lives at `$WOLTSPACE_DIR/container/bot/` (platform default). To customize:
 
-1. Copy it: `cp -r /workspace/woltspace/container/bot wolt/bot`
+1. Copy it: `cp -r "$WOLTSPACE_DIR/container/bot" wolt/bot`
 2. Add a `pyproject.toml` with deps at `wolt/bot/pyproject.toml`
-3. Edit freely — the entrypoint prefers `wolt/bot/` over `/workspace/woltspace/container/bot/`
+3. Edit freely — the entrypoint prefers `wolt/bot/` over `$WOLTSPACE_DIR/container/bot/`
 
 The bot is yours to modify. The platform default is just a starting point.
 
