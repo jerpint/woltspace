@@ -16,11 +16,11 @@ You were invoked with two arguments: `<mode> <wolt-name>`.
 
 ## What to do
 
-1. **Read your mode file** at `/workspace/woltspace/container/skills/start-chat/modes/<mode>.md` — this tells you how to behave in this session (notification style, viewport usage, constraints).
+1. **Read your mode file** from `modes/<mode>.md` beside this `SKILL.md` — this tells you how to behave in this session (notification style, viewport usage, constraints). The delivered skill always carries its `modes/` directory with it.
 
-2. **Read your identity** from your wolt's memory directory at `/workspace/wolts/<wolt-name>/wolt/memory/`. Start with `identity.md` if it exists, then `context.md` and `learnings.md`. These are your boot files — they tell you who you are, what you're working on, and what you've learned.
+2. **Read your identity** from `wolt/memory/` in your current wolt directory. Start with `identity.md` if it exists, then `context.md` and `learnings.md`. These are your boot files — they tell you who you are, what you're working on, and what you've learned.
 
-3. **Read your CLAUDE.md** at `/workspace/wolts/<wolt-name>/CLAUDE.md` if it exists — this has project-specific instructions.
+3. **Read your `CLAUDE.md`** in the current wolt directory if it exists — this has project-specific instructions.
 
 4. **Your site is already in the viewport** — if you are a rodent (raccoon, beaver, or otter), your site is already live in the viewport with livereload at `/wolt/<wolt-name>/site/`. The server pre-loaded it when the session started. Just edit `wolt/site/index.html` and changes appear instantly via livereload. If you need to push a different URL, use `push-view /wolt/<wolt-name>/site/page.html`. Non-rodent creatures (wolf, dog, etc.) do not have sites.
 
@@ -39,7 +39,7 @@ Do NOT summarize what you read. Just absorb the context and be ready to work.
 **NEVER restart, kill, or modify the woltspace server (FastAPI, port 7777)** — it runs the tunnel, split view, and all session routing. Restarting it breaks everything for everyone. If something seems wrong with the server, notify the developer and stop.
 
 **You can ONLY edit files inside your wolt directory.** Never edit, create, or delete files in:
-- `/workspace/woltspace/` — this is the platform code. Editing it breaks updates.
+- `$WOLTSPACE_DIR/` — this is the platform install. Editing it breaks updates.
 - Other wolts' directories
 - System files outside your wolt
 
