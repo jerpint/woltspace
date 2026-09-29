@@ -162,6 +162,11 @@ class RuntimeLayout:
         os.environ["WOLTSPACE_HOST"] = self.host
         os.environ["PORT"] = str(self.port)
         os.environ["WOLTSPACE_PORT"] = str(self.port)
+        # Platform helpers must run on the interpreter that owns this package.
+        # macOS still ships /usr/bin/python3 as 3.9 on some releases; letting a
+        # session helper rediscover that executable from PATH makes imports such
+        # as tomllib fail before tmux can create the session.
+        os.environ["WOLTSPACE_PYTHON"] = sys.executable
         # The one address every child is told. `notify`, `push-view` and the
         # bundled `woltspace` client all used to bake in http://localhost:7777,
         # which is a lie on any instance started

@@ -50,6 +50,7 @@ class TestEnvironmentAssembly:
         assert env["DEV_MODE"] == "false"
         assert env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
         assert env["LANG"] == "C.UTF-8"
+        assert env["WOLTSPACE_PYTHON"] == sys.executable
 
     def test_declares_the_two_facts_only_this_process_knows(self, tmp_path):
         """A stray `woltspace serve` inherits everything else — not these.

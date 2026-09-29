@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import socket
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,6 +60,31 @@ CLAUDE_TOKEN_VARS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 def _claude_token_in_env() -> bool:
     """Whether Claude Code would start logged in from the environment alone."""
     return any((os.environ.get(name) or "").strip() for name in CLAUDE_TOKEN_VARS)
+
+
+def _path_python_check() -> DoctorCheck | None:
+    """Describe an old ambient python without mistaking it for our runtime."""
+    executable = shutil.which("python3")
+    if not executable:
+        return None
+    try:
+        output = subprocess.check_output(
+            [executable, "-c", "import sys; print('.'.join(map(str, sys.version_info[:3])))"],
+            text=True,
+            timeout=5,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        version = tuple(int(part) for part in output.split("."))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    if version >= (3, 11):
+        return DoctorCheck("path-python", "pass", f"{executable} is Python {output}")
+    return DoctorCheck(
+        "path-python",
+        "warn",
+        f"{executable} is Python {output}; platform helpers use {sys.executable}",
+        "Keep WOLTSPACE_PYTHON set to the lodge interpreter; do not use this python3 for platform helpers.",
+    )
 
 
 def _auth_paths(home: Path) -> dict[str, Path]:
@@ -326,6 +352,10 @@ def run_doctor(
         f"Python {version.major}.{version.minor}.{version.micro}",
         "Install Python 3.11 or newer." if version < (3, 11) else "",
     ))
+
+    path_python = _path_python_check()
+    if path_python is not None:
+        checks.append(path_python)
 
     required_assets = (
         layout.install_root / "server",

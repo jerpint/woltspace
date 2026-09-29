@@ -346,6 +346,7 @@ def build_environment(
         # control plane refuses to act as owner unless it sees this.
         "WOLTSPACE_ENTRYPOINT": "1",
         "WOLTSPACE_ISOLATION": "external",
+        "WOLTSPACE_PYTHON": sys.executable,
         "LANG": "C.UTF-8",
     })
 
