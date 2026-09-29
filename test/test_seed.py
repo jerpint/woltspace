@@ -7,6 +7,7 @@ import pytest
 from woltspace.seed import (
     MAX_FILE_BYTES,
     SeedError,
+    _split_seed_git_source,
     create_seed,
     inspect_seed,
     install_seed,
@@ -210,6 +211,90 @@ def test_install_creates_fresh_independent_starters(tmp_path):
 
     with pytest.raises(SeedError, match="overwrite"):
         install_seed(source=package, wolts_dir=target, install_root=install_root)
+
+
+def _bare_seed_repository(tmp_path: Path) -> tuple[Path, str, str]:
+    source_wolts = tmp_path / "source-wolts"
+    make_wolt(source_wolts)
+    package = tmp_path / "package"
+    create_seed(
+        wolts_dir=source_wolts, output=package, name="starter-colony",
+        wolt_names=["raccoon"],
+    )
+    subprocess.run(["git", "init", "-q", str(package)], check=True)
+    subprocess.run(["git", "-C", str(package), "add", "."], check=True)
+    subprocess.run([
+        "git", "-C", str(package), "-c", "user.name=Test",
+        "-c", "user.email=test@example.invalid", "commit", "-qm", "first",
+    ], check=True)
+    first = subprocess.run(
+        ["git", "-C", str(package), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    (package / "wolts/raccoon/identity.md").write_text("# New tip identity\n")
+    subprocess.run(["git", "-C", str(package), "add", "."], check=True)
+    subprocess.run([
+        "git", "-C", str(package), "-c", "user.name=Test",
+        "-c", "user.email=test@example.invalid", "commit", "-qm", "second",
+    ], check=True)
+    tip = subprocess.run(
+        ["git", "-C", str(package), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    bare = tmp_path / "seed.git"
+    subprocess.run(["git", "clone", "-q", "--bare", str(package), str(bare)], check=True)
+    return bare, first, tip
+
+
+def test_install_git_source_at_full_commit_uses_exact_revision(tmp_path):
+    bare, first, _tip = _bare_seed_repository(tmp_path)
+    url = bare.as_uri()
+    install_root = make_template(tmp_path)
+    target = tmp_path / "new-lodge"
+
+    result = install_seed(
+        source=f"{url}@{first}", wolts_dir=target, install_root=install_root,
+    )
+
+    assert result["source"]["url"] == url
+    assert result["source"]["revision"] == first
+    assert result["source"]["source"] == f"{url}@{first}"
+    identity = (target / "raccoon/wolt/memory/identity.md").read_text()
+    assert "A careful raccoon" in identity
+    provenance = json.loads((target / "raccoon/wolt/wolt.json").read_text())["provenance"]
+    assert provenance["url"] == url
+    assert provenance["revision"] == first
+
+
+def test_install_unpinned_git_source_keeps_tip_behavior(tmp_path):
+    bare, _first, tip = _bare_seed_repository(tmp_path)
+    url = bare.as_uri()
+
+    result = install_seed(
+        source=url, wolts_dir=tmp_path / "new-lodge",
+        install_root=make_template(tmp_path),
+    )
+
+    assert result["source"]["url"] == url
+    assert result["source"]["revision"] == tip
+
+
+def test_install_git_source_reports_missing_pinned_commit(tmp_path):
+    bare, _first, _tip = _bare_seed_repository(tmp_path)
+    missing = "0" * 40
+
+    with pytest.raises(SeedError, match=f"could not check out colony seed revision {missing}"):
+        install_seed(
+            source=f"{bare.as_uri()}@{missing}", wolts_dir=tmp_path / "new-lodge",
+            install_root=make_template(tmp_path),
+        )
+
+
+def test_pinned_source_split_preserves_git_at_host_urls():
+    source = "git@example.com:owner/seed.git"
+    assert _split_seed_git_source(source) == (source, None)
+    revision = "a" * 40
+    assert _split_seed_git_source(f"{source}@{revision}") == (source, revision)
 
 
 def test_seed_rejects_secret_shaped_tracked_app_path(tmp_path):
