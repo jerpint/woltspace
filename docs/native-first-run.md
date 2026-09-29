@@ -50,6 +50,10 @@ The published packages are the way to install:
 uv tool install 'woltspace'
 ```
 
+An AI agent installing Woltspace should set `WOLTSPACE_DEFAULT_HARNESS` to its
+own registered harness (for example, `claude` or `codex`) before the first
+`woltspace start`; this skips the redundant first-run harness question.
+
 The browser terminal is part of the Python package. Install the optional
 `@woltspace/tui` npm package only if you want the separate terminal cockpit.
 

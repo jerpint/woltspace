@@ -79,6 +79,18 @@ def test_doctor_warns_about_old_python3_on_path(tmp_path, monkeypatch):
     assert str(sys.executable) in check.detail
 
 
+def test_doctor_warns_about_invalid_default_harness(tmp_path, monkeypatch):
+    monkeypatch.setenv("WOLTSPACE_DEFAULT_HARNESS", "winamp")
+
+    check = {item.name: item for item in run_doctor(_layout(tmp_path), check_port=False)}[
+        "default-harness"
+    ]
+
+    assert check.status == "warn"
+    assert "winamp" in check.detail
+    assert "first-run harness question will remain visible" in check.remedy
+
+
 def _restore_env(snapshot: dict):
     for key, value in snapshot.items():
         if value is None:

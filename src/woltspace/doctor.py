@@ -87,6 +87,27 @@ def _path_python_check() -> DoctorCheck | None:
     )
 
 
+def _default_harness_check() -> DoctorCheck | None:
+    name = (os.environ.get("WOLTSPACE_DEFAULT_HARNESS") or "").strip()
+    if not name:
+        return None
+    try:
+        from harnesses import HARNESSES
+    except ImportError:
+        return DoctorCheck(
+            "default-harness", "warn", f"cannot validate {name!r}",
+            "Reinstall Woltspace so its harness registry is available.",
+        )
+    if name in HARNESSES:
+        return DoctorCheck("default-harness", "pass", f"{name} is registered")
+    registered = ", ".join(sorted(HARNESSES))
+    return DoctorCheck(
+        "default-harness", "warn",
+        f"WOLTSPACE_DEFAULT_HARNESS={name!r} is not registered",
+        f"Use one of: {registered}. The first-run harness question will remain visible.",
+    )
+
+
 def _auth_paths(home: Path) -> dict[str, Path]:
     codex_home = Path(os.environ.get("CODEX_HOME", home / ".codex"))
     xdg_data = Path(os.environ.get("XDG_DATA_HOME", home / ".local" / "share"))
@@ -356,6 +377,9 @@ def run_doctor(
     path_python = _path_python_check()
     if path_python is not None:
         checks.append(path_python)
+    default_harness = _default_harness_check()
+    if default_harness is not None:
+        checks.append(default_harness)
 
     required_assets = (
         layout.install_root / "server",
