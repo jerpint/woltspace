@@ -289,6 +289,47 @@
   font-size: 13px;
   color: var(--ink-2);
 }
+.home-starter-welcome {
+  width: min(420px, 100%);
+  margin-top: 22px;
+  padding: 22px;
+  background: rgba(245,241,232,0.94);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(67, 58, 42, 0.12);
+  backdrop-filter: blur(6px);
+  animation: fadeUp 0.5s ease;
+}
+.home-starter-heading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: var(--ink);
+}
+.home-starter-emoji { font-size: 28px; }
+.home-starter-name {
+  font-family: var(--font-display);
+  font-size: 22px;
+}
+.home-starter-description {
+  margin: 10px auto 17px;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.home-starter-button {
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 650;
+  color: white;
+  background: var(--green, #3A6644);
+  border: none;
+  border-radius: 9px;
+  padding: 11px 22px;
+  cursor: pointer;
+}
+.home-starter-button:hover { background: #2e5438; }
 /* ── Create wolt CTA (shown until the first user-owned wolt exists) ── */
 .home-create-cta {
   margin-top: 20px;

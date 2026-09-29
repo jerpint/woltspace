@@ -125,6 +125,15 @@ test('hostile app metadata is assigned as text and never embedded in handlers', 
   assert.doesNotMatch(lodgeSource, /onclick[^\n]*(?:p\.name|keeper|s\.name|sessionFilterWolt)/);
 });
 
+test('starter welcome card treats wolt metadata as text and uses the open flow', () => {
+  const source = functionSource(lodgeSource, 'renderStarterWelcome');
+  assert.match(source, /lodgeElement\('span', 'home-starter-name', name\)/);
+  assert.match(source, /lodgeElement\('div', 'home-starter-description', wolt\.description/);
+  assert.match(source, /button\.addEventListener\('click'/);
+  assert.match(source, /startSession\(name\)/);
+  assert.doesNotMatch(source, /innerHTML|onclick\s*=/);
+});
+
 test('backend harness labels and wolf status remain data', () => {
   assert.match(lodgeSource, /button\.appendChild\(lodgeElement\('span', '', name\)\)/);
   assert.doesNotMatch(lodgeSource, /button\.innerHTML\s*=.*\$\{name\}/);
