@@ -1,6 +1,7 @@
 """Woltspace server — FastAPI replacement for server.js."""
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -8,6 +9,7 @@ import subprocess
 import threading
 import time
 import contextlib
+import unicodedata
 from collections import deque
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
@@ -61,9 +63,12 @@ import sys as _sys
 _sys.path.insert(0, str(WOLTSPACE_DIR / "container" / "lib"))
 from sessions import (
     resume_session, start_session, stop_session,
-    deliver_message, resolve_active_session, format_spawned_prompt,
+    deliver_message, resolve_active_session, format_attributed_message,
+    format_spawned_prompt,
     wolt_harness, ResumeUnavailable, ResumeFailed,
+    stored_resume_id, recover_resume_id, taken_resume_ids, claim_resume_id,
 )
+from session_expiry import get_idle_timeout, get_pane_activity, set_idle_timeout
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
 from execution_policy import AutoGrantStore, POLICY_VERSION
@@ -76,6 +81,9 @@ from harnesses import (
     set_default_harness,
     resolve_harness,
     platform_skill_invoke,
+    is_valid_model,
+    model_catalog,
+    tier_default_model,
     HARNESSES,
 )
 from apps import (
@@ -84,10 +92,13 @@ from apps import (
     discover_apps,
     get_app,
     app_dir,
+    app_log_file,
     running_apps,
     share_app,
     start_app,
     stop_app,
+    restart_app,
+    set_app_keeper,
     unshare_all_apps,
     unshare_app,
 )
@@ -797,22 +808,11 @@ async def memory_read(request: Request):
 
 # --- Session messaging ---
 
-@app.post("/sessions/{session_id}/message")
-async def session_message(session_id: str, request: Request):
-    """Deliver a message into a running session.
-
-    Body: {"text": "...", "from_wolt"?: "...", "from_session"?: "..."}.
-    When from_wolt is given, the message is prepended with sender attribution
-    + a reply instruction (the wolt-to-wolt relay contract). Delivery is
-    harness-aware (paste-buffer + per-harness settle) via deliver_message.
-    """
-    safe = sanitize_session(session_id)
-    body = await request.json()
-    text = body.get("text")
-    if not text:
-        return JSONResponse({"error": "text required"}, status_code=400)
-    result = deliver_message(
-        safe, text,
+async def _deliver_or_resume(safe: str, text: str, body: dict):
+    result = await asyncio.to_thread(
+        deliver_message,
+        safe,
+        text,
         from_wolt=body.get("from_wolt", "") or "",
         from_session=body.get("from_session", "") or "",
     )
@@ -820,11 +820,125 @@ async def session_message(session_id: str, request: Request):
     if status == "delivered":
         print(f"[message] → {safe}: {text[:80]}")
         return {"ok": True, **result}
-    # 409 for session-dead and agent-gone alike: the request was well
-    # formed, the session just cannot receive right now. agent-gone carries a
-    # detail saying to resume and retry.
+    if status in {"session-dead", "agent-gone"}:
+        from sessions import SessionRegistry
+        record = SessionRegistry(WOLTS_DIR).get(safe, check_alive=False)
+        if not record or record.get("status") not in {"running", "resting"}:
+            return JSONResponse({"ok": False, **result}, status_code=409)
+        prompt = format_attributed_message(
+            text,
+            body.get("from_wolt", "") or "",
+            body.get("from_session", "") or "",
+        )
+        try:
+            resumed = await asyncio.to_thread(resume_session, safe, prompt)
+            print(f"[message] resumed → {safe}: {text[:80]}")
+            return {"ok": True, **resumed, "status": "resumed", "session": safe}
+        except (ValueError, ResumeUnavailable, ResumeFailed, subprocess.CalledProcessError) as exc:
+            return JSONResponse(
+                {"ok": False, "status": status, "session": safe, "error": str(exc)},
+                status_code=409,
+            )
     code = 404 if status == "no-session" else 409
     return JSONResponse({"ok": False, **result}, status_code=code)
+
+
+@app.post("/sessions/{session_id}/describe")
+async def session_describe(session_id: str, request: Request):
+    """Give a session a concise title and one-line summary."""
+    from sessions import SessionRegistry
+
+    safe = sanitize_session(session_id)
+    if not safe or safe != session_id:
+        return JSONResponse({"error": "invalid session id"}, status_code=400)
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    title = body.get("title")
+    summary = body.get("summary")
+    if not isinstance(title, str) or not title.strip():
+        return JSONResponse({"error": "title required"}, status_code=400)
+    if not isinstance(summary, str) or not summary.strip():
+        return JSONResponse({"error": "summary required"}, status_code=400)
+    title = " ".join(title.split())
+    summary = " ".join(summary.split())
+    title = "".join(c for c in title if not unicodedata.category(c).startswith("C"))
+    summary = "".join(c for c in summary if not unicodedata.category(c).startswith("C"))
+    if not title:
+        return JSONResponse({"error": "title required"}, status_code=400)
+    if not summary:
+        return JSONResponse({"error": "summary required"}, status_code=400)
+    if len(title) > 80:
+        return JSONResponse({"error": "title must be 80 characters or fewer"}, status_code=400)
+    if len(summary) > 240:
+        return JSONResponse({"error": "summary must be 240 characters or fewer"}, status_code=400)
+    described = SessionRegistry(WOLTS_DIR).describe(safe, title, summary)
+    if described is None:
+        return JSONResponse({"error": "session not found"}, status_code=404)
+    return described
+
+
+@app.post("/sessions/{session_id}/message")
+async def session_message(session_id: str, request: Request):
+    """Deliver to a running session, or resume a resting one on contact."""
+    safe = sanitize_session(session_id)
+    body = await request.json()
+    text = body.get("text")
+    if not text:
+        return JSONResponse({"error": "text required"}, status_code=400)
+    return await _deliver_or_resume(safe, text, body)
+
+
+def _rest_session_locked(safe: str, expected_digest: str):
+    """Verify and stop one session without blocking the server event loop."""
+    from sessions import SessionRegistry
+    registry = SessionRegistry(WOLTS_DIR)
+    data = registry.get(safe, check_alive=False)
+    if data is None:
+        return JSONResponse({"error": "session not found"}, status_code=404)
+    wolt = data.get("wolt", "")
+    with registry._lock(wolt, safe):
+        data = registry.get(safe, wolt=wolt, check_alive=False)
+        if data is None:
+            return JSONResponse({"error": "session not found"}, status_code=404)
+        if data.get("status") != "running":
+            return {"ok": True, "status": data.get("status"), "session": safe}
+        # Resting must be reversible: stamp a recoverable id, or refuse.
+        # (we already hold this session's lock, so persist with the raw write)
+        if not claim_resume_id(registry, data, lambda d: registry._write(wolt, safe, d)):
+            return JSONResponse({"error": "session has no conversation to resume; not resting it"}, status_code=409)
+        try:
+            pane = get_runtime().capture(RuntimeHandle.from_record(data), start=None)
+        except Exception:
+            return JSONResponse({"error": "session activity could not be verified"}, status_code=409)
+        current_digest = hashlib.sha256(pane.encode("utf-8")).hexdigest()
+        if current_digest != expected_digest:
+            return JSONResponse({"error": "session became active; rest aborted"}, status_code=409)
+        get_runtime().stop(RuntimeHandle.from_record(data))
+        now = int(time.time())
+        data["status"] = "resting"
+        data["rested_at"] = now
+        registry._write(wolt, safe, data)
+        return {"ok": True, "status": "resting", "session": safe, "rested_at": now}
+
+
+@app.post("/sessions/{session_id}/rest")
+async def rest_session(session_id: str, request: Request):
+    """Stop one idle runtime while keeping its conversation resumable."""
+    safe = sanitize_session(session_id)
+    if safe == "main":
+        return JSONResponse({"error": "main session cannot rest"}, status_code=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    expected_digest = body.get("pane_digest") if isinstance(body, dict) else None
+    if not isinstance(expected_digest, str) or len(expected_digest) != 64:
+        return JSONResponse({"error": "pane_digest required"}, status_code=400)
+    return await asyncio.to_thread(_rest_session_locked, safe, expected_digest)
 
 
 @app.post("/wolts/{name}/message")
@@ -835,7 +949,13 @@ async def wolt_message(name: str, request: Request):
     This is the ergonomic entry point: senders address `codexw`, not a slug.
     """
     safe_wolt = "".join(c for c in name if c.isalnum() or c in "-_")
-    session_id = resolve_active_session(safe_wolt)
+    from sessions import SessionRegistry
+    registry = SessionRegistry(WOLTS_DIR)
+    session_id = resolve_active_session(safe_wolt, registry=registry)
+    if not session_id:
+        resting = [s for s in registry.list(wolt=safe_wolt) if s.get("status") == "resting"]
+        resting.sort(key=lambda s: (s.get("last_activity") or 0, s.get("created_at") or 0), reverse=True)
+        session_id = resting[0]["name"] if resting else None
     if not session_id:
         return JSONResponse(
             {"ok": False, "status": "no-session", "wolt": safe_wolt,
@@ -846,16 +966,10 @@ async def wolt_message(name: str, request: Request):
     text = body.get("text")
     if not text:
         return JSONResponse({"error": "text required"}, status_code=400)
-    result = deliver_message(
-        session_id, text,
-        from_wolt=body.get("from_wolt", "") or "",
-        from_session=body.get("from_session", "") or "",
-    )
-    result["wolt"] = safe_wolt
-    if result.get("status") == "delivered":
-        print(f"[message] → {safe_wolt} ({session_id}): {text[:80]}")
-        return {"ok": True, **result}
-    return JSONResponse({"ok": False, **result}, status_code=409)
+    result = await _deliver_or_resume(session_id, text, body)
+    if isinstance(result, dict):
+        result["wolt"] = safe_wolt
+    return result
 
 
 # --- Session spawning ---
@@ -1033,12 +1147,40 @@ async def session_new_slack(request: Request):
 # --- Sessions list ---
 
 @app.get("/sessions")
-async def list_sessions():
+async def list_sessions(view: str = ""):
     from sessions import SessionRegistry
     reg = SessionRegistry(WOLTS_DIR)
-    sessions = reg.list()
+    if view == "lodge":
+        payload = await asyncio.to_thread(reg.list_lodge_view)
+        sessions = payload["sessions"]
+    else:
+        sessions = reg.list()
+    timeout = get_idle_timeout()
+    observations = get_pane_activity() if timeout is not None else {}
+    now = int(time.time())
+    for session in sessions:
+        session["idle_timeout_seconds"] = timeout
+        observed = observations.get(session.get("name", ""), {}).get("unchanged_since")
+        if timeout is not None and isinstance(observed, int) and session.get("status") == "running":
+            session["idle_seconds"] = max(0, now - observed)
+            session["closes_in_seconds"] = max(0, timeout - session["idle_seconds"])
     sessions.sort(key=lambda s: (0 if s.get("status") == "running" else 1, -(s.get("created_at") or 0)))
-    return sessions
+    return payload if view == "lodge" else sessions
+
+
+@app.get("/sessions/{name}")
+async def get_session(name: str):
+    """Return one session with its agent-accurate liveness state."""
+    from sessions import SessionRegistry
+    safe = "".join(c for c in name if c.isalnum() or c in "-_")
+    if safe != name:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    session = await asyncio.to_thread(
+        SessionRegistry(WOLTS_DIR).get, safe, check_alive=True,
+    )
+    if session is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return session
 
 
 # --- Sparks ---
@@ -1465,6 +1607,29 @@ async def list_harnesses():
     return {"default": get_default_harness(), "harnesses": harness_metadata()}
 
 
+@app.get("/settings/session-expiry")
+async def get_session_expiry_setting():
+    return {"idle_timeout_seconds": get_idle_timeout()}
+
+
+@app.post("/settings/session-expiry")
+async def set_session_expiry_setting(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if set(body) != {"idle_timeout_seconds"}:
+        return JSONResponse({"error": "idle_timeout_seconds required"}, status_code=400)
+    value = body.get("idle_timeout_seconds")
+    try:
+        saved = set_idle_timeout(value)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return {"ok": True, "idle_timeout_seconds": saved}
+
+
 @app.get("/onboarding/status")
 async def get_onboarding_status():
     """First-run UI state, independent of every harness's authentication."""
@@ -1493,40 +1658,142 @@ async def set_harness_default(request: Request):
     return {"ok": True, "default": name}
 
 
-@app.post("/wolts/{name}/harness")
-async def set_wolt_harness(name: str, request: Request):
-    """Pin or clear a wolt's engine override (wolt.json "harness").
-
-    Body {"harness": "codex"} pins; {"harness": null} clears (follow default).
-    """
-    body = await request.json()
-    requested = body.get("harness")
-
+def _wolt_settings_path(name: str) -> tuple[str, Path]:
     safe = "".join(c for c in name if c.isalnum() or c in "-_")
-    wolt_json = WOLTS_DIR / safe / "wolt" / "wolt.json"
-    if not wolt_json.exists():
-        return JSONResponse({"error": f"wolt not found: {safe}"}, status_code=404)
+    if not safe or safe != name:
+        raise ValueError("invalid wolt name")
+    return safe, WOLTS_DIR / safe / "wolt" / "wolt.json"
 
+
+def _load_wolt_settings(name: str) -> tuple[str, Path, dict]:
+    safe, wolt_json = _wolt_settings_path(name)
+    if not wolt_json.exists():
+        raise FileNotFoundError(f"wolt not found: {safe}")
     try:
         cfg = json.loads(wolt_json.read_text())
     except (json.JSONDecodeError, OSError):
-        return JSONResponse({"error": "wolt.json unreadable"}, status_code=500)
+        raise RuntimeError("wolt.json unreadable")
+    if not isinstance(cfg, dict):
+        raise RuntimeError("wolt.json unreadable")
+    return safe, wolt_json, cfg
 
-    if requested in (None, ""):
-        cfg.pop("harness", None)          # follow the lodge default
-        effective = get_default_harness()
-        pinned = False
-    elif requested in HARNESSES:
-        cfg["harness"] = requested
-        effective = requested
-        pinned = True
+
+def _wolt_settings_response(safe: str, cfg: dict) -> dict:
+    harness = cfg.get("harness") or get_default_harness()
+    creature = cfg.get("type") or "raccoon"
+    pinned_model = cfg.get("model") or ""
+    model = pinned_model if is_valid_model(harness, pinned_model) else tier_default_model(harness, creature)
+    return {
+        "wolt": safe,
+        "harness": harness,
+        "model": model,
+        "configured": {"harness": cfg.get("harness"), "model": cfg.get("model")},
+        "applies": "next session",
+        "note": "Applies from the next session.",
+    }
+
+
+def _update_wolt_settings(name: str, body: dict) -> dict:
+    if not body or not set(body).issubset({"harness", "model"}):
+        raise ValueError("body must contain harness and/or model only")
+    safe, wolt_json, cfg = _load_wolt_settings(name)
+    requested_harness = body.get("harness", cfg.get("harness"))
+    if requested_harness in (None, ""):
+        chosen_harness = get_default_harness()
+        pin_harness = None
+    elif isinstance(requested_harness, str) and requested_harness in HARNESSES:
+        chosen_harness = requested_harness
+        pin_harness = requested_harness
     else:
-        return JSONResponse({"error": f"unknown harness: {requested}"}, status_code=400)
-
+        raise ValueError(f"unknown harness: {requested_harness}")
+    creature = cfg.get("type") or "raccoon"
+    harness_changed = "harness" in body and chosen_harness != (cfg.get("harness") or get_default_harness())
+    tier_model = tier_default_model(chosen_harness, creature)
+    if "model" in body:
+        requested_model = body.get("model")
+        model_is_tier_default = requested_model in (None, "")
+    elif harness_changed:
+        requested_model = tier_model
+        model_is_tier_default = True
+    else:
+        requested_model = cfg.get("model") or tier_model
+        model_is_tier_default = not cfg.get("model")
+    valid = [entry["id"] for entry in model_catalog(chosen_harness)]
+    if requested_model in (None, ""):
+        chosen_model = tier_model
+        pin_model = None
+    elif (model_is_tier_default
+          or (isinstance(requested_model, str)
+              and is_valid_model(chosen_harness, requested_model))):
+        chosen_model = requested_model
+        pin_model = requested_model
+    else:
+        raise ValueError(
+            f"model {requested_model!r} is not valid for {chosen_harness}; "
+            f"valid options: {', '.join(valid)}"
+        )
+    if pin_harness is None:
+        cfg.pop("harness", None)
+    else:
+        cfg["harness"] = pin_harness
+    if pin_model is None:
+        cfg.pop("model", None)
+    else:
+        cfg["model"] = pin_model
     tmp = wolt_json.with_suffix(".tmp")
     tmp.write_text(json.dumps(cfg, indent=2) + "\n")
-    tmp.rename(wolt_json)
-    return {"ok": True, "wolt": safe, "harness": effective, "pinned": pinned}
+    tmp.replace(wolt_json)
+    result = _wolt_settings_response(safe, cfg)
+    result.update({"ok": True, "harness": chosen_harness, "model": chosen_model})
+    return result
+
+
+def _wolt_settings_error(exc: Exception) -> JSONResponse:
+    if isinstance(exc, FileNotFoundError):
+        return JSONResponse({"error": str(exc)}, status_code=404)
+    if isinstance(exc, ValueError):
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/wolts/{name}/settings")
+async def get_wolt_settings(name: str):
+    try:
+        safe, _path, cfg = _load_wolt_settings(name)
+        return _wolt_settings_response(safe, cfg)
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
+        return _wolt_settings_error(exc)
+
+
+@app.patch("/wolts/{name}/settings")
+async def patch_wolt_settings(name: str, request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    try:
+        return _update_wolt_settings(name, body)
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
+        return _wolt_settings_error(exc)
+
+
+@app.post("/wolts/{name}/harness")
+async def set_wolt_harness(name: str, request: Request):
+    """Compatibility alias for the atomic settings writer."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict) or set(body) != {"harness"}:
+        return JSONResponse({"error": "harness is required"}, status_code=400)
+    try:
+        result = _update_wolt_settings(name, body)
+        result["pinned"] = body["harness"] not in (None, "")
+        return result
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
+        return _wolt_settings_error(exc)
 
 
 # --- Runtime capabilities and repository-scoped Auto consent ---
@@ -1602,6 +1869,22 @@ async def auto_grant_revoke(request: Request):
 # Centralized app management. Uses woltspace.json manifests.
 # App names are globally unique. Keeper (owning wolt) is in woltspace.json.
 
+_APP_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
+
+
+def _invalid_app_name(name: str) -> JSONResponse | None:
+    if not _APP_NAME_RE.fullmatch(name):
+        return JSONResponse({"error": "invalid app name"}, status_code=400)
+    return None
+
+@app.get("/tunnel")
+async def tunnel_status():
+    """Describe the lodge tunnel without exposing credentials or process state."""
+    url = tunnel_mgr.get_tunnel_url()
+    if not url:
+        return {"mode": "off", "url": ""}
+    return {"mode": tunnel_mgr.get_tunnel_mode(), "url": url}
+
 @app.get("/apps")
 async def list_apps_api():
     """List all apps that have woltspace.json."""
@@ -1610,6 +1893,7 @@ async def list_apps_api():
     result = []
     for a in apps:
         entry = a.model_dump()
+        entry["configured_port"] = a.port
         run_state = running.get(a.name)
         entry["running"] = run_state is not None
         entry["port"] = run_state["port"] if run_state else None
@@ -1623,11 +1907,14 @@ async def list_apps_api():
 @app.get("/apps/{name}")
 async def app_detail(name: str):
     """Get a single app's manifest and running state."""
+    if invalid := _invalid_app_name(name):
+        return invalid
     app_obj = get_app(name)
     if not app_obj:
         return JSONResponse({"error": f"app {name} not found"}, status_code=404)
     running = {r["name"]: r for r in running_apps()}
     entry = app_obj.model_dump()
+    entry["configured_port"] = app_obj.port
     run_state = running.get(name)
     entry["running"] = run_state is not None
     entry["port"] = run_state["port"] if run_state else None
@@ -1640,8 +1927,10 @@ async def app_detail(name: str):
 @app.post("/apps/{name}/start")
 async def app_start(name: str):
     """Start an app's dev server."""
+    if invalid := _invalid_app_name(name):
+        return invalid
     try:
-        state = start_app(name)
+        state = await asyncio.to_thread(start_app, name)
         print(f"[apps] started {name} on port {state['port']}")
         return state
     except ValueError as e:
@@ -1653,16 +1942,101 @@ async def app_start(name: str):
 @app.post("/apps/{name}/stop")
 async def app_stop(name: str):
     """Stop a running app."""
-    was_running = stop_app(name)
+    if invalid := _invalid_app_name(name):
+        return invalid
+    was_running = await asyncio.to_thread(stop_app, name)
     if was_running:
         print(f"[apps] stopped {name}")
         return {"ok": True, "name": name}
     return JSONResponse({"error": f"{name} is not running"}, status_code=404)
 
 
+@app.post("/apps/{name}/restart")
+async def app_restart(name: str):
+    if invalid := _invalid_app_name(name):
+        return invalid
+    try:
+        return await asyncio.to_thread(restart_app, name)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=404)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
+
+
+@app.get("/apps/{name}/logs")
+async def app_logs(name: str, tail: int = 200, stream: bool = False):
+    if invalid := _invalid_app_name(name):
+        return invalid
+    if not get_app(name):
+        return JSONResponse({"error": f"app {name} not found"}, status_code=404)
+    tail = max(1, min(tail, 2000))
+    path = app_log_file(name)
+
+    def read_tail() -> list[str]:
+        try:
+            with path.open("rb") as handle:
+                handle.seek(0, 2)
+                size = handle.tell()
+                handle.seek(max(0, size - 65536))
+                chunk = handle.read(65536)
+            return chunk.decode("utf-8", errors="replace").splitlines()[-tail:]
+        except FileNotFoundError:
+            return []
+
+    if not stream:
+        return {"name": name, "lines": read_tail()}
+
+    async def events():
+        position = path.stat().st_size if path.exists() else 0
+        for line in read_tail():
+            yield f"data: {json.dumps(line)}\n\n"
+        while True:
+            await asyncio.sleep(1)
+            if not path.exists():
+                continue
+            size = path.stat().st_size
+            if size < position:
+                position = 0
+            if size == position:
+                yield ": keepalive\n\n"
+                continue
+            with path.open("r", errors="replace") as handle:
+                handle.seek(position)
+                chunk = handle.read()
+                position = handle.tell()
+            for line in chunk.splitlines():
+                yield f"data: {json.dumps(line)}\n\n"
+
+    return StreamingResponse(events(), media_type="text/event-stream")
+
+
+@app.put("/apps/{name}")
+async def app_update(name: str, request: Request):
+    if invalid := _invalid_app_name(name):
+        return invalid
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if set(body) != {"keeper"}:
+        return JSONResponse({"error": "keeper is the only editable field"}, status_code=400)
+    keeper = body.get("keeper")
+    known = {w["dir"] for w in _configured_wolts()}
+    if not isinstance(keeper, str) or keeper not in known:
+        return JSONResponse({"error": "keeper must name an existing wolt"}, status_code=400)
+    try:
+        return set_app_keeper(name, keeper).model_dump()
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=404)
+
+
 @app.post("/apps/{name}/share")
 async def app_share(name: str):
     """Start a cloudflared tunnel to the app port and return the public URL."""
+    if invalid := _invalid_app_name(name):
+        return invalid
     import asyncio
     try:
         # share_app blocks (polls cloudflared log up to 30s) — run in thread
@@ -1678,6 +2052,8 @@ async def app_share(name: str):
 @app.post("/apps/{name}/unshare")
 async def app_unshare(name: str):
     """Stop the cloudflared tunnel for an app."""
+    if invalid := _invalid_app_name(name):
+        return invalid
     was_sharing = unshare_app(name)
     if was_sharing:
         print(f"[apps] unshared {name}")
@@ -2213,7 +2589,16 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
 
 @app.get("/tui")
 async def tui_page(request: Request):
+    # Rendering is read-only. The page wakes a resting session through the
+    # existing same-origin-guarded POST /sessions/{name}/resume route.
     return templates.TemplateResponse(request, "tui.html", context={
+        "cache_bust": int(time.time()),
+    })
+
+
+@app.get("/terminal")
+async def terminal_page(request: Request):
+    return templates.TemplateResponse(request, "terminal.html", context={
         "cache_bust": int(time.time()),
     })
 
@@ -2221,11 +2606,6 @@ async def tui_page(request: Request):
 @app.get("/settings")
 async def settings_page(request: Request):
     """Shared configuration surface for the lodge and desktop shell."""
-    configurable_types = {"raccoon", "rodent", "beaver", "otter"}
-    wolts = [
-        wolt for wolt in _configured_wolts()
-        if wolt.get("type", "rodent") in configurable_types
-    ]
     harnesses = harness_metadata()
     return templates.TemplateResponse(request, "settings.html", context={
         "active_nav": "settings",
@@ -2233,7 +2613,31 @@ async def settings_page(request: Request):
         "harness_default": get_default_harness(),
         "harnesses": harnesses,
         "harness_labels": {harness["id"]: harness["label"] for harness in harnesses},
-        "wolts": wolts,
+        "idle_timeout": get_idle_timeout(),
+    })
+
+
+@app.get("/w/{wolt_name}")
+async def lodge_wolt_page(request: Request, wolt_name: str):
+    """The lodge-native page for one persistent collaborator."""
+    wolt_dir = _builtin_wolt_dir(wolt_name)
+    if wolt_dir is None:
+        return PlainTextResponse("Not found", status_code=404)
+    config = next((w for w in _configured_wolts() if w.get("dir") == wolt_name), {})
+    return templates.TemplateResponse(request, "wolt.html", context={
+        "active_nav": "",
+        "cache_bust": int(time.time()),
+        "wolt_name": wolt_name,
+        "wolt": config,
+    })
+
+
+@app.get("/connectors")
+async def connectors_page(request: Request):
+    """Show lodge address and messaging connector health."""
+    return templates.TemplateResponse(request, "connectors.html", context={
+        "active_nav": "connectors",
+        "cache_bust": int(time.time()),
     })
 
 
@@ -2252,6 +2656,17 @@ async def wolves_page(request: Request):
         "active_nav": "wolves",
         "cache_bust": int(time.time()),
         "wolts": wolts,
+    })
+
+
+@app.get("/a/{app_name}")
+async def app_page(app_name: str, request: Request):
+    if not get_app(app_name):
+        return PlainTextResponse("App not found", status_code=404)
+    return templates.TemplateResponse(request, "app.html", context={
+        "active_nav": "apps",
+        "app_name": app_name,
+        "cache_bust": int(time.time()),
     })
 
 

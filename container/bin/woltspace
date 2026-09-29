@@ -25,6 +25,7 @@ import shutil
 import sys
 import urllib.request
 import urllib.error
+from urllib.parse import quote
 from pathlib import Path
 
 # The env namespace helper, resolved beside this script so the dev clone drives
@@ -97,6 +98,61 @@ def cmd_status(args):
     if isinstance(sessions, dict):
         sessions = sessions.get("sessions", [])
     _print_sessions(sessions, as_json=args.json)
+
+
+def cmd_app_action(args):
+    status, result = _req("POST", f"/apps/{args.name}/{args.verb}")
+    if args.json:
+        print(json.dumps(result, indent=2))
+    elif status < 300:
+        print(f"{args.name}: {args.verb} ok")
+    else:
+        print(result.get("error", f"HTTP {status}"), file=sys.stderr)
+        raise SystemExit(1)
+
+
+def cmd_app_logs(args):
+    status, result = _req("GET", f"/apps/{args.name}/logs?tail={args.tail}")
+    if status >= 300:
+        print(result.get("error", f"HTTP {status}"), file=sys.stderr)
+        raise SystemExit(1)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print("\n".join(result.get("lines", [])))
+
+
+def cmd_app_keeper(args):
+    status, result = _req("PUT", f"/apps/{args.name}", {"keeper": args.keeper})
+    if args.json:
+        print(json.dumps(result, indent=2))
+    elif status < 300:
+        print(f"{args.name}: kept by {args.keeper}")
+    else:
+        print(result.get("error", f"HTTP {status}"), file=sys.stderr)
+        raise SystemExit(1)
+
+
+def cmd_wolt_set(args):
+    if args.harness is None and args.model is None:
+        print("woltspace: wolt set requires --harness and/or --model", file=sys.stderr)
+        raise SystemExit(2)
+    body = {}
+    if args.harness is not None:
+        body["harness"] = args.harness
+    if args.model is not None:
+        body["model"] = args.model
+    status, result = _req("PATCH", f"/wolts/{quote(args.name, safe='')}/settings", body)
+    if status >= 300:
+        print(result.get("error", f"HTTP {status}"), file=sys.stderr)
+        raise SystemExit(1)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(
+            f"{result['wolt']}: {result['harness']} / {result.get('model') or 'default'} "
+            f"(applies from the next session)"
+        )
 
 
 def cmd_session_send(args):
@@ -198,6 +254,24 @@ def cmd_session_spawn(args):
     sys.exit(1)
 
 
+def cmd_session_describe(args):
+    session = args.session or get_env("WOLTSPACE_WOLT_SESSION", "")
+    if not session:
+        print("session id required: run inside a session or pass --session", file=sys.stderr)
+        sys.exit(2)
+    status, result = _req("POST", f"/sessions/{session}/describe", {
+        "title": args.title,
+        "summary": args.summary,
+    })
+    if status != 200:
+        print(result.get("error", f"HTTP {status}"), file=sys.stderr)
+        sys.exit(1)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"described → {session}")
+
+
 def cmd_auto_check(args):
     _, result = _req("POST", "/auto-grants/check", {
         "wolt_id": args.wolt, "workdir": args.workdir,
@@ -244,7 +318,7 @@ LIFECYCLE = {"start", "stop", "rebuild", "backup", "shell", "chat", "logs", "ini
 # the real CLI — `doctor`, `paths`, `serve`, `restore`, and the whole lifecycle
 # set. In the container "elsewhere" means the host; natively it means the python
 # CLI sitting a few directories up from this script.
-LOCAL_NOUNS = {"session", "status", "auto", "tui"}
+LOCAL_NOUNS = {"session", "status", "auto", "app", "wolt", "tui"}
 
 # Nouns the python CLI serves that only talk to this lodge's API, so they
 # belong to it in the container too — there is no host to send them to.
@@ -402,9 +476,43 @@ def main():
                     help="request Auto policy (host requires an exact-path grant)")
     sp.set_defaults(func=cmd_session_spawn)
 
+    sd = ssub.add_parser("describe", help="set this session's title and one-line summary")
+    sd.add_argument("title")
+    sd.add_argument("summary")
+    sd.add_argument("--session", default="", help="session id (default: current session)")
+    sd.add_argument("--json", action="store_true", help="raw JSON output")
+    sd.set_defaults(func=cmd_session_describe)
+
     status = sub.add_parser("status", help="show sessions with workdir and policy")
     status.add_argument("--json", action="store_true", help="raw JSON output")
     status.set_defaults(func=cmd_status)
+
+    apps = sub.add_parser("app", help="manage lodge apps")
+    app_sub = apps.add_subparsers(dest="verb")
+    for verb in ("start", "stop", "restart"):
+        action = app_sub.add_parser(verb)
+        action.add_argument("name")
+        action.add_argument("--json", action="store_true")
+        action.set_defaults(func=cmd_app_action)
+    logs = app_sub.add_parser("logs")
+    logs.add_argument("name")
+    logs.add_argument("--tail", type=int, default=200)
+    logs.add_argument("--json", action="store_true")
+    logs.set_defaults(func=cmd_app_logs)
+    keeper = app_sub.add_parser("keeper")
+    keeper.add_argument("name")
+    keeper.add_argument("keeper")
+    keeper.add_argument("--json", action="store_true")
+    keeper.set_defaults(func=cmd_app_keeper)
+
+    wolt = sub.add_parser("wolt", help="configure a wolt")
+    wsub = wolt.add_subparsers(dest="verb")
+    wset = wsub.add_parser("set", help="set a validated harness/model pair")
+    wset.add_argument("name")
+    wset.add_argument("--harness")
+    wset.add_argument("--model")
+    wset.add_argument("--json", action="store_true")
+    wset.set_defaults(func=cmd_wolt_set)
 
     auto = sub.add_parser("auto", help="manage repository-scoped Auto consent")
     asub = auto.add_subparsers(dest="verb")

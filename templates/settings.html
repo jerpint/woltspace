@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% from 'components/ui.html' import page_header, panel, choice_card, select_field, empty_state, tab_link %}
+{% from 'components/ui.html' import page_header, panel, choice_card, select_field, tab_link %}
 
 {% block title %}Settings · Woltspace{% endblock %}
 
@@ -14,7 +14,8 @@
   <div class="settings-layout">
     <nav class="settings-index" aria-label="Settings sections">
       <p class="settings-index-label">Configuration</p>
-      {{ tab_link('#harnesses', 'Harnesses', 'lodge + wolts', active=true) }}
+      {{ tab_link('#harnesses', 'Harnesses', 'lodge default', active=true) }}
+      {{ tab_link('#sessions', 'Sessions', 'idle policy') }}
       {{ tab_link('', 'Notifications', 'coming down the trail', disabled=true) }}
       {{ tab_link('', 'Desktop', 'after the Mac build', disabled=true) }}
     </nav>
@@ -42,30 +43,20 @@
         <div><strong>New sessions only</strong><p>Sessions already running keep the harness they started with.</p></div>
       </div>
 
-      {% call panel('Wolt harnesses', 'Each wolt can follow the lodge or use another harness.', (wolts|length ~ ' wolts')) %}
-        {% if wolts %}
-          <div class="ds-field-list">
-            {% for wolt in wolts %}
-              {% set wolt_name = wolt.name or wolt.dir %}
-              {% set wolt_type = wolt.type or 'rodent' %}
-              {% set selected = wolt.harness or '' %}
-              {% set field_id = 'wolt-harness-' ~ loop.index %}
-              {% call select_field(field_id, wolt_name, wolt_type) %}
-                <div class="ds-select-stack" data-wolt-row data-wolt="{{ wolt.dir or wolt_name }}" data-saved-value="{{ selected }}">
-                  <select class="ds-select" id="{{ field_id }}" aria-describedby="{{ field_id }}-help" data-wolt-select>
-                    <option value=""{% if not selected %} selected{% endif %}>Use lodge default ({{ harness_labels[harness_default] }})</option>
-                    {% for harness in harnesses %}
-                      <option value="{{ harness.id }}"{% if selected == harness.id %} selected{% endif %}>{{ harness.label }}</option>
-                    {% endfor %}
-                  </select>
-                </div>
-              {% endcall %}
-            {% endfor %}
+      <div id="sessions">
+      {% call panel('Idle sessions', 'Close sessions nobody has been in touch with, to free resources. Their conversation stays resumable.', 'lodge-wide') %}
+        {% call select_field('idle-session-timeout', 'Close idle sessions after', 'No contact means no message, notify or page update from the session for this long.') %}
+          <div class="ds-select-stack" data-expiry-row data-saved-value="{{ idle_timeout if idle_timeout is not none else '' }}">
+            <select class="ds-select" id="idle-session-timeout" data-expiry-select>
+              <option value=""{% if idle_timeout is none %} selected{% endif %}>Never</option>
+              <option value="3600"{% if idle_timeout == 3600 %} selected{% endif %}>1 hour</option>
+              <option value="14400"{% if idle_timeout == 14400 %} selected{% endif %}>4 hours</option>
+              <option value="86400"{% if idle_timeout == 86400 %} selected{% endif %}>1 day</option>
+            </select>
           </div>
-        {% else %}
-          {{ empty_state('🪵', 'No wolts to configure yet', 'Create a wolt and it will settle in here.') }}
-        {% endif %}
+        {% endcall %}
       {% endcall %}
+      </div>
     </div>
   </div>
 </div>

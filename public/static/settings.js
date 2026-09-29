@@ -63,25 +63,24 @@ if (root) {
     }
   });
 
-  document.querySelectorAll('[data-wolt-select]').forEach(select => {
-    select.addEventListener('change', async () => {
-      const row = select.closest('[data-wolt-row]');
-      const previous = row.dataset.savedValue;
-      const requested = select.value || null;
-      select.disabled = true;
-      setGlobalState('saving', `Saving ${row.dataset.wolt}…`);
-      try {
-        const data = await save(`/wolts/${encodeURIComponent(row.dataset.wolt)}/harness`, { harness: requested });
-        row.dataset.savedValue = requested || '';
-        setGlobalState('saved', `${row.dataset.wolt} saved`);
-        showToast(`${row.dataset.wolt} will use ${harnessLabels.get(data.harness) || data.harness}.`);
-      } catch (error) {
-        select.value = previous;
-        setGlobalState('error', 'Could not save');
-        showToast(error.message, 'error');
-      } finally {
-        select.disabled = false;
-      }
-    });
+  document.querySelector('[data-expiry-select]')?.addEventListener('change', async event => {
+    const select = event.currentTarget;
+    const row = select.closest('[data-expiry-row]');
+    const previous = row.dataset.savedValue;
+    const value = select.value ? Number(select.value) : null;
+    select.disabled = true;
+    setGlobalState('saving', 'Saving session policy…');
+    try {
+      const data = await save('/settings/session-expiry', { idle_timeout_seconds: value });
+      row.dataset.savedValue = data.idle_timeout_seconds ?? '';
+      setGlobalState('saved', 'Session policy saved');
+      showToast(value ? `Idle sessions will rest after ${select.options[select.selectedIndex].text}.` : 'Idle sessions will stay open.');
+    } catch (error) {
+      select.value = previous;
+      setGlobalState('error', 'Could not save');
+      showToast(error.message, 'error');
+    } finally {
+      select.disabled = false;
+    }
   });
 }

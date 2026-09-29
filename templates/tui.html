@@ -14,6 +14,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Preahvihear&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<style>@font-face{font-family:'Symbols Nerd Font Mono';font-display:block;src:url('/static/SymbolsNerdFontMono-Regular.woff2') format('woff2')}</style>
 <style>
   :root {
     --bg:         #EDE8DE;
@@ -348,7 +349,7 @@
   const statusText = document.getElementById('tui-status-text');
   const term = new Terminal({
     cursorBlink: true, fontSize: 13, unicodeVersion: '11',
-    fontFamily: "'JetBrains Mono','SF Mono','Fira Code','Consolas',monospace",
+    fontFamily: "'JetBrains Mono','Symbols Nerd Font Mono','SF Mono','Fira Code','Consolas',monospace",
     theme: {
       background: '#1a1612',
       foreground: '#E8E0D4',
@@ -443,10 +444,9 @@
   async function ensureSessionAlive() {
     if (session === 'main') { connectTUI(); return; }
     try {
-      const res = await fetch('/sessions');
-      const sessions = await res.json();
-      const s = sessions.find(x => x.name === session);
-      if (s && s.status === 'running' && s.alive) {
+      const res = await fetch('/sessions/' + encodeURIComponent(session));
+      const s = res.ok ? await res.json() : null;
+      if (s && s.status === 'running' && s.agent_alive === true) {
         connectTUI();
       } else if (s) {
         setStatus('connecting', 'resuming');
@@ -490,13 +490,20 @@
   let allSparks = [];
 
   function renderHist() {
-    histList.innerHTML = allSparks.map(s => {
+    histList.replaceChildren(...allSparks.map(s => {
       const isCurrent = lastUrl === '/history/' + s.id;
-      return `<div class="hist-item${isCurrent ? ' current' : ''}" onclick="loadSpark('${s.id}', '${(s.title||'').replace(/'/g,"\\'")}')">
-        <span class="hist-title">${s.title}</span>
-        <span class="hist-time">${timeAgo(new Date(s.timestamp).getTime())}</span>
-      </div>`;
-    }).join('');
+      const item = document.createElement('div');
+      item.className = `hist-item${isCurrent ? ' current' : ''}`;
+      const title = document.createElement('span');
+      title.className = 'hist-title';
+      title.textContent = s.title || '';
+      const timestamp = document.createElement('span');
+      timestamp.className = 'hist-time';
+      timestamp.textContent = timeAgo(new Date(s.timestamp).getTime());
+      item.append(title, timestamp);
+      item.addEventListener('click', () => loadSpark(s.id, s.title || ''));
+      return item;
+    }));
   }
 
   window.loadSpark = (id, title) => {

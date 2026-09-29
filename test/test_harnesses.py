@@ -218,7 +218,10 @@ class TestCodexDiscovery:
         d = wolts_dir / wolt / ".codex" / "sessions" / day
         d.mkdir(parents=True, exist_ok=True)
         f = d / f"rollout-2026-07-14T12-00-00-{uuid_}.jsonl"
-        f.write_text(json.dumps({"cwd": cwd}) + "\n")
+        f.write_text(json.dumps({
+            "type": "session_meta",
+            "payload": {"cwd": cwd},
+        }) + "\n")
         return f
 
     def test_finds_new_rollout(self, tmp_path, monkeypatch):
@@ -294,6 +297,18 @@ class TestDeliveryAwareInvocation:
         """Pre-change codex emitted `@woltspace-start-chat`. Nothing about the
         rename changed what a copy-path wolt has on disk."""
         assert "@woltspace-start-chat" in self._boot_prompt("codex")
+
+    def test_spawn_keeps_session_untitled_until_it_describes_itself(self):
+        from sessions import start_session, prepare_session_command, SessionRegistry
+
+        self._wolt_json("codex")
+        prompt = "Fix the thing on the lodge page!"
+        result = start_session(wolt="testwolt", prompt=prompt, routing={"adapter": "lodge"})
+        prepare_session_command(result["name"], "spawn", prompt)
+
+        stored = SessionRegistry(self.wolts_dir).get(result["name"], check_alive=False)
+        assert stored["title"] == ""
+        assert stored["prompt_preview"] == prompt
 
     def test_a_plugin_claude_wolt_gets_the_namespaced_name(self):
         out = self._boot_prompt("claude", skills_delivery="plugin")

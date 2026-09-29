@@ -123,14 +123,14 @@ if (root) {
   const TRASH = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>';
   function cardHtml(e) {
     if (e.removed) return `<div class="wolves-card gone" data-id="${e.id}">Removed ${esc(e.wolt)}'s wolf. <button class="link" type="button" data-undo>Undo</button>
-      <div class="wolves-status${e.err ? ' err' : ''}">${e.status || ''}</div></div>`;
+      <div class="wolves-status${e.err ? ' err' : ''}">${esc(e.status)}</div></div>`;
     return `<div class="wolves-card${e.isNew ? ' new' : ''}${e.c.error ? ' error' : ''}" data-id="${e.id}">
       <div class="wolves-sentence">${sentence(e)}</div>
       <textarea class="wolves-msg" data-f="msg" rows="1" aria-label="what to tell it" placeholder="and tell it... (e.g. write my morning digest)">${esc(e.msg)}</textarea>
       ${e.isNew
         ? `${pingLine(e)}<div class="wolves-newfoot"><button class="primary" type="button" data-add>Add</button><button type="button" data-cancel>Cancel</button></div>`
         : `<div class="wolves-foot"><span class="meta">${esc(nextLine(e))}</span><span class="wolves-acts"><button class="run" type="button" data-run>▶ Run now</button><button class="icon" type="button" data-remove aria-label="Remove this wolf" title="Remove">${TRASH}</button></span></div>`}
-      <div class="wolves-status${e.err ? ' err' : ''}">${e.status || ''}</div>
+      <div class="wolves-status${e.err ? ' err' : ''}">${esc(e.status)}</div>
       ${e.isNew ? '' : pingLine(e) + runsHtml(e)}
     </div>`;
   }
@@ -148,7 +148,7 @@ if (root) {
     const card = L.querySelector(`[data-id="${e.id}"]`);
     if (!card) return;
     const st = $('.wolves-status', card), mt = $('.meta', card);
-    st.innerHTML = e.status || ''; st.classList.toggle('err', !!e.err);
+    st.textContent = e.status || ''; st.classList.toggle('err', !!e.err);
     if (mt) mt.textContent = nextLine(e);
   }
   function render() {

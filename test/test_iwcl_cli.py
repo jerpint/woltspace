@@ -235,6 +235,48 @@ def test_session_spawn_rejects_legacy_prompt_with_recovery():
     assert prompt in error
 
 
+def test_session_describe_defaults_to_current_session(monkeypatch, capsys):
+    client = _load_client()
+    sent = {}
+    monkeypatch.setenv("WOLTSPACE_WOLT_SESSION", "n00b-maple-a1b2c3")
+
+    def fake_req(method, path, body=None):
+        sent.update(method=method, path=path, body=body)
+        return 200, {"name": "n00b-maple-a1b2c3", **body}
+
+    client["cmd_session_describe"].__globals__["_req"] = fake_req
+    client["cmd_session_describe"](argparse.Namespace(
+        title="Lodge redesign",
+        summary="Wiring session titles",
+        session="",
+        json=False,
+    ))
+
+    assert sent == {
+        "method": "POST",
+        "path": "/sessions/n00b-maple-a1b2c3/describe",
+        "body": {
+            "title": "Lodge redesign",
+            "summary": "Wiring session titles",
+        },
+    }
+    assert capsys.readouterr().out == "described → n00b-maple-a1b2c3\n"
+
+
+def test_session_describe_requires_session_context(monkeypatch, capsys):
+    client = _load_client()
+    monkeypatch.delenv("WOLTSPACE_WOLT_SESSION", raising=False)
+    monkeypatch.delenv("WOLT_SESSION", raising=False)
+
+    with pytest.raises(SystemExit) as stopped:
+        client["cmd_session_describe"](argparse.Namespace(
+            title="Title", summary="Summary", session="", json=False,
+        ))
+
+    assert stopped.value.code == 2
+    assert "session id required" in capsys.readouterr().err
+
+
 def test_native_cli_delegates_whole_session_noun(tmp_path, monkeypatch):
     from woltspace import cli
 

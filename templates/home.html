@@ -4,46 +4,11 @@
 
 {% block head %}
 <link rel="stylesheet" href="/static/home.css?v={{ cache_bust }}">
+<link rel="stylesheet" href="/static/wolts-page.css?v={{ cache_bust }}">
 {% endblock %}
 
 {% block before_sidebar %}
-<!-- ── BACKGROUND SCENE ── -->
-<div class="bg-scene" id="bg-scene">
-  <div id="bg-nature"></div>
-  <div class="bg-river-shimmer"></div>
-  <div id="cl-1" class="bg-cloud" style="top:38%; animation-duration:150s; animation-delay:0s"></div>
-  <div id="cl-2" class="bg-cloud" style="top:52%; animation-duration:115s; animation-delay:-42s"></div>
-  <div id="cl-3" class="bg-cloud" style="top:42%; animation-duration:185s; animation-delay:-92s"></div>
-  <div id="cl-4" class="bg-cloud" style="top:56%; animation-duration:135s; animation-delay:-68s"></div>
-  <div id="cl-5" class="bg-cloud" style="top:46%; animation-duration:165s; animation-delay:-125s"></div>
-  <div id="cl-6" class="bg-cloud" style="top:49%; animation-duration:200s; animation-delay:-28s"></div>
-  <div class="bg-beaver-main" id="bg-beaver-main">
-    <div class="sprite-2frame">
-      <div class="frm-a" id="sp-bv-main-a"></div>
-      <div class="frm-b" id="sp-bv-main-b"></div>
-    </div>
-  </div>
-  <div class="bg-beaver-2" id="bg-beaver-2" style="display:none">
-    <div id="sp-bv-side"></div>
-  </div>
-  <div class="bg-raccoon" id="bg-raccoon">
-    <div class="sprite-2frame">
-      <div class="frm-a" id="sp-rc-a"></div>
-      <div class="frm-b" id="sp-rc-b"></div>
-    </div>
-  </div>
-  <div class="bg-log" id="bg-log">
-    <div id="sp-log"></div>
-  </div>
-  <div class="bg-ripple-container">
-    <div class="bg-ripple"></div>
-    <div class="bg-ripple"></div>
-    <div class="bg-ripple"></div>
-  </div>
-  <div class="bg-leaf"><div id="sp-leaf-g"></div></div>
-  <div class="bg-peek" id="bg-peek"><div id="sp-peek"></div></div>
-  <div class="bg-fish" id="bg-fish"><div id="sp-fish"></div></div>
-</div>
+{% include 'partials/forest-scene.html' %}
 {% endblock %}
 
 {% block content %}
@@ -64,6 +29,9 @@
       </div>
     </div>
   </div>
+
+  <!-- ── WOLTS VIEW ── (filled by wolts-page.js) -->
+  <div id="wolts-view" class="view"></div>
 
   <!-- ── APPS VIEW ── -->
   <div id="apps-view" class="view">
@@ -114,7 +82,7 @@
         <option value="recent">Most recent</option>
         <option value="name">Name</option>
       </select>
-      <button id="sessions-toggle-running" class="sessions-toggle-running active" onclick="toggleRunningOnly()">Active</button>
+      <button id="sessions-toggle-running" class="sessions-toggle-running active" onclick="toggleRunningOnly()">Online</button>
     </div>
 
     <div id="sessions-list" class="sessions-list">
@@ -128,4 +96,5 @@
 
 {% block scripts %}
 <script src="/static/home-scene.js"></script>
+<script src="/static/wolts-page.js?v={{ cache_bust }}"></script>
 {% endblock %}

@@ -1,0 +1,48 @@
+/* Wolts page (/?view=wolts) */
+#wolts-view { padding-bottom: 60px; }
+.wolts-content { padding: 0 32px; }
+@media (max-width: 620px) { .wolts-content { padding: 0 16px; } }
+.wolts-search { width: 100%; box-sizing: border-box; height: 44px; padding: 0 14px; margin: 4px 0 16px; font: 16px var(--font-body, "DM Sans", sans-serif);
+  border: 1px solid rgba(24,16,10,.15); border-radius: 10px; background: rgba(255,255,255,.85); color: inherit; }
+.wolts-group { margin: 14px 0 8px; font: 600 11px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; opacity: .6; }
+.wolts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.wolts-card { border-radius: 12px; background: rgba(255,255,255,.85); border: 1px solid rgba(24,16,10,.08); transition: border-color .15s; min-width: 0; }
+.wolts-card:hover { border-color: var(--terra); }
+.wolts-card.online, .wolts-card.online:hover { border: 2px solid var(--green); }
+.wolts-card.expanded { grid-column: 1 / -1; }
+.wolts-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; cursor: pointer; border-radius: 12px; }
+.wolts-row:focus-visible { outline: 2px solid var(--terra); outline-offset: -2px; }
+.wolts-avatar { flex: none; width: 40px; height: 40px; display: grid; place-items: center; font-size: 22px; }
+.wolts-body { flex: 1; min-width: 0; overflow: hidden; }
+.wolts-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wolts-sub { font-size: 13px; opacity: .7; }
+.wolts-on { color: var(--green); }
+.wolts-count { border: 0; background: none; padding: 2px 0; font: inherit; color: inherit; cursor: pointer; white-space: nowrap; text-align: left;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; text-decoration: underline dotted rgba(24,16,10,.3); text-underline-offset: 3px; }
+.wolts-count:hover { color: var(--terra); }
+.wolts-chev { display: inline-block; font-size: 10px; transition: transform .15s; }
+.wolts-count.open .wolts-chev { transform: rotate(180deg); }
+.wolts-add, .wolts-more { flex: none; width: 32px; height: 32px; padding: 0; border-radius: 8px; font-size: 18px; line-height: 1; cursor: pointer; color: inherit; background: transparent; }
+.wolts-add { border: 1px solid rgba(24,16,10,.15); }
+.wolts-add:hover { background: var(--green); border-color: var(--green); color: #fff; }
+.wolts-more { border: 0; opacity: .6; }
+.wolts-more:hover { background: rgba(24,16,10,.07); opacity: 1; }
+.wolts-sessions { border-top: 1px solid rgba(24,16,10,.08); padding: 6px 8px 8px; }
+.wolts-session { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 8px; color: inherit; text-decoration: none; font-size: 14px; }
+.wolts-session:hover { background: rgba(24,16,10,.05); }
+.wolts-session .session-dot { flex: none; }
+.wolts-session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wolts-session-meta { flex: none; font-size: 12.5px; opacity: .6; }
+.wolts-session-all { display: inline-block; margin: 4px 8px 2px; font-size: 13px; color: var(--green); text-decoration: none; }
+@media (max-width: 620px) { .wolts-session { flex-wrap: wrap; } .wolts-session-meta { flex-basis: 100%; padding-left: 18px; } }
+.wolts-quiet { padding: 12px 0; opacity: .6; }
+.wolts-menu { position: fixed; z-index: 9000; min-width: 190px; padding: 6px; border-radius: 10px; background: #fff; color: var(--ink, #18100A);
+  box-shadow: 0 8px 28px rgba(24,16,10,.18); border: 1px solid rgba(24,16,10,.08); }
+.wolts-menu a, .wolts-menu button { display: flex; justify-content: space-between; width: 100%; box-sizing: border-box; padding: 9px 10px; border: 0; background: none;
+  border-radius: 7px; font: 14px var(--font-body, "DM Sans", sans-serif); text-align: left; color: inherit; text-decoration: none; cursor: pointer; }
+.wolts-menu a:hover { background: rgba(24,16,10,.06); }
+.wolts-menu button[disabled] { opacity: .4; cursor: default; }
+.wolts-menu small { font-size: 11px; }
+.wolts-menu hr { border: 0; border-top: 1px solid rgba(24,16,10,.08); margin: 4px 0; }
+.wolts-session.ended { opacity: .55; cursor: default; }
+.wolts-session.ended:hover { background: none; }

@@ -104,48 +104,91 @@ def _codex_command(entry: dict, mode: str, *, session_id: str = "",
     return " ".join(shlex.quote(p) for p in parts)
 
 
-def _codex_discover_session_id(data: dict, since: float) -> str | None:
+def _codex_session_dirs(wolt: str) -> list[tuple[Path, bool]]:
+    """Where codex may have written this wolt's rollouts, as (dir, shared).
+
+    With per-wolt isolation wcodex points CODEX_HOME at <wolt>/.codex. Natively
+    codex keeps the host's own CODEX_HOME (default ~/.codex), shared by every
+    wolt, so a rollout there only counts when its cwd is this session's dir.
+    """
+    wolts_dir = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
+    own = wolts_dir / wolt / ".codex" / "sessions"
+    host = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "sessions"
+    dirs = [(own, False)]
+    if host.resolve() != own.resolve():
+        dirs.append((host, True))
+    return [(d, shared) for d, shared in dirs if d.exists()]
+
+
+def _codex_rollouts(data: dict, since: float, until: float | None = None) -> list[tuple[float, str, bool]]:
+    """(start, id, cwd_matches) for rollouts of this wolt that started in [since, until]."""
+    wolt = data.get("wolt", "")
+    if not wolt:
+        return []
+    session_dir = data.get("dir", "")
+    found = []
+    for sessions_dir, shared in _codex_session_dirs(wolt):
+        for f in sessions_dir.glob("**/rollout-*.jsonl"):
+            m = _ROLLOUT_UUID_RE.search(f.name)
+            if not m:
+                continue
+            try:
+                if f.stat().st_mtime < since:
+                    continue  # last written before the window opened
+                with f.open() as fh:
+                    payload = json.loads(fh.readline()).get("payload", {})
+            except (OSError, json.JSONDecodeError, AttributeError):
+                continue
+            try:
+                from datetime import datetime
+                start = datetime.fromisoformat(payload.get("timestamp", "").replace("Z", "+00:00")).timestamp()
+            except (ValueError, AttributeError):
+                start = f.stat().st_mtime
+            if start < since or (until is not None and start > until):
+                continue
+            matches = bool(session_dir) and payload.get("cwd") == session_dir
+            if shared and not matches:
+                continue  # another wolt's (or another folder's) conversation
+            found.append((start, m.group(1), matches))
+    return sorted(found, reverse=True)
+
+
+def _codex_discover_session_id(
+    data: dict, since: float, taken: set[str] | None = None,
+) -> str | None:
     """Find the rollout id codex assigned to a just-spawned session.
 
     Codex writes $CODEX_HOME/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl at
-    session start. Returns the uuid of the newest rollout created after
-    `since`, preferring files whose recorded cwd matches the session dir
-    (disambiguates concurrent sessions of the same wolt in different dirs).
+    session start. Returns the newest rollout that started after `since`,
+    preferring one whose recorded cwd matches the session dir (disambiguates
+    concurrent sessions of the same wolt in different dirs).
     """
-    wolt = data.get("wolt", "")
-    if not wolt:
-        return None
-    wolts_dir = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
-    sessions_dir = wolts_dir / wolt / ".codex" / "sessions"
-    if not sessions_dir.exists():
-        return None
+    taken = taken or set()
+    found = _codex_rollouts(data, since)
+    for _, sid, matches in found:
+        if matches and sid not in taken:
+            return sid
+    # Old records without a workdir cannot prove a cwd match. Preserve their
+    # per-wolt-home discovery, but never use a cwd-mismatched fallback when the
+    # spawning session has an expected workdir.
+    if not data.get("dir"):
+        return next((sid for _, sid, _ in found if sid not in taken), None)
+    return None
 
-    candidates = []
-    for f in sessions_dir.glob("**/rollout-*.jsonl"):
-        try:
-            if f.stat().st_mtime < since:
-                continue
-        except OSError:
-            continue
-        m = _ROLLOUT_UUID_RE.search(f.name)
-        if m:
-            candidates.append((f.stat().st_mtime, f, m.group(1)))
-    if not candidates:
-        return None
-    candidates.sort(reverse=True)
 
-    # Prefer a rollout whose recorded cwd matches the session dir
-    session_dir = data.get("dir", "")
-    if session_dir:
-        for _, f, sid in candidates:
-            try:
-                meta = json.loads(f.read_text().split("\n", 1)[0])
-            except (json.JSONDecodeError, OSError, IndexError):
-                continue
-            cwd = meta.get("cwd") or meta.get("payload", {}).get("cwd", "")
-            if cwd == session_dir:
-                return sid
-    return candidates[0][2]
+def _codex_recover_session_id(data: dict, taken: set[str]) -> str | None:
+    """Recover the id of a session whose spawn-time discovery missed it.
+
+    Only a rollout in the session's own dir that started within a few minutes
+    of the session, and that no other session already owns. Two candidates is
+    ambiguous: better unresumable than resumed into someone else's conversation.
+    """
+    created = data.get("created_at") or 0
+    if not created:
+        return None
+    found = [sid for _, sid, matches in _codex_rollouts(data, created - 30, created + 180)
+             if matches and sid not in taken]
+    return found[0] if len(found) == 1 else None
 
 
 def _opencode_command(entry: dict, mode: str, *, session_id: str = "",
@@ -335,6 +378,7 @@ HARNESSES = {
         "auth_file": ".codex/auth.json",
         "preset_session_id": False,
         "discover_session_id": _codex_discover_session_id,
+        "recover_session_id": _codex_recover_session_id,
         # codex's TUI folds an Enter arriving right after a paste into the
         # paste (message stays in the composer). Verified live: 0.5s settle
         # before the Enter keystroke submits reliably.
@@ -586,6 +630,7 @@ def harness_metadata() -> list[dict]:
             "models": {tier: tier_default_model(hid, tier) for tier, _ in PICKER_TIERS},
             # full selectable list for the model picker (merged view)
             "catalog": model_catalog(hid),
+            "freeform_model": bool(entry.get("freeform_model")),
         })
     return out
 

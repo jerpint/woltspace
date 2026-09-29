@@ -22,8 +22,10 @@ import subprocess
 import sys
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
+from threading import Lock
 
 from env_compat import get_env
 from paths import (
@@ -84,6 +86,48 @@ ORPHAN_AGENT_GONE = "agent-process-missing"
 
 # The fields get(check_alive=True) and list() compute rather than read off disk.
 LIVENESS_FIELDS = frozenset({"alive", "tmux_alive", "agent_alive"})
+_LODGE_RECORD_CACHE: dict[Path, tuple[tuple[int, int], dict]] = {}
+_LODGE_RECORD_CACHE_LOCK = Lock()
+
+
+def _read_lodge_record(path: Path, wolt: str) -> dict | None:
+    """Read only the session fields the lodge UI consumes, with mtime caching."""
+    try:
+        stat = path.stat()
+        signature = (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return None
+    with _LODGE_RECORD_CACHE_LOCK:
+        cached = _LODGE_RECORD_CACHE.get(path)
+        if cached and cached[0] == signature:
+            return dict(cached[1])
+    try:
+        raw = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    record = {
+        "name": raw.get("name") or path.stem,
+        "wolt": raw.get("wolt") or wolt,
+        "status": raw.get("status") or "stopped",
+    }
+    if raw.get("last_activity") is not None:
+        record["last_activity"] = raw["last_activity"]
+    elif raw.get("created_at") is not None:
+        record["created_at"] = raw["created_at"]
+    for field in ("title", "summary"):
+        if raw.get(field):
+            record[field] = raw[field]
+    record["openable"] = bool(
+        raw.get("harness_session_id") or raw.get("claude_session_id")
+    )
+    record["_tmux_session_name"] = (
+        RuntimeHandle.from_record(raw).tmux_session_name or record["name"]
+    )
+    with _LODGE_RECORD_CACHE_LOCK:
+        _LODGE_RECORD_CACHE[path] = (signature, record)
+    return dict(record)
 
 
 class ResumeUnavailable(Exception):
@@ -131,11 +175,15 @@ class SessionRegistry:
         return self._sessions_dir(wolt) / f"{name}.json"
 
     def _read(self, wolt: str, name: str) -> dict | None:
-        path = self._path(wolt, name)
+        return self._read_path(wolt, self._path(wolt, name))
+
+    def _read_path(self, wolt: str, path: Path) -> dict | None:
+        """Read and normalize one registry record from an already-known path."""
         if not path.exists():
             return None
         try:
             data = json.loads(path.read_text())
+            self._normalize_description(data)
             return normalize_session_target(
                 data, wolts_dir=self.wolts_dir, fallback_wolt=wolt
             )
@@ -171,6 +219,24 @@ class SessionRegistry:
 
     # --- Core API ---
 
+    @staticmethod
+    def _normalize_description(data: dict) -> dict:
+        """Expose the original opening prompt separately from a description.
+
+        Existing records stored the opening prompt only as ``prompt``.  Keep
+        that field for compatibility, while giving the lodge a stable field it
+        can use as the italic fallback when a session has not described itself.
+        This is deliberately a read-compatible migration: records are updated
+        on their next ordinary write, with no eager colony-wide rewrite.
+        """
+        if "prompt_preview" not in data:
+            data["prompt_preview"] = str(data.get("prompt") or "")[:500]
+        data.setdefault("title", "")
+        data.setdefault("summary", "")
+        if not data["summary"] and data["title"] == _title_from_prompt(data.get("prompt") or ""):
+            data["title"] = ""
+        return data
+
     def create(
         self,
         name: str,
@@ -182,6 +248,7 @@ class SessionRegistry:
         dir: str = "",
         app: str = "",
         title: str = "",
+        summary: str = "",
         prompt: str = "",
         adapter: str = "",
         chat_id: str = "",
@@ -225,6 +292,8 @@ class SessionRegistry:
             ).to_record(),
             "auto_grant": auto_grant,
             "title": title,
+            "summary": summary,
+            "prompt_preview": prompt[:500],
             "prompt": prompt[:500],
             "last_activity": now,
             # routing — array for multi-adapter support
@@ -255,6 +324,15 @@ class SessionRegistry:
 
         self._write(wolt, name, data)
         return data
+
+    def describe(self, name: str, title: str, summary: str, *, wolt: str = None) -> dict | None:
+        """Set the short, human-facing description for a session."""
+        return self.update(
+            name,
+            wolt=wolt,
+            title=title,
+            summary=summary,
+        )
 
     @contextmanager
     def _lock(self, wolt: str, name: str):
@@ -455,13 +533,8 @@ class SessionRegistry:
             for path in sessions_dir.glob("*.json"):
                 if path.suffix == ".tmp":
                     continue
-                try:
-                    data = normalize_session_target(
-                        json.loads(path.read_text()),
-                        wolts_dir=self.wolts_dir,
-                        fallback_wolt=w,
-                    )
-                except (json.JSONDecodeError, OSError):
+                data = self._read_path(w, path)
+                if data is None:
                     continue
                 name = data.get("name", path.stem)
                 tmux_name = RuntimeHandle.from_record(data).tmux_session_name or name
@@ -483,6 +556,85 @@ class SessionRegistry:
                 results.append(data)
 
         return sorted(results, key=lambda s: s.get("created_at") or 0, reverse=True)
+
+    def list_lodge_view(
+        self, *, recent_seconds: int = 86400, per_wolt: int = 8,
+    ) -> dict:
+        """Return the small, liveness-aware session projection used by the lodge.
+
+        The full registry remains available through ``list()``. This view reads
+        only display/state fields, keeps the newest rows needed by each wolt
+        expander, and never performs liveness work for terminal records.
+        """
+        paths: list[tuple[Path, str]] = []
+        for wolt in self._all_wolts():
+            sessions_dir = self.wolts_dir / wolt / ".state" / "sessions"
+            if sessions_dir.exists():
+                paths.extend((path, wolt) for path in sessions_dir.glob("*.json"))
+
+        records: list[dict] = []
+        missing: list[tuple[Path, str]] = []
+        for path, wolt in paths:
+            try:
+                stat = path.stat()
+                signature = (stat.st_mtime_ns, stat.st_size)
+            except OSError:
+                continue
+            with _LODGE_RECORD_CACHE_LOCK:
+                cached = _LODGE_RECORD_CACHE.get(path)
+                record = dict(cached[1]) if cached and cached[0] == signature else None
+            if record is None:
+                missing.append((path, wolt))
+            else:
+                records.append(record)
+        if missing:
+            with ThreadPoolExecutor(max_workers=min(64, len(missing))) as pool:
+                loaded = pool.map(lambda item: _read_lodge_record(*item), missing)
+                records.extend(record for record in loaded if record is not None)
+
+        totals: dict[str, int] = {}
+        by_wolt: dict[str, list[dict]] = {}
+        for record in records:
+            wolt = record["wolt"]
+            totals[wolt] = totals.get(wolt, 0) + 1
+            by_wolt.setdefault(wolt, []).append(record)
+
+        now = int(time.time())
+        cutoff = now - recent_seconds
+        selected: list[dict] = []
+        for wolt_records in by_wolt.values():
+            ordered = sorted(
+                wolt_records,
+                key=lambda row: row.get("last_activity") or row.get("created_at") or 0,
+                reverse=True,
+            )
+            newest = {row["name"] for row in ordered[:per_wolt]}
+            selected.extend(
+                row for row in ordered
+                if row.get("status") == "running"
+                or (row.get("last_activity") or row.get("created_at") or 0) >= cutoff
+                or row["name"] in newest
+            )
+
+        # Lodge state has one deliberately lightweight meaning: an "open"
+        # session is a running record whose tmux window still exists. Whether
+        # its agent process survived is checked only when that session is
+        # opened, where a missing agent can be resumed before attachment.
+        live_sessions = _tmux_sessions()
+        for row in selected:
+            tmux_name = row.pop("_tmux_session_name", row["name"])
+            alive = row.get("status") == "running" and tmux_name in live_sessions
+            row["alive"] = alive
+            if row.get("status") == "running" and not alive:
+                row["status"] = "orphaned"
+
+        selected.sort(
+            key=lambda row: (
+                0 if row.get("status") == "running" else 1,
+                -(row.get("last_activity") or row.get("created_at") or 0),
+            )
+        )
+        return {"sessions": selected, "totals": totals}
 
     def reconcile(self) -> list[str]:
         """Check all 'running' sessions against tmux. Mark dead ones as orphaned."""
@@ -887,33 +1039,40 @@ def deliver_message(session_id: str, text: str, from_wolt: str = "",
     paste_settle (codex needs a settle before Enter; claude takes 0).
     """
     reg = registry or SessionRegistry()
-    data = reg.get(session_id)
-    if data is None:
+    existing = reg.get(session_id, check_alive=False)
+    if existing is None:
         return {"status": "no-session", "session": session_id}
-    if not data.get("tmux_alive", data.get("alive")):
-        return {"status": "session-dead", "session": session_id}
-    harness = resolve_harness(data.get("harness"))
-    if data.get("agent_alive") is not True:
-        return {
-            "status": "agent-gone",
-            "session": session_id,
-            "detail": (
-                "tmux session is up but could not be confirmed to hold a live "
-                f"{harness} agent — resume it and retry"
-            ),
-        }
-    target = resolve_agent_handle(data, harness, include_launching=False)
-    if target is None:
-        return {
-            "status": "agent-gone",
-            "session": session_id,
-            "detail": f"the {harness} agent is still booting — retry shortly",
-        }
-    settle = get_harness(harness).get("paste_settle", 0.0)
-    body = format_attributed_message(text, from_wolt, from_session)
-    _tmux_paste(target, _guard_paste_text(harness, body), settle=settle)
-    reg.touch(session_id)
-    return {"status": "delivered", "session": session_id, "harness": harness}
+    wolt = existing.get("wolt", "")
+    with reg._lock(wolt, session_id):
+        data = reg.get(session_id, wolt=wolt)
+        if data is None:
+            return {"status": "no-session", "session": session_id}
+        if not data.get("tmux_alive", data.get("alive")):
+            return {"status": "session-dead", "session": session_id}
+        harness = resolve_harness(data.get("harness"))
+        if data.get("agent_alive") is not True:
+            return {
+                "status": "agent-gone",
+                "session": session_id,
+                "detail": (
+                    "tmux session is up but could not be confirmed to hold a live "
+                    f"{harness} agent — resume it and retry"
+                ),
+            }
+        target = resolve_agent_handle(data, harness, include_launching=False)
+        if target is None:
+            return {
+                "status": "agent-gone",
+                "session": session_id,
+                "detail": f"the {harness} agent is still booting — retry shortly",
+            }
+        settle = get_harness(harness).get("paste_settle", 0.0)
+        body = format_attributed_message(text, from_wolt, from_session)
+        _tmux_paste(target, _guard_paste_text(harness, body), settle=settle)
+        current = reg._read(wolt, session_id) or existing
+        current["last_activity"] = int(time.time())
+        reg._write(wolt, session_id, current)
+        return {"status": "delivered", "session": session_id, "harness": harness}
 
 
 # ---------------------------------------------------------------------------
@@ -1103,11 +1262,64 @@ def stored_resume_id(data: dict) -> str:
     return legacy if _UUID_RE.match(legacy) else ""
 
 
+def taken_resume_ids(records: list[dict], exclude: str = "") -> set[str]:
+    """Conversation ids already owned by some session, so recovery never shares one."""
+    return {rid for d in records if d.get("name") != exclude for rid in [stored_resume_id(d)] if rid}
+
+
+@contextmanager
+def _resume_id_recovery_lock(wolts_dir: Path):
+    """One lodge-wide lock around recover-then-write, so two sessions can never
+    claim the same recovered conversation. Best-effort like the session locks."""
+    path = Path(wolts_dir) / ".state" / "resume-id-recovery.lock"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(path, "w")
+    except OSError:
+        yield
+        return
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        except OSError:
+            pass
+        yield
+    finally:
+        handle.close()
+
+
+def claim_resume_id(registry: "SessionRegistry", data: dict, write) -> str:
+    """The stored id, or recover one and persist it with `write(data)` while
+    holding the recovery lock (the taken-set is read inside the same lock)."""
+    existing = stored_resume_id(data)
+    if existing:
+        return existing
+    with _resume_id_recovery_lock(registry.wolts_dir):
+        recovered = recover_resume_id(data, taken_resume_ids(registry.list(), exclude=data.get("name", "")))
+        if recovered:
+            data["harness_session_id"] = recovered
+            write(data)
+    return recovered
+
+
+def recover_resume_id(data: dict, taken: set[str]) -> str:
+    """The stored id, or one recovered from the harness's own files, or "".
+
+    Read-only: callers that act on it stamp harness_session_id themselves.
+    """
+    existing = stored_resume_id(data)
+    if existing:
+        return existing
+    recover = get_harness(resolve_harness(data.get("harness"))).get("recover_session_id")
+    return (recover(data, taken) or "") if recover else ""
+
+
 def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
     """Build the full agent command for a session — the run-session.sh backend.
 
     Everything comes from the registry. Spawn also stamps harness_session_id
-    (used later for --resume) and a title derived from the prompt.
+    (used later for --resume). A session describes itself separately once its
+    focus is clear; the opening prompt remains the untitled preview.
 
     Raises ValueError if the session isn't in the registry.
     """
@@ -1142,7 +1354,7 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
         # one generated and stamped now. Others (codex) assign their own —
         # run-session.sh discovers it after launch via discover-id.
         session_id = ""
-        updates = {"title": _title_from_prompt(prompt)}
+        updates = {}
         if get_harness(harness).get("preset_session_id"):
             session_id = str(uuid.uuid4())
             updates["harness_session_id"] = session_id
@@ -1223,10 +1435,27 @@ def discover_session_id_for(name: str, timeout: int = 90) -> str:
     since = time.time() - 15
     deadline = time.time() + timeout
     while time.time() < deadline:
-        session_id = discover(data, since)
-        if session_id:
-            registry.update(name, wolt=data.get("wolt", ""), harness_session_id=session_id)
-            return session_id
+        # Discovery and persistence are one lodge-wide claim. Without this,
+        # concurrent Codex pollers can both observe the same newest rollout
+        # before either per-session update becomes visible to the other.
+        with _resume_id_recovery_lock(registry.wolts_dir):
+            current = registry.get(name, check_alive=False)
+            if current is None:
+                return ""
+            existing = stored_resume_id(current)
+            if existing:
+                return existing
+            taken = taken_resume_ids(registry.list(), exclude=name)
+            if resolve_harness(current.get("harness")) == "codex":
+                session_id = discover(current, since, taken)
+            else:
+                session_id = discover(current, since)
+            if session_id:
+                registry.update(
+                    name, wolt=current.get("wolt", ""),
+                    harness_session_id=session_id,
+                )
+                return session_id
         time.sleep(2)
     return ""
 
@@ -1566,6 +1795,8 @@ def resume_session(name: str, prompt: str = "") -> dict:
     # to spawn a fresh agent into the old session's slot and report success.
     # Refuse here, before any tmux is touched, so the caller gets the real
     # reason rather than a blank agent wearing the session's name.
+    claim_resume_id(registry, data, lambda d: registry.update(
+        name, wolt=wolt, harness_session_id=d["harness_session_id"]))
     if not stored_resume_id(data):
         raise ResumeUnavailable(
             f"session '{name}' has no {harness} conversation id on record "
