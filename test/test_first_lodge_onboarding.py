@@ -127,6 +127,12 @@ def test_an_existing_unmarked_wolt_migrates_as_user_owned(tmp_path, monkeypatch)
 
 
 def test_picker_selection_is_one_atomic_product_action(tmp_path, monkeypatch):
+    monkeypatch.delenv("WOLTSPACE_STARTER_SEED", raising=False)
+    calls = []
+    monkeypatch.setattr(
+        "woltspace.seed.install_seed",
+        lambda **kwargs: calls.append(kwargs) or {"ok": True},
+    )
     client = _client(tmp_path, monkeypatch)
 
     response = client.post("/onboarding/harness", json={"harness": "codex"})
@@ -136,6 +142,9 @@ def test_picker_selection_is_one_atomic_product_action(tmp_path, monkeypatch):
     config = json.loads((tmp_path / "woltspace.json").read_text())
     assert config["harness"]["default"] == "codex"
     assert config["onboarding"]["harness_selected"] is True
+    assert len(calls) == 1
+    assert calls[0]["source"] == state.DEFAULT_STARTER_SEED
+    assert config["starter_seed"]["source"] == state.DEFAULT_STARTER_SEED
 
 
 def test_starter_installs_once_after_harness_selection(tmp_path, monkeypatch):
@@ -155,6 +164,7 @@ def test_starter_installs_once_after_harness_selection(tmp_path, monkeypatch):
 
     assert first.status_code == second.status_code == 200
     assert len(calls) == 1
+    assert calls[0]["source"] == "/tmp/starter-seed"
     assert first.json()["starter"] == {"state": "installed"}
     record = json.loads((tmp_path / "woltspace.json").read_text())["starter_seed"]
     assert record["source"] == "/tmp/starter-seed"

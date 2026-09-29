@@ -26,6 +26,10 @@ from sessions import SessionRegistry  # noqa: E402
 from harnesses import HARNESSES  # noqa: E402
 
 
+DEFAULT_STARTER_SEED = (
+    "https://github.com/jerpint/woltspace-starter-lodge.git"
+    "@ba3b9d1c982e80978d961b315f17763e7b3e395f"
+)
 _starter_seed_lock = threading.Lock()
 
 
@@ -138,7 +142,10 @@ def install_starter_seed(installer=None) -> dict:
         if isinstance(existing, dict):
             return existing
 
-        source = (os.environ.get("WOLTSPACE_STARTER_SEED") or "").strip()
+        configured_source = os.environ.get("WOLTSPACE_STARTER_SEED")
+        source = (
+            DEFAULT_STARTER_SEED if configured_source is None else configured_source
+        ).strip()
         installed_at = datetime.now(timezone.utc).isoformat()
         if _has_any_wolt():
             record = {
