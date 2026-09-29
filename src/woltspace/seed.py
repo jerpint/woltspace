@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 FORMAT = "woltspace.colony-seed/v1"
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_PACKAGE_BYTES = 50 * 1024 * 1024
+ROOT_LICENSE_FILES = {"LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"}
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 MANAGED_START = "<!-- WOLTSPACE:BEGIN"
 MANAGED_END = "<!-- WOLTSPACE:END -->"
@@ -172,12 +173,22 @@ def inspect_seed(root: Path) -> SeedSummary:
     if not wolts:
         raise SeedError("colony seed has no wolts")
 
-    expected_roots = {"seed.json", "README.md", ".gitignore", "wolts", "apps"}
+    expected_roots = {
+        "seed.json", "README.md", ".gitignore", "wolts", "apps",
+        *ROOT_LICENSE_FILES,
+    }
     for child in root.iterdir():
         if child.name == ".git":
             continue
         if child.name not in expected_roots:
             raise SeedError(f"unexpected top-level path: {child.name}")
+        if child.name in ROOT_LICENSE_FILES:
+            if not child.is_file():
+                raise SeedError(f"seed license must be a regular text file: {child.name}")
+            try:
+                child.read_text(encoding="utf-8")
+            except UnicodeDecodeError as exc:
+                raise SeedError(f"seed license must be UTF-8 text: {child.name}") from exc
 
     for entry in manifest["wolts"]:
         name = entry["name"]

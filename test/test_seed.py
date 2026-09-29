@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from woltspace.seed import (
+    MAX_FILE_BYTES,
     SeedError,
     create_seed,
     inspect_seed,
@@ -134,6 +135,47 @@ def test_seed_is_small_allowlisted_and_deterministic(tmp_path):
     app = json.loads((first.root / "apps/tiny-app/woltspace.json").read_text())
     assert "port" not in app
     assert app["public"] is False and app["source"] is None
+    assert not any((first.root / name).exists() for name in (
+        "LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING",
+    ))
+
+
+@pytest.mark.parametrize("name", ["LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"])
+def test_seed_accepts_root_license_as_validated_package_metadata(tmp_path, name):
+    source_wolts = tmp_path / "source-wolts"
+    make_wolt(source_wolts)
+    package = tmp_path / "package"
+    create_seed(
+        wolts_dir=source_wolts, output=package, name="starter",
+        wolt_names=["raccoon"],
+    )
+    (package / name).write_text("MIT License\n", encoding="utf-8")
+
+    summary = inspect_seed(package)
+    install_root = make_template(tmp_path)
+    target = tmp_path / "new-lodge"
+    install_seed(source=package, wolts_dir=target, install_root=install_root)
+
+    assert summary.files > 0
+    assert not any(path.name in {"LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"}
+                   for path in (target / "raccoon").rglob("*"))
+
+
+def test_seed_rejects_non_text_or_oversized_root_license(tmp_path):
+    wolts = tmp_path / "wolts"
+    make_wolt(wolts)
+    package = tmp_path / "package"
+    create_seed(
+        wolts_dir=wolts, output=package, name="starter", wolt_names=["raccoon"],
+    )
+    license_path = package / "LICENSE"
+    license_path.write_bytes(b"\xff\xfe")
+    with pytest.raises(SeedError, match="UTF-8 text"):
+        inspect_seed(package)
+
+    license_path.write_bytes(b"x" * (MAX_FILE_BYTES + 1))
+    with pytest.raises(SeedError, match="exceeds 5 MiB"):
+        inspect_seed(package)
 
 
 def test_install_creates_fresh_independent_starters(tmp_path):
