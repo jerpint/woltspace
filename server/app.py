@@ -114,6 +114,7 @@ from .state import (
     sanitize_session,
     set_current_url,
     onboarding_status,
+    install_starter_seed,
     select_onboarding_harness,
 )
 
@@ -1644,6 +1645,7 @@ async def choose_onboarding_harness(request: Request):
     if name not in HARNESSES:
         return JSONResponse({"error": f"unknown harness: {name}"}, status_code=400)
     select_onboarding_harness(name)
+    await asyncio.to_thread(install_starter_seed)
     return {"ok": True, "default": name, **onboarding_status()}
 
 

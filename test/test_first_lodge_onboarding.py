@@ -40,6 +40,7 @@ def test_empty_lodge_requires_an_explicit_harness_choice(tmp_path, monkeypatch):
         "needs_harness_choice": True,
         "harness_selected": False,
         "has_user_wolt": False,
+        "starter": {"state": "pending"},
     }
 
 
@@ -71,6 +72,73 @@ def test_picker_selection_is_one_atomic_product_action(tmp_path, monkeypatch):
     config = json.loads((tmp_path / "woltspace.json").read_text())
     assert config["harness"]["default"] == "codex"
     assert config["onboarding"]["harness_selected"] is True
+
+
+def test_starter_installs_once_after_harness_selection(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    monkeypatch.setenv("WOLTSPACE_STARTER_SEED", "/tmp/starter-seed")
+    calls = []
+
+    def install(**kwargs):
+        calls.append(kwargs)
+        _wolt(tmp_path, "onboardie", origin="starter")
+        return {"ok": True, "wolts": ["onboardie"]}
+
+    monkeypatch.setattr("woltspace.seed.install_seed", install)
+
+    first = client.post("/onboarding/harness", json={"harness": "codex"})
+    second = client.post("/onboarding/harness", json={"harness": "codex"})
+
+    assert first.status_code == second.status_code == 200
+    assert len(calls) == 1
+    assert first.json()["starter"] == {"state": "installed"}
+    record = json.loads((tmp_path / "woltspace.json").read_text())["starter_seed"]
+    assert record["source"] == "/tmp/starter-seed"
+    assert record["result"]["state"] == "installed"
+
+
+def test_existing_wolt_skips_starter_once(tmp_path, monkeypatch):
+    _wolt(tmp_path, "existing")
+    client = _client(tmp_path, monkeypatch)
+    monkeypatch.setenv("WOLTSPACE_STARTER_SEED", "/tmp/starter-seed")
+    calls = []
+    monkeypatch.setattr("woltspace.seed.install_seed", lambda **kwargs: calls.append(kwargs))
+
+    response = client.post("/onboarding/harness", json={"harness": "codex"})
+
+    assert response.status_code == 200
+    assert calls == []
+    assert response.json()["starter"]["state"] == "skipped"
+
+
+def test_none_explicitly_skips_starter(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    monkeypatch.setenv("WOLTSPACE_STARTER_SEED", "none")
+
+    response = client.post("/onboarding/harness", json={"harness": "codex"})
+
+    assert response.status_code == 200
+    assert response.json()["starter"] == {
+        "state": "skipped", "reason": "starter seed disabled",
+    }
+
+
+def test_starter_failure_is_reported_without_blocking_onboarding(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    monkeypatch.setenv("WOLTSPACE_STARTER_SEED", "/tmp/broken-seed")
+
+    def fail(**kwargs):
+        raise ValueError("seed is broken")
+
+    monkeypatch.setattr("woltspace.seed.install_seed", fail)
+    response = client.post("/onboarding/harness", json={"harness": "codex"})
+
+    assert response.status_code == 200
+    assert response.json()["harness_selected"] is True
+    assert response.json()["starter"] == {
+        "state": "failed", "error": "seed is broken",
+    }
+    assert client.get("/onboarding/status").json()["starter"]["state"] == "failed"
 
 
 def test_unknown_harness_cannot_complete_first_run(tmp_path, monkeypatch):
