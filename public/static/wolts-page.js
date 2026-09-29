@@ -42,7 +42,7 @@
   function card(x) {
     const { w, name, sessions, online, last, total } = x;
     const isOpen = expanded.has(name);
-    const wrap = el('div', `wolts-card${isOpen ? ' expanded' : ''}`);
+    const wrap = el('div', `wolts-card${online.length ? ' online' : ''}${isOpen ? ' expanded' : ''}`);
     const row = el('div', 'wolts-row');
     row.tabIndex = 0;
     row.onclick = () => { window.location.href = woltUrl(name); };
