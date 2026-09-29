@@ -126,18 +126,20 @@ def _enabled_app_gateway_port() -> int | None:
         return None
     if not isinstance(root, dict):
         return None
-    apps_domain = root.get("apps_domain")
-    if not isinstance(apps_domain, str) or not apps_domain.strip():
-        return None
     try:
         lodge_port = int(os.environ.get("WOLTSPACE_PORT") or os.environ.get("PORT") or "7777")
     except ValueError:
         lodge_port = 7777
-    default_port = lodge_port - 1110
+    default_port = lodge_port - 660
     if not 1024 <= default_port <= 65535:
         raise RuntimeError("derived app gateway port must be from 1024 to 65535")
     gateway = root.get("app_gateway")
-    port = gateway.get("port", default_port) if isinstance(gateway, dict) else default_port
+    configured = gateway.get("port", default_port) if isinstance(gateway, dict) else default_port
+    raw_env_port = os.environ.get("WOLTSPACE_APP_GATEWAY_PORT", "").strip()
+    try:
+        port = int(raw_env_port) if raw_env_port else configured
+    except ValueError:
+        return default_port
     if not isinstance(port, int) or isinstance(port, bool) or not 1024 <= port <= 65535:
         return default_port
     return port

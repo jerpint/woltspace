@@ -103,7 +103,7 @@ Use the **subdomain pattern** `http://<app-name>.localhost:7777/` to push an app
 
 Each app declares its own port in `woltspace.json` (required). Use the **4000-5999** range for apps. The port is permanent — it never changes between restarts. Pick one that doesn't conflict with other apps. If two apps claim the same port, the second one to start gets an error — just pick a different port.
 
-The first lodge on a machine uses port `7777`; each additional lodge increments that port by one. Its app gateway follows in step from `6667`, so the last digit matches (`7778` lodge -> `6668` gateway). Apps must stay in the **4000-5999** range and must not use their lodge's gateway port. The platform sets `PORT` to the app manifest's value when it starts the app. Wolt sites do not allocate their own ports; the lodge serves them at `/wolt/<name>/site/`.
+The first lodge on a machine uses port `7777`; each additional lodge increments that port by one. Its app gateway follows in step from `7117`, so the last digit matches (`7778` lodge -> `7118` gateway). Apps must stay in the **4000-5999** range and must not use their lodge's gateway port. The platform sets `PORT` to the app manifest's value when it starts the app. Wolt sites do not allocate their own ports; the lodge serves them at `/wolt/<name>/site/`.
 
 ## Sharing (public access)
 

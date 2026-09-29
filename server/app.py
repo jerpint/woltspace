@@ -346,14 +346,19 @@ def set_apps_domain(value: object) -> str | None:
 
 
 def get_app_gateway_port() -> int:
-    default_port = PORT - 1110
+    default_port = PORT - 660
+    env_port = os.environ.get("WOLTSPACE_APP_GATEWAY_PORT", "").strip()
     if not 1024 <= default_port <= 65535:
         raise RuntimeError("derived app gateway port must be from 1024 to 65535")
     try:
         gateway = _load_lodge_config().get("app_gateway", {})
     except RuntimeError:
         return default_port
-    port = gateway.get("port", default_port) if isinstance(gateway, dict) else default_port
+    configured = gateway.get("port", default_port) if isinstance(gateway, dict) else default_port
+    try:
+        port = int(env_port) if env_port else configured
+    except ValueError:
+        return default_port
     return port if isinstance(port, int) and not isinstance(port, bool) and 1024 <= port <= 65535 else default_port
 
 
@@ -362,6 +367,9 @@ def set_app_gateway_port(value: object) -> int:
         raise ValueError("port must be an integer from 1024 to 65535")
     if value == PORT:
         raise ValueError("app gateway port must differ from the lodge port")
+    from .gateway_settings import _BLOCKED_PORTS
+    if value in _BLOCKED_PORTS:
+        raise ValueError(f"port {value} is blocked by web browsers; choose a safe port")
     cfg = _load_lodge_config()
     cfg["app_gateway"] = {"port": value}
     path = _lodge_config_path()

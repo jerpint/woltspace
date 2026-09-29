@@ -243,22 +243,17 @@ def test_proxy_rewrites_domain_cookies_to_host_only_and_preserves_multiples(monk
     ]
 
 
-def test_gateway_is_absent_without_apps_domain(tmp_path):
+def test_gateway_is_present_without_apps_domain(tmp_path):
     layout = RuntimeLayout(tmp_path, ROOT)
     direct = AppGatewayConnector().plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"})
     plans = plan_connectors(layout, {"WOLTSPACE_ENTRYPOINT": "1"})
 
-    assert not direct.enabled
-    assert "not started" in direct.detail
-    assert all(plan.name != "app-gateway" for plan in plans)
-    supervisor = ChannelSupervisor(
-        layout, [plan for plan in plans if plan.name == "app-gateway"],
-    )
-    supervisor.start(watch=False)
-    assert read_connector_report(layout)["connectors"] == []
+    assert direct.enabled
+    assert "7117" in direct.detail
+    assert any(plan.name == "app-gateway" for plan in plans)
 
 
-@pytest.mark.parametrize(("lodge_port", "gateway_port"), [(7777, 6667), (7778, 6668)])
+@pytest.mark.parametrize(("lodge_port", "gateway_port"), [(7777, 7117), (7778, 7118)])
 def test_gateway_default_port_tracks_lodge_port(
     tmp_path, lodge_port, gateway_port,
 ):
@@ -324,13 +319,13 @@ def test_gateway_port_changes_only_through_validated_lodge_route(tmp_path, monke
     }
 
 
-def test_app_start_reserves_gateway_port_only_when_apps_domain_is_enabled(
+def test_app_start_always_reserves_gateway_port(
     tmp_path, monkeypatch,
 ):
     target = tmp_path / "apps" / "notes"
     target.mkdir(parents=True)
     (target / "woltspace.json").write_text(json.dumps({
-        "name": "notes", "keeper": "n00b", "port": 6667,
+        "name": "notes", "keeper": "n00b", "port": 7117,
         "start": "echo hello", "stack": "html",
     }))
     state = tmp_path / ".space" / "apps"
@@ -346,17 +341,72 @@ def test_app_start_reserves_gateway_port_only_when_apps_domain_is_enabled(
     )())
 
     (tmp_path / "woltspace.json").write_text(json.dumps({
-        "app_gateway": {"port": 6667},
-    }))
-    assert apps.start_app("notes")["port"] == 6667
-    apps._clear_state("notes")
-
-    (tmp_path / "woltspace.json").write_text(json.dumps({
-        "apps_domain": "owner.woltspace.app",
+        "app_gateway": {"port": 7117},
     }))
     with pytest.raises(RuntimeError) as exc:
         apps.start_app("notes")
     assert str(exc.value) == (
-        "port 6667 is used by the app gateway; "
+        "port 7117 is used by the app gateway; "
         "change the app's port or the gateway port in Settings"
     )
+
+
+def test_gateway_env_port_overrides_file_and_default(tmp_path, monkeypatch):
+    (tmp_path / "woltspace.json").write_text(json.dumps({
+        "app_gateway": {"port": 4555},
+    }))
+    monkeypatch.setenv("WOLTSPACE_APP_GATEWAY_PORT", "4666")
+    settings = load_gateway_settings(tmp_path, lodge_port=7777)
+    plan = AppGatewayConnector().plan(
+        RuntimeLayout(tmp_path, ROOT),
+        {"WOLTSPACE_ENTRYPOINT": "1", "WOLTSPACE_APP_GATEWAY_PORT": "4777"},
+    )
+    assert settings.port == 4666
+    assert plan.command[7] == "4777"
+
+
+@pytest.mark.parametrize("port", [6667, 6697, 10080])
+def test_gateway_refuses_browser_blocked_ports(tmp_path, port):
+    (tmp_path / "woltspace.json").write_text(json.dumps({
+        "app_gateway": {"port": port},
+    }))
+    with pytest.raises(ValueError, match="blocked by web browsers"):
+        AppGatewayConnector().plan(
+            RuntimeLayout(tmp_path, ROOT), {"WOLTSPACE_ENTRYPOINT": "1"},
+        )
+
+
+def test_loopback_owner_opens_local_app_with_access_configured(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+
+    async def proxy(_request, name):
+        return PlainTextResponse(f"{name}:LOCAL_OK")
+
+    monkeypatch.setattr(gateway, "proxy_app_http", proxy)
+    response = asyncio.run(_get("/", host="notes.localhost:7117"))
+    assert response.status_code == 200
+    assert response.text == "notes:LOCAL_OK"
+
+
+def test_remote_app_host_without_access_fails_closed(tmp_path, monkeypatch):
+    (tmp_path / "woltspace.json").write_text(json.dumps({
+        "apps_domain": "owner.woltspace.app",
+    }))
+    monkeypatch.setattr(gateway, "WOLTS_DIR", tmp_path)
+    response = asyncio.run(_get("/", host="notes.owner.woltspace.app"))
+    assert response.status_code == 403
+    assert "identity verification required" in response.text
+
+
+def test_gateway_log_omits_tokens_cookies_and_query(tmp_path, monkeypatch, capsys):
+    _configure(tmp_path, monkeypatch)
+    secret = "SECRET_TOKEN_MUST_NOT_APPEAR"
+    response = asyncio.run(_get(
+        "/clean?secret=query-secret", host="notes.owner.woltspace.app", token=secret,
+    ))
+    assert response.status_code == 403
+    log = capsys.readouterr().err
+    assert "path=/clean" in log
+    assert "decision=bad-token" in log
+    assert secret not in log
+    assert "query-secret" not in log

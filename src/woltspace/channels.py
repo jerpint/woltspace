@@ -500,22 +500,25 @@ class AppGatewayConnector:
             root = json.loads(path.read_text()) if path.exists() else {}
         except (OSError, json.JSONDecodeError):
             root = {}
-        apps_domain = root.get("apps_domain") if isinstance(root, dict) else None
-        if not isinstance(apps_domain, str) or not apps_domain.strip():
-            return ConnectorPlan(
-                self.name, False,
-                "apps domain not configured; app gateway is not started",
-                remedy=f"Set apps_domain in {path}, then restart the lodge.",
-            )
         gateway = root.get("app_gateway") if isinstance(root, dict) else None
-        default_port = layout.port - 1110
+        default_port = layout.port - 660
         if not 1024 <= default_port <= 65535:
             raise ValueError("derived app gateway port must be from 1024 to 65535")
-        port = gateway.get("port", default_port) if isinstance(gateway, dict) else default_port
+        configured = gateway.get("port", default_port) if isinstance(gateway, dict) else default_port
+        raw_env_port = values.get("WOLTSPACE_APP_GATEWAY_PORT", "").strip()
+        try:
+            port = int(raw_env_port) if raw_env_port else configured
+        except ValueError:
+            raise ValueError("WOLTSPACE_APP_GATEWAY_PORT must be an integer from 1024 to 65535")
         if not isinstance(port, int) or isinstance(port, bool) or not 1024 <= port <= 65535:
             port = default_port
         if port == layout.port:
             raise ValueError("app gateway port must differ from the lodge port")
+        from server.gateway_settings import _BLOCKED_PORTS
+        if port in _BLOCKED_PORTS:
+            raise ValueError(
+                f"app gateway port {port} is blocked by web browsers; choose a safe port"
+            )
         child_env = export_both({
             "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
             "WOLTSPACE_DIR": str(layout.install_root),
@@ -552,14 +555,7 @@ CONNECTORS: tuple[ChannelConnector, ...] = (
 def plan_connectors(
     layout: RuntimeLayout, env: Mapping[str, str] | None = None
 ) -> list[ConnectorPlan]:
-    plans = [connector.plan(layout, env) for connector in CONNECTORS]
-    return [
-        plan for plan in plans
-        if not (
-            plan.name == "app-gateway"
-            and plan.detail == "apps domain not configured; app gateway is not started"
-        )
-    ]
+    return [connector.plan(layout, env) for connector in CONNECTORS]
 
 
 def connector_secrets(plans: list[ConnectorPlan]) -> dict[str, str]:
