@@ -1168,6 +1168,21 @@ async def list_sessions(view: str = ""):
     return payload if view == "lodge" else sessions
 
 
+@app.get("/sessions/{name}")
+async def get_session(name: str):
+    """Return one session with its agent-accurate liveness state."""
+    from sessions import SessionRegistry
+    safe = "".join(c for c in name if c.isalnum() or c in "-_")
+    if safe != name:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    session = await asyncio.to_thread(
+        SessionRegistry(WOLTS_DIR).get, safe, check_alive=True,
+    )
+    if session is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return session
+
+
 # --- Sparks ---
 # jerpint: i think the concept of sparks will disappear, or be renamed and rethought as a concept
 # wee will need session history, and within a session we might want to support versionoing (though maybe just let users

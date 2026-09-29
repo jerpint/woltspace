@@ -444,10 +444,9 @@
   async function ensureSessionAlive() {
     if (session === 'main') { connectTUI(); return; }
     try {
-      const res = await fetch('/sessions');
-      const sessions = await res.json();
-      const s = sessions.find(x => x.name === session);
-      if (s && s.status === 'running' && s.alive) {
+      const res = await fetch('/sessions/' + encodeURIComponent(session));
+      const s = res.ok ? await res.json() : null;
+      if (s && s.status === 'running' && s.agent_alive === true) {
         connectTUI();
       } else if (s) {
         setStatus('connecting', 'resuming');

@@ -34,7 +34,7 @@ def _record(root: Path, wolt: str, name: str, **fields) -> None:
     }))
 
 
-def test_lodge_view_is_bounded_slim_and_liveness_aware(tmp_path, monkeypatch):
+def test_lodge_view_is_bounded_slim_and_tmux_open_aware(tmp_path, monkeypatch):
     now = int(time.time())
     for index in range(10):
         _record(tmp_path, "n00b", f"old-{index}", last_activity=index + 1)
@@ -45,9 +45,9 @@ def test_lodge_view_is_bounded_slim_and_liveness_aware(tmp_path, monkeypatch):
     )
     _record(tmp_path, "pixie", "dead-running", status="running", last_activity=1)
 
-    agents = Mock(return_value={"running-pane"})
+    agents = Mock()
     monkeypatch.setattr(sessions, "sessions_with_agent_process", agents)
-    tmux = Mock()
+    tmux = Mock(return_value={"running-pane"})
     monkeypatch.setattr(sessions, "_tmux_sessions", tmux)
 
     payload = sessions.SessionRegistry(tmp_path).list_lodge_view()
@@ -57,10 +57,11 @@ def test_lodge_view_is_bounded_slim_and_liveness_aware(tmp_path, monkeypatch):
     assert "old-0" not in rows and "old-1" not in rows
     assert {f"old-{index}" for index in range(4, 10)} <= rows.keys()
     assert rows["running"]["alive"] is True
+    assert rows["running"]["status"] == "running"
     assert rows["dead-running"]["status"] == "orphaned"
     assert rows["dead-running"]["alive"] is False
-    assert agents.call_count == 1
-    tmux.assert_not_called()
+    agents.assert_not_called()
+    tmux.assert_called_once_with()
     forbidden = {"prompt", "prompt_preview", "target", "runtime", "dir", "workdir"}
     assert all(not forbidden.intersection(row) for row in rows.values())
 
@@ -77,3 +78,27 @@ def test_lodge_route_is_distinct_from_the_full_sessions_contract(monkeypatch):
 
     assert client.get("/sessions").json() == full
     assert client.get("/sessions?view=lodge").json() == light
+
+
+def test_single_session_route_returns_agent_liveness(monkeypatch):
+    record = {"name": "n00b-one", "status": "orphaned", "agent_alive": False}
+    lookup = Mock(return_value=record)
+    monkeypatch.setattr(sessions.SessionRegistry, "get", lookup)
+    client = TestClient(
+        server_app.app, base_url="http://localhost:7777", client=("127.0.0.1", 50000),
+    )
+
+    assert client.get("/sessions/n00b-one").json() == record
+    lookup.assert_called_once_with("n00b-one", check_alive=True)
+
+
+def test_single_session_route_rejects_unknown_and_unsafe_names(monkeypatch):
+    lookup = Mock(return_value=None)
+    monkeypatch.setattr(sessions.SessionRegistry, "get", lookup)
+    client = TestClient(
+        server_app.app, base_url="http://localhost:7777", client=("127.0.0.1", 50000),
+    )
+
+    assert client.get("/sessions/missing").status_code == 404
+    assert client.get("/sessions/not%20safe").status_code == 404
+    lookup.assert_called_once_with("missing", check_alive=True)

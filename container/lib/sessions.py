@@ -616,13 +616,14 @@ class SessionRegistry:
                 or row["name"] in newest
             )
 
-        running = [row for row in selected if row.get("status") == "running"]
-        agent_sessions = sessions_with_agent_process() if running else set()
-        if agent_sessions is None:
-            agent_sessions = _tmux_sessions()
+        # Lodge state has one deliberately lightweight meaning: an "open"
+        # session is a running record whose tmux window still exists. Whether
+        # its agent process survived is checked only when that session is
+        # opened, where a missing agent can be resumed before attachment.
+        live_sessions = _tmux_sessions()
         for row in selected:
             tmux_name = row.pop("_tmux_session_name", row["name"])
-            alive = row.get("status") == "running" and tmux_name in agent_sessions
+            alive = row.get("status") == "running" and tmux_name in live_sessions
             row["alive"] = alive
             if row.get("status") == "running" and not alive:
                 row["status"] = "orphaned"
