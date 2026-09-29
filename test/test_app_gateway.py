@@ -68,12 +68,14 @@ def _configure(tmp_path, monkeypatch):
     return key
 
 
-async def _get(path, *, host, token=None):
+async def _get(path, *, host, token=None, client=("127.0.0.1", 123), extra_headers=None):
     headers = {"host": host}
     if token:
         headers["cf-access-jwt-assertion"] = token
+    headers.update(extra_headers or {})
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=gateway.app), base_url="https://gateway.test",
+        transport=httpx.ASGITransport(app=gateway.app, client=client),
+        base_url="https://gateway.test",
     ) as client:
         return await client.get(path, headers=headers)
 
@@ -286,6 +288,8 @@ def test_container_files_expose_and_publish_gateway_port():
     assert "EXPOSE 7777 7117" in dockerfile
     assert '-p "$app_gateway_port:$app_gateway_port"' in launcher
     assert '-e WOLTSPACE_APP_GATEWAY_PORT="$app_gateway_port"' in launcher
+    assert "--entrypoint /usr/bin/python3" not in launcher
+    assert "from woltspace.app_gateway_port import resolve_app_gateway_port" in launcher
 
 
 def test_gateway_port_is_configurable(tmp_path):
@@ -301,19 +305,17 @@ def test_gateway_port_is_configurable(tmp_path):
     assert "4555" in plan.command
 
 
-def test_gateway_port_collision_fails_at_settings_load_and_connector_plan(tmp_path):
+def test_gateway_port_collision_falls_back_without_breaking_plans(tmp_path, capsys):
     (tmp_path / "woltspace.json").write_text(json.dumps({
         "apps_domain": "owner.woltspace.app",
         "app_gateway": {"port": 7777},
     }))
-    error = "app gateway port must differ from the lodge port"
-    with pytest.raises(ValueError, match=error):
-        load_gateway_settings(tmp_path, lodge_port=7777)
-    with pytest.raises(ValueError, match=error):
-        AppGatewayConnector().plan(
-            RuntimeLayout(tmp_path, ROOT, port=7777),
-            {"WOLTSPACE_ENTRYPOINT": "1"},
-        )
+    assert load_gateway_settings(tmp_path, lodge_port=7777).port == 7117
+    plan = AppGatewayConnector().plan(
+        RuntimeLayout(tmp_path, ROOT, port=7777), {"WOLTSPACE_ENTRYPOINT": "1"},
+    )
+    assert plan.command[7] == "7117"
+    assert "7777" in capsys.readouterr().err
 
 
 def test_gateway_port_changes_only_through_validated_lodge_route(tmp_path, monkeypatch):
@@ -329,8 +331,10 @@ def test_gateway_port_changes_only_through_validated_lodge_route(tmp_path, monke
 
     saved = asyncio.run(post(4555))
     invalid = asyncio.run(post(7777))
+    blocked = asyncio.run(post(6667))
     assert saved.json() == {"ok": True, "port": 4555, "applies": "next lodge start"}
     assert invalid.status_code == 400
+    assert blocked.status_code == 400
     assert json.loads((tmp_path / "woltspace.json").read_text()) == {
         "app_gateway": {"port": 4555},
     }
@@ -382,15 +386,17 @@ def test_gateway_env_port_overrides_file_and_default(tmp_path, monkeypatch):
     assert plan.command[7] == "4777"
 
 
-@pytest.mark.parametrize("port", [6667, 6697, 10080])
-def test_gateway_refuses_browser_blocked_ports(tmp_path, port):
-    (tmp_path / "woltspace.json").write_text(json.dumps({
-        "app_gateway": {"port": port},
-    }))
-    with pytest.raises(ValueError, match="blocked by web browsers"):
-        AppGatewayConnector().plan(
-            RuntimeLayout(tmp_path, ROOT), {"WOLTSPACE_ENTRYPOINT": "1"},
-        )
+@pytest.mark.parametrize("value", ["nonsense", "6667", "10080"])
+def test_bad_env_gateway_port_falls_back_and_lodge_plans_survive(tmp_path, value, capsys):
+    plans = plan_connectors(RuntimeLayout(tmp_path, ROOT), {
+        "WOLTSPACE_ENTRYPOINT": "1", "WOLTSPACE_APP_GATEWAY_PORT": value,
+    })
+    gateway_plan = next(plan for plan in plans if plan.name == "app-gateway")
+    assert gateway_plan.enabled
+    assert gateway_plan.command[7] == "7117"
+    warning = capsys.readouterr().err
+    assert value in warning
+    assert "using 7117" in warning
 
 
 def test_loopback_owner_opens_local_app_with_access_configured(tmp_path, monkeypatch):
@@ -405,6 +411,23 @@ def test_loopback_owner_opens_local_app_with_access_configured(tmp_path, monkeyp
     assert response.text == "notes:LOCAL_OK"
 
 
+def test_localhost_app_requires_loopback_peer(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+    response = asyncio.run(_get(
+        "/", host="notes.localhost:7117", client=("192.0.2.10", 123),
+    ))
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize("header", ["cf-connecting-ip", "x-forwarded-for"])
+def test_forwarded_localhost_app_is_not_owner_local(tmp_path, monkeypatch, header):
+    _configure(tmp_path, monkeypatch)
+    response = asyncio.run(_get(
+        "/", host="notes.localhost:7117", extra_headers={header: "203.0.113.4"},
+    ))
+    assert response.status_code == 403
+
+
 def test_remote_app_host_without_access_fails_closed(tmp_path, monkeypatch):
     (tmp_path / "woltspace.json").write_text(json.dumps({
         "apps_domain": "owner.woltspace.app",
@@ -413,6 +436,15 @@ def test_remote_app_host_without_access_fails_closed(tmp_path, monkeypatch):
     response = asyncio.run(_get("/", host="notes.owner.woltspace.app"))
     assert response.status_code == 403
     assert "identity verification required" in response.text
+
+
+def test_remote_app_host_with_corrupt_access_config_fails_closed(tmp_path, monkeypatch):
+    (tmp_path / "woltspace.json").write_text(json.dumps({
+        "apps_domain": "owner.woltspace.app", "access": {"broken": True},
+    }))
+    monkeypatch.setattr(gateway, "WOLTS_DIR", tmp_path)
+    response = asyncio.run(_get("/", host="notes.owner.woltspace.app"))
+    assert response.status_code == 403
 
 
 def test_gateway_log_omits_tokens_cookies_and_query(tmp_path, monkeypatch, capsys):
@@ -427,3 +459,24 @@ def test_gateway_log_omits_tokens_cookies_and_query(tmp_path, monkeypatch, capsy
     assert "decision=bad-token" in log
     assert secret not in log
     assert "query-secret" not in log
+
+
+def test_gateway_log_escapes_non_printable_host_and_path(capsys):
+    gateway._log_request(
+        {"type": "http", "method": "GET", "path": "/bad\x1bpath"},
+        {"host": "notes.localhost\x1b"}, 400, "test",
+    )
+    log = capsys.readouterr().err
+    assert "\\x1b" in log
+    assert "\x1b" not in log
+
+
+def test_gateway_port_resolver_is_shared_by_every_consumer():
+    sources = [
+        ROOT / "src" / "woltspace" / "channels.py",
+        ROOT / "server" / "gateway_settings.py",
+        ROOT / "server" / "app.py",
+        ROOT / "container" / "lib" / "apps.py",
+    ]
+    for source in sources:
+        assert "resolve_app_gateway_port" in source.read_text(), source

@@ -191,3 +191,6 @@ def test_app_page_has_editable_sharing_and_clear_consequences_copy():
     assert "Removing an entry immediately removes that access." in source
     assert "For stronger isolation, set an app domain." in source
     assert "/sharing" in source
+    assert "if(app.url)" in source
+    assert "Set an app domain in Settings to open apps remotely" in source
+    assert "open.href=app.url" in source

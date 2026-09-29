@@ -55,7 +55,7 @@ Then write `woltspace.json` — **this is required** for the platform to discove
 | `stack` | no | `python`, `vite`, `node`, or `html` |
 | `install` | no | Install command |
 | `port` | yes | Fixed app port in the 4000-5999 range. Permanent — survives restarts. Do not use platform service ports. |
-| `start` | no | Start command. Use `$PORT` — the platform expands it. Add `--host 0.0.0.0` for network access. Null = can't start from lodge. |
+| `start` | no | Start command. Use `$PORT` — the platform expands it. Null = can't start from lodge or be served as an app. |
 | `source` | no | Origin URL if cloned |
 | `emoji` | no | Display emoji (auto-assigned) |
 | `public` | no | If `true`, the app is shared publicly when started. With a named tunnel: served at `{name}.{domain}` (e.g. `corework.woltspace.com`). Without: a random quick tunnel URL. Default: `false`. |
@@ -64,13 +64,19 @@ Then write `woltspace.json` — **this is required** for the platform to discove
 
 ## Serving an app
 
-### Running dev server (primary mode)
+### Running app server
 
-The platform starts the server and sets the `PORT` env var. The viewport iframe loads the app's port **directly** — no proxy. This means internal links, WebSockets, and SSE all work naturally.
+The platform starts the server and sets the `PORT` env var. The app gateway forwards HTTP, WebSockets, and SSE to that server.
 
-### Static files (fallback)
+### Static HTML apps
 
-If the app isn't running, static files in `dist/` or the app root are served at `/app/{name}/`.
+There is no static-file fallback in the lodge or gateway. A static HTML app needs a start command just like every other app, for example:
+
+```json
+"start": "python3 -m http.server $PORT --bind 127.0.0.1"
+```
+
+When the process is stopped, the gateway shows the normal stopped-app page.
 
 ## Starting and stopping
 
@@ -92,12 +98,10 @@ curl http://localhost:7777/apps
 ## Pushing to the viewport
 
 ```bash
-push-view http://my-app.localhost:7777/
+push-view http://my-app.localhost:7117/
 ```
 
-Use the **subdomain pattern** `http://<app-name>.localhost:7777/` to push an app to the viewport.
-
-> **Why not `/app/my-app/`?** The `/app/` path triggers a 302 redirect to the app's bare port (e.g. `localhost:4010`). This works locally but breaks through the Cloudflare tunnel, since the redirect target isn't reachable from the outside. The subdomain pattern avoids the redirect entirely.
+Use the app gateway address shown by `GET /apps`. The first lodge defaults to `http://<app-name>.localhost:7117/`; `/app/<app-name>/` redirects there for compatibility.
 
 ## Ports
 

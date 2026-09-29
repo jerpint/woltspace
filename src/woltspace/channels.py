@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Protocol, runtime_checkable
 
 from .config import channel_config, config_path
+from .app_gateway_port import resolve_app_gateway_port
 from .envvars import export_both
 from .layout import RuntimeLayout
 
@@ -496,29 +497,7 @@ class AppGatewayConnector:
                 remedy="Run the control plane through `woltspace start`.",
             )
         path = layout.wolts_dir / "woltspace.json"
-        try:
-            root = json.loads(path.read_text()) if path.exists() else {}
-        except (OSError, json.JSONDecodeError):
-            root = {}
-        gateway = root.get("app_gateway") if isinstance(root, dict) else None
-        default_port = layout.port - 660
-        if not 1024 <= default_port <= 65535:
-            raise ValueError("derived app gateway port must be from 1024 to 65535")
-        configured = gateway.get("port", default_port) if isinstance(gateway, dict) else default_port
-        raw_env_port = values.get("WOLTSPACE_APP_GATEWAY_PORT", "").strip()
-        try:
-            port = int(raw_env_port) if raw_env_port else configured
-        except ValueError:
-            raise ValueError("WOLTSPACE_APP_GATEWAY_PORT must be an integer from 1024 to 65535")
-        if not isinstance(port, int) or isinstance(port, bool) or not 1024 <= port <= 65535:
-            port = default_port
-        if port == layout.port:
-            raise ValueError("app gateway port must differ from the lodge port")
-        from server.gateway_settings import _BLOCKED_PORTS
-        if port in _BLOCKED_PORTS:
-            raise ValueError(
-                f"app gateway port {port} is blocked by web browsers; choose a safe port"
-            )
+        port = resolve_app_gateway_port(layout.wolts_dir, layout.port, env=values)
         child_env = export_both({
             "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
             "WOLTSPACE_DIR": str(layout.install_root),
@@ -556,7 +535,16 @@ CONNECTORS: tuple[ChannelConnector, ...] = (
 def plan_connectors(
     layout: RuntimeLayout, env: Mapping[str, str] | None = None
 ) -> list[ConnectorPlan]:
-    return [connector.plan(layout, env) for connector in CONNECTORS]
+    plans = []
+    for connector in CONNECTORS:
+        try:
+            plans.append(connector.plan(layout, env))
+        except Exception as exc:
+            plans.append(ConnectorPlan(
+                connector.name, False, f"connector planning failed: {exc}",
+                remedy="Fix this connector's configuration, then restart the lodge.",
+            ))
+    return plans
 
 
 def connector_secrets(plans: list[ConnectorPlan]) -> dict[str, str]:

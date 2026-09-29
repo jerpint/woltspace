@@ -63,6 +63,12 @@ async def request_identity(scope, headers, *, local_host: bool, access):
     if local_host:
         if not _loopback_peer(scope):
             return None, "non-loopback-peer"
+        forwarding_headers = {
+            "cf-connecting-ip", "cf-ray", "x-forwarded-for", "x-forwarded-host",
+            "forwarded", "cf-access-jwt-assertion",
+        }
+        if forwarding_headers.intersection(headers):
+            return None, "forwarded-localhost"
         owner = access.owner_email if access is not None else "owner@localhost"
         return owner, "owner-local"
     if access is None:
@@ -82,8 +88,8 @@ async def request_identity(scope, headers, *, local_host: bool, access):
 
 def _log_request(scope, headers, status: int, reason: str) -> None:
     method = "ws" if scope["type"] == "websocket" else scope.get("method", "HTTP")
-    host = headers.get("host", "-").replace("\n", " ").replace("\r", " ")
-    path = scope.get("path", "/").replace("\n", " ").replace("\r", " ")
+    host = ascii(headers.get("host", "-"))[1:-1]
+    path = ascii(scope.get("path", "/"))[1:-1]
     timestamp = datetime.now(timezone.utc).isoformat()
     print(
         f"{timestamp} host={host} path={path} method={method} status={status} decision={reason}",

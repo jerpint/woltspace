@@ -17,6 +17,7 @@ import signal
 import subprocess
 import time
 from pathlib import Path
+from woltspace.app_gateway_port import resolve_app_gateway_port
 
 from pydantic import BaseModel, Field
 
@@ -119,30 +120,12 @@ def get_app(name: str) -> WoltspaceApp | None:
 
 
 def _enabled_app_gateway_port() -> int | None:
-    """Return the reserved gateway port only when a dedicated app domain is enabled."""
-    try:
-        root = json.loads((WOLTS_DIR / "woltspace.json").read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(root, dict):
-        return None
+    """Return the always-reserved gateway port."""
     try:
         lodge_port = int(os.environ.get("WOLTSPACE_PORT") or os.environ.get("PORT") or "7777")
     except ValueError:
         lodge_port = 7777
-    default_port = lodge_port - 660
-    if not 1024 <= default_port <= 65535:
-        raise RuntimeError("derived app gateway port must be from 1024 to 65535")
-    gateway = root.get("app_gateway")
-    configured = gateway.get("port", default_port) if isinstance(gateway, dict) else default_port
-    raw_env_port = os.environ.get("WOLTSPACE_APP_GATEWAY_PORT", "").strip()
-    try:
-        port = int(raw_env_port) if raw_env_port else configured
-    except ValueError:
-        return default_port
-    if not isinstance(port, int) or isinstance(port, bool) or not 1024 <= port <= 65535:
-        return default_port
-    return port
+    return resolve_app_gateway_port(WOLTS_DIR, lodge_port)
 
 
 # --- Running state ---

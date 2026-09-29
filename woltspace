@@ -235,17 +235,15 @@ _start_container() {
   # skills and tools still read WOLT_NAME.
   [ -n "$wolt_name" ] && extra_args="-e WOLTSPACE_WOLT_NAME=$wolt_name -e WOLT_NAME=$wolt_name"
 
-  # Resolve the gateway port before creating the container so the published
-  # host port, the connector bind, and lodge-generated app URLs are identical.
-  # An explicit environment value wins; otherwise ask the exact image to read
-  # Settings from the read-only colony mount and fall back from the host lodge
-  # port using the same -660 rule as the package.
+  # Resolve before `docker run` so publish, bind, and generated URLs agree.
+  # Prefer the package's shared resolver when host Python is present; a
+  # Python-less Docker host keeps the explicit env value or the safe default.
+  local lodge_port="${WOLTSPACE_PORT:-7777}"
   local app_gateway_port="${WOLTSPACE_APP_GATEWAY_PORT:-}"
-  if [ -z "$app_gateway_port" ]; then
-    app_gateway_port=$(docker run --rm \
-      --entrypoint /usr/bin/python3 \
-      -v "$WOLTS_DIR:/workspace/wolts:ro" \
-      woltspace -c 'import json,sys; from pathlib import Path; p=Path("/workspace/wolts/woltspace.json"); d=json.loads(p.read_text()) if p.exists() else {}; g=d.get("app_gateway", {}) if isinstance(d, dict) else {}; v=g.get("port") if isinstance(g, dict) else None; print(v if isinstance(v, int) and not isinstance(v, bool) else int(sys.argv[1])-660)' "${WOLTSPACE_PORT:-7777}")
+  if command -v python3 >/dev/null 2>&1; then
+    app_gateway_port=$(PYTHONPATH="$WOLTSPACE_DIR/src${PYTHONPATH:+:$PYTHONPATH}" python3 -c 'import sys; from pathlib import Path; from woltspace.app_gateway_port import resolve_app_gateway_port; print(resolve_app_gateway_port(Path(sys.argv[1]), int(sys.argv[2])))' "$WOLTS_DIR" "$lodge_port")
+  elif [ -z "$app_gateway_port" ] || ! [ "$app_gateway_port" -eq "$app_gateway_port" ] 2>/dev/null; then
+    app_gateway_port=$((lodge_port - 660))
   fi
 
   # No dev mount. /workspace/woltspace is the installed package's own bundle
