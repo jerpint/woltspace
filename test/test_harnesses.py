@@ -12,6 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 
+import harnesses  # noqa: E402
 from harnesses import (
     DEFAULT_HARNESS,
     HARNESSES,
@@ -109,6 +110,42 @@ class TestBuildCommandClaude:
 
 class TestBuildCommandCodex:
     """Verified against codex-cli 0.144 — see wcodex + harness plan."""
+
+    @pytest.fixture(autouse=True)
+    def _codex_has_no_daemon(self, monkeypatch):
+        monkeypatch.setattr(harnesses, "_codex_no_daemon", True)
+
+    def test_spawn_and_resume_skip_shared_daemon(self):
+        """Each session runs its own codex, never the shared app-server daemon.
+
+        Tools run by the shared daemon inherit the environment of the session
+        that started it (wrong WOLTSPACE_WOLT_SESSION), and a daemon restart
+        reloads threads without the bypass flag (no network).
+        """
+        spawn = build_command("codex", "spawn", prompt="x")
+        resume = build_command(
+            "codex", "resume",
+            resume_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890", prompt="x",
+        )
+        assert "--no-daemon" in spawn.split()
+        assert "--no-daemon" in resume.split()
+
+    def test_old_codex_without_daemon_gets_no_flag(self, monkeypatch):
+        monkeypatch.setattr(harnesses, "_codex_no_daemon", False)
+        assert "--no-daemon" not in build_command("codex", "spawn", prompt="x")
+
+    def test_no_daemon_probe_reads_codex_help(self, monkeypatch):
+        monkeypatch.setattr(harnesses, "_codex_no_daemon", None)
+        fake = type("R", (), {"stdout": "  --no-alt-screen\n  --no-daemon\n"})()
+        with patch.object(harnesses.subprocess, "run", return_value=fake) as run:
+            assert harnesses.codex_supports_no_daemon() is True
+            assert harnesses.codex_supports_no_daemon() is True
+        assert run.call_count == 1
+
+    def test_no_daemon_probe_fails_closed(self, monkeypatch):
+        monkeypatch.setattr(harnesses, "_codex_no_daemon", None)
+        with patch.object(harnesses.subprocess, "run", side_effect=OSError):
+            assert harnesses.codex_supports_no_daemon() is False
 
     def test_spawn(self):
         cmd = build_command("codex", "spawn", prompt="hey testwolt")
