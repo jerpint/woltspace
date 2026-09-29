@@ -343,6 +343,30 @@ def test_install_rolls_back_on_keyboard_interrupt(tmp_path, monkeypatch):
     assert not (target / "second").exists()
 
 
+def test_install_syncs_platform_skills_before_returning(tmp_path):
+    source_wolts = tmp_path / "source-wolts"
+    make_wolt(source_wolts)
+    package = tmp_path / "package"
+    create_seed(
+        wolts_dir=source_wolts, output=package, name="starter",
+        wolt_names=["raccoon"],
+    )
+    install_root = make_template(tmp_path)
+    skill = install_root / "container" / "skills" / "start-chat"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\nname: start-chat\ndescription: boot\n---\nhello\n"
+    )
+    target = tmp_path / "new-lodge"
+
+    install_seed(source=package, wolts_dir=target, install_root=install_root)
+
+    delivered = target / "raccoon" / ".claude" / "skills" / "woltspace-start-chat"
+    assert delivered.is_dir()
+    assert "name: woltspace-start-chat" in (delivered / "SKILL.md").read_text()
+    assert (target / "raccoon" / ".agents" / "skills").exists()
+
+
 def test_seed_and_backup_are_distinct_top_level_commands():
     from woltspace.cli import build_parser
 

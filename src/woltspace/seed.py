@@ -13,6 +13,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -341,6 +342,12 @@ def install_seed(
                     raise SeedError(f"install destination appeared during commit: {target}")
                 (stage / "apps" / name).rename(target)
                 moved.append(target)
+            runtime_lib = str(Path(install_root) / "container" / "lib")
+            if runtime_lib not in sys.path:
+                sys.path.insert(0, runtime_lib)
+            from skills_sync import seed_wolt_skills
+            for name in summary.wolts:
+                seed_wolt_skills(Path(install_root), wolts_dir / name)
             return {
                 "ok": True,
                 "seed": summary.name,
