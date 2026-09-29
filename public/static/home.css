@@ -292,12 +292,8 @@
 .home-starter-welcome {
   width: min(420px, 100%);
   margin-top: 22px;
-  padding: 22px;
-  background: rgba(245,241,232,0.94);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 8px 28px rgba(67, 58, 42, 0.12);
-  backdrop-filter: blur(6px);
+  display: flex;
+  justify-content: center;
   animation: fadeUp 0.5s ease;
 }
 .home-starter-button {
