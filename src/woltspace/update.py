@@ -12,7 +12,9 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from packaging.version import InvalidVersion, Version
 
@@ -111,6 +113,30 @@ def _command(executable: str, *args: str) -> subprocess.CompletedProcess[str]:
     return _run([executable, *args])
 
 
+def _tool_executable() -> str:
+    """Resolve uv's installed script directly, ignoring a shadowing PATH entry."""
+    result = _run(["uv", "tool", "dir", "--bin"])
+    if result.returncode == 0 and result.stdout.strip():
+        candidate = Path(result.stdout.strip()) / "woltspace"
+        if candidate.is_file():
+            return str(candidate)
+    executable = shutil.which("woltspace")
+    if executable:
+        return executable
+    raise UpdateError("cannot find the uv-managed woltspace executable")
+
+
+def _start_address(status: dict[str, Any]) -> tuple[str, int]:
+    endpoint = str(status.get("endpoint") or "")
+    try:
+        parsed = urlsplit(endpoint)
+        if not parsed.hostname or parsed.port is None:
+            raise ValueError
+    except ValueError as exc:
+        raise UpdateError("status did not report a valid lodge host and port") from exc
+    return parsed.hostname, parsed.port
+
+
 def _status(executable: str) -> dict[str, Any]:
     result = _command(executable, "status", "--json")
     if result.returncode not in (0, 1):
@@ -178,14 +204,13 @@ def update(args: Any) -> int:
                 emit({**summary, "ok": False, "cancelled": True}, "update cancelled")
                 return 1
 
-        executable = shutil.which("woltspace")
-        if not executable:
-            raise UpdateError("cannot find the installed woltspace executable")
+        executable = _tool_executable()
         before = _status(executable)
         state = before.get("state")
         if state not in {"healthy", "stopped"}:
             raise UpdateError(f"lodge state is {state!r}; resolve it before updating")
         was_running = state == "healthy"
+        start_host, start_port = _start_address(before) if was_running else ("", 0)
         if was_running:
             stopped = _command(executable, "stop")
             if stopped.returncode:
@@ -199,8 +224,10 @@ def update(args: Any) -> int:
         installed_result = _run(install)
         start_result: subprocess.CompletedProcess[str] | None = None
         if was_running:
-            new_executable = shutil.which("woltspace") or executable
-            start_result = _command(new_executable, "start")
+            new_executable = _tool_executable()
+            start_result = _command(
+                new_executable, "start", "--host", start_host, "--port", str(start_port)
+            )
         if installed_result.returncode:
             details = installed_result.stderr.strip() or "uv tool install failed"
             if start_result is not None and start_result.returncode:
@@ -209,7 +236,7 @@ def update(args: Any) -> int:
         if start_result is not None and start_result.returncode:
             raise UpdateError(start_result.stderr.strip() or "updated, but lodge restart failed")
 
-        new_executable = shutil.which("woltspace") or executable
+        new_executable = _tool_executable()
         observed = _command(new_executable, "--version")
         if observed.returncode or str(target.version) not in observed.stdout.split():
             raise UpdateError(f"version verification failed: {observed.stdout.strip() or observed.stderr.strip()}")

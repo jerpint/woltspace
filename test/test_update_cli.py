@@ -106,7 +106,7 @@ def test_false_container_flag_does_not_block_native(native, monkeypatch):
 
 
 def lifecycle_run(calls, *, fail_install=False, initially_running=True):
-    statuses = iter(([{"state": "healthy", "connectors": []}, {"state": "stopped"}, {"state": "healthy", "connectors": []}] if initially_running else [{"state": "stopped"}, {"state": "stopped"}]))
+    statuses = iter(([{"state": "healthy", "endpoint": "http://127.0.0.1:7778", "connectors": []}, {"state": "stopped"}, {"state": "healthy", "connectors": []}] if initially_running else [{"state": "stopped"}, {"state": "stopped"}]))
     def run(argv):
         calls.append(argv)
         if argv[0] == "uv" and argv[1:3] == ["tool", "list"]: return receipt(argv)
@@ -122,8 +122,8 @@ def test_running_lodge_stop_install_start_order(native, monkeypatch):
     monkeypatch.setattr(updater, "_pypi", lambda: metadata("0.5.12"))
     monkeypatch.setattr(updater, "_run", lifecycle_run(calls))
     assert updater.update(args()) == 0
-    actions = [c for c in calls if c[-1:] in (["stop"], ["start"]) or c[:4] == ["uv", "tool", "install", "--force"]]
-    assert actions == [["/tools/woltspace", "stop"], ["uv", "tool", "install", "--force", "woltspace==0.5.12"], ["/tools/woltspace", "start"]]
+    actions = [c for c in calls if c[-1:] == ["stop"] or c[1:2] == ["start"] or c[:4] == ["uv", "tool", "install", "--force"]]
+    assert actions == [["/tools/woltspace", "stop"], ["uv", "tool", "install", "--force", "woltspace==0.5.12"], ["/tools/woltspace", "start", "--host", "127.0.0.1", "--port", "7778"]]
 
 
 def test_install_failure_still_restarts_and_fails(native, monkeypatch, capsys):
@@ -131,7 +131,7 @@ def test_install_failure_still_restarts_and_fails(native, monkeypatch, capsys):
     monkeypatch.setattr(updater, "_pypi", lambda: metadata("0.5.12"))
     monkeypatch.setattr(updater, "_run", lifecycle_run(calls, fail_install=True))
     assert updater.update(args()) == 1
-    assert ["/tools/woltspace", "start"] in calls
+    assert ["/tools/woltspace", "start", "--host", "127.0.0.1", "--port", "7778"] in calls
     assert "install broke" in json.loads(capsys.readouterr().out)["error"]
 
 
@@ -142,3 +142,25 @@ def test_stopped_lodge_not_started(native, monkeypatch):
     assert updater.update(args()) == 0
     assert ["/tools/woltspace", "start"] not in calls
     assert ["/tools/woltspace", "stop"] not in calls
+
+
+def test_uv_tool_bin_wins_over_path(native, monkeypatch):
+    calls = []
+    uv_executable = "/managed/bin/woltspace"
+    monkeypatch.setattr(updater.Path, "is_file", lambda path: str(path) == uv_executable)
+    monkeypatch.setattr(updater.shutil, "which", lambda name: "/shadowing/woltspace")
+
+    def run(argv):
+        calls.append(argv)
+        if argv == ["uv", "tool", "list", "--show-version-specifiers"]: return receipt(argv)
+        if argv == ["uv", "tool", "dir", "--bin"]: return completed(argv, stdout="/managed/bin\n")
+        if argv[-2:] == ["status", "--json"]: return completed(argv, stdout=json.dumps({"state": "stopped"}))
+        if argv[-1] == "--version": return completed(argv, stdout="woltspace 0.5.12\n")
+        return completed(argv)
+
+    monkeypatch.setattr(updater, "_pypi", lambda: metadata("0.5.12"))
+    monkeypatch.setattr(updater, "_run", run)
+    assert updater.update(args()) == 0
+    assert [uv_executable, "status", "--json"] in calls
+    assert [uv_executable, "--version"] in calls
+    assert all(call[0] != "/shadowing/woltspace" for call in calls)
