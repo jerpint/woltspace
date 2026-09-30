@@ -85,6 +85,7 @@ from harnesses import (
     model_catalog,
     tier_default_model,
     HARNESSES,
+    refresh_model_catalogs,
 )
 from apps import (
     WoltspaceApp,
@@ -230,6 +231,7 @@ def _start_tool_gc():
 async def lifespan(app: FastAPI):
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     await asyncio.to_thread(apply_default_harness_from_env)
+    refresh_model_catalogs()
     tool_registry.restore()
     apps_restore()
     _start_file_watcher()

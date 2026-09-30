@@ -24,6 +24,9 @@ import os
 import re
 import shlex
 import subprocess
+import tempfile
+import threading
+import time
 from pathlib import Path
 
 from env_compat import get_env
@@ -43,6 +46,56 @@ WOPENCODE = str(_BIN_DIR / "wopencode")
 _ROLLOUT_UUID_RE = re.compile(
     r"rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$"
 )
+
+MODEL_CACHE_MAX_AGE = 24 * 60 * 60
+_model_refreshing: set[str] = set()
+_model_refresh_lock = threading.Lock()
+
+
+def _parse_codex_models(output: str) -> list[dict]:
+    """Parse the intentionally unstable ``codex debug models`` response."""
+    try:
+        data = json.loads(output)
+        models = data["models"]
+        if not isinstance(models, list):
+            return []
+        out = []
+        for model in models:
+            if (
+                not isinstance(model, dict)
+                or model.get("visibility") != "list"
+                or model.get("upgrade") is not None
+            ):
+                continue
+            slug = model.get("slug")
+            label = model.get("display_name")
+            if (
+                not isinstance(slug, str) or not slug
+                or not isinstance(label, str) or not label
+            ):
+                return []
+            out.append({"id": slug, "label": label})
+        return out
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return []
+
+
+def _discover_codex_models() -> list[dict]:
+    """Best-effort Codex catalog discovery; every failure is an empty result."""
+    try:
+        result = subprocess.run(
+            ["codex", "debug", "models"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if result.returncode != 0:
+            return []
+        return _parse_codex_models(result.stdout)
+    except (OSError, subprocess.SubprocessError):
+        return []
 
 
 def _claude_command(entry: dict, mode: str, *, session_id: str = "",
@@ -355,11 +408,11 @@ HARNESSES = {
         # every model a wolt may be pinned to on this harness (Free binding: any
         # model pickable for any tier). Seed list — woltspace.json can add/remove.
         "model_catalog": [
-            {"id": "opus", "label": "Opus 4.8"},
-            {"id": "sonnet", "label": "Sonnet 5"},
-            {"id": "haiku", "label": "Haiku 4.5"},
+            {"id": "opus", "label": "Opus"},
+            {"id": "sonnet", "label": "Sonnet"},
+            {"id": "haiku", "label": "Haiku"},
             # `claude --model fable` alias verified live (2026-07-16)
-            {"id": "fable", "label": "Fable 5"},
+            {"id": "fable", "label": "Fable"},
         ],
         # how a skill is invoked inside a prompt
         "skill_invoke": "/{name}",
@@ -397,6 +450,7 @@ HARNESSES = {
             # VERIFY live: exact id for "Sol" from codex's /model picker
             {"id": "gpt-5.6-sol", "label": "GPT-5.6 Sol"},
         ],
+        "discover_models": _discover_codex_models,
         # codex's native skill mention (the mentions_v2 feature) — resolves a
         # discovered skill for real. `$name` only worked by the model choosing to
         # read the SKILL.md itself; `@` is the reliable trigger. Verified live 2026-07-16.
@@ -571,18 +625,106 @@ def _model_overlay(harness: str | None) -> dict:
         return {}
 
 
+def _model_cache_path(harness: str) -> Path:
+    return _woltspace_json_path().parent / ".space" / "models" / f"{harness}.json"
+
+
+def _read_model_cache(harness: str) -> tuple[list[dict], float | None]:
+    try:
+        data = json.loads(_model_cache_path(harness).read_text())
+        fetched_at = data["fetched_at"]
+        models = data["models"]
+        if not isinstance(fetched_at, (int, float)) or not isinstance(models, list):
+            return [], None
+        clean = []
+        for model in models:
+            if not isinstance(model, dict) or not isinstance(model.get("id"), str):
+                return [], None
+            label = model.get("label")
+            if not model["id"] or not isinstance(label, str) or not label:
+                return [], None
+            clean.append({"id": model["id"], "label": label})
+        return clean, float(fetched_at)
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return [], None
+
+
+def _model_cache_stale(harness: str, *, now: float | None = None) -> bool:
+    _, fetched_at = _read_model_cache(harness)
+    current = now if now is not None else time.time()
+    return fetched_at is None or current - fetched_at >= MODEL_CACHE_MAX_AGE
+
+
+def _write_model_cache(
+    harness: str,
+    models: list[dict],
+    *,
+    fetched_at: float | None = None,
+) -> None:
+    cache = _model_cache_path(harness)
+    cache.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    payload = {
+        "fetched_at": fetched_at if fetched_at is not None else time.time(),
+        "models": models,
+    }
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", dir=cache.parent, prefix=f".{harness}.", delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            json.dump(payload, handle, separators=(",", ":"))
+        temporary.chmod(0o600)
+        os.replace(temporary, cache)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _refresh_model_cache(harness: str) -> None:
+    try:
+        discover = get_harness(harness).get("discover_models")
+        if discover:
+            models = discover()
+            if models:
+                _write_model_cache(harness, models)
+    finally:
+        with _model_refresh_lock:
+            _model_refreshing.discard(harness)
+
+
+def refresh_model_catalogs(*, force: bool = False) -> None:
+    """Schedule stale harness discoveries without waiting for subprocesses."""
+    for harness, entry in HARNESSES.items():
+        if (
+            not entry.get("discover_models")
+            or (not force and not _model_cache_stale(harness))
+        ):
+            continue
+        with _model_refresh_lock:
+            if harness in _model_refreshing:
+                continue
+            _model_refreshing.add(harness)
+        threading.Thread(
+            target=_refresh_model_cache,
+            args=(harness,),
+            name=f"woltspace-models-{harness}",
+            daemon=True,
+        ).start()
+
+
 def model_catalog(harness: str | None) -> list[dict]:
-    """Selectable models for a harness as [{"id","label"}]: the built-in seed,
-    replaced by woltspace.json's "catalog" when present. The catalog list IS the
-    lever — add or hide a model by editing that one list, no code. Overlay entries
-    may be bare id strings or {"id","label"} objects; labels fall back to the
-    seed's (then to the id) so a user adding a model need only list its id.
-    """
-    seed = get_harness(harness).get("model_catalog", [])
+    """Return overlay, or cached discovery merged with the stable seed."""
+    resolved = resolve_harness(harness)
+    seed = get_harness(resolved).get("model_catalog", [])
+    discovered, _ = _read_model_cache(resolved)
+    merged = [dict(m) for m in discovered]
+    seen = {m["id"] for m in merged}
+    merged.extend(dict(m) for m in seed if m["id"] not in seen)
     ov_catalog = _model_overlay(harness).get("catalog")
     if ov_catalog is None:
-        return [dict(m) for m in seed]
-    label_by_id = {m["id"]: m.get("label", m["id"]) for m in seed}
+        return merged
+    label_by_id = {m["id"]: m.get("label", m["id"]) for m in reversed(merged)}
     out = []
     for item in ov_catalog:
         if isinstance(item, dict) and item.get("id"):

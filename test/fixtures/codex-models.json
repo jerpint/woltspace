@@ -1,0 +1,32 @@
+{
+  "models": [
+    {
+      "slug": "gpt-6-astra",
+      "display_name": "GPT-6 Astra",
+      "visibility": "list",
+      "upgrade": null,
+      "supported_in_api": true
+    },
+    {
+      "slug": "internal-canary",
+      "display_name": "Internal Canary",
+      "visibility": "hide",
+      "upgrade": null,
+      "supported_in_api": false
+    },
+    {
+      "slug": "gpt-6-enterprise",
+      "display_name": "GPT-6 Enterprise",
+      "visibility": "list",
+      "upgrade": {"plan": "enterprise"},
+      "supported_in_api": true
+    },
+    {
+      "slug": "gpt-6-sol",
+      "display_name": "GPT-6 Sol",
+      "visibility": "list",
+      "upgrade": null,
+      "supported_in_api": true
+    }
+  ]
+}
