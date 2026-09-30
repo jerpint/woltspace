@@ -45,6 +45,10 @@ def remote_digest(url, algorithm='sha256'):
         return hashlib.new(algorithm, response.read()).hexdigest()
 
 
+# release/* lets maintenance branches (release/0.5) ship patch releases.
+ENVIRONMENT_BRANCHES = {'main', 'release/*'}
+
+
 def check_environments():
     for name in ('pypi', 'npm'):
         env = get_json(f'https://api.github.com/repos/{REPO}/environments/{name}')
@@ -63,9 +67,19 @@ def check_environments():
                 and policy.get('protected_branches') is False,
                 f'{name}: select custom deployment branches')
         branches = get_json(f'https://api.github.com/repos/{REPO}/environments/{name}/deployment-branch-policies')['branch_policies']
-        require(len(branches) == 1 and branches[0]['name'] == 'main'
-                and branches[0]['type'] == 'branch', f'{name}: permit only main, no tags')
-    print('Both publishing environments require jerpint approval, main only, no bypass.')
+        names = [branch['name'] for branch in branches]
+        require('main' in names and set(names) <= ENVIRONMENT_BRANCHES and len(names) == len(set(names))
+                and all(branch['type'] == 'branch' for branch in branches),
+                f'{name}: permit only main (and optionally release/*), no tags')
+    print('Both publishing environments require jerpint approval, main or release branches only, no bypass.')
+
+
+def publishing_branch():
+    """The branch this run publishes from: main, or a release/X.Y maintenance branch."""
+    branch = os.environ.get('GITHUB_REF_NAME', '')
+    require(branch == 'main' or re.fullmatch(r'release/[0-9]+\.[0-9]+', branch) is not None,
+            'Publish only from main or a release/X.Y branch')
+    return branch
 
 
 def output(key, value):
@@ -75,7 +89,8 @@ def output(key, value):
 
 
 def source_run():
-    """Admit retained artifacts only from a validated main publishing run."""
+    """Admit retained artifacts only from a validated publishing run of this branch."""
+    branch = publishing_branch()
     run_id = os.environ.get('RESUME_RUN_ID', '')
     if not run_id:
         output('release_commit', os.environ['GITHUB_SHA'])
@@ -83,10 +98,10 @@ def source_run():
     require(re.fullmatch(r'[0-9]+', run_id) is not None, 'Original run ID must be numeric')
     base = f'https://api.github.com/repos/{REPO}/actions/runs/{run_id}'
     run = get_json(base)
-    require(run['head_repository']['full_name'] == REPO and run['head_branch'] == 'main'
+    require(run['head_repository']['full_name'] == REPO and run['head_branch'] == branch
             and run['path'] == '.github/workflows/publish.yml'
             and run['event'] == 'workflow_dispatch' and run['status'] == 'completed',
-            'Resume requires a completed main publishing run from this repository')
+            'Resume requires a completed publishing run of this branch from this repository')
     sha = run['head_sha']
     require(re.fullmatch(r'[0-9a-f]{40}', sha) is not None, 'Original commit is invalid')
     required = {'guard', 'validation / tests (3.11)', 'validation / tests (3.13)',
@@ -275,7 +290,7 @@ def finalize():
         require(tag_commit(tag) == (existing_commit or manifest['commit']), f'{tag}: tag commit mismatch')
         if release['isDraft']:
             gh('release', 'edit', tag, '--repo', REPO, '--draft=false',
-               f'--latest={"true" if registry == "python" else "false"}')
+               f'--latest={"true" if registry == "python" and publishing_branch() == "main" else "false"}')
         print(f'Verified GitHub release {tag} at {existing_commit or manifest["commit"]}.')
 
 
