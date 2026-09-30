@@ -68,6 +68,12 @@ writing. It refuses to overwrite an existing wolt or app. Installed wolts get:
 - the published identity, authored rules, and explicitly selected skills;
 - fresh, empty context and learnings.
 
+One selected skill may provide the wolt's initial site. Name that skill
+`<wolt-name>-site` and put the site at `site/index.html` inside it. During
+installation Woltspace copies that directory into `wolt/site` only when the
+site is missing or still exactly matches the generated starter page; it never
+overwrites an edited site.
+
 Apps are private and stopped after install. Ports are assigned from the
 receiving lodge's available range. Bundled source is copied; pinned HTTPS Git
 apps are cloned and checked out at the recorded commit. Dependencies and app

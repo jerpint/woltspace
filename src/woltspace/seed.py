@@ -313,6 +313,9 @@ def install_seed(
         stage = Path(tempfile.mkdtemp(prefix=".seed-install-", dir=wolts_dir))
         moved: list[Path] = []
         try:
+            runtime_lib = str(Path(install_root) / "container" / "lib")
+            if runtime_lib not in sys.path:
+                sys.path.insert(0, runtime_lib)
             for entry in manifest["wolts"]:
                 name = entry["name"]
                 _stage_wolt(
@@ -372,12 +375,11 @@ def install_seed(
                     raise SeedError(f"install destination appeared during commit: {target}")
                 (stage / "apps" / name).rename(target)
                 moved.append(target)
-            runtime_lib = str(Path(install_root) / "container" / "lib")
-            if runtime_lib not in sys.path:
-                sys.path.insert(0, runtime_lib)
             from skills_sync import seed_wolt_skills
             for name in summary.wolts:
-                seed_wolt_skills(Path(install_root), wolts_dir / name)
+                wolt_dir = wolts_dir / name
+                seed_wolt_skills(Path(install_root), wolt_dir)
+                _install_wolt_skill_site(wolt_dir, name)
             return {
                 "ok": True,
                 "seed": summary.name,
@@ -418,6 +420,16 @@ def _stage_wolt(source: Path, target: Path, name: str, template: Path, provenanc
     (memory / "context.md").write_text("# Context\n\nNew independent starter copy.\n", encoding="utf-8")
     (memory / "learnings.md").write_text("# Learnings\n\n", encoding="utf-8")
     _write_json(target / "wolt" / "wolt.json", config)
+    from wolts import is_rodent, scaffold_starter_site
+    if is_rodent(config.get("type", "raccoon")):
+        site = target / "wolt" / "site"
+        site.mkdir(parents=True, exist_ok=True)
+        for path in site.iterdir():
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        scaffold_starter_site(site, name, config.get("type", "raccoon"))
     template_rules = (target / "CLAUDE.md").read_text(encoding="utf-8")
     managed = _managed_rules(template_rules)
     authored = (source / "rules.md").read_text(encoding="utf-8").strip()
@@ -435,6 +447,56 @@ def _stage_wolt(source: Path, target: Path, name: str, template: Path, provenanc
             target / ".claude" / "skills" / skill_name,
         )
     subprocess.run(["git", "init", "-q", str(target)], check=False)
+
+
+def _install_wolt_skill_site(wolt_dir: Path, name: str) -> bool:
+    """Install the conventional ``<wolt>-site`` skill's initial site.
+
+    A seed may ship many skills, but only the skill named after the wolt plus
+    ``-site`` owns this optional presentation.  Never replace lived work: the
+    destination must be absent or exactly match the starter site that
+    ``scaffold_starter_site`` would generate for this wolt.
+    """
+    source = wolt_dir / ".claude" / "skills" / f"{name}-site" / "site"
+    if not (source / "index.html").is_file():
+        return False
+
+    site = wolt_dir / "wolt" / "site"
+    replace = not site.exists()
+    if site.is_dir():
+        from wolts import scaffold_starter_site
+
+        config = _read_json(wolt_dir / "wolt" / "wolt.json")
+        with tempfile.TemporaryDirectory(prefix="woltspace-starter-site-") as raw:
+            expected = Path(raw)
+            scaffold_starter_site(expected, name, config.get("type", "raccoon"))
+            replace = _trees_equal(site, expected)
+    if not replace:
+        return False
+
+    if site.exists():
+        shutil.rmtree(site)
+    shutil.copytree(source, site)
+    return True
+
+
+def _trees_equal(left: Path, right: Path) -> bool:
+    """Compare regular-file directory trees without following links."""
+    def entries(root: Path) -> dict[Path, tuple[str, bytes | None]]:
+        result = {}
+        for path in root.rglob("*"):
+            relative = path.relative_to(root)
+            if path.is_symlink():
+                result[relative] = ("link", None)
+            elif path.is_dir():
+                result[relative] = ("dir", None)
+            elif path.is_file():
+                result[relative] = ("file", path.read_bytes())
+            else:
+                result[relative] = ("other", None)
+        return result
+
+    return entries(left) == entries(right)
 
 
 def _export_app(source: Path, target: Path, selected_wolts: list[str]) -> dict:

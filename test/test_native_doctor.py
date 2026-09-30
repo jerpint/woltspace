@@ -60,6 +60,48 @@ def test_doctor_discovers_existing_host_auth_without_copying_it(tmp_path, monkey
     assert not layout.wolts_dir.exists()
 
 
+def test_doctor_recognizes_claude_keychain_account_metadata(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    host_home = tmp_path / "home"
+    host_home.mkdir()
+    (host_home / ".claude.json").write_text(json.dumps({
+        "oauthAccount": {"emailAddress": "owner@example.com"},
+    }))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: host_home))
+    monkeypatch.setattr("woltspace.doctor.sys.platform", "darwin")
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    with patch("woltspace.doctor.shutil.which", side_effect=lambda name: (
+        "/usr/bin/claude" if name == "claude" else None
+    )):
+        checks = run_doctor(layout, check_port=False)
+
+    auth = {check.name: check for check in checks}["host-auth"]
+    assert auth.status == "pass"
+    assert auth.detail == "claude (macOS Keychain)"
+
+
+def test_doctor_still_warns_without_claude_login_metadata(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    host_home = tmp_path / "home"
+    host_home.mkdir()
+    (host_home / ".claude.json").write_text(json.dumps({"projects": {}}))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: host_home))
+    monkeypatch.setattr("woltspace.doctor.sys.platform", "darwin")
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    with patch("woltspace.doctor.shutil.which", side_effect=lambda name: (
+        "/usr/bin/claude" if name == "claude" else None
+    )):
+        checks = run_doctor(layout, check_port=False)
+
+    auth = {check.name: check for check in checks}["host-auth"]
+    assert auth.status == "warn"
+    assert auth.detail == "no supported auth file detected"
+
+
 def test_doctor_warns_about_old_python3_on_path(tmp_path, monkeypatch):
     layout = _layout(tmp_path)
     monkeypatch.setattr("woltspace.doctor.shutil.which", lambda name: (

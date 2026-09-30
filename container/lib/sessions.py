@@ -1380,10 +1380,16 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
             # _opencode_command), so this used to launch a BRAND NEW agent in
             # the resumed session's slot: tmux alive, agent alive, prompt
             # delivered, conversation gone. Better to refuse and say why.
+            still_running = _tmux_alive(data)
+            guidance = (
+                "the tmux session is still running and may be waiting for input — open it"
+                if still_running else
+                "start a new session instead"
+            )
             raise ValueError(
                 f"session '{name}' cannot be resumed: no harness_session_id on "
                 f"record (the {harness} conversation id was never stamped, so "
-                f"there is no transcript to resume) — start a new session instead"
+                f"there is no transcript to resume) — {guidance}"
             )
         # Same CLI-prompt constraint as spawn — stamp for paste delivery.
         if get_harness(harness).get("prompt_via_paste"):
@@ -1798,10 +1804,15 @@ def resume_session(name: str, prompt: str = "") -> dict:
     claim_resume_id(registry, data, lambda d: registry.update(
         name, wolt=wolt, harness_session_id=d["harness_session_id"]))
     if not stored_resume_id(data):
+        guidance = (
+            "the tmux session is still running and may be waiting for input — open it"
+            if tmux_alive else
+            "start a new session for this wolt instead"
+        )
         raise ResumeUnavailable(
             f"session '{name}' has no {harness} conversation id on record "
             f"(harness_session_id was never stamped), so there is nothing to "
-            f"resume — start a new session for this wolt instead"
+            f"resume — {guidance}"
         )
 
     # Both resume paths deliver run-session.sh — the single runtime wrapper.

@@ -7,6 +7,7 @@ import pytest
 from woltspace.seed import (
     MAX_FILE_BYTES,
     SeedError,
+    _install_wolt_skill_site,
     _split_seed_git_source,
     create_seed,
     inspect_seed,
@@ -68,6 +69,14 @@ def make_skill(wolt: Path, name: str = "public-craft") -> None:
     skill = wolt / ".claude" / "skills" / name
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text("# Public Craft\n\nDo the craft.\n")
+
+
+def make_site_skill(wolt: Path, name: str = "raccoon") -> None:
+    skill = wolt / ".claude" / "skills" / f"{name}-site"
+    (skill / "site").mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# Raccoon Site\n\nOwn the starter site.\n")
+    (skill / "site" / "index.html").write_text("<h1>skill site</h1>\n")
+    (skill / "site" / "site.css").write_text("h1 { color: green; }\n")
 
 
 def make_app(root: Path, name: str = "tiny-app", keeper: str = "raccoon") -> Path:
@@ -211,6 +220,56 @@ def test_install_creates_fresh_independent_starters(tmp_path):
 
     with pytest.raises(SeedError, match="overwrite"):
         install_seed(source=package, wolts_dir=target, install_root=install_root)
+
+
+def test_install_uses_named_site_skill_for_initial_site(tmp_path):
+    source_wolts = tmp_path / "source-wolts"
+    source = make_wolt(source_wolts)
+    make_site_skill(source)
+    package = tmp_path / "package"
+    create_seed(
+        wolts_dir=source_wolts, output=package, name="starter",
+        wolt_names=["raccoon"], skills=["raccoon:raccoon-site"],
+    )
+    install_root = make_template(tmp_path)
+
+    target = tmp_path / "new-lodge"
+    install_seed(source=package, wolts_dir=target, install_root=install_root)
+
+    installed = target / "raccoon" / "wolt" / "site"
+    assert (installed / "index.html").read_text() == "<h1>skill site</h1>\n"
+    assert (installed / "site.css").is_file()
+    assert not (installed / "style.css").exists()
+
+
+@pytest.mark.parametrize("site_state", ["missing", "starter"])
+def test_site_skill_installs_into_missing_or_starter_site(tmp_path, site_state):
+    wolt = tmp_path / "raccoon"
+    write_json(wolt / "wolt" / "wolt.json", {"name": "raccoon", "type": "raccoon"})
+    make_site_skill(wolt)
+    if site_state == "starter":
+        from wolts import scaffold_starter_site
+        site = wolt / "wolt" / "site"
+        site.mkdir(parents=True)
+        scaffold_starter_site(site, "raccoon", "raccoon")
+
+    assert _install_wolt_skill_site(wolt, "raccoon") is True
+    assert (wolt / "wolt" / "site" / "index.html").read_text() == "<h1>skill site</h1>\n"
+
+
+def test_site_skill_does_not_replace_edited_site(tmp_path):
+    from wolts import scaffold_starter_site
+
+    wolt = tmp_path / "raccoon"
+    write_json(wolt / "wolt" / "wolt.json", {"name": "raccoon", "type": "raccoon"})
+    make_site_skill(wolt)
+    site = wolt / "wolt" / "site"
+    site.mkdir(parents=True)
+    scaffold_starter_site(site, "raccoon", "raccoon")
+    (site / "index.html").write_text("owner edited this site\n")
+
+    assert _install_wolt_skill_site(wolt, "raccoon") is False
+    assert (site / "index.html").read_text() == "owner edited this site\n"
 
 
 def _bare_seed_repository(tmp_path: Path) -> tuple[Path, str, str]:

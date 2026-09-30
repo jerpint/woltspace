@@ -202,7 +202,7 @@ test('terminal opening checks only its session before attach or resume', () => {
   assert.match(tuiSource, /fetch\('\/sessions\/' \+ encodeURIComponent\(session\) \+ '\/resume'/);
 });
 
-async function runEnsureSessionAlive(record) {
+async function runEnsureSessionAlive(record, resume = { ok: true, body: { status: 'running' } }) {
   const source = tuiSource.match(/async function ensureSessionAlive\(\) \{[\s\S]*?^  \}/m)?.[0];
   assert.ok(source, 'ensureSessionAlive function found');
   const calls = [];
@@ -215,7 +215,8 @@ async function runEnsureSessionAlive(record) {
     fetch: async (url, options = {}) => {
       calls.push(['fetch', url, options.method || 'GET']);
       if (url.endsWith('/resume')) {
-        return { ok: true, json: async () => ({ status: 'running' }) };
+        if (resume.throw) throw new Error('resume request failed');
+        return { ok: resume.ok, json: async () => resume.body };
       }
       return { ok: true, json: async () => record };
     },
@@ -233,11 +234,43 @@ test('terminal attaches to a running session with a live agent', async () => {
 });
 
 test('terminal resumes a tmux-alive session whose agent exited', async () => {
-  const calls = await runEnsureSessionAlive({ status: 'running', agent_alive: false });
+  const calls = await runEnsureSessionAlive({
+    status: 'running', agent_alive: false, tmux_alive: true,
+  });
   assert.deepEqual(calls, [
     ['fetch', '/sessions/n00b-one', 'GET'],
     ['status', 'connecting', 'resuming'],
     ['fetch', '/sessions/n00b-one/resume', 'POST'],
     ['attach'],
   ]);
+});
+
+test('terminal attaches to live tmux when resume fails', async () => {
+  const calls = await runEnsureSessionAlive(
+    { status: 'running', agent_alive: false, tmux_alive: true },
+    { ok: false, body: { error: 'no conversation id' } },
+  );
+  assert.deepEqual(calls, [
+    ['fetch', '/sessions/n00b-one', 'GET'],
+    ['status', 'connecting', 'resuming'],
+    ['fetch', '/sessions/n00b-one/resume', 'POST'],
+    ['attach'],
+  ]);
+});
+
+test('terminal reports resume failure when tmux is gone', async () => {
+  const calls = await runEnsureSessionAlive(
+    { status: 'orphaned', agent_alive: false, tmux_alive: false },
+    { ok: false, body: { error: 'no conversation id' } },
+  );
+  assert.deepEqual(calls.at(-1), ['status', 'disconnected', 'resume failed']);
+  assert.equal(calls.some(call => call[0] === 'attach'), false);
+});
+
+test('terminal attaches to live tmux when resume request throws', async () => {
+  const calls = await runEnsureSessionAlive(
+    { status: 'running', agent_alive: false, tmux_alive: true },
+    { throw: true },
+  );
+  assert.deepEqual(calls.at(-1), ['attach']);
 });
