@@ -34,6 +34,7 @@ def _client(root: Path, monkeypatch) -> TestClient:
 
 
 def test_empty_lodge_requires_an_explicit_harness_choice(tmp_path, monkeypatch):
+    monkeypatch.delenv("WOLTSPACE_DEFAULT_HARNESS", raising=False)
     client = _client(tmp_path, monkeypatch)
 
     assert client.get("/onboarding/status").json() == {
@@ -42,6 +43,69 @@ def test_empty_lodge_requires_an_explicit_harness_choice(tmp_path, monkeypatch):
         "has_user_wolt": False,
         "starter": {"state": "pending"},
     }
+
+
+def test_environment_harness_completes_first_run_and_installs_starter_once(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("WOLTSPACE_DEFAULT_HARNESS", "codex")
+    monkeypatch.setenv("WOLTSPACE_STARTER_SEED", "/tmp/starter-seed")
+    calls = []
+
+    def install(**kwargs):
+        calls.append(kwargs)
+        _wolt(tmp_path, "onboardie", origin="starter")
+        return {"ok": True, "wolts": ["onboardie"]}
+
+    monkeypatch.setattr("woltspace.seed.install_seed", install)
+    client = _client(tmp_path, monkeypatch)
+
+    first = client.get("/onboarding/status").json()
+    second = client.get("/onboarding/status").json()
+
+    assert first["needs_harness_choice"] is False
+    assert first["harness_selected"] is True
+    assert first["starter"] == {"state": "installed"}
+    assert second == first
+    assert len(calls) == 1
+    config = json.loads((tmp_path / "woltspace.json").read_text())
+    assert config["harness"]["default"] == "codex"
+
+
+def test_environment_harness_never_overrides_a_recorded_choice(tmp_path, monkeypatch):
+    (tmp_path / "woltspace.json").write_text(json.dumps({
+        "harness": {"default": "claude"},
+        "onboarding": {"harness_selected": True},
+    }))
+    monkeypatch.setenv("WOLTSPACE_DEFAULT_HARNESS", "codex")
+    monkeypatch.setenv("WOLTSPACE_STARTER_SEED", "/tmp/starter-seed")
+    calls = []
+    monkeypatch.setattr("woltspace.seed.install_seed", lambda **kwargs: calls.append(kwargs))
+    client = _client(tmp_path, monkeypatch)
+
+    status = client.get("/onboarding/status").json()
+
+    assert status["needs_harness_choice"] is False
+    assert calls == []
+    config = json.loads((tmp_path / "woltspace.json").read_text())
+    assert config["harness"]["default"] == "claude"
+    assert "starter_seed" not in config
+
+
+def test_invalid_environment_harness_keeps_question_and_warns(
+    tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.setenv("WOLTSPACE_DEFAULT_HARNESS", "winamp")
+    client = _client(tmp_path, monkeypatch)
+
+    status = client.get("/onboarding/status").json()
+
+    assert status["needs_harness_choice"] is True
+    assert status["harness_selected"] is False
+    assert not (tmp_path / "woltspace.json").exists()
+    warning = capsys.readouterr().err
+    assert "invalid WOLTSPACE_DEFAULT_HARNESS='winamp'" in warning
+    assert "registered harnesses" in warning
 
 
 def test_a_bundled_starter_does_not_complete_first_run(tmp_path, monkeypatch):
@@ -63,6 +127,12 @@ def test_an_existing_unmarked_wolt_migrates_as_user_owned(tmp_path, monkeypatch)
 
 
 def test_picker_selection_is_one_atomic_product_action(tmp_path, monkeypatch):
+    monkeypatch.delenv("WOLTSPACE_STARTER_SEED", raising=False)
+    calls = []
+    monkeypatch.setattr(
+        "woltspace.seed.install_seed",
+        lambda **kwargs: calls.append(kwargs) or {"ok": True},
+    )
     client = _client(tmp_path, monkeypatch)
 
     response = client.post("/onboarding/harness", json={"harness": "codex"})
@@ -72,6 +142,77 @@ def test_picker_selection_is_one_atomic_product_action(tmp_path, monkeypatch):
     config = json.loads((tmp_path / "woltspace.json").read_text())
     assert config["harness"]["default"] == "codex"
     assert config["onboarding"]["harness_selected"] is True
+    assert len(calls) == 1
+    assert calls[0]["source"] == state.DEFAULT_STARTER_SEED
+    assert config["starter_seed"]["source"] == state.DEFAULT_STARTER_SEED
+
+
+def test_starter_installs_once_after_harness_selection(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    monkeypatch.setenv("WOLTSPACE_STARTER_SEED", "/tmp/starter-seed")
+    calls = []
+
+    def install(**kwargs):
+        calls.append(kwargs)
+        _wolt(tmp_path, "onboardie", origin="starter")
+        return {"ok": True, "wolts": ["onboardie"]}
+
+    monkeypatch.setattr("woltspace.seed.install_seed", install)
+
+    first = client.post("/onboarding/harness", json={"harness": "codex"})
+    second = client.post("/onboarding/harness", json={"harness": "codex"})
+
+    assert first.status_code == second.status_code == 200
+    assert len(calls) == 1
+    assert calls[0]["source"] == "/tmp/starter-seed"
+    assert first.json()["starter"] == {"state": "installed"}
+    record = json.loads((tmp_path / "woltspace.json").read_text())["starter_seed"]
+    assert record["source"] == "/tmp/starter-seed"
+    assert record["result"]["state"] == "installed"
+
+
+def test_existing_wolt_skips_starter_once(tmp_path, monkeypatch):
+    _wolt(tmp_path, "existing")
+    client = _client(tmp_path, monkeypatch)
+    monkeypatch.setenv("WOLTSPACE_STARTER_SEED", "/tmp/starter-seed")
+    calls = []
+    monkeypatch.setattr("woltspace.seed.install_seed", lambda **kwargs: calls.append(kwargs))
+
+    response = client.post("/onboarding/harness", json={"harness": "codex"})
+
+    assert response.status_code == 200
+    assert calls == []
+    assert response.json()["starter"]["state"] == "skipped"
+
+
+def test_none_explicitly_skips_starter(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    monkeypatch.setenv("WOLTSPACE_STARTER_SEED", "none")
+
+    response = client.post("/onboarding/harness", json={"harness": "codex"})
+
+    assert response.status_code == 200
+    assert response.json()["starter"] == {
+        "state": "skipped", "reason": "starter seed disabled",
+    }
+
+
+def test_starter_failure_is_reported_without_blocking_onboarding(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    monkeypatch.setenv("WOLTSPACE_STARTER_SEED", "/tmp/broken-seed")
+
+    def fail(**kwargs):
+        raise ValueError("seed is broken")
+
+    monkeypatch.setattr("woltspace.seed.install_seed", fail)
+    response = client.post("/onboarding/harness", json={"harness": "codex"})
+
+    assert response.status_code == 200
+    assert response.json()["harness_selected"] is True
+    assert response.json()["starter"] == {
+        "state": "failed", "error": "seed is broken",
+    }
+    assert client.get("/onboarding/status").json()["starter"]["state"] == "failed"
 
 
 def test_starter_installs_once_after_harness_selection(tmp_path, monkeypatch):

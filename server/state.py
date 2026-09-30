@@ -23,6 +23,14 @@ if str(_lib_path) not in sys.path:
     sys.path.insert(0, str(_lib_path))
 
 from sessions import SessionRegistry  # noqa: E402
+from harnesses import HARNESSES  # noqa: E402
+
+
+DEFAULT_STARTER_SEED = (
+    "https://github.com/jerpint/woltspace-starter-lodge.git"
+    "@7e553b072bf6be18369f58dac62850b74d55d227"
+)
+_starter_seed_lock = threading.Lock()
 
 
 _starter_seed_lock = threading.Lock()
@@ -103,6 +111,32 @@ def select_onboarding_harness(name: str) -> None:
     _write_lodge_config(config)
 
 
+def apply_default_harness_from_env(installer=None) -> bool:
+    """Complete first-run from an installer's harness hint, at most once.
+
+    Returning ``True`` means this call made the first-run choice. Existing
+    owner choices always win, and invalid hints leave the browser prompt in
+    place.
+    """
+    if has_selected_default_harness():
+        return False
+    name = (os.environ.get("WOLTSPACE_DEFAULT_HARNESS") or "").strip()
+    if not name:
+        return False
+    if name not in HARNESSES:
+        registered = ", ".join(sorted(HARNESSES))
+        print(
+            f"[onboarding] ignoring invalid WOLTSPACE_DEFAULT_HARNESS={name!r}; "
+            f"registered harnesses: {registered}",
+            file=sys.stderr,
+        )
+        return False
+    select_onboarding_harness(name)
+    install_starter_seed(installer=installer)
+    print(f"[onboarding] selected default harness from environment: {name}")
+    return True
+
+
 def install_starter_seed(installer=None) -> dict:
     """Attempt the configured starter once, without making onboarding fragile."""
     with _starter_seed_lock:
@@ -111,7 +145,10 @@ def install_starter_seed(installer=None) -> dict:
         if isinstance(existing, dict):
             return existing
 
-        source = (os.environ.get("WOLTSPACE_STARTER_SEED") or "").strip()
+        configured_source = os.environ.get("WOLTSPACE_STARTER_SEED")
+        source = (
+            DEFAULT_STARTER_SEED if configured_source is None else configured_source
+        ).strip()
         installed_at = datetime.now(timezone.utc).isoformat()
         if _has_any_wolt():
             record = {
