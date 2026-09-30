@@ -53,7 +53,7 @@ Tell the human:
 >
 > Also grab your **Account ID** and **Zone ID** from the Cloudflare dashboard → your domain → Overview page (right sidebar).
 
-Wait for all three values. Add them to the shared `.env` (`/workspace/wolts/.env`):
+Wait for all three values. Add them to the shared `.env` (`$WOLTSPACE_WOLTS_DIR/.env`):
 
 ```
 CLOUDFLARE_API_TOKEN=<token>
