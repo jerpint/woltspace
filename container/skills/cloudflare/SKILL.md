@@ -24,7 +24,7 @@ Ask the user which task they need, then read the matching sub-doc and follow it 
 Quick check for which state the user is in:
 
 ```bash
-source /workspace/wolts/.env
+eval "$(grep -E '^CLOUDFLARE_[A-Z_]+=' "${WOLTSPACE_WOLTS_DIR:-$HOME/.woltspace/wolts}/.env" | sed 's/^/export /')"
 echo "TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:+SET}"
 echo "TUNNEL_URL=${CLOUDFLARE_TUNNEL_URL:-NOT SET}"
 echo "API_TOKEN=${CLOUDFLARE_API_TOKEN:+SET}"

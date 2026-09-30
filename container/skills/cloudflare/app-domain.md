@@ -33,10 +33,10 @@ printf 'App gateway port: %s\n' "$GATEWAY_PORT"
 
 The API returns the effective gateway port; when it has not been customized, the default is the lodge port minus 660.
 
-Load the existing Cloudflare credentials and identify the named tunnel. If `CLOUDFLARE_TUNNEL_ID` was not saved, list the account's tunnels and select the exact existing Woltspace tunnel rather than guessing:
+Load the Cloudflare credentials (only the `CLOUDFLARE_*` lines - the file can hold multi-line values that break `source`) and identify the named tunnel. If `CLOUDFLARE_TUNNEL_ID` was not saved, list the account's tunnels and select the exact existing Woltspace tunnel rather than guessing:
 
 ```bash
-source /workspace/wolts/.env
+eval "$(grep -E '^CLOUDFLARE_[A-Z_]+=' "${WOLTSPACE_WOLTS_DIR:-$HOME/.woltspace/wolts}/.env" | sed 's/^/export /')"
 curl -fsS "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/cfd_tunnel?is_deleted=false" \
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
 ```
@@ -173,11 +173,11 @@ curl -fsS -X POST "$WOLTSPACE_API/settings/access" \
   }'
 ```
 
-Confirm both POST responses contain `"ok": true`. App-domain and gateway lifecycle changes apply on the next lodge start; tell the owner that a restart is needed, but do not restart the lodge unless they explicitly ask.
+Confirm both POST responses contain `"ok": true`. The gateway reads the app domain and Access settings on every request, so no restart is needed. Only a change of the gateway port itself (`/settings/app-gateway`) applies on the next lodge start.
 
 ## Step 7: Verify before removing anything old
 
-After the owner restarts the lodge, choose a running app and verify the new edge route:
+Choose a running app and verify the new edge route:
 
 ```bash
 curl -sS -o /dev/null -D - "https://<app>.$APP_DOMAIN"

@@ -15,7 +15,7 @@ If you're not sure where the email currently has access, list every Access app a
 ## Step 2: Check env
 
 ```bash
-source /workspace/wolts/.env
+eval "$(grep -E '^CLOUDFLARE_[A-Z_]+=' "${WOLTSPACE_WOLTS_DIR:-$HOME/.woltspace/wolts}/.env" | sed 's/^/export /')"
 echo "API_TOKEN=${CLOUDFLARE_API_TOKEN:+SET}"
 echo "ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-NOT SET}"
 ```
@@ -27,7 +27,7 @@ If either is missing, the named tunnel hasn't been set up yet — point the user
 List Access apps and their policies. This is verbose by design — show the user every policy that includes the target email so they can confirm which ones to remove.
 
 ```bash
-source /workspace/wolts/.env
+eval "$(grep -E '^CLOUDFLARE_[A-Z_]+=' "${WOLTSPACE_WOLTS_DIR:-$HOME/.woltspace/wolts}/.env" | sed 's/^/export /')"
 EMAIL="<email>"
 
 curl -s "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps" \
@@ -57,7 +57,7 @@ Show the matching rows to the user and ask which policy (or policies) to delete.
 For each policy the user confirmed:
 
 ```bash
-source /workspace/wolts/.env
+eval "$(grep -E '^CLOUDFLARE_[A-Z_]+=' "${WOLTSPACE_WOLTS_DIR:-$HOME/.woltspace/wolts}/.env" | sed 's/^/export /')"
 APP_ID="<app_id>"
 POLICY_ID="<policy_id>"
 

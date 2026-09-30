@@ -64,7 +64,7 @@ CLOUDFLARE_ZONE_ID=<zone_id>
 Verify the token works:
 
 ```bash
-source /workspace/wolts/.env
+eval "$(grep -E '^CLOUDFLARE_[A-Z_]+=' "${WOLTSPACE_WOLTS_DIR:-$HOME/.woltspace/wolts}/.env" | sed 's/^/export /')"
 curl -s "https://api.cloudflare.com/client/v4/user/tokens/verify" \
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" | python3 -c "
 import json,sys; r=json.load(sys.stdin)
@@ -87,7 +87,7 @@ Also choose an app domain now. Recommend a separate registered domain such as `t
 Run the following API calls. Replace `<subdomain>` and `<domain>` with the user's choices.
 
 ```bash
-source /workspace/wolts/.env
+eval "$(grep -E '^CLOUDFLARE_[A-Z_]+=' "${WOLTSPACE_WOLTS_DIR:-$HOME/.woltspace/wolts}/.env" | sed 's/^/export /')"
 
 # Create the tunnel
 TUNNEL_RESULT=$(curl -s -X POST \
@@ -149,7 +149,7 @@ This adds email OTP login at Cloudflare's edge — unauthenticated requests neve
 Ask the human for their email address, then:
 
 ```bash
-source /workspace/wolts/.env
+eval "$(grep -E '^CLOUDFLARE_[A-Z_]+=' "${WOLTSPACE_WOLTS_DIR:-$HOME/.woltspace/wolts}/.env" | sed 's/^/export /')"
 
 # Create Access application
 APP_RESULT=$(curl -s -X POST \
@@ -191,7 +191,7 @@ That guide creates wildcard DNS and Access, safely merges the gateway ingress ru
 Start the named tunnel manually to verify:
 
 ```bash
-source /workspace/wolts/.env
+eval "$(grep -E '^CLOUDFLARE_[A-Z_]+=' "${WOLTSPACE_WOLTS_DIR:-$HOME/.woltspace/wolts}/.env" | sed 's/^/export /')"
 cloudflared tunnel run --token "$CLOUDFLARE_TUNNEL_TOKEN" &
 sleep 3
 curl -s -o /dev/null -w "%{http_code}" "https://<subdomain>.<domain>"
