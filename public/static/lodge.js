@@ -304,7 +304,8 @@ function renderSidebarWolts() {
     more.onclick = e => { if (document.getElementById('wolts-view')) { e.preventDefault(); showView('wolts'); } };
     container.appendChild(more);
   }
-  if (typeof renderWoltsPage === 'function') renderWoltsPage();
+  const woltsViewBusy = document.querySelector('#wolts-view .session-control[data-mode]');
+  if (typeof renderWoltsPage === 'function' && !woltsViewBusy) renderWoltsPage();
 }
 
 // ── Engine picker (per-wolt harness override) ──
@@ -592,33 +593,18 @@ function renderSessions() {
     const session = byName.get(row.dataset.session);
     if (session) updateSessionRow(row, session);
   });
-  container.querySelectorAll('.sessions-group').forEach(group => {
-    const count = online.filter(session => (session.wolt || 'unknown') === group.dataset.wolt).length;
-    const groupTotal = sessionTotals[group.dataset.wolt] ?? group.querySelectorAll('.session-row').length;
-    group.querySelector('.sessions-group-meta').textContent = `${count} online · ${groupTotal} total`;
-  });
-
   const groups = new Map();
   online.forEach(session => {
     const name = session.wolt || 'unknown';
     if (!groups.has(name)) groups.set(name, []);
     groups.get(name).push(session);
   });
-  if (!online.length) {
-    if (!container.querySelector('.sessions-group')) {
-      const empty = lodgeElement('div', 'empty-state');
-      empty.append(lodgeElement('div', 'empty-state-icon', '🌿'), lodgeElement('div', 'empty-state-text', 'no sessions online'));
-      container.replaceChildren(empty);
-    }
-    return;
-  }
-  container.querySelector('.empty-state')?.remove();
+  if (online.length) container.querySelector('.empty-state')?.remove();
   [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).forEach(([wolt, sessions]) => {
     let group = [...container.querySelectorAll('.sessions-group')].find(node => node.dataset.wolt === wolt);
     const woltData = allWolts.find(w => (w.name || w.dir) === wolt);
     const emoji = woltData ? (WOLT_EMOJI[woltData.type] || '🦫') : '🦫';
     const sessionSprite = woltData ? woltSpriteAvatar(woltData.type, 20) : null;
-    const total = sessionTotals[wolt] ?? sessions.length;
     if (!group) {
       group = lodgeElement('div', 'sessions-group'); group.dataset.wolt = wolt;
       const header = lodgeElement('div', 'sessions-group-header');
@@ -635,9 +621,19 @@ function renderSessions() {
         .find(node => node.dataset.wolt.localeCompare(wolt) > 0);
       container.insertBefore(group, next || null);
     }
-    group.querySelector('.sessions-group-meta').textContent = `${sessions.length} online · ${total} total`;
     syncSessionRows(group.querySelector('.sessions-group-inner'), sessions);
   });
+  container.querySelectorAll('.sessions-group').forEach(group => {
+    const wolt = group.dataset.wolt;
+    const count = online.filter(session => (session.wolt || 'unknown') === wolt).length;
+    const total = sessionTotals[wolt] ?? group.querySelectorAll('.session-row').length;
+    group.querySelector('.sessions-group-meta').textContent = `${count} online · ${total} total`;
+  });
+  if (!online.length && !container.querySelector('.sessions-group')) {
+    const empty = lodgeElement('div', 'empty-state');
+    empty.append(lodgeElement('div', 'empty-state-icon', '🌿'), lodgeElement('div', 'empty-state-text', 'no sessions online'));
+    container.replaceChildren(empty);
+  }
 }
 
 // ── Session group toggle ──

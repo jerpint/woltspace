@@ -11,6 +11,7 @@
   const titleFor = session => (session.title || session.name || 'untitled session').trim();
   const stampFor = session => session.last_activity || session.created_at || 0;
   const stopEvents = event => { event.preventDefault(); event.stopPropagation(); };
+  const controlState = session => sessionIsOnline(session) ? 'stop' : session.openable === true ? 'resume' : 'none';
 
   function sessionControl(session) {
     const host = make('div', 'session-control');
@@ -97,6 +98,7 @@
     };
 
     host._session = session;
+    host._state = controlState(session);
     host._render = render;
     render();
     return host;
@@ -118,8 +120,13 @@
     titleNode.classList.toggle('untitled', !session.title);
     row.querySelector('.session-sub').textContent = `${session.summary ? `${session.summary} · ` : ''}${state}`;
     row.querySelector('.session-date').textContent = stampFor(session) ? formatter(stampFor(session)) : '';
-    const nextControl = sessionControl(session);
-    if (control) control.replaceWith(nextControl); else row.appendChild(nextControl);
+    const nextState = controlState(session);
+    if (control?._state === nextState) {
+      Object.assign(control._session, session);
+    } else {
+      const nextControl = sessionControl(session);
+      if (control) control.replaceWith(nextControl); else row.appendChild(nextControl);
+    }
     row._session = session;
   }
 

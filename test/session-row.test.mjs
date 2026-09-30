@@ -109,3 +109,15 @@ test('failed stop restores the stop control and reports inline', async () => {
   assert.equal(row.querySelector('.session-control-button').textContent, '■');
   assert.equal(row.querySelector('.session-control-error').textContent, "couldn't stop");
 });
+
+test('poll updates preserve a control and its keyboard focus while state is unchanged', () => {
+  const api = load(async () => ({ ok: true }));
+  const row = api.sessionRow({ name: 'same', title: 'Before', status: 'running', alive: true });
+  const control = row.querySelector('.session-control');
+  const button = row.querySelector('.session-control-button');
+  button.focus();
+  api.updateSessionRow(row, { name: 'same', title: 'After', status: 'running', alive: true });
+  assert.equal(row.querySelector('.session-control'), control);
+  assert.equal(document.activeElement, button);
+  assert.equal(row.querySelector('.session-title').textContent, 'After');
+});
