@@ -114,6 +114,8 @@ from .state import (
     sanitize_session,
     set_current_url,
     onboarding_status,
+    apply_default_harness_from_env,
+    install_starter_seed,
     select_onboarding_harness,
 )
 
@@ -227,6 +229,7 @@ def _start_tool_gc():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     STATE_DIR.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(apply_default_harness_from_env)
     tool_registry.restore()
     apps_restore()
     _start_file_watcher()
@@ -1633,6 +1636,7 @@ async def set_session_expiry_setting(request: Request):
 @app.get("/onboarding/status")
 async def get_onboarding_status():
     """First-run UI state, independent of every harness's authentication."""
+    await asyncio.to_thread(apply_default_harness_from_env)
     return onboarding_status()
 
 
@@ -1644,6 +1648,7 @@ async def choose_onboarding_harness(request: Request):
     if name not in HARNESSES:
         return JSONResponse({"error": f"unknown harness: {name}"}, status_code=400)
     select_onboarding_harness(name)
+    await asyncio.to_thread(install_starter_seed)
     return {"ok": True, "default": name, **onboarding_status()}
 
 

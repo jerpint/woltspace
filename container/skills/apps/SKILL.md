@@ -139,7 +139,7 @@ Requires a one-time Cloudflare setup after the named tunnel is configured: wildc
 ## Key rules
 
 - **Always use the API to start/stop** — never run start commands directly
-- **Never edit `/workspace/woltspace/`** — that's the platform
+- **Never edit `$WOLTSPACE_DIR/`** — that's the platform install
 - **Apps are portable** — should work if copied out of woltspace
 - **Write woltspace.json after setup** — or the app is invisible
 - **Use `$PORT` in start commands** — the platform expands it to your manifest port

@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import socket
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,6 +60,52 @@ CLAUDE_TOKEN_VARS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 def _claude_token_in_env() -> bool:
     """Whether Claude Code would start logged in from the environment alone."""
     return any((os.environ.get(name) or "").strip() for name in CLAUDE_TOKEN_VARS)
+
+
+def _path_python_check() -> DoctorCheck | None:
+    """Describe an old ambient python without mistaking it for our runtime."""
+    executable = shutil.which("python3")
+    if not executable:
+        return None
+    try:
+        output = subprocess.check_output(
+            [executable, "-c", "import sys; print('.'.join(map(str, sys.version_info[:3])))"],
+            text=True,
+            timeout=5,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        version = tuple(int(part) for part in output.split("."))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    if version >= (3, 11):
+        return DoctorCheck("path-python", "pass", f"{executable} is Python {output}")
+    return DoctorCheck(
+        "path-python",
+        "warn",
+        f"{executable} is Python {output}; platform helpers use {sys.executable}",
+        "Keep WOLTSPACE_PYTHON set to the lodge interpreter; do not use this python3 for platform helpers.",
+    )
+
+
+def _default_harness_check() -> DoctorCheck | None:
+    name = (os.environ.get("WOLTSPACE_DEFAULT_HARNESS") or "").strip()
+    if not name:
+        return None
+    try:
+        from harnesses import HARNESSES
+    except ImportError:
+        return DoctorCheck(
+            "default-harness", "warn", f"cannot validate {name!r}",
+            "Reinstall Woltspace so its harness registry is available.",
+        )
+    if name in HARNESSES:
+        return DoctorCheck("default-harness", "pass", f"{name} is registered")
+    registered = ", ".join(sorted(HARNESSES))
+    return DoctorCheck(
+        "default-harness", "warn",
+        f"WOLTSPACE_DEFAULT_HARNESS={name!r} is not registered",
+        f"Use one of: {registered}. The first-run harness question will remain visible.",
+    )
 
 
 def _auth_paths(home: Path) -> dict[str, Path]:
@@ -326,6 +373,13 @@ def run_doctor(
         f"Python {version.major}.{version.minor}.{version.micro}",
         "Install Python 3.11 or newer." if version < (3, 11) else "",
     ))
+
+    path_python = _path_python_check()
+    if path_python is not None:
+        checks.append(path_python)
+    default_harness = _default_harness_check()
+    if default_harness is not None:
+        checks.append(default_harness)
 
     required_assets = (
         layout.install_root / "server",

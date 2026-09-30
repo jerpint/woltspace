@@ -5,6 +5,7 @@
 let allWolts = [];
 let allApps = [];
 let allSessions = [];
+let lodgeSessionsLoaded = false;
 let sessionTotals = {};
 let appFilter = 'all';
 let currentView = 'home';
@@ -125,6 +126,7 @@ async function loadWolts() {
     allWolts = await woltsResponse.json();
     firstRun = await onboardingResponse.json();
     renderSidebarWolts();
+    renderStarterWelcome();
     if (allApps.length) renderApps();
   } catch {
     document.getElementById('sidebar-wolts').innerHTML = '';
@@ -140,7 +142,9 @@ function renderFirstRunHarnessChoice() {
   panel.style.display = needsChoice ? '' : 'none';
   const cta = document.getElementById('home-create-cta');
   if (cta) {
-    cta.style.display = !needsChoice && firstRun.has_user_wolt === false ? '' : 'none';
+    const starterWelcome = document.getElementById('home-starter-welcome');
+    const starterVisible = starterWelcome && starterWelcome.style.display !== 'none';
+    cta.style.display = !needsChoice && firstRun.has_user_wolt === false && !starterVisible ? '' : 'none';
   }
   if (!needsChoice) return;
 
@@ -181,12 +185,45 @@ async function chooseHomeHarness(id, button) {
     if (homeHarnessSelected !== id) return;
     firstRun = result;
     renderFirstRunHarnessChoice();
+    await loadWolts();
+    await loadSessions();
   } catch (error) {
     if (homeHarnessSelected === id) {
       status.textContent = error.message || 'try again';
       document.querySelectorAll('.home-harness-option').forEach(el => { el.disabled = false; });
     }
   }
+}
+
+function renderStarterWelcome() {
+  const card = document.getElementById('home-starter-welcome');
+  if (!card) return;
+  const startersOnly = allWolts.length > 0
+    && allWolts.every(wolt => wolt.origin === 'starter');
+  const untouched = lodgeSessionsLoaded && startersOnly && allWolts.every(wolt => {
+    const name = wolt.dir || wolt.name;
+    const projected = allSessions.filter(session => session.wolt === name).length;
+    return (sessionTotals[name] ?? projected) === 0;
+  });
+  if (!untouched) {
+    card.style.display = 'none';
+    card.replaceChildren();
+    return;
+  }
+
+  const wolt = allWolts[0];
+  const name = wolt.name || wolt.dir;
+  const emoji = wolt.emoji || WOLT_EMOJI[wolt.type] || '🦫';
+  const button = lodgeElement('button', 'home-starter-button', `Say hi ${emoji}`);
+  button.type = 'button';
+  button.addEventListener('click', () => {
+    card.style.display = 'none';
+    startSession(name);
+  });
+  card.replaceChildren(button);
+  card.style.display = '';
+  const cta = document.getElementById('home-create-cta');
+  if (cta) cta.style.display = 'none';
 }
 
 // Sidebar = the wolts you're likely to want right now. A small lodge lists everyone;
@@ -514,6 +551,7 @@ function applyLodgeSessions(payload, persist = false) {
   const sessions = Array.isArray(payload) ? payload : payload?.sessions;
   if (!Array.isArray(sessions)) return;
   allSessions = sessions;
+  if (persist) lodgeSessionsLoaded = true;
   sessionTotals = payload && !Array.isArray(payload) && payload.totals
     ? payload.totals : {};
   if (persist) {
@@ -525,6 +563,7 @@ function applyLodgeSessions(payload, persist = false) {
   }
   renderSidebarWolts();
   renderSessions();
+  renderStarterWelcome();
 }
 
 function restoreLodgeSessions() {

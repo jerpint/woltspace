@@ -289,6 +289,25 @@
   font-size: 13px;
   color: var(--ink-2);
 }
+.home-starter-welcome {
+  width: min(420px, 100%);
+  margin-top: 22px;
+  display: flex;
+  justify-content: center;
+  animation: fadeUp 0.5s ease;
+}
+.home-starter-button {
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 650;
+  color: white;
+  background: var(--green, #3A6644);
+  border: none;
+  border-radius: 9px;
+  padding: 11px 22px;
+  cursor: pointer;
+}
+.home-starter-button:hover { background: #2e5438; }
 /* ── Create wolt CTA (shown until the first user-owned wolt exists) ── */
 .home-create-cta {
   margin-top: 20px;

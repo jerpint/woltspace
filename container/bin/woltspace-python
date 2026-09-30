@@ -103,10 +103,9 @@ fi
 #    that are not venv-shaped (pip --user) and a bundle running from a checkout.
 #
 #    Which `woltspace` matters: this very directory holds one too — the thin
-#    HTTP control client, whose shebang is a bare `#!/usr/bin/env python3`. That
-#    is the *ambient* python and it owns none of the wheel's dependencies, so
-#    borrowing from it lands on an interpreter without PyJWT. Skip any candidate
-#    sitting in a `container/bin`, and verify the result either way.
+#    HTTP control client. It now routes through this shim too; borrowing its
+#    shebang would recurse. Skip any candidate sitting in a `container/bin`,
+#    and verify every other result either way.
 #    Walk PATH by hand, in the current shell: `command -v -a` is not portable,
 #    and we want every candidate rather than only the first.
 _interp_from_shebang() {

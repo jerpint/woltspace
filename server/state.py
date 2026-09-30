@@ -1,8 +1,11 @@
 """State management — viewport, views history, bot log, status."""
 
 import json
+import os
 import sys
+import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import (
@@ -20,6 +23,14 @@ if str(_lib_path) not in sys.path:
     sys.path.insert(0, str(_lib_path))
 
 from sessions import SessionRegistry  # noqa: E402
+from harnesses import HARNESSES  # noqa: E402
+
+
+DEFAULT_STARTER_SEED = (
+    "https://github.com/jerpint/woltspace-starter-lodge.git"
+    "@7e553b072bf6be18369f58dac62850b74d55d227"
+)
+_starter_seed_lock = threading.Lock()
 
 
 def ensure_state_dir():
@@ -64,6 +75,21 @@ def _lodge_config() -> dict:
         return {}
 
 
+def _write_lodge_config(config: dict) -> None:
+    path = WOLTS_DIR / "woltspace.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(config, indent=2) + "\n")
+    tmp.rename(path)
+
+
+def _has_any_wolt() -> bool:
+    try:
+        return any(WOLTS_DIR.glob("*/wolt/wolt.json"))
+    except OSError:
+        return False
+
+
 def has_selected_default_harness() -> bool:
     """Whether the owner explicitly answered the first-open harness prompt."""
     return _lodge_config().get("onboarding", {}).get("harness_selected") is True
@@ -76,14 +102,111 @@ def select_onboarding_harness(name: str) -> None:
     Keeping this write beside the reader makes first-open state independent of
     harness implementation details and authentication.
     """
-    path = WOLTS_DIR / "woltspace.json"
     config = _lodge_config()
     config.setdefault("harness", {})["default"] = name
     config.setdefault("onboarding", {})["harness_selected"] = True
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(config, indent=2) + "\n")
-    tmp.rename(path)
+    _write_lodge_config(config)
+
+
+def apply_default_harness_from_env(installer=None) -> bool:
+    """Complete first-run from an installer's harness hint, at most once.
+
+    Returning ``True`` means this call made the first-run choice. Existing
+    owner choices always win, and invalid hints leave the browser prompt in
+    place.
+    """
+    if has_selected_default_harness():
+        return False
+    name = (os.environ.get("WOLTSPACE_DEFAULT_HARNESS") or "").strip()
+    if not name:
+        return False
+    if name not in HARNESSES:
+        registered = ", ".join(sorted(HARNESSES))
+        print(
+            f"[onboarding] ignoring invalid WOLTSPACE_DEFAULT_HARNESS={name!r}; "
+            f"registered harnesses: {registered}",
+            file=sys.stderr,
+        )
+        return False
+    select_onboarding_harness(name)
+    install_starter_seed(installer=installer)
+    print(f"[onboarding] selected default harness from environment: {name}")
+    return True
+
+
+def install_starter_seed(installer=None) -> dict:
+    """Attempt the configured starter once, without making onboarding fragile."""
+    with _starter_seed_lock:
+        config = _lodge_config()
+        existing = config.get("starter_seed")
+        if isinstance(existing, dict):
+            return existing
+
+        configured_source = os.environ.get("WOLTSPACE_STARTER_SEED")
+        source = (
+            DEFAULT_STARTER_SEED if configured_source is None else configured_source
+        ).strip()
+        installed_at = datetime.now(timezone.utc).isoformat()
+        if _has_any_wolt():
+            record = {
+                "source": source,
+                "installed_at": installed_at,
+                "result": {"state": "skipped", "reason": "lodge already has wolts"},
+            }
+            config["starter_seed"] = record
+            _write_lodge_config(config)
+            return record
+        if not source or source.lower() == "none":
+            record = {
+                "source": source,
+                "installed_at": installed_at,
+                "result": {"state": "skipped", "reason": "starter seed disabled"},
+            }
+            config["starter_seed"] = record
+            _write_lodge_config(config)
+            return record
+
+        # Claim the one attempt before touching the source. A crash cannot make
+        # a restart silently repeat a partially completed import.
+        record = {
+            "source": source,
+            "installed_at": installed_at,
+            "result": {"state": "installing"},
+        }
+        config["starter_seed"] = record
+        _write_lodge_config(config)
+        try:
+            if installer is None:
+                from woltspace.seed import install_seed
+                installer = install_seed
+            details = installer(
+                source=source,
+                wolts_dir=WOLTS_DIR,
+                install_root=WOLTSPACE_DIR,
+            )
+            record["result"] = {"state": "installed", "details": details}
+        except Exception as exc:
+            record["result"] = {"state": "failed", "error": str(exc)}
+            print(f"[starter-seed] install failed: {exc}", file=sys.stderr)
+        config = _lodge_config()
+        config["starter_seed"] = record
+        _write_lodge_config(config)
+        return record
+
+
+def starter_seed_status() -> dict:
+    record = _lodge_config().get("starter_seed")
+    if not isinstance(record, dict):
+        return {"state": "pending"}
+    result = record.get("result")
+    if not isinstance(result, dict):
+        return {"state": "failed", "error": "invalid starter seed record"}
+    status = {"state": result.get("state", "failed")}
+    if result.get("error"):
+        status["error"] = result["error"]
+    if result.get("reason"):
+        status["reason"] = result["reason"]
+    return status
 
 
 def onboarding_status() -> dict:
@@ -96,6 +219,7 @@ def onboarding_status() -> dict:
         "needs_harness_choice": not selected and not has_user_wolt,
         "harness_selected": selected,
         "has_user_wolt": has_user_wolt,
+        "starter": starter_seed_status(),
     }
 
 

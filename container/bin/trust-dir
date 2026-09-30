@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env woltspace-python
 """Add a directory to Claude's trusted projects in ~/.claude.json.
 
 Usage: trust-dir <directory>

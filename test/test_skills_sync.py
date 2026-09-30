@@ -349,6 +349,34 @@ class TestStartSyncsSkills:
         sync.assert_called_once_with(layout)
         sync_docs.assert_called_once_with(layout.wolts_dir, layout.install_root)
 
+    def test_a_brand_new_data_root_exists_before_the_sync(self, tmp_path):
+        # First start on a fresh machine: the data root doesn't exist yet. The
+        # sync must see it, or it reports "not synced" for no real reason.
+        layout = _layout(tmp_path)
+        assert not layout.wolts_dir.exists()
+        stopped = {"state": "stopped", "owner": {}, "health": None}
+        seen = {}
+
+        with (
+            patch("woltspace.lifecycle.inspect_instance", return_value=stopped),
+            patch("woltspace.lifecycle.run_doctor", return_value=[]),
+            patch("woltspace.lifecycle.doctor_ok", return_value=True),
+            patch(
+                "woltspace.lifecycle.sync_platform_skills",
+                side_effect=lambda lay: seen.setdefault("skills", lay.wolts_dir.is_dir()),
+            ),
+            patch(
+                "woltspace.lifecycle.sync_claude_md_platform_section",
+                side_effect=lambda wolts, _root: seen.setdefault("docs", wolts.is_dir()),
+            ),
+            patch("woltspace.lifecycle.subprocess.Popen") as popen,
+            patch("woltspace.lifecycle.read_health", return_value=None),
+        ):
+            popen.return_value.poll.return_value = 3
+            start(layout, timeout=0.1)
+
+        assert seen == {"skills": True, "docs": True}
+
     def test_a_failed_sync_is_reported_not_raised(self, tmp_path):
         layout = _layout(tmp_path)
         stopped = {"state": "stopped", "owner": {}, "health": None}
@@ -502,6 +530,16 @@ class TestEnsurePlatformSkills:
         link = wolt / ".claude" / "skills" / "woltspace"
         assert link.is_symlink()
         assert link.resolve() == source.resolve()
+
+    def test_plugin_delivery_exposes_start_chat_modes(self, tmp_path):
+        wolt = _plugin_wolt(tmp_path)
+
+        ensure_platform_skills(wolt, "codex", SHIPPED_SKILLS)
+
+        delivered = wolt / ".claude" / "skills" / "woltspace" / "start-chat"
+        assert (delivered / "modes" / "lodge.md").is_file()
+        assert (delivered / "modes" / "telegram.md").is_file()
+        assert (delivered / "modes" / "slack.md").is_file()
 
     def test_a_link_pointing_somewhere_else_is_repointed(self, tmp_path):
         source = tmp_path / "install" / "container" / "skills"
@@ -1067,3 +1105,24 @@ class TestWoltSkillsDelivery:
         assert wolt_skills_delivery(broken) == "copy"
 
         assert wolt_skills_delivery(tmp_path / "wolts" / "nothing-here") == "copy"
+
+
+def test_copy_delivery_carries_start_chat_modes(tmp_path):
+    wolt = tmp_path / "wolts" / "copywolt"
+    wolt.mkdir(parents=True)
+    (wolt / "CLAUDE.md").write_text("instructions\n")
+
+    seed_wolt_skills(ROOT, wolt)
+
+    delivered = wolt / ".claude" / "skills" / "woltspace-start-chat"
+    assert (delivered / "modes" / "lodge.md").is_file()
+    assert (delivered / "modes" / "telegram.md").is_file()
+    assert (delivered / "modes" / "slack.md").is_file()
+
+
+def test_platform_skills_do_not_direct_native_agents_to_container_install_paths():
+    references = []
+    for path in SHIPPED_SKILLS.rglob("*.md"):
+        if "/workspace/woltspace" in path.read_text():
+            references.append(path.relative_to(ROOT).as_posix())
+    assert references == []

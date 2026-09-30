@@ -41,6 +41,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BIN = ROOT / "container" / "bin"
 SHIM = BIN / "woltspace-python"
 TOKEN_SCRIPT = BIN / "gh-app-token"
+SESSION_REG = BIN / "session-reg"
 
 # The exact probe the shim uses to decide an interpreter owns what the scripts
 # behind it import. `woltspace.envvars` is part of it: gh-app-token imports it
@@ -435,6 +436,45 @@ def test_every_bundled_shebang_can_now_be_satisfied():
             f"{entry.name} wants `{interpreter}`, which the bundle does not "
             f"ship — it will die with `env: {interpreter}: not found` natively"
         )
+
+
+def test_platform_python_helpers_use_the_lodge_interpreter():
+    helpers = ("create-creature-wolt", "trust-dir", "notify", "woltspace")
+    for name in helpers:
+        assert (BIN / name).read_text().splitlines()[0] == (
+            "#!/usr/bin/env woltspace-python"
+        )
+
+
+def test_session_registry_ignores_an_old_python3_on_path(tmp_path):
+    """A fresh macOS PATH may lead with Python 3.9; spawning must not use it."""
+    old_bin = tmp_path / "old-bin"
+    old_bin.mkdir()
+    marker = tmp_path / "ambient-python-was-used"
+    old_python = old_bin / "python3"
+    old_python.write_text(
+        "#!/bin/sh\n"
+        f"touch '{marker}'\n"
+        "exit 91\n"
+    )
+    old_python.chmod(0o755)
+    env = sandbox_env(
+        tmp_path,
+        extra_path=str(old_bin),
+        WOLTSPACE_PYTHON=sys.executable,
+    )
+
+    result = subprocess.run(
+        [str(SESSION_REG), "list"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "[]"
+    assert not marker.exists(), "session-reg used PATH's old python3"
 
 
 # --------------------------------------------------------------------------

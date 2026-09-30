@@ -642,5 +642,13 @@ def seed_wolt_skills(woltspace_dir: Path, wolt_dir: Path):
 
     skills_dir = Path(wolt_dir) / ".claude" / "skills"
     skills_dir.mkdir(parents=True, exist_ok=True)
-    sync_wolt_skills(sources, skills_dir)
     ensure_agent_bridges(wolt_dir)
+    config = _wolt_config(Path(wolt_dir))
+    if wolt_skills_delivery(wolt_dir) == PLUGIN_DELIVERY:
+        ensure_platform_skills(
+            Path(wolt_dir),
+            _wolt_harness(config, Path(wolt_dir).parent),
+            platform_skills_dir(woltspace_dir),
+        )
+    else:
+        sync_wolt_skills(sources, skills_dir)

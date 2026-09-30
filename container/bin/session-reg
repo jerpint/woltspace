@@ -13,4 +13,4 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="$(dirname "$SCRIPT_DIR")/lib"
 
-PYTHONPATH="$LIB_DIR:${PYTHONPATH:-}" exec python3 -c "from sessions import cli; cli()" "$@"
+PYTHONPATH="$LIB_DIR:${PYTHONPATH:-}" exec "${WOLTSPACE_PYTHON:-python3}" -c "from sessions import cli; cli()" "$@"
