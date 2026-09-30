@@ -99,7 +99,8 @@ def set_active_creature(creature_type: str, wolt_name: str) -> None:
 
 
 def create_creature_wolt(name: str, creature_type: str, role: str = "",
-                         description: str = "", harness: str = "") -> dict:
+                         description: str = "", harness: str = "",
+                         model: str = "") -> dict:
     """Create a minimal creature-wolt directory.
 
     Returns a dict with:
@@ -145,6 +146,8 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "",
     }
     if harness:
         wolt_json["harness"] = harness
+    if model:
+        wolt_json["model"] = model
     (wolt_dir / "wolt" / "wolt.json").write_text(json.dumps(wolt_json, indent=2) + "\n")
 
     # Write minimal identity.md
