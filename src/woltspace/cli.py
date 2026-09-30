@@ -135,6 +135,12 @@ def _container_entrypoint(args) -> int:
     return boot()
 
 
+def _update(args) -> int:
+    from .update import update
+
+    return update(args)
+
+
 def _status(args) -> int:
     from .instance import inspect_instance
     from .lifecycle import tunnel_report
@@ -1032,6 +1038,14 @@ def build_parser() -> argparse.ArgumentParser:
     stop.add_argument("--timeout", type=float, default=10.0)
     stop.add_argument("--json", action="store_true")
     stop.set_defaults(func=_stop)
+
+    update = sub.add_parser("update", help="check or update a uv-managed native install")
+    update.add_argument("--check", action="store_true", help="check only; change nothing")
+    update.add_argument("--version", default="", metavar="X", help="install this exact release")
+    update.add_argument("--pre", action="store_true", help="allow prerelease targets")
+    update.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    update.add_argument("--json", action="store_true")
+    update.set_defaults(func=_update)
 
     entrypoint = sub.add_parser(
         "container-entrypoint",
