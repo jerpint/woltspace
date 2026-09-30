@@ -142,7 +142,8 @@ class TestBuildCommandCodex:
             assert harnesses.codex_supports_no_daemon() is True
         assert run.call_count == 1
 
-    def test_no_daemon_probe_fails_closed(self, monkeypatch):
+    def test_no_daemon_probe_failure_keeps_previous_command(self, monkeypatch):
+        """Unknown codex: no flag, i.e. exactly the command main built."""
         monkeypatch.setattr(harnesses, "_codex_no_daemon", None)
         with patch.object(harnesses.subprocess, "run", side_effect=OSError):
             assert harnesses.codex_supports_no_daemon() is False

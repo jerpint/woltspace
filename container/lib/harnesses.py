@@ -79,8 +79,11 @@ _codex_no_daemon: bool | None = None
 def codex_supports_no_daemon() -> bool:
     """Whether the installed codex CLI accepts --no-daemon.
 
-    Older codex has no daemon and would reject the flag, so ask its help once
-    per process. Any failure (codex missing, timeout) means "don't pass it".
+    Older codex has no daemon and would reject the flag, so ask its help. This
+    runs in `session-reg prepare`, once per spawn, on the session's own PATH.
+    If the probe itself fails (codex missing, timeout) the command stays as it
+    was before this flag existed: an unknown codex keeps working, it just may
+    share the daemon.
     """
     global _codex_no_daemon
     if _codex_no_daemon is None:
