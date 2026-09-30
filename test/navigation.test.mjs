@@ -127,8 +127,10 @@ test('hostile app metadata is assigned as text and never embedded in handlers', 
 
 test('starter welcome card treats wolt metadata as text and uses the open flow', () => {
   const source = functionSource(lodgeSource, 'renderStarterWelcome');
-  assert.match(source, /lodgeElement\('span', 'home-starter-name', name\)/);
-  assert.match(source, /lodgeElement\('div', 'home-starter-description', wolt\.description/);
+  assert.match(source, /const emoji = wolt\.emoji \|\| WOLT_EMOJI\[wolt\.type\] \|\| '🦫'/);
+  assert.match(source, /lodgeElement\('button', 'home-starter-button', `Say hi \$\{emoji\}`\)/);
+  assert.match(source, /card\.replaceChildren\(button\)/);
+  assert.doesNotMatch(source, /wolt\.description|home-starter-(?:name|description|heading)/);
   assert.match(source, /button\.addEventListener\('click'/);
   assert.match(source, /startSession\(name\)/);
   assert.doesNotMatch(source, /innerHTML|onclick\s*=/);

@@ -147,6 +147,9 @@ def start(layout: RuntimeLayout, *, timeout: float = 15.0) -> tuple[int, dict]:
     # The container refreshes every wolt's managed instructions and skills on
     # boot, and a native start is that boot. Stale platform guidance is worth
     # saying out loud; it is never worth refusing to start over.
+    # A first start on a fresh machine has no data root yet; make it before the
+    # syncs look for wolts in it (else they report "not synced" for nothing).
+    layout.wolts_dir.mkdir(parents=True, exist_ok=True)
     platform_docs_error = None
     try:
         sync_claude_md_platform_section(layout.wolts_dir, layout.install_root)

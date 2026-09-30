@@ -73,6 +73,30 @@ def _claude_command(entry: dict, mode: str, *, session_id: str = "",
     return " ".join(shlex.quote(p) for p in parts)
 
 
+_codex_no_daemon: bool | None = None
+
+
+def codex_supports_no_daemon() -> bool:
+    """Whether the installed codex CLI accepts --no-daemon.
+
+    Older codex has no daemon and would reject the flag, so ask its help. This
+    runs in `session-reg prepare`, once per spawn, on the session's own PATH.
+    If the probe itself fails (codex missing, timeout) the command stays as it
+    was before this flag existed: an unknown codex keeps working, it just may
+    share the daemon.
+    """
+    global _codex_no_daemon
+    if _codex_no_daemon is None:
+        try:
+            out = subprocess.run(
+                ["codex", "--help"], capture_output=True, text=True, timeout=15,
+            ).stdout
+            _codex_no_daemon = "--no-daemon" in out
+        except (OSError, subprocess.SubprocessError):
+            _codex_no_daemon = False
+    return _codex_no_daemon
+
+
 def _codex_command(entry: dict, mode: str, *, session_id: str = "",
                    session_name: str = "", model: str = "", prompt: str = "",
                    resume_id: str = "", execution_policy=None) -> str:
@@ -93,6 +117,14 @@ def _codex_command(entry: dict, mode: str, *, session_id: str = "",
     parts = [wrapper]
     if mode == "resume" and resume_id:
         parts += ["resume", resume_id]
+    # Newer codex runs every session's tools inside one shared app-server
+    # daemon. Its tool calls inherit the environment of whichever session
+    # started the daemon (so they carry another session's identity), and when
+    # the daemon restarts (it auto-updates) it reloads threads without our
+    # sandbox flag, silently dropping them to workspace-write with no network.
+    # Each woltspace session runs its own codex process instead.
+    if codex_supports_no_daemon():
+        parts.append("--no-daemon")
     # Codex's own help: "Intended solely for running in environments that are
     # externally sandboxed" — which is exactly the woltspace container.
     if policy_mode(execution_policy) == "auto":

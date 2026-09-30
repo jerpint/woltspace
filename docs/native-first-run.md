@@ -51,6 +51,17 @@ uv tool install 'woltspace'
 uv tool update-shell
 ```
 
+An AI agent installing Woltspace should set `WOLTSPACE_DEFAULT_HARNESS` to its
+own registered harness (for example, `claude` or `codex`) before the first
+`woltspace start`; this skips the redundant first-run harness question.
+
+A fresh lodge installs the public MIT-licensed
+[`jerpint/woltspace-starter-lodge`](https://github.com/jerpint/woltspace-starter-lodge)
+from a release-pinned commit. Set `WOLTSPACE_STARTER_SEED=none` before the
+first start to turn it off, or set another seed source explicitly. The default
+install needs network access on first run; if offline, the failure is reported
+and onboarding continues.
+
 The browser terminal is part of the Python package. Install the optional
 `@woltspace/tui` npm package only if you want the separate terminal cockpit.
 

@@ -41,9 +41,24 @@ const base = process.env.BASE_URL || 'http://127.0.0.1:17799';
     await page.goto(base, { waitUntil: 'domcontentloaded' });
     const card = page.locator('#home-starter-welcome');
     await card.waitFor({ state: 'visible', timeout: 3000 });
-    assert.equal(await card.locator('.home-starter-name').textContent(), '<Onboardie>');
-    assert.equal(await card.locator('.home-starter-description').textContent(), '<img src=x onerror=alert(1)>');
+    assert.equal(await card.locator('.home-starter-name, .home-starter-description').count(), 0);
+    assert.equal(await card.locator('button').textContent(), 'Say hi 🪵');
+    assert.equal(await card.textContent(), 'Say hi 🪵');
     assert.equal(await card.locator('img').count(), 0);
+    const chrome = await card.evaluate(element => {
+      const style = getComputedStyle(element);
+      return {
+        background: style.backgroundColor,
+        border: style.borderTopWidth,
+        padding: style.paddingTop,
+        shadow: style.boxShadow,
+        alignment: style.justifyContent,
+      };
+    });
+    assert.deepEqual(chrome, {
+      background: 'rgba(0, 0, 0, 0)', border: '0px', padding: '0px',
+      shadow: 'none', alignment: 'center',
+    });
     await card.locator('button', { hasText: 'Say hi' }).click();
     assert.deepEqual(spawnBody, { wolt: '<Onboardie>' });
     assert.equal(await card.isVisible(), false);

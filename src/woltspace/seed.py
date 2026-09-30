@@ -24,6 +24,8 @@ from urllib.parse import urlsplit
 FORMAT = "woltspace.colony-seed/v1"
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_PACKAGE_BYTES = 50 * 1024 * 1024
+ROOT_LICENSE_FILES = {"LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"}
+FULL_COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 MANAGED_START = "<!-- WOLTSPACE:BEGIN"
 MANAGED_END = "<!-- WOLTSPACE:END -->"
@@ -172,12 +174,22 @@ def inspect_seed(root: Path) -> SeedSummary:
     if not wolts:
         raise SeedError("colony seed has no wolts")
 
-    expected_roots = {"seed.json", "README.md", ".gitignore", "wolts", "apps"}
+    expected_roots = {
+        "seed.json", "README.md", ".gitignore", "wolts", "apps",
+        *ROOT_LICENSE_FILES,
+    }
     for child in root.iterdir():
         if child.name == ".git":
             continue
         if child.name not in expected_roots:
             raise SeedError(f"unexpected top-level path: {child.name}")
+        if child.name in ROOT_LICENSE_FILES:
+            if not child.is_file():
+                raise SeedError(f"seed license must be a regular text file: {child.name}")
+            try:
+                child.read_text(encoding="utf-8")
+            except UnicodeDecodeError as exc:
+                raise SeedError(f"seed license must be UTF-8 text: {child.name}") from exc
 
     for entry in manifest["wolts"]:
         name = entry["name"]
@@ -253,16 +265,34 @@ def install_seed(
         package = local.resolve()
         provenance = {"source": source_text, "format": FORMAT}
     else:
+        git_url, pinned_revision = _split_seed_git_source(source_text)
         cleanup = Path(tempfile.mkdtemp(prefix="woltspace-seed-source-"))
         package = cleanup / "repo"
+        clone_command = ["git", "clone"]
+        if pinned_revision:
+            clone_command.append("--no-checkout")
+        else:
+            clone_command.extend(["--depth", "1"])
+        clone_command.extend(["--", git_url, str(package)])
         result = subprocess.run(
-            ["git", "clone", "--depth", "1", "--", source_text, str(package)],
+            clone_command,
             capture_output=True, text=True,
         )
         if result.returncode:
             shutil.rmtree(cleanup, ignore_errors=True)
             raise SeedError(f"could not clone colony seed: {result.stderr.strip()}")
-        provenance = {"source": source_text, "format": FORMAT}
+        if pinned_revision:
+            checkout = subprocess.run(
+                ["git", "-C", str(package), "checkout", "--quiet", "--detach", pinned_revision],
+                capture_output=True, text=True,
+            )
+            if checkout.returncode:
+                shutil.rmtree(cleanup, ignore_errors=True)
+                raise SeedError(
+                    f"could not check out colony seed revision {pinned_revision}: "
+                    f"{checkout.stderr.strip()}"
+                )
+        provenance = {"source": source_text, "url": git_url, "format": FORMAT}
         revision = subprocess.run(
             ["git", "-C", str(package), "rev-parse", "HEAD"],
             capture_output=True, text=True,
@@ -364,6 +394,14 @@ def install_seed(
     finally:
         if cleanup:
             shutil.rmtree(cleanup, ignore_errors=True)
+
+
+def _split_seed_git_source(source: str) -> tuple[str, str | None]:
+    """Separate an optional full-SHA suffix without breaking git@host URLs."""
+    url, separator, revision = source.rpartition("@")
+    if separator and url and FULL_COMMIT_RE.fullmatch(revision):
+        return url, revision.lower()
+    return source, None
 
 
 def _stage_wolt(source: Path, target: Path, name: str, template: Path, provenance: dict) -> None:
