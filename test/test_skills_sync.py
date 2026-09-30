@@ -349,6 +349,34 @@ class TestStartSyncsSkills:
         sync.assert_called_once_with(layout)
         sync_docs.assert_called_once_with(layout.wolts_dir, layout.install_root)
 
+    def test_a_brand_new_data_root_exists_before_the_sync(self, tmp_path):
+        # First start on a fresh machine: the data root doesn't exist yet. The
+        # sync must see it, or it reports "not synced" for no real reason.
+        layout = _layout(tmp_path)
+        assert not layout.wolts_dir.exists()
+        stopped = {"state": "stopped", "owner": {}, "health": None}
+        seen = {}
+
+        with (
+            patch("woltspace.lifecycle.inspect_instance", return_value=stopped),
+            patch("woltspace.lifecycle.run_doctor", return_value=[]),
+            patch("woltspace.lifecycle.doctor_ok", return_value=True),
+            patch(
+                "woltspace.lifecycle.sync_platform_skills",
+                side_effect=lambda lay: seen.setdefault("skills", lay.wolts_dir.is_dir()),
+            ),
+            patch(
+                "woltspace.lifecycle.sync_claude_md_platform_section",
+                side_effect=lambda wolts, _root: seen.setdefault("docs", wolts.is_dir()),
+            ),
+            patch("woltspace.lifecycle.subprocess.Popen") as popen,
+            patch("woltspace.lifecycle.read_health", return_value=None),
+        ):
+            popen.return_value.poll.return_value = 3
+            start(layout, timeout=0.1)
+
+        assert seen == {"skills": True, "docs": True}
+
     def test_a_failed_sync_is_reported_not_raised(self, tmp_path):
         layout = _layout(tmp_path)
         stopped = {"state": "stopped", "owner": {}, "health": None}
