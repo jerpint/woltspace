@@ -1085,6 +1085,34 @@ class TestModelDiscovery:
         assert harnesses._model_refreshing == {"codex"}
         harnesses._model_refreshing.clear()
 
+    def test_stale_picker_reads_schedule_once_without_waiting(
+        self, tmp_path, monkeypatch,
+    ):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", [
+            {"id": "cached", "label": "Cached"},
+        ], fetched_at=1)
+        started = []
+
+        class HeldThread:
+            def __init__(self, **kwargs):
+                started.append(kwargs)
+
+            def start(self):
+                pass
+
+        harnesses._model_refreshing.clear()
+        monkeypatch.setattr(harnesses.threading, "Thread", HeldThread)
+        first = harnesses.harness_metadata()
+        second = harnesses.harness_metadata()
+        assert len(started) == 1
+        assert started[0]["target"] is harnesses._refresh_model_cache
+        assert next(h for h in first if h["id"] == "codex")["catalog"][0] == {
+            "id": "cached", "label": "Cached",
+        }
+        assert second == first
+        harnesses._model_refreshing.clear()
+
 
 class TestTierDefaultModel:
     """Per-tier default: seed unless woltspace.json overrides it."""

@@ -794,6 +794,10 @@ def harness_metadata() -> list[dict]:
 
     Only display + model data — no wrappers, functions, or file paths.
     """
+    # A long-running lodge may outlive the cache TTL. Picker reads only schedule
+    # the already-deduplicated background refresh; discovery never blocks this
+    # request and spawn paths do not call it.
+    refresh_model_catalogs()
     out = []
     for hid, entry in HARNESSES.items():
         out.append({
