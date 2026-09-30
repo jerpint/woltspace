@@ -14,7 +14,6 @@
   const time = ts => new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const day = ts => { const d = new Date(ts * 1000), now = new Date(), yesterday = new Date(Date.now() - 86400e3); return d.toDateString() === now.toDateString() ? 'Today' : d.toDateString() === yesterday.toDateString() ? 'Yesterday' : d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }); };
   const effective = () => { const id = config.harness || harnesses.default || 'claude'; const h = (harnesses.harnesses || []).find(x => x.id === id) || {}; const models = h.models || {}; return { id, model: config.model || models[config.type] || models.raccoon || '' }; };
-  const sessionState = sessionStateText;  // shared with the sidebar and the Wolts page (lodge.js)
 
   function renderHeader() {
     const eng = effective(), own = sessions.filter(s => s.wolt === name).sort((a,b) => (b.last_activity || b.created_at || 0) - (a.last_activity || a.created_at || 0));
@@ -42,13 +41,7 @@
     own.slice(0,60).forEach(s => {
       const stamp = s.last_activity || s.created_at || 0, group = day(stamp);
       if (group !== currentDay) { currentDay = group; main.appendChild(el('div', 'wolt-day', group)); list = el('div', 'wolt-session-list'); main.appendChild(list); }
-      const row = link('', `/tui?session=${encodeURIComponent(s.name)}`, 'session-row');
-      const state = sessionState(s);
-      const dot = el('div', `session-dot ${sessionIsOnline(s) ? 'running' : 'stopped'}`);
-      const text = el('div', 'session-body');
-      const title = el('div', `session-title${s.title ? '' : ' wolt-untitled'}`, s.title || s.name || 'untitled session');
-      const summary = el('div', 'wolt-session-summary', `${s.summary ? `${s.summary} · ` : ''}${state}`);
-      text.append(title, summary); row.append(dot, text, el('div', 'session-date', time(stamp))); list.appendChild(row);
+      list.appendChild(sessionRow(s, { timeFormatter: time }));
     });
     if (!own.length) main.appendChild(el('div', 'wolt-quiet', 'No sessions yet — say hi.'));
     const wolf = panel(`Wolves · ${crons.filter(c => c.wolt === name).length}`);
