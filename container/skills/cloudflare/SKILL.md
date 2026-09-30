@@ -1,12 +1,12 @@
 ---
 name: cloudflare
-description: Configure Cloudflare Tunnel and Access for woltspace — initial setup, add or remove user permissions, and wildcard app subdomains.
+description: Configure Cloudflare Tunnel and Access for woltspace — initial setup, app domains, and user permissions.
 user_invocable: true
 ---
 
 # Woltspace Cloudflare
 
-Single skill for everything Cloudflare-related on woltspace: the named tunnel that gives the lodge a permanent URL, the Access policies that gate who can reach it, and the wildcard setup that lets public apps live at `{app}.{domain}`.
+Single skill for everything Cloudflare-related on woltspace: the named tunnel that gives the lodge a permanent URL, the separate gateway domain that serves apps, and the Access policies that gate both surfaces.
 
 This skill routes to a sub-doc based on what the user wants. Ask first — don't run any sub-doc by default.
 
@@ -17,6 +17,7 @@ Ask the user which task they need, then read the matching sub-doc and follow it 
 | User intent | Sub-doc | When to use |
 |-------------|---------|-------------|
 | First-time tunnel + Access setup | `setup.md` | No named tunnel yet, or `CLOUDFLARE_TUNNEL_TOKEN` is unset in `/workspace/wolts/.env`. |
+| Add or migrate the app domain | `app-domain.md` | The lodge already has a named tunnel, but remote apps need their own wildcard domain and gateway route. |
 | Add a person to an existing app | `add-access.md` | Tunnel + Access already configured. Granting an email access to the lodge, the wildcard, or one specific subdomain. |
 | Remove a person from an app | `remove-access.md` | Revoking a previously-granted email. |
 
@@ -30,7 +31,7 @@ echo "API_TOKEN=${CLOUDFLARE_API_TOKEN:+SET}"
 echo "ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-NOT SET}"
 ```
 
-- All four set → tunnel is up; user is probably here for `add-access.md` or `remove-access.md`.
+- All four set → tunnel is up; use `app-domain.md` if remote apps do not have a separate domain, otherwise use `add-access.md` or `remove-access.md`.
 - `TUNNEL_TOKEN` unset but `API_TOKEN` set → setup was started but tunnel never landed; resume `setup.md` from Step 4.
 - All unset → fresh install; start at `setup.md` Step 1.
 
@@ -46,10 +47,8 @@ echo "ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-NOT SET}"
 ## Architecture
 
 ```
-Browser → subdomain.domain.com
-       → Cloudflare Edge (Access: email OTP)
-       → Cloudflare Tunnel (QUIC, auto-reconnect)
-       → $WOLTSPACE_API (FastAPI)
+Lodge browser → lodge.example.com → Cloudflare Access + Tunnel → lodge port
+App browser   → app.theirapps.tld → Cloudflare Access + Tunnel → app gateway port
 ```
 
 - **Auth at the edge** — unauthorized requests never reach the container.

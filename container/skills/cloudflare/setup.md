@@ -80,6 +80,8 @@ Ask the human what subdomain they want for their lodge. For example, if their do
 
 This will NOT affect their root domain or any existing subdomains.
 
+Also choose an app domain now. Recommend a separate registered domain such as `theirapps.tld`, so apps use `*.theirapps.tld` and Cloudflare's free Universal SSL covers the wildcard. A nested wildcard such as `*.apps.example.com` needs an Advanced Certificate and shares a site with the lodge. The app domain must not equal or contain the lodge hostname.
+
 ## Step 4: Create the tunnel
 
 Run the following API calls. Replace `<subdomain>` and `<domain>` with the user's choices.
@@ -178,73 +180,11 @@ curl -s -X POST \
 
 To add more users later, see `add-access.md` (or load the woltspace cloudflare skill again and pick "add a person"). More identity providers (GitHub, Google) can be added from **Cloudflare Zero Trust → Access → Applications**.
 
-## Step 6: Enable app subdomains (optional)
+## Step 6: Configure the separate app domain
 
-If the user wants public apps to be served at `{app-name}.{domain}` (e.g. `corework.woltspace.com`), set up wildcard subdomain routing. This is a one-time addition to the named tunnel.
+Read and follow `app-domain.md` now. New setups must route the chosen app wildcard to the app gateway returned by `GET $WOLTSPACE_API/settings/app-gateway`; do not route `*.<lodge-domain>` to the lodge.
 
-**Add wildcard DNS:**
-
-```bash
-curl -s -X POST \
-  "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data "{
-    \"type\": \"CNAME\",
-    \"name\": \"*\",
-    \"content\": \"$TUNNEL_ID.cfargotunnel.com\",
-    \"proxied\": true
-  }"
-```
-
-**Add wildcard ingress rule.** This replaces the full tunnel config — include ALL existing rules plus the wildcard. The wildcard must come AFTER specific hostnames (first match wins):
-
-```bash
-curl -s -X PUT \
-  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID/configurations" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data "{
-    \"config\": {
-      \"ingress\": [
-        {\"hostname\": \"<subdomain>.<domain>\", \"service\": \"$WOLTSPACE_API\"},
-        {\"hostname\": \"*.<domain>\", \"service\": \"$WOLTSPACE_API\"},
-        {\"service\": \"http_status:404\"}
-      ]
-    }
-  }"
-```
-
-**Add wildcard Access policy** (recommended — without this, app subdomains are open to anyone):
-
-```bash
-APP_RESULT=$(curl -s -X POST \
-  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data "{
-    \"name\": \"woltspace-apps\",
-    \"domain\": \"*.<domain>\",
-    \"type\": \"self_hosted\",
-    \"session_duration\": \"24h\"
-  }")
-
-APP_ID=$(echo "$APP_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['id'])")
-
-curl -s -X POST \
-  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps/$APP_ID/policies" \
-  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data "{
-    \"name\": \"allow-owner\",
-    \"decision\": \"allow\",
-    \"include\": [{\"email\": {\"email\": \"<user-email>\"}}]
-  }"
-```
-
-The auth cookie is scoped to `.{domain}`, so logging in once (at the lodge or any app) covers all subdomains. After this, any app with `"public": true` in `woltspace.json` is automatically accessible at `{app-name}.{domain}`.
-
-See `docs/wildcard-subdomain-setup.md` for full details and troubleshooting.
+That guide creates wildcard DNS and Access, safely merges the gateway ingress rule into the existing tunnel configuration, and saves `apps_domain` plus verified Access settings through the lodge API.
 
 ## Step 7: Test the tunnel
 

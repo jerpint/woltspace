@@ -1119,6 +1119,37 @@ def test_wolt_facing_instructions_do_not_hardcode_the_default_lodge_port():
     assert offenders == []
 
 
+def test_cloudflare_skill_routes_to_every_sub_doc():
+    skill = ROOT / "container" / "skills" / "cloudflare"
+    router = (skill / "SKILL.md").read_text()
+    docs = sorted(path.name for path in skill.glob("*.md") if path.name != "SKILL.md")
+
+    assert docs == ["add-access.md", "app-domain.md", "remove-access.md", "setup.md"]
+    for name in docs:
+        assert f"`{name}`" in router
+
+
+def test_cloudflare_app_domain_uses_gateway_and_settings_apis():
+    body = (ROOT / "container" / "skills" / "cloudflare" / "app-domain.md").read_text()
+
+    assert '"$WOLTSPACE_API/settings/app-gateway"' in body
+    assert '"$WOLTSPACE_API/settings/apps-domain"' in body
+    assert '"$WOLTSPACE_API/settings/access"' in body
+    assert "http://localhost:$GATEWAY_PORT" not in body
+    assert '"service": "http://localhost:" + os.environ["GATEWAY_PORT"]' in body
+    assert "lodge port minus 660" in body
+    assert "access/apps/$APP_ID" in body
+    assert "-X PUT" in body
+
+
+def test_cloudflare_setup_routes_new_apps_to_the_separate_gateway_guide():
+    body = (ROOT / "container" / "skills" / "cloudflare" / "setup.md").read_text()
+
+    assert "Read and follow `app-domain.md` now" in body
+    assert "GET $WOLTSPACE_API/settings/app-gateway" in body
+    assert '"hostname": "*.<domain>"' not in body
+
+
 def test_copy_delivery_carries_start_chat_modes(tmp_path):
     wolt = tmp_path / "wolts" / "copywolt"
     wolt.mkdir(parents=True)
