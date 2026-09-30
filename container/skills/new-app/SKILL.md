@@ -20,8 +20,8 @@ Before creating an app, make sure they want one:
 Apps live in the global apps directory (shared across all wolts):
 
 ```bash
-mkdir -p /workspace/wolts/apps/{name}
-cd /workspace/wolts/apps/{name}
+mkdir -p "$WOLTSPACE_WOLTS_DIR/apps/{name}"
+cd "$WOLTSPACE_WOLTS_DIR/apps/{name}"
 ```
 
 ## 3. Scaffold it
@@ -92,7 +92,7 @@ This is **required** — the platform only discovers apps that have `woltspace.j
 
 ## 5. Configure for serving
 
-Your port is declared in `woltspace.json` and is permanent — it never changes. Check existing apps to avoid conflicts (`ls /workspace/wolts/apps/*/woltspace.json` and look at their ports). The control plane address is `$WOLTSPACE_API`; never assume its port. The app gateway follows the lodge port minus 660 unless Settings overrides it. Apps must stay in the **4000-5999** range and must not use their lodge's gateway port. Wolt sites have no separate port allocation; the lodge serves them at `/wolt/<name>/site/`.
+Your port is declared in `woltspace.json` and is permanent — it never changes. Check existing apps to avoid conflicts (`ls "$WOLTSPACE_WOLTS_DIR"/apps/*/woltspace.json` and look at their ports). The control plane address is `$WOLTSPACE_API`; never assume its port. The app gateway follows the lodge port minus 660 unless Settings overrides it. Apps must stay in the **4000-5999** range and must not use their lodge's gateway port. Wolt sites have no separate port allocation; the lodge serves them at `/wolt/<name>/site/`.
 
 - **App servers:** use `$PORT` in your start command — the platform expands it to your manifest port. Bind to `127.0.0.1`; the gateway is the public-facing server.
 - **Static HTML still needs a server.** There is no lodge or gateway static fallback. Use, for example, `"start": "python3 -m http.server $PORT --bind 127.0.0.1"`.

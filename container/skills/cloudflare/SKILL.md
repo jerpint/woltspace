@@ -16,7 +16,7 @@ Ask the user which task they need, then read the matching sub-doc and follow it 
 
 | User intent | Sub-doc | When to use |
 |-------------|---------|-------------|
-| First-time tunnel + Access setup | `setup.md` | No named tunnel yet, or `CLOUDFLARE_TUNNEL_TOKEN` is unset in `/workspace/wolts/.env`. |
+| First-time tunnel + Access setup | `setup.md` | No named tunnel yet, or `CLOUDFLARE_TUNNEL_TOKEN` is unset in `$WOLTSPACE_WOLTS_DIR/.env`. |
 | Add or migrate the app domain | `app-domain.md` | The lodge already has a named tunnel, but remote apps need their own wildcard domain and gateway route. |
 | Add a person to an existing app | `add-access.md` | Tunnel + Access already configured. Granting an email access to the lodge, the wildcard, or one specific subdomain. |
 | Remove a person from an app | `remove-access.md` | Revoking a previously-granted email. |
@@ -38,7 +38,7 @@ echo "ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-NOT SET}"
 ## Notes that apply to every sub-doc
 
 - All sub-docs are **idempotent** — safe to re-run. If something is already in place, validate and skip.
-- The shared `.env` lives at `/workspace/wolts/.env`. Every Cloudflare API call reads from there.
+- The shared `.env` lives at `$WOLTSPACE_WOLTS_DIR/.env`. Every Cloudflare API call reads only its needed `CLOUDFLARE_*` lines from there.
 - Required token permissions for the API token: **Cloudflare Tunnel: Edit**, **DNS: Edit** (scoped to the user's zone), **Access: Apps and Policies: Edit**.
 - Cloudflare Access free tier is 50 users per application. Each lodge or wildcard is one application; the limit doesn't stack across them.
 - The Access auth cookie is scoped to `.{domain}`, so a user who logs into one subdomain stays logged in across every app they have access to for the session duration.

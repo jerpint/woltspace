@@ -1163,9 +1163,25 @@ def test_copy_delivery_carries_start_chat_modes(tmp_path):
     assert (delivered / "modes" / "slack.md").is_file()
 
 
-def test_platform_skills_do_not_direct_native_agents_to_container_install_paths():
-    references = []
-    for path in SHIPPED_SKILLS.rglob("*.md"):
-        if "/workspace/woltspace" in path.read_text():
-            references.append(path.relative_to(ROOT).as_posix())
-    assert references == []
+def test_wolt_facing_skills_and_templates_do_not_assume_container_paths():
+    paths = list(SHIPPED_SKILLS.rglob("*.md")) + [ROOT / "template" / "CLAUDE.md"]
+    offenders = []
+    for path in paths:
+        sections = []
+        in_fence = False
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            if line.strip().startswith("```"):
+                in_fence = not in_fence
+            elif not in_fence and line.startswith("#"):
+                marker, _, _title = line.partition(" ")
+                if marker and set(marker) == {"#"}:
+                    level = len(marker)
+                    sections = [section for section in sections if section[0] < level]
+                    inherited = sections[-1][1] if sections else False
+                    sections.append((level, inherited or "(container only)" in line.lower()))
+            allowed = "(container only)" in line.lower() or bool(
+                sections and sections[-1][1]
+            )
+            if "/workspace/" in line and not allowed:
+                offenders.append(f"{path.relative_to(ROOT)}:{line_number}")
+    assert offenders == []

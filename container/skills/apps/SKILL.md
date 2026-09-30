@@ -25,8 +25,8 @@ Apps are things you ship — apps, tools, services. They live at `wolts/apps/{na
 ## Creating an app
 
 ```bash
-mkdir -p /workspace/wolts/apps/my-app
-cd /workspace/wolts/apps/my-app
+mkdir -p "$WOLTSPACE_WOLTS_DIR/apps/my-app"
+cd "$WOLTSPACE_WOLTS_DIR/apps/my-app"
 # ... set up your code
 ```
 
