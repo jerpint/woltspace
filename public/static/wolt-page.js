@@ -63,8 +63,14 @@
       if (!response.ok) throw new Error(data.error || 'Could not save settings.');
       config.harness = data.configured.harness || '';
       config.model = data.configured.model || '';
+      const renamed = 'display_name' in patch;
+      if (renamed) {
+        config.display_name = data.display_name || '';
+        document.title = `${config.display_name || name} · Woltspace`;
+        if (typeof loadWolts === 'function') loadWolts();  // the sidebar shows the name too
+      }
       renderHeader();
-      renderSettings('Saved · applies from the next session');
+      renderSettings(renamed ? 'Renamed' : 'Saved · applies from the next session');
     } catch (error) {
       status.textContent = error.message;
       status.classList.add('error');
@@ -77,6 +83,13 @@
   }
   function renderSettings(message = 'Changes apply from the next session.') {
     const box = el('div','wolt-card-panel'), eng = effective(), status = el('p','wolt-settings-status',message);
+    const rename = el('form','wolt-model-form wolt-rename-form'), nameInput = el('input','wolt-model-input');
+    nameInput.type='text'; nameInput.maxLength=40; nameInput.value=config.display_name || name;
+    nameInput.setAttribute('aria-label','Name'); nameInput.autocomplete='off'; nameInput.spellcheck=false;
+    const renameSave = el('button','wolt-choice','Rename'); renameSave.type='submit';
+    rename.onsubmit=event=>{event.preventDefault();saveSettings({display_name:nameInput.value.trim()},status);};
+    rename.append(nameInput,renameSave); box.appendChild(rename);
+    box.appendChild(el('p','wolt-rename-note',`Folder and address stay ${name}.`));
     const engines = (harnesses.harnesses || []).map(h => ({id:h.id,label:`${h.emoji || ''} ${h.label}`.trim()}));
     box.appendChild(choiceGroup('Engine',engines,eng.id,id=>saveSettings({harness:id},status)));
     const selected = (harnesses.harnesses || []).find(h=>h.id===eng.id) || {};
@@ -90,7 +103,7 @@
       freeform.onsubmit=event=>{event.preventDefault();const model=input.value.trim();if(model)saveSettings({model},status);};
       freeform.append(input,save); box.appendChild(freeform);
     }
-    const creature=el('div','wolt-setting');creature.append(el('b','','Creature'),el('span','',`${config.type || 'rodent'} · permanent`));box.appendChild(creature,status);body.replaceChildren(box);
+    const creature=el('div','wolt-setting');creature.append(el('b','','Creature'),el('span','',`${config.type || 'rodent'} · permanent`));box.append(creature,status);body.replaceChildren(box);
   }
   function renderSite() { const wrap=el('div');const bar=el('div','wolt-sitebar');bar.append(el('span','',`${name}'s site`),link('⤢ Expand',`/wolt/${encodeURIComponent(name)}/site/`,'btn btn-ghost'));const frame=el('iframe','wolt-site');frame.src=`/wolt/${encodeURIComponent(name)}/site/`;frame.title=`${name}'s site`;wrap.append(bar,frame);body.replaceChildren(wrap); }
   function switchTab(next) { tab = ['overview','about','settings','site'].includes(next) ? next : 'overview'; root.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active',b.dataset.tab===tab)); history.replaceState(null,'',`/w/${encodeURIComponent(name)}${tab==='overview'?'':`?tab=${tab}`}`); ({overview:renderOverview,about:renderAbout,settings:renderSettings,site:renderSite}[tab])(); }

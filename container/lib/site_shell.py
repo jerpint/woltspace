@@ -230,11 +230,22 @@ def script_json(data) -> str:
     )
 
 
+def _shell_asset_version() -> str:
+    """Changes whenever the installed shell.js does, so browsers and edge
+    caches never keep serving the previous release's drawer."""
+    try:
+        shell = Path(__file__).resolve().parents[2] / "public" / "static" / "wolt-shell" / "shell.js"
+        stat = shell.stat()
+        return f"{int(stat.st_mtime)}-{stat.st_size}"
+    except OSError:
+        return "0"
+
+
 def shell_tags(manifest: dict, drawer: bool = True) -> str:
     """The manifest inline (so the drawer draws with no fetch), then shell.js."""
     tags = f"<script>window.__WOLT_SHELL__={script_json(manifest)};</script>"
     if drawer:
-        tags += f'<script src="{SHELL_ASSET_BASE}/shell.js"></script>'
+        tags += f'<script src="{SHELL_ASSET_BASE}/shell.js?v={_shell_asset_version()}"></script>'
     return tags
 
 

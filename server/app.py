@@ -1942,15 +1942,45 @@ def _wolt_settings_response(safe: str, cfg: dict) -> dict:
         "harness": harness,
         "model": model,
         "configured": {"harness": cfg.get("harness"), "model": cfg.get("model")},
+        "display_name": cfg.get("display_name") or "",
         "applies": "next session",
         "note": "Applies from the next session.",
     }
 
 
+def _write_wolt_settings(wolt_json: Path, cfg: dict) -> None:
+    tmp = wolt_json.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, indent=2) + "\n")
+    tmp.replace(wolt_json)
+
+
+def _apply_display_name(cfg: dict, safe: str, value: object) -> None:
+    """Rename what people read. The folder name (the slug) never changes here."""
+    from wolts import WOLT_DISPLAY_NAME_MAX, clean_display_name
+
+    if value is not None and not isinstance(value, str):
+        raise ValueError("display_name must be a string")
+    shown = clean_display_name(value or "")
+    if len(shown) > WOLT_DISPLAY_NAME_MAX:
+        raise ValueError(f"name must be {WOLT_DISPLAY_NAME_MAX} characters or less")
+    if not shown or shown == safe:
+        cfg.pop("display_name", None)
+    else:
+        cfg["display_name"] = shown
+
+
 def _update_wolt_settings(name: str, body: dict) -> dict:
-    if not body or not set(body).issubset({"harness", "model"}):
-        raise ValueError("body must contain harness and/or model only")
+    if not body or not set(body).issubset({"harness", "model", "display_name"}):
+        raise ValueError("body must contain harness, model and/or display_name only")
     safe, wolt_json, cfg = _load_wolt_settings(name)
+    # Validate everything before the single write below.
+    if "display_name" in body:
+        _apply_display_name(cfg, safe, body["display_name"])
+    if set(body) == {"display_name"}:
+        _write_wolt_settings(wolt_json, cfg)
+        result = _wolt_settings_response(safe, cfg)
+        result.update({"ok": True, "applies": "now", "note": "Renamed."})
+        return result
     requested_harness = body.get("harness", cfg.get("harness"))
     if requested_harness in (None, ""):
         chosen_harness = get_default_harness()
@@ -1994,9 +2024,7 @@ def _update_wolt_settings(name: str, body: dict) -> dict:
         cfg.pop("model", None)
     else:
         cfg["model"] = pin_model
-    tmp = wolt_json.with_suffix(".tmp")
-    tmp.write_text(json.dumps(cfg, indent=2) + "\n")
-    tmp.replace(wolt_json)
+    _write_wolt_settings(wolt_json, cfg)
     result = _wolt_settings_response(safe, cfg)
     result.update({"ok": True, "harness": chosen_harness, "model": chosen_model})
     return result
