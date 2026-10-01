@@ -90,12 +90,23 @@ allowlists. Resolve any overriding `TELEGRAM_ALLOWED_USERS` or enablement settin
 in the lodge's existing configuration sources. Do not enable a connector until
 the token and allowlist are ready.
 
-Explain the brief connection interruption, then use the normal lifecycle:
+Explain the brief connection interruption. For a native lodge, follow the
+stop/start lifecycle in the [update skill](../update/SKILL.md) and its linked
+manual instructions. Before stopping, record `woltspace status --json`, including
+the running lodge's host, port, and data root. Use the installed native CLI in
+the same lodge environment, substituting that recorded host and port below:
 
 ```bash
-woltspace restart
-woltspace status
+woltspace stop
+woltspace start --host <recorded-host> --port <recorded-port>
+woltspace status --json
 ```
+
+Do not replace the recorded address with defaults. If the lodge is already
+stopped, skip stop and start with its configured host and port. There is no
+native `woltspace restart` command. For a container lodge, have the authorized
+host operator restart it through its existing container tooling; do not run
+native stop/start inside the container.
 
 Respect the session's restart permissions; if restart is forbidden, hand the
 prepared change to the owner or authorized operator. Verify the supervised
@@ -103,12 +114,13 @@ Telegram connector reports running without a polling conflict. Do not run a
 second `getUpdates` check after startup.
 
 The pending first message should reach the bot. With one builder wolt, it goes
-directly to that wolt. With several, the bot lists their names and asks for
+directly to that wolt. With several, the bot shows the existing wolt picker and offers
 `/wolt <name>`. With none, it asks the owner to create one in the lodge. Confirm
 what was configured and any remaining verification gap without showing secrets.
 
 ## Commands
 
+- `/wolt` — show the wolt picker
 - `/wolt <name>` — choose a wolt for this chat
 - `/sessions` — list sessions with links
 - `/kill <name>` — clean up a stale session

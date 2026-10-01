@@ -32,7 +32,7 @@ from bot.core import (
     _sanitize_history, start_claude_session,
 )
 from urllib.parse import urlparse, parse_qs
-from wolts import get_active_creature, is_rodent
+from wolts import get_active_creature
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from env_compat import get_env
@@ -289,15 +289,15 @@ async def _notify_switch(update: Update, old_state: dict, new_wolt: str, new_ses
     """Send a brief message if active wolt or session changed."""
     old_wolt = old_state.get("active_wolt")
     old_session = old_state.get("active_session")
+    emoji = CREATURE_EMOJIS.get("raccoon", "🐾")  # fallback, wolt.json lookup below
+    wolt_json = _WOLTS_DIR / new_wolt / "wolt" / "wolt.json"
+    if wolt_json.exists():
+        try:
+            data = json.loads(wolt_json.read_text())
+            emoji = CREATURE_EMOJIS.get(data.get("type", ""), "🐾")
+        except (json.JSONDecodeError, OSError):
+            pass
     if new_wolt != old_wolt:
-        emoji = CREATURE_EMOJIS.get("raccoon", "🐾")  # fallback, wolt.json lookup below
-        wolt_json = _WOLTS_DIR / new_wolt / "wolt" / "wolt.json"
-        if wolt_json.exists():
-            try:
-                data = json.loads(wolt_json.read_text())
-                emoji = CREATURE_EMOJIS.get(data.get("type", ""), "🐾")
-            except (json.JSONDecodeError, OSError):
-                pass
         await _reply(update, f"🪵 now talking to {emoji} {new_wolt} ({new_session})")
     elif new_session != old_session:
         await _reply(update, f"🪵 now talking to {emoji} {new_wolt} ({new_session})")
@@ -562,16 +562,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _select_wolt_without_dog(update: Update, chat_id: int, state: dict) -> bool:
     """Select the only builder, or explain how to choose without a model call."""
-    wolts = sorted(w["name"] for w in list_wolts() if is_rodent(w.get("type", "rodent")))
+    wolts = [w for w in list_wolts() if _is_wolt(w)]
     if len(wolts) == 1:
-        state["active_wolt"] = wolts[0]
+        state["active_wolt"] = wolts[0].get("name") or Path(wolts[0].get("dir", "")).name
         state.pop("active_session", None)
         _save_chat_state(chat_id, state)
         return True
     if wolts:
-        await _reply(update, "Wolts: " + ", ".join(wolts) + "\nSend /wolt <name> to pick one.")
+        await _reply(
+            update,
+            _wolt_picker_header(wolts, None),
+            parse_mode="Markdown",
+            reply_markup=_wolt_picker_keyboard(wolts, None),
+        )
+        await _reply(update, "or send /wolt <name>")
     else:
-        await _reply(update, "There are no wolts yet. Create one in the lodge.")
+        await _reply(update, _NO_WOLTS_MESSAGE)
     return False
 
 
@@ -1040,7 +1046,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
         return
-    await _reply(update, f"Hey. I'm {_dog_name()}. Talk to me and I'll connect you to a wolt.")
+    if dog_available():
+        await _reply(update, f"Hey. I'm {_dog_name()}. Talk to me and I'll connect you to a wolt.")
+    else:
+        await _reply(update, "Hey. Send a message and it goes to your wolt. /wolt picks which one.")
 
 
 def _wolt_of(session_name: str) -> str:
@@ -1140,6 +1149,7 @@ WOLT_TYPE_EMOJI = {
 }
 
 RODENT_WOLT_TYPES = {"raccoon", "beaver", "otter", "rodent"}
+_NO_WOLTS_MESSAGE = "no wolts found. create a wolt in the lodge first."
 
 
 def _is_wolt(w: dict) -> bool:
@@ -1213,7 +1223,7 @@ async def handle_setwolt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active = state.get("active_wolt")
     wolts = [w for w in list_wolts() if _is_wolt(w)]
     if not wolts:
-        await _reply(update, "no wolts found. create a wolt in the lodge first.")
+        await _reply(update, _NO_WOLTS_MESSAGE)
         return
 
     await _reply(

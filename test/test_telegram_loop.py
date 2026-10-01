@@ -540,16 +540,27 @@ class TestOptionalDog:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("builders,expected", [
-        ([], "There are no wolts yet. Create one in the lodge."),
+        ([], "no wolts found. create a wolt in the lodge first."),
         ([{"name": "b", "type": "beaver"}, {"name": "a", "type": "raccoon"}],
-         "Wolts: a, b\nSend /wolt <name> to pick one."),
+         "or send /wolt <name>"),
     ])
     async def test_selection_is_plain_text(self, routing, monkeypatch, builders, expected):
         adapter, update, context, state, spawn, route, model = routing
         monkeypatch.setattr(adapter, "list_wolts", lambda: builders + [
             {"name": "doggo", "type": "dog"}, {"name": "wolfie", "type": "wolf"}])
         await adapter.handle_message(update, context)
-        update.message.reply_text.assert_awaited_once_with(expected)
+        if builders:
+            calls = update.message.reply_text.await_args_list
+            assert len(calls) == 2
+            assert calls[0].args == (adapter._wolt_picker_header(builders, None),)
+            assert calls[0].kwargs == {
+                "parse_mode": "Markdown",
+                "reply_markup": adapter._wolt_picker_keyboard(builders, None),
+            }
+            assert calls[1].args == (expected,)
+            assert calls[1].kwargs == {}
+        else:
+            update.message.reply_text.assert_awaited_once_with(expected)
         spawn.assert_not_called()
         route.assert_not_called()
         model.assert_not_called()
@@ -606,3 +617,30 @@ class TestOptionalDog:
         route.assert_awaited_once()
         assert "no OPENAI_API_KEY set for transcription" in route.await_args.args[3]
         model.assert_not_called()
+
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("available,expected", [
+        (False, "Hey. Send a message and it goes to your wolt. /wolt picks which one."),
+        (True, "Hey. I'm doggo. Talk to me and I'll connect you to a wolt."),
+    ])
+    async def test_start_with_optional_dog(self, routing, monkeypatch, available, expected):
+        adapter, update, context, state, spawn, route, model = routing
+        monkeypatch.setattr(adapter, "dog_available", lambda: available)
+        monkeypatch.setattr(adapter, "_dog_name", lambda: "doggo")
+        await adapter.handle_start(update, context)
+        update.message.reply_text.assert_awaited_once_with(expected)
+        model.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_same_wolt_new_session_switch_notice(self, routing, monkeypatch, tmp_path):
+        adapter, update, context, state, spawn, route, model = routing
+        monkeypatch.setattr(adapter, "_WOLTS_DIR", tmp_path)
+        manifest = tmp_path / "nunu" / "wolt" / "wolt.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(json.dumps({"type": "otter"}))
+        await adapter._notify_switch(
+            update, {"active_wolt": "nunu", "active_session": "old"}, "nunu", "new")
+        emoji = adapter.CREATURE_EMOJIS["otter"]
+        update.message.reply_text.assert_awaited_once_with(
+            f"🪵 now talking to {emoji} nunu (new)")
