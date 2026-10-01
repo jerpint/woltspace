@@ -125,6 +125,15 @@ class TestInjection:
     def test_livereload_still_injected(self, client):
         assert "/wolt/testwolt/site/livereload" in client.get("/wolt/testwolt/site/").text
 
+    def test_manifest_carries_the_display_name(self, client, tmp_wolts):
+        cfg_path = tmp_wolts / "testwolt" / "wolt" / "wolt.json"
+        cfg = json.loads(cfg_path.read_text())
+        cfg["display_name"] = "Test Wolt"
+        cfg_path.write_text(json.dumps(cfg))
+        m = manifest_of(client.get("/wolt/testwolt/site/").text)
+        assert m["wolt"]["display_name"] == "Test Wolt"
+        assert m["wolt"]["name"] == "testwolt"
+
     def test_only_public_wolt_fields_reach_the_page(self, client):
         html = client.get("/wolt/testwolt/site/").text
         assert "DO-NOT-LEAK" not in html

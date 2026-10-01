@@ -11,6 +11,7 @@ Usage:
     active_wolf = get_active_creature("wolf")  # name or None
 """
 
+import html
 import json
 import os
 import shutil
@@ -209,7 +210,7 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "",
     if is_rodent(creature_type):
         site_dir = wolt_dir / "wolt" / "site"
         site_dir.mkdir(parents=True, exist_ok=True)
-        scaffold_starter_site(site_dir, name, creature_type)
+        scaffold_starter_site(site_dir, name, creature_type, display_name=shown)
 
     # Init git repo (needed for Claude Code project context and wolt git operations)
     if not (wolt_dir / ".git").is_dir():
@@ -529,8 +530,12 @@ _ACCENT = {
 }
 
 
-def scaffold_starter_site(site_dir: Path, name: str, creature_type: str) -> None:
+def scaffold_starter_site(site_dir: Path, name: str, creature_type: str,
+                          display_name: str = "") -> None:
     """Write the starter site (index.html, hello.html, style.css) for a new wolt.
+
+    The page shows the wolt's display name when it has one. It is a typed
+    name, so it goes into the page as text, escaped.
 
     The starter site uses the lodge design system (cream + Preahvihear/DM Sans)
     and embeds the wolt's pixel sprite. Two pages are scaffolded so the wolt
@@ -542,7 +547,10 @@ def scaffold_starter_site(site_dir: Path, name: str, creature_type: str) -> None
 
     (site_dir / "style.css").write_text(_STARTER_CSS.replace("{accent}", accent))
     (site_dir / "index.html").write_text(
-        _STARTER_INDEX.format(name=name, sprite=sprite_svg, species=species)
+        _STARTER_INDEX.format(
+            name=html.escape(clean_display_name(display_name) or name),
+            sprite=sprite_svg, species=species,
+        )
     )
 
 

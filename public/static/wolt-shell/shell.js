@@ -42,7 +42,7 @@
 
   function mount(m) {
     var w = m.wolt || {}, site = m.site || {}, t = site.tokens || {};
-    var title = site.title || w.name;
+    var title = site.title || w.display_name || w.name;
     var emoji = t.emoji || EMOJI[w.type] || '🌲';
 
     // No third-party fonts by default: the stacks below use the lodge fonts
