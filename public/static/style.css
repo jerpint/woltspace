@@ -790,6 +790,7 @@ body {
   flex-direction: column;
   gap: 2px;
 }
+/* session row */
 .session-row {
   display: flex;
   align-items: center;
@@ -807,6 +808,8 @@ body {
   position: relative;
   overflow: hidden;
 }
+.session-row.offline { opacity: .62; }
+.session-row:not(a) { cursor: default; }
 .session-row:hover {
   background: rgba(248, 243, 230, 0.95);
   border-color: rgba(120, 110, 90, 0.26);
@@ -845,7 +848,8 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.session-preview {
+.session-title.untitled { font-style: italic; color: var(--ink-3); }
+.session-sub {
   font-family: var(--font-body);
   font-size: 13px;
   color: var(--ink-3);
@@ -863,13 +867,13 @@ body {
   flex-shrink: 0;
   padding-top: 0;
 }
-.session-actions {
+.session-control {
   display: flex;
   gap: 4px;
+  align-items: center;
   flex-shrink: 0;
-  padding-top: 0;
 }
-.session-action {
+.session-control-button, .session-confirm {
   flex-shrink: 0;
   width: 30px; height: 30px;
   border: 1px solid transparent;
@@ -880,23 +884,43 @@ body {
   transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
   background: transparent;
 }
-.session-action-stop {
+.session-control-button.stop {
   color: var(--terra);
   background: rgba(196, 83, 30, 0.12);
   border-color: rgba(196, 83, 30, 0.32);
 }
-.session-action-stop:hover {
+.session-control-button.stop:hover {
   background: rgba(196, 83, 30, 0.22);
   border-color: rgba(196, 83, 30, 0.5);
 }
-.session-action-resume {
+.session-control-button.resume {
   color: var(--green);
   background: rgba(58, 102, 68, 0.1);
   border-color: rgba(58, 102, 68, 0.25);
 }
-.session-action-resume:hover {
+.session-control-button.resume:hover {
   background: rgba(58, 102, 68, 0.2);
   border-color: rgba(58, 102, 68, 0.45);
+}
+.session-control-button.pending { cursor: wait; color: var(--ink-3); }
+.session-confirm-label, .session-control-error { font-size: 11px; white-space: nowrap; color: var(--ink-3); }
+.session-control-error { color: var(--terra); }
+.session-confirm { width: auto; padding: 0 7px; font-size: 11px; }
+.session-confirm.yes { color: var(--terra); border-color: rgba(196, 83, 30, .35); }
+.session-confirm.no { color: var(--ink-3); border-color: var(--border); }
+.session-row.compact { padding: 8px; gap: 10px; border: 0; background: transparent; backdrop-filter: none; }
+.session-row.compact:hover { background: rgba(24,16,10,.05); box-shadow: none; }
+.session-row.compact .session-sub { font-size: 12px; }
+.wolts-sessions { border-top: 1px solid rgba(24,16,10,.08); padding: 6px 8px 8px; }
+.wolts-sessions .session-row + .session-row { margin-top: 2px; }
+@media (max-width: 620px) {
+  .session-control-button, .session-confirm { min-width: 44px; height: 44px; }
+}
+@media (max-width: 900px) {
+  .session-row { padding: 9px 10px; gap: 10px; }
+  .session-title { font-size: 12px; }
+  .session-date { font-size: 10.5px; }
+  .session-control-button { font-size: 14px; border-radius: 8px; }
 }
 .sessions-toggle-running {
   height: 36px;
@@ -1133,10 +1157,6 @@ body {
   .app-grid { padding: 0 20px 20px; }
   .sessions-list { padding: 0 20px 20px; }
   .onboard-banner { margin: 0 20px 16px; }
-  .session-row { padding: 9px 10px; gap: 10px; }
-  .session-title { font-size: 12px; }
-  .session-date { font-size: 10.5px; }
-  .session-action { width: 40px; height: 40px; font-size: 14px; border-radius: 8px; }
 }
 
 /* ── Loading skeleton ── */

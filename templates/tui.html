@@ -450,17 +450,23 @@
         connectTUI();
       } else if (s) {
         setStatus('connecting', 'resuming');
-        const r = await fetch('/sessions/' + encodeURIComponent(session) + '/resume', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: '' }),
-        });
-        const result = await r.json();
-        if (result.error) {
-          setStatus('disconnected', 'resume failed');
-        } else {
-          await new Promise(ok => setTimeout(ok, 1500));
-          connectTUI();
+        try {
+          const r = await fetch('/sessions/' + encodeURIComponent(session) + '/resume', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: '' }),
+          });
+          const result = await r.json();
+          if (!r.ok || result.error) {
+            if (s.tmux_alive === true) connectTUI();
+            else setStatus('disconnected', 'resume failed');
+          } else {
+            await new Promise(ok => setTimeout(ok, 1500));
+            connectTUI();
+          }
+        } catch {
+          if (s.tmux_alive === true) connectTUI();
+          else setStatus('disconnected', 'resume failed');
         }
       } else {
         setStatus('disconnected', 'not found');
