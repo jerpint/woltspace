@@ -128,10 +128,11 @@ def slugify_wolt_name(text: object) -> str:
     return slug[:WOLT_SLUG_MAX].strip("-")
 
 
-def wolt_display_name(name: str) -> str:
+def wolt_display_name(name: str, wolts_dir: Path | None = None) -> str:
     """What to call a wolt where a person reads it: its display name, else its name."""
     try:
-        config = json.loads((WOLTS_DIR / name / "wolt" / "wolt.json").read_text())
+        root = WOLTS_DIR if wolts_dir is None else wolts_dir
+        config = json.loads((root / name / "wolt" / "wolt.json").read_text())
         shown = clean_display_name(config.get("display_name"))
         return shown or name
     except (OSError, json.JSONDecodeError, AttributeError):

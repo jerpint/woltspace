@@ -644,3 +644,62 @@ class TestOptionalDog:
         emoji = adapter.CREATURE_EMOJIS["otter"]
         update.message.reply_text.assert_awaited_once_with(
             f"🪵 now talking to {emoji} nunu (new)")
+
+
+class TestDisplayNamesInTelegram:
+    """People read the display name; routing and commands keep the slug."""
+
+    @pytest.fixture
+    def wolts(self, monkeypatch, tmp_path):
+        import bot.telegram_adapter as adapter
+
+        def make(slug, creature, display_name=None):
+            home = tmp_path / slug / "wolt"
+            home.mkdir(parents=True)
+            config = {"name": slug, "type": creature}
+            if display_name:
+                config["display_name"] = display_name
+            (home / "wolt.json").write_text(json.dumps(config))
+            return config
+
+        monkeypatch.setattr(adapter, "_WOLTS_DIR", tmp_path)
+        return adapter, [
+            make("justin-beaver", "beaver", "Justin Beaver"),
+            make("chip", "otter"),
+            make("snake-case", "raccoon", "Sn_ake *Case*"),
+        ]
+
+    def test_picker_buttons_show_names_and_carry_slugs(self, wolts):
+        adapter, listed = wolts
+        keyboard = adapter._wolt_picker_keyboard(listed, None)
+        buttons = [button for row in keyboard.inline_keyboard for button in row]
+        assert [(b.text, b.callback_data) for b in buttons] == [
+            ("🦫 Justin Beaver", "wolt:justin-beaver"),
+            ("🦦 chip", "wolt:chip"),
+            ("🦝 Sn_ake *Case*", "wolt:snake-case"),
+        ]
+
+    def test_picker_header_escapes_a_typed_name_for_markdown(self, wolts):
+        adapter, listed = wolts
+        assert "*Justin Beaver*" in adapter._wolt_picker_header(listed, "justin-beaver")
+        assert r"*Sn\_ake \*Case\**" in adapter._wolt_picker_header(listed, "snake-case")
+        assert "*chip*" in adapter._wolt_picker_header(listed, "chip")
+
+    def test_shown_falls_back_to_the_slug(self, wolts):
+        adapter, _ = wolts
+        assert adapter._shown("justin-beaver") == "Justin Beaver"
+        assert adapter._shown("chip") == "chip"
+        assert adapter._shown("no-such-wolt") == "no-such-wolt"
+
+    @pytest.mark.asyncio
+    async def test_switch_notice_uses_the_display_name(self, wolts, monkeypatch):
+        adapter, _ = wolts
+        reply = AsyncMock()
+        monkeypatch.setattr(adapter, "_reply", reply)
+        await adapter._notify_switch(
+            MagicMock(), {"active_wolt": "chip", "active_session": "old"},
+            "justin-beaver", "justin-beaver-a-b-123456",
+        )
+        assert reply.await_args.args[1] == (
+            "🪵 now talking to 🦫 Justin Beaver (justin-beaver-a-b-123456)"
+        )
