@@ -730,11 +730,14 @@ def model_catalog(harness: str | None) -> list[dict]:
     label_by_id = {m["id"]: m.get("label", m["id"]) for m in reversed(merged)}
     out = []
     for item in ov_catalog:
-        if isinstance(item, dict) and item.get("id"):
-            out.append({"id": item["id"],
-                        "label": item.get("label") or label_by_id.get(item["id"], item["id"])})
-        elif isinstance(item, str):
-            out.append({"id": item, "label": label_by_id.get(item, item)})
+        # Only a non-empty string is a model id; anything else is not an entry.
+        model_id = item.get("id") if isinstance(item, dict) else item
+        if not isinstance(model_id, str) or not model_id.strip():
+            continue
+        label = item.get("label") if isinstance(item, dict) else None
+        if not isinstance(label, str) or not label:
+            label = label_by_id.get(model_id, model_id)
+        out.append({"id": model_id, "label": label})
     if not out:
         # A catalog that offers nothing would leave every session without a
         # valid model. Treat it as not set rather than run outside it.
