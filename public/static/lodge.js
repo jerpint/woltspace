@@ -692,6 +692,38 @@ function openApp(appName, keeper) {
 let createSelectedType = null;
 let createSelectedHarness = '';
 
+// Naming a wolt is the hard part: the empty name field cycles a few ideas.
+const CREATE_NAME_IDEAS = [
+  'wolter-white', 'justin-beaver', 'wolt-disney', 'harry-otter',
+  'rocky-raccoon', 'wolt-whitman', 'beaver-cleaver', 'otter-pilot',
+  'trash-gordon',
+];
+let createNameIdeaTimer = null;
+
+function startCreateNameIdeas() {
+  const input = document.getElementById('create-name');
+  if (!input) return;
+  stopCreateNameIdeas();
+  let index = Math.floor(Math.random() * CREATE_NAME_IDEAS.length);
+  const show = () => {
+    input.placeholder = `e.g. ${CREATE_NAME_IDEAS[index % CREATE_NAME_IDEAS.length]}`;
+    index += 1;
+  };
+  show();
+  createNameIdeaTimer = setInterval(show, 2400);
+}
+
+function stopCreateNameIdeas() {
+  if (createNameIdeaTimer) clearInterval(createNameIdeaTimer);
+  createNameIdeaTimer = null;
+}
+
+// What the typed name becomes: lowercase, spaces as hyphens, nothing else odd.
+function createWoltName() {
+  return document.getElementById('create-name').value
+    .trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+}
+
 function openCreateWolt(e) {
   if (e) e.preventDefault();
   document.getElementById('create-modal').classList.add('open');
@@ -703,11 +735,13 @@ function openCreateWolt(e) {
   document.getElementById('create-submit').textContent = 'Create';
   document.getElementById('create-error').style.display = 'none';
   renderCreateHarnessOptions();
+  startCreateNameIdeas();
   setTimeout(() => document.getElementById('create-name').focus(), 50);
 }
 
 function closeCreateWolt() {
   document.getElementById('create-modal').classList.remove('open');
+  stopCreateNameIdeas();
 }
 
 function pickType(el) {
@@ -745,23 +779,71 @@ function selectCreateHarness(id) {
 }
 
 function renderCreateHarness() {
+  const harness = harnessInfo(createSelectedHarness);
+  const catalog = harness.catalog || [];
+  // Engines that take any typed model name have no fixed list to choose from.
+  const choosable = !harness.freeform_model && catalog.length > 0;
   document.querySelectorAll('.type-card').forEach(card => {
     const hint = card.querySelector('.type-card-hint');
     const model = card.querySelector('.type-card-model');
+    const select = card.querySelector('.type-card-select');
+    const usual = modelFor(createSelectedHarness, card.dataset.type);
     if (hint) hint.textContent = hint.dataset.pace || '';
-    if (model) model.textContent = modelLabelFor(createSelectedHarness, card.dataset.type);
+    if (model) {
+      model.textContent = modelLabelFor(createSelectedHarness, card.dataset.type);
+      model.hidden = choosable;
+    }
+    if (!select) return;
+    select.hidden = !choosable;
+    select.replaceChildren();
+    if (!choosable) return;
+    catalog.forEach(entry => {
+      const option = document.createElement('option');
+      option.value = entry.id;
+      option.textContent = entry.label || entry.id;
+      select.appendChild(option);
+    });
+    // A default the list no longer offers still shows, instead of silently
+    // displaying some other model as selected.
+    if (usual && !catalog.some(entry => entry.id === usual)) {
+      const option = document.createElement('option');
+      option.value = usual;
+      option.textContent = usual;
+      select.prepend(option);
+    }
+    select.value = usual;
+    select.dataset.usual = usual;
   });
 }
 
+// The model to pin at creation: only a choice that differs from the working
+// style's usual model. Leaving the dropdown alone keeps following the default.
+function createSelectedModel() {
+  const card = document.querySelector(`.type-card[data-type="${createSelectedType}"]`);
+  const select = card && card.querySelector('.type-card-select');
+  if (!select || select.hidden || !select.value) return '';
+  return select.value === select.dataset.usual ? '' : select.value;
+}
+
+document.querySelectorAll('.type-card-select').forEach(select => {
+  // Choosing a model on a card also chooses that card; the click must not
+  // bubble into the card's own handler twice.
+  select.addEventListener('click', event => {
+    event.stopPropagation();
+    pickType(select.closest('.type-card'));
+  });
+  select.addEventListener('change', () => pickType(select.closest('.type-card')));
+});
+
 function updateCreatePreview() {
-  const name = document.getElementById('create-name').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+  const name = createWoltName();
   const submit = document.getElementById('create-submit');
   document.getElementById('create-error').style.display = 'none';
   submit.disabled = !(name && createSelectedType && createSelectedHarness);
 }
 
 async function submitCreateWolt() {
-  const name = document.getElementById('create-name').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+  const name = createWoltName();
   if (!name || !createSelectedType || !createSelectedHarness) return;
 
   const submit = document.getElementById('create-submit');
@@ -778,6 +860,7 @@ async function submitCreateWolt() {
         name,
         type: createSelectedType,
         harness: createSelectedHarness,
+        ...(createSelectedModel() ? { model: createSelectedModel() } : {}),
       }),
     });
     const data = await res.json();

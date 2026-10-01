@@ -126,6 +126,14 @@ requires_tmux = pytest.mark.skipif(not _tmux_available(), reason="tmux not insta
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
+def stub_harness_model_discovery(monkeypatch):
+    """Unit/integration tests must never probe the developer's real CLI."""
+    import harnesses
+    monkeypatch.setitem(
+        harnesses.HARNESSES["codex"], "discover_models", lambda: [])
+
+
+@pytest.fixture(autouse=True)
 def claude_trust_home(tmp_path_factory, monkeypatch):
     """Point Claude's trust file at a throwaway home for every test.
 

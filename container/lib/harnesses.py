@@ -24,6 +24,9 @@ import os
 import re
 import shlex
 import subprocess
+import tempfile
+import threading
+import time
 from pathlib import Path
 
 from env_compat import get_env
@@ -43,6 +46,56 @@ WOPENCODE = str(_BIN_DIR / "wopencode")
 _ROLLOUT_UUID_RE = re.compile(
     r"rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$"
 )
+
+MODEL_CACHE_MAX_AGE = 24 * 60 * 60
+_model_refreshing: set[str] = set()
+_model_refresh_lock = threading.Lock()
+
+
+def _parse_codex_models(output: str) -> list[dict]:
+    """Parse the intentionally unstable ``codex debug models`` response."""
+    try:
+        data = json.loads(output)
+        models = data["models"]
+        if not isinstance(models, list):
+            return []
+        out = []
+        for model in models:
+            if (
+                not isinstance(model, dict)
+                or model.get("visibility") != "list"
+                or model.get("upgrade") is not None
+            ):
+                continue
+            slug = model.get("slug")
+            label = model.get("display_name")
+            if (
+                not isinstance(slug, str) or not slug
+                or not isinstance(label, str) or not label
+            ):
+                return []
+            out.append({"id": slug, "label": label})
+        return out
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return []
+
+
+def _discover_codex_models() -> list[dict]:
+    """Best-effort Codex catalog discovery; every failure is an empty result."""
+    try:
+        result = subprocess.run(
+            ["codex", "debug", "models"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if result.returncode != 0:
+            return []
+        return _parse_codex_models(result.stdout)
+    except (OSError, subprocess.SubprocessError):
+        return []
 
 
 def _claude_command(entry: dict, mode: str, *, session_id: str = "",
@@ -355,11 +408,11 @@ HARNESSES = {
         # every model a wolt may be pinned to on this harness (Free binding: any
         # model pickable for any tier). Seed list — woltspace.json can add/remove.
         "model_catalog": [
-            {"id": "opus", "label": "Opus 4.8"},
-            {"id": "sonnet", "label": "Sonnet 5"},
-            {"id": "haiku", "label": "Haiku 4.5"},
+            {"id": "opus", "label": "Opus"},
+            {"id": "sonnet", "label": "Sonnet"},
+            {"id": "haiku", "label": "Haiku"},
             # `claude --model fable` alias verified live (2026-07-16)
-            {"id": "fable", "label": "Fable 5"},
+            {"id": "fable", "label": "Fable"},
         ],
         # how a skill is invoked inside a prompt
         "skill_invoke": "/{name}",
@@ -397,6 +450,7 @@ HARNESSES = {
             # VERIFY live: exact id for "Sol" from codex's /model picker
             {"id": "gpt-5.6-sol", "label": "GPT-5.6 Sol"},
         ],
+        "discover_models": _discover_codex_models,
         # codex's native skill mention (the mentions_v2 feature) — resolves a
         # discovered skill for real. `$name` only worked by the model choosing to
         # read the SKILL.md itself; `@` is the reliable trigger. Verified live 2026-07-16.
@@ -571,18 +625,106 @@ def _model_overlay(harness: str | None) -> dict:
         return {}
 
 
+def _model_cache_path(harness: str) -> Path:
+    return _woltspace_json_path().parent / ".space" / "models" / f"{harness}.json"
+
+
+def _read_model_cache(harness: str) -> tuple[list[dict], float | None]:
+    try:
+        data = json.loads(_model_cache_path(harness).read_text())
+        fetched_at = data["fetched_at"]
+        models = data["models"]
+        if not isinstance(fetched_at, (int, float)) or not isinstance(models, list):
+            return [], None
+        clean = []
+        for model in models:
+            if not isinstance(model, dict) or not isinstance(model.get("id"), str):
+                return [], None
+            label = model.get("label")
+            if not model["id"] or not isinstance(label, str) or not label:
+                return [], None
+            clean.append({"id": model["id"], "label": label})
+        return clean, float(fetched_at)
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return [], None
+
+
+def _model_cache_stale(harness: str, *, now: float | None = None) -> bool:
+    _, fetched_at = _read_model_cache(harness)
+    current = now if now is not None else time.time()
+    return fetched_at is None or current - fetched_at >= MODEL_CACHE_MAX_AGE
+
+
+def _write_model_cache(
+    harness: str,
+    models: list[dict],
+    *,
+    fetched_at: float | None = None,
+) -> None:
+    cache = _model_cache_path(harness)
+    cache.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    payload = {
+        "fetched_at": fetched_at if fetched_at is not None else time.time(),
+        "models": models,
+    }
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", dir=cache.parent, prefix=f".{harness}.", delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            json.dump(payload, handle, separators=(",", ":"))
+        temporary.chmod(0o600)
+        os.replace(temporary, cache)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _refresh_model_cache(harness: str) -> None:
+    try:
+        discover = get_harness(harness).get("discover_models")
+        if discover:
+            models = discover()
+            if models:
+                _write_model_cache(harness, models)
+    finally:
+        with _model_refresh_lock:
+            _model_refreshing.discard(harness)
+
+
+def refresh_model_catalogs(*, force: bool = False) -> None:
+    """Schedule stale harness discoveries without waiting for subprocesses."""
+    for harness, entry in HARNESSES.items():
+        if (
+            not entry.get("discover_models")
+            or (not force and not _model_cache_stale(harness))
+        ):
+            continue
+        with _model_refresh_lock:
+            if harness in _model_refreshing:
+                continue
+            _model_refreshing.add(harness)
+        threading.Thread(
+            target=_refresh_model_cache,
+            args=(harness,),
+            name=f"woltspace-models-{harness}",
+            daemon=True,
+        ).start()
+
+
 def model_catalog(harness: str | None) -> list[dict]:
-    """Selectable models for a harness as [{"id","label"}]: the built-in seed,
-    replaced by woltspace.json's "catalog" when present. The catalog list IS the
-    lever — add or hide a model by editing that one list, no code. Overlay entries
-    may be bare id strings or {"id","label"} objects; labels fall back to the
-    seed's (then to the id) so a user adding a model need only list its id.
-    """
-    seed = get_harness(harness).get("model_catalog", [])
+    """Return overlay, or cached discovery merged with the stable seed."""
+    resolved = resolve_harness(harness)
+    seed = get_harness(resolved).get("model_catalog", [])
+    discovered, _ = _read_model_cache(resolved)
+    merged = [dict(m) for m in discovered]
+    seen = {m["id"] for m in merged}
+    merged.extend(dict(m) for m in seed if m["id"] not in seen)
     ov_catalog = _model_overlay(harness).get("catalog")
     if ov_catalog is None:
-        return [dict(m) for m in seed]
-    label_by_id = {m["id"]: m.get("label", m["id"]) for m in seed}
+        return merged
+    label_by_id = {m["id"]: m.get("label", m["id"]) for m in reversed(merged)}
     out = []
     for item in ov_catalog:
         if isinstance(item, dict) and item.get("id"):
@@ -607,15 +749,41 @@ def is_valid_model(harness: str | None, model: str | None) -> bool:
     return any(m["id"] == model for m in model_catalog(harness))
 
 
+# Where each tier sits in a harness's own ranked model list: the thinker gets
+# the first model, the builder the second, the quick one the third. The
+# internal aliases follow the tier they have always shared a default with.
+_RANKED_TIER_POSITION = {"raccoon": 0, "rodent": 0, "beaver": 1, "wolf": 1, "otter": 2}
+
+
+def automatic_tier_model(harness: str | None, tier: str | None) -> str | None:
+    """A tier's default before any lodge setting.
+
+    When the harness reported its own model list, the defaults follow that
+    list's order, so they keep up with the harness instead of naming whatever
+    was current when this table was written. Without a usable list (no
+    discovery, discovery failed, fewer than three models) the built-in seed
+    applies.
+    """
+    if not tier:
+        return None
+    resolved = resolve_harness(harness)
+    position = _RANKED_TIER_POSITION.get(tier)
+    if position is not None and get_harness(resolved).get("discover_models"):
+        discovered, _ = _read_model_cache(resolved)
+        if len(discovered) >= len(PICKER_TIERS):
+            return discovered[position]["id"]
+    return get_harness(resolved)["models"].get(tier)
+
+
 def tier_default_model(harness: str | None, tier: str | None) -> str | None:
-    """The default model for a tier on this harness: woltspace.json's "tiers"
-    override if present, else the built-in seed."""
+    """The default model for a tier on this harness: the lodge's saved choice
+    (woltspace.json "tiers") if there is one, else the automatic default."""
     if not tier:
         return None
     overlay_tiers = _model_overlay(harness).get("tiers", {})
-    if tier in overlay_tiers:
+    if isinstance(overlay_tiers, dict) and overlay_tiers.get(tier):
         return overlay_tiers[tier]
-    return get_harness(harness)["models"].get(tier)
+    return automatic_tier_model(harness, tier)
 
 
 def creature_model(harness: str | None, creature: str | None) -> str | None:
@@ -652,6 +820,10 @@ def harness_metadata() -> list[dict]:
 
     Only display + model data — no wrappers, functions, or file paths.
     """
+    # A long-running lodge may outlive the cache TTL. Picker reads only schedule
+    # the already-deduplicated background refresh; discovery never blocks this
+    # request and spawn paths do not call it.
+    refresh_model_catalogs()
     out = []
     for hid, entry in HARNESSES.items():
         out.append({
@@ -660,6 +832,11 @@ def harness_metadata() -> list[dict]:
             "emoji": entry.get("emoji", ""),
             # per-tier default model (merged view — reflects woltspace.json overrides)
             "models": {tier: tier_default_model(hid, tier) for tier, _ in PICKER_TIERS},
+            # what each tier gets when the lodge has saved no choice of its own
+            "automatic_models": {
+                tier: automatic_tier_model(hid, tier) for tier, _ in PICKER_TIERS
+            },
+            "saved_models": _saved_tier_models(hid),
             # full selectable list for the model picker (merged view)
             "catalog": model_catalog(hid),
             "freeform_model": bool(entry.get("freeform_model")),
@@ -701,6 +878,67 @@ def set_default_harness(name: str) -> str:
     tmp.write_text(json.dumps(cfg, indent=2) + "\n")
     tmp.rename(path)
     return name
+
+
+def _saved_tier_models(harness: str) -> dict:
+    """The lodge's own per-tier choices for a harness (picker tiers only)."""
+    saved = _model_overlay(harness).get("tiers", {})
+    if not isinstance(saved, dict):
+        return {}
+    return {
+        tier: saved[tier] for tier, _ in PICKER_TIERS
+        if isinstance(saved.get(tier), str) and saved[tier]
+    }
+
+
+def set_tier_defaults(harness: str, tiers: dict) -> dict:
+    """Set a harness's default model per tier in woltspace.json.
+
+    ``tiers`` maps a picker tier (raccoon, beaver, otter) to a model id. Choosing
+    the model the tier would get anyway (or an empty value) saves nothing, so
+    the tier keeps following the automatic default. The whole request is
+    validated before anything is written. Returns the resulting defaults.
+    """
+    if harness not in HARNESSES:
+        raise ValueError(f"unknown harness: {harness}")
+    if not isinstance(tiers, dict) or not tiers:
+        raise ValueError("tiers must be a non-empty object")
+    allowed = {tier for tier, _ in PICKER_TIERS}
+    for tier, model in tiers.items():
+        if tier not in allowed:
+            raise ValueError(f"unknown tier: {tier}")
+        if model in (None, ""):
+            continue
+        if not isinstance(model, str) or not is_valid_model(harness, model):
+            raise ValueError(f"unknown model for {harness}: {model}")
+    path = _woltspace_json_path()
+    try:
+        cfg = json.loads(path.read_text()) if path.exists() else {}
+    except (json.JSONDecodeError, OSError):
+        cfg = {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    section = cfg.get("harness")
+    if not isinstance(section, dict):
+        section = cfg["harness"] = {}
+    models = section.get("models")
+    if not isinstance(models, dict):
+        models = section["models"] = {}
+    entry = models.get(harness)
+    if not isinstance(entry, dict):
+        entry = models[harness] = {}
+    saved = entry.get("tiers")
+    if not isinstance(saved, dict):
+        saved = entry["tiers"] = {}
+    for tier, model in tiers.items():
+        if model in (None, "") or model == automatic_tier_model(harness, tier):
+            saved.pop(tier, None)
+        else:
+            saved[tier] = model
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, indent=2) + "\n")
+    tmp.rename(path)
+    return {tier: tier_default_model(harness, tier) for tier, _ in PICKER_TIERS}
 
 
 def build_command(harness: str | None, mode: str, **kwargs) -> str:

@@ -401,3 +401,7 @@
   .ds-choice-card, .ds-toast { transition: none; }
   .ds-save-state.saving .ds-save-dot { animation: none; }
 }
+
+/* Settings: default models, one block of working styles per engine */
+.settings-tier-harness { margin: var(--space-4) 0 0; }
+.settings-tier-harness:first-child { margin-top: 0; }
