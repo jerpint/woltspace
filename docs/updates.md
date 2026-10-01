@@ -1,87 +1,54 @@
 # Updating Woltspace
 
-Woltspace uses its package manager for upgrades. There is no self-update CLI,
-custom installer, or separate updater to bootstrap.
+Woltspace has a thin update command for ordinary uv tool installations. It uses uv and the native lodge lifecycle; it is not a separate update engine.
 
 ## Ask a wolt
 
-From a native lodge session, ask: “Check for Woltspace updates” or “Update
-Woltspace.” The bundled update skill reviews the chosen release and crossed
-release notes/migrations, obtains applicable consent, and runs standard uv and
-lodge lifecycle commands. A check alone does not authorize installation.
+Ask “Check for Woltspace updates” or “Update Woltspace.” The bundled update skill reviews crossed release notes and migrations, obtains applicable consent, then uses this command for the mechanical lifecycle. A check alone does not authorize installation.
 
-The native tmux session survives the control-plane stop, so the wolt can upgrade
-and restart from within the lodge. The browser, tunnel and messaging connectors
-briefly disconnect; the wolt reports once routing is restored. Existing sessions
-keep loaded instructions. Native start syncs platform skills; new sessions load
-the updated instructions. The skill checks the installed version and recovery
-and reports gaps rather than assuming success.
+## Native update command
+
+Check without changing anything:
+
+```sh
+woltspace update --check
+```
+
+After reviewing releases and migrations, update to the newest stable release or an exact reviewed release:
+
+```sh
+woltspace update
+woltspace update --version VERSION
+```
+
+The command confirms interactively unless `--yes` is supplied. `--pre` permits the newest prerelease; `--json` returns machine-readable results. It refuses downgrades, yanked releases, containers, source/pip installs and custom uv sources.
+
+For a running lodge it records status, stops, runs `uv tool install --force` with an exact version, restarts via the newly installed executable, then verifies version and health. An initially stopped lodge remains stopped. An install failure still triggers the restart attempt, and both failures are reported.
+
+The browser, tunnel and messaging briefly disconnect, but native tmux sessions survive. Existing sessions retain their loaded instructions; new sessions load newly synced skills.
 
 ## Manual native upgrade
 
-For an ordinary uv tool install, review the [published release notes](https://github.com/jerpint/woltspace/releases)
-and migrations for the target and every crossed version, then run:
+Older releases without the command can be upgraded once with the underlying steps. Review the [published release notes](https://github.com/jerpint/woltspace/releases), PyPI withdrawal state and crossed migrations, then run:
 
 ```sh
+woltspace status --json
 woltspace stop
-uv tool upgrade woltspace
-woltspace start
-woltspace status
-```
-
-Use the installed native CLI and keep the same lodge environment/settings for
-stop and start. These are separate steps: if uv fails after stopping, still
-attempt start and report/resolve the install failure. If already stopped and
-you intend it to remain stopped, skip stop/start. There is no automatic recovery
-wrapper around these commands.
-
-uv upgrades respect installed version constraints and retain installation
-settings. If pinned to an older version, or choosing a specific reviewed release,
-replace the upgrade step with:
-
-```sh
 uv tool install --force 'woltspace==VERSION'
 uv tool update-shell
+woltspace start
+woltspace --version
+woltspace status --json
 ```
 
-Replace VERSION with the reviewed published version, preserving your installed
-extras. The wolt uses this exact-version path to avoid installing a different
-latest version than the one authorized. Do not overwrite custom sources/options
-with this example; preserve your recipe or use its documented upgrade procedure.
-Do not select withdrawn/yanked releases or downgrade as a routine upgrade.
+Use the installed native CLI and same lodge environment. If uv fails after the stop, still attempt start and report both outcomes. If the lodge was already stopped and should remain stopped, skip stop/start. Woltspace 0.5.4 and newer has no extras to preserve. Never overwrite a custom source or options with this example; follow that installation's own recipe.
 
-Normal uv resolution/cache behavior applies; downloads happen while the lodge
-is down. A failed replacement can leave the CLI unable to start. Repair the
-package with uv, then run `woltspace start` manually. No automatic rollback or
-migration execution is provided. Manual downgrade requires checking whether the
-older code can read current state; a compatible backup may be needed. Installing
-older code alone does not reverse migrations.
-
-Run `woltspace --version` and `woltspace status --json` afterwards and check your
-messaging channel. Connector diagnostics can retain stale state/errors; compare
-with the pre-update baseline and allow startup time before concluding recovery
-failed. A successful package installation is not proof every connector resumed
-or that required migration actions are complete.
-
-## Getting the new skill
-
-Older users already have uv and lodge stop/start commands; they can use the
-manual flow above to install the release containing this revised skill. No new
-update command is required. Start syncs the bundled skill; open a new session to
-load it. The website installer remains for fresh installations.
+Normal uv resolution and cache behavior applies. A failed replacement can leave the CLI unable to start; repair it with uv, then start manually. There is no automatic rollback or migration execution. A package downgrade cannot reverse a migration and is not part of this workflow.
 
 ## TUI and container updates
 
-The npm `@woltspace/tui` is a separate distribution with independent versions.
-Update it separately after reviewing its release notes and minimum lodge version.
-A newer TUI can refuse to start against an older lodge; upgrade the lodge to the
-required minimum first. The TUI checks its minimum lodge version, while the lodge
-does not enforce a TUI version. A dedicated TUI updater is deferred.
+The npm `@woltspace/tui` has independent versions. Update it separately after reviewing its release notes and minimum lodge version.
 
-For external/container deployments, update through the host's container tooling;
-do not apply native uv lifecycle commands inside the container. For source/pip
-installations, use the workflow for that installation method.
+External/container deployments are updated through host container tooling, not with native lifecycle commands inside the container. Source and pip installs use the workflow for their installation method.
 
-Validate a genuine version transition in a disposable lodge before updating the
-live lodge. Earlier container checks were no-op checks of the now-removed updater
-and do not establish that this skill workflow has been tested end to end.
+Validate genuine transitions in a disposable lodge before updating a live lodge.

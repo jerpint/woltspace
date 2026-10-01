@@ -39,9 +39,9 @@ def test_wolt_page_is_bookmarkable_and_unknown_wolt_is_404(tmp_path, monkeypatch
 def test_sidebar_has_product_nav_and_quiet_footer():
     sidebar = (ROOT / "templates" / "partials" / "sidebar.html").read_text()
 
-    for label in ("Home", "Apps", "Wolves", "Connectors"):
+    for label in ("Home", "Wolts", "Sessions", "Apps", "Wolves", "Connectors"):
         assert f">{label}<" in sidebar
-    assert "Sessions</span>" not in sidebar
+    assert 'id="sessions-badge"' in sidebar
     assert "System Creatures" not in sidebar
     assert "terminal" in sidebar and "⚙ settings" in sidebar
 
@@ -54,5 +54,6 @@ def test_wolt_page_has_render_level_xss_acceptance_check():
 
 def test_wolt_page_uses_provable_session_states():
     source = (ROOT / "public" / "static" / "wolt-page.js").read_text()
-    assert "const sessionState = sessionStateText" in source
+    assert "sessionRow(s, { timeFormatter: time })" in source
+    assert "sessionStateText" not in source
     assert "waiting on you" not in source.lower()

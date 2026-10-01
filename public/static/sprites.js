@@ -51,6 +51,43 @@ function woltSpriteAvatar(type, size) {
   return `<svg width="${w.toFixed(1)}" height="${h.toFixed(1)}" xmlns="http://www.w3.org/2000/svg" style="image-rendering:pixelated;display:block;margin:0 auto" shape-rendering="crispEdges">${rects}</svg>`;
 }
 
+// Same sprite as woltSpriteAvatar, built as DOM nodes (no markup strings), for
+// callers that keep to the lodge's data-as-data rule.
+function woltSpriteElement(type, size) {
+  const s = WOLT_SPRITES[type];
+  if (!s) return null;
+  const map = s.map;
+  let minR = Infinity, maxR = -1, minC = Infinity, maxC = -1;
+  for (let r = 0; r < map.length; r++) for (let c = 0; c < map[r].length; c++) {
+    const ch = map[r][c];
+    if (ch === '.' || ch === ' ' || !s.pal[ch]) continue;
+    if (r < minR) minR = r; if (r > maxR) maxR = r;
+    if (c < minC) minC = c; if (c > maxC) maxC = c;
+  }
+  if (maxR < 0) return null;
+  const NS = 'http://www.w3.org/2000/svg';
+  const bw = maxC - minC + 1, bh = maxR - minR + 1;
+  const px = size / Math.max(bw, bh);
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('width', (bw * px).toFixed(1));
+  svg.setAttribute('height', (bh * px).toFixed(1));
+  svg.setAttribute('shape-rendering', 'crispEdges');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.style.imageRendering = 'pixelated';
+  svg.style.display = 'block';
+  for (let r = minR; r <= maxR; r++) for (let c = minC; c <= Math.min(maxC, map[r].length - 1); c++) {
+    const fill = s.pal[map[r][c]]; if (!fill) continue;
+    const rect = document.createElementNS(NS, 'rect');
+    rect.setAttribute('x', ((c - minC) * px).toFixed(2));
+    rect.setAttribute('y', ((r - minR) * px).toFixed(2));
+    rect.setAttribute('width', px.toFixed(2));
+    rect.setAttribute('height', px.toFixed(2));
+    rect.setAttribute('fill', fill);
+    svg.appendChild(rect);
+  }
+  return svg;
+}
+
 // Background scene sprite data (used by home page)
 const BG_SPRITE_PAL = {
   bv: {A:'#3f190e',B:'#af6127',C:'#fce6b0',D:'#773c1f',E:'#050003',F:'#fffee7',G:'#dd7a2d'},

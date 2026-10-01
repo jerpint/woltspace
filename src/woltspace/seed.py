@@ -313,6 +313,9 @@ def install_seed(
         stage = Path(tempfile.mkdtemp(prefix=".seed-install-", dir=wolts_dir))
         moved: list[Path] = []
         try:
+            runtime_lib = str(Path(install_root) / "container" / "lib")
+            if runtime_lib not in sys.path:
+                sys.path.insert(0, runtime_lib)
             for entry in manifest["wolts"]:
                 name = entry["name"]
                 _stage_wolt(
@@ -372,9 +375,6 @@ def install_seed(
                     raise SeedError(f"install destination appeared during commit: {target}")
                 (stage / "apps" / name).rename(target)
                 moved.append(target)
-            runtime_lib = str(Path(install_root) / "container" / "lib")
-            if runtime_lib not in sys.path:
-                sys.path.insert(0, runtime_lib)
             from skills_sync import seed_wolt_skills
             for name in summary.wolts:
                 seed_wolt_skills(Path(install_root), wolts_dir / name)
@@ -418,6 +418,16 @@ def _stage_wolt(source: Path, target: Path, name: str, template: Path, provenanc
     (memory / "context.md").write_text("# Context\n\nNew independent starter copy.\n", encoding="utf-8")
     (memory / "learnings.md").write_text("# Learnings\n\n", encoding="utf-8")
     _write_json(target / "wolt" / "wolt.json", config)
+    from wolts import is_rodent, scaffold_starter_site
+    if is_rodent(config.get("type", "raccoon")):
+        site = target / "wolt" / "site"
+        site.mkdir(parents=True, exist_ok=True)
+        for path in site.iterdir():
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        scaffold_starter_site(site, name, config.get("type", "raccoon"))
     template_rules = (target / "CLAUDE.md").read_text(encoding="utf-8")
     managed = _managed_rules(template_rules)
     authored = (source / "rules.md").read_text(encoding="utf-8").strip()

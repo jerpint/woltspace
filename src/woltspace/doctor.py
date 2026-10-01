@@ -158,6 +158,21 @@ def _auth_paths(home: Path) -> dict[str, Path]:
     }
 
 
+def _claude_oauth_account_present(home: Path) -> bool:
+    """Recognize Claude's non-secret account marker used with macOS Keychain."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        config = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(config, dict)
+        and isinstance(config.get("oauthAccount"), dict)
+        and bool(config["oauthAccount"])
+    )
+
+
 class MountError(RuntimeError):
     """A container run is missing a mount it cannot work without."""
 
@@ -476,6 +491,12 @@ def run_doctor(
     home = Path.home()
     auth = _auth_paths(home)
     authenticated = [name for name in installed if auth[name].is_file()]
+    if (
+        "claude" in installed
+        and "claude" not in authenticated
+        and _claude_oauth_account_present(home)
+    ):
+        authenticated.append("claude (macOS Keychain)")
     # A token in the environment is auth too — Claude Code prefers it over the
     # file. Reporting "no supported auth file detected" at a host that is in
     # fact logged in sends people to re-run a login they do not need. It is

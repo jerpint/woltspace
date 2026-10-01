@@ -28,7 +28,7 @@ from harnesses import HARNESSES  # noqa: E402
 
 DEFAULT_STARTER_SEED = (
     "https://github.com/jerpint/woltspace-starter-lodge.git"
-    "@7e553b072bf6be18369f58dac62850b74d55d227"
+    "@ce830696f24769c7646995762be5780f06aad39d"
 )
 _starter_seed_lock = threading.Lock()
 

@@ -42,8 +42,11 @@ const base = process.env.BASE_URL || 'http://127.0.0.1:17799';
     const card = page.locator('#home-starter-welcome');
     await card.waitFor({ state: 'visible', timeout: 3000 });
     assert.equal(await card.locator('.home-starter-name, .home-starter-description').count(), 0);
-    assert.equal(await card.locator('button').textContent(), 'Say hi 🪵');
-    assert.equal(await card.textContent(), 'Say hi 🪵');
+    assert.equal(await card.locator('button').textContent(), 'Say hi to <Onboardie>');
+    assert.equal(await card.locator('.home-starter-bubble').textContent(),
+      "Hey! I'm <Onboardie>.Want to build something?");
+    assert.equal(await card.locator('.home-starter-sprite svg').count(), 1);
+    assert.equal(await page.locator('#home-quote').isVisible(), false, 'the quote steps aside');
     assert.equal(await card.locator('img').count(), 0);
     const chrome = await card.evaluate(element => {
       const style = getComputedStyle(element);

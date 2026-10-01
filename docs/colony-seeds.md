@@ -68,6 +68,9 @@ writing. It refuses to overwrite an existing wolt or app. Installed wolts get:
 - the published identity, authored rules, and explicitly selected skills;
 - fresh, empty context and learnings.
 
+Rodent wolts get the same generated starter site a newly created wolt gets.
+Seeds do not carry sites.
+
 Apps are private and stopped after install. Ports are assigned from the
 receiving lodge's available range. Bundled source is copied; pinned HTTPS Git
 apps are cloned and checked out at the recorded commit. Dependencies and app
