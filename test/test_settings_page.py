@@ -49,7 +49,12 @@ def test_settings_page_keeps_only_lodge_wide_harness_controls(tmp_path, monkeypa
     assert ">opencode<" in body
     assert "Available" not in body
     assert "Not installed" not in body
-    assert "GPT-5.5" not in body
+    # Default models is a lodge-wide control: one select per working style for
+    # engines with a fixed model list. Engines that take any typed model name
+    # (opencode) are not listed there.
+    assert "Default models" in body
+    assert body.count("data-tier-select") == 6
+    assert 'id="tier-codex-raccoon"' in body
     assert "GPT-4o" not in body
     assert 'data-wolt=' not in body
     assert 'name="default-harness"' in body
