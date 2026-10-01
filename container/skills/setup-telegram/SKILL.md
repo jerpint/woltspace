@@ -115,8 +115,43 @@ second `getUpdates` check after startup.
 
 The pending first message should reach the bot. With one builder wolt, it goes
 directly to that wolt. With several, the bot shows the existing wolt picker and offers
-`/wolt <name>`. With none, it asks the owner to create one in the lodge. Confirm
-what was configured and any remaining verification gap without showing secrets.
+`/wolt <name>`. With none, it asks the owner to create one in the lodge.
+
+## 4. Stay until a message arrives both ways
+
+Setup is not done when the connector says running. It is done when the owner
+has seen a message from the lodge on their phone and the lodge has received
+one back. Do not end the conversation before that, and do not report success
+on the configuration alone.
+
+1. Send the first message yourself, to the owner's own chat (a private chat
+   with the bot has the same id as the owner's user id):
+
+   ```bash
+   notify --telegram <owner id> <<'WOLTSPACE_NOTIFY_<16 random hex>'
+   hello from your lodge - Telegram is connected.
+   WOLTSPACE_NOTIFY_<same>
+   ```
+
+   Then ask in the session: "I just sent you a message on Telegram. Do you
+   see it?" Wait for the answer.
+2. When they see it, ask them to reply to it on Telegram, and tell them what to
+   expect: with one wolt the reply opens a session with that wolt; with
+   several, the bot shows the picker first. Check that the reply arrived (a new
+   or resumed session, or the picker in their chat) and say so.
+3. If either direction fails, stay and work through it with them, one cause at
+   a time, re-testing after each:
+   - nothing arrives on their phone: they have not opened the bot's chat and
+     pressed Start (a bot cannot write first to someone who never did); the
+     owner id is wrong; the connector is not running (`woltspace status`).
+   - the bot stays silent when they write: their id is missing from
+     `allowed_users`; another process is polling the same token (the status
+     shows a conflict); the lodge was not restarted after the change.
+   - `notify` reports no target: the token or the allowlist did not reach the
+     running lodge; check for a conflicting value in the lodge `.env`.
+4. Only then summarize what was configured, without showing secrets. If you had
+   to stop before both directions worked, say exactly which one is unproven
+   and what the owner should try next.
 
 ## Commands
 
