@@ -91,7 +91,7 @@
     var rows = [
       ['name', w.display_name || w.name], ['folder', w.name], ['creature', w.type], ['engine', w.harness || 'lodge default'], ['model', w.model || 'tier default'],
       ['role', w.role], ['capabilities', (w.capabilities || []).join(', ')],
-      ['site shell', document.querySelector('script[src$="shell.js"]') ? 'on' : 'off (the wolt owns its site)'], ['site title', site.title], ['custom css', site.custom_css], ['header slot', site.header_html], ['footer slot', site.footer_html]
+      ['site shell', document.querySelector('script[src*="/shell.js"]') ? 'on' : 'off (the wolt owns its site)'], ['site title', site.title], ['custom css', site.custom_css], ['header slot', site.header_html], ['footer slot', site.footer_html]
     ];
     render('<table>' + rows.map(function (r) { return '<tr><td>' + esc(r[0]) + '</td><td>' + esc(r[1] || '-') + '</td></tr>'; }).join('') + '</table>' +
       '<div class="note">Read-only for now. Engine and model live in <code>wolt/wolt.json</code>; the look lives in <code>wolt/site/site.json</code>.</div>');

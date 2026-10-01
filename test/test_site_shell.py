@@ -59,7 +59,8 @@ def site_dir(tmp_wolts):
     return tmp_wolts / "testwolt" / "wolt" / "site"
 
 
-SHELL_TAG = '<script src="/static/wolt-shell/shell.js"></script>'
+# The script address carries a version so an updated lodge never serves a stale drawer.
+SHELL_TAG = '<script src="/static/wolt-shell/shell.js?v='
 
 
 def manifest_of(html):
@@ -115,7 +116,7 @@ class TestSiteConfig:
 class TestInjection:
     def test_site_page_gets_manifest_and_shell_before_body_end(self, client):
         html = client.get("/wolt/testwolt/site/").text
-        assert '<script src="/static/wolt-shell/shell.js"></script>' in html
+        assert re.search(r'<script src="/static/wolt-shell/shell\.js\?v=\d+-\d+"></script>', html)
         assert html.index("shell.js") < html.rindex("</body>")
         m = manifest_of(html)
         assert m["wolt"]["name"] == "testwolt" and m["wolt"]["type"] == "beaver"
