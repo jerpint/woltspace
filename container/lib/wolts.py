@@ -98,9 +98,48 @@ def set_active_creature(creature_type: str, wolt_name: str) -> None:
     CONFIG_FILE.write_text(json.dumps(config, indent=2) + "\n")
 
 
+WOLT_SLUG_MAX = 20
+WOLT_DISPLAY_NAME_MAX = 40
+
+
+def clean_display_name(text: object) -> str:
+    """A typed wolt name as people will read it: one line, single spaces."""
+    if not isinstance(text, str):
+        return ""
+    spaced = "".join(" " if ch.isspace() else ch for ch in text)
+    return " ".join("".join(ch for ch in spaced if ch.isprintable()).split())
+
+
+def slugify_wolt_name(text: object) -> str:
+    """The folder-safe name for a typed wolt name.
+
+    Lowercase ASCII letters, digits and hyphens, starting with a letter, at
+    most WOLT_SLUG_MAX characters. Accents are dropped ("Señor" -> "senor"),
+    anything else becomes a hyphen. Returns "" when nothing usable is left.
+    """
+    import re
+    import unicodedata
+
+    shown = clean_display_name(text)
+    ascii_text = unicodedata.normalize("NFKD", shown).encode("ascii", "ignore").decode()
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")
+    slug = re.sub(r"^[^a-z]+", "", slug)
+    return slug[:WOLT_SLUG_MAX].strip("-")
+
+
+def wolt_display_name(name: str) -> str:
+    """What to call a wolt where a person reads it: its display name, else its name."""
+    try:
+        config = json.loads((WOLTS_DIR / name / "wolt" / "wolt.json").read_text())
+        shown = clean_display_name(config.get("display_name"))
+        return shown or name
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return name
+
+
 def create_creature_wolt(name: str, creature_type: str, role: str = "",
                          description: str = "", harness: str = "",
-                         model: str = "") -> dict:
+                         model: str = "", display_name: str = "") -> dict:
     """Create a minimal creature-wolt directory.
 
     Returns a dict with:
@@ -148,11 +187,14 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "",
         wolt_json["harness"] = harness
     if model:
         wolt_json["model"] = model
+    shown = clean_display_name(display_name)
+    if shown and shown != name:
+        wolt_json["display_name"] = shown
     (wolt_dir / "wolt" / "wolt.json").write_text(json.dumps(wolt_json, indent=2) + "\n")
 
     # Write minimal identity.md
     (wolt_dir / "wolt" / "memory" / "identity.md").write_text(
-        f"# {name}\n\nI am {name}, a {creature_type}.\n"
+        f"# {shown or name}\n\nI am {shown or name}, a {creature_type}.\n"
     )
 
     # Write empty context and learnings

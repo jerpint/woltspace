@@ -36,6 +36,13 @@ function harnessInfo(id) {
   return harnessList.find(h => h.id === id) || { id, label: id, emoji: '' };
 }
 
+// What to call a wolt where a person reads it. Its `name` stays the folder
+// name used in addresses and session names.
+function woltLabel(w) {
+  if (!w) return '';
+  return w.display_name || w.name || w.dir || '';
+}
+
 // A wolt's effective engine + the concrete model it will spawn with.
 function woltHarness(w) {
   const pinned = !!w.harness;
@@ -219,7 +226,8 @@ function renderStarterWelcome() {
   const name = wolt.name || wolt.dir;
   // A fresh lodge has one thing to do: meet the starter wolt. She stands in the
   // scene with a speech bubble and a "press start" button (styles: home.css).
-  const shown = name.charAt(0).toUpperCase() + name.slice(1);  // wolt names are lowercase dirs
+  // without a display name, a lowercase folder name still reads as a name
+  const shown = wolt.display_name || (name.charAt(0).toUpperCase() + name.slice(1));
   const quote = document.getElementById('home-quote');
   const hero = lodgeElement('div', 'home-starter-hero');
   const bubble = lodgeElement('div', 'home-starter-bubble');
@@ -306,7 +314,7 @@ function renderSidebarWolts() {
       avatar.appendChild(dot);
     }
     const info = document.createElement('div'); info.className = 'wolt-info';
-    const nameEl = document.createElement('div'); nameEl.className = 'wolt-name'; nameEl.textContent = name;
+    const nameEl = document.createElement('div'); nameEl.className = 'wolt-name'; nameEl.textContent = woltLabel(w) || name;
     const sub = document.createElement('div'); sub.className = 'wolt-type';
     sub.textContent = everyone ? w.type : woltStateText(x);
     info.append(nameEl, sub); card.append(avatar, info);
@@ -630,7 +638,7 @@ function renderSessions() {
       const header = lodgeElement('div', 'sessions-group-header');
       const avatar = lodgeElement('div', 'sessions-group-avatar');
       if (sessionSprite) avatar.innerHTML = sessionSprite; else avatar.textContent = emoji;
-      header.append(avatar, lodgeElement('span', 'sessions-group-name', wolt), lodgeElement('span', 'sessions-group-meta'));
+      header.append(avatar, lodgeElement('span', 'sessions-group-name', woltLabel(woltData) || wolt), lodgeElement('span', 'sessions-group-meta'));
       const chevron = lodgeElement('span', 'sessions-group-chevron', '⌄');
       header.appendChild(chevron);
       header.addEventListener('click', () => toggleSessionGroup(header));
@@ -718,16 +726,57 @@ function stopCreateNameIdeas() {
   createNameIdeaTimer = null;
 }
 
-// What the typed name becomes: lowercase, spaces as hyphens, nothing else odd.
+// The name as typed. The lodge decides what it becomes (GET /wolts/name-preview);
+// this page never works that out itself.
 function createWoltName() {
-  return document.getElementById('create-name').value
-    .trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+  return document.getElementById('create-name').value.trim();
+}
+
+let createNamePreview = { typed: '', ok: false, slug: '' };
+let createNamePreviewTimer = null;
+
+function showCreateNamePreview(text, isError) {
+  const line = document.getElementById('create-name-preview');
+  if (!line) return;
+  line.textContent = text;
+  line.hidden = !text;
+  line.classList.toggle('error', !!isError);
+}
+
+async function refreshCreateNamePreview() {
+  const typed = createWoltName();
+  if (!typed) {
+    createNamePreview = { typed, ok: false, slug: '' };
+    showCreateNamePreview('', false);
+    updateCreatePreview();
+    return;
+  }
+  try {
+    const response = await fetch(`/wolts/name-preview?name=${encodeURIComponent(typed)}`);
+    const data = await response.json();
+    if (typed !== createWoltName()) return;  // an older answer; a newer one is on its way
+    createNamePreview = { typed, ok: !!data.ok, slug: data.slug || '' };
+    if (!data.ok) showCreateNamePreview(data.error || 'that name will not work', true);
+    else showCreateNamePreview(data.slug === typed ? '' : `folder: ${data.slug}`, false);
+  } catch {
+    // Offline or a slow lodge: let the create request be the judge.
+    createNamePreview = { typed, ok: true, slug: '' };
+    showCreateNamePreview('', false);
+  }
+  updateCreatePreview();
+}
+
+function scheduleCreateNamePreview() {
+  clearTimeout(createNamePreviewTimer);
+  createNamePreviewTimer = setTimeout(refreshCreateNamePreview, 180);
 }
 
 function openCreateWolt(e) {
   if (e) e.preventDefault();
   document.getElementById('create-modal').classList.add('open');
   document.getElementById('create-name').value = '';
+  createNamePreview = { typed: '', ok: false, slug: '' };
+  showCreateNamePreview('', false);
   createSelectedType = null;
   createSelectedHarness = harnessDefault;
   document.querySelectorAll('.type-card').forEach(c => c.classList.remove('selected'));
@@ -839,7 +888,10 @@ function updateCreatePreview() {
   const name = createWoltName();
   const submit = document.getElementById('create-submit');
   document.getElementById('create-error').style.display = 'none';
-  submit.disabled = !(name && createSelectedType && createSelectedHarness);
+  // A name the lodge has not answered for yet is checked again on submit.
+  const checked = createNamePreview.typed === name;
+  if (!checked) scheduleCreateNamePreview();
+  submit.disabled = !(name && createSelectedType && createSelectedHarness && (!checked || createNamePreview.ok));
 }
 
 async function submitCreateWolt() {

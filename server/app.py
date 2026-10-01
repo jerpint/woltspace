@@ -996,19 +996,26 @@ async def session_new_create(request: Request):
     External mode adds per-wolt harness isolation; native mode inherits host auth.
     """
     body = await request.json()
-    wolt_name = (body.get("name") or "").strip().lower()
+    from wolts import (
+        WOLT_DISPLAY_NAME_MAX, clean_display_name, slugify_wolt_name,
+    )
+    # The typed name is what people read; the lodge derives the folder name.
+    typed_name = clean_display_name(body.get("name"))
+    wolt_name = slugify_wolt_name(typed_name)
     wolt_type = (body.get("type") or "").strip().lower()
     requested_harness = (body.get("harness") or "").strip()
     selected_harness = requested_harness or get_default_harness()
 
     # Validate name
-    if not wolt_name:
+    if not typed_name:
         return JSONResponse({"detail": "name is required"}, status_code=400)
-    import re
-    if not re.match(r'^[a-z][a-z0-9-]*$', wolt_name):
-        return JSONResponse({"detail": "name must start with a letter and contain only lowercase letters, numbers, and hyphens"}, status_code=400)
-    if len(wolt_name) > 20:
-        return JSONResponse({"detail": "name must be 20 characters or less"}, status_code=400)
+    if len(typed_name) > WOLT_DISPLAY_NAME_MAX:
+        return JSONResponse(
+            {"detail": f"name must be {WOLT_DISPLAY_NAME_MAX} characters or less"},
+            status_code=400,
+        )
+    if not wolt_name:
+        return JSONResponse({"detail": "name needs at least one letter"}, status_code=400)
 
     # Validate type — only rodent types can be created from the lodge
     if wolt_type not in ("otter", "beaver", "raccoon"):
@@ -1036,6 +1043,7 @@ async def session_new_create(request: Request):
             wolt_name, wolt_type,
             harness=selected_harness if requested_model else requested_harness,
             model=requested_model,
+            display_name=typed_name,
         )
         print(f"[sessions/create] scaffolded wolt '{wolt_name}' ({wolt_type})")
 
@@ -1272,6 +1280,26 @@ def _configured_wolts() -> list[dict]:
 async def list_wolts():
     """List all wolts by scanning WOLTS_DIR for wolt/wolt.json files."""
     return _configured_wolts()
+
+
+@app.get("/wolts/name-preview")
+async def wolt_name_preview(name: str = ""):
+    """What a typed wolt name becomes, so the create screen never guesses."""
+    from wolts import (
+        WOLT_DISPLAY_NAME_MAX, clean_display_name, slugify_wolt_name,
+    )
+    shown = clean_display_name(name)
+    slug = slugify_wolt_name(shown)
+    error = ""
+    if not shown:
+        error = "name is required"
+    elif len(shown) > WOLT_DISPLAY_NAME_MAX:
+        error = f"name must be {WOLT_DISPLAY_NAME_MAX} characters or less"
+    elif not slug:
+        error = "name needs at least one letter"
+    elif (WOLTS_DIR / slug).exists():
+        error = f"a wolt named {slug} already exists"
+    return {"display_name": shown, "slug": slug, "ok": not error, "error": error}
 
 
 # --- Wolf 🐺 ---

@@ -3,7 +3,8 @@
     <div class="modal-body">
       <div class="modal-field create-name-field">
         <label class="modal-label" for="create-name">Wolt name</label>
-        <input type="text" class="modal-input" id="create-name" placeholder="e.g. chip" maxlength="20" autocomplete="off" spellcheck="false" oninput="updateCreatePreview()">
+        <input type="text" class="modal-input" id="create-name" placeholder="e.g. chip" maxlength="40" autocomplete="off" spellcheck="false" oninput="updateCreatePreview()">
+      <p class="create-name-preview" id="create-name-preview" role="status" aria-live="polite" hidden></p>
       </div>
       <div class="modal-field">
         <label class="modal-label" for="create-harness">Harness <span class="modal-label-hint">(you can change it later in Settings)</span></label>
