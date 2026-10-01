@@ -48,7 +48,7 @@ SHELL_ASSET_BASE = "/static/wolt-shell"
 
 # The fields of wolt.json the shell may show. Anything else (secrets a wolt
 # might have put there, lodge internals) never reaches a page.
-WOLT_FIELDS = ("name", "type", "role", "description", "harness", "model", "capabilities")
+WOLT_FIELDS = ("name", "display_name", "type", "role", "description", "harness", "model", "capabilities")
 
 # Boot-file windows: the Memory page shows what a session actually boots with.
 CONTEXT_LINES = 80

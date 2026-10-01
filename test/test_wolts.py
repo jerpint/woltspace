@@ -192,6 +192,19 @@ class TestCreateCreatureWolt:
             assert wolt_display_name("chip") == "chip"
             assert wolt_display_name("nobody") == "nobody"
 
+    def test_starter_site_shows_the_display_name_as_text(self, tmp_path):
+        import wolts
+        from wolts import create_creature_wolt
+
+        with patch.object(wolts, "WOLTS_DIR", tmp_path):
+            create_creature_wolt("tom-jerry", "beaver", display_name="Tom & <Jerry>")
+            page = (tmp_path / "tom-jerry" / "wolt" / "site" / "index.html").read_text()
+            assert "<title>Tom &amp; &lt;Jerry&gt;</title>" in page
+            assert "<Jerry>" not in page
+            create_creature_wolt("chip", "otter")
+            plain = (tmp_path / "chip" / "wolt" / "site" / "index.html").read_text()
+            assert "<title>chip</title>" in plain
+
     @pytest.mark.parametrize("typed, slug", [
         ("Wolter White", "wolter-white"),
         ("Señor Otter!", "senor-otter"),
