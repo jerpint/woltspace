@@ -767,12 +767,24 @@ def automatic_tier_model(harness: str | None, tier: str | None) -> str | None:
     if not tier:
         return None
     resolved = resolve_harness(harness)
+    entry = get_harness(resolved)
+    seed = entry["models"].get(tier)
+    if entry.get("freeform_model"):
+        return seed  # no fixed list to stay inside; any provider/model is valid
+    offered = [m["id"] for m in model_catalog(resolved)]
     position = _RANKED_TIER_POSITION.get(tier)
-    if position is not None and get_harness(resolved).get("discover_models"):
+    if position is not None and entry.get("discover_models"):
         discovered, _ = _read_model_cache(resolved)
-        if len(discovered) >= len(PICKER_TIERS):
-            return discovered[position]["id"]
-    return get_harness(resolved)["models"].get(tier)
+        ranked = [m["id"] for m in discovered if m["id"] in offered]
+        if len(ranked) >= len(PICKER_TIERS):
+            return ranked[position]
+    if seed is None or seed in offered or not offered:
+        return seed  # an unknown tier has no default at all
+    # The lodge's catalog excludes the usual default: stay inside the catalog
+    # rather than hand a session a model the owner removed.
+    if position is None:
+        return offered[0]
+    return offered[min(position, len(offered) - 1)]
 
 
 def tier_default_model(harness: str | None, tier: str | None) -> str | None:
@@ -781,8 +793,10 @@ def tier_default_model(harness: str | None, tier: str | None) -> str | None:
     if not tier:
         return None
     overlay_tiers = _model_overlay(harness).get("tiers", {})
-    if isinstance(overlay_tiers, dict) and overlay_tiers.get(tier):
-        return overlay_tiers[tier]
+    saved = overlay_tiers.get(tier) if isinstance(overlay_tiers, dict) else None
+    # A saved choice the catalog no longer offers is ignored, not launched.
+    if saved and is_valid_model(harness, saved):
+        return saved
     return automatic_tier_model(harness, tier)
 
 
@@ -861,22 +875,57 @@ def get_default_harness() -> str:
         return DEFAULT_HARNESS
 
 
-def set_default_harness(name: str) -> str:
-    """Set the lodge default harness in woltspace.json. Returns the resolved value.
+def _load_lodge_settings_for_write() -> tuple[Path, dict]:
+    """woltspace.json as a dict, for a writer that will replace the file.
 
-    Raises ValueError for an unknown harness — the caller (API) surfaces it.
+    A missing file starts empty. A file that exists but cannot be read or is
+    not a JSON object is NEVER replaced: writing from an empty dict would
+    throw away every other setting in it.
     """
-    if name not in HARNESSES:
-        raise ValueError(f"unknown harness: {name}")
     path = _woltspace_json_path()
+    if not path.exists():
+        return path, {}
     try:
-        cfg = json.loads(path.read_text()) if path.exists() else {}
-    except (json.JSONDecodeError, OSError):
-        cfg = {}
-    cfg.setdefault("harness", {})["default"] = name
+        cfg = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ValueError(
+            "the lodge settings file (woltspace.json) could not be read; nothing was saved"
+        ) from exc
+    if not isinstance(cfg, dict):
+        raise ValueError(
+            "the lodge settings file (woltspace.json) is not a JSON object; nothing was saved"
+        )
+    return path, cfg
+
+
+def _settings_section(parent: dict, key: str) -> dict:
+    """A nested settings object, created when absent, refused when it is not one."""
+    if key not in parent:
+        parent[key] = {}
+    if not isinstance(parent[key], dict):
+        raise ValueError(
+            f"the lodge settings file (woltspace.json) has an unexpected {key!r} entry; nothing was saved"
+        )
+    return parent[key]
+
+
+def _write_lodge_settings(path: Path, cfg: dict) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(cfg, indent=2) + "\n")
     tmp.rename(path)
+
+
+def set_default_harness(name: str) -> str:
+    """Set the lodge default harness in woltspace.json. Returns the resolved value.
+
+    Raises ValueError for an unknown harness, or when the settings file exists
+    but cannot be read — the caller (API) surfaces it.
+    """
+    if name not in HARNESSES:
+        raise ValueError(f"unknown harness: {name}")
+    path, cfg = _load_lodge_settings_for_write()
+    _settings_section(cfg, "harness")["default"] = name
+    _write_lodge_settings(path, cfg)
     return name
 
 
@@ -894,10 +943,12 @@ def _saved_tier_models(harness: str) -> dict:
 def set_tier_defaults(harness: str, tiers: dict) -> dict:
     """Set a harness's default model per tier in woltspace.json.
 
-    ``tiers`` maps a picker tier (raccoon, beaver, otter) to a model id. Choosing
-    the model the tier would get anyway (or an empty value) saves nothing, so
-    the tier keeps following the automatic default. The whole request is
-    validated before anything is written. Returns the resulting defaults.
+    ``tiers`` maps a picker tier (raccoon, beaver, otter) to a model id. A chosen
+    model is always kept, even when it is the one the tier would get anyway;
+    an empty value clears the choice and the automatic default applies again.
+    The whole request is validated before anything is written, and an existing
+    settings file that cannot be read is never replaced. Returns the resulting
+    defaults.
     """
     if harness not in HARNESSES:
         raise ValueError(f"unknown harness: {harness}")
@@ -911,33 +962,17 @@ def set_tier_defaults(harness: str, tiers: dict) -> dict:
             continue
         if not isinstance(model, str) or not is_valid_model(harness, model):
             raise ValueError(f"unknown model for {harness}: {model}")
-    path = _woltspace_json_path()
-    try:
-        cfg = json.loads(path.read_text()) if path.exists() else {}
-    except (json.JSONDecodeError, OSError):
-        cfg = {}
-    if not isinstance(cfg, dict):
-        cfg = {}
-    section = cfg.get("harness")
-    if not isinstance(section, dict):
-        section = cfg["harness"] = {}
-    models = section.get("models")
-    if not isinstance(models, dict):
-        models = section["models"] = {}
-    entry = models.get(harness)
-    if not isinstance(entry, dict):
-        entry = models[harness] = {}
-    saved = entry.get("tiers")
-    if not isinstance(saved, dict):
-        saved = entry["tiers"] = {}
+    path, cfg = _load_lodge_settings_for_write()
+    section = _settings_section(cfg, "harness")
+    entry = _settings_section(_settings_section(section, "models"), harness)
+    saved = _settings_section(entry, "tiers")
     for tier, model in tiers.items():
-        if model in (None, "") or model == automatic_tier_model(harness, tier):
+        # (5) what the owner picks is what is kept; only an empty value clears.
+        if model in (None, ""):
             saved.pop(tier, None)
         else:
             saved[tier] = model
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(cfg, indent=2) + "\n")
-    tmp.rename(path)
+    _write_lodge_settings(path, cfg)
     return {tier: tier_default_model(harness, tier) for tier, _ in PICKER_TIERS}
 
 
