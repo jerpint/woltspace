@@ -290,11 +290,6 @@ def _shown(wolt: str) -> str:
     return wolt_display_name(wolt, _WOLTS_DIR) if wolt else wolt
 
 
-def _md(text: str) -> str:
-    """Escape Telegram Markdown control characters in a typed name."""
-    return re.sub(r"([_*`\[])", r"\\\1", text)
-
-
 async def _notify_switch(update: Update, old_state: dict, new_wolt: str, new_session: str):
     """Send a brief message if active wolt or session changed."""
     old_wolt = old_state.get("active_wolt")
@@ -582,10 +577,9 @@ async def _select_wolt_without_dog(update: Update, chat_id: int, state: dict) ->
         await _reply(
             update,
             _wolt_picker_header(wolts, None),
-            parse_mode="Markdown",
             reply_markup=_wolt_picker_keyboard(wolts, None),
         )
-        await _reply(update, "or send /wolt <name>")
+        await _reply(update, _PICK_THEN_RESEND)
     else:
         await _reply(update, _NO_WOLTS_MESSAGE)
     return False
@@ -1160,6 +1154,10 @@ WOLT_TYPE_EMOJI = {
 
 RODENT_WOLT_TYPES = {"raccoon", "beaver", "otter", "rodent"}
 _NO_WOLTS_MESSAGE = "no wolts found. create a wolt in the lodge first."
+_PICK_THEN_RESEND = (
+    "your message was not delivered: pick a wolt above (or send /wolt <name>), "
+    "then send it again."
+)
 
 
 def _is_wolt(w: dict) -> bool:
@@ -1196,7 +1194,7 @@ def _wolt_picker_header(wolts: list, active: str | None) -> str:
             "",
         )
         emoji = WOLT_TYPE_EMOJI.get(active_type, "🦫")
-        line = f"active: {emoji} *{_md(_shown(active))}*"
+        line = f"active: {emoji} {_shown(active)}"
     else:
         line = "active: none"
     others = [w for w in wolts if (w.get("name") or Path(w.get("dir", "")).name) != active]
@@ -1239,7 +1237,6 @@ async def handle_setwolt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _reply(
         update,
         _wolt_picker_header(wolts, active),
-        parse_mode="Markdown",
         reply_markup=_wolt_picker_keyboard(wolts, active),
     )
 
@@ -1352,7 +1349,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await query.edit_message_text(
                 _wolt_picker_header(wolts, name),
-                parse_mode="Markdown",
                 reply_markup=_wolt_picker_keyboard(wolts, name),
             )
         except Exception:

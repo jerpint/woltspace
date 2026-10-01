@@ -542,7 +542,8 @@ class TestOptionalDog:
     @pytest.mark.parametrize("builders,expected", [
         ([], "no wolts found. create a wolt in the lodge first."),
         ([{"name": "b", "type": "beaver"}, {"name": "a", "type": "raccoon"}],
-         "or send /wolt <name>"),
+         "your message was not delivered: pick a wolt above (or send /wolt <name>), "
+         "then send it again."),
     ])
     async def test_selection_is_plain_text(self, routing, monkeypatch, builders, expected):
         adapter, update, context, state, spawn, route, model = routing
@@ -553,8 +554,8 @@ class TestOptionalDog:
             calls = update.message.reply_text.await_args_list
             assert len(calls) == 2
             assert calls[0].args == (adapter._wolt_picker_header(builders, None),)
+            # plain text: no parse mode, so a typed name can never break the message
             assert calls[0].kwargs == {
-                "parse_mode": "Markdown",
                 "reply_markup": adapter._wolt_picker_keyboard(builders, None),
             }
             assert calls[1].args == (expected,)
@@ -679,11 +680,15 @@ class TestDisplayNamesInTelegram:
             ("🦝 Sn_ake *Case*", "wolt:snake-case"),
         ]
 
-    def test_picker_header_escapes_a_typed_name_for_markdown(self, wolts):
+    def test_picker_header_is_plain_text(self, wolts):
         adapter, listed = wolts
-        assert "*Justin Beaver*" in adapter._wolt_picker_header(listed, "justin-beaver")
-        assert r"*Sn\_ake \*Case\**" in adapter._wolt_picker_header(listed, "snake-case")
-        assert "*chip*" in adapter._wolt_picker_header(listed, "chip")
+        # plain text: a typed name is shown as typed and needs no escaping
+        assert adapter._wolt_picker_header(listed, "justin-beaver").startswith(
+            "active: 🦫 Justin Beaver\n")
+        assert adapter._wolt_picker_header(listed, "snake-case").startswith(
+            "active: 🦝 Sn_ake *Case*\n")
+        assert adapter._wolt_picker_header(listed, "chip").startswith("active: 🦦 chip\n")
+        assert not hasattr(adapter, "_md")
 
     def test_shown_falls_back_to_the_slug(self, wolts):
         adapter, _ = wolts
