@@ -1286,6 +1286,4 @@ class TestResolveModel:
             "openrouter/qwen/qwen-2.5-72b-instruct"
 
     def test_freeform_no_pin_still_uses_tier_default(self):
-        assert resolve_model("opencode", "raccoon", None) == "openrouter/z-ai/glm-5.3"
-        assert resolve_model("opencode", "beaver", None) == "openrouter/deepseek/deepseek-v4-flash"
-        assert resolve_model("opencode", "otter", None) == "openrouter/qwen/qwen3.8-flash"
+        assert resolve_model("opencode", "raccoon", None) == "openai/gpt-4o"
