@@ -1141,6 +1141,100 @@ class TestTierDefaultModel:
         assert creature_model("claude", "raccoon") == "fable"
 
 
+RANKED = [
+    {"id": "gpt-6-astra", "label": "GPT-6-Astra"},
+    {"id": "gpt-6-sol", "label": "GPT-6-Sol"},
+    {"id": "gpt-6-luna", "label": "GPT-6-Luna"},
+    {"id": "gpt-5.5", "label": "GPT-5.5"},
+]
+
+
+class TestRankedTierDefaults:
+    def test_discovered_order_sets_the_defaults(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", RANKED)
+        assert tier_default_model("codex", "raccoon") == "gpt-6-astra"
+        assert tier_default_model("codex", "beaver") == "gpt-6-sol"
+        assert tier_default_model("codex", "otter") == "gpt-6-luna"
+        # internal aliases follow the tier they share a default with
+        assert tier_default_model("codex", "rodent") == "gpt-6-astra"
+        assert tier_default_model("codex", "wolf") == "gpt-6-sol"
+
+    def test_too_short_a_list_keeps_the_seed(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", RANKED[:2])
+        assert tier_default_model("codex", "raccoon") == "gpt-5.5"
+        assert tier_default_model("codex", "otter") == "gpt-5.6-luna"
+
+    def test_harness_without_discovery_keeps_the_seed(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("claude", RANKED)
+        assert tier_default_model("claude", "raccoon") == "opus"
+
+    def test_saved_choice_beats_the_ranking(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", RANKED)
+        (tmp_path / "woltspace.json").write_text(json.dumps(
+            {"harness": {"models": {"codex": {"tiers": {"raccoon": "gpt-5.5"}}}}}))
+        assert tier_default_model("codex", "raccoon") == "gpt-5.5"
+        assert harnesses.automatic_tier_model("codex", "raccoon") == "gpt-6-astra"
+        assert tier_default_model("codex", "beaver") == "gpt-6-sol"
+
+    def test_metadata_reports_automatic_and_saved(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        monkeypatch.setattr(harnesses, "refresh_model_catalogs", lambda **_: None)
+        harnesses._write_model_cache("codex", RANKED)
+        harnesses.set_tier_defaults("codex", {"otter": "gpt-5.5"})
+        codex = next(h for h in harnesses.harness_metadata() if h["id"] == "codex")
+        assert codex["models"]["otter"] == "gpt-5.5"
+        assert codex["automatic_models"]["otter"] == "gpt-6-luna"
+        assert codex["saved_models"] == {"otter": "gpt-5.5"}
+
+
+class TestSetTierDefaults:
+    def test_saves_and_keeps_other_settings(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        (tmp_path / "woltspace.json").write_text(json.dumps(
+            {"harness": {"default": "codex"}, "other": {"kept": True}}))
+        result = harnesses.set_tier_defaults("claude", {"raccoon": "fable"})
+        assert result["raccoon"] == "fable"
+        saved = json.loads((tmp_path / "woltspace.json").read_text())
+        assert saved["harness"]["default"] == "codex"
+        assert saved["other"] == {"kept": True}
+        assert saved["harness"]["models"]["claude"]["tiers"] == {"raccoon": "fable"}
+
+    @pytest.mark.parametrize("back_to", ["", "haiku"])
+    def test_choosing_the_automatic_default_saves_nothing(
+        self, tmp_path, monkeypatch, back_to,
+    ):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses.set_tier_defaults("claude", {"otter": "fable"})
+        result = harnesses.set_tier_defaults("claude", {"otter": back_to})
+        assert result["otter"] == "haiku"
+        saved = json.loads((tmp_path / "woltspace.json").read_text())
+        assert saved["harness"]["models"]["claude"]["tiers"] == {}
+
+    @pytest.mark.parametrize("harness, tiers", [
+        ("nope", {"raccoon": "opus"}),
+        ("claude", {}),
+        ("claude", ["raccoon"]),
+        ("claude", {"wolf": "opus"}),
+        ("claude", {"raccoon": "gpt-5.5"}),
+        ("claude", {"raccoon": ["opus"]}),
+    ])
+    def test_rejects_bad_requests(self, tmp_path, monkeypatch, harness, tiers):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        with pytest.raises(ValueError):
+            harnesses.set_tier_defaults(harness, tiers)
+
+    def test_one_bad_tier_saves_nothing(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        with pytest.raises(ValueError):
+            harnesses.set_tier_defaults(
+                "claude", {"raccoon": "fable", "otter": "not-a-model"})
+        assert not (tmp_path / "woltspace.json").exists()
+
+
 class TestIsValidModel:
     def test_seed_membership(self):
         assert is_valid_model("claude", "fable")

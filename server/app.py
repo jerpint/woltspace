@@ -79,6 +79,7 @@ from harnesses import (
     harness_metadata,
     get_default_harness,
     set_default_harness,
+    set_tier_defaults,
     resolve_harness,
     platform_skill_invoke,
     is_valid_model,
@@ -988,6 +989,8 @@ async def session_new_create(request: Request):
     Expects JSON body with:
       - name: wolt name (required, lowercase alphanumeric + hyphens)
       - type: creature type (required, one of: otter, beaver, raccoon)
+      - harness: engine for this wolt (optional, lodge default otherwise)
+      - model: model for this wolt (optional, the tier default otherwise)
 
     The server scaffolds the full wolt directory before spawning the session.
     External mode adds per-wolt harness isolation; native mode inherits host auth.
@@ -1012,13 +1015,28 @@ async def session_new_create(request: Request):
         return JSONResponse({"detail": "type must be otter, beaver, or raccoon"}, status_code=400)
     if selected_harness not in HARNESSES:
         return JSONResponse({"detail": f"unknown harness: {selected_harness}"}, status_code=400)
+    requested_model = body.get("model") or ""
+    if not isinstance(requested_model, str):
+        return JSONResponse({"detail": "model must be a string"}, status_code=400)
+    requested_model = requested_model.strip()
+    if requested_model and not is_valid_model(selected_harness, requested_model):
+        return JSONResponse(
+            {"detail": f"unknown model for {selected_harness}: {requested_model}"},
+            status_code=400,
+        )
 
     try:
         # Step 1: Scaffold the wolt with environment-appropriate harness config.
         from wolts import create_creature_wolt
         # Only an explicit request becomes a durable per-wolt override. An API
         # caller that omits harness keeps following the lodge default later.
-        create_creature_wolt(wolt_name, wolt_type, harness=requested_harness)
+        # A chosen model is pinned with its harness: a pin only means something
+        # on the engine it was picked for.
+        create_creature_wolt(
+            wolt_name, wolt_type,
+            harness=selected_harness if requested_model else requested_harness,
+            model=requested_model,
+        )
         print(f"[sessions/create] scaffolded wolt '{wolt_name}' ({wolt_type})")
 
         # Step 2: Start a session — full isolation, site auto-start, viewport
@@ -1663,6 +1681,25 @@ async def set_harness_default(request: Request):
         return JSONResponse({"error": f"unknown harness: {name}"}, status_code=400)
     set_default_harness(name)
     return {"ok": True, "default": name}
+
+
+@app.post("/harness/tiers")
+async def set_harness_tiers(request: Request):
+    """Set an engine's default model per tier (woltspace.json harness.models)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict) or set(body) != {"harness", "tiers"}:
+        return JSONResponse({"error": "harness and tiers required"}, status_code=400)
+    harness = body.get("harness")
+    if not isinstance(harness, str):
+        return JSONResponse({"error": "harness must be a string"}, status_code=400)
+    try:
+        saved = set_tier_defaults(harness.strip(), body.get("tiers"))
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return {"ok": True, "harness": harness.strip(), "models": saved}
 
 
 def _wolt_settings_path(name: str) -> tuple[str, Path]:

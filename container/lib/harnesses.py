@@ -749,15 +749,41 @@ def is_valid_model(harness: str | None, model: str | None) -> bool:
     return any(m["id"] == model for m in model_catalog(harness))
 
 
+# Where each tier sits in a harness's own ranked model list: the thinker gets
+# the first model, the builder the second, the quick one the third. The
+# internal aliases follow the tier they have always shared a default with.
+_RANKED_TIER_POSITION = {"raccoon": 0, "rodent": 0, "beaver": 1, "wolf": 1, "otter": 2}
+
+
+def automatic_tier_model(harness: str | None, tier: str | None) -> str | None:
+    """A tier's default before any lodge setting.
+
+    When the harness reported its own model list, the defaults follow that
+    list's order, so they keep up with the harness instead of naming whatever
+    was current when this table was written. Without a usable list (no
+    discovery, discovery failed, fewer than three models) the built-in seed
+    applies.
+    """
+    if not tier:
+        return None
+    resolved = resolve_harness(harness)
+    position = _RANKED_TIER_POSITION.get(tier)
+    if position is not None and get_harness(resolved).get("discover_models"):
+        discovered, _ = _read_model_cache(resolved)
+        if len(discovered) >= len(PICKER_TIERS):
+            return discovered[position]["id"]
+    return get_harness(resolved)["models"].get(tier)
+
+
 def tier_default_model(harness: str | None, tier: str | None) -> str | None:
-    """The default model for a tier on this harness: woltspace.json's "tiers"
-    override if present, else the built-in seed."""
+    """The default model for a tier on this harness: the lodge's saved choice
+    (woltspace.json "tiers") if there is one, else the automatic default."""
     if not tier:
         return None
     overlay_tiers = _model_overlay(harness).get("tiers", {})
-    if tier in overlay_tiers:
+    if isinstance(overlay_tiers, dict) and overlay_tiers.get(tier):
         return overlay_tiers[tier]
-    return get_harness(harness)["models"].get(tier)
+    return automatic_tier_model(harness, tier)
 
 
 def creature_model(harness: str | None, creature: str | None) -> str | None:
@@ -806,6 +832,11 @@ def harness_metadata() -> list[dict]:
             "emoji": entry.get("emoji", ""),
             # per-tier default model (merged view — reflects woltspace.json overrides)
             "models": {tier: tier_default_model(hid, tier) for tier, _ in PICKER_TIERS},
+            # what each tier gets when the lodge has saved no choice of its own
+            "automatic_models": {
+                tier: automatic_tier_model(hid, tier) for tier, _ in PICKER_TIERS
+            },
+            "saved_models": _saved_tier_models(hid),
             # full selectable list for the model picker (merged view)
             "catalog": model_catalog(hid),
             "freeform_model": bool(entry.get("freeform_model")),
@@ -847,6 +878,67 @@ def set_default_harness(name: str) -> str:
     tmp.write_text(json.dumps(cfg, indent=2) + "\n")
     tmp.rename(path)
     return name
+
+
+def _saved_tier_models(harness: str) -> dict:
+    """The lodge's own per-tier choices for a harness (picker tiers only)."""
+    saved = _model_overlay(harness).get("tiers", {})
+    if not isinstance(saved, dict):
+        return {}
+    return {
+        tier: saved[tier] for tier, _ in PICKER_TIERS
+        if isinstance(saved.get(tier), str) and saved[tier]
+    }
+
+
+def set_tier_defaults(harness: str, tiers: dict) -> dict:
+    """Set a harness's default model per tier in woltspace.json.
+
+    ``tiers`` maps a picker tier (raccoon, beaver, otter) to a model id. Choosing
+    the model the tier would get anyway (or an empty value) saves nothing, so
+    the tier keeps following the automatic default. The whole request is
+    validated before anything is written. Returns the resulting defaults.
+    """
+    if harness not in HARNESSES:
+        raise ValueError(f"unknown harness: {harness}")
+    if not isinstance(tiers, dict) or not tiers:
+        raise ValueError("tiers must be a non-empty object")
+    allowed = {tier for tier, _ in PICKER_TIERS}
+    for tier, model in tiers.items():
+        if tier not in allowed:
+            raise ValueError(f"unknown tier: {tier}")
+        if model in (None, ""):
+            continue
+        if not isinstance(model, str) or not is_valid_model(harness, model):
+            raise ValueError(f"unknown model for {harness}: {model}")
+    path = _woltspace_json_path()
+    try:
+        cfg = json.loads(path.read_text()) if path.exists() else {}
+    except (json.JSONDecodeError, OSError):
+        cfg = {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    section = cfg.get("harness")
+    if not isinstance(section, dict):
+        section = cfg["harness"] = {}
+    models = section.get("models")
+    if not isinstance(models, dict):
+        models = section["models"] = {}
+    entry = models.get(harness)
+    if not isinstance(entry, dict):
+        entry = models[harness] = {}
+    saved = entry.get("tiers")
+    if not isinstance(saved, dict):
+        saved = entry["tiers"] = {}
+    for tier, model in tiers.items():
+        if model in (None, "") or model == automatic_tier_model(harness, tier):
+            saved.pop(tier, None)
+        else:
+            saved[tier] = model
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, indent=2) + "\n")
+    tmp.rename(path)
+    return {tier: tier_default_model(harness, tier) for tier, _ in PICKER_TIERS}
 
 
 def build_command(harness: str | None, mode: str, **kwargs) -> str:

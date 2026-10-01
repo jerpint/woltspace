@@ -1048,7 +1048,8 @@ body {
 /* ── Type picker (create wolt) ── */
 .type-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* minmax(0, …): a card's model dropdown must not widen its column */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 .type-card {
@@ -1059,6 +1060,7 @@ body {
   cursor: pointer;
   transition: all 0.15s;
   background: var(--surface);
+  min-width: 0;
 }
 .type-card:hover { border-color: var(--border-2); }
 .type-card.selected {
@@ -1084,6 +1086,64 @@ body {
   font-size: 9px;
   line-height: 1.35;
   color: var(--ink-3);
+}
+.type-card-model[hidden], .type-card-select[hidden] { display: none; }
+/* The model, as a quiet dropdown on the card. */
+.type-card-select {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  margin: 6px auto 0;
+  padding: 3px 17px 3px 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+  text-align: center;
+  text-align-last: center;
+  text-overflow: ellipsis;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='7' height='4'%3E%3Cpath d='M0 0l3.5 4L7 0z' fill='%238a8177'/%3E%3C/svg%3E") no-repeat right 5px center;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+.type-card-select:hover,
+.type-card-select:focus-visible {
+  border-color: var(--border-2);
+  color: var(--ink);
+  outline: none;
+}
+.type-card.selected .type-card-select { color: var(--ink-2); }
+/* Phone: one working style per row, so the model name has room. */
+@media (max-width: 620px) {
+  .type-grid { grid-template-columns: 1fr; }
+  .type-card {
+    display: grid;
+    grid-template-columns: 34px minmax(64px, 1fr) minmax(0, auto);
+    grid-template-rows: auto auto;
+    column-gap: 10px;
+    align-items: center;
+    padding: 10px 12px;
+    text-align: left;
+  }
+  .type-card-emoji { grid-row: 1 / span 2; margin: 0; font-size: 26px; text-align: center; }
+  .type-card-name { grid-column: 2; grid-row: 1; }
+  .type-card-hint { grid-column: 2; grid-row: 2; margin-top: 0; }
+  .type-card-model { grid-column: 3; grid-row: 1 / span 2; margin: 0; text-align: right; font-size: 12px; }
+  .type-card-select {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    justify-self: end;
+    margin: 0;
+    min-height: 44px;
+    padding: 8px 16px 8px 6px;
+    font-size: 16px;
+    letter-spacing: 0;
+    text-align: right;
+    text-align-last: right;
+  }
 }
 .modal-error {
   font-family: var(--font-mono);
