@@ -459,3 +459,188 @@ class TestTelegramAPI:
             data = json.loads(resp.read())
             assert data["ok"] is True
             assert isinstance(data["result"], list)
+
+
+class TestOptionalDog:
+    @pytest.mark.parametrize("provider,key", [
+        ("anthropic", "ANTHROPIC_API_KEY"),
+        ("openai", "OPENAI_API_KEY"),
+        ("openrouter", "OPENROUTER_API_KEY"),
+        ("gemini", "GEMINI_API_KEY"),
+    ])
+    @pytest.mark.parametrize("dog,key_present,expected", [
+        (None, True, False), ("doggo", True, True), ("doggo", False, False),
+    ])
+    def test_known_provider_availability(self, monkeypatch, provider, key, dog, key_present, expected):
+        from bot import core
+        monkeypatch.setattr(core, "get_active_creature", lambda kind: dog)
+        monkeypatch.setattr(core, "LLM_MODEL", provider + "/model")
+        monkeypatch.setenv(key, "test-key" if key_present else "")
+        assert core.dog_available() is expected
+
+    @pytest.mark.parametrize("provider", ["groq", "ollama", "custom"])
+    @pytest.mark.parametrize("dog,expected", [(None, False), ("doggo", True)])
+    def test_other_providers_preserve_behavior(self, monkeypatch, provider, dog, expected):
+        from bot import core
+        monkeypatch.setattr(core, "get_active_creature", lambda kind: dog)
+        monkeypatch.setattr(core, "LLM_MODEL", provider + "/model")
+        assert core.dog_available() is expected
+
+    @pytest.fixture
+    def routing(self, monkeypatch, tmp_path):
+        from bot import telegram_adapter as adapter
+        update = MagicMock()
+        update.effective_chat.id = 123
+        update.effective_chat.type = "private"
+        update.message.text = "hello"
+        update.message.reply_to_message = None
+        update.message.reply_text = AsyncMock()
+        context = MagicMock()
+        context.bot.username = "testbot"
+        state = {}
+        monkeypatch.setattr(adapter, "is_allowed", lambda update: True)
+        monkeypatch.setattr(adapter, "dog_available", lambda: False)
+        monkeypatch.setattr(adapter, "_load_chat_state", lambda chat_id: dict(state))
+        monkeypatch.setattr(adapter, "_save_chat_state", lambda chat_id, value: state.update(value))
+        monkeypatch.setattr(adapter, "_bot_log", lambda *args: None)
+        monkeypatch.setattr(adapter, "get_tunnel_url", lambda: "")
+        monkeypatch.setattr(adapter, "list_wolts", lambda: [{"name": "nunu", "type": "otter"}])
+        spawn = MagicMock(return_value={"name": "nunu-swift-marsh-abc123"})
+        route = AsyncMock(return_value="nunu-swift-marsh-abc123")
+        model = MagicMock(side_effect=AssertionError("No model call allowed"))
+        monkeypatch.setattr(adapter, "_spawn_session", spawn)
+        monkeypatch.setattr(adapter, "_route_to_session", route)
+        monkeypatch.setattr(adapter, "get_response", model)
+        monkeypatch.setattr(adapter, "_save_upload", lambda *args: tmp_path / "upload")
+        return adapter, update, context, state, spawn, route, model
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mention", [False, True])
+    async def test_one_wolt_routes_without_model(self, routing, mention):
+        adapter, update, context, state, spawn, route, model = routing
+        if mention:
+            update.message.text = "@testbot hello"
+            update.effective_chat.type = "group"
+        await adapter.handle_message(update, context)
+        spawn.assert_called_once_with("nunu", 123)
+        route.assert_awaited_once_with(update, "nunu-swift-marsh-abc123", "nunu", "hello", 123)
+        assert state["active_wolt"] == "nunu"
+        assert state["active_session"] == "nunu-swift-marsh-abc123"
+        model.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_mention_keeps_active_wolt(self, routing):
+        adapter, update, context, state, spawn, route, model = routing
+        state.update(active_wolt="other", active_session="other-swift-marsh-123abc")
+        update.message.text = "@testbot hello"
+        await adapter.handle_message(update, context)
+        spawn.assert_not_called()
+        assert route.await_args.args[1:4] == ("other-swift-marsh-123abc", "other", "hello")
+        model.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("builders,expected", [
+        ([], "no wolts found. create a wolt in the lodge first."),
+        ([{"name": "b", "type": "beaver"}, {"name": "a", "type": "raccoon"}],
+         "or send /wolt <name>"),
+    ])
+    async def test_selection_is_plain_text(self, routing, monkeypatch, builders, expected):
+        adapter, update, context, state, spawn, route, model = routing
+        monkeypatch.setattr(adapter, "list_wolts", lambda: builders + [
+            {"name": "doggo", "type": "dog"}, {"name": "wolfie", "type": "wolf"}])
+        await adapter.handle_message(update, context)
+        if builders:
+            calls = update.message.reply_text.await_args_list
+            assert len(calls) == 2
+            assert calls[0].args == (adapter._wolt_picker_header(builders, None),)
+            assert calls[0].kwargs == {
+                "parse_mode": "Markdown",
+                "reply_markup": adapter._wolt_picker_keyboard(builders, None),
+            }
+            assert calls[1].args == (expected,)
+            assert calls[1].kwargs == {}
+        else:
+            update.message.reply_text.assert_awaited_once_with(expected)
+        spawn.assert_not_called()
+        route.assert_not_called()
+        model.assert_not_called()
+        assert not state
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mention", [False, True])
+    async def test_available_dog_uses_existing_model_path(self, routing, monkeypatch, mention):
+        adapter, update, context, state, spawn, route, model = routing
+        monkeypatch.setattr(adapter, "dog_available", lambda: True)
+        monkeypatch.setattr(adapter, "_dog_ack", AsyncMock())
+        monkeypatch.setattr(adapter, "_load_history", lambda chat_id: [])
+        monkeypatch.setattr(adapter, "_append_history", lambda *args: None)
+        send = AsyncMock()
+        monkeypatch.setattr(adapter, "_send_result", send)
+        model.side_effect = None
+        model.return_value = {"history_messages": [], "type": "text", "text": "woof"}
+        if mention:
+            state.update(active_wolt="nunu", active_session="existing")
+            update.message.text = "@testbot hello"
+        await adapter.handle_message(update, context)
+        model.assert_called_once_with("hello", conversation_history=[], routing={"adapter": "telegram", "chat_id": 123})
+        send.assert_awaited_once_with(update, model.return_value)
+        spawn.assert_not_called()
+        route.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["voice", "photo", "document"])
+    async def test_media_without_dog_routes_to_wolt(self, routing, monkeypatch, kind):
+        adapter, update, context, state, spawn, route, model = routing
+        file = MagicMock()
+        file.download_to_drive = AsyncMock()
+        file.download_as_bytearray = AsyncMock(return_value=b"content")
+        context.bot.get_file = AsyncMock(return_value=file)
+        update.message.caption = "caption"
+        update.message.document.file_name = "note.txt"
+        update.message.document.mime_type = "text/plain"
+        monkeypatch.setattr(adapter, "transcribe_audio", lambda path: "hello")
+        await getattr(adapter, "handle_" + kind)(update, context)
+        spawn.assert_called_once_with("nunu", 123)
+        route.assert_awaited_once()
+        assert state["active_wolt"] == "nunu"
+        model.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_voice_missing_transcription_key_preserves_notice(self, routing, monkeypatch):
+        adapter, update, context, state, spawn, route, model = routing
+        file = MagicMock()
+        file.download_to_drive = AsyncMock()
+        context.bot.get_file = AsyncMock(return_value=file)
+        monkeypatch.setenv("OPENAI_API_KEY", "")
+        await adapter.handle_voice(update, context)
+        spawn.assert_called_once_with("nunu", 123)
+        route.assert_awaited_once()
+        assert "no OPENAI_API_KEY set for transcription" in route.await_args.args[3]
+        model.assert_not_called()
+
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("available,expected", [
+        (False, "Hey. Send a message and it goes to your wolt. /wolt picks which one."),
+        (True, "Hey. I'm doggo. Talk to me and I'll connect you to a wolt."),
+    ])
+    async def test_start_with_optional_dog(self, routing, monkeypatch, available, expected):
+        adapter, update, context, state, spawn, route, model = routing
+        monkeypatch.setattr(adapter, "dog_available", lambda: available)
+        monkeypatch.setattr(adapter, "_dog_name", lambda: "doggo")
+        await adapter.handle_start(update, context)
+        update.message.reply_text.assert_awaited_once_with(expected)
+        model.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_same_wolt_new_session_switch_notice(self, routing, monkeypatch, tmp_path):
+        adapter, update, context, state, spawn, route, model = routing
+        monkeypatch.setattr(adapter, "_WOLTS_DIR", tmp_path)
+        manifest = tmp_path / "nunu" / "wolt" / "wolt.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(json.dumps({"type": "otter"}))
+        await adapter._notify_switch(
+            update, {"active_wolt": "nunu", "active_session": "old"}, "nunu", "new")
+        emoji = adapter.CREATURE_EMOJIS["otter"]
+        update.message.reply_text.assert_awaited_once_with(
+            f"🪵 now talking to {emoji} nunu (new)")

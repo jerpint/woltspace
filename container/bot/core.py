@@ -57,6 +57,22 @@ MEMORY_DIR = WOLT_DIR / "wolt" / "memory"
 LLM_MODEL = os.environ.get("LLM_MODEL", "anthropic/claude-haiku-4-5-20251001")
 MAX_TOOL_ROUNDS = 5
 
+_DOG_PROVIDER_KEYS = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+}
+
+
+def dog_available() -> bool:
+    """Known providers need a key; preserve other providers' existing setup."""
+    if not get_active_creature("dog"):
+        return False
+    key = _DOG_PROVIDER_KEYS.get(LLM_MODEL.split("/", 1)[0])
+    return key is None or bool(os.environ.get(key, "").strip())
+
+
 # Bot log at .space/logs/ — global, never moves with wolt switch
 BOT_LOG_DIR = space_logs_dir(WOLTS_DIR)
 BOT_LOG_DIR.mkdir(parents=True, exist_ok=True)
