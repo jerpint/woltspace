@@ -27,7 +27,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, Cal
 import re
 import sys
 from bot.core import (
-    get_response, transcribe_audio, message_session, list_sessions,
+    dog_available, get_response, transcribe_audio, message_session, list_sessions,
     kill_session, get_tunnel_url, list_wolts, _bot_log, build_ack_text,
     _sanitize_history, start_claude_session,
 )
@@ -289,15 +289,15 @@ async def _notify_switch(update: Update, old_state: dict, new_wolt: str, new_ses
     """Send a brief message if active wolt or session changed."""
     old_wolt = old_state.get("active_wolt")
     old_session = old_state.get("active_session")
+    emoji = CREATURE_EMOJIS.get("raccoon", "🐾")  # fallback, wolt.json lookup below
+    wolt_json = _WOLTS_DIR / new_wolt / "wolt" / "wolt.json"
+    if wolt_json.exists():
+        try:
+            data = json.loads(wolt_json.read_text())
+            emoji = CREATURE_EMOJIS.get(data.get("type", ""), "🐾")
+        except (json.JSONDecodeError, OSError):
+            pass
     if new_wolt != old_wolt:
-        emoji = CREATURE_EMOJIS.get("raccoon", "🐾")  # fallback, wolt.json lookup below
-        wolt_json = _WOLTS_DIR / new_wolt / "wolt" / "wolt.json"
-        if wolt_json.exists():
-            try:
-                data = json.loads(wolt_json.read_text())
-                emoji = CREATURE_EMOJIS.get(data.get("type", ""), "🐾")
-            except (json.JSONDecodeError, OSError):
-                pass
         await _reply(update, f"🪵 now talking to {emoji} {new_wolt} ({new_session})")
     elif new_session != old_session:
         await _reply(update, f"🪵 now talking to {emoji} {new_wolt} ({new_session})")
@@ -508,11 +508,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 return  # no active wolt, not mentioned — ignore
 
-    # --- @dog mention: always goes to dog ---
+    # --- Bot mention: dog when available, otherwise normal routing ---
     if _is_dog_mention(text, bot_username):
-        user_message = _strip_mention(text, bot_username)
-        await _handle_dog(update, context, chat_id, user_message)
-        return
+        text = _strip_mention(text, bot_username)
+        if dog_available():
+            await _handle_dog(update, context, chat_id, text)
+            return
 
     # --- Reply-to routing: check if replying to a specific wolt's message ---
     reply_to = update.message.reply_to_message
@@ -556,15 +557,45 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             # else: couldn't parse wolt from session name — fall through to regular path
 
+    await _route_message(update, context, chat_id, text)
+
+
+async def _select_wolt_without_dog(update: Update, chat_id: int, state: dict) -> bool:
+    """Select the only builder, or explain how to choose without a model call."""
+    wolts = [w for w in list_wolts() if _is_wolt(w)]
+    if len(wolts) == 1:
+        state["active_wolt"] = wolts[0].get("name") or Path(wolts[0].get("dir", "")).name
+        state.pop("active_session", None)
+        _save_chat_state(chat_id, state)
+        return True
+    if wolts:
+        await _reply(
+            update,
+            _wolt_picker_header(wolts, None),
+            parse_mode="Markdown",
+            reply_markup=_wolt_picker_keyboard(wolts, None),
+        )
+        await _reply(update, "or send /wolt <name>")
+    else:
+        await _reply(update, _NO_WOLTS_MESSAGE)
+    return False
+
+
+async def _route_message(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int, text: str):
+    """Share the existing active-session/spawn path across message types."""
     # --- Load chat state ---
     state = _load_chat_state(chat_id)
     active_wolt = state.get("active_wolt")
     active_session = state.get("active_session")
 
-    # --- No active wolt: dog handles ---
     if not active_wolt:
-        await _handle_dog(update, context, chat_id, text)
-        return
+        if dog_available():
+            await _handle_dog(update, context, chat_id, text)
+            return
+        if not await _select_wolt_without_dog(update, chat_id, state):
+            return
+        active_wolt = state["active_wolt"]
+        active_session = None
 
     # --- Has active wolt + session: route to session ---
     if active_session:
@@ -607,7 +638,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _handle_dog(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_message: str):
-    """Route a message to the dog (Haiku) for routing/admin."""
+    """Route a message to the optional dog for routing/admin."""
+    if not dog_available():
+        await _route_message(update, context, chat_id, user_message)
+        return
     await _dog_ack(update)
 
     history = _load_history(chat_id)
@@ -724,6 +758,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await _reply(update, f"couldn't start session for {reply_wolt}: {e}")
                 return
 
+    if not dog_available():
+        await _route_message(update, context, chat_id, voice_message)
+        return
+
     # --- Regular routing ---
     state = _load_chat_state(chat_id)
     active_wolt = state.get("active_wolt")
@@ -804,6 +842,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_msg = f"[image received] {file_name} ({mime_type}, {len(image_bytes)} bytes) saved at {saved_path}"
     if caption:
         file_msg += f"\nCaption: {caption}"
+
+    if not dog_available():
+        await _route_message(update, context, chat_id, file_msg)
+        return
 
     if active_wolt and active_session:
         delivered = await _route_to_session(update, active_session, active_wolt, file_msg, chat_id)
@@ -960,6 +1002,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if caption:
         file_msg += f"\nCaption: {caption}"
 
+    if not dog_available():
+        await _route_message(update, context, chat_id, file_msg)
+        return
+
     if active_wolt and active_session:
         delivered = await _route_to_session(update, active_session, active_wolt, file_msg, chat_id)
         if delivered and delivered != active_session:
@@ -1000,7 +1046,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
         return
-    await _reply(update, f"Hey. I'm {_dog_name()}. Talk to me and I'll connect you to a wolt.")
+    if dog_available():
+        await _reply(update, f"Hey. I'm {_dog_name()}. Talk to me and I'll connect you to a wolt.")
+    else:
+        await _reply(update, "Hey. Send a message and it goes to your wolt. /wolt picks which one.")
 
 
 def _wolt_of(session_name: str) -> str:
@@ -1100,6 +1149,7 @@ WOLT_TYPE_EMOJI = {
 }
 
 RODENT_WOLT_TYPES = {"raccoon", "beaver", "otter", "rodent"}
+_NO_WOLTS_MESSAGE = "no wolts found. create a wolt in the lodge first."
 
 
 def _is_wolt(w: dict) -> bool:
@@ -1173,7 +1223,7 @@ async def handle_setwolt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active = state.get("active_wolt")
     wolts = [w for w in list_wolts() if _is_wolt(w)]
     if not wolts:
-        await _reply(update, "no wolts found. create a wolt in the lodge first.")
+        await _reply(update, _NO_WOLTS_MESSAGE)
         return
 
     await _reply(

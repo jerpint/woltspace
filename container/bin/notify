@@ -104,6 +104,11 @@ def main(argv: list[str] | None = None) -> int:
 
     session = get_env("WOLTSPACE_WOLT_SESSION", "")
     wolt_name = get_env("WOLTSPACE_WOLT_NAME", "wolt")
+    try:
+        from wolts import wolt_display_name
+        wolt_name = wolt_display_name(wolt_name)
+    except Exception:
+        pass  # the plain name is always a fine prefix
     session_reg = Path(__file__).resolve().parent / "session-reg"
     full_message = f"{_creature_emoji(session, session_reg)} {wolt_name}: {message}"
     payload: dict[str, str] = {"session": session, "message": full_message}

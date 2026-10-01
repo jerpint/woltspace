@@ -52,7 +52,8 @@
     if (sprite) avatar.innerHTML = sprite; else avatar.textContent = WOLT_EMOJI[w.type] || '🦫';
 
     const body = el('div', 'wolts-body');
-    body.appendChild(el('div', 'wolts-name', name));
+    const label = woltLabel(w) || name;
+    body.appendChild(el('div', 'wolts-name', label));
     const line = el('div', 'wolts-sub', `${w.type} · `);
     line.appendChild(el('span', online.length ? 'wolts-on' : '', woltStateText(x)));
     body.appendChild(line);
@@ -72,12 +73,12 @@
 
     if (RODENT_TYPES.has(w.type)) {
       const add = el('button', 'wolts-add', '+');
-      add.title = `New chat with ${name}`; add.setAttribute('aria-label', add.title);
+      add.title = `New chat with ${woltLabel(w) || name}`; add.setAttribute('aria-label', add.title);
       add.onclick = e => { e.stopPropagation(); startSession(name); };
       row.appendChild(add);
     }
     const more = el('button', 'wolts-more', '⋯');
-    more.title = `Manage ${name}`; more.setAttribute('aria-label', more.title); more.setAttribute('aria-haspopup', 'menu');
+    more.title = `Manage ${woltLabel(w) || name}`; more.setAttribute('aria-label', more.title); more.setAttribute('aria-haspopup', 'menu');
     more.onclick = e => { e.stopPropagation(); openMenu(more, name); };
     row.appendChild(more);
     wrap.appendChild(row);
@@ -86,7 +87,7 @@
       const list = el('div', 'wolts-sessions');
       sessions.slice(0, 8).forEach(s => list.appendChild(sessionRow(s, { compact: true })));
       if (total > sessions.length) {
-        const all = el('a', 'wolts-session-all', `All ${total} on ${name}'s page ›`);
+        const all = el('a', 'wolts-session-all', `All ${total} on ${woltLabel(w) || name}'s page ›`);
         all.href = woltUrl(name);
         list.appendChild(all);
       }
@@ -100,7 +101,7 @@
     const all = allWolts.filter(w => WOLT_TYPES.has(w.type)).map(woltSessionSummary)
       .sort((a, b) => ((b.online.length > 0) - (a.online.length > 0)) || (b.last - a.last));
     const q = query.trim().toLowerCase();
-    const hits = all.filter(x => !q || x.name.toLowerCase().includes(q) || (x.w.type || '').includes(q));
+    const hits = all.filter(x => !q || x.name.toLowerCase().includes(q) || woltLabel(x.w).toLowerCase().includes(q) || (x.w.type || '').includes(q));
     const online = hits.filter(x => x.online.length), offline = hits.filter(x => !x.online.length);
     const focused = document.activeElement?.id === 'wolts-search';
 

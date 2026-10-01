@@ -92,6 +92,29 @@ if (root) {
     }
   });
 
+  document.querySelectorAll('[data-tier-select]').forEach(select => {
+    select.addEventListener('change', async () => {
+      const row = select.closest('[data-tier-row]');
+      const previous = row.dataset.savedValue;
+      const { harness, harnessLabel, tier, tierLabel } = select.dataset;
+      select.disabled = true;
+      setGlobalState('saving', 'Saving default model…');
+      try {
+        await save('/harness/tiers', { harness, tiers: { [tier]: select.value } });
+        row.dataset.savedValue = select.value;
+        setGlobalState('saved', 'Default model saved');
+        const chosen = select.options[select.selectedIndex].text;
+        showToast(`${harnessLabel} ${tierLabel.toLowerCase()}s now start on ${chosen}.`);
+      } catch (error) {
+        select.value = previous;
+        setGlobalState('error', 'Could not save');
+        showToast(error.message, 'error');
+      } finally {
+        select.disabled = false;
+      }
+    });
+  });
+
   document.querySelector('[data-expiry-select]')?.addEventListener('change', async event => {
     const select = event.currentTarget;
     const row = select.closest('[data-expiry-row]');

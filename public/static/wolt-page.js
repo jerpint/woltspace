@@ -21,7 +21,7 @@
     const avatar = root.querySelector('[data-avatar]');
     const sprite = woltSpriteAvatar(config.type || 'rodent', 44);
     if (sprite) avatar.innerHTML = sprite; else avatar.textContent = WOLT_EMOJI[config.type] || '🦫';
-    root.querySelector('[data-name]').textContent = name;
+    root.querySelector('[data-name]').textContent = config.display_name || name;
     const last = own.length ? (own[0].last_activity || own[0].created_at || 0) : 0;
     root.querySelector('[data-meta]').textContent = `${config.type || 'rodent'} · ${eng.id}${eng.model ? ` · ${eng.model}` : ''} · ${woltStateText({ online, last })}`;
     root.querySelector('[data-role]').textContent = (manifest.wolt || {}).description || config.description || (manifest.wolt || {}).role || config.role || '';
