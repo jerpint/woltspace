@@ -50,7 +50,7 @@
   for (var k in map) if (t[k]) document.documentElement.style.setProperty(map[k], t[k]);
   if (site.fonts_href) { var f = document.createElement('link'); f.rel = 'stylesheet'; f.href = site.fonts_href; document.head.appendChild(f); }
   var emoji = t.emoji || EMOJI[w.type] || '🌲';
-  var name = site.title || w.name;
+  var name = site.title || w.display_name || w.name;
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function inline(s) {
@@ -89,7 +89,7 @@
 
   if (tab === 'settings') {
     var rows = [
-      ['name', w.name], ['creature', w.type], ['engine', w.harness || 'lodge default'], ['model', w.model || 'tier default'],
+      ['name', w.display_name || w.name], ['folder', w.name], ['creature', w.type], ['engine', w.harness || 'lodge default'], ['model', w.model || 'tier default'],
       ['role', w.role], ['capabilities', (w.capabilities || []).join(', ')],
       ['site shell', document.querySelector('script[src$="shell.js"]') ? 'on' : 'off (the wolt owns its site)'], ['site title', site.title], ['custom css', site.custom_css], ['header slot', site.header_html], ['footer slot', site.footer_html]
     ];
