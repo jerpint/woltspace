@@ -1198,6 +1198,21 @@ class TestRankedTierDefaults:
             assert chosen in catalog, (tier, chosen)
             assert is_valid_model("codex", chosen)
 
+    @pytest.mark.parametrize("harness", ["codex", "claude"])
+    @pytest.mark.parametrize("catalog", [[], [{}], [7, None]])
+    def test_an_empty_lodge_catalog_is_ignored_not_escaped(
+        self, tmp_path, monkeypatch, harness, catalog,
+    ):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", RANKED)
+        (tmp_path / "woltspace.json").write_text(json.dumps(
+            {"harness": {"models": {harness: {"catalog": catalog}}}}))
+        offered = [m["id"] for m in model_catalog(harness)]
+        assert offered, "an empty catalog must not leave the harness with no model"
+        for tier in ("raccoon", "beaver", "otter", "rodent", "wolf"):
+            chosen = resolve_model(harness, tier)
+            assert chosen in offered and is_valid_model(harness, chosen), (tier, chosen)
+
     def test_a_saved_choice_the_catalog_dropped_is_ignored(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         harnesses._write_model_cache("codex", RANKED)

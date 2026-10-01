@@ -20,6 +20,7 @@ to know how a harness spells its flags.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shlex
@@ -46,6 +47,8 @@ WOPENCODE = str(_BIN_DIR / "wopencode")
 _ROLLOUT_UUID_RE = re.compile(
     r"rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$"
 )
+
+logger = logging.getLogger(__name__)
 
 MODEL_CACHE_MAX_AGE = 24 * 60 * 60
 _model_refreshing: set[str] = set()
@@ -732,6 +735,11 @@ def model_catalog(harness: str | None) -> list[dict]:
                         "label": item.get("label") or label_by_id.get(item["id"], item["id"])})
         elif isinstance(item, str):
             out.append({"id": item, "label": label_by_id.get(item, item)})
+    if not out:
+        # A catalog that offers nothing would leave every session without a
+        # valid model. Treat it as not set rather than run outside it.
+        logger.warning("Ignoring empty model catalog for %s in woltspace.json", resolved)
+        return merged
     return out
 
 
