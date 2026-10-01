@@ -1889,7 +1889,10 @@ async def set_harness_default(request: Request):
     name = (body.get("harness") or "").strip()
     if name not in HARNESSES:
         return JSONResponse({"error": f"unknown harness: {name}"}, status_code=400)
-    set_default_harness(name)
+    try:
+        set_default_harness(name)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
     return {"ok": True, "default": name}
 
 

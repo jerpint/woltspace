@@ -1180,6 +1180,55 @@ class TestRankedTierDefaults:
         assert harnesses.automatic_tier_model("codex", "raccoon") == "gpt-6-astra"
         assert tier_default_model("codex", "beaver") == "gpt-6-sol"
 
+    @pytest.mark.parametrize("catalog", [
+        ["gpt-5.5"],
+        ["gpt-6-astra"],
+        ["gpt-6-luna", "gpt-5.5"],
+        ["gpt-5.6-terra", "gpt-6-sol", "gpt-6-astra", "gpt-5.5"],
+    ])
+    def test_defaults_stay_inside_the_lodge_catalog(self, tmp_path, monkeypatch, catalog):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", RANKED)
+        (tmp_path / "woltspace.json").write_text(json.dumps(
+            {"harness": {"models": {"codex": {"catalog": catalog}}}}))
+        offered = [m["id"] for m in model_catalog("codex")]
+        assert offered == catalog
+        for tier in ("raccoon", "beaver", "otter", "rodent", "wolf"):
+            chosen = resolve_model("codex", tier)
+            assert chosen in catalog, (tier, chosen)
+            assert is_valid_model("codex", chosen)
+
+    @pytest.mark.parametrize("harness", ["codex", "claude"])
+    @pytest.mark.parametrize("catalog", [
+        [], [{}], [7, None], [""], ["   "], [{"id": ""}], [{"id": 7}], [{"id": ["x"]}],
+    ])
+    def test_an_empty_lodge_catalog_is_ignored_not_escaped(
+        self, tmp_path, monkeypatch, harness, catalog,
+    ):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", RANKED)
+        (tmp_path / "woltspace.json").write_text(json.dumps(
+            {"harness": {"models": {harness: {"catalog": catalog}}}}))
+        offered = [m["id"] for m in model_catalog(harness)]
+        assert offered, "an empty catalog must not leave the harness with no model"
+        for tier in ("raccoon", "beaver", "otter", "rodent", "wolf"):
+            chosen = resolve_model(harness, tier)
+            assert chosen in offered and is_valid_model(harness, chosen), (tier, chosen)
+
+    def test_unusable_catalog_entries_are_skipped_among_good_ones(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        (tmp_path / "woltspace.json").write_text(json.dumps({"harness": {"models": {"claude": {
+            "catalog": ["", "opus", {"id": 7}, {"id": "fable", "label": 3}, None]}}}}))
+        assert model_catalog("claude") == [
+            {"id": "opus", "label": "Opus"}, {"id": "fable", "label": "Fable"}]
+
+    def test_a_saved_choice_the_catalog_dropped_is_ignored(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", RANKED)
+        (tmp_path / "woltspace.json").write_text(json.dumps({"harness": {"models": {"codex": {
+            "catalog": ["gpt-6-sol", "gpt-6-luna"], "tiers": {"raccoon": "gpt-5.5"}}}}}))
+        assert tier_default_model("codex", "raccoon") in ("gpt-6-sol", "gpt-6-luna")
+
     def test_metadata_reports_automatic_and_saved(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         monkeypatch.setattr(harnesses, "refresh_model_catalogs", lambda **_: None)
@@ -1203,16 +1252,59 @@ class TestSetTierDefaults:
         assert saved["other"] == {"kept": True}
         assert saved["harness"]["models"]["claude"]["tiers"] == {"raccoon": "fable"}
 
-    @pytest.mark.parametrize("back_to", ["", "haiku"])
-    def test_choosing_the_automatic_default_saves_nothing(
-        self, tmp_path, monkeypatch, back_to,
+    def test_a_chosen_model_is_kept_even_when_it_is_the_automatic_one(
+        self, tmp_path, monkeypatch,
     ):
         monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", RANKED)
+        assert harnesses.automatic_tier_model("codex", "raccoon") == "gpt-6-astra"
+        harnesses.set_tier_defaults("codex", {"raccoon": "gpt-6-astra"})
+        assert harnesses._saved_tier_models("codex") == {"raccoon": "gpt-6-astra"}
+        # the ranking moves; the owner's choice does not
+        harnesses._write_model_cache("codex", [RANKED[1], RANKED[0], RANKED[2], RANKED[3]])
+        assert tier_default_model("codex", "raccoon") == "gpt-6-astra"
+        assert tier_default_model("codex", "beaver") == "gpt-6-astra"  # still automatic
+
+    def test_an_empty_value_clears_the_choice(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         harnesses.set_tier_defaults("claude", {"otter": "fable"})
-        result = harnesses.set_tier_defaults("claude", {"otter": back_to})
-        assert result["otter"] == "haiku"
+        assert harnesses.set_tier_defaults("claude", {"otter": ""})["otter"] == "haiku"
         saved = json.loads((tmp_path / "woltspace.json").read_text())
         assert saved["harness"]["models"]["claude"]["tiers"] == {}
+
+    @pytest.mark.parametrize("existing", [
+        '{"harness": {"default": "codex"}, "channels": INVALID}',
+        '["not", "an", "object"]',
+        '{"harness": "not-an-object", "other": {"kept": true}}',
+        '{"harness": {"models": {"claude": {"tiers": ["bad"]}}}, "other": 1}',
+    ])
+    def test_an_unusable_settings_file_is_never_replaced(
+        self, tmp_path, monkeypatch, existing,
+    ):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        path = tmp_path / "woltspace.json"
+        path.write_text(existing)
+        with pytest.raises(ValueError, match="nothing was saved"):
+            harnesses.set_tier_defaults("claude", {"otter": "fable"})
+        assert path.read_text() == existing
+        assert not path.with_suffix(".tmp").exists()
+
+    @pytest.mark.parametrize("existing", [
+        '{"channels": INVALID}', '[]', '{"harness": 7}',
+    ])
+    def test_default_harness_writer_fails_closed_too(self, tmp_path, monkeypatch, existing):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        path = tmp_path / "woltspace.json"
+        path.write_text(existing)
+        with pytest.raises(ValueError, match="nothing was saved"):
+            harnesses.set_default_harness("codex")
+        assert path.read_text() == existing
+
+    def test_a_missing_settings_file_is_created(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        assert harnesses.set_default_harness("codex") == "codex"
+        assert json.loads((tmp_path / "woltspace.json").read_text()) == {
+            "harness": {"default": "codex"}}
 
     @pytest.mark.parametrize("harness, tiers", [
         ("nope", {"raccoon": "opus"}),
@@ -1286,6 +1378,4 @@ class TestResolveModel:
             "openrouter/qwen/qwen-2.5-72b-instruct"
 
     def test_freeform_no_pin_still_uses_tier_default(self):
-        assert resolve_model("opencode", "raccoon", None) == "openrouter/z-ai/glm-5.3"
-        assert resolve_model("opencode", "beaver", None) == "openrouter/deepseek/deepseek-v4-flash"
-        assert resolve_model("opencode", "otter", None) == "openrouter/qwen/qwen3.8-flash"
+        assert resolve_model("opencode", "raccoon", None) == "openai/gpt-4o"
