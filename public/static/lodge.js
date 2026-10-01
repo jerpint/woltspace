@@ -104,7 +104,7 @@ function showView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   target.classList.add('active');
   document.querySelectorAll('.sidebar-nav-item').forEach(n => n.classList.remove('active'));
-  document.getElementById('nav-' + name)?.classList.add('active');  // Sessions has no nav item any more
+  document.getElementById('nav-' + name)?.classList.add('active');
   history.replaceState(null, '', name === 'home' ? '/' : '/?view=' + encodeURIComponent(name));
   closeSidebar();
 }
@@ -304,7 +304,8 @@ function renderSidebarWolts() {
     more.onclick = e => { if (document.getElementById('wolts-view')) { e.preventDefault(); showView('wolts'); } };
     container.appendChild(more);
   }
-  if (typeof renderWoltsPage === 'function') renderWoltsPage();
+  const woltsViewBusy = document.querySelector('#wolts-view .session-control[data-mode]');
+  if (typeof renderWoltsPage === 'function' && !woltsViewBusy) renderWoltsPage();
 }
 
 // ── Engine picker (per-wolt harness override) ──
@@ -574,164 +575,71 @@ function restoreLodgeSessions() {
 }
 
 function renderSessions() {
-  if (!document.getElementById('sessions-list')) return;
   const online = allSessions.filter(s => s.name !== 'main' && sessionIsOnline(s));
   const total = Object.values(sessionTotals).reduce((sum, count) => sum + count, 0)
     || allSessions.length;
-  document.getElementById('sessions-subtitle').textContent =
-    `${online.length} online · ${total} total`;
-  const badge = document.getElementById('sessions-badge');  // gone from the sidebar since the wolt pages
+  const subtitle = document.getElementById('sessions-subtitle');
+  if (subtitle) subtitle.textContent = `${online.length} online · ${total} total`;
+  const badge = document.getElementById('sessions-badge');
   if (badge) {
     badge.textContent = online.length || '';
     badge.classList.toggle('visible', online.length > 0);
   }
-
-  const woltNames = [...new Set(allSessions.map(s => s.wolt).filter(Boolean))];
-  const tabs = document.getElementById('sessions-filter-tabs');
-  tabs.replaceChildren();
-  const addFilter = (label, wolt) => {
-    const button = lodgeElement('button', `filter-chip${wolt === null ? ' active' : ''}`, label);
-    button.type = 'button';
-    button.addEventListener('click', () => {
-      sessionFilterWolt = wolt;
-      filterSessions();
-      tabs.querySelectorAll('.filter-chip').forEach(chip => chip.classList.remove('active'));
-      button.classList.add('active');
-    });
-    tabs.appendChild(button);
-  };
-  addFilter('All', null);
-  woltNames.forEach(w => {
-    const emoji = WOLT_EMOJI[allWolts.find(wo => (wo.name || wo.dir) === w)?.type] || '🦫';
-    addFilter(`${emoji} ${w}`, w);
-  });
-
-  filterSessions();
-}
-
-let sessionFilterWolt = null;
-
-function filterSessions() {
-  const search = document.getElementById('sessions-search').value.toLowerCase();
-  const sort = document.getElementById('sessions-sort').value;
-
-  let filtered = allSessions.filter(s => s.name !== 'main');
-  if (runningOnly) filtered = filtered.filter(sessionIsOnline);
-  if (sessionFilterWolt) filtered = filtered.filter(s => s.wolt === sessionFilterWolt);
-  if (search) filtered = filtered.filter(s =>
-    (s.name || '').toLowerCase().includes(search) ||
-    (s.wolt || '').toLowerCase().includes(search) ||
-    (s.title || '').toLowerCase().includes(search) ||
-    (s.prompt_preview || s.prompt || '').toLowerCase().includes(search)
-  );
-
-  if (sort === 'name') {
-    filtered.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  } else {
-    filtered.sort((a, b) => {
-      const aR = sessionIsOnline(a) ? 0 : 1;
-      const bR = sessionIsOnline(b) ? 0 : 1;
-      if (aR !== bR) return aR - bR;
-      return (b.created_at || 0) - (a.created_at || 0);
-    });
-  }
-
-  const groups = {};
-  filtered.forEach(s => {
-    const w = s.wolt || 'unknown';
-    if (!groups[w]) groups[w] = [];
-    groups[w].push(s);
-  });
-
   const container = document.getElementById('sessions-list');
-  if (!filtered.length) {
-    container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🌿</div><div class="empty-state-text">no sessions found</div></div>';
-    return;
-  }
+  if (!container) return;
 
-  container.replaceChildren(...Object.entries(groups).map(([wolt, sessions]) => {
+  const byName = new Map(allSessions.map(session => [session.name, session]));
+  container.querySelectorAll('.session-row[data-session]').forEach(row => {
+    const session = byName.get(row.dataset.session);
+    if (session) updateSessionRow(row, session);
+  });
+  const groups = new Map();
+  online.forEach(session => {
+    const name = session.wolt || 'unknown';
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name).push(session);
+  });
+  if (online.length) container.querySelector('.empty-state')?.remove();
+  [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).forEach(([wolt, sessions]) => {
+    let group = [...container.querySelectorAll('.sessions-group')].find(node => node.dataset.wolt === wolt);
     const woltData = allWolts.find(w => (w.name || w.dir) === wolt);
     const emoji = woltData ? (WOLT_EMOJI[woltData.type] || '🦫') : '🦫';
     const sessionSprite = woltData ? woltSpriteAvatar(woltData.type, 20) : null;
-    const runCount = sessions.filter(sessionIsOnline).length;
-    const total = sessionTotals[wolt] ?? sessions.length;
-    const metaText = runCount > 0
-      ? `${runCount} online · ${total} total`
-      : `${total} session${total !== 1 ? 's' : ''}`;
-    const group = lodgeElement('div', 'sessions-group');
-    const header = lodgeElement('div', 'sessions-group-header');
-    const avatar = lodgeElement('div', 'sessions-group-avatar');
-    if (sessionSprite) avatar.innerHTML = sessionSprite; else avatar.textContent = emoji;
-    header.appendChild(avatar);
-    header.appendChild(lodgeElement('span', 'sessions-group-name', wolt));
-    header.appendChild(lodgeElement('span', 'sessions-group-meta', metaText));
-    const chevron = lodgeElement('span', 'sessions-group-chevron');
-    chevron.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>';
-    header.appendChild(chevron);
-    header.addEventListener('click', () => toggleSessionGroup(header));
-    group.appendChild(header);
-    const groupBody = lodgeElement('div', 'sessions-group-body');
-    const inner = lodgeElement('div', 'sessions-group-inner');
-
-    sessions.forEach(s => {
-      const time = sessionActivityText(s);
-      const label = s.name;
-      const isAlive = sessionIsOnline(s);
-      const dotClass = isAlive ? 'running' : 'stopped';
-      const row = lodgeElement('a', 'session-row');
-      row.href = `/tui?session=${encodeURIComponent(s.name)}`;
-      row.appendChild(lodgeElement('div', `session-dot ${dotClass}`));
-      const body = lodgeElement('div', 'session-body');
-      body.appendChild(lodgeElement('div', 'session-title', label));
-      row.appendChild(body);
-      row.appendChild(lodgeElement('div', 'session-date', time));
-      const actionWrap = lodgeElement('div', 'session-actions');
-      const action = lodgeElement(
-        'button', `session-action session-action-${isAlive ? 'stop' : 'resume'}`,
-        isAlive ? '■' : '▶',
-      );
-      action.type = 'button'; action.title = isAlive ? 'Stop' : 'Resume';
-      action.addEventListener('click', event => {
-        event.preventDefault(); event.stopPropagation();
-        if (isAlive) stopSession(s.name); else resumeSession(s.name);
-      });
-      actionWrap.appendChild(action); row.appendChild(actionWrap); inner.appendChild(row);
-    });
-    groupBody.appendChild(inner); group.appendChild(groupBody);
-    return group;
-  }));
+    if (!group) {
+      group = lodgeElement('div', 'sessions-group'); group.dataset.wolt = wolt;
+      const header = lodgeElement('div', 'sessions-group-header');
+      const avatar = lodgeElement('div', 'sessions-group-avatar');
+      if (sessionSprite) avatar.innerHTML = sessionSprite; else avatar.textContent = emoji;
+      header.append(avatar, lodgeElement('span', 'sessions-group-name', wolt), lodgeElement('span', 'sessions-group-meta'));
+      const chevron = lodgeElement('span', 'sessions-group-chevron', '⌄');
+      header.appendChild(chevron);
+      header.addEventListener('click', () => toggleSessionGroup(header));
+      const body = lodgeElement('div', 'sessions-group-body');
+      body.appendChild(lodgeElement('div', 'sessions-group-inner'));
+      group.append(header, body);
+      const next = [...container.querySelectorAll('.sessions-group')]
+        .find(node => node.dataset.wolt.localeCompare(wolt) > 0);
+      container.insertBefore(group, next || null);
+    }
+    syncSessionRows(group.querySelector('.sessions-group-inner'), sessions);
+  });
+  container.querySelectorAll('.sessions-group').forEach(group => {
+    const wolt = group.dataset.wolt;
+    const count = online.filter(session => (session.wolt || 'unknown') === wolt).length;
+    const total = sessionTotals[wolt] ?? group.querySelectorAll('.session-row').length;
+    group.querySelector('.sessions-group-meta').textContent = `${count} online · ${total} total`;
+  });
+  if (!online.length && !container.querySelector('.sessions-group')) {
+    const empty = lodgeElement('div', 'empty-state');
+    empty.append(lodgeElement('div', 'empty-state-icon', '🌿'), lodgeElement('div', 'empty-state-text', 'no sessions online'));
+    container.replaceChildren(empty);
+  }
 }
 
 // ── Session group toggle ──
 function toggleSessionGroup(header) {
   header.querySelector('.sessions-group-chevron').classList.toggle('collapsed');
   header.nextElementSibling.classList.toggle('collapsed');
-}
-
-// ── Session actions ──
-let runningOnly = true;
-
-async function stopSession(name) {
-  try {
-    await fetch('/sessions/' + encodeURIComponent(name) + '/stop', { method: 'POST' });
-    await loadSessions();
-  } catch {}
-}
-async function resumeSession(name) {
-  try {
-    await fetch('/sessions/' + encodeURIComponent(name) + '/resume', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: '' }),
-    });
-    await loadSessions();
-  } catch {}
-}
-function toggleRunningOnly() {
-  runningOnly = !runningOnly;
-  const btn = document.getElementById('sessions-toggle-running');
-  btn.classList.toggle('active', runningOnly);
-  renderSessions();
 }
 
 // ── Start session ──
