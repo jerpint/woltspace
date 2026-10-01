@@ -377,9 +377,7 @@ def install_seed(
                 moved.append(target)
             from skills_sync import seed_wolt_skills
             for name in summary.wolts:
-                wolt_dir = wolts_dir / name
-                seed_wolt_skills(Path(install_root), wolt_dir)
-                _install_wolt_skill_site(wolt_dir, name)
+                seed_wolt_skills(Path(install_root), wolts_dir / name)
             return {
                 "ok": True,
                 "seed": summary.name,
@@ -447,56 +445,6 @@ def _stage_wolt(source: Path, target: Path, name: str, template: Path, provenanc
             target / ".claude" / "skills" / skill_name,
         )
     subprocess.run(["git", "init", "-q", str(target)], check=False)
-
-
-def _install_wolt_skill_site(wolt_dir: Path, name: str) -> bool:
-    """Install the conventional ``<wolt>-site`` skill's initial site.
-
-    A seed may ship many skills, but only the skill named after the wolt plus
-    ``-site`` owns this optional presentation.  Never replace lived work: the
-    destination must be absent or exactly match the starter site that
-    ``scaffold_starter_site`` would generate for this wolt.
-    """
-    source = wolt_dir / ".claude" / "skills" / f"{name}-site" / "site"
-    if not (source / "index.html").is_file():
-        return False
-
-    site = wolt_dir / "wolt" / "site"
-    replace = not site.exists()
-    if site.is_dir():
-        from wolts import scaffold_starter_site
-
-        config = _read_json(wolt_dir / "wolt" / "wolt.json")
-        with tempfile.TemporaryDirectory(prefix="woltspace-starter-site-") as raw:
-            expected = Path(raw)
-            scaffold_starter_site(expected, name, config.get("type", "raccoon"))
-            replace = _trees_equal(site, expected)
-    if not replace:
-        return False
-
-    if site.exists():
-        shutil.rmtree(site)
-    shutil.copytree(source, site)
-    return True
-
-
-def _trees_equal(left: Path, right: Path) -> bool:
-    """Compare regular-file directory trees without following links."""
-    def entries(root: Path) -> dict[Path, tuple[str, bytes | None]]:
-        result = {}
-        for path in root.rglob("*"):
-            relative = path.relative_to(root)
-            if path.is_symlink():
-                result[relative] = ("link", None)
-            elif path.is_dir():
-                result[relative] = ("dir", None)
-            elif path.is_file():
-                result[relative] = ("file", path.read_bytes())
-            else:
-                result[relative] = ("other", None)
-        return result
-
-    return entries(left) == entries(right)
 
 
 def _export_app(source: Path, target: Path, selected_wolts: list[str]) -> dict:
