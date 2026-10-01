@@ -15,7 +15,6 @@
     const t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     return d.toDateString() === today ? t : d.toDateString() === yesterday ? `Yesterday ${t}` : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${t}`;
   };
-  const sessionState = sessionStateText;
 
   function closeMenu() { document.querySelector('.wolts-menu')?.remove(); }
 
@@ -85,18 +84,7 @@
 
     if (isOpen) {
       const list = el('div', 'wolts-sessions');
-      sessions.slice(0, 8).forEach(s => {
-        const live = sessionIsOnline(s);
-        // a session opens if it's live or has a conversation to go back to (opening wakes it)
-        const openable = live || s.openable === true;
-        const a = el(openable ? 'a' : 'div', `wolts-session${openable ? '' : ' ended'}`);
-        if (openable) a.href = `/tui?session=${encodeURIComponent(s.name)}`;
-        else a.title = 'No conversation to reopen';
-        a.appendChild(el('span', `session-dot ${live ? 'running' : 'stopped'}`));
-        a.appendChild(el('span', 'wolts-session-title', (s.title || s.name || 'untitled session').trim()));
-        a.appendChild(el('span', 'wolts-session-meta', sessionState(s)));
-        list.appendChild(a);
-      });
+      sessions.slice(0, 8).forEach(s => list.appendChild(sessionRow(s, { compact: true })));
       if (total > sessions.length) {
         const all = el('a', 'wolts-session-all', `All ${total} on ${name}'s page ›`);
         all.href = woltUrl(name);

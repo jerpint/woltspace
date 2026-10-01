@@ -196,6 +196,12 @@ test('wolt listings use the shared state vocabulary', () => {
   assert.doesNotMatch(woltPageSource, /sessionIsWorking|\bworking\b|\bawake\b/i);
 });
 
+test('poll rendering preserves an active Wolts-page session control', () => {
+  const source = functionSource(lodgeSource, 'renderSidebarWolts');
+  assert.match(source, /querySelector\('#wolts-view \.session-control\[data-mode\]'\)/);
+  assert.match(source, /typeof renderWoltsPage === 'function' && !woltsViewBusy/);
+});
+
 test('terminal opening checks only its session before attach or resume', () => {
   assert.match(tuiSource, /fetch\('\/sessions\/' \+ encodeURIComponent\(session\)\)/);
   assert.match(tuiSource, /s\.agent_alive === true/);
