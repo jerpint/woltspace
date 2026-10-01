@@ -206,6 +206,10 @@ function renderStarterWelcome() {
     return (sessionTotals[name] ?? projected) === 0;
   });
   if (!untouched) {
+    if (card.style.display !== 'none') {
+      const quote = document.getElementById('home-quote');
+      if (quote) quote.style.display = '';
+    }
     card.style.display = 'none';
     card.replaceChildren();
     return;
@@ -213,15 +217,31 @@ function renderStarterWelcome() {
 
   const wolt = allWolts[0];
   const name = wolt.name || wolt.dir;
-  const emoji = wolt.emoji || WOLT_EMOJI[wolt.type] || '🦫';
-  const button = lodgeElement('button', 'home-starter-button', `Say hi ${emoji}`);
+  // A fresh lodge has one thing to do: meet the starter wolt. She stands in the
+  // scene with a speech bubble and a "press start" button (styles: home.css).
+  const shown = name.charAt(0).toUpperCase() + name.slice(1);  // wolt names are lowercase dirs
+  const quote = document.getElementById('home-quote');
+  const hero = lodgeElement('div', 'home-starter-hero');
+  const bubble = lodgeElement('div', 'home-starter-bubble');
+  bubble.append(`Hey! I'm ${shown}.`, document.createElement('br'), 'Want to build something?');
+  hero.appendChild(bubble);
+  const sprite = woltSpriteElement(wolt.type, 132);
+  if (sprite) {
+    const figure = lodgeElement('div', 'home-starter-sprite');
+    figure.appendChild(sprite);
+    hero.appendChild(figure);
+  }
+  const button = lodgeElement('button', 'home-starter-button', `Say hi to ${shown}`);
   button.type = 'button';
   button.addEventListener('click', () => {
     card.style.display = 'none';
+    if (quote) quote.style.display = '';
     startSession(name);
   });
-  card.replaceChildren(button);
+  hero.append(button, lodgeElement('div', 'home-starter-sub', 'your first wolt'));
+  card.replaceChildren(hero);
   card.style.display = '';
+  if (quote) quote.style.display = 'none';
   const cta = document.getElementById('home-create-cta');
   if (cta) cta.style.display = 'none';
 }

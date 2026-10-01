@@ -213,6 +213,29 @@ def test_install_creates_fresh_independent_starters(tmp_path):
         install_seed(source=package, wolts_dir=target, install_root=install_root)
 
 
+def test_installed_rodent_gets_the_generated_starter_site(tmp_path):
+    from wolts import scaffold_starter_site
+
+    source_wolts = tmp_path / "source-wolts"
+    make_wolt(source_wolts)
+    package = tmp_path / "package"
+    create_seed(
+        wolts_dir=source_wolts, output=package, name="starter",
+        wolt_names=["raccoon"],
+    )
+    install_root = make_template(tmp_path)
+
+    target = tmp_path / "new-lodge"
+    install_seed(source=package, wolts_dir=target, install_root=install_root)
+
+    expected = tmp_path / "expected"
+    expected.mkdir()
+    scaffold_starter_site(expected, "raccoon", "raccoon")
+    installed = target / "raccoon" / "wolt" / "site"
+    assert sorted(p.name for p in installed.iterdir()) == sorted(p.name for p in expected.iterdir())
+    assert (installed / "index.html").read_text() == (expected / "index.html").read_text()
+
+
 def _bare_seed_repository(tmp_path: Path) -> tuple[Path, str, str]:
     source_wolts = tmp_path / "source-wolts"
     make_wolt(source_wolts)

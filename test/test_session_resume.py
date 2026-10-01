@@ -307,6 +307,23 @@ class TestResumeNeedsAConversation:
         with pytest.raises(ValueError, match="no harness_session_id"):
             prepare_session_command("testwolt-blank-dam-abc123", "resume", "hi")
 
+    @patch("sessions._tmux_alive", return_value=True)
+    def test_prepare_points_to_live_tmux_instead_of_new_session(self, mock_alive, unstamped):
+        from sessions import prepare_session_command
+
+        with pytest.raises(ValueError, match="still running.*waiting for input.*open it"):
+            prepare_session_command("testwolt-blank-dam-abc123", "resume", "hi")
+
+    @patch("sessions.resolve_agent_handle", return_value=None)
+    @patch("sessions._tmux_alive", return_value=True)
+    def test_resume_points_to_live_tmux_instead_of_new_session(
+        self, mock_alive, mock_agent, unstamped
+    ):
+        from sessions import ResumeUnavailable, resume_session
+
+        with pytest.raises(ResumeUnavailable, match="still running.*waiting for input.*open it"):
+            resume_session("testwolt-blank-dam-abc123", "hello")
+
     def test_a_non_uuid_legacy_id_does_not_count(self, unstamped):
         """Some legacy records stored the session NAME in claude_session_id.
 
