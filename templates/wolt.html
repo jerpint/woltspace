@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block title %}{{ wolt_name }} · Woltspace{% endblock %}
+{% block title %}{{ wolt.display_name or wolt_name }} · Woltspace{% endblock %}
 {% block head %}<link rel="stylesheet" href="/static/home.css?v={{ cache_bust }}"><link rel="stylesheet" href="/static/wolt-page.css?v={{ cache_bust }}">{% endblock %}
 {% block before_sidebar %}{% include 'partials/forest-scene.html' %}{% endblock %}
 {% block content %}

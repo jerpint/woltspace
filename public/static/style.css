@@ -1145,6 +1145,14 @@ body {
     text-align-last: right;
   }
 }
+.create-name-preview {
+  margin: 6px 2px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.create-name-preview[hidden] { display: none; }
+.create-name-preview.error { color: var(--terra, #C4531E); }
 .modal-error {
   font-family: var(--font-mono);
   font-size: 11px;

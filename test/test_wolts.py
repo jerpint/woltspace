@@ -176,6 +176,39 @@ class TestActiveCreature:
 class TestCreateCreatureWolt:
     """Unit: create_creature_wolt builds correct directory structure."""
 
+    def test_display_name_is_stored_and_read_back(self, tmp_path):
+        import wolts
+        from wolts import create_creature_wolt, wolt_display_name
+
+        with patch.object(wolts, "WOLTS_DIR", tmp_path):
+            create_creature_wolt("wolter-white", "raccoon", display_name="Wolter  White")
+            saved = json.loads((tmp_path / "wolter-white" / "wolt" / "wolt.json").read_text())
+            assert saved["name"] == "wolter-white"
+            assert saved["display_name"] == "Wolter White"
+            assert wolt_display_name("wolter-white") == "Wolter White"
+            create_creature_wolt("chip", "otter", display_name="chip")
+            plain = json.loads((tmp_path / "chip" / "wolt" / "wolt.json").read_text())
+            assert "display_name" not in plain
+            assert wolt_display_name("chip") == "chip"
+            assert wolt_display_name("nobody") == "nobody"
+
+    @pytest.mark.parametrize("typed, slug", [
+        ("Wolter White", "wolter-white"),
+        ("Señor Otter!", "senor-otter"),
+        ("  justin   beaver ", "justin-beaver"),
+        ("123 go", "go"),
+        ("R2-D2", "r2-d2"),
+        ("tab\tand\nline", "tab-and-line"),
+        ("A Very Long Wolt Name Indeed", "a-very-long-wolt-nam"),
+        ("!!!", ""),
+        (None, ""),
+    ])
+    def test_slugify_wolt_name(self, typed, slug):
+        from wolts import slugify_wolt_name
+
+        assert slugify_wolt_name(typed) == slug
+        assert len(slug) <= 20
+
     def test_creates_directory_structure(self, tmp_path):
         from wolts import create_creature_wolt
         config_file = tmp_path / "woltspace.json"
