@@ -482,22 +482,24 @@ HARNESSES = {
         # is just starter suggestions. (claude/codex stay catalog-gated.)
         "freeform_model": True,
         # Model ids are provider/model strings from opencode's models.dev catalog
-        # (`opencode session`/`opencode models` list them). Defaulting to the
-        # OpenAI provider — VERIFIED live end-to-end (opencode 1.18.3, spawn +
-        # resume + skills) using OPENAI_API_KEY from the environment, which the
-        # container passes through to sessions. Swapping provider is a one-line
-        # change per tier: anthropic/* (needs Claude Max OAuth — untested here),
-        # openrouter/<vendor>/<model> (one key, 341 models — needs a valid key),
-        # opencode/* (Zen), etc.
+        # (`opencode models` lists them). The defaults go through OpenRouter:
+        # one key (OPENROUTER_API_KEY, passed through to sessions) reaches all
+        # three. The ids below were checked against `opencode models` on
+        # opencode 1.18.31. Swapping provider is a one-line change per tier
+        # (openai/*, anthropic/*, opencode/* ...), and a wolt can pin any
+        # provider/model of its own.
         "models": {
-            "raccoon": "openai/gpt-4o",        # frontier / thinker
-            "beaver": "openai/gpt-4o",           # balanced / builder
-            "otter": "openai/gpt-4o-mini",       # fast / quick
-            "rodent": "openai/gpt-4o",           # legacy — treated as raccoon
-            "wolf": "openai/gpt-4o-mini",
+            "raccoon": "openrouter/z-ai/glm-5.3",                # thinker
+            "beaver": "openrouter/deepseek/deepseek-v4-flash",   # builder
+            "otter": "openrouter/qwen/qwen3.8-flash",            # quick
+            "rodent": "openrouter/z-ai/glm-5.3",                 # legacy — treated as raccoon
+            "wolf": "openrouter/qwen/qwen3.8-flash",
         },
-        # Selectable models for the picker (new-main integration).
+        # Starter suggestions for the picker; any provider/model is accepted.
         "model_catalog": [
+            {"id": "openrouter/z-ai/glm-5.3", "label": "GLM 5.3"},
+            {"id": "openrouter/deepseek/deepseek-v4-flash", "label": "DeepSeek V4 Flash"},
+            {"id": "openrouter/qwen/qwen3.8-flash", "label": "Qwen3.8 Flash"},
             {"id": "openai/gpt-4o", "label": "GPT-4o"},
             {"id": "openai/gpt-4o-mini", "label": "GPT-4o mini"},
             {"id": "openai/gpt-4.1", "label": "GPT-4.1"},
