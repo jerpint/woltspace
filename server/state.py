@@ -33,6 +33,9 @@ DEFAULT_STARTER_SEED = (
 _starter_seed_lock = threading.Lock()
 
 
+_starter_seed_lock = threading.Lock()
+
+
 def ensure_state_dir():
     STATE_DIR.mkdir(parents=True, exist_ok=True)
 

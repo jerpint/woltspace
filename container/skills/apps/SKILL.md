@@ -25,8 +25,8 @@ Apps are things you ship — apps, tools, services. They live at `wolts/apps/{na
 ## Creating an app
 
 ```bash
-mkdir -p /workspace/wolts/apps/my-app
-cd /workspace/wolts/apps/my-app
+mkdir -p "$WOLTSPACE_WOLTS_DIR/apps/my-app"
+cd "$WOLTSPACE_WOLTS_DIR/apps/my-app"
 # ... set up your code
 ```
 
@@ -54,8 +54,8 @@ Then write `woltspace.json` — **this is required** for the platform to discove
 | `description` | no | What the app does |
 | `stack` | no | `python`, `vite`, `node`, or `html` |
 | `install` | no | Install command |
-| `port` | yes | Fixed port for this app. Permanent — survives restarts. Avoid 7777 and 3001. |
-| `start` | no | Start command. Use `$PORT` — the platform expands it. Add `--host 0.0.0.0` for network access. Null = can't start from lodge. |
+| `port` | yes | Fixed app port in the 4000-5999 range. Permanent — survives restarts. Do not use platform service ports. |
+| `start` | no | Start command. Use `$PORT` — the platform expands it. Null = can't start from lodge or be served as an app. |
 | `source` | no | Origin URL if cloned |
 | `emoji` | no | Display emoji (auto-assigned) |
 | `public` | no | If `true`, the app is shared publicly when started. With a named tunnel: served at `{name}.{domain}` (e.g. `corework.woltspace.com`). Without: a random quick tunnel URL. Default: `false`. |
@@ -64,13 +64,19 @@ Then write `woltspace.json` — **this is required** for the platform to discove
 
 ## Serving an app
 
-### Running dev server (primary mode)
+### Running app server
 
-The platform starts the server and sets the `PORT` env var. The viewport iframe loads the app's port **directly** — no proxy. This means internal links, WebSockets, and SSE all work naturally.
+The platform starts the server and sets the `PORT` env var. The app gateway forwards HTTP, WebSockets, and SSE to that server.
 
-### Static files (fallback)
+### Static HTML apps
 
-If the app isn't running, static files in `dist/` or the app root are served at `/app/{name}/`.
+There is no static-file fallback in the lodge or gateway. A static HTML app needs a start command just like every other app, for example:
+
+```json
+"start": "python3 -m http.server $PORT --bind 127.0.0.1"
+```
+
+When the process is stopped, the gateway shows the normal stopped-app page.
 
 ## Starting and stopping
 
@@ -80,30 +86,28 @@ Running `npm run dev`, `python server.py`, or any start command directly bypasse
 
 ```bash
 # Start an app
-curl -X POST http://localhost:7777/apps/my-app/start
+curl -X POST "$WOLTSPACE_API/apps/my-app/start"
 
 # Stop an app
-curl -X POST http://localhost:7777/apps/my-app/stop
+curl -X POST "$WOLTSPACE_API/apps/my-app/stop"
 
 # List all apps + running state
-curl http://localhost:7777/apps
+curl "$WOLTSPACE_API/apps"
 ```
 
 ## Pushing to the viewport
 
 ```bash
-push-view http://my-app.localhost:7777/
+push-view http://my-app.localhost:7117/
 ```
 
-Use the **subdomain pattern** `http://<app-name>.localhost:7777/` to push an app to the viewport.
-
-> **Why not `/app/my-app/`?** The `/app/` path triggers a 302 redirect to the app's bare port (e.g. `localhost:4010`). This works locally but breaks through the Cloudflare tunnel, since the redirect target isn't reachable from the outside. The subdomain pattern avoids the redirect entirely.
+Use the app gateway address shown by `GET /apps`. The first lodge defaults to `http://<app-name>.localhost:7117/`; `/app/<app-name>/` redirects there for compatibility.
 
 ## Ports
 
 Each app declares its own port in `woltspace.json` (required). Use the **4000-5999** range for apps. The port is permanent — it never changes between restarts. Pick one that doesn't conflict with other apps. If two apps claim the same port, the second one to start gets an error — just pick a different port.
 
-Wolt sites auto-allocate in the **6000+** range, so no collisions. The platform also sets the `PORT` env var to match your manifest port when starting. Avoid 7777 (platform server) and 3001 (TUI).
+The control plane address is `$WOLTSPACE_API`; never assume its port. The app gateway follows the lodge port minus 660 unless Settings overrides it. Apps must stay in the **4000-5999** range and must not use their lodge's gateway port. The platform sets `PORT` to the app manifest's value when it starts the app. Wolt sites do not allocate their own ports; the lodge serves them at `/wolt/<name>/site/`.
 
 ## Sharing (public access)
 
@@ -111,13 +115,13 @@ Apps are private by default — only accessible locally. Set `"public": true` in
 
 ```bash
 # Share a running app
-curl -X POST http://localhost:7777/apps/my-app/share
+curl -X POST "$WOLTSPACE_API/apps/my-app/share"
 
 # Unshare
-curl -X POST http://localhost:7777/apps/my-app/unshare
+curl -X POST "$WOLTSPACE_API/apps/my-app/unshare"
 
 # Panic button — unshare ALL apps
-curl -X POST http://localhost:7777/apps/unshare-all
+curl -X POST "$WOLTSPACE_API/apps/unshare-all"
 ```
 
 ### How sharing works

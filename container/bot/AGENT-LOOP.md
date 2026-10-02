@@ -61,7 +61,7 @@ Claude Code session: notify (message supplied through a single-quoted heredoc)
 container/bin/notify (formats message with session URL)
   |
   v
-POST localhost:7777/notify
+POST $WOLTSPACE_API/notify
   |
   v
 server.js sendNotification()

@@ -16,8 +16,10 @@
       <p class="settings-index-label">Configuration</p>
       {{ tab_link('#harnesses', 'Harnesses', 'lodge default', active=true) }}
       {{ tab_link('#sessions', 'Sessions', 'idle policy') }}
+      {{ tab_link('#app-addresses', 'App addresses', 'optional domain') }}
       {{ tab_link('', 'Notifications', 'coming down the trail', disabled=true) }}
       {{ tab_link('', 'Desktop', 'after the Mac build', disabled=true) }}
+      {{ tab_link('#access', 'Access', 'token verification') }}
     </nav>
 
     <div class="settings-content" id="harnesses">
@@ -66,6 +68,26 @@
         {% endfor %}
       {% endcall %}
 
+      <div id="access">
+      {% call panel('Access verification', 'Verify identity tokens for remote lodge and app requests.', 'optional') %}
+        <div class="ds-select-stack" data-access-form
+             data-saved-value='{{ access | tojson }}'>
+          <label class="ds-label" for="access-team-domain">Team domain</label>
+          <input class="ds-select" id="access-team-domain" data-access-field="team_domain" value="{{ access.team_domain or '' }}" placeholder="team.cloudflareaccess.com" autocomplete="off" spellcheck="false">
+          <label class="ds-label" for="access-lodge-aud">Lodge audience</label>
+          <input class="ds-select" id="access-lodge-aud" data-access-field="lodge_aud" value="{{ access.lodge_aud or '' }}" autocomplete="off" spellcheck="false">
+          <label class="ds-label" for="access-apps-aud">Apps audience</label>
+          <input class="ds-select" id="access-apps-aud" data-access-field="apps_aud" value="{{ access.apps_aud or '' }}" autocomplete="off" spellcheck="false">
+          <label class="ds-label" for="access-owner-email">Owner email</label>
+          <input class="ds-select" id="access-owner-email" data-access-field="owner_email" value="{{ access.owner_email or '' }}" type="email" autocomplete="email" spellcheck="false">
+          <div class="detail-actions">
+            <button class="tool-button" type="button" data-access-save>Save verification</button>
+            <button class="tool-button" type="button" data-access-clear>Disable</button>
+          </div>
+        </div>
+      {% endcall %}
+      </div>
+
       <div id="sessions">
       {% call panel('Idle sessions', 'Close sessions nobody has been in touch with, to free resources. Their conversation stays resumable.', 'lodge-wide') %}
         {% call select_field('idle-session-timeout', 'Close idle sessions after', 'No contact means no message, notify or page update from the session for this long.') %}
@@ -76,6 +98,23 @@
               <option value="14400"{% if idle_timeout == 14400 %} selected{% endif %}>4 hours</option>
               <option value="86400"{% if idle_timeout == 86400 %} selected{% endif %}>1 day</option>
             </select>
+          </div>
+        {% endcall %}
+      {% endcall %}
+      </div>
+
+      <div id="app-addresses">
+      {% call panel('App addresses', 'Optionally serve every app on a dedicated domain.', 'lodge-wide') %}
+        {% call select_field('apps-domain', 'Apps domain', 'Enter a domain such as jerpint.woltspace.app. Leave it blank to keep the current addresses. Changes apply on the next lodge start.') %}
+          <div class="ds-select-stack" data-apps-domain-row data-saved-value="{{ apps_domain }}">
+            <input class="ds-select" id="apps-domain" data-apps-domain-input type="text" value="{{ apps_domain }}" placeholder="name.woltspace.app" inputmode="url" autocomplete="off" spellcheck="false">
+            <button class="tool-button" type="button" data-apps-domain-save>Save</button>
+          </div>
+        {% endcall %}
+        {% call select_field('app-gateway-port', 'Gateway port', 'Loopback-only port for app traffic. By default it follows the lodge port minus 660 (7777 → 7117). Changes apply on the next lodge start.') %}
+          <div class="ds-select-stack" data-gateway-port-row data-saved-value="{{ app_gateway_port }}">
+            <input class="ds-select" id="app-gateway-port" data-gateway-port-input type="number" min="1024" max="65535" value="{{ app_gateway_port }}">
+            <button class="tool-button" type="button" data-gateway-port-save>Save port</button>
           </div>
         {% endcall %}
       {% endcall %}

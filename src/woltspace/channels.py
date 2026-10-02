@@ -15,6 +15,7 @@ This is a seam, not a plugin framework: adding another means adding a class to
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -25,6 +26,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Protocol, runtime_checkable
 
 from .config import channel_config, config_path
+from .app_gateway_port import resolve_app_gateway_port
 from .envvars import export_both
 from .layout import RuntimeLayout
 
@@ -478,15 +480,71 @@ class WolfConnector:
         )
 
 
+@dataclass(frozen=True)
+class AppGatewayConnector:
+    """The app-only loopback gateway, supervised like every other child."""
+
+    name: str = "app-gateway"
+
+    def plan(
+        self, layout: RuntimeLayout, env: Mapping[str, str] | None = None,
+    ) -> ConnectorPlan:
+        values = dict(os.environ if env is None else env)
+        if not _truthy(values.get("WOLTSPACE_ENTRYPOINT", "")):
+            return ConnectorPlan(
+                self.name, False,
+                "not the platform entrypoint; a guest never owns the app gateway",
+                remedy="Run the control plane through `woltspace start`.",
+            )
+        path = layout.wolts_dir / "woltspace.json"
+        port = resolve_app_gateway_port(layout.wolts_dir, layout.port, env=values)
+        child_env = export_both({
+            "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
+            "WOLTSPACE_DIR": str(layout.install_root),
+            "WOLTSPACE_ISOLATION": layout.isolation,
+            "WOLTSPACE_APP_GATEWAY_PORT": str(port),
+            "PYTHONPATH": os.pathsep.join(
+                part for part in (
+                    str(layout.install_root), str(layout.runtime_lib),
+                    values.get("PYTHONPATH", ""),
+                ) if part
+            ),
+        })
+        return ConnectorPlan(
+            name=self.name,
+            enabled=True,
+            detail=f"app gateway on http://{'127.0.0.1' if layout.isolation == 'host' else '0.0.0.0'}:{port}",
+            command=(
+                sys.executable, "-m", "uvicorn", "server.gateway:app",
+                "--host", "127.0.0.1" if layout.isolation == "host" else "0.0.0.0",
+                "--port", str(port),
+                "--log-level", "warning",
+            ),
+            cwd=str(layout.install_root),
+            env=child_env,
+            remedy=f"Choose a free app_gateway.port in {path}.",
+            process_signature=("server.gateway:app",),
+        )
+
+
 CONNECTORS: tuple[ChannelConnector, ...] = (
-    TelegramConnector(), SlackConnector(), WolfConnector(),
+    TelegramConnector(), SlackConnector(), WolfConnector(), AppGatewayConnector(),
 )
 
 
 def plan_connectors(
     layout: RuntimeLayout, env: Mapping[str, str] | None = None
 ) -> list[ConnectorPlan]:
-    return [connector.plan(layout, env) for connector in CONNECTORS]
+    plans = []
+    for connector in CONNECTORS:
+        try:
+            plans.append(connector.plan(layout, env))
+        except Exception as exc:
+            plans.append(ConnectorPlan(
+                connector.name, False, f"connector planning failed: {exc}",
+                remedy="Fix this connector's configuration, then restart the lodge.",
+            ))
+    return plans
 
 
 def connector_secrets(plans: list[ConnectorPlan]) -> dict[str, str]:

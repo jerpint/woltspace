@@ -24,6 +24,7 @@ After review and consent, run the exact chosen version:
 
 ```sh
 woltspace update --version VERSION --yes
+uv tool update-shell
 ```
 
 The command revalidates yanked and downgrade boundaries, stops only a running native lodge, installs the exact version through uv, and restarts using the newly installed executable. It attempts restart even when installation fails. An initially stopped lodge remains stopped. Do not blindly retry or claim rollback.
