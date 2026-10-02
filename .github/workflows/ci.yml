@@ -51,6 +51,7 @@ jobs:
           python -m pytest -q
           test/test_release_workflow.py
           test/test_lodge_skills.py
+          test/test_lodge_shell.py
           test/test_skills_sync.py
           test/test_session_target_api.py
           test/test_execution_policy.py

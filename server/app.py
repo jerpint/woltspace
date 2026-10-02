@@ -2683,6 +2683,18 @@ async def tui_page(request: Request):
     })
 
 
+@app.get("/shell")
+async def lodge_shell_page(request: Request):
+    """One-view lodge layout: the lodge pages and open sessions as tabs.
+
+    Read-only render. It frames the existing pages and uses the same routes
+    they use; nothing here changes lodge state.
+    """
+    return templates.TemplateResponse(request, "lodge-shell.html", context={
+        "cache_bust": int(time.time()),
+    })
+
+
 @app.get("/terminal")
 async def terminal_page(request: Request):
     return templates.TemplateResponse(request, "terminal.html", context={

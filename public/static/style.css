@@ -1240,6 +1240,9 @@ body {
   border-radius: 6px;
 }
 
+/* ── Inside the one-view layout (/shell) ── */
+.in-shell .sidebar, .in-shell .hamburger { display: none; }
+
 /* ── Z-index layers ── */
 .sidebar { z-index: 2; }
 .main { z-index: 1; position: relative; }

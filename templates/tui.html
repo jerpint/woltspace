@@ -39,6 +39,9 @@
   html, body { height: 100dvh; overflow: hidden; background: var(--bg); }
   body { display: flex; flex-direction: column; font-family: var(--font-body); }
 
+  /* Inside the one-view layout (/shell) the layout draws the bar. */
+  .in-shell #topbar { display: none; }
+
   /* ── Topbar ── */
   #topbar {
     background: var(--surface-2);
@@ -279,6 +282,9 @@
 </style>
 </head>
 <body>
+<script>
+  if (window.name === 'lodge-shell-session' && window.parent !== window) document.documentElement.classList.add('in-shell');
+</script>
 
 <div id="topbar">
   <a class="tb-back" href="/" title="Back to lodge">
@@ -329,6 +335,16 @@
 
   // ── Session ──
   const session = new URLSearchParams(location.search).get('session') || 'main';
+
+  // One-view layout (/shell): a lodge page that opens a session lands here inside
+  // the layout's page frame. Hand the session to the layout, which opens it as a
+  // tab, go back to the lodge page, and start no terminal in this frame.
+  if (window.name === 'lodge-shell-page' && window.parent !== window) {
+    window.parent.postMessage({ type: 'woltspace-shell-open-session', session }, location.origin);
+    if (history.length > 1) history.back(); else location.replace('/');
+    await new Promise(() => {});
+  }
+  const inShell = window.name === 'lodge-shell-session' && window.parent !== window;
   const nameEl = document.getElementById('session-name');
   nameEl.textContent = session === 'main' ? nameEl.textContent : session;
   document.title = session === 'main' ? document.title : `${session} · tui`;
@@ -394,6 +410,7 @@
   function setStatus(state, text) {
     statusEl.className = 'tb-status ' + state;
     statusText.textContent = text;
+    if (inShell) window.parent.postMessage({ type: 'woltspace-shell-status', state, text }, location.origin);
   }
 
   // ── WebSocket ──

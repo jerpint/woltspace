@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>woltspace</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦫</text></svg>">
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#18100A">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Preahvihear&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/lodge-shell.css?v={{ cache_bust }}">
+</head>
+<body class="on-lodge">
+
+<aside id="side">
+  <div id="side-inner">
+    <div class="s-brand"><span class="e">🦫</span> Woltspace</div>
+    <div id="tree" tabindex="0" role="tree" aria-label="Lodge pages, wolts and their online sessions"></div>
+    <div id="keys" role="note">
+      <kbd>⌥E</kbd> or the sidebar's edge: show / hide<br>
+      <kbd>j</kbd> <kbd>k</kbd> move &nbsp; <kbd>h</kbd> <kbd>l</kbd> fold &nbsp; <kbd>Enter</kbd> open<br>
+      <kbd>Esc</kbd> back to the page or terminal<br>
+      <kbd>⌥]</kbd> <kbd>⌥[</kbd> next / previous tab<br>
+      <kbd>⌥1</kbd>-<kbd>9</kbd> go to tab &nbsp; <kbd>⌥W</kbd> close tab
+    </div>
+    <div class="s-foot" id="foot"></div>
+  </div>
+</aside>
+<button id="rail" type="button" title="Hide or show the sidebar" aria-label="Hide or show the sidebar">‹</button>
+<div id="scrim"></div>
+
+<div id="main">
+  <div id="topbar">
+    <div id="tabs" role="tablist"></div>
+    <div class="tb-right">
+      <div class="tb-status connecting" id="status"><i></i><span id="status-text">connecting</span></div>
+      <button class="tb-btn" id="btn-term" type="button" title="Fullscreen terminal">terminal</button>
+      <button class="tb-btn" id="btn-view" type="button" title="Fullscreen view">view</button>
+    </div>
+  </div>
+  <div id="stage">
+    <div id="toast" role="status"><span class="tt" id="toast-text"></span><button class="go" id="toast-open" type="button">open</button><button class="no" id="toast-close" type="button" aria-label="Dismiss">✕</button></div>
+    <iframe id="lodge-frame" name="lodge-shell-page" title="Lodge page"></iframe>
+  </div>
+</div>
+
+<script src="/static/sprites.js?v={{ cache_bust }}"></script>
+<script src="/static/lodge-shell.js?v={{ cache_bust }}"></script>
+</body>
+</html>
