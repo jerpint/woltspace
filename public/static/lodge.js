@@ -731,14 +731,41 @@ function createWoltName() {
   return document.getElementById('create-name').value.trim();
 }
 
+// A name is taken when it reads the same as a wolt already in the lodge.
+// This only warns early; the create request is still the judge.
+function sameWoltName(a, b) {
+  const plain = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  return !!plain(a) && plain(a) === plain(b);
+}
+
+function createNameWarning() {
+  const typed = createWoltName();
+  if (!typed) return '';
+  const taken = allWolts.find(w => sameWoltName(typed, w.name) || sameWoltName(typed, w.display_name));
+  return taken ? `${woltLabel(taken)} already lives here - pick another name` : '';
+}
+
+function showCreateNameWarning(text) {
+  const line = document.getElementById('create-name-warning');
+  const input = document.getElementById('create-name');
+  line.textContent = text;
+  line.hidden = !text;
+  input.classList.toggle('invalid', !!text);
+  input.setAttribute('aria-invalid', text ? 'true' : 'false');
+}
+
 function openCreateWolt(e) {
   if (e) e.preventDefault();
   document.getElementById('create-modal').classList.add('open');
   document.getElementById('create-name').value = '';
-  createSelectedType = null;
+  showCreateNameWarning('');
+  // One working style is always picked; the beaver is the starting choice.
+  createSelectedType = 'beaver';
   createSelectedHarness = harnessDefault;
-  document.querySelectorAll('.type-card').forEach(c => c.classList.remove('selected'));
-  document.getElementById('create-submit').disabled = true;
+  document.querySelectorAll('.type-card').forEach(c => {
+    c.classList.toggle('selected', c.dataset.type === createSelectedType);
+  });
+  document.getElementById('create-submit').disabled = false;
   document.getElementById('create-submit').textContent = 'Create';
   document.getElementById('create-error').style.display = 'none';
   renderCreateHarnessOptions();
@@ -843,15 +870,20 @@ document.querySelectorAll('.type-card-select').forEach(select => {
 });
 
 function updateCreatePreview() {
-  const name = createWoltName();
-  const submit = document.getElementById('create-submit');
   document.getElementById('create-error').style.display = 'none';
-  submit.disabled = !(name && createSelectedType && createSelectedHarness);
+  showCreateNameWarning(createNameWarning());
 }
 
+// Create is never a dead button: pressed too early, it says what is missing.
 async function submitCreateWolt() {
   const name = createWoltName();
-  if (!name || !createSelectedType || !createSelectedHarness) return;
+  const warning = name ? createNameWarning() : 'give your wolt a name first';
+  if (warning) {
+    showCreateNameWarning(warning);
+    document.getElementById('create-name').focus();
+    return;
+  }
+  if (!createSelectedType || !createSelectedHarness) return;
 
   const submit = document.getElementById('create-submit');
   const error = document.getElementById('create-error');
