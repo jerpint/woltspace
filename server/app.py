@@ -1016,6 +1016,10 @@ async def session_new_create(request: Request):
         )
     if not wolt_name:
         return JSONResponse({"detail": "name needs at least one letter"}, status_code=400)
+    if (WOLTS_DIR / wolt_name).exists():
+        return JSONResponse(
+            {"detail": f"a wolt named {wolt_name} already exists"}, status_code=409,
+        )
 
     # Validate type — only rodent types can be created from the lodge
     if wolt_type not in ("otter", "beaver", "raccoon"):
@@ -1280,26 +1284,6 @@ def _configured_wolts() -> list[dict]:
 async def list_wolts():
     """List all wolts by scanning WOLTS_DIR for wolt/wolt.json files."""
     return _configured_wolts()
-
-
-@app.get("/wolts/name-preview")
-async def wolt_name_preview(name: str = ""):
-    """What a typed wolt name becomes, so the create screen never guesses."""
-    from wolts import (
-        WOLT_DISPLAY_NAME_MAX, clean_display_name, slugify_wolt_name,
-    )
-    shown = clean_display_name(name)
-    slug = slugify_wolt_name(shown)
-    error = ""
-    if not shown:
-        error = "name is required"
-    elif len(shown) > WOLT_DISPLAY_NAME_MAX:
-        error = f"name must be {WOLT_DISPLAY_NAME_MAX} characters or less"
-    elif not slug:
-        error = "name needs at least one letter"
-    elif (WOLTS_DIR / slug).exists():
-        error = f"a wolt named {slug} already exists"
-    return {"display_name": shown, "slug": slug, "ok": not error, "error": error}
 
 
 # --- Wolf 🐺 ---

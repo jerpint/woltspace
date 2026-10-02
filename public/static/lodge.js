@@ -725,57 +725,16 @@ function stopCreateNameIdeas() {
   createNameIdeaTimer = null;
 }
 
-// The name as typed. The lodge decides what it becomes (GET /wolts/name-preview);
+// The name as typed. The lodge decides what it becomes when the wolt is created;
 // this page never works that out itself.
 function createWoltName() {
   return document.getElementById('create-name').value.trim();
-}
-
-let createNamePreview = { typed: '', ok: false, slug: '' };
-let createNamePreviewTimer = null;
-
-function showCreateNamePreview(text, isError) {
-  const line = document.getElementById('create-name-preview');
-  if (!line) return;
-  line.textContent = text;
-  line.hidden = !text;
-  line.classList.toggle('error', !!isError);
-}
-
-async function refreshCreateNamePreview() {
-  const typed = createWoltName();
-  if (!typed) {
-    createNamePreview = { typed, ok: false, slug: '' };
-    showCreateNamePreview('', false);
-    updateCreatePreview();
-    return;
-  }
-  try {
-    const response = await fetch(`/wolts/name-preview?name=${encodeURIComponent(typed)}`);
-    const data = await response.json();
-    if (typed !== createWoltName()) return;  // an older answer; a newer one is on its way
-    createNamePreview = { typed, ok: !!data.ok, slug: data.slug || '' };
-    if (!data.ok) showCreateNamePreview(data.error || 'that name will not work', true);
-    else showCreateNamePreview(data.slug === typed ? '' : `folder: ${data.slug}`, false);
-  } catch {
-    // Offline or a slow lodge: let the create request be the judge.
-    createNamePreview = { typed, ok: true, slug: '' };
-    showCreateNamePreview('', false);
-  }
-  updateCreatePreview();
-}
-
-function scheduleCreateNamePreview() {
-  clearTimeout(createNamePreviewTimer);
-  createNamePreviewTimer = setTimeout(refreshCreateNamePreview, 180);
 }
 
 function openCreateWolt(e) {
   if (e) e.preventDefault();
   document.getElementById('create-modal').classList.add('open');
   document.getElementById('create-name').value = '';
-  createNamePreview = { typed: '', ok: false, slug: '' };
-  showCreateNamePreview('', false);
   createSelectedType = null;
   createSelectedHarness = harnessDefault;
   document.querySelectorAll('.type-card').forEach(c => c.classList.remove('selected'));
@@ -887,10 +846,7 @@ function updateCreatePreview() {
   const name = createWoltName();
   const submit = document.getElementById('create-submit');
   document.getElementById('create-error').style.display = 'none';
-  // A name the lodge has not answered for yet is checked again on submit.
-  const checked = createNamePreview.typed === name;
-  if (!checked) scheduleCreateNamePreview();
-  submit.disabled = !(name && createSelectedType && createSelectedHarness && (!checked || createNamePreview.ok));
+  submit.disabled = !(name && createSelectedType && createSelectedHarness);
 }
 
 async function submitCreateWolt() {
