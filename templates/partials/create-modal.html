@@ -4,6 +4,7 @@
       <div class="modal-field create-name-field">
         <label class="modal-label" for="create-name">Wolt name</label>
         <input type="text" class="modal-input" id="create-name" placeholder="Wolter White" maxlength="40" autocomplete="off" spellcheck="false" oninput="updateCreatePreview()">
+        <p class="create-name-warning" id="create-name-warning" role="alert" hidden></p>
       </div>
       <div class="modal-field">
         <label class="modal-label" for="create-harness">Harness <span class="modal-label-hint">(you can change it later in Settings)</span></label>
@@ -39,6 +40,6 @@
     </div>
     <div class="modal-footer">
       <button type="button" class="btn btn-ghost" onclick="closeCreateWolt()">Cancel</button>
-      <button type="button" class="btn btn-primary" id="create-submit" onclick="submitCreateWolt()" disabled>Create</button>
+      <button type="button" class="btn btn-primary" id="create-submit" onclick="submitCreateWolt()">Create</button>
     </div>
 {% endcall %}
