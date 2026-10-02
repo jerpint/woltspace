@@ -716,9 +716,8 @@ let createSelectedHarness = '';
 
 // Naming a wolt is the hard part: the empty name field cycles a few ideas.
 const CREATE_NAME_IDEAS = [
-  'wolter-white', 'justin-beaver', 'wolt-disney', 'harry-otter',
-  'rocky-raccoon', 'wolt-whitman', 'beaver-cleaver', 'otter-pilot',
-  'trash-gordon',
+  'Wolt Disney', 'Justin Beaver', 'Wolter White', 'Racoona Matata',
+  'George Coony', 'Beaverly Hills',
 ];
 let createNameIdeaTimer = null;
 
@@ -728,7 +727,7 @@ function startCreateNameIdeas() {
   stopCreateNameIdeas();
   let index = Math.floor(Math.random() * CREATE_NAME_IDEAS.length);
   const show = () => {
-    input.placeholder = `e.g. ${CREATE_NAME_IDEAS[index % CREATE_NAME_IDEAS.length]}`;
+    input.placeholder = CREATE_NAME_IDEAS[index % CREATE_NAME_IDEAS.length];
     index += 1;
   };
   show();
@@ -740,61 +739,47 @@ function stopCreateNameIdeas() {
   createNameIdeaTimer = null;
 }
 
-// The name as typed. The lodge decides what it becomes (GET /wolts/name-preview);
+// The name as typed. The lodge decides what it becomes when the wolt is created;
 // this page never works that out itself.
 function createWoltName() {
   return document.getElementById('create-name').value.trim();
 }
 
-let createNamePreview = { typed: '', ok: false, slug: '' };
-let createNamePreviewTimer = null;
+// A name is taken when it reads the same as a wolt already in the lodge.
+// This only warns early; the create request is still the judge.
+function sameWoltName(a, b) {
+  const plain = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  return !!plain(a) && plain(a) === plain(b);
+}
 
-function showCreateNamePreview(text, isError) {
-  const line = document.getElementById('create-name-preview');
-  if (!line) return;
+function createNameWarning() {
+  const typed = createWoltName();
+  if (!typed) return '';
+  const taken = allWolts.find(w => sameWoltName(typed, w.name) || sameWoltName(typed, w.display_name));
+  return taken ? `${woltLabel(taken)} already lives here - pick another name` : '';
+}
+
+function showCreateNameWarning(text) {
+  const line = document.getElementById('create-name-warning');
+  const input = document.getElementById('create-name');
   line.textContent = text;
   line.hidden = !text;
-  line.classList.toggle('error', !!isError);
-}
-
-async function refreshCreateNamePreview() {
-  const typed = createWoltName();
-  if (!typed) {
-    createNamePreview = { typed, ok: false, slug: '' };
-    showCreateNamePreview('', false);
-    updateCreatePreview();
-    return;
-  }
-  try {
-    const response = await fetch(`/wolts/name-preview?name=${encodeURIComponent(typed)}`);
-    const data = await response.json();
-    if (typed !== createWoltName()) return;  // an older answer; a newer one is on its way
-    createNamePreview = { typed, ok: !!data.ok, slug: data.slug || '' };
-    if (!data.ok) showCreateNamePreview(data.error || 'that name will not work', true);
-    else showCreateNamePreview(data.slug === typed ? '' : `folder: ${data.slug}`, false);
-  } catch {
-    // Offline or a slow lodge: let the create request be the judge.
-    createNamePreview = { typed, ok: true, slug: '' };
-    showCreateNamePreview('', false);
-  }
-  updateCreatePreview();
-}
-
-function scheduleCreateNamePreview() {
-  clearTimeout(createNamePreviewTimer);
-  createNamePreviewTimer = setTimeout(refreshCreateNamePreview, 180);
+  input.classList.toggle('invalid', !!text);
+  input.setAttribute('aria-invalid', text ? 'true' : 'false');
 }
 
 function openCreateWolt(e) {
   if (e) e.preventDefault();
   document.getElementById('create-modal').classList.add('open');
   document.getElementById('create-name').value = '';
-  createNamePreview = { typed: '', ok: false, slug: '' };
-  showCreateNamePreview('', false);
-  createSelectedType = null;
+  showCreateNameWarning('');
+  // One working style is always picked; the beaver is the starting choice.
+  createSelectedType = 'beaver';
   createSelectedHarness = harnessDefault;
-  document.querySelectorAll('.type-card').forEach(c => c.classList.remove('selected'));
-  document.getElementById('create-submit').disabled = true;
+  document.querySelectorAll('.type-card').forEach(c => {
+    c.classList.toggle('selected', c.dataset.type === createSelectedType);
+  });
+  document.getElementById('create-submit').disabled = false;
   document.getElementById('create-submit').textContent = 'Create';
   document.getElementById('create-error').style.display = 'none';
   renderCreateHarnessOptions();
@@ -899,18 +884,20 @@ document.querySelectorAll('.type-card-select').forEach(select => {
 });
 
 function updateCreatePreview() {
-  const name = createWoltName();
-  const submit = document.getElementById('create-submit');
   document.getElementById('create-error').style.display = 'none';
-  // A name the lodge has not answered for yet is checked again on submit.
-  const checked = createNamePreview.typed === name;
-  if (!checked) scheduleCreateNamePreview();
-  submit.disabled = !(name && createSelectedType && createSelectedHarness && (!checked || createNamePreview.ok));
+  showCreateNameWarning(createNameWarning());
 }
 
+// Create is never a dead button: pressed too early, it says what is missing.
 async function submitCreateWolt() {
   const name = createWoltName();
-  if (!name || !createSelectedType || !createSelectedHarness) return;
+  const warning = name ? createNameWarning() : 'give your wolt a name first';
+  if (warning) {
+    showCreateNameWarning(warning);
+    document.getElementById('create-name').focus();
+    return;
+  }
+  if (!createSelectedType || !createSelectedHarness) return;
 
   const submit = document.getElementById('create-submit');
   const error = document.getElementById('create-error');
