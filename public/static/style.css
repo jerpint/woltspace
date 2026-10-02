@@ -1044,6 +1044,14 @@ body {
   font-size: 17px;
   padding: 12px 14px;
 }
+.create-name-field .modal-input.invalid { border-color: var(--terra); }
+.create-name-warning {
+  margin: 6px 2px 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--terra);
+}
+.create-name-warning[hidden] { display: none; }
 
 /* ── Type picker (create wolt) ── */
 .type-grid {
@@ -1064,8 +1072,9 @@ body {
 }
 .type-card:hover { border-color: var(--border-2); }
 .type-card.selected {
-  border-color: var(--ink);
-  background: var(--surface-2);
+  border-color: var(--green);
+  background: var(--green-light);
+  box-shadow: 0 0 0 1.5px var(--green);
 }
 .type-card-emoji { font-size: 28px; margin-bottom: 8px; }
 .type-card-name {
@@ -1145,14 +1154,6 @@ body {
     text-align-last: right;
   }
 }
-.create-name-preview {
-  margin: 6px 2px 0;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--ink-3);
-}
-.create-name-preview[hidden] { display: none; }
-.create-name-preview.error { color: var(--terra, #C4531E); }
 .modal-error {
   font-family: var(--font-mono);
   font-size: 11px;

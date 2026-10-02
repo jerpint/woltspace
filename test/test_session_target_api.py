@@ -199,17 +199,21 @@ def test_create_wolt_refuses_names_without_a_usable_slug(tmp_path, monkeypatch, 
     assert created == []
 
 
-def test_name_preview_reports_slug_and_taken_names(tmp_path, monkeypatch):
+def test_create_wolt_refuses_a_taken_name_in_plain_words(tmp_path, monkeypatch):
+    import wolts
+
     _layout(tmp_path, monkeypatch)
-    fresh = asyncio.run(_request("GET", "/wolts/name-preview?name=Wolter%20White"))
-    assert fresh.json() == {
-        "display_name": "Wolter White", "slug": "wolter-white", "ok": True, "error": "",
-    }
-    taken = asyncio.run(_request("GET", "/wolts/name-preview?name=Maple"))
-    assert taken.json()["ok"] is False
-    assert "already exists" in taken.json()["error"]
-    empty = asyncio.run(_request("GET", "/wolts/name-preview?name=%21%21"))
-    assert empty.json()["ok"] is False
+    created = []
+    monkeypatch.setattr(
+        wolts, "create_creature_wolt",
+        lambda *args, **kwargs: created.append(args),
+    )
+    response = asyncio.run(_request("POST", "/sessions/new/create", json={
+        "name": "Maple", "type": "raccoon",
+    }))
+    assert response.status_code == 409
+    assert response.json() == {"detail": "a wolt named maple already exists"}
+    assert created == []
 
 
 def test_create_wolt_pins_a_chosen_model_with_its_harness(tmp_path, monkeypatch):
