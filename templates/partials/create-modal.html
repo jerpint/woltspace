@@ -3,7 +3,8 @@
     <div class="modal-body">
       <div class="modal-field create-name-field">
         <label class="modal-label" for="create-name">Wolt name</label>
-        <input type="text" class="modal-input" id="create-name" placeholder="e.g. chip" maxlength="20" autocomplete="off" spellcheck="false" oninput="updateCreatePreview()">
+        <input type="text" class="modal-input" id="create-name" placeholder="Wolter White" maxlength="40" autocomplete="off" spellcheck="false" oninput="updateCreatePreview()">
+        <p class="create-name-warning" id="create-name-warning" role="alert" hidden></p>
       </div>
       <div class="modal-field">
         <label class="modal-label" for="create-harness">Harness <span class="modal-label-hint">(you can change it later in Settings)</span></label>
@@ -17,18 +18,21 @@
             <div class="type-card-name">Otter</div>
             <div class="type-card-hint" data-pace="Quick">Quick</div>
             <div class="type-card-model"></div>
+            <select class="type-card-select" aria-label="Model" hidden></select>
           </div>
           <div class="type-card" data-type="beaver" onclick="pickType(this)">
             <div class="type-card-emoji">🦫</div>
             <div class="type-card-name">Beaver</div>
             <div class="type-card-hint" data-pace="Builder">Builder</div>
             <div class="type-card-model"></div>
+            <select class="type-card-select" aria-label="Model" hidden></select>
           </div>
           <div class="type-card" data-type="raccoon" onclick="pickType(this)">
             <div class="type-card-emoji">🦝</div>
             <div class="type-card-name">Raccoon</div>
             <div class="type-card-hint" data-pace="Thinker">Thinker</div>
             <div class="type-card-model"></div>
+            <select class="type-card-select" aria-label="Model" hidden></select>
           </div>
         </div>
       </div>
@@ -36,6 +40,6 @@
     </div>
     <div class="modal-footer">
       <button type="button" class="btn btn-ghost" onclick="closeCreateWolt()">Cancel</button>
-      <button type="button" class="btn btn-primary" id="create-submit" onclick="submitCreateWolt()" disabled>Create</button>
+      <button type="button" class="btn btn-primary" id="create-submit" onclick="submitCreateWolt()">Create</button>
     </div>
 {% endcall %}

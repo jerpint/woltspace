@@ -590,14 +590,19 @@ class TestSessionHarnessPlumbing:
     def test_codex_discover_stamps_id(self, monkeypatch):
         """discover_session_id_for finds the rollout and stamps the registry."""
         import json as _json
+        from datetime import datetime, timezone
         from sessions import discover_session_id_for
         monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(self.wolts_dir))
         result = self._start(harness="codex")
         rollout_uuid = "c3d4e5f6-a7b8-9012-cdef-123456789012"
         d = self.wolts_dir / "testwolt" / ".codex" / "sessions" / "2026" / "07" / "14"
         d.mkdir(parents=True)
+        session_dir = self._session_data(result["name"])["dir"]
         (d / f"rollout-2026-07-14T12-00-00-{rollout_uuid}.jsonl").write_text(
-            _json.dumps({"cwd": ""}) + "\n"
+            _json.dumps({"payload": {
+                "cwd": session_dir,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }}) + "\n"
         )
         assert discover_session_id_for(result["name"], timeout=5) == rollout_uuid
         assert self._session_data(result["name"])["harness_session_id"] == rollout_uuid
@@ -934,7 +939,7 @@ class TestModelCatalog:
         assert ids == ["opus", "fable"]  # haiku/sonnet dropped by overlay
         # label still resolved from the seed
         labels = {m["id"]: m["label"] for m in model_catalog("claude")}
-        assert labels["opus"] == "Opus 4.8"
+        assert labels["opus"] == "Opus"
 
     def test_overlay_can_add_new_model_by_id(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
@@ -953,6 +958,160 @@ class TestModelCatalog:
         monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         (tmp_path / "woltspace.json").write_text("{ not json")
         assert {m["id"] for m in model_catalog("claude")} >= {"opus", "fable"}
+
+    def test_claude_alias_labels_do_not_claim_versions(self):
+        assert {m["id"]: m["label"] for m in model_catalog("claude")} == {
+            "opus": "Opus", "sonnet": "Sonnet", "haiku": "Haiku", "fable": "Fable",
+        }
+
+
+class TestModelDiscovery:
+    def test_real_shape_filters_hidden_and_keeps_order(self):
+        raw = (Path(__file__).parent / "fixtures" / "codex-models.json").read_text()
+        assert harnesses._parse_codex_models(raw) == [
+            {"id": "gpt-6-astra", "label": "GPT-6 Astra"},
+            {"id": "gpt-6-sol", "label": "GPT-6 Sol"},
+        ]
+
+    @pytest.mark.parametrize("raw", [
+        "not json", "[]", "{}", '{"models":{}}',
+        '{"models":[{"visibility":"list","slug":"x"}]}',
+    ])
+    def test_unexpected_shapes_return_empty(self, raw):
+        assert harnesses._parse_codex_models(raw) == []
+
+    @pytest.mark.parametrize("effect", [
+        FileNotFoundError(),
+        __import__("subprocess").TimeoutExpired("codex", 5),
+    ])
+    def test_process_failures_return_empty(self, monkeypatch, effect):
+        monkeypatch.setattr(
+            harnesses.subprocess, "run",
+            lambda *a, **k: (_ for _ in ()).throw(effect),
+        )
+        assert harnesses._discover_codex_models() == []
+
+    def test_nonzero_and_bad_json_return_empty(self, monkeypatch):
+        result = __import__("subprocess").CompletedProcess(
+            [], 1, stdout="{}", stderr="bad")
+        monkeypatch.setattr(harnesses.subprocess, "run", lambda *a, **k: result)
+        assert harnesses._discover_codex_models() == []
+        result.returncode, result.stdout = 0, "bad json"
+        assert harnesses._discover_codex_models() == []
+
+    def test_discovery_invocation_is_bounded_and_noninteractive(self, monkeypatch):
+        seen = {}
+
+        def fake_run(*args, **kwargs):
+            seen.update({"args": args, **kwargs})
+            return __import__("subprocess").CompletedProcess(
+                args, 0, stdout='{"models":[]}')
+
+        monkeypatch.setattr(harnesses.subprocess, "run", fake_run)
+        assert harnesses._discover_codex_models() == []
+        assert seen["args"][0] == ["codex", "debug", "models"]
+        assert seen["stdin"] is harnesses.subprocess.DEVNULL
+        assert seen["timeout"] == 5
+
+    def test_cache_roundtrip_and_staleness(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        models = [{"id": "gpt-6-astra", "label": "GPT-6 Astra"}]
+        harnesses._write_model_cache("codex", models, fetched_at=1000)
+        assert harnesses._read_model_cache("codex") == (models, 1000.0)
+        assert not harnesses._model_cache_stale("codex", now=1001)
+        assert harnesses._model_cache_stale(
+            "codex", now=1000 + harnesses.MODEL_CACHE_MAX_AGE)
+        cache = tmp_path / ".space" / "models" / "codex.json"
+        assert cache.stat().st_mode & 0o777 == 0o600
+
+    def test_discovered_catalog_precedes_seed_and_keeps_seed_pins(
+        self, tmp_path, monkeypatch,
+    ):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", [
+            {"id": "gpt-6-astra", "label": "GPT-6 Astra"},
+            {"id": "gpt-5.6-sol", "label": "Fresh Sol"},
+        ])
+        catalog = model_catalog("codex")
+        assert catalog[:2] == [
+            {"id": "gpt-6-astra", "label": "GPT-6 Astra"},
+            {"id": "gpt-5.6-sol", "label": "Fresh Sol"},
+        ]
+        assert sum(m["id"] == "gpt-5.6-sol" for m in catalog) == 1
+        assert any(m["id"] == "gpt-5.5" for m in catalog)
+        assert is_valid_model("codex", "gpt-6-astra")
+
+    def test_overlay_replaces_and_uses_discovered_labels(
+        self, tmp_path, monkeypatch,
+    ):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", [
+            {"id": "gpt-6-astra", "label": "GPT-6 Astra"},
+        ])
+        (tmp_path / "woltspace.json").write_text(json.dumps({
+            "harness": {"models": {"codex": {"catalog": [
+                "gpt-6-astra", {"id": "custom", "label": "Owner Choice"},
+            ]}}},
+        }))
+        assert model_catalog("codex") == [
+            {"id": "gpt-6-astra", "label": "GPT-6 Astra"},
+            {"id": "custom", "label": "Owner Choice"},
+        ]
+
+    def test_refresh_failure_preserves_previous_cache(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        old = [{"id": "old", "label": "Old"}]
+        harnesses._write_model_cache("codex", old, fetched_at=1)
+        monkeypatch.setitem(harnesses.HARNESSES["codex"], "discover_models", lambda: [])
+        harnesses._refresh_model_cache("codex")
+        assert harnesses._read_model_cache("codex") == (old, 1.0)
+
+    def test_scheduler_allows_only_one_refresh(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        started = []
+
+        class HeldThread:
+            def __init__(self, **kwargs):
+                started.append(kwargs)
+
+            def start(self):
+                pass
+
+        harnesses._model_refreshing.clear()
+        monkeypatch.setattr(harnesses.threading, "Thread", HeldThread)
+        harnesses.refresh_model_catalogs(force=True)
+        harnesses.refresh_model_catalogs(force=True)
+        assert len(started) == 1
+        assert harnesses._model_refreshing == {"codex"}
+        harnesses._model_refreshing.clear()
+
+    def test_stale_picker_reads_schedule_once_without_waiting(
+        self, tmp_path, monkeypatch,
+    ):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", [
+            {"id": "cached", "label": "Cached"},
+        ], fetched_at=1)
+        started = []
+
+        class HeldThread:
+            def __init__(self, **kwargs):
+                started.append(kwargs)
+
+            def start(self):
+                pass
+
+        harnesses._model_refreshing.clear()
+        monkeypatch.setattr(harnesses.threading, "Thread", HeldThread)
+        first = harnesses.harness_metadata()
+        second = harnesses.harness_metadata()
+        assert len(started) == 1
+        assert started[0]["target"] is harnesses._refresh_model_cache
+        assert next(h for h in first if h["id"] == "codex")["catalog"][0] == {
+            "id": "cached", "label": "Cached",
+        }
+        assert second == first
+        harnesses._model_refreshing.clear()
 
 
 class TestTierDefaultModel:
@@ -980,6 +1139,192 @@ class TestTierDefaultModel:
         (tmp_path / "woltspace.json").write_text(json.dumps(
             {"harness": {"models": {"claude": {"tiers": {"raccoon": "fable"}}}}}))
         assert creature_model("claude", "raccoon") == "fable"
+
+
+RANKED = [
+    {"id": "gpt-6-astra", "label": "GPT-6-Astra"},
+    {"id": "gpt-6-sol", "label": "GPT-6-Sol"},
+    {"id": "gpt-6-luna", "label": "GPT-6-Luna"},
+    {"id": "gpt-5.5", "label": "GPT-5.5"},
+]
+
+
+class TestRankedTierDefaults:
+    def test_discovered_order_sets_the_defaults(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", RANKED)
+        assert tier_default_model("codex", "raccoon") == "gpt-6-astra"
+        assert tier_default_model("codex", "beaver") == "gpt-6-sol"
+        assert tier_default_model("codex", "otter") == "gpt-6-luna"
+        # internal aliases follow the tier they share a default with
+        assert tier_default_model("codex", "rodent") == "gpt-6-astra"
+        assert tier_default_model("codex", "wolf") == "gpt-6-sol"
+
+    def test_too_short_a_list_keeps_the_seed(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", RANKED[:2])
+        assert tier_default_model("codex", "raccoon") == "gpt-5.5"
+        assert tier_default_model("codex", "otter") == "gpt-5.6-luna"
+
+    def test_harness_without_discovery_keeps_the_seed(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("claude", RANKED)
+        assert tier_default_model("claude", "raccoon") == "opus"
+
+    def test_saved_choice_beats_the_ranking(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", RANKED)
+        (tmp_path / "woltspace.json").write_text(json.dumps(
+            {"harness": {"models": {"codex": {"tiers": {"raccoon": "gpt-5.5"}}}}}))
+        assert tier_default_model("codex", "raccoon") == "gpt-5.5"
+        assert harnesses.automatic_tier_model("codex", "raccoon") == "gpt-6-astra"
+        assert tier_default_model("codex", "beaver") == "gpt-6-sol"
+
+    @pytest.mark.parametrize("catalog", [
+        ["gpt-5.5"],
+        ["gpt-6-astra"],
+        ["gpt-6-luna", "gpt-5.5"],
+        ["gpt-5.6-terra", "gpt-6-sol", "gpt-6-astra", "gpt-5.5"],
+    ])
+    def test_defaults_stay_inside_the_lodge_catalog(self, tmp_path, monkeypatch, catalog):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", RANKED)
+        (tmp_path / "woltspace.json").write_text(json.dumps(
+            {"harness": {"models": {"codex": {"catalog": catalog}}}}))
+        offered = [m["id"] for m in model_catalog("codex")]
+        assert offered == catalog
+        for tier in ("raccoon", "beaver", "otter", "rodent", "wolf"):
+            chosen = resolve_model("codex", tier)
+            assert chosen in catalog, (tier, chosen)
+            assert is_valid_model("codex", chosen)
+
+    @pytest.mark.parametrize("harness", ["codex", "claude"])
+    @pytest.mark.parametrize("catalog", [
+        [], [{}], [7, None], [""], ["   "], [{"id": ""}], [{"id": 7}], [{"id": ["x"]}],
+    ])
+    def test_an_empty_lodge_catalog_is_ignored_not_escaped(
+        self, tmp_path, monkeypatch, harness, catalog,
+    ):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", RANKED)
+        (tmp_path / "woltspace.json").write_text(json.dumps(
+            {"harness": {"models": {harness: {"catalog": catalog}}}}))
+        offered = [m["id"] for m in model_catalog(harness)]
+        assert offered, "an empty catalog must not leave the harness with no model"
+        for tier in ("raccoon", "beaver", "otter", "rodent", "wolf"):
+            chosen = resolve_model(harness, tier)
+            assert chosen in offered and is_valid_model(harness, chosen), (tier, chosen)
+
+    def test_unusable_catalog_entries_are_skipped_among_good_ones(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        (tmp_path / "woltspace.json").write_text(json.dumps({"harness": {"models": {"claude": {
+            "catalog": ["", "opus", {"id": 7}, {"id": "fable", "label": 3}, None]}}}}))
+        assert model_catalog("claude") == [
+            {"id": "opus", "label": "Opus"}, {"id": "fable", "label": "Fable"}]
+
+    def test_a_saved_choice_the_catalog_dropped_is_ignored(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", RANKED)
+        (tmp_path / "woltspace.json").write_text(json.dumps({"harness": {"models": {"codex": {
+            "catalog": ["gpt-6-sol", "gpt-6-luna"], "tiers": {"raccoon": "gpt-5.5"}}}}}))
+        assert tier_default_model("codex", "raccoon") in ("gpt-6-sol", "gpt-6-luna")
+
+    def test_metadata_reports_automatic_and_saved(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        monkeypatch.setattr(harnesses, "refresh_model_catalogs", lambda **_: None)
+        harnesses._write_model_cache("codex", RANKED)
+        harnesses.set_tier_defaults("codex", {"otter": "gpt-5.5"})
+        codex = next(h for h in harnesses.harness_metadata() if h["id"] == "codex")
+        assert codex["models"]["otter"] == "gpt-5.5"
+        assert codex["automatic_models"]["otter"] == "gpt-6-luna"
+        assert codex["saved_models"] == {"otter": "gpt-5.5"}
+
+
+class TestSetTierDefaults:
+    def test_saves_and_keeps_other_settings(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        (tmp_path / "woltspace.json").write_text(json.dumps(
+            {"harness": {"default": "codex"}, "other": {"kept": True}}))
+        result = harnesses.set_tier_defaults("claude", {"raccoon": "fable"})
+        assert result["raccoon"] == "fable"
+        saved = json.loads((tmp_path / "woltspace.json").read_text())
+        assert saved["harness"]["default"] == "codex"
+        assert saved["other"] == {"kept": True}
+        assert saved["harness"]["models"]["claude"]["tiers"] == {"raccoon": "fable"}
+
+    def test_a_chosen_model_is_kept_even_when_it_is_the_automatic_one(
+        self, tmp_path, monkeypatch,
+    ):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses._write_model_cache("codex", RANKED)
+        assert harnesses.automatic_tier_model("codex", "raccoon") == "gpt-6-astra"
+        harnesses.set_tier_defaults("codex", {"raccoon": "gpt-6-astra"})
+        assert harnesses._saved_tier_models("codex") == {"raccoon": "gpt-6-astra"}
+        # the ranking moves; the owner's choice does not
+        harnesses._write_model_cache("codex", [RANKED[1], RANKED[0], RANKED[2], RANKED[3]])
+        assert tier_default_model("codex", "raccoon") == "gpt-6-astra"
+        assert tier_default_model("codex", "beaver") == "gpt-6-astra"  # still automatic
+
+    def test_an_empty_value_clears_the_choice(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        harnesses.set_tier_defaults("claude", {"otter": "fable"})
+        assert harnesses.set_tier_defaults("claude", {"otter": ""})["otter"] == "haiku"
+        saved = json.loads((tmp_path / "woltspace.json").read_text())
+        assert saved["harness"]["models"]["claude"]["tiers"] == {}
+
+    @pytest.mark.parametrize("existing", [
+        '{"harness": {"default": "codex"}, "channels": INVALID}',
+        '["not", "an", "object"]',
+        '{"harness": "not-an-object", "other": {"kept": true}}',
+        '{"harness": {"models": {"claude": {"tiers": ["bad"]}}}, "other": 1}',
+    ])
+    def test_an_unusable_settings_file_is_never_replaced(
+        self, tmp_path, monkeypatch, existing,
+    ):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        path = tmp_path / "woltspace.json"
+        path.write_text(existing)
+        with pytest.raises(ValueError, match="nothing was saved"):
+            harnesses.set_tier_defaults("claude", {"otter": "fable"})
+        assert path.read_text() == existing
+        assert not path.with_suffix(".tmp").exists()
+
+    @pytest.mark.parametrize("existing", [
+        '{"channels": INVALID}', '[]', '{"harness": 7}',
+    ])
+    def test_default_harness_writer_fails_closed_too(self, tmp_path, monkeypatch, existing):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        path = tmp_path / "woltspace.json"
+        path.write_text(existing)
+        with pytest.raises(ValueError, match="nothing was saved"):
+            harnesses.set_default_harness("codex")
+        assert path.read_text() == existing
+
+    def test_a_missing_settings_file_is_created(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        assert harnesses.set_default_harness("codex") == "codex"
+        assert json.loads((tmp_path / "woltspace.json").read_text()) == {
+            "harness": {"default": "codex"}}
+
+    @pytest.mark.parametrize("harness, tiers", [
+        ("nope", {"raccoon": "opus"}),
+        ("claude", {}),
+        ("claude", ["raccoon"]),
+        ("claude", {"wolf": "opus"}),
+        ("claude", {"raccoon": "gpt-5.5"}),
+        ("claude", {"raccoon": ["opus"]}),
+    ])
+    def test_rejects_bad_requests(self, tmp_path, monkeypatch, harness, tiers):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        with pytest.raises(ValueError):
+            harnesses.set_tier_defaults(harness, tiers)
+
+    def test_one_bad_tier_saves_nothing(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        with pytest.raises(ValueError):
+            harnesses.set_tier_defaults(
+                "claude", {"raccoon": "fable", "otter": "not-a-model"})
+        assert not (tmp_path / "woltspace.json").exists()
 
 
 class TestIsValidModel:

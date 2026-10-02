@@ -23,3 +23,5 @@
 .wolt-sitebar { display:flex; justify-content:space-between; align-items:center; margin:4px 2px 8px; }.wolt-site { width:100%; height:72vh; border:1px solid var(--border); border-radius:12px; background:#fff; }
 .wolt-setting { display:flex; justify-content:space-between; padding:12px 0; border-top:1px solid var(--border); }.wolt-setting:first-child{border-top:0}
 @media(max-width:1000px){.wolt-overview{grid-template-columns:1fr}.wolt-side{position:static}}@media(max-width:620px){.wolt-page-body{padding:0 16px}.wolt-page-header{flex-direction:column;align-items:stretch;gap:12px}.wolt-page-header .header-actions{display:flex;gap:8px}.wolt-page-header .header-actions>*{flex:1;text-align:center}}
+.wolt-rename-note{margin:6px 0 0;color:var(--ink-3);font:11px var(--font-mono)}
+@media (max-width:620px){.wolt-model-input{font-size:16px}}

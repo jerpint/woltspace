@@ -11,6 +11,7 @@ Usage:
     active_wolf = get_active_creature("wolf")  # name or None
 """
 
+import html
 import json
 import os
 import shutil
@@ -98,8 +99,49 @@ def set_active_creature(creature_type: str, wolt_name: str) -> None:
     CONFIG_FILE.write_text(json.dumps(config, indent=2) + "\n")
 
 
+WOLT_SLUG_MAX = 20
+WOLT_DISPLAY_NAME_MAX = 40
+
+
+def clean_display_name(text: object) -> str:
+    """A typed wolt name as people will read it: one line, single spaces."""
+    if not isinstance(text, str):
+        return ""
+    spaced = "".join(" " if ch.isspace() else ch for ch in text)
+    return " ".join("".join(ch for ch in spaced if ch.isprintable()).split())
+
+
+def slugify_wolt_name(text: object) -> str:
+    """The folder-safe name for a typed wolt name.
+
+    Lowercase ASCII letters, digits and hyphens, starting with a letter, at
+    most WOLT_SLUG_MAX characters. Accents are dropped ("Señor" -> "senor"),
+    anything else becomes a hyphen. Returns "" when nothing usable is left.
+    """
+    import re
+    import unicodedata
+
+    shown = clean_display_name(text)
+    ascii_text = unicodedata.normalize("NFKD", shown).encode("ascii", "ignore").decode()
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")
+    slug = re.sub(r"^[^a-z]+", "", slug)
+    return slug[:WOLT_SLUG_MAX].strip("-")
+
+
+def wolt_display_name(name: str, wolts_dir: Path | None = None) -> str:
+    """What to call a wolt where a person reads it: its display name, else its name."""
+    try:
+        root = WOLTS_DIR if wolts_dir is None else wolts_dir
+        config = json.loads((root / name / "wolt" / "wolt.json").read_text())
+        shown = clean_display_name(config.get("display_name"))
+        return shown or name
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return name
+
+
 def create_creature_wolt(name: str, creature_type: str, role: str = "",
-                         description: str = "", harness: str = "") -> dict:
+                         description: str = "", harness: str = "",
+                         model: str = "", display_name: str = "") -> dict:
     """Create a minimal creature-wolt directory.
 
     Returns a dict with:
@@ -145,11 +187,16 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "",
     }
     if harness:
         wolt_json["harness"] = harness
+    if model:
+        wolt_json["model"] = model
+    shown = clean_display_name(display_name)
+    if shown and shown != name:
+        wolt_json["display_name"] = shown
     (wolt_dir / "wolt" / "wolt.json").write_text(json.dumps(wolt_json, indent=2) + "\n")
 
     # Write minimal identity.md
     (wolt_dir / "wolt" / "memory" / "identity.md").write_text(
-        f"# {name}\n\nI am {name}, a {creature_type}.\n"
+        f"# {shown or name}\n\nI am {shown or name}, a {creature_type}.\n"
     )
 
     # Write empty context and learnings
@@ -164,7 +211,7 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "",
     if is_rodent(creature_type):
         site_dir = wolt_dir / "wolt" / "site"
         site_dir.mkdir(parents=True, exist_ok=True)
-        scaffold_starter_site(site_dir, name, creature_type)
+        scaffold_starter_site(site_dir, name, creature_type, display_name=shown)
 
     # Init git repo (needed for Claude Code project context and wolt git operations)
     if not (wolt_dir / ".git").is_dir():
@@ -484,8 +531,12 @@ _ACCENT = {
 }
 
 
-def scaffold_starter_site(site_dir: Path, name: str, creature_type: str) -> None:
+def scaffold_starter_site(site_dir: Path, name: str, creature_type: str,
+                          display_name: str = "") -> None:
     """Write the starter site (index.html, hello.html, style.css) for a new wolt.
+
+    The page shows the wolt's display name when it has one. It is a typed
+    name, so it goes into the page as text, escaped.
 
     The starter site uses the lodge design system (cream + Preahvihear/DM Sans)
     and embeds the wolt's pixel sprite. Two pages are scaffolded so the wolt
@@ -497,7 +548,10 @@ def scaffold_starter_site(site_dir: Path, name: str, creature_type: str) -> None
 
     (site_dir / "style.css").write_text(_STARTER_CSS.replace("{accent}", accent))
     (site_dir / "index.html").write_text(
-        _STARTER_INDEX.format(name=name, sprite=sprite_svg, species=species)
+        _STARTER_INDEX.format(
+            name=html.escape(clean_display_name(display_name) or name),
+            sprite=sprite_svg, species=species,
+        )
     )
 
 

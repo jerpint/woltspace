@@ -43,6 +43,29 @@
         <div><strong>New sessions only</strong><p>Sessions already running keep the harness they started with.</p></div>
       </div>
 
+      {% set tier_rows = [('raccoon', 'Raccoon', 'thinker'), ('beaver', 'Beaver', 'builder'), ('otter', 'Otter', 'quick')] %}
+      {% call panel('Default models', 'The model a wolt gets for each working style. A wolt with its own model keeps it.', 'new sessions') %}
+        {% for harness in harnesses if not harness.freeform_model and harness.catalog %}
+          {% set labels = {} %}
+          {% for model in harness.catalog %}{% set _ = labels.update({model.id: model.label}) %}{% endfor %}
+          <p class="ds-label settings-tier-harness">{{ harness.label }}</p>
+          {% for tier, title, pace in tier_rows %}
+            {% set field_id = 'tier-' ~ harness.id ~ '-' ~ tier %}
+            {% set current = harness.models[tier] %}
+            {% call select_field(field_id, title, pace) %}
+              <div class="ds-select-stack" data-tier-row data-saved-value="{{ current }}">
+                <select class="ds-select" id="{{ field_id }}" data-tier-select data-harness="{{ harness.id }}" data-harness-label="{{ harness.label }}" data-tier="{{ tier }}" data-tier-label="{{ title }}">
+                  {% if current not in labels %}<option value="{{ current }}" selected>{{ current }}</option>{% endif %}
+                  {% for model in harness.catalog %}
+                    <option value="{{ model.id }}"{% if current == model.id %} selected{% endif %}>{{ model.label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            {% endcall %}
+          {% endfor %}
+        {% endfor %}
+      {% endcall %}
+
       <div id="sessions">
       {% call panel('Idle sessions', 'Close sessions nobody has been in touch with, to free resources. Their conversation stays resumable.', 'lodge-wide') %}
         {% call select_field('idle-session-timeout', 'Close idle sessions after', 'No contact means no message, notify or page update from the session for this long.') %}

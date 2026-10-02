@@ -79,12 +79,14 @@ from harnesses import (
     harness_metadata,
     get_default_harness,
     set_default_harness,
+    set_tier_defaults,
     resolve_harness,
     platform_skill_invoke,
     is_valid_model,
     model_catalog,
     tier_default_model,
     HARNESSES,
+    refresh_model_catalogs,
 )
 from apps import (
     WoltspaceApp,
@@ -230,6 +232,7 @@ def _start_tool_gc():
 async def lifespan(app: FastAPI):
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     await asyncio.to_thread(apply_default_harness_from_env)
+    refresh_model_catalogs()
     tool_registry.restore()
     apps_restore()
     _start_file_watcher()
@@ -986,37 +989,66 @@ async def session_new_create(request: Request):
     Expects JSON body with:
       - name: wolt name (required, lowercase alphanumeric + hyphens)
       - type: creature type (required, one of: otter, beaver, raccoon)
+      - harness: engine for this wolt (optional, lodge default otherwise)
+      - model: model for this wolt (optional, the tier default otherwise)
 
     The server scaffolds the full wolt directory before spawning the session.
     External mode adds per-wolt harness isolation; native mode inherits host auth.
     """
     body = await request.json()
-    wolt_name = (body.get("name") or "").strip().lower()
+    from wolts import (
+        WOLT_DISPLAY_NAME_MAX, clean_display_name, slugify_wolt_name,
+    )
+    # The typed name is what people read; the lodge derives the folder name.
+    typed_name = clean_display_name(body.get("name"))
+    wolt_name = slugify_wolt_name(typed_name)
     wolt_type = (body.get("type") or "").strip().lower()
     requested_harness = (body.get("harness") or "").strip()
     selected_harness = requested_harness or get_default_harness()
 
     # Validate name
-    if not wolt_name:
+    if not typed_name:
         return JSONResponse({"detail": "name is required"}, status_code=400)
-    import re
-    if not re.match(r'^[a-z][a-z0-9-]*$', wolt_name):
-        return JSONResponse({"detail": "name must start with a letter and contain only lowercase letters, numbers, and hyphens"}, status_code=400)
-    if len(wolt_name) > 20:
-        return JSONResponse({"detail": "name must be 20 characters or less"}, status_code=400)
+    if len(typed_name) > WOLT_DISPLAY_NAME_MAX:
+        return JSONResponse(
+            {"detail": f"name must be {WOLT_DISPLAY_NAME_MAX} characters or less"},
+            status_code=400,
+        )
+    if not wolt_name:
+        return JSONResponse({"detail": "name needs at least one letter"}, status_code=400)
+    if (WOLTS_DIR / wolt_name).exists():
+        return JSONResponse(
+            {"detail": f"a wolt named {wolt_name} already exists"}, status_code=409,
+        )
 
     # Validate type — only rodent types can be created from the lodge
     if wolt_type not in ("otter", "beaver", "raccoon"):
         return JSONResponse({"detail": "type must be otter, beaver, or raccoon"}, status_code=400)
     if selected_harness not in HARNESSES:
         return JSONResponse({"detail": f"unknown harness: {selected_harness}"}, status_code=400)
+    requested_model = body.get("model") or ""
+    if not isinstance(requested_model, str):
+        return JSONResponse({"detail": "model must be a string"}, status_code=400)
+    requested_model = requested_model.strip()
+    if requested_model and not is_valid_model(selected_harness, requested_model):
+        return JSONResponse(
+            {"detail": f"unknown model for {selected_harness}: {requested_model}"},
+            status_code=400,
+        )
 
     try:
         # Step 1: Scaffold the wolt with environment-appropriate harness config.
         from wolts import create_creature_wolt
         # Only an explicit request becomes a durable per-wolt override. An API
         # caller that omits harness keeps following the lodge default later.
-        create_creature_wolt(wolt_name, wolt_type, harness=requested_harness)
+        # A chosen model is pinned with its harness: a pin only means something
+        # on the engine it was picked for.
+        create_creature_wolt(
+            wolt_name, wolt_type,
+            harness=selected_harness if requested_model else requested_harness,
+            model=requested_model,
+            display_name=typed_name,
+        )
         print(f"[sessions/create] scaffolded wolt '{wolt_name}' ({wolt_type})")
 
         # Step 2: Start a session — full isolation, site auto-start, viewport
@@ -1659,8 +1691,30 @@ async def set_harness_default(request: Request):
     name = (body.get("harness") or "").strip()
     if name not in HARNESSES:
         return JSONResponse({"error": f"unknown harness: {name}"}, status_code=400)
-    set_default_harness(name)
+    try:
+        set_default_harness(name)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
     return {"ok": True, "default": name}
+
+
+@app.post("/harness/tiers")
+async def set_harness_tiers(request: Request):
+    """Set an engine's default model per tier (woltspace.json harness.models)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict) or set(body) != {"harness", "tiers"}:
+        return JSONResponse({"error": "harness and tiers required"}, status_code=400)
+    harness = body.get("harness")
+    if not isinstance(harness, str):
+        return JSONResponse({"error": "harness must be a string"}, status_code=400)
+    try:
+        saved = set_tier_defaults(harness.strip(), body.get("tiers"))
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return {"ok": True, "harness": harness.strip(), "models": saved}
 
 
 def _wolt_settings_path(name: str) -> tuple[str, Path]:
@@ -1693,15 +1747,45 @@ def _wolt_settings_response(safe: str, cfg: dict) -> dict:
         "harness": harness,
         "model": model,
         "configured": {"harness": cfg.get("harness"), "model": cfg.get("model")},
+        "display_name": cfg.get("display_name") or "",
         "applies": "next session",
         "note": "Applies from the next session.",
     }
 
 
+def _write_wolt_settings(wolt_json: Path, cfg: dict) -> None:
+    tmp = wolt_json.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, indent=2) + "\n")
+    tmp.replace(wolt_json)
+
+
+def _apply_display_name(cfg: dict, safe: str, value: object) -> None:
+    """Rename what people read. The folder name (the slug) never changes here."""
+    from wolts import WOLT_DISPLAY_NAME_MAX, clean_display_name
+
+    if value is not None and not isinstance(value, str):
+        raise ValueError("display_name must be a string")
+    shown = clean_display_name(value or "")
+    if len(shown) > WOLT_DISPLAY_NAME_MAX:
+        raise ValueError(f"name must be {WOLT_DISPLAY_NAME_MAX} characters or less")
+    if not shown or shown == safe:
+        cfg.pop("display_name", None)
+    else:
+        cfg["display_name"] = shown
+
+
 def _update_wolt_settings(name: str, body: dict) -> dict:
-    if not body or not set(body).issubset({"harness", "model"}):
-        raise ValueError("body must contain harness and/or model only")
+    if not body or not set(body).issubset({"harness", "model", "display_name"}):
+        raise ValueError("body must contain harness, model and/or display_name only")
     safe, wolt_json, cfg = _load_wolt_settings(name)
+    # Validate everything before the single write below.
+    if "display_name" in body:
+        _apply_display_name(cfg, safe, body["display_name"])
+    if set(body) == {"display_name"}:
+        _write_wolt_settings(wolt_json, cfg)
+        result = _wolt_settings_response(safe, cfg)
+        result.update({"ok": True, "applies": "now", "note": "Renamed."})
+        return result
     requested_harness = body.get("harness", cfg.get("harness"))
     if requested_harness in (None, ""):
         chosen_harness = get_default_harness()
@@ -1745,9 +1829,7 @@ def _update_wolt_settings(name: str, body: dict) -> dict:
         cfg.pop("model", None)
     else:
         cfg["model"] = pin_model
-    tmp = wolt_json.with_suffix(".tmp")
-    tmp.write_text(json.dumps(cfg, indent=2) + "\n")
-    tmp.replace(wolt_json)
+    _write_wolt_settings(wolt_json, cfg)
     result = _wolt_settings_response(safe, cfg)
     result.update({"ok": True, "harness": chosen_harness, "model": chosen_model})
     return result

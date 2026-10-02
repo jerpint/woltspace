@@ -36,6 +36,13 @@ function harnessInfo(id) {
   return harnessList.find(h => h.id === id) || { id, label: id, emoji: '' };
 }
 
+// What to call a wolt where a person reads it. Its `name` stays the folder
+// name used in addresses and session names.
+function woltLabel(w) {
+  if (!w) return '';
+  return w.display_name || w.name || w.dir || '';
+}
+
 // A wolt's effective engine + the concrete model it will spawn with.
 function woltHarness(w) {
   const pinned = !!w.harness;
@@ -219,7 +226,8 @@ function renderStarterWelcome() {
   const name = wolt.name || wolt.dir;
   // A fresh lodge has one thing to do: meet the starter wolt. She stands in the
   // scene with a speech bubble and a "press start" button (styles: home.css).
-  const shown = name.charAt(0).toUpperCase() + name.slice(1);  // wolt names are lowercase dirs
+  // without a display name, a lowercase folder name still reads as a name
+  const shown = wolt.display_name || (name.charAt(0).toUpperCase() + name.slice(1));
   const quote = document.getElementById('home-quote');
   const hero = lodgeElement('div', 'home-starter-hero');
   const bubble = lodgeElement('div', 'home-starter-bubble');
@@ -306,7 +314,7 @@ function renderSidebarWolts() {
       avatar.appendChild(dot);
     }
     const info = document.createElement('div'); info.className = 'wolt-info';
-    const nameEl = document.createElement('div'); nameEl.className = 'wolt-name'; nameEl.textContent = name;
+    const nameEl = document.createElement('div'); nameEl.className = 'wolt-name'; nameEl.textContent = woltLabel(w) || name;
     const sub = document.createElement('div'); sub.className = 'wolt-type';
     sub.textContent = everyone ? w.type : woltStateText(x);
     info.append(nameEl, sub); card.append(avatar, info);
@@ -630,7 +638,7 @@ function renderSessions() {
       const header = lodgeElement('div', 'sessions-group-header');
       const avatar = lodgeElement('div', 'sessions-group-avatar');
       if (sessionSprite) avatar.innerHTML = sessionSprite; else avatar.textContent = emoji;
-      header.append(avatar, lodgeElement('span', 'sessions-group-name', wolt), lodgeElement('span', 'sessions-group-meta'));
+      header.append(avatar, lodgeElement('span', 'sessions-group-name', woltLabel(woltData) || wolt), lodgeElement('span', 'sessions-group-meta'));
       const chevron = lodgeElement('span', 'sessions-group-chevron', '⌄');
       header.appendChild(chevron);
       header.addEventListener('click', () => toggleSessionGroup(header));
@@ -692,22 +700,82 @@ function openApp(appName, keeper) {
 let createSelectedType = null;
 let createSelectedHarness = '';
 
+// Naming a wolt is the hard part: the empty name field cycles a few ideas.
+const CREATE_NAME_IDEAS = [
+  'Wolt Disney', 'Justin Beaver', 'Wolter White', 'Racoona Matata',
+  'George Coony', 'Beaverly Hills',
+];
+let createNameIdeaTimer = null;
+
+function startCreateNameIdeas() {
+  const input = document.getElementById('create-name');
+  if (!input) return;
+  stopCreateNameIdeas();
+  let index = Math.floor(Math.random() * CREATE_NAME_IDEAS.length);
+  const show = () => {
+    input.placeholder = CREATE_NAME_IDEAS[index % CREATE_NAME_IDEAS.length];
+    index += 1;
+  };
+  show();
+  createNameIdeaTimer = setInterval(show, 2400);
+}
+
+function stopCreateNameIdeas() {
+  if (createNameIdeaTimer) clearInterval(createNameIdeaTimer);
+  createNameIdeaTimer = null;
+}
+
+// The name as typed. The lodge decides what it becomes when the wolt is created;
+// this page never works that out itself.
+function createWoltName() {
+  return document.getElementById('create-name').value.trim();
+}
+
+// A name is taken when it reads the same as a wolt already in the lodge.
+// This only warns early; the create request is still the judge.
+function sameWoltName(a, b) {
+  const plain = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  return !!plain(a) && plain(a) === plain(b);
+}
+
+function createNameWarning() {
+  const typed = createWoltName();
+  if (!typed) return '';
+  const taken = allWolts.find(w => sameWoltName(typed, w.name) || sameWoltName(typed, w.display_name));
+  return taken ? `${woltLabel(taken)} already lives here - pick another name` : '';
+}
+
+function showCreateNameWarning(text) {
+  const line = document.getElementById('create-name-warning');
+  const input = document.getElementById('create-name');
+  line.textContent = text;
+  line.hidden = !text;
+  input.classList.toggle('invalid', !!text);
+  input.setAttribute('aria-invalid', text ? 'true' : 'false');
+}
+
 function openCreateWolt(e) {
   if (e) e.preventDefault();
   document.getElementById('create-modal').classList.add('open');
   document.getElementById('create-name').value = '';
-  createSelectedType = null;
+  showCreateNameWarning('');
+  // One working style is always picked; the beaver is the starting choice.
+  createSelectedType = 'beaver';
   createSelectedHarness = harnessDefault;
-  document.querySelectorAll('.type-card').forEach(c => c.classList.remove('selected'));
-  document.getElementById('create-submit').disabled = true;
+  document.querySelectorAll('.type-card').forEach(c => {
+    c.classList.toggle('selected', c.dataset.type === createSelectedType);
+  });
+  document.getElementById('create-submit').disabled = false;
   document.getElementById('create-submit').textContent = 'Create';
   document.getElementById('create-error').style.display = 'none';
   renderCreateHarnessOptions();
+  startCreateNameIdeas();
   setTimeout(() => document.getElementById('create-name').focus(), 50);
 }
 
 function closeCreateWolt() {
   document.getElementById('create-modal').classList.remove('open');
+  stopCreateNameIdeas();
 }
 
 function pickType(el) {
@@ -745,24 +813,77 @@ function selectCreateHarness(id) {
 }
 
 function renderCreateHarness() {
+  const harness = harnessInfo(createSelectedHarness);
+  const catalog = harness.catalog || [];
+  // Engines that take any typed model name have no fixed list to choose from.
+  const choosable = !harness.freeform_model && catalog.length > 0;
   document.querySelectorAll('.type-card').forEach(card => {
     const hint = card.querySelector('.type-card-hint');
     const model = card.querySelector('.type-card-model');
+    const select = card.querySelector('.type-card-select');
+    const usual = modelFor(createSelectedHarness, card.dataset.type);
     if (hint) hint.textContent = hint.dataset.pace || '';
-    if (model) model.textContent = modelLabelFor(createSelectedHarness, card.dataset.type);
+    if (model) {
+      model.textContent = modelLabelFor(createSelectedHarness, card.dataset.type);
+      model.hidden = choosable;
+    }
+    if (!select) return;
+    select.hidden = !choosable;
+    select.replaceChildren();
+    if (!choosable) return;
+    catalog.forEach(entry => {
+      const option = document.createElement('option');
+      option.value = entry.id;
+      option.textContent = entry.label || entry.id;
+      select.appendChild(option);
+    });
+    // A default the list no longer offers still shows, instead of silently
+    // displaying some other model as selected.
+    if (usual && !catalog.some(entry => entry.id === usual)) {
+      const option = document.createElement('option');
+      option.value = usual;
+      option.textContent = usual;
+      select.prepend(option);
+    }
+    select.value = usual;
+    select.dataset.usual = usual;
   });
 }
 
-function updateCreatePreview() {
-  const name = document.getElementById('create-name').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
-  const submit = document.getElementById('create-submit');
-  document.getElementById('create-error').style.display = 'none';
-  submit.disabled = !(name && createSelectedType && createSelectedHarness);
+// The model to pin at creation: only a choice that differs from the working
+// style's usual model. Leaving the dropdown alone keeps following the default.
+function createSelectedModel() {
+  const card = document.querySelector(`.type-card[data-type="${createSelectedType}"]`);
+  const select = card && card.querySelector('.type-card-select');
+  if (!select || select.hidden || !select.value) return '';
+  return select.value === select.dataset.usual ? '' : select.value;
 }
 
+document.querySelectorAll('.type-card-select').forEach(select => {
+  // Choosing a model on a card also chooses that card; the click must not
+  // bubble into the card's own handler twice.
+  select.addEventListener('click', event => {
+    event.stopPropagation();
+    pickType(select.closest('.type-card'));
+  });
+  select.addEventListener('change', () => pickType(select.closest('.type-card')));
+});
+
+function updateCreatePreview() {
+  document.getElementById('create-error').style.display = 'none';
+  showCreateNameWarning(createNameWarning());
+}
+
+// Create is never a dead button: pressed too early, it says what is missing.
 async function submitCreateWolt() {
-  const name = document.getElementById('create-name').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
-  if (!name || !createSelectedType || !createSelectedHarness) return;
+  const name = createWoltName();
+  const warning = name ? createNameWarning() : 'give your wolt a name first';
+  if (warning) {
+    showCreateNameWarning(warning);
+    document.getElementById('create-name').focus();
+    return;
+  }
+  if (!createSelectedType || !createSelectedHarness) return;
 
   const submit = document.getElementById('create-submit');
   const error = document.getElementById('create-error');
@@ -778,6 +899,7 @@ async function submitCreateWolt() {
         name,
         type: createSelectedType,
         harness: createSelectedHarness,
+        ...(createSelectedModel() ? { model: createSelectedModel() } : {}),
       }),
     });
     const data = await res.json();

@@ -153,6 +153,133 @@ def test_create_wolt_passes_confirmed_target_and_policy(tmp_path, monkeypatch):
     assert seen["harness"] == "claude"
 
 
+@pytest.mark.parametrize("typed, slug, shown", [
+    ("Wolter White", "wolter-white", "Wolter White"),
+    ("Señor  Otter!", "senor-otter", "Señor Otter!"),
+    ("chip", "chip", "chip"),
+])
+def test_create_wolt_slugifies_the_typed_name(tmp_path, monkeypatch, typed, slug, shown):
+    import wolts
+
+    _layout(tmp_path, monkeypatch)
+    seen = {}
+    monkeypatch.setattr(
+        wolts, "create_creature_wolt",
+        lambda name, kind, **kwargs: seen.update({"name": name, **kwargs}),
+    )
+
+    def fake_start(**kwargs):
+        seen["session_wolt"] = kwargs["wolt"]
+        return {"name": f"{slug}-session", "wolt": slug}
+
+    monkeypatch.setattr(app_module, "start_session", fake_start)
+    response = asyncio.run(_request("POST", "/sessions/new/create", json={
+        "name": typed, "type": "raccoon",
+    }))
+    assert response.status_code == 200
+    assert seen["name"] == slug
+    assert seen["session_wolt"] == slug
+    assert seen["display_name"] == shown
+
+
+@pytest.mark.parametrize("typed", ["", "   ", "!!!", "123", "x" * 41])
+def test_create_wolt_refuses_names_without_a_usable_slug(tmp_path, monkeypatch, typed):
+    import wolts
+
+    _layout(tmp_path, monkeypatch)
+    created = []
+    monkeypatch.setattr(
+        wolts, "create_creature_wolt",
+        lambda *args, **kwargs: created.append(args),
+    )
+    response = asyncio.run(_request("POST", "/sessions/new/create", json={
+        "name": typed, "type": "raccoon",
+    }))
+    assert response.status_code == 400
+    assert created == []
+
+
+def test_create_wolt_refuses_a_taken_name_in_plain_words(tmp_path, monkeypatch):
+    import wolts
+
+    _layout(tmp_path, monkeypatch)
+    created = []
+    monkeypatch.setattr(
+        wolts, "create_creature_wolt",
+        lambda *args, **kwargs: created.append(args),
+    )
+    response = asyncio.run(_request("POST", "/sessions/new/create", json={
+        "name": "Maple", "type": "raccoon",
+    }))
+    assert response.status_code == 409
+    assert response.json() == {"detail": "a wolt named maple already exists"}
+    assert created == []
+
+
+def test_create_wolt_pins_a_chosen_model_with_its_harness(tmp_path, monkeypatch):
+    import wolts
+
+    _layout(tmp_path, monkeypatch)
+    seen = {}
+    monkeypatch.setattr(
+        wolts, "create_creature_wolt",
+        lambda name, kind, **kwargs: seen.update(kwargs),
+    )
+    monkeypatch.setattr(
+        app_module, "start_session",
+        lambda **kwargs: {"name": "newmaple-session", "wolt": "newmaple"},
+    )
+    response = asyncio.run(_request("POST", "/sessions/new/create", json={
+        "name": "newmaple", "type": "raccoon", "model": "fable",
+    }))
+    assert response.status_code == 200
+    assert seen["model"] == "fable"
+    # the pin is only meaningful on the engine it was chosen for
+    assert seen["harness"] == "claude"
+
+
+@pytest.mark.parametrize("model", ["gpt-5.5", ["fable"]])
+def test_create_wolt_refuses_a_model_the_harness_does_not_offer(
+    tmp_path, monkeypatch, model,
+):
+    import wolts
+
+    _layout(tmp_path, monkeypatch)
+    created = []
+    monkeypatch.setattr(
+        wolts, "create_creature_wolt",
+        lambda *args, **kwargs: created.append(args),
+    )
+    response = asyncio.run(_request("POST", "/sessions/new/create", json={
+        "name": "newmaple", "type": "raccoon", "harness": "claude", "model": model,
+    }))
+    assert response.status_code == 400
+    assert created == []
+
+
+def test_harness_tiers_route_saves_and_validates(tmp_path, monkeypatch):
+    _layout(tmp_path, monkeypatch)
+    # the lodge settings file is found through the environment, not WOLTS_DIR
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path / "wolts"))
+    ok = asyncio.run(_request("POST", "/harness/tiers", json={
+        "harness": "claude", "tiers": {"otter": "fable"},
+    }))
+    assert ok.status_code == 200
+    assert ok.json()["models"]["otter"] == "fable"
+    saved = json.loads((tmp_path / "wolts" / "woltspace.json").read_text())
+    assert saved["harness"]["models"]["claude"]["tiers"] == {"otter": "fable"}
+
+    for body in (
+        {"harness": "claude"},
+        {"harness": "claude", "tiers": {"otter": "gpt-5.5"}},
+        {"harness": "nope", "tiers": {"otter": "fable"}},
+        {"harness": "claude", "tiers": {"otter": "fable"}, "extra": 1},
+        ["claude"],
+    ):
+        bad = asyncio.run(_request("POST", "/harness/tiers", json=body))
+        assert bad.status_code == 400, body
+
+
 @pytest.mark.skipif(not shutil.which("node"), reason="TUI requires Node")
 @pytest.mark.parametrize("harness", ["claude", "codex"])
 @pytest.mark.parametrize("approved, override, expected", [
