@@ -78,7 +78,8 @@ test('tabs the layout opens by itself are attach-only', () => {
 });
 
 // Runs the session screen's real attach-only function against a fake lodge.
-async function attachOnly(record, { ok = true, throws = false } = {}) {
+// `answer` is what GET /sessions/{name} gives: { status, body } or 'throws'.
+async function attachOnly(answer, { handoff = false, inFlight = false } = {}) {
   const fn = tui.match(/async function attachIfRunning\(\) \{[\s\S]*?^  \}/m)?.[0];
   assert.ok(fn, 'attachIfRunning function found');
   const calls = [];
@@ -87,35 +88,62 @@ async function attachOnly(record, { ok = true, throws = false } = {}) {
     encodeURIComponent,
     fetch: async (url, options = {}) => {
       calls.push([options.method || 'GET', url]);
-      if (throws) throw new Error('network');
-      return { ok, json: async () => record };
+      if (answer === 'throws') throw new Error('network');
+      return { ok: answer.status === 200, status: answer.status, json: async () => answer.body };
     },
     connectTUI: () => calls.push(['attach']),
     setStatus: (state, text) => calls.push(['status', state, text]),
     reportOffline: () => calls.push(['offline']),
+    setTimeout: (callback, ms) => { calls.push(['retry', callback.name, ms]); return 1; },
+    metaInFlight: Promise.resolve(inFlight),
+    pollCurrent: async () => { calls.push(['settle-handoff']); return handoff; },
   };
   await runInNewContext(`${fn}; attachIfRunning()`, context);
   return calls;
 }
+const GET = ['GET', '/sessions/maple-quiet-brook-abc123'];
+const record = body => ({ status: 200, body });
 
-test('an attach-only tab attaches to a session whose agent exited, and never resumes it', async () => {
-  const calls = await attachOnly({ status: 'running', agent_alive: false, tmux_alive: true });
-  assert.deepEqual(calls, [['GET', '/sessions/maple-quiet-brook-abc123'], ['attach']]);
+test('an attach-only tab attaches to a live window and never resumes', async () => {
+  for (const body of [
+    { status: 'running', agent_alive: true, tmux_alive: true },
+    // What the lodge really answers when the agent exited and its window survives.
+    { status: 'orphaned', agent_alive: false, tmux_alive: true },
+  ]) {
+    assert.deepEqual(await attachOnly(record(body)), [GET, ['attach']]);
+  }
 });
 
-test('an attach-only tab reports offline instead of waking a resting session', async () => {
-  for (const record of [
-    { status: 'stopped', agent_alive: false, tmux_alive: false },
-    { status: 'running', agent_alive: false, tmux_alive: false },
-    { status: 'resting', agent_alive: false, tmux_alive: true },
-    null,
+test('an attach-only tab says offline only on a clear answer, and never wakes the session', async () => {
+  for (const answer of [
+    record({ status: 'stopped', agent_alive: false, tmux_alive: false }),
+    record({ status: 'orphaned', agent_alive: false, tmux_alive: false }),
+    { status: 404, body: { error: 'not found' } },
   ]) {
-    const calls = await attachOnly(record);
-    assert.deepEqual(calls, [['GET', '/sessions/maple-quiet-brook-abc123'], ['status', 'disconnected', 'offline'], ['offline']]);
+    assert.deepEqual(await attachOnly(answer), [GET, ['settle-handoff'], ['status', 'disconnected', 'offline'], ['offline']]);
   }
-  const failed = await attachOnly(null, { throws: true });
-  assert.deepEqual(failed.slice(1), [['status', 'disconnected', 'offline'], ['offline']]);
-  assert.ok(failed.every(call => call[0] !== 'POST'));
+});
+
+test('a failed liveness request is not an answer: the tab asks again and keeps its place', async () => {
+  for (const answer of ['throws', { status: 500, body: {} }, { status: 502, body: {} }]) {
+    assert.deepEqual(await attachOnly(answer), [GET, ['status', 'disconnected', 'reconnecting'], ['retry', 'attachIfRunning', 2000]]);
+  }
+});
+
+test('a pending hand-off is settled before a tab goes offline', async () => {
+  const stopped = record({ status: 'stopped', agent_alive: false, tmux_alive: false });
+  assert.deepEqual(await attachOnly(stopped, { handoff: true }), [GET, ['settle-handoff']]);
+  assert.deepEqual(await attachOnly(stopped, { inFlight: true }), [GET]);
+});
+
+test('the lodge terminal `main` is never a tab', () => {
+  assert.match(source, /!SESSION_NAME\.test\(name\) \|\| name === 'main'\) return;/);
+  assert.match(source, /to === name \|\| to === 'main'\) return;/);
+});
+
+test('an error answer from the lodge lists is not an empty lodge', () => {
+  assert.match(source, /if \(!r\.ok\) throw new Error/);
+  assert.match(source, /!Array\.isArray\(res\[0\]\) \|\| !res\[1\] \|\| !Array\.isArray\(res\[1\]\.sessions\)\) throw/);
 });
 
 test('the layout refuses to run inside a frame', () => {

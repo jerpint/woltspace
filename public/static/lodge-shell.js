@@ -403,7 +403,9 @@ var LodgeShellLogic = (function () {
 
   // ── Tabs ──
   function openSession(name, wake) {
-    if (typeof name !== 'string' || !SESSION_NAME.test(name)) return;
+    // `main` is the lodge's plain terminal, not a session with a record: it has no
+    // attach-only form, so it is never a tab here. It stays at /tui.
+    if (typeof name !== 'string' || !SESSION_NAME.test(name) || name === 'main') return;
     if (tabs.indexOf(name) < 0) tabs.push(name);   // new tabs go at the end
     current = name;
     delete fresh[name];
@@ -600,7 +602,7 @@ var LodgeShellLogic = (function () {
     if (e.data.type === 'woltspace-shell-redirect') {
       // The session handed off to another one: the tab follows it, and nothing wakes.
       var to = e.data.to;
-      if (typeof to !== 'string' || !SESSION_NAME.test(to) || to === name) return;
+      if (typeof to !== 'string' || !SESSION_NAME.test(to) || to === name || to === 'main') return;
       var moved = LodgeShellLogic.redirectTabs(tabs, current, name, to);
       dropFrame(name);
       tabs = moved.tabs;
@@ -625,16 +627,20 @@ var LodgeShellLogic = (function () {
 
   // ── Data: the lists the lodge already serves ──
   function load() {
+    // An error answer is not an empty lodge: anything but two good lists keeps
+    // what is on screen, so a hiccup never drops a tab's terminal.
+    var json = function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); };
     return Promise.all([
-      fetch('/wolts').then(function (r) { return r.json(); }),
-      fetch('/sessions?view=lodge').then(function (r) { return r.json(); }),
+      fetch('/wolts').then(json),
+      fetch('/sessions?view=lodge').then(json),
     ]).then(function (res) {
+      if (!Array.isArray(res[0]) || !res[1] || !Array.isArray(res[1].sessions)) throw new Error('shape');
       var nextWolts = {};
-      (Array.isArray(res[0]) ? res[0] : []).forEach(function (w) { nextWolts[w.name || w.dir] = w; });
-      var list = ((res[1] && res[1].sessions) || []).filter(isOnline);
+      res[0].forEach(function (w) { nextWolts[w.name || w.dir] = w; });
+      var list = res[1].sessions.filter(isOnline);
       list.forEach(function (s) { if (!nextWolts[s.wolt]) nextWolts[s.wolt] = { name: s.wolt }; });
       list.sort(function (a, b) { return (b.last_activity || 0) - (a.last_activity || 0); });
-      var listed = ((res[1] && res[1].sessions) || []);
+      var listed = res[1].sessions;
       wolts = nextWolts;
       online = list;
 
@@ -660,7 +666,7 @@ var LodgeShellLogic = (function () {
       });
       if (first) restore();
       render();
-      if (announce) showToast(woltLabel(announce.wolt) + ' started “' + sessionLabel(announce.name) + '”', announce.name);
+      if (announce) showToast(woltLabel(announce.wolt) + ': “' + sessionLabel(announce.name) + '” came online', announce.name);
     }).catch(function () { /* keep what is on screen; the next poll tries again */ });
   }
 
