@@ -1,4 +1,4 @@
-/* One-view lodge layout (/shell): one sidebar, lodge pages and sessions as tabs. */
+/* One-view lodge layout (/shell): one sidebar; sessions are tabs, a lodge page shows with no tab focused. */
 :root {
   --bg:#EDE8DE; --surface:#F5F1E8; --surface-2:#FAF7F0; --border:#D6CCBA; --border-2:#C4B89E;
   --ink:#18100A; --ink-2:#5C4D3C; --ink-3:#9A8878; --terra:#C4531E; --green:#3A6644;
@@ -44,6 +44,7 @@ body.side-hidden #rail { border-left:0; }
 .row:hover { background:rgba(255,255,255,.05); }
 .row.cursor { background:rgba(255,255,255,.06); }
 #tree:focus .row.cursor { background:rgba(255,255,255,.11); border-left-color:var(--terra); }
+.row.page { background:rgba(255,255,255,.08); }
 .row.page .lbl { color:#fff; }
 .row.t { padding-left:10px; gap:6px; }
 .caret { width:10px; text-align:center; color:rgba(255,255,255,.35); font-size:10px; flex-shrink:0; }
@@ -122,7 +123,6 @@ body.side-hidden #rail { border-left:0; }
   border:0; border-right:1px solid var(--border); border-bottom:2px solid transparent; background:transparent;
   font-family:var(--font-mono); font-size:11.5px; color:var(--ink-3); cursor:pointer;
 }
-.tab.lodge { flex:0 0 auto; min-width:0; padding:0 14px 0 12px; }
 .tab:hover { background:var(--surface); color:var(--ink-2); }
 .tab.active { background:var(--bg); color:var(--ink); border-bottom-color:var(--terra); font-weight:500; }
 .tab.offline .t { font-style:italic; opacity:.7; }
@@ -138,6 +138,8 @@ body.side-hidden #rail { border-left:0; }
 .tab .x:hover { background:var(--border); color:var(--ink); }
 .tb-right { display:flex; align-items:center; gap:6px; flex-shrink:0; }
 body.on-lodge .tb-right { display:none; }
+/* no session open: the lodge page takes the whole height (no terminal exists to be resized) */
+body.no-tabs #topbar { display:none; }
 .tb-status {
   font-family:var(--font-mono); font-size:10px; font-weight:500; letter-spacing:.05em; text-transform:uppercase;
   display:flex; align-items:center; gap:5px; padding:3px 9px; border-radius:12px;
@@ -182,9 +184,9 @@ body.on-lodge .tb-right { display:none; }
 #scrim { display:none; }
 
 @media (max-width:720px) {
-  #side { position:fixed; inset:0 auto 0 0; z-index:30; width:min(300px,86vw); box-shadow:8px 0 30px rgba(0,0,0,.4); transition:none; }
+  #side { position:fixed; inset:0 auto 0 0; z-index:30; width:min(272px,86vw); box-shadow:8px 0 30px rgba(0,0,0,.4); transition:none; }
   #side-inner { width:100%; }
-  body.side-hidden #side { width:min(300px,86vw); }
+  body.side-hidden #side { width:min(272px,86vw); }
   body:not(.side-open) #side { display:none; }
   body.side-open #scrim { display:block; position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:25; }
   #rail { width:22px; font-size:13px; align-items:flex-start; padding-top:16px; }

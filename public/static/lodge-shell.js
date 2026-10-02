@@ -1,6 +1,7 @@
 // One-view lodge layout (/shell). One sidebar (lodge pages, then wolts with their
-// online sessions) and a tab bar: the first tab is the lodge page, each opened
-// session is a tab after it, in the order opened.
+// online sessions) and a tab bar: each opened session is a tab, in the order
+// opened. A lodge page has no tab: picking one in the sidebar shows it and leaves
+// every tab unfocused.
 //
 // The lodge pages and the session screens are the existing pages, loaded in
 // frames. A frame named `lodge-shell-page` or `lodge-shell-session` hides its own
@@ -84,8 +85,8 @@ var LodgeShellLogic = (function () {
   var folded = {};         // wolt name -> true when folded
   var restingOpen = false;
   var tabs = [];           // session names, in the order they were opened
-  var current = null;      // session name shown, or null when the lodge tab is shown
-  var page = NAV[0];       // what the lodge tab shows
+  var current = null;      // session name shown, or null when a lodge page is shown
+  var page = NAV[0];       // the lodge page shown when no session is
   var cursor = null;       // tree cursor: 'n:<page>' 'w:<wolt>' 's:<session>' 'r:' 'o:<wolt>' 'f:settings'
   var frames = {};         // session name -> iframe
   var status = {};         // session name -> { state, text }
@@ -268,14 +269,6 @@ var LodgeShellLogic = (function () {
   function renderTabs() {
     var bar = $('tabs');
     bar.replaceChildren();
-    var lodge = el('button', 'tab lodge' + (current === null ? ' active' : ''));
-    lodge.type = 'button';
-    lodge.dataset.lodge = '1';
-    lodge.setAttribute('role', 'tab');
-    lodge.title = 'The lodge: ' + page.label;
-    lodge.appendChild(page.wolt ? sprite(page.wolt, 16) : el('span', 'ico', page.icon));
-    lodge.appendChild(el('span', 't', page.label));
-    bar.appendChild(lodge);
     tabs.forEach(function (name, i) {
       var wolt = woltOf(name);
       var tab = el('button', 'tab' + (name === current ? ' active' : '') + (byName(name) ? '' : ' offline'));
@@ -295,6 +288,7 @@ var LodgeShellLogic = (function () {
     var active = bar.querySelector('.tab.active');
     if (active) active.scrollIntoView({ inline: 'nearest', block: 'nearest' });
     document.body.classList.toggle('on-lodge', current === null);
+    document.body.classList.toggle('no-tabs', tabs.length === 0);
     document.title = (current === null ? page.label : sessionLabel(current)) + ' · woltspace';
   }
 
@@ -363,7 +357,7 @@ var LodgeShellLogic = (function () {
     delete status[name];
   }
 
-  // ── The lodge tab ──
+  // ── The lodge page ──
   function pageFromLocation(loc) {
     var path = loc.pathname, view = new URLSearchParams(loc.search).get('view');
     var m = path.match(/^\/w\/([^/]+)/);
@@ -429,10 +423,11 @@ var LodgeShellLogic = (function () {
     render();
     focusPane();
   }
-  function stepTab(d) {            // the lodge tab is position 0
-    var all = [null].concat(tabs);
-    var next = all[(all.indexOf(current) + d + all.length) % all.length];
-    if (next === null) showLodge(); else openSession(next, false);
+  function stepTab(d) {            // from a lodge page: forward to the first tab, back to the last
+    if (!tabs.length) return;
+    var i = tabs.indexOf(current);
+    var next = i < 0 ? (d > 0 ? 0 : tabs.length - 1) : (i + d + tabs.length) % tabs.length;
+    openSession(tabs[next], false);
     focusPane();
   }
 
@@ -532,12 +527,12 @@ var LodgeShellLogic = (function () {
     if (x) { closeTab(x.dataset.close); return; }
     var tab = e.target.closest('.tab');
     if (!tab) return;
-    if (tab.dataset.lodge) showLodge(); else openSession(tab.dataset.name, false);
+    openSession(tab.dataset.name, false);
     focusPane();
   });
   $('tabs').addEventListener('auxclick', function (e) {
     var tab = e.target.closest('.tab');
-    if (tab && tab.dataset.name && e.button === 1) closeTab(tab.dataset.name);
+    if (tab && e.button === 1) closeTab(tab.dataset.name);
   });
   $('rail').addEventListener('click', toggleSide);
   $('scrim').addEventListener('click', closeDrawer);

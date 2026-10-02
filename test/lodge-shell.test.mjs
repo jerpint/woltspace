@@ -71,7 +71,7 @@ test('tabs the layout opens by itself are attach-only', () => {
   // Reload, tab switch, keyboard, neighbour after a close.
   assert.match(source, /if \(current\) sessionFrame\(current, false\);   \/\/ attach only/);
   assert.match(source, /openSession\(tab\.dataset\.name, false\)/);
-  assert.match(source, /openSession\(next, false\)/);
+  assert.match(source, /openSession\(tabs\[next\], false\)/);
   assert.match(source, /\+ \(wake \? '' : '&attach=1'\)/);
   assert.match(tui, /if \(attachOnly\) attachIfRunning\(\); else ensureSessionAlive\(\);/);
   assert.match(tui, /setTimeout\(attachOnly \? attachIfRunning : connectTUI, 2000\)/);
