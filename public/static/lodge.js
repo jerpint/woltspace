@@ -702,9 +702,9 @@ let createSelectedHarness = '';
 
 // Naming a wolt is the hard part: the empty name field cycles a few ideas.
 const CREATE_NAME_IDEAS = [
-  'wolter-white', 'justin-beaver', 'wolt-disney', 'harry-otter',
-  'rocky-raccoon', 'wolt-whitman', 'beaver-cleaver', 'otter-pilot',
-  'trash-gordon',
+  'Wolter White', 'Justin Beaver', 'Wolt Disney', 'Harry Otter',
+  'Rocky Raccoon', 'Wolt Whitman', 'Beaver Cleaver', 'Otter Pilot',
+  'Trash Gordon',
 ];
 let createNameIdeaTimer = null;
 
@@ -714,7 +714,7 @@ function startCreateNameIdeas() {
   stopCreateNameIdeas();
   let index = Math.floor(Math.random() * CREATE_NAME_IDEAS.length);
   const show = () => {
-    input.placeholder = `e.g. ${CREATE_NAME_IDEAS[index % CREATE_NAME_IDEAS.length]}`;
+    input.placeholder = CREATE_NAME_IDEAS[index % CREATE_NAME_IDEAS.length];
     index += 1;
   };
   show();
