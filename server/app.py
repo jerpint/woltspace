@@ -2690,9 +2690,13 @@ async def lodge_shell_page(request: Request):
     Read-only render. It frames the existing pages and uses the same routes
     they use; nothing here changes lodge state.
     """
-    return templates.TemplateResponse(request, "lodge-shell.html", context={
+    response = templates.TemplateResponse(request, "lodge-shell.html", context={
         "cache_bust": int(time.time()),
     })
+    # Top-level only: framed, it would restore terminals at the outer frame's size.
+    response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+    response.headers["X-Frame-Options"] = "DENY"
+    return response
 
 
 @app.get("/terminal")

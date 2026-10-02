@@ -283,7 +283,15 @@
 </head>
 <body>
 <script>
-  if (window.name === 'lodge-shell-session' && window.parent !== window) document.documentElement.classList.add('in-shell');
+  // True when this page is the named frame of the one-view layout (/shell) on this origin.
+  function inLodgeShell(frameName) {
+    try {
+      return window.name === frameName && window.parent !== window
+        && window.parent.location.origin === location.origin
+        && window.parent.location.pathname === '/shell';
+    } catch (e) { return false; }
+  }
+  if (inLodgeShell('lodge-shell-session')) document.documentElement.classList.add('in-shell');
 </script>
 
 <div id="topbar">
@@ -339,12 +347,15 @@
   // One-view layout (/shell): a lodge page that opens a session lands here inside
   // the layout's page frame. Hand the session to the layout, which opens it as a
   // tab, go back to the lodge page, and start no terminal in this frame.
-  if (window.name === 'lodge-shell-page' && window.parent !== window) {
+  if (inLodgeShell('lodge-shell-page')) {
     window.parent.postMessage({ type: 'woltspace-shell-open-session', session }, location.origin);
     if (history.length > 1) history.back(); else location.replace('/');
     await new Promise(() => {});
   }
-  const inShell = window.name === 'lodge-shell-session' && window.parent !== window;
+  const inShell = inLodgeShell('lodge-shell-session');
+  // A tab the layout brought back by itself (a reload, a tab switch) only attaches
+  // to what is running. It never wakes a session.
+  const attachOnly = inShell && new URLSearchParams(location.search).get('attach') === '1';
   const nameEl = document.getElementById('session-name');
   nameEl.textContent = session === 'main' ? nameEl.textContent : session;
   document.title = session === 'main' ? document.title : `${session} · tui`;
@@ -425,7 +436,7 @@
     ws.onmessage = (e) => term.write(e.data);
     ws.onclose = () => {
       setStatus('disconnected', 'reconnecting');
-      setTimeout(connectTUI, 2000);
+      setTimeout(attachOnly ? attachIfRunning : connectTUI, 2000);
     };
     ws.onerror = () => ws.close();
   }
@@ -458,6 +469,19 @@
   }
 
   // Auto-resume dead sessions
+  // One-view layout, for a tab it opened by itself: attach to what is running and
+  // never wake anything. With nothing to attach to, tell the layout it is offline.
+  async function attachIfRunning() {
+    let s = null;
+    try {
+      const res = await fetch('/sessions/' + encodeURIComponent(session));
+      s = res.ok ? await res.json() : null;
+    } catch { s = null; }
+    if (s && s.status === 'running' && (s.agent_alive === true || s.tmux_alive === true)) { connectTUI(); return; }
+    setStatus('disconnected', 'offline');
+    reportOffline();
+  }
+
   async function ensureSessionAlive() {
     if (session === 'main') { connectTUI(); return; }
     try {
@@ -492,7 +516,10 @@
       connectTUI();
     }
   }
-  ensureSessionAlive();
+  function reportOffline() {
+    window.parent.postMessage({ type: 'woltspace-shell-status', state: 'disconnected', text: 'offline', offline: true }, location.origin);
+  }
+  if (attachOnly) attachIfRunning(); else ensureSessionAlive();
 
   // ── Right pane: views + history ──
   const histPanel = document.getElementById('hist-panel');
@@ -586,7 +613,8 @@
     try {
       const data = await fetch('/current/meta?session=' + encodeURIComponent(session)).then(r => r.json());
       if (data.redirect) {
-        location.replace('/tui?session=' + encodeURIComponent(data.redirect));
+        if (inShell) window.parent.postMessage({ type: 'woltspace-shell-redirect', to: data.redirect }, location.origin);
+        else location.replace('/tui?session=' + encodeURIComponent(data.redirect));
         return;
       }
       if (data.url && data.url !== lastUrl) {

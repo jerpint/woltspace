@@ -8,8 +8,61 @@
 // size, so a terminal in a background tab never resizes its session.
 //
 // Backend data is data: DOM nodes and textContent only.
+// The rules that decide what a reload may bring back. Pure, so they are tested
+// without a browser (test/lodge-shell.test.mjs).
+var LodgeShellLogic = (function () {
+  'use strict';
+  var VIEWS = ['wolts', 'apps', 'sessions'];
+  var PLAIN = ['/wolves', '/connectors', '/settings'];
+  var NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+
+  // The lodge page an address names, in its canonical form, or null. Only pages
+  // the sidebar can show: never a session screen, never the layout itself,
+  // never another origin. The address is normalized before it is judged.
+  function lodgePage(address, origin) {
+    if (typeof address !== 'string' || !address) return null;
+    var url;
+    try { url = new URL(address, origin); } catch (e) { return null; }
+    if (url.origin !== origin) return null;
+    var path = url.pathname, view = url.searchParams.get('view');
+    if (path === '/') {
+      if (!view) return '/';
+      return VIEWS.indexOf(view) >= 0 ? '/?view=' + view : null;
+    }
+    if (PLAIN.indexOf(path) >= 0) return path;
+    var m = path.match(/^\/w\/([^/]+)\/?$/);
+    if (!m) return null;
+    var name;
+    try { name = decodeURIComponent(m[1]); } catch (e) { return null; }
+    return NAME.test(name) ? '/w/' + name : null;
+  }
+
+  // The tabs a reload brings back: saved names that are online now, in saved order.
+  function restorableTabs(saved, onlineNames) {
+    var tabs = [];
+    if (saved && Array.isArray(saved.tabs)) saved.tabs.forEach(function (n) {
+      if (typeof n === 'string' && NAME.test(n) && onlineNames.indexOf(n) >= 0 && tabs.indexOf(n) < 0) tabs.push(n);
+    });
+    var current = saved && typeof saved.current === 'string' && tabs.indexOf(saved.current) >= 0 ? saved.current : null;
+    return { tabs: tabs, current: current };
+  }
+
+  // After a session hands off to another one, its tab becomes the new session's tab.
+  function redirectTabs(tabs, current, from, to) {
+    var next = tabs.filter(function (n) { return n !== from || tabs.indexOf(to) < 0; })
+      .map(function (n) { return n === from ? to : n; });
+    return { tabs: next, current: current === from ? to : current };
+  }
+
+  return { lodgePage: lodgePage, restorableTabs: restorableTabs, redirectTabs: redirectTabs, NAME: NAME };
+})();
+
 (function () {
   'use strict';
+  if (typeof document === 'undefined') return;
+  // The layout is a top-level page only. Framed (by another page, or by itself)
+  // it would restore terminals at whatever size the outer frame gives it.
+  if (window.top !== window) { document.body.replaceChildren(); return; }
 
   var STORE = 'woltspace.shell';
   var POLL_MS = 5000;
@@ -21,7 +74,7 @@
     { id: 'connectors', icon: '🔌', label: 'Connectors', url: '/connectors' },
   ];
   var SETTINGS = { id: 'settings', icon: '⚙', label: 'Settings', url: '/settings' };
-  var SESSION_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+  var SESSION_NAME = LodgeShellLogic.NAME;
 
   var wolts = {};          // name -> wolt record
   var online = [];         // online sessions, newest activity first
@@ -38,6 +91,8 @@
   var status = {};         // session name -> { state, text }
   var toastSession = null;
   var missing = {};        // tab name -> polls in a row the session was not online
+  var starting = {};       // wolt name -> true while a start request is in flight
+  var pendingCreate = false;
   var flash = {};
 
   var $ = function (id) { return document.getElementById(id); };
@@ -119,6 +174,7 @@
     plus.dataset.plus = woltName;
     plus.title = 'New session with ' + woltLabel(woltName);
     plus.setAttribute('aria-label', plus.title);
+    plus.disabled = starting[woltName] === true;
     return plus;
   }
   function renderTree() {
@@ -281,7 +337,10 @@
       if (input) input.focus();
     } catch (e) { /* frame not ready */ }
   }
-  function sessionFrame(name) {
+  // wake: the person asked for this session (tree, notice, "start it again"), so
+  // the session screen may wake it if it rests, as it does outside the layout.
+  // Without wake (a reload, switching tabs) the screen only attaches to what runs.
+  function sessionFrame(name, wake) {
     if (frames[name]) return frames[name];
     var frame = el('iframe');
     frame.name = 'lodge-shell-session';
@@ -291,7 +350,7 @@
       if (doc) doc.addEventListener('keydown', onKey, true);
       if (name === current) { renderStatus(); if (document.activeElement !== $('tree')) focusPane(); }
     });
-    frame.src = '/tui?session=' + encodeURIComponent(name);
+    frame.src = '/tui?session=' + encodeURIComponent(name) + (wake ? '' : '&attach=1');
     frames[name] = frame;
     $('stage').appendChild(frame);
     return frame;
@@ -338,11 +397,12 @@
     var doc = frameDocument(lodgeFrame);
     if (doc) doc.addEventListener('keydown', onKey, true);
     syncPage();
+    if (pendingCreate && openCreateDialog()) pendingCreate = false;
   });
   setInterval(syncPage, 1000);   // lodge pages also change their address without a load
 
   // ── Tabs ──
-  function openSession(name) {
+  function openSession(name, wake) {
     if (typeof name !== 'string' || !SESSION_NAME.test(name)) return;
     if (tabs.indexOf(name) < 0) tabs.push(name);   // new tabs go at the end
     current = name;
@@ -350,8 +410,8 @@
     if (toastSession === name) hideToast();
     cursor = 's:' + name;
     folded[woltOf(name)] = false;
-    if (!frames[name] && !byName(name)) missing[name] = -6;   // a deliberate open may be waking it: give it time
-    sessionFrame(name);
+    if (wake && !frames[name] && !byName(name)) missing[name] = -6;   // it may be waking: give it time
+    sessionFrame(name, wake === true);
     closeDrawer();
     render();
     if (document.activeElement !== $('tree')) focusPane();
@@ -363,18 +423,21 @@
     tabs.splice(i, 1);
     dropFrame(name);
     if (current === name) current = tabs[Math.min(i, tabs.length - 1)] || null;
+    if (current) sessionFrame(current, false);
     render();
     focusPane();
   }
   function stepTab(d) {            // the lodge tab is position 0
     var all = [null].concat(tabs);
     var next = all[(all.indexOf(current) + d + all.length) % all.length];
-    if (next === null) showLodge(); else openSession(next);
+    if (next === null) showLodge(); else openSession(next, false);
     focusPane();
   }
 
-  function startSession(woltName, button) {
-    if (button) button.disabled = true;
+  function startSession(woltName) {
+    if (starting[woltName]) return;
+    starting[woltName] = true;
+    renderTree();
     fetch('/sessions/new/lodge', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -383,17 +446,23 @@
       .then(function (res) {
         if (!res.ok || !res.data || typeof res.data.name !== 'string') throw new Error('start');
         mine[res.data.name] = true;
-        openSession(res.data.name);
+        openSession(res.data.name, true);
         load();
       })
       .catch(function () { showToast("Couldn't start a session with " + woltLabel(woltName), null); })
-      .then(function () { if (button) button.disabled = false; });
+      .then(function () { delete starting[woltName]; renderTree(); });
+  }
+  function openCreateDialog() {
+    try {
+      if (typeof lodgeFrame.contentWindow.openCreateWolt !== 'function') return false;
+      lodgeFrame.contentWindow.openCreateWolt();
+      return true;
+    } catch (e) { return false; }
   }
   function createWolt() {
     showLodge();
-    try {
-      if (typeof lodgeFrame.contentWindow.openCreateWolt === 'function') { lodgeFrame.contentWindow.openCreateWolt(); return; }
-    } catch (e) { /* fall through */ }
+    if (openCreateDialog()) return;
+    pendingCreate = true;        // the page is not ready: open the dialog when it has loaded
     showPage(NAV[1]);
   }
 
@@ -407,7 +476,7 @@
       showPage({ id: 'w:' + id, label: woltLabel(id), wolt: id, url: '/w/' + encodeURIComponent(id) });
     }
     else if (kind === 'r') { restingOpen = !restingOpen; renderTree(); }
-    else openSession(id);
+    else openSession(id, true);
   }
   function moveCursor(d) {
     var keys = visibleKeys();
@@ -441,7 +510,7 @@
     if (e.target.closest('[data-keys]')) { $('keys').classList.toggle('show'); renderTree(); return; }
     if (e.target.closest('[data-create]')) { createWolt(); return; }
     var plus = e.target.closest('[data-plus]');
-    if (plus) { startSession(plus.dataset.plus, plus); return; }
+    if (plus) { startSession(plus.dataset.plus); return; }
     var fold = e.target.closest('[data-fold]');
     if (fold) {
       folded[fold.dataset.fold] = !folded[fold.dataset.fold];
@@ -461,7 +530,7 @@
     if (x) { closeTab(x.dataset.close); return; }
     var tab = e.target.closest('.tab');
     if (!tab) return;
-    if (tab.dataset.lodge) showLodge(); else openSession(tab.dataset.name);
+    if (tab.dataset.lodge) showLodge(); else openSession(tab.dataset.name, false);
     focusPane();
   });
   $('tabs').addEventListener('auxclick', function (e) {
@@ -470,9 +539,9 @@
   });
   $('rail').addEventListener('click', toggleSide);
   $('scrim').addEventListener('click', closeDrawer);
-  $('toast-open').addEventListener('click', function () { if (toastSession) openSession(toastSession); });
+  $('toast-open').addEventListener('click', function () { if (toastSession) openSession(toastSession, true); });
   $('toast-close').addEventListener('click', hideToast);
-  $('offline-start').addEventListener('click', function () { if (current) openSession(current); });
+  $('offline-start').addEventListener('click', function () { if (current) openSession(current, true); });
   function toggleFull(side) {
     var frame = current && frames[current];
     try { frame.contentWindow.toggleFull(side); } catch (e) { return; }
@@ -490,7 +559,7 @@
       else if (e.code === 'BracketRight') stepTab(1);
       else if (e.code === 'BracketLeft') stepTab(-1);
       else if (e.code === 'KeyW') { if (current) closeTab(current); }
-      else if (/^Digit[1-9]$/.test(e.code)) { var t = tabs[Number(e.code.slice(5)) - 1]; if (t) { openSession(t); focusPane(); } }
+      else if (/^Digit[1-9]$/.test(e.code)) { var t = tabs[Number(e.code.slice(5)) - 1]; if (t) { openSession(t, false); focusPane(); } }
       else handled = false;
       if (handled) { e.preventDefault(); e.stopPropagation(); }
       return;
@@ -523,12 +592,29 @@
   window.addEventListener('message', function (e) {
     if (e.origin !== location.origin || !e.data || typeof e.data !== 'object') return;
     if (e.data.type === 'woltspace-shell-open-session' && e.source === lodgeFrame.contentWindow) {
-      if (typeof e.data.session === 'string') { mine[e.data.session] = true; openSession(e.data.session); load(); }
+      if (typeof e.data.session === 'string') { mine[e.data.session] = true; openSession(e.data.session, true); load(); }
+      return;
+    }
+    var name = Object.keys(frames).find(function (n) { return frames[n].contentWindow === e.source; });
+    if (!name) return;
+    if (e.data.type === 'woltspace-shell-redirect') {
+      // The session handed off to another one: the tab follows it, and nothing wakes.
+      var to = e.data.to;
+      if (typeof to !== 'string' || !SESSION_NAME.test(to) || to === name) return;
+      var moved = LodgeShellLogic.redirectTabs(tabs, current, name, to);
+      dropFrame(name);
+      tabs = moved.tabs;
+      current = moved.current;
+      if (current === to) sessionFrame(to, false);
+      render();
       return;
     }
     if (e.data.type === 'woltspace-shell-status') {
-      var name = Object.keys(frames).find(function (n) { return frames[n].contentWindow === e.source; });
-      if (!name) return;
+      if (e.data.offline === true) {       // an attach-only screen found nothing running
+        dropFrame(name);
+        render();
+        return;
+      }
       status[name] = {
         state: ['connected', 'connecting', 'disconnected'].indexOf(e.data.state) >= 0 ? e.data.state : 'connecting',
         text: String(e.data.text || '').slice(0, 24),
@@ -548,6 +634,7 @@
       var list = ((res[1] && res[1].sessions) || []).filter(isOnline);
       list.forEach(function (s) { if (!nextWolts[s.wolt]) nextWolts[s.wolt] = { name: s.wolt }; });
       list.sort(function (a, b) { return (b.last_activity || 0) - (a.last_activity || 0); });
+      var listed = ((res[1] && res[1].sessions) || []);
       wolts = nextWolts;
       online = list;
 
@@ -562,10 +649,10 @@
       var first = known === null;
       if (first) known = {};
       var announce = null;
-      list.forEach(function (s) {
-        if (known[s.name]) return;
+      listed.forEach(function (s) {
+        if (!s || typeof s.name !== 'string' || known[s.name]) return;
         known[s.name] = true;
-        if (first || mine[s.name] || tabs.indexOf(s.name) >= 0) return;
+        if (first || !isOnline(s) || mine[s.name] || tabs.indexOf(s.name) >= 0) return;
         fresh[s.name] = true;          // someone else started it: mark it and say so once
         flash[s.name] = true;
         folded[s.wolt] = false;
@@ -583,18 +670,18 @@
     var saved = null;
     try { saved = JSON.parse(localStorage.getItem(STORE)); } catch (e) { saved = null; }
     if (saved && typeof saved === 'object') {
-      if (Array.isArray(saved.tabs)) tabs = saved.tabs.filter(function (n) { return typeof n === 'string' && byName(n); });
-      if (typeof saved.current === 'string' && tabs.indexOf(saved.current) >= 0) current = saved.current;
+      var back = LodgeShellLogic.restorableTabs(saved, online.map(function (s) { return s.name; }));
+      tabs = back.tabs;
+      current = back.current;
       if (saved.folded && typeof saved.folded === 'object') {
         Object.keys(saved.folded).forEach(function (k) { if (saved.folded[k] === true) folded[k] = true; });
       }
-      if (typeof saved.page === 'string' && /^\/(?!\/)/.test(saved.page) && saved.page.indexOf('/tui') !== 0) {
-        try { page = pageFromLocation(new URL(saved.page, location.origin)); } catch (e) { page = NAV[0]; }
-      }
+      var address = LodgeShellLogic.lodgePage(saved.page, location.origin);
+      if (address) page = pageFromLocation(new URL(address, location.origin));
       if (saved.hidden === true && !phone.matches) document.body.classList.add('side-hidden');
     }
     lodgeFrame.src = page.url;
-    if (current) sessionFrame(current);   // other tabs load when first shown
+    if (current) sessionFrame(current, false);   // attach only; other tabs load when first shown
   }
 
   load();

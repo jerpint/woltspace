@@ -15,7 +15,11 @@
 <link href="https://fonts.googleapis.com/css2?family=Preahvihear&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script>
   // Inside the one-view layout (/shell) the layout draws the sidebar, so this page hides its own.
-  if (window.name === 'lodge-shell-page' && window.parent !== window) document.documentElement.classList.add('in-shell');
+  try {
+    if (window.name === 'lodge-shell-page' && window.parent !== window
+        && window.parent.location.origin === location.origin
+        && window.parent.location.pathname === '/shell') document.documentElement.classList.add('in-shell');
+  } catch (e) { /* framed by another origin: not the layout */ }
 </script>
 <link rel="stylesheet" href="/static/style.css?v={{ cache_bust }}">
 <link rel="stylesheet" href="/static/design-system.css?v={{ cache_bust }}">

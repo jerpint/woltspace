@@ -43,11 +43,14 @@ def test_shell_script_treats_backend_data_as_data():
     assert "e.origin !== location.origin" in source
 
 
-def test_shell_never_restores_a_tab_for_an_offline_session():
-    """Opening a session screen wakes a resting session; a reload must not."""
-    source = (ROOT / "public/static/lodge-shell.js").read_text()
+def test_shell_page_refuses_to_be_framed(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "WOLTS_DIR", tmp_path)
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
 
-    assert "saved.tabs.filter(function (n) { return typeof n === 'string' && byName(n); })" in source
+    response = asyncio.run(_request("GET", "/shell"))
+
+    assert response.headers["content-security-policy"] == "frame-ancestors 'none'"
+    assert response.headers["x-frame-options"] == "DENY"
 
 
 def test_framed_pages_hide_their_own_chrome_only_inside_the_shell():
@@ -56,8 +59,10 @@ def test_framed_pages_hide_their_own_chrome_only_inside_the_shell():
     style = (ROOT / "public/static/style.css").read_text()
 
     assert "window.name === 'lodge-shell-page' && window.parent !== window" in base
+    assert "window.parent.location.pathname === '/shell'" in base
     assert ".in-shell .sidebar, .in-shell .hamburger { display: none; }" in style
-    assert "window.name === 'lodge-shell-session' && window.parent !== window" in tui
+    assert "inLodgeShell('lodge-shell-session')" in tui
+    assert "window.parent.location.pathname === '/shell'" in tui
     assert ".in-shell #topbar { display: none; }" in tui
 
 
