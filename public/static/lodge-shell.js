@@ -37,6 +37,7 @@
   var frames = {};         // session name -> iframe
   var status = {};         // session name -> { state, text }
   var toastSession = null;
+  var missing = {};        // tab name -> polls in a row the session was not online
   var flash = {};
 
   var $ = function (id) { return document.getElementById(id); };
@@ -254,6 +255,7 @@
   function showFrames() {
     lodgeFrame.classList.toggle('active', current === null);
     Object.keys(frames).forEach(function (name) { frames[name].classList.toggle('active', name === current); });
+    $('offline').classList.toggle('show', current !== null && !frames[current]);
   }
 
   function save() {
@@ -348,6 +350,7 @@
     if (toastSession === name) hideToast();
     cursor = 's:' + name;
     folded[woltOf(name)] = false;
+    if (!frames[name] && !byName(name)) missing[name] = -6;   // a deliberate open may be waking it: give it time
     sessionFrame(name);
     closeDrawer();
     render();
@@ -469,6 +472,7 @@
   $('scrim').addEventListener('click', closeDrawer);
   $('toast-open').addEventListener('click', function () { if (toastSession) openSession(toastSession); });
   $('toast-close').addEventListener('click', hideToast);
+  $('offline-start').addEventListener('click', function () { if (current) openSession(current); });
   function toggleFull(side) {
     var frame = current && frames[current];
     try { frame.contentWindow.toggleFull(side); } catch (e) { return; }
@@ -546,6 +550,14 @@
       list.sort(function (a, b) { return (b.last_activity || 0) - (a.last_activity || 0); });
       wolts = nextWolts;
       online = list;
+
+      // A tab whose session went offline lets go of its terminal, so nothing keeps
+      // reconnecting to it. The tab stays; starting it again is a click.
+      tabs.forEach(function (name) {
+        if (byName(name) || !known || !known[name]) { delete missing[name]; return; }
+        missing[name] = (missing[name] || 0) + 1;
+        if (missing[name] >= 2) dropFrame(name);
+      });
 
       var first = known === null;
       if (first) known = {};

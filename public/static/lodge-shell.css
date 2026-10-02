@@ -157,6 +157,17 @@ body.on-lodge .tb-right { display:none; }
 #stage iframe { position:absolute; inset:0; width:100%; height:100%; border:0; visibility:hidden; background:var(--bg); }
 #stage iframe.active { visibility:visible; }
 
+#offline {
+  display:none; position:absolute; inset:0; align-items:center; justify-content:center; gap:12px;
+  font-family:var(--font-mono); font-size:12px; color:var(--ink-2);
+}
+#offline.show { display:flex; }
+#offline button {
+  font-family:var(--font-mono); font-size:11px; padding:6px 12px; border-radius:6px; cursor:pointer;
+  border:1px solid var(--border-2); background:var(--surface-2); color:var(--ink);
+}
+#offline button:hover { border-color:var(--green); }
+
 #toast {
   position:absolute; top:10px; right:14px; z-index:20; display:none; align-items:center; gap:10px;
   background:var(--ink); color:rgba(255,255,255,.85); border-radius:8px; padding:9px 10px 9px 12px;
