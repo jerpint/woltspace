@@ -702,9 +702,8 @@ let createSelectedHarness = '';
 
 // Naming a wolt is the hard part: the empty name field cycles a few ideas.
 const CREATE_NAME_IDEAS = [
-  'Wolter White', 'Justin Beaver', 'Wolt Disney', 'Harry Otter',
-  'Rocky Raccoon', 'Wolt Whitman', 'Beaver Cleaver', 'Otter Pilot',
-  'Trash Gordon',
+  'Wolt Disney', 'Justin Beaver', 'Wolter White', 'Racoona Matata',
+  'George Coony', 'Beaverly Hills',
 ];
 let createNameIdeaTimer = null;
 
