@@ -278,6 +278,7 @@ var LodgeShellLogic = (function () {
       tab.title = woltLabel(wolt) + ' · ' + sessionLabel(name);
       if (i < 9) tab.appendChild(el('span', 'n', String(i + 1)));
       tab.appendChild(sprite(wolt, 16));
+      tab.appendChild(el('span', 'w', woltLabel(wolt)));
       tab.appendChild(el('span', 't', sessionLabel(name)));
       var x = el('span', 'x', '×');
       x.dataset.close = name;
