@@ -75,3 +75,67 @@ def test_create_route_uses_default_or_explicit_harness(
     assert 'Raccoon wolt. Just born.' in seed
     assert all(model not in seed for model in ('Opus', 'Sonnet', 'Haiku'))
     assert not (root / 'fresh/.codex/auth.json').exists()
+
+
+def test_create_route_atomically_pins_codex_model(tmp_path, monkeypatch):
+    import sessions
+    import wolts
+
+    root = tmp_path / 'wolts'
+    root.mkdir()
+    source = Path(__file__).resolve().parents[1]
+    monkeypatch.setenv('WOLTSPACE_WOLTS_DIR', str(root))
+    monkeypatch.setenv('WOLTSPACE_ISOLATION', 'host')
+    monkeypatch.setenv('GIT_CONFIG_GLOBAL', '/dev/null')
+    monkeypatch.setenv('GIT_CONFIG_NOSYSTEM', '1')
+    monkeypatch.setattr(server_app, 'WOLTS_DIR', root)
+    monkeypatch.setattr(state, 'WOLTS_DIR', root)
+    monkeypatch.setattr(sessions, 'WOLTS_DIR', root)
+    monkeypatch.setattr(wolts, 'WOLTS_DIR', root)
+    monkeypatch.setattr(wolts, 'CONFIG_FILE', root / 'woltspace.json')
+    monkeypatch.setattr(wolts, 'WOLTSPACE_DIR', source)
+    seen = {}
+
+    def start(**kwargs):
+        config = json.loads((root / 'astre/wolt/wolt.json').read_text())
+        seen.update({'config_at_spawn': config, **kwargs})
+        return {'name': 'astre-session', 'harness': kwargs['harness']}
+
+    monkeypatch.setattr(server_app, 'start_session', start)
+    client = TestClient(server_app.app, base_url="http://localhost:7777")
+    response = client.post('/sessions/new/create', json={
+        'name': 'astre',
+        'type': 'raccoon',
+        'harness': 'codex',
+        'model': 'gpt-6-astra',
+    })
+
+    assert response.status_code == 200, response.text
+    assert seen['config_at_spawn']['harness'] == 'codex'
+    assert seen['config_at_spawn']['model'] == 'gpt-6-astra'
+    assert seen['harness'] == 'codex'
+
+
+def test_create_route_rejects_invalid_model_before_scaffold(tmp_path, monkeypatch):
+    import sessions
+    import wolts
+
+    root = tmp_path / 'wolts'
+    root.mkdir()
+    monkeypatch.setenv('WOLTSPACE_WOLTS_DIR', str(root))
+    monkeypatch.setattr(server_app, 'WOLTS_DIR', root)
+    monkeypatch.setattr(state, 'WOLTS_DIR', root)
+    monkeypatch.setattr(sessions, 'WOLTS_DIR', root)
+    monkeypatch.setattr(wolts, 'WOLTS_DIR', root)
+    client = TestClient(server_app.app, base_url="http://localhost:7777")
+
+    response = client.post('/sessions/new/create', json={
+        'name': 'astre',
+        'type': 'raccoon',
+        'harness': 'codex',
+        'model': 'not-a-codex-model',
+    })
+
+    assert response.status_code == 400
+    assert "not valid for codex" in response.json()['detail']
+    assert not (root / 'astre').exists()

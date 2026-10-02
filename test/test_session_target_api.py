@@ -131,6 +131,7 @@ def test_create_wolt_passes_confirmed_target_and_policy(tmp_path, monkeypatch):
         wolts, "create_creature_wolt",
         lambda name, kind, **kwargs: seen.update({
             "scaffold_harness": kwargs.get("harness"),
+            "scaffold_model": kwargs.get("model"),
         }),
     )
 
@@ -150,6 +151,7 @@ def test_create_wolt_passes_confirmed_target_and_policy(tmp_path, monkeypatch):
     assert seen["workdir"] == str(repo)
     assert seen["execution_policy"] == "prompt"
     assert seen["scaffold_harness"] == ""
+    assert seen["scaffold_model"] == ""
     assert seen["harness"] == "claude"
 
 

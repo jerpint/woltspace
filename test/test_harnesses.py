@@ -912,11 +912,15 @@ class TestBootPromptViaPaste:
 class TestModelCatalog:
     """Selectable model list: built-in seed, overridable via woltspace.json."""
 
-    def test_seed_includes_new_models(self):
+    def test_seed_includes_new_models(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         claude_ids = {m["id"] for m in model_catalog("claude")}
         assert {"opus", "sonnet", "haiku", "fable"} <= claude_ids
         codex_ids = {m["id"] for m in model_catalog("codex")}
-        assert {"gpt-5.5", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol"} <= codex_ids
+        assert {
+            "gpt-6-astra", "gpt-5.5", "gpt-5.6-terra",
+            "gpt-5.6-luna", "gpt-5.6-sol",
+        } <= codex_ids
 
     def test_entries_have_id_and_label(self):
         for c in model_catalog("claude"):

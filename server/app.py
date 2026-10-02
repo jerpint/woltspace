@@ -986,6 +986,8 @@ async def session_new_create(request: Request):
     Expects JSON body with:
       - name: wolt name (required, lowercase alphanumeric + hyphens)
       - type: creature type (required, one of: otter, beaver, raccoon)
+      - harness: optional durable harness pin
+      - model: optional durable model pin, validated for the selected harness
 
     The server scaffolds the full wolt directory before spawning the session.
     External mode adds per-wolt harness isolation; native mode inherits host auth.
@@ -995,6 +997,7 @@ async def session_new_create(request: Request):
     wolt_type = (body.get("type") or "").strip().lower()
     requested_harness = (body.get("harness") or "").strip()
     selected_harness = requested_harness or get_default_harness()
+    requested_model = (body.get("model") or "").strip()
 
     # Validate name
     if not wolt_name:
@@ -1010,13 +1013,25 @@ async def session_new_create(request: Request):
         return JSONResponse({"detail": "type must be otter, beaver, or raccoon"}, status_code=400)
     if selected_harness not in HARNESSES:
         return JSONResponse({"detail": f"unknown harness: {selected_harness}"}, status_code=400)
+    if requested_model and not is_valid_model(selected_harness, requested_model):
+        valid = [entry["id"] for entry in model_catalog(selected_harness)]
+        return JSONResponse({
+            "detail": (
+                f"model {requested_model!r} is not valid for {selected_harness}; "
+                f"valid options: {', '.join(valid)}"
+            )
+        }, status_code=400)
 
     try:
         # Step 1: Scaffold the wolt with environment-appropriate harness config.
         from wolts import create_creature_wolt
         # Only an explicit request becomes a durable per-wolt override. An API
         # caller that omits harness keeps following the lodge default later.
-        create_creature_wolt(wolt_name, wolt_type, harness=requested_harness)
+        create_creature_wolt(
+            wolt_name, wolt_type,
+            harness=requested_harness,
+            model=requested_model,
+        )
         print(f"[sessions/create] scaffolded wolt '{wolt_name}' ({wolt_type})")
 
         # Step 2: Start a session — full isolation, site auto-start, viewport
