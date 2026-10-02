@@ -1,14 +1,11 @@
 """
 Creature services — background and specialized role-based agents.
 
-Each creature has a single clear role in the wolt colony:
+The implemented background services are:
 
-  🐶 dog    — Lodge companion (loyal, constrained, always-on Telegram presence)
-  🐺 wolf   — Cron & scheduler (runs the pack's routines on schedule)
-  🕷️  spider — Headless browser (crawls, scrapes, watches the web)
-  🐻 bear   — Safety & validation (guards the den, reviews outputs)
-  🐼 panda  — Daily reminders & zen notifications (gentle, unhurried)
+  🐺 wolf    — cron and scheduler
+  🦅 vulture — session reconciliation and reaping
 
-Active session creatures (dog/raccoon/beaver) live in bot/core.py.
-These creatures are background services or specialized invocations.
+Session-creature identity lives in bot/core.py; this package contains only
+actual background-service implementations.
 """
