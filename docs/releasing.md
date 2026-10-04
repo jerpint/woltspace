@@ -50,6 +50,12 @@ promise depends on preserving those settings and workflow review rules.
 
 ## Running and approving
 
+Before publishing, run one fresh first run of the release candidate (empty
+lodge folder, default starter). Fresh lodges install the starter lodge's latest
+`main`, not a pinned commit, so a starter change can break first runs of any
+release, new or old. Check the starter installs, its wolt greets, and nothing
+asks for permission.
+
 Merge the reviewed release preparation and workflow changes into `main`, then
 open Actions → **Publish reviewed release pair** → Run workflow. Select `main`
 and enter the exact Python and TUI versions declared by that commit. Select
