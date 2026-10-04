@@ -10,6 +10,11 @@ release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 
 
+@pytest.fixture(autouse=True)
+def publishing_from_main(monkeypatch):
+    monkeypatch.setenv('GITHUB_REF_NAME', 'main')
+
+
 def environment():
     return {'can_admins_bypass': False,
             'protection_rules': [{'type': 'required_reviewers', 'prevent_self_review': False, 'reviewers': [
@@ -45,6 +50,18 @@ def test_release_refuses_inadequate_environment_protection(monkeypatch, change):
     monkeypatch.setattr(release, 'get_json', lambda url: {'branch_policies': branches} if url.endswith('deployment-branch-policies') else env)
     with pytest.raises(RuntimeError):
         release.check_environments()
+
+
+def test_release_branches_may_be_permitted_beside_main(monkeypatch):
+    branches = [{'name': 'main', 'type': 'branch'}, {'name': 'release/*', 'type': 'branch'}]
+    monkeypatch.setattr(release, 'get_json', lambda url: {'branch_policies': branches} if url.endswith('deployment-branch-policies') else environment())
+    release.check_environments()
+
+
+@pytest.mark.parametrize('branch', ['', 'feature', 'release/next', 'release/0.5/x', 'mainline'])
+def test_publishing_refuses_other_branches(monkeypatch, branch):
+    monkeypatch.setenv('GITHUB_REF_NAME', branch)
+    with pytest.raises(RuntimeError): release.publishing_branch()
 
 
 def test_both_environments_are_checked(monkeypatch):
@@ -210,6 +227,14 @@ def test_no_tags_required_before_first_successful_publication(artifacts, monkeyp
     assert '--latest=false' in edited[0]
     assert '--latest=true' in edited[1]
     assert all(not r['draft'] for r in releases.values())
+
+
+def test_release_branch_publication_is_never_marked_latest(artifacts, monkeypatch):
+    monkeypatch.setenv('GITHUB_REF_NAME', 'release/0.5')
+    calls, _ = fake_releases(monkeypatch, artifacts)
+    release.finalize()
+    edited = [call for call in calls if call[:2] == ('release', 'edit')]
+    assert edited and all('--latest=false' in call for call in edited)
     assert all(call[call.index('--target') + 1] == artifacts['commit']
                for call in calls if call[:2] == ('release', 'create'))
 
@@ -403,6 +428,21 @@ def test_recovery_rejects_untrusted_or_unvalidated_source_run(monkeypatch, chang
     monkeypatch.setenv('RESUME_RUN_ID', '../escape' if change == 'run_id' else '123')
     monkeypatch.setattr(release, 'get_json', lambda url: {'jobs': jobs} if '/jobs?' in url else run)
     with pytest.raises(RuntimeError): release.source_run()
+
+
+def test_recovery_requires_original_run_from_the_same_branch(monkeypatch):
+    monkeypatch.setenv('GITHUB_REF_NAME', 'release/0.5')
+    monkeypatch.setenv('RESUME_RUN_ID', '123')
+    jobs = [{'name': name, 'conclusion': 'success'} for name in (
+        'guard', 'validation / tests (3.11)', 'validation / tests (3.13)', 'validation / packages', 'prepare')]
+    monkeypatch.setattr(release, 'get_json', lambda url: {'jobs': jobs} if '/jobs?' in url else original_run())
+    with pytest.raises(RuntimeError): release.source_run()
+    run = {**original_run(), 'head_branch': 'release/0.5'}
+    monkeypatch.setattr(release, 'get_json', lambda url: {'jobs': jobs} if '/jobs?' in url else run)
+    outputs = {}
+    monkeypatch.setattr(release, 'output', lambda key, value: outputs.update({key: value}))
+    release.source_run()
+    assert outputs == {'release_commit': 'a' * 40}
 
 
 def test_recovery_admits_validated_original_run_across_job_pages(monkeypatch):
