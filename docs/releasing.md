@@ -1,6 +1,7 @@
 # Publishing an approved release pair
 
-`.github/workflows/publish.yml` is manually started on `main`. It runs the same
+`.github/workflows/publish.yml` is manually started on `main` (or on a
+`release/X.Y` maintenance branch, below). It runs the same
 focused Python/Node and package checks as pull-request CI, downloads those exact
 artifacts, and records their commit and SHA256 digests in the run summary. It
 plans publication before requesting **jerpint's separate approval** for each
@@ -50,6 +51,12 @@ promise depends on preserving those settings and workflow review rules.
 
 ## Running and approving
 
+Before publishing, run one fresh first run of the release candidate (empty
+lodge folder, default starter). Fresh lodges install the starter lodge's latest
+`main`, not a pinned commit, so a starter change can break first runs of any
+release, new or old. Check the starter installs, its wolt greets, and nothing
+asks for permission.
+
 Merge the reviewed release preparation and workflow changes into `main`, then
 open Actions → **Publish reviewed release pair** → Run workflow. Select `main`
 and enter the exact Python and TUI versions declared by that commit. Select
@@ -78,6 +85,22 @@ OIDC identities but cannot write repository contents; the final release job can
 write tags/releases but has no OIDC permission. Authenticated publishing and the
 real approval wait must be exercised on an explicitly authorized release; unit
 and ordinary CI success do not prove registry trust or approval configuration.
+
+## Maintenance branches
+
+`main` carries the next minor line (including its release candidates). To keep
+shipping patches for the previous line, cut `release/X.Y` from its last tag
+(for example `git branch release/0.5 v0.5.12`; the tag must already contain
+this workflow), land fixes on `main` first, cherry-pick them
+into the release branch by pull request, then prepare and publish the patch
+version from that branch exactly as from `main`.
+
+Enabling this is an owner setting: in each environment (`pypi`, `npm`) add a
+second **Branch** rule `release/*` beside `main`. Also cover `release/*` in the
+repository ruleset that protects `main`, so maintenance branches need a reviewed
+pull request too. The workflow accepts only `main` and `release/X.Y`, a
+recovery run must resume a run of the same branch, and a release published from
+a maintenance branch is never marked Latest.
 
 ## Recovering a partial release
 

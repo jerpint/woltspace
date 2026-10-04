@@ -26,10 +26,10 @@ from sessions import SessionRegistry  # noqa: E402
 from harnesses import HARNESSES  # noqa: E402
 
 
-DEFAULT_STARTER_SEED = (
-    "https://github.com/jerpint/woltspace-starter-lodge.git"
-    "@ce830696f24769c7646995762be5780f06aad39d"
-)
+# Unpinned on purpose: a fresh lodge installs the starter's latest main, so
+# onboarding improves without a release. Every release check must include a
+# fresh first run against that latest main (docs/releasing.md).
+DEFAULT_STARTER_SEED = "https://github.com/jerpint/woltspace-starter-lodge.git"
 _starter_seed_lock = threading.Lock()
 
 
