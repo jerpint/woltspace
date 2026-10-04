@@ -165,6 +165,32 @@ def test_app_detail_keeps_configured_port_when_stopped(monkeypatch):
     payload = TestClient(server_app.app, base_url="http://localhost:7777").get("/apps/notes").json()
     assert payload["configured_port"] == 4321
     assert payload["port"] is None
+    assert payload["url"] == "http://notes.localhost:7117/"
+
+
+def test_app_detail_reports_dedicated_address(monkeypatch):
+    manifest = apps.WoltspaceApp(name="notes", keeper="n00b", port=4321)
+    monkeypatch.setattr(server_app, "get_app", lambda name: manifest)
+    monkeypatch.setattr(server_app, "running_apps", lambda: [])
+    monkeypatch.setattr(server_app, "get_apps_domain", lambda: "owner.woltspace.app")
+
+    payload = TestClient(server_app.app, base_url="http://localhost:7777").get("/apps/notes").json()
+
+    assert payload["own_url"] == "https://notes.owner.woltspace.app"
+
+
+def test_legacy_app_path_redirects_to_gateway_and_preserves_path_query(tmp_path, monkeypatch):
+    target = tmp_path / "notes"
+    target.mkdir()
+    monkeypatch.setattr(server_app, "app_dir", lambda _name: target)
+    monkeypatch.setattr(server_app, "get_app_gateway_port", lambda: 7117)
+
+    response = TestClient(
+        server_app.app, base_url="http://localhost:7777",
+    ).get("/app/notes/deep/path?mode=1", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "http://notes.localhost:7117/deep/path?mode=1"
 
 
 def test_app_cli_twins_only_call_api(capsys):
@@ -176,11 +202,12 @@ def test_app_cli_twins_only_call_api(capsys):
     assert "restart ok" in capsys.readouterr().out
 
 
-def test_ui_keeps_sharing_read_only_and_guards_terminal_resize():
+def test_ui_uses_reviewed_sharing_route_and_guards_terminal_resize():
     app_js = (ROOT / "public" / "static" / "app-page.js").read_text()
     terminal_js = (ROOT / "public" / "static" / "terminal.js").read_text()
-    assert "🔒 Just me" in app_js
-    assert "/share" not in app_js and "/unshare" not in app_js
+    assert "/sharing" in app_js
+    assert "share_controls_enabled" in app_js
+    assert "quick-tunnel" not in app_js
     assert "offsetWidth<50" in terminal_js
     assert "term.cols>=20&&term.rows>=5" in terminal_js
     assert (ROOT / "public" / "static" / "SymbolsNerdFontMono-Regular.woff2").stat().st_size > 1000

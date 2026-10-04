@@ -6,7 +6,7 @@ identity, memory, and site. The platform provides shared infrastructure; you pro
 
 ## Rules
 
-- **DO NOT edit files outside your wolt directory** — no touching `/workspace/woltspace/`, other wolts, or system files
+- **DO NOT edit files outside your wolt directory** — no touching `$WOLTSPACE_DIR/`, other wolts, or system files
 - **DO NOT restart the woltspace server** (FastAPI, port 7777) — it runs the tunnel, viewport, and session routing
 - **DO NOT modify `woltspace-*` skills** in `.claude/skills/` — they are synced from the platform on every boot and will be overwritten
 - **DO NOT use built-in Claude Code memory** — write to `wolt/memory/` instead

@@ -113,10 +113,8 @@ def test_configured_tunnel_lodge_and_app_hosts_remain_valid(monkeypatch):
     )
 
     assert lodge.status_code == 200
-    # It passed the request guard and reached the app proxy. The app is simply
-    # not running in this isolated test.
-    assert app.status_code == 503
-    assert "not running" in app.text
+    assert app.status_code == 404
+    assert "Apps are served on the app domain" in app.text
 
 
 def test_quick_tunnel_exact_host_remains_valid(monkeypatch):
@@ -144,6 +142,64 @@ def test_invalid_tunnel_sibling_is_not_treated_as_an_app(monkeypatch):
     )
 
     assert response.status_code == 403
+
+
+def test_configured_apps_domain_is_refused_by_the_lodge(monkeypatch):
+    monkeypatch.setattr(server_app, "get_apps_domain", lambda: "owner.woltspace.app")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
+
+    app_route = _client().get(
+        "/sessions",
+        headers={"host": "notes.owner.woltspace.app"},
+    )
+    bare_domain = _client().get(
+        "/sessions",
+        headers={"host": "owner.woltspace.app"},
+    )
+    nested = _client().get(
+        "/sessions",
+        headers={"host": "two.labels.owner.woltspace.app"},
+    )
+
+    assert app_route.status_code == 403
+    assert app_route.json() == {"error": "untrusted request host"}
+    assert bare_domain.status_code == 403
+    assert nested.status_code == 403
+
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with _client().websocket_connect(
+            "/tui?session=main",
+            headers={
+                "host": "notes.owner.woltspace.app",
+                "origin": "https://notes.owner.woltspace.app",
+            },
+        ):
+            pass
+    assert exc.value.code == 1008
+
+
+def test_apps_domain_does_not_change_existing_tunnel_host_routing(monkeypatch):
+    monkeypatch.setattr(server_app, "get_apps_domain", lambda: "owner.woltspace.app")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
+
+    assert _client().get("/sessions", headers={"host": "owner.woltspace.test"}).status_code == 200
+    response = _client().get(
+        "/", headers={"host": "notes.woltspace.test"}, follow_redirects=False,
+    )
+    assert response.status_code in {302, 403}
+    if response.status_code == 302:
+        assert response.headers["location"] == "https://notes.owner.woltspace.app/"
+
+
+def test_lodge_host_is_never_extracted_as_an_app_when_domains_overlap(monkeypatch):
+    monkeypatch.setattr(server_app, "get_apps_domain", lambda: "woltspace.test")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
+
+    assert server_app._extract_app_subdomain("owner.woltspace.test") is None
+    assert _client().get("/sessions", headers={"host": "owner.woltspace.test"}).status_code == 200
 
 
 @pytest.mark.parametrize(
@@ -241,21 +297,26 @@ def test_lodge_and_localhost_terminal_websockets_still_attach(monkeypatch):
     assert attached == ["main", "main"]
 
 
-def test_app_websocket_router_rewrites_before_fastapi_route_selection(monkeypatch):
+def test_app_websocket_host_is_closed_before_fastapi_route_selection(monkeypatch):
     monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
     monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
     seen = []
+    sent = []
 
     async def downstream(scope, _receive, _send):
         seen.append(scope["path"])
 
-    middleware = server_app.AppWebSocketRoutingMiddleware(downstream)
+    async def send(message):
+        sent.append(message)
+
+    middleware = server_app.RejectAppHostWebSocketMiddleware(downstream)
     scope = {
         "type": "websocket",
         "path": "/tui",
         "headers": [(b"host", b"notes.woltspace.test")],
     }
     import asyncio
-    asyncio.run(middleware(scope, None, None))
+    asyncio.run(middleware(scope, None, send))
 
-    assert seen == ["/__woltspace_app_ws__/tui"]
+    assert seen == []
+    assert sent == [{"type": "websocket.close", "code": 1008}]
