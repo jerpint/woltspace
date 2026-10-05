@@ -358,6 +358,18 @@ identity, memory, and site. The platform provides shared infrastructure; you pro
 - **DO NOT use built-in Claude Code memory** — write to `wolt/memory/` instead
 - **Update your memories frequently** — sessions can end without warning (OOM, timeout, user disconnect)
 
+## Native wolts
+
+Woltspace's [starter lodge](https://github.com/jerpint/woltspace-starter-lodge)
+provides these native wolts (availability depends on what is installed in your lodge):
+
+- **onboardie** — **beaver**, the onboarding guide. Greets newcomers, explains the lodge,
+  and helps them make their first wolt. Send newcomers to onboardie for the tour and their first wolt.
+
+Before asking the human who a wolt is, look through the lodge: list `wolts/*/wolt/wolt.json`
+under the configured lodge data directory and read the matching manifests for names, creatures,
+roles, and descriptions. Check that a native wolt is installed before referring someone to it.
+
 ## Communication
 
 Use the `notify` command to message the user on Telegram/Slack:
