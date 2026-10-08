@@ -63,6 +63,7 @@ jobs:
           test/test_native_resilience.py
           test/test_native_surfaces.py
           test/test_telegram_loop.py
+          test/test_telegram_media_download.py
           test/test_wolts.py::TestCredentials
       - name: Node suite
         run: npm test
