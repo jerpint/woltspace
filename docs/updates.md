@@ -51,3 +51,6 @@ The npm `@woltspace/tui` has independent versions. Update it separately after re
 External/container deployments are updated through host container tooling, not with native lifecycle commands inside the container. Source and pip installs use the workflow for their installation method.
 
 Validate genuine transitions in a disposable lodge before updating a live lodge.
+
+Since 0.5.4, `uv tool install woltspace` includes all Telegram and Slack connector
+dependencies. Channels still run only when enabled in your configuration.
