@@ -222,3 +222,11 @@ native mode — there is no container to commit on a native install, and the bar
 copy carried every `node_modules` and virtualenv along with the data. It still
 works for container users and this change does not alter it; it now points at
 the native command when the wheel is installed.
+
+## Restoring across filesystems
+
+When moving backups across filesystems, an archive with names differing only by
+case (for example `Notes.md` and `notes.md`) restores both on a case-sensitive
+target. On a case-insensitive target, restore refuses those collisions with an
+error before extraction. This includes typical macOS volumes; the actual target
+filesystem determines the behavior.
