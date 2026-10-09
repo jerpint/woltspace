@@ -330,3 +330,71 @@ class TestAppsRestore:
         actions = apps.apps_restore()
         assert actions[0]["action"] == "restore-failed"
         assert "boom" in actions[0]["error"]
+
+
+# ---------------------------------------------------------------------------
+# apps_autostart (manifest-driven boot launch)
+# ---------------------------------------------------------------------------
+
+class TestAppsAutostart:
+    def test_autostart_defaults_false(self):
+        a = apps.WoltspaceApp(name="t", keeper="neowolt", port=4010)
+        assert a.autostart is False
+
+    def test_autostart_parsed_from_manifest(self, wolts_dir):
+        _make_app(wolts_dir, "boot-me", start="node s.js", port=4200, autostart=True)
+        app = apps.get_app("boot-me")
+        assert app.autostart is True
+
+    def test_autostart_empty(self, wolts_dir):
+        """No autostart apps — nothing to do."""
+        assert apps.apps_autostart() == []
+
+    def test_autostart_skips_when_flag_false(self, wolts_dir):
+        _make_app(wolts_dir, "off", start="node s.js", port=4201, autostart=False)
+        with patch("apps.subprocess.Popen") as mock_popen:
+            actions = apps.apps_autostart()
+        mock_popen.assert_not_called()
+        assert actions == []
+
+    @patch("apps.subprocess.Popen")
+    def test_autostart_starts_when_flag_true(self, mock_popen, wolts_dir):
+        mock_popen.return_value.pid = 33333
+        _make_app(wolts_dir, "on", start="node s.js", port=4202, autostart=True)
+        actions = apps.apps_autostart()
+        mock_popen.assert_called_once()
+        assert actions[0]["name"] == "on"
+        assert actions[0]["action"] == "autostarted"
+        assert actions[0]["pid"] == 33333
+
+    @patch("apps.subprocess.Popen")
+    def test_autostart_idempotent_when_already_running(self, mock_popen, wolts_dir):
+        """If the app is already running (state file + live PID), start_app returns
+        existing state and no new process is spawned."""
+        _make_app(wolts_dir, "already", start="node s.js", port=4203, autostart=True)
+        state_dir = apps._RUNNING_STATE_DIR
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "already.json").write_text(json.dumps({
+            "name": "already", "port": 4203, "pid": os.getpid(),
+        }))
+        actions = apps.apps_autostart()
+        mock_popen.assert_not_called()
+        assert actions[0]["name"] == "already"
+        assert actions[0]["action"] == "autostarted"
+        assert actions[0]["pid"] == os.getpid()
+
+    def test_autostart_skips_app_with_no_start_command(self, wolts_dir):
+        """An app flagged autostart but with no start command is silently skipped."""
+        _make_app(wolts_dir, "static", port=4204, autostart=True)  # no start
+        with patch("apps.subprocess.Popen") as mock_popen:
+            actions = apps.apps_autostart()
+        mock_popen.assert_not_called()
+        assert actions == []
+
+    @patch("apps.subprocess.Popen")
+    def test_autostart_records_failure(self, mock_popen, wolts_dir):
+        mock_popen.side_effect = RuntimeError("kaboom")
+        _make_app(wolts_dir, "doomed", start="node s.js", port=4205, autostart=True)
+        actions = apps.apps_autostart()
+        assert actions[0]["action"] == "autostart-failed"
+        assert "kaboom" in actions[0]["error"]

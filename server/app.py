@@ -90,6 +90,7 @@ from harnesses import (
 )
 from apps import (
     WoltspaceApp,
+    apps_autostart,
     apps_restore,
     discover_apps,
     get_app,
@@ -235,6 +236,7 @@ async def lifespan(app: FastAPI):
     refresh_model_catalogs()
     tool_registry.restore()
     apps_restore()
+    apps_autostart()
     _start_file_watcher()
     _start_tool_gc()
     tunnel_mgr.start_tunnel()
