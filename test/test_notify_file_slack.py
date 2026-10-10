@@ -130,6 +130,15 @@ async def test_file_without_an_upload_transport_is_refused_and_no_text_is_sent(a
     transport.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_more_than_one_file_is_refused_and_nothing_is_sent(attachment):
+    send, transport, _, upload = _sender()
+    with pytest.raises(RuntimeError, match="^slack sender carries one file per message$"):
+        await send(OutboundMessage("hi", LINK, (attachment, attachment)), DESTINATION, _context())
+    upload.assert_not_awaited()
+    transport.assert_not_awaited()
+
+
 class _Slack:
     """Slack's three upload endpoints behind a real httpx.AsyncClient on a MockTransport.
 

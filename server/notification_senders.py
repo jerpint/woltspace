@@ -197,6 +197,8 @@ def slack_sender(transport, set_status, upload_file=None) -> Send:
                 await transport(token, channel, thread_ts, text)
             elif upload_file is None:
                 raise RuntimeError("slack sender has no upload transport")
+            elif len(message.attachments) > 1:
+                raise RuntimeError("slack sender carries one file per message")
             else:
                 await upload_file(token, channel, thread_ts, message.attachments[0], text)
 
