@@ -267,7 +267,7 @@ def start_app(name: str) -> dict:
     # Check if already running
     existing = _read_state(name)
     if existing and _is_pid_alive(existing.get("pid", 0)):
-        return existing
+        return _revoke_disallowed_tunnel(name, existing)
 
     # Use port from manifest — check for conflicts with running apps
     port = app.port
@@ -341,6 +341,11 @@ def apps_restore() -> list[dict]:
             state = json.loads(f.read_text())
         except (json.JSONDecodeError, OSError):
             continue
+        if not isinstance(state, dict):
+            continue
+        # A quick tunnel recorded by an earlier lodge (or before the owner
+        # switched them off) is closed if today's policy would refuse it.
+        state = _revoke_disallowed_tunnel(name, state)
 
         # Manifest gone — app was removed while container was down
         if get_app(name) is None:
@@ -358,7 +363,10 @@ def apps_restore() -> list[dict]:
             print(f"[apps] {name} survived (pid {pid})")
             continue
 
-        # Dead PID — respawn
+        # Dead PID — respawn. A tunnel recorded for the dead process points at
+        # nothing and would be forgotten when the new state is written: close it.
+        if state.get("tunnel_pid"):
+            stop_cloudflared(state["tunnel_pid"])
         try:
             new_state = start_app(name)
             actions.append({"name": name, "action": "restored", "pid": new_state["pid"]})
@@ -452,6 +460,41 @@ def quick_tunnels_enabled() -> bool:
     return os.environ.get(QUICK_TUNNELS_ENV, "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _valid_port(value) -> int | None:
+    """An integer TCP port, or None. App state is plain JSON: never trust it."""
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 65535:
+        return value
+    return None
+
+
+def _tunnel_refusal(state: dict) -> str | None:
+    """Why the current policy refuses a quick tunnel for this state, if it does."""
+    port = _valid_port(state.get("port"))
+    if port is None:
+        return "the app has no valid port"
+    if port in (_lodge_port(), _enabled_app_gateway_port()):
+        return f"port {port} belongs to the lodge"
+    if not quick_tunnels_enabled():
+        return "quick tunnels are off"
+    return None
+
+
+def _revoke_disallowed_tunnel(name: str, state: dict) -> dict:
+    """Close a recorded quick tunnel the current policy no longer allows."""
+    tunnel_pid = state.get("tunnel_pid")
+    if not tunnel_pid:
+        return state
+    reason = _tunnel_refusal(state)
+    if reason is None:
+        return state
+    stopped = stop_cloudflared(tunnel_pid)
+    print(f"[apps] closed quick tunnel for {name} (pid {tunnel_pid}, {reason})"
+          if stopped else f"[apps] dropped stale quick tunnel record for {name} ({reason})")
+    state = {**state, "tunnel_pid": None, "tunnel_url": None}
+    _write_state(name, state)
+    return state
+
+
 def share_app(name: str) -> dict:
     """Open a quick tunnel to a running app, if the lodge owner allows them.
 
@@ -469,9 +512,11 @@ def share_app(name: str) -> dict:
             f"The lodge owner can allow them with {QUICK_TUNNELS_ENV}=1 in the lodge's .env."
         )
 
-    port = state["port"]
     # Never a tunnel to the lodge or the gateway, whatever an app's state says:
     # the lodge is only ever published through a named, Access-gated tunnel.
+    port = _valid_port(state.get("port"))
+    if port is None:
+        raise ShareRefused(f"Refusing a quick tunnel for {name}: it has no valid port")
     if port in (_lodge_port(), _enabled_app_gateway_port()):
         raise ShareRefused(f"Refusing a quick tunnel to port {port}: it belongs to the lodge")
 

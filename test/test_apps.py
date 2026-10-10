@@ -672,6 +672,70 @@ class TestUnitShareApp:
         with pytest.raises(apps_mod.ShareRefused, match="belongs to the lodge"):
             apps_mod.share_app("evil")
 
+    @pytest.mark.parametrize("bad_port", ["7777", "7117", "1@[::1]:7777", True, None, 0, 70000, 4500.0])
+    def test_state_ports_must_be_real_integers(self, tmp_path, monkeypatch, bad_port):
+        """App state is plain JSON; a string port must not slip past the guard (Astre P1)."""
+        import apps as apps_mod
+        monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setattr(apps_mod, "WOLTS_DIR", tmp_path / "wolts")
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
+        monkeypatch.delenv("WOLTSPACE_PORT", raising=False)
+        monkeypatch.delenv("PORT", raising=False)
+        monkeypatch.setattr(
+            apps_mod, "start_cloudflared",
+            lambda **_kw: pytest.fail("opened a quick tunnel for an invalid port"),
+        )
+        apps_mod._write_state("odd", {"name": "odd", "port": bad_port, "pid": 99})
+
+        with pytest.raises(apps_mod.ShareRefused):
+            apps_mod.share_app("odd")
+
+    def _legacy_tunnel(self, tmp_path, monkeypatch, port, *, app_alive):
+        import apps as apps_mod
+        monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path / "state")
+        monkeypatch.setattr(apps_mod, "WOLTS_DIR", tmp_path / "wolts")
+        monkeypatch.delenv("WOLTSPACE_PORT", raising=False)
+        monkeypatch.delenv("PORT", raising=False)
+        stopped = []
+        monkeypatch.setattr(apps_mod, "stop_cloudflared", lambda pid: stopped.append(pid) or True)
+        monkeypatch.setattr(apps_mod, "get_app", lambda name: object())
+        monkeypatch.setattr(apps_mod, "_is_pid_alive", lambda pid: app_alive and pid == 99)
+        apps_mod._write_state("legacy", {
+            "name": "legacy", "port": port, "pid": 99,
+            "tunnel_pid": 5555, "tunnel_url": "https://old.trycloudflare.com",
+        })
+        return apps_mod, stopped
+
+    def test_restore_closes_a_legacy_tunnel_to_the_lodge(self, tmp_path, monkeypatch):
+        """A tunnel an older lodge opened to 7777 must not survive the update (Astre P2)."""
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
+        apps_mod, stopped = self._legacy_tunnel(tmp_path, monkeypatch, 7777, app_alive=True)
+        apps_mod.apps_restore()
+        assert stopped == [5555]
+        state = apps_mod._read_state("legacy")
+        assert state["tunnel_pid"] is None and state["tunnel_url"] is None
+
+    def test_restore_closes_legacy_tunnels_when_quick_tunnels_are_off(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("WOLTSPACE_APP_QUICK_TUNNELS", raising=False)
+        apps_mod, stopped = self._legacy_tunnel(tmp_path, monkeypatch, 4500, app_alive=True)
+        apps_mod.apps_restore()
+        assert stopped == [5555]
+        assert apps_mod._read_state("legacy")["tunnel_pid"] is None
+
+    def test_restore_keeps_an_allowed_tunnel(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
+        apps_mod, stopped = self._legacy_tunnel(tmp_path, monkeypatch, 4500, app_alive=True)
+        apps_mod.apps_restore()
+        assert stopped == []
+        assert apps_mod._read_state("legacy")["tunnel_pid"] == 5555
+
+    def test_restore_closes_the_tunnel_of_a_dead_app_before_respawning(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
+        apps_mod, stopped = self._legacy_tunnel(tmp_path, monkeypatch, 4500, app_alive=False)
+        monkeypatch.setattr(apps_mod, "start_app", lambda name: {"name": name, "port": 4500, "pid": 100})
+        apps_mod.apps_restore()
+        assert stopped == [5555]
+
     def test_unshare_all_stops_all_tunnels(self, tmp_path, monkeypatch):
         """unshare_all_apps kills all tunnel processes."""
         import apps as apps_mod
