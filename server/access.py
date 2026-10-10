@@ -132,10 +132,20 @@ def save_access_settings(wolts_dir: Path, raw: object) -> AccessSettings | None:
     return settings
 
 
+# Clock skew tolerated on exp/iat: a machine a few seconds behind Cloudflare
+# must still accept a token it was just issued.
+TOKEN_LEEWAY_SECONDS = 30
+
+
 class AccessTokenVerifier:
-    def __init__(self, ttl_seconds: int = 3600, forced_refresh_interval: int = 60):
+    def __init__(self, ttl_seconds: int = 3600, forced_refresh_interval: int = 60,
+                 failure_backoff: float = 10.0):
         self.ttl_seconds = ttl_seconds
         self.forced_refresh_interval = forced_refresh_interval
+        # After a failed certificate fetch, refuse without fetching again for
+        # this long, so a burst of bad tokens can't queue a fetch each.
+        self.failure_backoff = failure_backoff
+        self._failed_at: float | None = None
         self._team_domain = ""
         self._keys: dict[str, object] = {}
         self._expires_at = 0.0
@@ -149,7 +159,9 @@ class AccessTokenVerifier:
             payload = response.json()
         keys = {}
         for item in payload.get("keys", []):
-            if isinstance(item, dict) and item.get("kid"):
+            # Only RSA keys verify RS256; one entry of another type must not
+            # take down every verification.
+            if isinstance(item, dict) and item.get("kid") and item.get("kty") == "RSA":
                 keys[item["kid"]] = RSAAlgorithm.from_jwk(json.dumps(item))
         if not keys:
             raise jwt.InvalidTokenError("Access certificate response contained no keys")
@@ -170,9 +182,20 @@ class AccessTokenVerifier:
             if (not force and self._team_domain == team_domain and self._keys
                     and time.monotonic() < self._expires_at):
                 return self._keys
+            if (self._failed_at is not None
+                    and now - self._failed_at < self.failure_backoff):
+                if self._team_domain == team_domain and self._keys:
+                    return self._keys
+                raise jwt.InvalidTokenError("Access certificates unavailable; retrying shortly")
             if force:
                 self._last_forced_at = now
-            return await self._refresh(team_domain)
+            try:
+                keys = await self._refresh(team_domain)
+            except Exception:
+                self._failed_at = time.monotonic()
+                raise
+            self._failed_at = None
+            return keys
 
     async def verify(self, token: str, settings: AccessSettings, audience: str) -> dict:
         try:
@@ -192,6 +215,7 @@ class AccessTokenVerifier:
             algorithms=["RS256"],
             audience=audience,
             issuer=f"https://{settings.team_domain}",
+            leeway=TOKEN_LEEWAY_SECONDS,
             options={"require": ["exp", "iat", "aud", "iss"]},
         )
         try:

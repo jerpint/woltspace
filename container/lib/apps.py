@@ -285,7 +285,9 @@ def start_app(name: str) -> dict:
             subprocess.run(app.install, shell=True, cwd=str(work_dir), check=True)
 
     # Start the process with PORT env var
-    env = {**os.environ, "PORT": str(port)}
+    # HOST/HOSTNAME ask the common dev servers (Vite, Next.js, many others) to
+    # bind loopback only: the gateway is the app's only public face.
+    env = {**os.environ, "PORT": str(port), "HOST": "127.0.0.1", "HOSTNAME": "127.0.0.1"}
     _RUNNING_STATE_DIR.mkdir(parents=True, exist_ok=True)
     log_handle = app_log_file(name).open("ab", buffering=0)
     try:

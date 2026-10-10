@@ -738,6 +738,7 @@ def test_proxy_bounds_the_wait_for_response_headers(monkeypatch):
 class _BlockingUpstream:
     close_code = None
     close_reason = ""
+    subprotocol = None
 
     async def __aenter__(self):
         return self
@@ -805,3 +806,188 @@ def test_a_failing_bridge_tells_the_visitor_it_failed(monkeypatch):
 
     asyncio.run(scenario())
     assert visitor.closed[0] == 1011
+
+
+# --- Hardening (prwolt's review of the Mill) --------------------------------
+
+
+async def _post(path, *, host, extra_headers=None, client=("127.0.0.1", 123)):
+    headers = {"host": host, **(extra_headers or {})}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=gateway.app, client=client),
+        base_url="https://gateway.test",
+    ) as http:
+        return await http.post(path, headers=headers, content=b"x=1")
+
+
+@pytest.mark.parametrize("extra, expected", [
+    ({"origin": "https://evil.example", "sec-fetch-site": "cross-site"}, 403),
+    ({"origin": "https://evil.example"}, 403),
+    ({"sec-fetch-site": "cross-site"}, 403),
+    ({"origin": "http://other.localhost:7117"}, 403),   # a sibling app's page
+    ({"origin": "http://demo.localhost:7117", "sec-fetch-site": "same-origin"}, 200),
+    ({}, 200),                                           # non-browser client
+])
+def test_gateway_refuses_cross_site_writes(tmp_path, monkeypatch, extra, expected):
+    _configure(tmp_path, monkeypatch)
+    monkeypatch.setattr(gateway, "proxy_app_http", lambda request, name: _ok())
+    response = asyncio.run(_post("/save", host="demo.localhost:7117", extra_headers=extra))
+    assert response.status_code == expected
+
+
+async def _ok():
+    return PlainTextResponse("APP_OK")
+
+
+def test_cross_site_reads_still_work(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+    monkeypatch.setattr(gateway, "proxy_app_http", lambda request, name: _ok())
+    response = asyncio.run(_get(
+        "/", host="demo.localhost:7117",
+        extra_headers={"origin": "https://evil.example", "sec-fetch-site": "cross-site"},
+    ))
+    assert response.status_code == 200
+
+
+def _capturing_client(monkeypatch, upstream_response, seen):
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def build_request(self, method, url, **kwargs):
+            seen["url"] = url
+            seen["headers"] = kwargs["headers"]
+            seen["content"] = kwargs["content"]
+            return httpx.Request(method, url, headers=kwargs["headers"])
+
+        async def send(self, request, **_kwargs):
+            return upstream_response(request)
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(app_proxy.httpx, "AsyncClient", Client)
+
+
+def _scope(path="/", raw_path=None, query=b"", method="GET"):
+    return {
+        "type": "http", "method": method, "scheme": "https", "path": path,
+        "raw_path": raw_path if raw_path is not None else path.encode(),
+        "query_string": query, "headers": [(b"host", b"notes.example")],
+        "client": ("127.0.0.1", 123), "server": ("notes.example", 443),
+    }
+
+
+async def _receive():
+    return {"type": "http.request", "body": b"", "more_body": False}
+
+
+async def _drain(response):
+    body = b""
+    async for chunk in response.body_iterator:
+        body += chunk if isinstance(chunk, bytes) else chunk.encode()
+    return body
+
+
+def test_compressed_responses_pass_through_intact(monkeypatch):
+    import gzip
+    raw = b"hello " * 1000
+    packed = gzip.compress(raw)
+    monkeypatch.setattr(app_proxy, "running_app", lambda _name: {"port": 4321})
+    _capturing_client(monkeypatch, lambda request: httpx.Response(
+        200, request=request, stream=httpx.ByteStream(packed),
+        headers={"content-encoding": "gzip", "content-length": str(len(packed))},
+    ), {})
+
+    async def scenario():
+        response = await app_proxy.proxy_app_http(Request(_scope(), _receive), "notes")
+        return response, await _drain(response)
+
+    response, body = asyncio.run(scenario())
+    assert response.headers["content-encoding"] == "gzip"
+    assert response.headers["content-length"] == str(len(packed))
+    assert body == packed and gzip.decompress(body) == raw
+
+
+def test_the_request_target_reaches_the_app_undecoded(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(app_proxy, "running_app", lambda _name: {"port": 4321})
+    _capturing_client(monkeypatch, lambda request: httpx.Response(200, request=request), seen)
+    asyncio.run(app_proxy.proxy_app_http(Request(
+        _scope(path="/a?x", raw_path=b"/a%3Fx/dir%2Fsub", query=b"q=%20"), _receive,
+    ), "notes"))
+    assert seen["url"] == "http://127.0.0.1:4321/a%3Fx/dir%2Fsub?q=%20"
+
+
+def test_uploads_are_streamed_not_buffered(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(app_proxy, "running_app", lambda _name: {"port": 4321})
+    _capturing_client(monkeypatch, lambda request: httpx.Response(200, request=request), seen)
+    asyncio.run(app_proxy.proxy_app_http(Request(_scope(method="POST"), _receive), "notes"))
+    assert not isinstance(seen["content"], (bytes, bytearray))
+    assert hasattr(seen["content"], "__aiter__")
+
+
+@pytest.mark.parametrize("location, expected", [
+    ("http://localhost:4321/next?a=1", "/next?a=1"),
+    ("http://127.0.0.1:4321/", "/"),
+    ("http://localhost:9999/elsewhere", "http://localhost:9999/elsewhere"),
+    ("https://example.com/out", "https://example.com/out"),
+    ("/already/relative", "/already/relative"),
+])
+def test_redirects_to_the_apps_own_port_stay_in_the_gateway(monkeypatch, location, expected):
+    monkeypatch.setattr(app_proxy, "running_app", lambda _name: {"port": 4321})
+    _capturing_client(monkeypatch, lambda request: httpx.Response(
+        302, request=request, headers={"location": location},
+    ), {})
+    response = asyncio.run(app_proxy.proxy_app_http(Request(_scope(), _receive), "notes"))
+    assert response.headers["location"] == expected
+
+
+def test_an_underscore_spelling_of_the_identity_header_is_dropped():
+    headers = app_proxy.upstream_headers({"X_Woltspace_User": "evil@x.example"}, "friend@example.com")
+    assert headers == {"x-woltspace-user": "friend@example.com"}
+
+
+def test_websocket_bridge_sends_one_host_and_the_apps_chosen_subprotocol(monkeypatch):
+    seen = {}
+
+    async def handler(connection):
+        seen["hosts"] = connection.request.headers.get_all("Host")
+        seen["offered"] = connection.request.headers.get("Sec-WebSocket-Protocol")
+        await connection.send("hi")
+        await connection.close()
+
+    import websockets
+    box = {}
+    import threading
+    ready = threading.Event()
+
+    def run():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def main():
+            async with websockets.serve(
+                handler, "127.0.0.1", 0,
+                select_subprotocol=lambda _conn, offered: "b" if "b" in offered else None,
+            ) as server:
+                box["port"] = server.sockets[0].getsockname()[1]
+                box["stop"] = loop.create_future()
+                ready.set()
+                await box["stop"]
+
+        loop.run_until_complete(main())
+
+    threading.Thread(target=run, daemon=True).start()
+    assert ready.wait(5)
+    monkeypatch.setattr(app_proxy, "running_app", lambda _name: {"port": box["port"]})
+    try:
+        with TestClient(_bridge_app("notes")).websocket_connect(
+            "/live", subprotocols=["a,b"],  # legal, unspaced list
+        ) as ws:
+            assert ws.accepted_subprotocol == "b"
+            assert ws.receive_text() == "hi"
+    finally:
+        box["stop"].get_loop().call_soon_threadsafe(box["stop"].set_result, None)
+    assert seen["hosts"] == [f"localhost:{box['port']}"]

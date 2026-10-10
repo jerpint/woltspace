@@ -84,7 +84,11 @@ def _log_request(scope, headers, status: int, reason: str) -> None:
     )
 
 
-def _websocket_origin_allowed(headers: dict[str, str]) -> bool:
+_READ_ONLY_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def _origin_matches_host(headers: dict[str, str]) -> bool:
+    """No Origin (a non-browser client), or one naming exactly this host."""
     origin = headers.get("origin")
     if not origin:
         return True
@@ -119,9 +123,18 @@ class AppGateway:
         if app_name is None:
             _log_request(scope, headers, 404, "unknown-host")
             return await _reject(scope, receive, send, 404, "Not found")
-        if scope["type"] == "websocket" and not _websocket_origin_allowed(headers):
+        if scope["type"] == "websocket" and not _origin_matches_host(headers):
             _log_request(scope, headers, 403, "bad-origin")
             return await _reject(scope, receive, send, 403, "Invalid websocket origin")
+        # The lodge's rule, local and remote alike: a browser write must come
+        # from the app's own page. Without it any page the owner visits can
+        # drive an app as the owner. Origin-less (non-browser) writes pass.
+        if (scope["type"] == "http"
+                and scope.get("method", "GET").upper() not in _READ_ONLY_METHODS
+                and (headers.get("sec-fetch-site", "").lower() == "cross-site"
+                     or not _origin_matches_host(headers))):
+            _log_request(scope, headers, 403, "cross-site")
+            return await _reject(scope, receive, send, 403, "Cross-site request rejected")
         try:
             access = load_access_settings(Path(WOLTS_DIR))
         except RuntimeError:
