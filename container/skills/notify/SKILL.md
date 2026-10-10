@@ -46,7 +46,8 @@ WOLTSPACE_NOTIFY_7F3A91C2
 
 `--file PATH` sends one file to the same chat or thread the message goes to.
 `PATH` is absolute or relative to the current directory. On Telegram the file
-arrives as a document with your message as its caption; on Slack it lands in
+arrives as a document with your message as its caption; a message too long for
+a caption arrives first, and the file follows it. On Slack the file lands in
 the thread with your message as its comment.
 
 - One file per call, up to 50 MB. Send several files with several calls.
