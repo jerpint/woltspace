@@ -242,6 +242,32 @@ async def test_missing_scope_names_the_scope_and_the_reinstall(failing, calls_ma
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failing", ["get_url", "complete"])
 @pytest.mark.parametrize("answer, message", [
+    ({"ok": False, "error": "missing_scope"}, SLACK_MISSING_FILES_SCOPE),
+    ({"ok": False, "error": "missing_scope", "needed": "chat:write"},
+     "Slack app lacks the chat:write scope: add it to the app manifest and reinstall the app."),
+], ids=["no-scope-named", "another-scope-named"])
+async def test_missing_scope_blames_the_scope_slack_names(failing, answer, message, attachment, monkeypatch):
+    _Slack(monkeypatch, **{failing: httpx.Response(200, json=answer)})
+    with pytest.raises(RuntimeError) as error:
+        await slack_upload_file("tok", "C123", "1.2", attachment, "hi")
+    assert str(error.value) == message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ticket", [
+    {"ok": True}, {"ok": True, "upload_url": UPLOAD_URL}, {"ok": True, "file_id": "F123"},
+], ids=["neither", "no-file-id", "no-upload-url"])
+async def test_an_upload_ticket_without_its_url_or_file_id_stops_before_the_bytes(ticket, attachment, monkeypatch):
+    slack = _Slack(monkeypatch, get_url=httpx.Response(200, json=ticket))
+    with pytest.raises(RuntimeError) as error:
+        await slack_upload_file("tok", "C123", "1.2", attachment, "hi")
+    assert str(error.value) == "slack gave no upload URL"
+    assert slack.urls == [GET_URL]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failing", ["get_url", "complete"])
+@pytest.mark.parametrize("answer, message", [
     ({"ok": False, "error": "file_uploads_disabled"}, "file_uploads_disabled"),
     ({"ok": False}, "slack error"),
 ])

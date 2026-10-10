@@ -107,6 +107,13 @@ def _slack_upload_data(response: httpx.Response) -> dict:
         raise RuntimeError(f"slack answered HTTP {response.status_code}")
     if not data.get("ok"):
         if data.get("error") == "missing_scope":
+            needed = data.get("needed")
+            if isinstance(needed, str) and needed and "files:write" not in needed:
+                # Slack says which scope it wanted: do not send the owner after another.
+                raise RuntimeError(
+                    f"Slack app lacks the {needed} scope: add it to the app manifest "
+                    "and reinstall the app."
+                )
             raise RuntimeError(SLACK_MISSING_FILES_SCOPE)
         raise RuntimeError(data.get("error", "slack error"))
     return data
@@ -130,10 +137,13 @@ async def slack_upload_file(
             headers=headers,
             timeout=UPLOAD_TIMEOUT,
         ))
+        upload_url, file_id = ticket.get("upload_url"), ticket.get("file_id")
+        if not upload_url or not file_id:
+            raise RuntimeError("slack gave no upload URL")
         with open(attachment.path, "rb") as handle:
             # The explicit length keeps httpx from sending the stream chunked.
             uploaded = await client.post(
-                ticket["upload_url"],
+                upload_url,
                 content=_file_chunks(handle),
                 headers={"Content-Length": str(attachment.size)},
                 timeout=UPLOAD_TIMEOUT,
@@ -141,7 +151,7 @@ async def slack_upload_file(
         if uploaded.status_code != 200:
             raise RuntimeError(f"slack upload failed: HTTP {uploaded.status_code}")
         payload = {
-            "files": [{"id": ticket["file_id"], "title": attachment.filename}],
+            "files": [{"id": file_id, "title": attachment.filename}],
             "channel_id": channel,
         }
         if thread_ts:
