@@ -4,11 +4,11 @@ Woltspace has one product UI delivered through several client surfaces:
 
 - a regular desktop browser;
 - an installed PWA, including mobile;
-- the macOS desktop shell; and
+- a native shell, if one wraps the lodge; and
 - a browser or shell connected to a remote lodge through Cloudflare.
 
 The server-rendered Jinja templates and shared static CSS/JavaScript are the
-canonical UI. The macOS app is a native host around that UI, not a separate
+canonical UI. A native shell is a host around that UI, not a separate
 frontend. Design-system and product changes should normally be made once in
 the shared web layer so every client receives them together.
 
@@ -52,7 +52,7 @@ system's default browser. It must not reinterpret internal links as external.
 
 ## Native-shell boundary
 
-The desktop shell may own capabilities that browsers cannot provide cleanly:
+A native shell may own capabilities that browsers cannot provide cleanly:
 
 - Docker availability, startup, and recovery UI;
 - application lifecycle, tray, and menu integration;
