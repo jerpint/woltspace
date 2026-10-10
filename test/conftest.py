@@ -27,13 +27,45 @@ os.environ.pop("TMUX_PANE", None)
 _TEST_TMUX_SOCKET = _TEST_TMUX_DIR / f"tmux-{os.getuid()}" / "default"
 
 
+# ---------------------------------------------------------------------------
+# A private data root unless a live-server run is explicitly requested
+# ---------------------------------------------------------------------------
+# Inside a wolt session WOLTS_DIR is the live colony. Fixtures that create
+# wolts (the shadow wolt) must not write there unless someone asked for a
+# live-server run, which brings its own scratch lodge and colony.
+def _is_live_colony(value: str | None) -> bool:
+    if not value:
+        return True
+    try:
+        path = Path(value).expanduser().resolve()
+    except OSError:
+        return False
+    live = {Path.home() / ".woltspace" / "wolts", Path("/workspace/wolts")}
+    return any(path == candidate.expanduser().resolve() for candidate in live)
+
+
+if os.environ.get("WOLTSPACE_TEST_LIVE_SERVER") != "1":
+    _chosen = next(
+        (os.environ[key] for key in ("WOLTSPACE_WOLTS_DIR", "WOLTS_DIR")
+         if not _is_live_colony(os.environ.get(key))),
+        None,
+    ) or tempfile.mkdtemp(prefix="wst-wolts-")
+    os.environ["WOLTSPACE_WOLTS_DIR"] = _chosen
+    os.environ["WOLTS_DIR"] = _chosen
+
+
 def pytest_sessionstart(session):
     """Prove tmux resolves to the private server before any test can touch it."""
     if shutil.which("tmux") is None:
         return
     probe = f"wst-probe-{os.getpid()}"
-    subprocess.run(["tmux", "new-session", "-d", "-s", probe], capture_output=True, check=False)
-    if not _TEST_TMUX_SOCKET.is_socket():
+    created = subprocess.run(["tmux", "new-session", "-d", "-s", probe],
+                             capture_output=True, check=False).returncode == 0
+    on_private = created and subprocess.run(
+        ["tmux", "-S", str(_TEST_TMUX_SOCKET), "has-session", "-t", f"={probe}"],
+        capture_output=True, check=False,
+    ).returncode == 0
+    if not on_private:
         # Isolation failed: remove only our own probe, by name, then stop.
         subprocess.run(["tmux", "kill-session", "-t", f"={probe}"], capture_output=True, check=False)
         pytest.exit(f"tmux isolation failed: no private socket at {_TEST_TMUX_SOCKET}", returncode=3)
@@ -49,7 +81,7 @@ def pytest_sessionfinish(session, exitstatus):
         ["tmux", "-S", str(_TEST_TMUX_SOCKET), "list-sessions", "-F", "#{session_name}"],
         capture_output=True, text=True, check=False,
     )
-    for name in listed.stdout.split():
+    for name in listed.stdout.splitlines():
         subprocess.run(["tmux", "-S", str(_TEST_TMUX_SOCKET), "kill-session", "-t", f"={name}"],
                        capture_output=True, check=False)
 
@@ -61,11 +93,23 @@ from env_compat import get_env  # noqa: E402
 # Environment detection
 # ---------------------------------------------------------------------------
 
+def _server_endpoint() -> str:
+    """The one server live tests may talk to: named explicitly, never assumed.
+
+    Probe, requests and cleanup all use it, so they can't disagree about
+    which lodge they are talking to.
+    """
+    return os.environ.get("WOLTSPACE_TEST_SERVER_URL", "").strip().rstrip("/")
+
+
 def _server_up() -> bool:
-    """Check if the woltspace server is running on localhost:7777."""
+    """Is the explicitly named test server answering?"""
     import urllib.request
+    endpoint = _server_endpoint()
+    if not endpoint:
+        return False
     try:
-        urllib.request.urlopen("http://localhost:7777/", timeout=2)
+        urllib.request.urlopen(f"{endpoint}/", timeout=2)
         return True
     except Exception:
         return False
@@ -152,7 +196,8 @@ def _live_server_enabled() -> bool:
 
 requires_server = pytest.mark.skipif(
     not (_live_server_enabled() and _server_up()),
-    reason="talks to a running lodge; set WOLTSPACE_TEST_LIVE_SERVER=1 (never against your live one)",
+    reason="talks to a running lodge; set WOLTSPACE_TEST_LIVE_SERVER=1 and "
+           "WOLTSPACE_TEST_SERVER_URL to a scratch lodge (never your live one)",
 )
 # getUpdates is not the read-only call it looks like: it is exclusive, so a
 # second caller either gets 409 or wins the race and takes updates the real bot
@@ -219,13 +264,13 @@ def codex_trust_home(tmp_path_factory, monkeypatch):
 
 @pytest.fixture
 def server_post():
-    """Helper to POST JSON to localhost:7777."""
+    """Helper to POST JSON to the explicitly named test server."""
     import urllib.request
 
     def _post(path: str, body: dict) -> dict:
         data = json.dumps(body).encode()
         req = urllib.request.Request(
-            f"http://localhost:7777{path}",
+            f"{_server_endpoint()}{path}",
             data=data,
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -241,11 +286,11 @@ def server_post():
 
 @pytest.fixture
 def server_get():
-    """Helper to GET from localhost:7777."""
+    """Helper to GET from the explicitly named test server."""
     import urllib.request
 
     def _get(path: str) -> dict | str:
-        req = urllib.request.Request(f"http://localhost:7777{path}", method="GET")
+        req = urllib.request.Request(f"{_server_endpoint()}{path}", method="GET")
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 text = resp.read().decode()
@@ -329,13 +374,6 @@ def shadow_wolt():
             shutil.rmtree(home, ignore_errors=True)
 
 
-def _server_endpoint() -> str:
-    """Where this suite's server lives — not always :7777."""
-    host = os.environ.get("WOLTSPACE_HOST", "localhost")
-    port = os.environ.get("WOLTSPACE_PORT") or os.environ.get("PORT") or "7777"
-    return f"http://{host}:{port}"
-
-
 def _stop_shadow_sessions(wolts_dir: Path):
     """Stop every session the shadow wolt spawned — through the server if it is up."""
     import urllib.request
@@ -345,7 +383,7 @@ def _stop_shadow_sessions(wolts_dir: Path):
     if sessions_dir.is_dir():
         names = [path.stem for path in sessions_dir.glob("*.json")]
     for name in names:
-        if not _live_server_enabled():
+        if not (_live_server_enabled() and _server_endpoint()):
             # Never ask a running lodge (likely the live one) unless opted in;
             # tmux here is the run's private server.
             subprocess.run(["tmux", "kill-session", "-t", f"={name}"],

@@ -144,7 +144,12 @@ case "$TIER" in
     echo "  wolt: test-shadow — created and removed per test; no real wolt is touched"
     export WOLTSPACE_TEST_REAL_SPAWN=1
     export WOLTSPACE_TEST_LIVE_SEND=1  # also unlocks the live getUpdates probes
-    export WOLTSPACE_TEST_LIVE_SERVER=1  # point WOLTSPACE_PORT at a scratch lodge, never your live one
+    if [ -z "${WOLTSPACE_TEST_SERVER_URL:-}" ] || [ -z "${WOLTSPACE_WOLTS_DIR:-}" ]; then
+      echo "  ✗ set WOLTSPACE_TEST_SERVER_URL and WOLTSPACE_WOLTS_DIR to a scratch lodge and its colony, never your live one"
+      exit 1
+    fi
+    echo "  lodge: $WOLTSPACE_TEST_SERVER_URL (colony $WOLTSPACE_WOLTS_DIR)"
+    export WOLTSPACE_TEST_LIVE_SERVER=1
     _run_tests "opt-in" uv run --extra test --project "$WOLTSPACE_DIR" pytest \
       test/test_server_health.py test/test_closed_loop.py test/test_telegram_loop.py \
       -v "${@:2}"
