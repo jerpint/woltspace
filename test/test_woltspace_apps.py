@@ -235,6 +235,32 @@ class TestStartStop:
         assert call_kwargs["shell"] is True
 
     @patch("apps.subprocess.Popen")
+    def test_start_refuses_the_lodge_port(self, mock_popen, wolts_dir, monkeypatch):
+        monkeypatch.delenv("WOLTSPACE_PORT", raising=False)
+        monkeypatch.delenv("PORT", raising=False)
+        _make_app(wolts_dir, "squatter", start="echo hi", port=7777)
+        with pytest.raises(RuntimeError, match="lodge's own port"):
+            apps.start_app("squatter")
+        mock_popen.assert_not_called()
+
+    @patch("apps.subprocess.Popen")
+    def test_a_public_manifest_never_opens_a_tunnel(self, mock_popen, wolts_dir, monkeypatch):
+        """A manifest is wolt-editable, so "public": true must publish nothing."""
+        mock_popen.return_value.pid = 22222
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
+        monkeypatch.setattr(
+            apps, "start_cloudflared",
+            lambda **_kw: pytest.fail("a manifest opened a tunnel"),
+        )
+        _make_app(wolts_dir, "loud", start="echo hi", port=4333)
+        manifest = wolts_dir / "apps" / "loud" / "woltspace.json"
+        data = json.loads(manifest.read_text())
+        data["public"] = True
+        manifest.write_text(json.dumps(data))
+        state = apps.start_app("loud")
+        assert "tunnel_url" not in state
+
+    @patch("apps.subprocess.Popen")
     def test_start_uses_manifest_port(self, mock_popen, wolts_dir):
         """Port comes from woltspace.json, not dynamic allocation."""
         mock_popen.return_value.pid = 11111

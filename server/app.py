@@ -106,6 +106,7 @@ from apps import (
     app_dir,
     app_log_file,
     running_apps,
+    ShareRefused,
     share_app,
     start_app,
     stop_app,
@@ -2349,7 +2350,7 @@ async def app_update(name: str, request: Request):
 
 @app.post("/apps/{name}/share")
 async def app_share(name: str):
-    """Start a cloudflared tunnel to the app port and return the public URL."""
+    """Open an opt-in quick tunnel to the app and return its public URL."""
     if invalid := _invalid_app_name(name):
         return invalid
     import asyncio
@@ -2360,6 +2361,8 @@ async def app_share(name: str):
         return result
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
+    except ShareRefused as e:
+        return JSONResponse({"error": str(e)}, status_code=403)
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=503)
 

@@ -67,7 +67,9 @@ class WoltspaceApp(BaseModel):
     source: str | None = Field(default=None, description="Origin wolt if cloned/forked, null if created locally")
     keeper: str = Field(description="Owning wolt name")
     emoji: str = Field(default_factory=random_emoji, description="App emoji for display")
-    public: bool = Field(default=False, description="Whether this app should be publicly shared via tunnel")
+    # Ignored, kept so existing manifests still load. A manifest is editable by
+    # any wolt, so it can never be what publishes an app.
+    public: bool = Field(default=False, description="Ignored; share through the gateway or an opt-in quick tunnel")
 
     def can_start(self) -> bool:
         """App can only start if it has a start command."""
@@ -147,13 +149,17 @@ def get_app(name: str) -> WoltspaceApp | None:
     return load_app(app_dir(name))
 
 
+def _lodge_port() -> int:
+    """The port the lodge itself listens on."""
+    try:
+        return int(os.environ.get("WOLTSPACE_PORT") or os.environ.get("PORT") or "7777")
+    except ValueError:
+        return 7777
+
+
 def _enabled_app_gateway_port() -> int | None:
     """Return the always-reserved gateway port."""
-    try:
-        lodge_port = int(os.environ.get("WOLTSPACE_PORT") or os.environ.get("PORT") or "7777")
-    except ValueError:
-        lodge_port = 7777
-    return resolve_app_gateway_port(WOLTS_DIR, lodge_port)
+    return resolve_app_gateway_port(WOLTS_DIR, _lodge_port())
 
 
 # --- Running state ---
@@ -265,6 +271,8 @@ def start_app(name: str) -> dict:
 
     # Use port from manifest — check for conflicts with running apps
     port = app.port
+    if port == _lodge_port():
+        raise RuntimeError(f"port {port} is the lodge's own port; change the app's port")
     gateway_port = _enabled_app_gateway_port()
     if port == gateway_port:
         raise RuntimeError(
@@ -309,16 +317,6 @@ def start_app(name: str) -> dict:
         "start_command": app.start,
     }
     _write_state(name, state)
-
-    # Auto-share if public=true and sharing is enabled
-    if app.public and SHARING_ENABLED:
-        try:
-            share_result = share_app(name)
-            state["tunnel_url"] = share_result.get("tunnel_url")
-            state["tunnel_pid"] = share_result.get("pid")
-        except Exception:
-            pass  # Non-fatal — app starts even if tunnel fails
-
     return state
 
 
@@ -431,65 +429,51 @@ def set_app_keeper(name: str, keeper: str) -> WoltspaceApp:
     return updated
 
 
-# --- Sharing (cloudflared tunnels) ---
+# --- Quick tunnels (opt-in, apps only) ---
+#
+# A quick tunnel gives anyone with its random link the app, with no login and
+# no share list. It is never for the lodge, and it is off unless the human who
+# owns the lodge switches it on in the lodge's .env. A manifest (which any
+# wolt can edit) can't turn it on. Normal sharing goes through the gateway's
+# share list.
 
-# Env var kill switch — if set to anything falsy, sharing is disabled entirely.
-# Default: sharing is enabled (no env var needed).
-SHARING_ENABLED = os.environ.get("WOLTSPACE_SHARING_ENABLED", "1").lower() not in ("0", "false", "no", "off")
-
-
-def _check_sharing_enabled():
-    """Raise if sharing is disabled by env var."""
-    if not SHARING_ENABLED:
-        raise RuntimeError("Sharing is disabled (WOLTSPACE_SHARING_ENABLED=0)")
+QUICK_TUNNELS_ENV = "WOLTSPACE_APP_QUICK_TUNNELS"
 
 
-def _get_subdomain_url(app_name: str) -> str | None:
-    """Return the wildcard subdomain URL for an app, or None if not available."""
-    tunnel_url = os.environ.get("CLOUDFLARE_TUNNEL_URL", "")
-    if not tunnel_url:
-        return None
-    from urllib.parse import urlparse
-    parsed = urlparse(tunnel_url)
-    hostname = parsed.hostname or ""
-    parts = hostname.split(".", 1)
-    if len(parts) != 2:
-        return None
-    return f"{parsed.scheme}://{app_name}.{parts[1]}"
+class ShareRefused(RuntimeError):
+    """The lodge will not open a quick tunnel for this request."""
+
+
+class QuickTunnelsOff(ShareRefused):
+    """App quick tunnels are not switched on for this lodge."""
+
+
+def quick_tunnels_enabled() -> bool:
+    return os.environ.get(QUICK_TUNNELS_ENV, "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def share_app(name: str) -> dict:
-    """Share an app publicly.
-
-    With a named tunnel + custom domain: returns the subdomain URL
-    (e.g. corework.woltspace.com) — no per-app tunnel needed.
-
-    Without a custom domain: falls back to a per-app quick tunnel
-    with --http-host-header localhost for Vite 6+ compatibility.
+    """Open a quick tunnel to a running app, if the lodge owner allows them.
 
     Stores tunnel_pid and tunnel_url in .space/apps/{name}.json.
-    Also sets public=true in woltspace.json.
     Returns dict with tunnel_url and pid.
-    Raises ValueError if app is not running.
-    Raises RuntimeError if sharing is disabled or tunnel fails.
+    Raises ValueError if app is not running, QuickTunnelsOff if quick tunnels
+    are not switched on, RuntimeError if the tunnel fails.
     """
-    _check_sharing_enabled()
-
     state = _read_state(name)
     if not state:
         raise ValueError(f"App {name} is not running")
+    if not quick_tunnels_enabled():
+        raise QuickTunnelsOff(
+            f"Quick tunnels are off. They give anyone with the link the app, with no login. "
+            f"The lodge owner can allow them with {QUICK_TUNNELS_ENV}=1 in the lodge's .env."
+        )
 
-    # Subdomain routing: stable URL, no per-app tunnel needed
-    subdomain_url = _get_subdomain_url(name)
-    if subdomain_url:
-        state["tunnel_url"] = subdomain_url
-        state["tunnel_pid"] = None
-        _write_state(name, state)
-        _set_public(name, True)
-        return {"tunnel_url": subdomain_url, "pid": None}
-
-    # Fallback: per-app quick tunnel
     port = state["port"]
+    # Never a tunnel to the lodge or the gateway, whatever an app's state says:
+    # the lodge is only ever published through a named, Access-gated tunnel.
+    if port in (_lodge_port(), _enabled_app_gateway_port()):
+        raise ShareRefused(f"Refusing a quick tunnel to port {port}: it belongs to the lodge")
 
     # Return existing tunnel if still alive
     tunnel_pid = state.get("tunnel_pid")
@@ -504,17 +488,12 @@ def share_app(name: str) -> dict:
     state["tunnel_pid"] = result["pid"]
     state["tunnel_url"] = result["url"]
     _write_state(name, state)
-
-    # Persist public=true in woltspace.json
-    _set_public(name, True)
-
     return {"tunnel_url": result["url"], "pid": result["pid"]}
 
 
 def unshare_app(name: str) -> bool:
     """Stop the cloudflared tunnel for an app.
 
-    Sets public=false in woltspace.json.
     Returns True if a tunnel was running and stopped.
     """
     state = _read_state(name)
@@ -527,10 +506,6 @@ def unshare_app(name: str) -> bool:
     state["tunnel_pid"] = None
     state["tunnel_url"] = None
     _write_state(name, state)
-
-    # Persist public=false in woltspace.json
-    _set_public(name, False)
-
     return stopped or tunnel_pid is not None
 
 
@@ -553,21 +528,7 @@ def unshare_all_apps() -> list[str]:
                 state["tunnel_pid"] = None
                 state["tunnel_url"] = None
                 _write_state(name, state)
-                _set_public(name, False)
                 unshared.append(name)
         except (json.JSONDecodeError, OSError):
             continue
     return unshared
-
-
-def _set_public(name: str, public: bool) -> None:
-    """Update the public field in an app's woltspace.json."""
-    manifest = app_dir(name) / MANIFEST
-    if not manifest.exists():
-        return
-    try:
-        data = json.loads(manifest.read_text())
-        data["public"] = public
-        manifest.write_text(json.dumps(data, indent=2) + "\n")
-    except (json.JSONDecodeError, OSError):
-        pass

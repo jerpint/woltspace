@@ -598,6 +598,7 @@ class TestUnitShareApp:
         monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
         monkeypatch.setattr(apps_mod, "_is_pid_alive", lambda pid: True)
         monkeypatch.delenv("CLOUDFLARE_TUNNEL_URL", raising=False)
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
 
         apps_mod._write_state("my-proj", {
             "name": "my-proj",
@@ -611,27 +612,12 @@ class TestUnitShareApp:
         assert result["tunnel_url"] == "https://already-live.trycloudflare.com"
         assert result["pid"] == 11111
 
-    def test_share_uses_subdomain_when_tunnel_url_set(self, tmp_path, monkeypatch):
-        """share_app returns subdomain URL when CLOUDFLARE_TUNNEL_URL is set."""
-        import apps as apps_mod
-        monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
-        monkeypatch.setenv("CLOUDFLARE_TUNNEL_URL", "https://jerpint.woltspace.com")
-
-        apps_mod._write_state("my-proj", {
-            "name": "my-proj",
-            "port": 4500,
-            "pid": 99,
-        })
-
-        result = apps_mod.share_app("my-proj")
-        assert result["tunnel_url"] == "https://my-proj.woltspace.com"
-        assert result["pid"] is None
-
-    def test_share_falls_back_to_quick_tunnel(self, tmp_path, monkeypatch):
-        """share_app uses quick tunnel when CLOUDFLARE_TUNNEL_URL is not set."""
+    def test_share_opens_a_quick_tunnel_when_the_owner_allows_it(self, tmp_path, monkeypatch):
+        """With WOLTSPACE_APP_QUICK_TUNNELS on, share_app opens a quick tunnel."""
         import apps as apps_mod
         monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
         monkeypatch.delenv("CLOUDFLARE_TUNNEL_URL", raising=False)
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
         monkeypatch.setattr(apps_mod, "_is_pid_alive", lambda pid: False)
         monkeypatch.setattr(apps_mod, "start_cloudflared", lambda port, host_header: {
             "url": "https://random.trycloudflare.com",
@@ -648,16 +634,43 @@ class TestUnitShareApp:
         assert "trycloudflare.com" in result["tunnel_url"]
         assert result["pid"] == 9999
 
-    def test_share_blocked_when_sharing_disabled(self, tmp_path, monkeypatch):
-        """share_app raises RuntimeError when SHARING_ENABLED is False."""
+    def test_quick_tunnels_are_off_unless_the_owner_allows_them(self, tmp_path, monkeypatch):
         import apps as apps_mod
         monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
-        monkeypatch.setattr(apps_mod, "SHARING_ENABLED", False)
-
+        monkeypatch.delenv("WOLTSPACE_APP_QUICK_TUNNELS", raising=False)
+        monkeypatch.setattr(
+            apps_mod, "start_cloudflared",
+            lambda **_kw: pytest.fail("opened a quick tunnel without opt-in"),
+        )
         apps_mod._write_state("my-proj", {"name": "my-proj", "port": 4500, "pid": 99})
 
-        with pytest.raises(RuntimeError, match="Sharing is disabled"):
+        with pytest.raises(apps_mod.QuickTunnelsOff, match="WOLTSPACE_APP_QUICK_TUNNELS"):
             apps_mod.share_app("my-proj")
+
+    @pytest.mark.parametrize("lodge_env, port", [
+        ({}, 7777),                              # default lodge port
+        ({"WOLTSPACE_PORT": "7778"}, 7778),      # custom lodge port
+        ({}, 7117),                              # the app gateway
+    ])
+    def test_never_a_quick_tunnel_to_the_lodge(self, tmp_path, monkeypatch, lodge_env, port):
+        """Even opted in, and whatever an app's state says (Astre's P1 on #523)."""
+        import apps as apps_mod
+        monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setattr(apps_mod, "WOLTS_DIR", tmp_path / "wolts")
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
+        monkeypatch.delenv("WOLTSPACE_PORT", raising=False)
+        monkeypatch.delenv("PORT", raising=False)
+        monkeypatch.delenv("WOLTSPACE_APP_GATEWAY_PORT", raising=False)
+        for key, value in lodge_env.items():
+            monkeypatch.setenv(key, value)
+        monkeypatch.setattr(
+            apps_mod, "start_cloudflared",
+            lambda **_kw: pytest.fail("opened a quick tunnel to the lodge"),
+        )
+        apps_mod._write_state("evil", {"name": "evil", "port": port, "pid": 99})
+
+        with pytest.raises(apps_mod.ShareRefused, match="belongs to the lodge"):
+            apps_mod.share_app("evil")
 
     def test_unshare_all_stops_all_tunnels(self, tmp_path, monkeypatch):
         """unshare_all_apps kills all tunnel processes."""
@@ -677,8 +690,6 @@ class TestUnitShareApp:
         monkeypatch.setattr(
             tunnel_mod, "process_executable", lambda pid, **kwargs: "cloudflared",
         )
-        # Also mock _set_public to avoid filesystem writes
-        monkeypatch.setattr(apps_mod, "_set_public", lambda name, public: None)
 
         apps_mod._write_state("app-a", {
             "name": "app-a", "port": 4500, "pid": 10,
