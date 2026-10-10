@@ -90,7 +90,7 @@
     rename.onsubmit=event=>{event.preventDefault();saveSettings({display_name:nameInput.value.trim()},status);};
     rename.append(nameInput,renameSave); box.appendChild(rename);
     box.appendChild(el('p','wolt-rename-note',`Folder and address stay ${name}.`));
-    const engines = (harnesses.harnesses || []).map(h => ({id:h.id,label:`${h.emoji || ''} ${h.label}`.trim()}));
+    const engines = (harnesses.harnesses || []).map(h => ({id:h.id,label:`${h.emoji || ''} ${h.label}`.trim()+(h.experimental?' · experimental':'')}));
     box.appendChild(choiceGroup('Engine',engines,eng.id,id=>saveSettings({harness:id},status)));
     const selected = (harnesses.harnesses || []).find(h=>h.id===eng.id) || {};
     const models = (selected.catalog || []).map(model=>({id:model.id,label:model.label || model.id}));

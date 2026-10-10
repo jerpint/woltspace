@@ -109,3 +109,65 @@ def test_pi_external_wrapper_isolates_state_and_copies_seed(tmp_path):
     assert (wolt_home / ".pi" / "agent" / "auth.json").read_text() == shared.read_text()
     assert (wolt_home / "AGENTS.md").resolve() == (wolt_home / "CLAUDE.md")
     assert (wolt_home / ".agents" / "skills").resolve() == (wolt_home / ".claude" / "skills")
+
+
+@pytest.mark.parametrize("isolation", ["host", "external"])
+def test_hermes_wrapper_gives_each_wolt_its_own_hermes_home(isolation, tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    probe = fake_bin / "hermes"
+    probe.write_text(
+        "#!/bin/sh\n"
+        "printf 'HOME=%s\\n' \"$HOME\"\n"
+        "printf 'HERMES_HOME=%s\\n' \"$HERMES_HOME\"\n"
+        "printf 'ARGS=%s\\n' \"$*\"\n"
+    )
+    probe.chmod(0o755)
+
+    host_home = tmp_path / "host-home"
+    host_home.mkdir()
+    wolt_home = tmp_path / "wolt home"
+    (wolt_home / ".claude" / "skills").mkdir(parents=True)
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+        "HOME": str(host_home),
+        "WOLTSPACE_ISOLATION": isolation,
+        "WOLTSPACE_WOLT_HOME": str(wolt_home),
+    }
+    result = subprocess.run(
+        [str(ROOT / "container" / "bin" / "whermes"), "chat", "--yolo"],
+        env=env, cwd=wolt_home, capture_output=True, text=True, check=True,
+    )
+
+    expected_home = host_home if isolation == "host" else wolt_home
+    hermes_home = wolt_home / ".hermes"
+    assert f"HOME={expected_home}" in result.stdout
+    assert f"HERMES_HOME={hermes_home}" in result.stdout
+    assert "ARGS=chat --yolo" in result.stdout
+    config = (hermes_home / "config.yaml").read_text()
+    assert f'external_dirs: ["{wolt_home / ".claude" / "skills"}"]' in config
+    assert "memory_enabled: false" in config
+    assert "busy_input_mode: queue" in config
+    assert "Woltspace lodge" in (hermes_home / "SOUL.md").read_text()
+    # Nothing credential-shaped is written into the wolt.
+    assert sorted(p.name for p in hermes_home.iterdir()) == ["SOUL.md", "config.yaml"]
+
+
+def test_hermes_wrapper_keeps_an_existing_soul(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "hermes").write_text("#!/bin/sh\nexit 0\n")
+    (fake_bin / "hermes").chmod(0o755)
+    wolt_home = tmp_path / "wolt"
+    (wolt_home / ".hermes").mkdir(parents=True)
+    (wolt_home / ".hermes" / "SOUL.md").write_text("custom\n")
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+        "WOLTSPACE_ISOLATION": "host",
+        "WOLTSPACE_WOLT_HOME": str(wolt_home),
+    }
+    subprocess.run([str(ROOT / "container" / "bin" / "whermes")], env=env,
+                   cwd=wolt_home, check=True)
+    assert (wolt_home / ".hermes" / "SOUL.md").read_text() == "custom\n"

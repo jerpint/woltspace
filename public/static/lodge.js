@@ -167,6 +167,9 @@ function renderFirstRunHarnessChoice() {
     button.className = 'home-harness-option';
     const name = `${h.emoji || ''} ${h.label || h.id}`.trim();
     button.appendChild(lodgeElement('span', '', name));
+    if (h.experimental) {
+      button.appendChild(lodgeElement('small', '', 'experimental'));
+    }
     button.onclick = () => chooseHomeHarness(h.id, button);
     options.appendChild(button);
   });
@@ -793,6 +796,7 @@ function renderCreateHarnessOptions() {
     const option = document.createElement('option');
     option.value = harness.id;
     option.textContent = `${harness.label || harness.id}`
+      + (harness.experimental ? ' · experimental' : '')
       + (harness.id === harnessDefault ? ' (lodge default)' : '');
     option.selected = harness.id === createSelectedHarness;
     select.appendChild(option);

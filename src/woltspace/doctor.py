@@ -429,13 +429,13 @@ def run_doctor(
         "Install tmux and ensure it is on PATH." if not tmux else "",
     ))
 
-    harnesses = {name: shutil.which(name) for name in ("claude", "codex", "opencode", "pi")}
+    harnesses = {name: shutil.which(name) for name in ("claude", "codex", "opencode", "pi", "hermes")}
     installed = {name: path for name, path in harnesses.items() if path}
     checks.append(DoctorCheck(
         "harness",
         "pass" if installed else "fail",
         ", ".join(f"{name}={path}" for name, path in installed.items()) or "none found",
-        "Install at least one supported CLI: claude, codex, opencode, or pi." if not installed else "",
+        "Install at least one supported CLI: claude, codex, opencode, pi, or hermes." if not installed else "",
     ))
 
     home = Path.home()

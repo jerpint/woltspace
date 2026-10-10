@@ -249,7 +249,7 @@ class TestBuildCommandOpencode:
 
 
 class TestBuildCommandPi:
-    """Offline contract for the experimental Pi 0.87.1 adapter."""
+    """Command contract for the experimental Pi adapter (benched on 1.1.0)."""
 
     SESSION_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 
@@ -295,11 +295,97 @@ class TestBuildCommandPi:
         with pytest.raises(ValueError, match="unknown mode"):
             build_command("pi", "teleport")
 
-    def test_openrouter_groundwork_defaults(self):
-        model = "openrouter/anthropic/claude-sonnet-5"
-        assert creature_model("pi", "raccoon") == model
-        assert creature_model("pi", "beaver") == model
-        assert creature_model("pi", "otter") == model
+    def test_openrouter_defaults(self):
+        assert creature_model("pi", "raccoon") == "openrouter/anthropic/claude-sonnet-5.5"
+        assert creature_model("pi", "beaver") == "openrouter/anthropic/claude-sonnet-5.5"
+        assert creature_model("pi", "otter") == "openrouter/anthropic/claude-haiku-5.5"
+
+
+class TestBuildCommandHermes:
+    """Command contract for the experimental Hermes adapter (benched on 0.19.0)."""
+
+    def test_spawn_is_chat_with_provider_and_model_split(self):
+        cmd = build_command(
+            "hermes", "spawn", model="openrouter/anthropic/claude-haiku-5.5",
+            prompt="never on the cli", execution_policy="auto",
+        )
+        assert "whermes chat" in cmd
+        assert "--provider openrouter -m anthropic/claude-haiku-5.5" in cmd
+        assert "--yolo" in cmd
+        # The boot prompt is pasted after boot, never passed on the CLI.
+        assert "never on the cli" not in cmd
+
+    def test_ask_first_policy_keeps_hermes_approvals(self):
+        cmd = build_command("hermes", "spawn", execution_policy="prompt")
+        assert "--yolo" not in cmd
+
+    def test_bare_model_lets_hermes_pick_the_provider(self):
+        cmd = build_command("hermes", "spawn", model="hermes-4")
+        assert "-m hermes-4" in cmd
+        assert "--provider" not in cmd
+
+    def test_resume_uses_exact_id(self):
+        cmd = build_command("hermes", "resume", resume_id="20261010_135923_86e360")
+        assert "--resume 20261010_135923_86e360" in cmd
+        assert "--continue" not in cmd
+
+    def test_resume_without_id_never_guesses(self):
+        cmd = build_command("hermes", "resume")
+        assert "--resume" not in cmd
+        assert "--continue" not in cmd
+
+    def test_unknown_mode_raises(self):
+        with pytest.raises(ValueError, match="unknown mode"):
+            build_command("hermes", "teleport")
+
+    def test_boot_prompt_goes_through_paste(self):
+        from harnesses import get_harness
+        entry = get_harness("hermes")
+        assert entry["prompt_via_paste"] is True
+        assert entry["tui_ready_marker"]
+        assert entry["preset_session_id"] is False
+
+
+class TestHermesDiscovery:
+    """Session-id discovery from <wolt>/.hermes/state.db."""
+
+    def _db(self, tmp_path, monkeypatch, rows):
+        import sqlite3
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        home = tmp_path / "testwolt" / ".hermes"
+        home.mkdir(parents=True)
+        conn = sqlite3.connect(home / "state.db")
+        conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY, "
+                     "source TEXT NOT NULL, started_at REAL NOT NULL, cwd TEXT)")
+        conn.executemany(
+            "INSERT INTO sessions (id, source, started_at, cwd) VALUES (?, 'cli', ?, ?)",
+            rows,
+        )
+        conn.commit()
+        conn.close()
+
+    def _discover(self, data, since):
+        from harnesses import _hermes_discover_session_id
+        return _hermes_discover_session_id(data, since)
+
+    def test_ignores_sessions_from_before_the_spawn(self, tmp_path, monkeypatch):
+        self._db(tmp_path, monkeypatch, [("old", 100.0, "/w")])
+        assert self._discover({"wolt": "testwolt", "dir": "/w"}, 200.0) is None
+
+    def test_prefers_the_session_dir_over_newer_elsewhere(self, tmp_path, monkeypatch):
+        self._db(tmp_path, monkeypatch, [
+            ("mine", 210.0, "/w"),
+            ("other", 220.0, "/elsewhere"),
+        ])
+        assert self._discover({"wolt": "testwolt", "dir": "/w"}, 200.0) == "mine"
+
+    def test_falls_back_to_newest(self, tmp_path, monkeypatch):
+        self._db(tmp_path, monkeypatch, [("a", 210.0, "/x"), ("b", 220.0, "/y")])
+        assert self._discover({"wolt": "testwolt", "dir": "/w"}, 200.0) == "b"
+
+    def test_no_database_yet(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        assert self._discover({"wolt": "testwolt", "dir": "/w"}, 0.0) is None
 
 
 class TestCodexDiscovery:
@@ -519,7 +605,9 @@ class TestHarnessMetadata:
         from harnesses import harness_metadata
         meta = harness_metadata()
         ids = {m["id"] for m in meta}
-        assert {"claude", "codex", "opencode", "pi"} <= ids
+        assert {"claude", "codex", "opencode", "pi", "hermes"} <= ids
+        experimental = {m["id"] for m in meta if m["experimental"]}
+        assert experimental == {"opencode", "pi", "hermes"}
         for m in meta:
             assert m["label"] and m["emoji"]
             assert set(m["models"]) == {"raccoon", "beaver", "otter"}
@@ -1404,6 +1492,8 @@ class TestIsValidModel:
         assert not is_valid_model("opencode", "")
         assert not is_valid_model("opencode", None)
         assert is_valid_model("pi", "openrouter/anthropic/claude-sonnet-5")
+        assert is_valid_model("hermes", "openrouter/nousresearch/hermes-4-405b")
+        assert not is_valid_model("hermes", "nous/hermes-4")
         assert not is_valid_model("pi", "")
         assert not is_valid_model("pi", "openai/gpt-5.5")
 
@@ -1438,7 +1528,9 @@ class TestResolveModel:
     def test_freeform_no_pin_still_uses_tier_default(self):
         assert resolve_model("opencode", "raccoon", None) == "openai/gpt-4o"
         assert resolve_model("pi", "raccoon", None) == \
-            "openrouter/anthropic/claude-sonnet-5"
+            "openrouter/anthropic/claude-sonnet-5.5"
+        assert resolve_model("hermes", "otter", None) == \
+            "openrouter/anthropic/claude-haiku-5.5"
 
     def test_pi_honors_explicit_openrouter_pin(self):
         model = "openrouter/deepseek/deepseek-v4.1-flash"

@@ -24,6 +24,7 @@ import logging
 import os
 import re
 import shlex
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -44,6 +45,7 @@ WCLAUDE = str(_BIN_DIR / "wclaude")
 WCODEX = str(_BIN_DIR / "wcodex")
 WOPENCODE = str(_BIN_DIR / "wopencode")
 WPI = str(_BIN_DIR / "wpi")
+WHERMES = str(_BIN_DIR / "whermes")
 
 _ROLLOUT_UUID_RE = re.compile(
     r"rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$"
@@ -395,7 +397,7 @@ def _opencode_discover_session_id(data: dict, since: float) -> str | None:
 def _pi_command(entry: dict, mode: str, *, session_id: str = "",
                 session_name: str = "", model: str = "", prompt: str = "",
                 resume_id: str = "", execution_policy=None) -> str:
-    """Build a Pi CLI command line (groundwork against Pi 0.87.1).
+    """Build a Pi CLI command line (benched live on Pi 1.1.0).
 
     Pi accepts a caller-supplied UUID, so Woltspace owns the session identity
     from first spawn and never has to discover it from Pi's JSONL store.
@@ -403,8 +405,8 @@ def _pi_command(entry: dict, mode: str, *, session_id: str = "",
     permission or sandbox flag. Pi deliberately has no built-in tool approval
     system, so isolation remains the launcher's responsibility.
 
-    This command shape is covered offline only. A live TUI/model bench is a
-    separate, owner-approved gate before Pi is considered production-ready.
+    Benched on 1.1.0: spawn with --session-id and an opening prompt, a
+    bracketed multi-line paste, and --session resume of the same conversation.
     """
     wrapper = entry["wrapper"]
     if mode == "login":
@@ -427,6 +429,107 @@ def _pi_command(entry: dict, mode: str, *, session_id: str = "",
     if prompt:
         parts.append(prompt)
     return " ".join(shlex.quote(p) for p in parts)
+
+
+def _hermes_model_flags(model: str) -> list[str]:
+    """Split a woltspace "provider/model" pin into Hermes' two flags.
+
+    Hermes names a provider and a model separately (`--provider openrouter
+    -m anthropic/claude-sonnet-5.5`). Woltspace pins are one freeform string,
+    like opencode and Pi, so the first path segment is the provider. A pin
+    with no slash is a bare model: Hermes picks the provider itself.
+    """
+    if not model:
+        return []
+    provider, sep, name = model.partition("/")
+    if not sep or not name:
+        return ["-m", model]
+    return ["--provider", provider, "-m", name]
+
+
+def _hermes_command(entry: dict, mode: str, *, session_id: str = "",
+                    session_name: str = "", model: str = "", prompt: str = "",
+                    resume_id: str = "", execution_policy=None) -> str:
+    """Build a Hermes Agent CLI command line (benched live on hermes-agent 0.19.0).
+
+      - `hermes chat` is the attachable terminal UI. It has no flag that opens
+        an interactive session with a first message (`-q`/`-z` answer once and
+        exit), so the boot prompt is pasted after boot ("prompt_via_paste").
+      - Hermes assigns its own session id (`20261010_135923_86e360`), so it is
+        discovered after launch from its state.db (_hermes_discover_session_id).
+        `--resume <id>` reopens that exact conversation (verified).
+      - `--yolo` skips Hermes' approval prompts for dangerous commands — the
+        same role as claude's --dangerously-skip-permissions.
+    """
+    wrapper = entry["wrapper"]
+    if mode == "login":
+        # Provider + credential picker. UNVERIFIED as a lodge login flow:
+        # sessions normally get provider keys from the lodge environment.
+        return f"{wrapper} model"
+    if mode not in ("spawn", "resume"):
+        raise ValueError(f"unknown mode: {mode}")
+
+    parts = [wrapper, "chat"]
+    if mode == "resume" and resume_id:
+        parts += ["--resume", resume_id]
+    if policy_mode(execution_policy) == "auto":
+        parts.append("--yolo")
+    parts += _hermes_model_flags(model)
+    return " ".join(shlex.quote(p) for p in parts)
+
+
+def _hermes_discover_session_id(data: dict, since: float) -> str | None:
+    """Find the id Hermes assigned to a just-spawned session.
+
+    whermes points HERMES_HOME at <wolt>/.hermes, and Hermes records every
+    session in the `sessions` table of state.db (id, started_at in epoch
+    seconds, cwd). Only rows started at/after `since` count, so a previous
+    run's session is never returned; among those, one whose cwd matches the
+    session dir wins (concurrent sessions of one wolt), else the newest.
+    """
+    wolt = data.get("wolt", "")
+    if not wolt:
+        return None
+    wolts_dir = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
+    db = wolts_dir / wolt / ".hermes" / "state.db"
+    if not db.is_file():
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2)
+        try:
+            rows = conn.execute(
+                "SELECT id, cwd FROM sessions WHERE started_at >= ? "
+                "ORDER BY started_at DESC",
+                (since,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+    if not rows:
+        return None
+    session_dir = data.get("dir", "")
+    if session_dir:
+        for sid, cwd in rows:
+            if cwd == session_dir:
+                return sid
+    return rows[0][0]
+
+
+# Tier defaults shared by the OpenRouter-backed harnesses (Pi, Hermes).
+# Ids checked against openrouter.ai/api/v1/models on 2026-10-10.
+OPENROUTER_TIER_MODELS = {
+    "raccoon": "openrouter/anthropic/claude-sonnet-5.5",
+    "beaver": "openrouter/anthropic/claude-sonnet-5.5",
+    "otter": "openrouter/anthropic/claude-haiku-5.5",
+    "rodent": "openrouter/anthropic/claude-sonnet-5.5",
+    "wolf": "openrouter/anthropic/claude-sonnet-5.5",
+}
+OPENROUTER_MODEL_CATALOG = [
+    {"id": "openrouter/anthropic/claude-sonnet-5.5", "label": "Claude Sonnet 5.5"},
+    {"id": "openrouter/anthropic/claude-haiku-5.5", "label": "Claude Haiku 5.5"},
+    {"id": "openrouter/anthropic/claude-opus-5.5", "label": "Claude Opus 5.5"},
+]
 
 
 HARNESSES = {
@@ -515,6 +618,8 @@ HARNESSES = {
         "wrapper": WOPENCODE,
         "command": _opencode_command,
         "label": "opencode",
+        # Experimental: offered, but not yet proven by real use.
+        "experimental": True,
         "emoji": "🟦",
         "process_names": {"opencode"},
         # opencode is a multi-provider engine with hundreds of models across
@@ -594,25 +699,16 @@ HARNESSES = {
         "wrapper": WPI,
         "command": _pi_command,
         "label": "Pi",
+        # Experimental: offered, but not yet proven by real use.
+        "experimental": True,
         "emoji": "🥧",
         "process_names": {"pi"},
-        # First exploration is deliberately OpenRouter-only. Sonnet 5 is the
-        # explicit model proven by the disposable spawn/resume POC (2026-09-25).
-        # All tiers remain identical until atomic harness/provider/model config
-        # lets the product express reviewed tier choices without mixed pairs.
+        # OpenRouter only for now: one key, every vendor. Pins are freeform
+        # "openrouter/<vendor>/<model>" strings; the catalog is suggestions.
         "freeform_model": True,
         "model_prefixes": ("openrouter/",),
-        "models": {
-            "raccoon": "openrouter/anthropic/claude-sonnet-5",
-            "beaver": "openrouter/anthropic/claude-sonnet-5",
-            "otter": "openrouter/anthropic/claude-sonnet-5",
-            "rodent": "openrouter/anthropic/claude-sonnet-5",
-            "wolf": "openrouter/anthropic/claude-sonnet-5",
-        },
-        "model_catalog": [
-            {"id": "openrouter/anthropic/claude-sonnet-5", "label": "Claude Sonnet 5"},
-            {"id": "openrouter/auto", "label": "OpenRouter Auto"},
-        ],
+        "models": OPENROUTER_TIER_MODELS,
+        "model_catalog": OPENROUTER_MODEL_CATALOG,
         # Pi implements Agent Skills and explicitly invokes them as
         # `/skill:<frontmatter-name>`. It recursively discovers .agents/skills,
         # so the existing Woltspace bridge works for copied and plugin delivery.
@@ -623,7 +719,42 @@ HARNESSES = {
         "auth_file": ".pi/agent/auth.json",
         "preset_session_id": True,
         "discover_session_id": None,
-        # UNVERIFIED interactive TUI: tune if Pi folds immediate Enter into a paste.
+        # Benched on Pi 1.1.0: a bracketed multi-line paste arrives as one
+        # message; the settle is kept as a margin.
+        "paste_settle": 0.5,
+    },
+    "hermes": {
+        "wrapper": WHERMES,
+        "command": _hermes_command,
+        "label": "Hermes",
+        # Experimental: offered, but not yet proven by real use.
+        "experimental": True,
+        "emoji": "☤",
+        # `hermes` is a Python entry-point script: ps reports the interpreter as
+        # comm and the runtime matches the script name from argv.
+        "process_names": {"hermes"},
+        "freeform_model": True,
+        "model_prefixes": ("openrouter/",),
+        "models": OPENROUTER_TIER_MODELS,
+        "model_catalog": OPENROUTER_MODEL_CATALOG + [
+            {"id": "openrouter/nousresearch/hermes-4-405b", "label": "Hermes 4 405B"},
+        ],
+        # Hermes registers every discovered skill as a /<name> command and
+        # lists them for the model; whermes points it at <wolt>/.claude/skills.
+        # It does not namespace skills, so platform skills answer to bare names
+        # under plugin delivery (UNVERIFIED: plugin delivery not benched).
+        "skill_invoke": "/{name}",
+        "platform_skill_invoke": "/{name}",
+        # `hermes chat` cannot take an opening message, so the boot prompt is
+        # pasted once the composer is painted (its welcome line).
+        "prompt_via_paste": True,
+        "tui_ready_marker": "Type your message",
+        "instructions_file": "AGENTS.md",
+        "auth_file": ".hermes/auth.json",
+        "preset_session_id": False,
+        "discover_session_id": _hermes_discover_session_id,
+        # Benched on 0.19.0: a bracketed paste arrives as one message (an
+        # unbracketed one submits at the first newline). Settle kept as margin.
         "paste_settle": 0.5,
     },
 }
@@ -942,6 +1073,7 @@ def harness_metadata() -> list[dict]:
             # full selectable list for the model picker (merged view)
             "catalog": model_catalog(hid),
             "freeform_model": bool(entry.get("freeform_model")),
+            "experimental": bool(entry.get("experimental")),
         })
     return out
 

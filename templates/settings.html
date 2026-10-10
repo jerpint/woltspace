@@ -30,7 +30,7 @@
               harness.id,
               harness.label,
               '',
-              '',
+              'experimental' if harness.experimental else '',
               harness.id == harness_default,
               harness.emoji
             ) }}

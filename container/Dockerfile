@@ -47,7 +47,7 @@ RUN npm install -g --prefix /opt/opencode opencode-ai
 # Pin the candidate while its CLI contract is being certified. Pi requires
 # Node >=22.19; node:22-slim currently satisfies that floor.
 FROM node:22-slim AS pi
-RUN npm install -g --ignore-scripts --prefix /opt/pi @earendil-works/pi-coding-agent@0.87.1
+RUN npm install -g --ignore-scripts --prefix /opt/pi @earendil-works/pi-coding-agent@1.1.0
 
 # --- Stage: main ---
 FROM node:22-slim
