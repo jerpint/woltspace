@@ -392,10 +392,9 @@ def stop_app(name: str) -> bool:
     state = _read_state(name)
     if not state:
         return False
-    # Kill tunnel first if running
+    # Close the tunnel first. If it survives, its record must survive too.
     tunnel_pid = state.get("tunnel_pid")
-    if tunnel_pid:
-        stop_cloudflared(tunnel_pid)
+    tunnel_gone = not tunnel_pid or _close_recorded_tunnel(name, tunnel_pid, "the app was stopped")
     # Kill the app process
     pid = state.get("pid")
     if pid and _is_pid_alive(pid):
@@ -406,7 +405,10 @@ def stop_app(name: str) -> bool:
                 os.kill(pid, signal.SIGTERM)
             except OSError:
                 pass
-    _clear_state(name)
+    if tunnel_gone:
+        _clear_state(name)
+    # Otherwise the record stays (app dead, tunnel alive): start_app refuses
+    # to replace it until the tunnel is gone, and unshare can still find it.
     return True
 
 
@@ -489,15 +491,27 @@ def _tunnel_refusal(state: dict) -> str | None:
     return None
 
 
-def _close_recorded_tunnel(name: str, tunnel_pid, reason: str) -> bool:
-    """Stop a recorded quick tunnel. True once it is gone.
+TUNNEL_EXIT_TIMEOUT = 3.0
 
-    False only when a live cloudflared with that pid could not be stopped: the
-    caller must then keep the record, so the tunnel can still be found.
+
+def _close_recorded_tunnel(name: str, tunnel_pid, reason: str) -> bool:
+    """Stop a recorded quick tunnel. True once it is confirmed gone.
+
+    False when a live cloudflared with that pid is still running (it could not
+    be signalled, or did not exit in time): the caller must then keep the
+    record, so the tunnel can still be found.
     """
     if stop_cloudflared(tunnel_pid):
-        print(f"[apps] closed quick tunnel for {name} (pid {tunnel_pid}, {reason})")
-        return True
+        # Signalled is not exited: wait, bounded, for it to go.
+        deadline = time.monotonic() + TUNNEL_EXIT_TIMEOUT
+        while is_cloudflared(tunnel_pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not is_cloudflared(tunnel_pid):
+            print(f"[apps] closed quick tunnel for {name} (pid {tunnel_pid}, {reason})")
+            return True
+        print(f"[apps] WARNING: quick tunnel for {name} (pid {tunnel_pid}, {reason}) "
+              "did not exit; record kept")
+        return False
     if is_cloudflared(tunnel_pid):
         print(f"[apps] WARNING: could not stop quick tunnel for {name} "
               f"(pid {tunnel_pid}, {reason}); record kept")
@@ -572,12 +586,14 @@ def unshare_app(name: str) -> bool:
         return False
 
     tunnel_pid = state.get("tunnel_pid")
-    stopped = stop_cloudflared(tunnel_pid) if tunnel_pid else False
-
+    if not tunnel_pid:
+        return False
+    if not _close_recorded_tunnel(name, tunnel_pid, "unshared"):
+        raise RuntimeError(f"could not stop the quick tunnel for {name} (pid {tunnel_pid})")
     state["tunnel_pid"] = None
     state["tunnel_url"] = None
     _write_state(name, state)
-    return stopped or tunnel_pid is not None
+    return True
 
 
 def unshare_all_apps() -> list[str]:
@@ -595,7 +611,7 @@ def unshare_all_apps() -> list[str]:
             state = json.loads(f.read_text())
             name = state.get("name", f.stem)
             tunnel_pid = state.get("tunnel_pid")
-            if tunnel_pid and stop_cloudflared(tunnel_pid):
+            if tunnel_pid and _close_recorded_tunnel(name, tunnel_pid, "unshare all"):
                 state["tunnel_pid"] = None
                 state["tunnel_url"] = None
                 _write_state(name, state)

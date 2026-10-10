@@ -757,6 +757,33 @@ class TestUnitShareApp:
         apps_mod.apps_restore()
         assert apps_mod._read_state("legacy")["tunnel_pid"] == 5555
 
+    def test_a_signalled_tunnel_that_does_not_exit_is_kept(self, tmp_path, monkeypatch):
+        """Signalled is not exited (Astre round 4)."""
+        monkeypatch.delenv("WOLTSPACE_APP_QUICK_TUNNELS", raising=False)
+        apps_mod, _stopped = self._legacy_tunnel(tmp_path, monkeypatch, 4500, app_alive=True)
+        monkeypatch.setattr(apps_mod, "stop_cloudflared", lambda pid: True)
+        monkeypatch.setattr(apps_mod, "is_cloudflared", lambda pid: True)
+        monkeypatch.setattr(apps_mod, "TUNNEL_EXIT_TIMEOUT", 0.05)
+        apps_mod.apps_restore()
+        assert apps_mod._read_state("legacy")["tunnel_pid"] == 5555
+
+    @pytest.mark.parametrize("action", ["stop", "unshare", "unshare_all"])
+    def test_owner_actions_never_forget_a_surviving_tunnel(self, tmp_path, monkeypatch, action):
+        """Stop, unshare and unshare-all keep the record while the tunnel lives."""
+        monkeypatch.delenv("WOLTSPACE_APP_QUICK_TUNNELS", raising=False)
+        apps_mod, _stopped = self._legacy_tunnel(tmp_path, monkeypatch, 4500, app_alive=False)
+        monkeypatch.setattr(apps_mod, "stop_cloudflared", lambda pid: True)
+        monkeypatch.setattr(apps_mod, "is_cloudflared", lambda pid: True)
+        monkeypatch.setattr(apps_mod, "TUNNEL_EXIT_TIMEOUT", 0.05)
+        if action == "stop":
+            apps_mod.stop_app("legacy")
+        elif action == "unshare":
+            with pytest.raises(RuntimeError, match="could not stop"):
+                apps_mod.unshare_app("legacy")
+        else:
+            assert apps_mod.unshare_all_apps() == []
+        assert apps_mod._read_state("legacy")["tunnel_pid"] == 5555
+
     def test_a_stale_tunnel_pid_is_dropped(self, tmp_path, monkeypatch):
         monkeypatch.delenv("WOLTSPACE_APP_QUICK_TUNNELS", raising=False)
         apps_mod, _stopped = self._legacy_tunnel(tmp_path, monkeypatch, 4500, app_alive=True)
@@ -783,6 +810,8 @@ class TestUnitShareApp:
         monkeypatch.setattr(
             tunnel_mod, "process_executable", lambda pid, **kwargs: "cloudflared",
         )
+        # ...and exit once signalled.
+        monkeypatch.setattr(apps_mod, "is_cloudflared", lambda pid: pid not in killed_pids)
 
         apps_mod._write_state("app-a", {
             "name": "app-a", "port": 4500, "pid": 10,

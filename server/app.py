@@ -2372,7 +2372,10 @@ async def app_unshare(name: str):
     """Stop the cloudflared tunnel for an app."""
     if invalid := _invalid_app_name(name):
         return invalid
-    was_sharing = unshare_app(name)
+    try:
+        was_sharing = unshare_app(name)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
     if was_sharing:
         print(f"[apps] unshared {name}")
         return {"ok": True, "name": name}
