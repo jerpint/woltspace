@@ -43,6 +43,12 @@ RUN npm install -g @openai/codex
 FROM node:22-slim AS opencode
 RUN npm install -g --prefix /opt/opencode opencode-ai
 
+# --- Stage: Pi ---
+# Pin the candidate while its CLI contract is being certified. Pi requires
+# Node >=22.19; node:22-slim currently satisfies that floor.
+FROM node:22-slim AS pi
+RUN npm install -g --ignore-scripts --prefix /opt/pi @earendil-works/pi-coding-agent@0.87.1
+
 # --- Stage: main ---
 FROM node:22-slim
 
@@ -106,6 +112,11 @@ ENV PATH="/opt/opencode/bin:${PATH}"
 # /workspace/wolts/.local/share/opencode/auth.json (in the mount, durable across
 # rebuilds; created by `opencode auth login` or copied in). wopencode self-heals
 # a per-wolt copy from it, mirroring the codex/claude seed pattern.
+
+# Copy Pi's complete isolated npm tree. wpi redirects its config, auth and
+# session roots per wolt; the shared seed is /workspace/wolts/.pi/agent/auth.json.
+COPY --from=pi /opt/pi /opt/pi
+ENV PATH="/opt/pi/bin:${PATH}"
 
 # Install worktui (worktree + Claude session manager)
 RUN git clone https://github.com/jerpint/worktui.git /home/node/worktui \

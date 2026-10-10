@@ -1,0 +1,38 @@
+#!/bin/bash
+# Harness wrapper for Pi in externally isolated containers and native hosts.
+#
+# Pi honors PI_CODING_AGENT_DIR and PI_CODING_AGENT_SESSION_DIR, letting each
+# wolt own its auth, configuration, extensions and JSONL sessions without
+# changing Pi's global defaults.
+
+if [ "${WOLTSPACE_ISOLATION:-external}" = "host" ]; then
+    # Native mode intentionally preserves the owner's existing Pi home and
+    # credentials. Pi has no built-in tool sandbox; host policy is external.
+    exec pi "$@"
+fi
+
+WOLTSPACE_HOME_DIR="${WOLTSPACE_WOLT_HOME:-$(echo "$PWD" | sed -n 's|\(/workspace/wolts/[^/]*\).*|\1|p')}"
+if [ -n "$WOLTSPACE_HOME_DIR" ] && [ -d "$WOLTSPACE_HOME_DIR" ]; then
+    export HOME="$WOLTSPACE_HOME_DIR"
+    export PI_CODING_AGENT_DIR="$WOLTSPACE_HOME_DIR/.pi/agent"
+    export PI_CODING_AGENT_SESSION_DIR="$PI_CODING_AGENT_DIR/sessions"
+    mkdir -p "$PI_CODING_AGENT_DIR" "$PI_CODING_AGENT_SESSION_DIR"
+
+    # Seed auth once, never symlink it: Pi may update stored credentials.
+    SHARED_AUTH="/workspace/wolts/.pi/agent/auth.json"
+    if [ ! -e "$PI_CODING_AGENT_DIR/auth.json" ] && [ -f "$SHARED_AUTH" ]; then
+        cp "$SHARED_AUTH" "$PI_CODING_AGENT_DIR/auth.json"
+        chmod 600 "$PI_CODING_AGENT_DIR/auth.json" 2>/dev/null || true
+    fi
+
+    # Pi reads AGENTS.md and recursively discovers Agent Skills here.
+    if [ ! -e "$WOLTSPACE_HOME_DIR/AGENTS.md" ] && [ -f "$WOLTSPACE_HOME_DIR/CLAUDE.md" ]; then
+        ln -s CLAUDE.md "$WOLTSPACE_HOME_DIR/AGENTS.md"
+    fi
+    if [ ! -e "$WOLTSPACE_HOME_DIR/.agents/skills" ] && [ -d "$WOLTSPACE_HOME_DIR/.claude/skills" ]; then
+        mkdir -p "$WOLTSPACE_HOME_DIR/.agents"
+        ln -s ../.claude/skills "$WOLTSPACE_HOME_DIR/.agents/skills"
+    fi
+fi
+
+exec pi "$@"
