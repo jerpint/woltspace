@@ -34,4 +34,4 @@ Extend `base.html`, import only the macros needed from `components/ui.html`, and
 wrap the content in `ds-page`. Add the screen to the Settings index when it has a
 real route and persistence behavior; avoid dead navigation pretending to be a
 feature. Put page behavior in its own module and keep fetch endpoints versionable
-and independent from Tauri. The desktop shell consumes the same lodge page.
+and independent from any native shell, which would consume the same lodge page.
