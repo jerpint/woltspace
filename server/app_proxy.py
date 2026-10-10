@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -129,23 +130,46 @@ async def proxy_app_http(
     client = httpx.AsyncClient(timeout=_UPSTREAM_TIMEOUT)
     headers = upstream_headers(request.headers, request.scope.get("state", {}).get("access_email"))
     headers["host"] = f"localhost:{port}"
+    # Only a request that has a body sends one: an empty chunked body on a
+    # GET/HEAD is refused by strict servers.
+    has_body = "content-length" in request.headers or "transfer-encoding" in request.headers
+    # The deadline is idle time, not total time: an upload may take as long as
+    # it keeps moving, then the app has RESPONSE_START_TIMEOUT to answer.
+    last_activity = [time.monotonic()]
+
+    async def body():
+        async for chunk in request.stream():
+            last_activity[0] = time.monotonic()
+            yield chunk
+        last_activity[0] = time.monotonic()
+
+    send = None
     try:
         upstream_request = client.build_request(
             # Streamed, never buffered whole: an upload can't fill the gateway.
-            request.method, upstream, headers=headers, content=request.stream(),
+            request.method, upstream, headers=headers,
+            content=body() if has_body else None,
         )
-        response = await asyncio.wait_for(
-            client.send(upstream_request, stream=True, follow_redirects=False),
-            timeout=RESPONSE_START_TIMEOUT,
+        send = asyncio.ensure_future(
+            client.send(upstream_request, stream=True, follow_redirects=False)
         )
+        while True:
+            done, _ = await asyncio.wait({send}, timeout=min(1.0, RESPONSE_START_TIMEOUT))
+            if done:
+                response = send.result()
+                break
+            if time.monotonic() - last_activity[0] > RESPONSE_START_TIMEOUT:
+                raise asyncio.TimeoutError
     except asyncio.TimeoutError:
+        await _cancel(send)
         await client.aclose()
         return HTMLResponse(f"<h1>{app_name} did not answer in time</h1>", status_code=504)
     except httpx.HTTPError:
         await client.aclose()
         return HTMLResponse(f"<h1>Cannot reach {app_name}</h1>", status_code=502)
     except BaseException:
-        # Cancelled (the visitor left, shutdown): still release the client.
+        # Cancelled (the visitor left, shutdown): still release everything.
+        await _cancel(send)
         await client.aclose()
         raise
     # The body is passed through exactly as the app encoded it (aiter_raw), so
@@ -172,6 +196,12 @@ async def proxy_app_http(
     for cookie in response.headers.get_list("set-cookie"):
         downstream.headers.append("set-cookie", _host_only_set_cookie(cookie))
     return downstream
+
+
+async def _cancel(task) -> None:
+    if task is not None and not task.done():
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 def _sendable_close_code(code: int | None) -> int:

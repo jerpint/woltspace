@@ -869,11 +869,11 @@ def _capturing_client(monkeypatch, upstream_response, seen):
     monkeypatch.setattr(app_proxy.httpx, "AsyncClient", Client)
 
 
-def _scope(path="/", raw_path=None, query=b"", method="GET"):
+def _scope(path="/", raw_path=None, query=b"", method="GET", headers=()):
     return {
         "type": "http", "method": method, "scheme": "https", "path": path,
         "raw_path": raw_path if raw_path is not None else path.encode(),
-        "query_string": query, "headers": [(b"host", b"notes.example")],
+        "query_string": query, "headers": [(b"host", b"notes.example"), *headers],
         "client": ("127.0.0.1", 123), "server": ("notes.example", 443),
     }
 
@@ -923,9 +923,64 @@ def test_uploads_are_streamed_not_buffered(monkeypatch):
     seen = {}
     monkeypatch.setattr(app_proxy, "running_app", lambda _name: {"port": 4321})
     _capturing_client(monkeypatch, lambda request: httpx.Response(200, request=request), seen)
-    asyncio.run(app_proxy.proxy_app_http(Request(_scope(method="POST"), _receive), "notes"))
+    asyncio.run(app_proxy.proxy_app_http(Request(
+        _scope(method="POST", headers=[(b"content-length", b"3")]), _receive,
+    ), "notes"))
     assert not isinstance(seen["content"], (bytes, bytearray))
     assert hasattr(seen["content"], "__aiter__")
+
+
+def test_a_bodiless_request_sends_no_body(monkeypatch):
+    """No empty chunked body on GET: strict servers refuse one (prwolt, #524)."""
+    seen = {}
+    monkeypatch.setattr(app_proxy, "running_app", lambda _name: {"port": 4321})
+    _capturing_client(monkeypatch, lambda request: httpx.Response(200, request=request), seen)
+    asyncio.run(app_proxy.proxy_app_http(Request(_scope(), _receive), "notes"))
+    assert seen["content"] is None
+
+
+def _slow_upload(monkeypatch, gaps):
+    """A visitor upload whose chunks arrive after the given pauses."""
+    monkeypatch.setattr(app_proxy, "running_app", lambda _name: {"port": 4321})
+    chunks = list(gaps)
+
+    async def receive():
+        if not chunks:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await asyncio.sleep(chunks.pop(0))
+        return {"type": "http.request", "body": b"x", "more_body": True}
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def build_request(self, method, url, **kwargs):
+            self.content = kwargs["content"]
+            return httpx.Request(method, url)
+
+        async def send(self, request, **_kwargs):
+            async for _chunk in self.content:  # the app reads the upload
+                pass
+            return httpx.Response(200, request=request)
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(app_proxy.httpx, "AsyncClient", Client)
+    scope = _scope(method="POST", headers=[(b"transfer-encoding", b"chunked")])
+    return asyncio.run(app_proxy.proxy_app_http(Request(scope, receive), "notes"))
+
+
+def test_a_slow_upload_that_keeps_moving_is_not_cut_off(monkeypatch):
+    monkeypatch.setattr(app_proxy, "RESPONSE_START_TIMEOUT", 0.3)
+    response = _slow_upload(monkeypatch, [0.15] * 5)  # 0.75s total, never idle 0.3s
+    assert response.status_code == 200
+
+
+def test_an_upload_that_stalls_times_out(monkeypatch):
+    monkeypatch.setattr(app_proxy, "RESPONSE_START_TIMEOUT", 0.2)
+    response = _slow_upload(monkeypatch, [0.05, 1.0])
+    assert response.status_code == 504
 
 
 @pytest.mark.parametrize("location, expected", [
