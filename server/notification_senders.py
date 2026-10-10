@@ -9,6 +9,9 @@ from .notification_types import OutboundMessage, SendContext, Send
 
 logger = logging.getLogger(__name__)
 
+# A file upload can take minutes; httpx's 5-second default suits small JSON calls.
+UPLOAD_TIMEOUT = httpx.Timeout(30.0, read=120.0, write=300.0)
+
 
 async def telegram_send(token: str, chat_id: str, text: str) -> dict:
     async with httpx.AsyncClient() as client:
