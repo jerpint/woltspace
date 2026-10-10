@@ -23,20 +23,18 @@ Examples: new container architecture, complete rewrite of session system, breaki
 
 ## Files
 
-- `.version` — current version string (e.g. `v0.0.2`), stamped on release and by `/update`
-- `CHANGELOG.md` — human-readable change log per version
+- `pyproject.toml` — the package version
+- `docs/release-notes.md` — notes for the release being prepared
 - `container/migrations/` — migration docs for minor/major bumps, shipped in the wheel
 
 ## Release workflow
 
-1. Merge PRs to main
+1. Merge PRs to main (or cherry-pick fixes into `release/X.Y` by PR)
 2. When ready to cut a release:
-   - Update `.version`
-   - Update `CHANGELOG.md`
+   - Open a prep PR that bumps the version and rewrites `docs/release-notes.md`
    - If minor/major: add a migration document to `container/migrations/`
-   - Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`
-   - Create GitHub release from the tag
-3. Users run `/update` to pull the new version
+3. After the prep PR merges, run the `publish.yml` workflow from that branch. It waits for the maintainer's approval, publishes, then tags and creates the GitHub release itself. Never tag by hand.
+4. Users update with `woltspace update`
 
 ## How /update uses versions
 

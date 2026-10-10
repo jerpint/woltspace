@@ -70,7 +70,6 @@ def test_a_slow_resume_leaves_the_control_plane_answering(monkeypatch):
 
 ADAPTERS = [
     "container/bot/telegram_adapter.py",
-    "container/bot/telegram_adapter_v1.py",
     "container/bot/slack_adapter.py",
 ]
 
