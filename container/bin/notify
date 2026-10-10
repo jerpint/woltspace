@@ -221,6 +221,15 @@ def main(argv: list[str] | None = None) -> int:
         print("notify: failed: invalid or empty API response", file=sys.stderr)
         return 1
     if result.get("ok"):
+        if source is not None and not result.get("attachments"):
+            # A lodge older than this command ignores the field and sends text only.
+            unstage()
+            print(
+                "notify: the lodge sent the text but not the file; "
+                "restart the lodge so it matches this command",
+                file=sys.stderr,
+            )
+            return 1
         sent = f"[notify] → {result.get('adapter', '?')}: {message}"
         print(sent if source is None else f"{sent} [file: {source.name}]")
         return 0

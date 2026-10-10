@@ -343,6 +343,21 @@ def test_session_context_inlines_complete_heredocs_for_explicit_routes():
 def _file_environment(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
     env, capture = _environment(tmp_path)
     env["WOLTSPACE_WOLTS_DIR"] = str(tmp_path / "wolts")
+    # A lodge that knows about files answers with what it sent.
+    curl = Path(env["PATH"].split(":", 1)[0]) / "curl"
+    curl.write_text(
+        """#!/bin/bash
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-d" ]; then
+    printf '%s' "$2" > "$NOTIFY_CAPTURE"
+    shift 2
+  else
+    shift
+  fi
+done
+printf '%s\\n' '{"ok":true,"adapter":"telegram","attachments":[{"name":"a.html","content_type":"text/html","size":11}]}'
+"""
+    )
     return env, capture, tmp_path / "wolts" / ".space" / "outbox"
 
 
@@ -655,3 +670,26 @@ def test_help_names_the_file_flag(tmp_path):
     assert "[--file PATH]" in result.stdout
     assert "--file sends one file with the message" in result.stdout
     assert not capture.exists()
+
+
+def test_ok_reply_without_attachments_means_the_file_was_not_sent(tmp_path):
+    # A lodge older than this command ignores the field: it sends the text and
+    # answers ok. The plain fake curl is that lodge.
+    env, capture = _environment(tmp_path)
+    env["WOLTSPACE_WOLTS_DIR"] = str(tmp_path / "wolts")
+    box = tmp_path / "wolts" / ".space" / "outbox"
+    source = tmp_path / "a.html"
+    source.write_bytes(b"<p>a</p>")
+
+    result = subprocess.run(
+        [NOTIFY, "--file", source], input="hello\n", text=True, capture_output=True, env=env,
+    )
+
+    assert result.returncode == 1
+    assert result.stderr == (
+        "notify: the lodge sent the text but not the file; "
+        "restart the lodge so it matches this command\n"
+    )
+    assert result.stdout == ""
+    assert json.loads(capture.read_text())["attachments"][0]["name"] == "a.html"
+    assert _entries(box) == []
