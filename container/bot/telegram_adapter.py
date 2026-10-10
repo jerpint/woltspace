@@ -481,6 +481,35 @@ def _parse_session_from_reply(reply_text: str) -> str | None:
     return None
 
 
+def _reply_source(reply_to) -> tuple[str, str | None]:
+    """The text that may carry the reply footer, and the replied-to file's name if any."""
+    # A document carries the footer in its caption; a text message in its text.
+    body = next(
+        (value for value in (reply_to.text, reply_to.caption) if isinstance(value, str) and value),
+        "",
+    )
+    name = getattr(getattr(reply_to, "document", None), "file_name", None)
+    return body, name if isinstance(name, str) and name else None
+
+
+def _quote_reply(body: str, file_name: str | None, message: str) -> str:
+    """Prefix a routed reply with what it replies to, without the reply footer."""
+    footer = "---\n" + _REPLY_FOOTER_MARKER
+    quoted = body
+    if quoted.startswith(footer):
+        # A file sent after its text carries the footer alone as its caption.
+        quoted = ""
+    else:
+        footer_idx = quoted.find("\n" + footer)
+        if footer_idx >= 0:
+            quoted = quoted[:footer_idx]
+    if not quoted.strip():
+        return f"[replying to file {file_name}]\n{message}" if file_name else message
+    if file_name:
+        return f"[replying to file {file_name}: {quoted[:200]}]\n{message}"
+    return f"[replying to: {quoted[:200]}]\n{message}"
+
+
 def _wolt_from_session_name(session_name: str) -> str | None:
     """Extract wolt name from session name (e.g. 'nunu-swift-marsh-abc123' -> 'nunu')."""
     if not session_name:
@@ -562,18 +591,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # --- Reply-to routing: check if replying to a specific wolt's message ---
     reply_to = update.message.reply_to_message
-    if reply_to and reply_to.text:
-        reply_session = _parse_session_from_reply(reply_to.text)
+    reply_body, reply_file = _reply_source(reply_to) if reply_to else ("", None)
+    if reply_body:
+        reply_session = _parse_session_from_reply(reply_body)
         if reply_session:
             reply_wolt = _wolt_from_session_name(reply_session)
             if reply_wolt:
-                # Build message with reply context
-                # Strip the footer from the quoted text
-                quoted = reply_to.text
-                footer_idx = quoted.find("\n---\n" + _REPLY_FOOTER_MARKER)
-                if footer_idx > 0:
-                    quoted = quoted[:footer_idx]
-                reply_text = f"[replying to: {quoted[:200]}]\n{text}" if quoted.strip() else text
+                # Build message with reply context, without the footer
+                reply_text = _quote_reply(reply_body, reply_file, text)
 
                 # Try routing directly — message_session handles revive internally
                 prev_state = _load_chat_state(chat_id)
@@ -772,16 +797,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # --- Reply-to routing: check if replying to a specific wolt's message ---
     reply_to = update.message.reply_to_message
-    if reply_to and reply_to.text:
-        reply_session = _parse_session_from_reply(reply_to.text)
+    reply_body, reply_file = _reply_source(reply_to) if reply_to else ("", None)
+    if reply_body:
+        reply_session = _parse_session_from_reply(reply_body)
         if reply_session:
             reply_wolt = _wolt_from_session_name(reply_session)
             if reply_wolt:
-                quoted = reply_to.text
-                footer_idx = quoted.find("\n---\n" + _REPLY_FOOTER_MARKER)
-                if footer_idx > 0:
-                    quoted = quoted[:footer_idx]
-                reply_text = f"[replying to: {quoted[:200]}]\n{voice_message}" if quoted.strip() else voice_message
+                reply_text = _quote_reply(reply_body, reply_file, voice_message)
 
                 # Try routing directly — message_session handles revive internally
                 prev_state = _load_chat_state(chat_id)
