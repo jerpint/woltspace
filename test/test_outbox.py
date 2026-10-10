@@ -382,6 +382,26 @@ def test_display_name_edges(raw, shown):
     assert outbox.display_name(raw) == shown
 
 
+@pytest.mark.parametrize("raw, shown", [
+    ("report‮fdp.exe", "reportfdp.exe"),       # a chat would show "reportexe.pdf"
+    ("‎report‏.pdf", "report.pdf"),
+    ("a‪‫‬‭‮⁦⁧⁨⁩b.txt", "ab.txt"),
+    ("‮⁦‏", "file"),                 # nothing but controls
+    ("‮.‭.", "file"),                     # dots only, once they are gone
+])
+def test_display_name_drops_direction_controls(raw, shown):
+    assert outbox.display_name(raw) == shown
+
+
+@pytest.mark.parametrize("name", [
+    "تقرير.pdf",           # Arabic: right-to-left text is not a control
+    "דוח שבועי.html",
+    "\U0001F468‍\U0001F469‍\U0001F467.png",   # the joiner inside an emoji stays
+])
+def test_display_name_keeps_right_to_left_text_and_emoji_joiners(name):
+    assert outbox.display_name(name) == name
+
+
 def test_space_outbox_dir_is_under_the_space_root(tmp_path):
     import paths
     assert paths.space_outbox_dir(tmp_path) == tmp_path / ".space" / "outbox"

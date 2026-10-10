@@ -26,6 +26,11 @@ ENTRY_ID_RE = re.compile(r"[0-9a-f]{32}")
 _DOTENV_TEMPLATE_SUFFIXES = (".example", ".sample")
 _MAX_NAME_CHARS = 200
 _MAX_SUFFIX_CHARS = 16
+# Unicode direction controls. Left in a name they can make it read backwards in
+# a chat, so that "report<U+202E>fdp.exe" is shown as "reportexe.pdf".
+_DIRECTION_CONTROLS = frozenset(
+    "\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+)
 
 
 class OutboxError(ValueError):
@@ -174,7 +179,10 @@ def display_name(name: object) -> str:
     if not isinstance(name, str):
         return "file"
     name = re.split(r"[/\\]", name)[-1]
-    name = "".join(ch for ch in name if ord(ch) >= 0x20 and ord(ch) != 0x7F).strip()
+    name = "".join(
+        ch for ch in name
+        if ord(ch) >= 0x20 and ord(ch) != 0x7F and ch not in _DIRECTION_CONTROLS
+    ).strip()
     if not name.strip("."):
         return "file"
     if len(name) > _MAX_NAME_CHARS:
