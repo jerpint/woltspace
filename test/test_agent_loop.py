@@ -88,7 +88,7 @@ def _tg_send_transcript(test_name: str, entries: list[dict]):
     """Send conversation transcript to test group."""
     chat_id = os.environ.get("TEST_CHAT_ID")
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    if not chat_id or not token:
+    if not chat_id or not token or os.environ.get("WOLTSPACE_TEST_LIVE_SEND") != "1":
         return
 
     short_name = test_name.split("::")[-1] if "::" in test_name else test_name
@@ -151,7 +151,12 @@ def _haiku_available() -> bool:
         return False
 
 
-requires_haiku = pytest.mark.skipif(not _haiku_available(), reason="haiku API not available")
+# Opt-in, checked BEFORE the availability probe: the probe itself is a paid call.
+_LIVE_MODEL = os.environ.get("WOLTSPACE_TEST_LIVE_MODEL") == "1"
+requires_haiku = pytest.mark.skipif(
+    not (_LIVE_MODEL and _haiku_available()),
+    reason="calls a real model; set WOLTSPACE_TEST_LIVE_MODEL=1",
+)
 
 
 def _get_response_with_mock_tools(user_message: str, mock_session_result: dict = None) -> dict:

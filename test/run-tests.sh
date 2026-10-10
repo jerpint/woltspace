@@ -119,6 +119,7 @@ case "$TIER" in
     echo "  decision: mocked tools, ~\$0.01/test"
     echo "  scenario: multi-turn convos, ~\$0.05/test"
     echo "  live: real sessions spawned, ~\$0.50/test"
+    export WOLTSPACE_TEST_LIVE_MODEL=1
     _run_tests "agent" uv run --extra test --project "$WOLTSPACE_DIR" pytest test/test_agent_loop.py -v "${@:2}"
     ;;
   live)
@@ -143,6 +144,7 @@ case "$TIER" in
     echo "  wolt: test-shadow — created and removed per test; no real wolt is touched"
     export WOLTSPACE_TEST_REAL_SPAWN=1
     export WOLTSPACE_TEST_LIVE_SEND=1  # also unlocks the live getUpdates probes
+    export WOLTSPACE_TEST_LIVE_SERVER=1  # point WOLTSPACE_PORT at a scratch lodge, never your live one
     _run_tests "opt-in" uv run --extra test --project "$WOLTSPACE_DIR" pytest \
       test/test_server_health.py test/test_closed_loop.py test/test_telegram_loop.py \
       -v "${@:2}"

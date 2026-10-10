@@ -5,10 +5,53 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 import pytest
+
+
+# ---------------------------------------------------------------------------
+# A private tmux server for the whole run
+# ---------------------------------------------------------------------------
+# Without this every tmux call in the suite (and in the code under test) talks
+# to the developer's default tmux server, where their live lodge's sessions
+# run. TMUX_TMPDIR points at a directory that really exists (a missing one
+# makes tmux fall back to the default socket), and TMUX is dropped because
+# inside a tmux pane it names the current server outright.
+_TEST_TMUX_DIR = Path(tempfile.mkdtemp(prefix="wst-tmux-"))
+os.environ["TMUX_TMPDIR"] = str(_TEST_TMUX_DIR)
+os.environ.pop("TMUX", None)
+os.environ.pop("TMUX_PANE", None)
+_TEST_TMUX_SOCKET = _TEST_TMUX_DIR / f"tmux-{os.getuid()}" / "default"
+
+
+def pytest_sessionstart(session):
+    """Prove tmux resolves to the private server before any test can touch it."""
+    if shutil.which("tmux") is None:
+        return
+    probe = f"wst-probe-{os.getpid()}"
+    subprocess.run(["tmux", "new-session", "-d", "-s", probe], capture_output=True, check=False)
+    if not _TEST_TMUX_SOCKET.is_socket():
+        # Isolation failed: remove only our own probe, by name, then stop.
+        subprocess.run(["tmux", "kill-session", "-t", f"={probe}"], capture_output=True, check=False)
+        pytest.exit(f"tmux isolation failed: no private socket at {_TEST_TMUX_SOCKET}", returncode=3)
+    subprocess.run(["tmux", "-S", str(_TEST_TMUX_SOCKET), "kill-session", "-t", f"={probe}"],
+                   capture_output=True, check=False)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Close whatever the run left on the private server, by name (never kill-server)."""
+    if not _TEST_TMUX_SOCKET.is_socket():
+        return
+    listed = subprocess.run(
+        ["tmux", "-S", str(_TEST_TMUX_SOCKET), "list-sessions", "-F", "#{session_name}"],
+        capture_output=True, text=True, check=False,
+    )
+    for name in listed.stdout.split():
+        subprocess.run(["tmux", "-S", str(_TEST_TMUX_SOCKET), "kill-session", "-t", f"={name}"],
+                       capture_output=True, check=False)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
 from env_compat import get_env  # noqa: E402
@@ -302,6 +345,12 @@ def _stop_shadow_sessions(wolts_dir: Path):
     if sessions_dir.is_dir():
         names = [path.stem for path in sessions_dir.glob("*.json")]
     for name in names:
+        if not _live_server_enabled():
+            # Never ask a running lodge (likely the live one) unless opted in;
+            # tmux here is the run's private server.
+            subprocess.run(["tmux", "kill-session", "-t", f"={name}"],
+                           capture_output=True, check=False)
+            continue
         body = json.dumps({}).encode()
         request = urllib.request.Request(
             f"{_server_endpoint()}/sessions/{name}/stop",
