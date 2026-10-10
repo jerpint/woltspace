@@ -84,7 +84,6 @@ SUBINDENT = "     "
 
 # The two warnings the launcher never let you miss. Single dash, on purpose.
 SHARE_WARNING = "share carefully - anyone with this link can reach your wolts."
-TUNNEL_DIGGING = "tunnel still digging - the lodge keeps trying"
 
 
 # --- Console -----------------------------------------------------------------
@@ -260,14 +259,10 @@ def public_tunnel_lines(tunnel: dict) -> None:
         headline(TREE, "tunnel disabled - the lodge stays on this machine")
         return
     blank()
-    headline(TREE, "tunnel open" if tunnel.get("url") else "starting tunnel")
+    headline(TREE, "tunnel open")
     subtitle("opening a path to the outside")
-    url = tunnel.get("url")
-    if url:
-        labelled("public", url)
-        warn(SHARE_WARNING)
-    else:
-        warn(TUNNEL_DIGGING)
+    labelled("public", tunnel.get("url", ""))
+    warn(SHARE_WARNING)
 
 
 def status_tunnel_line(tunnel: dict) -> None:
@@ -287,8 +282,6 @@ def status_tunnel_line(tunnel: dict) -> None:
     # `.env` whether or not cloudflared ever started, and printing it as though
     # the lodge were reachable there would be the one lie this line must not
     # tell — so it is named as configuration, in amber, on one line.
-    configured = tunnel.get("url")
-    if configured:
-        headline(TREE, f"tunnel configured, not up: {configured}")
-        return
-    headline(TREE, f"tunnel {tunnel.get('kind', 'quick')}, no public URL yet")
+    # Configured is not up: the named URL comes from `.env` whether or not
+    # cloudflared ever started.
+    headline(TREE, f"tunnel configured, not up: {tunnel.get('url', '')}")

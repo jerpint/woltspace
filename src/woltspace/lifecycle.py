@@ -25,10 +25,6 @@ from .platform_docs import sync_claude_md_platform_section
 from .skills import sync_platform_skills
 
 
-#: How long `tunnel_report` will wait for a quick tunnel's random URL to land
-#: in the state file. A named tunnel needs none of this — its URL is config.
-QUICK_TUNNEL_ATTEMPTS = 16
-QUICK_TUNNEL_INTERVAL = 0.5
 
 
 def tunnel_settings(layout: RuntimeLayout) -> dict:
@@ -53,15 +49,16 @@ def tunnel_settings(layout: RuntimeLayout) -> dict:
         except (OSError, ImportError):  # a broken .env must not break start
             pass
     default = "false" if layout.isolation == "host" else "true"
-    enabled = (values.get("WOLTSPACE_PUBLIC_TUNNEL") or default).lower() == "true"
+    requested = (values.get("WOLTSPACE_PUBLIC_TUNNEL") or default).lower() == "true"
     named = (values.get("CLOUDFLARE_TUNNEL_URL") or "").strip()
     token = (values.get("CLOUDFLARE_TUNNEL_TOKEN") or "").strip()
+    # A named tunnel is a token *and* a URL. Without both the lodge publishes
+    # nothing: it never falls back to a quick tunnel.
+    configured = bool(named and token)
     return {
-        "enabled": enabled,
-        # A named tunnel is a token *and* a URL: with only one of the pair the
-        # server falls back to a quick tunnel, whose URL is random.
-        "kind": "named" if (named and token) else "quick",
-        "url": named if (named and token) else "",
+        "enabled": requested and configured,
+        "kind": "named" if configured else "none",
+        "url": named if configured else "",
     }
 
 
@@ -107,22 +104,13 @@ def tunnel_report(layout: RuntimeLayout, *, wait: bool = True) -> dict:
       written to ``tunnel.json`` by the control plane. Empty when nothing is
       published, which is why `status` can tell "configured" from "up".
 
-    A quick tunnel's URL is assigned by Cloudflare at run time, so with
-    ``wait=True`` (a fresh `start`) the state file is briefly watched. With
-    ``wait=False`` (a `status`, which is a question about right now) nothing
-    is ever waited on.
+    Only a named tunnel is ever published, and its URL is configuration, so
+    nothing is waited on. ``wait`` is kept for callers and means nothing now.
     """
     settings = tunnel_settings(layout)
     if not settings["enabled"]:
         return {**settings, "live": ""}
-    attempts = QUICK_TUNNEL_ATTEMPTS if (wait and not settings["url"]) else 1
-    for attempt in range(attempts):
-        live = read_tunnel_url(layout)
-        if live:
-            return {**settings, "live": live, "url": settings["url"] or live}
-        if attempt + 1 < attempts:
-            time.sleep(QUICK_TUNNEL_INTERVAL)
-    return {**settings, "live": ""}
+    return {**settings, "live": read_tunnel_url(layout)}
 
 
 def start(layout: RuntimeLayout, *, timeout: float = 15.0) -> tuple[int, dict]:

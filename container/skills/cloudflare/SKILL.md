@@ -53,4 +53,4 @@ App browser   → app.theirapps.tld → Cloudflare Access + Tunnel → app gatew
 
 - **Auth at the edge** — unauthorized requests never reach the container.
 - **Auto-reconnect** — named tunnels survive network blips, same URL persists across restarts.
-- **Quick tunnels remain the default** — named tunnels only activate when env vars are set.
+- **No named tunnel, no tunnel** — without the env vars the lodge stays on the machine. It never opens a quick tunnel.
