@@ -36,8 +36,8 @@ Examples: new container architecture, complete rewrite of session system, breaki
 3. After the prep PR merges, run the `publish.yml` workflow from that branch. It waits for the maintainer's approval, publishes, then tags and creates the GitHub release itself. Never tag by hand.
 4. Users update with `woltspace update`
 
-## How /update uses versions
+## How `woltspace update` uses versions
 
-- Reads current `.version` from the running container
-- Fetches latest tag from origin
-- Compares: patch bump → safe pull with sanity check. Minor/major bump → flag it, show migration notes, require explicit confirmation.
+- Reads the newest usable release from PyPI; release candidates only with `--pre`
+- Installs it with `uv`, then checks the lodge came back healthy
+- Docs: `docs/updates.md`
