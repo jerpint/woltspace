@@ -35,6 +35,7 @@ Older releases without the command can be upgraded once with the underlying step
 woltspace status --json
 woltspace stop
 uv tool install --force 'woltspace==VERSION'
+uv tool update-shell
 woltspace start
 woltspace --version
 woltspace status --json

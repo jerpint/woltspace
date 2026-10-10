@@ -94,6 +94,6 @@ WOLTSPACE_NOTIFY_E70A249C
 
 ## How it works
 
-`notify` POSTs to `localhost:7777/notify` → server sends via Telegram/Slack API directly. Synchronous, no polling delay.
+`notify` POSTs to `$WOLTSPACE_API/notify` → server sends via Telegram/Slack API directly. Synchronous, no polling delay.
 
 With explicit flags (`--slack`, `--telegram`), the server skips session registry lookup entirely and sends directly to the specified target. Without flags, it falls back to session-based routing, then Telegram default.

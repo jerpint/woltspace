@@ -17,8 +17,9 @@ import signal
 import subprocess
 import time
 from pathlib import Path
+from woltspace.app_gateway_port import resolve_app_gateway_port
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from env_compat import get_env
 from paths import space_apps_dir
@@ -78,26 +79,54 @@ def load_app(app_path: str | Path) -> WoltspaceApp | None:
     manifest = Path(app_path) / MANIFEST
     if not manifest.exists():
         return None
+    app, _error = load_app_result(app_path)
+    return app
+
+
+def load_app_result(app_path: str | Path) -> tuple[WoltspaceApp | None, str | None]:
+    """Load an app and preserve a safe, human-readable validation failure."""
+    manifest = Path(app_path) / MANIFEST
+    if not manifest.exists():
+        return None, None
     try:
         data = json.loads(manifest.read_text())
-        return WoltspaceApp(**data)
-    except (json.JSONDecodeError, Exception):
-        return None
+        return WoltspaceApp(**data), None
+    except json.JSONDecodeError as exc:
+        return None, f"Invalid JSON at line {exc.lineno}, column {exc.colno}"
+    except ValidationError as exc:
+        details = []
+        for error in exc.errors(include_url=False, include_context=False):
+            field = ".".join(str(part) for part in error["loc"])
+            details.append(f"{field}: {error['msg']}")
+        return None, "; ".join(details)
+    except OSError as exc:
+        return None, f"Could not read woltspace.json: {exc.strerror or exc}"
+    except Exception as exc:
+        return None, f"Invalid woltspace.json: {exc}"
 
 
-def discover_apps() -> list[WoltspaceApp]:
-    """Scan wolts/apps/ and wolts/projects/ (legacy) for all apps with woltspace.json manifests."""
+def discover_apps_with_errors() -> tuple[list[WoltspaceApp], list[dict[str, str]]]:
+    """Discover valid apps and report manifests that need owner attention."""
     apps = []
+    invalid = []
     seen_names: set[str] = set()
-    # Primary: wolts/apps/
     for search_dir in (APPS_DIR, LEGACY_PROJECTS_DIR):
         if not search_dir.exists():
             continue
         for manifest in sorted(search_dir.glob("*/" + MANIFEST)):
-            app = load_app(manifest.parent)
+            app, error = load_app_result(manifest.parent)
             if app and app.name not in seen_names:
                 seen_names.add(app.name)
                 apps.append(app)
+            elif error and manifest.parent.name not in seen_names:
+                seen_names.add(manifest.parent.name)
+                invalid.append({"name": manifest.parent.name, "error": error})
+    return apps, invalid
+
+
+def discover_apps() -> list[WoltspaceApp]:
+    """Scan app directories and return manifests that pass validation."""
+    apps, _invalid = discover_apps_with_errors()
     return apps
 
 
@@ -116,6 +145,15 @@ def app_dir(name: str) -> Path:
 def get_app(name: str) -> WoltspaceApp | None:
     """Load a specific app by name."""
     return load_app(app_dir(name))
+
+
+def _enabled_app_gateway_port() -> int | None:
+    """Return the always-reserved gateway port."""
+    try:
+        lodge_port = int(os.environ.get("WOLTSPACE_PORT") or os.environ.get("PORT") or "7777")
+    except ValueError:
+        lodge_port = 7777
+    return resolve_app_gateway_port(WOLTS_DIR, lodge_port)
 
 
 # --- Running state ---
@@ -227,6 +265,12 @@ def start_app(name: str) -> dict:
 
     # Use port from manifest — check for conflicts with running apps
     port = app.port
+    gateway_port = _enabled_app_gateway_port()
+    if port == gateway_port:
+        raise RuntimeError(
+            f"port {port} is used by the app gateway; "
+            "change the app's port or the gateway port in Settings"
+        )
     for r in running_apps():
         if r["port"] == port:
             raise RuntimeError(f"Port {port} already in use by running app '{r['name']}'")

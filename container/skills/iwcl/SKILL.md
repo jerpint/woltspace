@@ -69,7 +69,7 @@ it knows its parent and can IWCL back without being told. The canonical delegati
 
 ```bash
 out=$(woltspace session spawn beaverwolt <<'WOLTSPACE_IWCL_B2A563F908D741BE'
-read /workspace/wolts/uxwolt/wolt/drafts/task-spec.md and build it
+read $WOLTSPACE_WOLTS_DIR/uxwolt/wolt/drafts/task-spec.md and build it
 WOLTSPACE_IWCL_B2A563F908D741BE
 )
 session=$(echo "$out" | sed -n 's/^SESSION=//p')
@@ -84,7 +84,7 @@ is exactly what this is for. The child shares your memory but is an independent 
 
 The seed prompt is a briefing, not a payload (capped at 4000 chars) — put big work orders in a
 file the child can read, and pass a short pointer. Paths in the seed must be **absolute**
-(`/workspace/wolts/...`): the child boots in its own wolt directory, not yours.
+(`$WOLTSPACE_WOLTS_DIR/...`): the child boots in its own wolt directory, not yours.
 
 > **Never spawn headless `claude` / `codex` processes (tmux, nohup, background shells) for
 > delegated work.** Platform sessions bill the owner's subscription; a headless agent process

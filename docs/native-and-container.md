@@ -31,6 +31,7 @@ is the same code either way. Choose by how much you want to be asked.
 
 ```bash
 uv tool install 'woltspace'
+uv tool update-shell
 woltspace start          # runs doctor, takes the data-root lock, serves the lodge
 woltspace tui            # the terminal UI
 woltspace status         # who owns the data root, which sessions were adopted
@@ -122,6 +123,7 @@ first release, install both artifacts from a checkout:
 
 ```bash
 uv tool install .
+uv tool update-shell
 cd tui && npm pack && npm install -g ./woltspace-tui-*.tgz
 ```
 
@@ -151,6 +153,7 @@ artifacts a native install uses**:
 
 ```dockerfile
 uv tool install 'woltspace==<WOLTSPACE_PYPI_VERSION>'   # the control plane
+uv tool update-shell
 npm  install -g '@woltspace/tui@<WOLTSPACE_TUI_VERSION>'            # optional terminal cockpit
 ```
 

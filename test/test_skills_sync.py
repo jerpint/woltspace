@@ -1107,6 +1107,49 @@ class TestWoltSkillsDelivery:
         assert wolt_skills_delivery(tmp_path / "wolts" / "nothing-here") == "copy"
 
 
+def test_wolt_facing_instructions_do_not_hardcode_the_default_lodge_port():
+    roots = [ROOT / "container" / "skills", ROOT / "container" / "bot" / "AGENT-LOOP.md"]
+    offenders = []
+    for root in roots:
+        paths = root.rglob("*.md") if root.is_dir() else [root]
+        for path in paths:
+            text = path.read_text()
+            if "localhost:7777" in text or "127.0.0.1:7777" in text:
+                offenders.append(str(path.relative_to(ROOT)))
+    assert offenders == []
+
+
+def test_cloudflare_skill_routes_to_every_sub_doc():
+    skill = ROOT / "container" / "skills" / "cloudflare"
+    router = (skill / "SKILL.md").read_text()
+    docs = sorted(path.name for path in skill.glob("*.md") if path.name != "SKILL.md")
+
+    assert docs == ["add-access.md", "app-domain.md", "remove-access.md", "setup.md"]
+    for name in docs:
+        assert f"`{name}`" in router
+
+
+def test_cloudflare_app_domain_uses_gateway_and_settings_apis():
+    body = (ROOT / "container" / "skills" / "cloudflare" / "app-domain.md").read_text()
+
+    assert '"$WOLTSPACE_API/settings/app-gateway"' in body
+    assert '"$WOLTSPACE_API/settings/apps-domain"' in body
+    assert '"$WOLTSPACE_API/settings/access"' in body
+    assert "http://localhost:$GATEWAY_PORT" not in body
+    assert '"service": "http://localhost:" + os.environ["GATEWAY_PORT"]' in body
+    assert "lodge port minus 660" in body
+    assert "access/apps/$APP_ID" in body
+    assert "-X PUT" in body
+
+
+def test_cloudflare_setup_routes_new_apps_to_the_separate_gateway_guide():
+    body = (ROOT / "container" / "skills" / "cloudflare" / "setup.md").read_text()
+
+    assert "Read and follow `app-domain.md` now" in body
+    assert "GET $WOLTSPACE_API/settings/app-gateway" in body
+    assert '"hostname": "*.<domain>"' not in body
+
+
 def test_copy_delivery_carries_start_chat_modes(tmp_path):
     wolt = tmp_path / "wolts" / "copywolt"
     wolt.mkdir(parents=True)
@@ -1120,9 +1163,25 @@ def test_copy_delivery_carries_start_chat_modes(tmp_path):
     assert (delivered / "modes" / "slack.md").is_file()
 
 
-def test_platform_skills_do_not_direct_native_agents_to_container_install_paths():
-    references = []
-    for path in SHIPPED_SKILLS.rglob("*.md"):
-        if "/workspace/woltspace" in path.read_text():
-            references.append(path.relative_to(ROOT).as_posix())
-    assert references == []
+def test_wolt_facing_skills_and_templates_do_not_assume_container_paths():
+    paths = list(SHIPPED_SKILLS.rglob("*.md")) + [ROOT / "template" / "CLAUDE.md"]
+    offenders = []
+    for path in paths:
+        sections = []
+        in_fence = False
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            if line.strip().startswith("```"):
+                in_fence = not in_fence
+            elif not in_fence and line.startswith("#"):
+                marker, _, _title = line.partition(" ")
+                if marker and set(marker) == {"#"}:
+                    level = len(marker)
+                    sections = [section for section in sections if section[0] < level]
+                    inherited = sections[-1][1] if sections else False
+                    sections.append((level, inherited or "(container only)" in line.lower()))
+            allowed = "(container only)" in line.lower() or bool(
+                sections and sections[-1][1]
+            )
+            if "/workspace/" in line and not allowed:
+                offenders.append(f"{path.relative_to(ROOT)}:{line_number}")
+    assert offenders == []

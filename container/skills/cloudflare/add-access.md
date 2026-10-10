@@ -18,7 +18,7 @@ Ask the user:
 ## Step 2: Check env
 
 ```bash
-source /workspace/wolts/.env
+eval "$(grep -E '^CLOUDFLARE_[A-Z_]+=' "${WOLTSPACE_WOLTS_DIR:-$HOME/.woltspace/wolts}/.env" | sed 's/^/export /')"
 echo "API_TOKEN=${CLOUDFLARE_API_TOKEN:+SET}"
 echo "ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-NOT SET}"
 ```
@@ -28,7 +28,7 @@ If either is missing, the named tunnel hasn't been set up yet — point the user
 ## Step 3: List existing Access apps
 
 ```bash
-source /workspace/wolts/.env
+eval "$(grep -E '^CLOUDFLARE_[A-Z_]+=' "${WOLTSPACE_WOLTS_DIR:-$HOME/.woltspace/wolts}/.env" | sed 's/^/export /')"
 curl -s "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps" \
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" | python3 -c "
 import json, sys
@@ -53,7 +53,7 @@ Skip this step if an Access app already covers the domain the user picked.
 A more specific Access app (e.g. `blog.example.com`) takes precedence over the wildcard (`*.example.com`) at Cloudflare's edge. That's how you give one person access to a single app without exposing the rest.
 
 ```bash
-source /workspace/wolts/.env
+eval "$(grep -E '^CLOUDFLARE_[A-Z_]+=' "${WOLTSPACE_WOLTS_DIR:-$HOME/.woltspace/wolts}/.env" | sed 's/^/export /')"
 APP_RESULT=$(curl -s -X POST \
   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps" \
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
@@ -76,7 +76,7 @@ A freshly-created Access app has no policies, so it blocks everyone until Step 4
 Replace `<APP_ID>`, `<EMAIL>`, and `<name>` with real values. `<name>` is just a label for the policy (e.g. `allow-friend-bob`).
 
 ```bash
-source /workspace/wolts/.env
+eval "$(grep -E '^CLOUDFLARE_[A-Z_]+=' "${WOLTSPACE_WOLTS_DIR:-$HOME/.woltspace/wolts}/.env" | sed 's/^/export /')"
 curl -s -X POST \
   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/apps/<APP_ID>/policies" \
   -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \

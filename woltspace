@@ -235,6 +235,22 @@ _start_container() {
   # skills and tools still read WOLT_NAME.
   [ -n "$wolt_name" ] && extra_args="-e WOLTSPACE_WOLT_NAME=$wolt_name -e WOLT_NAME=$wolt_name"
 
+  # Resolve before `docker run` so publish, bind, and generated URLs agree.
+  # Prefer the package's shared resolver when host Python is present; a
+  # Python-less Docker host keeps the explicit env value or the safe default.
+  local lodge_port="${WOLTSPACE_PORT:-7777}"
+  local app_gateway_port="${WOLTSPACE_APP_GATEWAY_PORT:-}"
+  if command -v python3 >/dev/null 2>&1; then
+    local resolved_gateway_port=""
+    resolved_gateway_port=$(PYTHONPATH="$WOLTSPACE_DIR/src${PYTHONPATH:+:$PYTHONPATH}" python3 -c 'import sys; from pathlib import Path; from woltspace.app_gateway_port import resolve_app_gateway_port; print(resolve_app_gateway_port(Path(sys.argv[1]), int(sys.argv[2])))' "$WOLTS_DIR" "$lodge_port" 2>/dev/null) || resolved_gateway_port=""
+    if [ -n "$resolved_gateway_port" ] && [ "$resolved_gateway_port" -eq "$resolved_gateway_port" ] 2>/dev/null; then
+      app_gateway_port="$resolved_gateway_port"
+    fi
+  fi
+  if [ -z "$app_gateway_port" ] || ! [ "$app_gateway_port" -eq "$app_gateway_port" ] 2>/dev/null; then
+    app_gateway_port=$((lodge_port - 660))
+  fi
+
   # No dev mount. /workspace/woltspace is the installed package's own bundle
   # now; shadowing it with a checkout would put the platform back to running
   # from raw source — the exact split this image was slimmed to remove.
@@ -244,6 +260,8 @@ _start_container() {
   fi
 
   mkdir -p "$WOLTS_DIR/.claude"
+  # Loopback-only publication is the boundary that lets the external lodge and
+  # gateway trust clean localhost requests across Docker's varying bridges.
   docker run -d \
     --name "$CONTAINER_NAME" \
     --env-file "$WOLTS_DIR/.env" \
@@ -251,7 +269,9 @@ _start_container() {
     -e HOST_GID=$(id -g) \
     -v "$WOLTS_DIR:/workspace/wolts:rw" \
     -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
-    -p "${WOLTSPACE_PORT:-7777}":7777 \
+    -p "127.0.0.1:${WOLTSPACE_PORT:-7777}:7777" \
+    -p "127.0.0.1:$app_gateway_port:$app_gateway_port" \
+    -e WOLTSPACE_APP_GATEWAY_PORT="$app_gateway_port" \
     $extra_args \
     woltspace > /dev/null
 
@@ -691,7 +711,8 @@ echo ""
 echo "restore complete. run with:"
 echo "  docker run -d --name woltspace \\"
 echo "    -v $DIR/wolts:/workspace/wolts:rw \\"
-echo "    -p 7777:7777 \\"
+echo "    -p 127.0.0.1:7777:7777 \\"
+echo "    -p 127.0.0.1:7117:7117 \\"
 echo "    woltspace-backup:$TAG"
 RESTORE
       chmod +x "$TMPDIR/restore.sh"
@@ -712,7 +733,8 @@ RESTORE
     else
       echo "    docker run -d --name $CONTAINER_NAME \\"
       echo "      -v $BACKUP_DIR:/workspace/wolts:rw \\"
-      echo "      -p ${WOLTSPACE_PORT:-7777}:7777 \\"
+      echo "      -p 127.0.0.1:${WOLTSPACE_PORT:-7777}:7777 \\"
+      echo "      -p 127.0.0.1:${WOLTSPACE_APP_GATEWAY_PORT:-7117}:${WOLTSPACE_APP_GATEWAY_PORT:-7117} \\"
       echo "      woltspace-backup:$TAG"
     fi
     echo ""

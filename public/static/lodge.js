@@ -451,6 +451,20 @@ function renderApps() {
 
   grid.replaceChildren(...filtered.map(p => {
     const card = lodgeElement('div', 'app-card');
+    if (p.invalid) {
+      const body = lodgeElement('div', 'app-card-body');
+      const top = lodgeElement('div', 'app-card-top');
+      top.appendChild(lodgeElement('span', 'app-emoji', '⚠️'));
+      const statusElement = lodgeElement('div', 'app-status stopped', 'broken');
+      statusElement.prepend(lodgeElement('div', 'app-status-dot'));
+      top.appendChild(statusElement);
+      body.appendChild(top);
+      body.appendChild(lodgeElement('div', 'app-name-link', p.name));
+      body.appendChild(lodgeElement('div', 'app-desc', 'Invalid woltspace.json'));
+      body.appendChild(lodgeElement('div', 'app-desc', p.error || 'Manifest validation failed'));
+      card.appendChild(body);
+      return card;
+    }
     card.setAttribute('role', 'link');
     card.tabIndex = 0;
     const destination = p.running
