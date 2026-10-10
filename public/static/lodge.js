@@ -133,6 +133,8 @@ async function loadWolts() {
     allWolts = await woltsResponse.json();
     firstRun = await onboardingResponse.json();
     renderSidebarWolts();
+    // Sessions may have rendered first, with no wolt data to name them by.
+    if (allSessions.length) renderSessions();
     renderStarterWelcome();
     if (allApps.length) renderApps();
   } catch {
@@ -602,6 +604,22 @@ function restoreLodgeSessions() {
   } catch {}
 }
 
+// Sessions can render before /wolts answers, so a group's avatar and name are
+// repainted on every render, not only when the group is created. The avatar is
+// rewritten only when the wolt's type changes, so the 15s poll doesn't flicker.
+function paintSessionGroupHeader(group, wolt) {
+  const woltData = allWolts.find(w => (w.name || w.dir) === wolt);
+  const type = woltData ? woltData.type || '' : '';
+  const avatar = group.querySelector('.sessions-group-avatar');
+  if (avatar && avatar.dataset.type !== type) {
+    const sprite = woltData ? woltSpriteAvatar(woltData.type, 20) : null;
+    if (sprite) avatar.innerHTML = sprite; else avatar.textContent = WOLT_EMOJI[type] || '🦫';
+    avatar.dataset.type = type;
+  }
+  const label = group.querySelector('.sessions-group-name');
+  if (label) label.textContent = woltLabel(woltData) || wolt;
+}
+
 function renderSessions() {
   const online = allSessions.filter(s => s.name !== 'main' && sessionIsOnline(s));
   const total = Object.values(sessionTotals).reduce((sum, count) => sum + count, 0)
@@ -630,15 +648,10 @@ function renderSessions() {
   if (online.length) container.querySelector('.empty-state')?.remove();
   [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).forEach(([wolt, sessions]) => {
     let group = [...container.querySelectorAll('.sessions-group')].find(node => node.dataset.wolt === wolt);
-    const woltData = allWolts.find(w => (w.name || w.dir) === wolt);
-    const emoji = woltData ? (WOLT_EMOJI[woltData.type] || '🦫') : '🦫';
-    const sessionSprite = woltData ? woltSpriteAvatar(woltData.type, 20) : null;
     if (!group) {
       group = lodgeElement('div', 'sessions-group'); group.dataset.wolt = wolt;
       const header = lodgeElement('div', 'sessions-group-header');
-      const avatar = lodgeElement('div', 'sessions-group-avatar');
-      if (sessionSprite) avatar.innerHTML = sessionSprite; else avatar.textContent = emoji;
-      header.append(avatar, lodgeElement('span', 'sessions-group-name', woltLabel(woltData) || wolt), lodgeElement('span', 'sessions-group-meta'));
+      header.append(lodgeElement('div', 'sessions-group-avatar'), lodgeElement('span', 'sessions-group-name'), lodgeElement('span', 'sessions-group-meta'));
       const chevron = lodgeElement('span', 'sessions-group-chevron', '⌄');
       header.appendChild(chevron);
       header.addEventListener('click', () => toggleSessionGroup(header));
@@ -649,6 +662,7 @@ function renderSessions() {
         .find(node => node.dataset.wolt.localeCompare(wolt) > 0);
       container.insertBefore(group, next || null);
     }
+    paintSessionGroupHeader(group, wolt);
     syncSessionRows(group.querySelector('.sessions-group-inner'), sessions);
   });
   container.querySelectorAll('.sessions-group').forEach(group => {
