@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from telegram import Update, BotCommand, MenuButtonCommands, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
-from telegram.error import TimedOut
+from telegram.error import NetworkError, TimedOut
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, CallbackQueryHandler, filters, ContextTypes
 import re
 import sys
@@ -97,6 +97,46 @@ async def _reply(update: Update, text: str, **kwargs):
         logger.warning("reply_text timed out, retrying once...")
         await asyncio.sleep(1)
         return await update.message.reply_text(text, **kwargs)
+
+
+# Telegram's file server is sometimes slow. A download that times out once
+# usually works on the next try, so media handlers retry before giving up,
+# and always tell the person when they do give up (never a silent drop).
+DOWNLOAD_ATTEMPTS = 3
+DOWNLOAD_READ_TIMEOUT = 30.0
+DOWNLOAD_CONNECT_TIMEOUT = 10.0
+
+
+async def _download_bytes(context: ContextTypes.DEFAULT_TYPE, file_id: str, what: str) -> bytes:
+    """Fetch a file from Telegram, retrying on timeouts and network errors."""
+    last_error: Exception | None = None
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            file = await context.bot.get_file(
+                file_id,
+                read_timeout=DOWNLOAD_READ_TIMEOUT,
+                connect_timeout=DOWNLOAD_CONNECT_TIMEOUT,
+            )
+            return bytes(await file.download_as_bytearray(
+                read_timeout=DOWNLOAD_READ_TIMEOUT,
+                connect_timeout=DOWNLOAD_CONNECT_TIMEOUT,
+            ))
+        except (TimedOut, NetworkError) as exc:
+            last_error = exc
+            logger.warning(f"{what} download attempt {attempt}/{DOWNLOAD_ATTEMPTS} failed: {exc}")
+            if attempt < DOWNLOAD_ATTEMPTS:
+                await asyncio.sleep(attempt)
+    raise last_error if last_error else RuntimeError(f"{what} download failed")
+
+
+async def _say_download_failed(update: Update, what: str) -> None:
+    """Best effort: the person must hear that their message did not arrive."""
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    logger.error(f"{what} lost after {DOWNLOAD_ATTEMPTS} attempts (chat_id={chat_id})")
+    try:
+        await _reply(update, f"I couldn't get that {what} from Telegram (it kept timing out). Please send it again.")
+    except Exception as exc:
+        logger.error(f"Could not tell chat_id={chat_id} that the {what} was lost: {exc}")
 
 
 async def _dog_ack(update: Update):
@@ -696,11 +736,18 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     chat_id = update.effective_chat.id
-    await _reply(update, random.choice(DOG_VOICE_ACKS))
+    try:
+        await _reply(update, random.choice(DOG_VOICE_ACKS))
+    except Exception as exc:
+        logger.warning(f"Voice ack failed (chat_id={chat_id}): {exc}")
 
-    file = await context.bot.get_file(voice.file_id)
+    try:
+        audio_bytes = await _download_bytes(context, voice.file_id, "voice message")
+    except Exception:
+        await _say_download_failed(update, "voice message")
+        return
     with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
-        await file.download_to_drive(tmp.name)
+        tmp.write(audio_bytes)
         tmp_path = tmp.name
 
     try:
@@ -823,11 +870,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     caption = update.message.caption or ""
 
     try:
-        file = await context.bot.get_file(photo.file_id)
-        image_bytes = bytes(await file.download_as_bytearray())
-    except Exception as e:
-        logger.error(f"Photo download failed: {e}")
-        await _reply(update, "Couldn't download that image.")
+        image_bytes = await _download_bytes(context, photo.file_id, "image")
+    except Exception:
+        await _say_download_failed(update, "image")
         return
 
     # Save to disk
@@ -915,11 +960,9 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     caption = msg.caption or ""
 
     try:
-        file = await context.bot.get_file(media.file_id)
-        file_bytes = bytes(await file.download_as_bytearray())
-    except Exception as e:
-        logger.error(f"Video download failed: {e}")
-        await _reply(update, "Couldn't download that video.")
+        file_bytes = await _download_bytes(context, media.file_id, "video")
+    except Exception:
+        await _say_download_failed(update, "video")
         return
 
     saved_path = _save_upload(file_name, file_bytes)
@@ -984,11 +1027,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     caption = update.message.caption or ""
 
     try:
-        file = await context.bot.get_file(doc.file_id)
-        file_bytes = bytes(await file.download_as_bytearray())
-    except Exception as e:
-        logger.error(f"Document download failed: {e}")
-        await _reply(update, "Couldn't download that file.")
+        file_bytes = await _download_bytes(context, doc.file_id, "file")
+    except Exception:
+        await _say_download_failed(update, "file")
         return
 
     saved_path = _save_upload(file_name, file_bytes)
@@ -1515,7 +1556,8 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Global error handler — log and swallow TimedOut, re-raise others."""
     err = context.error
     if isinstance(err, TimedOut):
-        logger.warning(f"Telegram TimedOut (swallowed): {err}")
+        chat = getattr(update, "effective_chat", None)
+        logger.warning(f"Telegram TimedOut (swallowed, chat_id={getattr(chat, 'id', None)}): {err}")
         return
     logger.error(f"Unhandled error: {err}", exc_info=err)
 

@@ -57,7 +57,8 @@ own registered harness (for example, `claude` or `codex`) before the first
 
 A fresh lodge installs the public MIT-licensed
 [`jerpint/woltspace-starter-lodge`](https://github.com/jerpint/woltspace-starter-lodge)
-from a release-pinned commit. Set `WOLTSPACE_STARTER_SEED=none` before the
+from its latest `main` at first start (not pinned to a release, so onboarding
+can improve between releases; existing lodges never re-fetch it). Set `WOLTSPACE_STARTER_SEED=none` before the
 first start to turn it off, or set another seed source explicitly. The default
 install needs network access on first run; if offline, the failure is reported
 and onboarding continues.

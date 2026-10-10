@@ -2,37 +2,46 @@
 
 give your wolt space to build.
 
-| Audience | File |
-|----------|------|
-| Humans | [HUMANS.md](HUMANS.md) |
-| Developers / Agents | [CLAUDE.md](CLAUDE.md) |
-| Running it natively or in Docker | [docs/native-and-container.md](docs/native-and-container.md) |
-| First native run on a Mac | [docs/native-first-run.md](docs/native-first-run.md) |
+Woltspace gives your coding agents a home. An identity. We call them wolts.
+Open source (MIT), runs on your own computer, with the Claude Code, Codex or
+opencode you already use.
 
-The Tauri 2 desktop shell, browser preview, and build instructions live in [desktop/](desktop/README.md).
+## For humans
 
-## Updates
+Paste this into Claude Code, Codex or the Claude app:
 
-Ask your wolt to update a native lodge, or use the standard uv upgrade workflow.
-See [the update instructions](docs/updates.md).
+> Read github.com/jerpint/woltspace and help me get started with the install
 
-Since 0.5.4, `uv tool install woltspace` includes all Telegram and Slack connector
-dependencies. Channels still run only when enabled in your configuration.
-After a fresh native install, run `uv tool update-shell` and open a new terminal
-so the `woltspace` command remains available.
+More in [HUMANS.md](HUMANS.md) and on [woltspace.com](https://woltspace.com).
 
-For local workflows shared by every wolt, see [Shared lodge skills](docs/shared-skills.md).
+## For agents
 
-To publish a tiny starter team rather than private lodge history, see
-[Colony seeds](docs/colony-seeds.md). Colony seeds are ordinary Git
-repositories containing selected wolt identities, authored rules, explicit
-skills, and app source or pinned HTTPS Git references.
+A human asked you to help install Woltspace. Explain it in two sentences, then
+ask before each step.
 
-For focused CI coverage and checkout test setup, see [Testing](docs/testing.md).
+1. Check: macOS or Linux (Windows through WSL2, still in progress), `uv`,
+   `tmux`, and a logged-in Claude Code, Codex or opencode.
+2. Install what's missing with what the machine already uses (with Homebrew:
+   `brew install uv tmux`). Ask before `sudo` or installing Homebrew.
+3. `uv tool install woltspace` (if `woltspace` isn't found afterwards:
+   `uv tool update-shell`, then a new terminal).
+4. `WOLTSPACE_DEFAULT_HARNESS=claude woltspace start` (`codex` or `opencode`
+   if that's what you are).
+5. Open http://127.0.0.1:7777. The lodge starts with Onboardie; tell them to
+   click "Say hi".
 
-`woltspace backup` creates a verified data archive; `woltspace restore` extracts
-into a new directory. When moving backups across filesystems, an archive with
-names differing only by case (for example `Notes.md` and `notes.md`) restores
-both on a case-sensitive target. On a case-insensitive target, restore refuses
-those collisions with an error before extraction. This includes typical macOS
-volumes; the actual target filesystem determines the behavior.
+What it touches: one uv tool, data in `~/.woltspace/wolts`, a local server on
+127.0.0.1:7777. Nothing is public unless they set it up.
+
+Remove: `woltspace stop`, then `uv tool uninstall woltspace` (data stays in
+`~/.woltspace` until they delete it).
+
+Working on Woltspace itself: [CLAUDE.md](CLAUDE.md).
+
+## More
+
+- [Native and Docker](docs/native-and-container.md) · [First native run on a Mac](docs/native-first-run.md)
+- [Updates](docs/updates.md): ask your wolt, or `woltspace update`
+- [Shared lodge skills](docs/shared-skills.md) · [Colony seeds](docs/colony-seeds.md)
+- [Backups](docs/backup.md): `woltspace backup` and `woltspace restore`
+- [Testing](docs/testing.md)

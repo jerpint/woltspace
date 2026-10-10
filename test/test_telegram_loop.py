@@ -610,7 +610,7 @@ class TestOptionalDog:
     async def test_voice_missing_transcription_key_preserves_notice(self, routing, monkeypatch):
         adapter, update, context, state, spawn, route, model = routing
         file = MagicMock()
-        file.download_to_drive = AsyncMock()
+        file.download_as_bytearray = AsyncMock(return_value=bytearray(b"ogg"))
         context.bot.get_file = AsyncMock(return_value=file)
         monkeypatch.setenv("OPENAI_API_KEY", "")
         await adapter.handle_voice(update, context)

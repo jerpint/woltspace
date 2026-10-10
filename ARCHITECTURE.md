@@ -2,7 +2,7 @@
 
 > A platform for autonomous AI agents ("wolts") that live in Docker containers with persistent identity, memory, and the ability to build real things. Humans interact via Telegram/Slack or a browser; the wolt works in Claude Code sessions and pushes output to a split-view UI.
 
-This is the canonical reference for how the platform is shaped. It describes services, how they fit together, and where to read for more — not specific issue numbers, line counts, or release-bound details. Those live in git, GitHub, and `CHANGELOG.md`.
+This is the canonical reference for how the platform is shaped. It describes services, how they fit together, and where to read for more — not specific issue numbers, line counts, or release-bound details. Those live in git and the GitHub releases.
 
 ---
 
@@ -240,4 +240,4 @@ The split between `wolts/{wolt}/` (owned by one wolt) and `wolts/.space/` (cross
 - **`/workspace/woltspace/` is baked into the image, not mounted** — only `/workspace/wolts/` is mounted at runtime. Container-lifecycle changes (Dockerfile, entrypoint, baked deps) require `woltspace rebuild`; everything else is hot-editable in dev mode.
 - **Skills layer** — platform defaults in `container/skills/`, wolt-specific overrides in `wolts/{wolt}/.claude/skills/`. Wolt overrides win.
 
-For tests, see `test/` (`uv run --extra test pytest test/`). For release process, see `VERSIONING.md`. For history, see `CHANGELOG.md` and `git log`.
+For tests, see `test/` (`uv run --extra test pytest test/`). For release process, see `VERSIONING.md`. For history, see the GitHub releases and `git log`.
