@@ -4,11 +4,13 @@ import asyncio
 import json
 import urllib.parse
 from pathlib import Path
-from unittest.mock import AsyncMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
 
+import outbox
 from server import notification_senders as senders
 from server import notify
 from server.notification_senders import (
@@ -274,6 +276,104 @@ async def test_registered_slack_sender_uploads_through_the_notify_patch_point(at
     )
     upload.assert_awaited_once_with("tok", "C123", "1.2", attachment, COMMENT)
     text.assert_not_awaited()
+
+
+@pytest.fixture
+def lodge(monkeypatch, tmp_path):
+    """What core needs around it for a Slack send that starts at send_notification."""
+    session = "test-session"
+    link = f"https://lodge.test/tui?session={session}"
+    source = tmp_path / "weekly-update.html"
+    source.write_bytes(b"<h1>hi</h1>")
+    box = tmp_path / "outbox"
+    entry = outbox.stage(source, box)
+    state = SimpleNamespace(
+        session=session, comment=f"hi\n\n\n<{link}|Open session>", entry=box / entry,
+        request=[{"id": entry, "name": "weekly-update.html"}],
+        routing={
+            "adapter": "slack", "chat_id": "C123", "thread_ts": "1.2", "wolt": "testwolt",
+            "slack_progress_mode": "agent", "slack_progress_ts": "old",
+            "slack_session_link": link,
+        },
+        text=AsyncMock(), status=AsyncMock(), history=Mock(), update=Mock(),
+    )
+    monkeypatch.setattr(notify, "OUTBOX_DIR", box)
+    monkeypatch.setattr(notify, "dotenv_env", lambda key: {"SLACK_BOT_TOKEN": "tok"}.get(key, ""))
+    monkeypatch.setattr(notify, "read_session_registry", lambda name: state.routing)
+    monkeypatch.setattr(notify, "slack_send", state.text)
+    monkeypatch.setattr(notify, "slack_set_agent_status", state.status)
+    monkeypatch.setattr(notify, "append_chat_history", state.history)
+    monkeypatch.setattr(notify, "SessionRegistry", lambda root: Mock(update=state.update))
+    return state
+
+
+@pytest.mark.asyncio
+async def test_end_to_end_through_send_notification(lodge, monkeypatch):
+    seen = []
+
+    async def upload(token, channel, thread_ts, attachment, comment):
+        # Read here: core removes the outbox entry once the send returns.
+        seen.append((token, channel, thread_ts, attachment, comment, attachment.path.read_bytes()))
+
+    monkeypatch.setattr(notify, "slack_upload_file", upload)
+    result = await notify.send_notification(
+        lodge.session, "hi\n", {"adapter": "slack", "channel": "C123", "thread_ts": "1.2"},
+        lodge.request,
+    )
+
+    assert seen == [(
+        "tok", "C123", "1.2",
+        Attachment(lodge.entry, "weekly-update.html", 11, "text/html"),
+        lodge.comment, b"<h1>hi</h1>",
+    )]
+    lodge.text.assert_not_awaited()
+    lodge.status.assert_awaited_once_with("tok", "C123", "1.2", "active")
+    lodge.update.assert_called_once_with(
+        lodge.session, wolt="testwolt", slack_progress_mode="", slack_progress_ts="",
+    )
+    lodge.history.assert_called_once_with(
+        "slack", "C123", "hi\n\n[file sent: weekly-update.html, text/html, 11 bytes]",
+    )
+    assert result == {
+        "adapter": "slack", "channel": "C123",
+        "attachments": [{"name": "weekly-update.html", "content_type": "text/html", "size": 11}],
+    }
+    assert not lodge.entry.exists()
+
+
+@pytest.mark.asyncio
+async def test_end_to_end_a_failed_upload_clears_the_status_and_the_outbox(lodge, monkeypatch):
+    original = RuntimeError(SLACK_MISSING_FILES_SCOPE)
+    monkeypatch.setattr(notify, "slack_upload_file", AsyncMock(side_effect=original))
+
+    with pytest.raises(RuntimeError) as error:
+        await notify.send_notification(lodge.session, "hi\n", None, lodge.request)
+
+    assert error.value is original
+    lodge.text.assert_not_awaited()
+    lodge.status.assert_awaited_once_with("tok", "C123", "1.2", "active")
+    lodge.update.assert_called_once_with(
+        lodge.session, wolt="testwolt", slack_progress_mode="", slack_progress_ts="",
+    )
+    lodge.history.assert_not_called()
+    assert not lodge.entry.exists()
+
+
+@pytest.mark.asyncio
+async def test_end_to_end_the_staged_bytes_are_on_the_wire_before_the_entry_is_removed(lodge, monkeypatch):
+    slack = _Slack(monkeypatch)
+
+    await notify.send_notification(lodge.session, "hi\n", None, lodge.request)
+
+    assert slack.urls == [GET_URL, UPLOAD_URL, COMPLETE_URL]
+    assert slack.requests[1].content == b"<h1>hi</h1>"
+    assert json.loads(slack.requests[2].content) == {
+        "files": [{"id": "F123", "title": "weekly-update.html"}],
+        "channel_id": "C123",
+        "thread_ts": "1.2",
+        "initial_comment": lodge.comment,
+    }
+    assert not lodge.entry.exists()
 
 
 def test_both_slack_app_manifests_request_files_write_and_agree():

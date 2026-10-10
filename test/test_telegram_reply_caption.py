@@ -113,6 +113,33 @@ async def test_voice_reply_to_a_file_routes_to_the_session():
     assert message.endswith("]\n[voice message] hello there")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text, routed", [
+    ("🦦 nunu: the weekly update", f"[replying to file {FILE_NAME}: 🦦 nunu: the weekly update\n]\nok"),
+    ("🦦 nunu: " + "long " * 300, f"[replying to file {FILE_NAME}]\nok"),
+], ids=["text-fits-the-caption", "text-went-first"])
+async def test_a_caption_the_telegram_sender_wrote_routes_the_reply(text, routed, tmp_path):
+    from bot.telegram_adapter import _parse_session_from_reply, _quote_reply, _reply_source
+    from server.notification_senders import telegram_sender
+    from server.notification_types import Attachment, OutboundMessage, SendContext
+
+    document = AsyncMock()
+    send = telegram_sender(AsyncMock(), document)
+    await send(
+        OutboundMessage(text, f"https://abc.trycloudflare.com/tui?session={SESSION}", (
+            Attachment(tmp_path / "entry", FILE_NAME, 11, "text/html"),
+        )),
+        {"chat_id": "42"}, SendContext({"TELEGRAM_BOT_TOKEN": "t"}, {}),
+    )
+    caption = document.await_args.args[3]
+
+    body, name = _reply_source(
+        SimpleNamespace(text=None, caption=caption, document=SimpleNamespace(file_name=FILE_NAME)),
+    )
+    assert _parse_session_from_reply(body) == SESSION
+    assert _quote_reply(body, name, "ok") == routed
+
+
 @pytest.mark.parametrize("reply_to, expected", [
     (SimpleNamespace(text="done" + FOOTER, caption=None, document=None), ("done" + FOOTER, None)),
     (SimpleNamespace(text=None, caption="done" + FOOTER, document=SimpleNamespace(file_name="a.html")),
