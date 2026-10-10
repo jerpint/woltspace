@@ -12,6 +12,9 @@ release is required.
   you create a wolt, in Settings, or on a wolt's page.
 - **They are marked experimental**, and so is opencode, until they see real
   use. The pickers say so next to their names.
+- **Each engine has its own icon.** Simple line icons replace the coloured
+  emoji wherever you pick an engine, and they follow light and dark mode. The
+  harness choice in Create a wolt is now a menu that shows them.
 - **Install them yourself, once.** Woltspace needs nothing new, but each engine
   is its own program:
   - Hermes: `uv tool install hermes-agent`
