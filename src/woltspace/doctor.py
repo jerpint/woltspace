@@ -108,6 +108,9 @@ def _default_harness_check() -> DoctorCheck | None:
     )
 
 
+_HERMES_PROVIDER_KEYS = ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY")
+
+
 def _auth_paths(home: Path) -> dict[str, Path]:
     codex_home = Path(os.environ.get("CODEX_HOME", home / ".codex"))
     xdg_data = Path(os.environ.get("XDG_DATA_HOME", home / ".local" / "share"))
@@ -440,7 +443,13 @@ def run_doctor(
 
     home = Path.home()
     auth = _auth_paths(home)
-    authenticated = [name for name in installed if auth[name].is_file()]
+    authenticated = [name for name in installed if name in auth and auth[name].is_file()]
+    # Hermes runs every wolt on its own Hermes home, so a host login does not
+    # reach wolts: provider keys in the lodge environment are its auth.
+    if "hermes" in installed:
+        keys = [key for key in _HERMES_PROVIDER_KEYS if os.environ.get(key)]
+        if keys:
+            authenticated.append(f"hermes ({keys[0]})")
     if (
         "claude" in installed
         and "claude" not in authenticated
