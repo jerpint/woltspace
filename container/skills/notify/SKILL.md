@@ -1,6 +1,6 @@
 ---
 name: notify
-description: Push a message back to the user on Telegram or Slack — from inside a session.
+description: Push a message or a file back to the user on Telegram or Slack — from inside a session.
 ---
 
 # Notify — Push Messages to the User
