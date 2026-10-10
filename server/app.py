@@ -488,11 +488,7 @@ async def legacy_app_host_redirect(request: Request, call_next):
 
 
 def _app_access_settings():
-    """Return verified-access configuration when that optional feature exists."""
-    try:
-        from .access import load_access_settings
-    except ImportError:
-        return None
+    """Return the Access settings, or None when unset or unreadable."""
     try:
         return load_access_settings(WOLTS_DIR)
     except RuntimeError:

@@ -33,9 +33,6 @@ DEFAULT_STARTER_SEED = "https://github.com/jerpint/woltspace-starter-lodge.git"
 _starter_seed_lock = threading.Lock()
 
 
-_starter_seed_lock = threading.Lock()
-
-
 def ensure_state_dir():
     STATE_DIR.mkdir(parents=True, exist_ok=True)
 
