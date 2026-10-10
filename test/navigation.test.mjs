@@ -138,7 +138,9 @@ test('starter welcome card treats wolt metadata as text and uses the open flow',
 });
 
 test('backend harness labels and wolf status remain data', () => {
-  assert.match(lodgeSource, /button\.appendChild\(lodgeElement\('span', '', name\)\)/);
+  assert.match(lodgeSource, /name\.append\(engineIcon\(h\), lodgeElement\('span', '', h\.label \|\| h\.id\)\)/);
+  assert.match(lodgeSource, /lodgeElement\('span', 'engine-menu-label', harness\.label \|\| harness\.id\)/);
+  assert.doesNotMatch(lodgeSource, /engine-menu[^\n]*innerHTML/);
   assert.doesNotMatch(lodgeSource, /button\.innerHTML\s*=.*\$\{name\}/);
   assert.match(wolvesSource, /\$\{esc\(e\.status\)\}/);
   assert.match(wolvesSource, /st\.textContent = e\.status \|\| ''/);

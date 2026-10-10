@@ -86,6 +86,17 @@ function lodgeElement(tag, className = '', text = '') {
   return element;
 }
 
+// An engine's icon: its SVG when the harness has one, else its emoji.
+function engineIcon(harness) {
+  if (harness && harness.icon) {
+    const icon = lodgeElement('span', 'engine-icon');
+    icon.style.setProperty('--engine-icon', `url("${harness.icon}")`);
+    icon.setAttribute('aria-hidden', 'true');
+    return icon;
+  }
+  return lodgeElement('span', 'engine-emoji', (harness && harness.emoji) || '');
+}
+
 // One definition of session state, shared by the sidebar, Wolts page, wolt page and
 // Sessions list. Online means the registry says running and the lodge view found
 // its tmux window. Everything else is offline; browser time never changes state.
@@ -167,8 +178,12 @@ function renderFirstRunHarnessChoice() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'home-harness-option';
-    const name = `${h.emoji || ''} ${h.label || h.id}`.trim();
-    button.appendChild(lodgeElement('span', '', name));
+    const name = lodgeElement('span', 'home-harness-name');
+    name.append(engineIcon(h), lodgeElement('span', '', h.label || h.id));
+    button.appendChild(name);
+    if (h.experimental) {
+      button.appendChild(lodgeElement('small', '', 'experimental'));
+    }
     button.onclick = () => chooseHomeHarness(h.id, button);
     options.appendChild(button);
   });
@@ -788,6 +803,7 @@ function openCreateWolt(e) {
 }
 
 function closeCreateWolt() {
+  closeCreateHarnessMenu();
   document.getElementById('create-modal').classList.remove('open');
   stopCreateNameIdeas();
 }
@@ -800,25 +816,87 @@ function pickType(el) {
 }
 
 function renderCreateHarnessOptions() {
-  const select = document.getElementById('create-harness');
-  if (!select) return;
-  select.innerHTML = '';
-  harnessList.forEach(harness => {
-    const option = document.createElement('option');
-    option.value = harness.id;
-    option.textContent = `${harness.label || harness.id}`
-      + (harness.id === harnessDefault ? ' (lodge default)' : '');
-    option.selected = harness.id === createSelectedHarness;
-    select.appendChild(option);
-  });
+  const list = document.getElementById('create-harness-list');
+  if (!list) return;
   // A stale/default id absent from the registry should never submit silently.
   if (!harnessList.some(h => h.id === createSelectedHarness)) {
     const first = harnessList[0];
     createSelectedHarness = first ? first.id : '';
-    select.value = createSelectedHarness;
   }
+  list.replaceChildren(...harnessList.map(harness => {
+    const option = lodgeElement('button', 'engine-menu-option');
+    option.type = 'button';
+    option.setAttribute('role', 'option');
+    option.dataset.id = harness.id;
+    option.append(engineIcon(harness), lodgeElement('span', 'engine-menu-label', harness.label || harness.id));
+    if (harness.id === harnessDefault) {
+      option.appendChild(lodgeElement('small', 'engine-menu-note', 'lodge default'));
+    }
+    if (harness.experimental) {
+      option.appendChild(lodgeElement('small', 'engine-menu-tag', 'experimental'));
+    }
+    option.onclick = () => { selectCreateHarness(harness.id); closeCreateHarnessMenu(true); };
+    return option;
+  }));
   renderCreateHarness();
 }
+
+function renderCreateHarnessTrigger() {
+  const trigger = document.getElementById('create-harness');
+  if (!trigger) return;
+  const harness = harnessInfo(createSelectedHarness);
+  const label = lodgeElement('span', 'engine-menu-label', harness.label || harness.id || 'No harness available');
+  const parts = createSelectedHarness ? [engineIcon(harness), label] : [label];
+  if (harness.experimental) parts.push(lodgeElement('small', 'engine-menu-tag', 'experimental'));
+  parts.push(lodgeElement('span', 'engine-menu-chevron', '▾'));
+  trigger.replaceChildren(...parts);
+  document.querySelectorAll('#create-harness-list .engine-menu-option').forEach(option => {
+    const selected = option.dataset.id === createSelectedHarness;
+    option.classList.toggle('selected', selected);
+    option.setAttribute('aria-selected', selected ? 'true' : 'false');
+  });
+}
+
+function toggleCreateHarnessMenu() {
+  const list = document.getElementById('create-harness-list');
+  if (!list) return;
+  if (!list.hidden) { closeCreateHarnessMenu(true); return; }
+  list.hidden = false;
+  document.getElementById('create-harness').setAttribute('aria-expanded', 'true');
+  const current = list.querySelector('.engine-menu-option.selected') || list.querySelector('.engine-menu-option');
+  if (current) current.focus();
+}
+
+function closeCreateHarnessMenu(refocus = false) {
+  const list = document.getElementById('create-harness-list');
+  const trigger = document.getElementById('create-harness');
+  if (!list || list.hidden) return;
+  list.hidden = true;
+  trigger.setAttribute('aria-expanded', 'false');
+  if (refocus) trigger.focus();
+}
+
+document.addEventListener('click', event => {
+  if (!event.target.closest('.engine-menu')) closeCreateHarnessMenu();
+});
+
+document.addEventListener('keydown', event => {
+  const list = document.getElementById('create-harness-list');
+  if (!list || list.hidden || !list.contains(document.activeElement)) return;
+  const options = [...list.querySelectorAll('.engine-menu-option')];
+  const index = options.indexOf(document.activeElement);
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    closeCreateHarnessMenu(true);
+  } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    const step = event.key === 'ArrowDown' ? 1 : -1;
+    options[(index + step + options.length) % options.length].focus();
+  } else if (event.key === 'Tab') {
+    closeCreateHarnessMenu();
+  }
+}, true);
 
 function selectCreateHarness(id) {
   createSelectedHarness = id;
@@ -827,6 +905,7 @@ function selectCreateHarness(id) {
 }
 
 function renderCreateHarness() {
+  renderCreateHarnessTrigger();
   const harness = harnessInfo(createSelectedHarness);
   const catalog = harness.catalog || [];
   // Engines that take any typed model name have no fixed list to choose from.

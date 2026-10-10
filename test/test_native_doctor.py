@@ -133,6 +133,29 @@ def test_doctor_warns_about_invalid_default_harness(tmp_path, monkeypatch):
     assert "first-run harness question will remain visible" in check.remedy
 
 
+def test_doctor_honors_pi_agent_dir_for_auth(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    host_home = tmp_path / "home"
+    pi_dir = tmp_path / "custom-pi-agent"
+    auth = pi_dir / "auth.json"
+    pi_dir.mkdir()
+    auth.write_text("{}")
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_dir))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: host_home))
+
+    def which(name):
+        return f"/usr/bin/{name}" if name in {"tmux", "pi"} else None
+
+    with patch("woltspace.doctor.shutil.which", side_effect=which):
+        checks = run_doctor(layout, check_port=False)
+
+    by_name = {check.name: check for check in checks}
+    assert by_name["host-auth"].status == "pass"
+    assert by_name["host-auth"].detail == "pi"
+    assert auth.read_text() == "{}"
+    assert not layout.wolts_dir.exists()
+
+
 def _restore_env(snapshot: dict):
     for key, value in snapshot.items():
         if value is None:
@@ -253,3 +276,28 @@ def test_the_sigterm_uvicorn_reraises_still_lets_connectors_stop(tmp_path, monke
 
     assert events == ["start", "serve", "stop"]
     assert signal.getsignal(signal.SIGTERM) is before, "the handler is scoped to run()"
+
+
+def test_doctor_counts_a_provider_key_as_hermes_auth(tmp_path, monkeypatch):
+    layout = _layout(tmp_path)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    for key in ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+                "CLAUDE_CODE_OAUTH_TOKEN"):
+        monkeypatch.delenv(key, raising=False)
+
+    def which(name):
+        return f"/usr/bin/{name}" if name in {"tmux", "hermes"} else None
+
+    with patch("woltspace.doctor.shutil.which", side_effect=which):
+        checks = run_doctor(layout, check_port=False)
+        assert {c.name: c for c in checks}["host-auth"].status == "warn"
+        # A key Hermes sessions cannot use does not count.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+        checks = run_doctor(layout, check_port=False)
+        assert {c.name: c for c in checks}["host-auth"].status == "warn"
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+        checks = run_doctor(layout, check_port=False)
+
+    auth = {c.name: c for c in checks}["host-auth"]
+    assert auth.status == "pass"
+    assert auth.detail == "hermes (OPENROUTER_API_KEY)"

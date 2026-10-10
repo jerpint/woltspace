@@ -36,6 +36,7 @@ class TestResolveHarness:
 
     def test_known_passes_through(self):
         assert resolve_harness("claude") == "claude"
+        assert resolve_harness("pi") == "pi"
 
 
 class TestCreatureModel:
@@ -246,6 +247,176 @@ class TestBuildCommandOpencode:
         cmd = build_command("opencode", "spawn", execution_policy="prompt")
         assert "--auto" not in cmd
 
+
+class TestBuildCommandPi:
+    """Command contract for the experimental Pi adapter (benched on 1.1.0)."""
+
+    SESSION_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+    def test_spawn_uses_owned_session_id_name_model_and_prompt(self):
+        cmd = build_command(
+            "pi", "spawn", session_id=self.SESSION_ID,
+            session_name="testwolt-chompy-dam-abc123",
+            model="openrouter/auto", prompt="hey testwolt",
+        )
+        assert "wpi" in cmd
+        # Never trust the working folder: a cloned repo's .pi/extensions
+        # would run as code.
+        assert "--no-approve" in cmd
+        assert " --approve" not in cmd
+        assert f"--session-id {self.SESSION_ID}" in cmd
+        assert "--name testwolt-chompy-dam-abc123" in cmd
+        assert "--model openrouter/auto" in cmd
+        assert cmd.endswith("'hey testwolt'")
+
+    def test_resume_uses_exact_session_not_picker_or_continue(self):
+        cmd = build_command(
+            "pi", "resume", resume_id=self.SESSION_ID,
+            model="openrouter/auto", prompt="continue",
+        )
+        assert f"--session {self.SESSION_ID}" in cmd
+        assert "--session-id" not in cmd
+        assert "--continue" not in cmd
+        assert "--resume" not in cmd
+
+    def test_resume_without_id_never_guesses(self):
+        cmd = build_command("pi", "resume", prompt="continue")
+        assert "--session" not in cmd
+        assert "--continue" not in cmd
+        assert "--resume" not in cmd
+
+    def test_login_opens_plain_tui(self):
+        cmd = build_command("pi", "login")
+        assert cmd.endswith("wpi")
+        assert "/login" not in cmd
+
+    def test_prompt_is_shell_quoted(self):
+        cmd = build_command("pi", "spawn", prompt='say "hi"; rm -rf /')
+        assert "'say \"hi\"; rm -rf /'" in cmd
+
+    def test_unknown_mode_raises(self):
+        with pytest.raises(ValueError, match="unknown mode"):
+            build_command("pi", "teleport")
+
+    def test_openrouter_defaults(self):
+        assert creature_model("pi", "raccoon") == "openrouter/anthropic/claude-sonnet-5.5"
+        assert creature_model("pi", "beaver") == "openrouter/anthropic/claude-sonnet-5.5"
+        assert creature_model("pi", "otter") == "openrouter/anthropic/claude-haiku-5.5"
+
+
+class TestBuildCommandHermes:
+    """Command contract for the experimental Hermes adapter (benched on 0.19.0)."""
+
+    def test_spawn_is_chat_with_provider_and_model_split(self):
+        cmd = build_command(
+            "hermes", "spawn", model="openrouter/anthropic/claude-haiku-5.5",
+            prompt="never on the cli", execution_policy="auto",
+        )
+        assert "whermes chat" in cmd
+        assert "--provider openrouter -m anthropic/claude-haiku-5.5" in cmd
+        assert "--yolo" in cmd
+        # The boot prompt is pasted after boot, never passed on the CLI.
+        assert "never on the cli" not in cmd
+
+    def test_ask_first_policy_keeps_hermes_approvals(self):
+        cmd = build_command("hermes", "spawn", execution_policy="prompt")
+        assert "--yolo" not in cmd
+
+    def test_bare_model_lets_hermes_pick_the_provider(self):
+        cmd = build_command("hermes", "spawn", model="hermes-4")
+        assert "-m hermes-4" in cmd
+        assert "--provider" not in cmd
+
+    def test_resume_uses_exact_id(self):
+        cmd = build_command("hermes", "resume", resume_id="20261010_135923_86e360")
+        assert "--resume 20261010_135923_86e360" in cmd
+        assert "--continue" not in cmd
+
+    def test_resume_without_id_never_guesses(self):
+        cmd = build_command("hermes", "resume")
+        assert "--resume" not in cmd
+        assert "--continue" not in cmd
+
+    def test_unknown_mode_raises(self):
+        with pytest.raises(ValueError, match="unknown mode"):
+            build_command("hermes", "teleport")
+
+    def test_boot_prompt_goes_through_paste(self):
+        from harnesses import get_harness
+        entry = get_harness("hermes")
+        assert entry["prompt_via_paste"] is True
+        assert entry["tui_ready_marker"]
+        assert entry["preset_session_id"] is False
+
+
+class TestHermesDiscovery:
+    """Session-id discovery from <wolt>/.hermes/state.db."""
+
+    def _db(self, tmp_path, monkeypatch, rows):
+        import sqlite3
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        home = tmp_path / "testwolt" / ".hermes"
+        home.mkdir(parents=True)
+        conn = sqlite3.connect(home / "state.db")
+        conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY, "
+                     "source TEXT NOT NULL, started_at REAL NOT NULL, cwd TEXT)")
+        conn.executemany(
+            "INSERT INTO sessions (id, source, started_at, cwd) VALUES (?, 'cli', ?, ?)",
+            rows,
+        )
+        conn.commit()
+        conn.close()
+        return str(tmp_path / "testwolt")
+
+    def _discover(self, data, since, taken=None):
+        from harnesses import _hermes_discover_session_id
+        return _hermes_discover_session_id(data, since, taken)
+
+    def test_ignores_sessions_from_before_the_spawn(self, tmp_path, monkeypatch):
+        home = self._db(tmp_path, monkeypatch, [("old", 100.0, "")])
+        assert self._discover({"wolt": "testwolt", "dir": home}, 200.0) is None
+
+    def test_never_claims_a_session_in_another_dir(self, tmp_path, monkeypatch):
+        home = self._db(tmp_path, monkeypatch, [("other", 210.0, "/elsewhere")])
+        assert self._discover({"wolt": "testwolt", "dir": home}, 200.0) is None
+
+    def test_cwd_match_survives_a_symlinked_path(self, tmp_path, monkeypatch):
+        real = self._db(tmp_path, monkeypatch, [])
+        link = tmp_path / "link"
+        link.symlink_to(real)
+        self._db_insert(real, [("mine", 210.0, str(link))])
+        assert self._discover({"wolt": "testwolt", "dir": real}, 200.0) == "mine"
+
+    def test_skips_ids_another_session_owns(self, tmp_path, monkeypatch):
+        home = self._db(tmp_path, monkeypatch, [])
+        self._db_insert(home, [("first", 210.0, home), ("second", 215.0, home)])
+        data = {"wolt": "testwolt", "dir": home, "created_at": 209}
+        assert self._discover(data, 195.0, {"first"}) == "second"
+
+    def test_two_sessions_in_one_dir_each_get_their_own_row(self, tmp_path, monkeypatch):
+        home = self._db(tmp_path, monkeypatch, [])
+        self._db_insert(home, [("a-row", 101.0, home), ("b-row", 106.0, home)])
+        a = {"wolt": "testwolt", "dir": home, "created_at": 100}
+        b = {"wolt": "testwolt", "dir": home, "created_at": 105}
+        # Whichever poller runs first, neither takes its sibling's row.
+        assert self._discover(b, 90.0) == "b-row"
+        assert self._discover(a, 85.0, {"b-row"}) == "a-row"
+        assert self._discover(a, 85.0) == "a-row"
+
+    def test_no_database_yet(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+        assert self._discover({"wolt": "testwolt", "dir": "/w"}, 0.0) is None
+
+    @staticmethod
+    def _db_insert(home, rows):
+        import sqlite3
+        conn = sqlite3.connect(f"{home}/.hermes/state.db")
+        conn.executemany(
+            "INSERT INTO sessions (id, source, started_at, cwd) VALUES (?, 'cli', ?, ?)",
+            [(sid, at, str(cwd)) for sid, at, cwd in rows],
+        )
+        conn.commit()
+        conn.close()
 
 class TestCodexDiscovery:
     """Rollout-id discovery from $CODEX_HOME/sessions."""
@@ -464,12 +635,22 @@ class TestHarnessMetadata:
         from harnesses import harness_metadata
         meta = harness_metadata()
         ids = {m["id"] for m in meta}
-        assert {"claude", "codex"} <= ids
+        assert {"claude", "codex", "opencode", "pi", "hermes"} <= ids
+        experimental = {m["id"] for m in meta if m["experimental"]}
+        assert experimental == {"opencode", "pi", "hermes"}
         for m in meta:
             assert m["label"] and m["emoji"]
             assert set(m["models"]) == {"raccoon", "beaver", "otter"}
             # every entry carries a selectable model catalog of {id,label}
             assert m["catalog"] and all(c["id"] and c["label"] for c in m["catalog"])
+
+    def test_every_harness_has_its_svg_icon(self):
+        from harnesses import harness_metadata
+        static = Path(__file__).resolve().parent.parent / "public" / "static"
+        for m in harness_metadata():
+            assert m["icon"] == f"/static/engines/{m['id']}.svg"
+            svg = (static / m["icon"].removeprefix("/static/")).read_text()
+            assert svg.startswith("<svg ") and 'viewBox="0 0 24 24"' in svg
 
     def test_metadata_is_json_safe(self):
         import json
@@ -1348,6 +1529,11 @@ class TestIsValidModel:
         # ...but empty is still invalid even for freeform harnesses
         assert not is_valid_model("opencode", "")
         assert not is_valid_model("opencode", None)
+        assert is_valid_model("pi", "openrouter/anthropic/claude-sonnet-5")
+        assert is_valid_model("hermes", "openrouter/nousresearch/hermes-4-405b")
+        assert not is_valid_model("hermes", "nous/hermes-4")
+        assert not is_valid_model("pi", "")
+        assert not is_valid_model("pi", "openai/gpt-5.5")
 
 
 class TestResolveModel:
@@ -1379,3 +1565,11 @@ class TestResolveModel:
 
     def test_freeform_no_pin_still_uses_tier_default(self):
         assert resolve_model("opencode", "raccoon", None) == "openai/gpt-4o"
+        assert resolve_model("pi", "raccoon", None) == \
+            "openrouter/anthropic/claude-sonnet-5.5"
+        assert resolve_model("hermes", "otter", None) == \
+            "openrouter/anthropic/claude-haiku-5.5"
+
+    def test_pi_honors_explicit_openrouter_pin(self):
+        model = "openrouter/deepseek/deepseek-v4.1-flash"
+        assert resolve_model("pi", "raccoon", model) == model

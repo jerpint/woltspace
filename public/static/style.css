@@ -1039,6 +1039,56 @@ body {
   outline: none;
 }
 .modal-input:focus { border-color: var(--border-2); }
+
+/* Create-wolt harness picker: a button + list, so each engine shows its icon. */
+.engine-menu { position: relative; }
+.engine-menu-trigger,
+.engine-menu-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 42px;
+  text-align: left;
+  cursor: pointer;
+}
+.engine-menu-label { flex: 1; min-width: 0; }
+.engine-menu-chevron { color: var(--ink-3); font-size: 11px; }
+.engine-menu-note,
+.engine-menu-tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-3);
+}
+.engine-menu-tag {
+  border: 1px solid var(--border-2);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.engine-menu-list {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  padding: 5px;
+  border: 1px solid var(--border-2);
+  border-radius: 10px;
+  background: var(--surface-2, #FAF7F0);
+  box-shadow: 0 10px 28px rgba(40, 30, 10, .14);
+}
+.engine-menu-option {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.engine-menu-option:hover,
+.engine-menu-option:focus-visible { background: var(--surface); outline: none; }
+.engine-menu-option.selected { background: var(--amber-light); font-weight: 600; }
 .create-name-field .modal-input {
   font-family: var(--font-display);
   font-size: 17px;
