@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from env_compat import get_env
 from paths import space_apps_dir
-from tunnel import start_cloudflared, stop_cloudflared
+from tunnel import is_cloudflared, start_cloudflared, stop_cloudflared
 
 WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 APPS_DIR = WOLTS_DIR / "apps"
@@ -268,6 +268,13 @@ def start_app(name: str) -> dict:
     existing = _read_state(name)
     if existing and _is_pid_alive(existing.get("pid", 0)):
         return _revoke_disallowed_tunnel(name, existing)
+    # A dead app's recorded tunnel points at nothing, and writing the new state
+    # would forget it. Close it first; refuse to start while one survives.
+    if existing and existing.get("tunnel_pid"):
+        if not _close_recorded_tunnel(name, existing["tunnel_pid"], "the app stopped"):
+            raise RuntimeError(
+                f"could not stop the old quick tunnel for {name} (pid {existing['tunnel_pid']})"
+            )
 
     # Use port from manifest — check for conflicts with running apps
     port = app.port
@@ -347,8 +354,14 @@ def apps_restore() -> list[dict]:
         # switched them off) is closed if today's policy would refuse it.
         state = _revoke_disallowed_tunnel(name, state)
 
-        # Manifest gone — app was removed while container was down
+        # Manifest gone — app was removed while container was down. Its tunnel
+        # goes first: once the record is deleted nothing could find it again.
         if get_app(name) is None:
+            if state.get("tunnel_pid") and not _close_recorded_tunnel(
+                name, state["tunnel_pid"], "the app was removed",
+            ):
+                actions.append({"name": name, "action": "orphan-kept", "reason": "tunnel survived"})
+                continue
             try:
                 f.unlink()
                 actions.append({"name": name, "action": "orphan-cleaned"})
@@ -363,10 +376,7 @@ def apps_restore() -> list[dict]:
             print(f"[apps] {name} survived (pid {pid})")
             continue
 
-        # Dead PID — respawn. A tunnel recorded for the dead process points at
-        # nothing and would be forgotten when the new state is written: close it.
-        if state.get("tunnel_pid"):
-            stop_cloudflared(state["tunnel_pid"])
+        # Dead PID — respawn (start_app closes the dead app's recorded tunnel).
         try:
             new_state = start_app(name)
             actions.append({"name": name, "action": "restored", "pid": new_state["pid"]})
@@ -479,6 +489,23 @@ def _tunnel_refusal(state: dict) -> str | None:
     return None
 
 
+def _close_recorded_tunnel(name: str, tunnel_pid, reason: str) -> bool:
+    """Stop a recorded quick tunnel. True once it is gone.
+
+    False only when a live cloudflared with that pid could not be stopped: the
+    caller must then keep the record, so the tunnel can still be found.
+    """
+    if stop_cloudflared(tunnel_pid):
+        print(f"[apps] closed quick tunnel for {name} (pid {tunnel_pid}, {reason})")
+        return True
+    if is_cloudflared(tunnel_pid):
+        print(f"[apps] WARNING: could not stop quick tunnel for {name} "
+              f"(pid {tunnel_pid}, {reason}); record kept")
+        return False
+    print(f"[apps] dropped stale quick tunnel record for {name} ({reason})")
+    return True
+
+
 def _revoke_disallowed_tunnel(name: str, state: dict) -> dict:
     """Close a recorded quick tunnel the current policy no longer allows."""
     tunnel_pid = state.get("tunnel_pid")
@@ -487,9 +514,8 @@ def _revoke_disallowed_tunnel(name: str, state: dict) -> dict:
     reason = _tunnel_refusal(state)
     if reason is None:
         return state
-    stopped = stop_cloudflared(tunnel_pid)
-    print(f"[apps] closed quick tunnel for {name} (pid {tunnel_pid}, {reason})"
-          if stopped else f"[apps] dropped stale quick tunnel record for {name} ({reason})")
+    if not _close_recorded_tunnel(name, tunnel_pid, reason):
+        return state
     state = {**state, "tunnel_pid": None, "tunnel_url": None}
     _write_state(name, state)
     return state

@@ -698,6 +698,7 @@ class TestUnitShareApp:
         monkeypatch.delenv("PORT", raising=False)
         stopped = []
         monkeypatch.setattr(apps_mod, "stop_cloudflared", lambda pid: stopped.append(pid) or True)
+        monkeypatch.setattr(apps_mod, "is_cloudflared", lambda pid: False)
         monkeypatch.setattr(apps_mod, "get_app", lambda name: object())
         monkeypatch.setattr(apps_mod, "_is_pid_alive", lambda pid: app_alive and pid == 99)
         apps_mod._write_state("legacy", {
@@ -729,12 +730,40 @@ class TestUnitShareApp:
         assert stopped == []
         assert apps_mod._read_state("legacy")["tunnel_pid"] == 5555
 
-    def test_restore_closes_the_tunnel_of_a_dead_app_before_respawning(self, tmp_path, monkeypatch):
+    def test_restore_stops_an_orphans_tunnel_before_forgetting_it(self, tmp_path, monkeypatch):
+        """Allowed or not, a removed app's tunnel is stopped before its record goes."""
         monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
-        apps_mod, stopped = self._legacy_tunnel(tmp_path, monkeypatch, 4500, app_alive=False)
-        monkeypatch.setattr(apps_mod, "start_app", lambda name: {"name": name, "port": 4500, "pid": 100})
+        apps_mod, stopped = self._legacy_tunnel(tmp_path, monkeypatch, 4500, app_alive=True)
+        monkeypatch.setattr(apps_mod, "get_app", lambda name: None)
         apps_mod.apps_restore()
         assert stopped == [5555]
+        assert apps_mod._read_state("legacy") is None
+
+    def test_an_orphans_record_is_kept_while_its_tunnel_survives(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
+        apps_mod, _stopped = self._legacy_tunnel(tmp_path, monkeypatch, 4500, app_alive=True)
+        monkeypatch.setattr(apps_mod, "get_app", lambda name: None)
+        monkeypatch.setattr(apps_mod, "stop_cloudflared", lambda pid: False)
+        monkeypatch.setattr(apps_mod, "is_cloudflared", lambda pid: True)  # still alive
+        apps_mod.apps_restore()
+        assert apps_mod._read_state("legacy")["tunnel_pid"] == 5555
+
+    def test_a_tunnel_that_could_not_be_stopped_is_never_forgotten(self, tmp_path, monkeypatch):
+        """stop_cloudflared returning False is not proof the tunnel is gone (Astre P2)."""
+        monkeypatch.delenv("WOLTSPACE_APP_QUICK_TUNNELS", raising=False)
+        apps_mod, _stopped = self._legacy_tunnel(tmp_path, monkeypatch, 7777, app_alive=True)
+        monkeypatch.setattr(apps_mod, "stop_cloudflared", lambda pid: False)
+        monkeypatch.setattr(apps_mod, "is_cloudflared", lambda pid: True)
+        apps_mod.apps_restore()
+        assert apps_mod._read_state("legacy")["tunnel_pid"] == 5555
+
+    def test_a_stale_tunnel_pid_is_dropped(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("WOLTSPACE_APP_QUICK_TUNNELS", raising=False)
+        apps_mod, _stopped = self._legacy_tunnel(tmp_path, monkeypatch, 4500, app_alive=True)
+        monkeypatch.setattr(apps_mod, "stop_cloudflared", lambda pid: False)
+        monkeypatch.setattr(apps_mod, "is_cloudflared", lambda pid: False)  # pid is not cloudflared
+        apps_mod.apps_restore()
+        assert apps_mod._read_state("legacy")["tunnel_pid"] is None
 
     def test_unshare_all_stops_all_tunnels(self, tmp_path, monkeypatch):
         """unshare_all_apps kills all tunnel processes."""
