@@ -1,6 +1,7 @@
 """Provider transport and formatting. Senders never write lodge state."""
 
 import logging
+import re
 
 import httpx
 
@@ -60,6 +61,13 @@ SLACK_MISSING_FILES_SCOPE = (
     "Slack app lacks the files:write scope: add it to the app manifest and "
     "reinstall the app. Text notifications are unaffected."
 )
+# Slack shares a file into a conversation id only. A member id, which
+# chat.postMessage accepts for text, is refused after the bytes are uploaded.
+SLACK_FILE_DESTINATION = re.compile(r"[CGDZ][A-Z0-9]{8,}")
+SLACK_NOT_A_FILE_DESTINATION = (
+    "Slack can attach a file only to a channel or DM id (C..., G..., D...), "
+    "not to a member id; send the file from the Slack thread, or send text only"
+)
 
 
 async def slack_send(token: str, channel: str, thread_ts: str | None, text: str) -> dict:
@@ -97,14 +105,14 @@ async def slack_set_agent_status(
         return data
 
 
-def _slack_upload_data(response: httpx.Response) -> dict:
+def _slack_upload_data(response: httpx.Response, method: str) -> dict:
     try:
         data = response.json()
     except ValueError:
         data = None
     if not isinstance(data, dict):
         # An error page from a proxy, say: the status is all there is to report.
-        raise RuntimeError(f"slack answered HTTP {response.status_code}")
+        raise RuntimeError(f"slack {method} answered HTTP {response.status_code}")
     if not data.get("ok"):
         if data.get("error") == "missing_scope":
             needed = data.get("needed")
@@ -115,7 +123,12 @@ def _slack_upload_data(response: httpx.Response) -> dict:
                     "and reinstall the app."
                 )
             raise RuntimeError(SLACK_MISSING_FILES_SCOPE)
-        raise RuntimeError(data.get("error", "slack error"))
+        # Slack's own explanation, when it gives one, names the argument it refused.
+        metadata = data.get("response_metadata")
+        messages = metadata.get("messages") if isinstance(metadata, dict) else None
+        explained = [m for m in messages if isinstance(m, str)] if isinstance(messages, list) else []
+        detail = f" ({'; '.join(explained)})" if explained else ""
+        raise RuntimeError(f"slack {method}: {data.get('error', 'unknown error')}{detail}")
     return data
 
 
@@ -129,14 +142,21 @@ async def slack_upload_file(
     token: str, channel: str, thread_ts: str | None, attachment: Attachment, comment: str,
 ) -> dict:
     """Slack's external upload: ask for a URL, send the bytes there, then share the file."""
-    headers = {"Authorization": f"Bearer {token}"}
+    if not SLACK_FILE_DESTINATION.fullmatch(channel or ""):
+        raise RuntimeError(SLACK_NOT_A_FILE_DESTINATION)
     async with httpx.AsyncClient() as client:
-        ticket = _slack_upload_data(await client.post(
-            "https://slack.com/api/files.getUploadURLExternal",
+        async def call(method: str, **body) -> dict:
+            return _slack_upload_data(await client.post(
+                f"https://slack.com/api/{method}",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=UPLOAD_TIMEOUT,
+                **body,
+            ), method)
+
+        ticket = await call(
+            "files.getUploadURLExternal",
             data={"filename": attachment.filename, "length": attachment.size},
-            headers=headers,
-            timeout=UPLOAD_TIMEOUT,
-        ))
+        )
         upload_url, file_id = ticket.get("upload_url"), ticket.get("file_id")
         if not upload_url or not file_id:
             raise RuntimeError("slack gave no upload URL")
@@ -158,12 +178,7 @@ async def slack_upload_file(
             payload["thread_ts"] = thread_ts
         if comment:
             payload["initial_comment"] = comment
-        return _slack_upload_data(await client.post(
-            "https://slack.com/api/files.completeUploadExternal",
-            json=payload,
-            headers=headers,
-            timeout=UPLOAD_TIMEOUT,
-        ))
+        return await call("files.completeUploadExternal", json=payload)
 
 
 def telegram_sender(transport, send_document=None) -> Send:
