@@ -26,6 +26,7 @@ python -m pytest -q test/test_release_workflow.py test/test_lodge_skills.py test
   test/test_closed_loop.py::TestRegressions::test_den_reply_footer_consistent \
   test/test_native_resilience.py \
   test/test_native_surfaces.py test/test_telegram_loop.py \
+  test/test_notify_file_slack.py test/test_telegram_reply_caption.py \
   test/test_wolts.py::TestCredentials
 npm test
 ```

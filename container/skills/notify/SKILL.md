@@ -36,6 +36,30 @@ quotes, or other metacharacters.
 `notify` accepts no message argument. This keeps message text out of the shell
 command itself on every harness.
 
+## Send a file
+
+```bash
+notify --file wolt/sparks/weekly-update.html <<'WOLTSPACE_NOTIFY_7F3A91C2'
+Weekly update is ready. Open the attached page.
+WOLTSPACE_NOTIFY_7F3A91C2
+```
+
+`--file PATH` sends one file to the same chat or thread the message goes to.
+`PATH` is absolute or relative to the current directory. On Telegram the file
+arrives as a document with your message as its caption; on Slack it lands in
+the thread with your message as its comment.
+
+- One file per call, up to 50 MB. Send several files with several calls.
+- `--file PATH` goes before or after the route flags, so you can add it to the
+  heredoc Woltspace generates for a reply.
+- An HTML page must be one self-contained file, with its styles, scripts and
+  images inlined. Nothing it links to on disk travels with it.
+- Credential files (`.env`, Claude and Codex credential files) are refused.
+  The message may be empty when a file is attached.
+
+On Slack the app needs the `files:write` scope. Without it the send fails with
+a message that names the scope; tell the user, and send the text on its own.
+
 ## Explicit routing
 
 When your session receives a message from Slack or Telegram, the prepended context includes the routing info you need:

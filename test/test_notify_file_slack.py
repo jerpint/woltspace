@@ -3,6 +3,7 @@
 import asyncio
 import json
 import urllib.parse
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import httpx
@@ -264,3 +265,14 @@ async def test_registered_slack_sender_uploads_through_the_notify_patch_point(at
     )
     upload.assert_awaited_once_with("tok", "C123", "1.2", attachment, COMMENT)
     text.assert_not_awaited()
+
+
+def test_both_slack_app_manifests_request_files_write_and_agree():
+    root = Path(__file__).resolve().parent.parent
+    skill = json.loads((root / "container/skills/setup-slack/references/manifest.json").read_text())
+    doc = (root / "docs/slack-dm-agent-mvp.md").read_text()
+    documented = json.loads(doc.split("```json\n", 1)[1].split("```", 1)[0])
+    assert skill["oauth_config"]["scopes"]["bot"] == [
+        "assistant:write", "chat:write", "files:write", "im:history",
+    ]
+    assert documented == skill

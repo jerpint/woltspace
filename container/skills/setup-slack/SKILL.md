@@ -47,16 +47,21 @@ updated to this manifest rather than creating a second app.
 The intentional surface is:
 
 - Agent View with the description `gnaw. build. repeat`
-- bot scopes `assistant:write`, `chat:write`, and `im:history`
+- bot scopes `assistant:write`, `chat:write`, `files:write`, and `im:history`
 - bot events `app_home_opened` and `message.im`
 - Interactivity and Socket Mode enabled
 
+`files:write` is what lets a wolt send a file to the owner. It does not let
+the app receive attachments; those are still refused.
+
 Do not add `app_mentions:read`, channel/group history, channel/group message
-events, file scopes, `chat:write.customize`, or `agent_session_stopped`.
+events, `files:read`, `chat:write.customize`, or `agent_session_stopped`.
 Those belong to separately implemented features.
 
 After the owner saves the manifest, have them reinstall the app to the
-workspace so the new bot scopes take effect.
+workspace so the new bot scopes take effect. An app installed before the
+manifest carried `files:write` needs this once: until then a file send fails
+with a message that names the scope, and text notifications keep working.
 
 ## 3. Create the Socket Mode token
 
@@ -120,6 +125,9 @@ closed by design.
   `connections:write` and Socket Mode is enabled.
 - replies work but no native processing state: the app is still on the legacy
   surface; migrate it instead of enabling message-progress fallback.
+- text arrives but a file send fails naming `files:write`: the app was
+  installed before the manifest carried that scope; update the manifest, Save,
+  and reinstall.
 
 Slack images, native Stop, custom per-wolt identity, shared OAuth installation,
 and channel participation are not part of setup. Treat each as a separate
