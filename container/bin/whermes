@@ -20,17 +20,23 @@ if [ -n "$WOLTSPACE_HOME_DIR" ] && [ -d "$WOLTSPACE_HOME_DIR" ]; then
     mkdir -p "$HERMES_HOME"
 
     # The lodge owns this file and rewrites it every start, so the skills path
-    # follows the wolt if its folder moves. Settings:
+    # follows the wolt if its folder moves. (For now: per-wolt overrides merged
+    # on top would be the next step.) Settings:
     #   skills.external_dirs   - the wolt's synced skills (woltspace + its own)
     #   memory.*               - off: a wolt's memory lives in wolt/memory/
     #   display.busy_input_mode - queue: a message that arrives while Hermes is
     #                             working waits for the turn to end instead of
     #                             interrupting it (Hermes' default)
+    # YAML single quotes: only a ' needs escaping (doubled), so any path is safe.
     SKILLS_DIR="$WOLTSPACE_HOME_DIR/.claude/skills"
+    Q="'"
+    SKILLS_YAML="$Q${SKILLS_DIR//$Q/$Q$Q}$Q"
+    # rm first: never write through a link planted at either path.
+    rm -f "$HERMES_HOME/config.yaml"
     cat > "$HERMES_HOME/config.yaml" <<EOF
 # Written by woltspace (whermes) on every session start. Edits are replaced.
 skills:
-  external_dirs: ["$SKILLS_DIR"]
+  external_dirs: [$SKILLS_YAML]
 memory:
   memory_enabled: false
   user_profile_enabled: false
@@ -41,6 +47,9 @@ EOF
     # Hermes seeds a default SOUL.md ("You are Hermes Agent ...") as the
     # primary identity when the file is missing. Write the wolt's own first;
     # Hermes never overwrites a SOUL.md it did not write.
+    if [ -L "$HERMES_HOME/SOUL.md" ]; then
+        rm -f "$HERMES_HOME/SOUL.md"
+    fi
     if [ ! -e "$HERMES_HOME/SOUL.md" ]; then
         cat > "$HERMES_HOME/SOUL.md" <<'EOF'
 You are a wolt living in a Woltspace lodge. Your name, identity and rules are in

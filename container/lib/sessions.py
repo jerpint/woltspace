@@ -1452,10 +1452,7 @@ def discover_session_id_for(name: str, timeout: int = 90) -> str:
             if existing:
                 return existing
             taken = taken_resume_ids(registry.list(), exclude=name)
-            if resolve_harness(current.get("harness")) == "codex":
-                session_id = discover(current, since, taken)
-            else:
-                session_id = discover(current, since)
+            session_id = discover(current, since, taken)
             if session_id:
                 registry.update(
                     name, wolt=current.get("wolt", ""),

@@ -28,6 +28,8 @@ Each `HARNESSES` entry is a dict. Fields, with what they mean and how `claude` v
 | `skill_invoke` | Format string for invoking a **wolt-owned** skill inside a prompt. `claude`: `/{name}`; `codex`: `@{name}`. |
 | `platform_skill_invoke` | Format string for invoking a **platform** skill under *plugin* delivery only. Those arrive namespaced (claude installs them as the `woltspace` plugin; codex namespaces any skill tree with `.claude-plugin/` at its root), so they are `/woltspace:{name}` on claude and `@woltspace:{name}` on codex. `opencode` is the exception: it discovers the same tree but namespaces nothing, so its template is the bare ` /{name}` (leading space = palette defuse) and a wolt-owned skill of the same name collides there. Absent = fall back to `skill_invoke`. Under *copy* delivery — the default, and most of the colony — this field is not consulted at all: the skill is a plain copy named `woltspace-{name}`, so `skill_invoke` spells it. `platform_skill_invoke(harness, name, delivery)` in `harnesses.py` is the only correct way to build one. |
 | `instructions_file` | The project-instructions filename the agent reads. `claude`: `CLAUDE.md`; `codex`: `AGENTS.md`. The wrapper symlinks it to the wolt's `CLAUDE.md`. |
+| `auth_env` | Optional. Environment variables that authenticate the harness when it has no login of its own in the session's home (`hermes`: `("OPENROUTER_API_KEY",)`). `woltspace doctor` reads it; nothing else needs to know. |
+| `experimental` | Optional `True` while a harness is offered but not yet proven by real use. `GET /harnesses` exposes it and every engine picker labels it. |
 | `auth_file` | Path (relative to the per-wolt HOME) where credentials live. `claude`: `.claude/.credentials.json`; `codex`: `.codex/auth.json`. Used by boot auth checks. |
 | `preset_session_id` | `True` if the CLI accepts a session id *you* generate at spawn (`claude --session-id <uuid>`). `False` if it assigns its own (`codex`, `opencode`). |
 | `discover_session_id` | `None` when `preset_session_id` is `True`. Otherwise a function `(session_data, since) -> str | None` that finds the id the agent assigned, by watching where it writes session state on disk (see the session-id story). |
@@ -70,6 +72,12 @@ To implement `discover_session_id`: find where the agent writes new session/roll
 - **Instructions file + skills symlinks.** Agents disagree on the instructions filename (`CLAUDE.md` vs `AGENTS.md`) and where skills live. Symlink the agent's expectations onto the wolt's already-synced files so a wolt keeps its instructions and skills across a harness switch, for free.
 - **Auth refresh copies go stale.** Auth files with rotating refresh tokens are the subtle one. Copying a seed once per wolt can drift if the agent refreshes tokens and the copies diverge — you may end up wanting a single shared auth dir instead of per-wolt copies. Decide this during live auth testing; it's not visible offline.
 - **Model identifiers drift.** Whatever you put in `models` will bit-rot as the provider renames models. Mark them clearly and confirm the live set with the agent's own model-listing command rather than trusting docs.
+
+## Experimental harnesses: known limits
+
+- **Pi** (1.1.0): runs with `--no-approve`, so a working folder's `.pi` resources (extensions, settings, skills) never load: with `--approve`, a cloned repo's `.pi/extensions` would run as code. The wolt's own skills come in through `--skill` (wpi). Natively Pi shares the owner's `~/.pi`, sessions included. Needs Node 22.19+. Not in the container image.
+- **Hermes** (0.19.0): one Hermes home per wolt (`<wolt>/.hermes`), even natively, because Hermes keeps a persona and memory there. whermes rewrites its `config.yaml` every start (skills, memory off, queued input). Authenticates from `OPENROUTER_API_KEY` in the lodge environment. Its session id is discovered from `state.db`; two sessions of one wolt started within ~5 s in the same folder can swap ids. Native only; not in the container image.
+- Neither has been run from Telegram/Slack-started sessions or under plugin skill delivery yet.
 
 ## Checklist: adding harness X
 

@@ -105,7 +105,7 @@ def test_pi_external_wrapper_isolates_state_and_copies_seed(tmp_path):
     assert f"HOME={wolt_home}" in result.stdout
     assert f"PI_DIR={wolt_home / '.pi' / 'agent'}" in result.stdout
     assert f"PI_SESSIONS={wolt_home / '.pi' / 'agent' / 'sessions'}" in result.stdout
-    assert "ARGS=--version" in result.stdout
+    assert f"ARGS=--skill {wolt_home / '.claude' / 'skills'} --version" in result.stdout
     assert (wolt_home / ".pi" / "agent" / "auth.json").read_text() == shared.read_text()
     assert (wolt_home / "AGENTS.md").resolve() == (wolt_home / "CLAUDE.md")
     assert (wolt_home / ".agents" / "skills").resolve() == (wolt_home / ".claude" / "skills")
@@ -146,7 +146,7 @@ def test_hermes_wrapper_gives_each_wolt_its_own_hermes_home(isolation, tmp_path)
     assert f"HERMES_HOME={hermes_home}" in result.stdout
     assert "ARGS=chat --yolo" in result.stdout
     config = (hermes_home / "config.yaml").read_text()
-    assert f'external_dirs: ["{wolt_home / ".claude" / "skills"}"]' in config
+    assert f"external_dirs: ['{wolt_home / '.claude' / 'skills'}']" in config
     assert "memory_enabled: false" in config
     assert "busy_input_mode: queue" in config
     assert "Woltspace lodge" in (hermes_home / "SOUL.md").read_text()
@@ -171,3 +171,55 @@ def test_hermes_wrapper_keeps_an_existing_soul(tmp_path):
     subprocess.run([str(ROOT / "container" / "bin" / "whermes")], env=env,
                    cwd=wolt_home, check=True)
     assert (wolt_home / ".hermes" / "SOUL.md").read_text() == "custom\n"
+
+
+def test_pi_host_wrapper_hands_over_only_the_wolt_skills(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "pi").write_text("#!/bin/sh\nprintf 'ARGS=%s\\n' \"$*\"\n")
+    (fake_bin / "pi").chmod(0o755)
+    wolt_home = tmp_path / "wolt home"
+    (wolt_home / ".claude" / "skills").mkdir(parents=True)
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+        "WOLTSPACE_ISOLATION": "host",
+        "WOLTSPACE_WOLT_HOME": str(wolt_home),
+    }
+    result = subprocess.run(
+        [str(ROOT / "container" / "bin" / "wpi"), "--no-approve"],
+        env=env, cwd=tmp_path, capture_output=True, text=True, check=True,
+    )
+    assert result.stdout.strip() == (
+        f"ARGS=--skill {wolt_home / '.claude' / 'skills'} --no-approve"
+    )
+
+
+def test_hermes_wrapper_quotes_odd_paths_and_never_writes_through_links(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "hermes").write_text("#!/bin/sh\nexit 0\n")
+    (fake_bin / "hermes").chmod(0o755)
+    wolt_home = tmp_path / "it's a \"wolt\""
+    hermes_home = wolt_home / ".hermes"
+    hermes_home.mkdir(parents=True)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("keep\n")
+    (hermes_home / "config.yaml").symlink_to(outside)
+    (hermes_home / "SOUL.md").symlink_to(tmp_path / "dangling")
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+        "WOLTSPACE_ISOLATION": "host",
+        "WOLTSPACE_WOLT_HOME": str(wolt_home),
+    }
+    subprocess.run([str(ROOT / "container" / "bin" / "whermes")], env=env,
+                   cwd=tmp_path, check=True)
+
+    assert outside.read_text() == "keep\n"
+    assert not (tmp_path / "dangling").exists()
+    assert not (hermes_home / "config.yaml").is_symlink()
+    assert not (hermes_home / "SOUL.md").is_symlink()
+    # YAML single-quoted scalar: the only escape is a doubled quote.
+    quoted = str(wolt_home / ".claude" / "skills").replace("'", "''")
+    assert f"external_dirs: ['{quoted}']" in (hermes_home / "config.yaml").read_text()

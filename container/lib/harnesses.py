@@ -329,7 +329,9 @@ def _opencode_command(entry: dict, mode: str, *, session_id: str = "",
     return " ".join(shlex.quote(p) for p in parts)
 
 
-def _opencode_discover_session_id(data: dict, since: float) -> str | None:
+def _opencode_discover_session_id(
+    data: dict, since: float, taken: set[str] | None = None,
+) -> str | None:
     """Find the ses_ id opencode assigned to a just-spawned session.
 
     Verified live against opencode 1.18.3: sessions live in a SQLite db
@@ -373,8 +375,10 @@ def _opencode_discover_session_id(data: dict, since: float) -> str | None:
     def _ts(s):  # created/updated are ms epoch
         return s.get("created") or s.get("updated") or 0
 
+    taken = taken or set()
     valid = [s for s in sessions
-             if isinstance(s, dict) and str(s.get("id", "")).startswith("ses_")]
+             if isinstance(s, dict) and str(s.get("id", "")).startswith("ses_")
+             and s.get("id") not in taken]
     valid.sort(key=_ts, reverse=True)
     if not valid:
         return None
@@ -401,9 +405,13 @@ def _pi_command(entry: dict, mode: str, *, session_id: str = "",
 
     Pi accepts a caller-supplied UUID, so Woltspace owns the session identity
     from first spawn and never has to discover it from Pi's JSONL store.
-    `--approve` trusts project-local resources for this run; it is not a tool
-    permission or sandbox flag. Pi deliberately has no built-in tool approval
-    system, so isolation remains the launcher's responsibility.
+
+    `--no-approve` refuses project trust for the run. Trust is per folder,
+    and a session often works in a cloned repo: with `--approve` any
+    `.pi/extensions` in it would run as code with no prompt (reproduced on
+    1.1.0). Trust also gates a folder's `.agents/skills`, so wpi passes the
+    wolt's own skills with `--skill` instead. Pi has no tool approval system;
+    isolation remains the launcher's responsibility.
 
     Benched on 1.1.0: spawn with --session-id and an opening prompt, a
     bracketed multi-line paste, and --session resume of the same conversation.
@@ -417,7 +425,7 @@ def _pi_command(entry: dict, mode: str, *, session_id: str = "",
     if mode not in ("spawn", "resume"):
         raise ValueError(f"unknown mode: {mode}")
 
-    parts = [wrapper, "--approve"]
+    parts = [wrapper, "--no-approve"]
     if mode == "spawn" and session_id:
         parts += ["--session-id", session_id]
     elif mode == "resume" and resume_id:
@@ -478,14 +486,28 @@ def _hermes_command(entry: dict, mode: str, *, session_id: str = "",
     return " ".join(shlex.quote(p) for p in parts)
 
 
-def _hermes_discover_session_id(data: dict, since: float) -> str | None:
+def _hermes_discover_session_id(
+    data: dict, since: float, taken: set[str] | None = None,
+) -> str | None:
     """Find the id Hermes assigned to a just-spawned session.
 
     whermes points HERMES_HOME at <wolt>/.hermes, and Hermes records every
     session in the `sessions` table of state.db (id, started_at in epoch
-    seconds, cwd). Only rows started at/after `since` count, so a previous
-    run's session is never returned; among those, one whose cwd matches the
-    session dir wins (concurrent sessions of one wolt), else the newest.
+    seconds, cwd). Candidates started at/after `since`, not already owned by
+    another session (`taken`), and run in this session's dir.
+
+    Two sessions of one wolt usually share a cwd (the wolt home), so "newest"
+    would let a poller claim its sibling's row. Instead the row that started
+    first after this session was created wins: Hermes writes its row about a
+    second after spawn, so each session's own row is the earliest one at or
+    after its created_at. Without a created_at the newest row is used.
+
+    Known limit: Hermes writes its row ~5 s after spawn, so two sessions of
+    one wolt started closer together than that in the same dir can still swap
+    ids, depending on which poller claims first. Hermes offers no tag to pass
+    at spawn that only labels the row (`--source` also changes how it treats
+    the session), so an exact match needs the lodge to rank sibling sessions
+    still waiting for an id. Pi does not have this problem: it takes our id.
     """
     wolt = data.get("wolt", "")
     if not wolt:
@@ -495,25 +517,34 @@ def _hermes_discover_session_id(data: dict, since: float) -> str | None:
     if not db.is_file():
         return None
     try:
-        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2)
+        conn = sqlite3.connect(f"{db.as_uri()}?mode=ro", uri=True, timeout=2)
         try:
             rows = conn.execute(
-                "SELECT id, cwd FROM sessions WHERE started_at >= ? "
-                "ORDER BY started_at DESC",
+                "SELECT id, cwd, started_at FROM sessions WHERE started_at >= ? "
+                "ORDER BY started_at",
                 (since,),
             ).fetchall()
         finally:
             conn.close()
     except sqlite3.Error:
         return None
-    if not rows:
-        return None
+
+    taken = taken or set()
+    rows = [row for row in rows if row[0] not in taken]
     session_dir = data.get("dir", "")
     if session_dir:
-        for sid, cwd in rows:
-            if cwd == session_dir:
-                return sid
-    return rows[0][0]
+        # Compare real paths: macOS /tmp is /private/tmp, homes can be links.
+        want = os.path.realpath(session_dir)
+        rows = [row for row in rows if row[1] and os.path.realpath(row[1]) == want]
+    if not rows:
+        return None
+    created = data.get("created_at")
+    if isinstance(created, (int, float)):
+        # created_at is stored in whole seconds; allow for the truncation.
+        own = [row for row in rows if row[2] >= created - 2]
+        if own:
+            return own[0][0]
+    return rows[-1][0]
 
 
 # Tier defaults shared by the OpenRouter-backed harnesses (Pi, Hermes).
@@ -710,8 +741,9 @@ HARNESSES = {
         "models": OPENROUTER_TIER_MODELS,
         "model_catalog": OPENROUTER_MODEL_CATALOG,
         # Pi implements Agent Skills and explicitly invokes them as
-        # `/skill:<frontmatter-name>`. It recursively discovers .agents/skills,
-        # so the existing Woltspace bridge works for copied and plugin delivery.
+        # `/skill:<frontmatter-name>`. wpi hands it <wolt>/.claude/skills with
+        # --skill (folder skills are trust-gated, see _pi_command). UNVERIFIED:
+        # plugin delivery through the platform symlink in that folder.
         "skill_invoke": "/skill:{name}",
         # Like opencode, Pi does not namespace the platform symlink tree.
         "platform_skill_invoke": "/skill:{name}",
@@ -751,6 +783,10 @@ HARNESSES = {
         "tui_ready_marker": "Type your message",
         "instructions_file": "AGENTS.md",
         "auth_file": ".hermes/auth.json",
+        # Every wolt runs on its own Hermes home, so a host login never reaches
+        # it: the lodge environment's provider key is its auth. OpenRouter only,
+        # matching model_prefixes.
+        "auth_env": ("OPENROUTER_API_KEY",),
         "preset_session_id": False,
         "discover_session_id": _hermes_discover_session_id,
         # Benched on 0.19.0: a bracketed paste arrives as one message (an

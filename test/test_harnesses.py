@@ -260,7 +260,10 @@ class TestBuildCommandPi:
             model="openrouter/auto", prompt="hey testwolt",
         )
         assert "wpi" in cmd
-        assert "--approve" in cmd
+        # Never trust the working folder: a cloned repo's .pi/extensions
+        # would run as code.
+        assert "--no-approve" in cmd
+        assert " --approve" not in cmd
         assert f"--session-id {self.SESSION_ID}" in cmd
         assert "--name testwolt-chompy-dam-abc123" in cmd
         assert "--model openrouter/auto" in cmd
@@ -363,30 +366,57 @@ class TestHermesDiscovery:
         )
         conn.commit()
         conn.close()
+        return str(tmp_path / "testwolt")
 
-    def _discover(self, data, since):
+    def _discover(self, data, since, taken=None):
         from harnesses import _hermes_discover_session_id
-        return _hermes_discover_session_id(data, since)
+        return _hermes_discover_session_id(data, since, taken)
 
     def test_ignores_sessions_from_before_the_spawn(self, tmp_path, monkeypatch):
-        self._db(tmp_path, monkeypatch, [("old", 100.0, "/w")])
-        assert self._discover({"wolt": "testwolt", "dir": "/w"}, 200.0) is None
+        home = self._db(tmp_path, monkeypatch, [("old", 100.0, "")])
+        assert self._discover({"wolt": "testwolt", "dir": home}, 200.0) is None
 
-    def test_prefers_the_session_dir_over_newer_elsewhere(self, tmp_path, monkeypatch):
-        self._db(tmp_path, monkeypatch, [
-            ("mine", 210.0, "/w"),
-            ("other", 220.0, "/elsewhere"),
-        ])
-        assert self._discover({"wolt": "testwolt", "dir": "/w"}, 200.0) == "mine"
+    def test_never_claims_a_session_in_another_dir(self, tmp_path, monkeypatch):
+        home = self._db(tmp_path, monkeypatch, [("other", 210.0, "/elsewhere")])
+        assert self._discover({"wolt": "testwolt", "dir": home}, 200.0) is None
 
-    def test_falls_back_to_newest(self, tmp_path, monkeypatch):
-        self._db(tmp_path, monkeypatch, [("a", 210.0, "/x"), ("b", 220.0, "/y")])
-        assert self._discover({"wolt": "testwolt", "dir": "/w"}, 200.0) == "b"
+    def test_cwd_match_survives_a_symlinked_path(self, tmp_path, monkeypatch):
+        real = self._db(tmp_path, monkeypatch, [])
+        link = tmp_path / "link"
+        link.symlink_to(real)
+        self._db_insert(real, [("mine", 210.0, str(link))])
+        assert self._discover({"wolt": "testwolt", "dir": real}, 200.0) == "mine"
+
+    def test_skips_ids_another_session_owns(self, tmp_path, monkeypatch):
+        home = self._db(tmp_path, monkeypatch, [])
+        self._db_insert(home, [("first", 210.0, home), ("second", 215.0, home)])
+        data = {"wolt": "testwolt", "dir": home, "created_at": 209}
+        assert self._discover(data, 195.0, {"first"}) == "second"
+
+    def test_two_sessions_in_one_dir_each_get_their_own_row(self, tmp_path, monkeypatch):
+        home = self._db(tmp_path, monkeypatch, [])
+        self._db_insert(home, [("a-row", 101.0, home), ("b-row", 106.0, home)])
+        a = {"wolt": "testwolt", "dir": home, "created_at": 100}
+        b = {"wolt": "testwolt", "dir": home, "created_at": 105}
+        # Whichever poller runs first, neither takes its sibling's row.
+        assert self._discover(b, 90.0) == "b-row"
+        assert self._discover(a, 85.0, {"b-row"}) == "a-row"
+        assert self._discover(a, 85.0) == "a-row"
 
     def test_no_database_yet(self, tmp_path, monkeypatch):
         monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
         assert self._discover({"wolt": "testwolt", "dir": "/w"}, 0.0) is None
 
+    @staticmethod
+    def _db_insert(home, rows):
+        import sqlite3
+        conn = sqlite3.connect(f"{home}/.hermes/state.db")
+        conn.executemany(
+            "INSERT INTO sessions (id, source, started_at, cwd) VALUES (?, 'cli', ?, ?)",
+            [(sid, at, str(cwd)) for sid, at, cwd in rows],
+        )
+        conn.commit()
+        conn.close()
 
 class TestCodexDiscovery:
     """Rollout-id discovery from $CODEX_HOME/sessions."""

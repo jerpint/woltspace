@@ -291,6 +291,10 @@ def test_doctor_counts_a_provider_key_as_hermes_auth(tmp_path, monkeypatch):
     with patch("woltspace.doctor.shutil.which", side_effect=which):
         checks = run_doctor(layout, check_port=False)
         assert {c.name: c for c in checks}["host-auth"].status == "warn"
+        # A key Hermes sessions cannot use does not count.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+        checks = run_doctor(layout, check_port=False)
+        assert {c.name: c for c in checks}["host-auth"].status == "warn"
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
         checks = run_doctor(layout, check_port=False)
 

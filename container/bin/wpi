@@ -5,10 +5,21 @@
 # wolt own its auth, configuration, extensions and JSONL sessions without
 # changing Pi's global defaults.
 
+# Sessions run with --no-approve (see _pi_command): Pi then ignores trust-gated
+# project resources, which include a folder's .agents/skills. The wolt's own
+# skills are handed over explicitly instead, so only they load, never the
+# .pi extensions or skills of whatever repo the session is working in.
+WOLT_SKILLS=()
+if [ -n "${WOLTSPACE_WOLT_HOME:-}" ] && [ -d "$WOLTSPACE_WOLT_HOME/.claude/skills" ]; then
+    WOLT_SKILLS=(--skill "$WOLTSPACE_WOLT_HOME/.claude/skills")
+fi
+
 if [ "${WOLTSPACE_ISOLATION:-external}" = "host" ]; then
-    # Native mode intentionally preserves the owner's existing Pi home and
-    # credentials. Pi has no built-in tool sandbox; host policy is external.
-    exec pi "$@"
+    # Native mode keeps the owner's own Pi home and credentials, like claude
+    # and codex do natively. Sharing it is fine for Pi: it has no persona or
+    # memory of its own (unlike Hermes), only config and one session store.
+    # Pi has no built-in tool sandbox; host policy is external.
+    exec pi "${WOLT_SKILLS[@]}" "$@"
 fi
 
 WOLTSPACE_HOME_DIR="${WOLTSPACE_WOLT_HOME:-$(echo "$PWD" | sed -n 's|\(/workspace/wolts/[^/]*\).*|\1|p')}"
@@ -35,4 +46,7 @@ if [ -n "$WOLTSPACE_HOME_DIR" ] && [ -d "$WOLTSPACE_HOME_DIR" ]; then
     fi
 fi
 
-exec pi "$@"
+if [ ${#WOLT_SKILLS[@]} -eq 0 ] && [ -n "${WOLTSPACE_HOME_DIR:-}" ] && [ -d "$WOLTSPACE_HOME_DIR/.claude/skills" ]; then
+    WOLT_SKILLS=(--skill "$WOLTSPACE_HOME_DIR/.claude/skills")
+fi
+exec pi "${WOLT_SKILLS[@]}" "$@"

@@ -108,7 +108,16 @@ def _default_harness_check() -> DoctorCheck | None:
     )
 
 
-_HERMES_PROVIDER_KEYS = ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY")
+_FALLBACK_HARNESSES = ("claude", "codex", "opencode", "pi", "hermes")
+
+
+def _harness_table() -> dict:
+    """The harness registry, or {} when it cannot be imported."""
+    try:
+        from harnesses import HARNESSES
+    except ImportError:
+        return {}
+    return HARNESSES
 
 
 def _auth_paths(home: Path) -> dict[str, Path]:
@@ -432,24 +441,28 @@ def run_doctor(
         "Install tmux and ensure it is on PATH." if not tmux else "",
     ))
 
-    harnesses = {name: shutil.which(name) for name in ("claude", "codex", "opencode", "pi", "hermes")}
+    table = _harness_table()
+    names = tuple(table) or _FALLBACK_HARNESSES
+    harnesses = {name: shutil.which(name) for name in names}
     installed = {name: path for name, path in harnesses.items() if path}
     checks.append(DoctorCheck(
         "harness",
         "pass" if installed else "fail",
         ", ".join(f"{name}={path}" for name, path in installed.items()) or "none found",
-        "Install at least one supported CLI: claude, codex, opencode, pi, or hermes." if not installed else "",
+        f"Install at least one supported CLI: {', '.join(names)}." if not installed else "",
     ))
 
     home = Path.home()
     auth = _auth_paths(home)
     authenticated = [name for name in installed if name in auth and auth[name].is_file()]
-    # Hermes runs every wolt on its own Hermes home, so a host login does not
-    # reach wolts: provider keys in the lodge environment are its auth.
-    if "hermes" in installed:
-        keys = [key for key in _HERMES_PROVIDER_KEYS if os.environ.get(key)]
+    # A harness that authenticates from the lodge environment declares the
+    # variables it needs (`auth_env` in its table entry).
+    for name in installed:
+        if name in authenticated:
+            continue
+        keys = [key for key in table.get(name, {}).get("auth_env", ()) if os.environ.get(key)]
         if keys:
-            authenticated.append(f"hermes ({keys[0]})")
+            authenticated.append(f"{name} ({keys[0]})")
     if (
         "claude" in installed
         and "claude" not in authenticated
