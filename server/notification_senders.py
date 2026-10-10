@@ -33,7 +33,11 @@ async def telegram_send_document(
                 files={"document": (attachment.filename, document, attachment.content_type)},
                 timeout=UPLOAD_TIMEOUT,
             )
-            data = resp.json()
+            try:
+                data = resp.json()
+            except ValueError:
+                # A proxy in front of the API answers an oversized upload in HTML.
+                raise RuntimeError(f"telegram answered HTTP {resp.status_code}") from None
             if not data.get("ok"):
                 raise RuntimeError(data.get("description", "telegram error"))
             return data

@@ -337,6 +337,22 @@ async def test_send_document_raises_what_telegram_answers(monkeypatch, attachmen
     assert str(error.value) == message
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status, body", [
+    (413, "<html><h1>413 Request Entity Too Large</h1></html>"),
+    (502, ""),
+])
+async def test_send_document_names_the_status_when_the_answer_is_not_json(
+    monkeypatch, attachment, status, body,
+):
+    _Telegram(monkeypatch, httpx.Response(status, text=body))
+
+    with pytest.raises(RuntimeError) as error:
+        await telegram_send_document("t", "42", attachment, "hi")
+
+    assert str(error.value) == f"telegram answered HTTP {status}"
+
+
 # --- registration and the whole path ----------------------------------------
 
 def test_registered_telegram_sender_declares_fifty_megabytes():
