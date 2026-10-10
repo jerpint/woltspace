@@ -57,6 +57,10 @@ the thread with your message as its comment.
 - Credential files (`.env`, Claude and Codex credential files) are refused.
   The message may be empty when a file is attached.
 
+A large file takes as long to send as it takes to upload, so let the command
+finish. If it times out, do not send again without checking: the lodge may
+still be delivering the file, and a second send would give the user two.
+
 On Slack the app needs the `files:write` scope. Without it the send fails with
 a message that names the scope; tell the user, and send the text on its own.
 
