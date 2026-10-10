@@ -10,7 +10,7 @@ import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
-from fastapi import Request
+from fastapi import Request, WebSocket
 from fastapi.responses import PlainTextResponse
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -217,6 +217,9 @@ def test_proxy_rewrites_domain_cookies_to_host_only_and_preserves_multiples(monk
     )
 
     class Client:
+        def __init__(self, **_kwargs):
+            pass
+
         def build_request(self, *args, **kwargs):
             return httpx.Request(*args, **kwargs)
 
@@ -516,3 +519,167 @@ def test_gateway_port_resolver_is_shared_by_every_consumer():
 def test_owner_local_rule_is_shared_by_lodge_and_gateway():
     for source in (ROOT / "server" / "app.py", ROOT / "server" / "gateway.py"):
         assert "from .local_request import owner_local_request" in source.read_text()
+
+
+def test_proxy_never_hands_visitor_credentials_to_the_app(monkeypatch):
+    monkeypatch.setattr(app_proxy, "running_app", lambda _name: {"port": 4321})
+    seen = {}
+
+    class Client:
+        def __init__(self, **kwargs):
+            seen["timeout"] = kwargs.get("timeout")
+
+        def build_request(self, *args, **kwargs):
+            seen["headers"] = kwargs["headers"]
+            return httpx.Request(*args, **kwargs)
+
+        async def send(self, request, **_kwargs):
+            return httpx.Response(200, content=b"ok", request=request)
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(app_proxy.httpx, "AsyncClient", Client)
+    scope = {
+        "type": "http", "method": "GET", "scheme": "https", "path": "/",
+        "raw_path": b"/", "query_string": b"",
+        "headers": [
+            (b"host", b"notes.you.example"),
+            (b"cf-access-jwt-assertion", b"visitor.jwt.token"),
+            (b"cf-access-client-id", b"svc"),
+            (b"cookie", b"CF_Authorization=visitor.jwt.token; theme=dark; CF_AppSession=s"),
+            (b"x-woltspace-user", b"spoofed@evil.example"),
+            (b"connection", b"keep-alive"),
+            (b"accept", b"text/html"),
+        ],
+        "client": ("127.0.0.1", 123), "server": ("notes.you.example", 443),
+        "state": {"access_email": "friend@example.com"},
+    }
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    response = asyncio.run(app_proxy.proxy_app_http(Request(scope, receive), "notes"))
+
+    headers = seen["headers"]
+    assert response.status_code == 200
+    assert "cf-access-jwt-assertion" not in headers
+    assert "cf-access-client-id" not in headers
+    assert "connection" not in headers
+    assert headers["cookie"] == "theme=dark; CF_AppSession=s"
+    assert "visitor.jwt.token" not in repr(headers)
+    assert headers["x-woltspace-user"] == "friend@example.com"
+    assert headers["accept"] == "text/html"
+    assert headers["host"] == "localhost:4321"
+    # Streams may stay quiet; only connecting is bounded.
+    assert seen["timeout"].read is None and seen["timeout"].connect is not None
+
+
+def test_proxy_drops_a_cookie_header_that_held_only_the_access_cookie():
+    headers = app_proxy.upstream_headers({"cookie": "CF_Authorization=t"}, None)
+    assert "cookie" not in headers and "x-woltspace-user" not in headers
+
+
+def test_proxy_reports_an_upstream_timeout_as_bad_gateway(monkeypatch):
+    monkeypatch.setattr(app_proxy, "running_app", lambda _name: {"port": 4321})
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def build_request(self, *args, **kwargs):
+            return httpx.Request(*args, **kwargs)
+
+        async def send(self, request, **_kwargs):
+            raise httpx.ConnectTimeout("slow", request=request)
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(app_proxy.httpx, "AsyncClient", Client)
+    scope = {
+        "type": "http", "method": "GET", "scheme": "https", "path": "/",
+        "raw_path": b"/", "query_string": b"", "headers": [],
+        "client": ("127.0.0.1", 123), "server": ("notes.example", 443),
+    }
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    response = asyncio.run(app_proxy.proxy_app_http(Request(scope, receive), "notes"))
+    assert response.status_code == 502
+
+
+def _upstream_ws_server(handler):
+    """Run a real websocket server on a free loopback port in a thread."""
+    import threading
+    import websockets
+
+    ready = threading.Event()
+    box = {}
+
+    def run():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def main():
+            async with websockets.serve(handler, "127.0.0.1", 0) as server:
+                box["port"] = server.sockets[0].getsockname()[1]
+                box["stop"] = loop.create_future()
+                ready.set()
+                await box["stop"]
+
+        loop.run_until_complete(main())
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    assert ready.wait(5)
+    return box, thread
+
+
+def _bridge_app(app_name):
+    async def app(scope, receive, send):
+        scope.setdefault("state", {})["access_email"] = "friend@example.com"
+        # A bridge that never ends fails the test instead of hanging it.
+        await asyncio.wait_for(
+            app_proxy.proxy_app_websocket(WebSocket(scope, receive, send), app_name, scope["path"]),
+            timeout=10,
+        )
+    return app
+
+
+def test_websocket_bridge_carries_binary_frames_and_identity(monkeypatch):
+    seen = {}
+
+    async def echo(connection):
+        seen["user"] = connection.request.headers.get("x-woltspace-user")
+        async for message in connection:
+            await connection.send(message)
+
+    box, _thread = _upstream_ws_server(echo)
+    monkeypatch.setattr(app_proxy, "running_app", lambda _name: {"port": box["port"]})
+    try:
+        with TestClient(_bridge_app("notes")).websocket_connect("/live") as ws:
+            ws.send_bytes(b"\x00\x01binary")
+            assert ws.receive_bytes() == b"\x00\x01binary"
+            ws.send_text("hello")
+            assert ws.receive_text() == "hello"
+    finally:
+        box["stop"].get_loop().call_soon_threadsafe(box["stop"].set_result, None)
+    assert seen["user"] == "friend@example.com"
+
+
+def test_websocket_bridge_closes_the_visitor_when_the_app_hangs_up(monkeypatch):
+    async def hang_up(connection):
+        await connection.send("bye")
+        await connection.close()
+
+    box, _thread = _upstream_ws_server(hang_up)
+    monkeypatch.setattr(app_proxy, "running_app", lambda _name: {"port": box["port"]})
+    try:
+        with TestClient(_bridge_app("notes")).websocket_connect("/live") as ws:
+            assert ws.receive_text() == "bye"
+            message = ws.receive()
+            assert message["type"] == "websocket.close"
+    finally:
+        box["stop"].get_loop().call_soon_threadsafe(box["stop"].set_result, None)
