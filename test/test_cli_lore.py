@@ -328,16 +328,22 @@ class TestTunnelResolution:
             "https://jerpint.woltspace.com"
         )
 
-    def test_half_a_named_tunnel_is_a_quick_tunnel(self, tmp_path, monkeypatch):
-        """A URL without a token is not a named tunnel; the URL would be a lie."""
+    def test_half_a_named_tunnel_publishes_nothing(self, tmp_path, monkeypatch):
+        """A URL without a token is not a named tunnel, and there is no quick fallback."""
         _clear_tunnel_env(monkeypatch)
         layout = _colony(tmp_path, [
             "WOLTSPACE_PUBLIC_TUNNEL=true",
             "CLOUDFLARE_TUNNEL_URL=https://jerpint.woltspace.com",
         ])
-        settings = tunnel_settings(layout)
-        assert settings["kind"] == "quick"
-        assert settings["url"] == ""
+        assert tunnel_settings(layout) == {"enabled": False, "kind": "none", "url": ""}
+
+    def test_asking_for_a_tunnel_without_a_named_one_publishes_nothing(
+        self, tmp_path, monkeypatch
+    ):
+        """The lodge never opens a quick tunnel, not even when asked to publish."""
+        _clear_tunnel_env(monkeypatch)
+        layout = _colony(tmp_path, ["WOLTSPACE_PUBLIC_TUNNEL=true"])
+        assert tunnel_settings(layout) == {"enabled": False, "kind": "none", "url": ""}
 
     def test_a_shell_export_beats_the_env_file(self, tmp_path, monkeypatch):
         """Same precedence the supervisor applies when it boots."""
@@ -421,22 +427,30 @@ class TestStatusSaysWhetherItIsPublished:
         Publishing is on and no URL has landed — the exact shape that makes
         `start` wait. `status` must not.
         """
-        self._scratch(tmp_path, monkeypatch, ["WOLTSPACE_PUBLIC_TUNNEL=true"])
+        self._scratch(tmp_path, monkeypatch, [
+            "WOLTSPACE_PUBLIC_TUNNEL=true",
+            "CLOUDFLARE_TUNNEL_TOKEN=a-token",
+            "CLOUDFLARE_TUNNEL_URL=https://jerpint.woltspace.com",
+        ])
         monkeypatch.setattr(
             "woltspace.lifecycle.time.sleep",
             lambda _: pytest.fail("status waited on a tunnel"),
         )
         assert cli_main(["status"]) == 0
-        assert "no public URL yet" in capsys.readouterr().out
+        assert "tunnel configured, not up" in capsys.readouterr().out
 
     def test_a_live_tunnel_shows_the_public_url(self, tmp_path, monkeypatch, capsys):
         self._scratch(
-            tmp_path, monkeypatch, ["WOLTSPACE_PUBLIC_TUNNEL=true"],
-            state={"url": "https://tiny-forest.trycloudflare.com", "type": "quick"},
+            tmp_path, monkeypatch, [
+            "WOLTSPACE_PUBLIC_TUNNEL=true",
+            "CLOUDFLARE_TUNNEL_TOKEN=a-token",
+            "CLOUDFLARE_TUNNEL_URL=https://jerpint.woltspace.com",
+        ],
+            state={"url": "https://jerpint.woltspace.com", "type": "named"},
         )
         cli_main(["status"])
         assert (
-            f"  {lore.TREE} public: https://tiny-forest.trycloudflare.com"
+            f"  {lore.TREE} public: https://jerpint.woltspace.com"
             in capsys.readouterr().out
         )
 
@@ -464,15 +478,19 @@ class TestStatusSaysWhetherItIsPublished:
         self, tmp_path, monkeypatch, capsys
     ):
         self._scratch(
-            tmp_path, monkeypatch, ["WOLTSPACE_PUBLIC_TUNNEL=true"],
-            state={"url": "https://tiny-forest.trycloudflare.com", "type": "quick"},
+            tmp_path, monkeypatch, [
+            "WOLTSPACE_PUBLIC_TUNNEL=true",
+            "CLOUDFLARE_TUNNEL_TOKEN=a-token",
+            "CLOUDFLARE_TUNNEL_URL=https://jerpint.woltspace.com",
+        ],
+            state={"url": "https://jerpint.woltspace.com", "type": "named"},
         )
         cli_main(["status", "--json"])
         tunnel = json.loads(capsys.readouterr().out)["tunnel"]
         assert sorted(tunnel) == ["enabled", "kind", "live", "url"]
         assert tunnel["enabled"] is True
-        assert tunnel["live"] == "https://tiny-forest.trycloudflare.com"
-        assert tunnel["url"] == "https://tiny-forest.trycloudflare.com"
+        assert tunnel["live"] == "https://jerpint.woltspace.com"
+        assert tunnel["url"] == "https://jerpint.woltspace.com"
 
     def test_the_report_shape_is_one_shape(self, tmp_path, monkeypatch):
         """`start` and `status` read the same resolver, so the keys must match."""
@@ -488,7 +506,7 @@ class TestStatusSaysWhetherItIsPublished:
 
 class TestTunnelLines:
     def test_a_disabled_tunnel_says_so_in_one_line(self, capsys):
-        lore.public_tunnel_lines({"enabled": False, "kind": "quick", "url": ""})
+        lore.public_tunnel_lines({"enabled": False, "kind": "none", "url": ""})
         said = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
         assert len(said) == 1
         assert "tunnel disabled" in said[0]
@@ -502,13 +520,6 @@ class TestTunnelLines:
         assert lore.SHARE_WARNING in out
         assert "opening a path to the outside" in out
 
-    def test_a_tunnel_with_no_url_yet_admits_it(self, capsys):
-        lore.public_tunnel_lines({"enabled": True, "kind": "quick", "url": ""})
-        out = capsys.readouterr().out
-        assert "starting tunnel" in out
-        assert "still digging" in out
-        assert "public:" not in out
-
 
 # ---------------------------------------------------------------------------
 # House style — the copy rules the colony holds itself to
@@ -516,7 +527,7 @@ class TestTunnelLines:
 
 
 def _every_phrase() -> list[str]:
-    phrases = [lore.SHARE_WARNING, lore.TUNNEL_DIGGING]
+    phrases = [lore.SHARE_WARNING]
     for _, headline, subtitle in lore.TRANSITIONS.values():
         phrases.extend([headline, subtitle])
     return phrases

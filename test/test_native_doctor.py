@@ -63,6 +63,7 @@ def test_doctor_discovers_existing_host_auth_without_copying_it(tmp_path, monkey
 def test_doctor_warns_when_env_tunnel_token_is_disabled(tmp_path, monkeypatch):
     layout = _layout(tmp_path)
     monkeypatch.setenv("CLOUDFLARE_TUNNEL_TOKEN", "configured-token")
+    monkeypatch.setenv("CLOUDFLARE_TUNNEL_URL", "https://lodge.example.com")
     monkeypatch.setenv("WOLTSPACE_PUBLIC_TUNNEL", "false")
 
     check = {item.name: item for item in run_doctor(layout, check_port=False)}[
@@ -70,6 +71,20 @@ def test_doctor_warns_when_env_tunnel_token_is_disabled(tmp_path, monkeypatch):
     ]
     assert check.status == "warn"
     assert check.remedy == "Set WOLTSPACE_PUBLIC_TUNNEL=true and restart the lodge."
+
+
+def test_doctor_names_the_missing_tunnel_url(tmp_path, monkeypatch):
+    """A token without a URL publishes nothing; turning the switch on won't help."""
+    layout = _layout(tmp_path)
+    monkeypatch.setenv("CLOUDFLARE_TUNNEL_TOKEN", "configured-token")
+    monkeypatch.delenv("CLOUDFLARE_TUNNEL_URL", raising=False)
+    monkeypatch.setenv("WOLTSPACE_PUBLIC_TUNNEL", "true")
+
+    check = {item.name: item for item in run_doctor(layout, check_port=False)}[
+        "public-tunnel"
+    ]
+    assert check.status == "warn"
+    assert "CLOUDFLARE_TUNNEL_URL" in check.remedy
 
 
 def test_doctor_warns_when_dotenv_tunnel_token_is_disabled(tmp_path, monkeypatch):

@@ -235,6 +235,61 @@ class TestStartStop:
         assert call_kwargs["shell"] is True
 
     @patch("apps.subprocess.Popen")
+    def test_start_refuses_the_lodge_port(self, mock_popen, wolts_dir, monkeypatch):
+        monkeypatch.delenv("WOLTSPACE_PORT", raising=False)
+        monkeypatch.delenv("PORT", raising=False)
+        _make_app(wolts_dir, "squatter", start="echo hi", port=7777)
+        with pytest.raises(RuntimeError, match="lodge's own port"):
+            apps.start_app("squatter")
+        mock_popen.assert_not_called()
+
+    @patch("apps.subprocess.Popen")
+    def test_starting_a_dead_app_closes_its_recorded_tunnel(self, mock_popen, wolts_dir, monkeypatch):
+        """A direct Start, not only boot restore, must not forget the old tunnel."""
+        mock_popen.return_value.pid = 33333
+        stopped = []
+        monkeypatch.setattr(apps, "stop_cloudflared", lambda pid: stopped.append(pid) or True)
+        _make_app(wolts_dir, "revived", start="echo hi", port=4334)
+        apps._write_state("revived", {
+            "name": "revived", "port": 4334, "pid": 999999,  # dead
+            "tunnel_pid": 6666, "tunnel_url": "https://old.trycloudflare.com",
+        })
+        state = apps.start_app("revived")
+        assert stopped == [6666]
+        assert state["pid"] == 33333 and "tunnel_pid" not in state
+
+    @patch("apps.subprocess.Popen")
+    def test_a_dead_app_with_a_surviving_tunnel_does_not_start(self, mock_popen, wolts_dir, monkeypatch):
+        monkeypatch.setattr(apps, "stop_cloudflared", lambda pid: False)
+        monkeypatch.setattr(apps, "is_cloudflared", lambda pid: True)
+        _make_app(wolts_dir, "stuck", start="echo hi", port=4335)
+        apps._write_state("stuck", {
+            "name": "stuck", "port": 4335, "pid": 999999,
+            "tunnel_pid": 7777777, "tunnel_url": "https://old.trycloudflare.com",
+        })
+        with pytest.raises(RuntimeError, match="could not stop the old quick tunnel"):
+            apps.start_app("stuck")
+        mock_popen.assert_not_called()
+        assert apps._read_state("stuck")["tunnel_pid"] == 7777777
+
+    @patch("apps.subprocess.Popen")
+    def test_a_public_manifest_never_opens_a_tunnel(self, mock_popen, wolts_dir, monkeypatch):
+        """A manifest is wolt-editable, so "public": true must publish nothing."""
+        mock_popen.return_value.pid = 22222
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
+        monkeypatch.setattr(
+            apps, "start_cloudflared",
+            lambda **_kw: pytest.fail("a manifest opened a tunnel"),
+        )
+        _make_app(wolts_dir, "loud", start="echo hi", port=4333)
+        manifest = wolts_dir / "apps" / "loud" / "woltspace.json"
+        data = json.loads(manifest.read_text())
+        data["public"] = True
+        manifest.write_text(json.dumps(data))
+        state = apps.start_app("loud")
+        assert "tunnel_url" not in state
+
+    @patch("apps.subprocess.Popen")
     def test_start_uses_manifest_port(self, mock_popen, wolts_dir):
         """Port comes from woltspace.json, not dynamic allocation."""
         mock_popen.return_value.pid = 11111

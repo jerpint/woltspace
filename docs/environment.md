@@ -110,10 +110,10 @@ lists in the host `woltspace` launcher.
 
 | name | purpose | consumed where | default |
 |---|---|---|---|
-| `WOLTSPACE_PUBLIC_TUNNEL` | Whether to run a tunnel at all. With a Cloudflare token and URL it runs the named, Access-gated tunnel; with neither it runs a throwaway public URL. | `server/tunnel.py`, `supervisor.py`, `container_entrypoint.py` | `true` in the container, `false` natively |
+| `WOLTSPACE_PUBLIC_TUNNEL` | Whether to run a tunnel at all. It only ever runs the named, Access-gated tunnel, so it also needs `CLOUDFLARE_TUNNEL_TOKEN` and `CLOUDFLARE_TUNNEL_URL`; without them the lodge stays local (never a quick tunnel). | `server/tunnel.py`, `supervisor.py`, `container_entrypoint.py` | `true` in the container, `false` natively |
 | `WOLTSPACE_TUI_BIN` | Path to the terminal cockpit binary. | `src/woltspace/tui.py` | resolved from `PATH` |
 | `WOLTSPACE_WOLF` | Enable or disable the cron scheduler connector. | `channels.py` | enabled for the entrypoint |
-| `WOLTSPACE_SHARING_ENABLED` | Whether apps may be given public tunnels. | `container/lib/apps.py` | on |
+| `WOLTSPACE_APP_QUICK_TUNNELS` | Allow per-app quick tunnels (random public links, no login), opened one by one through the share API. Never for the lodge. | `container/lib/apps.py` | off |
 | `WOLTSPACE_USER` | Display name for the human in the cockpit. `HUMAN_NAME` is honoured as a second-choice source. | `tui/src/ui/App.js` | the OS username |
 | `WOLTSPACE_TMUX_BIN` | `tmux` binary, for a host that keeps it somewhere unusual. | `container/lib/runtime_context.py`, `session_runtime.py` | `tmux` |
 | `WOLTSPACE_PS_BIN` | `ps` binary, same reason. | `container/lib/runtime_context.py`, `container/lib/tunnel.py` | `ps` |

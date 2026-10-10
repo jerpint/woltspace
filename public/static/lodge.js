@@ -564,6 +564,10 @@ async function toggleShare(name, isSharing) {
   try {
     const res = await fetch(`/apps/${name}/${action}`, { method: 'POST' });
     const data = await res.json();
+    if (!res.ok) {
+      if (btn) btn.title = typeof data.error === 'string' ? data.error : '';
+      throw new Error('share refused');
+    }
     if (data.tunnel_url) {
       await navigator.clipboard.writeText(data.tunnel_url).catch(() => {});
       if (btn) { btn.textContent = '✅'; }

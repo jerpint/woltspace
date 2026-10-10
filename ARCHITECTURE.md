@@ -180,10 +180,7 @@ The proxy streams responses (so SSE / Vite HMR / video Range requests work) and 
 
 ## Tunnels
 
-Two flavors, both in `container/lib/tunnel.py`:
-
-- **Quick tunnel** — `cloudflared tunnel --url http://localhost:7777`. Random `*.trycloudflare.com` URL, parsed from cloudflared's logs. No account needed. Default for new installs.
-- **Named tunnel** — `cloudflared tunnel run --token $TOKEN`. Permanent URL on a domain you control, configured via Cloudflare's API. Set `CLOUDFLARE_TUNNEL_TOKEN` + `CLOUDFLARE_TUNNEL_URL` in `.env`. `WOLTSPACE_PUBLIC_TUNNEL=false` disables tunneling entirely.
+The lodge is only ever published through a **named tunnel** — `cloudflared tunnel run --token $TOKEN` (`container/lib/tunnel.py`). Permanent URL on a domain you control, gated by Cloudflare Access. Set `CLOUDFLARE_TUNNEL_TOKEN` + `CLOUDFLARE_TUNNEL_URL` in `.env`. Without both, the lodge stays on the machine: it never opens a quick (random, unauthenticated) tunnel. `WOLTSPACE_PUBLIC_TUNNEL=false` disables tunneling entirely.
 
 Selection is config-driven; `server/tunnel.py` picks the right path at startup. The same module also tracks `tunnel_domain` and `tunnel_hostname` so the subdomain proxy knows which host is the lodge and which are app subdomains.
 

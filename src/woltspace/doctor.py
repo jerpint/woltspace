@@ -439,11 +439,19 @@ def run_doctor(
     from .lifecycle import tunnel_settings
 
     if _tunnel_token_present(layout) and not tunnel_settings(layout)["enabled"]:
-        checks.append(DoctorCheck(
-            "public-tunnel", "warn",
-            "CLOUDFLARE_TUNNEL_TOKEN is configured but the tunnel is disabled",
-            "Set WOLTSPACE_PUBLIC_TUNNEL=true and restart the lodge.",
-        ))
+        if tunnel_settings(layout)["kind"] != "named":
+            checks.append(DoctorCheck(
+                "public-tunnel", "warn",
+                "CLOUDFLARE_TUNNEL_TOKEN is set but CLOUDFLARE_TUNNEL_URL is missing, "
+                "so the lodge is not published",
+                "Set CLOUDFLARE_TUNNEL_URL to the lodge's address and restart the lodge.",
+            ))
+        else:
+            checks.append(DoctorCheck(
+                "public-tunnel", "warn",
+                "CLOUDFLARE_TUNNEL_TOKEN is configured but the tunnel is disabled",
+                "Set WOLTSPACE_PUBLIC_TUNNEL=true and restart the lodge.",
+            ))
     default_harness = _default_harness_check()
     if default_harness is not None:
         checks.append(default_harness)

@@ -598,6 +598,7 @@ class TestUnitShareApp:
         monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
         monkeypatch.setattr(apps_mod, "_is_pid_alive", lambda pid: True)
         monkeypatch.delenv("CLOUDFLARE_TUNNEL_URL", raising=False)
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
 
         apps_mod._write_state("my-proj", {
             "name": "my-proj",
@@ -611,27 +612,12 @@ class TestUnitShareApp:
         assert result["tunnel_url"] == "https://already-live.trycloudflare.com"
         assert result["pid"] == 11111
 
-    def test_share_uses_subdomain_when_tunnel_url_set(self, tmp_path, monkeypatch):
-        """share_app returns subdomain URL when CLOUDFLARE_TUNNEL_URL is set."""
-        import apps as apps_mod
-        monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
-        monkeypatch.setenv("CLOUDFLARE_TUNNEL_URL", "https://jerpint.woltspace.com")
-
-        apps_mod._write_state("my-proj", {
-            "name": "my-proj",
-            "port": 4500,
-            "pid": 99,
-        })
-
-        result = apps_mod.share_app("my-proj")
-        assert result["tunnel_url"] == "https://my-proj.woltspace.com"
-        assert result["pid"] is None
-
-    def test_share_falls_back_to_quick_tunnel(self, tmp_path, monkeypatch):
-        """share_app uses quick tunnel when CLOUDFLARE_TUNNEL_URL is not set."""
+    def test_share_opens_a_quick_tunnel_when_the_owner_allows_it(self, tmp_path, monkeypatch):
+        """With WOLTSPACE_APP_QUICK_TUNNELS on, share_app opens a quick tunnel."""
         import apps as apps_mod
         monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
         monkeypatch.delenv("CLOUDFLARE_TUNNEL_URL", raising=False)
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
         monkeypatch.setattr(apps_mod, "_is_pid_alive", lambda pid: False)
         monkeypatch.setattr(apps_mod, "start_cloudflared", lambda port, host_header: {
             "url": "https://random.trycloudflare.com",
@@ -648,16 +634,200 @@ class TestUnitShareApp:
         assert "trycloudflare.com" in result["tunnel_url"]
         assert result["pid"] == 9999
 
-    def test_share_blocked_when_sharing_disabled(self, tmp_path, monkeypatch):
-        """share_app raises RuntimeError when SHARING_ENABLED is False."""
+    def test_quick_tunnels_are_off_unless_the_owner_allows_them(self, tmp_path, monkeypatch):
         import apps as apps_mod
         monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
-        monkeypatch.setattr(apps_mod, "SHARING_ENABLED", False)
-
+        monkeypatch.delenv("WOLTSPACE_APP_QUICK_TUNNELS", raising=False)
+        monkeypatch.setattr(
+            apps_mod, "start_cloudflared",
+            lambda **_kw: pytest.fail("opened a quick tunnel without opt-in"),
+        )
         apps_mod._write_state("my-proj", {"name": "my-proj", "port": 4500, "pid": 99})
 
-        with pytest.raises(RuntimeError, match="Sharing is disabled"):
+        with pytest.raises(apps_mod.QuickTunnelsOff, match="WOLTSPACE_APP_QUICK_TUNNELS"):
             apps_mod.share_app("my-proj")
+
+    @pytest.mark.parametrize("lodge_env, port", [
+        ({}, 7777),                              # default lodge port
+        ({"WOLTSPACE_PORT": "7778"}, 7778),      # custom lodge port
+        ({}, 7117),                              # the app gateway
+    ])
+    def test_never_a_quick_tunnel_to_the_lodge(self, tmp_path, monkeypatch, lodge_env, port):
+        """Even opted in, and whatever an app's state says (Astre's P1 on #523)."""
+        import apps as apps_mod
+        monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setattr(apps_mod, "WOLTS_DIR", tmp_path / "wolts")
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
+        monkeypatch.delenv("WOLTSPACE_PORT", raising=False)
+        monkeypatch.delenv("PORT", raising=False)
+        monkeypatch.delenv("WOLTSPACE_APP_GATEWAY_PORT", raising=False)
+        for key, value in lodge_env.items():
+            monkeypatch.setenv(key, value)
+        monkeypatch.setattr(
+            apps_mod, "start_cloudflared",
+            lambda **_kw: pytest.fail("opened a quick tunnel to the lodge"),
+        )
+        apps_mod._write_state("evil", {"name": "evil", "port": port, "pid": 99})
+
+        with pytest.raises(apps_mod.ShareRefused, match="belongs to the lodge"):
+            apps_mod.share_app("evil")
+
+    @pytest.mark.parametrize("bad_port", ["7777", "7117", "1@[::1]:7777", True, None, 0, 70000, 4500.0])
+    def test_state_ports_must_be_real_integers(self, tmp_path, monkeypatch, bad_port):
+        """App state is plain JSON; a string port must not slip past the guard (Astre P1)."""
+        import apps as apps_mod
+        monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setattr(apps_mod, "WOLTS_DIR", tmp_path / "wolts")
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
+        monkeypatch.delenv("WOLTSPACE_PORT", raising=False)
+        monkeypatch.delenv("PORT", raising=False)
+        monkeypatch.setattr(
+            apps_mod, "start_cloudflared",
+            lambda **_kw: pytest.fail("opened a quick tunnel for an invalid port"),
+        )
+        apps_mod._write_state("odd", {"name": "odd", "port": bad_port, "pid": 99})
+
+        with pytest.raises(apps_mod.ShareRefused):
+            apps_mod.share_app("odd")
+
+    def _legacy_tunnel(self, tmp_path, monkeypatch, port, *, app_alive):
+        import apps as apps_mod
+        monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path / "state")
+        monkeypatch.setattr(apps_mod, "WOLTS_DIR", tmp_path / "wolts")
+        monkeypatch.delenv("WOLTSPACE_PORT", raising=False)
+        monkeypatch.delenv("PORT", raising=False)
+        stopped = []
+        monkeypatch.setattr(apps_mod, "stop_cloudflared", lambda pid: stopped.append(pid) or True)
+        monkeypatch.setattr(apps_mod, "is_cloudflared", lambda pid: False)
+        monkeypatch.setattr(apps_mod, "get_app", lambda name: object())
+        monkeypatch.setattr(apps_mod, "_is_pid_alive", lambda pid: app_alive and pid == 99)
+        apps_mod._write_state("legacy", {
+            "name": "legacy", "port": port, "pid": 99,
+            "tunnel_pid": 5555, "tunnel_url": "https://old.trycloudflare.com",
+        })
+        return apps_mod, stopped
+
+    def test_restore_closes_a_legacy_tunnel_to_the_lodge(self, tmp_path, monkeypatch):
+        """A tunnel an older lodge opened to 7777 must not survive the update (Astre P2)."""
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
+        apps_mod, stopped = self._legacy_tunnel(tmp_path, monkeypatch, 7777, app_alive=True)
+        apps_mod.apps_restore()
+        assert stopped == [5555]
+        state = apps_mod._read_state("legacy")
+        assert state["tunnel_pid"] is None and state["tunnel_url"] is None
+
+    def test_restore_closes_legacy_tunnels_when_quick_tunnels_are_off(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("WOLTSPACE_APP_QUICK_TUNNELS", raising=False)
+        apps_mod, stopped = self._legacy_tunnel(tmp_path, monkeypatch, 4500, app_alive=True)
+        apps_mod.apps_restore()
+        assert stopped == [5555]
+        assert apps_mod._read_state("legacy")["tunnel_pid"] is None
+
+    def test_restore_keeps_an_allowed_tunnel(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
+        apps_mod, stopped = self._legacy_tunnel(tmp_path, monkeypatch, 4500, app_alive=True)
+        apps_mod.apps_restore()
+        assert stopped == []
+        assert apps_mod._read_state("legacy")["tunnel_pid"] == 5555
+
+    def test_restore_stops_an_orphans_tunnel_before_forgetting_it(self, tmp_path, monkeypatch):
+        """Allowed or not, a removed app's tunnel is stopped before its record goes."""
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
+        apps_mod, stopped = self._legacy_tunnel(tmp_path, monkeypatch, 4500, app_alive=True)
+        monkeypatch.setattr(apps_mod, "get_app", lambda name: None)
+        apps_mod.apps_restore()
+        assert stopped == [5555]
+        assert apps_mod._read_state("legacy") is None
+
+    def test_an_orphans_record_is_kept_while_its_tunnel_survives(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
+        apps_mod, _stopped = self._legacy_tunnel(tmp_path, monkeypatch, 4500, app_alive=True)
+        monkeypatch.setattr(apps_mod, "get_app", lambda name: None)
+        monkeypatch.setattr(apps_mod, "stop_cloudflared", lambda pid: False)
+        monkeypatch.setattr(apps_mod, "is_cloudflared", lambda pid: True)  # still alive
+        apps_mod.apps_restore()
+        assert apps_mod._read_state("legacy")["tunnel_pid"] == 5555
+
+    def test_a_tunnel_that_could_not_be_stopped_is_never_forgotten(self, tmp_path, monkeypatch):
+        """stop_cloudflared returning False is not proof the tunnel is gone (Astre P2)."""
+        monkeypatch.delenv("WOLTSPACE_APP_QUICK_TUNNELS", raising=False)
+        apps_mod, _stopped = self._legacy_tunnel(tmp_path, monkeypatch, 7777, app_alive=True)
+        monkeypatch.setattr(apps_mod, "stop_cloudflared", lambda pid: False)
+        monkeypatch.setattr(apps_mod, "is_cloudflared", lambda pid: True)
+        apps_mod.apps_restore()
+        assert apps_mod._read_state("legacy")["tunnel_pid"] == 5555
+
+    def test_a_signalled_tunnel_that_does_not_exit_is_kept(self, tmp_path, monkeypatch):
+        """Signalled is not exited (Astre round 4)."""
+        monkeypatch.delenv("WOLTSPACE_APP_QUICK_TUNNELS", raising=False)
+        apps_mod, _stopped = self._legacy_tunnel(tmp_path, monkeypatch, 4500, app_alive=True)
+        monkeypatch.setattr(apps_mod, "stop_cloudflared", lambda pid: True)
+        monkeypatch.setattr(apps_mod, "is_cloudflared", lambda pid: True)
+        monkeypatch.setattr(apps_mod, "TUNNEL_EXIT_TIMEOUT", 0.05)
+        apps_mod.apps_restore()
+        assert apps_mod._read_state("legacy")["tunnel_pid"] == 5555
+
+    @pytest.mark.parametrize("action", ["stop", "unshare", "unshare_all"])
+    def test_owner_actions_never_forget_a_surviving_tunnel(self, tmp_path, monkeypatch, action):
+        """Stop, unshare and unshare-all keep the record while the tunnel lives."""
+        monkeypatch.delenv("WOLTSPACE_APP_QUICK_TUNNELS", raising=False)
+        apps_mod, _stopped = self._legacy_tunnel(tmp_path, monkeypatch, 4500, app_alive=False)
+        monkeypatch.setattr(apps_mod, "stop_cloudflared", lambda pid: True)
+        monkeypatch.setattr(apps_mod, "is_cloudflared", lambda pid: True)
+        monkeypatch.setattr(apps_mod, "TUNNEL_EXIT_TIMEOUT", 0.05)
+        if action == "stop":
+            apps_mod.stop_app("legacy")
+        elif action == "unshare":
+            with pytest.raises(RuntimeError, match="could not stop"):
+                apps_mod.unshare_app("legacy")
+        else:
+            assert apps_mod.unshare_all_apps() == []
+        assert apps_mod._read_state("legacy")["tunnel_pid"] == 5555
+
+    def test_two_simultaneous_shares_launch_one_tunnel(self, tmp_path, monkeypatch):
+        """Astre round 5: without a per-app lock both calls launched and one was forgotten."""
+        import threading
+        import apps as apps_mod
+        monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setattr(apps_mod, "WOLTS_DIR", tmp_path / "wolts")
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
+        monkeypatch.delenv("WOLTSPACE_PORT", raising=False)
+        monkeypatch.delenv("PORT", raising=False)
+        launched = []
+        both_inside = threading.Barrier(2)
+
+        def launcher(**_kw):
+            # Unlocked, both calls meet here; locked, the wait times out.
+            try:
+                both_inside.wait(timeout=0.5)
+            except threading.BrokenBarrierError:
+                pass
+            pid = 111 + len(launched)
+            launched.append(pid)
+            return {"pid": pid, "url": f"https://t{pid}.trycloudflare.com"}
+
+        monkeypatch.setattr(apps_mod, "start_cloudflared", launcher)
+        monkeypatch.setattr(apps_mod, "_is_pid_alive", lambda pid: pid in launched)
+        apps_mod._write_state("busy", {"name": "busy", "port": 4500, "pid": 99})
+        results = []
+        threads = [threading.Thread(target=lambda: results.append(apps_mod.share_app("busy")))
+                   for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(5)
+
+        assert launched == [111]
+        assert [r["pid"] for r in results] == [111, 111]
+        assert apps_mod._read_state("busy")["tunnel_pid"] == 111
+
+    def test_a_stale_tunnel_pid_is_dropped(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("WOLTSPACE_APP_QUICK_TUNNELS", raising=False)
+        apps_mod, _stopped = self._legacy_tunnel(tmp_path, monkeypatch, 4500, app_alive=True)
+        monkeypatch.setattr(apps_mod, "stop_cloudflared", lambda pid: False)
+        monkeypatch.setattr(apps_mod, "is_cloudflared", lambda pid: False)  # pid is not cloudflared
+        apps_mod.apps_restore()
+        assert apps_mod._read_state("legacy")["tunnel_pid"] is None
 
     def test_unshare_all_stops_all_tunnels(self, tmp_path, monkeypatch):
         """unshare_all_apps kills all tunnel processes."""
@@ -677,8 +847,8 @@ class TestUnitShareApp:
         monkeypatch.setattr(
             tunnel_mod, "process_executable", lambda pid, **kwargs: "cloudflared",
         )
-        # Also mock _set_public to avoid filesystem writes
-        monkeypatch.setattr(apps_mod, "_set_public", lambda name, public: None)
+        # ...and exit once signalled.
+        monkeypatch.setattr(apps_mod, "is_cloudflared", lambda pid: pid not in killed_pids)
 
         apps_mod._write_state("app-a", {
             "name": "app-a", "port": 4500, "pid": 10,

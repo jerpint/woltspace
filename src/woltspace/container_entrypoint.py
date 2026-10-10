@@ -484,6 +484,9 @@ def start_tunnel_report(wolts_dir: Path, env: dict[str, str]) -> threading.Threa
     if (env.get("WOLTSPACE_PUBLIC_TUNNEL") or "true") != "true":
         print("tunnel disabled — access via http://localhost:7777")
         return None
+    if not (env.get("CLOUDFLARE_TUNNEL_TOKEN") and env.get("CLOUDFLARE_TUNNEL_URL")):
+        print("no named tunnel configured — access via http://localhost:7777")
+        return None
     thread = threading.Thread(
         target=report_tunnel_url, args=(wolts_dir,), name="tunnel-report", daemon=True,
     )
