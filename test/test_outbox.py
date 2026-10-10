@@ -53,6 +53,16 @@ def test_stage_checks_the_source_before_it_creates_anything(tmp_path):
     assert not box.exists()
 
 
+def test_stage_tightens_an_outbox_that_already_exists_with_a_wider_mode(tmp_path):
+    source = tmp_path / "report.pdf"
+    source.write_bytes(b"%PDF")
+    box = tmp_path / "outbox"
+    box.mkdir()
+    box.chmod(0o755)
+    outbox.stage(source, box)
+    assert (box.stat().st_mode & 0o777) == 0o700
+
+
 def test_stage_gives_every_copy_its_own_entry(tmp_path):
     source = tmp_path / "report.pdf"
     source.write_bytes(b"%PDF")
@@ -106,6 +116,30 @@ def test_resolve_refuses_an_entry_that_is_not_a_regular_file(tmp_path, kind):
     error = _reason(outbox.resolve, tmp_path, "a" * 32)     # a FIFO must not block
     assert error.reason == "attachment_invalid"
     assert str(error) == "attachment is not a regular file"
+
+
+def test_resolve_refuses_a_socket_planted_in_the_outbox(tmp_path, monkeypatch):
+    import socket
+
+    monkeypatch.chdir(tmp_path)                             # a socket path must be short
+    planted = socket.socket(socket.AF_UNIX)
+    try:
+        planted.bind("a" * 32)
+        error = _reason(outbox.resolve, tmp_path, "a" * 32)
+    finally:
+        planted.close()
+    assert error.reason == "attachment_invalid"
+    assert str(error) == "attachment is not a regular file"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root opens every file")
+def test_resolve_reports_an_entry_it_may_not_open_without_the_os_text(tmp_path):
+    entry = tmp_path / ("a" * 32)
+    entry.write_bytes(b"x")
+    entry.chmod(0)
+    error = _reason(outbox.resolve, tmp_path, "a" * 32)
+    assert error.reason == "attachment_invalid"
+    assert str(error) == "attachment cannot be opened"      # no path, no errno
 
 
 def test_resolve_measures_the_entry_itself(tmp_path):

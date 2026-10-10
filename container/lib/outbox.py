@@ -85,6 +85,10 @@ def stage(source: Path, outbox: Path) -> str:
     """Copy `source` into the outbox and return the new entry's id."""
     check_source(source)
     outbox.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        outbox.chmod(0o700)  # mkdir leaves the mode of a directory that exists alone
+    except OSError:
+        pass  # not ours to change; entries are 0600 either way
     entry_id = secrets.token_hex(16)
     temp = outbox / f".{entry_id}.tmp"
     try:
@@ -112,9 +116,15 @@ def resolve(outbox: Path, entry_id: str) -> tuple[Path, int]:
             "attachment_not_found", "attachment is no longer in the outbox"
         ) from None
     except OSError as exc:
-        if exc.errno == errno.ELOOP:
+        # ELOOP is a symlink and ENXIO a socket. The OS text names the lodge's
+        # paths, so a refusal never carries it.
+        if exc.errno in (errno.ELOOP, errno.ENXIO):
             raise OutboxError(
                 "attachment_invalid", "attachment is not a regular file"
+            ) from None
+        if exc.errno in (errno.EACCES, errno.EPERM):
+            raise OutboxError(
+                "attachment_invalid", "attachment cannot be opened"
             ) from None
         raise
     try:
