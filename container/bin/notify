@@ -6,31 +6,57 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import outbox  # noqa: E402
 from env_compat import get_env  # noqa: E402
 from notify_prompt import (  # noqa: E402
     MessageInputError,
     read_message_input,
     validate_argv,
 )
+from paths import space_outbox_dir  # noqa: E402
 
 
 USAGE = """Usage:
-  notify
-  notify --telegram CHAT_ID
-  notify --slack CHANNEL THREAD_TS
+  notify [--file PATH]
+  notify --telegram CHAT_ID [--file PATH]
+  notify --slack CHANNEL THREAD_TS [--file PATH]
 
-Message text is read from standard input. Use a single-quoted heredoc."""
+Message text is read from standard input. Use a single-quoted heredoc.
+--file sends one file with the message; it may also come before the route flags."""
 
 
 def fail_usage(message: str) -> int:
     print(f"notify: {message}", file=sys.stderr)
     print(USAGE, file=sys.stderr)
     return 2
+
+
+def _take_file(argv: list[str]) -> tuple[list[str], str | None]:
+    """Pull `--file PATH` out of argv, wherever it sits before a `--`."""
+    rest: list[str] = []
+    path: str | None = None
+    index = 0
+    while index < len(argv):
+        if argv[index] == "--":
+            rest.extend(argv[index:])
+            break
+        if argv[index] != "--file":
+            rest.append(argv[index])
+            index += 1
+            continue
+        if path is not None:
+            raise ValueError("only one --file per notify")
+        if index + 1 >= len(argv):
+            raise ValueError("--file requires PATH")
+        path = argv[index + 1]
+        index += 2
+    return rest, path
 
 
 def _parse_route(argv: list[str]) -> tuple[list[str], str, str, str, list[str]]:
@@ -87,9 +113,18 @@ def _safe_transport_detail(stderr: str, secrets: tuple[str, ...]) -> str:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
+        argv, file_arg = _take_file(argv)
         route_argv, adapter, route_id, slack_thread, remaining = _parse_route(argv)
     except ValueError as exc:
         return fail_usage(str(exc))
+
+    source = None if file_arg is None else Path(file_arg)
+    if source is not None:
+        try:
+            outbox.check_source(source)
+        except outbox.OutboxError as exc:
+            print(f"notify: {exc}", file=sys.stderr)
+            return 2
 
     try:
         message = read_message_input(
@@ -97,9 +132,18 @@ def main(argv: list[str] | None = None) -> int:
             remaining,
             sys.stdin,
             prefix="WOLTSPACE_NOTIFY",
+            allow_empty=source is not None,
         )
     except MessageInputError as exc:
         print(str(exc), file=sys.stderr, end="")
+        if source is not None and len(remaining) == 1:
+            # The recovery heredoc is built from the route alone. Written as a
+            # shell comment, so running the recovery text whole stays harmless.
+            print(
+                "# notify: this command sends the text only. To send the file "
+                f"too, add: --file {shlex.quote(file_arg)}",
+                file=sys.stderr,
+            )
         return 2
 
     session = get_env("WOLTSPACE_WOLT_SESSION", "")
@@ -111,11 +155,29 @@ def main(argv: list[str] | None = None) -> int:
         pass  # the plain name is always a fine prefix
     session_reg = Path(__file__).resolve().parent / "session-reg"
     full_message = f"{_creature_emoji(session, session_reg)} {wolt_name}: {message}"
-    payload: dict[str, str] = {"session": session, "message": full_message}
+    payload: dict[str, object] = {"session": session, "message": full_message}
     if adapter == "slack":
         payload.update(adapter="slack", channel=route_id, thread_ts=slack_thread)
     elif adapter == "telegram":
         payload.update(adapter="telegram", chat_id=route_id)
+
+    box = space_outbox_dir()
+    entry_id = None
+    if source is not None:
+        try:
+            entry_id = outbox.stage(source, box)
+        except outbox.OutboxError as exc:  # the file changed since the first check
+            print(f"notify: {exc}", file=sys.stderr)
+            return 2
+        except OSError as exc:
+            print(f"notify: could not stage the file: {exc}", file=sys.stderr)
+            return 1
+        payload["attachments"] = [{"id": entry_id, "name": source.name}]
+
+    def unstage() -> None:
+        # The lodge removes an entry it handled; this covers a request it never saw.
+        if entry_id is not None:
+            outbox.discard(box, entry_id)
 
     api = os.environ.get("WOLTSPACE_API", "http://localhost:7777")
     request = subprocess.run(
@@ -135,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
         check=False,
     )
     if request.returncode != 0:
+        unstage()
         detail = _safe_transport_detail(
             request.stderr,
             (
@@ -154,11 +217,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = json.loads(response)
     except json.JSONDecodeError:
+        unstage()
         print("notify: failed: invalid or empty API response", file=sys.stderr)
         return 1
     if result.get("ok"):
-        print(f"[notify] → {result.get('adapter', '?')}: {message}")
+        sent = f"[notify] → {result.get('adapter', '?')}: {message}"
+        print(sent if source is None else f"{sent} [file: {source.name}]")
         return 0
+    unstage()
     print(f"notify: failed: {result.get('error', 'unknown error')}", file=sys.stderr)
     return 1
 
