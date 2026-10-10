@@ -47,6 +47,7 @@ def test_settings_page_keeps_only_lodge_wide_harness_controls(tmp_path, monkeypa
     assert "Uses ·" not in body
     assert "Follows lodge ·" not in body
     assert ">opencode<" in body
+    assert "--engine-icon: url('/static/engines/hermes.svg')" in body
     assert "Available" not in body
     assert "Not installed" not in body
     # Default models is a lodge-wide control: one select per working style for

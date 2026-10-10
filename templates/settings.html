@@ -32,7 +32,8 @@
               '',
               'experimental' if harness.experimental else '',
               harness.id == harness_default,
-              harness.emoji
+              harness.emoji,
+              icon=harness.icon
             ) }}
           {% endfor %}
         </fieldset>

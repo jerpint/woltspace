@@ -644,6 +644,14 @@ class TestHarnessMetadata:
             # every entry carries a selectable model catalog of {id,label}
             assert m["catalog"] and all(c["id"] and c["label"] for c in m["catalog"])
 
+    def test_every_harness_has_its_svg_icon(self):
+        from harnesses import harness_metadata
+        static = Path(__file__).resolve().parent.parent / "public" / "static"
+        for m in harness_metadata():
+            assert m["icon"] == f"/static/engines/{m['id']}.svg"
+            svg = (static / m["icon"].removeprefix("/static/")).read_text()
+            assert svg.startswith("<svg ") and 'viewBox="0 0 24 24"' in svg
+
     def test_metadata_is_json_safe(self):
         import json
         from harnesses import harness_metadata

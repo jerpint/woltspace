@@ -221,6 +221,19 @@
 .ds-choice-input:checked + .ds-choice-indicator { border-color: var(--green); background: var(--green); }
 .ds-choice-input:focus-visible + .ds-choice-indicator { outline: 2px solid var(--amber); outline-offset: 3px; }
 .ds-choice-emoji { grid-area: emoji; font-size: 16px; line-height: 1.2; }
+.ds-choice-emoji .engine-icon { width: 16px; height: 16px; }
+
+/* An engine's one-colour SVG, painted with the text colour through a mask. */
+.engine-icon {
+  display: inline-block;
+  flex: none;
+  width: 1.15em;
+  height: 1.15em;
+  vertical-align: -0.2em;
+  background: currentColor;
+  -webkit-mask: var(--engine-icon) center / contain no-repeat;
+  mask: var(--engine-icon) center / contain no-repeat;
+}
 .ds-choice-copy { grid-area: copy; display: flex; min-width: 0; flex-direction: column; gap: var(--space-1); }
 .ds-choice-title { color: var(--ink); font-family: var(--font-mono); font-size: 12px; font-weight: 600; }
 .ds-choice-description { color: var(--ink-3); font-size: 12px; line-height: 1.45; }

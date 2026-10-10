@@ -570,6 +570,7 @@ HARNESSES = {
         # display metadata for pickers/badges (exposed via the API)
         "label": "Claude Code",
         "emoji": "🟠",
+        "icon": "/static/engines/claude.svg",
         # comm names that count as "the agent is running" in a session's process tree
         "process_names": {"claude"},
         # creature tier → default model flag value (the seed; woltspace.json may override)
@@ -607,6 +608,7 @@ HARNESSES = {
         "command": _codex_command,
         "label": "Codex",
         "emoji": "⬛",
+        "icon": "/static/engines/codex.svg",
         "process_names": {"codex"},
         # From the live /model picker (codex-cli 0.144.4, 2026-07):
         # gpt-5.5 "frontier, complex work", gpt-5.6-terra "balanced, everyday"
@@ -652,6 +654,7 @@ HARNESSES = {
         # Experimental: offered, but not yet proven by real use.
         "experimental": True,
         "emoji": "🟦",
+        "icon": "/static/engines/opencode.svg",
         "process_names": {"opencode"},
         # opencode is a multi-provider engine with hundreds of models across
         # providers — a curated whitelist can't keep up, so model pins are
@@ -733,6 +736,7 @@ HARNESSES = {
         # Experimental: offered, but not yet proven by real use.
         "experimental": True,
         "emoji": "🥧",
+        "icon": "/static/engines/pi.svg",
         "process_names": {"pi"},
         # OpenRouter only for now: one key, every vendor. Pins are freeform
         # "openrouter/<vendor>/<model>" strings; the catalog is suggestions.
@@ -762,6 +766,7 @@ HARNESSES = {
         # Experimental: offered, but not yet proven by real use.
         "experimental": True,
         "emoji": "☤",
+        "icon": "/static/engines/hermes.svg",
         # `hermes` is a Python entry-point script: ps reports the interpreter as
         # comm and the runtime matches the script name from argv.
         "process_names": {"hermes"},
@@ -1099,6 +1104,8 @@ def harness_metadata() -> list[dict]:
             "id": hid,
             "label": entry.get("label", hid),
             "emoji": entry.get("emoji", ""),
+            # one-colour SVG drawn as a CSS mask, so it takes the text colour
+            "icon": entry.get("icon", ""),
             # per-tier default model (merged view — reflects woltspace.json overrides)
             "models": {tier: tier_default_model(hid, tier) for tier, _ in PICKER_TIERS},
             # what each tier gets when the lodge has saved no choice of its own

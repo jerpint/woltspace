@@ -274,6 +274,7 @@
   align-items: center;
   gap: 2px;
 }
+.home-harness-name { display: inline-flex; align-items: center; gap: 7px; }
 .home-harness-option small {
   font-size: 10px;
   font-weight: 500;

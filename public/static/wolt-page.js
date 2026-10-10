@@ -78,7 +78,7 @@
   }
   function choiceGroup(label, choices, selected, onChoose) {
     const section = el('section','wolt-choice-section'), title = el('div','wolt-colhead',label), pills = el('div','wolt-choices');
-    choices.forEach(choice => { const button = el('button',`wolt-choice${choice.id === selected ? ' active' : ''}`,choice.label); button.type='button'; button.onclick=()=>onChoose(choice.id); pills.appendChild(button); });
+    choices.forEach(choice => { const button = el('button',`wolt-choice${choice.id === selected ? ' active' : ''}`,choice.label); if (choice.icon) { const icon = el('span','engine-icon'); icon.style.setProperty('--engine-icon',`url("${choice.icon}")`); icon.setAttribute('aria-hidden','true'); button.prepend(icon); } button.type='button'; button.onclick=()=>onChoose(choice.id); pills.appendChild(button); });
     section.append(title,pills); return section;
   }
   function renderSettings(message = 'Changes apply from the next session.') {
@@ -90,7 +90,7 @@
     rename.onsubmit=event=>{event.preventDefault();saveSettings({display_name:nameInput.value.trim()},status);};
     rename.append(nameInput,renameSave); box.appendChild(rename);
     box.appendChild(el('p','wolt-rename-note',`Folder and address stay ${name}.`));
-    const engines = (harnesses.harnesses || []).map(h => ({id:h.id,label:`${h.emoji || ''} ${h.label}`.trim()+(h.experimental?' · experimental':'')}));
+    const engines = (harnesses.harnesses || []).map(h => ({id:h.id,icon:h.icon,label:`${h.icon ? '' : `${h.emoji || ''} `}${h.label}`.trim()+(h.experimental?' · experimental':'')}));
     box.appendChild(choiceGroup('Engine',engines,eng.id,id=>saveSettings({harness:id},status)));
     const selected = (harnesses.harnesses || []).find(h=>h.id===eng.id) || {};
     const models = (selected.catalog || []).map(model=>({id:model.id,label:model.label || model.id}));
