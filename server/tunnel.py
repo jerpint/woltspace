@@ -45,8 +45,7 @@ def get_tunnel_mode() -> str:
     """Return the public lifecycle kind without exposing tunnel state details."""
     if not _tunnel_url:
         return "off"
-    mode = _read_state().get("type")
-    return mode if mode in {"named", "quick"} else "quick"
+    return "named"
 
 
 def _parse_tunnel_domain(url: str):
@@ -90,7 +89,7 @@ def start_tunnel():
     """Start the lodge tunnel. Called once at server boot."""
     global _tunnel_url
     _import_lib()
-    from tunnel import start_cloudflared, start_named_tunnel, stop_cloudflared
+    from tunnel import start_named_tunnel, stop_cloudflared
 
     if os.environ.get("WOLTSPACE_PUBLIC_TUNNEL", "true").lower() != "true":
         log.info("tunnel disabled")
@@ -116,19 +115,17 @@ def start_tunnel():
     # Parse domain for wildcard subdomain routing
     _parse_tunnel_domain(tunnel_url or "")
 
+    # The lodge is only ever published through a named, Access-gated tunnel.
+    # It never opens a quick tunnel: a random public URL with no login in
+    # front of a lodge that can spawn shells.
+    if not (tunnel_token and tunnel_url):
+        log.info("no named tunnel configured; the lodge stays on this machine")
+        return
     try:
-        if tunnel_token and tunnel_url:
-            # Named tunnel — permanent URL, pre-configured on Cloudflare
-            result = start_named_tunnel(token=tunnel_token, host_header=None)
-            _tunnel_url = tunnel_url
-            _write_state({"pid": result["pid"], "url": _tunnel_url, "type": "named"})
-            log.info(f"named tunnel ready: {_tunnel_url}")
-        else:
-            # Quick tunnel — random URL, zero config
-            result = start_cloudflared(port=7777, host_header=None)
-            _tunnel_url = result["url"]
-            _write_state({"pid": result["pid"], "url": _tunnel_url, "type": "quick"})
-            log.info(f"quick tunnel ready: {_tunnel_url}")
+        result = start_named_tunnel(token=tunnel_token, host_header=None)
+        _tunnel_url = tunnel_url
+        _write_state({"pid": result["pid"], "url": _tunnel_url, "type": "named"})
+        log.info(f"named tunnel ready: {_tunnel_url}")
     except RuntimeError as e:
         log.error(f"tunnel failed: {e}")
         _write_state({})

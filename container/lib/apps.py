@@ -15,7 +15,9 @@ import json
 import os
 import signal
 import subprocess
+import threading
 import time
+from functools import wraps
 from pathlib import Path
 from woltspace.app_gateway_port import resolve_app_gateway_port
 
@@ -23,7 +25,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from env_compat import get_env
 from paths import space_apps_dir
-from tunnel import start_cloudflared, stop_cloudflared
+from tunnel import is_cloudflared, start_cloudflared, stop_cloudflared
 
 WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 APPS_DIR = WOLTS_DIR / "apps"
@@ -67,7 +69,9 @@ class WoltspaceApp(BaseModel):
     source: str | None = Field(default=None, description="Origin wolt if cloned/forked, null if created locally")
     keeper: str = Field(description="Owning wolt name")
     emoji: str = Field(default_factory=random_emoji, description="App emoji for display")
-    public: bool = Field(default=False, description="Whether this app should be publicly shared via tunnel")
+    # Ignored, kept so existing manifests still load. A manifest is editable by
+    # any wolt, so it can never be what publishes an app.
+    public: bool = Field(default=False, description="Ignored; share through the gateway or an opt-in quick tunnel")
 
     def can_start(self) -> bool:
         """App can only start if it has a start command."""
@@ -147,13 +151,41 @@ def get_app(name: str) -> WoltspaceApp | None:
     return load_app(app_dir(name))
 
 
+def _lodge_port() -> int:
+    """The port the lodge itself listens on."""
+    try:
+        return int(os.environ.get("WOLTSPACE_PORT") or os.environ.get("PORT") or "7777")
+    except ValueError:
+        return 7777
+
+
 def _enabled_app_gateway_port() -> int | None:
     """Return the always-reserved gateway port."""
-    try:
-        lodge_port = int(os.environ.get("WOLTSPACE_PORT") or os.environ.get("PORT") or "7777")
-    except ValueError:
-        lodge_port = 7777
-    return resolve_app_gateway_port(WOLTS_DIR, lodge_port)
+    return resolve_app_gateway_port(WOLTS_DIR, _lodge_port())
+
+
+# --- Per-app lifecycle lock ---
+#
+# Start, stop, share, unshare and keeper changes each read an app's state,
+# act (spawn or stop a process), then write it back. Two at once could each
+# launch a tunnel and leave only one recorded. One re-entrant lock per app
+# serializes them (restore and restart call start/stop under it).
+
+_APP_LOCKS: dict[str, threading.RLock] = {}
+_APP_LOCKS_GUARD = threading.Lock()
+
+
+def _app_lock(name: str) -> threading.RLock:
+    with _APP_LOCKS_GUARD:
+        return _APP_LOCKS.setdefault(name, threading.RLock())
+
+
+def _locked_per_app(func):
+    @wraps(func)
+    def wrapper(name, *args, **kwargs):
+        with _app_lock(name):
+            return func(name, *args, **kwargs)
+    return wrapper
 
 
 # --- Running state ---
@@ -247,6 +279,7 @@ def intended_apps() -> list[dict]:
     return intended
 
 
+@_locked_per_app
 def start_app(name: str) -> dict:
     """Start an app's dev server. Returns state dict with port and pid.
 
@@ -261,10 +294,19 @@ def start_app(name: str) -> dict:
     # Check if already running
     existing = _read_state(name)
     if existing and _is_pid_alive(existing.get("pid", 0)):
-        return existing
+        return _revoke_disallowed_tunnel(name, existing)
+    # A dead app's recorded tunnel points at nothing, and writing the new state
+    # would forget it. Close it first; refuse to start while one survives.
+    if existing and existing.get("tunnel_pid"):
+        if not _close_recorded_tunnel(name, existing["tunnel_pid"], "the app stopped"):
+            raise RuntimeError(
+                f"could not stop the old quick tunnel for {name} (pid {existing['tunnel_pid']})"
+            )
 
     # Use port from manifest — check for conflicts with running apps
     port = app.port
+    if port == _lodge_port():
+        raise RuntimeError(f"port {port} is the lodge's own port; change the app's port")
     gateway_port = _enabled_app_gateway_port()
     if port == gateway_port:
         raise RuntimeError(
@@ -309,16 +351,6 @@ def start_app(name: str) -> dict:
         "start_command": app.start,
     }
     _write_state(name, state)
-
-    # Auto-share if public=true and sharing is enabled
-    if app.public and SHARING_ENABLED:
-        try:
-            share_result = share_app(name)
-            state["tunnel_url"] = share_result.get("tunnel_url")
-            state["tunnel_pid"] = share_result.get("pid")
-        except Exception:
-            pass  # Non-fatal — app starts even if tunnel fails
-
     return state
 
 
@@ -338,48 +370,65 @@ def apps_restore() -> list[dict]:
     for f in sorted(_RUNNING_STATE_DIR.iterdir()):
         if not f.name.endswith(".json"):
             continue
-        name = f.stem
-        try:
-            state = json.loads(f.read_text())
-        except (json.JSONDecodeError, OSError):
-            continue
-
-        # Manifest gone — app was removed while container was down
-        if get_app(name) is None:
-            try:
-                f.unlink()
-                actions.append({"name": name, "action": "orphan-cleaned"})
-                print(f"[apps] orphan {name} cleaned (no manifest)")
-            except OSError:
-                pass
-            continue
-
-        pid = state.get("pid")
-        if pid and _is_pid_alive(pid):
-            actions.append({"name": name, "action": "survived", "pid": pid})
-            print(f"[apps] {name} survived (pid {pid})")
-            continue
-
-        # Dead PID — respawn
-        try:
-            new_state = start_app(name)
-            actions.append({"name": name, "action": "restored", "pid": new_state["pid"]})
-            print(f"[apps] restored {name} on port {new_state['port']} (new pid {new_state['pid']})")
-        except Exception as e:
-            actions.append({"name": name, "action": "restore-failed", "error": str(e)})
-            print(f"[apps] restore failed for {name}: {e}")
+        with _app_lock(f.stem):
+            _restore_one(f, actions)
     return actions
 
 
+def _restore_one(f: Path, actions: list[dict]) -> None:
+    """Restore one app's recorded state. Runs under that app's lock."""
+    name = f.stem
+    try:
+        state = json.loads(f.read_text())
+    except (json.JSONDecodeError, OSError):
+        return
+    if not isinstance(state, dict):
+        return
+    # A quick tunnel recorded by an earlier lodge (or before the owner
+    # switched them off) is closed if today's policy would refuse it.
+    state = _revoke_disallowed_tunnel(name, state)
+
+    # Manifest gone — app was removed while container was down. Its tunnel
+    # goes first: once the record is deleted nothing could find it again.
+    if get_app(name) is None:
+        if state.get("tunnel_pid") and not _close_recorded_tunnel(
+            name, state["tunnel_pid"], "the app was removed",
+        ):
+            actions.append({"name": name, "action": "orphan-kept", "reason": "tunnel survived"})
+            return
+        try:
+            f.unlink()
+            actions.append({"name": name, "action": "orphan-cleaned"})
+            print(f"[apps] orphan {name} cleaned (no manifest)")
+        except OSError:
+            pass
+        return
+
+    pid = state.get("pid")
+    if pid and _is_pid_alive(pid):
+        actions.append({"name": name, "action": "survived", "pid": pid})
+        print(f"[apps] {name} survived (pid {pid})")
+        return
+
+    # Dead PID — respawn (start_app closes the dead app's recorded tunnel).
+    try:
+        new_state = start_app(name)
+        actions.append({"name": name, "action": "restored", "pid": new_state["pid"]})
+        print(f"[apps] restored {name} on port {new_state['port']} (new pid {new_state['pid']})")
+    except Exception as e:
+        actions.append({"name": name, "action": "restore-failed", "error": str(e)})
+        print(f"[apps] restore failed for {name}: {e}")
+
+
+@_locked_per_app
 def stop_app(name: str) -> bool:
     """Stop a running app. Also kills any active tunnel. Returns True if it was running."""
     state = _read_state(name)
     if not state:
         return False
-    # Kill tunnel first if running
+    # Close the tunnel first. If it survives, its record must survive too.
     tunnel_pid = state.get("tunnel_pid")
-    if tunnel_pid:
-        stop_cloudflared(tunnel_pid)
+    tunnel_gone = not tunnel_pid or _close_recorded_tunnel(name, tunnel_pid, "the app was stopped")
     # Kill the app process
     pid = state.get("pid")
     if pid and _is_pid_alive(pid):
@@ -390,10 +439,14 @@ def stop_app(name: str) -> bool:
                 os.kill(pid, signal.SIGTERM)
             except OSError:
                 pass
-    _clear_state(name)
+    if tunnel_gone:
+        _clear_state(name)
+    # Otherwise the record stays (app dead, tunnel alive): start_app refuses
+    # to replace it until the tunnel is gone, and unshare can still find it.
     return True
 
 
+@_locked_per_app
 def restart_app(name: str) -> dict:
     """Restart an app through the same lifecycle primitives as start/stop."""
     if not get_app(name):
@@ -412,6 +465,7 @@ def restart_app(name: str) -> dict:
     return state
 
 
+@_locked_per_app
 def set_app_keeper(name: str, keeper: str) -> WoltspaceApp:
     """Atomically update the keeper in an app manifest."""
     path = app_dir(name) / MANIFEST
@@ -431,65 +485,117 @@ def set_app_keeper(name: str, keeper: str) -> WoltspaceApp:
     return updated
 
 
-# --- Sharing (cloudflared tunnels) ---
+# --- Quick tunnels (opt-in, apps only) ---
+#
+# A quick tunnel gives anyone with its random link the app, with no login and
+# no share list. It is never for the lodge, and it is off unless the human who
+# owns the lodge switches it on in the lodge's .env. A manifest (which any
+# wolt can edit) can't turn it on. Normal sharing goes through the gateway's
+# share list.
 
-# Env var kill switch — if set to anything falsy, sharing is disabled entirely.
-# Default: sharing is enabled (no env var needed).
-SHARING_ENABLED = os.environ.get("WOLTSPACE_SHARING_ENABLED", "1").lower() not in ("0", "false", "no", "off")
-
-
-def _check_sharing_enabled():
-    """Raise if sharing is disabled by env var."""
-    if not SHARING_ENABLED:
-        raise RuntimeError("Sharing is disabled (WOLTSPACE_SHARING_ENABLED=0)")
+QUICK_TUNNELS_ENV = "WOLTSPACE_APP_QUICK_TUNNELS"
 
 
-def _get_subdomain_url(app_name: str) -> str | None:
-    """Return the wildcard subdomain URL for an app, or None if not available."""
-    tunnel_url = os.environ.get("CLOUDFLARE_TUNNEL_URL", "")
-    if not tunnel_url:
-        return None
-    from urllib.parse import urlparse
-    parsed = urlparse(tunnel_url)
-    hostname = parsed.hostname or ""
-    parts = hostname.split(".", 1)
-    if len(parts) != 2:
-        return None
-    return f"{parsed.scheme}://{app_name}.{parts[1]}"
+class ShareRefused(RuntimeError):
+    """The lodge will not open a quick tunnel for this request."""
 
 
+class QuickTunnelsOff(ShareRefused):
+    """App quick tunnels are not switched on for this lodge."""
+
+
+def quick_tunnels_enabled() -> bool:
+    return os.environ.get(QUICK_TUNNELS_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _valid_port(value) -> int | None:
+    """An integer TCP port, or None. App state is plain JSON: never trust it."""
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 65535:
+        return value
+    return None
+
+
+def _tunnel_refusal(state: dict) -> str | None:
+    """Why the current policy refuses a quick tunnel for this state, if it does."""
+    port = _valid_port(state.get("port"))
+    if port is None:
+        return "the app has no valid port"
+    if port in (_lodge_port(), _enabled_app_gateway_port()):
+        return f"port {port} belongs to the lodge"
+    if not quick_tunnels_enabled():
+        return "quick tunnels are off"
+    return None
+
+
+TUNNEL_EXIT_TIMEOUT = 3.0
+
+
+def _close_recorded_tunnel(name: str, tunnel_pid, reason: str) -> bool:
+    """Stop a recorded quick tunnel. True once it is confirmed gone.
+
+    False when a live cloudflared with that pid is still running (it could not
+    be signalled, or did not exit in time): the caller must then keep the
+    record, so the tunnel can still be found.
+    """
+    if stop_cloudflared(tunnel_pid):
+        # Signalled is not exited: wait, bounded, for it to go.
+        deadline = time.monotonic() + TUNNEL_EXIT_TIMEOUT
+        while is_cloudflared(tunnel_pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not is_cloudflared(tunnel_pid):
+            print(f"[apps] closed quick tunnel for {name} (pid {tunnel_pid}, {reason})")
+            return True
+        print(f"[apps] WARNING: quick tunnel for {name} (pid {tunnel_pid}, {reason}) "
+              "did not exit; record kept")
+        return False
+    if is_cloudflared(tunnel_pid):
+        print(f"[apps] WARNING: could not stop quick tunnel for {name} "
+              f"(pid {tunnel_pid}, {reason}); record kept")
+        return False
+    print(f"[apps] dropped stale quick tunnel record for {name} ({reason})")
+    return True
+
+
+def _revoke_disallowed_tunnel(name: str, state: dict) -> dict:
+    """Close a recorded quick tunnel the current policy no longer allows."""
+    tunnel_pid = state.get("tunnel_pid")
+    if not tunnel_pid:
+        return state
+    reason = _tunnel_refusal(state)
+    if reason is None:
+        return state
+    if not _close_recorded_tunnel(name, tunnel_pid, reason):
+        return state
+    state = {**state, "tunnel_pid": None, "tunnel_url": None}
+    _write_state(name, state)
+    return state
+
+
+@_locked_per_app
 def share_app(name: str) -> dict:
-    """Share an app publicly.
-
-    With a named tunnel + custom domain: returns the subdomain URL
-    (e.g. corework.woltspace.com) — no per-app tunnel needed.
-
-    Without a custom domain: falls back to a per-app quick tunnel
-    with --http-host-header localhost for Vite 6+ compatibility.
+    """Open a quick tunnel to a running app, if the lodge owner allows them.
 
     Stores tunnel_pid and tunnel_url in .space/apps/{name}.json.
-    Also sets public=true in woltspace.json.
     Returns dict with tunnel_url and pid.
-    Raises ValueError if app is not running.
-    Raises RuntimeError if sharing is disabled or tunnel fails.
+    Raises ValueError if app is not running, QuickTunnelsOff if quick tunnels
+    are not switched on, RuntimeError if the tunnel fails.
     """
-    _check_sharing_enabled()
-
     state = _read_state(name)
     if not state:
         raise ValueError(f"App {name} is not running")
+    if not quick_tunnels_enabled():
+        raise QuickTunnelsOff(
+            f"Quick tunnels are off. They give anyone with the link the app, with no login. "
+            f"The lodge owner can allow them with {QUICK_TUNNELS_ENV}=1 in the lodge's .env."
+        )
 
-    # Subdomain routing: stable URL, no per-app tunnel needed
-    subdomain_url = _get_subdomain_url(name)
-    if subdomain_url:
-        state["tunnel_url"] = subdomain_url
-        state["tunnel_pid"] = None
-        _write_state(name, state)
-        _set_public(name, True)
-        return {"tunnel_url": subdomain_url, "pid": None}
-
-    # Fallback: per-app quick tunnel
-    port = state["port"]
+    # Never a tunnel to the lodge or the gateway, whatever an app's state says:
+    # the lodge is only ever published through a named, Access-gated tunnel.
+    port = _valid_port(state.get("port"))
+    if port is None:
+        raise ShareRefused(f"Refusing a quick tunnel for {name}: it has no valid port")
+    if port in (_lodge_port(), _enabled_app_gateway_port()):
+        raise ShareRefused(f"Refusing a quick tunnel to port {port}: it belongs to the lodge")
 
     # Return existing tunnel if still alive
     tunnel_pid = state.get("tunnel_pid")
@@ -504,17 +610,13 @@ def share_app(name: str) -> dict:
     state["tunnel_pid"] = result["pid"]
     state["tunnel_url"] = result["url"]
     _write_state(name, state)
-
-    # Persist public=true in woltspace.json
-    _set_public(name, True)
-
     return {"tunnel_url": result["url"], "pid": result["pid"]}
 
 
+@_locked_per_app
 def unshare_app(name: str) -> bool:
     """Stop the cloudflared tunnel for an app.
 
-    Sets public=false in woltspace.json.
     Returns True if a tunnel was running and stopped.
     """
     state = _read_state(name)
@@ -522,16 +624,14 @@ def unshare_app(name: str) -> bool:
         return False
 
     tunnel_pid = state.get("tunnel_pid")
-    stopped = stop_cloudflared(tunnel_pid) if tunnel_pid else False
-
+    if not tunnel_pid:
+        return False
+    if not _close_recorded_tunnel(name, tunnel_pid, "unshared"):
+        raise RuntimeError(f"could not stop the quick tunnel for {name} (pid {tunnel_pid})")
     state["tunnel_pid"] = None
     state["tunnel_url"] = None
     _write_state(name, state)
-
-    # Persist public=false in woltspace.json
-    _set_public(name, False)
-
-    return stopped or tunnel_pid is not None
+    return True
 
 
 def unshare_all_apps() -> list[str]:
@@ -545,29 +645,13 @@ def unshare_all_apps() -> list[str]:
     for f in sorted(_RUNNING_STATE_DIR.iterdir()):
         if not f.name.endswith(".json"):
             continue
-        try:
-            state = json.loads(f.read_text())
-            name = state.get("name", f.stem)
-            tunnel_pid = state.get("tunnel_pid")
-            if tunnel_pid and stop_cloudflared(tunnel_pid):
+        name = f.stem
+        with _app_lock(name):
+            state = _read_state(name)
+            tunnel_pid = state.get("tunnel_pid") if state else None
+            if tunnel_pid and _close_recorded_tunnel(name, tunnel_pid, "unshare all"):
                 state["tunnel_pid"] = None
                 state["tunnel_url"] = None
                 _write_state(name, state)
-                _set_public(name, False)
                 unshared.append(name)
-        except (json.JSONDecodeError, OSError):
-            continue
     return unshared
-
-
-def _set_public(name: str, public: bool) -> None:
-    """Update the public field in an app's woltspace.json."""
-    manifest = app_dir(name) / MANIFEST
-    if not manifest.exists():
-        return
-    try:
-        data = json.loads(manifest.read_text())
-        data["public"] = public
-        manifest.write_text(json.dumps(data, indent=2) + "\n")
-    except (json.JSONDecodeError, OSError):
-        pass

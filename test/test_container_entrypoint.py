@@ -287,6 +287,12 @@ class TestFirstRunSweep:
 # Tunnel reporting
 # ---------------------------------------------------------------------------
 
+NAMED_TUNNEL = {
+    "CLOUDFLARE_TUNNEL_TOKEN": "a-token",
+    "CLOUDFLARE_TUNNEL_URL": "https://jerpint.woltspace.com",
+}
+
+
 class TestTunnelReport:
     def test_disabled_says_so_and_starts_no_thread(self, tmp_path, capsys):
         thread = boot.start_tunnel_report(tmp_path, {"WOLTSPACE_PUBLIC_TUNNEL": "false"})
@@ -298,7 +304,7 @@ class TestTunnelReport:
         """`${WOLTSPACE_PUBLIC_TUNNEL:-true}` treated empty as unset."""
         monkeypatch.setattr(boot, "report_tunnel_url", lambda wolts_dir: None)
 
-        thread = boot.start_tunnel_report(tmp_path, {"WOLTSPACE_PUBLIC_TUNNEL": ""})
+        thread = boot.start_tunnel_report(tmp_path, {"WOLTSPACE_PUBLIC_TUNNEL": "", **NAMED_TUNNEL})
 
         assert thread is not None
         thread.join(timeout=5)
@@ -326,10 +332,17 @@ class TestTunnelReport:
     def test_the_report_thread_never_holds_the_process_open(self, tmp_path, monkeypatch):
         monkeypatch.setattr(boot, "report_tunnel_url", lambda wolts_dir: None)
 
-        thread = boot.start_tunnel_report(tmp_path, {})
+        thread = boot.start_tunnel_report(tmp_path, dict(NAMED_TUNNEL))
 
         assert thread.daemon is True
         thread.join(timeout=5)
+
+    def test_no_named_tunnel_means_no_tunnel_and_no_wait(self, tmp_path, capsys):
+        """The lodge never opens a quick tunnel, so there is nothing to wait for."""
+        thread = boot.start_tunnel_report(tmp_path, {"WOLTSPACE_PUBLIC_TUNNEL": "true"})
+
+        assert thread is None
+        assert "no named tunnel configured" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

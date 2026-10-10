@@ -106,6 +106,7 @@ from apps import (
     app_dir,
     app_log_file,
     running_apps,
+    ShareRefused,
     share_app,
     start_app,
     stop_app,
@@ -2349,7 +2350,7 @@ async def app_update(name: str, request: Request):
 
 @app.post("/apps/{name}/share")
 async def app_share(name: str):
-    """Start a cloudflared tunnel to the app port and return the public URL."""
+    """Open an opt-in quick tunnel to the app and return its public URL."""
     if invalid := _invalid_app_name(name):
         return invalid
     import asyncio
@@ -2360,6 +2361,8 @@ async def app_share(name: str):
         return result
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=404)
+    except ShareRefused as e:
+        return JSONResponse({"error": str(e)}, status_code=403)
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=503)
 
@@ -2369,7 +2372,10 @@ async def app_unshare(name: str):
     """Stop the cloudflared tunnel for an app."""
     if invalid := _invalid_app_name(name):
         return invalid
-    was_sharing = unshare_app(name)
+    try:
+        was_sharing = await asyncio.to_thread(unshare_app, name)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
     if was_sharing:
         print(f"[apps] unshared {name}")
         return {"ok": True, "name": name}
@@ -2379,7 +2385,7 @@ async def app_unshare(name: str):
 @app.post("/apps/unshare-all")
 async def app_unshare_all():
     """Panic button — stop ALL app tunnels."""
-    unshared = unshare_all_apps()
+    unshared = await asyncio.to_thread(unshare_all_apps)
     print(f"[apps] unshare-all: stopped {len(unshared)} tunnels: {unshared}")
     return {"ok": True, "unshared": unshared}
 

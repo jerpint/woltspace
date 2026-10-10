@@ -325,3 +325,47 @@ class TestTunnelPolicy:
         )
         assert payload["url"] == ""
         assert payload["state_exists"] is False
+
+    def test_the_lodge_never_opens_a_quick_tunnel(self, native_root):
+        """Publishing switched on, no named tunnel: nothing starts.
+
+        cloudflared is replaced by a recorder, so even a regression here can
+        never publish anything.
+        """
+        payload = run_in_clean_process(
+            """
+            import json, sys, types
+            calls = []
+            fake = types.ModuleType("tunnel")
+            fake.start_cloudflared = lambda **kw: calls.append(("quick", kw)) or {"pid": 1, "url": "https://x.trycloudflare.com"}
+            fake.start_named_tunnel = lambda **kw: calls.append(("named", kw)) or {"pid": 1}
+            fake.stop_cloudflared = lambda pid: False
+            sys.modules["tunnel"] = fake
+            from woltspace.layout import RuntimeLayout
+            from woltspace.supervisor import Supervisor
+            layout = RuntimeLayout.from_env()
+            Supervisor(layout).prepare()
+            from server import tunnel
+            tunnel._lib_imported = True
+            import os
+            asked = os.environ.get("WOLTSPACE_PUBLIC_TUNNEL")
+            tunnel.start_tunnel()
+            print(json.dumps({
+                "asked": asked,
+                "calls": calls,
+                "url": tunnel.get_tunnel_url(),
+                "mode": tunnel.get_tunnel_mode(),
+                "state_exists": tunnel.TUNNEL_STATE_FILE.exists(),
+            }))
+            """,
+            {
+                "WOLTSPACE_WOLTS_DIR": str(native_root),
+                "WOLTSPACE_DIR": str(ROOT),
+                "WOLTSPACE_PUBLIC_TUNNEL": "true",
+            },
+        )
+        assert payload["asked"] == "true"  # publishing really was requested
+        assert payload["calls"] == []
+        assert payload["url"] == ""
+        assert payload["mode"] == "off"
+        assert payload["state_exists"] is False

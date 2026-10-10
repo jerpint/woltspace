@@ -2,7 +2,7 @@
 
 Guide the human through setting up a named Cloudflare Tunnel with Access auth for their lodge. Step by step, one at a time.
 
-By default, woltspace uses free quick tunnels that generate a random URL on every restart. This sub-doc upgrades to a permanent URL on the user's own domain with password protection at Cloudflare's edge.
+By default, a lodge stays on its machine: it is never published through a quick tunnel. This sub-doc gives it a permanent URL on the user's own domain, with login protection at Cloudflare's edge.
 
 **This is idempotent** — safe to run again. If things are already configured, validate and skip.
 
@@ -207,7 +207,7 @@ On next container restart, the server will use the named tunnel automatically.
 
 Explain to the human how to revert:
 
-> To go back to quick tunnels: remove `CLOUDFLARE_TUNNEL_TOKEN` and `CLOUDFLARE_TUNNEL_URL` from `.env` and restart.
+> To take the lodge offline again: remove `CLOUDFLARE_TUNNEL_TOKEN` and `CLOUDFLARE_TUNNEL_URL` from `.env` and restart.
 >
 > `$WOLTSPACE_API` always names the current lodge regardless of tunnel configuration.
 

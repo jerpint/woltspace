@@ -58,7 +58,7 @@ Then write `woltspace.json` — **this is required** for the platform to discove
 | `start` | no | Start command. Use `$PORT` — the platform expands it. Null = can't start from lodge or be served as an app. |
 | `source` | no | Origin URL if cloned |
 | `emoji` | no | Display emoji (auto-assigned) |
-| `public` | no | If `true`, the app is shared publicly when started. With a named tunnel: served at `{name}.{domain}` (e.g. `corework.woltspace.com`). Without: a random quick tunnel URL. Default: `false`. |
+| `public` | no | Ignored (kept so old manifests load). Share through the share list or an opt-in quick tunnel. |
 
 **Important:** Only `woltspace.json` is recognized. Not `project.json`, not `app.json`.
 
@@ -109,36 +109,21 @@ Each app declares its own port in `woltspace.json` (required). Use the **4000-59
 
 The control plane address is `$WOLTSPACE_API`; never assume its port. The app gateway follows the lodge port minus 660 unless Settings overrides it. Apps must stay in the **4000-5999** range and must not use their lodge's gateway port. The platform sets `PORT` to the app manifest's value when it starts the app. Wolt sites do not allocate their own ports; the lodge serves them at `/wolt/<name>/site/`.
 
-## Sharing (public access)
+## Sharing
 
-Apps are private by default — only accessible locally. Set `"public": true` in `woltspace.json` to share, or use the API:
+Apps are private by default: only the lodge owner, locally, through the app gateway.
+
+**Share with people (the normal way):** the lodge owner adds exact emails or `@domain` entries to the app's share list, from the app page or with `woltspace app share <app> friend@example.com` (`woltspace app sharing <app>` lists it, `unshare` removes). Visitors open `https://<app>.<apps domain>`, sign in through Cloudflare Access, and the gateway checks the list. This needs an app domain; see the woltspace cloudflare skill.
+
+**Quick tunnels (opt-in, apps only):** a random `trycloudflare.com` link that gives anyone who has it the app, with no login. Off unless the lodge owner sets `WOLTSPACE_APP_QUICK_TUNNELS=1` in the lodge's `.env`. Then:
 
 ```bash
-# Share a running app
-curl -X POST "$WOLTSPACE_API/apps/my-app/share"
-
-# Unshare
-curl -X POST "$WOLTSPACE_API/apps/my-app/unshare"
-
-# Panic button — unshare ALL apps
-curl -X POST "$WOLTSPACE_API/apps/unshare-all"
+curl -X POST "$WOLTSPACE_API/apps/my-app/share"     # open one
+curl -X POST "$WOLTSPACE_API/apps/my-app/unshare"   # close it
+curl -X POST "$WOLTSPACE_API/apps/unshare-all"      # close them all
 ```
 
-### How sharing works
-
-There are two modes, selected automatically:
-
-**Subdomain routing (named tunnel):** If the lodge has a named tunnel (`CLOUDFLARE_TUNNEL_URL` is set), public apps are served at `{app-name}.{domain}` — e.g. `corework.woltspace.com`. No per-app tunnel is spawned. The server's subdomain proxy middleware routes requests to the app's port. URLs are stable, auth-protected by Cloudflare Access, and work automatically for any app.
-
-**Quick tunnels (fallback):** If there's no named tunnel, a per-app `cloudflared` tunnel starts with a random `trycloudflare.com` URL. Uses `--http-host-header localhost` so Vite/Next.js/Astro allowedHosts checks pass. URLs are random and change on restart.
-
-The mode is automatic — wolts don't need to know or care which is active.
-
-### Setup for subdomain routing
-
-Requires a one-time Cloudflare setup after the named tunnel is configured: wildcard DNS, tunnel ingress rule, and Access policy. See `docs/wildcard-subdomain-setup.md` for step-by-step instructions, or load the woltspace cloudflare skill, which covers this.
-
-**Kill switch:** Set `WOLTSPACE_SHARING_ENABLED=0` to disable all sharing. The API will reject share requests and `public: true` is ignored.
+A quick tunnel is never opened for the lodge or the gateway port, and the manifest's `public` field is ignored: a manifest can never publish an app.
 
 ## Key rules
 

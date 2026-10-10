@@ -110,9 +110,9 @@ Browser → corework.yourdomain.com
 
 The server reads `CLOUDFLARE_TUNNEL_URL` at boot to determine the parent domain. When a request arrives at `corework.woltspace.com`, the middleware strips `.woltspace.com` to get the app name, looks up the running app's port, and proxies the request. The app sees clean requests at `/` on its own port — no path prefixes, no URL rewriting.
 
-## Fallback: quick tunnels
+## Without a custom domain: opt-in quick tunnels
 
-Lodges without a custom domain (`CLOUDFLARE_TUNNEL_URL` not set) automatically fall back to per-app quick tunnels with random `trycloudflare.com` URLs. The `public: true` flag in `woltspace.json` triggers this. No additional setup needed.
+There is no automatic fallback. A lodge owner can allow per-app quick tunnels (random `trycloudflare.com` links, no login) with `WOLTSPACE_APP_QUICK_TUNNELS=1` in the lodge's `.env`; each one is opened explicitly through `POST /apps/<name>/share`. The lodge itself is never published this way.
 
 ## Verifying the setup
 
