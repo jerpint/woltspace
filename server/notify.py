@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .notification_senders import (
     slack_send, slack_sender, slack_set_agent_status, telegram_send, telegram_sender,
+    TELEGRAM_MAX_ATTACHMENT_BYTES, telegram_send_document,
 )
 from .notification_types import Attachment, OutboundMessage, Plugin, SendContext
 import outbox
@@ -108,8 +109,13 @@ def append_chat_history(adapter: str, chat_id: str, content: str):
 # The providers own each implementation; these lambdas resolve patched names at call time.
 SENDERS = {
     "telegram": Plugin(
-        "telegram", telegram_sender(lambda *args: telegram_send(*args)),
+        "telegram",
+        telegram_sender(
+            lambda *args: telegram_send(*args),
+            lambda *args: telegram_send_document(*args),
+        ),
         secrets=("TELEGRAM_BOT_TOKEN",),
+        max_attachment_bytes=TELEGRAM_MAX_ATTACHMENT_BYTES,
     ),
     "slack": Plugin(
         "slack", slack_sender(

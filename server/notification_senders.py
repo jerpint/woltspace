@@ -5,12 +5,38 @@ import logging
 import httpx
 
 from .config import DEN_REPLY_FOOTER
-from .notification_types import OutboundMessage, SendContext, Send
+from .notification_types import Attachment, OutboundMessage, SendContext, Send
 
 logger = logging.getLogger(__name__)
 
 # A file upload can take minutes; httpx's 5-second default suits small JSON calls.
 UPLOAD_TIMEOUT = httpx.Timeout(30.0, read=120.0, write=300.0)
+
+# The Bot API's limit for a file a bot uploads.
+TELEGRAM_MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
+# A caption's limit. Telegram counts UTF-16 code units, so an emoji is two.
+TELEGRAM_CAPTION_LIMIT = 1024
+
+
+async def telegram_send_document(
+    token: str, chat_id: str, attachment: Attachment, caption: str
+) -> dict:
+    """Upload one file as a document: it arrives byte-for-byte, whatever its type."""
+    fields = {"chat_id": chat_id}
+    if caption:
+        fields["caption"] = caption
+    with open(attachment.path, "rb") as document:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"https://api.telegram.org/bot{token}/sendDocument",
+                data=fields,
+                files={"document": (attachment.filename, document, attachment.content_type)},
+                timeout=UPLOAD_TIMEOUT,
+            )
+            data = resp.json()
+            if not data.get("ok"):
+                raise RuntimeError(data.get("description", "telegram error"))
+            return data
 
 
 async def telegram_send(token: str, chat_id: str, text: str) -> dict:
@@ -60,16 +86,35 @@ async def slack_set_agent_status(
         return data
 
 
-def telegram_sender(transport) -> Send:
+def telegram_sender(transport, send_document=None) -> Send:
     """Temporary transport injection preserves notify's existing patch points."""
     async def send(message: OutboundMessage, destination, context: SendContext) -> None:
+        token, chat_id = context.secrets["TELEGRAM_BOT_TOKEN"], destination["chat_id"]
         footer = ""
         if message.session_link:
             footer = f"\n\n---{DEN_REPLY_FOOTER}\n{message.session_link}"
-        await transport(
-            context.secrets["TELEGRAM_BOT_TOKEN"], destination["chat_id"],
-            message.text + footer,
-        )
+        text = message.text + footer
+        if not message.attachments:
+            await transport(token, chat_id, text)
+            return
+        if send_document is None:
+            raise RuntimeError("telegram sender has no document transport")
+        if len(message.attachments) > 1:
+            raise RuntimeError("telegram sender carries one file per message")
+        attachment = message.attachments[0]
+        if len(text.encode("utf-16-le")) // 2 <= TELEGRAM_CAPTION_LIMIT:
+            await send_document(token, chat_id, attachment, text)
+            return
+        # Too long for a caption: the text goes first, exactly as a text
+        # notification, and the file carries the footer so either can be replied to.
+        await transport(token, chat_id, text)
+        try:
+            await send_document(token, chat_id, attachment, footer.strip())
+        except Exception as exc:
+            raise RuntimeError(
+                "the text was delivered but the file was not: "
+                f"{str(exc) or type(exc).__name__}"
+            ) from exc
     return send
 
 
