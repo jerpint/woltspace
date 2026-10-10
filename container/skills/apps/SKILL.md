@@ -123,6 +123,8 @@ curl -X POST "$WOLTSPACE_API/apps/my-app/unshare"   # close it
 curl -X POST "$WOLTSPACE_API/apps/unshare-all"      # close them all
 ```
 
+**Cross-site writes are refused.** Like the lodge, the gateway rejects a browser POST/PUT/DELETE that comes from another site's page. So an OAuth provider's `form_post` callback can't reach an app: use the redirect (GET) callback mode.
+
 A quick tunnel is never opened for the lodge or the gateway port, and the manifest's `public` field is ignored: a manifest can never publish an app.
 
 ## Key rules

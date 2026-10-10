@@ -403,3 +403,79 @@ def test_access_settings_cache_invalidates_on_file_mtime(tmp_path, monkeypatch):
     }}))
     assert access_module.load_access_settings(tmp_path) == SETTINGS
     assert len(reads) == 2
+
+
+def test_a_token_issued_a_few_seconds_ahead_is_accepted(monkeypatch):
+    """Clock skew: a lodge slightly behind Cloudflare must not refuse fresh tokens."""
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    verifier = AccessTokenVerifier()
+
+    async def refresh(team_domain):
+        verifier._team_domain = team_domain
+        verifier._keys = {"key-1": key.public_key()}
+        verifier._expires_at = time.monotonic() + 3600
+        return verifier._keys
+
+    monkeypatch.setattr(verifier, "_refresh", refresh)
+    now = int(time.time())
+    token = jwt.encode({
+        "iss": "https://team.cloudflareaccess.com", "aud": "lodge-audience",
+        "email": "owner@example.com", "iat": now + 5, "exp": now + 300,
+    }, key, algorithm="RS256", headers={"kid": "key-1"})
+    claims = asyncio.run(verifier.verify(token, SETTINGS, "lodge-audience"))
+    assert claims["email"] == "owner@example.com"
+
+
+def test_unreachable_certificates_are_not_fetched_per_token(monkeypatch):
+    verifier = AccessTokenVerifier(failure_backoff=60)
+    calls = []
+
+    async def refresh(_team):
+        calls.append(1)
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(verifier, "_refresh", refresh)
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    now = int(time.time())
+    token = jwt.encode({"iss": "x", "aud": "a", "iat": now, "exp": now + 60},
+                       key, algorithm="RS256", headers={"kid": "key"})
+    for _ in range(20):
+        with pytest.raises(Exception):
+            asyncio.run(verifier.verify(token, SETTINGS, "lodge-audience"))
+    assert len(calls) == 1
+
+
+def test_a_non_rsa_key_in_the_certificate_set_is_skipped(monkeypatch):
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from jwt.algorithms import ECAlgorithm, RSAAlgorithm
+
+    rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    rsa_jwk = json.loads(RSAAlgorithm.to_jwk(rsa_key.public_key()))
+    rsa_jwk["kid"] = "rsa-key"
+    ec_jwk = json.loads(ECAlgorithm.to_jwk(ec.generate_private_key(ec.SECP256R1()).public_key()))
+    ec_jwk["kid"] = "ec-key"
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"keys": [ec_jwk, rsa_jwk]}
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        async def get(self, _url):
+            return Response()
+
+    import server.access as access_mod
+    monkeypatch.setattr(access_mod.httpx, "AsyncClient", Client)
+    keys = asyncio.run(AccessTokenVerifier()._refresh("team.cloudflareaccess.com"))
+    assert list(keys) == ["rsa-key"]

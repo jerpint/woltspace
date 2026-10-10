@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import websockets
@@ -51,7 +53,9 @@ def upstream_headers(headers, email: str | None) -> dict[str, str]:
     """
     result: dict[str, str] = {}
     for key, value in headers.items():
-        name = key.lower()
+        # Some servers fold "_" into "-", so X_Woltspace_User would join the
+        # real header there: compare names with underscores folded.
+        name = key.lower().replace("_", "-")
         if (name in _HOP_BY_HOP or name.startswith("cf-access-")
                 or name == IDENTITY_HEADER):
             continue
@@ -59,10 +63,34 @@ def upstream_headers(headers, email: str | None) -> dict[str, str]:
             value = _strip_identity_cookies(value)
             if not value:
                 continue
-        result[name] = value
+        result[key.lower()] = value
     if email:
         result[IDENTITY_HEADER] = email
     return result
+
+
+def _raw_target(scope) -> str:
+    """The request target exactly as the visitor sent it (no decoding).
+
+    Rebuilding it from the decoded path turns /a%3Fx into /a?x and
+    /dir%2Fsub into /dir/sub.
+    """
+    raw = scope.get("raw_path") or scope.get("path", "/").encode("utf-8")
+    target = raw.decode("latin-1")
+    query = scope.get("query_string") or b""
+    return f"{target}?{query.decode('latin-1')}" if query else target
+
+
+def _relative_location(location: str, port: int) -> str:
+    """Keep a redirect to the app's own loopback address inside the gateway."""
+    try:
+        parsed = urlsplit(location)
+        host, location_port = (parsed.hostname or "").lower(), parsed.port
+    except ValueError:
+        return location
+    if host in {"localhost", "127.0.0.1"} and location_port == port:
+        return urlunsplit(("", "", parsed.path or "/", parsed.query, parsed.fragment))
+    return location
 
 
 def running_app(name: str) -> dict | None:
@@ -98,38 +126,65 @@ async def proxy_app_http(
     if not run_state:
         return missing_app_response(app_name, unknown_is_stopped=unknown_is_stopped)
     port = run_state["port"]
-    query = f"?{request.url.query}" if request.url.query else ""
-    upstream = f"http://127.0.0.1:{port}{request.url.path}{query}"
+    upstream = f"http://127.0.0.1:{port}{_raw_target(request.scope)}"
     client = httpx.AsyncClient(timeout=_UPSTREAM_TIMEOUT)
     headers = upstream_headers(request.headers, request.scope.get("state", {}).get("access_email"))
     headers["host"] = f"localhost:{port}"
+    # Only a request that has a body sends one: an empty chunked body on a
+    # GET/HEAD is refused by strict servers.
+    has_body = "content-length" in request.headers or "transfer-encoding" in request.headers
+    # The deadline is idle time, not total time: an upload may take as long as
+    # it keeps moving, then the app has RESPONSE_START_TIMEOUT to answer.
+    last_activity = [time.monotonic()]
+
+    async def body():
+        async for chunk in request.stream():
+            last_activity[0] = time.monotonic()
+            yield chunk
+        last_activity[0] = time.monotonic()
+
+    send = None
     try:
         upstream_request = client.build_request(
-            request.method, upstream, headers=headers, content=await request.body(),
+            # Streamed, never buffered whole: an upload can't fill the gateway.
+            request.method, upstream, headers=headers,
+            content=body() if has_body else None,
         )
-        response = await asyncio.wait_for(
-            client.send(upstream_request, stream=True, follow_redirects=False),
-            timeout=RESPONSE_START_TIMEOUT,
+        send = asyncio.ensure_future(
+            client.send(upstream_request, stream=True, follow_redirects=False)
         )
+        while True:
+            done, _ = await asyncio.wait({send}, timeout=min(1.0, RESPONSE_START_TIMEOUT))
+            if done:
+                response = send.result()
+                break
+            if time.monotonic() - last_activity[0] > RESPONSE_START_TIMEOUT:
+                raise asyncio.TimeoutError
     except asyncio.TimeoutError:
+        await _cancel(send)
         await client.aclose()
         return HTMLResponse(f"<h1>{app_name} did not answer in time</h1>", status_code=504)
     except httpx.HTTPError:
         await client.aclose()
         return HTMLResponse(f"<h1>Cannot reach {app_name}</h1>", status_code=502)
     except BaseException:
-        # Cancelled (the visitor left, shutdown): still release the client.
+        # Cancelled (the visitor left, shutdown): still release everything.
+        await _cancel(send)
         await client.aclose()
         raise
-    excluded = _HOP_BY_HOP | {"content-encoding"}
+    # The body is passed through exactly as the app encoded it (aiter_raw), so
+    # content-encoding and content-length stay true. Decoding it while keeping
+    # the app's content-length truncated every gzip response to nothing.
     response_headers = {
         key: value for key, value in response.headers.items()
-        if key.lower() not in excluded | {"set-cookie"}
+        if key.lower() not in _HOP_BY_HOP | {"set-cookie"}
     }
+    if "location" in response_headers:
+        response_headers["location"] = _relative_location(response_headers["location"], port)
 
     async def stream_body():
         try:
-            async for chunk in response.aiter_bytes():
+            async for chunk in response.aiter_raw():
                 yield chunk
         finally:
             await response.aclose()
@@ -141,6 +196,12 @@ async def proxy_app_http(
     for cookie in response.headers.get_list("set-cookie"):
         downstream.headers.append("set-cookie", _host_only_set_cookie(cookie))
     return downstream
+
+
+async def _cancel(task) -> None:
+    if task is not None and not task.done():
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 def _sendable_close_code(code: int | None) -> int:
@@ -159,23 +220,30 @@ async def proxy_app_websocket(ws: WebSocket, app_name: str, path: str):
         return
     port = run_state["port"]
     subprotocols = [
-        value for value in ws.headers.get("sec-websocket-protocol", "").split(", ")
-        if value
+        value.strip()
+        for value in ws.headers.get("sec-websocket-protocol", "").split(",")
+        if value.strip()
     ]
-    query = f"?{ws.query_params}" if ws.query_params else ""
-    upstream_url = f"ws://127.0.0.1:{port}/{path.lstrip('/')}{query}"
+    # The URL names localhost (that is the Host the app sees, once); the
+    # socket goes to 127.0.0.1.
+    upstream_url = f"ws://localhost:{port}{_raw_target(ws.scope)}"
     email = ws.scope.get("state", {}).get("access_email")
     identity = {IDENTITY_HEADER: email} if email else {}
-    await ws.accept(subprotocol=subprotocols[0] if subprotocols else None)
+    accepted = False
     # What the visitor is told when the bridge ends. Default: the app could
     # not be reached or the bridge failed.
     close_code, close_reason = 1011, ""
     try:
         async with websockets.connect(
             upstream_url,
+            host="127.0.0.1",
+            port=port,
             subprotocols=subprotocols or None,
-            additional_headers={"host": f"localhost:{port}", **identity},
+            additional_headers=identity,
         ) as upstream:
+            # Accept only now, with the subprotocol the app actually chose.
+            await ws.accept(subprotocol=upstream.subprotocol)
+            accepted = True
             async def client_to_upstream():
                 while True:
                     message = await ws.receive()
@@ -223,9 +291,12 @@ async def proxy_app_websocket(ws: WebSocket, app_name: str, path: str):
             else:
                 close_code = _sendable_close_code(upstream.close_code)
                 close_reason = upstream.close_reason or ""
-    except (OSError, websockets.WebSocketException):
+    except (OSError, ValueError, websockets.WebSocketException):
         pass
     try:
+        if not accepted:
+            await ws.close(code=1011)
+            return
         await ws.close(code=close_code, reason=close_reason)
     except Exception:
         pass
