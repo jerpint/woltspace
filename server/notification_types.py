@@ -2,12 +2,24 @@
 
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class Attachment:
+    """One file to deliver. Core builds it; senders only read `path`."""
+
+    path: Path
+    filename: str
+    size: int
+    content_type: str
 
 
 @dataclass(frozen=True)
 class OutboundMessage:
     text: str
     session_link: str | None = None
+    attachments: tuple[Attachment, ...] = ()
 
 
 @dataclass
@@ -26,3 +38,5 @@ class Plugin:
     send: Send
     secrets: tuple[str, ...] = ()
     route_state: tuple[str, ...] = ()
+    # Largest file this sender can carry, in bytes. 0 means it cannot carry files.
+    max_attachment_bytes: int = 0
