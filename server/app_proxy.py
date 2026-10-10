@@ -28,9 +28,9 @@ _HOP_BY_HOP = {
 _UPSTREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=10.0)
 RESPONSE_START_TIMEOUT = 60.0
 
-# Close codes an endpoint may send. 1005, 1006 and 1015 only describe what a
-# peer observed and can never be put on the wire.
-_RESERVED_CLOSE_CODES = {1004, 1005, 1006, 1015}
+# Close codes an endpoint may put on the wire (RFC 6455 + IANA registry):
+# the assigned protocol codes, then 3000-4999 for libraries and apps.
+_SENDABLE_PROTOCOL_CODES = {1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014}
 
 
 def _strip_identity_cookies(value: str) -> str:
@@ -117,6 +117,10 @@ async def proxy_app_http(
     except httpx.HTTPError:
         await client.aclose()
         return HTMLResponse(f"<h1>Cannot reach {app_name}</h1>", status_code=502)
+    except BaseException:
+        # Cancelled (the visitor left, shutdown): still release the client.
+        await client.aclose()
+        raise
     excluded = _HOP_BY_HOP | {"content-encoding"}
     response_headers = {
         key: value for key, value in response.headers.items()
@@ -143,9 +147,9 @@ def _sendable_close_code(code: int | None) -> int:
     """A close code we may forward; anything abnormal becomes 1011."""
     if code is None or code == 1005:
         return 1000
-    if code in _RESERVED_CLOSE_CODES or not (1000 <= code <= 4999):
-        return 1011
-    return code
+    if code in _SENDABLE_PROTOCOL_CODES or 3000 <= code <= 4999:
+        return code
+    return 1011
 
 
 async def proxy_app_websocket(ws: WebSocket, app_name: str, path: str):

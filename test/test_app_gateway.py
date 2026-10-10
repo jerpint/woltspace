@@ -690,7 +690,8 @@ def test_websocket_bridge_closes_the_visitor_when_the_app_hangs_up(monkeypatch):
 
 @pytest.mark.parametrize("code, expected", [
     (None, 1000), (1000, 1000), (1001, 1001), (1005, 1000), (1006, 1011),
-    (1015, 1011), (4000, 4000), (999, 1011), (5000, 1011),
+    (1015, 1011), (4000, 4000), (999, 1011), (5000, 1011), (1004, 1011),
+    (1014, 1014), (1016, 1011), (2000, 1011), (2999, 1011), (3000, 3000),
 ])
 def test_only_sendable_close_codes_are_forwarded(code, expected):
     assert app_proxy._sendable_close_code(code) == expected
