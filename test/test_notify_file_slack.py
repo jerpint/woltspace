@@ -253,6 +253,20 @@ async def test_other_slack_errors_pass_through(failing, answer, message, attachm
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failing", ["get_url", "complete"])
+@pytest.mark.parametrize("answer, message", [
+    (httpx.Response(502, text="<html>Bad Gateway</html>"), "slack answered HTTP 502"),
+    (httpx.Response(200, text=""), "slack answered HTTP 200"),
+    (httpx.Response(200, json=["not", "an", "object"]), "slack answered HTTP 200"),
+], ids=["html-error-page", "empty-body", "json-but-not-an-object"])
+async def test_a_reply_that_is_not_json_names_the_http_status(failing, answer, message, attachment, monkeypatch):
+    _Slack(monkeypatch, **{failing: answer})
+    with pytest.raises(RuntimeError) as error:
+        await slack_upload_file("tok", "C123", "1.2", attachment, "hi")
+    assert str(error.value) == message
+
+
+@pytest.mark.asyncio
 async def test_failed_byte_upload_raises_with_the_status(attachment, monkeypatch):
     slack = _Slack(monkeypatch, upload=httpx.Response(500, text="boom"))
     with pytest.raises(RuntimeError) as error:

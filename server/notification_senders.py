@@ -98,7 +98,13 @@ async def slack_set_agent_status(
 
 
 def _slack_upload_data(response: httpx.Response) -> dict:
-    data = response.json()
+    try:
+        data = response.json()
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        # An error page from a proxy, say: the status is all there is to report.
+        raise RuntimeError(f"slack answered HTTP {response.status_code}")
     if not data.get("ok"):
         if data.get("error") == "missing_scope":
             raise RuntimeError(SLACK_MISSING_FILES_SCOPE)
