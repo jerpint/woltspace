@@ -1,5 +1,8 @@
 # Pi harness roadmap
 
+The complete first-night evidence is recorded in
+[`pi-evaluation-2026-09-25.md`](pi-evaluation-2026-09-25.md).
+
 Status: **experimental POC**. The disposable print-mode lifecycle and a
 containerized interactive-TUI/IWCL roundtrip are proven; native supervisor
 registration and browser attachment are not yet live-certified.
