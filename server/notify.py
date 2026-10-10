@@ -6,17 +6,20 @@ Falls back to session registry lookup, then Telegram default.
 
 import json
 import logging
+import mimetypes
 import urllib.parse
 from pathlib import Path
 
 from .notification_senders import (
     slack_send, slack_sender, slack_set_agent_status, telegram_send, telegram_sender,
 )
-from .notification_types import OutboundMessage, Plugin, SendContext
+from .notification_types import Attachment, OutboundMessage, Plugin, SendContext
+import outbox
 from sessions import SessionRegistry
 
 from .config import (
     STATE_DIR,
+    SPACE_DIR,
     SPACE_PLATFORM_DIR,
     WOLTS_DIR,
     DEN_REPLY_FOOTER,
@@ -25,6 +28,19 @@ from .config import (
 from .state import sanitize_session
 
 logger = logging.getLogger(__name__)
+
+MAX_ATTACHMENTS = 1
+# Where `notify --file` stages what it wants sent. Core is the only server code
+# that touches it, and it opens entries by id, never a path a caller names.
+OUTBOX_DIR = SPACE_DIR / "outbox"
+
+
+class AttachmentError(RuntimeError):
+    """A file the request named cannot be sent. `reason` is machine-readable."""
+
+    def __init__(self, reason: str, message: str):
+        super().__init__(message)
+        self.reason = reason
 
 
 class NoNotificationTarget(RuntimeError):
@@ -106,9 +122,36 @@ SENDERS = {
 }
 
 
+def _resolve_attachments(attachments) -> tuple[Attachment, ...]:
+    """Turn the request's outbox ids into attachments, measured and named by core."""
+    if (
+        not isinstance(attachments, (list, tuple))
+        or len(attachments) > MAX_ATTACHMENTS
+        or not all(
+            isinstance(entry, dict) and isinstance(entry.get("id"), str)
+            for entry in attachments
+        )
+    ):
+        raise AttachmentError(
+            "attachment_invalid",
+            "attachments must be a list with at most one {id, name} entry",
+        )
+    resolved = []
+    for entry in attachments:
+        try:
+            path, size = outbox.resolve(OUTBOX_DIR, entry["id"])
+        except outbox.OutboxError as exc:
+            raise AttachmentError(exc.reason, str(exc)) from None
+        filename = outbox.display_name(entry.get("name"))
+        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        resolved.append(Attachment(path, filename, size, content_type))
+    return tuple(resolved)
+
+
 async def _send(
     adapter: str, session: str, message: str, chat_id: str,
     thread_ts: str | None = None, routing: dict | None = None,
+    attachments: tuple[Attachment, ...] = (),
 ) -> dict:
     """Resolve core context, dispatch a built-in, and persist its declared updates."""
     sender = SENDERS[adapter]
@@ -138,12 +181,24 @@ async def _send(
         if thread_ts is not None:
             destination["thread_ts"] = thread_ts
 
+    for attachment in attachments:
+        if sender.max_attachment_bytes == 0:
+            raise AttachmentError("attachments_unsupported", f"{adapter} cannot carry files")
+        if attachment.size > sender.max_attachment_bytes:
+            raise AttachmentError(
+                "attachment_too_large",
+                f"{attachment.filename} is {attachment.size} bytes; "
+                f"{adapter} accepts at most {sender.max_attachment_bytes}",
+            )
+
     context = SendContext(
         secrets,
         {key: routing[key] for key in sender.route_state if routing and key in routing},
     )
     try:
-        await sender.send(OutboundMessage(message, session_link or None), destination, context)
+        await sender.send(
+            OutboundMessage(message, session_link or None, attachments), destination, context,
+        )
     finally:
         updates = {}
         for key, value in context.updates.items():
@@ -153,8 +208,17 @@ async def _send(
                 logger.warning("Ignored undeclared notification state key: %s", key)
         if updates and session and routing:
             SessionRegistry(WOLTS_DIR).update(session, wolt=routing.get("wolt", ""), **updates)
-    append_chat_history(adapter, chat_id, message)
-    return {"adapter": adapter, "chat_id" if adapter == "telegram" else "channel": chat_id}
+    append_chat_history(adapter, chat_id, message + "".join(
+        f"\n[file sent: {a.filename}, {a.content_type}, {a.size} bytes]" for a in attachments
+    ))
+    result = {"adapter": adapter, "chat_id" if adapter == "telegram" else "channel": chat_id}
+    if attachments:
+        # Metadata only: this dict is logged and returned to the caller.
+        result["attachments"] = [
+            {"name": a.filename, "content_type": a.content_type, "size": a.size}
+            for a in attachments
+        ]
+    return result
 
 
 async def _send_telegram(session: str, message: str, chat_id: str) -> dict:
@@ -170,14 +234,35 @@ async def _send_slack(
     return await _send("slack", session, message, channel, thread_ts, routing)
 
 
-async def send_notification(session: str, message: str, explicit: dict | None = None) -> dict:
+async def send_notification(
+    session: str, message: str, explicit: dict | None = None, attachments=(),
+) -> dict:
     """Send a notification. Explicit routing takes priority over session lookup.
 
     explicit dict can contain:
       {"adapter": "slack", "channel": "C123", "thread_ts": "1234.5678"}
       {"adapter": "telegram", "chat_id": "98765"}
-    """
 
+    attachments is what the request carried: [{"id": <outbox entry>, "name": ...}].
+    Every entry it names is removed from the outbox, whatever happens to the send.
+    """
+    try:
+        outbox.sweep(OUTBOX_DIR)
+    except Exception as exc:
+        logger.warning("Could not sweep the outbox: %s", exc)
+    try:
+        return await _route(session, message, explicit, _resolve_attachments(attachments))
+    finally:
+        if isinstance(attachments, (list, tuple)):
+            for entry in attachments:
+                if isinstance(entry, dict):
+                    outbox.discard(OUTBOX_DIR, entry.get("id"))
+
+
+async def _route(
+    session: str, message: str, explicit: dict | None, attachments: tuple[Attachment, ...],
+) -> dict:
+    """Pick the destination: explicit route, then the session's, then the Telegram default."""
     routing = read_session_registry(session) if session else None
 
     # 1. Explicit routing — caller knows exactly where to send. A temporary
@@ -196,12 +281,14 @@ async def send_notification(session: str, message: str, explicit: dict | None = 
             )
             return await _send(
                 adapter, session if exact else "", message, channel, thread_ts,
-                routing if exact else None,
+                routing if exact else None, attachments=attachments,
             )
         if adapter == "telegram":
             chat_id = explicit.get("chat_id", "")
             if chat_id:
-                return await _send(adapter, session, message, str(chat_id))
+                return await _send(
+                    adapter, session, message, str(chat_id), attachments=attachments,
+                )
 
     # 2. Session registry lookup — find routing from session metadata
     if session:
@@ -212,7 +299,7 @@ async def send_notification(session: str, message: str, explicit: dict | None = 
                 return await _send(
                     adapter, session, message,
                     str(chat_id) if adapter == "telegram" else chat_id,
-                    routing.get("thread_ts"), routing,
+                    routing.get("thread_ts"), routing, attachments=attachments,
                 )
 
     # 3. Telegram default — fall back to first allowed user
@@ -221,7 +308,9 @@ async def send_notification(session: str, message: str, explicit: dict | None = 
     telegram_chat_id = allowed[0] if allowed else None
 
     if telegram_token and telegram_chat_id:
-        return await _send("telegram", session, message, telegram_chat_id)
+        return await _send(
+            "telegram", session, message, telegram_chat_id, attachments=attachments,
+        )
 
     raise NoNotificationTarget(
         "no notification target — set TELEGRAM_BOT_TOKEN + TELEGRAM_ALLOWED_USERS "
