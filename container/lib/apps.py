@@ -446,6 +446,7 @@ def stop_app(name: str) -> bool:
     return True
 
 
+@_locked_per_app
 def restart_app(name: str) -> dict:
     """Restart an app through the same lifecycle primitives as start/stop."""
     if not get_app(name):
