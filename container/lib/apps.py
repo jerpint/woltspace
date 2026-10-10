@@ -15,7 +15,9 @@ import json
 import os
 import signal
 import subprocess
+import threading
 import time
+from functools import wraps
 from pathlib import Path
 from woltspace.app_gateway_port import resolve_app_gateway_port
 
@@ -162,6 +164,30 @@ def _enabled_app_gateway_port() -> int | None:
     return resolve_app_gateway_port(WOLTS_DIR, _lodge_port())
 
 
+# --- Per-app lifecycle lock ---
+#
+# Start, stop, share, unshare and keeper changes each read an app's state,
+# act (spawn or stop a process), then write it back. Two at once could each
+# launch a tunnel and leave only one recorded. One re-entrant lock per app
+# serializes them (restore and restart call start/stop under it).
+
+_APP_LOCKS: dict[str, threading.RLock] = {}
+_APP_LOCKS_GUARD = threading.Lock()
+
+
+def _app_lock(name: str) -> threading.RLock:
+    with _APP_LOCKS_GUARD:
+        return _APP_LOCKS.setdefault(name, threading.RLock())
+
+
+def _locked_per_app(func):
+    @wraps(func)
+    def wrapper(name, *args, **kwargs):
+        with _app_lock(name):
+            return func(name, *args, **kwargs)
+    return wrapper
+
+
 # --- Running state ---
 
 
@@ -253,6 +279,7 @@ def intended_apps() -> list[dict]:
     return intended
 
 
+@_locked_per_app
 def start_app(name: str) -> dict:
     """Start an app's dev server. Returns state dict with port and pid.
 
@@ -343,50 +370,57 @@ def apps_restore() -> list[dict]:
     for f in sorted(_RUNNING_STATE_DIR.iterdir()):
         if not f.name.endswith(".json"):
             continue
-        name = f.stem
-        try:
-            state = json.loads(f.read_text())
-        except (json.JSONDecodeError, OSError):
-            continue
-        if not isinstance(state, dict):
-            continue
-        # A quick tunnel recorded by an earlier lodge (or before the owner
-        # switched them off) is closed if today's policy would refuse it.
-        state = _revoke_disallowed_tunnel(name, state)
-
-        # Manifest gone — app was removed while container was down. Its tunnel
-        # goes first: once the record is deleted nothing could find it again.
-        if get_app(name) is None:
-            if state.get("tunnel_pid") and not _close_recorded_tunnel(
-                name, state["tunnel_pid"], "the app was removed",
-            ):
-                actions.append({"name": name, "action": "orphan-kept", "reason": "tunnel survived"})
-                continue
-            try:
-                f.unlink()
-                actions.append({"name": name, "action": "orphan-cleaned"})
-                print(f"[apps] orphan {name} cleaned (no manifest)")
-            except OSError:
-                pass
-            continue
-
-        pid = state.get("pid")
-        if pid and _is_pid_alive(pid):
-            actions.append({"name": name, "action": "survived", "pid": pid})
-            print(f"[apps] {name} survived (pid {pid})")
-            continue
-
-        # Dead PID — respawn (start_app closes the dead app's recorded tunnel).
-        try:
-            new_state = start_app(name)
-            actions.append({"name": name, "action": "restored", "pid": new_state["pid"]})
-            print(f"[apps] restored {name} on port {new_state['port']} (new pid {new_state['pid']})")
-        except Exception as e:
-            actions.append({"name": name, "action": "restore-failed", "error": str(e)})
-            print(f"[apps] restore failed for {name}: {e}")
+        with _app_lock(f.stem):
+            _restore_one(f, actions)
     return actions
 
 
+def _restore_one(f: Path, actions: list[dict]) -> None:
+    """Restore one app's recorded state. Runs under that app's lock."""
+    name = f.stem
+    try:
+        state = json.loads(f.read_text())
+    except (json.JSONDecodeError, OSError):
+        return
+    if not isinstance(state, dict):
+        return
+    # A quick tunnel recorded by an earlier lodge (or before the owner
+    # switched them off) is closed if today's policy would refuse it.
+    state = _revoke_disallowed_tunnel(name, state)
+
+    # Manifest gone — app was removed while container was down. Its tunnel
+    # goes first: once the record is deleted nothing could find it again.
+    if get_app(name) is None:
+        if state.get("tunnel_pid") and not _close_recorded_tunnel(
+            name, state["tunnel_pid"], "the app was removed",
+        ):
+            actions.append({"name": name, "action": "orphan-kept", "reason": "tunnel survived"})
+            return
+        try:
+            f.unlink()
+            actions.append({"name": name, "action": "orphan-cleaned"})
+            print(f"[apps] orphan {name} cleaned (no manifest)")
+        except OSError:
+            pass
+        return
+
+    pid = state.get("pid")
+    if pid and _is_pid_alive(pid):
+        actions.append({"name": name, "action": "survived", "pid": pid})
+        print(f"[apps] {name} survived (pid {pid})")
+        return
+
+    # Dead PID — respawn (start_app closes the dead app's recorded tunnel).
+    try:
+        new_state = start_app(name)
+        actions.append({"name": name, "action": "restored", "pid": new_state["pid"]})
+        print(f"[apps] restored {name} on port {new_state['port']} (new pid {new_state['pid']})")
+    except Exception as e:
+        actions.append({"name": name, "action": "restore-failed", "error": str(e)})
+        print(f"[apps] restore failed for {name}: {e}")
+
+
+@_locked_per_app
 def stop_app(name: str) -> bool:
     """Stop a running app. Also kills any active tunnel. Returns True if it was running."""
     state = _read_state(name)
@@ -430,6 +464,7 @@ def restart_app(name: str) -> dict:
     return state
 
 
+@_locked_per_app
 def set_app_keeper(name: str, keeper: str) -> WoltspaceApp:
     """Atomically update the keeper in an app manifest."""
     path = app_dir(name) / MANIFEST
@@ -535,6 +570,7 @@ def _revoke_disallowed_tunnel(name: str, state: dict) -> dict:
     return state
 
 
+@_locked_per_app
 def share_app(name: str) -> dict:
     """Open a quick tunnel to a running app, if the lodge owner allows them.
 
@@ -576,6 +612,7 @@ def share_app(name: str) -> dict:
     return {"tunnel_url": result["url"], "pid": result["pid"]}
 
 
+@_locked_per_app
 def unshare_app(name: str) -> bool:
     """Stop the cloudflared tunnel for an app.
 
@@ -607,15 +644,13 @@ def unshare_all_apps() -> list[str]:
     for f in sorted(_RUNNING_STATE_DIR.iterdir()):
         if not f.name.endswith(".json"):
             continue
-        try:
-            state = json.loads(f.read_text())
-            name = state.get("name", f.stem)
-            tunnel_pid = state.get("tunnel_pid")
+        name = f.stem
+        with _app_lock(name):
+            state = _read_state(name)
+            tunnel_pid = state.get("tunnel_pid") if state else None
             if tunnel_pid and _close_recorded_tunnel(name, tunnel_pid, "unshare all"):
                 state["tunnel_pid"] = None
                 state["tunnel_url"] = None
                 _write_state(name, state)
                 unshared.append(name)
-        except (json.JSONDecodeError, OSError):
-            continue
     return unshared

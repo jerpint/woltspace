@@ -2373,7 +2373,7 @@ async def app_unshare(name: str):
     if invalid := _invalid_app_name(name):
         return invalid
     try:
-        was_sharing = unshare_app(name)
+        was_sharing = await asyncio.to_thread(unshare_app, name)
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=503)
     if was_sharing:
@@ -2385,7 +2385,7 @@ async def app_unshare(name: str):
 @app.post("/apps/unshare-all")
 async def app_unshare_all():
     """Panic button — stop ALL app tunnels."""
-    unshared = unshare_all_apps()
+    unshared = await asyncio.to_thread(unshare_all_apps)
     print(f"[apps] unshare-all: stopped {len(unshared)} tunnels: {unshared}")
     return {"ok": True, "unshared": unshared}
 

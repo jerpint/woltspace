@@ -784,6 +784,43 @@ class TestUnitShareApp:
             assert apps_mod.unshare_all_apps() == []
         assert apps_mod._read_state("legacy")["tunnel_pid"] == 5555
 
+    def test_two_simultaneous_shares_launch_one_tunnel(self, tmp_path, monkeypatch):
+        """Astre round 5: without a per-app lock both calls launched and one was forgotten."""
+        import threading
+        import apps as apps_mod
+        monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setattr(apps_mod, "WOLTS_DIR", tmp_path / "wolts")
+        monkeypatch.setenv("WOLTSPACE_APP_QUICK_TUNNELS", "1")
+        monkeypatch.delenv("WOLTSPACE_PORT", raising=False)
+        monkeypatch.delenv("PORT", raising=False)
+        launched = []
+        both_inside = threading.Barrier(2)
+
+        def launcher(**_kw):
+            # Unlocked, both calls meet here; locked, the wait times out.
+            try:
+                both_inside.wait(timeout=0.5)
+            except threading.BrokenBarrierError:
+                pass
+            pid = 111 + len(launched)
+            launched.append(pid)
+            return {"pid": pid, "url": f"https://t{pid}.trycloudflare.com"}
+
+        monkeypatch.setattr(apps_mod, "start_cloudflared", launcher)
+        monkeypatch.setattr(apps_mod, "_is_pid_alive", lambda pid: pid in launched)
+        apps_mod._write_state("busy", {"name": "busy", "port": 4500, "pid": 99})
+        results = []
+        threads = [threading.Thread(target=lambda: results.append(apps_mod.share_app("busy")))
+                   for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(5)
+
+        assert launched == [111]
+        assert [r["pid"] for r in results] == [111, 111]
+        assert apps_mod._read_state("busy")["tunnel_pid"] == 111
+
     def test_a_stale_tunnel_pid_is_dropped(self, tmp_path, monkeypatch):
         monkeypatch.delenv("WOLTSPACE_APP_QUICK_TUNNELS", raising=False)
         apps_mod, _stopped = self._legacy_tunnel(tmp_path, monkeypatch, 4500, app_alive=True)
