@@ -100,7 +100,17 @@ def shadow_is_reusable(home: Path) -> bool:
     return False
 
 
-requires_server = pytest.mark.skipif(not _server_up(), reason="server not running on localhost:7777")
+# Talking to a running lodge is opt-in, like the live bot and real spawns: on a
+# developer's machine :7777 is usually their LIVE lodge, and "is something
+# listening" is not consent to drive it.
+def _live_server_enabled() -> bool:
+    return os.environ.get("WOLTSPACE_TEST_LIVE_SERVER", "").strip() == "1"
+
+
+requires_server = pytest.mark.skipif(
+    not (_live_server_enabled() and _server_up()),
+    reason="talks to a running lodge; set WOLTSPACE_TEST_LIVE_SERVER=1 (never against your live one)",
+)
 # getUpdates is not the read-only call it looks like: it is exclusive, so a
 # second caller either gets 409 or wins the race and takes updates the real bot
 # then never sees. Touching the live bot at all is opt-in.
