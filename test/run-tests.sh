@@ -17,7 +17,7 @@
 #                         real person skips unless you name the chat yourself.
 #   WOLTSPACE_TEST_REAL_SPAWN=1 — let tests boot real agent processes
 #   WOLTSPACE_TEST_LIVE_SEND=1  — let tests send real Telegram messages
-#   Server on :7777     — required for integration tests (auto-skipped if down)
+#   A scratch lodge     — live-server tests: WOLTSPACE_TEST_LIVE_SERVER=1 + WOLTSPACE_TEST_SERVER_URL (opt-in tier)
 #   TEST_VERBOSE=1      — post every test result to test group (default: on)
 #   TEST_VERBOSE=0      — summary only
 
@@ -144,6 +144,12 @@ case "$TIER" in
     echo "  wolt: test-shadow — created and removed per test; no real wolt is touched"
     export WOLTSPACE_TEST_REAL_SPAWN=1
     export WOLTSPACE_TEST_LIVE_SEND=1  # also unlocks the live getUpdates probes
+    colony="$(cd "${WOLTSPACE_WOLTS_DIR:-/nonexistent}" 2>/dev/null && pwd -P)"
+    live_colony="$(cd "$HOME/.woltspace/wolts" 2>/dev/null && pwd -P)"
+    if [ -n "$colony" ] && { [ "$colony" = "$live_colony" ] || [ "$colony" = "/workspace/wolts" ]; }; then
+      echo "  ✗ WOLTSPACE_WOLTS_DIR is the live colony; point it at the scratch lodge's colony"
+      exit 1
+    fi
     if [ -z "${WOLTSPACE_TEST_SERVER_URL:-}" ] || [ -z "${WOLTSPACE_WOLTS_DIR:-}" ]; then
       echo "  ✗ set WOLTSPACE_TEST_SERVER_URL and WOLTSPACE_WOLTS_DIR to a scratch lodge and its colony, never your live one"
       exit 1

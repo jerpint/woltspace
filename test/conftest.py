@@ -44,7 +44,16 @@ def _is_live_colony(value: str | None) -> bool:
     return any(path == candidate.expanduser().resolve() for candidate in live)
 
 
-if os.environ.get("WOLTSPACE_TEST_LIVE_SERVER") != "1":
+if os.environ.get("WOLTSPACE_TEST_LIVE_SERVER") == "1":
+    # A live-server run writes wolts into the colony it names: that must be
+    # the scratch lodge's colony, never the live one inherited from a shell.
+    for _key in ("WOLTSPACE_WOLTS_DIR", "WOLTS_DIR"):
+        if _is_live_colony(os.environ.get(_key)):
+            raise SystemExit(
+                f"refusing a live-server test run: {_key} is unset or names the live colony; "
+                "point it at the scratch lodge's colony"
+            )
+else:
     _chosen = next(
         (os.environ[key] for key in ("WOLTSPACE_WOLTS_DIR", "WOLTS_DIR")
          if not _is_live_colony(os.environ.get(key))),
@@ -268,6 +277,8 @@ def server_post():
     import urllib.request
 
     def _post(path: str, body: dict) -> dict:
+        if not (_live_server_enabled() and _server_endpoint()):
+            return {"error": "no live test server (WOLTSPACE_TEST_LIVE_SERVER + WOLTSPACE_TEST_SERVER_URL)"}
         data = json.dumps(body).encode()
         req = urllib.request.Request(
             f"{_server_endpoint()}{path}",
@@ -290,6 +301,8 @@ def server_get():
     import urllib.request
 
     def _get(path: str) -> dict | str:
+        if not (_live_server_enabled() and _server_endpoint()):
+            return {"error": "no live test server (WOLTSPACE_TEST_LIVE_SERVER + WOLTSPACE_TEST_SERVER_URL)"}
         req = urllib.request.Request(f"{_server_endpoint()}{path}", method="GET")
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
