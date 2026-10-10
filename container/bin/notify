@@ -38,24 +38,29 @@ def fail_usage(message: str) -> int:
 
 
 def _take_file(argv: list[str]) -> tuple[list[str], str | None]:
-    """Pull `--file PATH` out of argv, wherever it sits before a `--`."""
+    """Pull `--file PATH` or `--file=PATH` out of argv, wherever it sits before a `--`."""
     rest: list[str] = []
     path: str | None = None
     index = 0
     while index < len(argv):
-        if argv[index] == "--":
+        arg = argv[index]
+        if arg == "--":
             rest.extend(argv[index:])
             break
-        if argv[index] != "--file":
-            rest.append(argv[index])
+        if arg == "--file":
+            value, taken = (argv[index + 1] if index + 1 < len(argv) else ""), 2
+        elif arg.startswith("--file="):
+            value, taken = arg[len("--file="):], 1
+        else:
+            rest.append(arg)
             index += 1
             continue
         if path is not None:
             raise ValueError("only one --file per notify")
-        if index + 1 >= len(argv):
+        if not value:
             raise ValueError("--file requires PATH")
-        path = argv[index + 1]
-        index += 2
+        path = value
+        index += taken
     return rest, path
 
 

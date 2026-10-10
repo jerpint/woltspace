@@ -693,3 +693,52 @@ def test_ok_reply_without_attachments_means_the_file_was_not_sent(tmp_path):
     assert result.stdout == ""
     assert json.loads(capture.read_text())["attachments"][0]["name"] == "a.html"
     assert _entries(box) == []
+
+
+@pytest.mark.parametrize("file_first", [True, False])
+def test_file_flag_accepts_the_equals_form(tmp_path, file_first):
+    env, capture, box = _file_environment(tmp_path)
+    source = tmp_path / "a=b report.html"
+    source.write_bytes(b"<p>a</p>")
+    route_args, file_args = ["--telegram", "-100123"], [f"--file={source}"]
+
+    result = subprocess.run(
+        [NOTIFY, *(file_args + route_args if file_first else route_args + file_args)],
+        input="hello\n",
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(capture.read_text())
+    (attachment,) = payload["attachments"]
+    assert attachment["name"] == "a=b report.html"
+    assert (box / attachment["id"]).read_bytes() == b"<p>a</p>"
+    assert (payload["adapter"], payload["chat_id"]) == ("telegram", "-100123")
+    assert payload["message"] == "🦫 testwolt: hello\n"    # the flag is never message text
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["--file="], "notify: --file requires PATH"),
+        (["--telegram", "123", "--file="], "notify: --file requires PATH"),
+        (["--file=a.html", "--file", "b.html"], "notify: only one --file per notify"),
+        (["--file", "a.html", "--file=b.html"], "notify: only one --file per notify"),
+    ],
+)
+def test_equals_form_has_the_same_usage_errors(tmp_path, argv, expected):
+    env, capture, box = _file_environment(tmp_path)
+    for name in ("a.html", "b.html"):
+        (tmp_path / name).write_bytes(b"<p>x</p>")
+
+    result = subprocess.run(
+        [NOTIFY, *argv], input="hello\n", text=True, capture_output=True, env=env,
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 2
+    assert result.stderr.splitlines()[0] == expected
+    assert not capture.exists()
+    assert _entries(box) == []
