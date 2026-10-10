@@ -55,6 +55,13 @@ async def telegram_send(token: str, chat_id: str, text: str) -> dict:
         return data
 
 
+SLACK_MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
+SLACK_MISSING_FILES_SCOPE = (
+    "Slack app lacks the files:write scope: add it to the app manifest and "
+    "reinstall the app. Text notifications are unaffected."
+)
+
+
 async def slack_send(token: str, channel: str, thread_ts: str | None, text: str) -> dict:
     payload = {"channel": channel, "text": text}
     if thread_ts:
@@ -90,6 +97,59 @@ async def slack_set_agent_status(
         return data
 
 
+def _slack_upload_data(response: httpx.Response) -> dict:
+    data = response.json()
+    if not data.get("ok"):
+        if data.get("error") == "missing_scope":
+            raise RuntimeError(SLACK_MISSING_FILES_SCOPE)
+        raise RuntimeError(data.get("error", "slack error"))
+    return data
+
+
+async def _file_chunks(handle, size: int = 64 * 1024):
+    # An AsyncClient refuses a plain file object as the body; it needs an async stream.
+    while chunk := handle.read(size):
+        yield chunk
+
+
+async def slack_upload_file(
+    token: str, channel: str, thread_ts: str | None, attachment: Attachment, comment: str,
+) -> dict:
+    """Slack's external upload: ask for a URL, send the bytes there, then share the file."""
+    headers = {"Authorization": f"Bearer {token}"}
+    async with httpx.AsyncClient() as client:
+        ticket = _slack_upload_data(await client.post(
+            "https://slack.com/api/files.getUploadURLExternal",
+            data={"filename": attachment.filename, "length": attachment.size},
+            headers=headers,
+            timeout=UPLOAD_TIMEOUT,
+        ))
+        with open(attachment.path, "rb") as handle:
+            # The explicit length keeps httpx from sending the stream chunked.
+            uploaded = await client.post(
+                ticket["upload_url"],
+                content=_file_chunks(handle),
+                headers={"Content-Length": str(attachment.size)},
+                timeout=UPLOAD_TIMEOUT,
+            )
+        if uploaded.status_code != 200:
+            raise RuntimeError(f"slack upload failed: HTTP {uploaded.status_code}")
+        payload = {
+            "files": [{"id": ticket["file_id"], "title": attachment.filename}],
+            "channel_id": channel,
+        }
+        if thread_ts:
+            payload["thread_ts"] = thread_ts
+        if comment:
+            payload["initial_comment"] = comment
+        return _slack_upload_data(await client.post(
+            "https://slack.com/api/files.completeUploadExternal",
+            json=payload,
+            headers=headers,
+            timeout=UPLOAD_TIMEOUT,
+        ))
+
+
 def telegram_sender(transport, send_document=None) -> Send:
     """Temporary transport injection preserves notify's existing patch points."""
     async def send(message: OutboundMessage, destination, context: SendContext) -> None:
@@ -122,7 +182,7 @@ def telegram_sender(transport, send_document=None) -> Send:
     return send
 
 
-def slack_sender(transport, set_status) -> Send:
+def slack_sender(transport, set_status, upload_file=None) -> Send:
     """Temporary transport injection preserves notify's existing patch points."""
     async def send(message: OutboundMessage, destination, context: SendContext) -> None:
         token = context.secrets["SLACK_BOT_TOKEN"]
@@ -131,9 +191,18 @@ def slack_sender(transport, set_status) -> Send:
         text = message.text
         if message.session_link:
             text += f"\n\n<{message.session_link}|Open session>"
+
+        async def deliver() -> None:
+            if not message.attachments:
+                await transport(token, channel, thread_ts, text)
+            elif upload_file is None:
+                raise RuntimeError("slack sender has no upload transport")
+            else:
+                await upload_file(token, channel, thread_ts, message.attachments[0], text)
+
         if context.route_state.get("slack_progress_mode") == "agent" and thread_ts:
             try:
-                await transport(token, channel, thread_ts, text)
+                await deliver()
             finally:
                 try:
                     await set_status(token, channel, thread_ts, "active")
@@ -142,5 +211,5 @@ def slack_sender(transport, set_status) -> Send:
                 context.updates["slack_progress_mode"] = ""
                 context.updates["slack_progress_ts"] = ""
         else:
-            await transport(token, channel, thread_ts, text)
+            await deliver()
     return send

@@ -13,6 +13,7 @@ from pathlib import Path
 from .notification_senders import (
     slack_send, slack_sender, slack_set_agent_status, telegram_send, telegram_sender,
     TELEGRAM_MAX_ATTACHMENT_BYTES, telegram_send_document,
+    SLACK_MAX_ATTACHMENT_BYTES, slack_upload_file,
 )
 from .notification_types import Attachment, OutboundMessage, Plugin, SendContext
 import outbox
@@ -121,9 +122,11 @@ SENDERS = {
         "slack", slack_sender(
             lambda *args: slack_send(*args),
             lambda *args: slack_set_agent_status(*args),
+            lambda *args: slack_upload_file(*args),
         ),
         secrets=("SLACK_BOT_TOKEN",),
         route_state=("slack_progress_mode", "slack_progress_ts"),
+        max_attachment_bytes=SLACK_MAX_ATTACHMENT_BYTES,
     ),
 }
 
