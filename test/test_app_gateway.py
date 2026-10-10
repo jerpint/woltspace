@@ -672,7 +672,7 @@ def test_websocket_bridge_carries_binary_frames_and_identity(monkeypatch):
 def test_websocket_bridge_closes_the_visitor_when_the_app_hangs_up(monkeypatch):
     async def hang_up(connection):
         await connection.send("bye")
-        await connection.close()
+        await connection.close(4000, "app restarting")
 
     box, _thread = _upstream_ws_server(hang_up)
     monkeypatch.setattr(app_proxy, "running_app", lambda _name: {"port": box["port"]})
@@ -681,5 +681,126 @@ def test_websocket_bridge_closes_the_visitor_when_the_app_hangs_up(monkeypatch):
             assert ws.receive_text() == "bye"
             message = ws.receive()
             assert message["type"] == "websocket.close"
+            # The app's own close code and reason reach the visitor.
+            assert message["code"] == 4000
+            assert message["reason"] == "app restarting"
     finally:
         box["stop"].get_loop().call_soon_threadsafe(box["stop"].set_result, None)
+
+
+@pytest.mark.parametrize("code, expected", [
+    (None, 1000), (1000, 1000), (1001, 1001), (1005, 1000), (1006, 1011),
+    (1015, 1011), (4000, 4000), (999, 1011), (5000, 1011),
+])
+def test_only_sendable_close_codes_are_forwarded(code, expected):
+    assert app_proxy._sendable_close_code(code) == expected
+
+
+def test_cookie_filter_removes_only_the_exact_access_cookie():
+    headers = app_proxy.upstream_headers(
+        {"cookie": "cf_authorization2=keep-me; CF_Authorization =t; other=1"}, None,
+    )
+    assert headers["cookie"] == "cf_authorization2=keep-me; other=1"
+
+
+def test_proxy_bounds_the_wait_for_response_headers(monkeypatch):
+    monkeypatch.setattr(app_proxy, "running_app", lambda _name: {"port": 4321})
+    monkeypatch.setattr(app_proxy, "RESPONSE_START_TIMEOUT", 0.05)
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def build_request(self, *args, **kwargs):
+            return httpx.Request(*args, **kwargs)
+
+        async def send(self, *_args, **_kwargs):
+            await asyncio.sleep(30)  # accepted, never answers
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(app_proxy.httpx, "AsyncClient", Client)
+    scope = {
+        "type": "http", "method": "GET", "scheme": "https", "path": "/",
+        "raw_path": b"/", "query_string": b"", "headers": [],
+        "client": ("127.0.0.1", 123), "server": ("notes.example", 443),
+    }
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    response = asyncio.run(app_proxy.proxy_app_http(Request(scope, receive), "notes"))
+    assert response.status_code == 504
+
+
+class _BlockingUpstream:
+    close_code = None
+    close_reason = ""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        await asyncio.Event().wait()
+
+    async def send(self, _message):
+        return None
+
+    async def close(self, *_args):
+        return None
+
+
+class _BlockingVisitor:
+    headers = {}
+    query_params = ""
+    scope = {"state": {}}
+
+    async def accept(self, subprotocol=None):
+        return None
+
+    async def receive(self):
+        await asyncio.Event().wait()
+
+    async def close(self, code=1000, reason=""):
+        self.closed = (code, reason)
+
+
+def test_cancelled_bridge_leaves_no_tasks_behind(monkeypatch):
+    monkeypatch.setattr(app_proxy, "running_app", lambda _name: {"port": 4321})
+    monkeypatch.setattr(app_proxy.websockets, "connect", lambda *_a, **_k: _BlockingUpstream())
+
+    async def scenario():
+        handler = asyncio.ensure_future(
+            app_proxy.proxy_app_websocket(_BlockingVisitor(), "notes", "/live")
+        )
+        await asyncio.sleep(0.05)
+        handler.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await handler
+        await asyncio.sleep(0)
+        return [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+
+    assert asyncio.run(scenario()) == []
+
+
+def test_a_failing_bridge_tells_the_visitor_it_failed(monkeypatch):
+    class Failing(_BlockingUpstream):
+        async def __anext__(self):
+            raise RuntimeError("app bridge broke")
+
+    monkeypatch.setattr(app_proxy, "running_app", lambda _name: {"port": 4321})
+    monkeypatch.setattr(app_proxy.websockets, "connect", lambda *_a, **_k: Failing())
+    visitor = _BlockingVisitor()
+
+    async def scenario():
+        await asyncio.wait_for(app_proxy.proxy_app_websocket(visitor, "notes", "/live"), 5)
+
+    asyncio.run(scenario())
+    assert visitor.closed[0] == 1011

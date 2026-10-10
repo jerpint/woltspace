@@ -6,7 +6,7 @@ import asyncio
 
 import httpx
 import websockets
-from fastapi import Request, WebSocket, WebSocketDisconnect
+from fastapi import Request, WebSocket
 from fastapi.responses import HTMLResponse, StreamingResponse
 
 from apps import get_app, running_apps
@@ -22,17 +22,24 @@ _HOP_BY_HOP = {
     "te", "trailer", "transfer-encoding", "upgrade",
 }
 
-# Streams (SSE, long polls, downloads) may stay quiet for a long time; only
-# connecting to the app and waiting for a pooled connection are bounded.
-_UPSTREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=None, write=None, pool=10.0)
+# Once an app has started answering, its stream (SSE, long polls, downloads)
+# may stay quiet for as long as it likes. Everything before that is bounded:
+# connecting, sending the request body, and the wait for response headers.
+_UPSTREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=10.0)
+RESPONSE_START_TIMEOUT = 60.0
+
+# Close codes an endpoint may send. 1005, 1006 and 1015 only describe what a
+# peer observed and can never be put on the wire.
+_RESERVED_CLOSE_CODES = {1004, 1005, 1006, 1015}
 
 
 def _strip_identity_cookies(value: str) -> str:
     """Drop Cloudflare Access cookies; keep every cookie the app set itself."""
-    kept = [
-        part.strip() for part in value.split(";")
-        if part.strip() and not part.strip().lower().startswith("cf_authorization")
-    ]
+    kept = []
+    for part in value.split(";"):
+        part = part.strip()
+        if part and part.partition("=")[0].strip().lower() != "cf_authorization":
+            kept.append(part)
     return "; ".join(kept)
 
 
@@ -100,7 +107,13 @@ async def proxy_app_http(
         upstream_request = client.build_request(
             request.method, upstream, headers=headers, content=await request.body(),
         )
-        response = await client.send(upstream_request, stream=True, follow_redirects=False)
+        response = await asyncio.wait_for(
+            client.send(upstream_request, stream=True, follow_redirects=False),
+            timeout=RESPONSE_START_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        await client.aclose()
+        return HTMLResponse(f"<h1>{app_name} did not answer in time</h1>", status_code=504)
     except httpx.HTTPError:
         await client.aclose()
         return HTMLResponse(f"<h1>Cannot reach {app_name}</h1>", status_code=502)
@@ -126,6 +139,15 @@ async def proxy_app_http(
     return downstream
 
 
+def _sendable_close_code(code: int | None) -> int:
+    """A close code we may forward; anything abnormal becomes 1011."""
+    if code is None or code == 1005:
+        return 1000
+    if code in _RESERVED_CLOSE_CODES or not (1000 <= code <= 4999):
+        return 1011
+    return code
+
+
 async def proxy_app_websocket(ws: WebSocket, app_name: str, path: str):
     run_state = running_app(app_name)
     if not run_state:
@@ -141,6 +163,9 @@ async def proxy_app_websocket(ws: WebSocket, app_name: str, path: str):
     email = ws.scope.get("state", {}).get("access_email")
     identity = {IDENTITY_HEADER: email} if email else {}
     await ws.accept(subprotocol=subprotocols[0] if subprotocols else None)
+    # What the visitor is told when the bridge ends. Default: the app could
+    # not be reached or the bridge failed.
+    close_code, close_reason = 1011, ""
     try:
         async with websockets.connect(
             upstream_url,
@@ -151,32 +176,52 @@ async def proxy_app_websocket(ws: WebSocket, app_name: str, path: str):
                 while True:
                     message = await ws.receive()
                     if message["type"] == "websocket.disconnect":
-                        return
+                        code = message.get("code") or 1000
+                        await upstream.close(_sendable_close_code(code))
+                        return "visitor"
                     if message.get("bytes") is not None:
                         await upstream.send(message["bytes"])
                     elif message.get("text") is not None:
                         await upstream.send(message["text"])
 
             async def upstream_to_client():
-                async for message in upstream:
-                    if isinstance(message, bytes):
-                        await ws.send_bytes(message)
-                    else:
-                        await ws.send_text(message)
+                try:
+                    async for message in upstream:
+                        if isinstance(message, bytes):
+                            await ws.send_bytes(message)
+                        else:
+                            await ws.send_text(message)
+                except websockets.ConnectionClosed:
+                    pass
+                return "app"
 
-            # Whichever side ends first ends the bridge; the other is cancelled
-            # instead of waiting forever on a peer that is gone.
-            tasks = {
+            # Whichever side ends first ends the bridge. Every child task is
+            # cancelled and awaited in `finally`, so a cancelled handler (the
+            # visitor's connection dropped, shutdown) never leaves one behind.
+            tasks = [
                 asyncio.ensure_future(client_to_upstream()),
                 asyncio.ensure_future(upstream_to_client()),
-            }
-            _done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
-    except Exception:
+            ]
+            try:
+                done, _pending = await asyncio.wait(
+                    tasks, return_when=asyncio.FIRST_COMPLETED,
+                )
+            finally:
+                for task in tasks:
+                    task.cancel()
+                # Retrieves every child's result, so no failure goes unread.
+                await asyncio.gather(*tasks, return_exceptions=True)
+            ended = next(iter(done))
+            if ended.cancelled() or ended.exception() is not None:
+                pass  # the bridge itself failed: the visitor gets 1011
+            elif ended.result() == "visitor":
+                return
+            else:
+                close_code = _sendable_close_code(upstream.close_code)
+                close_reason = upstream.close_reason or ""
+    except (OSError, websockets.WebSocketException):
         pass
     try:
-        await ws.close()
+        await ws.close(code=close_code, reason=close_reason)
     except Exception:
         pass
