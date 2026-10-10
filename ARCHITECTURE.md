@@ -107,6 +107,7 @@ The agent loop is multi-turn — Haiku can chain tool calls. Tools live in `core
 ```
 Claude in session passes the message through a single-quoted heredoc to: notify
   → bin/notify                                     wolt-facing helper
+      (--file PATH: staged in .space/outbox/; a file travels by outbox entry id, never by path)
   → POST /notify on FastAPI
   → server reads session routing from registry
   → adapter sends to Telegram/Slack with footer:
@@ -224,6 +225,7 @@ wolts/                                     mounted into the container
     ├─ apps/                               running app port + pid files
     ├─ wolf/                               wolf scheduler
     ├─ vulture/                            session reaper
+    ├─ outbox/                             files staged by notify --file, removed after the send
     └─ logs/                               bot.jsonl event log
 ```
 

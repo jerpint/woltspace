@@ -8,6 +8,8 @@ The developer is watching this terminal directly — you do NOT need to use `not
 
 If they step away and ask you to notify them, then pass the message to `notify` with a single-quoted heredoc and a fresh random delimiter — but default to terminal conversation.
 
+To send them a file that way, add `--file PATH` to the same command. One file per call. An HTML page must be one self-contained file, with its styles, scripts and images inlined.
+
 ## Viewport
 
 You're running inside a split view: terminal on the left, viewport (iframe) on the right. The developer can see whatever you push to the viewport. Use the woltspace viewport skill whenever you produce something visual — HTML pages, dashboards, diagrams, reports, apps.

@@ -19,11 +19,14 @@ export WOLTSPACE_DIR="$PWD"
 python -m pytest -q test/test_release_workflow.py test/test_lodge_skills.py test/test_skills_sync.py \
   test/test_session_target_api.py test/test_execution_policy.py \
   test/test_auto_grants_cli.py test/test_backup.py test/test_native_doctor.py \
+  test/test_outbox.py test/test_notification_types.py test/test_notify_file_core.py \
+  test/test_notify_file_telegram.py test/test_notify_file_route.py \
   test/test_closed_loop.py::TestRegressions::test_notify_footer_appended \
   test/test_closed_loop.py::TestRegressions::test_notify_script_executable \
   test/test_closed_loop.py::TestRegressions::test_den_reply_footer_consistent \
   test/test_native_resilience.py \
   test/test_native_surfaces.py test/test_telegram_loop.py \
+  test/test_notify_file_slack.py test/test_telegram_reply_caption.py \
   test/test_wolts.py::TestCredentials
 npm test
 ```

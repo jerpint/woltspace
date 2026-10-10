@@ -382,6 +382,9 @@ Use a fresh random delimiter each time. Keep the opening delimiter single-quoted
 and the closing delimiter on a line by itself so the shell treats the message
 body literally. Never pass message text as a command argument.
 
+To send a file, add `--file PATH`: `notify --file report.html <<'...'`.
+One file per call; the notify skill has the details.
+
 ## Your Site
 
 Your site at `wolt/site/` is live in the viewport with livereload at `/wolt/<your-name>/site/`.

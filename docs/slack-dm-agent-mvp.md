@@ -55,7 +55,7 @@ token with `connections:write` and install the app to the workspace. Do not add
   },
   "oauth_config": {
     "scopes": {
-      "bot": ["assistant:write", "chat:write", "im:history"]
+      "bot": ["assistant:write", "chat:write", "files:write", "im:history"]
     }
   },
   "settings": {
@@ -71,6 +71,12 @@ token with `connections:write` and install the app to the workspace. Do not add
   }
 }
 ```
+
+`files:write` is what lets a wolt send a file with `notify --file`. An app
+created before the manifest carried this scope must add it and be reinstalled
+once. Until then a file send fails with a message that names the scope, and
+text notifications keep working. Receiving attachments is unchanged: it stays
+deferred.
 
 Configure the lodge only after copying the intended human's immutable Slack
 member ID (starts with `U` or `W`):
@@ -105,6 +111,7 @@ the same owned thread recovers. Never infer the owner from the first sender.
 | Suggested prompts | Yes, in Slack's Agent View | Future handler and product work. |
 | Processing/active status | Implemented | Agent View plus `assistant:write`; final delivery returns status to `active`. |
 | Agent Session title | Implemented | Exact Woltspace slug today; human-friendly Woltspace-owned names later. |
+| Sending a file | Implemented | `files:write`; `notify --file` uploads into the session's thread. Receiving attachments stays deferred. |
 | Streaming responses | Partially | Uses Slack's stream API when available, with a plain final-message fallback. |
 | Native Stop | Yes, through `agent_session_stopped` | Convert the app to Agent View, subscribe to the event, and map it to real session interruption. |
 | Per-wolt name/icon | Yes | Add `chat:write.customize`; keep sender identity auditable and owner-controlled. |

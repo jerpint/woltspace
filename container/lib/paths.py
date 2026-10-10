@@ -85,6 +85,11 @@ def space_logs_dir(wolts_dir: Path = None) -> Path:
     return space_dir(wolts_dir) / "logs"
 
 
+def space_outbox_dir(wolts_dir: Path = None) -> Path:
+    """Files a wolt staged for sending: wolts/.space/outbox/"""
+    return space_dir(wolts_dir) / "outbox"
+
+
 # ---------------------------------------------------------------------------
 # Specific files
 # ---------------------------------------------------------------------------
