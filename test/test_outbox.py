@@ -277,6 +277,70 @@ def test_credential_rule_matches_the_backup_rules(rel):
     assert outbox.credential_rule(Path(rel)) == secret_rule(rel)
 
 
+@pytest.mark.parametrize("rel", [
+    ".ssh/deploy", "home/ali/.ssh/id_rsa.bak", ".ssh/keys/work", ".SSH/deploy",
+    "id_rsa", "backup/id_dsa", "id_ecdsa", "id_ed25519", "keys/id_ecdsa_sk", "id_ed25519_sk",
+    "ID_RSA",
+    "server.pem", "certs/SERVER.PEM", "tls.key", "store.p12", "store.PFX",
+    ".netrc", "home/.git-credentials", ".pgpass", ".NETRC",
+])
+def test_credential_rule_refuses_keys_and_password_files(rel):
+    assert outbox.credential_rule(Path(rel)) is not None
+
+
+@pytest.mark.parametrize("rel", [
+    ".ssh/id_ed25519.pub", ".ssh/known_hosts", ".ssh/authorized_keys", ".ssh/config",
+    "id_rsa.pub", "id_rsa.txt", "my_id_rsa", "ssh/notes.txt", "x.ssh/notes.txt", ".ssh",
+    "pem", "notes.pem.txt", "monkey", "netrc", "pgpass.md", "keys/readme.md",
+])
+def test_credential_rule_lets_public_and_ordinary_files_through(rel):
+    assert outbox.credential_rule(Path(rel)) is None
+
+
+@pytest.mark.parametrize("rel, rule", [
+    (".ssh/deploy", "ssh-folder"), ("id_ed25519", "ssh-key"), ("tls.key", "key-file"),
+    (".netrc", "password-file"),
+])
+def test_each_sending_only_rule_has_its_own_name(rel, rule):
+    assert outbox.credential_rule(Path(rel)) == rule
+
+
+def test_the_sending_only_rules_are_not_backup_s(tmp_path):
+    # A backup keeps a key; only a send refuses one. backup.py is not to change.
+    from woltspace.backup import secret_rule
+    for rel in (".ssh/deploy", "id_ed25519", "tls.key", ".netrc"):
+        assert secret_rule(rel) is None
+
+
+@pytest.mark.parametrize("name", ["server.pem", "id_ed25519", ".netrc"])
+def test_check_source_refuses_a_key_or_a_password_file(tmp_path, name):
+    path = tmp_path / name
+    path.write_text("secret")
+    error = _reason(outbox.check_source, path)
+    assert error.reason == "credential"
+    assert str(error) == f"refusing to send a credential file: {name}"
+
+
+def test_check_source_sees_a_private_key_behind_an_innocent_symlink(tmp_path):
+    (tmp_path / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----")
+    link = tmp_path / "notes.txt"
+    link.symlink_to(tmp_path / "id_ed25519")
+    error = _reason(outbox.check_source, link)
+    assert error.reason == "credential"
+    assert str(error) == "refusing to send a credential file: notes.txt"
+
+
+def test_check_source_sees_the_ssh_folder_behind_a_relative_name(tmp_path, monkeypatch):
+    (tmp_path / ".ssh" / "keys").mkdir(parents=True)
+    (tmp_path / ".ssh" / "keys" / "deploy").write_text("secret")
+    (tmp_path / ".ssh" / "config").write_text("Host *")
+    monkeypatch.chdir(tmp_path / ".ssh" / "keys")
+    error = _reason(outbox.check_source, Path("deploy"))
+    assert error.reason == "credential"
+    assert str(error) == "refusing to send a credential file: deploy"
+    assert outbox.check_source(tmp_path / ".ssh" / "config") == len("Host *")
+
+
 # --- discard and sweep ------------------------------------------------------
 
 def test_discard_removes_the_entry(tmp_path):

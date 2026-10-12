@@ -24,6 +24,13 @@ MAX_ENTRY_AGE_SECONDS = 3600
 ENTRY_ID_RE = re.compile(r"[0-9a-f]{32}")
 
 _DOTENV_TEMPLATE_SUFFIXES = (".example", ".sample")
+# What an `.ssh` folder holds that is public, or names no secret.
+_SSH_PUBLIC_NAMES = frozenset({"known_hosts", "authorized_keys", "config"})
+_SSH_KEY_NAMES = frozenset({
+    "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_ecdsa_sk", "id_ed25519_sk",
+})
+_KEY_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
+_PASSWORD_FILE_NAMES = frozenset({".netrc", ".git-credentials", ".pgpass"})
 _MAX_NAME_CHARS = 200
 _MAX_SUFFIX_CHARS = 16
 # Unicode direction controls. Left in a name they can make it read backwards in
@@ -42,7 +49,11 @@ class OutboxError(ValueError):
 
 
 def credential_rule(path: Path) -> str | None:
-    """Which credential rule a path trips, if any. The rules of backup.secret_rule."""
+    """Which credential rule a path trips, if any.
+
+    The first three are the rules of backup.secret_rule. The rest are for
+    sending only.
+    """
     name = path.name
     parent = path.parent.name
     if name == ".env" or (
@@ -53,6 +64,18 @@ def credential_rule(path: Path) -> str | None:
         return "claude-credentials"
     if parent == ".codex" and name == "auth.json":
         return "codex-auth"
+    # Read without regard to case: on a Mac `ID_RSA` is `id_rsa`.
+    lowered = name.lower()
+    if any(part.lower() == ".ssh" for part in path.parts[:-1]) and not (
+        lowered.endswith(".pub") or lowered in _SSH_PUBLIC_NAMES
+    ):
+        return "ssh-folder"
+    if lowered in _SSH_KEY_NAMES:
+        return "ssh-key"
+    if lowered.endswith(_KEY_SUFFIXES):
+        return "key-file"
+    if lowered in _PASSWORD_FILE_NAMES:
+        return "password-file"
     return None
 
 
