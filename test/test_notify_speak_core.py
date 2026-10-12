@@ -252,6 +252,19 @@ async def test_the_audio_is_removed_when_the_sender_raises(lodge, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_an_outbox_that_cannot_be_made_is_reported_without_its_path(lodge, monkeypatch):
+    # tunnel.json is a file, so nothing can be made beneath it.
+    monkeypatch.setattr(notify, "OUTBOX_DIR", lodge.tmp / "tunnel.json" / "outbox")
+
+    with pytest.raises(RuntimeError) as error:
+        await notify.send_notification("test-session", "hi\n", None, (), WORDS)
+
+    assert not isinstance(error.value, notify.SpeechError)      # the route answers 500
+    assert str(error.value) == "could not write the spoken audio: not a directory"
+    assert lodge.spoken == [] and lodge.sent == []
+
+
+@pytest.mark.asyncio
 async def test_a_missing_token_is_reported_before_anything_is_spoken(lodge):
     lodge.env["TELEGRAM_BOT_TOKEN"] = ""
     explicit = {"adapter": "telegram", "chat_id": "101"}

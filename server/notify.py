@@ -20,6 +20,7 @@ from .notification_senders import (
 from .notification_types import Attachment, OutboundMessage, Plugin, SendContext
 from .speech import (
     DEFAULT_SPEECH_MODEL, DEFAULT_SPEECH_VOICE, SPEECH_FILES, SpeechError, synthesize,
+    write_failure,
 )
 import outbox
 import voice_notes
@@ -220,7 +221,11 @@ async def _spoken(speech: _Speech, sender: Plugin, adapter: str) -> Attachment:
             "speech_not_configured",
             f"speaking needs OPENAI_API_KEY in {WOLTS_DIR}/.env; send the message as text",
         )
-    OUTBOX_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        OUTBOX_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError as exc:
+        # Before the words are spoken: there would be nowhere to keep the audio.
+        raise write_failure(exc) from None
     path = OUTBOX_DIR / speech.entry_id
     size = await synthesize(
         speech.text, sender.speech_format, path, api_key=api_key,

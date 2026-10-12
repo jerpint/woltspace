@@ -27,6 +27,17 @@ class SpeechError(RuntimeError):
         self.reason = reason
 
 
+def write_failure(exc: OSError) -> RuntimeError:
+    """The lodge could not keep the audio: its own fault, not the service's.
+
+    The OS text names the lodge's paths, so the error carries the reason alone.
+    """
+    return RuntimeError(
+        "could not write the spoken audio: "
+        f"{exc.strerror.lower() if exc.strerror else type(exc).__name__}"
+    )
+
+
 def _is_audio(speech_format: str, head: bytes) -> bool:
     """Whether a body starts the way audio in this format does."""
     if speech_format == "opus":
@@ -101,12 +112,7 @@ async def synthesize(
             "speech_failed", f"could not reach the speech service: {type(exc).__name__}",
         ) from None
     except OSError as exc:
-        # The lodge's own fault, not the service's. The OS text names the
-        # lodge's paths, so the error carries the reason alone.
-        raise RuntimeError(
-            "could not write the spoken audio: "
-            f"{exc.strerror.lower() if exc.strerror else type(exc).__name__}"
-        ) from None
+        raise write_failure(exc) from None
     finally:
         if created and not complete:
             Path(target).unlink(missing_ok=True)
