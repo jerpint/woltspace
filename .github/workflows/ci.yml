@@ -59,6 +59,7 @@ jobs:
           test/test_native_doctor.py
           test/test_outbox.py
           test/test_notification_types.py
+          test/test_notification_senders.py
           test/test_notify_file_core.py
           test/test_notify_file_telegram.py
           test/test_notify_file_telegram_methods.py
