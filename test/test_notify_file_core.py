@@ -253,8 +253,10 @@ async def test_unknown_content_type_falls_back_to_octet_stream(lodge, name, file
 async def test_every_route_carries_the_attachment(lodge, case):
     explicit, adapter, destination = None, "telegram", {"chat_id": "101"}
     if case == "explicit_telegram":
+        lodge.env["TELEGRAM_ALLOWED_USERS"] = "101,404"     # a file goes only to the lodge's own chats
         explicit, destination = {"adapter": "telegram", "chat_id": 404}, {"chat_id": "404"}
     elif case == "explicit_slack":
+        lodge.env["SLACK_NOTIFY_CHANNEL"] = "C123"
         explicit = {"adapter": "slack", "channel": "C123", "thread_ts": "1.2"}
         adapter, destination = "slack", {"channel": "C123", "thread_ts": "1.2"}
     elif case == "session_telegram":

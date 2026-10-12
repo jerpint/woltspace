@@ -63,6 +63,7 @@ jobs:
           test/test_notify_file_telegram.py
           test/test_notify_file_telegram_methods.py
           test/test_notify_file_route.py
+          test/test_notify_destination.py
           test/test_voice_notes.py
           test/test_notify_voice_telegram.py
           test/test_notify_voice_core.py

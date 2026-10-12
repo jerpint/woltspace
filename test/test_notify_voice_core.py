@@ -162,6 +162,7 @@ async def test_a_voice_entry_sent_to_slack_is_still_answered_as_a_voice_note(lod
     # `notify --voice` reads the mark in the answer; without it the command
     # would report a Slack send as one an older lodge made.
     entry = _stage(lodge, "note.mp3", OGG)
+    lodge.env["SLACK_NOTIFY_CHANNEL"] = "D0123456789"       # the lodge's own chat
     explicit = {"adapter": "slack", "channel": "D0123456789", "thread_ts": "1.2"}
 
     result = await notify.send_notification(

@@ -238,12 +238,30 @@ async def _spoken(speech: _Speech, sender: Plugin, adapter: str) -> Attachment:
     return Attachment(path, filename, size, content_type, "voice")
 
 
+def _own_chats(adapter: str, session_record: dict | None) -> set[str]:
+    """The chats that are this lodge's own: the ones it is set up with, and the session's."""
+    if adapter == "telegram":
+        chats = {entry.strip() for entry in dotenv_env("TELEGRAM_ALLOWED_USERS").split(",")}
+    else:
+        chats = {dotenv_env("SLACK_NOTIFY_CHANNEL")}
+    if session_record and session_record.get("adapter") == adapter:
+        chats.add(str(session_record.get("chat_id") or ""))
+    chats.discard("")
+    return chats
+
+
 async def _send(
     adapter: str, session: str, message: str, chat_id: str,
     thread_ts: str | None = None, routing: dict | None = None,
     attachments: tuple[Attachment, ...] = (), speech: _Speech | None = None,
+    session_record: dict | None = None,
 ) -> dict:
-    """Resolve core context, dispatch a built-in, and persist its declared updates."""
+    """Resolve core context, dispatch a built-in, and persist its declared updates.
+
+    `routing` is the session's record only when the route is the session's own
+    thread, and carries its progress state. `session_record` is that record
+    whatever the route, and is read only to tell whose chat this is.
+    """
     sender = SENDERS[adapter]
     secrets = {key: dotenv_env(key) for key in sender.secrets}
     session_link = ""
@@ -270,6 +288,17 @@ async def _send(
         destination = {"channel": chat_id}
         if thread_ts is not None:
             destination["thread_ts"] = thread_ts
+
+    if (attachments or speech is not None) and str(chat_id) not in _own_chats(
+        adapter, session_record,
+    ):
+        # Text may go to any chat a caller names. A file can be anything on this
+        # machine, so it goes only where the lodge already talks to its human.
+        raise AttachmentError(
+            "attachment_destination",
+            f"a file goes only to this lodge's own chats, and {adapter} {chat_id} is not "
+            "one of them; send it to your own chat, or send text only",
+        )
 
     if speech is not None:
         # Only now that there is somewhere to send it: every spoken message is
@@ -393,13 +422,14 @@ async def _route(
             return await _send(
                 adapter, session if exact else "", message, channel, thread_ts,
                 routing if exact else None, attachments=attachments, speech=speech,
+                session_record=routing,
             )
         if adapter == "telegram":
             chat_id = explicit.get("chat_id", "")
             if chat_id:
                 return await _send(
                     adapter, session, message, str(chat_id), attachments=attachments,
-                    speech=speech,
+                    speech=speech, session_record=routing,
                 )
 
     # 2. Session registry lookup — find routing from session metadata
@@ -412,7 +442,7 @@ async def _route(
                     adapter, session, message,
                     str(chat_id) if adapter == "telegram" else chat_id,
                     routing.get("thread_ts"), routing, attachments=attachments,
-                    speech=speech,
+                    speech=speech, session_record=routing,
                 )
 
     # 3. Telegram default — fall back to first allowed user
@@ -423,7 +453,7 @@ async def _route(
     if telegram_token and telegram_chat_id:
         return await _send(
             "telegram", session, message, telegram_chat_id, attachments=attachments,
-            speech=speech,
+            speech=speech, session_record=routing,
         )
 
     raise NoNotificationTarget(

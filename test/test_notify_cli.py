@@ -1182,8 +1182,8 @@ def test_voice_request_and_answer_are_the_ones_the_lodge_really_reads_and_writes
 
     # The lodge, with its outbound transports replaced: nothing leaves the process.
     lodge_env = {
-        "TELEGRAM_BOT_TOKEN": "telegram-token", "TELEGRAM_ALLOWED_USERS": "101",
-        "SLACK_BOT_TOKEN": "slack-token",
+        "TELEGRAM_BOT_TOKEN": "telegram-token", "TELEGRAM_ALLOWED_USERS": "101,12345",
+        "SLACK_BOT_TOKEN": "slack-token", "SLACK_NOTIFY_CHANNEL": "D0123456789",
     }
     uploaded = []
 
@@ -1245,8 +1245,9 @@ def test_speak_request_and_answer_are_the_ones_the_lodge_really_reads_and_writes
     request = json.loads(capture.read_text())
 
     lodge_env = {
-        "TELEGRAM_BOT_TOKEN": "telegram-token", "TELEGRAM_ALLOWED_USERS": "101",
-        "SLACK_BOT_TOKEN": "slack-token", "OPENAI_API_KEY": "sk-test",
+        "TELEGRAM_BOT_TOKEN": "telegram-token", "TELEGRAM_ALLOWED_USERS": "101,12345",
+        "SLACK_BOT_TOKEN": "slack-token", "SLACK_NOTIFY_CHANNEL": "D0123456789",
+        "OPENAI_API_KEY": "sk-test",
     }
     said, uploaded = [], []
 
@@ -1290,3 +1291,59 @@ def test_speak_request_and_answer_are_the_ones_the_lodge_really_reads_and_writes
 
     assert second.returncode == 0, second.stderr
     assert second.stdout.rstrip("\n").endswith("[spoken]")
+
+
+def test_a_file_for_a_chat_that_is_not_the_lodge_s_own_is_refused_and_removed(
+    tmp_path, monkeypatch,
+):
+    # The command's own request goes to the real route and core, which refuse
+    # the destination, and their answer goes back to the command.
+    from unittest.mock import AsyncMock, Mock
+
+    from starlette.testclient import TestClient
+
+    monkeypatch.syspath_prepend(str(ROOT))
+    import server.app as server_app
+    from server import notify
+
+    env, capture, box = _file_environment(tmp_path)
+    source = tmp_path / "a.html"
+    source.write_bytes(b"<p>a</p>")
+    argv = ["--file", str(source), "--telegram", "999"]
+
+    first = _run(argv, env)
+    assert first.returncode == 0, first.stderr
+    request = json.loads(capture.read_text())
+
+    lodge_env = {"TELEGRAM_BOT_TOKEN": "telegram-token", "TELEGRAM_ALLOWED_USERS": "101"}
+    telegram_send_document = AsyncMock()
+    monkeypatch.setattr(notify, "telegram_send", AsyncMock())
+    monkeypatch.setattr(notify, "telegram_send_document", telegram_send_document)
+    monkeypatch.setattr(notify, "dotenv_env", lambda key: lodge_env.get(key, ""))
+    monkeypatch.setattr(notify, "OUTBOX_DIR", box)
+    monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
+    monkeypatch.setattr(notify, "read_session_registry", lambda name: None)
+    monkeypatch.setattr(notify, "append_chat_history", Mock())
+    monkeypatch.setattr(server_app, "bot_log", Mock())
+
+    response = TestClient(server_app.app, base_url="http://localhost:7777").post(
+        "/notify", json=request,
+    )
+
+    assert response.status_code == 400, response.json()
+    telegram_send_document.assert_not_awaited()
+    assert _entries(box) == []                          # the lodge removed what it refused
+
+    curl = Path(env["PATH"].split(":", 1)[0]) / "curl"
+    curl.write_text(
+        _ANSWERING_CURL.replace("'__REPLY__'", shlex.quote(json.dumps(response.json())))
+    )
+    second = _run(argv, env)
+
+    assert second.returncode == 1
+    assert second.stderr == (
+        "notify: failed: a file goes only to this lodge's own chats, and telegram 999 "
+        "is not one of them; send it to your own chat, or send text only\n"
+    )
+    assert second.stdout == ""
+    assert _entries(box) == []                          # and the command, what it staged

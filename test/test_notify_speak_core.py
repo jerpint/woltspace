@@ -114,6 +114,7 @@ async def test_the_words_are_spoken_and_sent_as_a_voice_attachment(lodge):
 
 @pytest.mark.asyncio
 async def test_slack_gets_mp3(lodge):
+    lodge.env["SLACK_NOTIFY_CHANNEL"] = "D0123456789"       # the lodge's own chat
     explicit = {"adapter": "slack", "channel": "D0123456789", "thread_ts": "1.2"}
 
     await notify.send_notification("test-session", "hi\n", explicit, (), WORDS)
