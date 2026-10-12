@@ -78,6 +78,7 @@ jobs:
           test/test_notify_file_slack.py
           test/test_telegram_reply_caption.py
           test/test_wolts.py::TestCredentials
+          test/test_wolts.py::TestSyncClaudeMdPlatformSection
       - name: Node suite
         run: npm test
 
