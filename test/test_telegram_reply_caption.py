@@ -181,3 +181,122 @@ def test_quote_reply_names_the_file_and_drops_the_footer(body, file_name, expect
     from bot.telegram_adapter import _quote_reply
 
     assert _quote_reply(body, file_name, "ok") == expected
+
+
+# --- a reply to a voice note -------------------------------------------------
+
+def _voice_note(caption):
+    reply_to = MagicMock()
+    reply_to.text = None
+    reply_to.caption = caption
+    reply_to.document = None
+    reply_to.voice.file_unique_id = "AgADvoice"
+    return reply_to
+
+
+@pytest.mark.asyncio
+async def test_reply_to_a_voice_note_with_a_caption_routes_to_the_session():
+    update = _update(_voice_note("🦦 nunu: the build is green" + FOOTER))
+    session, wolt, message = await _routed_by_handle_message(update)
+    assert (session, wolt) == (SESSION, "nunu")
+    assert message.startswith("[replying to voice note: 🦦 nunu: the build is green")
+    assert message.endswith("]\nlooks good")
+    assert DEN_REPLY_FOOTER.strip() not in message
+
+
+@pytest.mark.asyncio
+async def test_reply_to_a_voice_note_whose_caption_is_only_the_footer():
+    update = _update(_voice_note(FOOTER.strip()))
+    session, wolt, message = await _routed_by_handle_message(update)
+    assert (session, wolt) == (SESSION, "nunu")
+    assert message == "[replying to voice note]\nlooks good"
+
+
+@pytest.mark.asyncio
+async def test_voice_reply_to_a_voice_note_routes_to_the_session():
+    from bot import telegram_adapter as tg
+
+    update = _update(_voice_note("🦦 nunu: the build is green" + FOOTER))
+    update.message.voice.file_id = "voice-file"
+    update.message.voice.file_unique_id = "voice-unique"
+    file = MagicMock()
+    file.download_as_bytearray = AsyncMock(return_value=bytearray(b"ogg"))
+    context = MagicMock()
+    context.bot.get_file = AsyncMock(return_value=file)
+    with patch("bot.telegram_adapter.is_allowed", return_value=True), \
+         patch("bot.telegram_adapter.asyncio.sleep", new_callable=AsyncMock), \
+         patch("bot.telegram_adapter._save_upload"), \
+         patch("bot.telegram_adapter.transcribe_audio", return_value="hello there"), \
+         patch("bot.telegram_adapter._load_chat_state", return_value={"active_wolt": "uxwolt", "active_session": "uxwolt-test-123-abc"}), \
+         patch("bot.telegram_adapter._save_chat_state"), \
+         patch("bot.telegram_adapter._notify_switch", new_callable=AsyncMock), \
+         patch("bot.telegram_adapter._is_session_alive", return_value=True), \
+         patch("bot.telegram_adapter._route_to_session", new_callable=AsyncMock, return_value=SESSION) as route:
+        await tg.handle_voice(update, context)
+
+    route.assert_called_once()
+    session, wolt, message = route.call_args[0][1:4]
+    assert (session, wolt) == (SESSION, "nunu")
+    assert message.startswith("[replying to voice note: 🦦 nunu: the build is green")
+    assert message.endswith("]\n[voice message] hello there")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text, routed", [
+    ("🦦 nunu: the build is green", "[replying to voice note: 🦦 nunu: the build is green\n]\nok"),
+    ("🦦 nunu: " + "long " * 300, "[replying to voice note]\nok"),
+], ids=["text-fits-the-caption", "text-went-first"])
+async def test_a_voice_caption_the_telegram_sender_wrote_routes_the_reply(text, routed, tmp_path):
+    from bot.telegram_adapter import (
+        _parse_session_from_reply, _quote_reply, _reply_is_voice, _reply_source,
+    )
+    from server.notification_senders import telegram_sender
+    from server.notification_types import Attachment, OutboundMessage, SendContext
+
+    voice = AsyncMock()
+    send = telegram_sender(AsyncMock(), AsyncMock(), voice)
+    await send(
+        OutboundMessage(text, f"https://abc.trycloudflare.com/tui?session={SESSION}", (
+            Attachment(tmp_path / "entry", "voice-note.ogg", 11, "audio/ogg", "voice"),
+        )),
+        {"chat_id": "42"}, SendContext({"TELEGRAM_BOT_TOKEN": "t"}, {}),
+    )
+    caption = voice.await_args.args[3]
+
+    reply_to = SimpleNamespace(
+        text=None, caption=caption, document=None,
+        voice=SimpleNamespace(file_unique_id="AgADvoice"),
+    )
+    body, name = _reply_source(reply_to)
+    assert _parse_session_from_reply(body) == SESSION
+    assert _quote_reply(body, name, "ok", _reply_is_voice(reply_to)) == routed
+
+
+def test_only_a_real_voice_counts_as_a_voice_note():
+    from bot.telegram_adapter import _reply_is_voice
+
+    assert _reply_is_voice(_voice_note("x")) is True
+    assert _reply_is_voice(SimpleNamespace(voice=SimpleNamespace(file_unique_id="AgAD"))) is True
+    assert _reply_is_voice(MagicMock()) is False            # a stand-in has every attribute
+    assert _reply_is_voice(_file_message("x")) is False
+    assert _reply_is_voice(SimpleNamespace(voice=None)) is False
+    assert _reply_is_voice(SimpleNamespace()) is False
+
+
+@pytest.mark.parametrize("body, expected", [
+    # The newline before "]" is what today's quoting leaves of the footer's blank line.
+    ("🦦 nunu: done" + FOOTER, "[replying to voice note: 🦦 nunu: done\n]\nok"),
+    (FOOTER.strip(), "[replying to voice note]\nok"),
+    ("", "[replying to voice note]\nok"),
+])
+def test_quote_reply_names_a_voice_note_and_drops_the_footer(body, expected):
+    from bot.telegram_adapter import _quote_reply
+
+    assert _quote_reply(body, None, "ok", True) == expected
+
+
+def test_quote_reply_without_the_voice_flag_is_unchanged():
+    from bot.telegram_adapter import _quote_reply
+
+    assert _quote_reply("🦦 nunu: done" + FOOTER, None, "ok") == "[replying to: 🦦 nunu: done\n]\nok"
+    assert _quote_reply(FOOTER.strip(), None, "ok") == "ok"

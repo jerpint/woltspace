@@ -483,7 +483,8 @@ def _parse_session_from_reply(reply_text: str) -> str | None:
 
 def _reply_source(reply_to) -> tuple[str, str | None]:
     """The text that may carry the reply footer, and the replied-to file's name if any."""
-    # A document carries the footer in its caption; a text message in its text.
+    # A document or a voice note carries the footer in its caption; a text
+    # message in its text.
     body = next(
         (value for value in (reply_to.text, reply_to.caption) if isinstance(value, str) and value),
         "",
@@ -492,21 +493,29 @@ def _reply_source(reply_to) -> tuple[str, str | None]:
     return body, name if isinstance(name, str) and name else None
 
 
-def _quote_reply(body: str, file_name: str | None, message: str) -> str:
+def _reply_is_voice(reply_to) -> bool:
+    """Whether the replied-to message is a voice note."""
+    # Judged by type, as the file name above is: a stand-in has every attribute.
+    voice = getattr(reply_to, "voice", None)
+    return isinstance(getattr(voice, "file_unique_id", None), str)
+
+
+def _quote_reply(body: str, file_name: str | None, message: str, voice: bool = False) -> str:
     """Prefix a routed reply with what it replies to, without the reply footer."""
     footer = "---\n" + _REPLY_FOOTER_MARKER
     quoted = body
     if quoted.startswith(footer):
-        # A file sent after its text carries the footer alone as its caption.
+        # A file or a voice note sent after its text carries the footer alone as its caption.
         quoted = ""
     else:
         footer_idx = quoted.find("\n" + footer)
         if footer_idx >= 0:
             quoted = quoted[:footer_idx]
+    what = f"file {file_name}" if file_name else "voice note" if voice else ""
     if not quoted.strip():
-        return f"[replying to file {file_name}]\n{message}" if file_name else message
-    if file_name:
-        return f"[replying to file {file_name}: {quoted[:200]}]\n{message}"
+        return f"[replying to {what}]\n{message}" if what else message
+    if what:
+        return f"[replying to {what}: {quoted[:200]}]\n{message}"
     return f"[replying to: {quoted[:200]}]\n{message}"
 
 
@@ -598,7 +607,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_wolt = _wolt_from_session_name(reply_session)
             if reply_wolt:
                 # Build message with reply context, without the footer
-                reply_text = _quote_reply(reply_body, reply_file, text)
+                reply_text = _quote_reply(
+                    reply_body, reply_file, text, _reply_is_voice(reply_to),
+                )
 
                 # Try routing directly — message_session handles revive internally
                 prev_state = _load_chat_state(chat_id)
@@ -803,7 +814,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if reply_session:
             reply_wolt = _wolt_from_session_name(reply_session)
             if reply_wolt:
-                reply_text = _quote_reply(reply_body, reply_file, voice_message)
+                reply_text = _quote_reply(
+                    reply_body, reply_file, voice_message, _reply_is_voice(reply_to),
+                )
 
                 # Try routing directly — message_session handles revive internally
                 prev_state = _load_chat_state(chat_id)
