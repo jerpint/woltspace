@@ -8,7 +8,7 @@ The developer is watching this terminal directly — you do NOT need to use `not
 
 If they step away and ask you to notify them, then pass the message to `notify` with a single-quoted heredoc and a fresh random delimiter — but default to terminal conversation.
 
-To send them a file that way, add `--file PATH` to the same command. One file per call. An HTML page must be one self-contained file, with its styles, scripts and images inlined.
+To send them a file that way, add `--file PATH` to the same command. One file per call. An HTML page must be one self-contained file, with its styles, scripts and images inlined. To answer by voice, add `--speak` instead: the lodge reads your message aloud and sends it as a voice note.
 
 ## Viewport
 

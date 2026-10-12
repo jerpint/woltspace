@@ -184,6 +184,12 @@ platform's owner-DM Agent View adapter; there is no custom Slack module path.
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` are passed through
 to litellm and the image generator.
 
+**Voice** — `OPENAI_API_KEY` is also the key that transcribes a voice note the
+human sends and speaks a message a wolt sends with `notify --speak`.
+`OPENAI_TTS_MODEL` (default `gpt-4o-mini-tts`) and `OPENAI_TTS_VOICE` (default
+`alloy`) pick the model and the voice of the spoken message. Read by
+`server/notify.py`; each spoken message is one paid request.
+
 **Harnesses** — `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`,
 `CLAUDE_CODE_DISABLE_AUTO_MEMORY`, `CODEX_HOME`, `OPENCODE_CONFIG_DIR` and the
 `XDG_*` directories. Located by `container/lib/harness_auth.py`, carried into

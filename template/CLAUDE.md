@@ -39,6 +39,9 @@ body literally. Never pass message text as a command argument.
 To send a file, add `--file PATH`: `notify --file report.html <<'...'`.
 One file per call; the notify skill has the details.
 
+To answer by voice, add `--speak`: the lodge reads your message aloud and sends
+it as a voice note. `--voice PATH` sends audio you already have as one.
+
 ## Your Site
 
 Your site at `wolt/site/` is live in the viewport with livereload at `/wolt/<your-name>/site/`.

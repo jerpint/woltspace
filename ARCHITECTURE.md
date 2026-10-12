@@ -43,6 +43,7 @@ server/                     FastAPI server, port 7777
   state.py                    Viewport state + views history
   tunnel.py                   Lodge tunnel lifecycle (quick or named)
   notify.py                   Outbound Telegram/Slack notifications
+  speech.py                   Text to audio for notify --speak; the one module that talks to the speech service
   tools.py                    Tool process registry (spawn + proxy)
   sparks.py                   Spark/digest storage
   tui-service.js              Node pty + WebSocket — the only Node piece left
@@ -108,6 +109,9 @@ The agent loop is multi-turn — Haiku can chain tool calls. Tools live in `core
 Claude in session passes the message through a single-quoted heredoc to: notify
   → bin/notify                                     wolt-facing helper
       (--file PATH: staged in .space/outbox/; a file travels by outbox entry id, never by path)
+      (--voice PATH: staged the same way, and marked to arrive as a voice note)
+      (--speak: no file; the lodge has the message spoken once it knows where it goes,
+       writes the audio into .space/outbox/ and sends it as a voice note)
   → POST /notify on FastAPI
   → server reads session routing from registry
   → adapter sends to Telegram/Slack with footer:
@@ -225,7 +229,8 @@ wolts/                                     mounted into the container
     ├─ apps/                               running app port + pid files
     ├─ wolf/                               wolf scheduler
     ├─ vulture/                            session reaper
-    ├─ outbox/                             files staged by notify --file, removed after the send
+    ├─ outbox/                             files staged by notify --file / --voice and audio the lodge
+    │                                      spoke for --speak, removed after the send
     └─ logs/                               bot.jsonl event log
 ```
 

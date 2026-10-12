@@ -1,6 +1,6 @@
 ---
 name: notify
-description: Push a message or a file back to the user on Telegram or Slack — from inside a session.
+description: Push a message, a file or a voice note back to the user on Telegram or Slack — from inside a session.
 ---
 
 # Notify — Push Messages to the User
@@ -64,6 +64,46 @@ still be delivering the file, and a second send would give the user two.
 
 On Slack the app needs the `files:write` scope. Without it the send fails with
 a message that names the scope; tell the user, and send the text on its own.
+
+## Send a voice note
+
+```bash
+notify --speak <<'WOLTSPACE_NOTIFY_5C3E81D7'
+The build is green. I pushed nothing yet.
+WOLTSPACE_NOTIFY_5C3E81D7
+```
+
+`--speak` has the lodge read your message aloud and send the audio to the same
+chat or thread the message goes to. On Telegram the user gets a voice note with
+your message as its caption; a message too long for a caption arrives first,
+and the voice note follows it. On Slack the audio lands in the thread as a
+file, with your message as its comment.
+
+Use it when the user spoke to you (their message starts with `[voice message]`)
+or asked for a spoken answer, and the answer is short. Send anything long or
+technical as text.
+
+- Write for the ear: plain sentences, no markdown, no lists, no code, no paths
+  or links. A few sentences is right. 4096 characters is the hard limit: a
+  longer message is refused, not cut.
+- The lodge says your words only, not your name in front of them and not the
+  reply footer.
+- `--voice PATH` sends audio you already have as a voice note: a file ending in
+  `.ogg` (Opus), `.oga`, `.opus`, `.mp3` or `.m4a`, up to 50 MB. Any other audio
+  goes with `--file`, as a document.
+- One of `--file`, `--voice` and `--speak` per call. Like `--file`, the voice
+  flags go before or after the route flags.
+- If it fails, send the same message again as text. The error says why: no
+  `OPENAI_API_KEY` in the lodge's `.env`, the speech service refused, or the
+  user has voice messages blocked. If it says the text was delivered, the user
+  already has your words; do not send them twice.
+- Each `--speak` is a paid request to OpenAI, and the text of the message goes
+  there. `OPENAI_TTS_VOICE` and `OPENAI_TTS_MODEL` in the lodge's `.env` change
+  the voice and the model.
+
+Speech takes a few seconds to make, more for a long message, so let the command
+finish here too. If it times out, check before you send the text: the lodge may
+still be delivering the voice note.
 
 ## Explicit routing
 
