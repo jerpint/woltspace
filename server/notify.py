@@ -211,7 +211,8 @@ def _speech_request(speak, attachments) -> _Speech | None:
 
 async def _spoken(speech: _Speech, sender: Plugin, adapter: str) -> Attachment:
     """Have the speech service say the words, into the outbox entry set aside for them."""
-    if not sender.speech_format:
+    if not sender.speech_format or not sender.max_attachment_bytes:
+        # Asked before the words are spoken: the audio travels as an attachment.
         raise AttachmentError("speech_unsupported", f"{adapter} cannot carry a spoken message")
     api_key = dotenv_env("OPENAI_API_KEY")
     if not api_key:

@@ -162,6 +162,23 @@ async def test_a_sender_that_declares_no_speech_format_refuses(lodge, monkeypatc
     assert lodge.spoken == [] and lodge.sent == []
 
 
+@pytest.mark.asyncio
+async def test_a_sender_that_cannot_carry_the_audio_refuses_before_anything_is_spoken(
+    lodge, monkeypatch,
+):
+    monkeypatch.setitem(notify.SENDERS, "telegram", Plugin(
+        "telegram", _recorder(lodge.sent, "telegram"), secrets=("TELEGRAM_BOT_TOKEN",),
+        speech_format="opus",
+    ))
+
+    with pytest.raises(notify.AttachmentError) as error:
+        await notify.send_notification("test-session", "hi\n", None, (), WORDS)
+
+    assert error.value.reason == "speech_unsupported"
+    assert str(error.value) == "telegram cannot carry a spoken message"
+    assert lodge.spoken == [] and lodge.sent == []
+
+
 @pytest.mark.parametrize("speak", [
     "say this", ["text"], {}, {"text": 7}, {"text": ""}, {"text": "  \n"}, {"words": "hi"},
 ])
