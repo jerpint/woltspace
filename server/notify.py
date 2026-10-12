@@ -8,7 +8,9 @@ import json
 import logging
 import mimetypes
 import urllib.parse
+from dataclasses import dataclass
 from pathlib import Path
+from secrets import token_hex
 
 from .notification_senders import (
     slack_send, slack_sender, slack_set_agent_status, telegram_send, telegram_sender,
@@ -16,6 +18,9 @@ from .notification_senders import (
     SLACK_MAX_ATTACHMENT_BYTES, slack_upload_file,
 )
 from .notification_types import Attachment, OutboundMessage, Plugin, SendContext
+from .speech import (
+    DEFAULT_SPEECH_MODEL, DEFAULT_SPEECH_VOICE, SPEECH_FILES, SpeechError, synthesize,
+)
 import outbox
 import voice_notes
 from sessions import SessionRegistry
@@ -33,13 +38,17 @@ from .state import sanitize_session
 logger = logging.getLogger(__name__)
 
 MAX_ATTACHMENTS = 1
-# Where `notify --file` stages what it wants sent. Core is the only server code
-# that touches it, and it opens entries by id, never a path a caller names.
+# Where `notify --file` stages what it wants sent, and where core writes the
+# audio of a message it has spoken. Core is the only server code that touches
+# it, and it opens entries by id, never a path a caller names.
 OUTBOX_DIR = SPACE_DIR / "outbox"
 
 
 class AttachmentError(RuntimeError):
-    """A file the request named cannot be sent. `reason` is machine-readable."""
+    """A file the request named, or the words it asked to have spoken, cannot be sent.
+
+    `reason` is machine-readable.
+    """
 
     def __init__(self, reason: str, message: str):
         super().__init__(message)
@@ -174,10 +183,57 @@ def _resolve_attachments(attachments) -> tuple[Attachment, ...]:
     return tuple(resolved)
 
 
+@dataclass(frozen=True)
+class _Speech:
+    """Words to say, and the outbox entry set aside for the audio."""
+
+    text: str
+    entry_id: str
+
+
+def _speech_request(speak, attachments) -> _Speech | None:
+    """The request's `speak` as words to say; AttachmentError says why not."""
+    if speak is None:
+        return None
+    text = speak.get("text") if isinstance(speak, dict) else None
+    if not isinstance(text, str) or not text.strip():
+        raise AttachmentError("speak_invalid", "speak must be {text} with the words to say")
+    if attachments:
+        raise AttachmentError("speak_invalid", "a spoken message cannot also carry a file")
+    if len(text) > voice_notes.SPEECH_MAX_CHARS:
+        raise AttachmentError(
+            "speak_too_long",
+            f"speech reads at most {voice_notes.SPEECH_MAX_CHARS} characters; "
+            f"this text has {len(text)}",
+        )
+    return _Speech(text, token_hex(16))
+
+
+async def _spoken(speech: _Speech, sender: Plugin, adapter: str) -> Attachment:
+    """Have the speech service say the words, into the outbox entry set aside for them."""
+    if not sender.speech_format:
+        raise AttachmentError("speech_unsupported", f"{adapter} cannot carry a spoken message")
+    api_key = dotenv_env("OPENAI_API_KEY")
+    if not api_key:
+        raise SpeechError(
+            "speech_not_configured",
+            f"speaking needs OPENAI_API_KEY in {WOLTS_DIR}/.env; send the message as text",
+        )
+    OUTBOX_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = OUTBOX_DIR / speech.entry_id
+    size = await synthesize(
+        speech.text, sender.speech_format, path, api_key=api_key,
+        model=dotenv_env("OPENAI_TTS_MODEL") or DEFAULT_SPEECH_MODEL,
+        voice=dotenv_env("OPENAI_TTS_VOICE") or DEFAULT_SPEECH_VOICE,
+    )
+    filename, content_type = SPEECH_FILES[sender.speech_format]
+    return Attachment(path, filename, size, content_type, "voice")
+
+
 async def _send(
     adapter: str, session: str, message: str, chat_id: str,
     thread_ts: str | None = None, routing: dict | None = None,
-    attachments: tuple[Attachment, ...] = (),
+    attachments: tuple[Attachment, ...] = (), speech: _Speech | None = None,
 ) -> dict:
     """Resolve core context, dispatch a built-in, and persist its declared updates."""
     sender = SENDERS[adapter]
@@ -206,6 +262,11 @@ async def _send(
         destination = {"channel": chat_id}
         if thread_ts is not None:
             destination["thread_ts"] = thread_ts
+
+    if speech is not None:
+        # Only now that there is somewhere to send it: every spoken message is
+        # a paid request, and its words leave the lodge.
+        attachments = (await _spoken(speech, sender, adapter),)
 
     for attachment in attachments:
         if sender.max_attachment_bytes == 0:
@@ -265,7 +326,7 @@ async def _send_slack(
 
 
 async def send_notification(
-    session: str, message: str, explicit: dict | None = None, attachments=(),
+    session: str, message: str, explicit: dict | None = None, attachments=(), speak=None,
 ) -> dict:
     """Send a notification. Explicit routing takes priority over session lookup.
 
@@ -276,22 +337,33 @@ async def send_notification(
     attachments is what the request carried: [{"id": <outbox entry>, "name": ...}],
     with "kind": "voice" on audio that is to arrive as a voice note.
     Every entry it names is removed from the outbox, whatever happens to the send.
+
+    speak is the request's own value, expected {"text": <the words to say>}. The
+    lodge has them spoken and sends the audio as a voice note with `message` as
+    its text; that audio is removed from the outbox too.
     """
     try:
         outbox.sweep(OUTBOX_DIR)
     except Exception as exc:
         logger.warning("Could not sweep the outbox: %s", exc)
+    speech = None
     try:
-        return await _route(session, message, explicit, _resolve_attachments(attachments))
+        speech = _speech_request(speak, attachments)
+        return await _route(
+            session, message, explicit, _resolve_attachments(attachments), speech,
+        )
     finally:
         if isinstance(attachments, (list, tuple)):
             for entry in attachments:
                 if isinstance(entry, dict):
                     outbox.discard(OUTBOX_DIR, entry.get("id"))
+        if speech is not None:
+            outbox.discard(OUTBOX_DIR, speech.entry_id)
 
 
 async def _route(
     session: str, message: str, explicit: dict | None, attachments: tuple[Attachment, ...],
+    speech: _Speech | None = None,
 ) -> dict:
     """Pick the destination: explicit route, then the session's, then the Telegram default."""
     routing = read_session_registry(session) if session else None
@@ -312,13 +384,14 @@ async def _route(
             )
             return await _send(
                 adapter, session if exact else "", message, channel, thread_ts,
-                routing if exact else None, attachments=attachments,
+                routing if exact else None, attachments=attachments, speech=speech,
             )
         if adapter == "telegram":
             chat_id = explicit.get("chat_id", "")
             if chat_id:
                 return await _send(
                     adapter, session, message, str(chat_id), attachments=attachments,
+                    speech=speech,
                 )
 
     # 2. Session registry lookup — find routing from session metadata
@@ -331,6 +404,7 @@ async def _route(
                     adapter, session, message,
                     str(chat_id) if adapter == "telegram" else chat_id,
                     routing.get("thread_ts"), routing, attachments=attachments,
+                    speech=speech,
                 )
 
     # 3. Telegram default — fall back to first allowed user
@@ -341,6 +415,7 @@ async def _route(
     if telegram_token and telegram_chat_id:
         return await _send(
             "telegram", session, message, telegram_chat_id, attachments=attachments,
+            speech=speech,
         )
 
     raise NoNotificationTarget(

@@ -51,6 +51,7 @@ from .config import (
 )
 from . import tunnel as tunnel_mgr
 from .notify import AttachmentError, NoNotificationTarget, send_notification
+from .speech import SpeechError
 from .sparks import get_spark_with_chain, list_sparks
 from .pty_bridge import (
     PtyBridgeError,
@@ -772,9 +773,13 @@ async def post_notify(request: Request):
             explicit["chat_id"] = body.get("chat_id", "")
     # Outbox entries `notify --file` staged: [{"id", "name"}]. Never a path.
     attachments = body.get("attachments") or []
+    # `notify --speak`: {"text"}, the words the lodge is to say. Passed on only
+    # when the request has it, so every other call is the one it always was.
+    speak = body.get("speak")
     try:
         result = await send_notification(
             session, message, explicit=explicit or None, attachments=attachments,
+            **({} if speak is None else {"speak": speak}),
         )
         print(f"[notify] → {result.get('adapter')} | {message[:80]}")
         bot_log("notify_sent", {"session": session, **result, "message": message})
@@ -796,6 +801,13 @@ async def post_notify(request: Request):
         return JSONResponse(
             {"ok": False, "error": str(e), "reason": e.reason},
             status_code=413 if e.reason == "attachment_too_large" else 400,
+        )
+    except SpeechError as e:
+        # The words could not be made into audio; nothing was sent.
+        print(f"[notify] speech failed: {e}")
+        return JSONResponse(
+            {"ok": False, "error": str(e), "reason": e.reason},
+            status_code=502 if e.reason == "speech_failed" else 400,
         )
     except Exception as e:
         # Some errors carry no text (an httpx timeout, say); name them instead.
