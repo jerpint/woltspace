@@ -17,6 +17,7 @@ from .notification_senders import (
 )
 from .notification_types import Attachment, OutboundMessage, Plugin, SendContext
 import outbox
+import voice_notes
 from sessions import SessionRegistry
 
 from .config import (
@@ -155,8 +156,21 @@ def _resolve_attachments(attachments) -> tuple[Attachment, ...]:
         except outbox.OutboxError as exc:
             raise AttachmentError(exc.reason, str(exc)) from None
         filename = outbox.display_name(entry.get("name"))
-        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-        resolved.append(Attachment(path, filename, size, content_type))
+        kind = entry.get("kind", "file")
+        if kind not in ("file", "voice"):
+            raise AttachmentError("attachment_invalid", 'attachment kind must be "file" or "voice"')
+        if kind == "voice":
+            # Read from the name alone: a voice note is one of a short list of types.
+            content_type = voice_notes.voice_content_type(filename)
+            if content_type is None:
+                raise AttachmentError(
+                    "voice_format_unsupported",
+                    f"{filename} cannot be a voice note; "
+                    f"send audio ending in {voice_notes.VOICE_SUFFIXES_TEXT}",
+                )
+        else:
+            content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        resolved.append(Attachment(path, filename, size, content_type, kind))
     return tuple(resolved)
 
 
@@ -221,13 +235,17 @@ async def _send(
         if updates and session and routing:
             SessionRegistry(WOLTS_DIR).update(session, wolt=routing.get("wolt", ""), **updates)
     append_chat_history(adapter, chat_id, message + "".join(
-        f"\n[file sent: {a.filename}, {a.content_type}, {a.size} bytes]" for a in attachments
+        f"\n[{'voice note' if a.kind == 'voice' else 'file'} sent: "
+        f"{a.filename}, {a.content_type}, {a.size} bytes]"
+        for a in attachments
     ))
     result = {"adapter": adapter, "chat_id" if adapter == "telegram" else "channel": chat_id}
     if attachments:
-        # Metadata only: this dict is logged and returned to the caller.
+        # Metadata only: this dict is logged and returned to the caller. A voice
+        # note is marked, so `notify` can tell it from audio that went as a document.
         result["attachments"] = [
             {"name": a.filename, "content_type": a.content_type, "size": a.size}
+            | ({"kind": "voice"} if a.kind == "voice" else {})
             for a in attachments
         ]
     return result
@@ -255,7 +273,8 @@ async def send_notification(
       {"adapter": "slack", "channel": "C123", "thread_ts": "1234.5678"}
       {"adapter": "telegram", "chat_id": "98765"}
 
-    attachments is what the request carried: [{"id": <outbox entry>, "name": ...}].
+    attachments is what the request carried: [{"id": <outbox entry>, "name": ...}],
+    with "kind": "voice" on audio that is to arrive as a voice note.
     Every entry it names is removed from the outbox, whatever happens to the send.
     """
     try:
