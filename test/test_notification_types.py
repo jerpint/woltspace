@@ -22,3 +22,17 @@ def test_message_carries_attachments_as_a_tuple():
 
 def test_a_sender_that_declares_nothing_cannot_carry_files():
     assert Plugin("quiet", _send).max_attachment_bytes == 0
+
+
+def test_an_attachment_is_a_plain_file_unless_it_says_voice():
+    path = Path("/outbox/abc")
+    assert Attachment(path, "a.html", 11, "text/html").kind == "file"
+    assert Attachment(path, "a.ogg", 11, "audio/ogg", "voice").kind == "voice"
+    # The default keeps every attachment built before voice notes equal to itself.
+    assert Attachment(path, "a.html", 11, "text/html") == Attachment(
+        path, "a.html", 11, "text/html", "file",
+    )
+
+
+def test_a_sender_that_declares_nothing_cannot_carry_speech():
+    assert Plugin("quiet", _send).speech_format == ""

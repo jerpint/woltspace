@@ -13,6 +13,9 @@ class Attachment:
     filename: str
     size: int
     content_type: str
+    # "file" travels as a document. "voice" asks for a voice note where the
+    # provider has one, and is an ordinary audio file where it has not.
+    kind: str = "file"
 
 
 @dataclass(frozen=True)
@@ -40,3 +43,6 @@ class Plugin:
     route_state: tuple[str, ...] = ()
     # Largest file this sender can carry, in bytes. 0 means it cannot carry files.
     max_attachment_bytes: int = 0
+    # The audio format this sender wants for a message core speaks aloud:
+    # "opus" or "mp3". Empty means it cannot carry a spoken message.
+    speech_format: str = ""

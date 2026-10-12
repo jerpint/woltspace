@@ -117,6 +117,7 @@ SENDERS = {
         ),
         secrets=("TELEGRAM_BOT_TOKEN",),
         max_attachment_bytes=TELEGRAM_MAX_ATTACHMENT_BYTES,
+        speech_format="opus",
     ),
     "slack": Plugin(
         "slack", slack_sender(
@@ -127,6 +128,7 @@ SENDERS = {
         secrets=("SLACK_BOT_TOKEN",),
         route_state=("slack_progress_mode", "slack_progress_ts"),
         max_attachment_bytes=SLACK_MAX_ATTACHMENT_BYTES,
+        speech_format="mp3",
     ),
 }
 
