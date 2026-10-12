@@ -19,19 +19,18 @@ TELEGRAM_MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
 TELEGRAM_CAPTION_LIMIT = 1024
 
 
-async def telegram_send_document(
-    token: str, chat_id: str, attachment: Attachment, caption: str
+async def _telegram_upload(
+    method: str, field: str, token: str, chat_id: str, attachment: Attachment, caption: str,
 ) -> dict:
-    """Upload one file as a document: it arrives byte-for-byte, whatever its type."""
     fields = {"chat_id": chat_id}
     if caption:
         fields["caption"] = caption
-    with open(attachment.path, "rb") as document:
+    with open(attachment.path, "rb") as upload:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"https://api.telegram.org/bot{token}/sendDocument",
+                f"https://api.telegram.org/bot{token}/{method}",
                 data=fields,
-                files={"document": (attachment.filename, document, attachment.content_type)},
+                files={field: (attachment.filename, upload, attachment.content_type)},
                 timeout=UPLOAD_TIMEOUT,
             )
             try:
@@ -42,6 +41,20 @@ async def telegram_send_document(
             if not data.get("ok"):
                 raise RuntimeError(data.get("description", "telegram error"))
             return data
+
+
+async def telegram_send_document(
+    token: str, chat_id: str, attachment: Attachment, caption: str
+) -> dict:
+    """Upload one file as a document: it arrives byte-for-byte, whatever its type."""
+    return await _telegram_upload("sendDocument", "document", token, chat_id, attachment, caption)
+
+
+async def telegram_send_voice(
+    token: str, chat_id: str, attachment: Attachment, caption: str
+) -> dict:
+    """Upload audio Telegram shows as a voice note: Ogg Opus, MP3 or M4A."""
+    return await _telegram_upload("sendVoice", "voice", token, chat_id, attachment, caption)
 
 
 async def telegram_send(token: str, chat_id: str, text: str) -> dict:
@@ -181,7 +194,7 @@ async def slack_upload_file(
         return await call("files.completeUploadExternal", json=payload)
 
 
-def telegram_sender(transport, send_document=None) -> Send:
+def telegram_sender(transport, send_document=None, send_voice=None) -> Send:
     """Temporary transport injection preserves notify's existing patch points."""
     async def send(message: OutboundMessage, destination, context: SendContext) -> None:
         token, chat_id = context.secrets["TELEGRAM_BOT_TOKEN"], destination["chat_id"]
@@ -192,22 +205,28 @@ def telegram_sender(transport, send_document=None) -> Send:
         if not message.attachments:
             await transport(token, chat_id, text)
             return
-        if send_document is None:
-            raise RuntimeError("telegram sender has no document transport")
+        attachment = message.attachments[0]
+        if attachment.kind == "voice":
+            upload, what = send_voice, "voice note"
+            if upload is None:
+                raise RuntimeError("telegram sender has no voice transport")
+        else:
+            upload, what = send_document, "file"
+            if upload is None:
+                raise RuntimeError("telegram sender has no document transport")
         if len(message.attachments) > 1:
             raise RuntimeError("telegram sender carries one file per message")
-        attachment = message.attachments[0]
         if len(text.encode("utf-16-le")) // 2 <= TELEGRAM_CAPTION_LIMIT:
-            await send_document(token, chat_id, attachment, text)
+            await upload(token, chat_id, attachment, text)
             return
         # Too long for a caption: the text goes first, exactly as a text
         # notification, and the file carries the footer so either can be replied to.
         await transport(token, chat_id, text)
         try:
-            await send_document(token, chat_id, attachment, footer.strip())
+            await upload(token, chat_id, attachment, footer.strip())
         except Exception as exc:
             raise RuntimeError(
-                "the text was delivered but the file was not: "
+                f"the text was delivered but the {what} was not: "
                 f"{str(exc) or type(exc).__name__}"
             ) from exc
     return send
