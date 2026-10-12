@@ -1149,3 +1149,71 @@ def test_help_names_the_voice_flags(tmp_path):
                  "--speak has the lodge read the message aloud and send it as a voice note.",
                  "Use at most one of --file, --voice and --speak."):
         assert text in result.stdout
+
+
+# --- the command and the lodge, each reading what the other really wrote -----
+
+@pytest.mark.parametrize(
+    "route",
+    [[], ["--telegram", "12345"], ["--slack", "D0123456789", "1700000000.000100"]],
+)
+def test_voice_request_and_answer_are_the_ones_the_lodge_really_reads_and_writes(
+    tmp_path, monkeypatch, route,
+):
+    # Everywhere else the command is answered with a reply written by hand, and
+    # the route is sent a request written by hand. Here the command's own
+    # request goes to the real route and core, and their answer back to it.
+    from unittest.mock import AsyncMock, Mock
+
+    from starlette.testclient import TestClient
+
+    monkeypatch.syspath_prepend(str(ROOT))
+    import server.app as server_app
+    from server import notify
+
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+    source = tmp_path / "note.ogg"
+    source.write_bytes(OGG)
+    argv = ["--voice", str(source), *route]
+
+    first = _run(argv, env, "The recording.\n")
+    assert first.returncode == 0, first.stderr
+    request = json.loads(capture.read_text())
+
+    # The lodge, with its outbound transports replaced: nothing leaves the process.
+    lodge_env = {
+        "TELEGRAM_BOT_TOKEN": "telegram-token", "TELEGRAM_ALLOWED_USERS": "101",
+        "SLACK_BOT_TOKEN": "slack-token",
+    }
+    uploaded = []
+
+    async def upload(*args):
+        attachment = args[-2]
+        uploaded.append((attachment.filename, attachment.kind, attachment.path.read_bytes()))
+
+    monkeypatch.setattr(notify, "telegram_send", AsyncMock())
+    monkeypatch.setattr(notify, "telegram_send_document", AsyncMock())
+    monkeypatch.setattr(notify, "telegram_send_voice", upload)
+    monkeypatch.setattr(notify, "slack_send", AsyncMock())
+    monkeypatch.setattr(notify, "slack_upload_file", upload)
+    monkeypatch.setattr(notify, "dotenv_env", lambda key: lodge_env.get(key, ""))
+    monkeypatch.setattr(notify, "OUTBOX_DIR", box)
+    monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
+    monkeypatch.setattr(notify, "read_session_registry", lambda name: None)
+    monkeypatch.setattr(notify, "append_chat_history", Mock())
+    monkeypatch.setattr(server_app, "bot_log", Mock())
+
+    response = TestClient(server_app.app, base_url="http://localhost:7777").post(
+        "/notify", json=request,
+    )
+
+    assert response.status_code == 200, response.json()
+    assert uploaded == [("note.ogg", "voice", OGG)]     # the bytes the command staged
+    assert _entries(box) == []                          # and the lodge removed them
+
+    curl = Path(env["PATH"].split(":", 1)[0]) / "curl"
+    curl.write_text(_ANSWERING_CURL.replace("__REPLY__", json.dumps(response.json())))
+    second = _run(argv, env, "The recording.\n")
+
+    assert second.returncode == 0, second.stderr
+    assert second.stdout.rstrip("\n").endswith("[voice: note.ogg]")
