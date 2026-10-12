@@ -158,6 +158,34 @@ async def test_an_audio_file_sent_as_a_file_stays_a_document(lodge):
 
 
 @pytest.mark.asyncio
+async def test_a_voice_entry_sent_to_slack_is_still_answered_as_a_voice_note(lodge):
+    # `notify --voice` reads the mark in the answer; without it the command
+    # would report a Slack send as one an older lodge made.
+    entry = _stage(lodge, "note.mp3", OGG)
+    explicit = {"adapter": "slack", "channel": "D0123456789", "thread_ts": "1.2"}
+
+    result = await notify.send_notification(
+        "test-session", "hi\n", explicit, _voice(entry, "note.mp3"),
+    )
+
+    (sent,) = lodge.sent
+    assert sent.adapter == "slack"
+    assert sent.message.attachments == (
+        Attachment(lodge.box / entry, "note.mp3", len(OGG), "audio/mpeg", "voice"),
+    )
+    assert result == {
+        "adapter": "slack", "channel": "D0123456789",
+        "attachments": [
+            {"name": "note.mp3", "content_type": "audio/mpeg", "size": len(OGG), "kind": "voice"},
+        ],
+    }
+    lodge.history.assert_called_once_with(
+        "slack", "D0123456789",
+        f"hi\n\n[voice note sent: note.mp3, audio/mpeg, {len(OGG)} bytes]",
+    )
+
+
+@pytest.mark.asyncio
 async def test_slack_carries_a_voice_attachment_as_an_ordinary_upload(tmp_path):
     from server.notification_senders import slack_sender
     from server.notification_types import SendContext
