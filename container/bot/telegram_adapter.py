@@ -35,6 +35,7 @@ from urllib.parse import urlparse, parse_qs
 from wolts import get_active_creature, wolt_display_name
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import outbox
 from env_compat import get_env
 from paths import space_dir
 from session_runtime import RuntimeHandle, get_runtime
@@ -490,7 +491,9 @@ def _reply_source(reply_to) -> tuple[str, str | None]:
         "",
     )
     name = getattr(getattr(reply_to, "document", None), "file_name", None)
-    return body, name if isinstance(name, str) and name else None
+    # Cleaned as an outgoing name is: anyone can send a document under any
+    # name, and this one goes into the session's prompt.
+    return body, outbox.display_name(name) if isinstance(name, str) and name else None
 
 
 def _reply_is_voice(reply_to) -> bool:
