@@ -343,3 +343,50 @@ async def test_a_hostile_file_name_cannot_add_a_line_to_the_routed_reply():
     assert message.startswith(f"[replying to file {CLEANED_NAME}: 🦦 nunu: the weekly update")
     assert message.count("\n") == 2          # the caption's own, and the one before the reply
     assert "‮" not in message and "\x07" not in message
+
+
+# --- a reply to a file Telegram plays: it is stored as an audio, not a document ---
+
+def _audio_message(caption, name="song.mp3"):
+    reply_to = MagicMock()
+    reply_to.text = None
+    reply_to.caption = caption
+    reply_to.document = None
+    reply_to.voice = None
+    reply_to.audio.file_name = name
+    return reply_to
+
+
+@pytest.mark.asyncio
+async def test_reply_to_an_audio_file_with_a_caption_names_the_file():
+    update = _update(_audio_message("🦦 nunu: the jingle" + FOOTER))
+    session, wolt, message = await _routed_by_handle_message(update)
+    assert (session, wolt) == (SESSION, "nunu")
+    assert message.startswith("[replying to file song.mp3: 🦦 nunu: the jingle")
+    assert message.endswith("]\nlooks good")
+    assert DEN_REPLY_FOOTER.strip() not in message
+
+
+@pytest.mark.asyncio
+async def test_reply_to_an_audio_file_whose_caption_is_only_the_footer():
+    update = _update(_audio_message(FOOTER.strip()))
+    session, wolt, message = await _routed_by_handle_message(update)
+    assert (session, wolt) == (SESSION, "nunu")
+    assert message == "[replying to file song.mp3]\nlooks good"
+
+
+@pytest.mark.parametrize("document, audio, expected", [
+    (None, SimpleNamespace(file_name="b.mp3"), "b.mp3"),
+    (SimpleNamespace(file_name="a.html"), SimpleNamespace(file_name="b.mp3"), "a.html"),
+    (SimpleNamespace(file_name=None), SimpleNamespace(file_name="b.mp3"), "b.mp3"),
+    (None, SimpleNamespace(file_name=HOSTILE_NAME), CLEANED_NAME),
+    (None, SimpleNamespace(file_name=None), None),       # Telegram may keep no name
+    (None, SimpleNamespace(file_name=""), None),
+    (None, None, None),
+], ids=["audio", "document-first", "document-unnamed", "audio-cleaned", "audio-unnamed",
+        "audio-empty-name", "neither"])
+def test_reply_source_reads_the_name_of_a_document_or_else_of_an_audio(document, audio, expected):
+    from bot.telegram_adapter import _reply_source
+
+    reply_to = SimpleNamespace(text=None, caption="x", document=document, audio=audio)
+    assert _reply_source(reply_to) == ("x", expected)

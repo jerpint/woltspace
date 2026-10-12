@@ -484,16 +484,20 @@ def _parse_session_from_reply(reply_text: str) -> str | None:
 
 def _reply_source(reply_to) -> tuple[str, str | None]:
     """The text that may carry the reply footer, and the replied-to file's name if any."""
-    # A document or a voice note carries the footer in its caption; a text
-    # message in its text.
+    # A file or a voice note carries the footer in its caption; a text message
+    # in its text.
     body = next(
         (value for value in (reply_to.text, reply_to.caption) if isinstance(value, str) and value),
         "",
     )
-    name = getattr(getattr(reply_to, "document", None), "file_name", None)
-    # Cleaned as an outgoing name is: anyone can send a document under any
-    # name, and this one goes into the session's prompt.
-    return body, outbox.display_name(name) if isinstance(name, str) and name else None
+    # Telegram keeps a file as a document, and as an audio when it is one it plays.
+    for part in ("document", "audio"):
+        name = getattr(getattr(reply_to, part, None), "file_name", None)
+        if isinstance(name, str) and name:
+            # Cleaned as an outgoing name is: anyone can send a file under any
+            # name, and this one goes into the session's prompt.
+            return body, outbox.display_name(name)
+    return body, None
 
 
 def _reply_is_voice(reply_to) -> bool:
