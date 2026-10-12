@@ -1217,3 +1217,76 @@ def test_voice_request_and_answer_are_the_ones_the_lodge_really_reads_and_writes
 
     assert second.returncode == 0, second.stderr
     assert second.stdout.rstrip("\n").endswith("[voice: note.ogg]")
+
+
+@pytest.mark.parametrize(
+    "route",
+    [[], ["--telegram", "12345"], ["--slack", "D0123456789", "1700000000.000100"]],
+)
+def test_speak_request_and_answer_are_the_ones_the_lodge_really_reads_and_writes(
+    tmp_path, monkeypatch, route,
+):
+    # The --speak twin of the test above. The command's own request goes to the
+    # real route and core, and their answer back to the command; only the
+    # speech client and the outbound transports are stand-ins.
+    from unittest.mock import AsyncMock, Mock
+
+    from starlette.testclient import TestClient
+
+    monkeypatch.syspath_prepend(str(ROOT))
+    import server.app as server_app
+    from server import notify
+
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+    argv = ["--speak", *route]
+
+    first = _run(argv, env, "The build is green.\n")
+    assert first.returncode == 0, first.stderr
+    request = json.loads(capture.read_text())
+
+    lodge_env = {
+        "TELEGRAM_BOT_TOKEN": "telegram-token", "TELEGRAM_ALLOWED_USERS": "101",
+        "SLACK_BOT_TOKEN": "slack-token", "OPENAI_API_KEY": "sk-test",
+    }
+    said, uploaded = [], []
+
+    async def synthesize(text, speech_format, target, **settings):
+        said.append((text, speech_format))
+        target.write_bytes(OGG)
+        return len(OGG)
+
+    async def upload(*args):
+        attachment, text = args[-2], args[-1]
+        uploaded.append((attachment.kind, attachment.path.read_bytes(), text.split("\n")[0]))
+
+    monkeypatch.setattr(notify, "synthesize", synthesize)
+    monkeypatch.setattr(notify, "telegram_send", AsyncMock())
+    monkeypatch.setattr(notify, "telegram_send_document", AsyncMock())
+    monkeypatch.setattr(notify, "telegram_send_voice", upload)
+    monkeypatch.setattr(notify, "slack_send", AsyncMock())
+    monkeypatch.setattr(notify, "slack_upload_file", upload)
+    monkeypatch.setattr(notify, "dotenv_env", lambda key: lodge_env.get(key, ""))
+    monkeypatch.setattr(notify, "OUTBOX_DIR", box)
+    monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
+    monkeypatch.setattr(notify, "read_session_registry", lambda name: None)
+    monkeypatch.setattr(notify, "append_chat_history", Mock())
+    monkeypatch.setattr(server_app, "bot_log", Mock())
+
+    response = TestClient(server_app.app, base_url="http://localhost:7777").post(
+        "/notify", json=request,
+    )
+
+    assert response.status_code == 200, response.json()
+    # The words alone are spoken, in the format the destination asks for, and
+    # the message with its name in front travels as the text.
+    assert said == [("The build is green.", "mp3" if "--slack" in route else "opus")]
+    assert uploaded == [("voice", OGG, request["message"].rstrip("\n"))]
+    assert request["message"].endswith(": The build is green.\n")
+    assert _entries(box) == []                          # the lodge removed its audio
+
+    curl = Path(env["PATH"].split(":", 1)[0]) / "curl"
+    curl.write_text(_ANSWERING_CURL.replace("__REPLY__", json.dumps(response.json())))
+    second = _run(argv, env, "The build is green.\n")
+
+    assert second.returncode == 0, second.stderr
+    assert second.stdout.rstrip("\n").endswith("[spoken]")
