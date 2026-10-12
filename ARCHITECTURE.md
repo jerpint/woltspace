@@ -108,13 +108,19 @@ The agent loop is multi-turn — Haiku can chain tool calls. Tools live in `core
 ```
 Claude in session passes the message through a single-quoted heredoc to: notify
   → bin/notify                                     wolt-facing helper
-      (--file PATH: staged in .space/outbox/; a file travels by outbox entry id, never by path)
+      (--file PATH: staged in .space/outbox/; a file travels by outbox entry id, never by path;
+       credential files, private keys and password files are refused before anything is staged)
       (--voice PATH: staged the same way, and marked to arrive as a voice note)
       (--speak: no file; the lodge has the message spoken once it knows where it goes,
        writes the audio into .space/outbox/ and sends it as a voice note)
   → POST /notify on FastAPI
   → server reads session routing from registry
+      (text goes to any chat the caller names; a file, a voice note or a spoken message only to
+       the lodge's own: TELEGRAM_ALLOWED_USERS, SLACK_NOTIFY_CHANNEL, or the session's own chat)
   → adapter sends to Telegram/Slack with footer:
+      (Telegram reads a file's name: .ogg/.oga/.opus → sendVoice, .mp3/.m4a → sendAudio, anything
+       else → sendDocument; a voice or audio upload Telegram refuses goes again as a document.
+       A voice note that was asked for, --voice or --speak, is sendVoice with no second try)
         "↩ reply to this message…"
         "https://tunnel/tui?session=NAME"
 ```

@@ -50,7 +50,18 @@ arrives as a document with your message as its caption; a message too long for
 a caption arrives first, and the file follows it. On Slack the file lands in
 the thread with your message as its comment.
 
+Telegram reads an audio file's name. One ending in `.ogg`, `.oga` or `.opus`
+arrives as a voice note, and one ending in `.mp3` or `.m4a` as audio in
+Telegram's player. If Telegram will not take it that way (an `.ogg` that is not
+Opus, say), it arrives as a plain file. Any other name is a document.
+
 - One file per call, up to 50 MB. Send several files with several calls.
+- A file goes only to this lodge's own chats: the chat your session was started
+  from, a Telegram chat in `TELEGRAM_ALLOWED_USERS`, or the Slack channel in
+  `SLACK_NOTIFY_CHANNEL`. Your own chat always works. To any other chat the
+  send is refused and nothing goes out; send text there. On a lodge with no
+  `SLACK_NOTIFY_CHANNEL`, a file reaches Slack only from a session that was
+  started in Slack.
 - `--file PATH` goes before or after the route flags, so you can add it to the
   heredoc Woltspace generates for a reply.
 - An HTML page must be one self-contained file, with its styles, scripts and
@@ -95,10 +106,15 @@ technical as text.
 - The lodge says your words only, not your name in front of them and not the
   reply footer.
 - `--voice PATH` sends audio you already have as a voice note: a file ending in
-  `.ogg` (Opus), `.oga`, `.opus`, `.mp3` or `.m4a`, up to 50 MB. Any other audio
-  goes with `--file`, as a document.
+  `.ogg` (Opus), `.oga`, `.opus`, `.mp3` or `.m4a`, up to 50 MB. It is the way
+  to ask for a voice note and be told when Telegram cannot make it one. With
+  `--file` the same audio still arrives, as a plain file if need be, and you
+  are not told which. Any other audio (`.wav`, say) goes with `--file`, as a
+  document.
 - One of `--file`, `--voice` and `--speak` per call. Like `--file`, the voice
   flags go before or after the route flags.
+- Like a file, a voice note and a spoken message go only to the lodge's own
+  chats. Another chat gets text only, and nothing is spoken for it.
 - If it fails, send the same message again as text. The error says why: no
   `OPENAI_API_KEY` in the lodge's `.env`, the speech service refused, or the
   user has voice messages blocked. If it says the text was delivered, the user

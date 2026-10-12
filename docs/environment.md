@@ -178,6 +178,11 @@ These keep the names their own platform gave them, and are configured in
 `container/bot/`. `TELEGRAM_BOT_DIR` / `TELEGRAM_BOT_MODULE` point its
 connector at an owner-customized Telegram adapter. Slack always uses the
 platform's owner-DM Agent View adapter; there is no custom Slack module path.
+`TELEGRAM_ALLOWED_USERS` and `SLACK_NOTIFY_CHANNEL` also name the chats a
+wolt may send a file, a voice note or a spoken message to, beside the chat
+its session was started from (`server/notify.py`). With no
+`SLACK_NOTIFY_CHANNEL`, a file reaches Slack only from a session started in
+Slack. Text is not held to these lists.
 `BOT_ADAPTER` names which adapter a bot process is.
 
 **Models** — `LLM_MODEL` picks the bot brain's model;

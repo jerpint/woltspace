@@ -20,7 +20,9 @@ a complete heredoc with the correct route and a fresh delimiter; replace only
 
 To send a file, add `--file PATH` to the same command, before or after the route
 flags. One file per call. An HTML page must be one self-contained file, with its
-styles, scripts and images inlined.
+styles, scripts and images inlined. A file, a voice note or a spoken message
+goes only to this lodge's own chats: the chat this session was started from
+always works, and any other chat gets text only.
 
 To answer by voice: when the developer's message starts with `[voice message]`
 (they spoke to you) or they ask for a spoken answer, and your answer is short

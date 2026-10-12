@@ -111,7 +111,7 @@ the same owned thread recovers. Never infer the owner from the first sender.
 | Suggested prompts | Yes, in Slack's Agent View | Future handler and product work. |
 | Processing/active status | Implemented | Agent View plus `assistant:write`; final delivery returns status to `active`. |
 | Agent Session title | Implemented | Exact Woltspace slug today; human-friendly Woltspace-owned names later. |
-| Sending a file | Implemented | `files:write`; `notify --file` uploads into the session's thread. `notify --voice` and `--speak` send their audio the same way: Slack has no voice-note call for a bot. Receiving attachments stays deferred. |
+| Sending a file | Implemented | `files:write`; `notify --file` uploads into the session's thread. `notify --voice` and `--speak` send their audio the same way: Slack has no voice-note call for a bot. A file goes only to `SLACK_NOTIFY_CHANNEL` or to the chat the sending session was started from. Receiving attachments stays deferred. |
 | Streaming responses | Partially | Uses Slack's stream API when available, with a plain final-message fallback. |
 | Native Stop | Yes, through `agent_session_stopped` | Convert the app to Agent View, subscribe to the event, and map it to real session interruption. |
 | Per-wolt name/icon | Yes | Add `chat:write.customize`; keep sender identity auditable and owner-controlled. |

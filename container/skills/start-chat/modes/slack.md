@@ -20,7 +20,9 @@ only `YOUR_REPLY` and run it. You do not need to load the notify skill first.
 
 To send a file, add `--file PATH` to the same command, before or after the route
 flags. One file per call. An HTML page must be one self-contained file, with its
-styles, scripts and images inlined.
+styles, scripts and images inlined. A file, a voice note or a spoken message
+goes only to this lodge's own chats: the chat this session was started from
+always works, and any other chat gets text only.
 
 To answer by voice: when the developer asks for a spoken answer and it is short
 and reads well aloud, add `--speak` to the same notify command. The lodge reads
