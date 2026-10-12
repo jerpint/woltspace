@@ -144,9 +144,10 @@ def resolve(outbox: Path, entry_id: str) -> tuple[Path, int]:
             "attachment_not_found", "attachment is no longer in the outbox"
         ) from None
     except OSError as exc:
-        # ELOOP is a symlink and ENXIO a socket. The OS text names the lodge's
+        # ELOOP is a symlink. A socket is ENXIO on Linux and EOPNOTSUPP on
+        # macOS, where ENOTSUP is another number. The OS text names the lodge's
         # paths, so a refusal never carries it.
-        if exc.errno in (errno.ELOOP, errno.ENXIO):
+        if exc.errno in (errno.ELOOP, errno.ENXIO, errno.EOPNOTSUPP, errno.ENOTSUP):
             raise OutboxError(
                 "attachment_invalid", "attachment is not a regular file"
             ) from None

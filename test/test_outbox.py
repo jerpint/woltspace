@@ -1,5 +1,6 @@
 """The outbox: what may be staged, what the lodge will open, and what is swept."""
 
+import errno
 import os
 import shutil
 import time
@@ -130,6 +131,25 @@ def test_resolve_refuses_a_socket_planted_in_the_outbox(tmp_path, monkeypatch):
         planted.close()
     assert error.reason == "attachment_invalid"
     assert str(error) == "attachment is not a regular file"
+
+
+@pytest.mark.parametrize("number", [errno.EOPNOTSUPP, errno.ENOTSUP], ids=["EOPNOTSUPP", "ENOTSUP"])
+def test_resolve_refuses_a_socket_the_way_macos_reports_one(tmp_path, monkeypatch, number):
+    # Linux answers open() on a socket with ENXIO. macOS answers EOPNOTSUPP,
+    # which no Linux test can provoke, so the answer is made up here.
+    entry = tmp_path / ("a" * 32)
+    real_open = os.open
+
+    def macos_open(path, *args, **kwargs):
+        if Path(path) == entry:
+            raise OSError(number, "Operation not supported on socket", str(path))
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(outbox.os, "open", macos_open)
+    error = _reason(outbox.resolve, tmp_path, "a" * 32)
+    assert error.reason == "attachment_invalid"
+    assert str(error) == "attachment is not a regular file"
+    assert str(tmp_path) not in str(error)
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root opens every file")
