@@ -742,3 +742,410 @@ def test_equals_form_has_the_same_usage_errors(tmp_path, argv, expected):
     assert result.stderr.splitlines()[0] == expected
     assert not capture.exists()
     assert _entries(box) == []
+
+
+# --- notify --voice and notify --speak ---------------------------------------
+
+_ANSWERING_CURL = """#!/bin/bash
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-d" ]; then
+    printf '%s' "$2" > "$NOTIFY_CAPTURE"
+    shift 2
+  else
+    shift
+  fi
+done
+printf '%s\\n' '__REPLY__'
+"""
+VOICE_SENT = {
+    "ok": True, "adapter": "telegram",
+    "attachments": [{"name": "note.ogg", "content_type": "audio/ogg", "size": 27, "kind": "voice"}],
+}
+# What a lodge with file sending but without voice notes says of audio it sent.
+AUDIO_SENT_AS_A_FILE = {
+    "ok": True, "adapter": "telegram",
+    "attachments": [{"name": "note.ogg", "content_type": "audio/ogg", "size": 27}],
+}
+OGG = b"OggS" + b"\x00" * 23
+
+
+def _lodge_answering(tmp_path: Path, reply: dict) -> tuple[dict[str, str], Path, Path]:
+    env, capture, box = _file_environment(tmp_path)
+    curl = Path(env["PATH"].split(":", 1)[0]) / "curl"
+    curl.write_text(_ANSWERING_CURL.replace("__REPLY__", json.dumps(reply)))
+    return env, capture, box
+
+
+def _run(argv, env, stdin="hello\n"):
+    return subprocess.run([NOTIFY, *argv], input=stdin, text=True, capture_output=True, env=env)
+
+
+def test_voice_flag_stages_the_audio_and_marks_the_entry_voice(tmp_path):
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+    source = tmp_path / "note.ogg"
+    source.write_bytes(OGG)
+
+    result = _run(["--voice", source], env, "The recording.\n")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(capture.read_text())
+    (attachment,) = payload["attachments"]
+    assert attachment == {"id": attachment["id"], "name": "note.ogg", "kind": "voice"}
+    assert (box / attachment["id"]).read_bytes() == OGG
+    assert "speak" not in payload
+    assert result.stdout.rstrip("\n").endswith("[voice: note.ogg]")
+
+
+def test_speak_flag_sends_the_words_without_the_name_prefix(tmp_path):
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+
+    result = _run(["--speak"], env, "The build is green.\n")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(capture.read_text())
+    assert payload["speak"] == {"text": "The build is green."}
+    assert payload["message"].endswith(": The build is green.\n")
+    assert "attachments" not in payload
+    assert _entries(box) == []
+    assert result.stdout.rstrip("\n").endswith("[spoken]")
+
+
+def test_a_file_send_still_has_no_kind_key(tmp_path):
+    env, capture, box = _file_environment(tmp_path)
+    source = tmp_path / "a.html"
+    source.write_bytes(b"<h1>hi</h1>")
+
+    result = _run(["--file", source], env)
+
+    assert result.returncode == 0, result.stderr
+    (attachment,) = json.loads(capture.read_text())["attachments"]
+    assert set(attachment) == {"id", "name"}
+
+
+def test_voice_accepts_a_suffix_in_upper_case(tmp_path):
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+    source = tmp_path / "NOTE.MP3"
+    source.write_bytes(b"ID3" + b"\x00" * 24)
+
+    result = _run(["--voice", source], env)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(capture.read_text())["attachments"][0]["name"] == "NOTE.MP3"
+
+
+def test_voice_refuses_a_name_that_is_not_voice_audio_before_reading_stdin(tmp_path):
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+    source = tmp_path / "notes.wav"
+    source.write_bytes(b"RIFF....WAVE")
+
+    result = subprocess.run(
+        [NOTIFY, "--voice", source], stdin=subprocess.DEVNULL, text=True,
+        capture_output=True, env=env,
+    )
+
+    assert result.returncode == 2
+    assert result.stderr == (
+        "notify: --voice needs audio ending in .ogg, .oga, .opus, .mp3 or .m4a: notes.wav\n"
+    )
+    assert not capture.exists()
+    assert _entries(box) == []
+
+
+@pytest.mark.parametrize("name", ["notes.wav", "page.html", "note"])
+def test_voice_refuses_what_is_not_voice_audio_while_stdin_is_still_open(tmp_path, name):
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+    source = tmp_path / name
+    source.write_bytes(b"not a voice note")
+
+    with subprocess.Popen(
+        [NOTIFY, "--voice", source],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    ) as process:
+        # Nothing is written and stdin stays open: a notify that read it first
+        # would still be waiting.
+        assert process.wait(timeout=20) == 2
+        assert process.stderr.read() == (
+            f"notify: --voice needs audio ending in .ogg, .oga, .opus, .mp3 or .m4a: {name}\n"
+        )
+    assert not capture.exists()
+    assert _entries(box) == []
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [
+        ("missing", "file not found: {path}"),
+        ("directory", "not a regular file: {path}"),
+        ("empty", "file is empty: {path}"),
+        ("credential", "refusing to send a credential file: .env"),
+    ],
+)
+def test_voice_problems_exit_2_without_staging_or_sending(tmp_path, kind, expected):
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+    path = tmp_path / (".env" if kind == "credential" else "note.ogg")
+    if kind == "directory":
+        path.mkdir()
+    elif kind == "empty":
+        path.write_bytes(b"")
+    elif kind == "credential":
+        path.write_text("TOKEN=1")
+
+    result = _run(["--voice", path], env)
+
+    assert result.returncode == 2
+    assert result.stderr == f"notify: {expected.format(path=path)}\n"
+    assert not capture.exists()
+    assert _entries(box) == []
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["--file", "{a}", "--voice", "{v}"], "use only one of --file, --voice and --speak"),
+        (["--voice", "{v}", "--file", "{a}"], "use only one of --file, --voice and --speak"),
+        (["--voice", "{v}", "--speak"], "use only one of --file, --voice and --speak"),
+        (["--speak", "--file", "{a}"], "use only one of --file, --voice and --speak"),
+        (["--voice", "{v}", "--voice", "{v}"], "use only one of --file, --voice and --speak"),
+        (["--speak", "--speak"], "use only one of --file, --voice and --speak"),
+        (["--voice"], "--voice requires PATH"),
+        (["--voice="], "--voice requires PATH"),
+        (["--speak=yes"], "--speak takes no value"),
+    ],
+)
+def test_flag_combinations_are_usage_errors_and_nothing_is_sent(tmp_path, argv, expected):
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+    (tmp_path / "a.html").write_bytes(b"<p>a</p>")
+    (tmp_path / "note.ogg").write_bytes(OGG)
+    argv = [
+        arg.format(a=tmp_path / "a.html", v=tmp_path / "note.ogg") for arg in argv
+    ]
+
+    result = _run(argv, env)
+
+    assert result.returncode == 2
+    assert result.stderr.startswith(f"notify: {expected}\nUsage:")
+    assert not capture.exists()
+    assert _entries(box) == []
+
+
+def test_speak_refuses_a_message_longer_than_the_speech_limit(tmp_path):
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+
+    result = _run(["--speak"], env, "x" * 4097 + "\n")
+
+    assert result.returncode == 2
+    assert result.stderr == (
+        "notify: --speak reads at most 4096 characters and this message has 4097; "
+        "send it as text or shorten it\n"
+    )
+    assert not capture.exists()
+
+
+def test_speak_accepts_a_message_of_exactly_the_limit(tmp_path):
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+
+    result = _run(["--speak"], env, "x" * 4096 + "\n")
+
+    assert result.returncode == 0, result.stderr
+    assert len(json.loads(capture.read_text())["speak"]["text"]) == 4096
+
+
+def test_speak_refuses_whitespace_only_words(tmp_path):
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+
+    result = _run(["--speak"], env, " \n\t\n")
+
+    assert result.returncode == 2
+    assert result.stderr == "notify: --speak needs words to read aloud\n"
+    assert not capture.exists()
+
+
+def test_speak_with_empty_stdin_is_refused_like_an_empty_text_message(tmp_path):
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+
+    spoken, plain = _run(["--speak"], env, ""), _run([], env, "")
+
+    assert spoken.returncode == plain.returncode == 2
+    assert spoken.stderr == plain.stderr == "notify: message must not be empty\n"
+    assert not capture.exists()
+
+
+@pytest.mark.parametrize(
+    ("argv", "reply", "expected"),
+    [
+        (["--voice", "{v}"], {"ok": True, "adapter": "telegram"},
+         "the lodge sent the text but not the voice note"),
+        (["--voice", "{v}"], AUDIO_SENT_AS_A_FILE,
+         "the lodge sent the audio as a file, not as a voice note"),
+        (["--speak"], {"ok": True, "adapter": "telegram"},
+         "the lodge sent the text but did not speak it"),
+        # A lodge that can speak but whose sender knows no voice notes yet.
+        (["--speak"], AUDIO_SENT_AS_A_FILE,
+         "the lodge sent the audio as a file, not as a voice note"),
+    ],
+)
+def test_an_older_lodge_is_never_reported_as_success(tmp_path, argv, reply, expected):
+    env, capture, box = _lodge_answering(tmp_path, reply)
+    (tmp_path / "note.ogg").write_bytes(OGG)
+    argv = [arg.format(v=tmp_path / "note.ogg") for arg in argv]
+
+    result = _run(argv, env)
+
+    assert result.returncode == 1
+    assert result.stderr == (
+        f"notify: {expected}; restart the lodge so it matches this command\n"
+    )
+    assert result.stdout == ""
+    assert _entries(box) == []
+
+
+def test_a_lodge_that_could_not_make_speech_is_reported_with_its_reason(tmp_path):
+    refusal = "speaking needs OPENAI_API_KEY in /wolts/.env; send the message as text"
+    env, capture, box = _lodge_answering(
+        tmp_path, {"ok": False, "error": refusal, "reason": "speech_not_configured"},
+    )
+
+    result = _run(["--speak"], env)
+
+    assert result.returncode == 1
+    assert result.stderr == f"notify: failed: {refusal}\n"
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize(
+    ("curl_tail", "expected"),
+    [
+        ("printf '%s\\n' '{\"ok\":false,\"error\":\"boom\"}'", "notify: failed: boom"),
+        ("echo 'curl: (7) could not connect' >&2\nexit 7", "transport failed (curl exit 7)"),
+        ("echo 'not json'", "invalid or empty API response"),
+    ],
+)
+def test_failed_voice_request_removes_the_staged_entry(tmp_path, curl_tail, expected):
+    env, _, box = _file_environment(tmp_path)
+    seen = tmp_path / "entries-at-request-time"
+    curl = Path(env["PATH"].split(":", 1)[0]) / "curl"
+    curl.write_text(f'#!/bin/bash\nls "{box}" | wc -l > "{seen}"\n{curl_tail}\n')
+    source = tmp_path / "note.ogg"
+    source.write_bytes(OGG)
+
+    result = _run(["--voice", source], env)
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+    assert seen.read_text().strip() == "1"      # it was staged when the request went out
+    assert _entries(box) == []
+
+
+# Use the route values the existing test_file_flag_works_before_and_after_route_flags
+# uses: the command validates a chat id, a channel and a thread timestamp.
+@pytest.mark.parametrize("flag_first", [True, False])
+@pytest.mark.parametrize("route", [["--telegram", "12345"], ["--slack", "C0123456789", "1700000000.000100"]])
+def test_voice_and_speak_work_before_and_after_route_flags(tmp_path, route, flag_first):
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+    (tmp_path / "note.ogg").write_bytes(OGG)
+    voice = ["--voice", str(tmp_path / "note.ogg")]
+
+    for flags in (voice, ["--speak"]):
+        result = _run(flags + route if flag_first else route + flags, env)
+        assert result.returncode == 0, result.stderr
+        payload = json.loads(capture.read_text())
+        assert payload["adapter"] == route[0].lstrip("-")
+        assert ("speak" in payload) == (flags == ["--speak"])
+
+
+def test_voice_flag_accepts_the_equals_form(tmp_path):
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+    (tmp_path / "note.ogg").write_bytes(OGG)
+
+    result = _run([f"--voice={tmp_path / 'note.ogg'}"], env)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(capture.read_text())["attachments"][0]["kind"] == "voice"
+
+
+def test_voice_alone_needs_no_message(tmp_path):
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+    (tmp_path / "note.ogg").write_bytes(OGG)
+
+    result = _run(["--voice", tmp_path / "note.ogg"], env, "")
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("flag", ["--voice", "--speak"])
+def test_voice_and_speak_after_a_double_dash_are_message_text_as_before(tmp_path, flag):
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+
+    result = subprocess.run(
+        [NOTIFY, "--", flag], text=True, capture_output=True, env=env,
+    )
+
+    assert result.returncode == 2
+    assert "message arguments are not supported" in result.stderr
+    assert not capture.exists()
+    assert _entries(box) == []
+
+
+def test_positional_message_with_voice_flag_says_how_to_put_the_flag_back(tmp_path):
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+    source = tmp_path / "my note.ogg"
+    source.write_bytes(OGG)
+
+    result = subprocess.run(
+        [NOTIFY, "--voice", source, "hello"], text=True, capture_output=True, env=env,
+    )
+
+    assert result.returncode == 2
+    assert "message arguments are not supported" in result.stderr
+    note = result.stderr.splitlines()[-1]
+    assert note.startswith(
+        "# notify: this command sends the text only. To send the voice note too, add: "
+    )
+    assert shlex.split(note.split(" add: ", 1)[1]) == ["--voice", str(source)]
+    assert not capture.exists()
+    assert _entries(box) == []
+
+
+def test_positional_message_with_speak_flag_says_how_to_put_the_flag_back(tmp_path):
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+
+    result = subprocess.run(
+        [NOTIFY, "--speak", "hello"], text=True, capture_output=True, env=env,
+    )
+
+    assert result.returncode == 2
+    assert "message arguments are not supported" in result.stderr
+    assert result.stderr.splitlines()[-1] == (
+        "# notify: this command sends the text only. To have it spoken, add: --speak"
+    )
+    assert not capture.exists()
+
+
+def test_several_positional_arguments_get_no_speak_note(tmp_path):
+    env, capture, box = _lodge_answering(tmp_path, VOICE_SENT)
+
+    result = subprocess.run(
+        [NOTIFY, "--speak", "one", "two"], text=True, capture_output=True, env=env,
+    )
+
+    assert result.returncode == 2
+    assert "Run this instead:" not in result.stderr
+    assert "--speak" not in result.stderr      # there is no command to add it to
+    assert not capture.exists()
+
+
+def test_help_names_the_voice_flags(tmp_path):
+    env, capture, _ = _file_environment(tmp_path)
+
+    result = subprocess.run([NOTIFY, "--help"], text=True, capture_output=True, env=env)
+
+    assert result.returncode == 0
+    for text in ("[--file PATH]", "[--voice PATH]", "[--speak]",
+                 "--voice sends one audio file (.ogg, .oga, .opus, .mp3 or .m4a) as a voice note.",
+                 "--speak has the lodge read the message aloud and send it as a voice note.",
+                 "Use at most one of --file, --voice and --speak."):
+        assert text in result.stdout
