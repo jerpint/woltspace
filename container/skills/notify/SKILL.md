@@ -55,8 +55,14 @@ the thread with your message as its comment.
   heredoc Woltspace generates for a reply.
 - An HTML page must be one self-contained file, with its styles, scripts and
   images inlined. Nothing it links to on disk travels with it.
-- Credential files (`.env`, Claude and Codex credential files) are refused.
-  The message may be empty when a file is attached.
+- Credential files are refused: `.env`, the Claude and Codex credential files,
+  anything in an `.ssh` folder except public keys (`*.pub`), `known_hosts`,
+  `authorized_keys` and `config`, SSH private keys by name (`id_rsa`,
+  `id_ed25519` and the like) wherever they are, files ending in `.pem`, `.key`,
+  `.p12` or `.pfx`, and `.netrc`, `.git-credentials` and `.pgpass`. A link to
+  one of them under another name is refused too. A Keynote deck also ends in
+  `.key`: export it to PDF and send that.
+- The message may be empty when a file is attached.
 
 A large file takes as long to send as it takes to upload, so let the command
 finish. If it times out, do not send again without checking: the lodge may
