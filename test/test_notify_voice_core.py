@@ -149,7 +149,7 @@ async def test_kind_file_is_the_same_as_no_kind(lodge):
 
 
 @pytest.mark.asyncio
-async def test_an_audio_file_sent_as_a_file_stays_a_document(lodge):
+async def test_audio_sent_as_a_file_keeps_the_kind_file_in_core(lodge):
     entry = _stage(lodge, "note.ogg", OGG)
 
     await notify.send_notification("test-session", "hi\n", None, [{"id": entry, "name": "note.ogg"}])

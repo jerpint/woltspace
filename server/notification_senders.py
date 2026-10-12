@@ -2,6 +2,7 @@
 
 import logging
 import re
+from pathlib import Path
 
 import httpx
 
@@ -17,6 +18,18 @@ UPLOAD_TIMEOUT = httpx.Timeout(30.0, read=120.0, write=300.0)
 TELEGRAM_MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
 # A caption's limit. Telegram counts UTF-16 code units, so an emoji is two.
 TELEGRAM_CAPTION_LIMIT = 1024
+# How a file travels is read from its name: the lists Python keeps of types
+# differ by platform. Any other name goes out with sendDocument.
+_TELEGRAM_VOICE_SUFFIXES = (".ogg", ".oga", ".opus")   # sendVoice, field "voice"
+_TELEGRAM_AUDIO_SUFFIXES = (".mp3", ".m4a")            # sendAudio, field "audio"
+
+
+class TelegramRefused(RuntimeError):
+    """Telegram answered an upload, and the answer was not ok.
+
+    Its own type so the sender can tell a file Telegram will not take this way
+    from a request that may never have arrived.
+    """
 
 
 async def _telegram_upload(
@@ -37,9 +50,9 @@ async def _telegram_upload(
                 data = resp.json()
             except ValueError:
                 # A proxy in front of the API answers an oversized upload in HTML.
-                raise RuntimeError(f"telegram answered HTTP {resp.status_code}") from None
+                raise TelegramRefused(f"telegram answered HTTP {resp.status_code}") from None
             if not data.get("ok"):
-                raise RuntimeError(data.get("description", "telegram error"))
+                raise TelegramRefused(data.get("description", "telegram error"))
             return data
 
 
@@ -55,6 +68,13 @@ async def telegram_send_voice(
 ) -> dict:
     """Upload audio Telegram shows as a voice note: Ogg Opus, MP3 or M4A."""
     return await _telegram_upload("sendVoice", "voice", token, chat_id, attachment, caption)
+
+
+async def telegram_send_audio(
+    token: str, chat_id: str, attachment: Attachment, caption: str
+) -> dict:
+    """Upload audio Telegram shows in its music player: MP3 or M4A."""
+    return await _telegram_upload("sendAudio", "audio", token, chat_id, attachment, caption)
 
 
 async def telegram_send(token: str, chat_id: str, text: str) -> dict:
@@ -194,8 +214,26 @@ async def slack_upload_file(
         return await call("files.completeUploadExternal", json=payload)
 
 
-def telegram_sender(transport, send_document=None, send_voice=None) -> Send:
+def telegram_sender(transport, send_document=None, send_voice=None, send_audio=None) -> Send:
     """Temporary transport injection preserves notify's existing patch points."""
+    async def _by_name(token: str, chat_id: str, attachment: Attachment, caption: str) -> None:
+        """Send a file the way its name asks for, and as a document if Telegram refuses that."""
+        suffix = Path(attachment.filename).suffix.lower()
+        if suffix in _TELEGRAM_VOICE_SUFFIXES and send_voice is not None:
+            method, upload = "sendVoice", send_voice
+        elif suffix in _TELEGRAM_AUDIO_SUFFIXES and send_audio is not None:
+            method, upload = "sendAudio", send_audio
+        else:
+            await send_document(token, chat_id, attachment, caption)
+            return
+        try:
+            await upload(token, chat_id, attachment, caption)
+        except TelegramRefused as exc:
+            # An .ogg that is Vorbis and not Opus, say. The file still arrives. Any
+            # other failure may have reached Telegram, so it is not sent twice.
+            logger.warning("Telegram refused %s (%s); sending the file as a document", method, exc)
+            await send_document(token, chat_id, attachment, caption)
+
     async def send(message: OutboundMessage, destination, context: SendContext) -> None:
         token, chat_id = context.secrets["TELEGRAM_BOT_TOKEN"], destination["chat_id"]
         footer = ""
@@ -207,12 +245,13 @@ def telegram_sender(transport, send_document=None, send_voice=None) -> Send:
             return
         attachment = message.attachments[0]
         if attachment.kind == "voice":
+            # A voice note was asked for: if it cannot be one, the caller is told.
             upload, what = send_voice, "voice note"
             if upload is None:
                 raise RuntimeError("telegram sender has no voice transport")
         else:
-            upload, what = send_document, "file"
-            if upload is None:
+            upload, what = _by_name, "file"
+            if send_document is None:
                 raise RuntimeError("telegram sender has no document transport")
         if len(message.attachments) > 1:
             raise RuntimeError("telegram sender carries one file per message")
