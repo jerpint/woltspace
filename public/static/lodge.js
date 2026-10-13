@@ -902,11 +902,11 @@ document.addEventListener('keydown', event => {
 
 function selectCreateHarness(id) {
   createSelectedHarness = id;
-  renderCreateHarness();
+  renderCreateHarness(true);
   updateCreatePreview();
 }
 
-function renderCreateHarness() {
+function renderCreateHarness(keepChosen = false) {
   renderCreateHarnessTrigger();
   const harness = harnessInfo(createSelectedHarness);
   const catalog = harness.catalog || [];
@@ -923,6 +923,10 @@ function renderCreateHarness() {
       model.hidden = choosable;
     }
     if (!select) return;
+    // Picking an engine keeps a model chosen on a card, as long as that engine
+    // offers it too. A card left on its usual model has no choice to keep: it
+    // follows the engine's usual model, and so does a freshly opened dialog.
+    const chosen = keepChosen && select.value !== select.dataset.usual ? select.value : '';
     select.hidden = !choosable;
     select.replaceChildren();
     if (!choosable) return;
@@ -940,7 +944,7 @@ function renderCreateHarness() {
       option.textContent = usual;
       select.prepend(option);
     }
-    select.value = usual;
+    select.value = catalog.some(entry => entry.id === chosen) ? chosen : usual;
     select.dataset.usual = usual;
   });
 }
