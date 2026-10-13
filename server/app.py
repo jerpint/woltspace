@@ -131,6 +131,7 @@ from .state import (
     onboarding_status,
     apply_default_harness_from_env,
     install_starter_seed,
+    LodgeConfigUnreadable,
     select_onboarding_harness,
 )
 
@@ -378,9 +379,27 @@ def _split_host(host_header: str) -> tuple[str, int | None]:
         return "", None
 
 
+def _owner_allowed_hosts() -> set[str]:
+    """Extra names the owner reaches the lodge by (a tailnet name, a LAN name).
+
+    WOLTSPACE_ALLOWED_HOSTS is a comma-separated list of exact host names. The
+    Host check exists against DNS rebinding, so only the owner adds to it.
+    """
+    raw = os.environ.get("WOLTSPACE_ALLOWED_HOSTS", "")
+    names = {name.strip().lower().rstrip(".") for name in raw.split(",")}
+    # `*.localhost` is reserved for this machine's app hosts and `localhost`
+    # is always allowed, so neither can be re-declared as a lodge name.
+    return {name for name in names if name and name != "localhost"
+            and not name.endswith(".localhost")}
+
+
 def _allowed_http_hostname(hostname: str) -> bool:
     """Allow only the lodge's loopback/tunnel names and valid app subdomains."""
+    if not hostname:  # an unparseable Host
+        return False
     if hostname in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    if hostname in _owner_allowed_hosts():
         return True
     if hostname.endswith(".localhost"):
         return bool(_APP_HOST_RE.fullmatch(hostname.removesuffix(".localhost")))
@@ -447,6 +466,10 @@ def _extract_app_subdomain(host_header: str) -> str | None:
     host, _port = _split_host(host_header)
     if host.endswith(".localhost") and host != "localhost":
         return host.removesuffix(".localhost")
+    if host in _owner_allowed_hosts():
+        # A name the owner listed is always the lodge itself, even when it
+        # sits under the tunnel domain; it never takes the apps audience.
+        return None
     td = tunnel_mgr.get_tunnel_domain()
     th = tunnel_mgr.get_tunnel_hostname()
     if td and host.endswith(f".{td}") and host != th:
@@ -585,12 +608,20 @@ class AccessTokenMiddleware:
                 )
             return await self._reject(scope, receive, send, message)
         if settings is None:
+            # The owner chose the way in (a tunnel with Cloudflare Access, a
+            # tailnet, ...) and it does the checking. Doctor and Settings say
+            # plainly that without lodge-side Access anyone it lets through
+            # is treated as the owner.
             return await self.inner(scope, receive, send)
         token = headers.get("cf-access-jwt-assertion", "").strip()
         if not token:
             return await self._reject(scope, receive, send, "Access token required")
         app_name = _extract_app_subdomain(host_header)
         audience = settings.apps_aud if app_name else settings.lodge_aud
+        if not audience:
+            return await self._reject(
+                scope, receive, send, "apps have no Cloudflare Access audience configured",
+            )
         try:
             claims = await access_token_verifier.verify(token, settings, audience)
         except Exception:
@@ -1893,8 +1924,11 @@ async def choose_onboarding_harness(request: Request):
     name = (body.get("harness") or "").strip()
     if name not in HARNESSES:
         return JSONResponse({"error": f"unknown harness: {name}"}, status_code=400)
-    select_onboarding_harness(name)
-    await asyncio.to_thread(install_starter_seed)
+    try:
+        select_onboarding_harness(name)
+        await asyncio.to_thread(install_starter_seed)
+    except LodgeConfigUnreadable as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
     return {"ok": True, "default": name, **onboarding_status()}
 
 

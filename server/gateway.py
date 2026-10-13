@@ -58,7 +58,7 @@ async def request_identity(scope, headers, *, local_host: bool, access):
             return None, "non-loopback-peer"
         owner = access.owner_email if access is not None else "owner@localhost"
         return owner, "owner-local"
-    if access is None:
+    if access is None or not access.apps_aud:
         return None, "no-identity-provider"
     token = headers.get("cf-access-jwt-assertion", "").strip()
     if not token:
