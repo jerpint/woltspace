@@ -1,4 +1,4 @@
-"""Lodge-owned per-app share lists."""
+"""Lodge-owned share lists for apps and wolt sites."""
 
 from __future__ import annotations
 
@@ -16,8 +16,10 @@ _CACHE_LOCK = threading.Lock()
 _CACHE: dict[Path, tuple[tuple[int, int] | None, dict]] = {}
 
 
-def _path(wolts_dir: Path) -> Path:
-    return wolts_dir / ".space" / "platform" / "app-sharing.json"
+def _path(wolts_dir: Path, kind: str = "app") -> Path:
+    if kind not in {"app", "site"}:
+        raise ValueError(f"unknown share kind: {kind}")
+    return wolts_dir / ".space" / "platform" / f"{kind}-sharing.json"
 
 
 def normalize_entry(value: object) -> str:
@@ -33,8 +35,8 @@ def normalize_entry(value: object) -> str:
     return entry
 
 
-def read_app_shares(wolts_dir: Path, app_name: str) -> list[str]:
-    path = _path(wolts_dir)
+def read_app_shares(wolts_dir: Path, app_name: str, *, kind: str = "app") -> list[str]:
+    path = _path(wolts_dir, kind)
     data = _read_state(path)
     entries = data.get(app_name, [])
     if not isinstance(entries, list):
@@ -63,11 +65,13 @@ def _read_state(path: Path) -> dict:
     return data
 
 
-def write_app_shares(wolts_dir: Path, app_name: str, values: object) -> list[str]:
+def write_app_shares(
+    wolts_dir: Path, app_name: str, values: object, *, kind: str = "app",
+) -> list[str]:
     if not isinstance(values, list):
         raise ValueError("entries must be a list")
     entries = sorted({normalize_entry(entry) for entry in values})
-    path = _path(wolts_dir)
+    path = _path(wolts_dir, kind)
     with _LOCK:
         try:
             data = json.loads(path.read_text()) if path.exists() else {}
@@ -99,3 +103,12 @@ def email_is_shared(email: str, entries: list[str]) -> bool:
     normalized = email.strip().lower()
     domain = normalized.partition("@")[2]
     return normalized in entries or (bool(domain) and f"@{domain}" in entries)
+
+
+def read_site_shares(wolts_dir: Path, wolt: str) -> list[str]:
+    """Who besides the owner may open a wolt's site on the app domain."""
+    return read_app_shares(wolts_dir, wolt, kind="site")
+
+
+def write_site_shares(wolts_dir: Path, wolt: str, values: object) -> list[str]:
+    return write_app_shares(wolts_dir, wolt, values, kind="site")

@@ -105,7 +105,7 @@
     }
     const creature=el('div','wolt-setting');creature.append(el('b','','Creature'),el('span','',`${config.type || 'rodent'} · permanent`));box.append(creature,status);body.replaceChildren(box);
   }
-  function renderSite() { const wrap=el('div');const bar=el('div','wolt-sitebar');bar.append(el('span','',`${name}'s site`),link('⤢ Expand',`/wolt/${encodeURIComponent(name)}/site/`,'btn btn-ghost'));const frame=el('iframe','wolt-site');frame.src=`/wolt/${encodeURIComponent(name)}/site/`;frame.title=`${name}'s site`;wrap.append(bar,frame);body.replaceChildren(wrap); }
+  function renderSite() { const wrap=el('div');const bar=el('div','wolt-sitebar');bar.append(el('span','',`${name}'s site`),link('⤢ Expand',`/wolt/${encodeURIComponent(name)}/site/`,'btn btn-ghost'));const frame=el('iframe','wolt-site');frame.setAttribute('sandbox','allow-scripts');frame.src=`/wolt/${encodeURIComponent(name)}/site/`;frame.title=`${name}'s site`;wrap.append(bar,frame);body.replaceChildren(wrap); }
   function switchTab(next) { tab = ['overview','about','settings','site'].includes(next) ? next : 'overview'; root.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active',b.dataset.tab===tab)); history.replaceState(null,'',`/w/${encodeURIComponent(name)}${tab==='overview'?'':`?tab=${tab}`}`); ({overview:renderOverview,about:renderAbout,settings:renderSettings,site:renderSite}[tab])(); }
   root.querySelectorAll('[data-tab]').forEach(b => b.onclick=()=>switchTab(b.dataset.tab));
 

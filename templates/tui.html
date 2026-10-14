@@ -525,8 +525,13 @@
     return location.protocol + '//' + location.hostname + ':' + port + (subPath || '/');
   }
 
+  // Sites and sparks are sandboxed by the server's CSP header; the frame
+  // says so too. Apps live on their own origin and keep theirs.
+  const SANDBOXED_VIEWS = /^\/(wolt\/[^/]+\/site(\/|$)|history\/)/;
   function loadView(url, title, pushToStack = true) {
     const meta = currentViewportMeta;
+    if (SANDBOXED_VIEWS.test(url || '')) preview.setAttribute('sandbox', 'allow-scripts');
+    else preview.removeAttribute('sandbox');
     if (meta && meta.port && meta.port !== 7777 && url && url.startsWith('/app/')) {
       const direct = directPortUrl(meta.port);
       if (direct) {

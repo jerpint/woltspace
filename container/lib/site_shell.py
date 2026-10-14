@@ -181,17 +181,127 @@ def wolt_fields(wolt_dir: Path, wolt_name: str) -> dict:
     return fields
 
 
-def shell_manifest(wolt_name: str, wolt_dir: Path, sdir: Path, site_cfg: dict | None = None) -> dict:
-    """Everything the drawer needs, inlined into the page so it draws with no fetch."""
+# A slot is a fragment of the drawer, not a page; this is plenty for one.
+MAX_SLOT_BYTES = 64 * 1024
+
+
+def slot_html(sdir: Path, name: object) -> str | None:
+    """The header/footer slot file, read from inside the site dir or nothing."""
+    if not isinstance(name, str) or not name:
+        return None
+    path = sdir / name.strip("/")
+    try:
+        path.resolve().relative_to(sdir.resolve())
+        if not path.is_file() or path.stat().st_size > MAX_SLOT_BYTES:
+            return None
+        return path.read_text(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        return None
+
+
+# What a wolt's site.json may change about the lodge-drawn built-in pages:
+# the title, a few colours, the avatar emoji. Each value is checked, not
+# passed through - a hex colour is a hex colour, never `url(...)`, a font
+# stack or anything else CSS would act on. Stylesheets (`custom_css`), font
+# imports (`fonts_href`), slots and font tokens stay on the wolt's own site
+# pages, which are the wolt's own documents.
+_HEX_COLOUR_RE = re.compile(r"#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})")
+OWNER_COLOUR_TOKENS = ("accent", "bg", "ink", "muted", "line")
+_TITLE_MAX = 60
+_EMOJI_MAX = 8
+
+
+def owner_look(cfg: dict) -> dict:
+    """The checked subset of site.json a built-in page may use."""
+    look: dict = {}
+    title = cfg.get("title")
+    if isinstance(title, str) and title.strip():
+        look["title"] = " ".join(title.split())[:_TITLE_MAX]
+    tokens = cfg.get("tokens") if isinstance(cfg.get("tokens"), dict) else {}
+    safe = {k: v.strip() for k, v in tokens.items()
+            if k in OWNER_COLOUR_TOKENS and isinstance(v, str) and _HEX_COLOUR_RE.fullmatch(v.strip())}
+    emoji = tokens.get("emoji")
+    if isinstance(emoji, str) and 0 < len(emoji.strip()) <= _EMOJI_MAX and emoji.isprintable():
+        safe["emoji"] = emoji.strip()
+    if safe:
+        look["tokens"] = safe
+    return look
+
+
+def shell_manifest(wolt_name: str, wolt_dir: Path, sdir: Path, site_cfg: dict | None = None,
+                   slots: bool = False, owner_page: bool = False) -> dict:
+    """Everything the drawer needs, inlined into the page so it draws with no fetch.
+
+    `slots` inlines the header/footer HTML too. Only a wolt's own site page
+    asks for that: it is served sandboxed (opaque origin), so it could not
+    fetch the slots itself, and the wolt's markup inside the wolt's own page
+    adds nothing. shell.js draws no slot it was not handed.
+
+    `owner_page` is for the lodge-drawn built-in pages, which carry the wolt's
+    boot files: the site look is cut down to owner_look(), so no wolt
+    stylesheet, font import, slot or free-form token reaches that document.
+    One manifest shape per page kind, so the two renderers cannot disagree.
+    """
     cfg = load_site_config(sdir) if site_cfg is None else site_cfg
+    if owner_page:
+        site = owner_look(cfg)
+    else:
+        site = {k: cfg[k] for k in ("title", "tokens", "fonts_href", "custom_css", "header_html", "footer_html") if k in cfg}
+    if slots and not owner_page:
+        found = {k: slot_html(sdir, cfg.get(f"{k}_html")) for k in ("header", "footer")}
+        found = {k: v for k, v in found.items() if v is not None}
+        if found:
+            site["slots"] = found
     return {
         "v": 1,
         "wolt": wolt_fields(wolt_dir, wolt_name),
-        "site": {k: cfg[k] for k in ("title", "tokens", "fonts_href", "custom_css", "header_html", "footer_html") if k in cfg},
+        "site": site,
         "tree": page_tree(sdir, cfg),
         "base": f"/wolt/{wolt_name}/site/",
         "builtin": f"/wolt/{wolt_name}/_/",
     }
+
+
+# What a site page served on its own content host (the app gateway) may know
+# about its wolt. Nothing that describes how the wolt runs.
+PUBLIC_WOLT_FIELDS = ("name", "display_name", "type", "role", "description")
+SITE_LOOK_FIELDS = ("title", "tokens", "fonts_href", "custom_css", "header_html", "footer_html")
+# The shell assets a content host serves itself, under its reserved namespace.
+PUBLIC_ASSET_BASE = "/_woltspace/assets/"
+PUBLIC_ASSETS = ("shell.js", "shell.css")
+
+
+def public_shell_manifest(
+    wolt_name: str, wolt_dir: Path, sdir: Path, site_cfg: dict | None = None,
+    *, lodge_origin: str | None = None,
+) -> dict:
+    """The manifest for a page on the site's own origin: content, no lodge.
+
+    Built apart from `shell_manifest` on purpose: no memory, no engine
+    settings, no lodge paths. Pages and assets are addressed from the site
+    root. The built-in About / Memory / Settings pages stay on the lodge, so
+    `builtin` is an absolute lodge address and only present when the caller
+    says the viewer is the owner; a shared viewer gets content navigation only.
+    """
+    cfg = load_site_config(sdir) if site_cfg is None else site_cfg
+    fields = wolt_fields(wolt_dir, wolt_name)
+    manifest = {
+        "v": 1,
+        "wolt": {k: fields[k] for k in PUBLIC_WOLT_FIELDS if k in fields},
+        "site": {k: cfg[k] for k in SITE_LOOK_FIELDS if k in cfg},
+        "tree": page_tree(sdir, cfg),
+        "base": "/",
+        "assets": PUBLIC_ASSET_BASE,
+    }
+    # The wolt's own header/footer HTML, on its own origin: inlined because
+    # shell.js draws only slots it was handed (it never fetches them).
+    found = {k: slot_html(sdir, cfg.get(f"{k}_html")) for k in ("header", "footer")}
+    found = {k: v for k, v in found.items() if v is not None}
+    if found:
+        manifest["site"]["slots"] = found
+    if lodge_origin:
+        manifest["builtin"] = f"{lodge_origin.rstrip('/')}/wolt/{wolt_name}/_/"
+    return manifest
 
 
 def _head(path: Path, n: int) -> tuple[str, int]:
@@ -200,6 +310,18 @@ def _head(path: Path, n: int) -> tuple[str, int]:
     except OSError:
         return "", 0
     return "\n".join(lines[:n]), len(lines)
+
+
+def memory_for_tab(wolt_dir: Path, tab: str) -> dict:
+    """Only what one built-in tab shows: About gets identity, Memory gets the
+    boot files, Settings gets nothing. Inlined into the page, so each page
+    carries no more of the wolt's memory than it draws."""
+    if tab == "memory":
+        return memory_payload(wolt_dir)
+    if tab == "about":
+        identity, _ = _head(wolt_dir / "wolt" / "memory" / "identity.md", 10_000)
+        return {"identity": identity}
+    return {}
 
 
 def memory_payload(wolt_dir: Path) -> dict:
@@ -242,10 +364,16 @@ def _shell_asset_version() -> str:
 
 
 def shell_tags(manifest: dict, drawer: bool = True) -> str:
-    """The manifest inline (so the drawer draws with no fetch), then shell.js."""
+    """The manifest inline (so the drawer draws with no fetch), then shell.js.
+
+    The script comes from wherever the manifest says the shell assets live:
+    the lodge's static path by default, a content host's reserved namespace
+    for a page served on the site's own origin.
+    """
     tags = f"<script>window.__WOLT_SHELL__={script_json(manifest)};</script>"
     if drawer:
-        tags += f'<script src="{SHELL_ASSET_BASE}/shell.js?v={_shell_asset_version()}"></script>'
+        base = manifest.get("assets") or f"{SHELL_ASSET_BASE}/"
+        tags += f'<script src="{base}shell.js?v={_shell_asset_version()}"></script>'
     return tags
 
 

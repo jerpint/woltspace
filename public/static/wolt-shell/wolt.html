@@ -46,9 +46,12 @@
   var m = window.__WOLT_SHELL__, w = m.wolt, site = m.site || {}, t = site.tokens || {};
   var tab = location.pathname.slice(m.builtin.length).split('/')[0] || 'about';
   var EMOJI = { raccoon: '🦝', beaver: '🦫', otter: '🦦', wolf: '🐺', dog: '🐶', rodent: '🐿️' };
-  var map = { accent: '--s-accent', bg: '--s-bg', ink: '--s-ink', muted: '--s-muted', line: '--s-line', display_font: '--s-display', body_font: '--s-body' };
-  for (var k in map) if (t[k]) document.documentElement.style.setProperty(map[k], t[k]);
-  if (site.fonts_href) { var f = document.createElement('link'); f.rel = 'stylesheet'; f.href = site.fonts_href; document.head.appendChild(f); }
+  // This page holds the wolt's boot files, so the wolt's look stops at a few
+  // colours - checked here as well as on the server (site_shell.owner_look):
+  // a hex colour and nothing else, no stylesheet, no font import.
+  var map = { accent: '--s-accent', bg: '--s-bg', ink: '--s-ink', muted: '--s-muted', line: '--s-line' };
+  var HEX = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+  for (var k in map) if (typeof t[k] === 'string' && HEX.test(t[k])) document.documentElement.style.setProperty(map[k], t[k]);
   var emoji = t.emoji || EMOJI[w.type] || '🌲';
   var name = site.title || w.display_name || w.name;
 
@@ -91,15 +94,16 @@
     var rows = [
       ['name', w.display_name || w.name], ['folder', w.name], ['creature', w.type], ['engine', w.harness || 'lodge default'], ['model', w.model || 'tier default'],
       ['role', w.role], ['capabilities', (w.capabilities || []).join(', ')],
-      ['site shell', document.querySelector('script[src*="/shell.js"]') ? 'on' : 'off (the wolt owns its site)'], ['site title', site.title], ['custom css', site.custom_css], ['header slot', site.header_html], ['footer slot', site.footer_html]
+      ['site shell', document.querySelector('script[src*="/shell.js"]') ? 'on' : 'off (the wolt owns its site)'], ['site title', site.title]
     ];
     render('<table>' + rows.map(function (r) { return '<tr><td>' + esc(r[0]) + '</td><td>' + esc(r[1] || '-') + '</td></tr>'; }).join('') + '</table>' +
       '<div class="note">Read-only for now. Engine and model live in <code>wolt/wolt.json</code>; the look lives in <code>wolt/site/site.json</code>.</div>');
     return;
   }
 
-  render('<p class="meta">loading...</p>');
-  fetch(m.builtin + 'memory.json').then(function (r) { return r.json(); }).then(function (mem) {
+  // The server inlines what this tab shows: the page is sandboxed (opaque
+  // origin) and has no same-origin fetch to pull memory with.
+  Promise.resolve(m.memory || {}).then(function (mem) {
     if (tab === 'about') {
       render((w.description ? '<p>' + esc(w.description) + '</p>' : '') +
         '<div class="md">' + (mem.identity ? md(mem.identity) : '<p class="meta">No identity.md yet.</p>') + '</div>');
@@ -108,8 +112,8 @@
         '<details class="mem" open><summary>context.md <span class="meta">(first ' + mem.context_window + ' of ' + mem.context_lines + ' lines)</span></summary><div class="md">' + md(mem.context) + '</div></details>' +
         '<details class="mem"><summary>learnings.md <span class="meta">(first ' + mem.learnings_window + ' of ' + mem.learnings_lines + ' lines)</span></summary><div class="md">' + md(mem.learnings) + '</div></details>' +
         '<details class="mem"><summary>identity.md</summary><div class="md">' + md(mem.identity) + '</div></details>' +
-        '<details class="mem"><summary>archive/ <span class="meta">(' + mem.archive.length + ' files)</span></summary><ul>' +
-        mem.archive.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul></details>');
+        '<details class="mem"><summary>archive/ <span class="meta">(' + (mem.archive || []).length + ' files)</span></summary><ul>' +
+        (mem.archive || []).map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul></details>');
     }
   }).catch(function () { render('<p class="meta">Could not load memory.</p>'); });
 })();

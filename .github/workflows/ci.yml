@@ -72,6 +72,11 @@ jobs:
           test/test_notify_speak_core.py
           test/test_notify_speak_route.py
           test/test_notify_hardening.py
+          test/test_access_tokens.py
+          test/test_access_cli.py
+          test/test_lodge_config_writes.py
+          test/test_app_gateway.py
+          test/test_site_gateway.py
           test/test_closed_loop.py::TestRegressions::test_notify_footer_appended
           test/test_closed_loop.py::TestRegressions::test_notify_script_executable
           test/test_closed_loop.py::TestRegressions::test_den_reply_footer_consistent

@@ -7,6 +7,7 @@ import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 from woltspace.app_gateway_port import resolve_app_gateway_port
 
 
@@ -14,6 +15,7 @@ from woltspace.app_gateway_port import resolve_app_gateway_port
 class GatewaySettings:
     apps_domain: str | None
     port: int
+    lodge_port: int = 7777
 
 
 _CACHE: dict[tuple[Path, int, str], tuple[tuple[int, int] | None, GatewaySettings]] = {}
@@ -55,7 +57,32 @@ def load_gateway_settings(
     domain = root.get("apps_domain")
     domain = domain.strip().lower().rstrip(".") if isinstance(domain, str) else None
     port = resolve_app_gateway_port(wolts_dir, lodge_port)
-    settings = GatewaySettings(domain or None, port)
+    settings = GatewaySettings(domain or None, port, lodge_port)
     with _LOCK:
         _CACHE[cache_key] = (signature, settings)
     return settings
+
+
+def lodge_origin(settings: GatewaySettings, wolts_dir: Path, *, local: bool) -> str | None:
+    """Where the lodge is for a visitor of a content host, or None.
+
+    Locally the lodge is on loopback at its own port. Remotely it is the named
+    tunnel's address when the control plane recorded one; without it a site
+    page simply carries no links back to the lodge.
+    """
+    if local:
+        return f"http://localhost:{settings.lodge_port}"
+    url = os.environ.get("CLOUDFLARE_TUNNEL_URL", "").strip()
+    if not url:
+        try:
+            state = json.loads((wolts_dir / ".space" / "platform" / "tunnel.json").read_text())
+            url = state.get("url", "") if isinstance(state, dict) else ""
+        except (OSError, json.JSONDecodeError):
+            url = ""
+    try:
+        parsed = urlsplit(url.strip())
+    except ValueError:
+        return None
+    if parsed.scheme != "https" or not parsed.hostname or parsed.path not in {"", "/"}:
+        return None
+    return f"https://{parsed.netloc.lower()}"

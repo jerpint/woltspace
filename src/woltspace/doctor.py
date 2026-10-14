@@ -443,6 +443,118 @@ def _graft_runtime_lib(layout: RuntimeLayout) -> None:
         sys.path.insert(0, lib_dir)
 
 
+def _allowed_hosts_values(layout: RuntimeLayout) -> list[str]:
+    """WOLTSPACE_ALLOWED_HOSTS as the lodge will see it: shell, then the data root .env."""
+    raw = os.environ.get("WOLTSPACE_ALLOWED_HOSTS")
+    if raw is None:
+        env_file = layout.wolts_dir / ".env"
+        try:
+            from dotenv import dotenv_values
+
+            raw = dotenv_values(env_file).get("WOLTSPACE_ALLOWED_HOSTS") if env_file.is_file() else None
+        except (OSError, ImportError):
+            raw = None
+    return [name.strip() for name in (raw or "").split(",") if name.strip()]
+
+
+def _allowed_hosts_check(names: list[str]) -> DoctorCheck | None:
+    """Name WOLTSPACE_ALLOWED_HOSTS entries the lodge can never match."""
+    import ipaddress
+
+    def never_matches(name: str) -> bool:
+        try:
+            ipaddress.ip_address(name)
+            return False  # a bare IP, IPv6 included, is matched as written
+        except ValueError:
+            pass
+        lowered = name.lower().rstrip(".")
+        return (not lowered or any(ch in name for ch in "/:*[]@ ") or lowered == "localhost"
+                or lowered.endswith(".localhost"))
+
+    bad = [name for name in names if never_matches(name)]
+    if not bad:
+        return None
+    return DoctorCheck(
+        "allowed-hosts", "warn",
+        "WOLTSPACE_ALLOWED_HOSTS has entries the lodge ignores or can never match: "
+        + ", ".join(bad),
+        "Use exact host names only: no scheme, port, path, brackets or wildcards "
+        "(IPv6 as fd00::1). localhost names are reserved.",
+    )
+
+
+# Kept in step with `server/content_hosts.py`: the host label prefix that
+# names a wolt's site on the app domain. An app of that name is never served.
+SITE_HOST_PREFIX = "site-"
+
+
+def _reserved_app_names_check(layout: RuntimeLayout) -> DoctorCheck | None:
+    """Apps whose names the gateway reserves for wolt sites (`site-<wolt>`)."""
+    found = []
+    for folder in ("apps", "projects"):
+        for manifest in sorted((layout.wolts_dir / folder).glob("*/woltspace.json")):
+            names = {manifest.parent.name}
+            try:
+                data = json.loads(manifest.read_text())
+                if isinstance(data, dict) and isinstance(data.get("name"), str):
+                    names.add(data["name"])
+            except (OSError, json.JSONDecodeError):
+                pass
+            found.extend(sorted(name for name in names if name.lower().startswith(SITE_HOST_PREFIX)))
+    if not found:
+        return None
+    return DoctorCheck(
+        "app-names", "warn",
+        f"app name(s) reserved for wolt sites, not served: {', '.join(dict.fromkeys(found))}",
+        f"Give the app a name without the {SITE_HOST_PREFIX} prefix (directory and "
+        f"woltspace.json). Its old host stays reserved: browsers may still hold its "
+        f"storage and workers, so no site will ever be served there.",
+    )
+
+
+def _remote_access_check(layout: RuntimeLayout, tunnel: dict) -> DoctorCheck | None:
+    """Say plainly what a published lodge's Access settings mean for it.
+
+    A warning, not a failure: the way in is the owner's choice. The lodge
+    still starts, and our own Cloudflare setup turns the check on. Reads the
+    settings with the lodge's own loader, so doctor and server always agree.
+    """
+    hosts = _allowed_hosts_values(layout)
+    if not tunnel.get("enabled") and not hosts:
+        return None
+    where = tunnel.get("url") or (", ".join(hosts) if hosts else "its public address")
+    root = str(layout.install_root)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    try:
+        from server.access import load_access_settings
+    except ImportError:
+        return None
+    try:
+        settings = load_access_settings(layout.wolts_dir)
+    except RuntimeError as exc:
+        return DoctorCheck(
+            "remote-access", "warn",
+            f"the lodge's Access settings are unusable ({exc}), so it refuses every "
+            "remote request",
+            "Repair them with `woltspace access set`, or restore woltspace.json from a "
+            "backup. This machine still reaches the lodge.",
+        )
+    if settings is not None:
+        return DoctorCheck(
+            "remote-access", "pass", "remote requests are checked with Cloudflare Access",
+        )
+    return DoctorCheck(
+        "remote-access", "warn",
+        "the lodge is published without its own Access check: anyone who reaches "
+        f"{where} is treated as you, unless whatever guards that way in "
+        "(e.g. Cloudflare Access) stops them first",
+        "Run `woltspace access set` on this machine (or open Settings > Access) so the "
+        "lodge verifies every remote request itself. The cloudflare skill explains "
+        "where each value comes from.",
+    )
+
+
 def run_doctor(
     layout: RuntimeLayout, *, check_port: bool = True, as_entrypoint: bool = False
 ) -> list[DoctorCheck]:
@@ -479,6 +591,15 @@ def run_doctor(
                 "CLOUDFLARE_TUNNEL_TOKEN is configured but the tunnel is disabled",
                 "Set WOLTSPACE_PUBLIC_TUNNEL=true and restart the lodge.",
             ))
+    remote = _remote_access_check(layout, tunnel_settings(layout))
+    if remote is not None:
+        checks.append(remote)
+    hosts_check = _allowed_hosts_check(_allowed_hosts_values(layout))
+    if hosts_check is not None:
+        checks.append(hosts_check)
+    reserved_apps = _reserved_app_names_check(layout)
+    if reserved_apps is not None:
+        checks.append(reserved_apps)
     default_harness = _default_harness_check()
     if default_harness is not None:
         checks.append(default_harness)

@@ -75,8 +75,24 @@ def _lodge_config() -> dict:
         return {}
 
 
+class LodgeConfigUnreadable(RuntimeError):
+    """woltspace.json exists but is not a JSON object: never write over it."""
+
+
 def _write_lodge_config(config: dict) -> None:
     path = WOLTS_DIR / "woltspace.json"
+    # The reader treats a broken file as {}; writing that back would erase
+    # whatever the owner had (Access settings included) with nobody asked.
+    if path.exists():
+        try:
+            current = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            current = None
+        if not isinstance(current, dict):
+            raise LodgeConfigUnreadable(
+                f"{path} is unreadable; not overwriting it. Repair it or restore it "
+                "from a backup."
+            )
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(config, indent=2) + "\n")
@@ -128,8 +144,12 @@ def apply_default_harness_from_env(installer=None) -> bool:
             file=sys.stderr,
         )
         return False
-    select_onboarding_harness(name)
-    install_starter_seed(installer=installer)
+    try:
+        select_onboarding_harness(name)
+        install_starter_seed(installer=installer)
+    except LodgeConfigUnreadable as exc:
+        print(f"[onboarding] {exc}", file=sys.stderr)
+        return False
     print(f"[onboarding] selected default harness from environment: {name}")
     return True
 
