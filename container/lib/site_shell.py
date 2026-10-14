@@ -194,6 +194,42 @@ def shell_manifest(wolt_name: str, wolt_dir: Path, sdir: Path, site_cfg: dict | 
     }
 
 
+# What a site page served on its own content host (the app gateway) may know
+# about its wolt. Nothing that describes how the wolt runs.
+PUBLIC_WOLT_FIELDS = ("name", "display_name", "type", "role", "description")
+SITE_LOOK_FIELDS = ("title", "tokens", "fonts_href", "custom_css", "header_html", "footer_html")
+# The shell assets a content host serves itself, under its reserved namespace.
+PUBLIC_ASSET_BASE = "/_woltspace/assets/"
+PUBLIC_ASSETS = ("shell.js", "shell.css")
+
+
+def public_shell_manifest(
+    wolt_name: str, wolt_dir: Path, sdir: Path, site_cfg: dict | None = None,
+    *, lodge_origin: str | None = None,
+) -> dict:
+    """The manifest for a page on the site's own origin: content, no lodge.
+
+    Built apart from `shell_manifest` on purpose: no memory, no engine
+    settings, no lodge paths. Pages and assets are addressed from the site
+    root. The built-in About / Memory / Settings pages stay on the lodge, so
+    `builtin` is an absolute lodge address and only present when the caller
+    says the viewer is the owner; a shared viewer gets content navigation only.
+    """
+    cfg = load_site_config(sdir) if site_cfg is None else site_cfg
+    fields = wolt_fields(wolt_dir, wolt_name)
+    manifest = {
+        "v": 1,
+        "wolt": {k: fields[k] for k in PUBLIC_WOLT_FIELDS if k in fields},
+        "site": {k: cfg[k] for k in SITE_LOOK_FIELDS if k in cfg},
+        "tree": page_tree(sdir, cfg),
+        "base": "/",
+        "assets": PUBLIC_ASSET_BASE,
+    }
+    if lodge_origin:
+        manifest["builtin"] = f"{lodge_origin.rstrip('/')}/wolt/{wolt_name}/_/"
+    return manifest
+
+
 def _head(path: Path, n: int) -> tuple[str, int]:
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -242,10 +278,16 @@ def _shell_asset_version() -> str:
 
 
 def shell_tags(manifest: dict, drawer: bool = True) -> str:
-    """The manifest inline (so the drawer draws with no fetch), then shell.js."""
+    """The manifest inline (so the drawer draws with no fetch), then shell.js.
+
+    The script comes from wherever the manifest says the shell assets live:
+    the lodge's static path by default, a content host's reserved namespace
+    for a page served on the site's own origin.
+    """
     tags = f"<script>window.__WOLT_SHELL__={script_json(manifest)};</script>"
     if drawer:
-        tags += f'<script src="{SHELL_ASSET_BASE}/shell.js?v={_shell_asset_version()}"></script>'
+        base = manifest.get("assets") or f"{SHELL_ASSET_BASE}/"
+        tags += f'<script src="{base}shell.js?v={_shell_asset_version()}"></script>'
     return tags
 
 

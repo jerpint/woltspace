@@ -99,9 +99,10 @@ def validate_access_settings(raw: object) -> AccessSettings:
         raise ValueError("team_domain must be a domain name without a scheme, path, or port")
     if not lodge_aud or len(lodge_aud) > 512:
         raise ValueError("lodge_aud must be a non-empty Access audience")
-    if not apps_aud or len(apps_aud) > 512:
-        raise ValueError("apps_aud must be a non-empty Access audience")
-    if lodge_aud == apps_aud:
+    # Empty until the owner sets up an app domain: app hosts are then refused.
+    if len(apps_aud) > 512:
+        raise ValueError("apps_aud must be an Access audience")
+    if apps_aud and lodge_aud == apps_aud:
         raise ValueError("lodge_aud and apps_aud must be different")
     if not _EMAIL_RE.fullmatch(owner_email):
         raise ValueError("owner_email must be an email address")

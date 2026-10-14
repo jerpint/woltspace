@@ -73,10 +73,29 @@ def _configured(monkeypatch, public_key):
     monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
 
 
-def test_unset_keeps_edge_trust_behavior(monkeypatch):
+def test_unset_trusts_the_owners_way_in(monkeypatch):
+    """Without lodge-side Access, whatever guards the way in does the checking."""
     monkeypatch.setattr(server_app, "load_access_settings", lambda _root: None)
     monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
     assert asyncio.run(_request()).status_code == 200
+
+
+def test_owner_listed_hosts_are_allowed_and_others_are_not(monkeypatch):
+    """A tailnet or LAN name works once the owner lists it, never before."""
+    monkeypatch.setattr(server_app, "load_access_settings", lambda _root: None)
+    assert asyncio.run(_request(host="lodge.tail1234.ts.net")).status_code == 403
+    monkeypatch.setenv("WOLTSPACE_ALLOWED_HOSTS", "lodge.tail1234.ts.net, studio.local")
+    assert asyncio.run(_request(host="lodge.tail1234.ts.net")).status_code == 200
+    assert asyncio.run(_request(host="studio.local:7777")).status_code == 200
+    assert asyncio.run(_request(host="attacker.example")).status_code == 403
+
+
+def test_listed_hosts_still_need_access_when_it_is_configured(monkeypatch):
+    monkeypatch.setattr(server_app, "load_access_settings", lambda _root: SETTINGS)
+    monkeypatch.setenv("WOLTSPACE_ALLOWED_HOSTS", "lodge.tail1234.ts.net")
+    response = asyncio.run(_request(host="lodge.tail1234.ts.net"))
+    assert response.status_code == 403
+    assert response.json() == {"error": "Access token required"}
 
 
 def test_lodge_requires_lodge_audience_and_owner_email(monkeypatch):
@@ -479,3 +498,154 @@ def test_a_non_rsa_key_in_the_certificate_set_is_skipped(monkeypatch):
     monkeypatch.setattr(access_mod.httpx, "AsyncClient", Client)
     keys = asyncio.run(AccessTokenVerifier()._refresh("team.cloudflareaccess.com"))
     assert list(keys) == ["rsa-key"]
+
+
+def test_a_legacy_lodge_starts_verifying_once_settings_are_saved(tmp_path, monkeypatch):
+    """The 0.5 state: a tunnel and edge Access, but no access block in woltspace.json."""
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _configured(monkeypatch, key.public_key())
+    (tmp_path / "woltspace.json").write_text(json.dumps({"default_harness": "claude"}))
+    monkeypatch.setattr(server_app, "WOLTS_DIR", tmp_path)
+    monkeypatch.setattr(server_app, "load_access_settings", access_module.load_access_settings)
+    good = _token(key, SETTINGS.lodge_aud)
+
+    assert asyncio.run(_request(token="forged")).status_code == 200  # nothing verifies yet
+    assert asyncio.run(_request(host="localhost:7777")).status_code == 200
+
+    access_module.save_access_settings(tmp_path, {
+        "team_domain": SETTINGS.team_domain, "lodge_aud": SETTINGS.lodge_aud,
+        "apps_aud": "", "owner_email": SETTINGS.owner_email,
+    })
+
+    assert asyncio.run(_request(token=good)).status_code == 200
+    assert asyncio.run(_request(token="forged")).status_code == 403
+    assert asyncio.run(_request()).status_code == 403
+    assert asyncio.run(_request(token=_token(key, "someone-elses-app"))).status_code == 403
+    assert asyncio.run(_request(
+        token=_token(key, SETTINGS.lodge_aud, email="intruder@example.com"),
+    )).status_code == 403
+    assert json.loads((tmp_path / "woltspace.json").read_text())["default_harness"] == "claude"
+
+
+def test_without_an_apps_audience_app_hosts_are_refused(monkeypatch):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _configured(monkeypatch, key.public_key())
+    lodge_only = AccessSettings(SETTINGS.team_domain, SETTINGS.lodge_aud, "", SETTINGS.owner_email)
+    monkeypatch.setattr(server_app, "load_access_settings", lambda _root: lodge_only)
+    response = asyncio.run(_request(host="notes.woltspace.test", token=_token(key, "")))
+    assert response.status_code == 403
+
+
+def test_apps_audience_is_optional_but_distinct():
+    from server.access import validate_access_settings
+
+    base = {"team_domain": "team.cloudflareaccess.com", "lodge_aud": "a",
+            "owner_email": "o@example.com"}
+    assert validate_access_settings({**base, "apps_aud": ""}).apps_aud == ""
+    with pytest.raises(ValueError):
+        validate_access_settings({**base, "apps_aud": "a"})
+
+
+def test_an_interrupted_settings_write_leaves_the_old_settings(tmp_path):
+    access_module.save_access_settings(tmp_path, {
+        "team_domain": SETTINGS.team_domain, "lodge_aud": SETTINGS.lodge_aud,
+        "apps_aud": SETTINGS.apps_aud, "owner_email": SETTINGS.owner_email,
+    })
+    # A write that died before its rename leaves only a hidden temp file.
+    (tmp_path / ".woltspace.json.999.tmp").write_text('{"access": {"broken"')
+    assert access_module.load_access_settings(tmp_path) == SETTINGS
+
+
+def test_an_owner_listed_name_under_the_tunnel_domain_is_the_lodge(monkeypatch):
+    """alt.woltspace.test sits under the tunnel domain but the owner listed it:
+    it is the lodge, so only a lodge-audience owner token opens it."""
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _configured(monkeypatch, key.public_key())
+    monkeypatch.setenv("WOLTSPACE_ALLOWED_HOSTS", "alt.woltspace.test")
+    assert server_app._extract_app_subdomain("alt.woltspace.test") is None
+    host = "alt.woltspace.test"
+    assert asyncio.run(_request(host=host, token=_token(key, SETTINGS.apps_aud))).status_code == 403
+    assert asyncio.run(_request(host=host, token=_token(key, SETTINGS.lodge_aud))).status_code == 200
+
+
+@pytest.mark.parametrize("listed,host", [
+    (".", "bad:invalid"),
+    (" , ,", "bad:invalid"),
+    (".", ""),
+])
+def test_empty_or_unparseable_names_never_pass_the_host_check(listed, host, monkeypatch):
+    monkeypatch.setattr(server_app, "load_access_settings", lambda _root: None)
+    monkeypatch.setenv("WOLTSPACE_ALLOWED_HOSTS", listed)
+    assert "" not in server_app._owner_allowed_hosts()
+    assert not server_app._allowed_http_hostname("")
+    response = asyncio.run(_request(host=host))
+    assert response.status_code == 403
+
+
+def test_listed_hosts_keep_the_write_and_websocket_guards(monkeypatch):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _configured(monkeypatch, key.public_key())
+    host = "lodge.tail1234.ts.net"
+    monkeypatch.setenv("WOLTSPACE_ALLOWED_HOSTS", host)
+    owner = _token(key, SETTINGS.lodge_aud)
+
+    async def post(headers):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=server_app.app, client=("127.0.0.1", 1)),
+            base_url=f"https://{host}",
+        ) as client:
+            return await client.post("/settings/session-expiry", json={"idle_timeout_seconds": 60},
+                                     headers={"host": host, **headers})
+
+    assert asyncio.run(post({})).status_code == 403  # no token
+    assert asyncio.run(post({"cf-access-jwt-assertion": owner,
+                             "origin": "https://attacker.example"})).status_code == 403
+    assert asyncio.run(post({"cf-access-jwt-assertion": owner, "origin": "null"})).status_code == 403
+
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with TestClient(server_app.app).websocket_connect(
+            "/livereload", headers={"host": host, "origin": f"https://{host}"},
+        ):
+            pass
+    assert exc.value.code == 1008
+
+
+def test_localhost_names_cannot_be_redeclared_as_lodge_hosts(monkeypatch):
+    monkeypatch.setenv("WOLTSPACE_ALLOWED_HOSTS", "studio.localhost, localhost, real.example")
+    assert server_app._owner_allowed_hosts() == {"real.example"}
+    assert server_app._extract_app_subdomain("studio.localhost") == "studio"
+
+
+@pytest.mark.parametrize("origin", ["null", "https://attacker.example", "https://lodge.tail1234.ts.net:8443"])
+def test_listed_host_websocket_with_a_valid_owner_token_still_checks_origin(origin, monkeypatch):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _configured(monkeypatch, key.public_key())
+    host = "lodge.tail1234.ts.net"
+    monkeypatch.setenv("WOLTSPACE_ALLOWED_HOSTS", host)
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with TestClient(server_app.app).websocket_connect("/livereload", headers={
+            "host": host, "origin": origin,
+            "cf-access-jwt-assertion": _token(key, SETTINGS.lodge_aud),
+        }):
+            pass
+    assert exc.value.code == 1008
+
+
+def test_listed_host_websocket_with_owner_token_and_same_origin_connects(monkeypatch):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _configured(monkeypatch, key.public_key())
+    host = "lodge.tail1234.ts.net"
+    monkeypatch.setenv("WOLTSPACE_ALLOWED_HOSTS", host)
+    with TestClient(server_app.app).websocket_connect("/livereload", headers={
+        "host": host, "origin": f"https://{host}",
+        "cf-access-jwt-assertion": _token(key, SETTINGS.lodge_aud),
+    }):
+        pass
+
+
+def test_overlapping_alias_refuses_a_non_owner_lodge_token(monkeypatch):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _configured(monkeypatch, key.public_key())
+    monkeypatch.setenv("WOLTSPACE_ALLOWED_HOSTS", "alt.woltspace.test")
+    token = _token(key, SETTINGS.lodge_aud, email="intruder@example.com")
+    assert asyncio.run(_request(host="alt.woltspace.test", token=token)).status_code == 403

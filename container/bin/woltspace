@@ -134,7 +134,14 @@ def cmd_app_keeper(args):
 
 
 def cmd_app_sharing(args):
-    path = f"/apps/{quote(args.name, safe='')}/sharing"
+    _sharing(args, f"/apps/{quote(args.name, safe='')}/sharing")
+
+
+def cmd_site_sharing(args):
+    _sharing(args, f"/sites/{quote(args.name, safe='')}/sharing")
+
+
+def _sharing(args, path):
     status, current = _req("GET", path)
     if status >= 300:
         print(current.get("error", f"HTTP {status}"), file=sys.stderr)
@@ -155,6 +162,8 @@ def cmd_app_sharing(args):
     else:
         values = current.get("entries", [])
         print("\n".join(values) if values else f"{args.name}: owner only")
+        if current.get("unsupported"):
+            print(f"note: {current['unsupported']}", file=sys.stderr)
 
 
 def cmd_wolt_set(args):
@@ -342,7 +351,7 @@ LIFECYCLE = {"start", "stop", "rebuild", "backup", "shell", "chat", "logs", "ini
 # the real CLI — `doctor`, `paths`, `serve`, `restore`, and the whole lifecycle
 # set. In the container "elsewhere" means the host; natively it means the python
 # CLI sitting a few directories up from this script.
-LOCAL_NOUNS = {"session", "status", "auto", "app", "wolt", "tui"}
+LOCAL_NOUNS = {"session", "status", "auto", "app", "site", "wolt", "tui"}
 
 # Nouns the python CLI serves that only talk to this lodge's API, so they
 # belong to it in the container too — there is no host to send them to.
@@ -537,6 +546,18 @@ def main():
             sharing.set_defaults(entries=[])
         sharing.add_argument("--json", action="store_true")
         sharing.set_defaults(func=cmd_app_sharing)
+
+    site = sub.add_parser("site", help="share a wolt's site on the app domain")
+    site_sub = site.add_subparsers(dest="verb")
+    for verb in ("sharing", "share", "unshare"):
+        sharing = site_sub.add_parser(verb)
+        sharing.add_argument("name", help="the wolt")
+        if verb != "sharing":
+            sharing.add_argument("entries", nargs="+")
+        else:
+            sharing.set_defaults(entries=[])
+        sharing.add_argument("--json", action="store_true")
+        sharing.set_defaults(func=cmd_site_sharing)
 
     wolt = sub.add_parser("wolt", help="configure a wolt")
     wsub = wolt.add_subparsers(dest="verb")

@@ -497,6 +497,93 @@ def _auto(args) -> int:
     return 1
 
 
+def _access_module(layout: RuntimeLayout):
+    """The lodge's own Access settings code: one validator, one atomic writer."""
+    root = str(layout.install_root)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from server import access
+
+    return access
+
+
+def _access(args) -> int:
+    """A bare `woltspace access` names its own verbs."""
+    args.access_parser.print_help()
+    return 1
+
+
+def _access_show(args) -> int:
+    layout = RuntimeLayout.from_env()
+    try:
+        settings = _access_module(layout).load_access_settings(layout.wolts_dir)
+    except RuntimeError as exc:
+        print(f"woltspace access: {exc}", file=sys.stderr)
+        return 1
+    payload = _access_module(layout).access_settings_dict(settings)
+    if args.json:
+        print(json.dumps({"access": payload}, indent=2))
+    elif payload is None:
+        print("No lodge-side Access settings: remote callers are trusted to whatever "
+              "guards the way in (e.g. Cloudflare Access at the edge).")
+    else:
+        for key, value in payload.items():
+            lore.field(key, value or "(none)", value_style=lore.TEAL)
+    return 0
+
+
+def _access_set(args) -> int:
+    """Write the lodge's Access settings from this machine.
+
+    Works with the lodge stopped, over SSH, and without a browser, so it is
+    also the way back when the saved settings lock the owner out. The values are not secrets; they
+    come from the Cloudflare Zero Trust dashboard (see the cloudflare skill).
+    """
+    layout = RuntimeLayout.from_env()
+    access = _access_module(layout)
+    apps_aud = args.apps_aud
+    if apps_aud is None:
+        # Omitted keeps the app domain's audience; `--apps-aud ""` clears it.
+        try:
+            current = access.load_access_settings(layout.wolts_dir)
+        except RuntimeError:
+            current = None
+        apps_aud = current.apps_aud if current else ""
+        team = args.team_domain.strip().lower().rstrip(".")
+        if current and current.apps_aud and team != current.team_domain:
+            print(
+                "woltspace access: the team domain changes, so the saved apps audience "
+                "may no longer apply. Pass --apps-aud <tag> to keep apps reachable, "
+                'or --apps-aud "" to turn remote apps off.',
+                file=sys.stderr,
+            )
+            return 1
+    raw = {
+        "team_domain": args.team_domain,
+        "lodge_aud": args.lodge_aud,
+        "apps_aud": apps_aud,
+        "owner_email": args.owner_email,
+    }
+    try:
+        settings = access.save_access_settings(layout.wolts_dir, raw)
+    except (ValueError, RuntimeError) as exc:
+        print(f"woltspace access: {exc}", file=sys.stderr)
+        return 1
+    print(f"Saved. Remote requests now need an Access token for {settings.owner_email}.")
+    return 0
+
+
+def _access_clear(args) -> int:
+    layout = RuntimeLayout.from_env()
+    try:
+        _access_module(layout).save_access_settings(layout.wolts_dir, None)
+    except RuntimeError as exc:
+        print(f"woltspace access: {exc}", file=sys.stderr)
+        return 1
+    print("Cleared. The lodge no longer verifies remote requests itself.")
+    return 0
+
+
 def _auto_runtime():
     """Borrow the runtime's own grant store and target resolver.
 
@@ -1095,6 +1182,31 @@ def build_parser() -> argparse.ArgumentParser:
     auto_list = auto_sub.add_parser("list", help="show every standing Auto grant")
     auto_list.add_argument("--json", action="store_true")
     auto_list.set_defaults(func=_auto_list)
+
+    access = sub.add_parser(
+        "access", help="show or set the Cloudflare Access settings remote callers need"
+    )
+    access.set_defaults(func=_access, access_parser=access)
+    access_sub = access.add_subparsers(dest="verb")
+    access_show = access_sub.add_parser("show", help="show the saved Access settings")
+    access_show.add_argument("--json", action="store_true")
+    access_show.set_defaults(func=_access_show)
+    access_set = access_sub.add_parser(
+        "set", help="save Access settings so remote requests can be verified"
+    )
+    access_set.add_argument("--team-domain", required=True,
+                            help="e.g. yourteam.cloudflareaccess.com")
+    access_set.add_argument("--lodge-aud", required=True,
+                            help="Application Audience (AUD) tag of the lodge's Access app")
+    access_set.add_argument("--apps-aud", default=None,
+                            help="AUD tag of the apps' Access app; omit to keep the saved one, "
+                                 '"" to turn remote apps off')
+    access_set.add_argument("--owner-email", required=True)
+    access_set.set_defaults(func=_access_set)
+    access_clear = access_sub.add_parser(
+        "clear", help="remove Access settings; the lodge stops verifying remote requests"
+    )
+    access_clear.set_defaults(func=_access_clear)
 
     seed = sub.add_parser(
         "seed", help="create, inspect, and install shareable colony seeds"
