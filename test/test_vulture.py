@@ -29,6 +29,21 @@ def _idle_closing_off():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _vulture_state_in_tmp(tmp_path, monkeypatch):
+    """Every vulture write lands in tmp_path, never the developer's live lodge.
+
+    The module computes its log and state paths from WOLTSPACE_WOLTS_DIR at
+    import, so a test run from a wolt session used to append to the real log.
+    """
+    from creatures import vulture
+    state = tmp_path / ".vulture-state"
+    monkeypatch.setattr(vulture, "STATE_DIR", state)
+    monkeypatch.setattr(vulture, "LOG_FILE", state / "vulture.log")
+    monkeypatch.setattr(vulture, "LAST_RUN_FILE", state / "last-run")
+    monkeypatch.setattr(vulture, "ACTIVITY_FILE", state / "pane-activity.json")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -82,6 +97,23 @@ class TestRegistryReaping:
         assert "dead-session" in stats["registry_reaped"]
         data = _read_wolt_session(tmp_path, "testwolt", "dead-session")
         assert data["status"] == "reaped"
+
+    def test_a_dead_session_that_can_resume_rests_instead(self, tmp_path):
+        """A reaped session refuses messages; a resting one wakes on them."""
+        from creatures.vulture import reap
+
+        data = _make_wolt_session(tmp_path, "testwolt", "can-resume", status="running")
+        data["harness_session_id"] = "abc"
+        (tmp_path / "testwolt" / ".state" / "sessions" / "can-resume.json").write_text(json.dumps(data))
+
+        with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
+             patch("creatures.vulture._tmux_sessions", return_value=set()):
+            stats = reap()
+
+        assert "can-resume" in stats["registry_reaped"]
+        after = _read_wolt_session(tmp_path, "testwolt", "can-resume")
+        assert after["status"] == "resting"
+        assert after["rested_at"]
 
     def test_skips_already_completed_sessions(self, tmp_path):
         from creatures.vulture import reap

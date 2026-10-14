@@ -18,7 +18,7 @@ Logs:   .space/vulture/vulture.log
 State:  .space/vulture/last-run
 
 Usage:
-  python -m creatures.vulture              # Run as background service (default: every 5 min)
+  python -m creatures.vulture              # Run as background service (default: every 30 min)
   python -m creatures.vulture --once       # Single pass and exit
   python -m creatures.vulture --interval N # Custom interval in seconds
   python -m creatures.vulture --dry-run    # Show what would be reaped, don't touch anything
@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from env_compat import get_env
-from sessions import SessionRegistry, recover_resume_id, taken_resume_ids
+from sessions import SessionRegistry, recover_resume_id, stored_resume_id, taken_resume_ids
 from harnesses import session_has_agent_process
 from paths import space_vulture_dir
 from session_runtime import RuntimeHandle, get_runtime
@@ -143,6 +143,23 @@ def _rest_via_api(session_name: str, pane_digest: str) -> bool:
         return False
 
 
+def _settle_dead(data: dict, now: int) -> str:
+    """Mark a session whose runtime is gone. One that can come back rests.
+
+    "resting" sessions wake when someone messages them; "reaped" ones refuse.
+    A dead session that still has its conversation id is no different from
+    one the vulture rested for being idle, so it gets the same status.
+    """
+    status = "resting" if stored_resume_id(data) else "reaped"
+    data["status"] = status
+    if status == "resting":
+        data["rested_at"] = now
+    else:
+        data["finished_at"] = now
+    data["last_activity"] = now
+    return status
+
+
 def _rest_idle_sessions(reg: SessionRegistry, live_tmux: set[str], now: int,
                         timeout: int | None, dry_run: bool) -> list[str]:
     """Rest only panes proven unchanged for the complete configured window."""
@@ -238,16 +255,14 @@ def reap(dry_run: bool = False) -> dict:
             if now - created_at < GRACE_PERIOD_SECONDS:
                 continue
 
-            # If tmux session is gone, mark as reaped
+            # If tmux session is gone, mark it resting (or reaped if it can't resume)
             if name not in live_tmux:
                 if dry_run:
                     log(f"[dry-run] would reap registry: {name}")
                 else:
-                    data["status"] = "reaped"
-                    data["finished_at"] = now
-                    data["last_activity"] = now
+                    status = _settle_dead(data, now)
                     reg._write(wolt_name, name, data)
-                    log(f"🦅 reaped registry: {name}")
+                    log(f"🦅 {status} registry: {name}")
                 stats["registry_reaped"].append(name)
 
     # --- Pass 2: Zombie tmux sessions ---
@@ -268,17 +283,15 @@ def reap(dry_run: bool = False) -> dict:
 
         if reg_data and reg_data.get("status") == "running":
             wolt_name = reg_data.get("wolt", "")
-            # Claude exited but tmux lingers — mark reaped and kill tmux
+            # The agent exited but tmux lingers — kill tmux, rest or reap the record
             if dry_run:
                 log(f"[dry-run] would kill zombie tmux + reap: {session_name}")
             else:
-                reg_data["status"] = "reaped"
-                reg_data["finished_at"] = now
-                reg_data["last_activity"] = now
+                status = _settle_dead(reg_data, now)
                 if wolt_name:
                     reg._write(wolt_name, session_name, reg_data)
                 _kill_tmux_session(session_name)
-                log(f"🦅 killed zombie tmux + reaped: {session_name}")
+                log(f"🦅 killed zombie tmux, {status}: {session_name}")
             stats["tmux_killed"].append(session_name)
         elif reg_data and reg_data.get("status") in ("reaped", "orphaned", "completed", "failed", "resting"):
             # Already reaped/done but tmux still exists — clean up tmux
@@ -309,8 +322,10 @@ def run_loop(interval: int = DEFAULT_INTERVAL, dry_run: bool = False):
             total = sum(len(stats[key]) for key in ("registry_reaped", "tmux_killed", "sessions_rested"))
             if total > 0:
                 log(f"🦅 pass done — rested {len(stats['sessions_rested'])}, reaped {len(stats['registry_reaped'])} registry, killed {len(stats['tmux_killed'])} tmux")
-                if not dry_run:
-                    _send_notify(f"cleaned up {total} dead sessions — keep on wolting")
+                # Resting is routine and reversible; only a real cleanup is worth a ping.
+                cleaned = len(stats["registry_reaped"]) + len(stats["tmux_killed"])
+                if cleaned and not dry_run:
+                    _send_notify(f"cleaned up {cleaned} dead sessions — keep on wolting")
         except Exception as e:
             log(f"🦅 error during reap: {e}")
         time.sleep(interval)

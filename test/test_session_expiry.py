@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import ANY, Mock
 
 import httpx
+import pytest
 from starlette.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +17,21 @@ sys.path.insert(0, str(ROOT / "container" / "lib"))
 
 import server.app as server_app
 import session_expiry
+
+
+@pytest.fixture(autouse=True)
+def _vulture_state_in_tmp(tmp_path, monkeypatch):
+    """Every vulture write lands in tmp_path, never the developer's live lodge.
+
+    The module computes its log and state paths from WOLTSPACE_WOLTS_DIR at
+    import, so a test run from a wolt session used to append to the real log.
+    """
+    from creatures import vulture
+    state = tmp_path / ".vulture-state"
+    monkeypatch.setattr(vulture, "STATE_DIR", state)
+    monkeypatch.setattr(vulture, "LOG_FILE", state / "vulture.log")
+    monkeypatch.setattr(vulture, "LAST_RUN_FILE", state / "last-run")
+    monkeypatch.setattr(vulture, "ACTIVITY_FILE", state / "pane-activity.json")
 
 
 def _client():

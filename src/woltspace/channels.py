@@ -517,6 +517,7 @@ class VultureConnector(_CreatureConnector):
     role = "session reaper"
     without = "idle sessions are never closed and dead ones are never cleaned up"
 
+
 CONNECTORS: tuple[ChannelConnector, ...] = (
     TelegramConnector(), SlackConnector(), WolfConnector(), VultureConnector(),
 )
