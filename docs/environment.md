@@ -112,6 +112,7 @@ lists in the host `woltspace` launcher.
 | `WOLTSPACE_PUBLIC_TUNNEL` | Whether to run a tunnel at all. With a Cloudflare token and URL it runs the named, Access-gated tunnel; with neither it runs a throwaway public URL. | `server/tunnel.py`, `supervisor.py`, `container_entrypoint.py` | `true` in the container, `false` natively |
 | `WOLTSPACE_TUI_BIN` | Path to the terminal cockpit binary. | `src/woltspace/tui.py` | resolved from `PATH` |
 | `WOLTSPACE_WOLF` | Enable or disable the cron scheduler connector. | `channels.py` | enabled for the entrypoint |
+| `WOLTSPACE_VULTURE` | Enable or disable the session reaper connector (closes idle sessions, cleans up dead ones). | `channels.py` | enabled for the entrypoint |
 | `WOLTSPACE_SHARING_ENABLED` | Whether apps may be given public tunnels. | `container/lib/apps.py` | on |
 | `WOLTSPACE_USER` | Display name for the human in the cockpit. `HUMAN_NAME` is honoured as a second-choice source. | `tui/src/ui/App.js` | the OS username |
 | `WOLTSPACE_TMUX_BIN` | `tmux` binary, for a host that keeps it somewhere unusual. | `container/lib/runtime_context.py`, `session_runtime.py` | `tmux` |

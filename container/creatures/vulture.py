@@ -9,8 +9,9 @@ It does three things on each pass:
   0. Rests sessions whose pane has not changed for the owner-selected window.
   1. Reconciles the registry — marks "running" sessions as "reaped"
      if their tmux session is gone.
-  2. Kills zombie tmux sessions — sessions where the claude process
-     has exited but the tmux session lingers.
+  2. Kills zombie tmux sessions — lodge sessions where the agent has
+     exited but the tmux session lingers. A tmux session the registry
+     does not know is never touched: natively it is the owner's own.
 
 Config: sessions.idle_timeout_seconds in woltspace.json (default: 1 day; null = never).
 Logs:   .space/vulture/vulture.log
@@ -287,14 +288,9 @@ def reap(dry_run: bool = False) -> dict:
                 _kill_tmux_session(session_name)
                 log(f"🦅 killed leftover tmux: {session_name}")
             stats["tmux_killed"].append(session_name)
-        elif not reg_data:
-            # Tmux session with no registry entry and no claude — stale
-            if dry_run:
-                log(f"[dry-run] would kill unregistered tmux: {session_name}")
-            else:
-                _kill_tmux_session(session_name)
-                log(f"🦅 killed unregistered tmux: {session_name}")
-            stats["tmux_killed"].append(session_name)
+        # A session with no registry entry is not the lodge's. Natively the
+        # lodge shares the owner's own tmux server, so "no agent, no record"
+        # describes their terminals; the vulture used to kill them.
 
     # Write last-run timestamp
     if not dry_run:

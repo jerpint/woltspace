@@ -222,14 +222,14 @@ class TestZombieTmuxCleanup:
 
         assert "leftover-session" in stats["tmux_killed"]
 
-    def test_kills_unregistered_tmux_session(self, tmp_path):
+    def test_never_touches_a_tmux_session_the_lodge_did_not_register(self, tmp_path):
+        """Natively the lodge shares the owner's tmux server: these are their terminals."""
         from creatures.vulture import reap
 
-        # Create a wolt dir but no session for ghost-session
         (tmp_path / "testwolt" / ".state" / "sessions").mkdir(parents=True)
 
         with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
-             patch("creatures.vulture._tmux_sessions", return_value={"ghost-session"}), \
+             patch("creatures.vulture._tmux_sessions", return_value={"145", "my-shell"}), \
              patch("creatures.vulture.session_has_agent_process", return_value=False), \
              patch("creatures.vulture._kill_tmux_session", return_value=True) as mock_kill, \
              patch("creatures.vulture.STATE_DIR", tmp_path / ".space" / "vulture"), \
@@ -237,8 +237,8 @@ class TestZombieTmuxCleanup:
              patch("creatures.vulture.LOG_FILE", tmp_path / "vulture.log"):
             stats = reap()
 
-        assert "ghost-session" in stats["tmux_killed"]
-        mock_kill.assert_called_once_with("ghost-session")
+        assert stats["tmux_killed"] == []
+        mock_kill.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

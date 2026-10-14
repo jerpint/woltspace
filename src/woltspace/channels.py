@@ -382,25 +382,21 @@ def telegram_token_is_busy(token: str, *, timeout: float = 3.0, opener=None) -> 
 
 
 WOLF_MODULE = "creatures.wolf"
+VULTURE_MODULE = "creatures.vulture"
 
 
-class WolfConnector:
-    """🐺 The cron scheduler, behind the same seam.
+class _CreatureConnector:
+    """A platform creature run as a supervised child of the control plane.
 
-    `container/creatures/wolf.py` reads every wolt's `wolf.json`, fires the
-    schedules that are due, and posts them back to this very control plane.
-    The container's boot launched it by hand, so a colony run natively simply
-    had no scheduler — every cron silently stopped firing. It is a supervised
-    child now: starts with the API, restarts if it dies, shows up in
-    `woltspace status`, and goes down with `woltspace stop`.
-
-    Enabled by default — schedules already written in `wolf.json` are a
-    standing instruction, and a scheduler that needs opting into is a
-    scheduler nobody remembers to turn on. A guest never runs it: two wolves
-    on one data root would fire every cron twice.
+    Subclasses name the creature, its module, its env switch and what is lost
+    when it is off; the plan is the same for all of them.
     """
 
-    name = "wolf"
+    name: str
+    module: str
+    env_var: str
+    role: str
+    without: str
 
     def plan(
         self, layout: RuntimeLayout, env: Mapping[str, str] | None = None
@@ -409,11 +405,11 @@ class WolfConnector:
         settings = channel_config(layout, self.name, values)
         path = config_path(layout, values)
 
-        raw = values.get("WOLTSPACE_WOLF")
+        raw = values.get(self.env_var)
         enabled = _truthy(raw) if raw is not None else bool(settings.get("enabled", True))
         remedy = (
-            f'Set channels.wolf = {{"enabled": true}} in {path} '
-            "(or unset WOLTSPACE_WOLF). Without it no wolt's wolf.json schedules fire."
+            f'Set channels.{self.name} = {{"enabled": true}} in {path} '
+            f"(or unset {self.env_var}). Without it {self.without}."
         )
         if not enabled:
             return ConnectorPlan(self.name, False, "disabled", remedy=remedy)
@@ -421,16 +417,17 @@ class WolfConnector:
             return ConnectorPlan(
                 self.name,
                 False,
-                "not the platform entrypoint; a guest never fires the schedules",
-                remedy="Run the control plane through `woltspace start` to own the schedules.",
+                "not the platform entrypoint; a guest never runs the lodge's creatures",
+                remedy=f"Run the control plane through `woltspace start` to own the {self.role}.",
             )
 
         container = layout.install_root / "container"
-        if not (container / "creatures" / "wolf.py").is_file():
+        module_file = container / Path(*self.module.split(".")).with_suffix(".py")
+        if not module_file.is_file():
             return ConnectorPlan(
                 self.name,
                 False,
-                f"no {WOLF_MODULE} under {container}",
+                f"no {self.module} under {container}",
                 remedy=(
                     "Reinstall woltspace so the platform runtime ships beside it, "
                     "then `woltspace start`."
@@ -438,8 +435,8 @@ class WolfConnector:
             )
 
         # Same interpreter rule as the adapter: the container keeps its uv
-        # project, a native run stays inside the installed environment. Wolf is
-        # stdlib-only either way — this is one mechanism, not a special case.
+        # project, a native run stays inside the installed environment. The
+        # creatures are stdlib-only either way — one mechanism, not a special case.
         interpreter = _interpreter(str(container), layout.isolation, layout.install_root)
         child_env = export_both({
             "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
@@ -467,19 +464,61 @@ class WolfConnector:
         return ConnectorPlan(
             name=self.name,
             enabled=True,
-            detail=f"cron scheduler on {layout.endpoint} · {WOLF_MODULE} from {container}",
-            command=(*interpreter, "-m", WOLF_MODULE),
+            detail=f"{self.role} on {layout.endpoint} · {self.module} from {container}",
+            command=(*interpreter, "-m", self.module),
             cwd=str(container),
             env=child_env,
             remedy=remedy,
-            # `-m creatures.wolf` as an adjacent pair — a log file *named* after
+            # `-m <module>` as an adjacent pair — a log file *named* after
             # the module cannot forge it.
-            process_signature=("-m", WOLF_MODULE),
+            process_signature=("-m", self.module),
         )
 
 
+class WolfConnector(_CreatureConnector):
+    """🐺 The cron scheduler, behind the same seam.
+
+    `container/creatures/wolf.py` reads every wolt's `wolf.json`, fires the
+    schedules that are due, and posts them back to this very control plane.
+    The container's boot launched it by hand, so a colony run natively simply
+    had no scheduler — every cron silently stopped firing. It is a supervised
+    child now: starts with the API, restarts if it dies, shows up in
+    `woltspace status`, and goes down with `woltspace stop`.
+
+    Enabled by default — schedules already written in `wolf.json` are a
+    standing instruction, and a scheduler that needs opting into is a
+    scheduler nobody remembers to turn on. A guest never runs it: two wolves
+    on one data root would fire every cron twice.
+    """
+
+    name = "wolf"
+    module = WOLF_MODULE
+    env_var = "WOLTSPACE_WOLF"
+    role = "cron scheduler"
+    without = "no wolt's wolf.json schedules fire"
+
+
+class VultureConnector(_CreatureConnector):
+    """🦅 The session reaper, behind the same seam.
+
+    `container/creatures/vulture.py` rests sessions idle for longer than the
+    lodge's "close idle sessions after" setting, marks sessions whose tmux is
+    gone, and stops lodge sessions whose agent has exited. The container's
+    boot used to launch it; once that went, nothing did, natively or in the
+    container, and idle sessions piled up. It is supervised like the wolf now.
+
+    A guest never runs it, for the same reason as the wolf: one data root,
+    one reaper.
+    """
+
+    name = "vulture"
+    module = VULTURE_MODULE
+    env_var = "WOLTSPACE_VULTURE"
+    role = "session reaper"
+    without = "idle sessions are never closed and dead ones are never cleaned up"
+
 CONNECTORS: tuple[ChannelConnector, ...] = (
-    TelegramConnector(), SlackConnector(), WolfConnector(),
+    TelegramConnector(), SlackConnector(), WolfConnector(), VultureConnector(),
 )
 
 
