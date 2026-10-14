@@ -92,7 +92,8 @@ def test_gateway_valid_owner_and_shared_email_reach_http_app(tmp_path, monkeypat
     owner = asyncio.run(_get(
         "/hello", host="notes.owner.woltspace.app", token=_token(key, "apps-aud"),
     ))
-    (tmp_path / ".space" / "platform").mkdir(parents=True)
+    # The gateway may already have created it for the content-origin record.
+    (tmp_path / ".space" / "platform").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".space" / "platform" / "app-sharing.json").write_text(json.dumps({
         "notes": ["friend@example.com"],
     }))
@@ -1046,3 +1047,28 @@ def test_websocket_bridge_sends_one_host_and_the_apps_chosen_subprotocol(monkeyp
     finally:
         box["stop"].get_loop().call_soon_threadsafe(box["stop"].set_result, None)
     assert seen["hosts"] == [f"localhost:{box['port']}"]
+
+
+def test_gateway_refuses_every_token_while_the_apps_audience_is_empty(tmp_path, monkeypatch):
+    key = _configure(tmp_path, monkeypatch)
+    config = json.loads((tmp_path / "woltspace.json").read_text())
+    config["access"]["apps_aud"] = ""
+    (tmp_path / "woltspace.json").write_text(json.dumps(config))
+    for token in (None, _token(key, "apps-aud"), _token(key, ""), _token(key, "lodge-aud")):
+        response = asyncio.run(_get("/", host="notes.owner.woltspace.app", token=token))
+        assert response.status_code == 403
+
+
+def test_gateway_websocket_is_refused_while_the_apps_audience_is_empty(tmp_path, monkeypatch):
+    key = _configure(tmp_path, monkeypatch)
+    config = json.loads((tmp_path / "woltspace.json").read_text())
+    config["access"]["apps_aud"] = ""
+    (tmp_path / "woltspace.json").write_text(json.dumps(config))
+    headers = {
+        "host": "notes.owner.woltspace.app", "origin": "https://notes.owner.woltspace.app",
+        "cf-access-jwt-assertion": _token(key, "apps-aud"),
+    }
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with TestClient(gateway.app).websocket_connect("/socket", headers=headers):
+            pass
+    assert exc.value.code == 1008

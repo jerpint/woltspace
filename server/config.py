@@ -58,7 +58,6 @@ PORT = int(os.environ.get("PORT", "7777"))
 
 # --- State files ---
 
-TOOL_REGISTRY_FILE = STATE_DIR / "tool-registry.json"
 VIEWS_HISTORY_FILE = STATE_DIR / "views-history.jsonl"
 BOT_LOG_DIR = SPACE_LOGS_DIR
 BOT_LOG_FILE = BOT_LOG_DIR / "bot.jsonl"

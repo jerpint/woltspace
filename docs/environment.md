@@ -110,6 +110,7 @@ lists in the host `woltspace` launcher.
 
 | name | purpose | consumed where | default |
 |---|---|---|---|
+| `WOLTSPACE_ALLOWED_HOSTS` | Extra host names the lodge answers to, comma-separated: a tailnet name (`lodge.tail1234.ts.net`) or a LAN name. Exact names only; `localhost` and `*.localhost` names are reserved and ignored. The lodge otherwise refuses unknown hosts, against DNS rebinding. With lodge-side Access settings saved, requests on these names still need a valid Access token. | `server/app.py` | unset |
 | `WOLTSPACE_PUBLIC_TUNNEL` | Whether to run a tunnel at all. It only ever runs the named, Access-gated tunnel, so it also needs `CLOUDFLARE_TUNNEL_TOKEN` and `CLOUDFLARE_TUNNEL_URL`; without them the lodge stays local (never a quick tunnel). | `server/tunnel.py`, `supervisor.py`, `container_entrypoint.py` | `true` in the container, `false` natively |
 | `WOLTSPACE_TUI_BIN` | Path to the terminal cockpit binary. | `src/woltspace/tui.py` | resolved from `PATH` |
 | `WOLTSPACE_WOLF` | Enable or disable the cron scheduler connector. | `channels.py` | enabled for the entrypoint |

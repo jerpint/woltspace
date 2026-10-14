@@ -55,6 +55,7 @@ Tell the human:
 > - **Account / Cloudflare Tunnel: Edit**
 > - **Zone / DNS: Edit** (scoped to your domain)
 > - **Account / Access: Apps and Policies: Edit** (for auth — optional but recommended)
+> - **Account / Access: Organizations, Identity Providers, and Groups: Read** (to read the team domain for the lodge's own Access check)
 >
 > Also grab your **Account ID** and **Zone ID** from the Cloudflare dashboard → your domain → Overview page (right sidebar).
 
@@ -149,9 +150,11 @@ The token is already in `.env` (written above). Add the tunnel URL next to it:
 CLOUDFLARE_TUNNEL_URL=https://<subdomain>.<domain>
 ```
 
-## Step 5: Set up Access auth (optional but recommended)
+## Step 5: Set up Access auth (recommended)
 
-This adds email OTP login at Cloudflare's edge — unauthenticated requests never reach the container.
+This adds email OTP login at Cloudflare's edge, and the lodge then checks every
+remote request's Access token itself. Without it, anyone who reaches the
+lodge's address is treated as the owner.
 
 Ask the human for their email address, then:
 
@@ -184,6 +187,33 @@ curl -s -X POST \
     \"include\": [{\"email\": {\"email\": \"<user-email>\"}}]
   }"
 ```
+
+Then tell the lodge how to verify the tokens. None of these values is a secret:
+the team domain, the app's Application Audience (AUD) tag, and the owner email.
+
+```bash
+TEAM_DOMAIN=$(curl -s \
+  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/access/organizations" \
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['auth_domain'])")
+LODGE_AUD=$(echo "$APP_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['result']['aud'])")
+
+woltspace access set --team-domain "$TEAM_DOMAIN" --lodge-aud "$LODGE_AUD" \
+  --owner-email "<user-email>"
+```
+
+Without an API token, the human can read the same values in **Cloudflare Zero
+Trust**: the team domain under **Settings → Custom Pages** (it ends in
+`.cloudflareaccess.com`), and the AUD tag on the lodge application's
+**Overview** tab. They can also type them into the lodge's **Settings → Access**.
+`--apps-aud` stays empty until the app domain exists (Step 6).
+
+**A lodge that already has Access** (set up before 0.6): the edge login works,
+but the lodge itself does not verify tokens yet, and `woltspace doctor` says so. Look up the existing `woltspace-lodge`
+application (`GET .../access/apps`, match on its `domain`), and run the same
+`woltspace access set` with its `aud`. On a headless machine, run it over SSH,
+or forward the lodge's port over SSH (`ssh -L <port>:127.0.0.1:<port> host`, with
+the port from `woltspace status`) and open `/settings` on that local port.
 
 To add more users later, see `add-access.md` (or load the woltspace cloudflare skill again and pick "add a person"). More identity providers (GitHub, Google) can be added from **Cloudflare Zero Trust → Access → Applications**.
 

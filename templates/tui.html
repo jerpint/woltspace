@@ -525,22 +525,55 @@
     return location.protocol + '//' + location.hostname + ':' + port + (subPath || '/');
   }
 
-  function loadView(url, title, pushToStack = true) {
+  // What the lodge serves itself is sandboxed by its CSP header, and the frame
+  // says so too: lodge copies of sites and sparks are opaque (allow-scripts).
+  // A wolt's site lives on its own origin; the lodge resolves a legacy
+  // `/wolt/x/site/...` path (or an already-canonical site URL) through
+  // GET /sites/resolve BEFORE the frame is pointed anywhere, and only a
+  // resolved site host gets allow-same-origin, which is that host's own
+  // storage and fetch. A sandboxed frame that merely followed the redirect
+  // would stay opaque, so the flags and the src are always chosen together.
+  // Apps live on their own origin and keep their own.
+  const OPAQUE_VIEWS = /^\/(wolt\/[^/]+\/site([/?#]|$)|history\/)/;
+  const MAYBE_SITE = /^(\/wolt\/[^/]+\/site([/?#]|$)|https?:\/\/[a-z0-9-]+\.sites\.localhost(:\d+)?([/?#]|$))/i;
+  async function resolveSite(url) {
+    if (!MAYBE_SITE.test(url || '')) return null;
+    try {
+      const data = await fetch('/sites/resolve?path=' + encodeURIComponent(url)).then(r => r.json());
+      return data && data.site_url ? data.site_url : null;
+    } catch { return null; }
+  }
+  function frameView(url, siteUrl) {
+    if (siteUrl) {
+      preview.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+      preview.src = siteUrl;
+      return;
+    }
+    if (OPAQUE_VIEWS.test(url || '')) preview.setAttribute('sandbox', 'allow-scripts');
+    else preview.removeAttribute('sandbox');
+    preview.src = url;
+  }
+  let loadSeq = 0;
+  async function loadView(url, title, pushToStack = true) {
     const meta = currentViewportMeta;
+    lastUrl = url;
+    renderHist();
+    const seq = ++loadSeq;
+    const siteUrl = await resolveSite(url);
+    if (seq !== loadSeq) return;  // a newer view won the race
+    if (siteUrl) { frameView(url, siteUrl); return; }
     if (meta && meta.port && meta.port !== 7777 && url && url.startsWith('/app/')) {
       const direct = directPortUrl(meta.port);
       if (direct) {
-        preview.src = direct;
+        frameView(direct, null);
       } else if (meta.tunnel_url) {
-        preview.src = meta.tunnel_url;
+        frameView(meta.tunnel_url, null);
       } else {
-        preview.src = url;
+        frameView(url, null);
       }
     } else {
-      preview.src = url;
+      frameView(url, null);
     }
-    lastUrl = url;
-    renderHist();
   }
 
   function setCurrent(url, port) {
