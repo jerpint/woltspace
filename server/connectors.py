@@ -156,6 +156,8 @@ class Limits:
     handoff_max_attempts: int = 5
     ack_max_parts: int = 50
     cursor_max_chars: int = 32
+    # A pending (handoff) generation must be activated within this long of its mint.
+    handoff_window_seconds: float = 10.0
 
 
 class ConnectorStateUnreadable(RuntimeError):
@@ -838,17 +840,37 @@ class ConnectorStore:
 
     # ------------------------------------------------------------ credentials
 
-    def issue_token(self, instance_id: str) -> str:
+    def lodge_id(self) -> str:
+        """This lodge's identity for handoffs: random, made once, kept in the registry."""
+        with self._lock():
+            registry = self._registry()
+            if not registry.get("lodge_id"):
+                registry["lodge_id"] = secrets.token_hex(16)
+                self._write_json(self.registry_path, registry)
+            return registry["lodge_id"]
+
+    def issue_token(self, instance_id: str, *, pending: bool = False) -> str:
+        """Mint the next generation's token; see `mint`."""
+        return self.mint(instance_id, pending=pending)["token"]
+
+    def mint(self, instance_id: str, *, pending: bool = False) -> dict:
         """Mint the next generation's token; older generations are revoked.
 
-        One registry write. Leases the old generation held are released when
-        the queue is next read (its acks are refused anyway); the queue itself
-        is untouched. Called when a runner is actually relaunched, never
-        because the lodge restarted.
+        One registry write, and everything the caller must know about what
+        it minted comes back from inside that same lock: `token`,
+        `generation`, `issued` and `lodge_id`. Nothing is re-read afterwards,
+        so a concurrent mint can never be mistaken for this one. Leases the
+        old generation held are released when the queue is next read; the
+        queue itself is untouched. Called when a runner is actually
+        relaunched, never because the lodge restarted. A `pending` token (a
+        handoff in flight) authenticates nothing until `activate`; an unused
+        one is revoked by whoever minted it.
         """
         with self._lock():
             registry = self._registry()
             instance = self._instance(registry, instance_id)
+            if not registry.get("lodge_id"):
+                registry["lodge_id"] = secrets.token_hex(16)
             instance["generation"] += 1
             now = self.clock()
             for token in registry["tokens"]:
@@ -858,13 +880,57 @@ class ConnectorStore:
             registry["tokens"].append({
                 "digest": _digest(plain), "instance_id": instance_id,
                 "generation": instance["generation"], "issued": now, "revoked": None,
+                "pending": pending,
             })
             registry["tokens"] = [
                 t for t in registry["tokens"]
                 if t.get("revoked") is None or now - t["revoked"] < 86400
             ]
             self._write_json(self.registry_path, registry)
-            return plain
+            return {
+                "token": plain, "generation": instance["generation"], "issued": now,
+                "lodge_id": registry["lodge_id"], "instance_id": instance_id,
+            }
+
+    def revoke_generation(self, instance_id: str, generation: int) -> int:
+        """Revoke exactly one generation's tokens; a newer generation is untouched."""
+        with self._lock():
+            registry = self._registry()
+            self._instance(registry, instance_id)
+            now, count = self.clock(), 0
+            for token in registry["tokens"]:
+                if (
+                    token["instance_id"] == instance_id and token["generation"] == generation
+                    and token.get("revoked") is None
+                ):
+                    token["revoked"] = now
+                    count += 1
+            if count:
+                self._write_json(self.registry_path, registry)
+            return count
+
+    def token_state(self, instance_id: str, generation: int) -> str | None:
+        """'pending', 'active' or 'revoked' for a generation's token; None if there is none."""
+        registry = self._registry()
+        for token in registry["tokens"]:
+            if token["instance_id"] == instance_id and token["generation"] == generation:
+                if token.get("revoked") is not None:
+                    return "revoked"
+                return "pending" if token.get("pending") else "active"
+        return None
+
+    def revoke_stale_pending(self, older_than: float) -> list[tuple[str, int]]:
+        """Revoke every pending generation issued before `older_than`; the handoff never came."""
+        with self._lock():
+            registry = self._registry()
+            now, revoked = self.clock(), []
+            for token in registry["tokens"]:
+                if token.get("pending") and token.get("revoked") is None and token["issued"] < older_than:
+                    token["revoked"] = now
+                    revoked.append((token["instance_id"], token["generation"]))
+            if revoked:
+                self._write_json(self.registry_path, registry)
+            return revoked
 
     def revoke_tokens(self, instance_id: str) -> int:
         with self._lock():
@@ -882,6 +948,9 @@ class ConnectorStore:
     def _principal(self, registry: dict, digest: str) -> Principal | None:
         for record in registry["tokens"]:
             if hmac.compare_digest(record["digest"], digest) and record.get("revoked") is None:
+                if record.get("pending"):
+                    # A handoff in flight: nothing but activation accepts it.
+                    return None
                 instance = registry["instances"].get(record["instance_id"])
                 if instance is None or instance["generation"] != record["generation"]:
                     return None
@@ -895,11 +964,53 @@ class ConnectorStore:
         """The principal a bearer token proves, or None for anything else.
 
         An unreadable registry raises: no token is believed on a guess, and
-        the caller must never fall back to the token-less owner path.
+        the caller must never fall back to the token-less owner path. A
+        pending token (a handoff not yet activated) is refused here.
         """
         if not isinstance(token, str) or not token.startswith(TOKEN_PREFIX) or len(token) > 128:
             return None
         return self._principal(self._registry(), _digest(token))
+
+    def activate(self, token: object, *, lodge_id: object, instance_id: object, generation: object) -> Principal:
+        """Turn a pending generation into a live one: the connector's acknowledgement.
+
+        Under the lock, so exactly one activation wins and a revocation racing
+        it leaves one outcome: the token must be pending and unrevoked, what
+        the caller expects (lodge, instance, generation, told to it apart
+        from the file) must be what the registry says, and the window since
+        the mint must not have run out. Anything else is a 401 and leaves
+        the record as it was; a timed-out generation is revoked on the spot.
+        """
+        if not isinstance(token, str) or not token.startswith(TOKEN_PREFIX) or len(token) > 128:
+            raise ConnectorError(401, "connector_token_required")
+        digest = _digest(token)
+        with self._lock():
+            registry = self._registry()
+            record = next(
+                (r for r in registry["tokens"] if hmac.compare_digest(r["digest"], digest)), None,
+            )
+            if record is None or record.get("revoked") is not None or not record.get("pending"):
+                raise ConnectorError(401, "connector_token_required")
+            now = self.clock()
+            if now - record["issued"] > self.limits.handoff_window_seconds:
+                record["revoked"] = now
+                self._write_json(self.registry_path, registry)
+                raise ConnectorError(401, "connector_token_required", "the handoff window has passed")
+            instance = registry["instances"].get(record["instance_id"])
+            if (
+                instance is None or str(lodge_id) != str(registry.get("lodge_id"))
+                or str(instance_id) != record["instance_id"]
+                or str(generation) != str(record["generation"])
+                or instance["generation"] != record["generation"]
+            ):
+                raise ConnectorError(401, "connector_token_required", "the activation does not match the registry")
+            record["pending"] = False
+            record["activated"] = now
+            self._write_json(self.registry_path, registry)
+            return Principal(
+                record["instance_id"], record["generation"], instance["channel"],
+                instance["account"], bool(instance["enabled"]), digest,
+            )
 
     def _live(self, registry: dict, who: Principal) -> Principal:
         """The principal as the registry has it now, or a refusal.

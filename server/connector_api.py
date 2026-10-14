@@ -178,6 +178,36 @@ async def post_upload(request: Request):
     return await _run(request, handle)
 
 
+@router.post("/activate")
+async def post_activate(request: Request):
+    """The handoff acknowledgement: a pending token becomes live here and nowhere else."""
+    store = get_store()
+    try:
+        token = _bearer(request)
+        hostname = (request.url.hostname or "").lower().rstrip(".")
+        if not owner_local_request(request.scope, hostname):
+            raise _Refused(403, {"error": "connector tokens are local-only"})
+        body = await _json_body(request, store)
+        if not isinstance(body, dict) or set(body) != {"lodge_id", "instance_id", "generation"}:
+            raise ConnectorError(400, "malformed_activation", "body is {lodge_id, instance_id, generation}")
+        who = store.activate(
+            token, lodge_id=body["lodge_id"], instance_id=body["instance_id"], generation=body["generation"],
+        )
+        response = JSONResponse({"activated": True, "instance_id": who.instance_id, "generation": who.generation})
+    except _Refused as exc:
+        response = JSONResponse(exc.body, status_code=exc.status)
+    except ConnectorError as exc:
+        if exc.status == 401:
+            response = JSONResponse({"error": "connector token required"}, status_code=401)
+        else:
+            response = JSONResponse({"error": str(exc), "reason": exc.reason, "retry": exc.retry}, status_code=exc.status)
+    except ConnectorStateUnreadable as exc:
+        logger.error("connector state unreadable: %s", exc)
+        response = JSONResponse({"error": "connector state unreadable"}, status_code=503)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @router.get("/state")
 async def get_state(request: Request):
     async def handle(store, who):

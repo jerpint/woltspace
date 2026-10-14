@@ -134,11 +134,16 @@ def redact(text: object, token: str) -> str:
 class TelegramConnector:
     def __init__(
         self, lodge: httpx.AsyncClient, bot: httpx.AsyncClient, *, bot_token: str, connector_token: str,
+        activation: dict | None = None,
     ):
         self.lodge = lodge
         self.bot = bot
         self._bot_token = bot_token
         self._connector_token = connector_token
+        # {lodge_id, instance_id, generation} the supervisor told this process
+        # to expect: a token that came by handoff is pending until the lodge
+        # confirms exactly these at `POST activate`.
+        self._activation = activation
         self.cursor: int | None = None
         self.started = False
         self.run_lock: str | None = None
@@ -167,6 +172,11 @@ class TelegramConnector:
         provider call always ends before the lock does). Already held means
         another connector runs for this channel: refuse to start.
         """
+        if self._activation is not None:
+            activated = await self._lodge("POST", "/activate", json=self._activation)
+            if activated.status_code != 200:
+                raise StartRefused(f"the lodge did not activate this generation ({activated.status_code})")
+            self._activation = None
         response = await self._lodge("GET", "/state")
         if response.status_code != 200:
             raise StartRefused(f"the lodge answered {response.status_code} to the state request")

@@ -127,6 +127,11 @@ def timeout_for_stillborn() -> float:
     return 5.0
 
 
+RECOVERY_INTERVAL = 60.0
+# While something is owed or failing: often enough to settle soon, not every tick.
+RECOVERY_RETRY = 5.0
+
+
 def backoff_delay(restarts: int) -> float:
     return min(BACKOFF_BASE * (2 ** max(restarts - 1, 0)), BACKOFF_CAP)
 
@@ -147,6 +152,9 @@ class ConnectorState:
     log_offset: int = 0
     crash_times: list[float] = field(default_factory=list)
     fast_exits: int = 0
+    # "confirmed" once the child's exit was observed on stop; "unknown" when
+    # it could not be: its run lock may still be held.
+    shutdown: str = ""
 
     def to_record(self) -> dict:
         record = self.plan.to_record()
@@ -161,6 +169,11 @@ class ConnectorState:
             "error": self.error or None,
             "log": self.log or None,
         })
+        if self.shutdown:
+            record["shutdown"] = self.shutdown
+        if self.plan.handoff is not None:
+            # The generation in flight and any revocation still owed: never the token.
+            record["handoff"] = self.plan.handoff.status()
         return record
 
 
@@ -183,8 +196,14 @@ class ChannelSupervisor:
         ps_bin: str | None = None,
         runner=subprocess.run,
         already_reaped: bool = False,
+        recovery=None,
     ):
         self.layout = layout
+        # The lodge-wide debt recovery (handoff.ConnectorRecovery), or None
+        # when it could not be built: then every report says so.
+        self.recovery = recovery
+        self._recovery_status: dict = {"ran": False, "ok": False, "errors": ["recovery unavailable"]}
+        self._recovered_at = 0.0
         self._already_reaped = already_reaped
         self.ps_bin = ps_bin or os.environ.get("WOLTSPACE_PS_BIN", "ps")
         self._run = runner
@@ -257,6 +276,9 @@ class ChannelSupervisor:
             orphans = self.reap_orphans()
             if orphans:
                 print(f"[connectors] reaped {len(orphans)} orphaned connector(s): {orphans}")
+        # Whatever a previous supervisor left owed is settled before anything
+        # new is minted, whatever the plans say about launching.
+        self._recover()
         for name, state in self.states.items():
             if not state.plan.enabled:
                 state.state = "disabled"
@@ -283,8 +305,24 @@ class ChannelSupervisor:
                 if state.state != "disabled":
                     state.state = "stopped"
                     state.pid = None
-        for _name, child in children:
+        for name, child in children:
+            # Terminate, then wait: the child releases its run lock only when
+            # it exits, and the lodge must not outlive that. An exit that
+            # cannot be confirmed is said so, never claimed; the generation
+            # is revoked either way.
             self._terminate(child, timeout=timeout)
+            state = self.states[name]
+            try:
+                child.wait(timeout=timeout)
+                state.shutdown = "confirmed"
+            except (subprocess.TimeoutExpired, OSError) as exc:
+                state.shutdown = "unknown"
+                state.state = "failed"
+                state.error = f"did not exit within {timeout:g}s of stop ({exc}); its run lock may still be held"
+            self._abandon_handoff(state.plan)
+        for state in self.states.values():
+            if state.plan.handoff is not None:
+                state.plan.handoff.retry_debts()
         thread = self._thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=timeout)
@@ -301,8 +339,21 @@ class ChannelSupervisor:
         plan = state.plan
         log_path = self._log_path(name)
         state.log = str(log_path)
-        env = dict(os.environ)
-        env.update(plan.env)
+        if plan.isolated_env:
+            # Only what the plan names: the lodge's environment stays its own.
+            env = dict(plan.env)
+        else:
+            env = dict(os.environ)
+            env.update(plan.env)
+        if plan.handoff is not None:
+            # A real launch: the token for this process generation is minted
+            # now and travels by file, never in argv or the environment.
+            try:
+                env.update(plan.handoff.prepare())
+            except Exception as exc:  # noqa: BLE001 - registry unreadable, disk full: a named failure
+                state.state = "failed"
+                state.error = f"cannot prepare the connector handoff: {exc}"
+                return
         try:
             handle = log_path.open("a")
             # The adapter may log a request URL, and a request URL carries the
@@ -322,6 +373,7 @@ class ChannelSupervisor:
         except OSError as exc:
             state.state = "failed"
             state.error = f"cannot open {log_path}: {exc}"
+            self._abandon_handoff(plan)
             return
         try:
             child = self._popen(
@@ -338,6 +390,7 @@ class ChannelSupervisor:
             handle.close()
             state.state = "failed"
             state.error = str(exc)
+            self._abandon_handoff(plan)
             return
         finally:
             if not handle.closed:
@@ -361,9 +414,25 @@ class ChannelSupervisor:
                 stillborn = False
         if stillborn:
             self._terminate(child, timeout=timeout_for_stillborn())
+            try:
+                child.wait(timeout=timeout_for_stillborn())
+                shutdown, outcome, error = "confirmed", "stopped", ""
+            except (subprocess.TimeoutExpired, OSError) as exc:
+                shutdown, outcome = "unknown", "failed"
+                error = f"stillborn child did not exit ({exc}); its run lock may still be held"
+            self._abandon_handoff(plan)
             with self._lock:
                 state.pid = None
-                state.state = "stopped"
+                state.state = outcome
+                state.shutdown = shutdown
+                if error:
+                    state.error = error
+
+    @staticmethod
+    def _abandon_handoff(plan: ConnectorPlan) -> None:
+        """A launch that did not happen, or ended: its generation is revoked."""
+        if plan.handoff is not None:
+            plan.handoff.abandon()
 
     def _terminate(self, child: subprocess.Popen, *, timeout: float) -> None:
         if child.poll() is not None:
@@ -445,7 +514,22 @@ class ChannelSupervisor:
     def poll_once(self) -> None:
         """One supervision tick. Public so tests can drive it deterministically."""
         changed = False
+        # Recovery again: every few seconds while something is owed or failing, else once a minute.
+        interval = RECOVERY_INTERVAL if self._recovery_status.get("ok") else RECOVERY_RETRY
+        if self.recovery is not None and self._clock() - self._recovered_at >= interval:
+            before = {k: v for k, v in self._recovery_status.items() if k != "at"}
+            self._recover()
+            if {k: v for k, v in self._recovery_status.items() if k != "at"} != before:
+                changed = True
         for name, state in self.states.items():
+            handoff = state.plan.handoff
+            if handoff is not None:
+                # Debts (a revocation or a removal that failed) are retried
+                # from every state: failed spawn, no child, stopped.
+                before = handoff.status()
+                handoff.retry_debts()
+                if handoff.status() != before:
+                    changed = True
             if not state.plan.enabled or state.state in {"failed", "stopped", "disabled"}:
                 continue
             if state.state in {"running", "degraded"} and self.scan_log(name):
@@ -454,10 +538,31 @@ class ChannelSupervisor:
                 child = self._children.get(name)
             if child is None:
                 continue
+            handoff = state.plan.handoff
+            if handoff is not None and child.poll() is None:
+                # Also retries any revocation still owed from an earlier failure.
+                before = handoff.status()
+                problem = handoff.check()
+                if handoff.status() != before:
+                    changed = True
+                if problem:
+                    # Not started: the token is revoked and the child goes;
+                    # its exit is handled below like any other.
+                    state.error = problem
+                    self._terminate(child, timeout=timeout_for_stillborn())
+                    try:
+                        child.wait(timeout=timeout_for_stillborn())
+                    except (subprocess.TimeoutExpired, OSError):
+                        pass
             code = child.poll()
             if code is None:
                 continue
             changed = True
+            if handoff is not None:
+                # The process generation is over: whatever it held is revoked.
+                handoff.abandon()
+                if handoff.unrevoked:
+                    changed = True
             state.last_exit_code = code
             state.pid = None
             with self._lock:
@@ -533,9 +638,19 @@ class ChannelSupervisor:
 
     # -- reporting ---------------------------------------------------------
 
+    def _recover(self) -> None:
+        if self.recovery is None:
+            return
+        try:
+            self._recovery_status = self.recovery.run()
+        except Exception as exc:  # noqa: BLE001 - reported, retried
+            self._recovery_status = {"ran": True, "ok": False, "errors": [str(exc)], "owed": [], "settled": []}
+        self._recovered_at = self._clock()
+
     def report(self) -> dict:
         return {
             "connectors": [state.to_record() for state in self.states.values()],
+            "recovery": dict(self._recovery_status),
             "updated": int(time.time()),
         }
 

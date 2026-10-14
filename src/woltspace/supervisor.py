@@ -18,6 +18,7 @@ from .channels import (
     TOKEN_BUSY_DETAIL,
     TOKEN_BUSY_REMEDY,
     ConnectorPlan,
+    connector_recovery,
     connector_secrets,
     plan_connectors,
     telegram_token_is_busy,
@@ -117,7 +118,8 @@ class Supervisor:
         # disable the connector — and only *then* reap the orphan, leaving the
         # channel down with nothing running. Clear our own debris, then ask.
         planned = plan_connectors(self.layout)
-        reaper = ChannelSupervisor(self.layout, planned)
+        recovery = connector_recovery(self.layout)
+        reaper = ChannelSupervisor(self.layout, planned, recovery=recovery)
         reaped = reaper.reap_orphans()
         if reaped:
             print(f"[connectors] reaped {len(reaped)} orphaned connector(s): {reaped}")
@@ -131,7 +133,7 @@ class Supervisor:
         for key, value in connector_secrets(plans).items():
             if key not in os.environ or key in env_file_keys:
                 os.environ[key] = value
-        return ChannelSupervisor(self.layout, plans, already_reaped=True)
+        return ChannelSupervisor(self.layout, plans, already_reaped=True, recovery=recovery)
 
     def _refuse_busy_token(self, plan: ConnectorPlan) -> ConnectorPlan:
         """Never spawn a poller onto a token someone else already holds.
@@ -140,7 +142,7 @@ class Supervisor:
         fact. This protects the one that was already there, which is the one
         that has no idea we exist.
         """
-        if not plan.enabled or plan.name != "telegram":
+        if not plan.enabled or plan.name not in ("telegram", "telegram-connector"):
             return plan
         token = plan.env.get("TELEGRAM_BOT_TOKEN", "")
         if not self.probe_token(token):

@@ -28,7 +28,7 @@ def _layout(tmp_path):
 
 def test_browser_bridge_is_not_a_supervised_node_connector():
     assert [connector.name for connector in CONNECTORS] == [
-        "telegram", "slack", "wolf", "app-gateway",
+        "telegram", "telegram-connector", "slack", "wolf", "app-gateway",
     ]
 
 

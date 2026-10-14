@@ -35,23 +35,53 @@ def _truthy(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def telegram_runtime(layout: RuntimeLayout) -> str:
-    """Which runtime owns Telegram: `telegram.runtime` in the lodge's woltspace.json.
-
-    The reader is the lodge's own (server/connectors.py), reached the way the
-    CLI reaches the rest of the lodge's code, so both sides read one rule.
-    """
+def _connectors_module(layout: RuntimeLayout):
+    """The lodge's own connector state code, reached the way the CLI reaches it."""
     root = str(layout.install_root)
     if root not in sys.path:
         sys.path.insert(0, root)
     lib_dir = str(layout.runtime_lib)
     if lib_dir not in sys.path:
         sys.path.insert(0, lib_dir)
+    from server import connectors
+
+    return connectors
+
+
+def telegram_runtime(layout: RuntimeLayout) -> str:
+    """Which runtime owns Telegram: `telegram.runtime` in the lodge's woltspace.json.
+
+    The reader is the lodge's own (server/connectors.py), reached the way the
+    CLI reaches the rest of the lodge's code, so both sides read one rule.
+    """
     try:
-        from server.connectors import channel_runtime
+        connectors = _connectors_module(layout)
     except ImportError:
         return "adapter"
-    return channel_runtime(layout.wolts_dir / "woltspace.json", "telegram")
+    return connectors.channel_runtime(layout.wolts_dir / "woltspace.json", "telegram")
+
+
+# The environment a connector child gets besides what its plan names: enough
+# to find its interpreter and a home, nothing of the lodge's.
+_CHILD_BASE_ENV = ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL")
+
+
+def connector_recovery(layout: RuntimeLayout):
+    """The lodge-wide debt recovery step, built without any connector plan.
+
+    None when the lodge's own state code is not beside this CLI; the
+    supervisor then reports recovery as unavailable rather than done.
+    """
+    from .handoff import ConnectorRecovery
+
+    try:
+        connectors = _connectors_module(layout)
+    except ImportError:
+        return None
+    return ConnectorRecovery(
+        layout.platform_state,
+        lambda: connectors.ConnectorStore(layout.wolts_dir / ".space" / "connectors"),
+    )
 
 
 def _module_available(name: str) -> bool:
@@ -119,6 +149,13 @@ class ConnectorPlan:
     # ends in "bot/", and the module name appears inside any file *named* after
     # it (`tail -f bot.telegram_adapter.log`). A token pair cannot.
     process_signature: tuple[str, ...] = ()
+    # True: the child gets `env` and a minimal base (PATH, HOME, TMPDIR, LANG),
+    # never the lodge's whole environment.
+    isolated_env: bool = False
+    # A `ConnectorHandoff`: asked for the child's extra env right before each
+    # spawn (a token minted for that launch), checked on every tick, abandoned
+    # on stop. Never in the public record.
+    handoff: object | None = field(default=None, compare=False)
 
     def to_record(self) -> dict:
         """Public description. Never includes `env` — that carries the token."""
@@ -285,6 +322,97 @@ class TelegramConnector:
             # `-m <module>` is present as an adjacent pair in both the plain
             # and the dev-reload argv, and no filename can produce it.
             process_signature=("-m", module),
+        )
+
+
+class TelegramRuntimeConnector:
+    """The Telegram connector on the protocol, as a supervised child.
+
+    Enabled only when the owner switched `telegram.runtime` to the connector
+    and an enabled Telegram instance exists in the connector registry. The
+    child is `python -m woltspace_telegram` from the bundled `connectors/
+    telegram`, with an environment of its own: the lodge's loopback address,
+    the one secret the manifest declares, a minimal base, and the path of a
+    handoff file carrying a token minted for that launch. The token itself is
+    never in argv and never in the environment. The child takes the channel's
+    run lock itself and holds it until it exits; the supervisor waits for
+    that exit on stop.
+    """
+
+    name = "telegram-connector"
+
+    def plan(
+        self, layout: RuntimeLayout, env: Mapping[str, str] | None = None
+    ) -> ConnectorPlan:
+        values = dict(os.environ if env is None else env)
+        settings = channel_config(layout, "telegram", values)
+        if telegram_runtime(layout) != "connector":
+            return ConnectorPlan(
+                self.name, False, "telegram.runtime is adapter: the connector does not run",
+                remedy="Stop the lodge, then `woltspace connector runtime telegram connector`.",
+            )
+        # The channel's own off switch means the same whichever runtime owns it.
+        configured = bool(settings.get("enabled", False))
+        raw_enabled = values.get("ENABLE_TELEGRAM_BOT")
+        from_env = _truthy(raw_enabled) if raw_enabled is not None else False
+        if (raw_enabled is not None and not from_env) or not (configured or from_env):
+            return ConnectorPlan(
+                self.name, False, "disabled",
+                remedy=f'Set channels.telegram = {{"enabled": true, "token": "<bot token>"}} in {config_path(layout, values)}.',
+            )
+        token = (values.get("TELEGRAM_BOT_TOKEN") or settings.get("token") or "").strip()
+        if not token:
+            return ConnectorPlan(
+                self.name, False, "enabled without a bot token",
+                remedy=f'Set channels.telegram = {{"token": "<bot token>"}} in {config_path(layout, values)}.',
+            )
+        try:
+            connectors = _connectors_module(layout)
+            store = connectors.ConnectorStore(layout.wolts_dir / ".space" / "connectors")
+            instances = [
+                i for i in store.list_instances() if i["channel"] == "telegram" and i["enabled"]
+            ]
+        except Exception as exc:  # noqa: BLE001 - an unreadable registry is a named refusal
+            return ConnectorPlan(
+                self.name, False, f"connector registry unreadable: {exc}",
+                remedy="Fix .space/connectors/registry.json, then restart the lodge.",
+            )
+        if not instances:
+            return ConnectorPlan(
+                self.name, False, "no enabled telegram instance in the connector registry",
+                remedy=(
+                    "`woltspace connector add <id> --channel telegram --account <bot id>`, "
+                    "bind a sender, `woltspace connector enable <id>`, then restart the lodge."
+                ),
+            )
+        instance_id = instances[0]["instance_id"]
+        package_dir = layout.install_root / "connectors" / "telegram"
+        if not (package_dir / "woltspace_telegram" / "__init__.py").is_file():
+            return ConnectorPlan(
+                self.name, False, "the Telegram connector package is not installed beside the lodge",
+                remedy="Reinstall woltspace so `connectors/telegram` ships with it.",
+            )
+        from .handoff import ConnectorHandoff
+
+        child_env = {key: values[key] for key in _CHILD_BASE_ENV if values.get(key)}
+        child_env.update({
+            "TELEGRAM_BOT_TOKEN": token,
+            "WOLTSPACE_API": layout.endpoint,
+            "PYTHONPATH": str(package_dir),
+            "PYTHONUNBUFFERED": "1",
+        })
+        handoff = ConnectorHandoff(
+            lambda: _connectors_module(layout).ConnectorStore(layout.wolts_dir / ".space" / "connectors"),
+            instance_id, layout.platform_state,
+        )
+        return ConnectorPlan(
+            name=self.name, enabled=True,
+            detail=f"woltspace_telegram for instance {instance_id} from {package_dir}",
+            command=(sys.executable, "-m", "woltspace_telegram"),
+            cwd=str(package_dir), env=child_env,
+            remedy="Check the connector log, then `woltspace connector list`.",
+            process_signature=("-m", "woltspace_telegram"),
+            isolated_env=True, handoff=handoff,
         )
 
 
@@ -560,7 +688,8 @@ class AppGatewayConnector:
 
 
 CONNECTORS: tuple[ChannelConnector, ...] = (
-    TelegramConnector(), SlackConnector(), WolfConnector(), AppGatewayConnector(),
+    TelegramConnector(), TelegramRuntimeConnector(), SlackConnector(), WolfConnector(),
+    AppGatewayConnector(),
 )
 
 

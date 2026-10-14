@@ -53,6 +53,7 @@ packages = ["src/woltspace"]
 [tool.hatch.build.targets.wheel.force-include]
 "server" = "woltspace/_bundle/server"
 "container" = "woltspace/_bundle/container"
+"connectors" = "woltspace/_bundle/connectors"
 "public" = "woltspace/_bundle/public"
 "template" = "woltspace/_bundle/template"
 "templates" = "woltspace/_bundle/templates"
@@ -68,6 +69,7 @@ include = [
     "/src/woltspace",
     "/server",
     "/container",
+    "/connectors",
     "/public",
     "/template",
     "/templates",

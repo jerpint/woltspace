@@ -597,6 +597,7 @@ def run_doctor(
     hosts_check = _allowed_hosts_check(_allowed_hosts_values(layout))
     if hosts_check is not None:
         checks.append(hosts_check)
+    checks.append(check_connector_ledger(layout))
     reserved_apps = _reserved_app_names_check(layout)
     if reserved_apps is not None:
         checks.append(reserved_apps)
@@ -702,6 +703,25 @@ def run_doctor(
             "Stop the existing service or choose --port <free-port>." if not available else "",
         ))
     return checks
+
+
+def check_connector_ledger(layout: RuntimeLayout) -> DoctorCheck:
+    """Revocation debts a supervisor could not settle, or a ledger nobody can read."""
+    from .handoff import DebtLedger
+
+    status = DebtLedger(str(layout.platform_state)).status()
+    if not status["readable"]:
+        return DoctorCheck(
+            "connector-ledger", "warn", f"revocation ledger unreadable: {status['error']}",
+            remedy="Inspect .space/platform/run/debts.json; it is kept as it is until it reads, and recovery fails until then.",
+        )
+    if status["debts"]:
+        owed = ", ".join(f"{i}/{g}" for i, g in status["debts"])
+        return DoctorCheck(
+            "connector-ledger", "warn", f"connector revocations still owed: {owed}",
+            remedy="They are settled at the next `woltspace start`; `woltspace connector list` shows them.",
+        )
+    return DoctorCheck("connector-ledger", "pass", "no connector revocation owed")
 
 
 def doctor_ok(checks: list[DoctorCheck]) -> bool:

@@ -74,7 +74,7 @@ def test_add_bind_enable_token_disable_unbind_remove(colony, capsys):
     assert cli_main(["connector", "remove", "tg-main", "--json"]) == 0
     assert _out(capsys) == {"ok": True, "cancelled": 0, "transferred": 0}
     assert cli_main(["connector", "list", "--json"]) == 0
-    assert _out(capsys) == {"instances": [], "bindings": []}
+    assert _out(capsys) == {"instances": [], "bindings": [], "ledger": {"readable": True, "debts": [], "error": None}}
 
 
 def test_one_enabled_instance_per_channel_and_refusals_exit_1(colony, capsys):

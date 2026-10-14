@@ -94,6 +94,7 @@ jobs:
           test/test_connector_router.py
           test/test_connector_runtime_switch.py
           test/test_telegram_connector.py
+          test/test_connector_launch.py
       - name: notify command
         # The script runs under woltspace-python, which needs a Python that
         # has the test install's dependencies.

@@ -277,6 +277,14 @@ def format_connector_lines(result: dict, *, show_pid: bool = True) -> list[str]:
             lines.append(f"  error: {error}")
         if state in {"disabled", "failed"} and connector.get("remedy"):
             lines.append(f"  fix: {connector['remedy']}")
+    recovery = (result.get("health") or {}).get("recovery") or result.get("recovery")
+    if isinstance(recovery, dict) and recovery.get("ran") and not recovery.get("ok"):
+        owed = recovery.get("owed") or []
+        lines.append(
+            "connector recovery: " + (f"{len(owed)} revocation(s) still owed" if owed else "failing")
+        )
+        for error in recovery.get("errors") or []:
+            lines.append(f"  error: {error}")
     return lines
 
 
@@ -1121,7 +1129,14 @@ def _connector_list(args) -> int:
                 )
         if not lines:
             lines.append("no connector instances")
-        return {"instances": instances, "bindings": bindings, "lines": lines}
+        from .handoff import DebtLedger
+
+        ledger = DebtLedger(str(RuntimeLayout.from_env().platform_state)).status()
+        if not ledger["readable"]:
+            lines.append(f"revocation ledger unreadable: {ledger['error']} (kept as it is; recovery is failing)")
+        elif ledger["debts"]:
+            lines.append("revocations owed: " + ", ".join(f"{i}/{g}" for i, g in ledger["debts"]))
+        return {"instances": instances, "bindings": bindings, "ledger": ledger, "lines": lines}
     return _connector_run(args, action)
 
 
