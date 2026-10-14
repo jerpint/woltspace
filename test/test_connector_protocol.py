@@ -1643,6 +1643,16 @@ def test_an_uncommitted_failure_path_dispatches_no_claim(lodge, monkeypatch):
     assert calls == [1, 1]
 
 
+def _elsewhere(fn):
+    """Run `fn` on another thread and wait: a concurrent connector read, not a nested one."""
+    import threading
+
+    thread = threading.Thread(target=fn)
+    thread.start()
+    thread.join(10)
+    assert not thread.is_alive()
+
+
 def test_a_late_receipt_from_an_older_attempt_is_ignored(lodge):
     """Attempt 1 is slow; attempt 2 is claimed and finishes first; attempt 1's receipt is late."""
     who = _principal(lodge)
@@ -1653,7 +1663,7 @@ def test_a_late_receipt_from_an_older_attempt_is_ignored(lodge):
             outcomes.append("slow started")
             lodge.clock.advance(LIMITS.handoff_retry_seconds + 1)
             lodge.store.router = lambda e: outcomes.append("fast") or {"routed": "delivered"}
-            lodge.store.lease(who, 1)   # claims attempt 2 and runs the fast router
+            _elsewhere(lambda: lodge.store.lease(who, 1))   # claims attempt 2 and runs the fast router
             return {"routed": "late"}
         return {"routed": "delivered"}
 
@@ -1752,7 +1762,7 @@ def test_an_owner_retry_during_an_old_dispatch_keeps_the_new_attempts_result(lod
         seen.append("old started")
         assert lodge.store.retry_handoff("tg-main", "e1") is True
         lodge.store.router = lambda e: seen.append("new") or {"routed": "error", "error": "new attempt failed"}
-        lodge.store.lease(who, 1)
+        _elsewhere(lambda: lodge.store.lease(who, 1))
         record = lodge.store._queue("tg-main").inbound["bot:1\x00e1"]
         assert record["result"] == {"routed": "error", "error": "new attempt failed"}
         return {"routed": "delivered", "session": "OLD"}
@@ -1783,7 +1793,7 @@ def test_a_late_receipt_after_pause_and_resume_is_ignored(lodge):
         lodge.store.enable("tg-main")
         lodge.clock.advance(LIMITS.handoff_retry_seconds + 1)
         lodge.store.router = lambda e: {"routed": "delivered", "session": "NEW"}
-        lodge.store.lease(who, 1)
+        _elsewhere(lambda: lodge.store.lease(who, 1))
         claims.append(lodge.store._queue("tg-main").inbound["bot:1\x00e1"]["claim"])
         return {"routed": "delivered", "session": "OLD"}
 

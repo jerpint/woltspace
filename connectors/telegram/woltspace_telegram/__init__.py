@@ -58,6 +58,7 @@ API and the real lodge app.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 
 import httpx
@@ -70,6 +71,8 @@ POLL_TIMEOUT = 25
 LEASE_WAIT = 20
 DOWNLOAD_CAP = 50 * 1024 * 1024
 MAX_EVENT_TEXT = 16 * 1024
+# The only callback data core ever issues; anything else is nobody's button.
+CALLBACK_DATA_RE = re.compile(r"cb_[0-9a-f]{32}")
 
 logger = logging.getLogger(__name__)
 
@@ -340,11 +343,43 @@ class TelegramConnector:
         raise Permanent(f"lodge refused the upload: {reason}")
 
     async def _event_for(self, update: dict) -> dict:
-        """The lodge payload for one update: an event, or an ignore disposition.
+        """The lodge payload for one update: an event, a button press, or an ignore disposition.
 
         Raises Transient when a file could not be fetched or uploaded for a
         reason that may clear; the caller then stops the batch here.
         """
+        query = update.get("callback_query")
+        if isinstance(query, dict):
+            message = query.get("message") or {}
+            data = query.get("data")
+            if not query.get("from") or not isinstance(message, dict) or not message.get("chat") or not isinstance(data, str):
+                return {"event_id": f"tg:{update['update_id']}", "cursor": update["update_id"], "ignore": "unsupported_update"}
+            if not CALLBACK_DATA_RE.fullmatch(data):
+                # Legacy or foreign button data: not one of core's ids, disposed of for good.
+                try:
+                    await self._call("answerCallbackQuery", callback_query_id=str(query.get("id", "")))
+                except (httpx.HTTPError, ValueError, OwnershipLost):
+                    pass
+                return {"event_id": f"tg:{update['update_id']}", "cursor": update["update_id"], "ignore": "unsupported_callback"}
+            # The spinner stops whatever core decides; core's answer comes as a delivery.
+            try:
+                await self._call("answerCallbackQuery", callback_query_id=str(query.get("id", "")))
+            except (httpx.HTTPError, ValueError, OwnershipLost):
+                pass
+            return {
+                "event_id": f"tg:{update['update_id']}",
+                "sender": {
+                    "provider_id": str(query["from"]["id"]),
+                    "display": (query["from"].get("username") or query["from"].get("first_name") or "")[:256],
+                },
+                "conversation": {
+                    "provider_id": str(message["chat"]["id"]),
+                    "thread": str(message["message_thread_id"]) if message.get("message_thread_id") else None,
+                },
+                "text": "",
+                "callback": {"id": data[:128]},
+                "cursor": update["update_id"],
+            }
         message = update.get("message") or update.get("edited_message")
         if not isinstance(message, dict) or not message.get("from") or not message.get("chat"):
             return {"event_id": f"tg:{update['update_id']}", "cursor": update["update_id"], "ignore": "unsupported_update"}
@@ -392,7 +427,7 @@ class TelegramConnector:
         if not await self.owns_channel():
             report.fenced = True
             return report
-        params = {"timeout": timeout, "allowed_updates": ["message", "edited_message"]}
+        params = {"timeout": timeout, "allowed_updates": ["message", "edited_message", "callback_query"]}
         if self.cursor is not None:
             params["offset"] = self.cursor
         try:
@@ -463,9 +498,16 @@ class TelegramConnector:
         footer = delivery.get("reply_footer") or ""
         text = delivery["text"] or ""
         parts = split_text(text + footer) if (text or footer) else []
-        for part in parts:
+        keyboard = [
+            [{"text": b["text"], "callback_data": b["callback_id"]} for b in row]
+            for row in delivery.get("buttons") or []
+        ]
+        for index, part in enumerate(parts):
+            params = {"chat_id": chat_id, "text": part, **extra}
+            if keyboard and index == len(parts) - 1:
+                params["reply_markup"] = {"inline_keyboard": keyboard}
             try:
-                response = await self._call("sendMessage", chat_id=chat_id, text=part, **extra)
+                response = await self._call("sendMessage", **params)
                 body = response.json()
             except OwnershipLost as exc:
                 return message_ids, str(exc), True

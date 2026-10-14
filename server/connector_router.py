@@ -15,9 +15,11 @@ What it does, in order, every attempt the same way:
    is left alone, a source that is gone is fine if its destination exists.
    Only then are the upload handles released. A crash anywhere in here
    leaves the next attempt the same destinations and the same files.
-2. Picks the session: the one the replied-to delivery came from, else the
-   binding's remembered active session, else the default wolt's live
-   session. Delivers there; a stopped session is resumed only when the
+2. Hands a fixed chat command, or an inline-button press, to
+   `connector_commands.Commands` (grants and resources checked there); the
+   rest is a message. Picks the session: the one the replied-to delivery
+   came from, else the binding's remembered active session, else the live
+   session of the wolt this chat picked (or the default wolt). Delivers there; a stopped session is resumed only when the
    binding says `may_wake`. No live session and no wake: refused, and the
    human is told through a delivery. Creating a session is a separate grant
    (`may_create`, slice 2b), so this router never spawns.
@@ -38,6 +40,7 @@ from pathlib import Path
 from typing import Callable
 
 from .config import SPACE_DIR, WOLTS_DIR
+from .connector_commands import Commands, _default_wolt_of, allowed_wolts
 from .connectors import AcceptedEvent, ConnectorError, ConnectorStore, NoConnectorBinding
 
 logger = logging.getLogger(__name__)
@@ -147,6 +150,8 @@ class Router:
         resume: Callable[[str, str], dict] = _default_resume,
         resolve: Callable[[str], str | None] = _default_resolve,
         wolts_dir: Path | None = None,
+        commands: Commands | None = None,
+        wolt_of: Callable[[str], str | None] = _default_wolt_of,
     ):
         self.store = store
         self.uploads_root = uploads_root or SPACE_DIR
@@ -154,6 +159,8 @@ class Router:
         self.resume = resume
         self.resolve = resolve
         self.wolts_dir = wolts_dir or WOLTS_DIR
+        self.wolt_of = wolt_of
+        self.commands = commands or Commands(store, resolve=resolve, wolt_of=wolt_of)
 
     def _tell(self, event: AcceptedEvent, text: str) -> None:
         """Answer the conversation through its own binding; never fatal."""
@@ -192,12 +199,42 @@ class Router:
         return files
 
     def __call__(self, event: AcceptedEvent) -> dict:
+        if self.commands.handles(event):
+            # A command never carries files anywhere; what came with it is released.
+            if event.attachments:
+                self.store.release_uploads(event.instance_id, [a["upload_id"] for a in event.attachments])
+            return self.commands(event)
         files = self.place_files(event)
         text = session_text(event, files)
         binding_id = event.binding["binding_id"]
-        wolt = event.binding["default_wolt"]
-        remembered = self.store.routing_state(event.instance_id, binding_id).get("active_session")
-        session = event.reply_to_session or remembered or self.resolve(wolt)
+        state = self.store.routing_state(event.instance_id, binding_id)
+        # Routing memory is only as good as the current grant: a picked wolt
+        # that is no longer selectable, and a remembered session of such a
+        # wolt, are forgotten here and now; the default wolt needs no grant.
+        allowed = allowed_wolts(event.binding)
+
+        def permitted(name: str) -> bool:
+            # The session's real wolt, never inferred from the current
+            # selection; a session whose wolt cannot be verified is refused.
+            owner = self.wolt_of(name)
+            return owner is not None and owner in allowed
+
+        wolt = state.get("active_wolt") or event.binding["default_wolt"]
+        remembered = state.get("active_session")
+        if wolt not in allowed:
+            wolt = event.binding["default_wolt"]
+            remembered = None
+            self.store.remember_route(event.instance_id, binding_id, active_wolt=None, active_session=None)
+        elif remembered and not permitted(remembered):
+            remembered = None
+            self.store.remember_route(event.instance_id, binding_id, active_session=None)
+        if event.reply_to_session:
+            if not permitted(event.reply_to_session):
+                self._tell(event, f"🪵 {event.reply_to_session} belongs to a wolt this chat may not talk to now")
+                return {"routed": "refused", "reason": "reply_target_not_allowed", "session": event.reply_to_session}
+            session = event.reply_to_session
+        else:
+            session = remembered or self.resolve(wolt)
         if not session:
             self._tell(event, f"🪵 {wolt} has no live session; ask the owner to start one")
             return {"routed": "refused", "reason": "no_session", "wolt": wolt}
@@ -205,6 +242,7 @@ class Router:
         status = result.get("status")
         if status == "delivered":
             self.store.remember_route(event.instance_id, binding_id, active_session=session)
+            self.store.associate_session(event.instance_id, binding_id, session, via="routed", wolt=self.wolt_of(session) or "")
             self._tell(event, f"{self._emoji(wolt)} sent to {session}")
             return {"routed": "delivered", "session": session}
         if status in {"session-dead", "agent-gone"}:
@@ -217,6 +255,7 @@ class Router:
                 self._tell(event, f"🪵 could not wake {session}: {exc}")
                 return {"routed": "refused", "reason": "resume_failed", "session": session}
             self.store.remember_route(event.instance_id, binding_id, active_session=session)
+            self.store.associate_session(event.instance_id, binding_id, session, via="routed", wolt=self.wolt_of(session) or "")
             self._tell(event, f"🪵 {session} was asleep; woke it and delivered")
             return {"routed": "resumed", "session": session, "detail": revived.get("status", "")}
         # no-session (the remembered or replied-to session is gone): fall back
@@ -226,6 +265,7 @@ class Router:
             result = self.deliver(live, text)
             if result.get("status") == "delivered":
                 self.store.remember_route(event.instance_id, binding_id, active_session=live)
+                self.store.associate_session(event.instance_id, binding_id, live, via="routed", wolt=self.wolt_of(live) or "")
                 self._tell(event, f"🪵 {session} is gone; delivered to {wolt}'s live session {live}")
                 return {"routed": "delivered", "session": live, "fallback_from": session}
         self._tell(event, f"🪵 {session} is gone and {wolt} has no live session")

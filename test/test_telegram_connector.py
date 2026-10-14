@@ -862,3 +862,52 @@ async def test_provider_calls_before_start_and_after_stop_are_refused(lodge, api
     with pytest.raises(NotOwner):
         await connector.deliver_once()
     assert api.calls == []
+
+
+# ------------------------------------------------- part B: buttons and button presses
+
+
+async def test_buttons_render_as_an_inline_keyboard_and_presses_become_callback_events(lodge, api):
+    lodge.store.bind("tg", sender="101", conversation="101", default_wolt="softie", selectable_wolts=["softie", "otter"])
+    lodge.store.router = lambda event: lodge.routed.append(event) or {"routed": "test"}
+    lodge.enqueue("pick one", buttons=[[{"text": "softie", "action": {"command": "wolt", "argument": "softie"}},
+                                        {"text": "otter", "action": {"command": "wolt", "argument": "otter"}}]])
+    connector = _connector(lodge, api)
+    report = await connector.deliver_once()
+    assert report.acks[0]["body"]["status"] == "delivered"
+    [sent] = [m for m in api.sent if m["method"] == "sendMessage"]
+    keyboard = sent["reply_markup"]["inline_keyboard"]
+    assert [b["text"] for b in keyboard[0]] == ["softie", "otter"]
+    assert all(b["callback_data"].startswith("cb_") for b in keyboard[0])
+    # A press on the second button arrives as a callback_query and becomes a callback event.
+    api.updates = [{
+        "update_id": 71,
+        "callback_query": {"id": "q1", "from": {"id": 101, "username": "jer"},
+                           "message": {"message_id": sent["message_id"], "chat": {"id": 101}},
+                           "data": keyboard[0][1]["callback_data"]},
+    }]
+    report = await connector.poll_once(timeout=0)
+    assert report.events[0]["body"]["accepted"] is True and report.cursor == 72
+    assert lodge.routed[0].callback == keyboard[0][1]["callback_data"] and lodge.routed[0].text == ""
+    assert [m for m, p in api.calls if m == "answerCallbackQuery"] == ["answerCallbackQuery"]
+    # A callback query without data is ignored durably.
+    api.updates = [{"update_id": 72, "callback_query": {"id": "q2", "from": {"id": 101}, "message": {"chat": {"id": 101}}}}]
+    report = await connector.poll_once(timeout=0)
+    assert report.events[0]["body"]["reason"] == "ignored_unsupported_update" and report.cursor == 73
+
+
+async def test_malformed_or_legacy_callback_data_is_disposed_of_once_and_later_updates_flow(lodge, api):
+    lodge.store.router = lambda event: lodge.routed.append(event) or {"routed": "test"}
+    api.updates = [
+        {"update_id": 81, "callback_query": {"id": "q1", "from": {"id": 101}, "message": {"chat": {"id": 101}}, "data": "legacy:wolt:softie"}},
+        {"update_id": 82, "callback_query": {"id": "q2", "from": {"id": 101}, "message": {"chat": {"id": 101}}, "data": "cb_" + "0" * 32}},
+        _update(83, "after the buttons"),
+    ]
+    connector = _connector(lodge, api)
+    report = await connector.poll_once(timeout=0)
+    assert [(e["status"], e["body"].get("reason")) for e in report.events] == [
+        (200, "ignored_unsupported_callback"), (200, None), (200, None),
+    ]
+    assert report.cursor == 84 and [e.text for e in lodge.routed if e.text] == ["after the buttons"]
+    # The well-formed unknown id was a final 200 (the router answers it), never a 400 that holds the cursor.
+    assert [m for m, p in api.calls if m == "answerCallbackQuery"] == ["answerCallbackQuery"] * 2

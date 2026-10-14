@@ -657,7 +657,8 @@ class ChannelSupervisor:
     def publish(self) -> None:
         path = report_path(self.layout)
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
+        # A name of this write's own: the watch thread and a direct tick may publish at once.
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text(json.dumps(self.report(), indent=2) + "\n")
         tmp.chmod(0o600)
         tmp.replace(path)

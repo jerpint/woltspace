@@ -34,6 +34,9 @@ class Sessions:
     def resolve(self, wolt):
         return self.live.get(wolt)
 
+    def wolt_of(self, session):
+        return session.rsplit("-", 1)[0]
+
 
 @pytest.fixture
 def lodge(tmp_path):
@@ -66,7 +69,7 @@ def test_delivers_to_the_default_wolts_live_session_and_remembers_it(lodge, tmp_
     assert session == "softie-7"
     assert text.startswith("[telegram message from jer, chat_id=c1, event=tg:1]: hello")
     assert "WOLTSPACE_NOTIFY" in text
-    assert store.routing_state("tg-main", binding["binding_id"]) == {"active_session": "softie-7"}
+    assert store.routing_state("tg-main", binding["binding_id"])["active_session"] == "softie-7"
     assert _replies(store) == ["🐾 sent to softie-7"]
     # Next time the remembered session wins over the wolt's live one.
     sessions.live["softie"] = "softie-8"
@@ -103,7 +106,7 @@ def test_a_stopped_session_is_woken_only_when_the_binding_may_wake(lodge, tmp_pa
     woken = router(_event(store, sleepy, conversation="c2"))
     assert woken == {"routed": "resumed", "session": "softie-7", "detail": "revived"}
     assert sessions.resumed[0][0] == "softie-7"
-    assert store.routing_state("tg-main", sleepy["binding_id"]) == {"active_session": "softie-7"}
+    assert store.routing_state("tg-main", sleepy["binding_id"])["active_session"] == "softie-7"
     texts = _replies(store)
     assert "🪵 softie-7 is asleep and this chat may not wake it" in texts
     assert "🪵 softie-7 was asleep; woke it and delivered" in texts
@@ -117,7 +120,7 @@ def test_a_gone_session_falls_back_to_the_wolts_live_one_once(lodge, tmp_path):
     result = router(_event(store, binding))
     assert result == {"routed": "delivered", "session": "softie-9", "fallback_from": "softie-old"}
     assert [s for s, _ in sessions.pasted] == ["softie-old", "softie-9"]
-    assert store.routing_state("tg-main", binding["binding_id"]) == {"active_session": "softie-9"}
+    assert store.routing_state("tg-main", binding["binding_id"])["active_session"] == "softie-9"
     sessions.live = {}
     sessions.statuses["softie-9"] = "no-session"
     gone = router(_event(store, binding))
@@ -150,7 +153,7 @@ def test_session_text_names_the_event_for_duplicate_detection(lodge):
 
 
 def _boundary(sessions):
-    return {"deliver": sessions.deliver, "resume": sessions.resume, "resolve": sessions.resolve}
+    return {"deliver": sessions.deliver, "resume": sessions.resume, "resolve": sessions.resolve, "wolt_of": sessions.wolt_of}
 
 
 def _claimed_upload(store, event_id="tg:1"):
