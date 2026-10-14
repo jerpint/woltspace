@@ -56,12 +56,11 @@ class TestNotifyEndpoint:
 
 @requires_server
 class TestToolProxy:
-    """The /tools endpoint handles tool registrations."""
+    """The tool registry and its proxy are gone; the path answers 404 for good."""
 
-    def test_tools_endpoint_exists(self, server_get):
-        """GET /tools should return something (list or error, not 404)."""
+    def test_tools_endpoint_is_gone(self, server_get):
         result = server_get("/tools")
-        assert result is not None
+        assert isinstance(result, dict) and "404" in result.get("error", "")
 
 
 # ---------------------------------------------------------------------------

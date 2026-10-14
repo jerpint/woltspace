@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import socket
 import subprocess
 import threading
 import time
@@ -194,6 +195,9 @@ def _enabled_app_gateway_port() -> int | None:
 
 _APP_LOCKS: dict[str, threading.RLock] = {}
 _APP_LOCKS_GUARD = threading.Lock()
+# Serializes the port probe and spawn across apps, so two apps declaring the
+# same port can't both pass the probe.
+_PORT_START_LOCK = threading.Lock()
 
 
 def _app_lock(name: str) -> threading.RLock:
@@ -300,6 +304,19 @@ def intended_apps() -> list[dict]:
     return intended
 
 
+def _port_answers(port: int) -> str:
+    """The loopback address already accepting on `port`, or "" if none does."""
+    for family, host in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+        try:
+            with socket.socket(family, socket.SOCK_STREAM) as sock:
+                sock.settimeout(0.3)
+                if sock.connect_ex((host, port)) == 0:
+                    return host
+        except OSError:
+            continue  # no IPv6 loopback, say
+    return ""
+
+
 @_locked_per_app
 def start_app(name: str) -> dict:
     """Start an app's dev server. Returns state dict with port and pid.
@@ -337,7 +354,6 @@ def start_app(name: str) -> dict:
     for r in running_apps():
         if r["port"] == port:
             raise RuntimeError(f"Port {port} already in use by running app '{r['name']}'")
-
     work_dir = app_dir(name)
 
     # Auto-install if node_modules is missing and install command is defined
@@ -355,28 +371,51 @@ def start_app(name: str) -> dict:
     # bind loopback only: the gateway is the app's only public face.
     env = app_environment(PORT=str(port), HOST="127.0.0.1", HOSTNAME="127.0.0.1")
     _RUNNING_STATE_DIR.mkdir(parents=True, exist_ok=True)
-    log_handle = app_log_file(name).open("ab", buffering=0)
-    try:
-        proc = subprocess.Popen(
-            app.start,
-            shell=True,
-            cwd=str(work_dir),
-            env=env,
-            stdout=log_handle,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-    finally:
-        log_handle.close()
+    # The gateway proxies to 127.0.0.1:<port> and trusts whoever answers. If
+    # another program (possibly another user's lodge on this machine) already
+    # holds the port, starting would serve that program under this app's
+    # name. Probe right before spawning (after any install), with same-port
+    # starts of different apps serialized, and refuse without writing state.
+    # This catches a pre-existing listener only: it doesn't prove the process
+    # started here is the one that ends up answering (external races, PID
+    # reuse, a wrapper whose server moved ports remain open).
+    with _PORT_START_LOCK:
+        # Re-check managed apps inside the lock: another app may have been
+        # spawned on this port since the scan above, and its child may not
+        # have bound yet, so the probe alone would still see a free port. The
+        # state written below, inside the same lock, is the reservation.
+        for r in running_apps():
+            if r["port"] == port and r["name"] != name:
+                raise RuntimeError(f"Port {port} already in use by running app '{r['name']}'")
+        holder = _port_answers(port)
+        if holder:
+            print(f"[apps] refusing to start {name}: port {port} already answers on {holder}")
+            raise RuntimeError(
+                f"port {port} is already in use by another program ({holder}); "
+                "pick a free port in the app's woltspace.json"
+            )
+        log_handle = app_log_file(name).open("ab", buffering=0)
+        try:
+            proc = subprocess.Popen(
+                app.start,
+                shell=True,
+                cwd=str(work_dir),
+                env=env,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        finally:
+            log_handle.close()
 
-    state = {
-        "name": name,
-        "keeper": app.keeper,
-        "port": port,
-        "pid": proc.pid,
-        "start_command": app.start,
-    }
-    _write_state(name, state)
+        state = {
+            "name": name,
+            "keeper": app.keeper,
+            "port": port,
+            "pid": proc.pid,
+            "start_command": app.start,
+        }
+        _write_state(name, state)
     return state
 
 

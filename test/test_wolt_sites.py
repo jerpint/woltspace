@@ -144,7 +144,8 @@ class TestSitesApi:
     def test_lists_wolts_with_sites(self, client):
         resp = client.get("/sites")
         assert resp.status_code == 200
-        assert {"wolt": "testwolt", "url": "/wolt/testwolt/site/"} in resp.json()
+        entry = next(e for e in resp.json() if e["wolt"] == "testwolt")
+        assert entry["url"] == "/wolt/testwolt/site/"
 
     def test_site_detail(self, client):
         resp = client.get("/sites/testwolt")

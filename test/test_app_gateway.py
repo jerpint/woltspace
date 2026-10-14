@@ -92,7 +92,8 @@ def test_gateway_valid_owner_and_shared_email_reach_http_app(tmp_path, monkeypat
     owner = asyncio.run(_get(
         "/hello", host="notes.owner.woltspace.app", token=_token(key, "apps-aud"),
     ))
-    (tmp_path / ".space" / "platform").mkdir(parents=True)
+    # The gateway may already have created it for the content-origin record.
+    (tmp_path / ".space" / "platform").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".space" / "platform" / "app-sharing.json").write_text(json.dumps({
         "notes": ["friend@example.com"],
     }))
@@ -1046,3 +1047,56 @@ def test_websocket_bridge_sends_one_host_and_the_apps_chosen_subprotocol(monkeyp
     finally:
         box["stop"].get_loop().call_soon_threadsafe(box["stop"].set_result, None)
     assert seen["hosts"] == [f"localhost:{box['port']}"]
+
+
+def test_gateway_refuses_every_token_while_the_apps_audience_is_empty(tmp_path, monkeypatch):
+    key = _configure(tmp_path, monkeypatch)
+    config = json.loads((tmp_path / "woltspace.json").read_text())
+    config["access"]["apps_aud"] = ""
+    (tmp_path / "woltspace.json").write_text(json.dumps(config))
+    for token in (None, _token(key, "apps-aud"), _token(key, ""), _token(key, "lodge-aud")):
+        response = asyncio.run(_get("/", host="notes.owner.woltspace.app", token=token))
+        assert response.status_code == 403
+
+
+def test_gateway_websocket_is_refused_while_the_apps_audience_is_empty(tmp_path, monkeypatch):
+    key = _configure(tmp_path, monkeypatch)
+    config = json.loads((tmp_path / "woltspace.json").read_text())
+    config["access"]["apps_aud"] = ""
+    (tmp_path / "woltspace.json").write_text(json.dumps(config))
+    headers = {
+        "host": "notes.owner.woltspace.app", "origin": "https://notes.owner.woltspace.app",
+        "cf-access-jwt-assertion": _token(key, "apps-aud"),
+    }
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with TestClient(gateway.app).websocket_connect("/socket", headers=headers):
+            pass
+    assert exc.value.code == 1008
+
+
+
+def test_gateway_never_reaches_a_foreign_listener_on_a_refused_app_port(tmp_path, monkeypatch):
+    """An app refused because its port was taken has no running state, so the
+    gateway answers 'stopped' for HTTP and closes the websocket, without ever
+    connecting to whoever holds the port."""
+    import socket
+    import server.app_proxy as proxy
+    key = _configure(tmp_path, monkeypatch)
+    foreign = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    foreign.bind(("127.0.0.1", 0))
+    foreign.listen(1)
+    foreign.settimeout(0.2)
+    try:
+        monkeypatch.setattr(proxy, "running_app", lambda _name: None)
+        monkeypatch.setattr(proxy, "get_app", lambda name: object() if name == "notes" else None)
+        response = asyncio.run(_get("/", host="notes.owner.woltspace.app", token=_token(key, "apps-aud")))
+        assert response.status_code == 503
+        headers = {"host": "notes.owner.woltspace.app", "origin": "https://notes.owner.woltspace.app",
+                   "cf-access-jwt-assertion": _token(key, "apps-aud")}
+        with pytest.raises(WebSocketDisconnect):
+            with TestClient(gateway.app).websocket_connect("/socket", headers=headers):
+                pass
+        with pytest.raises(socket.timeout):
+            foreign.accept()  # nobody connected to the foreign listener
+    finally:
+        foreign.close()

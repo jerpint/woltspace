@@ -443,3 +443,137 @@ class TestAppsRestore:
         actions = apps.apps_restore()
         assert actions[0]["action"] == "restore-failed"
         assert "boom" in actions[0]["error"]
+
+
+class TestPortAlreadyAnswers:
+    """The gateway trusts whoever answers on an app's port: never start into a held one."""
+
+    @patch("apps.subprocess.Popen")
+    def test_start_refuses_a_port_another_program_holds(self, mock_popen, wolts_dir):
+        import socket
+        holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        holder.bind(("127.0.0.1", 0))
+        holder.listen(1)
+        port = holder.getsockname()[1]
+        try:
+            _make_app(wolts_dir, "squatted", start="echo hi", port=port)
+            with pytest.raises(RuntimeError, match="already in use by another program"):
+                apps.start_app("squatted")
+            mock_popen.assert_not_called()
+            assert apps._read_state("squatted") is None
+        finally:
+            holder.close()
+
+    def test_a_free_port_answers_nothing(self):
+        import socket
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+        probe.close()  # bound then released, nothing listening
+        assert apps._port_answers(port) == ""
+
+
+def _foreign_listener():
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(64)  # room for every probe connection; nobody accepts them
+    return sock, sock.getsockname()[1]
+
+
+class TestForeignListenerAcrossLifecycle:
+    @patch("apps.subprocess.Popen")
+    def test_restore_and_restart_refuse_and_publish_nothing(self, mock_popen, wolts_dir):
+        sock, port = _foreign_listener()
+        try:
+            _make_app(wolts_dir, "squatted", start="echo hi", port=port)
+            apps._write_state("squatted", {"name": "squatted", "port": port, "pid": 999999})
+            actions = apps.apps_restore()
+            assert [a["action"] for a in actions if a["name"] == "squatted"] == ["restore-failed"]
+            with pytest.raises(RuntimeError, match="already in use by another program"):
+                apps.restart_app("squatted")
+            mock_popen.assert_not_called()
+            assert all(r["name"] != "squatted" for r in apps.running_apps())
+        finally:
+            sock.close()  # the foreign listener is never touched by the lodge
+
+
+
+class TestManagedSamePortRace:
+    @patch("apps.subprocess.Popen")
+    def test_two_apps_on_one_port_only_one_spawns(self, mock_popen, wolts_dir, monkeypatch):
+        # The first child never binds (a slow dev server), so the connect
+        # probe alone would let the second app through.
+        mock_popen.return_value.pid = os.getpid()
+        monkeypatch.setattr(apps, "_port_answers", lambda port: "")
+        _make_app(wolts_dir, "first", start="echo hi", port=4590)
+        _make_app(wolts_dir, "second", start="echo hi", port=4590)
+        real_running = apps.running_apps
+        scans = {"n": 0}
+
+        def running_apps_stale_first_scan():
+            # The outer scan runs before "first" exists; only the in-lock
+            # recheck can see it.
+            scans["n"] += 1
+            return [] if scans["n"] == 1 else real_running()
+
+        apps.start_app("first")
+        monkeypatch.setattr(apps, "running_apps", running_apps_stale_first_scan)
+        with pytest.raises(RuntimeError, match="already in use by running app 'first'"):
+            apps.start_app("second")
+        assert scans["n"] == 2  # refused by the in-lock recheck, not the outer scan
+        assert mock_popen.call_count == 1
+        assert apps._read_state("second") is None
+
+
+def test_gateway_refuses_an_app_whose_start_was_refused(wolts_dir, monkeypatch):
+    """Real lifecycle: the app's manifest points at a port a foreign listener
+    holds, start is refused, and the gateway then makes no upstream connection."""
+    import asyncio
+    import socket
+    import httpx
+    from starlette.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+    import server.gateway as gateway
+
+    foreign = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    foreign.bind(("127.0.0.1", 0))
+    foreign.listen(64)
+    foreign.setblocking(False)
+    port = foreign.getsockname()[1]
+
+    def drain():
+        n = 0
+        while True:
+            try:
+                conn, _ = foreign.accept()
+                conn.close()
+                n += 1
+            except (BlockingIOError, OSError):
+                return n
+
+    try:
+        _make_app(wolts_dir, "squatted", start="echo hi", port=port)
+        with pytest.raises(RuntimeError, match="already in use by another program"):
+            apps.start_app("squatted")
+        assert drain() >= 1  # the start probe's own preflight connection
+        monkeypatch.setattr(gateway, "WOLTS_DIR", wolts_dir)
+        host = "squatted.localhost:7117"
+
+        async def get():
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=gateway.app, client=("127.0.0.1", 1)),
+                base_url=f"http://{host}",
+            ) as client:
+                return await client.get("/", headers={"host": host})
+
+        response = asyncio.run(get())
+        assert response.status_code == 503
+        with pytest.raises(WebSocketDisconnect):
+            with TestClient(gateway.app, client=("127.0.0.1", 1)).websocket_connect(
+                "/socket", headers={"host": host, "origin": f"http://{host}"},
+            ):
+                pass
+        assert drain() == 0  # the gateway never connected to the foreign port
+    finally:
+        foreign.close()

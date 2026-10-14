@@ -11,7 +11,9 @@
   window.__woltShellMounted = true;
   if (document.querySelector('meta[name="wolt-shell"][content="off"]')) return;
 
-  var ASSETS = '/static/wolt-shell/';
+  // Where shell.css lives: the lodge's static path, or the reserved
+  // /_woltspace/assets/ namespace when the page is served on its own host.
+  var DEFAULT_ASSETS = '/static/wolt-shell/';
   var EMOJI = { raccoon: '🦝', beaver: '🦫', otter: '🦦', wolf: '🐺', dog: '🐶', rodent: '🐿️' };
   var TABS = [['about', 'About'], ['memory', 'Memory'], ['settings', 'Settings']];
 
@@ -41,7 +43,7 @@
   }
 
   function mount(m) {
-    var w = m.wolt || {}, site = m.site || {}, t = site.tokens || {};
+    var w = m.wolt || {}, site = m.site || {}, t = site.tokens || {}, slots = site.slots || {};
     var title = site.title || w.display_name || w.name;
     var emoji = t.emoji || EMOJI[w.type] || '🌲';
 
@@ -67,14 +69,17 @@
       '--s-display:' + (t.display_font || '"Preahvihear", ui-serif, Georgia, serif') + ';' +
       '--s-body:' + (t.body_font || '"DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif') + ';}';
     root.appendChild(el('style', { text: vars }));
-    var css = el('link', { rel: 'stylesheet', href: ASSETS + 'shell.css' });
+    var css = el('link', { rel: 'stylesheet', href: (m.assets || DEFAULT_ASSETS) + 'shell.css' });
     css.addEventListener('load', function () { host.style.visibility = ''; });
     css.addEventListener('error', function () { host.style.visibility = ''; });
     root.appendChild(css);
     if (site.custom_css) root.appendChild(el('link', { rel: 'stylesheet', href: m.base + enc(site.custom_css) }));
 
     var here = norm(location.pathname);
-    var onBuiltin = location.pathname.indexOf(m.builtin) === 0;
+    // The built-in pages are lodge pages. On the lodge `builtin` is a path on
+    // this origin; on a site host it is an absolute lodge address for the
+    // owner, and absent for a shared viewer, who gets the page tree only.
+    var onBuiltin = !!m.builtin && location.pathname.indexOf(m.builtin) === 0;
     var tabHere = onBuiltin ? (location.pathname.slice(m.builtin.length).split('/')[0] || 'about') : '';
 
     function link(item) {
@@ -93,28 +98,32 @@
       });
       return ul;
     }
-    function slot(file) {
-      if (!file) return null;
+    // Slot HTML is only ever what the server inlined into the manifest, and
+    // it only does that for the wolt's own (sandboxed) site pages. Never a
+    // fetch: a sandboxed page has no same-origin fetch, and on the lodge-origin
+    // built-in pages the wolt's markup must not be written into the document.
+    function slot(html) {
+      if (typeof html !== 'string' || !html) return null;
       var box = el('div', { class: 'slot' });
-      fetch(m.base + enc(file)).then(function (r) { return r.ok ? r.text() : ''; }).then(function (h) { box.innerHTML = h; }).catch(function () {});
+      box.innerHTML = html;
       return box;
     }
 
-    var builtins = TABS.map(function (p) {
+    var builtins = m.builtin ? TABS.map(function (p) {
       return el('a', { href: m.builtin + (p[0] === 'about' ? '' : p[0]), class: 'builtin' + (tabHere === p[0] ? ' active' : '') }, [el('span', { text: p[1] })]);
-    });
+    }) : [];
 
     var drawer = el('nav', { class: 'drawer', 'aria-label': title + ' site' }, [
       el('div', { class: 'who' }, [
         el('div', { class: 'avatar', text: emoji }),
         el('div', {}, [el('div', { class: 'title', text: title }), el('div', { class: 'role', text: w.role || '' })])
       ]),
-      slot(site.header_html),
-      el('div', { class: 'section', text: 'Wolt' }),
-      el('div', { class: 'builtins' }, builtins),
+      slot(slots.header),
+      builtins.length ? el('div', { class: 'section', text: 'Wolt' }) : null,
+      builtins.length ? el('div', { class: 'builtins' }, builtins) : null,
       el('div', { class: 'section', text: 'Pages' }),
       (m.tree && m.tree.length) ? branch(m.tree, 0) : el('div', { class: 'empty', text: 'No pages yet.' }),
-      slot(site.footer_html)
+      slot(slots.footer)
     ]);
     var scrim = el('div', { class: 'scrim', onclick: toggle });
     var pill = el('button', { class: 'pill', type: 'button', 'aria-label': 'Open ' + title + ' menu', onclick: toggle },

@@ -5,7 +5,7 @@
   document.body.dataset.wolt = name;
   const config = JSON.parse(document.getElementById('wolt-config').textContent || '{}');
   const body = root.querySelector('[data-body]');
-  let sessions = [], apps = [], crons = [], memory = {}, manifest = {}, harnesses = { default: 'claude', harnesses: [] };
+  let sessions = [], apps = [], crons = [], memory = {}, manifest = {}, harnesses = { default: 'claude', harnesses: [] }, site = {};
   let tab = new URLSearchParams(location.search).get('tab') || 'overview';
 
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
@@ -105,9 +105,16 @@
     }
     const creature=el('div','wolt-setting');creature.append(el('b','','Creature'),el('span','',`${config.type || 'rodent'} · permanent`));box.append(creature,status);body.replaceChildren(box);
   }
-  function renderSite() { const wrap=el('div');const bar=el('div','wolt-sitebar');bar.append(el('span','',`${name}'s site`),link('⤢ Expand',`/wolt/${encodeURIComponent(name)}/site/`,'btn btn-ghost'));const frame=el('iframe','wolt-site');frame.src=`/wolt/${encodeURIComponent(name)}/site/`;frame.title=`${name}'s site`;wrap.append(bar,frame);body.replaceChildren(wrap); }
+  // The site lives on its own origin when the lodge resolved one (GET /sites/{name}
+  // -> site_url): framed there with allow-same-origin, which is that origin's
+  // own storage and fetch, never the lodge's. Without a site_url the legacy
+  // lodge copy is framed opaque (allow-scripts only). The flags and the src are
+  // chosen together, before loading: a sandboxed frame that merely follows a
+  // redirect to the site host would stay opaque.
+  function siteTarget() { return site.site_url ? { src: site.site_url, sandbox: 'allow-scripts allow-same-origin' } : { src: `/wolt/${encodeURIComponent(name)}/site/`, sandbox: 'allow-scripts' }; }
+  function renderSite() { const t=siteTarget();const wrap=el('div');const bar=el('div','wolt-sitebar');bar.append(el('span','',`${name}'s site`),link('⤢ Expand',t.src,'btn btn-ghost'));const frame=el('iframe','wolt-site');frame.setAttribute('sandbox',t.sandbox);frame.src=t.src;frame.title=`${name}'s site`;wrap.append(bar,frame);body.replaceChildren(wrap); }
   function switchTab(next) { tab = ['overview','about','settings','site'].includes(next) ? next : 'overview'; root.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active',b.dataset.tab===tab)); history.replaceState(null,'',`/w/${encodeURIComponent(name)}${tab==='overview'?'':`?tab=${tab}`}`); ({overview:renderOverview,about:renderAbout,settings:renderSettings,site:renderSite}[tab])(); }
   root.querySelectorAll('[data-tab]').forEach(b => b.onclick=()=>switchTab(b.dataset.tab));
 
-  Promise.all([fetchJSON('/sessions?view=lodge',{sessions:[],totals:{}}),fetchJSON('/apps',[]),fetchJSON('/wolf/crons',{crons:[]}),fetchJSON(`/wolt/${encodeURIComponent(name)}/_/memory.json`,{}),fetchJSON(`/wolt/${encodeURIComponent(name)}/_/manifest.json`,{}),fetchJSON('/harnesses',{default:'claude',harnesses:[]})]).then(values => { const sessionPayload=values[0]; sessions=sessionPayload.sessions || []; sessionTotals=sessionPayload.totals || {}; allSessions=sessions; apps=values[1]; crons = values[2].crons || []; memory=values[3];manifest=values[4];harnesses=values[5]; renderHeader();renderSidebarWolts();switchTab(tab); });
+  Promise.all([fetchJSON('/sessions?view=lodge',{sessions:[],totals:{}}),fetchJSON('/apps',[]),fetchJSON('/wolf/crons',{crons:[]}),fetchJSON(`/wolt/${encodeURIComponent(name)}/_/memory.json`,{}),fetchJSON(`/wolt/${encodeURIComponent(name)}/_/manifest.json`,{}),fetchJSON('/harnesses',{default:'claude',harnesses:[]}),fetchJSON(`/sites/${encodeURIComponent(name)}`,{})]).then(values => { const sessionPayload=values[0]; sessions=sessionPayload.sessions || []; sessionTotals=sessionPayload.totals || {}; allSessions=sessions; apps=values[1]; crons = values[2].crons || []; memory=values[3];manifest=values[4];harnesses=values[5];site=values[6] || {}; renderHeader();renderSidebarWolts();switchTab(tab); });
 })();
