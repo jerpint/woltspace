@@ -1197,6 +1197,89 @@ def _connector_token(args) -> int:
     return _connector_run(args, action)
 
 
+def _connector_runtime(args) -> int:
+    """Show or set which runtime owns a channel: its adapter or its connector.
+
+    A switch is refused while either runtime runs, or might: it is made
+    under two locks taken without waiting, the lodge's own control-plane
+    lock (held by `woltspace start` for the lodge's whole life, so no
+    adapter child or connector API is live) and the channel's run lock
+    (held by a running connector process until it exits, so no provider
+    call of its is in flight). Held or unknown refuses. Nothing is polled
+    by either runtime until the next start, which reads the new setting.
+    """
+    def action(connectors, store):
+        layout = RuntimeLayout.from_env()
+        path = layout.wolts_dir / "woltspace.json"
+        if args.runtime:
+            from .instance import DataRootLock, InstanceConflict
+
+            lock = DataRootLock(layout, f"switch-{os.getpid()}")
+            try:
+                lock.acquire()
+            except InstanceConflict as exc:
+                raise connectors.ConnectorError(
+                    409, "lodge_running",
+                    f"the lodge is running or starting ({exc}); stop it, then switch",
+                ) from None
+            except OSError as exc:
+                raise connectors.ConnectorError(
+                    409, "lodge_state_unknown", f"cannot tell whether the lodge runs: {exc}",
+                ) from None
+            try:
+                try:
+                    with connectors.held_run_lock(connectors.run_lock_path(store.root, args.channel)):
+                        connectors.set_channel_runtime(path, args.channel, args.runtime)
+                except BlockingIOError:
+                    raise connectors.ConnectorError(
+                        409, "connector_running",
+                        f"a {args.channel} connector process is running; stop it, then switch",
+                    ) from None
+                except OSError as exc:
+                    raise connectors.ConnectorError(
+                        409, "connector_state_unknown",
+                        f"cannot tell whether a {args.channel} connector runs: {exc}",
+                    ) from None
+            finally:
+                lock.release()
+        runtime = connectors.channel_runtime(path, args.channel)
+        lines = [f"{args.channel}.runtime = {runtime}"]
+        if args.runtime:
+            lines.append("takes effect at the next `woltspace start`")
+        return {"channel": args.channel, "runtime": runtime, "lines": lines}
+    return _connector_run(args, action)
+
+
+def _connector_handoffs(args) -> int:
+    """Accepted events still waiting for a session, parked ones included; retry or cancel one."""
+    def action(_connectors, store):
+        if args.retry:
+            done = store.retry_handoff(args.instance_id, args.retry)
+            return {"retried": done, "lines": ["queued for another attempt" if done else "no such pending event"]}
+        if args.cancel:
+            done = store.cancel_handoff(args.instance_id, args.cancel)
+            return {"cancelled": done, "lines": ["cancelled; its files are released" if done else "no such pending event"]}
+        records = store.handoffs(args.instance_id)
+        lines = [
+            f"{r['event_id']}  {r['state']}  attempts={r.get('attempts', 0)}"
+            + (f"  {r['last_error']}" if r.get("last_error") else "")
+            for r in records
+        ] or ["nothing waiting"]
+        return {"handoffs": records, "lines": lines}
+    return _connector_run(args, action)
+
+
+def _connector_cursor(args) -> int:
+    """Owner-side: seed or clear an instance's provider cursor (a handover)."""
+    def action(_connectors, store):
+        cursor = None if args.clear else args.cursor
+        store.seed_cursor(args.instance_id, cursor)
+        return {"instance_id": args.instance_id, "cursor": cursor, "lines": [
+            f"{args.instance_id} cursor = {cursor if cursor is not None else '(none: provider backlog)'}",
+        ]}
+    return _connector_run(args, action)
+
+
 def _connector_queue(args) -> int:
     def action(_connectors, store):
         deliveries = store.list_deliveries(args.instance_id)
@@ -1521,6 +1604,29 @@ def build_parser() -> argparse.ArgumentParser:
     connector_unbind.add_argument("--thread", default=None)
     connector_unbind.add_argument("--json", action="store_true")
     connector_unbind.set_defaults(func=_connector_unbind)
+    connector_runtime = connector_sub.add_parser(
+        "runtime", help="show or set which runtime owns a channel: adapter or connector"
+    )
+    connector_runtime.add_argument("channel")
+    connector_runtime.add_argument("runtime", nargs="?", choices=("adapter", "connector"), default=None)
+    connector_runtime.add_argument("--json", action="store_true")
+    connector_runtime.set_defaults(func=_connector_runtime)
+    connector_handoffs = connector_sub.add_parser(
+        "handoffs", help="accepted events not yet handed to a session; --retry or --cancel one by event id"
+    )
+    connector_handoffs.add_argument("instance_id")
+    connector_handoffs.add_argument("--retry", metavar="EVENT_ID", default=None, help="the event id shown by the listing")
+    connector_handoffs.add_argument("--cancel", metavar="EVENT_ID", default=None)
+    connector_handoffs.add_argument("--json", action="store_true")
+    connector_handoffs.set_defaults(func=_connector_handoffs)
+    connector_cursor = connector_sub.add_parser(
+        "cursor", help="seed an instance's provider cursor (a handover), or clear it"
+    )
+    connector_cursor.add_argument("instance_id")
+    connector_cursor.add_argument("cursor", nargs="?", type=int, default=None)
+    connector_cursor.add_argument("--clear", action="store_true")
+    connector_cursor.add_argument("--json", action="store_true")
+    connector_cursor.set_defaults(func=_connector_cursor)
     connector_token = connector_sub.add_parser(
         "token", help="mint the instance's next token (printed once), or revoke it"
     )

@@ -140,3 +140,31 @@ def test_unreadable_state_is_a_message_and_nothing_is_written(colony, capsys):
 def test_bare_connector_prints_its_verbs(colony, capsys):
     assert cli_main(["connector"]) == 1
     assert "bind" in capsys.readouterr().out
+
+
+def test_handoffs_are_listed_retried_and_cancelled_by_their_displayed_event_id(colony, capsys):
+    """Astre's probe: the owner types what the listing shows, never an internal key."""
+    assert cli_main(["connector", "add", "tg", "--channel", "fake", "--account", "acct"]) == 0
+    assert cli_main(["connector", "bind", "tg", "--sender", "u", "--conversation", "c", "--wolt", "softie"]) == 0
+    assert cli_main(["connector", "enable", "tg"]) == 0
+    # The lodge accepts two events whose handoff fails; the CLI sees them parked.
+    lodge = ConnectorStore(colony / ".space" / "connectors")
+    lodge.router = lambda event: (_ for _ in ()).throw(RuntimeError("session unreachable"))
+    who = lodge.authenticate(lodge.issue_token("tg"))
+    for event_id in ("tg:41", "tg:42"):
+        lodge.accept_event(who, {"event_id": event_id, "sender": {"provider_id": "u"}, "conversation": {"provider_id": "c"}, "text": "hi"})
+    capsys.readouterr()
+    assert cli_main(["connector", "handoffs", "tg"]) == 0
+    out = capsys.readouterr().out
+    assert "tg:41  accepted  attempts=1  session unreachable" in out and "tg:42" in out
+    assert "\x00" not in out
+    assert cli_main(["connector", "handoffs", "tg", "--retry", "tg:41", "--json"]) == 0
+    assert _out(capsys)["retried"] is True
+    record = lodge._queue("tg").inbound["acct\x00tg:41"]
+    assert (record["attempts"], record["claim"]) == (0, None)
+    assert cli_main(["connector", "handoffs", "tg", "--cancel", "tg:42", "--json"]) == 0
+    assert _out(capsys)["cancelled"] is True
+    assert cli_main(["connector", "handoffs", "tg", "--json"]) == 0
+    assert [h["event_id"] for h in _out(capsys)["handoffs"]] == ["tg:41"]
+    assert cli_main(["connector", "handoffs", "tg", "--retry", "tg:99"]) == 0
+    assert "no such pending event" in capsys.readouterr().out

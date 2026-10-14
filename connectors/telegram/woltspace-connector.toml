@@ -1,0 +1,12 @@
+# The official Telegram connector: polls the Bot API, speaks the connector
+# protocol to the lodge. Read as inert data by the installer when
+# `connector add` arrives; nothing parses it yet.
+contract = 1
+kind = "chat"
+id = "telegram"
+name = "Telegram"
+runner = "python"
+module = "woltspace_telegram"
+secrets = ["TELEGRAM_BOT_TOKEN"]
+inbound_identities = "telegram user ids (senders), chat ids (conversations), message thread ids"
+network = ["api.telegram.org"]

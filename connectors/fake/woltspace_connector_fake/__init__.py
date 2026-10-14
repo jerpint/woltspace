@@ -73,7 +73,7 @@ class FakeConnector:
             "attachments": [{"upload_id": upload_id} for upload_id in attachments],
         }
         if reply_to is not None:
-            payload["reply_to"] = {"delivery_id": reply_to}
+            payload["reply_to"] = reply_to if isinstance(reply_to, dict) else {"delivery_id": reply_to}
         payload.update(extra)
         return await self.client.post(f"{PREFIX}/events", json=payload, headers=self.headers)
 

@@ -270,8 +270,11 @@ async def _send(
     sender = SENDERS[adapter]
     secrets = {key: dotenv_env(key) for key in sender.secrets}
     session_link = ""
+    # The owner's switch: under the connector runtime the lodge never talks
+    # to Telegram itself; the message is queued for the connector instead.
+    via_connector = adapter == "telegram" and _telegram_runtime() == "connector"
     if adapter == "telegram":
-        if not secrets.get("TELEGRAM_BOT_TOKEN"):
+        if not secrets.get("TELEGRAM_BOT_TOKEN") and not via_connector:
             raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
         tunnel_url = ""
         try:
@@ -320,6 +323,11 @@ async def _send(
                 f"{adapter} accepts at most {sender.max_attachment_bytes}",
             )
 
+    if via_connector:
+        return _enqueue_for_connector(
+            adapter, session, message, chat_id, session_link, attachments,
+        )
+
     context = SendContext(
         secrets,
         {key: routing[key] for key in sender.route_state if routing and key in routing},
@@ -346,6 +354,58 @@ async def _send(
     if attachments:
         # Metadata only: this dict is logged and returned to the caller. A voice
         # note is marked, so `notify` can tell it from audio that went as a document.
+        result["attachments"] = [
+            {"name": a.filename, "content_type": a.content_type, "size": a.size}
+            | ({"kind": "voice"} if a.kind == "voice" else {})
+            for a in attachments
+        ]
+    return result
+
+
+def _telegram_runtime() -> str:
+    from .connectors import channel_runtime
+
+    return channel_runtime(WOLTS_DIR / "woltspace.json", "telegram")
+
+
+def _enqueue_for_connector(
+    adapter: str, session: str, message: str, chat_id: str, session_link: str,
+    attachments: tuple[Attachment, ...],
+) -> dict:
+    """Queue the message for the channel's connector; it sends, core keeps the record.
+
+    Exactly one outbound route per channel: when this runs, the in-process
+    sender does not. The connector appends `reply_footer` to the last part
+    it sends, the way the sender appended it, and acks with every part's
+    message id so a reply to any of them routes back to `session`.
+    """
+    from .connector_api import get_store
+    from .connectors import ConnectorError, NoConnectorBinding
+
+    footer = f"\n\n---{DEN_REPLY_FOOTER}\n{session_link}" if session_link else ""
+    attachment = attachments[0] if attachments else None
+    try:
+        delivery_id = get_store().enqueue(
+            channel=adapter, account=None, conversation=str(chat_id), text=message,
+            attachment=attachment.path if attachment else None,
+            attachment_name=attachment.filename if attachment else "",
+            attachment_kind=attachment.kind if attachment else "file",
+            reply_footer=footer, session=session or None,
+        )
+    except NoConnectorBinding as exc:
+        raise NoNotificationTarget(
+            f"{adapter} runs through its connector, and {exc}; bind the chat with "
+            "`woltspace connector bind`, or switch telegram.runtime back to adapter"
+        ) from None
+    except ConnectorError as exc:
+        raise AttachmentError(exc.reason, str(exc)) from None
+    append_chat_history(adapter, chat_id, message + "".join(
+        f"\n[{'voice note' if a.kind == 'voice' else 'file'} queued: "
+        f"{a.filename}, {a.content_type}, {a.size} bytes]"
+        for a in attachments
+    ))
+    result = {"adapter": adapter, "chat_id": chat_id, "delivery_id": delivery_id, "via": "connector"}
+    if attachments:
         result["attachments"] = [
             {"name": a.filename, "content_type": a.content_type, "size": a.size}
             | ({"kind": "voice"} if a.kind == "voice" else {})

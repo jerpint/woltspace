@@ -1363,3 +1363,447 @@ async def test_deeply_nested_json_is_malformed_input_not_a_crash(lodge):
         for path in ("/connector/v1/events", "/connector/v1/deliveries/lease"):
             response = await client.post(path, content=nested, headers=connector.headers)
             assert (response.status_code, response.json()["reason"]) == (400, "malformed_json"), path
+
+
+# ----------------------------------- slice 2a: handoff, cursor, message map
+
+
+def _event(event_id="e1", text="hi", **extra) -> dict:
+    return {
+        "event_id": event_id, "sender": {"provider_id": "u1"}, "conversation": {"provider_id": "c1"},
+        "text": text, **extra,
+    }
+
+
+def test_an_accepted_event_is_durable_before_the_router_and_handed_off_once(lodge, monkeypatch):
+    """Boundary core -> session: accepted is written first; the receipt follows the router."""
+    store = lodge.store
+    who = _principal(lodge)
+    seen = []
+
+    def router(event):
+        queue = json.loads((store.root / "queues" / "tg-main.json").read_text())
+        seen.append(queue["inbound"][event.dedup_key]["state"])
+        return {"routed": "test"}
+
+    store.router = router
+    status, body = store.accept_event(who, _event())
+    assert (status, body["routed"]) == (200, "test")
+    assert seen == ["accepted"]
+    record = store._queue("tg-main").inbound["bot:1\x00e1"]
+    assert (record["state"], record["result"]) == ("handed_off", {"routed": "test"})
+    # Replays and sweeps never hand it off again.
+    assert store.accept_event(who, _event()) == (200, body)
+    lodge.clock.advance(LIMITS.handoff_retry_seconds * 2)
+    store.list_deliveries("tg-main")
+    assert seen == ["accepted"]
+
+
+def test_a_crash_between_accept_and_receipt_is_retried_idempotently_on_load(lodge, monkeypatch):
+    """Fault injection: the router ran (or did not) but the receipt never landed."""
+    store = lodge.store
+    who = _principal(lodge)
+    delivered = []
+
+    def crashing_router(event):
+        delivered.append(event.dedup_key)
+        raise KeyboardInterrupt("process died after the paste")
+
+    store.router = crashing_router
+    with pytest.raises(KeyboardInterrupt):
+        store.accept_event(who, _event())
+    record = store._queue("tg-main").inbound["bot:1\x00e1"]
+    assert record["state"] == "accepted" and "result" not in record
+    assert delivered == ["bot:1\x00e1"]
+    # A replay inside the retry window answers from dedup without a handoff.
+    assert store.accept_event(who, _event())[1]["accepted"] is True
+    assert len(delivered) == 1
+    # The lodge restarts: the next read of the queue hands the event off
+    # again, outside the lock. An idempotent router (keyed on dedup_key)
+    # sees the same key and may skip; a session paste would repeat.
+    reloaded = lodge.reload()
+    receipts = []
+
+    def idempotent_router(event):
+        if event.dedup_key in delivered:
+            receipts.append(("skipped", event.dedup_key))
+            return {"routed": "already_delivered"}
+        delivered.append(event.dedup_key)
+        return {"routed": "delivered"}
+
+    reloaded.router = idempotent_router
+    lodge.clock.advance(LIMITS.handoff_retry_seconds + 1)
+    who = reloaded.authenticate(lodge.token)
+    reloaded.lease(who, 1)  # a connector-driven read claims the next attempt
+    assert receipts == [("skipped", "bot:1\x00e1")]
+    record = reloaded._queue("tg-main").inbound["bot:1\x00e1"]
+    assert (record["state"], record["result"]) == ("handed_off", {"routed": "already_delivered"})
+    assert reloaded.pending_handoffs("tg-main") == []
+    lodge.clock.advance(LIMITS.handoff_retry_seconds + 1)
+    reloaded.lease(who, 1)
+    assert len(receipts) == 1
+
+
+def test_a_router_that_keeps_failing_is_retried_up_to_the_cap_then_parked(lodge):
+    store = lodge.store
+    who = _principal(lodge)
+    tries = []
+    store.router = lambda event: tries.append(1) or (_ for _ in ()).throw(RuntimeError("session unreachable"))
+    status, body = store.accept_event(who, _event())
+    assert (status, body["routed"]) == (200, "error")
+    for _ in range(LIMITS.handoff_max_attempts + 2):
+        lodge.clock.advance(LIMITS.handoff_retry_seconds + 1)
+        store.lease(who, 1)
+    assert len(tries) == LIMITS.handoff_max_attempts
+    record = store._queue("tg-main").inbound["bot:1\x00e1"]
+    assert record["state"] == "handoff_failed"
+    assert "session unreachable" in record["last_error"]
+    # Parked, not aged out: still listed after the retention period, with its
+    # owner recovery path.
+    lodge.clock.advance(LIMITS.dedup_retention_seconds + 1)
+    store.lease(who, 1)
+    assert [h["state"] for h in store.handoffs("tg-main")] == ["handoff_failed"]
+    assert store.retry_handoff("tg-main", "e1") is True
+    lodge.clock.advance(1)
+    store.lease(who, 1)
+    assert len(tries) == LIMITS.handoff_max_attempts + 1
+    assert store.cancel_handoff("tg-main", "e1") is True
+    assert store.handoffs("tg-main") == []
+
+
+async def test_state_and_cursor_advance_only_past_answered_updates(lodge):
+    """Boundary receipt -> cursor: core refuses a cursor it has not answered up to."""
+    async with _client() as client:
+        connector = FakeConnector(client, lodge.token)
+        state = await client.get("/connector/v1/state", headers=connector.headers)
+        assert state.json()["cursor"] is None and state.json()["runtime_active"] is True
+        ahead = await client.post("/connector/v1/cursor", json={"cursor": 5}, headers=connector.headers)
+        assert (ahead.status_code, ahead.json()["reason"]) == (409, "cursor_ahead")
+        assert (await connector.send_event("tg:4", "u1", "c1", "hi", cursor=4)).json()["accepted"] is True
+        dropped = await connector.send_event("tg:5", "u2", "c1", "hi", cursor=5)
+        assert dropped.json()["accepted"] is False
+        moved = await client.post("/connector/v1/cursor", json={"cursor": 6}, headers=connector.headers)
+        assert moved.json() == {"cursor": 6, "answered_cursor": 5}
+        too_far = await client.post("/connector/v1/cursor", json={"cursor": 7}, headers=connector.headers)
+        assert too_far.json()["reason"] == "cursor_ahead"
+        back = await client.post("/connector/v1/cursor", json={"cursor": 3}, headers=connector.headers)
+        assert back.json()["reason"] == "cursor_regressed"
+        for raw in (b'{"cursor": -1}', b'{"cursor": "6"}', b'{"cursor": 6, "x": 1}', b'{"cursor": true}'):
+            response = await client.post("/connector/v1/cursor", content=raw, headers=connector.headers)
+            assert response.status_code == 400, raw
+        # A replay of an answered update is still an answer for its position.
+        assert (await connector.send_event("tg:4", "u1", "c1", "hi", cursor=4)).json()["accepted"] is True
+        # The cursor survives a restart and a rotation.
+        lodge.reload()
+        rotated = FakeConnector(client, lodge.store.issue_token("tg-main"))
+        assert (await client.get("/connector/v1/state", headers=rotated.headers)).json()["cursor"] == 6
+
+
+async def test_provider_message_map_covers_every_part_and_stays_inside_the_binding(lodge):
+    """A reply to any part of a split send finds the delivery, in its own account and binding."""
+    other_sender = lodge.store.bind("tg-main", sender="u2", conversation="c1", default_wolt="softie")
+    delivery_id = lodge.enqueue("long", binding_id=lodge.binding["binding_id"])
+    async with _client() as client:
+        connector = FakeConnector(client, lodge.token)
+        leased = (await connector.lease()).json()["deliveries"][0]
+        ack = await client.post(
+            f"/connector/v1/deliveries/{delivery_id}/ack",
+            json={"attempt_id": leased["attempt_id"], "ok": True, "provider_message_ids": ["m1", "m2", "m3"]},
+            headers=connector.headers,
+        )
+        assert ack.json()["status"] == "delivered"
+        for part in ("m1", "m2", "m3"):
+            reply = await connector.send_event(f"re:{part}", "u1", "c1", "re", reply_to={"provider_message_id": part})
+            assert (reply.json()["accepted"], reply.json()["session"]) == (True, "softie-1"), part
+        # Same conversation, other sender: another binding, nothing resolves.
+        foreign = await connector.send_event("re:x", "u2", "c1", "re", reply_to={"provider_message_id": "m2"})
+        assert foreign.json()["reason"] == "reply_to_out_of_binding"
+        unknown = await connector.send_event("re:y", "u1", "c1", "re", reply_to={"provider_message_id": "m9"})
+        assert unknown.json()["reason"] == "reply_to_out_of_binding"
+        both = await connector.send_event("re:z", "u1", "c1", "re", reply_to={"provider_message_id": "m1", "delivery_id": delivery_id})
+        assert both.status_code == 400
+        too_many = await client.post(
+            f"/connector/v1/deliveries/{delivery_id}/ack",
+            json={"attempt_id": leased["attempt_id"], "ok": True, "provider_message_ids": ["m"] * 51},
+            headers=connector.headers,
+        )
+        assert too_many.status_code == 400
+        # Another account's instance with the same message id: its own map is empty.
+        other_token = lodge.second_instance(enable=True)
+        other = FakeConnector(client, other_token)
+        cross = await other.send_event("re:q", "u9", "c9", "re", reply_to={"provider_message_id": "m1"})
+    assert cross.json()["reason"] == "reply_to_out_of_binding"
+    record = lodge.deliveries()[delivery_id]
+    assert (record["provider_message_id"], record["provider_message_ids"]) == ("m1", ["m1", "m2", "m3"])
+    assert other_sender["binding_id"] != lodge.binding["binding_id"]
+
+
+# ----------------------------------- round 2: dispatcher ownership, frontier, map
+
+
+def _cli_store(lodge) -> ConnectorStore:
+    """A store the way the CLI builds one: same files, no dispatcher."""
+    return ConnectorStore(lodge.store.root, clock=lodge.clock, limits=LIMITS)
+
+
+def test_a_store_without_a_dispatcher_never_hands_off_or_writes_a_receipt(lodge):
+    """Astre's probe 1: a CLI read must not manufacture a receipt."""
+    lodge.store.router = lambda event: (_ for _ in ()).throw(RuntimeError("temporary"))
+    who = _principal(lodge)
+    status, body = lodge.store.accept_event(who, _event())
+    assert body["routed"] == "error"
+    lodge.clock.advance(LIMITS.handoff_retry_seconds + 1)
+    cli = _cli_store(lodge)
+    assert cli.router is None
+    cli.list_deliveries("tg-main")
+    cli.state(who)
+    cli.lease(who, 1)
+    cli.recover()
+    record = cli._queue("tg-main").inbound["bot:1\x00e1"]
+    assert (record["state"], record["attempts"], record["result"]) == ("accepted", 1, {"routed": "error", "error": "temporary"})
+    # A store with no dispatcher accepts, records, and leaves the event waiting.
+    fresh = ConnectorStore(lodge.store.root / "nodispatch", clock=lodge.clock, limits=LIMITS)
+    fresh.add_instance("x", "fake", "acct")
+    fresh.bind("x", sender="u", conversation="c", default_wolt="softie")
+    fresh.enable("x")
+    me = fresh.authenticate(fresh.issue_token("x"))
+    status, body = fresh.accept_event(me, {"event_id": "e", "sender": {"provider_id": "u"}, "conversation": {"provider_id": "c"}, "text": "hi"})
+    assert body["routed"] == "pending"
+    assert fresh.handoffs("x")[0]["state"] == "accepted" and "attempts" not in fresh.handoffs("x")[0]
+
+
+def test_owner_reads_never_claim_an_attempt_connector_reads_do(lodge):
+    calls = []
+    lodge.store.router = lambda event: calls.append(1) or (_ for _ in ()).throw(RuntimeError("later"))
+    who = _principal(lodge)
+    lodge.store.accept_event(who, _event())
+    assert calls == [1]
+    lodge.clock.advance(LIMITS.handoff_retry_seconds + 1)
+    lodge.store.list_deliveries("tg-main")
+    lodge.store.state(who)
+    lodge.store.recover()
+    assert calls == [1]
+    lodge.store.lease(who, 1)
+    assert calls == [1, 1]
+
+
+def test_retries_recheck_the_binding_the_instance_and_the_runtime(lodge, tmp_path):
+    """Astre's probe 2: withdrawn grants never remain authority for a retry."""
+    seen = []
+    lodge.store.router = lambda event: (_ for _ in ()).throw(RuntimeError("temporary"))
+    who = _principal(lodge)
+    lodge.store.accept_event(who, _event())
+    lodge.store.router = lambda event: seen.append(event) or {"routed": "delivered"}
+    # Disabled: the record waits, no attempt is spent.
+    lodge.store.disable("tg-main")
+    lodge.clock.advance(LIMITS.handoff_retry_seconds + 1)
+    lodge.store.state(who)
+    lodge.store.lease(who, 1)
+    record = lodge.store._queue("tg-main").inbound["bot:1\x00e1"]
+    assert (seen, record["state"], record["attempts"]) == ([], "accepted", 1)
+    # The channel's runtime moved to the adapter: still waiting.
+    lodge.store.enable("tg-main")
+    config = tmp_path / "woltspace.json"
+    config.write_text(json.dumps({"telegram": {"runtime": "adapter"}}))
+    lodge.store.runtime_config = config
+    lodge.store.lease(who, 1)
+    assert seen == []
+    lodge.store.runtime_config = None
+    # A changed grant is what the router sees.
+    lodge.store.bind("tg-main", sender="u1", conversation="c1", default_wolt="otter", may_wake=True)
+    lodge.store.lease(who, 1)
+    assert [e.binding["default_wolt"] for e in seen] == ["otter"]
+    assert seen[0].binding["may_wake"] is True
+    # Unbound: cancelled, the router is never called.
+    lodge.store.router = lambda event: (_ for _ in ()).throw(RuntimeError("temporary"))
+    lodge.store.accept_event(who, _event("e2"))
+    lodge.store.router = lambda event: seen.append(event) or {"routed": "delivered"}
+    lodge.store.unbind("tg-main", sender="u1", conversation="c1")
+    lodge.clock.advance(LIMITS.handoff_retry_seconds + 1)
+    lodge.store.bind("tg-main", sender="u1", conversation="c1", default_wolt="softie")
+    lodge.store.lease(who, 1)
+    record = lodge.store._queue("tg-main").inbound["bot:1\x00e2"]
+    assert (len(seen), record["state"], record["result"]["reason"]) == (1, "cancelled", "binding_removed")
+
+
+def test_an_uncommitted_failure_path_dispatches_no_claim(lodge, monkeypatch):
+    calls = []
+    lodge.store.router = lambda event: calls.append(1) or (_ for _ in ()).throw(RuntimeError("later"))
+    who = _principal(lodge)
+    lodge.store.accept_event(who, _event())
+    lodge.clock.advance(LIMITS.handoff_retry_seconds + 1)
+    before = (lodge.store.root / "queues" / "tg-main.json").read_text()
+    with monkeypatch.context() as patched:
+        patched.setattr(ConnectorStore, "_save_queue", lambda self, i, q: (_ for _ in ()).throw(OSError("disk gone")))
+        with pytest.raises(OSError):
+            lodge.store.lease(who, 1)
+    assert calls == [1]
+    assert (lodge.store.root / "queues" / "tg-main.json").read_text() == before
+    lodge.store.lease(who, 1)
+    assert calls == [1, 1]
+
+
+def test_a_late_receipt_from_an_older_attempt_is_ignored(lodge):
+    """Attempt 1 is slow; attempt 2 is claimed and finishes first; attempt 1's receipt is late."""
+    who = _principal(lodge)
+    outcomes = []
+
+    def slow_then_fast(event):
+        if not outcomes:
+            outcomes.append("slow started")
+            lodge.clock.advance(LIMITS.handoff_retry_seconds + 1)
+            lodge.store.router = lambda e: outcomes.append("fast") or {"routed": "delivered"}
+            lodge.store.lease(who, 1)   # claims attempt 2 and runs the fast router
+            return {"routed": "late"}
+        return {"routed": "delivered"}
+
+    lodge.store.router = slow_then_fast
+    status, body = lodge.store.accept_event(who, _event())
+    record = lodge.store._queue("tg-main").inbound["bot:1\x00e1"]
+    assert outcomes == ["slow started", "fast"]
+    assert (record["state"], record["attempts"], record["result"]) == ("handed_off", 2, {"routed": "delivered"})
+    assert body["routed"] == "delivered"
+
+
+async def test_an_ignore_disposition_answers_the_position_for_good(lodge):
+    async with _client() as client:
+        connector = FakeConnector(client, lodge.token)
+        ignored = await client.post(
+            "/connector/v1/events", json={"event_id": "tg:7", "cursor": 7, "ignore": "unsupported_update"},
+            headers=connector.headers,
+        )
+        assert ignored.json() == {"accepted": False, "reason": "ignored_unsupported_update", "event_id": "tg:7"}
+        assert (await client.post("/connector/v1/cursor", json={"cursor": 8}, headers=connector.headers)).json()["cursor"] == 8
+        replay = await client.post(
+            "/connector/v1/events", json={"event_id": "tg:7", "cursor": 7, "ignore": "unsupported_update"},
+            headers=connector.headers,
+        )
+        assert replay.json() == ignored.json()
+        bad = await client.post(
+            "/connector/v1/events", json={"event_id": "tg:8", "cursor": 8, "ignore": "x", "text": "no"},
+            headers=connector.headers,
+        )
+        assert bad.status_code == 400
+    assert lodge.routed == []
+
+
+async def test_a_replay_with_another_cursor_is_a_conflict_not_a_relabel(lodge):
+    async with _client() as client:
+        connector = FakeConnector(client, lodge.token)
+        assert (await connector.send_event("tg:5", "u1", "c1", "hi", cursor=5)).json()["accepted"] is True
+        relabel = await connector.send_event("tg:5", "u1", "c1", "hi", cursor=9)
+        assert (relabel.status_code, relabel.json()["reason"]) == (409, "event_conflict")
+        state = (await client.get("/connector/v1/state", headers=connector.headers)).json()
+        assert state["answered_cursor"] == 5
+        assert (await client.post("/connector/v1/cursor", json={"cursor": 10}, headers=connector.headers)).json()["reason"] == "cursor_ahead"
+        # A gap in provider ids is nobody's to answer: 6..19 were never fetched.
+        assert (await connector.send_event("tg:20", "u1", "c1", "hi", cursor=20)).json()["accepted"] is True
+        assert (await client.post("/connector/v1/cursor", json={"cursor": 21}, headers=connector.headers)).json()["cursor"] == 21
+
+
+async def test_message_map_is_scoped_by_conversation_and_keeps_parts_of_failed_attempts(lodge):
+    """Astre's probe 3, plus the sent parts of a nacked attempt."""
+    lodge.store.bind("tg-main", sender="u1", conversation="c2", default_wolt="softie")
+    in_c1 = lodge.enqueue("one", conversation="c1")
+    in_c2 = lodge.enqueue("two", conversation="c2")
+    async with _client() as client:
+        connector = FakeConnector(client, lodge.token)
+        leased = {d["delivery_id"]: d for d in (await connector.lease()).json()["deliveries"]}
+        # Both chats hand out message id 100: unique per chat, not per bot.
+        for delivery_id in (in_c1, in_c2):
+            ack = await client.post(
+                f"/connector/v1/deliveries/{delivery_id}/ack",
+                json={"attempt_id": leased[delivery_id]["attempt_id"], "ok": True, "provider_message_ids": ["100"]},
+                headers=connector.headers,
+            )
+            assert ack.json()["status"] == "delivered"
+        reply = await connector.send_event("re:1", "u1", "c1", "re", reply_to={"provider_message_id": "100"})
+        assert (reply.json()["accepted"], reply.json()["session"]) == (True, "softie-1")
+        # A failed attempt that sent part one: the part is mapped, the retry adds the rest.
+        partial = lodge.enqueue("long", conversation="c1")
+        first = (await connector.lease()).json()["deliveries"][0]
+        nack = await client.post(
+            f"/connector/v1/deliveries/{partial}/ack",
+            json={"attempt_id": first["attempt_id"], "ok": False, "retry": True, "error": "timeout", "provider_message_ids": ["201"]},
+            headers=connector.headers,
+        )
+        assert nack.json()["status"] == "queued"
+        re_part = await connector.send_event("re:2", "u1", "c1", "re", reply_to={"provider_message_id": "201"})
+        assert re_part.json()["accepted"] is True
+        lodge.clock.advance(5)
+        second = (await connector.lease()).json()["deliveries"][0]
+        await client.post(
+            f"/connector/v1/deliveries/{partial}/ack",
+            json={"attempt_id": second["attempt_id"], "ok": True, "provider_message_ids": ["201", "202"]},
+            headers=connector.headers,
+        )
+    assert lodge.deliveries()[partial]["provider_message_ids"] == ["201", "202"]
+
+
+# ----------------------------------------- round 3: claim identity
+
+
+def test_an_owner_retry_during_an_old_dispatch_keeps_the_new_attempts_result(lodge):
+    """Astre's probe: old attempt in flight, owner retries, new attempt fails, old receipt arrives."""
+    who = _principal(lodge)
+    seen = []
+
+    def old_router(event):
+        seen.append("old started")
+        assert lodge.store.retry_handoff("tg-main", "e1") is True
+        lodge.store.router = lambda e: seen.append("new") or {"routed": "error", "error": "new attempt failed"}
+        lodge.store.lease(who, 1)
+        record = lodge.store._queue("tg-main").inbound["bot:1\x00e1"]
+        assert record["result"] == {"routed": "error", "error": "new attempt failed"}
+        return {"routed": "delivered", "session": "OLD"}
+
+    lodge.store.router = old_router
+    lodge.store.accept_event(who, _event())
+    record = lodge.store._queue("tg-main").inbound["bot:1\x00e1"]
+    assert seen == ["old started", "new"]
+    assert (record["state"], record["result"]) == ("accepted", {"routed": "error", "error": "new attempt failed"})
+    assert record["attempts"] == 1 and record["claim"]
+    # The budget was reset by the retry; the claim identity was not reused.
+    lodge.clock.advance(LIMITS.handoff_retry_seconds + 1)
+    lodge.store.router = lambda e: {"routed": "delivered", "session": "NEW"}
+    lodge.store.lease(who, 1)
+    record = lodge.store._queue("tg-main").inbound["bot:1\x00e1"]
+    assert (record["state"], record["result"]["session"], record["attempts"]) == ("handed_off", "NEW", 2)
+
+
+def test_a_late_receipt_after_pause_and_resume_is_ignored(lodge):
+    who = _principal(lodge)
+    claims = []
+
+    def old_router(event):
+        claims.append(lodge.store._queue("tg-main").inbound["bot:1\x00e1"]["claim"])
+        # The owner pauses and resumes while this attempt is still running;
+        # then a connector tick claims a new attempt with a new identity.
+        lodge.store.disable("tg-main")
+        lodge.store.enable("tg-main")
+        lodge.clock.advance(LIMITS.handoff_retry_seconds + 1)
+        lodge.store.router = lambda e: {"routed": "delivered", "session": "NEW"}
+        lodge.store.lease(who, 1)
+        claims.append(lodge.store._queue("tg-main").inbound["bot:1\x00e1"]["claim"])
+        return {"routed": "delivered", "session": "OLD"}
+
+    lodge.store.router = old_router
+    lodge.store.accept_event(who, _event())
+    record = lodge.store._queue("tg-main").inbound["bot:1\x00e1"]
+    assert len(claims) == 2 and claims[0] != claims[1]
+    assert (record["state"], record["result"]["session"], record["claim"]) == ("handed_off", "NEW", claims[1])
+
+
+def test_a_returned_claim_is_a_new_identity_when_made_again(lodge):
+    who = _principal(lodge)
+    lodge.store.router = lambda e: (_ for _ in ()).throw(RuntimeError("temporary"))
+    lodge.store.accept_event(who, _event())
+    first = lodge.store._queue("tg-main").inbound["bot:1\x00e1"]["claim"]
+    lodge.store.disable("tg-main")
+    lodge.clock.advance(LIMITS.handoff_retry_seconds + 1)
+    lodge.store.lease(who, 1)
+    lodge.store.enable("tg-main")
+    lodge.store.router = lambda e: {"routed": "delivered"}
+    lodge.store.lease(who, 1)
+    record = lodge.store._queue("tg-main").inbound["bot:1\x00e1"]
+    assert record["state"] == "handed_off" and record["claim"] != first

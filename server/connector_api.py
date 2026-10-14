@@ -10,6 +10,9 @@ a snapshot; every store operation checks it again under the store lock, so a
 request that waited on its body or a stream cannot act on authority the
 owner withdrew meanwhile.
 
+`GET state` hands a starting connector its cursor; `POST cursor {"cursor"}`
+advances it, never past what core has answered (see `ConnectorStore.set_cursor`).
+
 Answers: `{"accepted": false, "reason"}` is a final policy drop (do not
 retry, do not re-upload); a 4xx carries `{"error", "reason", "retry"}` where
 `retry` is true only for a 429 (a limit that clears with time; an upload it
@@ -59,6 +62,9 @@ def get_store() -> ConnectorStore:
     global _store
     if _store is None or _store.root != CONNECTORS_DIR:
         _store = ConnectorStore(CONNECTORS_DIR)
+        # The real router: accepted events go into sessions, not a journal.
+        from .connector_router import make_router
+        _store.router = make_router(_store)
         try:
             _store.recover()
         except ConnectorStateUnreadable as exc:
@@ -169,6 +175,23 @@ async def post_upload(request: Request):
             store.abort_upload(who, upload_id, part)
             raise
         return JSONResponse(store.commit_upload(who, upload_id, part, request.query_params.get("name")))
+    return await _run(request, handle)
+
+
+@router.get("/state")
+async def get_state(request: Request):
+    async def handle(store, who):
+        return JSONResponse(store.state(who))
+    return await _run(request, handle)
+
+
+@router.post("/cursor")
+async def post_cursor(request: Request):
+    async def handle(store, who):
+        body = await _json_body(request, store)
+        if not isinstance(body, dict) or set(body) != {"cursor"}:
+            raise ConnectorError(400, "malformed_cursor", "body is {\"cursor\": <int>}")
+        return JSONResponse(store.set_cursor(who, body["cursor"]))
     return await _run(request, handle)
 
 

@@ -35,6 +35,25 @@ def _truthy(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def telegram_runtime(layout: RuntimeLayout) -> str:
+    """Which runtime owns Telegram: `telegram.runtime` in the lodge's woltspace.json.
+
+    The reader is the lodge's own (server/connectors.py), reached the way the
+    CLI reaches the rest of the lodge's code, so both sides read one rule.
+    """
+    root = str(layout.install_root)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    lib_dir = str(layout.runtime_lib)
+    if lib_dir not in sys.path:
+        sys.path.insert(0, lib_dir)
+    try:
+        from server.connectors import channel_runtime
+    except ImportError:
+        return "adapter"
+    return channel_runtime(layout.wolts_dir / "woltspace.json", "telegram")
+
+
 def _module_available(name: str) -> bool:
     try:
         return importlib.util.find_spec(name) is not None
@@ -161,6 +180,19 @@ class TelegramConnector:
 
         if env_disables or not (configured or from_env):
             return ConnectorPlan(self.name, False, "disabled", remedy=remedy)
+
+        if telegram_runtime(layout) == "connector":
+            # The owner moved Telegram to the connector protocol: exactly one
+            # poller per bot, and it is not this adapter. Launching the
+            # connector process from here is the next slice's seam.
+            return ConnectorPlan(
+                self.name, False, "telegram.runtime is connector: the adapter does not poll",
+                remedy=(
+                    "The lodge does not launch the Telegram connector yet (next slice). "
+                    "To use the adapter again: stop the lodge, then "
+                    "`woltspace connector runtime telegram adapter`."
+                ),
+            )
 
         # Read the entrypoint marker from the same mapping as everything else,
         # so a plan is a pure function of (layout, environment).
