@@ -1065,6 +1065,150 @@ def _wolf_runs(args) -> int:
     return 0
 
 
+def _connector_store(layout: RuntimeLayout):
+    """The lodge's own connector state code: one store, one lock, one writer."""
+    for entry in (str(layout.install_root), str(layout.runtime_lib)):
+        if entry not in sys.path:
+            sys.path.insert(0, entry)
+    from server import connectors
+
+    return connectors, connectors.ConnectorStore(layout.wolts_dir / ".space" / "connectors")
+
+
+def _connector(args) -> int:
+    """A bare `woltspace connector` names its own verbs."""
+    args.connector_parser.print_help()
+    return 1
+
+
+def _connector_run(args, action) -> int:
+    """Run one owner action; a refusal or unreadable state is a message and exit 1."""
+    connectors, store = _connector_store(RuntimeLayout.from_env())
+    try:
+        store.recover()
+        payload = action(connectors, store)
+    except (connectors.ConnectorError, connectors.ConnectorStateUnreadable) as exc:
+        print(f"woltspace connector: {exc}", file=sys.stderr)
+        return 1
+    lines = payload.pop("lines", ())
+    if getattr(args, "json", False):
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    for line in lines:
+        print(line)
+    return 0
+
+
+def _connector_list(args) -> int:
+    def action(_connectors, store):
+        instances = store.list_instances()
+        bindings = store.list_bindings()
+        lines = []
+        for instance in instances:
+            state = "enabled" if instance["enabled"] else "disabled"
+            lines.append(
+                f"{instance['instance_id']}  {instance['channel']}  account={instance['account']}"
+                f"  {state}  generation={instance['generation']}"
+            )
+            for binding in bindings:
+                if binding["instance_id"] != instance["instance_id"]:
+                    continue
+                thread = f" thread={binding['thread']}" if binding.get("thread") else ""
+                wake = " may-wake" if binding["may_wake"] else ""
+                lines.append(
+                    f"    sender={binding['sender']} conversation={binding['conversation']}"
+                    f"{thread} -> {binding['default_wolt']}{wake}"
+                )
+        if not lines:
+            lines.append("no connector instances")
+        return {"instances": instances, "bindings": bindings, "lines": lines}
+    return _connector_run(args, action)
+
+
+def _connector_add(args) -> int:
+    def action(_connectors, store):
+        instance = store.add_instance(args.instance_id, args.channel, args.account)
+        return {"instance": instance, "lines": [
+            f"registered {args.instance_id} (disabled, no code installed); bind a sender, then enable it",
+        ]}
+    return _connector_run(args, action)
+
+
+def _connector_enable(args) -> int:
+    def action(_connectors, store):
+        store.enable(args.instance_id)
+        return {"ok": True, "lines": [f"{args.instance_id} enabled"]}
+    return _connector_run(args, action)
+
+
+def _connector_disable(args) -> int:
+    def action(_connectors, store):
+        store.disable(args.instance_id)
+        return {"ok": True, "lines": [f"{args.instance_id} disabled; its queue waits"]}
+    return _connector_run(args, action)
+
+
+def _connector_remove(args) -> int:
+    def action(_connectors, store):
+        outcome = store.remove_instance(args.instance_id)
+        return {"ok": True, **outcome, "lines": [
+            f"removed {args.instance_id}: {outcome['cancelled']} queued deliveries cancelled",
+        ]}
+    return _connector_run(args, action)
+
+
+def _connector_bind(args) -> int:
+    def action(_connectors, store):
+        binding = store.bind(
+            args.instance_id, sender=args.sender, conversation=args.conversation,
+            thread=args.thread, default_wolt=args.wolt, may_wake=args.may_wake,
+        )
+        return {"binding": binding, "lines": [
+            f"{args.sender} in {args.conversation} -> {args.wolt}",
+        ]}
+    return _connector_run(args, action)
+
+
+def _connector_unbind(args) -> int:
+    def action(_connectors, store):
+        removed = store.unbind(
+            args.instance_id, sender=args.sender, conversation=args.conversation,
+            thread=args.thread,
+        )
+        return {"removed": removed, "lines": [
+            "binding removed" if removed else "no such binding",
+        ]}
+    return _connector_run(args, action)
+
+
+def _connector_token(args) -> int:
+    """Mint the instance's next credential, or revoke the current one.
+
+    The token is printed once, on stdout and nowhere else, so it can be piped
+    straight into a handoff file. It never appears in an argv.
+    """
+    def action(_connectors, store):
+        if args.revoke:
+            count = store.revoke_tokens(args.instance_id)
+            return {"revoked": count, "lines": [f"revoked {count} token(s)"]}
+        token = store.issue_token(args.instance_id)
+        print("the previous generation is revoked; its queue is untouched", file=sys.stderr)
+        return {"token": token, "lines": [token]}
+    return _connector_run(args, action)
+
+
+def _connector_queue(args) -> int:
+    def action(_connectors, store):
+        deliveries = store.list_deliveries(args.instance_id)
+        lines = [
+            f"{d['delivery_id']}  {d['status']}  attempts={d.get('attempts', 0)}"
+            f"  conversation={d['conversation']}" + (f"  {d['error']}" if d.get("error") else "")
+            for d in deliveries
+        ] or ["queue is empty"]
+        return {"deliveries": deliveries, "lines": lines}
+    return _connector_run(args, action)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="woltspace",
@@ -1327,6 +1471,63 @@ def build_parser() -> argparse.ArgumentParser:
     wolf_runs.add_argument("--limit", type=int, default=20)
     wolf_runs.add_argument("--json", action="store_true")
     wolf_runs.set_defaults(func=_wolf_runs)
+
+    connector = sub.add_parser(
+        "connector", help="connector instances, their bindings and credentials"
+    )
+    connector.set_defaults(func=_connector, connector_parser=connector)
+    connector_sub = connector.add_subparsers(dest="verb")
+    connector_list = connector_sub.add_parser("list", help="every instance and its bindings")
+    connector_list.add_argument("--json", action="store_true")
+    connector_list.set_defaults(func=_connector_list)
+    connector_add = connector_sub.add_parser(
+        "add", help="register an instance, disabled (registration only: installs no code)"
+    )
+    connector_add.add_argument("instance_id")
+    connector_add.add_argument("--channel", required=True, help="the chat kind it serves, e.g. telegram")
+    connector_add.add_argument("--account", required=True, help="the provider account it is, e.g. a bot id")
+    connector_add.add_argument("--json", action="store_true")
+    connector_add.set_defaults(func=_connector_add)
+    for verb, func, help_text in (
+        ("enable", _connector_enable, "route to the instance; one per channel"),
+        ("disable", _connector_disable, "pause the instance; its queue and files wait"),
+        ("queue", _connector_queue, "show the instance's deliveries"),
+    ):
+        verb_parser = connector_sub.add_parser(verb, help=help_text)
+        verb_parser.add_argument("instance_id")
+        verb_parser.add_argument("--json", action="store_true")
+        verb_parser.set_defaults(func=func)
+    connector_remove = connector_sub.add_parser(
+        "remove", help="revoke its tokens, drop its bindings and cancel its queue"
+    )
+    connector_remove.add_argument("instance_id")
+    connector_remove.add_argument("--json", action="store_true")
+    connector_remove.set_defaults(func=_connector_remove)
+    connector_bind = connector_sub.add_parser(
+        "bind", help="allow one provider sender in one conversation"
+    )
+    connector_bind.add_argument("instance_id")
+    connector_bind.add_argument("--sender", required=True)
+    connector_bind.add_argument("--conversation", required=True)
+    connector_bind.add_argument("--thread", default=None)
+    connector_bind.add_argument("--wolt", required=True, help="where unrouted text goes")
+    connector_bind.add_argument("--may-wake", action="store_true", help="a message may resume a stopped session")
+    connector_bind.add_argument("--json", action="store_true")
+    connector_bind.set_defaults(func=_connector_bind)
+    connector_unbind = connector_sub.add_parser("unbind", help="remove a binding")
+    connector_unbind.add_argument("instance_id")
+    connector_unbind.add_argument("--sender", required=True)
+    connector_unbind.add_argument("--conversation", required=True)
+    connector_unbind.add_argument("--thread", default=None)
+    connector_unbind.add_argument("--json", action="store_true")
+    connector_unbind.set_defaults(func=_connector_unbind)
+    connector_token = connector_sub.add_parser(
+        "token", help="mint the instance's next token (printed once), or revoke it"
+    )
+    connector_token.add_argument("instance_id")
+    connector_token.add_argument("--revoke", action="store_true")
+    connector_token.add_argument("--json", action="store_true")
+    connector_token.set_defaults(func=_connector_token)
 
     tui = sub.add_parser("tui", help="open the terminal UI")
     tui.add_argument("--dry-run", action="store_true", help="show resolution without launching")

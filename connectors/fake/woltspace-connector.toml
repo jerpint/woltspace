@@ -1,0 +1,12 @@
+# The fake-transport fixture: a connector with no provider behind it.
+# Read as inert data by the installer when `connector add` arrives; nothing
+# parses it yet.
+contract = 1
+kind = "chat"
+id = "fake"
+name = "Fake transport"
+runner = "python"
+module = "woltspace_connector_fake"
+secrets = []
+inbound_identities = "sender and conversation ids the test chooses"
+network = []

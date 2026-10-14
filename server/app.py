@@ -55,6 +55,7 @@ from .access import (
     save_access_settings,
 )
 from .notify import AttachmentError, NoNotificationTarget, send_notification
+from .connector_api import connector_route, router as connector_router
 from .speech import SpeechError
 from .app_sharing import read_app_shares, read_site_shares, write_app_shares, write_site_shares
 from .content_hosts import (
@@ -719,15 +720,28 @@ class AccessTokenMiddleware:
     def __init__(self, inner):
         self.inner = inner
 
-    async def _reject(self, scope, receive, send, message: str):
+    async def _reject(self, scope, receive, send, message: str, status: int = 403):
         if scope["type"] == "websocket":
             await send({"type": "websocket.close", "code": 1008})
         else:
-            await JSONResponse({"error": message}, status_code=403)(scope, receive, send)
+            await JSONResponse({"error": message}, status_code=status)(scope, receive, send)
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") not in {"http", "websocket"}:
             return await self.inner(scope, receive, send)
+        if any(
+            key.lower() == b"authorization" for key, _value in scope.get("headers", [])
+        ) and not connector_route(scope.get("path", "")):
+            # Decision table row 1: a workload credential, or anything shaped
+            # like one (malformed, duplicated, another scheme), opens nothing
+            # outside the connector API and is never retried as the
+            # token-less owner. 401 whatever the host or peer; the connector
+            # routes do their own row 1 to 3 checks. Compatibility: a proxy
+            # that fronts the lodge with Basic auth must authenticate at its
+            # own boundary and strip Authorization before forwarding. This is
+            # not containment: a request that omits the header is still the
+            # ambient local owner (row 4).
+            return await self._reject(scope, receive, send, "connector token not accepted here", status=401)
         headers = {
             key.decode("latin-1").lower(): value.decode("latin-1")
             for key, value in scope.get("headers", [])
@@ -1099,6 +1113,12 @@ async def views_history():
 
 
 # --- Notify ---
+
+# The connector protocol's routes carry their own admission (a connector
+# token, local-only). AccessTokenMiddleware refuses any Authorization header
+# on every other route, so a connector credential opens nothing but these.
+app.include_router(connector_router)
+
 
 @app.post("/notify")
 async def post_notify(request: Request):
