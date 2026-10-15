@@ -189,7 +189,9 @@ def test_rest_route_preserves_resume_identity(monkeypatch):
     monkeypatch.setattr("sessions.SessionRegistry", registry_type)
     runtime = Mock()
     runtime.last_outputs.return_value = {"friend": 1000}
+    runtime.stop.return_value = True
     monkeypatch.setattr(server_app, "get_runtime", Mock(return_value=runtime))
+    monkeypatch.setattr(server_app, "get_idle_timeout", lambda: 3600)
     response = _client().post("/sessions/friend/rest", json={"idle_since": 1000})
     assert response.status_code == 200
     runtime.stop.assert_called_once()
@@ -285,6 +287,8 @@ def test_rest_requires_idle_since():
     assert _client().post("/sessions/friend/rest", json={}).status_code == 400
     assert _client().post("/sessions/friend/rest", json={"idle_since": "1000"}).status_code == 400
     assert _client().post("/sessions/friend/rest", json={"idle_since": True}).status_code == 400
+    future = int(time.time()) + 3600
+    assert _client().post("/sessions/friend/rest", json={"idle_since": future}).status_code == 400
 
 
 def test_rendering_a_resting_session_is_read_only(monkeypatch):
@@ -397,3 +401,50 @@ def test_session_list_reports_idle_time_from_tmux(monkeypatch):
     assert 600 <= rows["friend"]["idle_seconds"] < 660
     assert 2940 < rows["friend"]["closes_in_seconds"] <= 3000
     assert "idle_seconds" not in rows["done"]
+
+
+def _rest_fixture(monkeypatch, last_output, *, timeout=3600, stopped=True):
+    record = {"name": "friend", "wolt": "pal", "status": "running", "harness_session_id": "conv-1"}
+    registry = _registry_mock(); registry.get.return_value = record
+    monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
+    runtime = Mock(); runtime.last_outputs.return_value = {"friend": last_output}
+    runtime.stop.return_value = stopped
+    monkeypatch.setattr(server_app, "get_runtime", Mock(return_value=runtime))
+    monkeypatch.setattr(server_app, "get_idle_timeout", lambda: timeout)
+    return registry, runtime
+
+
+def test_rest_refuses_output_in_the_same_second_it_was_judged(monkeypatch):
+    """tmux stamps whole seconds: a caller that saw "now" and output in that
+    same second both read the same stamp. The authority's own quiet-window
+    check is what refuses it."""
+    now = int(time.time())
+    registry, runtime = _rest_fixture(monkeypatch, now)
+    response = _client().post("/sessions/friend/rest", json={"idle_since": now})
+    assert response.status_code == 409
+    runtime.stop.assert_not_called()
+    registry._write.assert_not_called()
+
+
+def test_rest_rechecks_the_configured_window_itself(monkeypatch):
+    """A caller cannot shorten the window: quiet for 10 minutes against a 1h setting stays up."""
+    quiet_since = int(time.time()) - 600
+    registry, runtime = _rest_fixture(monkeypatch, quiet_since)
+    response = _client().post("/sessions/friend/rest", json={"idle_since": quiet_since})
+    assert response.status_code == 409
+    runtime.stop.assert_not_called()
+
+
+def test_rest_refuses_when_idle_closing_is_off(monkeypatch):
+    registry, runtime = _rest_fixture(monkeypatch, 1000, timeout=None)
+    response = _client().post("/sessions/friend/rest", json={"idle_since": 1000})
+    assert response.status_code == 409
+    runtime.stop.assert_not_called()
+
+
+def test_rest_keeps_the_record_running_when_tmux_refuses_the_stop(monkeypatch):
+    registry, runtime = _rest_fixture(monkeypatch, 1000, stopped=False)
+    response = _client().post("/sessions/friend/rest", json={"idle_since": 1000})
+    assert response.status_code == 409
+    runtime.stop.assert_called_once()
+    assert not any(c.args[2].get("status") == "resting" for c in registry._write.call_args_list)

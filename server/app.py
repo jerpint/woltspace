@@ -949,10 +949,17 @@ def _rest_session_locked(safe: str, idle_since: int):
             last_output = None
         if last_output is None:
             return JSONResponse({"error": "session activity could not be verified"}, status_code=409)
+        now = int(time.time())
         if last_output > idle_since:
             return JSONResponse({"error": "session became active; rest aborted"}, status_code=409)
-        get_runtime().stop(handle)
-        now = int(time.time())
+        # The authority judges the quiet window itself, never the caller. This
+        # also closes the same-second gap: output in the second the vulture
+        # looked is "now", far inside any window.
+        timeout = get_idle_timeout()
+        if timeout is None or now - last_output < timeout:
+            return JSONResponse({"error": "session is not idle long enough; rest aborted"}, status_code=409)
+        if not get_runtime().stop(handle):
+            return JSONResponse({"error": "session could not be stopped; still running"}, status_code=409)
         data["status"] = "resting"
         data["rested_at"] = now
         registry._write(wolt, safe, data)
@@ -971,7 +978,8 @@ async def rest_session(session_id: str, request: Request):
         return JSONResponse({"error": "JSON object body required"}, status_code=400)
     # The pane's last-output time the caller judged idle; a newer one aborts.
     idle_since = body.get("idle_since") if isinstance(body, dict) else None
-    if not isinstance(idle_since, int) or isinstance(idle_since, bool) or idle_since <= 0:
+    if (not isinstance(idle_since, int) or isinstance(idle_since, bool)
+            or not 0 < idle_since <= time.time()):
         return JSONResponse({"error": "idle_since required"}, status_code=400)
     return await asyncio.to_thread(_rest_session_locked, safe, idle_since)
 
