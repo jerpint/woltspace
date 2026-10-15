@@ -232,6 +232,25 @@ requires_tmux = pytest.mark.skipif(not _tmux_available(), reason="tmux not insta
 # Fixtures
 # ---------------------------------------------------------------------------
 
+@pytest.fixture
+def telegram_adapter_runtime(monkeypatch):
+    """Telegram on the old in-process adapter, which an owner has to choose since 0.6.
+
+    For the tests of notify's direct Telegram path and of the adapter's
+    supervised child (the adapter's): under the default connector runtime,
+    notify queues for the connector and the adapter does not poll, which the
+    connector tests cover.
+    """
+    from server import notify
+
+    monkeypatch.setattr(notify, "_telegram_runtime", lambda: "adapter")
+    try:
+        from woltspace import channels
+    except ImportError:
+        return
+    monkeypatch.setattr(channels, "telegram_runtime", lambda layout: "adapter")
+
+
 @pytest.fixture(autouse=True)
 def stub_harness_model_discovery(monkeypatch):
     """Unit/integration tests must never probe the developer's real CLI."""

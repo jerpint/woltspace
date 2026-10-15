@@ -17,6 +17,9 @@ import server.app as server_app
 from server import notify
 from server.notification_types import Plugin
 
+# notify's direct Telegram path: the old adapter runtime (see conftest).
+pytestmark = pytest.mark.usefixtures("telegram_adapter_runtime")
+
 OGG = b"OggS" + b"\x00" * 23
 WORDS = {"text": "The build is green."}
 NOTIFY_CHANNEL = "C0NOTIFY001"

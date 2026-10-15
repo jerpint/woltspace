@@ -10,6 +10,9 @@ from server import notify
 from server.config import DEN_REPLY_FOOTER
 from server.notification_types import Plugin
 
+# notify's direct Telegram path: the old adapter runtime (see conftest).
+pytestmark = pytest.mark.usefixtures("telegram_adapter_runtime")
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", [

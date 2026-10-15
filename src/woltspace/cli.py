@@ -1194,12 +1194,15 @@ def _connector_bind(args) -> int:
             may_stop_own_sessions=args.may_stop_own_sessions,
             create_per_hour=args.create_per_hour, create_concurrent=args.create_concurrent,
             may_transcribe=args.transcribe, may_manage_apps=args.may_manage_apps,
+            any_wolt=args.any_wolt,
         )
         lines = [f"{args.sender} in {args.conversation} -> {args.wolt}"]
         grants = []
         if binding["may_wake"]:
             grants.append("may wake a stopped session")
-        if binding["selectable_wolts"]:
+        if binding.get("any_wolt"):
+            grants.append("may pick any wolt of this lodge, now and later")
+        elif binding["selectable_wolts"]:
             grants.append("may pick: " + ", ".join(binding["selectable_wolts"]))
         if binding["may_create"]:
             grants.append(
@@ -1673,6 +1676,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--selectable-wolts", default="", metavar="A,B",
         help="wolts this chat may pick with /wolt and start with /new",
     )
+    connector_bind.add_argument("--any-wolt", action="store_true", help="every wolt of this lodge, now and later, is selectable (the owner's own chat)")
     connector_bind.add_argument("--may-create", action="store_true", help="/new, or a message for a wolt with no live session, may start a session (not the same as --may-wake)")
     connector_bind.add_argument("--may-stop-own-sessions", action="store_true", help="/kill may stop a session this chat started or talked to")
     connector_bind.add_argument("--may-manage-apps", action="store_true", help="/apps may list, start and stop the lodge's apps")

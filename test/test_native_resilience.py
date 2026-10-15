@@ -37,6 +37,11 @@ from woltspace.layout import RuntimeLayout  # noqa: E402
 from woltspace.supervisor import Supervisor  # noqa: E402
 
 
+# The adapter's supervised child and its token checks: the old adapter
+# runtime, which an owner chooses since 0.6 (see conftest).
+pytestmark = pytest.mark.usefixtures("telegram_adapter_runtime")
+
+
 def _layout(tmp_path, isolation="host", port=18811):
     return RuntimeLayout(
         wolts_dir=tmp_path / "wolts",

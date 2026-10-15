@@ -20,6 +20,7 @@ from .channels import (
     ConnectorPlan,
     connector_recovery,
     connector_secrets,
+    adopt_telegram,
     plan_connectors,
     telegram_token_is_busy,
 )
@@ -117,6 +118,9 @@ class Supervisor:
         # holds the token, so asking Telegram first would always hear 409 and
         # disable the connector — and only *then* reap the orphan, leaving the
         # channel down with nothing running. Clear our own debris, then ask.
+        adopted = adopt_telegram(self.layout)
+        if adopted:
+            print(f"[telegram] {adopted}")
         planned = plan_connectors(self.layout)
         recovery = connector_recovery(self.layout)
         reaper = ChannelSupervisor(self.layout, planned, recovery=recovery)

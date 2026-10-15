@@ -21,6 +21,9 @@ from server.notification_senders import (
 )
 from server.notification_types import Attachment, OutboundMessage, SendContext
 
+# notify's direct Telegram path: the old adapter runtime (see conftest).
+pytestmark = pytest.mark.usefixtures("telegram_adapter_runtime")
+
 LINK = "https://lodge.test/tui?session=test-session"
 FOOTER = f"\n\n---{DEN_REPLY_FOOTER}\n{LINK}"
 DESTINATION = {"chat_id": "42"}

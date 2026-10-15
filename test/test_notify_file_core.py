@@ -11,6 +11,9 @@ import outbox
 from server import notify
 from server.notification_types import Attachment, OutboundMessage, Plugin
 
+# notify's direct Telegram path: the old adapter runtime (see conftest).
+pytestmark = pytest.mark.usefixtures("telegram_adapter_runtime")
+
 LINK = "https://lodge.test/tui?session=test-session"
 INVALID = "attachments must be a list with at most one {id, name} entry"
 

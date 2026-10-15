@@ -14,6 +14,10 @@ ROOT = Path(__file__).parents[1]
 NOTIFY = ROOT / "container" / "bin" / "notify"
 
 
+# notify's direct Telegram path: the old adapter runtime (see conftest).
+pytestmark = pytest.mark.usefixtures("telegram_adapter_runtime")
+
+
 def _environment(tmp_path: Path) -> tuple[dict[str, str], Path]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()

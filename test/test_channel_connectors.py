@@ -35,6 +35,10 @@ TOKEN = "123456:configured-telegram-token"
 
 @pytest.fixture
 def layout(tmp_path):
+    # These plans are the old in-process adapter's, which runs only when the
+    # owner chose it: the connector is Telegram's default runtime.
+    (tmp_path / "wolts").mkdir()
+    (tmp_path / "wolts" / "woltspace.json").write_text(json.dumps({"telegram": {"runtime": "adapter"}}))
     return RuntimeLayout(
         wolts_dir=tmp_path / "wolts",
         install_root=ROOT,

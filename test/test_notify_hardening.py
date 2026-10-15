@@ -16,6 +16,9 @@ from server import notify, speech
 from server.notification_types import Plugin
 from server.speech import SpeechError, synthesize
 
+# notify's direct Telegram path: the old adapter runtime (see conftest).
+pytestmark = pytest.mark.usefixtures("telegram_adapter_runtime")
+
 OGG = b"OggS" + b"\x00" * 60
 SETTINGS = {"api_key": "sk-test", "model": "gpt-4o-mini-tts", "voice": "alloy"}
 

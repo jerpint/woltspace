@@ -113,9 +113,19 @@ prepared change to the owner or authorized operator. Verify the supervised
 Telegram connector reports running without a polling conflict. Do not run a
 second `getUpdates` check after startup.
 
-The pending first message should reach the bot. With one builder wolt, it goes
-directly to that wolt. With several, the bot shows the existing wolt picker and offers
-`/wolt <name>`. With none, it asks the owner to create one in the lodge.
+Telegram runs on its connector by default. On the first start with a token and
+an allowlist, and no Telegram connector registered yet, the lodge registers one
+and gives each allowed user's own chat the owner's grants (every wolt, start,
+wake and stop sessions, `/apps`, voice notes); `woltspace connector list` shows
+it. That happens once: to allow another person or a group later, bind them
+with `woltspace connector bind telegram --sender <id> --conversation <chat id>
+--wolt <wolt>` and only the grants they need (`woltspace connector bind --help`).
+An owner who wants the old in-process adapter switches back with the lodge
+stopped: `woltspace connector runtime telegram adapter`.
+
+The pending first message should reach the bot and start a session with the
+owner's first wolt; `/wolt` picks another. With no wolt yet, nothing is bound:
+create one in the lodge, then restart it.
 
 ## 4. Stay until a message arrives both ways
 

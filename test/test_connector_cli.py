@@ -42,7 +42,7 @@ def test_add_bind_enable_token_disable_unbind_remove(colony, capsys):
     ]) == 0
     binding = _out(capsys)["binding"]
     assert binding.pop("binding_id")
-    assert (binding.pop("selectable_wolts"), binding.pop("may_create"), binding.pop("may_stop_own_sessions"), binding.pop("may_transcribe"), binding.pop("may_manage_apps")) == ([], False, False, False, False)
+    assert (binding.pop("selectable_wolts"), binding.pop("may_create"), binding.pop("may_stop_own_sessions"), binding.pop("may_transcribe"), binding.pop("may_manage_apps"), binding.pop("any_wolt")) == ([], False, False, False, False, False)
     assert (binding.pop("create_per_hour"), binding.pop("create_concurrent")) == (6, 2)
     assert binding == {
         "instance_id": "tg-main", "account": "bot:1", "sender": "u1", "conversation": "c1",

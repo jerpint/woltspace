@@ -1,4 +1,4 @@
-"""`telegram.runtime`: exactly one runtime polls and one sends, the adapter by default."""
+"""`telegram.runtime`: exactly one runtime polls and one sends, the connector by default."""
 
 import asyncio
 import json
@@ -39,6 +39,9 @@ def colony(tmp_path, monkeypatch):
         monkeypatch.setenv(name, str(wolts))
     monkeypatch.setenv("WOLTSPACE_DIR", str(ROOT))
     monkeypatch.delenv("FORCE_COLOR", raising=False)
+    # These tests switch between the two runtimes: start on the old adapter,
+    # which an owner chose explicitly.
+    (wolts / "woltspace.json").write_text(json.dumps({"telegram": {"runtime": "adapter"}}))
     return wolts
 
 
@@ -62,13 +65,14 @@ def _client():
     )
 
 
-def test_the_adapter_is_the_default_and_the_file_decides(colony):
+def test_the_connector_is_the_default_and_the_file_decides(colony):
     config = colony / "woltspace.json"
-    assert channel_runtime(config, "telegram") == "adapter"
-    assert channel_runtime(None, "telegram") == "adapter"
+    config.unlink()
+    assert channel_runtime(config, "telegram") == "connector"
+    assert channel_runtime(None, "telegram") == "connector"
     assert channel_runtime(config, "fake") == "connector"
     config.write_text("{broken")
-    assert channel_runtime(config, "telegram") == "adapter"
+    assert channel_runtime(config, "telegram") == "connector"
     config.write_text(json.dumps({"default_harness": "claude"}))
     set_channel_runtime(config, "telegram", "connector")
     assert channel_runtime(config, "telegram") == "connector"
@@ -177,7 +181,7 @@ def test_the_planner_does_not_start_the_adapter_under_the_connector_runtime(colo
     plan = TelegramConnector().plan(layout, env)
     assert plan.enabled is False
     assert "does not poll" in plan.detail
-    assert "next slice" in plan.remedy and "stop the lodge" in plan.remedy
+    assert "old adapter" in plan.remedy and "stop the lodge" in plan.remedy
     set_channel_runtime(colony / "woltspace.json", "telegram", "adapter")
     assert TelegramConnector().plan(layout, env).enabled is True
 
