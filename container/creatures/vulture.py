@@ -6,7 +6,8 @@ pile up and choke the system. Runs as a platform-level background
 process — not managed by wolves.
 
 It does three things on each pass:
-  0. Rests sessions whose pane has not changed for the owner-selected window.
+  0. Rests sessions whose pane has printed nothing for the owner-selected window
+     (tmux's own window_activity stamp, so it works for every harness).
   1. Reconciles the registry — marks "running" sessions as "reaped"
      if their tmux session is gone.
   2. Kills zombie tmux sessions — lodge sessions where the agent has
@@ -25,7 +26,6 @@ Usage:
 """
 
 import json
-import hashlib
 import os
 import subprocess
 import sys
@@ -46,7 +46,6 @@ WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 STATE_DIR = space_vulture_dir(WOLTS_DIR)
 LOG_FILE = STATE_DIR / "vulture.log"
 LAST_RUN_FILE = STATE_DIR / "last-run"
-ACTIVITY_FILE = STATE_DIR / "pane-activity.json"
 
 # Sessions younger than this are never reaped (grace period for startup)
 GRACE_PERIOD_SECONDS = 120
@@ -113,27 +112,12 @@ def _kill_tmux_session(session_name: str) -> bool:
     return get_runtime().stop(RuntimeHandle(session_name, session_name))
 
 
-def _load_activity() -> dict:
-    try:
-        data = json.loads(ACTIVITY_FILE.read_text())
-        return data if isinstance(data, dict) else {}
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-def _save_activity(data: dict) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = ACTIVITY_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, sort_keys=True) + "\n")
-    tmp.replace(ACTIVITY_FILE)
-
-
-def _rest_via_api(session_name: str, pane_digest: str) -> bool:
+def _rest_via_api(session_name: str, idle_since: int) -> bool:
     """Ask the FastAPI authority to perform the lifecycle/state change."""
     base = os.environ.get("WOLTSPACE_API", "http://localhost:7777").rstrip("/")
     req = urlrequest.Request(
         f"{base}/sessions/{session_name}/rest",
-        data=json.dumps({"pane_digest": pane_digest}).encode(), method="POST",
+        data=json.dumps({"idle_since": idle_since}).encode(), method="POST",
         headers={"Content-Type": "application/json"},
     )
     try:
@@ -162,13 +146,19 @@ def _settle_dead(data: dict, now: int) -> str:
 
 def _rest_idle_sessions(reg: SessionRegistry, live_tmux: set[str], now: int,
                         timeout: int | None, dry_run: bool) -> list[str]:
-    """Rest only panes proven unchanged for the complete configured window."""
+    """Rest sessions whose pane has printed nothing for the configured window.
+
+    tmux stamps each window with the time of its last output; a working agent
+    keeps it fresh (spinner, tool output), one idle at its prompt leaves it.
+    """
     if timeout is None:
         return []
-    activity = _load_activity()
-    seen = set()
+    try:
+        last_outputs = get_runtime().last_outputs()
+    except Exception:
+        # Unknown activity is active: never close on missing evidence.
+        return []
     rested = []
-    runtime = get_runtime()
     records = reg.list()
     taken = taken_resume_ids(records)
     for data in records:
@@ -181,33 +171,17 @@ def _rest_idle_sessions(reg: SessionRegistry, live_tmux: set[str], now: int,
         # Resting must be reversible: never stop a session resume_session could not bring back.
         if not recover_resume_id(data, taken):
             continue
-        try:
-            pane = runtime.capture(RuntimeHandle.from_record(data), start=None)
-        except Exception:
-            # Unknown activity is active: never close on missing evidence.
-            continue
-        seen.add(name)
-        digest = hashlib.sha256(pane.encode("utf-8")).hexdigest()
-        previous = activity.get(name, {})
-        unchanged_since = previous.get("unchanged_since", now)
-        if previous.get("digest") != digest:
-            unchanged_since = now
-        activity[name] = {"digest": digest, "unchanged_since": unchanged_since}
-        if now - unchanged_since < timeout:
+        idle_since = last_outputs.get(RuntimeHandle.from_record(data).tmux_session_name)
+        if idle_since is None or now - idle_since < timeout:
             continue
         if dry_run:
             log(f"[dry-run] would rest idle session: {name}")
             rested.append(name)
-        elif _rest_via_api(name, digest):
+        elif _rest_via_api(name, idle_since):
             log(f"🦅 rested idle session: {name}")
             rested.append(name)
-            activity.pop(name, None)
         else:
             log(f"could not rest idle session through API: {name}")
-    for stale in set(activity) - seen:
-        activity.pop(stale, None)
-    if not dry_run:
-        _save_activity(activity)
     return rested
 
 

@@ -335,6 +335,16 @@ class TestTmuxSessionRuntime:
         assert captures[1][-2:] == ["-S", "-200"]
 
 
+    def test_last_outputs_reads_tmux_window_activity(self, tmp_path):
+        """The vulture's idle clock: tmux's own last-output stamp, one call
+        for every session, each session at its busiest window."""
+        runner = FakeRunner(by_verb={"list-windows": "a\t100\nb\t300\nb\t200\nodd line\n"})
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
+
+        assert runtime.last_outputs() == {"a": 100, "b": 300}
+        assert runner.commands()[0] == [
+            "tmux", "list-windows", "-a", "-F", "#{session_name}\t#{window_activity}"]
+
 class TestAgentDetection:
     """has_descendant_process is the vulture's kill decision — cover it."""
 

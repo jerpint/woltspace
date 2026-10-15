@@ -41,7 +41,6 @@ def _vulture_state_in_tmp(tmp_path, monkeypatch):
     monkeypatch.setattr(vulture, "STATE_DIR", state)
     monkeypatch.setattr(vulture, "LOG_FILE", state / "vulture.log")
     monkeypatch.setattr(vulture, "LAST_RUN_FILE", state / "last-run")
-    monkeypatch.setattr(vulture, "ACTIVITY_FILE", state / "pane-activity.json")
 
 
 # ---------------------------------------------------------------------------
@@ -310,12 +309,8 @@ def test_idle_closing_skips_sessions_that_cannot_resume(tmp_path):
         {"name": "has-id", "wolt": "w", "status": "running", "created_at": old, "harness_session_id": "abc"},
     ]
     runtime = MagicMock()
-    runtime.capture.return_value = "same pane"
-    activity = {n: {"digest": __import__("hashlib").sha256(b"same pane").hexdigest(), "unchanged_since": old}
-                for n in ("no-id", "has-id")}
-    with patch.object(vulture, "_load_activity", return_value=activity), \
-         patch.object(vulture, "_save_activity"), \
-         patch.object(vulture, "get_runtime", return_value=runtime), \
+    runtime.last_outputs.return_value = {"no-id": old, "has-id": old}
+    with patch.object(vulture, "get_runtime", return_value=runtime), \
          patch.object(vulture, "_rest_via_api", return_value=True) as rest:
         rested = vulture._rest_idle_sessions(reg, {"no-id", "has-id"}, int(time.time()), 86400, dry_run=False)
     assert rested == ["has-id"]
