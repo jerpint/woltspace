@@ -146,7 +146,7 @@ The minimum complete object for a newly created wildcard application is:
 }
 ```
 
-Use the policy pattern from `add-access.md` for explicit email allow policies. Record the wildcard application's `aud` value as `apps_aud`.
+Use the policy pattern from `add-access.md` for explicit email allow policies. Record the wildcard application's `aud` value as `apps_aud`. An app host that gets its own Access application (one app shared with its own list) has its own `aud`: add it to `apps_aud`, comma-separated (`woltspace access set ... --apps-aud <wildcard aud>,<app aud>`), or the lodge refuses that host's visitors.
 
 Also inspect the existing lodge Access application and record its `aud` as `lodge_aud`. Read the team's Access domain from the existing Access organization or dashboard; it looks like `team.cloudflareaccess.com`.
 

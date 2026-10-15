@@ -58,13 +58,13 @@ async def request_identity(scope, headers, *, local_host: bool, access):
             return None, "non-loopback-peer"
         owner = access.owner_email if access is not None else "owner@localhost"
         return owner, "owner-local"
-    if access is None or not access.apps_aud:
+    if access is None or not access.apps_audiences:
         return None, "no-identity-provider"
     token = headers.get("cf-access-jwt-assertion", "").strip()
     if not token:
         return None, "no-token"
     try:
-        claims = await access_token_verifier.verify(token, access, access.apps_aud)
+        claims = await access_token_verifier.verify(token, access, access.apps_audiences)
     except Exception:
         return None, "bad-token"
     email = claims.get("email")

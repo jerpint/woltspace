@@ -617,7 +617,7 @@ class AccessTokenMiddleware:
         if not token:
             return await self._reject(scope, receive, send, "Access token required")
         app_name = _extract_app_subdomain(host_header)
-        audience = settings.apps_aud if app_name else settings.lodge_aud
+        audience = settings.apps_audiences if app_name else settings.lodge_aud
         if not audience:
             return await self._reject(
                 scope, receive, send, "apps have no Cloudflare Access audience configured",

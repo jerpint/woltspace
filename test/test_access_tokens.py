@@ -546,6 +546,39 @@ def test_apps_audience_is_optional_but_distinct():
         validate_access_settings({**base, "apps_aud": "a"})
 
 
+def test_apps_audience_may_be_a_list_never_including_the_lodge():
+    from server.access import validate_access_settings
+
+    base = {"team_domain": "team.cloudflareaccess.com", "lodge_aud": "a",
+            "owner_email": "o@example.com"}
+    settings = validate_access_settings({**base, "apps_aud": " b, c  b\nd "})
+    assert (settings.apps_aud, settings.apps_audiences) == ("b,c,d", ["b", "c", "d"])
+    with pytest.raises(ValueError):
+        validate_access_settings({**base, "apps_aud": "b,a"})
+    with pytest.raises(ValueError):
+        validate_access_settings({**base, "apps_aud": ",".join(f"x{i}" for i in range(65))})
+
+
+def test_an_app_host_accepts_any_listed_apps_audience_and_the_lodge_none(monkeypatch):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _configured(monkeypatch, key.public_key())
+    listed = AccessSettings(
+        team_domain=SETTINGS.team_domain, lodge_aud=SETTINGS.lodge_aud,
+        apps_aud="apps-audience,naptime-audience", owner_email=SETTINGS.owner_email,
+    )
+    monkeypatch.setattr(server_app, "load_access_settings", lambda _root: listed)
+
+    def status(host, aud, path="/"):
+        return asyncio.run(_request(path=path, host=host, token=_token(key, aud))).status_code
+
+    # Past the check (the lodge then redirects app hosts to the gateway): 404, not 403.
+    assert status("notes.woltspace.test", "naptime-audience") == 404
+    assert status("notes.woltspace.test", "apps-audience") == 404
+    assert status("notes.woltspace.test", "elsewhere-audience") == 403
+    # An app token never opens the lodge.
+    assert status("owner.woltspace.test", "naptime-audience", "/sessions") == 403
+
+
 def test_an_interrupted_settings_write_leaves_the_old_settings(tmp_path):
     access_module.save_access_settings(tmp_path, {
         "team_domain": SETTINGS.team_domain, "lodge_aud": SETTINGS.lodge_aud,

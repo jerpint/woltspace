@@ -105,6 +105,25 @@ def test_gateway_valid_owner_and_shared_email_reach_http_app(tmp_path, monkeypat
     assert seen == [("notes", "/hello"), ("notes", "/hello")]
 
 
+def test_an_app_host_with_its_own_access_app_is_opened_by_its_listed_audience(tmp_path, monkeypatch):
+    """A host guarded by its own Access application carries that application's audience."""
+    key = _configure(tmp_path, monkeypatch)
+    config = json.loads((tmp_path / "woltspace.json").read_text())
+    config["access"]["apps_aud"] = "apps-aud, naptime-aud"
+    (tmp_path / "woltspace.json").write_text(json.dumps(config))
+
+    async def proxy(request, name):
+        return PlainTextResponse("APP_OK")
+
+    monkeypatch.setattr(gateway, "proxy_app_http", proxy)
+    for aud in ("apps-aud", "naptime-aud"):
+        response = asyncio.run(_get("/", host="notes.owner.woltspace.app", token=_token(key, aud)))
+        assert response.text == "APP_OK"
+    for aud in ("other-aud", "lodge-aud"):
+        response = asyncio.run(_get("/", host="notes.owner.woltspace.app", token=_token(key, aud)))
+        assert response.status_code == 403
+
+
 def test_gateway_rejects_unlisted_missing_garbage_and_lodge_audience_http(tmp_path, monkeypatch):
     key = _configure(tmp_path, monkeypatch)
     cases = [

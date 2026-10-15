@@ -22,12 +22,32 @@ _CONFIG_CACHE: dict[Path, tuple[tuple[int, int] | None, AccessSettings | None | 
 _CONFIG_CACHE_LOCK = threading.Lock()
 
 
+MAX_APPS_AUDIENCES = 64
+
+
 @dataclass(frozen=True)
 class AccessSettings:
     team_domain: str
     lodge_aud: str
+    # One Access audience, or several separated by commas: the app domain's
+    # wildcard application and any application that guards a single app host
+    # (an app shared with its own list). Any of them opens the app hosts;
+    # Cloudflare has already checked the host's own application at its edge.
     apps_aud: str
     owner_email: str
+
+    @property
+    def apps_audiences(self) -> list[str]:
+        return parse_audiences(self.apps_aud)
+
+
+def parse_audiences(value: str) -> list[str]:
+    """The audiences in a comma- or space-separated list, in order, each once."""
+    seen: list[str] = []
+    for part in re.split(r"[,\s]+", value or ""):
+        if part and part not in seen:
+            seen.append(part)
+    return seen
 
 
 def access_settings_dict(settings: AccessSettings | None) -> dict | None:
@@ -100,10 +120,12 @@ def validate_access_settings(raw: object) -> AccessSettings:
     if not lodge_aud or len(lodge_aud) > 512:
         raise ValueError("lodge_aud must be a non-empty Access audience")
     # Empty until the owner sets up an app domain: app hosts are then refused.
-    if len(apps_aud) > 512:
-        raise ValueError("apps_aud must be an Access audience")
-    if apps_aud and lodge_aud == apps_aud:
+    audiences = parse_audiences(apps_aud)
+    if len(audiences) > MAX_APPS_AUDIENCES or any(len(a) > 512 for a in audiences):
+        raise ValueError(f"apps_aud must be up to {MAX_APPS_AUDIENCES} Access audiences, separated by commas")
+    if lodge_aud in audiences:
         raise ValueError("lodge_aud and apps_aud must be different")
+    apps_aud = ",".join(audiences)
     if not _EMAIL_RE.fullmatch(owner_email):
         raise ValueError("owner_email must be an email address")
     return AccessSettings(team_domain, lodge_aud, apps_aud, owner_email)
@@ -198,7 +220,8 @@ class AccessTokenVerifier:
             self._failed_at = None
             return keys
 
-    async def verify(self, token: str, settings: AccessSettings, audience: str) -> dict:
+    async def verify(self, token: str, settings: AccessSettings, audience: str | list[str]) -> dict:
+        """The token's claims, if Access signed it for `audience` (or any one of a list)."""
         try:
             header = jwt.get_unverified_header(token)
         except jwt.PyJWTError as exc:

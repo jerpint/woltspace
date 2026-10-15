@@ -1199,8 +1199,9 @@ def build_parser() -> argparse.ArgumentParser:
     access_set.add_argument("--lodge-aud", required=True,
                             help="Application Audience (AUD) tag of the lodge's Access app")
     access_set.add_argument("--apps-aud", default=None,
-                            help="AUD tag of the apps' Access app; omit to keep the saved one, "
-                                 '"" to turn remote apps off')
+                            help="AUD tag of the apps' Access app, or several separated by commas "
+                                 "(the wildcard app and any app host with its own Access app); "
+                                 'omit to keep the saved ones, "" to turn remote apps off')
     access_set.add_argument("--owner-email", required=True)
     access_set.set_defaults(func=_access_set)
     access_clear = access_sub.add_parser(
