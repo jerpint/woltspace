@@ -49,10 +49,16 @@ def lodge(tmp_path):
 
 
 def _event(store, binding, text="hello", attachments=(), reply_to_session=None, conversation="c1"):
-    return AcceptedEvent(
+    event = AcceptedEvent(
         "tg-main", "telegram", "bot:1", "tg:1", binding, {"provider_id": "u1", "display": "jer"},
         {"provider_id": conversation, "thread": None}, text, tuple(attachments), reply_to_session, 7,
     )
+    # Waiting for its receipt, the way accept_event leaves it: the router
+    # delivers only an event that is still dispatchable.
+    queue = store._queue("tg-main")
+    queue.inbound.setdefault(event.dedup_key, {"state": "accepted", "event": event.to_record(), "at": 0})
+    store._save_queue("tg-main", queue)
+    return event
 
 
 def _replies(store):

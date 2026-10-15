@@ -23,11 +23,14 @@ refused kept no bytes, so send it again later). Every answer is
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import math
 import os
 from collections.abc import Awaitable, Callable
+
+import anyio
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -107,6 +110,18 @@ def _authenticate(request: Request, store: ConnectorStore) -> Principal:
     return who
 
 
+async def _off(fn, *args, **kwargs):
+    """Run a store call off the event loop.
+
+    Any store call that a connector drives may dispatch a handoff (the
+    router, a session paste, a transcription with its slot wait and HTTP
+    call), which blocks. It runs on a worker thread; if the request is
+    cancelled the worker still finishes, so a slot or lock it holds is
+    released by its own cleanup, never abandoned.
+    """
+    return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
+
+
 async def _run(
     request: Request, handler: Callable[[ConnectorStore, Principal], Awaitable[Response]],
 ) -> Response:
@@ -151,7 +166,8 @@ async def _json_body(request: Request, store: ConnectorStore) -> object:
 @router.post("/events")
 async def post_event(request: Request):
     async def handle(store, who):
-        status, body = store.accept_event(who, await _json_body(request, store))
+        body_in = await _json_body(request, store)
+        status, body = await _off(store.accept_event, who, body_in)
         return JSONResponse(body, status_code=status)
     return await _run(request, handle)
 
@@ -159,7 +175,7 @@ async def post_event(request: Request):
 @router.post("/uploads")
 async def post_upload(request: Request):
     async def handle(store, who):
-        upload_id, part = store.begin_upload(who)
+        upload_id, part = await _off(store.begin_upload, who)
         received = 0
         try:
             descriptor = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -169,12 +185,12 @@ async def post_upload(request: Request):
                     if not chunk:
                         continue
                     received += len(chunk)
-                    store.account_upload_bytes(who, upload_id, received)
+                    await _off(store.account_upload_bytes, who, upload_id, received)
                     sink.write(chunk)
         except BaseException:
-            store.abort_upload(who, upload_id, part)
+            await _off(store.abort_upload, who, upload_id, part)
             raise
-        return JSONResponse(store.commit_upload(who, upload_id, part, request.query_params.get("name")))
+        return JSONResponse(await _off(store.commit_upload, who, upload_id, part, request.query_params.get("name")))
     return await _run(request, handle)
 
 
@@ -190,8 +206,8 @@ async def post_activate(request: Request):
         body = await _json_body(request, store)
         if not isinstance(body, dict) or set(body) != {"lodge_id", "instance_id", "generation"}:
             raise ConnectorError(400, "malformed_activation", "body is {lodge_id, instance_id, generation}")
-        who = store.activate(
-            token, lodge_id=body["lodge_id"], instance_id=body["instance_id"], generation=body["generation"],
+        who = await _off(
+            store.activate, token, lodge_id=body["lodge_id"], instance_id=body["instance_id"], generation=body["generation"],
         )
         response = JSONResponse({"activated": True, "instance_id": who.instance_id, "generation": who.generation})
     except _Refused as exc:
@@ -211,7 +227,7 @@ async def post_activate(request: Request):
 @router.get("/state")
 async def get_state(request: Request):
     async def handle(store, who):
-        return JSONResponse(store.state(who))
+        return JSONResponse(await _off(store.state, who))
     return await _run(request, handle)
 
 
@@ -221,7 +237,7 @@ async def post_cursor(request: Request):
         body = await _json_body(request, store)
         if not isinstance(body, dict) or set(body) != {"cursor"}:
             raise ConnectorError(400, "malformed_cursor", "body is {\"cursor\": <int>}")
-        return JSONResponse(store.set_cursor(who, body["cursor"]))
+        return JSONResponse(await _off(store.set_cursor, who, body["cursor"]))
     return await _run(request, handle)
 
 
@@ -244,7 +260,7 @@ async def post_lease(request: Request):
         while True:
             # Each turn re-reads the registry under the lock: a revoke or
             # rotation during the wait is a 401, a disable is `paused`.
-            result = store.lease(who, max_items)
+            result = await _off(store.lease, who, max_items)
             if result["deliveries"] or result["paused"]:
                 return JSONResponse(result)
             if asyncio.get_running_loop().time() >= deadline:
@@ -256,7 +272,8 @@ async def post_lease(request: Request):
 @router.post("/deliveries/{delivery_id}/ack")
 async def post_ack(delivery_id: str, request: Request):
     async def handle(store, who):
-        return JSONResponse(store.ack(who, delivery_id, await _json_body(request, store)))
+        body = await _json_body(request, store)
+        return JSONResponse(await _off(store.ack, who, delivery_id, body))
     return await _run(request, handle)
 
 
@@ -264,7 +281,7 @@ async def post_ack(delivery_id: str, request: Request):
 async def get_file(file_id: str, request: Request):
     async def handle(store, who):
         attempt_id = request.query_params.get("attempt_id")
-        path, attachment = store.open_file(who, file_id, attempt_id)
+        path, attachment = await _off(store.open_file, who, file_id, attempt_id)
         try:
             handle = open(path, "rb")
         except OSError:
@@ -275,7 +292,7 @@ async def get_file(file_id: str, request: Request):
                 while True:
                     # Every chunk re-checks the whole authority: token,
                     # generation, lease for this attempt, binding, instance.
-                    if not store.stream_allowed(who, file_id, attempt_id):
+                    if not await _off(store.stream_allowed, who, file_id, attempt_id):
                         return
                     chunk = handle.read(_CHUNK)
                     if not chunk:

@@ -165,6 +165,13 @@ class Limits:
     create_per_hour: int = 6
     create_concurrent: int = 2
     max_buttons: int = 20
+    # Voice transcription (owner opt-in per binding). Bounds are bytes and
+    # requests, measured on the stored file; no duration is claimed.
+    transcribe_max_bytes: int = 10 * 1024 * 1024
+    transcribe_bytes_per_day: int = 100 * 1024 * 1024
+    transcribe_requests_per_day: int = 200
+    transcribe_max_attempts: int = 2
+    transcribe_claim_seconds: float = 120.0
 
 
 class ConnectorStateUnreadable(RuntimeError):
@@ -273,6 +280,11 @@ class _Queue:
     # Durable command operations keyed by the event's dedup key: {key: {"command",
     # "argument", "binding_id", "state", "session", "wolt", "at", ...}}.
     operations: dict = field(default_factory=dict)
+    # Voice transcriptions, one record per (event, attachment): {"<key>\x00<upload_id>":
+    # {"state": "claimed"|"done", "claim", "claimed_at", "attempts", "text"|"reason"}}.
+    transcriptions: dict = field(default_factory=dict)
+    # The instance's UTC-day transcription budget: {"day", "bytes", "requests"}.
+    transcribe_budget: dict = field(default_factory=dict)
     # The provider cursor the connector last confirmed, and the highest
     # position core has answered (accepted or dropped).
     cursor: int | None = None
@@ -284,6 +296,7 @@ class _Queue:
             "uploads": self.uploads, "counters": self.counters, "inbound": self.inbound,
             "provider_messages": self.provider_messages, "routing": self.routing,
             "callbacks": self.callbacks, "operations": self.operations,
+            "transcriptions": self.transcriptions, "transcribe_budget": self.transcribe_budget,
             "cursor": self.cursor, "answered_cursor": self.answered_cursor,
         }
 
@@ -296,13 +309,15 @@ class _Queue:
             data.get("uploads", {}), data.get("counters", {"events": [], "uploads": []}),
             data.get("inbound", {}), data.get("provider_messages", {}), data.get("routing", {}),
             data.get("callbacks", {}), data.get("operations", {}),
+            data.get("transcriptions", {}), data.get("transcribe_budget", {}),
             data.get("cursor"), data.get("answered_cursor"),
         )
         if not (isinstance(queue.deliveries, list) and isinstance(queue.dedup, dict)
                 and isinstance(queue.uploads, dict) and isinstance(queue.counters, dict)
                 and isinstance(queue.inbound, dict) and isinstance(queue.provider_messages, dict)
                 and isinstance(queue.routing, dict) and isinstance(queue.callbacks, dict)
-                and isinstance(queue.operations, dict)):
+                and isinstance(queue.operations, dict) and isinstance(queue.transcriptions, dict)
+                and isinstance(queue.transcribe_budget, dict)):
             raise ConnectorStateUnreadable("queue file has an unknown shape")
         for value in (queue.cursor, queue.answered_cursor):
             if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
@@ -835,7 +850,7 @@ class ConnectorStore:
         thread: str | None = None, may_wake: bool = False,
         selectable_wolts: tuple[str, ...] | list[str] = (), may_create: bool = False,
         may_stop_own_sessions: bool = False, create_per_hour: int | None = None,
-        create_concurrent: int | None = None,
+        create_concurrent: int | None = None, may_transcribe: bool = False,
     ) -> dict:
         """Allow one provider sender in one conversation; the owner's grant, typed.
 
@@ -846,7 +861,9 @@ class ConnectorStore:
         `selectable_wolts` (which wolts `/wolt` and `/new` may pick),
         `may_create` (`/new`, with its hourly and concurrent limits; distinct
         from `may_wake`, which is only resuming), `may_stop_own_sessions`
-        (`/kill`, and only a session this binding created or routed to).
+        (`/kill`, and only a session this binding created or routed to),
+        `may_transcribe` (voice notes are sent to OpenAI for transcription
+        with the lodge's key, within the daily byte and request budget).
         Residual trust, stated plainly: a malicious connector can forge an
         allowed sender and use any grant turned on here.
         """
@@ -884,6 +901,7 @@ class ConnectorStore:
                 "default_wolt": default_wolt, "may_wake": bool(may_wake),
                 "selectable_wolts": selectable, "may_create": bool(may_create),
                 "may_stop_own_sessions": bool(may_stop_own_sessions),
+                "may_transcribe": bool(may_transcribe),
                 "create_per_hour": self.limits.create_per_hour if create_per_hour is None else create_per_hour,
                 "create_concurrent": self.limits.create_concurrent if create_concurrent is None else create_concurrent,
             }
@@ -1251,6 +1269,14 @@ class ConnectorStore:
                 record["attempts"] = record.get("attempts", 0) + 1
                 record["claim"] = secrets.token_hex(8)
                 tx.pending_handoffs.append((instance_id, key, record["claim"]))
+        for tkey, record in list(queue.transcriptions.items()):
+            inbound = queue.inbound.get(tkey.rsplit("\x00", 1)[0])
+            if inbound is None:
+                # The event is gone (past dedup retention): nothing can retry it.
+                del queue.transcriptions[tkey]
+            elif inbound["state"] in ("handed_off", "cancelled") and "text" in (record.get("disposition") or {}):
+                # Delivered or cancelled: keep the tombstone (its attempt count), not the body.
+                record["disposition"] = {"reason": "delivered" if inbound["state"] == "handed_off" else "cancelled"}
         queue.provider_messages = {
             key: record for key, record in queue.provider_messages.items()
             if now - record["at"] < limits.dedup_retention_seconds
@@ -1559,6 +1585,15 @@ class ConnectorStore:
                 # Resolved, cancelled, retried by the owner or re-claimed
                 # meanwhile: this receipt is late.
                 return {}
+            if routed.get("routed") == "deferred":
+                # Waiting on something bounded elsewhere (a transcription in
+                # flight): give the claim back without spending an attempt;
+                # the next try waits the ordinary retry interval.
+                record["attempts"] = max(record.get("attempts", 1) - 1, 0)
+                record["tried"] = self.clock()
+                record["claim"] = None
+                self._save_queue(instance_id, queue)
+                return routed
             if routed.get("routed") == "error":
                 # No receipt: the next connector-driven read claims another
                 # attempt, up to the cap; then the record is parked.
@@ -1989,6 +2024,129 @@ class ConnectorStore:
                                         "session": record.get("session")}
                 self._save_queue(instance_id, queue)
                 return True
+
+    def claim_transcription(
+        self, instance_id: str, key: str, upload_id: str, size: int, *, key_present: bool = True,
+    ) -> dict:
+        """Claim one attachment's transcription, or say why not; one locked write.
+
+        Returns `{"claim": id}` to go ahead, or `{"done": {"text"|"reason"}}`
+        for a disposition already settled (cached, reused by every retry),
+        or one settled now: the binding's current `may_transcribe`, the
+        per-attachment attempt
+        cap (across restarts and owner retries), and the instance's UTC-day
+        byte and request budget, charged here and kept whatever happens
+        next (the provider may have billed). A live claim held by another
+        attempt answers `{"busy": True}`; a stale one is reclaimed within the
+        cap. A disabled instance, or one whose channel the connector does not
+        own now, answers `{"paused": True}` and settles nothing. Results are cached; a crash after the call and before its
+        settlement can call again, at most `transcribe_max_attempts` times.
+        """
+        tkey = f"{key}\x00{upload_id}"
+        with self._lock():
+            registry = self._registry()
+            queue = self._queue(instance_id)
+            inbound = queue.inbound.get(key)
+            if (
+                inbound is None or inbound["state"] != "accepted"
+                or upload_id not in [a.get("upload_id") for a in inbound["event"].get("attachments", ())]
+            ):
+                # The event is over (cancelled, delivered, pruned) or does not
+                # own this file: no call, and nothing for a session either.
+                return {"stopped": True}
+            record = queue.transcriptions.get(tkey)
+            if record is not None and record["state"] == "done":
+                return {"done": dict(record["disposition"])}
+            now = self.clock()
+
+            def settle(reason: str) -> dict:
+                entry = queue.transcriptions.setdefault(tkey, {"attempts": 0})
+                entry.update({"state": "done", "disposition": {"reason": reason}, "claim": None})
+                self._save_queue(instance_id, queue)
+                return {"done": {"reason": reason}}
+
+            if record is not None and record["state"] == "claimed" and now - record.get("claimed_at", 0) < self.limits.transcribe_claim_seconds:
+                return {"busy": True}
+            binding_id = ((inbound.get("event") or {}).get("binding") or {}).get("binding_id")
+            binding = next((b for b in registry["bindings"] if b["binding_id"] == binding_id), None)
+            instance = registry["instances"].get(instance_id)
+            if binding is None or instance is None:
+                return settle("not_allowed")
+            if not instance.get("enabled") or not self.runtime_active(instance.get("channel", "")):
+                # A pause, not a refusal: no claim, no charge, nothing settled;
+                # the event waits and is transcribed once the instance is back.
+                return {"paused": True}
+            if not binding.get("may_transcribe"):
+                return settle("not_enabled")
+            if not key_present:
+                return settle("no_key")         # before any charge: no call will be made
+            if not isinstance(size, int) or size <= 0:
+                return settle("unreadable")
+            if size > self.limits.transcribe_max_bytes:
+                return settle("too_large")
+            attempts = (record or {}).get("attempts", 0)
+            if attempts >= self.limits.transcribe_max_attempts:
+                return settle("retries_exhausted")
+            day = time.strftime("%Y-%m-%d", time.gmtime(now))
+            budget = queue.transcribe_budget
+            if budget.get("day") != day:
+                budget.clear()
+                budget.update({"day": day, "bytes": 0, "requests": 0})
+            if (budget["requests"] + 1 > self.limits.transcribe_requests_per_day
+                    or budget["bytes"] + size > self.limits.transcribe_bytes_per_day):
+                return settle("over_budget")
+            budget["requests"] += 1
+            budget["bytes"] += size
+            claim = secrets.token_hex(8)
+            queue.transcriptions[tkey] = {
+                "state": "claimed", "claim": claim, "claimed_at": now, "attempts": attempts + 1,
+            }
+            self._save_queue(instance_id, queue)
+            return {"claim": claim}
+
+    def dispatch_allowed(self, instance_id: str, key: str, binding_id: str) -> tuple[str, dict | None]:
+        """May this event be delivered now: `("ok", binding)`, `("later", None)` or `("gone", None)`.
+
+        Gone: the event is no longer waiting for its receipt (cancelled,
+        delivered, pruned) or its binding was removed. Later: the instance is
+        disabled or its runtime is not running; the event stays queued and
+        is tried again, never dropped.
+        """
+        with self._lock():
+            registry = self._registry()
+            inbound = self._queue(instance_id).inbound.get(key)
+            binding = next((b for b in registry["bindings"] if b["binding_id"] == binding_id), None)
+            instance = registry["instances"].get(instance_id)
+            if inbound is None or inbound["state"] != "accepted" or binding is None or instance is None:
+                return "gone", None
+            if not instance.get("enabled") or not self.runtime_active(instance.get("channel", "")):
+                return "later", None
+            return "ok", dict(binding)
+
+    def settle_transcription(self, instance_id: str, key: str, upload_id: str, claim: str, disposition: dict) -> dict:
+        """Persist the terminal disposition of a claim: `{"text"}` or `{"reason"}`.
+
+        Answers `{"done": disposition}` (saved now, or already saved),
+        `{"pending": True}` when a replacement claim owns the record, or
+        `{"stopped": True}` when the event is over or pruned.
+        """
+        tkey = f"{key}\x00{upload_id}"
+        with self._lock():
+            queue = self._queue(instance_id)
+            record = queue.transcriptions.get(tkey)
+            inbound = queue.inbound.get(key)
+            if record is None or inbound is None or inbound["state"] != "accepted":
+                # Pruned, or the event is over: never recreated, no body
+                # restored, nothing for a session.
+                return {"stopped": True}
+            if record["state"] == "done":
+                return {"done": dict(record["disposition"])}
+            if record.get("claim") != claim:
+                # A replacement attempt owns it now: its result is the one.
+                return {"pending": True}
+            record.update({"state": "done", "disposition": dict(disposition), "claim": None})
+            self._save_queue(instance_id, queue)
+            return {"done": dict(disposition)}
 
     def record_command(self, instance_id: str, record: dict) -> None:
         """Audit: one line per command executed or refused, never the token or a body."""

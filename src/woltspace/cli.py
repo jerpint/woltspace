@@ -1193,6 +1193,7 @@ def _connector_bind(args) -> int:
             selectable_wolts=selectable, may_create=args.may_create,
             may_stop_own_sessions=args.may_stop_own_sessions,
             create_per_hour=args.create_per_hour, create_concurrent=args.create_concurrent,
+            may_transcribe=args.transcribe,
         )
         lines = [f"{args.sender} in {args.conversation} -> {args.wolt}"]
         grants = []
@@ -1206,6 +1207,11 @@ def _connector_bind(args) -> int:
             )
         if binding["may_stop_own_sessions"]:
             grants.append("may stop the sessions it started or talked to")
+        if binding.get("may_transcribe"):
+            grants.append(
+                "voice notes are transcribed: the audio is sent to OpenAI (whisper-1) with this lodge's "
+                "OPENAI_API_KEY, within a daily byte and request budget"
+            )
         if grants:
             lines.extend(f"  grant: {grant}" for grant in grants)
             lines.append(f"  warning: {FORGED_SENDER_WARNING}")
@@ -1667,6 +1673,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     connector_bind.add_argument("--may-create", action="store_true", help="/new may start a session (not the same as --may-wake)")
     connector_bind.add_argument("--may-stop-own-sessions", action="store_true", help="/kill may stop a session this chat started or talked to")
+    connector_bind.add_argument("--transcribe", action="store_true", help="transcribe voice notes (the audio is sent to OpenAI)")
     connector_bind.add_argument("--create-per-hour", type=int, default=None, help="/new limit per hour (default 6)")
     connector_bind.add_argument("--create-concurrent", type=int, default=None, help="live sessions /new may have started at once (default 2)")
     connector_bind.add_argument("--json", action="store_true")

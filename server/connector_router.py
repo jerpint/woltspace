@@ -32,6 +32,7 @@ default to the lodge's own `sessions` module, so tests mock the boundary.
 
 from __future__ import annotations
 
+import dataclasses
 import errno
 import logging
 import os
@@ -41,6 +42,7 @@ from typing import Callable
 
 from .config import SPACE_DIR, WOLTS_DIR
 from .connector_commands import Commands, _default_wolt_of, allowed_wolts
+from .connector_transcribe import TranscriptionPending, TranscriptionStopped, Transcriber
 from .connectors import AcceptedEvent, ConnectorError, ConnectorStore, NoConnectorBinding
 
 logger = logging.getLogger(__name__)
@@ -126,7 +128,7 @@ def place_file(source: Path, dest: Path) -> Path:
     return dest
 
 
-def session_text(event: AcceptedEvent, files: list[Path]) -> str:
+def session_text(event: AcceptedEvent, files: list[Path], notes: list[str] = ()) -> str:
     """The message a session receives: attributed, with the event id, files, and how to reply."""
     conversation = event.conversation["provider_id"]
     who = event.sender.get("display") or event.sender["provider_id"]
@@ -137,6 +139,7 @@ def session_text(event: AcceptedEvent, files: list[Path]) -> str:
     lines = [header]
     for path in files:
         lines.append(f"[file saved: {path}]")
+    lines.extend(notes)
     instruction = _reply_instruction(event.channel, conversation)
     if instruction:
         lines.append(instruction)
@@ -152,6 +155,7 @@ class Router:
         wolts_dir: Path | None = None,
         commands: Commands | None = None,
         wolt_of: Callable[[str], str | None] = _default_wolt_of,
+        transcriber: Transcriber | None = None,
     ):
         self.store = store
         self.uploads_root = uploads_root or SPACE_DIR
@@ -160,6 +164,7 @@ class Router:
         self.resolve = resolve
         self.wolts_dir = wolts_dir or WOLTS_DIR
         self.wolt_of = wolt_of
+        self.transcriber = transcriber or Transcriber(store, self.uploads_root)
         self.commands = commands or Commands(store, resolve=resolve, wolt_of=wolt_of)
 
     def _tell(self, event: AcceptedEvent, text: str) -> None:
@@ -205,8 +210,24 @@ class Router:
                 self.store.release_uploads(event.instance_id, [a["upload_id"] for a in event.attachments])
             return self.commands(event)
         files = self.place_files(event)
-        text = session_text(event, files)
+        try:
+            notes = self.transcriber.notes(event, files)
+        except TranscriptionPending:
+            return {"routed": "deferred", "reason": "transcription_pending"}
+        except TranscriptionStopped:
+            return {"routed": "stopped", "reason": "event_over"}
         binding_id = event.binding["binding_id"]
+        # Authorization after the (possibly slow) transcription: the event
+        # must still be waiting for its receipt, and the binding, instance
+        # and runtime as they are now decide where it goes, or that it goes
+        # nowhere.
+        verdict, current = self.store.dispatch_allowed(event.instance_id, event.dedup_key, binding_id)
+        if verdict == "later":
+            return {"routed": "deferred", "reason": "instance_paused"}
+        if current is None:
+            return {"routed": "stopped", "reason": "no_longer_dispatchable"}
+        event = dataclasses.replace(event, binding=current)
+        text = session_text(event, files, notes)
         state = self.store.routing_state(event.instance_id, binding_id)
         # Routing memory is only as good as the current grant: a picked wolt
         # that is no longer selectable, and a remembered session of such a
