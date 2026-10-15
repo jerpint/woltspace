@@ -20,9 +20,12 @@ What it does, in order, every attempt the same way:
    rest is a message. Picks the session: the one the replied-to delivery
    came from, else the binding's remembered active session, else the live
    session of the wolt this chat picked (or the default wolt). Delivers there; a stopped session is resumed only when the
-   binding says `may_wake`. No live session and no wake: refused, and the
-   human is told through a delivery. Creating a session is a separate grant
-   (`may_create`, slice 2b), so this router never spawns.
+   binding says `may_wake`. No session to take the message (none live, or
+   the one it went to is gone and its wolt has no other): with `may_create`
+   a session is started with the message in its opening prompt, the way the
+   adapter does, through the same durable operation as `/new` (keyed by
+   this event, so a retry never starts a second one); without it, refused,
+   and the human is told through a delivery.
 3. Tells the conversation what happened, as a delivery through the same
    binding, the way the adapter replied "sent to <session>".
 
@@ -72,6 +75,18 @@ def _default_resolve(wolt: str) -> str | None:
     from sessions import resolve_active_session
 
     return resolve_active_session(wolt)
+
+
+def _default_opening(wolt: str, channel: str) -> str:
+    """start-chat, spelled for this wolt's engine and skills delivery, as the adapter spells it."""
+    from harnesses import platform_skill_invoke
+    from sessions import wolt_harness
+    from skills_sync import wolt_skills_delivery
+
+    invoke = platform_skill_invoke(
+        wolt_harness(wolt), "start-chat", delivery=wolt_skills_delivery(WOLTS_DIR / wolt),
+    )
+    return f"{invoke} {channel} {wolt}"
 
 
 def _reply_instruction(channel: str, conversation: str) -> str:
@@ -128,13 +143,26 @@ def place_file(source: Path, dest: Path) -> Path:
     return dest
 
 
+def quoted(quote: dict | None, message: str) -> str:
+    """The message prefixed with what it replies to, as the adapter quotes it."""
+    if not quote:
+        return message
+    body = str(quote.get("text") or "").strip()
+    what = f"file {quote['file']}" if quote.get("file") else "voice note" if quote.get("voice") else ""
+    if not body:
+        return f"[replying to {what}]\n{message}" if what else message
+    if what:
+        return f"[replying to {what}: {body}]\n{message}"
+    return f"[replying to: {body}]\n{message}"
+
+
 def session_text(event: AcceptedEvent, files: list[Path], notes: list[str] = ()) -> str:
-    """The message a session receives: attributed, with the event id, files, and how to reply."""
+    """The message a session receives: attributed, with the event id, what it replies to, files, and how to reply."""
     conversation = event.conversation["provider_id"]
     who = event.sender.get("display") or event.sender["provider_id"]
     header = (
         f"[{event.channel} message from {who}, chat_id={conversation}, "
-        f"event={event.event_id}]: {event.text}"
+        f"event={event.event_id}]: {quoted(event.reply_quote, event.text)}"
     )
     lines = [header]
     for path in files:
@@ -156,6 +184,7 @@ class Router:
         commands: Commands | None = None,
         wolt_of: Callable[[str], str | None] = _default_wolt_of,
         transcriber: Transcriber | None = None,
+        opening: Callable[[str, str], str] = _default_opening,
     ):
         self.store = store
         self.uploads_root = uploads_root or SPACE_DIR
@@ -164,6 +193,7 @@ class Router:
         self.resolve = resolve
         self.wolts_dir = wolts_dir or WOLTS_DIR
         self.wolt_of = wolt_of
+        self.opening = opening
         self.transcriber = transcriber or Transcriber(store, self.uploads_root)
         self.commands = commands or Commands(store, resolve=resolve, wolt_of=wolt_of)
 
@@ -228,6 +258,10 @@ class Router:
             return {"routed": "stopped", "reason": "no_longer_dispatchable"}
         event = dataclasses.replace(event, binding=current)
         text = session_text(event, files, notes)
+        if self.store.operation(event.instance_id, event.dedup_key) is not None:
+            # An earlier attempt of this event began starting a session for
+            # it: finish that (or replay its answer), never paste as well.
+            return self._start(event, self.store.operation(event.instance_id, event.dedup_key).get("argument") or "", text)
         state = self.store.routing_state(event.instance_id, binding_id)
         # Routing memory is only as good as the current grant: a picked wolt
         # that is no longer selectable, and a remembered session of such a
@@ -257,6 +291,8 @@ class Router:
         else:
             session = remembered or self.resolve(wolt)
         if not session:
+            if event.binding.get("may_create"):
+                return self._start(event, wolt, text)
             self._tell(event, f"🪵 {wolt} has no live session; ask the owner to start one")
             return {"routed": "refused", "reason": "no_session", "wolt": wolt}
         result = self.deliver(session, text)
@@ -280,7 +316,10 @@ class Router:
             self._tell(event, f"🪵 {session} was asleep; woke it and delivered")
             return {"routed": "resumed", "session": session, "detail": revived.get("status", "")}
         # no-session (the remembered or replied-to session is gone): fall back
-        # to the wolt's live session once, then give up with a word to the human.
+        # to its wolt's live session once, then start one (with the grant), or
+        # give up with a word to the human.
+        if event.reply_to_session and session == event.reply_to_session:
+            wolt = self.wolt_of(session) or wolt
         live = self.resolve(wolt)
         if live and live != session:
             result = self.deliver(live, text)
@@ -289,8 +328,25 @@ class Router:
                 self.store.associate_session(event.instance_id, binding_id, live, via="routed", wolt=self.wolt_of(live) or "")
                 self._tell(event, f"🪵 {session} is gone; delivered to {wolt}'s live session {live}")
                 return {"routed": "delivered", "session": live, "fallback_from": session}
+        if event.binding.get("may_create"):
+            self._tell(event, f"🪵 {session} expired; starting a new one for {wolt}")
+            return self._start(event, wolt, text)
         self._tell(event, f"🪵 {session} is gone and {wolt} has no live session")
         return {"routed": "refused", "reason": "no_session", "session": session}
+
+    def _start(self, event: AcceptedEvent, wolt: str, text: str) -> dict:
+        """A new session for `wolt`, the message in its opening prompt after start-chat.
+
+        start-chat leads, so the session layer adds no second one; the
+        message rides in the prompt because a paste right after a spawn is
+        lost while the agent boots (#555).
+        """
+        try:
+            prompt = f"{self.opening(wolt, event.channel)}\n\n{text}"
+        except Exception as exc:  # noqa: BLE001 - no prompt, no start; the human is told
+            self._tell(event, f"🪵 could not start a session for {wolt}: {exc}")
+            return {"routed": "refused", "reason": "start_failed", "wolt": wolt}
+        return self.commands.start_with_message(event, wolt, prompt)
 
 
 def make_router(store: ConnectorStore, **overrides) -> Router:

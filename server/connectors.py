@@ -237,6 +237,9 @@ class AcceptedEvent:
     cursor: int | None = None
     # An inline-button press: the opaque id core issued, resolved at execution.
     callback: str | None = None
+    # What the replied-to delivery said, from core's own record of it:
+    # {"text", "file", "voice"} (see `_quote_of`); None when not a reply to one.
+    reply_quote: dict | None = None
 
     @property
     def dedup_key(self) -> str:
@@ -249,7 +252,7 @@ class AcceptedEvent:
             "event_id": self.event_id, "binding": self.binding, "sender": self.sender,
             "conversation": self.conversation, "text": self.text,
             "attachments": list(self.attachments), "reply_to_session": self.reply_to_session,
-            "cursor": self.cursor, "callback": self.callback,
+            "cursor": self.cursor, "callback": self.callback, "reply_quote": self.reply_quote,
         }
 
     @classmethod
@@ -258,7 +261,7 @@ class AcceptedEvent:
             record["instance_id"], record["channel"], record["account"], record["event_id"],
             record["binding"], record["sender"], record["conversation"], record["text"],
             tuple(record["attachments"]), record.get("reply_to_session"), record.get("cursor"),
-            record.get("callback"),
+            record.get("callback"), record.get("reply_quote"),
         )
 
 
@@ -337,6 +340,29 @@ _ACK_KEYS = frozenset({"attempt_id", "ok", "provider_message_id", "provider_mess
 _REPLY_TO_KEYS = frozenset({"delivery_id", "provider_message_id"})
 _IGNORE_KEYS = frozenset({"event_id", "cursor", "ignore"})
 RUNTIMES = ("adapter", "connector")
+
+
+QUOTE_MAX_CHARS = 200
+ROUTE_LOCK_STRIPES = 1024
+
+
+def _quote_of(delivery: dict) -> dict:
+    """What a reply to this delivery quotes: its text (footer kept apart already), its file or voice note."""
+    if "quote" in delivery:
+        return delivery["quote"]
+    attachment = next(iter(delivery.get("attachments") or ()), None) or {}
+    return {
+        "text": str(delivery.get("text") or "")[:QUOTE_MAX_CHARS],
+        "file": attachment.get("name") if attachment.get("kind") == "file" else None,
+        "voice": attachment.get("kind") == "voice",
+    }
+
+
+def may_start(binding: dict, wolt: str | None) -> bool:
+    """`may_create`, for a wolt this binding may talk to: a selectable one or its default."""
+    return bool(binding.get("may_create")) and wolt is not None and (
+        wolt == binding["default_wolt"] or wolt in (binding.get("selectable_wolts") or ())
+    )
 
 
 def default_channel_runtime(channel: str) -> str:
@@ -851,6 +877,7 @@ class ConnectorStore:
         selectable_wolts: tuple[str, ...] | list[str] = (), may_create: bool = False,
         may_stop_own_sessions: bool = False, create_per_hour: int | None = None,
         create_concurrent: int | None = None, may_transcribe: bool = False,
+        may_manage_apps: bool = False,
     ) -> dict:
         """Allow one provider sender in one conversation; the owner's grant, typed.
 
@@ -863,7 +890,9 @@ class ConnectorStore:
         from `may_wake`, which is only resuming), `may_stop_own_sessions`
         (`/kill`, and only a session this binding created or routed to),
         `may_transcribe` (voice notes are sent to OpenAI for transcription
-        with the lodge's key, within the daily byte and request budget).
+        with the lodge's key, within the daily byte and request budget),
+        `may_manage_apps` (`/apps`: list the lodge's apps, start and stop
+        any of them; lodge-wide, so an owner's grant).
         Residual trust, stated plainly: a malicious connector can forge an
         allowed sender and use any grant turned on here.
         """
@@ -902,6 +931,7 @@ class ConnectorStore:
                 "selectable_wolts": selectable, "may_create": bool(may_create),
                 "may_stop_own_sessions": bool(may_stop_own_sessions),
                 "may_transcribe": bool(may_transcribe),
+                "may_manage_apps": bool(may_manage_apps),
                 "create_per_hour": self.limits.create_per_hour if create_per_hour is None else create_per_hour,
                 "create_concurrent": self.limits.create_concurrent if create_concurrent is None else create_concurrent,
             }
@@ -1262,6 +1292,10 @@ class ConnectorStore:
                     continue
                 if not (instance["enabled"] and self.runtime_active(instance.get("channel", ""))):
                     continue
+                if self._routing_now(instance_id, key):
+                    # An attempt is routing it right now: neither a new claim
+                    # nor exhaustion; its receipt settles the event.
+                    continue
                 if record.get("attempts", 0) >= limits.handoff_max_attempts:
                     record["state"] = "handoff_failed"
                     continue
@@ -1469,13 +1503,17 @@ class ConnectorStore:
             if binding is None:
                 return drop(reason)
             reply_session = None
+            reply_quote = None
             if event["reply_to"] is not None:
                 kind, value = event["reply_to"]
                 if kind == "delivery_id":
                     target = next(
                         (d for d in queue.deliveries if d["delivery_id"] == value), None,
                     )
-                    target = {"binding_id": target.get("binding_id"), "session": target.get("session")} if target else None
+                    target = {
+                        "binding_id": target.get("binding_id"), "session": target.get("session"),
+                        "quote": _quote_of(target),
+                    } if target else None
                 else:
                     # Keyed by account and conversation: a message id is only
                     # unique inside its chat, and another account's never resolve here.
@@ -1484,6 +1522,7 @@ class ConnectorStore:
                 if target is None or target.get("binding_id") != binding["binding_id"]:
                     return drop("reply_to_out_of_binding")
                 reply_session = target.get("session")
+                reply_quote = target.get("quote")
             claimed = []
             for upload_id in event["attachments"]:
                 handle = queue.uploads.get(upload_id)
@@ -1510,7 +1549,7 @@ class ConnectorStore:
                         "name": handle["name"], "size": handle["size"],
                     } for upload_id, handle in claimed
                 ),
-                reply_session, event["cursor"], event.get("callback"),
+                reply_session, event["cursor"], event.get("callback"), reply_quote,
             )
             queue.dedup[key] = {"digest": digest, "status": 200, "body": body, "at": now}
             queue.inbound[key] = {"state": "accepted", "event": accepted.to_record(), "at": now}
@@ -1534,12 +1573,67 @@ class ConnectorStore:
         does not own leaves it waiting (the claim is given back, and the
         next one has a new identity). The event's binding snapshot is
         refreshed, so a changed grant (default wolt, may_wake) is what the
-        router sees. The receipt is written only while `claim` is still the
-        record's current claim: a late receipt from a slower, older claim,
-        or from before an owner retry, is ignored.
+        router sees.
+
+        One attempt at a time decides where the event goes and acts on it:
+        the whole route decision and its effect (a paste, a session start)
+        run under the event's route lock, taken without waiting, before the
+        claim is checked. An attempt that finds it held gives its claim back
+        and acts on nothing; one that takes it after another attempt
+        finished finds the event over. A claim can be overtaken while its
+        attempt still runs (the retry interval passed, the owner retried or
+        paused and resumed), but no other attempt can act meanwhile, so the
+        holder's receipt is the event's: it is written whenever the event is
+        still waiting, not only while `claim` is still the record's. An
+        event resolved or cancelled meanwhile keeps that outcome.
         """
         if self.router is None:
             return {}
+        try:
+            with self._route_lock(instance_id, key):
+                return self._hand_off_owned(instance_id, key, claim)
+        except BlockingIOError:
+            # Another attempt is routing this event right now: never a second
+            # decision or effect beside it. This claim is given back.
+            with self._lock():
+                record = self._queue(instance_id).inbound.get(key)
+                if record is not None and record["state"] == "accepted" and record.get("claim") == claim:
+                    queue = self._queue(instance_id)
+                    record = queue.inbound[key]
+                    record["attempts"] = max(record.get("attempts", 1) - 1, 0)
+                    record["tried"] = self.clock()
+                    record["claim"] = None
+                    self._save_queue(instance_id, queue)
+            return {"routed": "deferred", "reason": "routing_in_progress"}
+
+    @contextlib.contextmanager
+    def _route_lock(self, instance_id: str, key: str):
+        """The event's route lock: one attempt decides and acts at a time, across threads and processes.
+
+        One of a fixed set of lock files, chosen by the event, so they never
+        pile up. Two events sharing one while both route is rare and only
+        defers the later one to its next attempt.
+        """
+        stripe = int(hashlib.sha256(f"{instance_id}\x00{key}".encode()).hexdigest(), 16) % ROUTE_LOCK_STRIPES
+        path = self.root / "routing" / f"{stripe:04d}.lock"
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with open(path, "a+") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    def _routing_now(self, instance_id: str, key: str) -> bool:
+        """Whether an attempt holds the event's route lock at this moment (never waits)."""
+        try:
+            with self._route_lock(instance_id, key):
+                return False
+        except BlockingIOError:
+            return True
+
+    def _hand_off_owned(self, instance_id: str, key: str, claim: str) -> dict:
+        """`_hand_off` with the event's route lock held."""
         with self._lock():
             registry = self._registry()
             queue = self._queue(instance_id)
@@ -1581,10 +1675,12 @@ class ConnectorStore:
         with self._lock():
             queue = self._queue(instance_id)
             record = queue.inbound.get(key)
-            if record is None or record["state"] != "accepted" or record.get("claim") != claim:
-                # Resolved, cancelled, retried by the owner or re-claimed
-                # meanwhile: this receipt is late.
+            if record is None or record["state"] != "accepted":
+                # Resolved or cancelled meanwhile: that outcome stands. A claim
+                # taken meanwhile acted on nothing (it could not take the
+                # route lock), so this attempt's receipt is the event's.
                 return {}
+            record["claim"] = claim
             if routed.get("routed") == "deferred":
                 # Waiting on something bounded elsewhere (a transcription in
                 # flight): give the claim back without spending an attempt;
@@ -1846,8 +1942,8 @@ class ConnectorStore:
     def reserve_create(self, instance_id: str, key: str, binding_id: str, wolt: str, live_created: int) -> dict:
         """Reserve one `/new` for this event, or say why not; one locked read-modify-write.
 
-        The grant is read again from the registry here: `may_create` and the
-        wolt in `selectable_wolts`. The hourly count includes every creation
+        The grant is read again from the registry here: `may_create`, for a
+        wolt the binding may talk to (`may_start`). The hourly count includes every creation
         reserved or made in the last hour; the concurrent count is
         `live_created` (the caller's liveness check of this binding's created
         sessions, made outside the lock) plus every reservation still in
@@ -1865,7 +1961,7 @@ class ConnectorStore:
                 return dict(existing)
             if binding is None or not binding.get("may_create"):
                 return {"refused": "no_grant"}
-            if wolt not in (binding.get("selectable_wolts") or []):
+            if not may_start(binding, wolt):
                 return {"refused": "not_selectable"}
             now = self.clock()
             def holds_a_reservation(r: dict) -> bool:
@@ -1929,7 +2025,7 @@ class ConnectorStore:
                     and self.runtime_active(instance.get("channel", ""))
                 )
                 if allowed and grant == "create":
-                    allowed = bool(binding.get("may_create")) and record.get("wolt") in (binding.get("selectable_wolts") or [])
+                    allowed = may_start(binding, record.get("wolt"))
                 elif allowed and grant == "stop":
                     # The boolean grant, the explicit association, and the
                     # target's real wolt (looked up by the caller from the
@@ -2510,7 +2606,7 @@ class ConnectorStore:
             for part in parts:
                 queue.provider_messages[f"{who.account}\x00{delivery['conversation']}\x00{part}"] = {
                     "delivery_id": delivery["delivery_id"], "binding_id": delivery.get("binding_id"),
-                    "session": delivery.get("session"), "at": self.clock(),
+                    "session": delivery.get("session"), "at": self.clock(), "quote": _quote_of(delivery),
                 }
             if body["ok"]:
                 delivery.update({

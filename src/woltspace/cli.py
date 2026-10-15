@@ -1193,7 +1193,7 @@ def _connector_bind(args) -> int:
             selectable_wolts=selectable, may_create=args.may_create,
             may_stop_own_sessions=args.may_stop_own_sessions,
             create_per_hour=args.create_per_hour, create_concurrent=args.create_concurrent,
-            may_transcribe=args.transcribe,
+            may_transcribe=args.transcribe, may_manage_apps=args.may_manage_apps,
         )
         lines = [f"{args.sender} in {args.conversation} -> {args.wolt}"]
         grants = []
@@ -1207,6 +1207,8 @@ def _connector_bind(args) -> int:
             )
         if binding["may_stop_own_sessions"]:
             grants.append("may stop the sessions it started or talked to")
+        if binding.get("may_manage_apps"):
+            grants.append("may list, start and stop the lodge's apps (/apps)")
         if binding.get("may_transcribe"):
             grants.append(
                 "voice notes are transcribed: the audio is sent to OpenAI (whisper-1) with this lodge's "
@@ -1671,8 +1673,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--selectable-wolts", default="", metavar="A,B",
         help="wolts this chat may pick with /wolt and start with /new",
     )
-    connector_bind.add_argument("--may-create", action="store_true", help="/new may start a session (not the same as --may-wake)")
+    connector_bind.add_argument("--may-create", action="store_true", help="/new, or a message for a wolt with no live session, may start a session (not the same as --may-wake)")
     connector_bind.add_argument("--may-stop-own-sessions", action="store_true", help="/kill may stop a session this chat started or talked to")
+    connector_bind.add_argument("--may-manage-apps", action="store_true", help="/apps may list, start and stop the lodge's apps")
     connector_bind.add_argument("--transcribe", action="store_true", help="transcribe voice notes (the audio is sent to OpenAI)")
     connector_bind.add_argument("--create-per-hour", type=int, default=None, help="/new limit per hour (default 6)")
     connector_bind.add_argument("--create-concurrent", type=int, default=None, help="live sessions /new may have started at once (default 2)")

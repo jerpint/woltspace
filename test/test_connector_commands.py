@@ -135,7 +135,9 @@ def test_only_fixed_commands_with_one_bare_argument_are_commands():
     assert parse_command("/new@softbot otter") == ("new", "otter")
     assert parse_command("/sessions") == ("sessions", None)
     assert parse_command("/kill softie-1") == ("kill", "softie-1")
-    assert parse_command("/apps") == ("unsupported", "apps")
+    assert parse_command("/apps") == ("apps", None)
+    # Button-only commands can't be typed.
+    assert parse_command("/appstopok web") == ("unsupported", "appstopok")
     assert parse_command("/kill --all") == ("kill", "--all")           # refused later: not a name
     assert parse_command("/kill a b") is None                            # extra arguments: plain text
     assert parse_command("hello /wolt") is None
@@ -328,9 +330,9 @@ async def test_help_and_unsupported_commands_answer_without_doing_anything(lodge
         assert "/new" in text and "/kill" in text and "/wolt" in text
         bare = await _say(lodge, connector, "u1", "c1", "/help")
         assert "/new" not in _last_reply(lodge, "c1")["text"]
-        apps = await _say(lodge, connector, "u2", "c2", "/apps")
-        assert (apps["outcome"], apps["reason"]) == ("refused", "unsupported")
-        assert "/apps is not supported" in _last_reply(lodge, "c2")["text"]
+        other = await _say(lodge, connector, "u2", "c2", "/dog")
+        assert (other["outcome"], other["reason"]) == ("refused", "unsupported")
+        assert "/dog is not supported" in _last_reply(lodge, "c2")["text"]
     assert lodge.sessions.started == [] and lodge.sessions.pasted == []
 
 
@@ -677,8 +679,8 @@ def test_a_stale_attempt_cannot_redo_or_overwrite_a_finished_operation(lodge, co
     assert paused.wait(5)
     lodge.clock.now += 31
     b = _run(lambda: lodge.store.lease(who, 1))          # the sweep's retry of the same event
-    b.join(0.3)
-    assert b.is_alive()                                  # it waits for A's command lock
+    b.join(5)
+    assert not b.is_alive()                              # it cannot route beside A: given back at once
     go.set()
     a.join(5)
     b.join(5)
@@ -898,3 +900,85 @@ def test_a_kill_target_whose_wolt_leaves_the_binding_at_the_effect_boundary_is_n
     lodge.store.settle_operation = settle
     status, body = lodge.store.accept_event(who, _event_payload("k", "u2", "c2", "/kill otter-1"))
     assert body["reason"] == "grant_withdrawn" and lodge.sessions.stopped == []
+
+
+# ----------------------------------------------------------------- /apps
+
+
+class Apps:
+    def __init__(self):
+        self.running = {"web"}
+        self.known = ["web", "notes"]
+        self.calls = []
+
+    def list(self):
+        return [{"name": n, "emoji": "", "running": n in self.running, "own_url": f"https://{n}.apps.test"} for n in self.known]
+
+    def start(self, name):
+        self.calls.append(("start", name))
+        if name not in self.known:
+            raise ValueError(f"app {name} not found")
+        self.running.add(name)
+        return {"port": 1}
+
+    def stop(self, name):
+        self.calls.append(("stop", name))
+        was = name in self.running
+        self.running.discard(name)
+        return was
+
+
+def _with_apps(lodge):
+    apps = Apps()
+    commands = lodge.store.router.commands
+    commands.apps, commands.app_start, commands.app_stop = apps.list, apps.start, apps.stop
+    lodge.store.bind("tg", sender="u3", conversation="c3", default_wolt="softie", may_manage_apps=True)
+    return apps
+
+
+def _press(reply, label):
+    return next(b["callback_id"] for row in reply["buttons"] for b in row if b["text"] == label)
+
+
+async def test_apps_needs_its_own_grant(lodge):
+    apps = _with_apps(lodge)
+    async with _client() as client:
+        connector = FakeConnector(client, lodge.token)
+        refused = await _say(lodge, connector, "u2", "c2", "/apps")
+    assert (refused["outcome"], refused["reason"]) == ("refused", "no_grant")
+    assert "may not manage apps" in _last_reply(lodge, "c2")["text"]
+    assert apps.calls == []
+
+
+async def test_apps_lists_running_first_starts_and_stops_after_a_confirm(lodge):
+    apps = _with_apps(lodge)
+    async with _client() as client:
+        connector = FakeConnector(client, lodge.token)
+        listed = await _say(lodge, connector, "u3", "c3", "/apps")
+        reply = _last_reply(lodge, "c3")
+        assert listed["count"] == 2
+        assert reply["text"].splitlines() == ["2 apps · 1 running", "📦 web  https://web.apps.test", "📦 notes (off)"]
+        await _say(lodge, connector, "u3", "c3", callback={"id": _press(reply, "▶ notes")})
+        assert apps.calls == [("start", "notes")] and _last_reply(lodge, "c3")["text"] == "▶ started notes"
+        # Stopping asks first; the stop happens only on the confirm.
+        await _say(lodge, connector, "u3", "c3", callback={"id": _press(reply, "⏹ web")})
+        ask = _last_reply(lodge, "c3")
+        assert ask["text"] == "stop app web?" and apps.calls == [("start", "notes")]
+        stopped = await _say(lodge, connector, "u3", "c3", callback={"id": _press(ask, "✓ stop")})
+        assert stopped["outcome"] == "stopped" and apps.calls[-1] == ("stop", "web")
+        # A button from another chat is never this chat's.
+        await _say(lodge, connector, "u3", "c3", "/apps")
+        foreign = await _say(lodge, connector, "u2", "c2", callback={"id": _press(_last_reply(lodge, "c3"), "⏹ notes")})
+        assert foreign["reason"] == "callback_invalid" and apps.calls[-1] == ("stop", "web")
+
+
+async def test_the_apps_grant_is_checked_again_when_a_button_is_pressed(lodge):
+    apps = _with_apps(lodge)
+    async with _client() as client:
+        connector = FakeConnector(client, lodge.token)
+        await _say(lodge, connector, "u3", "c3", "/apps")
+        reply = _last_reply(lodge, "c3")
+        lodge.store.bind("tg", sender="u3", conversation="c3", default_wolt="softie")   # grant withdrawn
+        pressed = await _say(lodge, connector, "u3", "c3", callback={"id": _press(reply, "▶ notes")})
+    assert (pressed["outcome"], pressed["reason"]) == ("refused", "no_grant")
+    assert apps.calls == []
