@@ -164,8 +164,11 @@ def transcribe(audio: Path, settings: TranscriptionSettings, key: str | None) ->
     """One call to the configured endpoint; the transcript text.
 
     Bounded: at most RESPONSE_MAX_BYTES of response (read raw, identity
-    encoding only, never the body of an error), and CALL_TIMEOUT_SECONDS end
-    to end. Every failure is a TranscriptionFailed with a fixed reason.
+    encoding only, never the body of an error). Each idle phase (connect,
+    upload, headers, a stalled read) is cut by httpx's timeouts, and a
+    response still dripping in after CALL_TIMEOUT_SECONDS is cut off; this is
+    not a hard wall-clock deadline for the whole call. Every failure is a
+    TranscriptionFailed with a fixed reason.
     """
     import time
 
