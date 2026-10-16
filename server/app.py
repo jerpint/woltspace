@@ -755,6 +755,23 @@ async def views_history():
 
 # --- Notify ---
 
+def _touch_origin(name: str) -> None:
+    """A session that talks is in use: its own notify, message or spawn stamps it.
+
+    Only last_activity, only on a running record, through the locked touch();
+    never the status, so a resting sender stays resting. The name comes from
+    the caller, on the same trust as /notify's session and /current.
+    """
+    if not name or sanitize_session(name) != name or name == "main":
+        return
+    from sessions import SessionRegistry
+    try:
+        SessionRegistry(WOLTS_DIR).touch(name)
+    except Exception as exc:
+        # Stamping use never fails the send it rides on.
+        print(f"[sessions] could not stamp use on {name}: {exc}")
+
+
 @app.post("/notify")
 async def post_notify(request: Request):
     body = await request.json()
@@ -783,6 +800,7 @@ async def post_notify(request: Request):
         )
         print(f"[notify] → {result.get('adapter')} | {message[:80]}")
         bot_log("notify_sent", {"session": session, **result, "message": message})
+        await asyncio.to_thread(_touch_origin, session)
         return {"ok": True, **result}
     except NoNotificationTarget as e:
         # Not a server fault: no chat has been connected yet. 409 so a caller
@@ -849,8 +867,10 @@ async def _deliver_or_resume(safe: str, text: str, body: dict):
         from_session=body.get("from_session", "") or "",
     )
     status = result.get("status")
+    sender = body.get("from_session", "") or ""
     if status == "delivered":
         print(f"[message] → {safe}: {text[:80]}")
+        await asyncio.to_thread(_touch_origin, sender)
         return {"ok": True, **result}
     if status in {"session-dead", "agent-gone"}:
         from sessions import SessionRegistry
@@ -865,6 +885,7 @@ async def _deliver_or_resume(safe: str, text: str, body: dict):
         try:
             resumed = await asyncio.to_thread(resume_session, safe, prompt)
             print(f"[message] resumed → {safe}: {text[:80]}")
+            await asyncio.to_thread(_touch_origin, sender)
             return {"ok": True, **resumed, "status": "resumed", "session": safe}
         except (ValueError, ResumeUnavailable, ResumeFailed, subprocess.CalledProcessError) as exc:
             return JSONResponse(
@@ -1251,6 +1272,7 @@ async def session_new_lodge(request: Request):
         )
         # Site auto-start + viewport URL handled by start_session()
         print(f"[sessions/lodge] spawned {result['name']} for {wolt}")
+        await asyncio.to_thread(_touch_origin, body.get("from_session", "") or "")
         return result
     except PermissionError as e:
         return JSONResponse({"error": str(e)}, status_code=403)

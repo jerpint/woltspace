@@ -414,16 +414,21 @@ class SessionRegistry:
         return data
 
     def touch(self, name: str, *, wolt: str = None) -> bool:
-        """Bump last_activity timestamp. Returns True if session exists."""
+        """Stamp last_activity on a running session. Returns True if stamped.
+
+        Under the session lock, and only while running: a touch racing a rest
+        must never write running back over resting while tmux is gone.
+        """
         if not wolt:
             wolt = self._find_wolt(name)
         if not wolt:
             return False
-        data = self._read(wolt, name)
-        if data is None:
-            return False
-        data["last_activity"] = int(time.time())
-        self._write(wolt, name, data)
+        with self._lock(wolt, name):
+            data = self._read(wolt, name)
+            if data is None or data.get("status") != "running":
+                return False
+            data["last_activity"] = int(time.time())
+            self._write(wolt, name, data)
         return True
 
     def finish(self, name: str, exit_code: int, *, wolt: str = None) -> dict | None:
