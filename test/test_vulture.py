@@ -530,6 +530,47 @@ class TestRecoveredConversationIds:
         assert _read_wolt_session(tmp_path, "testwolt", "codex-order")["status"] == "resting"
 
 
+class TestTheCleanupPing:
+    """Resting is routine and reversible, a dead session that rests included:
+    only what is gone for good is worth a ping to the owner."""
+
+    def test_a_dead_session_that_rests_is_not_counted_as_cleaned(self, tmp_path, monkeypatch):
+        from creatures.vulture import reap
+
+        _make_wolt_session(tmp_path, "testwolt", "can-wake")
+        path = tmp_path / "testwolt" / ".state" / "sessions" / "can-wake.json"
+        path.write_text(json.dumps(json.loads(path.read_text()) | {"harness_session_id": "conv-1"}))
+        _codex_session_without_id(tmp_path, monkeypatch, "gone", rollout=False)
+        with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
+             patch("creatures.vulture._tmux_sessions", return_value=set()):
+            stats = reap()
+
+        assert sorted(stats["registry_reaped"]) == ["can-wake", "gone"]
+        assert stats["cleaned"] == ["gone"]
+
+    def test_the_ping_counts_only_what_is_gone_for_good(self, monkeypatch):
+        from creatures import vulture
+        pings = []
+        passes = iter([
+            {"registry_reaped": ["can-wake"], "tmux_killed": [], "sessions_rested": [], "cleaned": []},
+            {"registry_reaped": ["can-wake", "gone"], "tmux_killed": [], "sessions_rested": [], "cleaned": ["gone"]},
+        ])
+        monkeypatch.setattr(vulture, "_wait_for_api", lambda: True)
+        monkeypatch.setattr(vulture, "_send_notify", pings.append)
+        monkeypatch.setattr(vulture, "reap", lambda dry_run=False: next(passes))
+        naps = []
+
+        def nap(_seconds):
+            naps.append(_seconds)
+            if len(naps) == 2:
+                raise _Stop
+
+        monkeypatch.setattr(vulture.time, "sleep", nap)
+        with pytest.raises(_Stop):
+            vulture.run_loop(interval=600)
+        assert pings == ["cleaned up 1 dead sessions — keep on wolting"]
+
+
 # ---------------------------------------------------------------------------
 # The first pass waits for the lodge API
 # ---------------------------------------------------------------------------

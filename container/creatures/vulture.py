@@ -289,12 +289,15 @@ def _rest_idle_sessions(reg: SessionRegistry, live_tmux: set[str], now: int,
 def reap(dry_run: bool = False) -> dict:
     """
     Single reaper pass. Returns stats dict:
-      { "registry_reaped": [...], "tmux_killed": [...], "errors": [...] }
+      { "registry_reaped": [...], "tmux_killed": [...], "sessions_rested": [...],
+        "cleaned": [...], "errors": [...] }
+    "cleaned" is what is gone for good: deaths settled reaped, and leftover
+    tmux killed. A death that rests can still wake, like an idle rest.
     """
     reg = SessionRegistry(WOLTS_DIR)
     now = int(time.time())
     live_tmux = _tmux_sessions()
-    stats = {"registry_reaped": [], "tmux_killed": [], "sessions_rested": [], "errors": []}
+    stats = {"registry_reaped": [], "tmux_killed": [], "sessions_rested": [], "cleaned": [], "errors": []}
 
     stats["sessions_rested"] = _rest_idle_sessions(
         reg, live_tmux, now, get_idle_timeout(), dry_run
@@ -342,6 +345,8 @@ def reap(dry_run: bool = False) -> dict:
                     if status is None:
                         continue
                     log(f"🦅 {status} registry: {name}")
+                    if status == "reaped":
+                        stats["cleaned"].append(name)
                 stats["registry_reaped"].append(name)
 
     # --- Pass 2: Zombie tmux sessions ---
@@ -376,6 +381,8 @@ def reap(dry_run: bool = False) -> dict:
                 if status is None:
                     continue
                 log(f"🦅 killed zombie tmux, {status}: {session_name}")
+                if status == "reaped":
+                    stats["cleaned"].append(session_name)
             stats["tmux_killed"].append(session_name)
         elif reg_data and reg_data.get("status") in LEFTOVER_STATUSES:
             # Already reaped/done but tmux still exists — clean up tmux, unless
@@ -390,6 +397,7 @@ def reap(dry_run: bool = False) -> dict:
                         continue
                     _kill_tmux_session(session_name)
                 log(f"🦅 killed leftover tmux: {session_name}")
+                stats["cleaned"].append(session_name)
             stats["tmux_killed"].append(session_name)
         # A session with no registry entry is not the lodge's. Natively the
         # lodge shares the owner's own tmux server, so "no agent, no record"
@@ -413,8 +421,9 @@ def run_loop(interval: int = DEFAULT_INTERVAL, dry_run: bool = False):
             total = sum(len(stats[key]) for key in ("registry_reaped", "tmux_killed", "sessions_rested"))
             if total > 0:
                 log(f"🦅 pass done — rested {len(stats['sessions_rested'])}, reaped {len(stats['registry_reaped'])} registry, killed {len(stats['tmux_killed'])} tmux")
-                # Resting is routine and reversible; only a real cleanup is worth a ping.
-                cleaned = len(stats["registry_reaped"]) + len(stats["tmux_killed"])
+                # Resting is routine and reversible, a dead session that rests
+                # included; only what is gone for good is worth a ping.
+                cleaned = len(stats["cleaned"])
                 if cleaned and not dry_run:
                     _send_notify(f"cleaned up {cleaned} dead sessions — keep on wolting")
         except Exception as e:
