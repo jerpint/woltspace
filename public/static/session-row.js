@@ -13,6 +13,85 @@
   const stopEvents = event => { event.preventDefault(); event.stopPropagation(); };
   const controlState = session => sessionIsOnline(session) ? 'stop' : session.openable === true ? 'resume' : 'none';
 
+  // A hold keeps a running session up for a background task: "📌 forever" or
+  // "📌 until 17:20" (another day: "Oct 18 17:20"), in the lodge's local time.
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const pad = n => String(n).padStart(2, '0');
+  const clock = epoch => {
+    const when = new Date(epoch * 1000);
+    const time = `${pad(when.getHours())}:${pad(when.getMinutes())}`;
+    return when.toDateString() === new Date().toDateString()
+      ? time : `${MONTHS[when.getMonth()]} ${when.getDate()} ${time}`;
+  };
+  const holdLabel = hold => `📌 ${hold.until == null ? 'forever' : `until ${clock(hold.until)}`}`;
+  const holdKey = hold => `${hold.until}|${hold.reason}`;
+
+  function holdControl(session) {
+    const host = make('span', 'session-hold');
+    host.addEventListener('click', stopEvents);
+
+    // Releasing kills nothing: the session rests at the next sweep only if
+    // nobody is using it.
+    const release = async () => {
+      host.dataset.mode = 'pending';
+      host.replaceChildren(make('span', 'session-hold-badge', '…'));
+      try {
+        const response = await fetch(`/sessions/${encodeURIComponent(host._session.name)}/hold`, { method: 'DELETE' });
+        if (!response.ok) throw new Error('release');
+        delete host._session.hold;
+        host.remove();
+      } catch {
+        delete host.dataset.mode;
+        render();
+        const note = make('span', 'session-control-error', "couldn't release");
+        host.appendChild(note);
+        setTimeout(() => note.remove(), 2400);
+      }
+    };
+
+    const render = () => {
+      host.replaceChildren();
+      const hold = host._session.hold;
+      if (host.dataset.mode === 'confirm') {
+        const label = make('span', 'session-confirm-label', 'Release?');
+        const yes = make('button', 'session-confirm yes', 'yes');
+        const no = make('button', 'session-confirm no', 'no');
+        yes.type = no.type = 'button';
+        yes.addEventListener('click', event => { stopEvents(event); release(); });
+        no.addEventListener('click', event => { stopEvents(event); delete host.dataset.mode; render(); });
+        host.append(label, yes, no);
+        return;
+      }
+      // The reason is inline, since a phone never shows a tooltip; CSS cuts a
+      // long one with an ellipsis, and the title keeps it whole.
+      const badge = make('span', 'session-hold-badge');
+      badge.append(make('span', 'session-hold-when', holdLabel(hold)));
+      // A no-break space: a plain one at the start of a flex item collapses.
+      if (hold.reason) badge.append(make('span', 'session-hold-reason', `\u00a0· ${hold.reason}`));
+      badge.title = hold.reason || '';
+      const button = make('button', 'session-hold-release', '🔓');
+      button.type = 'button';
+      button.title = 'Release the hold';
+      button.setAttribute('aria-label', `Release the hold on ${titleFor(host._session)}`);
+      button.addEventListener('click', event => { stopEvents(event); host.dataset.mode = 'confirm'; render(); });
+      host.append(badge, button);
+    };
+
+    host._session = session;
+    host._key = holdKey(session.hold);
+    render();
+    return host;
+  }
+
+  function updateHold(row, session, online) {
+    const current = row.querySelector('.session-hold');
+    if (current?.dataset.mode) return;
+    if (!online || !session.hold) { current?.remove(); return; }
+    if (current?._key === holdKey(session.hold)) { current._session = session; return; }
+    const next = holdControl(session);
+    if (current) current.replaceWith(next); else row.querySelector('.session-body').appendChild(next);
+  }
+
   function sessionControl(session) {
     const host = make('div', 'session-control');
     host.addEventListener('click', stopEvents);
@@ -120,6 +199,7 @@
     titleNode.classList.toggle('untitled', !session.title);
     row.querySelector('.session-sub').textContent = `${session.summary ? `${session.summary} · ` : ''}${state}`;
     row.querySelector('.session-date').textContent = stampFor(session) ? formatter(stampFor(session)) : '';
+    updateHold(row, session, online);
     const nextState = controlState(session);
     if (control?._state === nextState) {
       Object.assign(control._session, session);

@@ -201,6 +201,8 @@ def test_the_held_line_prints_until_in_utc_like_its_stamp(tmp_path, monkeypatch)
 # --- a hold no clock can print is no hold ---------------------------------------
 
 HUGE = {"until": 10 ** 18, "reason": "hand-edited", "since": 1}
+# A valid hold with a hand-edited since: /holds prints since, so it must be dropped.
+BAD_SINCE = {"until": None, "reason": "hand-edited since", "since": 10 ** 18}
 
 
 def test_an_until_past_the_routes_cap_is_no_hold():
@@ -209,11 +211,14 @@ def test_an_until_past_the_routes_cap_is_no_hold():
     import session_expiry
     now = int(time.time())
     assert not session_expiry.hold_active({"status": "running", "hold": dict(HUGE)}, now)
+    assert session_expiry.public_hold(dict(HUGE)) is None
     edge = {"until": now + session_expiry.HOLD_MAX_SECONDS, "reason": "longest", "since": now}
     assert session_expiry.hold_active({"status": "running", "hold": edge}, now)
+    assert session_expiry.public_hold(edge) == edge
 
 
 def test_no_printer_raises_on_a_hand_edited_huge_until(tmp_path, monkeypatch):
+    from bot import core, telegram_adapter
     from creatures import vulture
 
     registry = _registry(tmp_path, monkeypatch, hold=dict(HUGE), harness_session_id="conv-1", created_at=1)
@@ -226,6 +231,15 @@ def test_no_printer_raises_on_a_hand_edited_huge_until(tmp_path, monkeypatch):
     listed = Mock(); listed.list.return_value = [_stored(registry)]
     assert vulture._rest_idle_sessions(listed, {NAME}, 100000, 3600, False) == [NAME]
 
+    # Telegram /holds: nothing held.
+    alive = [_stored(registry) | {"alive": True}]
+    monkeypatch.setattr(registry, "list", lambda *a, **k: alive)
+    monkeypatch.setattr(core, "registry", registry)
+    monkeypatch.setattr(core, "get_tunnel_url", lambda: "")
+    monkeypatch.setattr(telegram_adapter, "list_wolts", lambda: [])
+    text, markup = telegram_adapter._holds_message(core.list_sessions(), None)
+    assert text == "no held sessions." and markup is None
+
     # The CLI's `hold` show, fed what the lodge answers for this session.
     monkeypatch.setattr(registry, "get", lambda *a, **k: SessionRegistry.get(registry, *a, **{**k, "check_alive": False}))
     answer = _client().get(f"/sessions/{NAME}").json()
@@ -234,6 +248,14 @@ def test_no_printer_raises_on_a_hand_edited_huge_until(tmp_path, monkeypatch):
     client["cmd_session_hold"].__globals__["_req"] = lambda *a, **k: (200, answer)
     monkeypatch.setenv("WOLTSPACE_WOLT_SESSION", NAME)
     client["cmd_session_hold"](_hold_args())
+
+    # A hold with a since no clock can print still holds; /holds just leaves since out.
+    data = _stored(registry)
+    data["hold"] = dict(BAD_SINCE)
+    registry._write("pal", NAME, data)
+    alive[:] = [_stored(registry) | {"alive": True}]
+    text, _markup = telegram_adapter._holds_message(core.list_sessions(), None)
+    assert "hand-edited since" in text and "since" not in text.split("hand-edited since", 1)[1]
 
 
 # --- the CLI ------------------------------------------------------------------

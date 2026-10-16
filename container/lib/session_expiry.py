@@ -12,6 +12,7 @@ read: no screen, no output, no CPU, no hooks, so every engine behaves alike.
 """
 
 import json
+import time
 from pathlib import Path
 
 from env_compat import get_env
@@ -92,6 +93,19 @@ def _well_formed(hold, now: int) -> bool:
     if until is None:
         return True
     return isinstance(until, int) and not isinstance(until, bool) and until <= now + HOLD_MAX_SECONDS
+
+
+def public_hold(hold, now: int | None = None) -> dict | None:
+    """The fields a hold shows: until (None is forever), reason, since.
+    None for a malformed hold, so every printer only sees a valid one; a
+    since no clock could print is left out (None) the same way."""
+    now = int(time.time()) if now is None else now
+    if not _well_formed(hold, now):
+        return None
+    since = hold.get("since")
+    if not (isinstance(since, int) and not isinstance(since, bool) and 0 <= since <= now + HOLD_MAX_SECONDS):
+        since = None
+    return {"until": hold["until"], "reason": hold.get("reason"), "since": since}
 
 
 def hold_active(record: dict, now: int) -> bool:

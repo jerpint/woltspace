@@ -42,8 +42,9 @@ woltspace session hold                                # show this session's hold
 ```
 
 - **Durations:** `90m`, `6h`, `2d`, or `forever`.
-- **The reason is required.** Name the task that is running. The lodge log
-  names every held session with its reason, and the owner can release it.
+- **The reason is required.** Name the task that is running. The owner sees
+  every held session with its reason (in the lodge: Sessions, then Held; on
+  Telegram: `/holds`) and can release it. The lodge log names it too.
 
 ## Rules
 

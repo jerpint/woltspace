@@ -8,6 +8,7 @@ let allSessions = [];
 let lodgeSessionsLoaded = false;
 let sessionTotals = {};
 let appFilter = 'all';
+let sessionFilter = 'online';  // or 'held': online sessions a hold keeps up
 let currentView = 'home';
 const LODGE_SESSIONS_CACHE = 'woltspace:lodge-sessions:v1';
 
@@ -635,12 +636,22 @@ function paintSessionGroupHeader(group, wolt) {
   if (label) label.textContent = woltLabel(woltData) || wolt;
 }
 
+function filterSessions(filter, el) {
+  sessionFilter = filter;
+  document.querySelectorAll('#session-filters .filter-chip').forEach(c => c.classList.remove('active'));
+  if (el) el.classList.add('active');
+  document.getElementById('sessions-list')?.replaceChildren();
+  renderSessions();
+}
+
 function renderSessions() {
   const online = allSessions.filter(s => s.name !== 'main' && sessionIsOnline(s));
+  const held = online.filter(s => s.hold);
+  const visible = sessionFilter === 'held' ? held : online;
   const total = Object.values(sessionTotals).reduce((sum, count) => sum + count, 0)
     || allSessions.length;
   const subtitle = document.getElementById('sessions-subtitle');
-  if (subtitle) subtitle.textContent = `${online.length} online · ${total} total`;
+  if (subtitle) subtitle.textContent = `${online.length} online · ${total} total${held.length ? ` · ${held.length} held` : ''}`;
   const badge = document.getElementById('sessions-badge');
   if (badge) {
     badge.textContent = online.length || '';
@@ -655,12 +666,12 @@ function renderSessions() {
     if (session) updateSessionRow(row, session);
   });
   const groups = new Map();
-  online.forEach(session => {
+  visible.forEach(session => {
     const name = session.wolt || 'unknown';
     if (!groups.has(name)) groups.set(name, []);
     groups.get(name).push(session);
   });
-  if (online.length) container.querySelector('.empty-state')?.remove();
+  if (visible.length) container.querySelector('.empty-state')?.remove();
   [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).forEach(([wolt, sessions]) => {
     let group = [...container.querySelectorAll('.sessions-group')].find(node => node.dataset.wolt === wolt);
     if (!group) {
@@ -680,15 +691,24 @@ function renderSessions() {
     paintSessionGroupHeader(group, wolt);
     syncSessionRows(group.querySelector('.sessions-group-inner'), sessions);
   });
+  if (sessionFilter === 'held') {
+    // Held shows only what a hold keeps up now: a row whose hold ended, or
+    // whose session went offline, leaves, and so does a group left empty.
+    const keep = new Set(visible.map(session => session.name));
+    container.querySelectorAll('.session-row').forEach(row => { if (!keep.has(row.dataset.session)) row.remove(); });
+    container.querySelectorAll('.sessions-group').forEach(group => { if (!group.querySelector('.session-row')) group.remove(); });
+  }
   container.querySelectorAll('.sessions-group').forEach(group => {
     const wolt = group.dataset.wolt;
-    const count = online.filter(session => (session.wolt || 'unknown') === wolt).length;
+    const count = visible.filter(session => (session.wolt || 'unknown') === wolt).length;
     const total = sessionTotals[wolt] ?? group.querySelectorAll('.session-row').length;
-    group.querySelector('.sessions-group-meta').textContent = `${count} online · ${total} total`;
+    group.querySelector('.sessions-group-meta').textContent =
+      sessionFilter === 'held' ? `${count} held` : `${count} online · ${total} total`;
   });
-  if (!online.length && !container.querySelector('.sessions-group')) {
+  if (!visible.length && !container.querySelector('.sessions-group')) {
     const empty = lodgeElement('div', 'empty-state');
-    empty.append(lodgeElement('div', 'empty-state-icon', '🌿'), lodgeElement('div', 'empty-state-text', 'no sessions online'));
+    empty.append(lodgeElement('div', 'empty-state-icon', sessionFilter === 'held' ? '📌' : '🌿'),
+      lodgeElement('div', 'empty-state-text', sessionFilter === 'held' ? 'no held sessions' : 'no sessions online'));
     container.replaceChildren(empty);
   }
 }

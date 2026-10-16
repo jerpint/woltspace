@@ -779,12 +779,15 @@ body {
 .sessions-group-chevron.collapsed { transform: rotate(-90deg); }
 .sessions-group-body {
   display: grid;
+  /* A zero minimum: an automatic one takes the widest nowrap content (a long
+     hold reason) and pushes every row past the screen. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 1fr;
   transition: grid-template-rows 0.25s ease;
   overflow: hidden;
 }
 .sessions-group-body.collapsed { grid-template-rows: 0fr; }
-.sessions-group-body > .sessions-group-inner { min-height: 0; }
+.sessions-group-body > .sessions-group-inner { min-height: 0; min-width: 0; }
 .sessions-group-inner {
   display: flex;
   flex-direction: column;
@@ -908,6 +911,37 @@ body {
 .session-confirm { width: auto; padding: 0 7px; font-size: 11px; }
 .session-confirm.yes { color: var(--terra); border-color: rgba(196, 83, 30, .35); }
 .session-confirm.no { color: var(--ink-3); border-color: var(--border); }
+/* A hold keeps the session up for a background task: a badge and a release button. */
+.session-hold { display: flex; gap: 4px; align-items: center; margin-top: 3px; min-width: 0; }
+.session-hold-badge {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  font-family: var(--font-body);
+  font-size: 11.5px;
+  color: var(--ink-2);
+  background: rgba(58, 102, 68, 0.1);
+  border: 1px solid rgba(58, 102, 68, 0.25);
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+.session-hold-when { flex-shrink: 0; }
+/* The reason gives way first: cut with an ellipsis, whole in the badge's title. */
+.session-hold-reason { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.session-hold-release {
+  flex-shrink: 0;
+  width: 22px; height: 22px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.session-hold-release:hover, .session-hold-release:focus-visible {
+  border-color: var(--border-2); background: rgba(24,16,10,.05);
+}
 .session-row.compact { padding: 8px; gap: 10px; border: 0; background: transparent; backdrop-filter: none; }
 .session-row.compact:hover { background: rgba(24,16,10,.05); box-shadow: none; }
 .session-row.compact .session-sub { font-size: 12px; }
@@ -915,6 +949,7 @@ body {
 .wolts-sessions .session-row + .session-row { margin-top: 2px; }
 @media (max-width: 620px) {
   .session-control-button, .session-confirm { min-width: 44px; height: 44px; }
+  .session-hold-release { min-width: 44px; height: 44px; }
 }
 @media (max-width: 900px) {
   .session-row { padding: 9px 10px; gap: 10px; }

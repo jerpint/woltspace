@@ -53,6 +53,7 @@ from harnesses import (
 )
 from skills_sync import wolt_skills_delivery
 from sites import ensure_site
+from session_expiry import hold_active, public_hold
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget, normalize_session_target
 from execution_policy import (
@@ -120,6 +121,9 @@ def _read_lodge_record(path: Path, wolt: str) -> dict | None:
     for field in ("title", "summary"):
         if raw.get(field):
             record[field] = raw[field]
+    # Only a hold in force; one that ends while cached is dropped by the route.
+    if hold_active(raw, int(time.time())):
+        record["hold"] = public_hold(raw["hold"])
     record["openable"] = bool(
         raw.get("harness_session_id") or raw.get("claude_session_id")
     )

@@ -1178,10 +1178,11 @@ def _sessions_picker_message(sessions: list, tunnel_url: str | None) -> tuple[st
         emoji = WOLT_TYPE_EMOJI.get(types_by_wolt.get(wolt, ""), "🦫")
         wolt_counts[wolt] = wolt_counts.get(wolt, 0) + 1
         url = f"{tunnel_url}/tui?session={name}" if tunnel_url else None
+        label = f"{emoji} 📌 {name}" if s.get("hold") else f"{emoji} {name}"
         open_btn = (
-            InlineKeyboardButton(f"{emoji} {name}", url=url)
+            InlineKeyboardButton(label, url=url)
             if url else
-            InlineKeyboardButton(f"{emoji} {name}", callback_data=f"noop:{name}")
+            InlineKeyboardButton(label, callback_data=f"noop:{name}")
         )
         stop_btn = InlineKeyboardButton("⏹", callback_data=f"sstop:{name}")
         rows.append([open_btn, stop_btn])
@@ -1196,6 +1197,69 @@ def _sessions_picker_message(sessions: list, tunnel_url: str | None) -> tuple[st
         f"{summary}"
     )
     return header, InlineKeyboardMarkup(rows)
+
+
+def _clock(epoch: int) -> str:
+    """17:20 today, or "Oct 18 17:20" on another day (the lodge's local time)."""
+    when = datetime.fromtimestamp(epoch)
+    if when.date() == datetime.now().date():
+        return when.strftime("%H:%M")
+    return f"{when.strftime('%b')} {when.day} {when.strftime('%H:%M')}"
+
+
+def _holds_message(sessions: list, tunnel_url: str | None) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Header + keyboard for /holds: every running session a hold keeps up,
+    oldest hold first, each with its open link and a release button.
+
+    Plain text, no Markdown: a reason is the wolt's own words.
+    """
+    held = [s for s in sessions if s.get("hold") and s.get("alive")]
+    if not held:
+        return "no held sessions.", None
+    held.sort(key=lambda s: s["hold"].get("since") or 0)
+    lines = [f"📌 {len(held)} held session{'s' if len(held) != 1 else ''}"]
+    rows = []
+    for s in held:
+        name, hold = s["name"], s["hold"]
+        emoji = _session_emoji(name)
+        span = "forever" if hold.get("until") is None else f"until {_clock(hold['until'])}"
+        since = f" · since {_clock(hold['since'])}" if hold.get("since") else ""
+        lines.append(f"{emoji} {name} · {span} · {hold.get('reason', '')}{since}")
+        url = f"{tunnel_url}/tui?session={name}" if tunnel_url else None
+        open_btn = (
+            InlineKeyboardButton(f"{emoji} {name}", url=url)
+            if url else
+            InlineKeyboardButton(f"{emoji} {name}", callback_data=f"noop:{name}")
+        )
+        rows.append([open_btn, InlineKeyboardButton("🔓", callback_data=f"hrel:{name}")])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+
+async def _release_hold(name: str) -> bool:
+    """DELETE /sessions/{name}/hold on the lodge. The session rests at the next
+    sweep only if nobody is using it; nothing is stopped now."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.delete(f"{_api()}/sessions/{name}/hold", timeout=15)
+            return resp.status_code < 400
+        except Exception:
+            return False
+
+
+async def handle_holds(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        return
+    text, markup = _holds_message(list_sessions(), get_tunnel_url())
+    await _reply(update, text, reply_markup=markup)
+
+
+async def _refresh_holds_message(query):
+    text, markup = _holds_message(list_sessions(), get_tunnel_url())
+    try:
+        await query.edit_message_text(text, reply_markup=markup)
+    except Exception:
+        pass
 
 
 def _session_emoji(session_name: str) -> str:
@@ -1378,6 +1442,37 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "astop-cancel":
         await query.answer()
         await _refresh_apps_message(query)
+        return
+
+    if data.startswith("hrel:"):
+        name = data.split(":", 1)[1]
+        await query.answer()
+        confirm = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✓ release", callback_data=f"hrel-confirm:{name}"),
+            InlineKeyboardButton("cancel", callback_data="hrel-cancel"),
+        ]])
+        try:
+            await query.edit_message_text(
+                f"release the hold on {_session_emoji(name)} {name}? "
+                f"It rests at the next sweep if nobody is using it.",
+                reply_markup=confirm,
+            )
+        except Exception:
+            pass
+        return
+
+    if data.startswith("hrel-confirm:"):
+        name = data.split(":", 1)[1]
+        if await _release_hold(name):
+            await query.answer(f"released {name}")
+        else:
+            await query.answer("failed — the session may be gone", show_alert=True)
+        await _refresh_holds_message(query)
+        return
+
+    if data == "hrel-cancel":
+        await query.answer()
+        await _refresh_holds_message(query)
         return
 
     if data.startswith("sstop:"):
@@ -1587,6 +1682,7 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/wolt — show active wolt and available wolts\n"
         "/wolt <name> — switch active wolt\n"
         "/sessions — list active sessions with links\n"
+        "/holds — sessions kept up by a hold, with release buttons\n"
         "/kill <session> — kill a session\n"
         "/apps — list all apps with status and public links\n"
         "/help — this message\n"
@@ -1622,6 +1718,7 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 BOT_COMMANDS = [
     BotCommand("sessions", "list active sessions"),
+    BotCommand("holds", "list sessions kept up by a hold"),
     BotCommand("wolt", "switch or show the active wolt"),
     BotCommand("new", "start a fresh session"),
     BotCommand("apps", "list apps with public links"),
@@ -1650,6 +1747,7 @@ def run():
     app.add_error_handler(_error_handler)
     app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(CommandHandler("sessions", handle_sessions))
+    app.add_handler(CommandHandler("holds", handle_holds))
     app.add_handler(CommandHandler("kill", handle_kill))
     app.add_handler(CommandHandler("wolt", handle_setwolt))
     app.add_handler(CommandHandler("new", handle_new))

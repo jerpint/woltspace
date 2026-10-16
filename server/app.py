@@ -69,7 +69,7 @@ from sessions import (
     stored_resume_id, recover_resume_id, taken_resume_ids, claim_resume_id,
 )
 from session_expiry import (
-    HOLD_MAX_SECONDS, get_idle_timeout, hold_active, last_use, set_idle_timeout,
+    HOLD_MAX_SECONDS, get_idle_timeout, hold_active, last_use, public_hold, set_idle_timeout,
 )
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
@@ -1359,7 +1359,7 @@ def _show_hold(session: dict, now: int) -> bool:
     held = hold_active(session, now)
     hold = session.pop("hold", None)
     if held:
-        session["hold"] = {k: hold.get(k) for k in ("until", "reason", "since")}
+        session["hold"] = public_hold(hold)
     return held
 
 

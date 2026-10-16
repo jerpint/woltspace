@@ -35,6 +35,7 @@ from sessions import (
     _tmux_stop,
 )
 from env_compat import get_env
+from session_expiry import hold_active, public_hold
 from wolts import get_active_creature, find_by_type, list_wolts as _list_wolts_full
 from paths import (
     wolt_sessions_log,
@@ -419,6 +420,7 @@ def list_sessions() -> list[dict]:
     """List all sessions from the registry, enriched with liveness from tmux."""
     tunnel_url = get_tunnel_url()
     sessions = registry.list()
+    now = int(time.time())
     # Normalize output format for compatibility
     results = []
     for s in sessions:
@@ -430,6 +432,8 @@ def list_sessions() -> list[dict]:
             "last_activity": s.get("last_activity") or s.get("created_at"),
             "alive": s.get("alive", False),
         }
+        if hold_active(s, now):
+            entry["hold"] = public_hold(s["hold"])
         if tunnel_url:
             entry["url"] = f"{tunnel_url}/tui?session={s['name']}"
         results.append(entry)
