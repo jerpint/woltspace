@@ -1262,6 +1262,91 @@ async def _refresh_holds_message(query):
         pass
 
 
+# The lodge's idle window: the same four choices as the Settings page.
+_IDLE_CHOICES = ((None, "Never"), (3600, "1 hour"), (14400, "4 hours"), (86400, "1 day"))
+_IDLE_LABELS = dict(_IDLE_CHOICES)
+
+
+def _idle_text(value, mode: str = "is") -> str:
+    """mode "is" answers /idle, "now" a change, "still" a refused change."""
+    if value is None:
+        return {"is": "Idle sessions stay open (whole lodge).",
+                "now": "Idle sessions now stay open.",
+                "still": "Idle sessions still stay open."}[mode]
+    label = _IDLE_LABELS.get(value, f"{value} seconds")
+    return {"is": f"Idle sessions rest after {label} (whole lodge).",
+            "now": f"Idle sessions now rest after {label}.",
+            "still": f"Idle sessions still rest after {label}."}[mode]
+
+
+def _idle_keyboard(current) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(f"✓ {label}" if value == current else label,
+                             callback_data=f"idle:{'never' if value is None else value}")
+        for value, label in _IDLE_CHOICES
+    ]])
+
+
+async def _idle_setting(body: dict | None = None) -> tuple[int, dict]:
+    """GET, or with a body POST, /settings/session-expiry on the lodge."""
+    import httpx
+    url = f"{_api()}/settings/session-expiry"
+    async with httpx.AsyncClient() as client:
+        resp = await (client.get(url, timeout=10) if body is None
+                      else client.post(url, json=body, timeout=10))
+    try:
+        data = resp.json()
+    except Exception:
+        data = {}
+    return resp.status_code, data if isinstance(data, dict) else {}
+
+
+async def handle_idle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /idle — show the lodge's idle window and pick another."""
+    if not is_allowed(update):
+        return
+    try:
+        status, data = await _idle_setting()
+        if status >= 400:
+            raise RuntimeError(data.get("error") or f"HTTP {status}")
+    except Exception as e:
+        await _reply(update, f"couldn't read the idle setting: {e}")
+        return
+    value = data.get("idle_timeout_seconds")
+    await _reply(update, _idle_text(value), reply_markup=_idle_keyboard(value))
+
+
+async def _pick_idle(query, choice: str):
+    value = None if choice == "never" else int(choice) if choice.isdigit() else -1
+    if value not in _IDLE_LABELS:
+        await query.answer("unknown choice", show_alert=True)
+        return
+    try:
+        status, data = await _idle_setting({"idle_timeout_seconds": value})
+        error = None if status < 400 else (data.get("error") or f"HTTP {status}")
+    except Exception as e:
+        error = str(e) or type(e).__name__
+    if error is None:
+        saved = data.get("idle_timeout_seconds", value)
+        await query.answer()
+        text, markup = _idle_text(saved, "now"), _idle_keyboard(saved)
+    else:
+        await query.answer("not changed", show_alert=True)
+        # The setting is unchanged: say what it still is, if the lodge can tell.
+        text, markup = f"couldn't change it: {error}", None
+        try:
+            status, data = await _idle_setting()
+            if status < 400:
+                still = data.get("idle_timeout_seconds")
+                text, markup = f"{text}\n{_idle_text(still, 'still')}", _idle_keyboard(still)
+        except Exception:
+            pass
+    try:
+        await query.edit_message_text(text, reply_markup=markup)
+    except Exception:
+        pass
+
+
 def _session_emoji(session_name: str) -> str:
     wolt = _wolt_of(session_name)
     types_by_wolt = {
@@ -1442,6 +1527,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "astop-cancel":
         await query.answer()
         await _refresh_apps_message(query)
+        return
+
+    if data.startswith("idle:"):
+        await _pick_idle(query, data.split(":", 1)[1])
         return
 
     if data.startswith("hrel:"):
@@ -1683,6 +1772,7 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/wolt <name> — switch active wolt\n"
         "/sessions — list active sessions with links\n"
         "/holds — sessions kept up by a hold, with release buttons\n"
+        "/idle — how long idle sessions stay up (lodge-wide)\n"
         "/kill <session> — kill a session\n"
         "/apps — list all apps with status and public links\n"
         "/help — this message\n"
@@ -1719,6 +1809,7 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 BOT_COMMANDS = [
     BotCommand("sessions", "list active sessions"),
     BotCommand("holds", "list sessions kept up by a hold"),
+    BotCommand("idle", "how long idle sessions stay up"),
     BotCommand("wolt", "switch or show the active wolt"),
     BotCommand("new", "start a fresh session"),
     BotCommand("apps", "list apps with public links"),
@@ -1748,6 +1839,7 @@ def run():
     app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(CommandHandler("sessions", handle_sessions))
     app.add_handler(CommandHandler("holds", handle_holds))
+    app.add_handler(CommandHandler("idle", handle_idle))
     app.add_handler(CommandHandler("kill", handle_kill))
     app.add_handler(CommandHandler("wolt", handle_setwolt))
     app.add_handler(CommandHandler("new", handle_new))
