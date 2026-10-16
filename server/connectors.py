@@ -2207,6 +2207,7 @@ class ConnectorStore:
 
     def claim_transcription(
         self, instance_id: str, key: str, upload_id: str, size: int, *, key_present: bool = True,
+        configured: bool = True,
     ) -> dict:
         """Claim one attachment's transcription, or say why not; one locked write.
 
@@ -2258,6 +2259,8 @@ class ConnectorStore:
                 return {"paused": True}
             if not binding.get("may_transcribe"):
                 return settle("not_enabled")
+            if not configured:
+                return settle("misconfigured")  # before any charge: no call will be made
             if not key_present:
                 return settle("no_key")         # before any charge: no call will be made
             if not isinstance(size, int) or size <= 0:

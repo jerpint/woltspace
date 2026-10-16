@@ -45,7 +45,7 @@ from typing import Callable
 
 from .config import SPACE_DIR, WOLTS_DIR
 from .connector_commands import Commands, _default_wolt_of, allowed_wolts
-from .connector_transcribe import TranscriptionPending, TranscriptionStopped, Transcriber
+from .connector_transcribe import TranscriptionPending, TranscriptionStopped, Transcriber, load_settings
 from .connectors import AcceptedEvent, ConnectorError, ConnectorStore, NoConnectorBinding
 
 logger = logging.getLogger(__name__)
@@ -194,7 +194,10 @@ class Router:
         self.wolts_dir = wolts_dir or WOLTS_DIR
         self.wolt_of = wolt_of
         self.opening = opening
-        self.transcriber = transcriber or Transcriber(store, self.uploads_root)
+        self.transcriber = transcriber or Transcriber(
+            store, self.uploads_root,
+            settings=lambda: load_settings(self.wolts_dir / "woltspace.json"),
+        )
         self.commands = commands or Commands(store, resolve=resolve, wolt_of=wolt_of)
 
     def _tell(self, event: AcceptedEvent, text: str) -> None:

@@ -9,7 +9,8 @@ user_invocable: true
 The owner does two things: pastes a BotFather token, then sends their bot any
 message. You write the configuration and verify the connection. Text messages
 use the wolts' existing harness setup; no dog or separate model API key is required.
-Voice notes need an OpenAI API key for transcription.
+Voice notes need a transcription service: OpenAI by default (`OPENAI_API_KEY`),
+or any OpenAI-style one, a local server included (`woltspace transcription set`).
 
 This skill is idempotent. Preserve unrelated configuration, existing allowed
 users, and working connections. Never print tokens or put them in shell arguments,
@@ -186,8 +187,9 @@ agreement, configure `LLM_MODEL` and its matching key in the lodge's private
 `.env`: `anthropic/…` uses `ANTHROPIC_API_KEY`, `openai/…` uses `OPENAI_API_KEY`,
 `openrouter/…` uses `OPENROUTER_API_KEY`, and `gemini/…` uses `GEMINI_API_KEY`.
 Preserve an existing provider configuration. Never request a key merely to enable
-ordinary wolt text messages. Voice transcription separately requires
-`OPENAI_API_KEY`, even when the dog uses another provider. The same key is what
+ordinary wolt text messages. Voice transcription by default requires
+`OPENAI_API_KEY`; `woltspace transcription set --base-url ... --model ...
+[--key-env NAME | --no-key]` points it at another OpenAI-style service. `OPENAI_API_KEY` is what
 lets a wolt answer with a voice note (`notify --speak`); each spoken answer is
 one OpenAI API request, billed to that key, and nothing is spoken unless a wolt
 asks for it.

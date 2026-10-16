@@ -36,8 +36,9 @@ class Provider:
         self.calls = []
         self.outcome = outcome or {"text": "hello from a voice note"}
 
-    def __call__(self, data, filename, content_type, key):
+    def __call__(self, data, filename, content_type, key, settings=None):
         self.calls.append((len(data), filename, content_type))
+        self.settings, self.key = settings, key
         return dict(self.outcome) if not callable(self.outcome) else self.outcome()
 
 
