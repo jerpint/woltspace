@@ -273,6 +273,70 @@ class TestZombieTmuxCleanup:
 
 
 # ---------------------------------------------------------------------------
+# The first pass waits for the lodge API
+# ---------------------------------------------------------------------------
+
+class _Stop(BaseException):
+    """Ends run_loop's endless loop in a test (it catches Exception only)."""
+
+
+class TestWaitsForTheApi:
+    """Idle rests go through the lodge's /rest. At a lodge restart the vulture
+    starts before the API answers, and every rest of its first pass failed."""
+
+    def test_the_first_pass_waits_for_health(self, monkeypatch):
+        from creatures import vulture
+        order = []
+        monkeypatch.setattr(vulture, "_wait_for_api", lambda: order.append("wait") or True)
+        monkeypatch.setattr(vulture, "reap", lambda dry_run=False: order.append("reap") or
+                            {"registry_reaped": [], "tmux_killed": [], "sessions_rested": []})
+
+        def stop(_seconds):
+            raise _Stop
+
+        monkeypatch.setattr(vulture.time, "sleep", stop)
+        with pytest.raises(_Stop):
+            vulture.run_loop(interval=600)
+        assert order == ["wait", "reap"]
+
+    def test_wait_gives_up_after_a_minute_and_says_so(self, monkeypatch):
+        from creatures import vulture
+        now = [0.0]
+        monkeypatch.setattr(vulture, "_api_ready", lambda: False)
+        assert vulture._wait_for_api(clock=lambda: now[0],
+                                     sleep=lambda s: now.__setitem__(0, now[0] + s)) is False
+        assert 60 <= now[0] <= 62
+        assert "not answering" in vulture.LOG_FILE.read_text()
+
+    def test_health_is_asked_of_the_configured_api(self, monkeypatch):
+        from creatures import vulture
+        from urllib import error as urlerror
+        asked = []
+
+        class Answer:
+            status = 200
+            def __enter__(self):
+                return self
+            def __exit__(self, *exc):
+                return False
+
+        def urlopen(url, timeout=None):
+            asked.append(url)
+            return Answer()
+
+        monkeypatch.setenv("WOLTSPACE_API", "http://127.0.0.1:7794/")
+        monkeypatch.setattr(vulture.urlrequest, "urlopen", urlopen)
+        assert vulture._api_ready() is True
+        assert asked == ["http://127.0.0.1:7794/health"]
+
+        def refused(url, timeout=None):
+            raise urlerror.URLError("connection refused")
+
+        monkeypatch.setattr(vulture.urlrequest, "urlopen", refused)
+        assert vulture._api_ready() is False
+
+
+# ---------------------------------------------------------------------------
 # Dry run
 # ---------------------------------------------------------------------------
 

@@ -176,6 +176,28 @@ def test_the_vulture_names_a_held_session_once_an_hour(tmp_path, monkeypatch):
     rest.assert_not_called()
 
 
+def test_the_held_line_prints_until_in_utc_like_its_stamp(tmp_path, monkeypatch):
+    """Every log line is stamped in UTC; an until in local time read as expired."""
+    import os
+    from datetime import datetime, timezone
+    from creatures import vulture
+    until = int(time.time()) + 7200
+    old_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "America/Toronto"  # any zone that is not UTC
+    time.tzset()
+    try:
+        monkeypatch.setattr(vulture, "_held_logged", {})
+        vulture._log_held({"name": NAME, "hold": {"until": until, "reason": "build", "since": 1}}, 100000)
+    finally:
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        time.tzset()
+    utc = datetime.fromtimestamp(until, timezone.utc).strftime("%Y-%m-%d %H:%M")
+    assert f"held (until {utc}): {NAME}: build" in vulture.LOG_FILE.read_text()
+
+
 # --- a hold no clock can print is no hold ---------------------------------------
 
 HUGE = {"until": 10 ** 18, "reason": "hand-edited", "since": 1}

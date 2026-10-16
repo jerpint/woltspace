@@ -58,6 +58,9 @@ PROTECTED_SESSIONS = {"main"}
 
 DEFAULT_INTERVAL = 600  # 10 minutes
 
+# How long the first pass waits for the lodge API at start.
+API_WAIT_SECONDS = 60
+
 # A held session is named in the log at most this often, so a forgotten
 # forever hold stays visible without flooding the log.
 HELD_LOG_EVERY = 3600
@@ -135,6 +138,33 @@ def _rest_via_api(session_name: str, idle_since: int) -> bool:
         return False
 
 
+def _api_ready() -> bool:
+    """Whether the lodge API answers GET /health."""
+    base = os.environ.get("WOLTSPACE_API", "http://localhost:7777").rstrip("/")
+    try:
+        with urlrequest.urlopen(f"{base}/health", timeout=3) as response:
+            return 200 <= response.status < 300
+    except (OSError, urlerror.URLError, ValueError):
+        return False
+
+
+def _wait_for_api(limit: float = API_WAIT_SECONDS, step: float = 2.0,
+                  clock=time.monotonic, sleep=time.sleep) -> bool:
+    """Wait for the lodge API before the first pass: idle rests go through it.
+
+    At a lodge restart the vulture starts before the API answers, and every
+    rest of the first pass failed. Gives up after `limit` seconds and circles
+    anyway: deaths need no API, and the next pass retries the rests.
+    """
+    deadline = clock() + limit
+    while not _api_ready():
+        if clock() >= deadline:
+            log(f"🦅 lodge API not answering after {int(limit)}s; circling anyway")
+            return False
+        sleep(step)
+    return True
+
+
 def _settle_dead(data: dict, now: int) -> str:
     """Mark a session whose runtime is gone. One that can come back rests.
 
@@ -159,7 +189,8 @@ def _log_held(data: dict, now: int) -> None:
     _held_logged[name] = now
     hold = data["hold"]
     until = hold.get("until")
-    span = "forever" if until is None else "until " + datetime.fromtimestamp(until).strftime("%Y-%m-%d %H:%M")
+    # UTC, like every line's stamp: local time read as a hold already over.
+    span = "forever" if until is None else "until " + datetime.fromtimestamp(until, timezone.utc).strftime("%Y-%m-%d %H:%M")
     log(f"🦅 held ({span}): {name}: {hold.get('reason', '')}")
 
 
@@ -312,6 +343,7 @@ def reap(dry_run: bool = False) -> dict:
 def run_loop(interval: int = DEFAULT_INTERVAL, dry_run: bool = False):
     """Run the vulture on a loop."""
     log(f"🦅 vulture started — interval {interval}s, dry_run={dry_run}")
+    _wait_for_api()
     while True:
         try:
             stats = reap(dry_run=dry_run)
