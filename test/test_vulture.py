@@ -309,7 +309,7 @@ def test_idle_closing_skips_sessions_that_cannot_resume(tmp_path):
         {"name": "has-id", "wolt": "w", "status": "running", "created_at": old, "harness_session_id": "abc"},
     ]
     runtime = MagicMock()
-    runtime.last_outputs.return_value = {"no-id": old, "has-id": old}
+    runtime.last_keys.return_value = {"no-id": old, "has-id": old}
     with patch.object(vulture, "get_runtime", return_value=runtime), \
          patch.object(vulture, "_rest_via_api", return_value=True) as rest:
         rested = vulture._rest_idle_sessions(reg, {"no-id", "has-id"}, int(time.time()), 86400, dry_run=False)

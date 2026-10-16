@@ -269,19 +269,22 @@ def test_rest_aborts_if_activity_check_fails(monkeypatch):
     runtime.stop.assert_not_called()
 
 
-def test_vulture_requires_a_full_quiet_window(monkeypatch):
+def _sweep_fixture(monkeypatch, keys, records, *, outputs=None):
     from creatures import vulture
-
-    runtime = Mock()
-    runtime.last_outputs.return_value = {"friend": 1000}
+    runtime = Mock(); runtime.last_keys.return_value = keys
+    # Output is not use: a pane that printed a second ago is still idle.
+    runtime.last_outputs.return_value = outputs or {}
     monkeypatch.setattr(vulture, "get_runtime", Mock(return_value=runtime))
-    rest = Mock(return_value=True)
-    monkeypatch.setattr(vulture, "_rest_via_api", rest)
-    registry = Mock()
-    registry.list.return_value = [{
+    rest = Mock(return_value=True); monkeypatch.setattr(vulture, "_rest_via_api", rest)
+    registry = Mock(); registry.list.return_value = records
+    return vulture, registry, rest
+
+
+def test_vulture_requires_a_full_quiet_window(monkeypatch):
+    vulture, registry, rest = _sweep_fixture(monkeypatch, {"friend": 1000}, [{
         "name": "friend", "wolt": "pal", "status": "running",
         "created_at": 1, "runtime": {"tmux_session_name": "friend"}, "harness_session_id": "conv-1",
-    }]
+    }])
 
     assert vulture._rest_idle_sessions(registry, {"friend"}, 1000, 3600, False) == []
     assert vulture._rest_idle_sessions(registry, {"friend"}, 4599, 3600, False) == []
@@ -290,32 +293,58 @@ def test_vulture_requires_a_full_quiet_window(monkeypatch):
 
 
 def test_quiet_window_counts_from_tmux_not_from_first_look(monkeypatch):
-    """A pane quiet since before the vulture started is idle on its first pass."""
-    from creatures import vulture
-
-    runtime = Mock(); runtime.last_outputs.return_value = {"friend": 1000}
-    monkeypatch.setattr(vulture, "get_runtime", Mock(return_value=runtime))
-    rest = Mock(return_value=True); monkeypatch.setattr(vulture, "_rest_via_api", rest)
-    registry = Mock()
-    registry.list.return_value = [{"name": "friend", "status": "running", "created_at": 1, "harness_session_id": "conv-1"}]
+    """A session unused since before the vulture started is idle on its first pass."""
+    vulture, registry, rest = _sweep_fixture(monkeypatch, {"friend": 1000}, [
+        {"name": "friend", "status": "running", "created_at": 1, "harness_session_id": "conv-1"}])
     assert vulture._rest_idle_sessions(registry, {"friend"}, 1000 + 86400, 86400, False) == ["friend"]
 
 
-def test_recent_output_keeps_session_open(monkeypatch):
-    from creatures import vulture
-
-    runtime = Mock(); runtime.last_outputs.return_value = {"friend": 8000}
-    monkeypatch.setattr(vulture, "get_runtime", Mock(return_value=runtime))
-    rest = Mock(return_value=True); monkeypatch.setattr(vulture, "_rest_via_api", rest)
-    registry = Mock()
-    registry.list.return_value = [{"name": "friend", "status": "running", "created_at": 1, "harness_session_id": "conv-1"}]
+def test_recent_keystrokes_keep_session_open(monkeypatch):
+    vulture, registry, rest = _sweep_fixture(monkeypatch, {"friend": 8000}, [
+        {"name": "friend", "status": "running", "created_at": 1, "harness_session_id": "conv-1"}])
     assert vulture._rest_idle_sessions(registry, {"friend"}, 8199, 3600, False) == []
     rest.assert_not_called()
 
 
+def test_output_alone_does_not_keep_a_session_open(monkeypatch):
+    """An agent redrawing its prompt, or a dev server logging, is not use."""
+    vulture, registry, rest = _sweep_fixture(
+        monkeypatch, {"friend": 1000},
+        [{"name": "friend", "status": "running", "created_at": 1, "harness_session_id": "conv-1"}],
+        outputs={"friend": 8000})
+    assert vulture._rest_idle_sessions(registry, {"friend"}, 8001, 3600, False) == ["friend"]
+    rest.assert_called_once_with("friend", 1000)
+
+
+def test_a_lodge_write_keeps_a_session_open(monkeypatch):
+    """A message, a notify or a page push stamps last_activity: that is use."""
+    vulture, registry, rest = _sweep_fixture(monkeypatch, {"friend": 1000}, [
+        {"name": "friend", "status": "running", "created_at": 1, "last_activity": 7000,
+         "harness_session_id": "conv-1"}])
+    assert vulture._rest_idle_sessions(registry, {"friend"}, 9000, 3600, False) == []
+    assert vulture._rest_idle_sessions(registry, {"friend"}, 10600, 3600, False) == ["friend"]
+    rest.assert_called_once_with("friend", 7000)
+
+
+def test_a_held_session_is_never_rested(monkeypatch):
+    held = {"name": "friend", "status": "running", "created_at": 1, "harness_session_id": "conv-1",
+            "hold": {"until": None, "reason": "npm run dev on :3000", "since": 1}}
+    vulture, registry, rest = _sweep_fixture(monkeypatch, {"friend": 1000}, [held])
+    assert vulture._rest_idle_sessions(registry, {"friend"}, 1000 + 10 * 86400, 3600, False) == []
+    rest.assert_not_called()
+
+
+def test_an_expired_hold_lets_the_session_rest(monkeypatch):
+    held = {"name": "friend", "status": "running", "created_at": 1, "harness_session_id": "conv-1",
+            "hold": {"until": 5000, "reason": "build", "since": 1}}
+    vulture, registry, rest = _sweep_fixture(monkeypatch, {"friend": 1000}, [held])
+    assert vulture._rest_idle_sessions(registry, {"friend"}, 4999, 3600, False) == []
+    assert vulture._rest_idle_sessions(registry, {"friend"}, 5000, 3600, False) == ["friend"]
+
+
 def test_activity_failure_leaves_session_open(monkeypatch):
     from creatures import vulture
-    runtime = Mock(); runtime.last_outputs.side_effect = RuntimeError("no pane")
+    runtime = Mock(); runtime.last_keys.side_effect = RuntimeError("no tmux")
     monkeypatch.setattr(vulture, "get_runtime", Mock(return_value=runtime))
     rest = Mock(return_value=True); monkeypatch.setattr(vulture, "_rest_via_api", rest)
     registry = Mock(); registry.list.return_value = [{"name": "friend", "status": "running", "created_at": 1, "harness_session_id": "conv-1"}]
@@ -407,11 +436,8 @@ def test_opening_a_session_with_nothing_to_resume_still_renders(monkeypatch):
 
 
 def test_session_tmux_does_not_report_stays_open(monkeypatch):
-    from creatures import vulture
-    runtime = Mock(); runtime.last_outputs.return_value = {"someone-else": 1}
-    monkeypatch.setattr(vulture, "get_runtime", Mock(return_value=runtime))
-    rest = Mock(return_value=True); monkeypatch.setattr(vulture, "_rest_via_api", rest)
-    registry = Mock(); registry.list.return_value = [{"name": "friend", "status": "running", "created_at": 1, "harness_session_id": "conv-1"}]
+    vulture, registry, rest = _sweep_fixture(monkeypatch, {"someone-else": 1}, [
+        {"name": "friend", "status": "running", "created_at": 1, "harness_session_id": "conv-1"}])
     assert vulture._rest_idle_sessions(registry, {"friend"}, 100000, 3600, False) == []
     rest.assert_not_called()
 

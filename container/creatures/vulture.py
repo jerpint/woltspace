@@ -6,8 +6,11 @@ pile up and choke the system. Runs as a platform-level background
 process — not managed by wolves.
 
 It does three things on each pass:
-  0. Rests sessions whose pane has printed nothing for the owner-selected window
-     (tmux's own window_activity stamp, so it works for every harness).
+  0. Rests running sessions nobody has used for the owner-selected window,
+     unless they hold. Use is the later of the record's last_activity (every
+     lodge write: a message in or out, a wake, a page push) and tmux's
+     session_activity (an attach or a keystroke); output is not use. A wolt
+     keeps a session up for a background task with `woltspace session hold`.
   1. Reconciles the registry — marks "running" sessions as "reaped"
      if their tmux session is gone.
   2. Kills zombie tmux sessions — lodge sessions where the agent has
@@ -19,7 +22,7 @@ Logs:   .space/vulture/vulture.log
 State:  .space/vulture/last-run
 
 Usage:
-  python -m creatures.vulture              # Run as background service (default: every 30 min)
+  python -m creatures.vulture              # Run as background service (default: every 10 min)
   python -m creatures.vulture --once       # Single pass and exit
   python -m creatures.vulture --interval N # Custom interval in seconds
   python -m creatures.vulture --dry-run    # Show what would be reaped, don't touch anything
@@ -38,7 +41,7 @@ from sessions import SessionRegistry, recover_resume_id, stored_resume_id, taken
 from harnesses import session_has_agent_process
 from paths import space_vulture_dir
 from session_runtime import RuntimeHandle, get_runtime
-from session_expiry import get_idle_timeout
+from session_expiry import get_idle_timeout, hold_active, last_use
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
@@ -53,7 +56,7 @@ GRACE_PERIOD_SECONDS = 120
 # Don't kill the main tmux session
 PROTECTED_SESSIONS = {"main"}
 
-DEFAULT_INTERVAL = 1800  # 30 minutes
+DEFAULT_INTERVAL = 600  # 10 minutes
 
 
 def _send_notify(message: str):
@@ -146,15 +149,15 @@ def _settle_dead(data: dict, now: int) -> str:
 
 def _rest_idle_sessions(reg: SessionRegistry, live_tmux: set[str], now: int,
                         timeout: int | None, dry_run: bool) -> list[str]:
-    """Rest sessions whose pane has printed nothing for the configured window.
+    """Rest running sessions nobody has used for the configured window.
 
-    tmux stamps each window with the time of its last output; a working agent
-    keeps it fresh (spinner, tool output), one idle at its prompt leaves it.
+    Use is the later of the record's last_activity (every lodge write) and
+    tmux's session_activity (an attach or a keystroke). Output is not use.
     """
     if timeout is None:
         return []
     try:
-        last_outputs = get_runtime().last_outputs()
+        keys = get_runtime().last_keys()
     except Exception:
         # Unknown activity is active: never close on missing evidence.
         return []
@@ -168,16 +171,18 @@ def _rest_idle_sessions(reg: SessionRegistry, live_tmux: set[str], now: int,
             continue
         if now - (data.get("created_at") or now) < GRACE_PERIOD_SECONDS:
             continue
+        if hold_active(data, now):
+            continue
+        used = last_use(data, keys)
+        if used is None or now - used < timeout:
+            continue
         # Resting must be reversible: never stop a session resume_session could not bring back.
         if not recover_resume_id(data, taken):
-            continue
-        idle_since = last_outputs.get(RuntimeHandle.from_record(data).tmux_session_name)
-        if idle_since is None or now - idle_since < timeout:
             continue
         if dry_run:
             log(f"[dry-run] would rest idle session: {name}")
             rested.append(name)
-        elif _rest_via_api(name, idle_since):
+        elif _rest_via_api(name, used):
             log(f"🦅 rested idle session: {name}")
             rested.append(name)
         else:
