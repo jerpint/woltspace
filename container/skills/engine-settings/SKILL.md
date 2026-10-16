@@ -1,6 +1,6 @@
 ---
 name: engine-settings
-description: Change your own engine settings, such as effort (low, medium, high, xhigh, max), when the user asks. Writes the setting in your own folder only, never in a file other wolts share.
+description: Change your own engine settings, such as effort (low, medium, high, xhigh), when the user asks. Writes the setting in your own folder only, never in a file other wolts share.
 ---
 
 # Engine settings: change your own effort
@@ -21,7 +21,10 @@ Only write inside your wolt folder (your current working directory).
 Persistent, from your next session:
 
 - File: `.claude/settings.json` in your wolt folder.
-- Key: `"effortLevel"`, one of `low`, `medium`, `high`, `xhigh`, `max`.
+- Key: `"effortLevel"`, one of `low`, `medium`, `high`, `xhigh`.
+- `max` can't be saved: Claude ignores `"effortLevel": "max"` in a settings
+  file and starts at its default. `max` only works for one session (below).
+  If the user asks for max, save `xhigh` and tell them how to get max now.
 - Merge it into the existing JSON. Keep every other key; the file may hold
   permissions and other settings.
 
@@ -40,7 +43,14 @@ Persistent, from your next session:
 - File: `.codex/config.toml` in your wolt folder.
 - Key: `model_reasoning_effort = "<level>"`, using a level your model lists
   (`low`, `medium`, `high`, ...).
-- Keep every other line of the file.
+- It must be a **top-level key, above the first `[table]` line**. The lodge
+  keeps tables such as `[shell_environment_policy]` and `[projects."..."]`
+  in this file. A key appended at the end lands inside the last table, and
+  Codex won't read it as the effort setting. Put it on the first line (or
+  replace the existing top-level line), and keep every other line.
+- Check it parses, with the key at the top level:
+  `python3 -c 'import tomllib;print(tomllib.load(open(".codex/config.toml","rb")).get("model_reasoning_effort"))'`
+  must print your level.
 
 Codex reads a folder's config only once the folder is trusted. Wolt folders
 the lodge starts are trusted already. The status line shows the result:

@@ -488,6 +488,9 @@ class TestShippedManifest:
         assert '"effortLevel"' in text
         assert "model_reasoning_effort" in text
         assert "~/.claude/" in text and "~/.codex/" in text
+        # Claude ignores a saved "max"; Codex reads the key only at the top level.
+        assert "`max` can't be saved" in text
+        assert "top-level key, above the first `[table]` line" in text
 
     def test_wolt_settings_point_to_the_wolt_for_effort(self):
         page = (ROOT / "public" / "static" / "wolt-page.js").read_text()
