@@ -708,3 +708,18 @@ class TestResumeRacesARest:
         before = int(time.time())
         resume_session(self.NAME, "hello")
         assert reg._read("testwolt", self.NAME)["last_activity"] >= before
+
+    @patch("sessions._tmux_paste")
+    @patch("sessions.resolve_agent_handle", return_value=_agent_in("%7"))
+    def test_a_paste_needs_the_status_it_saw(self, mock_agent, mock_paste, wolt_env):
+        """The agent alone is not enough: a record that left the status the
+        unlocked look saw (it rested meanwhile) is never pasted into or
+        written running; the caller wakes it instead."""
+        from sessions import SessionRegistry, _paste_into_live_agent
+        reg = SessionRegistry(wolt_env)
+        data = reg._read("testwolt", self.NAME)
+        data["status"] = "resting"
+        reg._write("testwolt", self.NAME, data)
+        assert _paste_into_live_agent(reg, "testwolt", self.NAME, "running", "claude", "hello") is False
+        mock_paste.assert_not_called()
+        assert reg._read("testwolt", self.NAME)["status"] == "resting"
