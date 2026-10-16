@@ -397,6 +397,7 @@ class FakeSessionRuntime:
         self.pastes: list[tuple[str, str, float]] = []  # (target pane, text, settle)
         self.captures: list[tuple[str, str | None]] = []  # (target pane, start)
         self.last_output_at: dict[str, int] = {}        # session -> window_activity
+        self.last_key_at: dict[str, int] = {}           # session -> session_activity
         self.stops: list[str] = []                      # tmux session names
         self.alive_checks: list[str] = []
 
@@ -484,6 +485,9 @@ class FakeSessionRuntime:
 
     def last_outputs(self) -> dict[str, int]:
         return dict(self.last_output_at)
+
+    def last_keys(self) -> dict[str, int]:
+        return dict(self.last_key_at)
 
     def stop(self, handle) -> bool:
         self.stops.append(handle.tmux_session_name)

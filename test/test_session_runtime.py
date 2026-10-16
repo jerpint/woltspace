@@ -345,6 +345,26 @@ class TestTmuxSessionRuntime:
         assert runner.commands()[0] == [
             "tmux", "list-windows", "-a", "-F", "#{session_name}\t#{window_activity}"]
 
+    def test_last_keys_reads_tmux_session_activity(self, tmp_path):
+        """The vulture's idle clock: tmux's last client input per session
+        (an attach or a keystroke), one call for every session. Output and
+        the lodge's own paste-buffer deliveries do not move it."""
+        runner = FakeRunner(by_verb={"list-sessions": "a\t100\nb\t300\nodd line\nmy pal\t50\n"})
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
+
+        assert runtime.last_keys() == {"a": 100, "b": 300, "my pal": 50}
+        assert runner.commands()[0] == [
+            "tmux", "list-sessions", "-F", "#{session_name}\t#{session_activity}"]
+
+    def test_last_keys_raises_when_tmux_cannot_answer(self, tmp_path):
+        """Callers treat a raise as "in use": never rest on missing evidence."""
+        def failing(command, **_kwargs):
+            raise subprocess.CalledProcessError(1, command)
+
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=failing)
+        with pytest.raises(subprocess.CalledProcessError):
+            runtime.last_keys()
+
 class TestAgentDetection:
     """has_descendant_process is the vulture's kill decision — cover it."""
 

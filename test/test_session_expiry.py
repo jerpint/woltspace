@@ -102,6 +102,46 @@ def test_garbage_config_means_never(tmp_path, monkeypatch):
         assert session_expiry.get_idle_timeout() is None
 
 
+def test_last_use_is_the_later_of_the_record_and_tmux():
+    """Use moves on every lodge write (last_activity) and on every attach or
+    keystroke in tmux (session_activity), keyed by the runtime's tmux name."""
+    record = {"name": "friend", "last_activity": 1000, "runtime": {"tmux_session_name": "tmux-friend"}}
+    assert session_expiry.last_use(record, {"tmux-friend": 900}) == 1000
+    assert session_expiry.last_use(record, {"tmux-friend": 1500}) == 1500
+    assert session_expiry.last_use({"name": "friend"}, {"friend": 700}) == 700
+
+
+def test_last_use_is_unknown_when_tmux_does_not_report_the_session():
+    """Unknown is in use: a session tmux does not list is never judged idle."""
+    record = {"name": "friend", "last_activity": 1000}
+    assert session_expiry.last_use(record, {"someone-else": 5}) is None
+
+
+def _held(until, status="running"):
+    return {"name": "friend", "status": status, "hold": {"until": until, "reason": "npm run dev", "since": 1}}
+
+
+def test_hold_active_reads_only_the_record():
+    now = 1000
+    assert session_expiry.hold_active(_held(None), now)  # forever
+    assert session_expiry.hold_active(_held(1001), now)
+    assert not session_expiry.hold_active(_held(1000), now)  # it ends at until
+    assert not session_expiry.hold_active(_held(999), now)
+    assert not session_expiry.hold_active({"name": "friend", "status": "running"}, now)
+
+
+def test_hold_counts_only_on_a_running_session():
+    assert not session_expiry.hold_active(_held(None, status="resting"), 1000)
+    assert not session_expiry.hold_active(_held(None, status="completed"), 1000)
+
+
+def test_a_malformed_hold_is_no_hold():
+    """Only a well-formed hold keeps a session up; garbage never means forever."""
+    for hold in ("yes", {"reason": "no until"}, {"until": "2099"}, {"until": True}, None, []):
+        record = {"name": "friend", "status": "running", "hold": hold}
+        assert not session_expiry.hold_active(record, 1000), hold
+
+
 def test_dead_iwcl_session_resumes_with_attribution(monkeypatch):
     monkeypatch.setattr(server_app, "deliver_message", Mock(return_value={"status": "session-dead"}))
     resumed = Mock(return_value={"name": "friend", "status": "resumed"})
