@@ -191,7 +191,10 @@ Slack. Text is not held to these lists.
 to litellm and the image generator.
 
 **Voice** — `OPENAI_API_KEY` is also the key that transcribes a voice note the
-human sends and speaks a message a wolt sends with `notify --speak`.
+human sends (by default: `woltspace.json` `transcription`, set with
+`woltspace transcription set`, picks any OpenAI-style endpoint, its model and
+the variable holding its key) and speaks a message a wolt sends with
+`notify --speak`.
 `OPENAI_TTS_MODEL` (default `gpt-4o-mini-tts`) and `OPENAI_TTS_VOICE` (default
 `alloy`) pick the model and the voice of the spoken message. Read by
 `server/notify.py`; each spoken message is one OpenAI API request,
