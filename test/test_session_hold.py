@@ -150,7 +150,7 @@ def test_a_dead_held_session_settles_without_its_hold(tmp_path, monkeypatch):
     from creatures import vulture
     registry = _registry(tmp_path, monkeypatch, hold=dict(HOLD), harness_session_id="conv-1", created_at=1)
     data = _stored(registry)
-    vulture._settle_dead(data, int(time.time()))
+    vulture._settle_dead(data, int(time.time()), "tmux-session-missing")
     registry._write("pal", NAME, data)
     stored = _stored(registry)
     assert stored["status"] == "resting"

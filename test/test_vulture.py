@@ -273,6 +273,264 @@ class TestZombieTmuxCleanup:
 
 
 # ---------------------------------------------------------------------------
+# Deaths settle under the session lock
+# ---------------------------------------------------------------------------
+
+class TestDeathsAreReCheckedUnderTheLock:
+    """The passes work from a snapshot taken at their start. A message can wake
+    a session in between (resume_session spawns a new tmux and writes running),
+    so each settle reads the record again under the session lock and asks the
+    runtime again: a woken session is never written resting while it runs."""
+
+    def test_a_session_woken_since_the_snapshot_is_not_settled(self, tmp_path):
+        from creatures.vulture import reap
+
+        _make_wolt_session(tmp_path, "testwolt", "woken", status="running")
+        runtime = MagicMock(); runtime.is_alive.return_value = True
+        with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
+             patch("creatures.vulture._tmux_sessions", return_value=set()), \
+             patch("creatures.vulture.get_runtime", return_value=runtime):
+            stats = reap()
+
+        assert stats["registry_reaped"] == []
+        assert _read_wolt_session(tmp_path, "testwolt", "woken")["status"] == "running"
+
+    def test_an_agent_revived_since_the_look_is_not_killed(self, tmp_path):
+        from creatures.vulture import reap
+
+        _make_wolt_session(tmp_path, "testwolt", "revived", status="running")
+        with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
+             patch("creatures.vulture._tmux_sessions", return_value={"revived"}), \
+             patch("creatures.vulture.session_has_agent_process", side_effect=[False, True]), \
+             patch("creatures.vulture._kill_tmux_session", return_value=True) as kill:
+            stats = reap()
+
+        kill.assert_not_called()
+        assert stats["tmux_killed"] == []
+        assert _read_wolt_session(tmp_path, "testwolt", "revived")["status"] == "running"
+
+    def test_a_leftover_resumed_since_the_look_is_not_killed(self, tmp_path):
+        from creatures.vulture import reap
+
+        _make_wolt_session(tmp_path, "testwolt", "back", status="reaped")
+
+        def resumed_meanwhile(_record):
+            data = _read_wolt_session(tmp_path, "testwolt", "back")
+            data["status"] = "running"
+            (tmp_path / "testwolt" / ".state" / "sessions" / "back.json").write_text(json.dumps(data))
+            return False
+
+        with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
+             patch("creatures.vulture._tmux_sessions", return_value={"back"}), \
+             patch("creatures.vulture.session_has_agent_process", side_effect=resumed_meanwhile), \
+             patch("creatures.vulture._kill_tmux_session", return_value=True) as kill:
+            reap()
+
+        kill.assert_not_called()
+
+    def test_a_message_right_after_the_settle_keeps_its_agent(self, tmp_path, monkeypatch):
+        """Pass 2 used to write resting, release the lock, then kill tmux. A
+        message in that gap read resting, revived the agent in the lingering
+        pane, and the kill took it down. The kill happens under the lock now,
+        before the write: a message that reads resting finds tmux gone and
+        wakes the session in a fresh one."""
+        import sessions
+        from contextlib import contextmanager
+        from creatures.vulture import reap
+
+        data = _make_wolt_session(tmp_path, "testwolt", "gap", status="running")
+        data["harness_session_id"] = "abc"
+        path = tmp_path / "testwolt" / ".state" / "sessions" / "gap.json"
+        path.write_text(json.dumps(data))
+        world = {"tmux": "old", "agent": None, "killed": [], "messaged": False}
+
+        def message_arrives():
+            # resume_session wakes a resting record in its lingering tmux if
+            # there is one, else in a new tmux.
+            current = json.loads(path.read_text())
+            if current["status"] != "resting":
+                return
+            world["messaged"] = True
+            if world["tmux"] == "old":
+                world["agent"] = "revived in the old tmux"
+            else:
+                world["tmux"], world["agent"] = "new", "fresh in a new tmux"
+            current["status"] = "running"
+            path.write_text(json.dumps(current))
+
+        real_lock = sessions.SessionRegistry._lock
+
+        @contextmanager
+        def lock_then_message(self, wolt, name):
+            with real_lock(self, wolt, name):
+                yield
+            if name == "gap" and not world["messaged"]:
+                message_arrives()
+
+        def kill(name):
+            world["killed"].append(world["agent"])
+            if world["tmux"] == "old":
+                world["tmux"] = None
+            return True
+
+        monkeypatch.setattr(sessions.SessionRegistry, "_lock", lock_then_message)
+        with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
+             patch("creatures.vulture._tmux_sessions", return_value={"gap"}), \
+             patch("creatures.vulture.session_has_agent_process", return_value=False), \
+             patch("creatures.vulture._kill_tmux_session", side_effect=kill):
+            reap()
+
+        assert world["messaged"]
+        assert world["killed"] == [None], f"the kill took down {world['killed']}"
+        assert world["agent"] == "fresh in a new tmux"
+        assert _read_wolt_session(tmp_path, "testwolt", "gap")["status"] == "running"
+
+    def test_a_zombie_whose_tmux_will_not_die_stays_running(self, tmp_path):
+        """As /rest: a failed stop is not a settle; the next pass tries again."""
+        from creatures.vulture import reap
+
+        _make_wolt_session(tmp_path, "testwolt", "stubborn", status="running")
+        with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
+             patch("creatures.vulture._tmux_sessions", return_value={"stubborn"}), \
+             patch("creatures.vulture.session_has_agent_process", return_value=False), \
+             patch("creatures.vulture._kill_tmux_session", return_value=False) as kill:
+            stats = reap()
+
+        kill.assert_called_once_with("stubborn")
+        assert stats["tmux_killed"] == []
+        assert _read_wolt_session(tmp_path, "testwolt", "stubborn")["status"] == "running"
+
+    def test_a_dead_held_session_settles_and_loses_its_hold(self, tmp_path):
+        """The hold gates idle rests only: the task it covered died with tmux."""
+        from creatures.vulture import reap
+
+        data = _make_wolt_session(tmp_path, "testwolt", "held-dead", status="running")
+        data.update(harness_session_id="abc", hold={"until": None, "reason": "dev server", "since": 1})
+        (tmp_path / "testwolt" / ".state" / "sessions" / "held-dead.json").write_text(json.dumps(data))
+        with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
+             patch("creatures.vulture._tmux_sessions", return_value=set()):
+            stats = reap()
+
+        assert "held-dead" in stats["registry_reaped"]
+        after = _read_wolt_session(tmp_path, "testwolt", "held-dead")
+        assert after["status"] == "resting"
+        assert "hold" not in after
+        assert after["rest_reason"] == "tmux-session-missing"
+
+
+# ---------------------------------------------------------------------------
+# Conversation ids never stamped (codex, opencode, hermes pick their own)
+# ---------------------------------------------------------------------------
+
+CODEX_ID = "01a0e464-dc51-7053-a4b5-0afe1fed6bb9"
+CODEX_START = 1790523810  # 2026-09-27T15:43:30Z
+CODEX_START_ISO = "2026-09-27T15:43:30Z"
+
+
+def _codex_session_without_id(wolts_dir: Path, monkeypatch, name: str, *,
+                              rollout: bool = True) -> None:
+    """A running codex session whose spawn-time discovery missed its id and,
+    unless told otherwise, the rollout codex wrote for it in the wolt's own
+    CODEX_HOME. No codex binary: recovery only reads these files."""
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(wolts_dir))
+    monkeypatch.setenv("CODEX_HOME", str(wolts_dir / "no-host-codex"))
+    data = _make_wolt_session(wolts_dir, "testwolt", name, status="running",
+                              created_at=CODEX_START)
+    data.update(harness="codex", dir=str(wolts_dir / "testwolt"))
+    (wolts_dir / "testwolt" / ".state" / "sessions" / f"{name}.json").write_text(json.dumps(data))
+    if rollout:
+        day = wolts_dir / "testwolt" / ".codex" / "sessions" / "2026" / "09" / "27"
+        day.mkdir(parents=True)
+        meta = {"type": "session_meta",
+                "payload": {"id": CODEX_ID, "timestamp": CODEX_START_ISO, "cwd": data["dir"]}}
+        (day / f"rollout-2026-09-27T15-43-30-{CODEX_ID}.jsonl").write_text(json.dumps(meta) + "\n")
+
+
+class TestRecoveredConversationIds:
+    """A dead session whose id was never stamped gets it recovered from the
+    engine's files first, as an idle rest does, so it rests instead of being
+    reaped: a message can still wake it."""
+
+    def test_tmux_gone_rests_with_the_recovered_id(self, tmp_path, monkeypatch):
+        from creatures.vulture import reap
+
+        _codex_session_without_id(tmp_path, monkeypatch, "codex-dead")
+        with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
+             patch("creatures.vulture._tmux_sessions", return_value=set()):
+            stats = reap()
+
+        assert "codex-dead" in stats["registry_reaped"]
+        after = _read_wolt_session(tmp_path, "testwolt", "codex-dead")
+        assert after["status"] == "resting"
+        assert after["harness_session_id"] == CODEX_ID
+        assert after["rest_reason"] == "tmux-session-missing"
+
+    def test_agent_gone_rests_with_the_recovered_id(self, tmp_path, monkeypatch):
+        from creatures.vulture import reap
+
+        _codex_session_without_id(tmp_path, monkeypatch, "codex-zombie")
+        with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
+             patch("creatures.vulture._tmux_sessions", return_value={"codex-zombie"}), \
+             patch("creatures.vulture.session_has_agent_process", return_value=False), \
+             patch("creatures.vulture._kill_tmux_session", return_value=True) as kill:
+            reap()
+
+        kill.assert_called_once_with("codex-zombie")
+        after = _read_wolt_session(tmp_path, "testwolt", "codex-zombie")
+        assert after["status"] == "resting"
+        assert after["harness_session_id"] == CODEX_ID
+        assert after["rest_reason"] == "agent-process-missing"
+
+    def test_nothing_to_recover_is_still_reaped(self, tmp_path, monkeypatch):
+        from creatures.vulture import reap
+
+        _codex_session_without_id(tmp_path, monkeypatch, "codex-empty", rollout=False)
+        with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
+             patch("creatures.vulture._tmux_sessions", return_value=set()):
+            reap()
+
+        after = _read_wolt_session(tmp_path, "testwolt", "codex-empty")
+        assert after["status"] == "reaped"
+        assert not after.get("harness_session_id")
+
+    def test_recovery_runs_before_the_session_lock(self, tmp_path, monkeypatch):
+        """claim_resume_id holds the lodge-wide recovery lock, which resume_session
+        and the id poller take before the session lock: never inside it."""
+        import sessions
+        from creatures import vulture
+        from contextlib import contextmanager
+
+        _codex_session_without_id(tmp_path, monkeypatch, "codex-order")
+        held = []
+        real_lock = sessions.SessionRegistry._lock
+
+        @contextmanager
+        def tracking_lock(self, *args):
+            with real_lock(self, *args):
+                held.append(True)
+                try:
+                    yield
+                finally:
+                    held.pop()
+
+        seen = []
+        real_recover = sessions.recover_resume_id
+
+        def recover(data, taken):
+            seen.append(bool(held))
+            return real_recover(data, taken)
+
+        monkeypatch.setattr(sessions.SessionRegistry, "_lock", tracking_lock)
+        monkeypatch.setattr(sessions, "recover_resume_id", recover)
+        with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
+             patch("creatures.vulture._tmux_sessions", return_value=set()):
+            vulture.reap()
+
+        assert seen and not any(seen), "recovery ran inside the session lock"
+        assert _read_wolt_session(tmp_path, "testwolt", "codex-order")["status"] == "resting"
+
+
+# ---------------------------------------------------------------------------
 # The first pass waits for the lodge API
 # ---------------------------------------------------------------------------
 

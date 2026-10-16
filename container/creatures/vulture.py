@@ -11,11 +11,16 @@ It does three things on each pass:
      lodge write: a message in or out, a wake, a page push) and tmux's
      session_activity (an attach or a keystroke); output is not use. A wolt
      keeps a session up for a background task with `woltspace session hold`.
-  1. Reconciles the registry — marks "running" sessions as "reaped"
-     if their tmux session is gone.
+  1. Reconciles the registry — a "running" session whose tmux session is
+     gone rests if it can resume, and is marked "reaped" if it cannot. An
+     engine that picks its own conversation id (codex, opencode, hermes)
+     may never have had it stamped; it is recovered from the engine's
+     files first. A hold does not keep a dead session.
   2. Kills zombie tmux sessions — lodge sessions where the agent has
      exited but the tmux session lingers. A tmux session the registry
      does not know is never touched: natively it is the owner's own.
+  Passes 1 and 2 settle under the session lock, after a second look, so a
+  session a message woke in the meantime is never written resting.
 
 Config: sessions.idle_timeout_seconds in woltspace.json (default: 1 day; null = never).
 Logs:   .space/vulture/vulture.log
@@ -37,7 +42,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from env_compat import get_env
-from sessions import SessionRegistry, recover_resume_id, stored_resume_id, taken_resume_ids
+from sessions import (
+    SessionRegistry, claim_resume_id, recover_resume_id, stamp_resume_id,
+    stored_resume_id, taken_resume_ids,
+)
 from harnesses import session_has_agent_process
 from paths import space_vulture_dir
 from session_runtime import RuntimeHandle, get_runtime
@@ -55,6 +63,9 @@ GRACE_PERIOD_SECONDS = 120
 
 # Don't kill the main tmux session
 PROTECTED_SESSIONS = {"main"}
+
+# Records already done whose tmux may linger; pass 2 cleans that tmux up.
+LEFTOVER_STATUSES = ("reaped", "orphaned", "completed", "failed", "resting")
 
 DEFAULT_INTERVAL = 600  # 10 minutes
 
@@ -165,20 +176,57 @@ def _wait_for_api(limit: float = API_WAIT_SECONDS, step: float = 2.0,
     return True
 
 
-def _settle_dead(data: dict, now: int) -> str:
+def _settle_dead(data: dict, now: int, reason: str) -> str:
     """Mark a session whose runtime is gone. One that can come back rests.
 
     "resting" sessions wake when someone messages them; "reaped" ones refuse.
     A dead session that still has its conversation id is no different from
-    one the vulture rested for being idle, so it gets the same status.
+    one the vulture rested for being idle, so it gets the same status. A hold
+    does not keep it: the task it covered died with the session, and the
+    registry drops the hold on this write.
     """
     status = "resting" if stored_resume_id(data) else "reaped"
     data["status"] = status
     if status == "resting":
         data["rested_at"] = now
+        data["rest_reason"] = reason
     else:
         data["finished_at"] = now
     data["last_activity"] = now
+    return status
+
+
+def _settle_if_still_dead(reg: SessionRegistry, wolt: str, name: str, now: int,
+                          reason: str, still_dead, stop=None) -> str | None:
+    """Settle one session under its lock, if it is still running and still dead.
+
+    The pass works from a snapshot taken at its start; a message can resume a
+    session in the meantime (resume_session spawns a new tmux and writes
+    running). Read again under the lock and ask the runtime again, so a woken
+    session is never written resting while it runs. Returns the new status,
+    or None when the session was left alone.
+
+    `stop` (pass 2's tmux kill) runs in the same critical section, before the
+    write, as /rest does: a message that reads resting then finds tmux gone
+    and wakes the session in a fresh one, instead of reviving the agent in a
+    pane about to be killed. A failed stop leaves the session running.
+
+    A session without a stored conversation id first gets one recovered from
+    its engine's files, as an idle rest does, so it rests instead of being
+    reaped. Before the session lock, never inside it: claim_resume_id holds the
+    lodge-wide recovery lock, which resume_session takes first too.
+    """
+    data = reg.get(name, wolt=wolt, check_alive=False)
+    if data is not None and data.get("status") == "running" and not stored_resume_id(data):
+        claim_resume_id(reg, data, lambda d: stamp_resume_id(reg, wolt, name, d["harness_session_id"]))
+    with reg._lock(wolt, name):
+        current = reg._read(wolt, name)
+        if current is None or current.get("status") != "running" or not still_dead(current):
+            return None
+        if stop is not None and not stop():
+            return None
+        status = _settle_dead(current, now, reason)
+        reg._write(wolt, name, current)
     return status
 
 
@@ -287,8 +335,12 @@ def reap(dry_run: bool = False) -> dict:
                 if dry_run:
                     log(f"[dry-run] would reap registry: {name}")
                 else:
-                    status = _settle_dead(data, now)
-                    reg._write(wolt_name, name, data)
+                    status = _settle_if_still_dead(
+                        reg, wolt_name, name, now, "tmux-session-missing",
+                        lambda current: not get_runtime().is_alive(RuntimeHandle.from_record(current)),
+                    )
+                    if status is None:
+                        continue
                     log(f"🦅 {status} registry: {name}")
                 stats["registry_reaped"].append(name)
 
@@ -310,22 +362,33 @@ def reap(dry_run: bool = False) -> dict:
 
         if reg_data and reg_data.get("status") == "running":
             wolt_name = reg_data.get("wolt", "")
-            # The agent exited but tmux lingers — kill tmux, rest or reap the record
+            # The agent exited but tmux lingers — kill tmux, rest or reap the record.
+            # The agent is looked for again under the lock: a resume can revive it
+            # in this very pane between the look above and the kill.
             if dry_run:
                 log(f"[dry-run] would kill zombie tmux + reap: {session_name}")
             else:
-                status = _settle_dead(reg_data, now)
-                if wolt_name:
-                    reg._write(wolt_name, session_name, reg_data)
-                _kill_tmux_session(session_name)
+                status = _settle_if_still_dead(
+                    reg, wolt_name, session_name, now, "agent-process-missing",
+                    lambda current: session_has_agent_process(current) is False,
+                    stop=lambda: _kill_tmux_session(session_name),
+                )
+                if status is None:
+                    continue
                 log(f"🦅 killed zombie tmux, {status}: {session_name}")
             stats["tmux_killed"].append(session_name)
-        elif reg_data and reg_data.get("status") in ("reaped", "orphaned", "completed", "failed", "resting"):
-            # Already reaped/done but tmux still exists — clean up tmux
+        elif reg_data and reg_data.get("status") in LEFTOVER_STATUSES:
+            # Already reaped/done but tmux still exists — clean up tmux, unless
+            # a resume made the record running again since it was read.
             if dry_run:
                 log(f"[dry-run] would kill leftover tmux: {session_name}")
             else:
-                _kill_tmux_session(session_name)
+                wolt_name = reg_data.get("wolt", "")
+                with reg._lock(wolt_name, session_name):
+                    current = reg._read(wolt_name, session_name)
+                    if not current or current.get("status") not in LEFTOVER_STATUSES:
+                        continue
+                    _kill_tmux_session(session_name)
                 log(f"🦅 killed leftover tmux: {session_name}")
             stats["tmux_killed"].append(session_name)
         # A session with no registry entry is not the lodge's. Natively the
