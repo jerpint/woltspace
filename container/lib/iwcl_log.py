@@ -1,7 +1,10 @@
 """One lodge-wide log of wolt-to-wolt traffic: `.space/logs/iwcl.jsonl`.
 
 One JSON line per message attempt or wolt-started spawn, written after the
-outcome is known. Readers tail the file: a line is complete once it ends in a
+outcome is known. Wolt-to-wolt traffic comes from the control plane; a
+human's chat message (Telegram, Slack) from its adapter, with `from_human`
+and `via` set. Writers may be separate processes, so each line is written
+under an exclusive flock. Readers tail the file: a line is complete once it ends in a
 newline, and at ROTATE_BYTES the file is renamed to `iwcl.jsonl.1` (one
 generation kept), so a follower reopens on rename.
 
@@ -10,6 +13,7 @@ message text) or `off`. Sender fields are what the sender claimed; nothing
 here authenticates them. Logging never fails a delivery.
 """
 
+import fcntl
 import json
 import os
 import threading
@@ -33,9 +37,17 @@ def log_path(wolts_dir: Path) -> Path:
     return Path(wolts_dir) / ".space" / "logs" / "iwcl.jsonl"
 
 
-def record(wolts_dir: Path, event: str, *, from_wolt: str = "", from_session: str = "",
+def record(wolts_dir: Path, event: str, **fields) -> None:
+    """Append one line; never raises (logging never fails a delivery)."""
+    try:
+        _record(wolts_dir, event, **fields)
+    except Exception as exc:
+        print(f"[iwcl-log] not written: {exc}")
+
+
+def _record(wolts_dir: Path, event: str, *, from_wolt: str = "", from_session: str = "",
            to_wolt: str = "", to_session: str = "", text: str = "", status: str = "",
-           error: str = "") -> None:
+           error: str = "", from_human: str = "", via: str = "") -> None:
     mode = log_mode()
     if mode == "off":
         return
@@ -46,6 +58,8 @@ def record(wolts_dir: Path, event: str, *, from_wolt: str = "", from_session: st
         "event": event,
         "from_wolt": from_wolt or "",
         "from_session": from_session or "",
+        "from_human": from_human or "",
+        "via": via or "",
         "claimed": True,
         "to_wolt": to_wolt or "",
         "to_session": to_session or "",
@@ -57,9 +71,11 @@ def record(wolts_dir: Path, event: str, *, from_wolt: str = "", from_session: st
         line["error"] = str(error)
     data = (json.dumps(line, ensure_ascii=False) + "\n").encode("utf-8")
     path = log_path(wolts_dir)
-    try:
-        with _lock:
-            path.parent.mkdir(parents=True, exist_ok=True)
+    with _lock:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock_fd = os.open(path.with_name(path.name + ".lock"), os.O_WRONLY | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
             try:
                 if path.stat().st_size + len(data) > ROTATE_BYTES:
                     os.replace(path, path.with_name(path.name + ".1"))
@@ -70,5 +86,5 @@ def record(wolts_dir: Path, event: str, *, from_wolt: str = "", from_session: st
                 os.write(fd, data)
             finally:
                 os.close(fd)
-    except Exception as exc:  # never fail the delivery over the log
-        print(f"[iwcl-log] not written: {exc}")
+        finally:
+            os.close(lock_fd)

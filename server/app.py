@@ -48,7 +48,6 @@ from .config import (
     WOLTSPACE_DIR,
     load_dotenv,
 )
-from . import iwcl_log
 from . import tunnel as tunnel_mgr
 from .notify import AttachmentError, NoNotificationTarget, send_notification
 from .speech import SpeechError
@@ -109,6 +108,7 @@ from apps import (
     unshare_app,
 )
 from sites import ensure_site, site_dir
+import iwcl_log
 import wolfcore
 from site_shell import inject_shell, load_site_config, memory_payload, shell_manifest, shell_tags, shell_wanted
 from .state import (
@@ -1154,16 +1154,22 @@ async def wolt_message(name: str, request: Request):
         resting = [s for s in registry.list(wolt=safe_wolt) if s.get("status") == "resting"]
         resting.sort(key=lambda s: (s.get("last_activity") or 0, s.get("created_at") or 0), reverse=True)
         session_id = resting[0]["name"] if resting else None
-    if not session_id:
-        return JSONResponse(
-            {"ok": False, "status": "no-session", "wolt": safe_wolt,
-             "error": f"no live session for wolt '{safe_wolt}'"},
-            status_code=404,
-        )
     body = await request.json()
     text = body.get("text")
     if not text:
         return JSONResponse({"error": "text required"}, status_code=400)
+    if not session_id:
+        error = f"no live session for wolt '{safe_wolt}'"
+        await asyncio.to_thread(
+            iwcl_log.record, WOLTS_DIR, "message",
+            from_wolt=body.get("from_wolt", "") or "",
+            from_session=body.get("from_session", "") or "",
+            to_wolt=safe_wolt, text=text, status="no-session", error=error,
+        )
+        return JSONResponse(
+            {"ok": False, "status": "no-session", "wolt": safe_wolt, "error": error},
+            status_code=404,
+        )
     result = await _deliver_or_resume(session_id, text, body)
     if isinstance(result, dict):
         result["wolt"] = safe_wolt

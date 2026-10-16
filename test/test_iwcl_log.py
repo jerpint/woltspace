@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from server import app as app_module
-from server import iwcl_log
+import iwcl_log
 
 
 async def _request(method, path, **kwargs):
@@ -117,3 +117,15 @@ def test_a_broken_log_never_fails_the_delivery(wolts, monkeypatch):
     (wolts / ".space" / "logs").write_text("not a directory")
     response = _send(monkeypatch, "delivered", from_wolt="softie")
     assert response.status_code == 200
+
+
+def test_a_send_to_a_wolt_with_no_live_session_is_logged(wolts, monkeypatch):
+    import sessions
+
+    monkeypatch.setattr(app_module, "resolve_active_session", lambda *_a, **_k: None)
+    monkeypatch.setattr(sessions.SessionRegistry, "list", lambda self, **_k: [], raising=False)
+    response = asyncio.run(_request("POST", "/wolts/nobody/message", json={"text": "anyone?", "from_wolt": "softie"}))
+    assert response.status_code == 404
+    [line] = _lines(wolts)
+    assert (line["to_wolt"], line["to_session"], line["status"]) == ("nobody", "", "no-session")
+    assert line["text"] == "anyone?" and line["error"]
