@@ -508,8 +508,9 @@ class TestResumeWaitsForInput:
         assert lodge.events == [
             ("age", PANE, 0), ("sleep", 3),
             ("age", PANE, 3), ("probe", PANE, True),
-            ("paste", PANE),
-            ("lock",),  # the record update, after the paste
+            # The paste happens under the session lock, so a rest can't stop
+            # the pane under it; after the wait, which never runs under it.
+            ("lock",), ("paste", PANE),
         ]
         assert [text for _pane, text, _settle in runtime.pastes] == ["fix the bug"]
 
@@ -522,8 +523,7 @@ class TestResumeWaitsForInput:
         assert lodge.events == [
             ("age", PANE, 1), ("sleep", 2),
             ("age", PANE, 3), ("probe", PANE, True),
-            ("paste", PANE),
-            ("lock",),
+            ("lock",), ("paste", PANE),
         ]
 
     def test_a_revived_agent_under_an_old_record_waits_on_its_own_age(self, lodge):
@@ -545,7 +545,7 @@ class TestResumeWaitsForInput:
         res = sessions.resume_session(NAME, "fix the bug")
         assert res["status"] == "delivered"
         assert lodge.events == [
-            ("age", PANE, 60), ("probe", PANE, True), ("paste", PANE), ("lock",),
+            ("age", PANE, 60), ("probe", PANE, True), ("lock",), ("paste", PANE),
         ]
 
     def test_an_old_cooked_agent_is_pasted_into_and_says_so(self, lodge, capsys):
@@ -555,7 +555,7 @@ class TestResumeWaitsForInput:
 
         assert res["status"] == "delivered"
         assert lodge.events == [
-            ("age", PANE, 60), ("probe", PANE, False), ("paste", PANE), ("lock",),
+            ("age", PANE, 60), ("probe", PANE, False), ("lock",), ("paste", PANE),
         ]
         assert [text for _pane, text, _settle in runtime.pastes] == ["fix the bug"]
         log = capsys.readouterr().err.strip().splitlines()
@@ -565,14 +565,14 @@ class TestResumeWaitsForInput:
         lodge.boot(("agent", None))
         res = sessions.resume_session(NAME, "fix the bug")
         assert res["status"] == "delivered"
-        assert lodge.events[:3] == [("age", PANE, 60), ("probe", PANE, None), ("paste", PANE)]
+        assert lodge.events[:4] == [("age", PANE, 60), ("probe", PANE, None), ("lock",), ("paste", PANE)]
         assert len(capsys.readouterr().err.strip().splitlines()) == 1
 
     def test_an_unreadable_age_pastes_at_once_and_says_so(self, lodge, capsys):
         lodge.boot(("agent", True), born=None)
         res = sessions.resume_session(NAME, "fix the bug")
         assert res["status"] == "delivered"
-        assert lodge.events[:2] == [("age", PANE, None), ("paste", PANE)]
+        assert lodge.events[:3] == [("age", PANE, None), ("lock",), ("paste", PANE)]
         assert len(capsys.readouterr().err.strip().splitlines()) == 1
 
     def test_a_booting_session_is_waited_for_not_relaunched(self, lodge):

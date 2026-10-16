@@ -1877,6 +1877,34 @@ def start_session(
 # Session resume — shared entry point for bot + API
 # ---------------------------------------------------------------------------
 
+def _paste_into_live_agent(registry: "SessionRegistry", wolt: str, name: str,
+                           seen_status: str, harness: str, prompt: str) -> bool:
+    """Deliver a resume prompt to the agent found running, under the session lock.
+
+    The look that found the agent was not locked. A rest takes this lock, stops
+    the runtime and writes `resting`; a paste after that sends the message into
+    a dead pane and writes `running` over a stopped session. So re-read under
+    the lock and paste only while the record still has the status we saw and
+    the agent is still there (the shape deliver_message has). False when the
+    session changed under us: the caller wakes it instead.
+    """
+    with registry._lock(wolt, name):
+        current = registry._read(wolt, name)
+        if current is None or current.get("status") != seen_status:
+            return False
+        target = resolve_agent_handle(current, harness, include_launching=False)
+        if target is None:
+            return False
+        if prompt:
+            _tmux_paste(target, _guard_paste_text(harness, prompt),
+                        settle=get_harness(harness).get("paste_settle", 0.0))
+        current["status"] = "running"
+        current["runtime"] = target.to_record()
+        current["last_activity"] = int(time.time())  # a message is use
+        registry._write(wolt, name, current)
+    return True
+
+
 def resume_session(name: str, prompt: str = "") -> dict:
     """Resume an existing Claude Code session.
 
@@ -1940,26 +1968,42 @@ def resume_session(name: str, prompt: str = "") -> dict:
         # deliver_message path, which preserves newlines for paste-aware TUIs so
         # the multi-line attributed message renders intact — hence the flatten
         # lives at the call site, not in _guard_paste_text.
-        if prompt:
-            ready = _await_input_ready(target, harness)
-            if ready is None:
-                raise ResumeFailed(
-                    f"session '{name}': the {harness} agent is still booting — it "
-                    f"was not taking input after {INPUT_READY_TIMEOUT}s, so the "
-                    f"message was not sent"
-                )
-            target = ready
-            _tmux_paste(target, _guard_paste_text(harness, prompt.replace("\n", " ")),
-                        settle=get_harness(harness).get("paste_settle", 0.0))
-        registry.update(
-            name,
-            wolt=wolt,
-            status="running",
-            runtime=target.to_record(),
-        )
-        detail = ("agent booting, nothing to send" if booting and not prompt
-                  else "agent running, message sent")
-        return {"name": name, "url": session_url, "status": "delivered", "detail": detail}
+        if booting and not prompt:
+            # Nothing to paste, and nothing to relaunch: the agent is on its way.
+            registry.update(name, wolt=wolt, status="running", runtime=target.to_record())
+            return {"name": name, "url": session_url, "status": "delivered",
+                    "detail": "agent booting, nothing to send"}
+        # Wait for the agent to take input before the session lock, never under
+        # it: the wait can run INPUT_READY_TIMEOUT, and a rest takes the same
+        # lock. _paste_into_live_agent finds the pane again under the lock.
+        if prompt and _await_input_ready(target, harness) is None:
+            raise ResumeFailed(
+                f"session '{name}': the {harness} agent is still booting — it "
+                f"was not taking input after {INPUT_READY_TIMEOUT}s, so the "
+                f"message was not sent"
+            )
+        if _paste_into_live_agent(registry, wolt, name, data.get("status"), harness,
+                                  prompt.replace("\n", " ")):
+            return {"name": name, "url": session_url, "status": "delivered",
+                    "detail": "agent running, message sent"}
+        # A rest (or a stop) took the lock between our look and the paste and
+        # stopped the runtime. Look again, and wake the session the way a
+        # resting one wakes: the message goes in as the resume prompt. If the
+        # pane has an agent again, or a launching one (someone else woke it in
+        # the meantime), leave it alone: relaunching would paste the resume
+        # command into an agent that is booting.
+        data = registry.get(name, wolt=wolt, check_alive=False)
+        if data is None:
+            raise ValueError(f"session '{name}' not found in registry")
+        tmux_alive = _tmux_alive(data)
+        target = _runtime_handle(data)
+        agent_running = False
+        if tmux_alive and resolve_agent_handle(data, harness, include_launching=True) is not None:
+            raise ResumeFailed(
+                f"session '{name}' changed while the message was on its way "
+                f"(now {data.get('status')!r} with its agent running or "
+                f"booting); nothing was sent — retry"
+            )
 
     # A record whose workdir does not exist on this host was written by a
     # different runtime (container vs native share a migrated data root).

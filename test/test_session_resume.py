@@ -609,3 +609,102 @@ def test_resume_replaces_a_missing_agent_pane_without_touching_user_layout(
         assert runtime.has_descendant_process(replacement, {"cat"}) is True
     finally:
         runtime.stop(RuntimeHandle(name, name))
+
+
+class TestResumeRacesARest:
+    """resume_session looks for the agent without the session lock, then
+    pastes. A rest takes that lock, stops tmux and writes resting in between.
+    The paste goes under the lock, after a second look, so the message is
+    never pasted into a pane being stopped: it wakes the session instead."""
+
+    NAME = "testwolt-chompy-dam-abc123"
+
+    def _race(self, wolt_env, monkeypatch, *, after):
+        """Run resume_session until the agent is ready, then hold the lock and
+        apply `after(registry, phase)` before letting the paste go on."""
+        import sessions
+        import threading
+
+        registry = sessions.SessionRegistry(wolt_env)
+        phase = {"now": "agent"}
+
+        def resolve(target, harness, include_launching=False):
+            if phase["now"] == "agent":
+                return _agent_in("%7")
+            if phase["now"] == "booting" and include_launching:
+                return _agent_in("%9")
+            return None
+
+        monkeypatch.setattr(sessions, "resolve_agent_handle", resolve)
+        monkeypatch.setattr(sessions, "_tmux_alive", lambda _s: phase["now"] != "rested")
+        ready = threading.Event()
+
+        def await_ready(target, harness, *args, **kwargs):
+            ready.set()
+            return target
+
+        monkeypatch.setattr(sessions, "_await_input_ready", await_ready)
+        pastes = []
+        monkeypatch.setattr(sessions, "_tmux_paste", lambda target, text, settle=0.0: pastes.append((target, text)))
+        outcome = {}
+
+        def resume():
+            try:
+                outcome["result"] = sessions.resume_session(self.NAME, "hello")
+            except Exception as exc:  # noqa: BLE001 - reported below
+                outcome["error"] = exc
+
+        worker = threading.Thread(target=resume, daemon=True)
+        with registry._lock("testwolt", self.NAME):
+            worker.start()
+            assert ready.wait(5), "resume never found the agent ready"
+            after(registry, phase)
+        worker.join(10)
+        assert not worker.is_alive()
+        return registry, pastes, outcome
+
+    @patch("sessions.subprocess.run")
+    def test_a_rest_that_won_the_race_turns_the_paste_into_a_wake(
+            self, mock_run, wolt_env, monkeypatch, agent_comes_up):
+        def rest(registry, phase):
+            data = registry._read("testwolt", self.NAME)
+            data["status"] = "resting"
+            registry._write("testwolt", self.NAME, data)
+            phase["now"] = "rested"
+
+        registry, pastes, outcome = self._race(wolt_env, monkeypatch, after=rest)
+        assert "error" not in outcome, outcome
+        assert pastes == [], "the message was pasted into a session being stopped"
+        assert outcome["result"]["status"] == "respawned"
+        spawned = [c for c in mock_run.call_args_list if "new-session" in str(c)]
+        assert len(spawned) == 1 and "--resume" in str(spawned[0])
+        assert registry._read("testwolt", self.NAME)["status"] == "running"
+
+    @patch("sessions.subprocess.run")
+    def test_a_session_woken_again_meanwhile_is_not_relaunched_over(
+            self, mock_run, wolt_env, monkeypatch, agent_comes_up):
+        """Rested and woken by someone else before the paste: the record says
+        running, but only the new launcher is up. Relaunching would paste
+        `run-session.sh --resume` into that booting pane: refuse instead."""
+        def rested_and_woken(registry, phase):
+            phase["now"] = "booting"
+
+        registry, pastes, outcome = self._race(wolt_env, monkeypatch, after=rested_and_woken)
+        assert pastes == []
+        assert not [c for c in mock_run.call_args_list if "new-session" in str(c) or "respawn" in str(c)]
+        from sessions import ResumeFailed
+        assert isinstance(outcome.get("error"), ResumeFailed)
+        assert "retry" in str(outcome["error"])
+
+    @patch("sessions.subprocess.run")
+    @patch("sessions.resolve_agent_handle", return_value=_agent_in("%7"))
+    @patch("sessions._tmux_alive", return_value=True)
+    def test_a_pasted_message_is_use(self, mock_alive, mock_agent, mock_run, wolt_env):
+        from sessions import resume_session, SessionRegistry
+        reg = SessionRegistry(wolt_env)
+        data = reg._read("testwolt", self.NAME)
+        data["last_activity"] = 1000
+        reg._write("testwolt", self.NAME, data)
+        before = int(time.time())
+        resume_session(self.NAME, "hello")
+        assert reg._read("testwolt", self.NAME)["last_activity"] >= before

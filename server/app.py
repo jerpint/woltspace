@@ -665,7 +665,9 @@ async def post_current(request: Request):
     body = await request.json()
     url = body.get("url")
     if url:
-        set_current_url(url, session, body.get("port", 7777))
+        # set_viewport writes the record under the session's flock, which a rest
+        # holds while it stops tmux: never wait for it on the event loop.
+        await asyncio.to_thread(set_current_url, url, session, body.get("port", 7777))
         log_view(url, body.get("title"))
     return {"url": get_current_url(session)}
 
