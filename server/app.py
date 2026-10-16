@@ -48,6 +48,7 @@ from .config import (
     WOLTSPACE_DIR,
     load_dotenv,
 )
+from . import iwcl_log
 from . import tunnel as tunnel_mgr
 from .notify import AttachmentError, NoNotificationTarget, send_notification
 from .speech import SpeechError
@@ -863,6 +864,35 @@ async def memory_read(request: Request):
 # --- Session messaging ---
 
 async def _deliver_or_resume(safe: str, text: str, body: dict):
+    outcome = await _deliver_or_resume_now(safe, text, body)
+    await asyncio.to_thread(_log_iwcl_message, safe, text, body, outcome)
+    return outcome
+
+
+def _log_iwcl_message(safe: str, text: str, body: dict, outcome) -> None:
+    """One `.space/logs/iwcl.jsonl` line for this attempt, after its outcome."""
+    try:
+        if isinstance(outcome, JSONResponse):
+            detail = json.loads(outcome.body or b"{}")
+        else:
+            detail = dict(outcome)
+        from sessions import SessionRegistry
+        target = SessionRegistry(WOLTS_DIR).get(safe, check_alive=False) or {}
+        iwcl_log.record(
+            WOLTS_DIR, "message",
+            from_wolt=body.get("from_wolt", "") or "",
+            from_session=body.get("from_session", "") or "",
+            to_wolt=target.get("wolt", ""),
+            to_session=safe,
+            text=text,
+            status=detail.get("status") or ("delivered" if detail.get("ok") else "failed"),
+            error=detail.get("error", "") if not detail.get("ok") else "",
+        )
+    except Exception as exc:
+        print(f"[iwcl-log] not written: {exc}")
+
+
+async def _deliver_or_resume_now(safe: str, text: str, body: dict):
     result = await asyncio.to_thread(
         deliver_message,
         safe,
@@ -1275,6 +1305,14 @@ async def session_new_lodge(request: Request):
         # Site auto-start + viewport URL handled by start_session()
         print(f"[sessions/lodge] spawned {result['name']} for {wolt}")
         await asyncio.to_thread(_touch_origin, body.get("from_session", "") or "")
+        if body.get("from_wolt"):
+            await asyncio.to_thread(
+                iwcl_log.record, WOLTS_DIR, "spawn",
+                from_wolt=body.get("from_wolt", "") or "",
+                from_session=body.get("from_session", "") or "",
+                to_wolt=wolt, to_session=result.get("name", ""),
+                text=body.get("prompt", "") or "", status="started",
+            )
         return result
     except PermissionError as e:
         return JSONResponse({"error": str(e)}, status_code=403)
