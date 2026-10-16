@@ -68,7 +68,7 @@ from sessions import (
     wolt_harness, ResumeUnavailable, ResumeFailed, HarnessNotInstalled,
     stored_resume_id, recover_resume_id, taken_resume_ids, claim_resume_id,
 )
-from session_expiry import get_idle_timeout, set_idle_timeout
+from session_expiry import get_idle_timeout, hold_active, last_use, set_idle_timeout
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
 from execution_policy import AutoGrantStore, POLICY_VERSION
@@ -925,43 +925,54 @@ async def session_message(session_id: str, request: Request):
 
 
 def _rest_session_locked(safe: str, idle_since: int):
-    """Verify and stop one session without blocking the server event loop."""
-    from sessions import SessionRegistry
+    """Verify and stop one idle session without blocking the server event loop.
+
+    The authority judges the rule itself, under the session lock: the session
+    is running, can come back, holds nothing, and nobody has used it since
+    idle_since or for the whole window.
+    """
+    from sessions import SessionRegistry, stamp_resume_id
     registry = SessionRegistry(WOLTS_DIR)
     data = registry.get(safe, check_alive=False)
     if data is None:
         return JSONResponse({"error": "session not found"}, status_code=404)
     wolt = data.get("wolt", "")
+    # Resting must be reversible: recover a missing id first. Before the session
+    # lock, never inside it: claim_resume_id holds the lodge-wide recovery lock,
+    # which resume_session and the id poller take before the session lock.
+    if data.get("status") == "running" and not stored_resume_id(data):
+        claim_resume_id(registry, data, lambda d: stamp_resume_id(
+            registry, wolt, safe, d["harness_session_id"]))
     with registry._lock(wolt, safe):
         data = registry.get(safe, wolt=wolt, check_alive=False)
         if data is None:
             return JSONResponse({"error": "session not found"}, status_code=404)
         if data.get("status") != "running":
             return {"ok": True, "status": data.get("status"), "session": safe}
-        # Resting must be reversible: stamp a recoverable id, or refuse.
-        # (we already hold this session's lock, so persist with the raw write)
-        if not claim_resume_id(registry, data, lambda d: registry._write(wolt, safe, d)):
+        if not stored_resume_id(data):
             return JSONResponse({"error": "session has no conversation to resume; not resting it"}, status_code=409)
-        handle = RuntimeHandle.from_record(data)
-        try:
-            last_output = get_runtime().last_outputs().get(handle.tmux_session_name)
-        except Exception:
-            last_output = None
-        if last_output is None:
-            return JSONResponse({"error": "session activity could not be verified"}, status_code=409)
         now = int(time.time())
-        if last_output > idle_since:
-            return JSONResponse({"error": "session became active; rest aborted"}, status_code=409)
+        if hold_active(data, now):
+            return JSONResponse({"error": "session is held; not resting it"}, status_code=409)
+        try:
+            used = last_use(data, get_runtime().last_keys())
+        except Exception:
+            used = None
+        if used is None:
+            return JSONResponse({"error": "session activity could not be verified"}, status_code=409)
+        if used > idle_since:
+            return JSONResponse({"error": "session was used since; rest aborted"}, status_code=409)
         # The authority judges the quiet window itself, never the caller. This
-        # also closes the same-second gap: output in the second the vulture
+        # also closes the same-second gap: use in the second the vulture
         # looked is "now", far inside any window.
         timeout = get_idle_timeout()
-        if timeout is None or now - last_output < timeout:
+        if timeout is None or now - used < timeout:
             return JSONResponse({"error": "session is not idle long enough; rest aborted"}, status_code=409)
-        if not get_runtime().stop(handle):
+        if not get_runtime().stop(RuntimeHandle.from_record(data)):
             return JSONResponse({"error": "session could not be stopped; still running"}, status_code=409)
         data["status"] = "resting"
         data["rested_at"] = now
+        data["rest_reason"] = "idle"
         registry._write(wolt, safe, data)
         return {"ok": True, "status": "resting", "session": safe, "rested_at": now}
 
@@ -976,7 +987,7 @@ async def rest_session(session_id: str, request: Request):
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "JSON object body required"}, status_code=400)
-    # The pane's last-output time the caller judged idle; a newer one aborts.
+    # The last use the caller judged idle; a newer one aborts.
     idle_since = body.get("idle_since") if isinstance(body, dict) else None
     if (not isinstance(idle_since, int) or isinstance(idle_since, bool)
             or not 0 < idle_since <= time.time()):
@@ -1227,10 +1238,10 @@ async def session_new_slack(request: Request):
 
 # --- Sessions list ---
 
-def _last_outputs() -> dict[str, int]:
-    """tmux's last-output time per session; empty when tmux cannot say."""
+def _last_keys() -> dict[str, int]:
+    """tmux's last client input per session; empty when tmux cannot say."""
     try:
-        return get_runtime().last_outputs()
+        return get_runtime().last_keys()
     except Exception:
         return {}
 
@@ -1245,14 +1256,23 @@ async def list_sessions(view: str = ""):
     else:
         sessions = reg.list()
     timeout = get_idle_timeout()
-    last_outputs = await asyncio.to_thread(_last_outputs) if timeout is not None else {}
+    keys = await asyncio.to_thread(_last_keys) if timeout is not None else {}
     now = int(time.time())
     for session in sessions:
         session["idle_timeout_seconds"] = timeout
-        observed = last_outputs.get(RuntimeHandle.from_record(session).tmux_session_name)
-        if timeout is not None and isinstance(observed, int) and session.get("status") == "running":
-            session["idle_seconds"] = max(0, now - observed)
-            session["closes_in_seconds"] = max(0, timeout - session["idle_seconds"])
+        # Only a hold in force is shown; one that has ended waits for the next write to drop it.
+        held = hold_active(session, now)
+        hold = session.pop("hold", None)
+        if held:
+            session["hold"] = {k: hold.get(k) for k in ("until", "reason", "since")}
+        if session.get("status") != "running":
+            continue
+        used = last_use(session, keys)
+        if timeout is not None and used is not None:
+            session["idle_seconds"] = max(0, now - used)
+            # A held session does not close; it rests only after its hold ends.
+            if not held:
+                session["closes_in_seconds"] = max(0, timeout - session["idle_seconds"])
     sessions.sort(key=lambda s: (0 if s.get("status") == "running" else 1, -(s.get("created_at") or 0)))
     return payload if view == "lodge" else sessions
 

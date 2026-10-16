@@ -245,7 +245,6 @@ class SessionRuntime(Protocol):
     def agent_age(
         self, handle: RuntimeHandle, process_names: Iterable[str]
     ) -> int | None: ...
-    def last_outputs(self) -> dict[str, int]: ...
     def last_keys(self) -> dict[str, int]: ...
     def stop(self, handle: RuntimeHandle) -> bool: ...
     def list_session_names(self, include_main: bool = False) -> set[str]: ...
@@ -668,29 +667,6 @@ class TmuxSessionRuntime:
                 if seconds is not None:
                     ages.append(seconds)
         return min(ages) if ages else None
-
-    def last_outputs(self) -> dict[str, int]:
-        """Unix time each session last printed anything, by session name.
-
-        tmux keeps this itself (`window_activity`): any output moves it, a
-        spinner frame included, and an agent idle at its prompt leaves it
-        still. One call covers every session; a session's time is its
-        busiest window. Raises when tmux cannot answer, so callers treat
-        unknown as active.
-        """
-        result = self._run(
-            [self.tmux, "list-windows", "-a", "-F", "#{session_name}\t#{window_activity}"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=_TMUX_TIMEOUT,
-        )
-        stamps: dict[str, int] = {}
-        for line in str(result.stdout).splitlines():
-            name, _, stamp = line.rpartition("\t")
-            if name and stamp.isdigit():
-                stamps[name] = max(stamps.get(name, 0), int(stamp))
-        return stamps
 
     def last_keys(self) -> dict[str, int]:
         """Unix time each session was last used, by session name.

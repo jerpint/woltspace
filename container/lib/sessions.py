@@ -1435,6 +1435,21 @@ def claim_resume_id(registry: "SessionRegistry", data: dict, write) -> str:
     return recovered
 
 
+def stamp_resume_id(registry: "SessionRegistry", wolt: str, name: str, resume_id: str) -> None:
+    """Persist a recovered conversation id and nothing else.
+
+    A raw write under the session lock, never update(): update() stamps
+    last_activity, and a recovered id is not use. Call it outside the session
+    lock (claim_resume_id's write callback runs under the recovery lock, which
+    is always taken first).
+    """
+    with registry._lock(wolt, name):
+        current = registry._read(wolt, name)
+        if current is not None and not stored_resume_id(current):
+            current["harness_session_id"] = resume_id
+            registry._write(wolt, name, current)
+
+
 def recover_resume_id(data: dict, taken: set[str]) -> str:
     """The stored id, or one recovered from the harness's own files, or "".
 

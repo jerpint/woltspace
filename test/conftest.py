@@ -396,7 +396,6 @@ class FakeSessionRuntime:
         self.in_session_spawns: list[tuple[str, str, str]] = []
         self.pastes: list[tuple[str, str, float]] = []  # (target pane, text, settle)
         self.captures: list[tuple[str, str | None]] = []  # (target pane, start)
-        self.last_output_at: dict[str, int] = {}        # session -> window_activity
         self.last_key_at: dict[str, int] = {}           # session -> session_activity
         self.stops: list[str] = []                      # tmux session names
         self.alive_checks: list[str] = []
@@ -482,9 +481,6 @@ class FakeSessionRuntime:
 
     def agent_age(self, handle, process_names) -> int | None:
         return self._age
-
-    def last_outputs(self) -> dict[str, int]:
-        return dict(self.last_output_at)
 
     def last_keys(self) -> dict[str, int]:
         return dict(self.last_key_at)
