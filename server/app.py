@@ -864,7 +864,12 @@ async def memory_read(request: Request):
 # --- Session messaging ---
 
 async def _deliver_or_resume(safe: str, text: str, body: dict):
-    outcome = await _deliver_or_resume_now(safe, text, body)
+    try:
+        outcome = await _deliver_or_resume_now(safe, text, body)
+    except Exception as exc:
+        failed = {"ok": False, "status": "failed", "error": str(exc)}
+        await asyncio.to_thread(_log_iwcl_message, safe, text, body, failed)
+        raise
     await asyncio.to_thread(_log_iwcl_message, safe, text, body, outcome)
     return outcome
 
@@ -1154,7 +1159,12 @@ async def wolt_message(name: str, request: Request):
         resting = [s for s in registry.list(wolt=safe_wolt) if s.get("status") == "resting"]
         resting.sort(key=lambda s: (s.get("last_activity") or 0, s.get("created_at") or 0), reverse=True)
         session_id = resting[0]["name"] if resting else None
-    body = await request.json()
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        body = None
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
     text = body.get("text")
     if not text:
         return JSONResponse({"error": "text required"}, status_code=400)

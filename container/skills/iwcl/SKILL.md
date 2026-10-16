@@ -106,5 +106,5 @@ woltspace session list --wolt codexw    # a specific wolt's sessions
   with the stdin form above, or pick another wolt.
 - IWCL is for wolt-to-wolt communication. To message the human, use `notify` instead.
 - The lodge logs every send, every wolt-started spawn and every human Telegram
-  message, full text included, to `.space/logs/iwcl.jsonl` (one JSON line each). Don't put secrets in a
+  message delivered to a session, full text included, to `.space/logs/iwcl.jsonl` (one JSON line each). Don't put secrets in a
   message. The owner can set `WOLTSPACE_IWCL_LOG=meta` (no text) or `off`.

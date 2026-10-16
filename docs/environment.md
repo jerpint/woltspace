@@ -104,7 +104,7 @@ lists in the host `woltspace` launcher.
 | `WOLTSPACE_INSTANCE_ID` | Identifies one control plane, so tunnel state and ownership records can say who wrote them. | `supervisor.py`, `server/app.py`, `server/tunnel.py` | assigned per start |
 | `WOLTSPACE_ALLOW_SHARED_DATA_ROOT` | Opt out of the refusal to start a second control plane on a data root another one already owns. | `doctor.py` | unset (refuse) |
 | `WOLTSPACE_CONFIG` | Path override for `woltspace.json`. | `src/woltspace/config.py` | `<data root>/woltspace.json` |
-| `WOLTSPACE_IWCL_LOG` | What the lodge-wide inter-wolt log `.space/logs/iwcl.jsonl` (wolt-to-wolt messages and spawns, plus human Telegram messages) records: `full` (with message text), `meta` (no text) or `off`. | `container/lib/iwcl_log.py` | `full` |
+| `WOLTSPACE_IWCL_LOG` | What the lodge-wide inter-wolt log `.space/logs/iwcl.jsonl` (wolt-to-wolt messages and spawns, plus human Telegram messages delivered to a wolt session) records: `full` (with message text), `meta` (no text) or `off`. | `container/lib/iwcl_log.py` | `full` |
 
 ## Connectors and surfaces
 

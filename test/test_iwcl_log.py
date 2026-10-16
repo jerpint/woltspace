@@ -35,6 +35,9 @@ def wolts(tmp_path, monkeypatch):
         def get(self, name, **_k):
             return {"name": name, "wolt": "maple", "status": "running"}
 
+        def list(self, **_k):
+            return []
+
     monkeypatch.setattr(sessions, "SessionRegistry", Registry)
     return wolts
 
@@ -120,12 +123,87 @@ def test_a_broken_log_never_fails_the_delivery(wolts, monkeypatch):
 
 
 def test_a_send_to_a_wolt_with_no_live_session_is_logged(wolts, monkeypatch):
-    import sessions
-
     monkeypatch.setattr(app_module, "resolve_active_session", lambda *_a, **_k: None)
-    monkeypatch.setattr(sessions.SessionRegistry, "list", lambda self, **_k: [], raising=False)
     response = asyncio.run(_request("POST", "/wolts/nobody/message", json={"text": "anyone?", "from_wolt": "softie"}))
     assert response.status_code == 404
     [line] = _lines(wolts)
     assert (line["to_wolt"], line["to_session"], line["status"]) == ("nobody", "", "no-session")
     assert line["text"] == "anyone?" and line["error"]
+
+
+def test_a_short_write_still_leaves_whole_lines(wolts, monkeypatch):
+    real_write = iwcl_log.os.write
+    calls = []
+
+    def short_first(fd, data):
+        calls.append(len(data))
+        return real_write(fd, bytes(data[:8]) if len(calls) == 1 else data)
+
+    monkeypatch.setattr(iwcl_log.os, "write", short_first)
+    iwcl_log.record(wolts, "message", text="first", status="delivered")
+    iwcl_log.record(wolts, "message", text="second", status="delivered")
+    assert [line["text"] for line in _lines(wolts)] == ["first", "second"]
+
+
+def test_an_existing_permissive_log_is_made_private(wolts):
+    path = iwcl_log.log_path(wolts)
+    path.parent.mkdir(parents=True)
+    path.write_text("")
+    path.chmod(0o644)
+    iwcl_log.record(wolts, "message", text="x", status="delivered")
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_malformed_json_to_a_wolt_name_is_a_400(wolts, monkeypatch):
+    monkeypatch.setattr(app_module, "resolve_active_session", lambda *_a, **_k: None)
+    for content in (b"{not json", b"[1, 2]"):
+        response = asyncio.run(_request(
+            "POST", "/wolts/nobody/message", content=content,
+            headers={"content-type": "application/json"},
+        ))
+        assert response.status_code == 400
+    assert not iwcl_log.log_path(wolts).exists()
+
+
+def test_a_delivery_that_throws_is_logged_as_failed(wolts, monkeypatch):
+    def boom(*_a, **_k):
+        raise RuntimeError("tmux exploded")
+
+    monkeypatch.setattr(app_module, "deliver_message", boom)
+    with pytest.raises(RuntimeError):
+        asyncio.run(_request("POST", "/sessions/maple-s1/message", json={"text": "hi", "from_wolt": "softie"}))
+    [line] = _lines(wolts)
+    assert (line["status"], line["error"], line["to_session"]) == ("failed", "tmux exploded", "maple-s1")
+
+
+_WRITER = """
+import sys
+sys.path.insert(0, sys.argv[1])
+import iwcl_log
+iwcl_log.ROTATE_BYTES = int(sys.argv[3])
+for i in range(int(sys.argv[4])):
+    iwcl_log.record(sys.argv[2], "message", text=f"{sys.argv[5]}-{i}" + "x" * 300, status="delivered")
+"""
+
+
+@pytest.mark.parametrize("rotate", [10**9, 20_000])
+def test_concurrent_writers_never_tear_a_line(wolts, rotate):
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    lib = str(Path(__file__).resolve().parent.parent / "container" / "lib")
+    procs = [
+        subprocess.Popen([sys.executable, "-c", _WRITER, lib, str(wolts), str(rotate), "150", f"w{n}"])
+        for n in range(4)
+    ]
+    assert all(p.wait(timeout=60) == 0 for p in procs)
+    path = iwcl_log.log_path(wolts)
+    lines = []
+    for f in (path.with_name("iwcl.jsonl.1"), path):
+        if f.exists():
+            lines += [json.loads(line) for line in f.read_text().splitlines()]
+    if rotate == 10**9:
+        assert len(lines) == 600
+    else:
+        assert path.with_name("iwcl.jsonl.1").exists() and lines

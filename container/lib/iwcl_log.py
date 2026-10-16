@@ -2,15 +2,16 @@
 
 One JSON line per message attempt or wolt-started spawn, written after the
 outcome is known. Wolt-to-wolt traffic comes from the control plane; a
-human's chat message (Telegram, Slack) from its adapter, with `from_human`
-and `via` set. Writers may be separate processes, so each line is written
+human's Telegram message delivered to a wolt session (pasted, or in a new
+session's opening prompt) from the adapter, with `from_human` and `via` set. Writers may be separate processes, so each line is written
 under an exclusive flock. Readers tail the file: a line is complete once it ends in a
 newline, and at ROTATE_BYTES the file is renamed to `iwcl.jsonl.1` (one
 generation kept), so a follower reopens on rename.
 
 `WOLTSPACE_IWCL_LOG` picks what is written: `full` (default), `meta` (no
 message text) or `off`. Sender fields are what the sender claimed; nothing
-here authenticates them. Logging never fails a delivery.
+here authenticates them. Full text is sensitive: the file is kept 0600.
+Logging never fails a delivery.
 """
 
 import fcntl
@@ -83,7 +84,10 @@ def _record(wolts_dir: Path, event: str, *, from_wolt: str = "", from_session: s
                 pass
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
             try:
-                os.write(fd, data)
+                os.fchmod(fd, 0o600)
+                view = memoryview(data)
+                while view:  # a short write must not leave half a line
+                    view = view[os.write(fd, view):]
             finally:
                 os.close(fd)
         finally:
