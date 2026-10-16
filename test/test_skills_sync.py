@@ -476,6 +476,23 @@ class TestShippedManifest:
         assert "background task" in description
         assert "never just to stay available" in description
 
+    def test_engine_settings_ships_and_keeps_wolts_out_of_shared_files(self):
+        """A wolt asked to change its effort finds this skill by its description,
+        and the skill keeps the change inside the wolt's own folder."""
+        assert SHIPPED_SKILLS / "engine-settings" in skills_sync.platform_skill_sources(ROOT)
+        text = (SHIPPED_SKILLS / "engine-settings" / "SKILL.md").read_text()
+        description = next(line for line in text.split("---")[1].splitlines()
+                           if line.startswith("description:"))
+        assert "effort" in description
+        assert "own folder" in description
+        assert '"effortLevel"' in text
+        assert "model_reasoning_effort" in text
+        assert "~/.claude/" in text and "~/.codex/" in text
+
+    def test_wolt_settings_point_to_the_wolt_for_effort(self):
+        page = (ROOT / "public" / "static" / "wolt-page.js").read_text()
+        assert "Effort and other engine settings: ask your wolt." in page
+
     def test_hold_keeps_its_name_through_the_copy_rename(self, tmp_path):
         skills = tmp_path / "wolts" / "nw" / ".claude" / "skills"
         skills.mkdir(parents=True)
