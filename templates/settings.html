@@ -69,7 +69,7 @@
 
       <div id="sessions">
       {% call panel('Idle sessions', 'Close sessions nobody has been in touch with, to free resources. Their conversation stays resumable.', 'lodge-wide') %}
-        {% call select_field('idle-session-timeout', 'Close idle sessions after', 'No contact means no message, notify or page update from the session for this long.') %}
+        {% call select_field('idle-session-timeout', 'Close idle sessions after', 'A session rests when nobody has used it for this long and it has no hold. Use is a message to it or from it, typing in its terminal, or opening it. While a background task runs, a wolt can keep its session up with woltspace session hold.') %}
           <div class="ds-select-stack" data-expiry-row data-saved-value="{{ idle_timeout if idle_timeout is not none else '' }}">
             <select class="ds-select" id="idle-session-timeout" data-expiry-select>
               <option value=""{% if idle_timeout is none %} selected{% endif %}>Never</option>

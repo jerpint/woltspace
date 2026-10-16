@@ -106,3 +106,20 @@ def test_configured_wolts_skips_broken_entries(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "WOLTS_DIR", tmp_path)
 
     assert [wolt["name"] for wolt in app_module._configured_wolts()] == ["maple"]
+
+
+def test_idle_setting_says_what_counts_as_use_and_how_to_hold(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "WOLTS_DIR", tmp_path)
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+
+    body = asyncio.run(_request("GET", "/settings")).text
+
+    assert "No contact means" not in body
+    help_text = body.split('id="idle-session-timeout-help">', 1)[1].split("</p>", 1)[0]
+    assert help_text == (
+        "A session rests when nobody has used it for this long and it has no hold. "
+        "Use is a message to it or from it, typing in its terminal, or opening it. "
+        "While a background task runs, a wolt can keep its session up with woltspace session hold."
+    )
+    for choice in (">Never<", ">1 hour<", ">4 hours<", ">1 day<"):
+        assert choice in body
