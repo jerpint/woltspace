@@ -238,3 +238,41 @@ async def test_message_to_a_running_session_is_still_pasted(lodge, kind, dog):
     assert _reply_instructions(pasted) == 1
     assert f"🪵 sent to {OLD}\n{OLD}" in _replies(update)
     assert history()[-1] == ("assistant", f"[delivered to session {OLD}]")
+
+
+def _iwcl(tmp_path):
+    path = tmp_path / "wolts" / ".space" / "logs" / "iwcl.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+@pytest.mark.asyncio
+async def test_a_spawning_message_is_a_human_spawn_line_in_the_iwcl_log(lodge, tmp_path, monkeypatch):
+    monkeypatch.delenv("WOLTSPACE_IWCL_LOG", raising=False)
+    adapter, start, deliver, events, history, setup = lodge
+    setup(False, {"active_wolt": WOLT})
+    update = _update("message", False)
+    update.effective_user.username = "jerpint"
+
+    await _handle(adapter, "message", update)
+
+    [line] = _iwcl(tmp_path)
+    assert (line["event"], line["status"], line["via"]) == ("spawn", "started", "telegram")
+    assert (line["from_human"], line["from_wolt"]) == ("jerpint", "")
+    assert (line["to_wolt"], line["to_session"], line["text"]) == (WOLT, NEW, "hello")
+
+
+@pytest.mark.asyncio
+async def test_a_pasted_message_is_a_human_message_line_in_the_iwcl_log(lodge, tmp_path, monkeypatch):
+    monkeypatch.delenv("WOLTSPACE_IWCL_LOG", raising=False)
+    adapter, start, deliver, events, history, setup = lodge
+    deliver.side_effect = lambda name, msg: {"ok": True, "url": ""}
+    setup(False, {"active_wolt": WOLT, "active_session": OLD})
+    update = _update("message", False)
+    update.effective_user.username = None
+    update.effective_user.first_name = "Jeremy"
+
+    await _handle(adapter, "message", update)
+
+    [line] = _iwcl(tmp_path)
+    assert (line["event"], line["status"], line["from_human"]) == ("message", "delivered", "Jeremy")
+    assert (line["to_session"], line["text"]) == (OLD, "hello")
