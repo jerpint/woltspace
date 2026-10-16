@@ -6,25 +6,26 @@ pile up and choke the system. Runs as a platform-level background
 process — not managed by wolves.
 
 It does three things on each pass:
-  0. Rests sessions whose pane has not changed for the owner-selected window.
+  0. Rests sessions whose pane has printed nothing for the owner-selected window
+     (tmux's own window_activity stamp, so it works for every harness).
   1. Reconciles the registry — marks "running" sessions as "reaped"
      if their tmux session is gone.
-  2. Kills zombie tmux sessions — sessions where the claude process
-     has exited but the tmux session lingers.
+  2. Kills zombie tmux sessions — lodge sessions where the agent has
+     exited but the tmux session lingers. A tmux session the registry
+     does not know is never touched: natively it is the owner's own.
 
 Config: sessions.idle_timeout_seconds in woltspace.json (default: 1 day; null = never).
 Logs:   .space/vulture/vulture.log
 State:  .space/vulture/last-run
 
 Usage:
-  python -m creatures.vulture              # Run as background service (default: every 5 min)
+  python -m creatures.vulture              # Run as background service (default: every 30 min)
   python -m creatures.vulture --once       # Single pass and exit
   python -m creatures.vulture --interval N # Custom interval in seconds
   python -m creatures.vulture --dry-run    # Show what would be reaped, don't touch anything
 """
 
 import json
-import hashlib
 import os
 import subprocess
 import sys
@@ -33,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from env_compat import get_env
-from sessions import SessionRegistry, recover_resume_id, taken_resume_ids
+from sessions import SessionRegistry, recover_resume_id, stored_resume_id, taken_resume_ids
 from harnesses import session_has_agent_process
 from paths import space_vulture_dir
 from session_runtime import RuntimeHandle, get_runtime
@@ -45,7 +46,6 @@ WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 STATE_DIR = space_vulture_dir(WOLTS_DIR)
 LOG_FILE = STATE_DIR / "vulture.log"
 LAST_RUN_FILE = STATE_DIR / "last-run"
-ACTIVITY_FILE = STATE_DIR / "pane-activity.json"
 
 # Sessions younger than this are never reaped (grace period for startup)
 GRACE_PERIOD_SECONDS = 120
@@ -112,27 +112,12 @@ def _kill_tmux_session(session_name: str) -> bool:
     return get_runtime().stop(RuntimeHandle(session_name, session_name))
 
 
-def _load_activity() -> dict:
-    try:
-        data = json.loads(ACTIVITY_FILE.read_text())
-        return data if isinstance(data, dict) else {}
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-def _save_activity(data: dict) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = ACTIVITY_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, sort_keys=True) + "\n")
-    tmp.replace(ACTIVITY_FILE)
-
-
-def _rest_via_api(session_name: str, pane_digest: str) -> bool:
+def _rest_via_api(session_name: str, idle_since: int) -> bool:
     """Ask the FastAPI authority to perform the lifecycle/state change."""
     base = os.environ.get("WOLTSPACE_API", "http://localhost:7777").rstrip("/")
     req = urlrequest.Request(
         f"{base}/sessions/{session_name}/rest",
-        data=json.dumps({"pane_digest": pane_digest}).encode(), method="POST",
+        data=json.dumps({"idle_since": idle_since}).encode(), method="POST",
         headers={"Content-Type": "application/json"},
     )
     try:
@@ -142,15 +127,38 @@ def _rest_via_api(session_name: str, pane_digest: str) -> bool:
         return False
 
 
+def _settle_dead(data: dict, now: int) -> str:
+    """Mark a session whose runtime is gone. One that can come back rests.
+
+    "resting" sessions wake when someone messages them; "reaped" ones refuse.
+    A dead session that still has its conversation id is no different from
+    one the vulture rested for being idle, so it gets the same status.
+    """
+    status = "resting" if stored_resume_id(data) else "reaped"
+    data["status"] = status
+    if status == "resting":
+        data["rested_at"] = now
+    else:
+        data["finished_at"] = now
+    data["last_activity"] = now
+    return status
+
+
 def _rest_idle_sessions(reg: SessionRegistry, live_tmux: set[str], now: int,
                         timeout: int | None, dry_run: bool) -> list[str]:
-    """Rest only panes proven unchanged for the complete configured window."""
+    """Rest sessions whose pane has printed nothing for the configured window.
+
+    tmux stamps each window with the time of its last output; a working agent
+    keeps it fresh (spinner, tool output), one idle at its prompt leaves it.
+    """
     if timeout is None:
         return []
-    activity = _load_activity()
-    seen = set()
+    try:
+        last_outputs = get_runtime().last_outputs()
+    except Exception:
+        # Unknown activity is active: never close on missing evidence.
+        return []
     rested = []
-    runtime = get_runtime()
     records = reg.list()
     taken = taken_resume_ids(records)
     for data in records:
@@ -163,33 +171,17 @@ def _rest_idle_sessions(reg: SessionRegistry, live_tmux: set[str], now: int,
         # Resting must be reversible: never stop a session resume_session could not bring back.
         if not recover_resume_id(data, taken):
             continue
-        try:
-            pane = runtime.capture(RuntimeHandle.from_record(data), start=None)
-        except Exception:
-            # Unknown activity is active: never close on missing evidence.
-            continue
-        seen.add(name)
-        digest = hashlib.sha256(pane.encode("utf-8")).hexdigest()
-        previous = activity.get(name, {})
-        unchanged_since = previous.get("unchanged_since", now)
-        if previous.get("digest") != digest:
-            unchanged_since = now
-        activity[name] = {"digest": digest, "unchanged_since": unchanged_since}
-        if now - unchanged_since < timeout:
+        idle_since = last_outputs.get(RuntimeHandle.from_record(data).tmux_session_name)
+        if idle_since is None or now - idle_since < timeout:
             continue
         if dry_run:
             log(f"[dry-run] would rest idle session: {name}")
             rested.append(name)
-        elif _rest_via_api(name, digest):
+        elif _rest_via_api(name, idle_since):
             log(f"🦅 rested idle session: {name}")
             rested.append(name)
-            activity.pop(name, None)
         else:
             log(f"could not rest idle session through API: {name}")
-    for stale in set(activity) - seen:
-        activity.pop(stale, None)
-    if not dry_run:
-        _save_activity(activity)
     return rested
 
 
@@ -237,16 +229,14 @@ def reap(dry_run: bool = False) -> dict:
             if now - created_at < GRACE_PERIOD_SECONDS:
                 continue
 
-            # If tmux session is gone, mark as reaped
+            # If tmux session is gone, mark it resting (or reaped if it can't resume)
             if name not in live_tmux:
                 if dry_run:
                     log(f"[dry-run] would reap registry: {name}")
                 else:
-                    data["status"] = "reaped"
-                    data["finished_at"] = now
-                    data["last_activity"] = now
+                    status = _settle_dead(data, now)
                     reg._write(wolt_name, name, data)
-                    log(f"🦅 reaped registry: {name}")
+                    log(f"🦅 {status} registry: {name}")
                 stats["registry_reaped"].append(name)
 
     # --- Pass 2: Zombie tmux sessions ---
@@ -267,17 +257,15 @@ def reap(dry_run: bool = False) -> dict:
 
         if reg_data and reg_data.get("status") == "running":
             wolt_name = reg_data.get("wolt", "")
-            # Claude exited but tmux lingers — mark reaped and kill tmux
+            # The agent exited but tmux lingers — kill tmux, rest or reap the record
             if dry_run:
                 log(f"[dry-run] would kill zombie tmux + reap: {session_name}")
             else:
-                reg_data["status"] = "reaped"
-                reg_data["finished_at"] = now
-                reg_data["last_activity"] = now
+                status = _settle_dead(reg_data, now)
                 if wolt_name:
                     reg._write(wolt_name, session_name, reg_data)
                 _kill_tmux_session(session_name)
-                log(f"🦅 killed zombie tmux + reaped: {session_name}")
+                log(f"🦅 killed zombie tmux, {status}: {session_name}")
             stats["tmux_killed"].append(session_name)
         elif reg_data and reg_data.get("status") in ("reaped", "orphaned", "completed", "failed", "resting"):
             # Already reaped/done but tmux still exists — clean up tmux
@@ -287,14 +275,9 @@ def reap(dry_run: bool = False) -> dict:
                 _kill_tmux_session(session_name)
                 log(f"🦅 killed leftover tmux: {session_name}")
             stats["tmux_killed"].append(session_name)
-        elif not reg_data:
-            # Tmux session with no registry entry and no claude — stale
-            if dry_run:
-                log(f"[dry-run] would kill unregistered tmux: {session_name}")
-            else:
-                _kill_tmux_session(session_name)
-                log(f"🦅 killed unregistered tmux: {session_name}")
-            stats["tmux_killed"].append(session_name)
+        # A session with no registry entry is not the lodge's. Natively the
+        # lodge shares the owner's own tmux server, so "no agent, no record"
+        # describes their terminals; the vulture used to kill them.
 
     # Write last-run timestamp
     if not dry_run:
@@ -313,8 +296,10 @@ def run_loop(interval: int = DEFAULT_INTERVAL, dry_run: bool = False):
             total = sum(len(stats[key]) for key in ("registry_reaped", "tmux_killed", "sessions_rested"))
             if total > 0:
                 log(f"🦅 pass done — rested {len(stats['sessions_rested'])}, reaped {len(stats['registry_reaped'])} registry, killed {len(stats['tmux_killed'])} tmux")
-                if not dry_run:
-                    _send_notify(f"cleaned up {total} dead sessions — keep on wolting")
+                # Resting is routine and reversible; only a real cleanup is worth a ping.
+                cleaned = len(stats["registry_reaped"]) + len(stats["tmux_killed"])
+                if cleaned and not dry_run:
+                    _send_notify(f"cleaned up {cleaned} dead sessions — keep on wolting")
         except Exception as e:
             log(f"🦅 error during reap: {e}")
         time.sleep(interval)

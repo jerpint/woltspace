@@ -29,6 +29,20 @@ def _idle_closing_off():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _vulture_state_in_tmp(tmp_path, monkeypatch):
+    """Every vulture write lands in tmp_path, never the developer's live lodge.
+
+    The module computes its log and state paths from WOLTSPACE_WOLTS_DIR at
+    import, so a test run from a wolt session used to append to the real log.
+    """
+    from creatures import vulture
+    state = tmp_path / ".vulture-state"
+    monkeypatch.setattr(vulture, "STATE_DIR", state)
+    monkeypatch.setattr(vulture, "LOG_FILE", state / "vulture.log")
+    monkeypatch.setattr(vulture, "LAST_RUN_FILE", state / "last-run")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -82,6 +96,23 @@ class TestRegistryReaping:
         assert "dead-session" in stats["registry_reaped"]
         data = _read_wolt_session(tmp_path, "testwolt", "dead-session")
         assert data["status"] == "reaped"
+
+    def test_a_dead_session_that_can_resume_rests_instead(self, tmp_path):
+        """A reaped session refuses messages; a resting one wakes on them."""
+        from creatures.vulture import reap
+
+        data = _make_wolt_session(tmp_path, "testwolt", "can-resume", status="running")
+        data["harness_session_id"] = "abc"
+        (tmp_path / "testwolt" / ".state" / "sessions" / "can-resume.json").write_text(json.dumps(data))
+
+        with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
+             patch("creatures.vulture._tmux_sessions", return_value=set()):
+            stats = reap()
+
+        assert "can-resume" in stats["registry_reaped"]
+        after = _read_wolt_session(tmp_path, "testwolt", "can-resume")
+        assert after["status"] == "resting"
+        assert after["rested_at"]
 
     def test_skips_already_completed_sessions(self, tmp_path):
         from creatures.vulture import reap
@@ -222,14 +253,14 @@ class TestZombieTmuxCleanup:
 
         assert "leftover-session" in stats["tmux_killed"]
 
-    def test_kills_unregistered_tmux_session(self, tmp_path):
+    def test_never_touches_a_tmux_session_the_lodge_did_not_register(self, tmp_path):
+        """Natively the lodge shares the owner's tmux server: these are their terminals."""
         from creatures.vulture import reap
 
-        # Create a wolt dir but no session for ghost-session
         (tmp_path / "testwolt" / ".state" / "sessions").mkdir(parents=True)
 
         with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
-             patch("creatures.vulture._tmux_sessions", return_value={"ghost-session"}), \
+             patch("creatures.vulture._tmux_sessions", return_value={"145", "my-shell"}), \
              patch("creatures.vulture.session_has_agent_process", return_value=False), \
              patch("creatures.vulture._kill_tmux_session", return_value=True) as mock_kill, \
              patch("creatures.vulture.STATE_DIR", tmp_path / ".space" / "vulture"), \
@@ -237,8 +268,8 @@ class TestZombieTmuxCleanup:
              patch("creatures.vulture.LOG_FILE", tmp_path / "vulture.log"):
             stats = reap()
 
-        assert "ghost-session" in stats["tmux_killed"]
-        mock_kill.assert_called_once_with("ghost-session")
+        assert stats["tmux_killed"] == []
+        mock_kill.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -278,12 +309,8 @@ def test_idle_closing_skips_sessions_that_cannot_resume(tmp_path):
         {"name": "has-id", "wolt": "w", "status": "running", "created_at": old, "harness_session_id": "abc"},
     ]
     runtime = MagicMock()
-    runtime.capture.return_value = "same pane"
-    activity = {n: {"digest": __import__("hashlib").sha256(b"same pane").hexdigest(), "unchanged_since": old}
-                for n in ("no-id", "has-id")}
-    with patch.object(vulture, "_load_activity", return_value=activity), \
-         patch.object(vulture, "_save_activity"), \
-         patch.object(vulture, "get_runtime", return_value=runtime), \
+    runtime.last_outputs.return_value = {"no-id": old, "has-id": old}
+    with patch.object(vulture, "get_runtime", return_value=runtime), \
          patch.object(vulture, "_rest_via_api", return_value=True) as rest:
         rested = vulture._rest_idle_sessions(reg, {"no-id", "has-id"}, int(time.time()), 86400, dry_run=False)
     assert rested == ["has-id"]

@@ -207,7 +207,7 @@ Background cron service, run as the `wolf` connector. Every 30s it reads each wo
 CLI: `woltspace wolf list|add|set|rm|run|runs` — a thin client of `/wolf/crons`.
 
 ### `container/creatures/vulture.py` (Vulture Reaper 🦅)
-Background session reaper. Cleans up dead sessions — reconciles registry, kills zombie tmux sessions. Platform-level, always on, not wolf-managed.
+Background session reaper, run as the `vulture` connector (`WOLTSPACE_VULTURE` / `channels.vulture` turn it off). Every 30 minutes it rests sessions idle longer than the lodge's idle setting (`sessions.idle_timeout_seconds`, default 1 day), marks sessions whose tmux is gone, and stops lodge sessions whose agent exited. It never touches a tmux session the registry does not know: natively that is the owner's own.
 
 ### `container/lib/sessions.py` (Session Registry)
 Centralized session metadata — single source of truth. One JSON file per session in `.state/registry/{session_name}.json`.

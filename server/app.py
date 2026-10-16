@@ -1,7 +1,6 @@
 """Woltspace server — FastAPI replacement for server.js."""
 
 import asyncio
-import hashlib
 import json
 import os
 import re
@@ -69,7 +68,7 @@ from sessions import (
     wolt_harness, ResumeUnavailable, ResumeFailed, HarnessNotInstalled,
     stored_resume_id, recover_resume_id, taken_resume_ids, claim_resume_id,
 )
-from session_expiry import get_idle_timeout, get_pane_activity, set_idle_timeout
+from session_expiry import get_idle_timeout, set_idle_timeout
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
 from execution_policy import AutoGrantStore, POLICY_VERSION
@@ -925,7 +924,7 @@ async def session_message(session_id: str, request: Request):
     return await _deliver_or_resume(safe, text, body)
 
 
-def _rest_session_locked(safe: str, expected_digest: str):
+def _rest_session_locked(safe: str, idle_since: int):
     """Verify and stop one session without blocking the server event loop."""
     from sessions import SessionRegistry
     registry = SessionRegistry(WOLTS_DIR)
@@ -943,15 +942,24 @@ def _rest_session_locked(safe: str, expected_digest: str):
         # (we already hold this session's lock, so persist with the raw write)
         if not claim_resume_id(registry, data, lambda d: registry._write(wolt, safe, d)):
             return JSONResponse({"error": "session has no conversation to resume; not resting it"}, status_code=409)
+        handle = RuntimeHandle.from_record(data)
         try:
-            pane = get_runtime().capture(RuntimeHandle.from_record(data), start=None)
+            last_output = get_runtime().last_outputs().get(handle.tmux_session_name)
         except Exception:
+            last_output = None
+        if last_output is None:
             return JSONResponse({"error": "session activity could not be verified"}, status_code=409)
-        current_digest = hashlib.sha256(pane.encode("utf-8")).hexdigest()
-        if current_digest != expected_digest:
-            return JSONResponse({"error": "session became active; rest aborted"}, status_code=409)
-        get_runtime().stop(RuntimeHandle.from_record(data))
         now = int(time.time())
+        if last_output > idle_since:
+            return JSONResponse({"error": "session became active; rest aborted"}, status_code=409)
+        # The authority judges the quiet window itself, never the caller. This
+        # also closes the same-second gap: output in the second the vulture
+        # looked is "now", far inside any window.
+        timeout = get_idle_timeout()
+        if timeout is None or now - last_output < timeout:
+            return JSONResponse({"error": "session is not idle long enough; rest aborted"}, status_code=409)
+        if not get_runtime().stop(handle):
+            return JSONResponse({"error": "session could not be stopped; still running"}, status_code=409)
         data["status"] = "resting"
         data["rested_at"] = now
         registry._write(wolt, safe, data)
@@ -968,10 +976,12 @@ async def rest_session(session_id: str, request: Request):
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "JSON object body required"}, status_code=400)
-    expected_digest = body.get("pane_digest") if isinstance(body, dict) else None
-    if not isinstance(expected_digest, str) or len(expected_digest) != 64:
-        return JSONResponse({"error": "pane_digest required"}, status_code=400)
-    return await asyncio.to_thread(_rest_session_locked, safe, expected_digest)
+    # The pane's last-output time the caller judged idle; a newer one aborts.
+    idle_since = body.get("idle_since") if isinstance(body, dict) else None
+    if (not isinstance(idle_since, int) or isinstance(idle_since, bool)
+            or not 0 < idle_since <= time.time()):
+        return JSONResponse({"error": "idle_since required"}, status_code=400)
+    return await asyncio.to_thread(_rest_session_locked, safe, idle_since)
 
 
 @app.post("/wolts/{name}/message")
@@ -1217,6 +1227,14 @@ async def session_new_slack(request: Request):
 
 # --- Sessions list ---
 
+def _last_outputs() -> dict[str, int]:
+    """tmux's last-output time per session; empty when tmux cannot say."""
+    try:
+        return get_runtime().last_outputs()
+    except Exception:
+        return {}
+
+
 @app.get("/sessions")
 async def list_sessions(view: str = ""):
     from sessions import SessionRegistry
@@ -1227,11 +1245,11 @@ async def list_sessions(view: str = ""):
     else:
         sessions = reg.list()
     timeout = get_idle_timeout()
-    observations = get_pane_activity() if timeout is not None else {}
+    last_outputs = await asyncio.to_thread(_last_outputs) if timeout is not None else {}
     now = int(time.time())
     for session in sessions:
         session["idle_timeout_seconds"] = timeout
-        observed = observations.get(session.get("name", ""), {}).get("unchanged_since")
+        observed = last_outputs.get(RuntimeHandle.from_record(session).tmux_session_name)
         if timeout is not None and isinstance(observed, int) and session.get("status") == "running":
             session["idle_seconds"] = max(0, now - observed)
             session["closes_in_seconds"] = max(0, timeout - session["idle_seconds"])

@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import ANY, Mock
 
 import httpx
+import pytest
 from starlette.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +17,20 @@ sys.path.insert(0, str(ROOT / "container" / "lib"))
 
 import server.app as server_app
 import session_expiry
+
+
+@pytest.fixture(autouse=True)
+def _vulture_state_in_tmp(tmp_path, monkeypatch):
+    """Every vulture write lands in tmp_path, never the developer's live lodge.
+
+    The module computes its log and state paths from WOLTSPACE_WOLTS_DIR at
+    import, so a test run from a wolt session used to append to the real log.
+    """
+    from creatures import vulture
+    state = tmp_path / ".vulture-state"
+    monkeypatch.setattr(vulture, "STATE_DIR", state)
+    monkeypatch.setattr(vulture, "LOG_FILE", state / "vulture.log")
+    monkeypatch.setattr(vulture, "LAST_RUN_FILE", state / "last-run")
 
 
 def _client():
@@ -173,11 +188,11 @@ def test_rest_route_preserves_resume_identity(monkeypatch):
     registry_type = Mock(return_value=registry)
     monkeypatch.setattr("sessions.SessionRegistry", registry_type)
     runtime = Mock()
-    runtime.capture.return_value = "unchanged"
+    runtime.last_outputs.return_value = {"friend": 1000}
+    runtime.stop.return_value = True
     monkeypatch.setattr(server_app, "get_runtime", Mock(return_value=runtime))
-    import hashlib
-    digest = hashlib.sha256(b"unchanged").hexdigest()
-    response = _client().post("/sessions/friend/rest", json={"pane_digest": digest})
+    monkeypatch.setattr(server_app, "get_idle_timeout", lambda: 3600)
+    response = _client().post("/sessions/friend/rest", json={"idle_since": 1000})
     assert response.status_code == 200
     runtime.stop.assert_called_once()
     written = registry._write.call_args.args[2]
@@ -191,37 +206,34 @@ def test_main_session_can_never_rest():
     assert response.json() == {"error": "main session cannot rest"}
 
 
-def test_rest_aborts_if_pane_changed_after_idle_observation(monkeypatch):
+def test_rest_aborts_if_pane_printed_after_idle_observation(monkeypatch):
     record = {"name": "friend", "wolt": "pal", "status": "running", "harness_session_id": "conv-1"}
     registry = _registry_mock(); registry.get.return_value = record
     monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
-    runtime = Mock(); runtime.capture.return_value = "new output"
+    runtime = Mock(); runtime.last_outputs.return_value = {"friend": 1001}
     monkeypatch.setattr(server_app, "get_runtime", Mock(return_value=runtime))
-    response = _client().post("/sessions/friend/rest", json={"pane_digest": "0" * 64})
+    response = _client().post("/sessions/friend/rest", json={"idle_since": 1000})
     assert response.status_code == 409
     runtime.stop.assert_not_called()
     registry._write.assert_not_called()
 
 
-def test_rest_aborts_if_recapture_fails(monkeypatch):
+def test_rest_aborts_if_activity_check_fails(monkeypatch):
     record = {"name": "friend", "wolt": "pal", "status": "running", "harness_session_id": "conv-1"}
     registry = _registry_mock(); registry.get.return_value = record
     monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
-    runtime = Mock(); runtime.capture.side_effect = RuntimeError("tmux unavailable")
+    runtime = Mock(); runtime.last_outputs.side_effect = RuntimeError("tmux unavailable")
     monkeypatch.setattr(server_app, "get_runtime", Mock(return_value=runtime))
-    response = _client().post("/sessions/friend/rest", json={"pane_digest": "0" * 64})
+    response = _client().post("/sessions/friend/rest", json={"idle_since": 1000})
     assert response.status_code == 409
     runtime.stop.assert_not_called()
 
 
-def test_vulture_requires_a_full_unchanged_window(tmp_path, monkeypatch):
+def test_vulture_requires_a_full_quiet_window(monkeypatch):
     from creatures import vulture
 
-    activity = tmp_path / "activity.json"
-    monkeypatch.setattr(vulture, "ACTIVITY_FILE", activity)
-    monkeypatch.setattr(vulture, "STATE_DIR", tmp_path)
     runtime = Mock()
-    runtime.capture.return_value = "same pane"
+    runtime.last_outputs.return_value = {"friend": 1000}
     monkeypatch.setattr(vulture, "get_runtime", Mock(return_value=runtime))
     rest = Mock(return_value=True)
     monkeypatch.setattr(vulture, "_rest_via_api", rest)
@@ -234,38 +246,49 @@ def test_vulture_requires_a_full_unchanged_window(tmp_path, monkeypatch):
     assert vulture._rest_idle_sessions(registry, {"friend"}, 1000, 3600, False) == []
     assert vulture._rest_idle_sessions(registry, {"friend"}, 4599, 3600, False) == []
     assert vulture._rest_idle_sessions(registry, {"friend"}, 4600, 3600, False) == ["friend"]
-    rest.assert_called_once_with("friend", ANY)
+    rest.assert_called_once_with("friend", 1000)
 
 
-def test_pane_change_resets_idle_window(tmp_path, monkeypatch):
+def test_quiet_window_counts_from_tmux_not_from_first_look(monkeypatch):
+    """A pane quiet since before the vulture started is idle on its first pass."""
     from creatures import vulture
 
-    monkeypatch.setattr(vulture, "ACTIVITY_FILE", tmp_path / "activity.json")
-    monkeypatch.setattr(vulture, "STATE_DIR", tmp_path)
-    runtime = Mock()
-    runtime.capture.side_effect = ["first", "changed", "changed"]
+    runtime = Mock(); runtime.last_outputs.return_value = {"friend": 1000}
     monkeypatch.setattr(vulture, "get_runtime", Mock(return_value=runtime))
-    rest = Mock(return_value=True)
-    monkeypatch.setattr(vulture, "_rest_via_api", rest)
+    rest = Mock(return_value=True); monkeypatch.setattr(vulture, "_rest_via_api", rest)
     registry = Mock()
-    registry.list.return_value = [{"name": "friend", "status": "running", "created_at": 1}]
+    registry.list.return_value = [{"name": "friend", "status": "running", "created_at": 1, "harness_session_id": "conv-1"}]
+    assert vulture._rest_idle_sessions(registry, {"friend"}, 1000 + 86400, 86400, False) == ["friend"]
 
-    vulture._rest_idle_sessions(registry, {"friend"}, 1000, 3600, False)
-    vulture._rest_idle_sessions(registry, {"friend"}, 4600, 3600, False)
+
+def test_recent_output_keeps_session_open(monkeypatch):
+    from creatures import vulture
+
+    runtime = Mock(); runtime.last_outputs.return_value = {"friend": 8000}
+    monkeypatch.setattr(vulture, "get_runtime", Mock(return_value=runtime))
+    rest = Mock(return_value=True); monkeypatch.setattr(vulture, "_rest_via_api", rest)
+    registry = Mock()
+    registry.list.return_value = [{"name": "friend", "status": "running", "created_at": 1, "harness_session_id": "conv-1"}]
     assert vulture._rest_idle_sessions(registry, {"friend"}, 8199, 3600, False) == []
     rest.assert_not_called()
 
 
-def test_capture_failure_leaves_session_open(tmp_path, monkeypatch):
+def test_activity_failure_leaves_session_open(monkeypatch):
     from creatures import vulture
-    monkeypatch.setattr(vulture, "ACTIVITY_FILE", tmp_path / "activity.json")
-    monkeypatch.setattr(vulture, "STATE_DIR", tmp_path)
-    runtime = Mock(); runtime.capture.side_effect = RuntimeError("no pane")
+    runtime = Mock(); runtime.last_outputs.side_effect = RuntimeError("no pane")
     monkeypatch.setattr(vulture, "get_runtime", Mock(return_value=runtime))
     rest = Mock(return_value=True); monkeypatch.setattr(vulture, "_rest_via_api", rest)
-    registry = Mock(); registry.list.return_value = [{"name": "friend", "status": "running", "created_at": 1}]
+    registry = Mock(); registry.list.return_value = [{"name": "friend", "status": "running", "created_at": 1, "harness_session_id": "conv-1"}]
     assert vulture._rest_idle_sessions(registry, {"friend"}, 5000, 3600, False) == []
     rest.assert_not_called()
+
+
+def test_rest_requires_idle_since():
+    assert _client().post("/sessions/friend/rest", json={}).status_code == 400
+    assert _client().post("/sessions/friend/rest", json={"idle_since": "1000"}).status_code == 400
+    assert _client().post("/sessions/friend/rest", json={"idle_since": True}).status_code == 400
+    future = int(time.time()) + 3600
+    assert _client().post("/sessions/friend/rest", json={"idle_since": future}).status_code == 400
 
 
 def test_rendering_a_resting_session_is_read_only(monkeypatch):
@@ -319,7 +342,7 @@ def test_rest_refuses_a_session_that_could_not_come_back(monkeypatch):
     monkeypatch.setattr(server_app, "claim_resume_id", Mock(return_value=""))
     runtime = Mock()
     monkeypatch.setattr(server_app, "get_runtime", Mock(return_value=runtime))
-    response = _client().post("/sessions/friend/rest", json={"pane_digest": "0" * 64})
+    response = _client().post("/sessions/friend/rest", json={"idle_since": 1000})
     assert response.status_code == 409
     runtime.stop.assert_not_called()
     registry._write.assert_not_called()
@@ -341,3 +364,87 @@ def test_opening_a_session_with_nothing_to_resume_still_renders(monkeypatch):
     monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
     monkeypatch.setattr(server_app, "resume_session", Mock(side_effect=server_app.ResumeUnavailable("no id")))
     assert _client().get("/tui?session=friend").status_code == 200
+
+
+def test_session_tmux_does_not_report_stays_open(monkeypatch):
+    from creatures import vulture
+    runtime = Mock(); runtime.last_outputs.return_value = {"someone-else": 1}
+    monkeypatch.setattr(vulture, "get_runtime", Mock(return_value=runtime))
+    rest = Mock(return_value=True); monkeypatch.setattr(vulture, "_rest_via_api", rest)
+    registry = Mock(); registry.list.return_value = [{"name": "friend", "status": "running", "created_at": 1, "harness_session_id": "conv-1"}]
+    assert vulture._rest_idle_sessions(registry, {"friend"}, 100000, 3600, False) == []
+    rest.assert_not_called()
+
+
+def test_rest_aborts_when_tmux_does_not_report_the_session(monkeypatch):
+    record = {"name": "friend", "wolt": "pal", "status": "running", "harness_session_id": "conv-1"}
+    registry = _registry_mock(); registry.get.return_value = record
+    monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
+    runtime = Mock(); runtime.last_outputs.return_value = {}
+    monkeypatch.setattr(server_app, "get_runtime", Mock(return_value=runtime))
+    response = _client().post("/sessions/friend/rest", json={"idle_since": 1000})
+    assert response.status_code == 409
+    runtime.stop.assert_not_called()
+
+
+def test_session_list_reports_idle_time_from_tmux(monkeypatch):
+    registry = Mock()
+    registry.list.return_value = [
+        {"name": "friend", "wolt": "pal", "status": "running", "created_at": 1},
+        {"name": "done", "wolt": "pal", "status": "stopped", "created_at": 1},
+    ]
+    monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
+    monkeypatch.setattr(server_app, "get_idle_timeout", lambda: 3600)
+    runtime = Mock(); runtime.last_outputs.return_value = {"friend": int(time.time()) - 600, "done": 1}
+    monkeypatch.setattr(server_app, "get_runtime", Mock(return_value=runtime))
+    rows = {row["name"]: row for row in _client().get("/sessions").json()}
+    assert 600 <= rows["friend"]["idle_seconds"] < 660
+    assert 2940 < rows["friend"]["closes_in_seconds"] <= 3000
+    assert "idle_seconds" not in rows["done"]
+
+
+def _rest_fixture(monkeypatch, last_output, *, timeout=3600, stopped=True):
+    record = {"name": "friend", "wolt": "pal", "status": "running", "harness_session_id": "conv-1"}
+    registry = _registry_mock(); registry.get.return_value = record
+    monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
+    runtime = Mock(); runtime.last_outputs.return_value = {"friend": last_output}
+    runtime.stop.return_value = stopped
+    monkeypatch.setattr(server_app, "get_runtime", Mock(return_value=runtime))
+    monkeypatch.setattr(server_app, "get_idle_timeout", lambda: timeout)
+    return registry, runtime
+
+
+def test_rest_refuses_output_in_the_same_second_it_was_judged(monkeypatch):
+    """tmux stamps whole seconds: a caller that saw "now" and output in that
+    same second both read the same stamp. The authority's own quiet-window
+    check is what refuses it."""
+    now = int(time.time())
+    registry, runtime = _rest_fixture(monkeypatch, now)
+    response = _client().post("/sessions/friend/rest", json={"idle_since": now})
+    assert response.status_code == 409
+    runtime.stop.assert_not_called()
+    registry._write.assert_not_called()
+
+
+def test_rest_rechecks_the_configured_window_itself(monkeypatch):
+    """A caller cannot shorten the window: quiet for 10 minutes against a 1h setting stays up."""
+    quiet_since = int(time.time()) - 600
+    registry, runtime = _rest_fixture(monkeypatch, quiet_since)
+    response = _client().post("/sessions/friend/rest", json={"idle_since": quiet_since})
+    assert response.status_code == 409
+    runtime.stop.assert_not_called()
+
+
+def test_rest_refuses_when_idle_closing_is_off(monkeypatch):
+    registry, runtime = _rest_fixture(monkeypatch, 1000, timeout=None)
+    response = _client().post("/sessions/friend/rest", json={"idle_since": 1000})
+    assert response.status_code == 409
+    runtime.stop.assert_not_called()
+
+
+def test_rest_keeps_the_record_running_when_tmux_refuses_the_stop(monkeypatch):
+    registry, runtime = _rest_fixture(monkeypatch, 1000, stopped=False)
+    response = _client().post("/sessions/friend/rest", json={"idle_since": 1000})
+    assert response.status_code == 409
+    runtime.stop.assert_called_once()
+    assert not any(c.args[2].get("status") == "resting" for c in registry._write.call_args_list)
