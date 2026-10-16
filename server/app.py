@@ -68,7 +68,9 @@ from sessions import (
     wolt_harness, ResumeUnavailable, ResumeFailed, HarnessNotInstalled,
     stored_resume_id, recover_resume_id, taken_resume_ids, claim_resume_id,
 )
-from session_expiry import get_idle_timeout, hold_active, last_use, set_idle_timeout
+from session_expiry import (
+    HOLD_MAX_SECONDS, get_idle_timeout, hold_active, last_use, set_idle_timeout,
+)
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
 from execution_policy import AutoGrantStore, POLICY_VERSION
@@ -934,8 +936,6 @@ async def session_describe(session_id: str, request: Request):
     return described
 
 
-# A hold longer than this is not a duration any clock can print; use null (forever).
-_HOLD_MAX_SECONDS = 100 * 365 * 86400
 _HOLD_REASON_MAX = 200
 
 
@@ -1006,7 +1006,7 @@ async def hold_session(session_id: str, request: Request):
         return JSONResponse({"error": "seconds required: a whole number of seconds, or null for forever"}, status_code=400)
     seconds = body["seconds"]
     if seconds is not None and (not isinstance(seconds, int) or isinstance(seconds, bool)
-                                or not 0 < seconds <= _HOLD_MAX_SECONDS):
+                                or not 0 < seconds <= HOLD_MAX_SECONDS):
         return JSONResponse({"error": "seconds must be a positive whole number, or null for forever"}, status_code=400)
     reason = _hold_reason(body.get("reason"))
     if not reason:

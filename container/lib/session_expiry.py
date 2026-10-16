@@ -78,6 +78,22 @@ def last_use(record: dict, keys: dict[str, int]) -> int | None:
     return max(recorded, tmux_used)
 
 
+# The longest hold the route takes; null (forever) covers anything longer. An
+# until past now + this was never written by the route, and no clock prints it.
+HOLD_MAX_SECONDS = 100 * 365 * 86400
+
+
+def _well_formed(hold, now: int) -> bool:
+    """A hold the route could have written: until null, or a whole epoch no
+    further than the route's cap. Anything else is malformed: no hold."""
+    if not isinstance(hold, dict) or "until" not in hold:
+        return False
+    until = hold["until"]
+    if until is None:
+        return True
+    return isinstance(until, int) and not isinstance(until, bool) and until <= now + HOLD_MAX_SECONDS
+
+
 def hold_active(record: dict, now: int) -> bool:
     """A running session holds while its hold has no end or ends after now.
 
@@ -88,9 +104,6 @@ def hold_active(record: dict, now: int) -> bool:
     if record.get("status") != "running":
         return False
     hold = record.get("hold")
-    if not isinstance(hold, dict) or "until" not in hold:
+    if not _well_formed(hold, now):
         return False
-    until = hold["until"]
-    if until is None:
-        return True
-    return isinstance(until, int) and not isinstance(until, bool) and until > now
+    return hold["until"] is None or hold["until"] > now

@@ -176,6 +176,44 @@ def test_the_vulture_names_a_held_session_once_an_hour(tmp_path, monkeypatch):
     rest.assert_not_called()
 
 
+# --- a hold no clock can print is no hold ---------------------------------------
+
+HUGE = {"until": 10 ** 18, "reason": "hand-edited", "since": 1}
+
+
+def test_an_until_past_the_routes_cap_is_no_hold():
+    """Only the route writes holds, and it caps them at 100 years. A hand-edited
+    until beyond that is malformed: no hold, and nothing to print."""
+    import session_expiry
+    now = int(time.time())
+    assert not session_expiry.hold_active({"status": "running", "hold": dict(HUGE)}, now)
+    edge = {"until": now + session_expiry.HOLD_MAX_SECONDS, "reason": "longest", "since": now}
+    assert session_expiry.hold_active({"status": "running", "hold": edge}, now)
+
+
+def test_no_printer_raises_on_a_hand_edited_huge_until(tmp_path, monkeypatch):
+    from creatures import vulture
+
+    registry = _registry(tmp_path, monkeypatch, hold=dict(HUGE), harness_session_id="conv-1", created_at=1)
+
+    # The vulture: no hold, so the idle session rests, and the pass goes on.
+    monkeypatch.setattr(vulture, "_held_logged", {})
+    runtime = Mock(); runtime.last_keys.return_value = {NAME: 1000}
+    monkeypatch.setattr(vulture, "get_runtime", Mock(return_value=runtime))
+    rest = Mock(return_value=True); monkeypatch.setattr(vulture, "_rest_via_api", rest)
+    listed = Mock(); listed.list.return_value = [_stored(registry)]
+    assert vulture._rest_idle_sessions(listed, {NAME}, 100000, 3600, False) == [NAME]
+
+    # The CLI's `hold` show, fed what the lodge answers for this session.
+    monkeypatch.setattr(registry, "get", lambda *a, **k: SessionRegistry.get(registry, *a, **{**k, "check_alive": False}))
+    answer = _client().get(f"/sessions/{NAME}").json()
+    assert "hold" not in answer
+    client = runpy.run_path(str(ROOT / "container" / "bin" / "woltspace"))
+    client["cmd_session_hold"].__globals__["_req"] = lambda *a, **k: (200, answer)
+    monkeypatch.setenv("WOLTSPACE_WOLT_SESSION", NAME)
+    client["cmd_session_hold"](_hold_args())
+
+
 # --- the CLI ------------------------------------------------------------------
 
 def _cli(monkeypatch, answer=(200, {})):
