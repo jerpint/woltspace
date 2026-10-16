@@ -26,6 +26,7 @@ _KEY_ENV_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$")
 CALL_TIMEOUT_SECONDS = 60.0
 TRANSCRIPT_MAX_CHARS = 4000
+RESPONSE_MAX_BYTES = 64 * 1024
 
 
 class SettingsInvalid(ValueError):
@@ -160,26 +161,50 @@ class TranscriptionFailed(RuntimeError):
 
 
 def transcribe(audio: Path, settings: TranscriptionSettings, key: str | None) -> str:
-    """One call to the configured endpoint; the transcript text."""
+    """One call to the configured endpoint; the transcript text.
+
+    Bounded: at most RESPONSE_MAX_BYTES of response (read raw, identity
+    encoding only, never the body of an error), and CALL_TIMEOUT_SECONDS end
+    to end. Every failure is a TranscriptionFailed with a fixed reason.
+    """
+    import time
+
     import httpx
 
-    headers = {}
+    headers = {"Accept-Encoding": "identity"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
     # A server on this machine is reached directly: an ambient HTTP(S)_PROXY
     # would otherwise carry its clear-text audio and key off the machine.
     local = _loopback(urlsplit(settings.base_url).hostname or "")
-    with httpx.Client(follow_redirects=False, timeout=CALL_TIMEOUT_SECONDS, trust_env=not local) as client:
-        with open(audio, "rb") as handle:
-            response = client.post(
-                settings.endpoint, headers=headers,
+    deadline = time.monotonic() + CALL_TIMEOUT_SECONDS
+    body = bytearray()
+    try:
+        with httpx.Client(follow_redirects=False, timeout=httpx.Timeout(CALL_TIMEOUT_SECONDS, connect=10.0),
+                          trust_env=not local) as client, open(audio, "rb") as handle:
+            with client.stream(
+                "POST", settings.endpoint, headers=headers,
                 files={"file": (Path(audio).name, handle, "application/octet-stream")},
                 data={"model": settings.model, "response_format": "json"},
-            )
-    if response.status_code != 200:
-        raise TranscriptionFailed(f"the transcription service answered HTTP {response.status_code}")
+            ) as response:
+                if response.status_code != 200:            # the body is never read
+                    raise TranscriptionFailed(f"the transcription service answered HTTP {response.status_code}")
+                if response.headers.get("content-encoding", "identity").strip().lower() not in ("", "identity"):
+                    raise TranscriptionFailed("the transcription service sent no transcript")
+                for chunk in response.iter_raw():
+                    if len(body) + len(chunk) > RESPONSE_MAX_BYTES:
+                        raise TranscriptionFailed("the transcription service sent too much")
+                    if time.monotonic() > deadline:
+                        raise TranscriptionFailed("the transcription service timed out")
+                    body += chunk
+    except httpx.TimeoutException:
+        raise TranscriptionFailed("the transcription service timed out") from None
+    except httpx.HTTPError:
+        raise TranscriptionFailed("the transcription service could not be reached") from None
+    except OSError:
+        raise TranscriptionFailed("the voice note could not be read") from None
     try:
-        text = response.json()["text"]
+        text = json.loads(bytes(body))["text"]
     except (ValueError, KeyError, TypeError):
         raise TranscriptionFailed("the transcription service sent no transcript") from None
     if not isinstance(text, str):

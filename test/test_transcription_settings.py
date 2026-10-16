@@ -61,7 +61,8 @@ def _mock(monkeypatch, response):
 
     def client(**kw):
         seen["trust_env"] = kw.pop("trust_env", True)
-        return real(transport=httpx.MockTransport(lambda r: seen.setdefault("requests", []).append(r) or response),
+        make = response if callable(response) else (lambda: response)
+        return real(transport=httpx.MockTransport(lambda r: seen.setdefault("requests", []).append(r) or make()),
                     trust_env=False, **kw)
 
     monkeypatch.setattr(httpx, "Client", client)
@@ -71,7 +72,7 @@ def _mock(monkeypatch, response):
 def test_the_call_goes_to_the_configured_endpoint_model_and_key(tmp_path, monkeypatch):
     audio = tmp_path / "note.ogg"
     audio.write_bytes(b"ogg")
-    seen = _mock(monkeypatch, httpx.Response(200, json={"text": " the  whole note "}))
+    seen = _mock(monkeypatch, lambda: httpx.Response(200, stream=httpx.ByteStream(b'{"text": " the  whole note "}')))
     local = TranscriptionSettings.parse({"base_url": "http://127.0.0.1:8080/v1", "model": "large-v3", "key_env": ""})
     assert stt.transcribe(audio, local, None) == "the whole note"
     request = seen["requests"][0]
@@ -84,7 +85,11 @@ def test_the_call_goes_to_the_configured_endpoint_model_and_key(tmp_path, monkey
 
 @pytest.mark.parametrize("response", [
     httpx.Response(401, text="bad key sk-secret"), httpx.Response(302, headers={"location": "https://evil.example"}),
-    httpx.Response(200, text="not json"), httpx.Response(200, json={"text": 5}),
+    httpx.Response(200, stream=httpx.ByteStream(b"not json")),
+    httpx.Response(200, stream=httpx.ByteStream(b'{"text": 5}')),
+    httpx.Response(200, stream=httpx.ByteStream(b'{"text": "' + b"x" * 70000 + b'"}')),
+    httpx.Response(500, stream=httpx.ByteStream(b"sk-secret " * 100000)),
+    httpx.Response(200, headers={"content-encoding": "gzip"}, stream=httpx.ByteStream(b"\x1f\x8b")),
 ])
 def test_a_failed_call_is_a_fixed_error_never_the_body(tmp_path, monkeypatch, response):
     audio = tmp_path / "note.ogg"
@@ -93,6 +98,51 @@ def test_a_failed_call_is_a_fixed_error_never_the_body(tmp_path, monkeypatch, re
     with pytest.raises(stt.TranscriptionFailed) as failed:
         stt.transcribe(audio, TranscriptionSettings(), "sk-1")
     assert "sk-secret" not in str(failed.value) and "evil" not in str(failed.value)
+
+
+@pytest.mark.parametrize("error,reason", [
+    (httpx.ConnectError("refused 10.0.0.1"), "could not be reached"),
+    (httpx.ReadTimeout("slow"), "timed out"),
+])
+def test_transport_failures_are_fixed_reasons(tmp_path, monkeypatch, error, reason):
+    audio = tmp_path / "note.ogg"
+    audio.write_bytes(b"ogg")
+    real = httpx.Client
+
+    def raising(request):
+        raise error
+
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(raising),
+                                                           **{k: v for k, v in kw.items() if k != "trust_env"}))
+    with pytest.raises(stt.TranscriptionFailed) as failed:
+        stt.transcribe(audio, TranscriptionSettings(), "sk-1")
+    assert reason in str(failed.value) and "10.0.0.1" not in str(failed.value)
+    assert failed.value.__cause__ is None
+
+
+def test_an_unreachable_local_server_is_a_fixed_reason(tmp_path):
+    audio = tmp_path / "note.ogg"
+    audio.write_bytes(b"ogg")
+    settings = TranscriptionSettings.parse({"base_url": "http://127.0.0.1:9/v1", "key_env": ""})
+    with pytest.raises(stt.TranscriptionFailed, match="could not be reached"):
+        stt.transcribe(audio, settings, None)
+
+
+def test_a_drip_feed_is_cut_at_the_total_deadline(tmp_path, monkeypatch):
+    audio = tmp_path / "note.ogg"
+    audio.write_bytes(b"ogg")
+    monkeypatch.setattr(stt, "CALL_TIMEOUT_SECONDS", 0.2)
+    import time
+
+    class Drip(httpx.SyncByteStream):
+        def __iter__(self):
+            for _ in range(50):
+                time.sleep(0.02)
+                yield b" "
+
+    _mock(monkeypatch, httpx.Response(200, stream=Drip()))
+    with pytest.raises(stt.TranscriptionFailed, match="timed out"):
+        stt.transcribe(audio, TranscriptionSettings(), "sk-1")
 
 
 def test_a_loopback_call_with_a_proxy_set_reaches_the_local_server(tmp_path, monkeypatch):
