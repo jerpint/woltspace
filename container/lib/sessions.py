@@ -230,6 +230,11 @@ class SessionRegistry:
         # lies to whoever reads it next.
         if normalized.get("status") != "orphaned":
             normalized.pop("orphaned_reason", None)
+        # Same rule for a hold: it covered a task running in this session, and
+        # that task died with it. Every write that leaves running (rest, death,
+        # stop, finish, orphaned) drops it, so a woken session never inherits one.
+        if normalized.get("status") != "running":
+            normalized.pop("hold", None)
         tmp.write_text(json.dumps(normalized, indent=2) + "\n")
         tmp.rename(path)
 

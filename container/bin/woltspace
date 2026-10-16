@@ -12,6 +12,7 @@ Phase 1 nouns:
   session list [--wolt X] [--alive] [--json]
   session send <wolt|session> [--from <wolt>]  # message on stdin
   session spawn <wolt> [--from <wolt>]  # optional seed prompt on stdin
+  session hold [<duration> <reason> | off]  # keep up for a background task
 
 A wolt self-identifies as the sender via $WOLTSPACE_WOLT_NAME /
 $WOLTSPACE_WOLT_SESSION (exported
@@ -272,6 +273,86 @@ def cmd_session_describe(args):
         print(f"described → {session}")
 
 
+HOLD_HELP = """\
+Keep this session from resting while a background task you started runs.
+Only for a background task that must keep running (a build, a dev server, a
+watcher), never to stay available. Release it with `woltspace session hold off`
+as soon as the task ends.
+
+  woltspace session hold 6h "npm run dev on :3000"   90m, 6h, 2d or forever
+  woltspace session hold off                         release the hold
+  woltspace session hold                             show this session's hold
+"""
+_HOLD_UNITS = {"m": 60, "h": 3600, "d": 86400}
+
+
+def _hold_seconds(duration):
+    """90m, 6h, 2d -> seconds; forever -> None. Raises ValueError otherwise."""
+    if duration == "forever":
+        return None
+    match = re.fullmatch(r"([0-9]+)([mhd])", duration)
+    if not match or int(match.group(1)) == 0:
+        raise ValueError(f"bad duration {duration!r}: use 90m, 6h, 2d or forever")
+    return int(match.group(1)) * _HOLD_UNITS[match.group(2)]
+
+
+def _clock(epoch):
+    from datetime import datetime
+    when = datetime.fromtimestamp(epoch)
+    same_day = when.date() == datetime.now().date()
+    return when.strftime("%H:%M" if same_day else "%Y-%m-%d %H:%M")
+
+
+def _describe_hold(hold):
+    if not hold:
+        return "no hold"
+    span = "forever" if hold.get("until") is None else f"until {_clock(hold['until'])}"
+    return f"held {span}: {hold.get('reason', '')}"
+
+
+def cmd_session_hold(args):
+    session = args.session or get_env("WOLTSPACE_WOLT_SESSION", "")
+    if not session:
+        print("session id required: run inside a session or pass --session", file=sys.stderr)
+        sys.exit(2)
+    words = list(args.words)
+    if not words:
+        status, result = _req("GET", f"/sessions/{session}")
+        if status != 200:
+            print(result.get("error", f"HTTP {status}"), file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps(result.get("hold"), indent=2) if args.json
+              else f"{session}: {_describe_hold(result.get('hold'))}")
+        return
+    if words[0] == "off":
+        if len(words) > 1:
+            print("hold off takes no reason", file=sys.stderr)
+            sys.exit(2)
+        status, result = _req("DELETE", f"/sessions/{session}/hold")
+        verb = "released"
+    else:
+        try:
+            seconds = _hold_seconds(words[0])
+        except ValueError as exc:
+            print(exc, file=sys.stderr)
+            sys.exit(2)
+        reason = " ".join(words[1:]).strip()
+        if not reason:
+            print('reason required: name the task that is running, e.g. hold 6h "npm run dev"', file=sys.stderr)
+            sys.exit(2)
+        status, result = _req("POST", f"/sessions/{session}/hold", {"seconds": seconds, "reason": reason})
+        verb = "held"
+    if status != 200:
+        print(result.get("error", f"HTTP {status}"), file=sys.stderr)
+        sys.exit(1)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    elif verb == "held":
+        print(f"{_describe_hold(result.get('hold'))} → {session}")
+    else:
+        print(f"released → {session}")
+
+
 def cmd_auto_check(args):
     _, result = _req("POST", "/auto-grants/check", {
         "wolt_id": args.wolt, "workdir": args.workdir,
@@ -482,6 +563,15 @@ def main():
     sd.add_argument("--session", default="", help="session id (default: current session)")
     sd.add_argument("--json", action="store_true", help="raw JSON output")
     sd.set_defaults(func=cmd_session_describe)
+
+    sh = ssub.add_parser("hold", help="keep this session up while a background task runs",
+                         description=HOLD_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sh.add_argument("words", nargs="*", metavar="DURATION REASON",
+                    help="90m, 6h, 2d or forever, then the task that is running; "
+                         "`off` releases; nothing shows the hold")
+    sh.add_argument("--session", default="", help="session id (default: current session)")
+    sh.add_argument("--json", action="store_true", help="raw JSON output")
+    sh.set_defaults(func=cmd_session_hold)
 
     status = sub.add_parser("status", help="show sessions with workdir and policy")
     status.add_argument("--json", action="store_true", help="raw JSON output")

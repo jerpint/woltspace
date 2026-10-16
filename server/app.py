@@ -913,6 +913,97 @@ async def session_describe(session_id: str, request: Request):
     return described
 
 
+# A hold longer than this is not a duration any clock can print; use null (forever).
+_HOLD_MAX_SECONDS = 100 * 365 * 86400
+_HOLD_REASON_MAX = 200
+
+
+def _hold_reason(value) -> str:
+    """One line, no control characters, like a session description."""
+    if not isinstance(value, str):
+        return ""
+    text = " ".join(value.split())
+    text = "".join(c for c in text if not unicodedata.category(c).startswith("C"))
+    return " ".join(text.split())
+
+
+def _hold_locked(safe: str, seconds: int | None, reason: str):
+    from sessions import SessionRegistry
+    registry = SessionRegistry(WOLTS_DIR)
+    data = registry.get(safe, check_alive=False)
+    if data is None:
+        return JSONResponse({"error": "session not found"}, status_code=404)
+    wolt = data.get("wolt", "")
+    with registry._lock(wolt, safe):
+        data = registry.get(safe, wolt=wolt, check_alive=False)
+        if data is None:
+            return JSONResponse({"error": "session not found"}, status_code=404)
+        if data.get("status") != "running":
+            return JSONResponse({"error": f"session is {data.get('status') or 'not running'}; only a running session can hold"},
+                                status_code=409)
+        now = int(time.time())
+        data["hold"] = {"until": None if seconds is None else now + seconds, "reason": reason, "since": now}
+        data["last_activity"] = now  # taking a hold is use
+        registry._write(wolt, safe, data)
+    return {"ok": True, "session": safe, "hold": data["hold"]}
+
+
+def _release_hold_locked(safe: str):
+    from sessions import SessionRegistry
+    registry = SessionRegistry(WOLTS_DIR)
+    data = registry.get(safe, check_alive=False)
+    if data is None:
+        return JSONResponse({"error": "session not found"}, status_code=404)
+    wolt = data.get("wolt", "")
+    with registry._lock(wolt, safe):
+        data = registry.get(safe, wolt=wolt, check_alive=False)
+        if data is None:
+            return JSONResponse({"error": "session not found"}, status_code=404)
+        if "hold" in data:
+            # A raw write: releasing is not use, so an idle session rests on the next sweep.
+            data.pop("hold")
+            registry._write(wolt, safe, data)
+    return {"ok": True, "session": safe, "hold": None}
+
+
+@app.post("/sessions/{session_id}/hold")
+async def hold_session(session_id: str, request: Request):
+    """Keep a running session from resting while a background task runs in it.
+
+    Body: {"seconds": N | null, "reason": "..."}; null holds until released.
+    """
+    safe = sanitize_session(session_id)
+    if not safe or safe != session_id:
+        return JSONResponse({"error": "invalid session id"}, status_code=400)
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if "seconds" not in body:
+        return JSONResponse({"error": "seconds required: a whole number of seconds, or null for forever"}, status_code=400)
+    seconds = body["seconds"]
+    if seconds is not None and (not isinstance(seconds, int) or isinstance(seconds, bool)
+                                or not 0 < seconds <= _HOLD_MAX_SECONDS):
+        return JSONResponse({"error": "seconds must be a positive whole number, or null for forever"}, status_code=400)
+    reason = _hold_reason(body.get("reason"))
+    if not reason:
+        return JSONResponse({"error": "reason required: name the task that is running"}, status_code=400)
+    if len(reason) > _HOLD_REASON_MAX:
+        return JSONResponse({"error": f"reason must be {_HOLD_REASON_MAX} characters or fewer"}, status_code=400)
+    return await asyncio.to_thread(_hold_locked, safe, seconds, reason)
+
+
+@app.delete("/sessions/{session_id}/hold")
+async def release_hold(session_id: str):
+    """Drop a session's hold. It rests at the next sweep only if nobody is using it."""
+    safe = sanitize_session(session_id)
+    if not safe or safe != session_id:
+        return JSONResponse({"error": "invalid session id"}, status_code=400)
+    return await asyncio.to_thread(_release_hold_locked, safe)
+
+
 @app.post("/sessions/{session_id}/message")
 async def session_message(session_id: str, request: Request):
     """Deliver to a running session, or resume a resting one on contact."""
@@ -1238,6 +1329,16 @@ async def session_new_slack(request: Request):
 
 # --- Sessions list ---
 
+def _show_hold(session: dict, now: int) -> bool:
+    """Leave only a hold in force on a session row; one that has ended waits
+    for the next write to drop it. Returns whether the session holds."""
+    held = hold_active(session, now)
+    hold = session.pop("hold", None)
+    if held:
+        session["hold"] = {k: hold.get(k) for k in ("until", "reason", "since")}
+    return held
+
+
 def _last_keys() -> dict[str, int]:
     """tmux's last client input per session; empty when tmux cannot say."""
     try:
@@ -1260,11 +1361,7 @@ async def list_sessions(view: str = ""):
     now = int(time.time())
     for session in sessions:
         session["idle_timeout_seconds"] = timeout
-        # Only a hold in force is shown; one that has ended waits for the next write to drop it.
-        held = hold_active(session, now)
-        hold = session.pop("hold", None)
-        if held:
-            session["hold"] = {k: hold.get(k) for k in ("until", "reason", "since")}
+        held = _show_hold(session, now)
         if session.get("status") != "running":
             continue
         used = last_use(session, keys)
@@ -1289,6 +1386,7 @@ async def get_session(name: str):
     )
     if session is None:
         return JSONResponse({"error": "not found"}, status_code=404)
+    _show_hold(session, int(time.time()))
     return session
 
 

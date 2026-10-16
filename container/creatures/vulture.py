@@ -58,6 +58,11 @@ PROTECTED_SESSIONS = {"main"}
 
 DEFAULT_INTERVAL = 600  # 10 minutes
 
+# A held session is named in the log at most this often, so a forgotten
+# forever hold stays visible without flooding the log.
+HELD_LOG_EVERY = 3600
+_held_logged: dict[str, int] = {}
+
 
 def _send_notify(message: str):
     """Send a vulture notification via the server — only when there's something to report."""
@@ -147,6 +152,17 @@ def _settle_dead(data: dict, now: int) -> str:
     return status
 
 
+def _log_held(data: dict, now: int) -> None:
+    name = data["name"]
+    if name in _held_logged and now - _held_logged[name] < HELD_LOG_EVERY:
+        return
+    _held_logged[name] = now
+    hold = data["hold"]
+    until = hold.get("until")
+    span = "forever" if until is None else "until " + datetime.fromtimestamp(until).strftime("%Y-%m-%d %H:%M")
+    log(f"🦅 held ({span}): {name}: {hold.get('reason', '')}")
+
+
 def _rest_idle_sessions(reg: SessionRegistry, live_tmux: set[str], now: int,
                         timeout: int | None, dry_run: bool) -> list[str]:
     """Rest running sessions nobody has used for the configured window.
@@ -172,6 +188,7 @@ def _rest_idle_sessions(reg: SessionRegistry, live_tmux: set[str], now: int,
         if now - (data.get("created_at") or now) < GRACE_PERIOD_SECONDS:
             continue
         if hold_active(data, now):
+            _log_held(data, now)
             continue
         used = last_use(data, keys)
         if used is None or now - used < timeout:

@@ -1,0 +1,231 @@
+"""A hold keeps a running session from resting while a background task runs.
+
+The route is the only writer; the registry drops the hold on every write that
+leaves "running"; the CLI is a thin client; the vulture names held sessions.
+"""
+
+import argparse
+import runpy
+import sys
+import time
+from pathlib import Path
+from unittest.mock import Mock
+
+import pytest
+from starlette.testclient import TestClient
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "container"))
+sys.path.insert(0, str(ROOT / "container" / "lib"))
+
+import server.app as server_app  # noqa: E402
+from sessions import SessionRegistry  # noqa: E402
+
+NAME = "pal-maple-a1b2c3"
+HOLD = {"until": None, "reason": "npm run dev on :3000", "since": 1}
+
+
+@pytest.fixture(autouse=True)
+def _vulture_state_in_tmp(tmp_path, monkeypatch):
+    from creatures import vulture
+    state = tmp_path / ".vulture-state"
+    monkeypatch.setattr(vulture, "STATE_DIR", state)
+    monkeypatch.setattr(vulture, "LOG_FILE", state / "vulture.log")
+    monkeypatch.setattr(vulture, "LAST_RUN_FILE", state / "last-run")
+
+
+def _registry(tmp_path, monkeypatch, **fields):
+    registry = SessionRegistry(tmp_path)
+    registry.create(NAME, wolt="pal")
+    data = registry._read("pal", NAME)
+    data.update({"status": "running", "last_activity": 1000, **fields})
+    registry._write("pal", NAME, data)
+    monkeypatch.setattr("sessions.SessionRegistry", lambda *_a, **_k: registry)
+    monkeypatch.setattr(server_app, "WOLTS_DIR", tmp_path)
+    return registry
+
+
+def _client():
+    return TestClient(server_app.app, base_url="http://localhost:7777")
+
+
+def _stored(registry):
+    return registry._read("pal", NAME)
+
+
+# --- the route ---------------------------------------------------------------
+
+def test_a_hold_for_a_duration_records_until_reason_and_since(tmp_path, monkeypatch):
+    registry = _registry(tmp_path, monkeypatch)
+    before = int(time.time())
+    response = _client().post(f"/sessions/{NAME}/hold", json={"seconds": 21600, "reason": "npm run dev on :3000"})
+    after = int(time.time())
+    assert response.status_code == 200, response.json()
+    hold = _stored(registry)["hold"]
+    assert isinstance(hold["until"], int)
+    assert before + 21600 <= hold["until"] <= after + 21600
+    assert before <= hold["since"] <= after
+    assert hold["reason"] == "npm run dev on :3000"
+    assert response.json()["hold"] == hold
+    assert _stored(registry)["last_activity"] >= before  # taking a hold is use
+
+
+def test_a_hold_without_seconds_is_forever(tmp_path, monkeypatch):
+    registry = _registry(tmp_path, monkeypatch)
+    response = _client().post(f"/sessions/{NAME}/hold", json={"seconds": None, "reason": "tunnel for the demo"})
+    assert response.status_code == 200
+    assert _stored(registry)["hold"]["until"] is None
+
+
+def test_the_reason_is_cleaned_like_a_description(tmp_path, monkeypatch):
+    registry = _registry(tmp_path, monkeypatch)
+    response = _client().post(f"/sessions/{NAME}/hold", json={"seconds": 60, "reason": "  npm\x00  run\n dev\x1b "})
+    assert response.status_code == 200
+    assert _stored(registry)["hold"]["reason"] == "npm run dev"
+
+
+@pytest.mark.parametrize("body", [
+    {"reason": "build"},                      # no seconds at all
+    {"seconds": 0, "reason": "build"},
+    {"seconds": "6h", "reason": "build"},
+    {"seconds": True, "reason": "build"},
+    {"seconds": 10 ** 12, "reason": "build"},  # past any printable date: use null
+    {"seconds": 60, "reason": "\x00\x1b"},  # no reason left once cleaned
+    {"seconds": 60, "reason": "x" * 201},
+    [60, "build"],                            # not an object
+])
+def test_a_bad_hold_is_refused(tmp_path, monkeypatch, body):
+    registry = _registry(tmp_path, monkeypatch)
+    response = _client().post(f"/sessions/{NAME}/hold", json=body)
+    assert response.status_code == 400
+    assert "hold" not in _stored(registry)
+
+
+def test_a_session_that_is_not_running_cannot_hold(tmp_path, monkeypatch):
+    registry = _registry(tmp_path, monkeypatch, status="resting")
+    response = _client().post(f"/sessions/{NAME}/hold", json={"seconds": 60, "reason": "build"})
+    assert response.status_code == 409
+    assert "hold" not in _stored(registry)
+
+
+def test_release_drops_the_hold_without_counting_as_use(tmp_path, monkeypatch):
+    """Releasing lets an idle session rest on the next sweep, not a window later."""
+    registry = _registry(tmp_path, monkeypatch, hold=dict(HOLD))
+    response = _client().delete(f"/sessions/{NAME}/hold")
+    assert response.status_code == 200
+    stored = _stored(registry)
+    assert "hold" not in stored
+    assert stored["last_activity"] == 1000
+
+
+def test_one_session_shows_its_hold_only_while_in_force(tmp_path, monkeypatch):
+    registry = _registry(tmp_path, monkeypatch, hold=dict(HOLD))
+    monkeypatch.setattr(registry, "get", lambda *a, **k: SessionRegistry.get(registry, *a, **{**k, "check_alive": False}))
+    assert _client().get(f"/sessions/{NAME}").json()["hold"]["reason"] == "npm run dev on :3000"
+    data = _stored(registry)
+    data["hold"] = {"until": 5, "reason": "old build", "since": 1}
+    registry._write("pal", NAME, data)
+    assert "hold" not in _client().get(f"/sessions/{NAME}").json()
+
+
+# --- a hold ends when the session leaves running -----------------------------
+
+@pytest.mark.parametrize("status", ["resting", "reaped", "stopped", "completed", "failed", "orphaned", "archived"])
+def test_every_write_that_leaves_running_drops_the_hold(tmp_path, monkeypatch, status):
+    registry = _registry(tmp_path, monkeypatch, hold=dict(HOLD))
+    data = _stored(registry)
+    data["status"] = status
+    registry._write("pal", NAME, data)
+    assert "hold" not in _stored(registry)
+
+
+def test_a_running_write_keeps_the_hold(tmp_path, monkeypatch):
+    registry = _registry(tmp_path, monkeypatch, hold=dict(HOLD))
+    registry.update(NAME, wolt="pal", title="still working")
+    assert _stored(registry)["hold"] == HOLD
+
+
+def test_a_dead_held_session_settles_without_its_hold(tmp_path, monkeypatch):
+    from creatures import vulture
+    registry = _registry(tmp_path, monkeypatch, hold=dict(HOLD), harness_session_id="conv-1", created_at=1)
+    data = _stored(registry)
+    vulture._settle_dead(data, int(time.time()))
+    registry._write("pal", NAME, data)
+    stored = _stored(registry)
+    assert stored["status"] == "resting"
+    assert "hold" not in stored
+
+
+# --- the vulture names held sessions ------------------------------------------
+
+def test_the_vulture_names_a_held_session_once_an_hour(tmp_path, monkeypatch):
+    from creatures import vulture
+    monkeypatch.setattr(vulture, "_held_logged", {})
+    runtime = Mock(); runtime.last_keys.return_value = {NAME: 1000}
+    monkeypatch.setattr(vulture, "get_runtime", Mock(return_value=runtime))
+    rest = Mock(return_value=True); monkeypatch.setattr(vulture, "_rest_via_api", rest)
+    registry = Mock(); registry.list.return_value = [
+        {"name": NAME, "status": "running", "created_at": 1, "harness_session_id": "conv-1", "hold": dict(HOLD)}]
+
+    for now in (100000, 100600, 103599, 103600):
+        assert vulture._rest_idle_sessions(registry, {NAME}, now, 3600, False) == []
+    lines = [line for line in vulture.LOG_FILE.read_text().splitlines() if "held" in line]
+    assert len(lines) == 2
+    assert f"held (forever): {NAME}: npm run dev on :3000" in lines[0]
+    rest.assert_not_called()
+
+
+# --- the CLI ------------------------------------------------------------------
+
+def _cli(monkeypatch, answer=(200, {})):
+    client = runpy.run_path(str(ROOT / "container" / "bin" / "woltspace"))
+    sent = []
+
+    def fake_req(method, path, body=None):
+        sent.append((method, path, body))
+        return answer
+
+    client["cmd_session_hold"].__globals__["_req"] = fake_req
+    monkeypatch.setenv("WOLTSPACE_WOLT_SESSION", NAME)
+    return client, sent
+
+
+def _hold_args(*words, session=""):
+    return argparse.Namespace(words=list(words), session=session, json=False)
+
+
+@pytest.mark.parametrize("duration,seconds", [("90m", 5400), ("forever", None)])
+def test_cli_hold_posts_the_duration_and_reason(monkeypatch, capsys, duration, seconds):
+    client, sent = _cli(monkeypatch, (200, {"hold": {"until": None, "reason": "build", "since": 1}}))
+    client["cmd_session_hold"](_hold_args(duration, "npm", "run", "build"))
+    assert sent == [("POST", f"/sessions/{NAME}/hold", {"seconds": seconds, "reason": "npm run build"})]
+    assert NAME in capsys.readouterr().out
+
+
+def test_cli_hold_off_releases(monkeypatch, capsys):
+    client, sent = _cli(monkeypatch)
+    client["cmd_session_hold"](_hold_args("off"))
+    assert sent == [("DELETE", f"/sessions/{NAME}/hold", None)]
+    assert "released" in capsys.readouterr().out
+
+
+def test_cli_hold_alone_shows_the_hold(monkeypatch, capsys):
+    client, sent = _cli(monkeypatch, (200, {"name": NAME, "status": "running", "hold": HOLD}))
+    client["cmd_session_hold"](_hold_args())
+    assert sent == [("GET", f"/sessions/{NAME}", None)]
+    out = capsys.readouterr().out
+    assert "forever" in out and "npm run dev on :3000" in out
+    client, _ = _cli(monkeypatch, (200, {"name": NAME, "status": "running"}))
+    client["cmd_session_hold"](_hold_args())
+    assert "no hold" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("words", [("6h",), ("soon", "build"), ("off", "now")])
+def test_cli_hold_refuses_a_bad_request_before_sending(monkeypatch, capsys, words):
+    client, sent = _cli(monkeypatch)
+    with pytest.raises(SystemExit) as stopped:
+        client["cmd_session_hold"](_hold_args(*words))
+    assert stopped.value.code == 2
+    assert sent == []
+    assert capsys.readouterr().err
