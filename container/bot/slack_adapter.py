@@ -29,7 +29,7 @@ from bot.core import (
     message_session, start_claude_session, _bot_log, build_ack_text, registry,
     _sanitize_history,
 )
-from wolts import get_active_creature, list_wolts
+from wolts import get_active_creature, list_wolts, wolt_exists
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from env_compat import get_env
@@ -501,9 +501,14 @@ def _format_tool_log(tc: dict) -> str:
 # --- Session ownership ---
 
 def _get_session_owner(channel: str, thread_ts: str) -> dict | None:
-    """Get session ownership info for a thread, or None if dog-owned."""
-    key = _thread_key(channel, thread_ts)
-    return _thread_sessions.get(key)
+    """Get session ownership info for a thread, or None if dog-owned.
+
+    A thread whose wolt is gone (archived, or removed by hand) is unowned.
+    """
+    owner = _thread_sessions.get(_thread_key(channel, thread_ts))
+    if owner and not wolt_exists(owner.get("wolt", ""), _WOLTS_DIR):
+        return None
+    return owner
 
 
 def _set_session_owner(channel: str, thread_ts: str, session_name: str, wolt_name: str,

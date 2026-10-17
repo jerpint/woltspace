@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import { Node } from './fake-dom.mjs';
 
 const lodgeSource = readFileSync(
   new URL('../public/static/lodge.js', import.meta.url),
@@ -19,46 +20,6 @@ function functionSource(source, name) {
     if (depth === 0) return source.slice(start, i + 1);
   }
   throw new Error(`${name} is incomplete`);
-}
-
-// Just enough DOM for renderSessions: class selectors, one attribute form.
-class Node {
-  constructor(tag) {
-    this.tagName = tag.toUpperCase();
-    this.children = [];
-    this.dataset = {};
-    this.className = '';
-    this._text = '';
-    this._html = '';
-  }
-  set textContent(value) { this._text = String(value); this._html = ''; this.children = []; }
-  get textContent() { return this._text || this.children.map(child => child.textContent).join(''); }
-  set innerHTML(value) { this._html = String(value); this._text = ''; this.children = []; }
-  get innerHTML() { return this._html; }
-  append(...nodes) { nodes.forEach(node => { node.parentNode = this; this.children.push(node); }); }
-  appendChild(node) { this.append(node); return node; }
-  insertBefore(node, ref) {
-    node.parentNode = this;
-    const i = ref ? this.children.indexOf(ref) : -1;
-    if (i < 0) this.children.push(node); else this.children.splice(i, 0, node);
-  }
-  remove() { if (this.parentNode) this.parentNode.children = this.parentNode.children.filter(n => n !== this); }
-  replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
-  addEventListener() {}
-  matches(selector) {
-    const [cls] = selector.replace(/\[.*\]$/, '').split('.').filter(Boolean);
-    return this.className.split(/\s+/).includes(cls);
-  }
-  querySelectorAll(selector) {
-    const out = [];
-    const walk = node => node.children.forEach(child => {
-      if (child.matches(selector)) out.push(child);
-      walk(child);
-    });
-    walk(this);
-    return out;
-  }
-  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
 }
 
 // filter and online are for the Held tests; the avatar tests take the defaults.

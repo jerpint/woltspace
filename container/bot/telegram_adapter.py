@@ -32,7 +32,7 @@ from bot.core import (
     _sanitize_history, start_claude_session,
 )
 from urllib.parse import urlparse, parse_qs
-from wolts import get_active_creature, wolt_display_name
+from wolts import get_active_creature, wolt_display_name, wolt_exists
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import outbox
@@ -177,14 +177,26 @@ def _chat_state_file(chat_id: int) -> Path:
     return CHATS_DIR / f"{chat_id}.json"
 
 
+def _wolt_exists(name: str) -> bool:
+    return wolt_exists(name, _WOLTS_DIR)
+
+
 def _load_chat_state(chat_id: int) -> dict:
-    """Load chat state: {active_wolt, active_session, updated_at}"""
+    """Load chat state: {active_wolt, active_session, updated_at}
+
+    A chosen wolt that is gone (archived, or removed by hand) reads as
+    no choice, so every handler goes to the picker instead of a spawn that fails.
+    """
     path = _chat_state_file(chat_id)
     if path.exists():
         try:
-            return json.loads(path.read_text())
+            state = json.loads(path.read_text())
         except (json.JSONDecodeError, OSError):
-            pass
+            return {}
+        if state.get("active_wolt") and not _wolt_exists(state["active_wolt"]):
+            state.pop("active_wolt")
+            state.pop("active_session", None)
+        return state
     return {}
 
 
@@ -638,7 +650,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_session = _parse_session_from_reply(reply_body)
         if reply_session:
             reply_wolt = _wolt_from_session_name(reply_session)
-            if reply_wolt:
+            # A reply to a gone wolt's old message is routed like any message.
+            if reply_wolt and _wolt_exists(reply_wolt):
                 # Build message with reply context, without the footer
                 reply_text = _quote_reply(
                     reply_body, reply_file, text, _reply_is_voice(reply_to),
@@ -841,7 +854,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_session = _parse_session_from_reply(reply_body)
         if reply_session:
             reply_wolt = _wolt_from_session_name(reply_session)
-            if reply_wolt:
+            # A reply to a gone wolt's old message is routed like any message.
+            if reply_wolt and _wolt_exists(reply_wolt):
                 reply_text = _quote_reply(
                     reply_body, reply_file, voice_message, _reply_is_voice(reply_to),
                 )

@@ -212,6 +212,11 @@ def test_install_creates_fresh_independent_starters(tmp_path):
     with pytest.raises(SeedError, match="overwrite"):
         install_seed(source=package, wolts_dir=target, install_root=install_root)
 
+    (target / ".archive").mkdir()
+    (target / "raccoon").rename(target / ".archive" / "raccoon")
+    with pytest.raises(SeedError, match="an archived wolt is named raccoon: unarchive or delete it first"):
+        install_seed(source=package, wolts_dir=target, install_root=install_root)
+
 
 def test_installed_rodent_gets_the_generated_starter_site(tmp_path):
     from wolts import scaffold_starter_site
