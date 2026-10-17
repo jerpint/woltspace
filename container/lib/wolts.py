@@ -160,11 +160,13 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "",
     if creature_type not in VALID_TYPES:
         raise ValueError(f"Invalid creature type: {creature_type}. Must be one of: {', '.join(sorted(VALID_TYPES))}")
 
+    # Imported here: wolt_archive brings in the whole session registry.
+    from wolt_archive import RESERVED_NAMES, in_archive
+    if name in RESERVED_NAMES:
+        raise ValueError(f"{name} is reserved for the lodge's apps; pick another name")
     wolt_dir = WOLTS_DIR / name
     if wolt_dir.exists():
         raise ValueError(f"Wolt '{name}' already exists at {wolt_dir}")
-    # Imported here: wolt_archive brings in the whole session registry.
-    from wolt_archive import in_archive
     if in_archive(name, wolts_dir=WOLTS_DIR):
         raise ValueError(f"an archived wolt is named {name}: unarchive or delete it first")
 

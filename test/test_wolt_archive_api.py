@@ -96,6 +96,16 @@ def test_create_refuses_a_name_the_archive_holds(tmp_path, client, half_deleted)
     assert not (tmp_path / "pal").exists()
 
 
+@pytest.mark.parametrize("typed, slug", [("Apps", "apps"), ("projects", "projects")])
+def test_create_refuses_the_apps_folders_names(tmp_path, client, typed, slug):
+    """#575 review: typing "Apps" in the create dialog gave the apps root's own name."""
+    response = client.post("/sessions/new/create", json={"name": typed, "type": "beaver"})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == f"{slug} is reserved for the lodge's apps; pick another name"
+    assert not (tmp_path / slug).exists()
+
+
 def test_old_session_links_do_not_recreate_the_folder(tmp_path, client):
     """Review Focus 5."""
     _session(tmp_path, RESTING, status="resting", harness_session_id="abc")
