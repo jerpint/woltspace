@@ -294,15 +294,27 @@ class TestDeliverMessage:
         # codex harness → non-zero paste settle (its TUI folds an immediate Enter)
         assert captured["settle"] == 0.5
 
-    def test_claude_harness_zero_settle(self, tmp_registry, monkeypatch):
+    def test_delivered_to_claude_pauses_before_enter(self, tmp_registry, monkeypatch):
         reg = tmp_registry
-        reg.create("uxwolt-warm-oak-aaaaaa", wolt="uxwolt", harness="claude")
+        reg.create("probe-warm-oak-aaaaaa", wolt="probe", harness="claude")
+        reg.update(
+            "probe-warm-oak-aaaaaa", wolt="probe",
+            runtime=RuntimeHandle(
+                "probe-warm-oak-aaaaaa", "persisted-tmux", "%42"
+            ).to_record(),
+        )
         monkeypatch.setattr(sessions, "_tmux_alive", lambda n: True)
-        has, resolve = _agent_ready()
+        has, resolve = _agent_ready("%42", "persisted-tmux")
         monkeypatch.setattr(sessions, "session_has_agent_process", has)
         monkeypatch.setattr(sessions, "resolve_agent_handle", resolve)
         captured = {}
-        monkeypatch.setattr(sessions, "_tmux_paste",
-                            lambda t, x, settle=0.0: captured.update(settle=settle))
-        deliver_message("uxwolt-warm-oak-aaaaaa", "hi", registry=reg)
-        assert captured["settle"] == 0.0
+
+        def fake_paste(target, text, settle=0.0):
+            captured["settle"] = settle
+
+        monkeypatch.setattr(sessions, "_tmux_paste", fake_paste)
+        res = deliver_message("probe-warm-oak-aaaaaa", "hi", registry=reg)
+        assert res["status"] == "delivered"
+        assert res["harness"] == "claude"
+        # claude drops an Enter that lands while it attaches pasted image paths
+        assert captured["settle"] == 0.5

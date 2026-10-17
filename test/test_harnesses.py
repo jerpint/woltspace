@@ -590,6 +590,13 @@ class TestTableShape:
             missing = self.REQUIRED_KEYS - set(entry)
             assert not missing, f"harness '{name}' missing keys: {missing}"
 
+    def test_every_harness_pauses_before_enter(self):
+        """Claude and codex have each lost an Enter that came right after a
+        paste, so no engine sends its Enter without a pause."""
+        for name, entry in HARNESSES.items():
+            assert entry["paste_settle"] >= 0.5, (
+                f"harness '{name}' paste_settle {entry['paste_settle']} < 0.5")
+
     def test_plugin_delivery_is_spelled_per_harness(self):
         """claude and codex namespace platform skills under `woltspace:` — one
         via the plugin, one via the .claude-plugin-rooted tree. opencode

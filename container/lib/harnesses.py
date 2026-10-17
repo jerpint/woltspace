@@ -603,8 +603,10 @@ HARNESSES = {
         # claude accepts --session-id at spawn; codex assigns its own
         "preset_session_id": True,
         "discover_session_id": None,
-        # claude's TUI accepts paste + immediate Enter (see _tmux_paste)
-        "paste_settle": 0.0,
+        # claude drops an Enter that arrives while it is attaching pasted image
+        # paths (2+ paths, each on its own line). Measured 2026-10-17 on
+        # 2.1.302: a 0.5s settle submitted 3 of 3 with 4 and with 8 screenshots.
+        "paste_settle": 0.5,
     },
     "codex": {
         "wrapper": WCODEX,

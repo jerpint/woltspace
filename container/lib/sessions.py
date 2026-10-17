@@ -877,8 +877,9 @@ def _tmux_paste(target: str | dict | RuntimeHandle, text: str, settle: float = 0
     submits it. See TmuxSessionRuntime.paste.
 
     settle: seconds to wait between the paste and the Enter keystroke.
-    Codex's TUI folded an immediate Enter into an unbracketed paste — its
-    harness entry keeps paste_settle=0.5. Claude takes 0.
+    Codex's TUI folded an immediate Enter into an unbracketed paste, and
+    Claude drops one while it attaches pasted image paths — every harness
+    entry keeps paste_settle=0.5.
     """
     _runtime().paste(_runtime_handle(target), text, settle=settle)
 
@@ -1182,7 +1183,7 @@ def deliver_message(session_id: str, text: str, from_wolt: str = "",
     the pane the agent is booting in.
 
     Delivery is harness-aware: it reuses _tmux_paste with the target harness's
-    paste_settle (codex needs a settle before Enter; claude takes 0).
+    paste_settle (every engine, claude included, pauses before the Enter).
     """
     reg = registry or SessionRegistry()
     existing = reg.get(session_id, check_alive=False)
