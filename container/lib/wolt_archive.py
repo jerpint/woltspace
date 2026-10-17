@@ -13,10 +13,15 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import stat
+import sys
 import threading
 import time
 from pathlib import Path
 
+from execution_policy import AutoGrantStore
+from paths import space_wolf_dir
 from session_expiry import hold_active
 from session_runtime import RuntimeHandle, get_runtime
 from sessions import SessionRegistry, claim_resume_id, stamp_resume_id, stored_resume_id
@@ -54,6 +59,12 @@ def archive_dir(wolts_dir: Path) -> Path:
 def is_archived(name: str, *, wolts_dir: Path) -> bool:
     return bool(_NAME_RE.fullmatch(name or "")) and (
         archive_dir(wolts_dir) / name / "wolt" / "wolt.json").is_file()
+
+
+def in_archive(name: str, *, wolts_dir: Path) -> bool:
+    """A real folder holds the name in the archive, whole or half-deleted."""
+    folder = archive_dir(wolts_dir) / name
+    return bool(_NAME_RE.fullmatch(name or "")) and folder.is_dir() and not folder.is_symlink()
 
 
 def _held(record: dict) -> dict:
@@ -149,3 +160,104 @@ def list_archived_wolts(*, wolts_dir: Path) -> list[dict]:
         wolts.append({"name": name, "display_name": config.get("display_name") or None,
                       "type": config.get("type") or "rodent"})
     return wolts
+
+
+def _ghost_entry(path: Path) -> bool:
+    """What a ghost may hold: folders, and the empty <s>.lock a session lock leaves."""
+    if path.is_symlink():
+        return False
+    return path.is_dir() or (path.suffix == ".lock" and path.is_file()
+                             and path.stat().st_size == 0)
+
+
+def _clear_ghost(home: Path) -> None:
+    """Remove a wolts/<name> left holding only folders and empty *.lock files.
+
+    A registry lookup creates the sessions folder and a session lock leaves
+    <s>.lock, so a message racing the move can leave one behind. It must not
+    block the wolt coming back. Anything else in it is a 409.
+    """
+    if home.is_symlink() or not home.is_dir():
+        raise ArchiveError(409, f"wolts/{home.name} already exists")
+    entries = list(home.rglob("*"))
+    if not all(_ghost_entry(p) for p in entries):
+        raise ArchiveError(409, f"wolts/{home.name} already exists")
+    try:
+        for path in sorted(entries, key=lambda p: len(p.parts), reverse=True) + [home]:
+            path.rmdir() if path.is_dir() else path.unlink()
+    except OSError as exc:
+        raise ArchiveError(409, f"{home} is in the way: {exc}")
+
+
+def unarchive_wolt(name: str, *, wolts_dir: Path) -> dict:
+    check_wolt_name(name)
+    wolts_dir = Path(wolts_dir)
+    home = wolts_dir / name
+    with _LOCK:
+        if not is_archived(name, wolts_dir=wolts_dir):
+            raise ArchiveError(404, f"no archived wolt named {name}")
+        if home.exists() or home.is_symlink():
+            _clear_ghost(home)
+        try:
+            os.rename(archive_dir(wolts_dir) / name, home)
+        except OSError as exc:
+            raise ArchiveError(500, f"could not move {name} back: {exc}")
+    return {"unarchived": name}
+
+
+def _add_rwx(path) -> None:
+    try:
+        os.chmod(path, os.stat(path).st_mode | stat.S_IRWXU)
+    except OSError:
+        pass
+
+
+def _open_up(folder: Path) -> None:
+    """Make every real folder in the tree u+rwx, top-down, never through a symlink.
+
+    A folder with no read permission (a Go module cache, an unpacked tarball,
+    a test that chmods one) can't be listed, so rmtree can't empty it.
+    """
+    _add_rwx(folder)
+    for root, dirs, _files in os.walk(folder):
+        for name in dirs:
+            path = os.path.join(root, name)
+            if not os.path.islink(path):
+                _add_rwx(path)
+
+
+def _retry_removal(func, path, exc):
+    """rmtree's error handler: retry a removal once, its folder made writable.
+
+    Anything else (an open, a scandir) re-raises the original error.
+    """
+    if func not in (os.unlink, os.rmdir, os.remove):
+        raise exc[1] if isinstance(exc, tuple) else exc  # onerror passes exc_info
+    _add_rwx(os.path.dirname(path))
+    func(path)
+
+
+_ON_ERROR = "onexc" if sys.version_info >= (3, 12) else "onerror"
+
+
+def delete_archived_wolt(name: str, *, wolts_dir: Path) -> dict:
+    check_wolt_name(name)
+    wolts_dir = Path(wolts_dir)
+    target = archive_dir(wolts_dir) / name
+    with _LOCK:
+        # Only from the archive: a live wolt is archived first. No wolt.json
+        # needed, so a delete that failed halfway can run again.
+        if not in_archive(name, wolts_dir=wolts_dir):
+            raise ArchiveError(404, f"no archived wolt named {name}")
+        # Grants and cron stamps are keyed by name: a later wolt with this
+        # name must not inherit them. They go first, so a delete that fails
+        # halfway never leaves a grant behind.
+        revoked = AutoGrantStore(wolts_dir).revoke_wolt(name)
+        shutil.rmtree(space_wolf_dir(wolts_dir) / name, ignore_errors=True)
+        _open_up(target)
+        try:
+            shutil.rmtree(target, **{_ON_ERROR: _retry_removal})
+        except OSError as exc:
+            raise ArchiveError(500, f"could not delete all of {name} ({exc}); what is left "
+                                    f"stays in {ARCHIVE_DIRNAME}, run delete again to retry")
+    return {"deleted": name, "grants_revoked": revoked}

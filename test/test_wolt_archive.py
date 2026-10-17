@@ -5,6 +5,7 @@ already skips. These tests run on tmp_path with a fake runtime: no real tmux.
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -15,8 +16,11 @@ sys.path.insert(0, str(ROOT / "container" / "lib"))
 
 import session_runtime  # noqa: E402
 import wolfcore  # noqa: E402
+from execution_policy import AutoGrantStore  # noqa: E402
+from session_targets import SessionTarget  # noqa: E402
 from sessions import SessionRegistry  # noqa: E402
-from wolt_archive import ArchiveError, archive_wolt, list_archived_wolts  # noqa: E402
+from wolt_archive import (  # noqa: E402
+    ArchiveError, archive_wolt, delete_archived_wolt, list_archived_wolts, unarchive_wolt)
 
 from conftest import FakeSessionRuntime  # noqa: E402
 
@@ -270,3 +274,242 @@ def test_list_archived_shows_shown_name(tmp_path, runtime):
 def test_list_archived_is_empty_without_an_archive(tmp_path):
     assert list_archived_wolts(wolts_dir=tmp_path) == []
     assert not (tmp_path / ".archive").exists()
+
+
+# --- unarchive ---------------------------------------------------------------
+
+def _archived(tmp_path, runtime, name="pal"):
+    home = _wolt(tmp_path, name)
+    (home / "wolt" / "wolf.json").write_text(json.dumps(
+        {"crons": [{"name": "digest", "schedule": "0 9 * * *", "prompt": "hi"}]}))
+    _session(tmp_path, name, RESTING, status="resting", harness_session_id="abc")
+    archive_wolt(name, wolts_dir=tmp_path)
+    return tmp_path / ".archive" / name
+
+
+def test_unarchive_brings_folder_records_and_crons_back(tmp_path, runtime):
+    _archived(tmp_path, runtime)
+    assert all(c["_owner"] != "pal" for c in wolfcore.load_all(tmp_path)[0])
+
+    assert unarchive_wolt("pal", wolts_dir=tmp_path) == {"unarchived": "pal"}
+
+    assert (tmp_path / "pal" / "wolt" / "wolt.json").is_file()
+    assert not (tmp_path / ".archive" / "pal").exists()
+    record = SessionRegistry(tmp_path).get(RESTING, check_alive=False)
+    assert (record["status"], record["harness_session_id"]) == ("resting", "abc")
+    assert any(c["_owner"] == "pal" for c in wolfcore.load_all(tmp_path)[0])
+
+
+def test_unarchive_refuses_when_the_name_is_taken(tmp_path, runtime):
+    archived = _archived(tmp_path, runtime)
+    _wolt(tmp_path, "pal", display_name="A new pal")
+
+    with pytest.raises(ArchiveError) as e:
+        unarchive_wolt("pal", wolts_dir=tmp_path)
+
+    assert e.value.status == 409
+    assert json.loads((tmp_path / "pal" / "wolt" / "wolt.json").read_text())["display_name"] == "A new pal"
+    assert (archived / "wolt" / "wolt.json").is_file()
+
+
+def test_unarchive_clears_an_empty_ghost_folder(tmp_path, runtime):
+    _archived(tmp_path, runtime)
+    # A message racing the move: the session lock leaves an empty <s>.lock.
+    (tmp_path / "pal" / ".state" / "sessions").mkdir(parents=True)
+    (tmp_path / "pal" / ".state" / "sessions" / f"{RESTING}.lock").touch()
+    (tmp_path / "pal" / "wolt").mkdir()
+
+    assert unarchive_wolt("pal", wolts_dir=tmp_path) == {"unarchived": "pal"}
+    assert (tmp_path / "pal" / "wolt" / "wolt.json").is_file()
+    assert SessionRegistry(tmp_path).get(RESTING, check_alive=False)["status"] == "resting"
+
+
+@pytest.mark.parametrize("leftover", [
+    "notes.txt", ".state/sessions/x.json", ".state/sessions/x.lock", "link"])
+def test_unarchive_refuses_a_ghost_with_a_file(tmp_path, runtime, leftover):
+    archived = _archived(tmp_path, runtime)
+    (tmp_path / "pal" / "a" / "empty").mkdir(parents=True)
+    path = tmp_path / "pal" / leftover
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if leftover == "link":
+        (tmp_path / "elsewhere").mkdir()
+        path.symlink_to(tmp_path / "elsewhere", target_is_directory=True)
+    else:
+        path.write_text("keep me")
+
+    with pytest.raises(ArchiveError) as e:
+        unarchive_wolt("pal", wolts_dir=tmp_path)
+
+    assert e.value.status == 409
+    assert path.is_symlink() or path.read_text() == "keep me"
+    assert (tmp_path / "pal" / "a" / "empty").is_dir()  # a refusal removes nothing
+    assert (archived / "wolt" / "wolt.json").is_file()
+
+
+def test_unarchive_unknown_name_404(tmp_path, runtime):
+    _wolt(tmp_path, "pal")
+    for name in ["pal", "ghost"]:
+        with pytest.raises(ArchiveError) as e:
+            unarchive_wolt(name, wolts_dir=tmp_path)
+        assert e.value.status == 404
+    with pytest.raises(ArchiveError) as e:
+        unarchive_wolt("../pal", wolts_dir=tmp_path)
+    assert e.value.status == 400
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["pal"]
+
+
+# --- delete ------------------------------------------------------------------
+
+def _grant(tmp_path, wolt, workdir):
+    workdir.mkdir(parents=True, exist_ok=True)
+    AutoGrantStore(tmp_path).grant(SessionTarget(wolt, workdir.resolve()))
+
+
+def test_delete_only_from_the_archive_and_revokes_grants(tmp_path, runtime):
+    _wolt(tmp_path, "pal")
+    with pytest.raises(ArchiveError) as e:
+        delete_archived_wolt("pal", wolts_dir=tmp_path)
+    assert e.value.status == 404
+    assert (tmp_path / "pal" / "wolt" / "wolt.json").is_file()
+
+    archive_wolt("pal", wolts_dir=tmp_path)
+    _grant(tmp_path, "pal", tmp_path / "a")
+    _grant(tmp_path, "pal", tmp_path / "b")
+    _grant(tmp_path, "other", tmp_path / "a")
+    stamps = tmp_path / ".space" / "wolf" / "pal"
+    stamps.mkdir(parents=True)
+    (stamps / "digest.last").write_text("2026-10-17-09:00")
+    (tmp_path / ".space" / "wolf" / "other").mkdir()
+
+    assert delete_archived_wolt("pal", wolts_dir=tmp_path) == {"deleted": "pal", "grants_revoked": 2}
+
+    assert not (tmp_path / ".archive" / "pal").exists()
+    assert [g.wolt_id for g in AutoGrantStore(tmp_path).list()] == ["other"]
+    assert not stamps.exists()
+    assert (tmp_path / ".space" / "wolf" / "other").is_dir()
+
+
+def test_delete_removes_read_only_folders(tmp_path, runtime):
+    _wolt(tmp_path, "pal")
+    archive_wolt("pal", wolts_dir=tmp_path)
+    pkg = tmp_path / ".archive" / "pal" / "gomod" / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "mod.go").write_text("package mod")
+    (pkg / "mod.go").chmod(0o444)
+    pkg.chmod(0o555)
+
+    assert delete_archived_wolt("pal", wolts_dir=tmp_path)["deleted"] == "pal"
+    assert not (tmp_path / ".archive" / "pal").exists()
+
+
+@pytest.mark.parametrize("mode", [0o000, 0o300])
+def test_delete_removes_folders_it_cannot_read(tmp_path, runtime, mode):
+    _wolt(tmp_path, "pal")
+    archive_wolt("pal", wolts_dir=tmp_path)
+    _grant(tmp_path, "pal", tmp_path / "a")
+    locked = tmp_path / ".archive" / "pal" / "fixtures" / "locked"
+    locked.mkdir(parents=True)
+    (locked / "secret.txt").write_text("x")
+    locked.chmod(mode)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o500)
+    (tmp_path / ".archive" / "pal" / "link").symlink_to(outside, target_is_directory=True)
+
+    assert delete_archived_wolt("pal", wolts_dir=tmp_path) == {"deleted": "pal", "grants_revoked": 1}
+    assert not (tmp_path / ".archive" / "pal").exists()
+    assert AutoGrantStore(tmp_path).list() == []
+    assert outside.stat().st_mode & 0o777 == 0o500  # never chmodded through the link
+
+
+def test_a_folder_that_stays_unreadable_ends_as_a_500(tmp_path, runtime, monkeypatch):
+    _wolt(tmp_path, "pal")
+    archive_wolt("pal", wolts_dir=tmp_path)
+    _grant(tmp_path, "pal", tmp_path / "a")
+    locked = tmp_path / ".archive" / "pal" / "locked"
+    locked.mkdir()
+    (locked / "secret.txt").write_text("x")
+    locked.chmod(0o000)
+    monkeypatch.setattr(os, "chmod", lambda *args, **kwargs: None)
+
+    try:
+        with pytest.raises(ArchiveError) as e:  # never a TypeError from rmtree's handler
+            delete_archived_wolt("pal", wolts_dir=tmp_path)
+    finally:
+        monkeypatch.undo()
+        locked.chmod(0o700)
+
+    assert e.value.status == 500 and e.value.message.endswith("run delete again to retry")
+    assert locked.is_dir()
+    assert AutoGrantStore(tmp_path).list() == []
+
+
+def test_a_delete_that_fails_leaves_the_wolt_in_the_archive_without_its_grants(
+        tmp_path, runtime, monkeypatch):
+    import shutil
+    import wolt_archive
+
+    _wolt(tmp_path, "pal")
+    archive_wolt("pal", wolts_dir=tmp_path)
+    _grant(tmp_path, "pal", tmp_path / "a")
+
+    real_rmtree = shutil.rmtree
+
+    def refuse(path, **kwargs):
+        if Path(path) != tmp_path / ".archive" / "pal":
+            return real_rmtree(path, **kwargs)
+        raise PermissionError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr(wolt_archive.shutil, "rmtree", refuse)
+    with pytest.raises(ArchiveError) as e:
+        delete_archived_wolt("pal", wolts_dir=tmp_path)
+    monkeypatch.setattr(wolt_archive.shutil, "rmtree", real_rmtree)
+
+    assert e.value.status == 500
+    assert (tmp_path / ".archive" / "pal" / "wolt" / "wolt.json").is_file()
+    # Revoked before the folder goes: a half-done delete never leaves a grant.
+    assert AutoGrantStore(tmp_path).list() == []
+
+
+def test_a_delete_that_failed_halfway_can_be_run_again(tmp_path, runtime, monkeypatch):
+    import shutil
+    import wolt_archive
+
+    _wolt(tmp_path, "pal")
+    archive_wolt("pal", wolts_dir=tmp_path)
+    _grant(tmp_path, "pal", tmp_path / "a")
+    target = tmp_path / ".archive" / "pal"
+    (target / "data").mkdir()
+    (target / "data" / "stuck.bin").write_text("x")
+
+    real_rmtree = shutil.rmtree
+
+    def halfway(path, **kwargs):
+        if Path(path) != target:
+            return real_rmtree(path, **kwargs)
+        (target / "wolt" / "wolt.json").unlink()
+        raise PermissionError(13, "Permission denied", str(target / "data" / "stuck.bin"))
+
+    monkeypatch.setattr(wolt_archive.shutil, "rmtree", halfway)
+    with pytest.raises(ArchiveError) as e:
+        delete_archived_wolt("pal", wolts_dir=tmp_path)
+    monkeypatch.setattr(wolt_archive.shutil, "rmtree", real_rmtree)
+    assert e.value.status == 500 and e.value.message.endswith("run delete again to retry")
+    assert list_archived_wolts(wolts_dir=tmp_path) == []
+    assert AutoGrantStore(tmp_path).list() == []
+
+    assert delete_archived_wolt("pal", wolts_dir=tmp_path) == {"deleted": "pal", "grants_revoked": 0}
+    assert not target.exists()
+
+
+def test_delete_refuses_a_symlink_in_the_archive(tmp_path, runtime):
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "wolt").mkdir(parents=True)
+    (elsewhere / "wolt" / "wolt.json").write_text("{}")
+    (tmp_path / ".archive").mkdir()
+    (tmp_path / ".archive" / "pal").symlink_to(elsewhere, target_is_directory=True)
+
+    with pytest.raises(ArchiveError) as e:
+        delete_archived_wolt("pal", wolts_dir=tmp_path)
+
+    assert e.value.status == 404
+    assert (elsewhere / "wolt" / "wolt.json").is_file()
