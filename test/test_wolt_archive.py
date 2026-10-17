@@ -357,3 +357,20 @@ def test_a_wolts_folder_that_is_itself_a_link_still_works(tmp_path, live_runtime
     archive_wolt("pal", wolts_dir=wolts_dir)
     assert delete_archived_wolt("pal", wolts_dir=wolts_dir)["deleted"] == "pal"
     assert not (disk / ".archive" / "pal").exists() and os.listdir(disk / ".space" / "wolf") == []
+
+
+@pytest.mark.parametrize("link", [".space/wolf", ".space"])
+def test_delete_never_follows_a_link_to_the_cron_stamps(tmp_path, live_runtime, link):
+    """A link anywhere on .space/wolf/<name> skips the stamps; the delete still goes through."""
+    wolts_dir, outside = tmp_path / "wolts", tmp_path / "outside"
+    _wolt(wolts_dir, "pal")
+    archive_wolt("pal", wolts_dir=wolts_dir)
+    stamp = outside / ".space" / "wolf" / "pal" / "digest.last"
+    stamp.parent.mkdir(parents=True)
+    stamp.write_text("2026-10-17-09:00")
+    if link == ".space/wolf":
+        (wolts_dir / ".space").mkdir()
+    (wolts_dir / link).symlink_to(outside / link, target_is_directory=True)
+
+    assert delete_archived_wolt("pal", wolts_dir=wolts_dir)["deleted"] == "pal"
+    assert stamp.read_text() == "2026-10-17-09:00" and not (wolts_dir / ".archive" / "pal").exists()

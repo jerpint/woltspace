@@ -279,7 +279,9 @@ def delete_archived_wolt(name: str, *, wolts_dir: Path) -> dict:
         # name must not inherit them. They go first, so a delete that fails
         # halfway never leaves a grant behind.
         revoked = AutoGrantStore(wolts_dir).revoke_wolt(name)
-        shutil.rmtree(space_wolf_dir(wolts_dir) / name, ignore_errors=True)
+        stamps = space_wolf_dir(wolts_dir) / name
+        if _unlinked(stamps, wolts_dir):  # a link on .space/wolf/<name> skips them, never followed
+            shutil.rmtree(stamps, ignore_errors=True)
         _open_up(target)
         try:
             shutil.rmtree(target, **{_ON_ERROR: _retry_removal})
