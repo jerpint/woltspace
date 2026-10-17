@@ -7,6 +7,21 @@ const WOLT_EMOJI = {
 };
 const RODENT_TYPES = new Set(['raccoon', 'beaver', 'otter', 'rodent']);
 const WOLT_TYPES = new Set(['raccoon', 'beaver', 'otter', 'rodent', 'dog']);
+// A custom creature behaves like its size: /wolts sends that as base_type.
+const woltBaseType = (w) => (w && (w.base_type || w.type)) || '';
+// The model a wolt's session gets on an engine when the wolt pins none:
+// its custom creature's own model there (if the engine offers it: any id on
+// a freeform engine), else the default of its size. Mirrors the lodge's
+// harnesses.creature_model.
+const woltDefaultModel = (w, info) => {
+  const own = ((w && w.creature_models) || {})[info.id];
+  if (own && (info.freeform_model || (info.catalog || []).some(c => c.id === own))) return own;
+  const models = info.models || {};
+  return models[woltBaseType(w)] || models.raccoon || '';
+};
+// How a wolt is shown when it has no pixel sprite: its built-in emoji, else
+// the custom creature's own (from /wolts).
+const woltEmoji = (w, fallback = '🦫') => WOLT_EMOJI[w && w.type] || (w && w.emoji) || fallback;
 
 const WOLT_SPRITES = {
   beaver: {

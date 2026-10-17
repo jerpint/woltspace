@@ -89,6 +89,7 @@ jobs:
           test/test_telegram_reply_caption.py
           test/test_input_ready.py
           test/test_telegram_spawn_with_message.py
+          test/test_creature_types.py
           test/test_wolts.py::TestCredentials
           test/test_wolts.py::TestSyncClaudeMdPlatformSection
           test/test_update_cli.py

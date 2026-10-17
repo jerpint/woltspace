@@ -37,6 +37,8 @@ from sessions import (
 from env_compat import get_env
 from session_expiry import hold_active, public_hold
 from wolts import get_active_creature, find_by_type, list_wolts as _list_wolts_full
+from creature_types import emoji_from
+from settings_files import settings_lock, write_json_atomic
 from paths import (
     wolt_sessions_log,
     platform_version_file,
@@ -120,10 +122,11 @@ def switch_wolt(name: str) -> str | None:
     config_path = WOLTS_DIR / "woltspace.json"
     if config_path.exists():
         try:
-            config = json.loads(config_path.read_text())
-            adapter = os.environ.get("BOT_ADAPTER", "telegram")
-            config.setdefault(adapter, {})["active_wolt"] = name
-            config_path.write_text(json.dumps(config, indent=2) + "\n")
+            with settings_lock(config_path):
+                config = json.loads(config_path.read_text())
+                adapter = os.environ.get("BOT_ADAPTER", "telegram")
+                config.setdefault(adapter, {})["active_wolt"] = name
+                write_json_atomic(config_path, config)
         except Exception:
             pass
     return name
@@ -205,7 +208,7 @@ Never prefix your messages with emojis or your name — the adapter handles that
     try:
         for w in list_wolts():
             wtype = w.get("type", "rodent")
-            emoji = creature_emojis_map.get(wtype, "🐾")
+            emoji = emoji_from(creature_emojis_map, wtype, "🐾")
             role = w.get("role") or w.get("description") or ""
             wolt_roster_lines.append(f"- **{w['name']}** ({emoji} {wtype}) — {role}")
     except Exception:
@@ -329,7 +332,7 @@ def build_ack_text(url: str = None, session_name: str = None, adapter: str = Non
     """Build the 🪵 ack message shown when a session starts."""
     quote = random.choice(BEAVER_ACKS)
     wolt_name = session_name.split("-")[0] if session_name else "wolt"
-    emoji = CREATURE_EMOJIS.get(creature, "🦫")
+    emoji = emoji_from(CREATURE_EMOJIS, creature, "🦫")
     text = f'🪵 session started - "{quote}"\n\n{emoji} assigned: {wolt_name}'
     if url:
         text += f"\n\n---\nsession: {url}"

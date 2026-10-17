@@ -178,6 +178,11 @@ def wolt_fields(wolt_dir: Path, wolt_name: str) -> dict:
     fields = {k: cfg.get(k) for k in WOLT_FIELDS if cfg.get(k) not in (None, "")}
     fields.setdefault("name", wolt_name)
     fields.setdefault("type", "rodent")
+    # A custom creature's own emoji; built-ins keep the shell's own table.
+    from creature_types import get_custom
+    custom = get_custom(fields["type"])
+    if custom:
+        fields["emoji"] = custom["emoji"]
     return fields
 
 

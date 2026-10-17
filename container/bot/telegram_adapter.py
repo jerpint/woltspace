@@ -33,6 +33,7 @@ from bot.core import (
 )
 from urllib.parse import urlparse, parse_qs
 from wolts import get_active_creature, wolt_display_name, wolt_exists
+from creature_types import base_type, emoji_from
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import outbox
@@ -285,7 +286,7 @@ def format_response(result: dict) -> str:
 def _format_tool_log(tc: dict) -> str:
     name = tc["tool"]
     creature = tc.get("creature") or tc.get("args", {}).get("creature", "")
-    emoji = CREATURE_EMOJIS.get(creature, "")
+    emoji = emoji_from(CREATURE_EMOJIS, creature, "")
     wolt = tc.get("args", {}).get("wolt", "")
     recipient = f"{emoji} {wolt}".strip()
     line = f"🪵 {recipient} — {name}" if recipient else f"🪵 {name}"
@@ -352,7 +353,7 @@ async def _notify_switch(update: Update, old_state: dict, new_wolt: str, new_ses
     if wolt_json.exists():
         try:
             data = json.loads(wolt_json.read_text())
-            emoji = CREATURE_EMOJIS.get(data.get("type", ""), "🐾")
+            emoji = emoji_from(CREATURE_EMOJIS, data.get("type", ""), "🐾")
         except (json.JSONDecodeError, OSError):
             pass
     if new_wolt != old_wolt:
@@ -424,7 +425,7 @@ async def _route_to_session(update: Update, session_name: str, wolt: str, text: 
         try:
             data = json.loads(wolt_json.read_text())
             creature = data.get("type", "")
-            emoji = CREATURE_EMOJIS.get(creature, "🐾")
+            emoji = emoji_from(CREATURE_EMOJIS, creature, "🐾")
         except (json.JSONDecodeError, OSError):
             pass
 
@@ -793,7 +794,7 @@ async def _handle_dog(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_i
             state["active_session"] = session_name
             _save_chat_state(chat_id, state)
 
-            emoji = CREATURE_EMOJIS.get(session.get("creature", ""), "🐾")
+            emoji = emoji_from(CREATURE_EMOJIS, session.get("creature", ""), "🐾")
             session_link = session.get("url") or ""
             handoff = f"{emoji} {wolt_name} is now active in this chat — messages go directly to this session"
             if session_link:
@@ -1189,7 +1190,7 @@ def _sessions_picker_message(sessions: list, tunnel_url: str | None) -> tuple[st
     for s in alive:
         name = s["name"]
         wolt = _wolt_of(name)
-        emoji = WOLT_TYPE_EMOJI.get(types_by_wolt.get(wolt, ""), "🦫")
+        emoji = emoji_from(WOLT_TYPE_EMOJI, types_by_wolt.get(wolt, ""), "🦫")
         wolt_counts[wolt] = wolt_counts.get(wolt, 0) + 1
         url = f"{tunnel_url}/tui?session={name}" if tunnel_url else None
         label = f"{emoji} 📌 {name}" if s.get("hold") else f"{emoji} {name}"
@@ -1202,7 +1203,7 @@ def _sessions_picker_message(sessions: list, tunnel_url: str | None) -> tuple[st
         rows.append([open_btn, stop_btn])
 
     summary = " · ".join(
-        f"{WOLT_TYPE_EMOJI.get(types_by_wolt.get(w, ''), '🦫')} {w} ({c})"
+        f"{emoji_from(WOLT_TYPE_EMOJI, types_by_wolt.get(w, ''), '🦫')} {w} ({c})"
         for w, c in sorted(wolt_counts.items(), key=lambda kv: -kv[1])
     )
     total = len(alive)
@@ -1367,7 +1368,7 @@ def _session_emoji(session_name: str) -> str:
         (w.get("name") or Path(w.get("dir", "")).name): w.get("type", "")
         for w in list_wolts()
     }
-    return WOLT_TYPE_EMOJI.get(types_by_wolt.get(wolt, ""), "🦫")
+    return emoji_from(WOLT_TYPE_EMOJI, types_by_wolt.get(wolt, ""), "🦫")
 
 
 async def handle_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1420,7 +1421,7 @@ _PICK_THEN_RESEND = (
 
 def _is_wolt(w: dict) -> bool:
     """Wolves and dogs are singletons, not chat targets — exclude them from pickers."""
-    return w.get("type", "") in RODENT_WOLT_TYPES
+    return base_type(w.get("type", "")) in RODENT_WOLT_TYPES
 
 
 def _wolt_picker_keyboard(wolts: list, active: str | None) -> InlineKeyboardMarkup | None:
@@ -1430,7 +1431,7 @@ def _wolt_picker_keyboard(wolts: list, active: str | None) -> InlineKeyboardMark
         name = w.get("name") or Path(w.get("dir", "")).name
         if not name or name == active:
             continue
-        emoji = WOLT_TYPE_EMOJI.get(w.get("type", ""), "🦫")
+        emoji = emoji_from(WOLT_TYPE_EMOJI, w.get("type", ""), "🦫")
         row.append(InlineKeyboardButton(
             f"{emoji} {_shown(name)}",
             callback_data=f"wolt:{name}",
@@ -1451,7 +1452,7 @@ def _wolt_picker_header(wolts: list, active: str | None) -> str:
              if (w.get("name") or Path(w.get("dir", "")).name) == active),
             "",
         )
-        emoji = WOLT_TYPE_EMOJI.get(active_type, "🦫")
+        emoji = emoji_from(WOLT_TYPE_EMOJI, active_type, "🦫")
         line = f"active: {emoji} {_shown(active)}"
     else:
         line = "active: none"

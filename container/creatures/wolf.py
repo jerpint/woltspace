@@ -30,6 +30,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+from creature_types import emoji_from
 from env_compat import get_env
 import wolfcore
 from wolfcore import CATCH_UP_WINDOW, STAMP_FORMAT, CronError, cron_matches  # noqa: F401
@@ -230,7 +231,7 @@ def _get_wolt_emoji(wolt_name: str) -> str:
     try:
         wolt_json = WOLTS_DIR / wolt_name / "wolt" / "wolt.json"
         data = json.loads(wolt_json.read_text())
-        return CREATURE_EMOJI.get(data.get("type", ""), "🐾")
+        return emoji_from(CREATURE_EMOJI, data.get("type", ""), "🐾")
     except Exception:
         return "🐾"
 
