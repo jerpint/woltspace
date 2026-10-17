@@ -318,3 +318,42 @@ def test_delete_refuses_a_symlink_in_the_archive(tmp_path, live_runtime):
     with pytest.raises(ArchiveError) as e:
         delete_archived_wolt("pal", wolts_dir=tmp_path)
     assert e.value.status == 404 and (tmp_path / "elsewhere" / "wolt").is_dir()
+
+
+# --- links out of the wolts folder (#575 review) -----------------------------
+
+@pytest.mark.parametrize("action, name, link", [
+    (archive_wolt, "kit", ".archive"), (unarchive_wolt, "pal", ".archive"),
+    (delete_archived_wolt, "pal", ".archive"), (unarchive_wolt, "pal", ".archive/pal")])
+def test_a_link_out_of_the_archive_is_never_followed(tmp_path, live_runtime, action, name, link):
+    """.archive, or a wolt in it, linked to a sibling folder: nothing there moves, goes or lists."""
+    wolts_dir, outside = tmp_path / "wolts", tmp_path / "outside"
+    _wolt(wolts_dir, "kit")
+    _wolt(outside, "pal")
+    if link == ".archive/pal":
+        (wolts_dir / ".archive").mkdir()
+    (wolts_dir / link).symlink_to({".archive": outside, ".archive/pal": outside / "pal"}[link], target_is_directory=True)
+
+    with pytest.raises(ArchiveError) as e:
+        action(name, wolts_dir=wolts_dir)
+
+    assert e.value.status == 409
+    assert os.listdir(outside) == ["pal"] and (outside / "pal" / "wolt" / "wolt.json").is_file()
+    assert sorted(os.listdir(wolts_dir)) == [".archive", "kit"]
+    if link == ".archive":
+        assert list_archived_wolts(wolts_dir=wolts_dir) == []
+
+
+def test_a_wolts_folder_that_is_itself_a_link_still_works(tmp_path, live_runtime):
+    """A lodge on another disk: the link checks resolve both sides."""
+    disk, wolts_dir = tmp_path / "disk", tmp_path / "wolts"
+    _wolt(disk, "pal")
+    (disk / ".space" / "wolf" / "pal").mkdir(parents=True)
+    wolts_dir.symlink_to(disk, target_is_directory=True)
+
+    archive_wolt("pal", wolts_dir=wolts_dir)
+    assert [w["name"] for w in list_archived_wolts(wolts_dir=wolts_dir)] == ["pal"]
+    unarchive_wolt("pal", wolts_dir=wolts_dir)
+    archive_wolt("pal", wolts_dir=wolts_dir)
+    assert delete_archived_wolt("pal", wolts_dir=wolts_dir)["deleted"] == "pal"
+    assert not (disk / ".archive" / "pal").exists() and os.listdir(disk / ".space" / "wolf") == []

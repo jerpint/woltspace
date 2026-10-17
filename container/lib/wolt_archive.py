@@ -56,6 +56,27 @@ def archive_dir(wolts_dir: Path) -> Path:
     return Path(wolts_dir) / ARCHIVE_DIRNAME
 
 
+def _unlinked(path: Path, wolts_dir: Path) -> bool:
+    """No symlink on the path below the wolts folder, so it can't lead out of it.
+
+    Both sides resolved: a lodge whose whole wolts folder is a link (on another
+    disk) still passes.
+    """
+    return os.path.realpath(path) == os.path.join(os.path.realpath(wolts_dir), path.relative_to(wolts_dir))
+
+
+def _no_link(path: Path, wolts_dir: Path) -> Path:
+    if not _unlinked(path, wolts_dir):
+        raise ArchiveError(409, f"wolts/{path.relative_to(wolts_dir)} leads through a symlink; "
+                                "archive, unarchive and delete never follow one")
+    return path
+
+
+def _archive_root(wolts_dir: Path) -> Path:
+    """wolts/.archive, refused when it is a symlink: a move or delete there would follow it out."""
+    return _no_link(archive_dir(wolts_dir), wolts_dir)
+
+
 def is_archived(name: str, *, wolts_dir: Path) -> bool:
     return bool(_NAME_RE.fullmatch(name or "")) and (
         archive_dir(wolts_dir) / name / "wolt" / "wolt.json").is_file()
@@ -117,8 +138,8 @@ def archive_wolt(name: str, *, wolts_dir: Path, now: int | None = None) -> dict:
     check_wolt_name(name)
     wolts_dir = Path(wolts_dir)
     home = wolts_dir / name
-    target = archive_dir(wolts_dir) / name
     with _LOCK:
+        target = _archive_root(wolts_dir) / name
         # Before any registry call: a lookup creates the wolt's sessions folder.
         if not (home / "wolt" / "wolt.json").is_file():
             raise ArchiveError(404, f"no wolt named {name}")
@@ -145,8 +166,12 @@ def archive_wolt(name: str, *, wolts_dir: Path, now: int | None = None) -> dict:
 
 
 def list_archived_wolts(*, wolts_dir: Path) -> list[dict]:
+    try:
+        root = _archive_root(Path(wolts_dir))
+    except ArchiveError:
+        return []
     wolts = []
-    for wolt_json in sorted(archive_dir(wolts_dir).glob("*/wolt/wolt.json")):
+    for wolt_json in sorted(root.glob("*/wolt/wolt.json")):
         name = wolt_json.parent.parent.name
         if not _NAME_RE.fullmatch(name):
             continue
@@ -194,12 +219,13 @@ def unarchive_wolt(name: str, *, wolts_dir: Path) -> dict:
     wolts_dir = Path(wolts_dir)
     home = wolts_dir / name
     with _LOCK:
+        source = _no_link(_archive_root(wolts_dir) / name, wolts_dir)
         if not is_archived(name, wolts_dir=wolts_dir):
             raise ArchiveError(404, f"no archived wolt named {name}")
         if home.exists() or home.is_symlink():
             _clear_ghost(home)
         try:
-            os.rename(archive_dir(wolts_dir) / name, home)
+            os.rename(source, home)
         except OSError as exc:
             raise ArchiveError(500, f"could not move {name} back: {exc}")
     return {"unarchived": name}
@@ -243,8 +269,8 @@ _ON_ERROR = "onexc" if sys.version_info >= (3, 12) else "onerror"
 def delete_archived_wolt(name: str, *, wolts_dir: Path) -> dict:
     check_wolt_name(name)
     wolts_dir = Path(wolts_dir)
-    target = archive_dir(wolts_dir) / name
     with _LOCK:
+        target = _archive_root(wolts_dir) / name
         # Only from the archive: a live wolt is archived first. No wolt.json
         # needed, so a delete that failed halfway can run again.
         if not in_archive(name, wolts_dir=wolts_dir):
