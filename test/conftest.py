@@ -568,3 +568,33 @@ def fake_runtime(monkeypatch):
     session_runtime.set_runtime(runtime)
     yield runtime
     session_runtime.set_runtime(None)
+
+
+class LiveSessionRuntime(FakeSessionRuntime):
+    """A tmux session is alive while its exact name is in `live`; stop() takes it out."""
+
+    def __init__(self):
+        super().__init__()
+        self.live: set[str] = set()
+
+    def is_alive(self, handle) -> bool:
+        return handle.tmux_session_name in self.live
+
+    def list_session_names(self, include_main: bool = False) -> set[str]:
+        return set(self.live)
+
+    def stop(self, handle) -> bool:
+        self.live.discard(handle.tmux_session_name)
+        return super().stop(handle)
+
+
+@pytest.fixture
+def live_runtime():
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+    import session_runtime
+
+    runtime = LiveSessionRuntime()
+    session_runtime.set_runtime(runtime)
+    yield runtime
+    session_runtime.set_runtime(None)

@@ -12,9 +12,7 @@ const click = node => node.onclick({ stopPropagation() {} });
 // The Wolts page with the lodge globals it reads stubbed, and fetch answering
 // from `answers` ("METHOD url" -> [status, body]).
 async function loadPage({ wolts = [PAL], archived = [], answers = {} } = {}) {
-  const view = new Node('div');
-  view.className = 'active';
-  const body = new Node('body');
+  const view = Object.assign(new Node('div'), { className: 'active' }), body = new Node('body');
   const calls = [], confirms = [], alerts = [];
   const context = {
     allWolts: wolts, WOLT_TYPES: new Set(['beaver']), RODENT_TYPES: new Set(['beaver']), WOLT_EMOJI: {},
@@ -32,11 +30,9 @@ async function loadPage({ wolts = [PAL], archived = [], answers = {} } = {}) {
     },
     setTimeout() {}, addEventListener() {}, innerHeight: 800,
     document: {
-      body, activeElement: null, addEventListener() {},
-      getElementById: id => (id === 'wolts-view' ? view : null),
-      createElement: tag => new Node(tag),
-      createTextNode: text => { const node = new Node('#text'); node.textContent = text; return node; },
-      querySelector: selector => body.querySelector(selector),
+      body, activeElement: null, addEventListener() {}, createElement: tag => new Node(tag),
+      getElementById: id => (id === 'wolts-view' ? view : null), querySelector: s => body.querySelector(s),
+      createTextNode: text => Object.assign(new Node('#text'), { textContent: text }),
     },
   };
   context.window = context;

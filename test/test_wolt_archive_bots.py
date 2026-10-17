@@ -29,53 +29,40 @@ def telegram(monkeypatch, tmp_path):
     for name in ("bob", "kit"):
         (wolts / name / "wolt").mkdir(parents=True)
         (wolts / name / "wolt" / "wolt.json").write_text(json.dumps({"name": name, "type": "beaver"}))
-    monkeypatch.setattr(adapter, "_WOLTS_DIR", wolts)
-    monkeypatch.setattr(adapter, "CHATS_DIR", tmp_path / "chats")
-    monkeypatch.setattr(adapter, "HISTORY_DIR", tmp_path / "history")
-    monkeypatch.setattr(adapter, "list_wolts", lambda: [
-        {"name": n, "type": "beaver", "dir": str(wolts / n)} for n in ("bob", "kit")])
-    for name, value in [("is_allowed", lambda update: True), ("get_tunnel_url", lambda: ""),
-                        ("dog_available", lambda: False), ("transcribe_audio", lambda path: "hi"),
-                        ("_download_bytes", AsyncMock(return_value=b"ogg")),
-                        ("_save_upload", lambda name, data: tmp_path / name)]:
-        monkeypatch.setattr(adapter, name, value)
     start = MagicMock(return_value={"name": "pal-new-reed-654321", "url": ""})
-    monkeypatch.setattr(adapter, "start_claude_session", start)
     deliver = MagicMock(side_effect=lambda name, msg: {"ok": name == LIVE, "url": ""})
-    monkeypatch.setattr(adapter, "message_session", deliver)
+    for name, value in [
+            ("_WOLTS_DIR", wolts), ("CHATS_DIR", tmp_path / "chats"), ("HISTORY_DIR", tmp_path / "history"),
+            ("list_wolts", lambda: [{"name": n, "type": "beaver", "dir": str(wolts / n)} for n in ("bob", "kit")]),
+            ("is_allowed", lambda update: True), ("get_tunnel_url", lambda: ""), ("dog_available", lambda: False),
+            ("transcribe_audio", lambda path: "hi"), ("_download_bytes", AsyncMock(return_value=b"ogg")),
+            ("_save_upload", lambda name, data: tmp_path / name),
+            ("start_claude_session", start), ("message_session", deliver)]:
+        monkeypatch.setattr(adapter, name, value)
     return adapter, wolts, start, deliver
 
 
-def _update(kind="message", reply_to_gone=False):
+async def _handle(adapter, kind="message", reply_to_gone=False):
     update = MagicMock()
-    update.effective_user.id = 12345
-    update.effective_chat.id = CHAT
-    update.effective_chat.type = "private"
-    update.message.text = "hi"
-    update.message.reply_text = AsyncMock()
-    update.message.reply_to_message = None
-    update.message.voice.file_id = "f1"
-    update.message.voice.file_unique_id = "u1"
+    update.effective_user.id, update.effective_chat.id, update.effective_chat.type = 12345, CHAT, "private"
+    update.message.text, update.message.reply_text, update.message.reply_to_message = "hi", AsyncMock(), None
+    update.message.voice.file_id, update.message.voice.file_unique_id = "f1", "u1"
     if reply_to_gone:
         update.message.reply_to_message = MagicMock(caption=None, text=(
             "🦫 pal: done\n\n---\n↩️ reply to this message to talk to this session directly\n"
             f"https://x.trycloudflare.com/tui?session={GONE}"))
-    return update
-
-
-async def _handle(adapter, update, kind="message"):
     context = MagicMock()
     context.bot.username = "testbot"
     await getattr(adapter, f"handle_{kind}")(update, context)
+    return update
 
 
 @pytest.mark.asyncio
 async def test_chat_pointing_at_a_gone_wolt_goes_to_the_picker(telegram):
     adapter, wolts, start, deliver = telegram
     adapter._save_chat_state(CHAT, {"active_wolt": "pal", "active_session": GONE})
-    update = _update()
 
-    await _handle(adapter, update)
+    update = await _handle(adapter)
 
     start.assert_not_called()
     deliver.assert_not_called()
@@ -100,7 +87,7 @@ async def test_reply_to_an_archived_wolts_message_is_routed_normally(telegram, k
     adapter, wolts, start, deliver = telegram
     adapter._save_chat_state(CHAT, {"active_wolt": "bob", "active_session": LIVE})
 
-    await _handle(adapter, _update(kind, reply_to_gone=True), kind)
+    await _handle(adapter, kind, reply_to_gone=True)
 
     assert [c.args[0] for c in deliver.call_args_list] == [LIVE]
     start.assert_not_called()

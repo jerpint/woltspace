@@ -53,15 +53,9 @@ def test_native_session_uses_its_own_interpreter(
 
 def test_native_wolt_reaches_the_bundled_client(tmp_path):
     # delete without --yes is refused by the bundled client, before any API call.
-    env = {
-        "HOME": str(tmp_path),
-        "PATH": os.pathsep.join(["/usr/bin", "/bin"]),
-        "PYTHONPATH": os.pathsep.join([str(ROOT / "src"), *sys.path]),
-        "WOLTSPACE_DIR": str(ROOT),
-        "WOLTSPACE_WOLTS_DIR": str(tmp_path / "wolts"),
-        "WOLTSPACE_API": "http://127.0.0.1:9",
-        "WOLTSPACE_ISOLATION": "host",
-    }
+    env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin", "WOLTSPACE_DIR": str(ROOT),
+           "PYTHONPATH": os.pathsep.join([str(ROOT / "src"), *sys.path]),
+           "WOLTSPACE_API": "http://127.0.0.1:9", "WOLTSPACE_ISOLATION": "host"}
     result = subprocess.run(
         [sys.executable, "-c", "from woltspace.cli import main; raise SystemExit(main())",
          "wolt", "delete", "pal"],
