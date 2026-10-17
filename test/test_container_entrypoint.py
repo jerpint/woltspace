@@ -392,3 +392,15 @@ class TestPhaseDispatch:
         monkeypatch.setattr(boot, "run_node_phase", lambda: 7)
 
         assert boot.main() == 7
+
+
+def test_boot_never_picks_a_name_only_the_archive_holds(tmp_path, monkeypatch):
+    """Scaffolding it would make a blank wolt that takes the archived one's grants."""
+    (tmp_path / ".archive" / "pal" / "wolt").mkdir(parents=True)
+    (tmp_path / "bob" / "wolt").mkdir(parents=True)
+    (tmp_path / "woltspace.json").write_text(json.dumps({"claude": {"default_wolt": "pal"}}))
+    monkeypatch.delenv("WOLTSPACE_WOLT_NAME", raising=False)
+    monkeypatch.delenv("WOLT_NAME", raising=False)
+    assert boot.resolve_wolt_name(tmp_path) == "bob"
+    monkeypatch.setenv("WOLTSPACE_WOLT_NAME", "pal")
+    assert boot.resolve_wolt_name(tmp_path) == "bob"

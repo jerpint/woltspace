@@ -92,17 +92,28 @@ def run_root_phase() -> int:
 # but they stay import-light: this runs before anything else.
 # ---------------------------------------------------------------------------
 
+def _only_archived(wolts_dir: Path, name: str) -> bool:
+    # wolt_archive.in_archive, written out: importing it would load the session
+    # registry, whose paths read the environment at import time.
+    archived = wolts_dir / ".archive" / name
+    return not (wolts_dir / name).exists() and archived.is_dir() and not archived.is_symlink()
+
+
 def resolve_wolt_name(wolts_dir: Path) -> str:
-    """Active wolt: env name > woltspace.json > first wolt found."""
+    """Active wolt: env name > woltspace.json > first wolt found.
+
+    A name only the archive holds is skipped: a blank wolt scaffolded under it
+    would take the archived one's grants and block its unarchive.
+    """
     env_name = get_env("WOLTSPACE_WOLT_NAME", "")
-    if env_name:
+    if env_name and not _only_archived(wolts_dir, env_name):
         return env_name
     config_file = wolts_dir / "woltspace.json"
     if config_file.exists():
         try:
             config = json.loads(config_file.read_text())
             name = config.get("claude", {}).get("default_wolt", "")
-            if name:
+            if name and not _only_archived(wolts_dir, name):
                 return name
         except (json.JSONDecodeError, OSError):
             pass

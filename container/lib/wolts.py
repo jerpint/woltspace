@@ -155,6 +155,10 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "",
     wolt_dir = WOLTS_DIR / name
     if wolt_dir.exists():
         raise ValueError(f"Wolt '{name}' already exists at {wolt_dir}")
+    # Imported here: wolt_archive brings in the whole session registry.
+    from wolt_archive import in_archive
+    if in_archive(name, wolts_dir=WOLTS_DIR):
+        raise ValueError(f"an archived wolt is named {name}: unarchive or delete it first")
 
     # Check singleton constraint
     demoted = None

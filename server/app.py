@@ -109,6 +109,7 @@ from apps import (
 )
 from sites import ensure_site, site_dir
 import wolfcore
+import wolt_archive
 from site_shell import inject_shell, load_site_config, memory_payload, shell_manifest, shell_tags, shell_wanted
 from .state import (
     bot_log,
@@ -2077,6 +2078,37 @@ async def set_wolt_harness(name: str, request: Request):
         return result
     except (ValueError, FileNotFoundError, RuntimeError) as exc:
         return _wolt_settings_error(exc)
+
+
+# --- Archive, unarchive and delete a wolt ---
+# The file work is wolt_archive's. These routes only call it, off the event
+# loop: deleting a big folder takes a while.
+
+async def _archive_call(action, name: str):
+    try:
+        return await asyncio.to_thread(action, name, wolts_dir=WOLTS_DIR)
+    except wolt_archive.ArchiveError as exc:
+        return JSONResponse({"error": exc.message, **exc.extra}, status_code=exc.status)
+
+
+@app.get("/wolts/archived")
+async def archived_wolts():
+    return await asyncio.to_thread(wolt_archive.list_archived_wolts, wolts_dir=WOLTS_DIR)
+
+
+@app.post("/wolts/{name}/archive")
+async def archive_wolt(name: str):
+    return await _archive_call(wolt_archive.archive_wolt, name)
+
+
+@app.post("/wolts/archived/{name}/unarchive")
+async def unarchive_wolt(name: str):
+    return await _archive_call(wolt_archive.unarchive_wolt, name)
+
+
+@app.delete("/wolts/archived/{name}")
+async def delete_archived_wolt(name: str):
+    return await _archive_call(wolt_archive.delete_archived_wolt, name)
 
 
 # --- Runtime capabilities and repository-scoped Auto consent ---
