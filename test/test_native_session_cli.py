@@ -49,3 +49,33 @@ def test_native_session_uses_its_own_interpreter(
     assert result.returncode == expected_code, result.stderr
     assert expected_help in result.stdout
     assert result.stderr == ""
+
+
+def test_native_wolt_reaches_the_bundled_client(tmp_path):
+    # delete without --yes is refused by the bundled client, before any API call.
+    env = {
+        "HOME": str(tmp_path),
+        "PATH": os.pathsep.join(["/usr/bin", "/bin"]),
+        "PYTHONPATH": os.pathsep.join([str(ROOT / "src"), *sys.path]),
+        "WOLTSPACE_DIR": str(ROOT),
+        "WOLTSPACE_WOLTS_DIR": str(tmp_path / "wolts"),
+        "WOLTSPACE_API": "http://127.0.0.1:9",
+        "WOLTSPACE_ISOLATION": "host",
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", "from woltspace.cli import main; raise SystemExit(main())",
+         "wolt", "delete", "pal"],
+        env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 2
+    assert result.stderr == "woltspace: wolt delete needs --yes (the wolt will not be recoverable)\n"
+
+
+def test_a_lodge_that_does_not_answer_in_time_is_not_a_traceback(monkeypatch, capsys):
+    import argparse, runpy, urllib.request
+    client = runpy.run_path(str(ROOT / "container" / "bin" / "woltspace"))
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(TimeoutError()))
+    with pytest.raises(SystemExit) as e:
+        client["cmd_wolt_delete"](argparse.Namespace(name="pal", yes=True))
+    assert e.value.code == 1 and capsys.readouterr().err == (
+        "no answer from the lodge in 15 s; it may still be working (check: woltspace wolt archived)\n")
