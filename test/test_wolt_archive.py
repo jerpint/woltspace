@@ -184,6 +184,21 @@ def test_archive_refuses_a_name_the_archive_holds(tmp_path, live_runtime):
     assert e.value.status == 409 and (tmp_path / "pal" / "wolt" / "wolt.json").is_file()
 
 
+@pytest.mark.parametrize("name", ["apps", "projects"])
+def test_the_apps_folders_are_no_wolts(tmp_path, live_runtime, name):
+    """#575 review: wolts/apps (and the legacy wolts/projects) hold the lodge's apps, even with a wolt.json."""
+    _wolt(tmp_path, name)
+    (tmp_path / name / "todo").mkdir()
+    (tmp_path / name / "todo" / "app.json").write_text("{}")
+    for action in (archive_wolt, unarchive_wolt, delete_archived_wolt):
+        with pytest.raises(ArchiveError) as e:
+            action(name, wolts_dir=tmp_path)
+        assert e.value.status == 400
+    assert (tmp_path / name / "todo" / "app.json").is_file() and not (tmp_path / ".archive").exists()
+    _wolt(tmp_path / ".archive", name)  # moved there by hand
+    assert list_archived_wolts(wolts_dir=tmp_path) == []
+
+
 def test_list_archived_shows_the_shown_name(tmp_path, live_runtime):
     assert list_archived_wolts(wolts_dir=tmp_path) == []
     _wolt(tmp_path, "pal", display_name="Pal The Builder")
@@ -324,22 +339,22 @@ def test_delete_refuses_a_symlink_in_the_archive(tmp_path, live_runtime):
 
 @pytest.mark.parametrize("action, name, link", [
     (archive_wolt, "kit", ".archive"), (unarchive_wolt, "pal", ".archive"),
-    (delete_archived_wolt, "pal", ".archive"), (unarchive_wolt, "pal", ".archive/pal")])
-def test_a_link_out_of_the_archive_is_never_followed(tmp_path, live_runtime, action, name, link):
-    """.archive, or a wolt in it, linked to a sibling folder: nothing there moves, goes or lists."""
+    (delete_archived_wolt, "pal", ".archive"), (unarchive_wolt, "pal", ".archive/pal"), (archive_wolt, "pal", "pal")])
+def test_a_link_out_of_the_wolts_folder_is_never_followed(tmp_path, live_runtime, action, name, link):
+    """.archive, a wolt in it or a live wolt linked to a sibling folder: nothing there moves, goes or lists."""
     wolts_dir, outside = tmp_path / "wolts", tmp_path / "outside"
     _wolt(wolts_dir, "kit")
     _wolt(outside, "pal")
     if link == ".archive/pal":
         (wolts_dir / ".archive").mkdir()
-    (wolts_dir / link).symlink_to({".archive": outside, ".archive/pal": outside / "pal"}[link], target_is_directory=True)
+    (wolts_dir / link).symlink_to(outside if link == ".archive" else outside / "pal", target_is_directory=True)
 
     with pytest.raises(ArchiveError) as e:
         action(name, wolts_dir=wolts_dir)
 
     assert e.value.status == 409
     assert os.listdir(outside) == ["pal"] and (outside / "pal" / "wolt" / "wolt.json").is_file()
-    assert sorted(os.listdir(wolts_dir)) == [".archive", "kit"]
+    assert sorted(os.listdir(wolts_dir)) == sorted(["kit", Path(link).parts[0]])
     if link == ".archive":
         assert list_archived_wolts(wolts_dir=wolts_dir) == []
 

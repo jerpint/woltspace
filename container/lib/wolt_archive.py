@@ -31,6 +31,8 @@ ARCHIVE_DIRNAME = ".archive"
 # Older wolts can have capitals or underscores, so this is wider than the slug
 # rule new wolts get. No dot, no slash: a name is one plain folder.
 _NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+# The lodge's own folders beside the wolts: the apps root and its legacy name.
+_RESERVED = frozenset({"apps", "projects"})
 
 # Archive, unarchive and delete run one at a time.
 _LOCK = threading.Lock()
@@ -46,8 +48,12 @@ class ArchiveError(Exception):
         self.extra = extra
 
 
+def _a_wolt_name(name) -> bool:
+    return isinstance(name, str) and bool(_NAME_RE.fullmatch(name)) and name not in _RESERVED
+
+
 def check_wolt_name(name: str) -> str:
-    if not isinstance(name, str) or not _NAME_RE.fullmatch(name):
+    if not _a_wolt_name(name):
         raise ArchiveError(400, f"not a wolt name: {name!r}")
     return name
 
@@ -140,6 +146,7 @@ def archive_wolt(name: str, *, wolts_dir: Path, now: int | None = None) -> dict:
     home = wolts_dir / name
     with _LOCK:
         target = _archive_root(wolts_dir) / name
+        _no_link(home, wolts_dir)  # a linked wolt folder would be archived as the link
         # Before any registry call: a lookup creates the wolt's sessions folder.
         if not (home / "wolt" / "wolt.json").is_file():
             raise ArchiveError(404, f"no wolt named {name}")
@@ -173,7 +180,7 @@ def list_archived_wolts(*, wolts_dir: Path) -> list[dict]:
     wolts = []
     for wolt_json in sorted(root.glob("*/wolt/wolt.json")):
         name = wolt_json.parent.parent.name
-        if not _NAME_RE.fullmatch(name):
+        if not _a_wolt_name(name):
             continue
         try:
             config = json.loads(wolt_json.read_text())
