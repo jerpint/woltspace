@@ -56,10 +56,10 @@ def _get_wolt_type(wolt_name: str) -> str:
         return "rodent"
 
 
-def list_wolts() -> list[dict]:
+def list_wolts(wolts_dir: Path = None) -> list[dict]:
     """Discover all wolts by scanning wolt.json files."""
     wolts = []
-    for wolt_json in sorted(WOLTS_DIR.glob("*/wolt/wolt.json")):
+    for wolt_json in sorted((wolts_dir or WOLTS_DIR).glob("*/wolt/wolt.json")):
         try:
             data = json.loads(wolt_json.read_text())
             data.setdefault("type", "rodent")
@@ -68,6 +68,14 @@ def list_wolts() -> list[dict]:
         except (json.JSONDecodeError, OSError):
             continue
     return wolts
+
+
+def wolt_exists(name: str, wolts_dir: Path = None) -> bool:
+    """A live wolt answers to this name: its folder, or, only when that misses,
+    a wolt.json "name" (the bots' pickers choose a wolt by that name)."""
+    root = wolts_dir or WOLTS_DIR
+    return bool(name) and ((root / name / "wolt" / "wolt.json").is_file()
+                           or any(w.get("name") == name for w in list_wolts(root)))
 
 
 def find_by_type(creature_type: str) -> list[dict]:

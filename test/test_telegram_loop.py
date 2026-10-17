@@ -147,6 +147,7 @@ class TestReplyToRouting:
 
         with patch("bot.telegram_adapter.is_allowed", return_value=True), \
              patch("bot.telegram_adapter._is_session_alive", return_value=True), \
+             patch("bot.telegram_adapter._wolt_exists", return_value=True), \
              patch("bot.telegram_adapter._route_to_session", new_callable=AsyncMock, return_value=True) as mock_route:
             await handle_message(update, context)
             mock_route.assert_called_once()
