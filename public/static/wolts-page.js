@@ -1,11 +1,13 @@
 // Wolts page (/?view=wolts): every wolt in the lodge, online ones first, then by last chat.
 // Tap a card for the wolt's page, + for a new chat, the session count for its recent sessions,
-// ⋯ for its settings. Reads the same allWolts / allSessions lodge.js already loads.
+// ⋯ for its settings or to archive it. Reads the same allWolts / allSessions lodge.js already loads;
+// archived wolts come from /wolts/archived, listed at the bottom with Unarchive and Delete.
 (() => {
   const view = document.getElementById('wolts-view');
   if (!view) return;
   const expanded = new Set();
   let query = '';
+  let archived = [], archivedKey = '[]', archivedOpen = false;
 
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
   const woltUrl = (name, tab) => `/w/${encodeURIComponent(name)}${tab ? `?tab=${tab}` : ''}`;
@@ -18,17 +20,43 @@
 
   function closeMenu() { document.querySelector('.wolts-menu')?.remove(); }
 
-  function openMenu(button, name) {
+  // Asked on every render; a different answer draws the page again.
+  async function refreshArchived() {
+    try {
+      const r = await fetch('/wolts/archived');
+      const key = r.ok ? JSON.stringify(await r.json()) : '[]';
+      if (key !== archivedKey) { archivedKey = key; archived = JSON.parse(key); renderWoltsPage(); }
+    } catch {}
+  }
+
+  // Archive, unarchive and delete are the lodge's; the page asks, calls and reports a refusal.
+  async function archiveAction(method, url, question) {
+    if (question && !confirm(question)) return;
+    try {
+      const r = await fetch(url, { method });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        alert([body.error || `failed (${r.status})`, ...(body.held || []).map(h => `${h.session}: ${h.reason}`)].join('\n'));
+      }
+    } catch (e) { alert(e.message); }
+    await loadWolts();
+    renderWoltsPage();
+  }
+
+  function openMenu(button, name, shown) {
     closeMenu();
     const menu = el('div', 'wolts-menu');
     menu.setAttribute('role', 'menu');
     const item = (label, href) => { const a = el('a', '', label); a.href = href; a.setAttribute('role', 'menuitem'); menu.appendChild(a); };
-    const later = label => { const b = el('button', '', label); b.disabled = true; b.appendChild(el('small', '', 'later')); menu.appendChild(b); };
     item('Open page', woltUrl(name));
     item('⚙ Settings', woltUrl(name, 'settings'));
     item('About & memory', woltUrl(name, 'about'));
     menu.appendChild(el('hr'));
-    later('Rename'); later('Archive'); later('Delete wolt');
+    const archive = el('button', '', 'Archive');
+    archive.setAttribute('role', 'menuitem');
+    archive.onclick = () => { closeMenu(); return archiveAction('POST', `/wolts/${encodeURIComponent(name)}/archive`,
+      `Archive ${shown}? Its sessions stop and it leaves the lodge until you unarchive it.`); };
+    menu.appendChild(archive);
     menu.addEventListener('click', e => e.stopPropagation());
     document.body.appendChild(menu);
     const r = button.getBoundingClientRect();
@@ -79,7 +107,7 @@
     }
     const more = el('button', 'wolts-more', '⋯');
     more.title = `Manage ${woltLabel(w) || name}`; more.setAttribute('aria-label', more.title); more.setAttribute('aria-haspopup', 'menu');
-    more.onclick = e => { e.stopPropagation(); openMenu(more, name); };
+    more.onclick = e => { e.stopPropagation(); openMenu(more, name, woltLabel(w) || name); };
     row.appendChild(more);
     wrap.appendChild(row);
 
@@ -94,6 +122,19 @@
       wrap.appendChild(list);
     }
     return wrap;
+  }
+
+  function archivedRow(a) {
+    const shown = a.display_name || a.name, url = `/wolts/archived/${encodeURIComponent(a.name)}`;
+    const row = el('div', 'wolts-archived-row');
+    const body = el('div', 'wolts-body');
+    body.append(el('div', 'wolts-name', shown), el('div', 'wolts-sub', a.type));
+    const unarchive = el('button', 'btn btn-ghost', 'Unarchive');
+    unarchive.onclick = () => archiveAction('POST', `${url}/unarchive`);
+    const remove = el('button', 'btn btn-ghost', 'Delete');
+    remove.onclick = () => archiveAction('DELETE', url, `Delete ${shown}? This wolt will not be recoverable.`);
+    row.append(body, unarchive, remove);
+    return row;
   }
 
   window.renderWoltsPage = function () {
@@ -128,10 +169,20 @@
     };
     group('Online', online);
     group('Offline', offline, false);
-    if (!hits.length) content.appendChild(el('div', 'wolts-quiet', all.length ? 'No wolt matches.' : 'No wolts yet.'));
+    const shelved = archived.filter(a => !q || a.name.toLowerCase().includes(q) || (a.display_name || '').toLowerCase().includes(q));
+    if (!hits.length && !shelved.length) content.appendChild(el('div', 'wolts-quiet', all.length ? 'No wolt matches.' : 'No wolts yet.'));
+    if (shelved.length) {
+      const section = el('details', 'wolts-archived');
+      section.open = archivedOpen;
+      section.ontoggle = () => { archivedOpen = section.open; };
+      section.appendChild(el('summary', 'wolts-group', `Archived · ${shelved.length}`));
+      shelved.forEach(a => section.appendChild(archivedRow(a)));
+      content.appendChild(section);
+    }
 
     view.replaceChildren(header, content);
     if (focused) { search.focus(); search.setSelectionRange(query.length, query.length); }
+    refreshArchived();
   };
 
   // showView lives in lodge.js; draw this page whenever it becomes the active view
