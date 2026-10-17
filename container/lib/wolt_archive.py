@@ -32,6 +32,7 @@ ARCHIVE_DIRNAME = ".archive"
 # rule new wolts get. No dot, no slash: a name is one plain folder.
 _NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 # The lodge's own folders beside the wolts: the apps root and its legacy name.
+# Matched in any case: a macOS volume ignores case by default.
 RESERVED_NAMES = frozenset({"apps", "projects"})
 
 # Archive, unarchive and delete run one at a time.
@@ -49,7 +50,7 @@ class ArchiveError(Exception):
 
 
 def _a_wolt_name(name) -> bool:
-    return isinstance(name, str) and bool(_NAME_RE.fullmatch(name)) and name not in RESERVED_NAMES
+    return isinstance(name, str) and bool(_NAME_RE.fullmatch(name)) and name.lower() not in RESERVED_NAMES
 
 
 def check_wolt_name(name: str) -> str:

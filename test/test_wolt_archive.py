@@ -184,9 +184,12 @@ def test_archive_refuses_a_name_the_archive_holds(tmp_path, live_runtime):
     assert e.value.status == 409 and (tmp_path / "pal" / "wolt" / "wolt.json").is_file()
 
 
-@pytest.mark.parametrize("name", ["apps", "projects"])
+@pytest.mark.parametrize("name", ["apps", "projects", "Apps"])
 def test_the_apps_folders_are_no_wolts(tmp_path, live_runtime, name):
-    """#575 review: wolts/apps (and the legacy wolts/projects) hold the lodge's apps, even with a wolt.json."""
+    """#575 review: wolts/apps (and the legacy wolts/projects) hold the lodge's apps, even with a wolt.json.
+
+    Any case: on a macOS volume, which ignores case by default, Apps is the apps folder.
+    """
     _wolt(tmp_path, name)
     (tmp_path / name / "todo").mkdir()
     (tmp_path / name / "todo" / "app.json").write_text("{}")

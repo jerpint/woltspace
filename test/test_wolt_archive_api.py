@@ -103,7 +103,9 @@ def test_create_refuses_the_apps_folders_names(tmp_path, client, typed, slug):
 
     assert response.status_code == 409
     assert response.json()["detail"] == f"{slug} is reserved for the lodge's apps; pick another name"
-    assert not (tmp_path / slug).exists()
+    with pytest.raises(ValueError, match="is reserved for the lodge's apps"):
+        wolts.create_creature_wolt(typed, "beaver")  # as create-creature-wolt passes it, case kept
+    assert not (tmp_path / slug).exists() and not (tmp_path / typed).exists()
 
 
 def test_old_session_links_do_not_recreate_the_folder(tmp_path, client):

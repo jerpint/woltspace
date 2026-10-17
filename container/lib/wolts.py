@@ -162,7 +162,7 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "",
 
     # Imported here: wolt_archive brings in the whole session registry.
     from wolt_archive import RESERVED_NAMES, in_archive
-    if name in RESERVED_NAMES:
+    if name.lower() in RESERVED_NAMES:
         raise ValueError(f"{name} is reserved for the lodge's apps; pick another name")
     wolt_dir = WOLTS_DIR / name
     if wolt_dir.exists():
