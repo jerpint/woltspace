@@ -85,7 +85,7 @@ export function setupMessage({ base, has, cli }) {
     'Easiest: paste this into Claude Code, Codex or opencode:',
     `  ${AGENT_PROMPT}`,
     '',
-    'Or give your agent the install skill:  npx skills add jerpint/woltspace',
+    'Or bring Onboardie 🦫 into your agent:  npx skills add jerpint/woltspace',
     `Docs: ${README}`,
     '',
   ].join('\n');

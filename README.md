@@ -16,7 +16,7 @@ Or from npm:
 
 ```bash
 npx woltspace                     # opens the lodge's terminal cockpit, or shows how to install
-npx skills add jerpint/woltspace  # gives your agent the install skill
+npx skills add jerpint/woltspace  # brings Onboardie 🦫 into your agent, to install it with you
 ```
 
 More in [HUMANS.md](HUMANS.md) and on [woltspace.com](https://woltspace.com).
