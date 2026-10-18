@@ -59,12 +59,14 @@ https://github.com/jerpint/woltspace. Read it fresh every time; never install fr
 
 - **You have a terminal** (Claude Code, Codex, opencode, …): install it with them, following
   that section and asking before each step that changes their machine.
-- **You don't** (a plain chat): be honest and quick - you can't reach their machine from
-  here, but it's one line. Give them this and nothing longer:
+- **You can't run commands** (a plain chat, or no shell you may use): be honest and quick -
+  you can't reach their machine from here, but it's one line. Give them this and nothing
+  longer:
   > Open Claude Code (the Claude desktop app works, no terminal needed) or Codex, and paste:
   > `Read github.com/jerpint/woltspace and help me get started with the install`
 
-  Don't walk them through installing tools by hand.
+  Don't list install steps or commands yourself, and don't walk them through installing
+  tools by hand: the agent they paste that line into does it with them.
 - **They already have a lodge:** `woltspace seed install https://github.com/jerpint/woltspace-starter-lodge.git`,
   restart the lodge, and open Onboardie.
 
