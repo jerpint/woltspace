@@ -40,6 +40,7 @@ Working on Woltspace itself: [CLAUDE.md](CLAUDE.md).
 
 ## More
 
+- From npm: `npx woltspace` opens the terminal cockpit, or shows what's missing and how to install
 - [Native and Docker](docs/native-and-container.md) · [First native run on a Mac](docs/native-first-run.md)
 - [Updates](docs/updates.md): ask your wolt, or `woltspace update`
 - [Shared lodge skills](docs/shared-skills.md) · [Colony seeds](docs/colony-seeds.md)
