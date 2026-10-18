@@ -12,6 +12,12 @@ Paste this into Claude Code, Codex or the Claude app:
 
 > Read github.com/jerpint/woltspace and help me get started with the install
 
+Or give your agent the install skill, then ask it to install Woltspace:
+
+```bash
+npx skills add jerpint/woltspace
+```
+
 More in [HUMANS.md](HUMANS.md) and on [woltspace.com](https://woltspace.com).
 
 ## For agents
