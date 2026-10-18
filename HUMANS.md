@@ -14,44 +14,19 @@ Each wolt gets:
 
 ## Install
 
-Most people just need Docker Desktop:
+Paste this into Claude Code, Codex or opencode:
 
-```bash
-curl -fsSL https://woltspace.com/install.sh | bash
-```
+> Read github.com/jerpint/woltspace and help me get started with the install
 
-This runs the container. No git, no Python, no Node required on your machine.
+The steps live in one place: the "For agents" section of the [README](README.md).
+From npm, `npx woltspace` opens the terminal cockpit or shows what's missing, and
+`npx skills add jerpint/woltspace` brings Onboardie into your coding agent to
+install it with you.
 
-If you're developing wolts or the platform itself, install natively instead:
+The rest of this page describes the older Docker container setup; see
+[Native and Docker](docs/native-and-container.md) for how the two differ.
 
-```bash
-curl -fsSL https://woltspace.com/install.sh | bash -s -- --native
-```
-
-Or by hand:
-
-```bash
-uv tool install 'woltspace'
-npm install -g @woltspace/tui
-woltspace doctor
-woltspace start
-```
-
-Native prerequisites: `uv`, Node >= 18, `tmux`, and a harness CLI (`claude`,
-`codex`, or `opencode`) that you're already logged into.
-
-To upgrade a native install later, reinstall both packages, then
-`woltspace stop && woltspace start`. The two are versioned independently: the
-tui declares the minimum `woltspace` version it needs and says so if the lodge
-is older, and woltspace never checks the tui's version — so you can upgrade
-either on its own.
-
-### Prerequisites
-
-- Container: [Docker](https://docs.docker.com/get-docker/)
-- Native: `uv`, Node >= 18, `tmux`, a harness CLI
-
-## Quick start
+## Quick start (container)
 
 ```bash
 woltspace init

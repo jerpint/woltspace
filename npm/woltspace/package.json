@@ -21,6 +21,6 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@woltspace/tui": ">=0.5.2"
+    "@woltspace/tui": ">=0.5.3 <1"
   }
 }

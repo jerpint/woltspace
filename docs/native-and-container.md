@@ -1,5 +1,8 @@
 # Native and container
 
+> **Installing?** The steps are in the "For agents" section of the
+> [README](../README.md); this page is background and detail.
+
 Woltspace is one product with one codebase. Native and container are not two
 implementations of it — they are two answers to a single question:
 

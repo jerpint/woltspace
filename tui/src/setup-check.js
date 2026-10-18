@@ -15,15 +15,21 @@ export const README = 'https://github.com/jerpint/woltspace';
 export const AGENT_PROMPT = 'Read github.com/jerpint/woltspace and help me get started with the install';
 export const AGENTS = ['claude', 'codex', 'opencode'];
 
-// Any HTTP answer at all means a lodge is there; the tui reports anything
-// else itself. A connection failure gets one more try, as api.js does.
+// A lodge answers /health with {"ok": true} (every version since 0.5.0).
+// Anything else on that port is not a lodge. A connection failure gets one
+// more try, as api.js does.
 export async function lodgeAnswers(base, fetchFn = fetch) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    let res;
     try {
-      await fetchFn(`${base}/health`, { signal: AbortSignal.timeout(3000) });
-      return true;
+      res = await fetchFn(`${base}/health`, { signal: AbortSignal.timeout(3000) });
     } catch {
-      /* try once more, then report */
+      continue;
+    }
+    try {
+      return (await res.json())?.ok === true;
+    } catch {
+      return false;
     }
   }
   return false;

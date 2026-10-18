@@ -21,8 +21,12 @@ function binDir(...names) {
   return dir;
 }
 
-test('any HTTP answer counts as a lodge, even an error status', async () => {
-  assert.equal(await lodgeAnswers(BASE, async () => ({ ok: false, status: 500 })), true);
+const answer = (body) => async () => ({ json: async () => body });
+
+test('a lodge is a /health that says ok; anything else on the port is not', async () => {
+  assert.equal(await lodgeAnswers(BASE, answer({ ok: true, version: '0.5.20' })), true);
+  assert.equal(await lodgeAnswers(BASE, answer({ status: 'up' })), false);
+  assert.equal(await lodgeAnswers(BASE, async () => ({ json: async () => { throw new SyntaxError('html'); } })), false);
 });
 
 test('a refused connection is tried twice, then reported', async () => {
@@ -75,7 +79,7 @@ test('installed but stopped: only the start command, with its full path', () => 
 
 test('checkLodge prints nothing and passes when a lodge answers', async () => {
   let written = '';
-  const ok = await checkLodge(BASE, { fetchFn: async () => ({ ok: true }), write: (s) => { written += s; } });
+  const ok = await checkLodge(BASE, { fetchFn: answer({ ok: true }), write: (s) => { written += s; } });
   assert.equal(ok, true);
   assert.equal(written, '');
 });

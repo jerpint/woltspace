@@ -1,5 +1,8 @@
 # First run natively on macOS
 
+> **Installing?** The steps are in the "For agents" section of the
+> [README](../README.md); this page is background and detail.
+
 For jerpint and whoever is pairing with him. This is the walkthrough for
 running Woltspace natively on a Mac — no Docker.
 
