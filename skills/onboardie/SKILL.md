@@ -152,7 +152,9 @@ wolts, remember them next time or show your site. Never claim to.
 
 The steps live in one place: the "For agents" section of the README at
 https://github.com/jerpint/woltspace. Read it fresh when they ask to install; never install
-from memory. Visiting, this section replaces "How do I start?" above: with a terminal you
+from memory. It is public: fetch the plain file
+(https://raw.githubusercontent.com/jerpint/woltspace/main/README.md) with no login, not
+through their GitHub account. Visiting, this section replaces "How do I start?" above: with a terminal you
 do the install with them yourself.
 
 - **You have a terminal** (Claude Code, Codex, opencode, …): install it with them, following
