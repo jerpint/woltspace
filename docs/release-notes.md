@@ -1,55 +1,52 @@
-# Woltspace 0.5.20
+# Woltspace 0.5.21
 
-Python **0.5.20** is a release for 0.5. The separately distributed
-**@woltspace/tui remains at 0.5.2**; no npm release is required.
+Python **0.5.21** and **@woltspace/tui 0.5.3** are a release pair for 0.5.
+Both registries publish this time.
 
 ## Thank you
 
-- [@asharakeh](https://github.com/asharakeh) built the hold, the rule that
-  idle sessions rest by use, and the ways to see and release holds
-  (#559, #569, #570, merged as #571).
-- [@ASalvail](https://github.com/ASalvail), with a first contribution: the
-  fix for `woltspace session` in an ordinary terminal (#568).
+- [@asharakeh](https://github.com/asharakeh) built archive, unarchive and
+  delete for wolts (#575), kept large boot memory from stopping new sessions
+  (#580), and fixed messages left unsent in Claude's input box (#576).
 
 ## What's new
 
-- **Idle sessions rest by use, and a wolt can hold its session.** A running
-  session rests once nobody has used it for the idle window (Settings →
-  Sessions, or `/idle` on Telegram: never, 1 hour, 4 hours, 1 day; the
-  default is 1 day). Use means a message to or from the session, a spawn,
-  `push-view`, or a keystroke or attach in tmux. Screen output does not
-  count, so every engine behaves the same. A wolt with a long background
-  task keeps its session up with
-  `woltspace session hold <90m|6h|2d|forever> "<reason>"`; the new
-  `woltspace-hold` skill tells it when to. You see every hold with its
-  reason and can release it: `/holds` on Telegram, Sessions → Held in the
-  lodge. A rested session wakes with its conversation on the next message
-  (#554, #559, #569, #570, merged as #571).
-- **`woltspace restart`.** One safe way for a wolt or a person to restart
-  the lodge: it stops and starts on the same address, waits for health, and
-  reports connectors that got worse or sessions that were not picked up
-  again. If the start fails, the error names the exact command that brings
-  the lodge back. `docs/updates.md` lists recommended permissions so a wolt
-  can run `update`, `restart`, `status` and `doctor` without asking (#558).
-- **Wolts set their own effort.** Ask your wolt for low, medium, high or
-  xhigh effort; the new `woltspace-engine-settings` skill writes it in that
-  wolt's own folder only, for Claude Code and Codex, so other wolts are not
-  affected. The wolt's settings page says "Effort and other engine
-  settings: ask your wolt." (#572).
+- **Two npm doors.** `npx woltspace` opens the lodge's terminal cockpit. On a
+  machine with no lodge it lists what is there and what is missing, in the
+  lodge's voice, then gives the one line to paste into Claude Code, Codex or
+  opencode. If woltspace is installed but stopped, it gives the start command
+  instead. It never installs anything; the steps stay in the README's "For
+  agents" section. `npx skills add jerpint/woltspace` brings Onboardie 🦫 into
+  any agent, to explain Woltspace and install it with you, asking before each
+  step. It offers that one skill only; the lodge's own skills are not listed
+  (#582).
+- **One Onboardie everywhere.** The skill, the starter lodge's chat skill and
+  the site all use the same Onboardie and the same paste line, pointing at
+  the README (#582).
+- **Archive, unarchive and delete a wolt.** Put away a wolt you no longer
+  need from the ⋯ menu on the Wolts page or with `woltspace wolt archive
+  <name>`. It comes back exactly as it was with unarchive. Delete works only
+  on an archived wolt and asks first. A held session blocks archiving, an
+  archived name stays reserved, and a delete also clears that wolt's Auto
+  grants and cron stamps so a later wolt with the same name starts clean
+  (#575).
 
 ## Fixes
 
-- **A voice note from a wolt is never lost.** When the speech service
-  stalls, `notify --speak` tries once more; if it still fails, the lodge
-  sends the words as text with a note that the voice note failed, and the
-  wolt is told not to send them again (#563).
-- **`woltspace session` works from an ordinary terminal.** On a native
-  install it failed outside a lodge session with
-  `env: woltspace-python: No such file or directory`. It now runs on the
-  same Python as the CLI (#568).
-- **`woltspace update` works for a lodge on a non-default port next to
-  another lodge.** A stopped lodge with no owner record no longer reads as a
-  conflict with the lodge on 7777 (#558).
+- **A wolt with a lot of memory still gets new sessions.** A new session's
+  opening prompt carried the boot memory whole, and past Linux's limit for
+  one argument (128 KiB) every new session exited at once while the message
+  read as delivered. Oversized boot memory is now cut to fit, so the session
+  starts (#580, fixes #578).
+- **Messages to Claude are sent, not left in the input box.** A message with
+  two or more image paths on their own lines could sit unsent while the
+  lodge reported it delivered. Claude now waits half a second before Enter,
+  like every other engine (#576).
+- **`woltspace wolt …` works from an ordinary terminal.** The installed CLI
+  had no `wolt` noun; it now hands it to the bundled client, as it does for
+  `session` (#575).
+- **Telegram and Slack let go of a wolt that is gone.** A chat whose wolt was
+  archived or removed goes back to the wolt picker (#575).
 
 ## Upgrade notes
 
@@ -61,11 +58,8 @@ No colony-data migration is required. Native upgrades stop and restart the
 control plane while preserving tmux sessions. Container lodges update from the
 host as before.
 
-After upgrading, the first sweep (it waits for the lodge's health check)
-rests every running session nobody has used for longer than the idle
-window, 1 day unless you changed it. Sessions whose screens keep printing
-are included. They wake with their conversation on the next message. A
-wolt running a long job should take a hold first.
+The TUI updates on its own: `npx woltspace` or `npx @woltspace/tui` fetch
+0.5.3. A global install updates with `npm install -g @woltspace/tui`.
 
 After upgrading, verify the lodge is healthy:
 
