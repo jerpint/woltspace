@@ -59,42 +59,68 @@ export function uvWoltspace(run = spawnSync) {
   return isExecutable(cli) ? cli : null;
 }
 
-export function setupMessage({ base, has, cli }) {
+// The CLI's lodge voice (src/woltspace/lore.py): an emoji and an amber
+// headline, the moss lore line tucked under it, teal for anything you can
+// type or open. Colour only on a terminal that wants it.
+const PALETTE = {
+  amber: [217, 158, 66], moss: [127, 166, 80], teal: [63, 176, 160],
+  terra: [192, 92, 74], bark: [138, 127, 109],
+};
+const INDENT = '  ';
+const SUBINDENT = '     ';
+
+export function wantsColor(stream = process.stderr, env = process.env) {
+  return Boolean(stream.isTTY) && !('NO_COLOR' in env) && env.TERM !== 'dumb';
+}
+
+export function setupMessage({ base, has, cli, color = false }) {
+  const paint = (name, text) => (color
+    ? `\x1b[38;2;${PALETTE[name].join(';')}m${text}\x1b[0m` : text);
+  const head = (emoji, text) => `${INDENT}${emoji} ${paint('amber', text)}`;
+  const sub = (text, name = 'moss') => `${SUBINDENT}${paint(name, text)}`;
   if (cli) {
     return [
-      `woltspace is installed, but no lodge answers at ${base}.`,
       '',
-      'Start it, then run this again:',
-      `  ${cli} start`,
+      head('🌙', `no lodge answers at ${base}`),
+      sub('lodge closed for the night - woltspace is installed'),
+      '',
+      head('☀️', 'wake it up, then run this again:'),
+      sub(`${cli} start`, 'teal'),
       '',
     ].join('\n');
   }
-  const mark = (ok) => (ok ? '✓' : '✗');
+  const mark = (ok, name) => (ok ? `${paint('moss', '✓')} ${name}` : `${paint('terra', '✗')} ${paint('bark', name)}`);
   const agent = AGENTS.find((name) => has[name]);
   const checks = [
-    `${mark(has.uv)} uv`,
-    `${mark(has.tmux)} tmux`,
-    `${mark(agent)} ${agent || 'claude / codex / opencode'}`,
-    '✗ woltspace',
+    mark(has.uv, 'uv'),
+    mark(has.tmux, 'tmux'),
+    mark(agent, agent || 'claude / codex / opencode'),
+    mark(false, 'woltspace'),
   ].join('   ');
   return [
-    `No lodge answers at ${base}, and woltspace isn't installed yet.`,
     '',
-    `  ${checks}`,
+    head('💤', `no lodge answers at ${base}`),
+    sub("the river's quiet - woltspace isn't installed yet"),
     '',
-    'Easiest: paste this into Claude Code, Codex or opencode:',
-    `  ${AGENT_PROMPT}`,
+    `${SUBINDENT}${checks}`,
     '',
-    'Or bring Onboardie 🦫 into your agent:  npx skills add jerpint/woltspace',
-    `Docs: ${README}`,
+    head('🦫', 'easiest: paste this into Claude Code, Codex or opencode'),
+    sub(AGENT_PROMPT, 'teal'),
+    '',
+    head('🪵', 'or bring Onboardie into your agent'),
+    sub('npx skills add jerpint/woltspace', 'teal'),
+    '',
+    `${INDENT}🌲 ${paint('bark', 'docs')} ${paint('teal', README)}`,
     '',
   ].join('\n');
 }
 
 // True when a lodge answers. Otherwise prints the checklist and returns false.
-export async function checkLodge(base, { fetchFn, run, pathVar, write = (s) => process.stderr.write(s) } = {}) {
+export async function checkLodge(base, {
+  fetchFn, run, pathVar, color = wantsColor(), write = (s) => process.stderr.write(s),
+} = {}) {
   if (await lodgeAnswers(base, fetchFn)) return true;
   const has = Object.fromEntries(['uv', 'tmux', ...AGENTS].map((name) => [name, onPath(name, pathVar)]));
-  write(setupMessage({ base, has, cli: uvWoltspace(run) }));
+  write(setupMessage({ base, has, cli: uvWoltspace(run), color }));
   return false;
 }

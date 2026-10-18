@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import {
-  AGENT_PROMPT, checkLodge, lodgeAnswers, onPath, setupMessage, uvWoltspace,
+  AGENT_PROMPT, checkLodge, lodgeAnswers, onPath, setupMessage, uvWoltspace, wantsColor,
 } from '../src/setup-check.js';
 
 const BASE = 'http://127.0.0.1:7799';
@@ -53,7 +53,8 @@ test('the uv-installed CLI is found by its absolute path, never on PATH', () => 
 
 test('nothing installed: the checklist points at the agent prompt and the skill', () => {
   const text = setupMessage({ base: BASE, has: { uv: false, tmux: true, codex: true }, cli: null });
-  assert.match(text, /No lodge answers at http:\/\/127\.0\.0\.1:7799/);
+  assert.match(text, /no lodge answers at http:\/\/127\.0\.0\.1:7799/);
+  assert.match(text, /woltspace isn't installed yet/);
   assert.match(text, /✗ uv {3}✓ tmux {3}✓ codex {3}✗ woltspace/);
   assert.ok(text.includes(AGENT_PROMPT));
   assert.match(text, /npx skills add jerpint\/woltspace/);
@@ -68,6 +69,7 @@ test('no agent CLI found: the checklist names all three', () => {
 test('installed but stopped: only the start command, with its full path', () => {
   const text = setupMessage({ base: BASE, has: {}, cli: '/home/me/.local/bin/woltspace' });
   assert.match(text, /\/home\/me\/\.local\/bin\/woltspace start/);
+  assert.match(text, /lodge closed for the night/);
   assert.doesNotMatch(text, /npx skills/);
 });
 
@@ -99,4 +101,20 @@ test('the tui exits with the checklist, without opening, when no lodge answers',
   });
   assert.equal(result.status, 1, result.stderr);
   assert.match(result.stderr, /lodge answers at http:\/\/127\.0\.0\.1:9/);
+});
+
+test('plain text unless asked for colour; colour uses the lodge palette', () => {
+  const args = { base: BASE, has: { uv: true }, cli: null };
+  assert.doesNotMatch(setupMessage(args), /\x1b\[/);
+  const painted = setupMessage({ ...args, color: true });
+  assert.match(painted, /\x1b\[38;2;217;158;66m/, 'amber headline');
+  assert.match(painted, /\x1b\[38;2;63;176;160mnpx skills add jerpint\/woltspace/, 'teal command');
+  assert.equal(painted.replace(/\x1b\[[0-9;]*m/g, ''), setupMessage(args), 'same words either way');
+});
+
+test('colour only on a terminal, and never with NO_COLOR or TERM=dumb', () => {
+  assert.equal(wantsColor({ isTTY: true }, {}), true);
+  assert.equal(wantsColor({ isTTY: false }, {}), false);
+  assert.equal(wantsColor({ isTTY: true }, { NO_COLOR: '' }), false);
+  assert.equal(wantsColor({ isTTY: true }, { TERM: 'dumb' }), false);
 });
