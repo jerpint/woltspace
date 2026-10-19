@@ -399,7 +399,9 @@ def _backup(args) -> int:
     layout = RuntimeLayout.from_env()
     wolts_dir = args.wolts_dir or layout.wolts_dir
     try:
-        result = create_backup(wolts_dir, out_dir=args.out or None, tag=args.tag or None)
+        result = create_backup(
+            wolts_dir, out_dir=args.out or None, tag=args.tag or None, full=args.full,
+        )
     except (FileNotFoundError, OSError, ValueError) as exc:
         lore.failure(f"backup failed: {exc}")
         return 1
@@ -454,7 +456,7 @@ def _report_line_style(line: str) -> str:
     stripped = line.strip()
     if not stripped:
         return ""
-    if stripped.startswith(("warnings:", "withheld:")):
+    if stripped.startswith(("warnings:", "withheld:", "left out:")):
         return lore.TERRA
     if stripped.startswith(("verified:", "restored:", "backup:")):
         return lore.MOSS
@@ -1064,8 +1066,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     entrypoint.set_defaults(func=_container_entrypoint)
 
-    backup = sub.add_parser("backup", help="archive the wolts directory — data only")
+    backup = sub.add_parser(
+        "backup", help="archive the wolts directory — all context and code (--full adds media)",
+    )
     backup.add_argument("--tag", default="", help="archive tag (default: UTC timestamp)")
+    backup.add_argument(
+        "--full", action="store_true",
+        help="also keep media, binaries and other large files (default: slim, and they are listed)",
+    )
     backup.add_argument("--out", default="", help="where to write it (default: beside the wolts dir)")
     backup.add_argument("--wolts-dir", default="", help=argparse.SUPPRESS)
     backup.add_argument("--json", action="store_true")

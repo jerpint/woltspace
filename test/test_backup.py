@@ -186,6 +186,8 @@ def test_round_trip_restores_the_tree_byte_for_byte(wolts, tmp_path):
 
     before = snapshot(wolts)
     after = snapshot(restored.wolts_dir)
+    # The one file a restore adds: the mark that keeps the copy on its own tmux.
+    assert after.pop(backup_mod.RESTORED_MARKER)[0] == "file"
     assert before == after
     assert restored.manifest["tag"] == result.manifest["tag"]
     assert restored.entries == result.manifest["entries"]
@@ -723,3 +725,350 @@ def test_cli_reports_a_missing_source_without_traceback(tmp_path, capsys):
     code = cli_main(["backup", "--wolts-dir", str(tmp_path / "nope"), "--out", str(tmp_path)])
     assert code == 1
     assert "backup failed" in capsys.readouterr().out
+
+
+# Slim (the default) and --full
+
+
+@pytest.fixture
+def lived_in(wolts):
+    """The same lodge after some living: media, big logs, caches, checkouts."""
+
+    def write(rel: str, data: bytes) -> None:
+        path = wolts / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+    write("beaverwolt/wolt/drafts/talk/render.mp4", b"\0" * 40_000)
+    write("beaverwolt/wolt/site/hero.png", b"\x89PNG" + b"\0" * 9_000)
+    write("beaverwolt/wolt/drafts/huge-notes.md", b"n" * (backup_mod.SLIM_TEXT_MAX + 1))
+    write("beaverwolt/wolt/drafts/plan.md", b"# plan\n")
+    write("beaverwolt/wolt/drafts/nb.ipynb", b"{}")
+    write("beaverwolt/worktrees/feature-y/README.md", b"checkout\n")
+    write("beaverwolt/wolt/sparks/tool/lib/python3.13/site.py", b"x = 1\n")
+    write("beaverwolt/wolt/sparks/npm/_cacache/index", b"c" * 100)
+    write("beaverwolt/.git/worktrees/feature-y/HEAD", b"ref: refs/heads/y\n")
+    # Context, kept at any size and in any format.
+    big = b"{}\n" * (backup_mod.SLIM_TEXT_MAX // 3 + 1)
+    write("beaverwolt/.claude/projects/-pond/session.jsonl", big)
+    write("raccoonwolt/.codex/sessions/2026/10/rollout.jsonl", big)
+    write("raccoonwolt/.codex/state_5.sqlite", b"SQLite format 3\0")
+    write("raccoonwolt/.local/share/opencode/opencode.db", b"SQLite format 3\0")
+    write("beaverwolt/wolt/.git/objects/pack/pack-1.pack", b"\0" * 30_000)
+    write("beaverwolt/wolt/memory/photo.jpg", b"\xff\xd8" + b"\0" * 100)
+    write(".space/logs/control-plane.log", b"log\n")
+    return wolts
+
+
+def test_slim_keeps_all_context_and_code_and_lists_the_rest(lived_in, tmp_path):
+    result = create_backup(lived_in, out_dir=tmp_path / "out")
+    names = set(_members(result.archive))
+
+    for kept in (
+        "beaverwolt/wolt/drafts/plan.md",
+        "beaverwolt/wolt/drafts/nb.ipynb",
+        "beaverwolt/wolt/site/index.html",
+        "beaverwolt/.claude/projects/-pond/session.jsonl",
+        "raccoonwolt/.codex/sessions/2026/10/rollout.jsonl",
+        "raccoonwolt/.codex/state_5.sqlite",
+        "raccoonwolt/.local/share/opencode/opencode.db",
+        "beaverwolt/wolt/.git/objects/pack/pack-1.pack",
+        "beaverwolt/.git/worktrees/feature-y/HEAD",
+        "beaverwolt/wolt/memory/photo.jpg",
+        ".space/platform/config.json",
+    ):
+        assert f"{ARCHIVE_ROOT}/{kept}" in names, kept
+
+    left = {
+        "beaverwolt/wolt/drafts/talk/render.mp4",
+        "beaverwolt/wolt/site/hero.png",
+        "beaverwolt/wolt/drafts/huge-notes.md",
+        "beaverwolt/worktrees",
+        "beaverwolt/wolt/sparks/tool/lib/python3.13",
+        "beaverwolt/wolt/sparks/npm/_cacache",
+        ".space/logs/control-plane.log",
+    }
+    assert not {f"{ARCHIVE_ROOT}/{rel}" for rel in left} & names
+    assert not [n for n in names if n.startswith(f"{ARCHIVE_ROOT}/beaverwolt/worktrees/")]
+
+    manifest = result.manifest
+    assert manifest["mode"] == "slim"
+    with tarfile.open(result.archive, "r:gz") as tar:
+        listed = tar.extractfile(backup_mod.LEFT_OUT_NAME).read().decode().splitlines()
+    rows = {line.split("\t")[0]: line.split("\t") for line in listed[1:]}
+    assert left <= set(rows)
+    assert rows["beaverwolt/worktrees"][1] == "dir"
+    assert int(rows["beaverwolt/wolt/drafts/talk/render.mp4"][2]) == 40_000
+    assert manifest["left_out"]["files"] == sum(int(r[3]) for r in rows.values())
+    verify_archive(result.archive)
+
+
+def test_full_keeps_media_and_writes_no_left_out_list(lived_in, tmp_path):
+    result = create_backup(lived_in, out_dir=tmp_path / "out", full=True)
+    names = set(_members(result.archive))
+    assert f"{ARCHIVE_ROOT}/beaverwolt/wolt/drafts/talk/render.mp4" in names
+    assert f"{ARCHIVE_ROOT}/beaverwolt/wolt/drafts/huge-notes.md" in names
+    assert backup_mod.LEFT_OUT_NAME not in names
+    assert result.manifest["mode"] == "full"
+    assert "left_out" not in result.manifest
+
+
+def test_slim_round_trip_restores_what_it_kept_and_says_what_it_did_not(lived_in, tmp_path):
+    result = create_backup(lived_in, out_dir=tmp_path / "out")
+    restored = restore_backup(result.archive, to=tmp_path / "back")
+    assert restored.entries == result.manifest["entries"]
+    root = restored.wolts_dir
+    session = root / "beaverwolt" / ".claude" / "projects" / "-pond" / "session.jsonl"
+    assert session.read_bytes() == (lived_in / "beaverwolt/.claude/projects/-pond/session.jsonl").read_bytes()
+    assert not (root / "beaverwolt" / "wolt" / "drafts" / "talk" / "render.mp4").exists()
+    assert (restored.target / backup_mod.LEFT_OUT_NAME).is_file()
+    lines = backup_mod.restore_lines(restored)
+    assert any(line.startswith("left out:") for line in lines)
+
+
+def test_a_wolt_at_the_root_is_never_slim_dropped_by_name(wolts, tmp_path):
+    (wolts / "cache" / "wolt").mkdir(parents=True)
+    (wolts / "cache" / "wolt" / "wolt.json").write_text(json.dumps({"name": "cache"}))
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    assert f"{ARCHIVE_ROOT}/cache/wolt/wolt.json" in _members(result.archive)
+
+
+def test_cli_full_flag(lived_in, tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(lived_in))
+    assert cli_main(["backup", "--tag", "slim", "--out", str(tmp_path / "out")]) == 0
+    assert "mode: slim" in capsys.readouterr().out
+    assert cli_main(["backup", "--full", "--tag", "full", "--out", str(tmp_path / "out"), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["manifest"]["mode"] == "full"
+
+
+def test_slim_keeps_every_transcript_even_inside_dropped_dirs(wolts, tmp_path):
+    """Reproducibility: no session transcript is ever left out of a slim backup."""
+    stores = (
+        "beaverwolt/worktrees/feature-z/.claude/projects/-z/a.jsonl",
+        "beaverwolt/wolt/worktrees/old/.codex/sessions/2026/r.jsonl",
+        "beaverwolt/wolt/sparks/.tmp/lodge/wolts/w/.claude/projects/-w/b.jsonl",
+        "beaverwolt/wolt/apps/demo/node_modules/x/.codex/archived_sessions/c.jsonl",
+        "beaverwolt/wolt/drafts/cache/home/.local/share/opencode/opencode.db",
+    )
+    for rel in stores:
+        path = wolts / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\0" * 10)
+    (wolts / "beaverwolt/worktrees/feature-z/big.mp4").write_bytes(b"\0" * 1000)
+    (wolts / "beaverwolt/worktrees/feature-z/src.py").write_text("x = 1\n")
+
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    names = set(_members(result.archive))
+    for rel in stores:
+        assert f"{ARCHIVE_ROOT}/{rel}" in names, rel
+    # Only the transcripts come out of a dropped directory; the rest is listed.
+    assert f"{ARCHIVE_ROOT}/beaverwolt/worktrees/feature-z/src.py" not in names
+    with tarfile.open(result.archive, "r:gz") as tar:
+        listed = tar.extractfile(backup_mod.LEFT_OUT_NAME).read().decode()
+    assert "beaverwolt/worktrees/feature-z/big.mp4" in listed
+    assert "beaverwolt/worktrees/feature-z/src.py" in listed
+    assert "beaverwolt/wolt/apps/demo/node_modules/left-pad" in listed
+
+
+# Slim leaves databases out unless a manifest opts them in
+
+
+def test_slim_leaves_databases_out_unless_a_manifest_opts_them_in(wolts, tmp_path):
+    def write(rel: str, data: bytes) -> None:
+        path = wolts / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+    app = "beaverwolt/wolt/apps/demo"
+    write(f"{app}/woltspace.json", json.dumps({"name": "demo", "backup": {"keep": ["data/app.db"]}}).encode())
+    write(f"{app}/data/app.db", b"\0" * (backup_mod.SLIM_TEXT_MAX + 1))
+    write(f"{app}/data/app.db-wal", b"\0" * 10)
+    write(f"{app}/data/scratch.db", b"\0" * 10)
+    # A wolt opts in from its own wolt.json; a manifest never reaches outside itself.
+    write("raccoonwolt/wolt/wolt.json", json.dumps({
+        "name": "raccoonwolt", "backup": {"keep": ["notes/*.sqlite", "../beaverwolt/x.db", "/etc/hosts"]},
+    }).encode())
+    write("raccoonwolt/notes/index.sqlite", b"\0" * 10)
+    write("beaverwolt/x.db", b"\0" * 10)
+    write("raccoonwolt/.codex/logs_2.sqlite", b"\0" * 10)
+    write(f"{app}/Makefile", b"all:\n" * (backup_mod.SLIM_NO_SUFFIX_MAX // 5 + 1))
+
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    names = set(_members(result.archive))
+    for kept in (f"{app}/data/app.db", f"{app}/data/app.db-wal", f"{app}/Makefile",
+                 "raccoonwolt/notes/index.sqlite"):
+        assert f"{ARCHIVE_ROOT}/{kept}" in names, kept
+    for left in (f"{app}/data/scratch.db", "beaverwolt/x.db", "raccoonwolt/.codex/logs_2.sqlite"):
+        assert f"{ARCHIVE_ROOT}/{left}" not in names, left
+    with tarfile.open(result.archive, "r:gz") as tar:
+        listed = tar.extractfile(backup_mod.LEFT_OUT_NAME).read().decode()
+    assert f"{app}/data/scratch.db" in listed
+    assert result.manifest["left_out"]["rules"]["opted_in"] == {
+        app: ["data/app.db"], "raccoonwolt": ["notes/*.sqlite"],
+    }
+
+
+# A restored copy keeps its hands off the lodge it came from
+
+
+def _lodge_runtime(wolts: Path, live_pid: int) -> None:
+    """Runtime records as a running lodge leaves them, pointing at live processes."""
+    source = str(wolts.resolve())
+
+    def write(rel: str, data) -> None:
+        path = wolts / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data))
+
+    write(".space/platform/control-plane.json", {"instance_id": "abc", "pid": live_pid})
+    write(".space/platform/tunnel.json", {"pid": live_pid, "url": "https://example.test"})
+    write(".space/platform/connectors.json", {"connectors": [{"name": "wolf", "pid": live_pid}]})
+    write(".space/apps/demo.json", {"name": "demo", "pid": live_pid, "port": 4001, "tunnel_pid": None})
+    session = {
+        "name": "beaverwolt-s1", "wolt": "beaverwolt", "status": "running",
+        "workdir": f"{source}/beaverwolt", "dir": f"{source}/beaverwolt",
+        "target": {"wolt_id": "beaverwolt", "canonical_workdir": f"{source}/beaverwolt"},
+        "runtime": {"tmux_session_name": "beaverwolt-s1", "pane_id": "%7", "kind": "tmux"},
+        "harness_session_id": "resume-me",
+    }
+    write("beaverwolt/.state/sessions/beaverwolt-s1.json", session)
+    write("beaverwolt/.state/sessions/beaverwolt-repo.json", {
+        **session, "name": "beaverwolt-repo", "workdir": "/elsewhere/repo", "dir": "/elsewhere/repo",
+        "target": {"wolt_id": "beaverwolt", "canonical_workdir": "/elsewhere/repo"},
+    })
+    write("beaverwolt/.state/sessions/beaverwolt-old.json", {
+        **session, "name": "beaverwolt-old", "status": "stopped",
+        "workdir": "/workspace/wolts/beaverwolt", "dir": "/workspace/wolts/beaverwolt",
+        "target": {"wolt_id": "beaverwolt", "canonical_workdir": "/workspace/wolts/beaverwolt"},
+    })
+    write(".space/auto-grants.json", {"grants": [
+        {"wolt_id": "beaverwolt", "canonical_workdir": f"{source}/beaverwolt", "policy_version": 1},
+        {"wolt_id": "beaverwolt", "canonical_workdir": "/elsewhere/repo", "policy_version": 1},
+    ]})
+
+
+def test_restore_disarms_the_copy(wolts, tmp_path):
+    _lodge_runtime(wolts, os.getpid())
+    archive = create_backup(wolts, out_dir=tmp_path / "out").archive
+    restored = restore_backup(archive, to=tmp_path / "back")
+    copy = restored.wolts_dir
+
+    for rel in (".space/platform/control-plane.json", ".space/platform/tunnel.json",
+                ".space/platform/connectors.json", ".space/apps/demo.json"):
+        assert not (copy / rel).exists(), rel
+    session = json.loads((copy / "beaverwolt/.state/sessions/beaverwolt-s1.json").read_text())
+    assert session["status"] == "stopped"
+    assert "runtime" not in session
+    assert session["workdir"] == session["dir"] == str(copy / "beaverwolt")
+    assert session["target"]["canonical_workdir"] == str(copy / "beaverwolt")
+    assert session["harness_session_id"] == "resume-me"
+    # The container era saw the same lodge at /workspace/wolts: re-pointed, not set aside.
+    old = json.loads((copy / "beaverwolt/.state/sessions/beaverwolt-old.json").read_text())
+    assert old["dir"] == old["target"]["canonical_workdir"] == str(copy / "beaverwolt")
+    # Worked outside the lodge: set aside, not re-pointed, not deleted.
+    assert not (copy / "beaverwolt/.state/sessions/beaverwolt-repo.json").exists()
+    aside = restored.target / backup_mod.QUARANTINE_NAME / "beaverwolt/.state/sessions/beaverwolt-repo.json"
+    assert json.loads(aside.read_text())["harness_session_id"] == "resume-me"
+    grants = json.loads((copy / ".space/auto-grants.json").read_text())["grants"]
+    assert [g["canonical_workdir"] for g in grants] == [str(copy / "beaverwolt")]
+    # The source is untouched.
+    assert json.loads((wolts / ".space/apps/demo.json").read_text())["pid"] == os.getpid()
+    lines = backup_mod.restore_lines(restored)
+    assert any(line.startswith("disarmed: 1 app(s) and 2 session(s)") for line in lines)
+    assert any(line.startswith("set aside: 1 session(s)") for line in lines)
+    assert any("WOLTSPACE_PORT=" in line for line in lines)
+    assert backup_mod.restored_tmux_dir(copy) == restored.target / "tmux"
+    assert backup_mod.restored_tmux_dir(wolts) is None
+
+
+def test_restore_refuses_a_link_where_it_must_disarm(tmp_path):
+    outside = tmp_path / "live" / ".space"
+    (outside / "apps").mkdir(parents=True)
+    (outside / "apps" / "demo.json").write_text('{"pid": 1}')
+
+    def build(tar):
+        _add_bytes(tar, f"{ARCHIVE_ROOT}/w/wolt/wolt.json", b"{}")
+        _add_symlink(tar, f"{ARCHIVE_ROOT}/.space", str(outside))
+        _add_bytes(tar, MANIFEST_NAME, json.dumps({"entries": 2, "source": "/src"}).encode())
+
+    archive = _write_archive(tmp_path / "evil.tar.gz", build)
+    with pytest.raises(ValueError, match="symlink where a restore must disarm"):
+        restore_backup(archive, to=tmp_path / "back")
+    assert (outside / "apps" / "demo.json").is_file()
+    assert not (tmp_path / "back" / ARCHIVE_ROOT).exists()
+
+
+def test_disarm_fails_closed_through_a_link(tmp_path):
+    outside = tmp_path / "live"
+    (outside / "apps").mkdir(parents=True)
+    (outside / "apps" / "demo.json").write_text('{"pid": 1}')
+    copy = tmp_path / "back" / "wolts"
+    copy.mkdir(parents=True)
+    (copy / ".space").symlink_to(outside)
+    with pytest.raises(ValueError, match="through a symlink"):
+        backup_mod.disarm(copy, "/source", tmp_path / "back")
+    assert (outside / "apps" / "demo.json").is_file()
+
+
+@pytest.mark.skipif(not __import__("shutil").which("tmux"), reason="needs tmux")
+def test_a_copy_beside_its_source_only_touches_itself(wolts, tmp_path):
+    """Same machine, same session names, started with the source's tmux in its
+    environment: the copy's boot, wake and stop still stay in the copy."""
+    import shutil
+    import subprocess
+    import tempfile
+
+    app = subprocess.Popen(["sleep", "300"])  # the source's live app
+    short = Path(tempfile.mkdtemp(prefix="wsb-", dir="/tmp"))  # socket paths are capped
+    source_tmux = short / "src"
+    source_tmux.mkdir()
+    source_socket = source_tmux / f"tmux-{os.getuid()}" / "default"
+
+    def tmux(*args: str, where: Path = source_tmux) -> subprocess.CompletedProcess:
+        env = {**os.environ, "TMUX_TMPDIR": str(where)}
+        env.pop("TMUX", None)
+        return subprocess.run(["tmux", *args], env=env, capture_output=True, text=True)
+
+    def in_copy(code: str) -> str:
+        # The worst case: launched from a pane of the source's tmux server.
+        env = {**os.environ, "TMUX_TMPDIR": str(source_tmux), "TMUX": f"{source_socket},1,0",
+               "WOLTSPACE_WOLTS_DIR": str(copy)}
+        lib = ROOT / "container" / "lib"
+        out = subprocess.run([sys.executable, "-c", f"import sys; sys.path[:0] = [{str(lib)!r}]\n{code}"],
+                             env=env, capture_output=True, text=True, timeout=60)
+        assert out.returncode == 0, out.stderr
+        return out.stdout
+
+    try:
+        _lodge_runtime(wolts, app.pid)
+        assert tmux("new-session", "-d", "-s", "beaverwolt-s1", "sleep 300").returncode == 0
+        archive = create_backup(wolts, out_dir=tmp_path / "out").archive
+        restored = restore_backup(archive, to=short / "back")
+        copy = restored.wolts_dir
+        own_tmux = restored.target / "tmux"
+
+        # Boot: the copy adopts nothing of the source's.
+        report = json.loads(in_copy(
+            "import json, sessions\nprint(json.dumps(sessions.SessionRegistry().adopt_runtime_sessions()))"
+        ))
+        assert not report["adopted"]
+        # Stop in the copy: its app has no state, its session has no tmux of its own.
+        out = in_copy("import apps, sessions\nprint(apps.stop_app('demo'))\n"
+                      "print(sessions.stop_session('beaverwolt-s1')['was_alive'])")
+        assert out.split() == ["False", "False"]
+        # Wake in the copy (same name), then stop it: it lands on, and leaves, the copy's own server.
+        in_copy("import subprocess, paths\n"
+                "subprocess.run(['tmux', 'new-session', '-d', '-s', 'beaverwolt-s1', 'sleep 300'], check=True)")
+        assert tmux("has-session", "-t", "=beaverwolt-s1", where=own_tmux).returncode == 0
+        assert in_copy("import sessions\nprint(sessions.stop_session('beaverwolt-s1')['was_alive'])").split() == ["True"]
+        assert tmux("has-session", "-t", "=beaverwolt-s1", where=own_tmux).returncode != 0
+
+        # The source never noticed.
+        assert tmux("has-session", "-t", "=beaverwolt-s1").returncode == 0
+        assert app.poll() is None
+    finally:
+        tmux("kill-session", "-t", "=beaverwolt-s1")
+        tmux("kill-session", "-t", "=beaverwolt-s1", where=short / "back" / "tmux")
+        app.kill()
+        app.wait()
+        shutil.rmtree(short, ignore_errors=True)

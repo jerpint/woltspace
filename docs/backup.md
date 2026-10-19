@@ -4,18 +4,77 @@ A woltspace backup is a snapshot of the **data plane**: one `tar.gz` holding the
 wolts directory and a manifest describing it. No container, no image, no caches.
 
 ```bash
-woltspace backup                       # → woltspace-backup-<UTC timestamp>.tar.gz
+woltspace backup                       # slim → woltspace-backup-<UTC timestamp>.tar.gz
 woltspace backup --tag pre-rc5         # name it yourself
 woltspace backup --out ~/snapshots     # somewhere other than beside the wolts dir
+woltspace backup --full --out /Volumes/drive   # also keep media and other large files
 woltspace restore ~/snapshots/woltspace-backup-pre-rc5.tar.gz
 ```
 
 Both commands work the same natively and inside the container — they only ever
 touch files. Take one before an upgrade.
 
-## What goes in
+## Slim by default
 
-Everything under `WOLTSPACE_WOLTS_DIR` that is data:
+A backup is meant to bring the whole story back: every wolt with its identity,
+memory and session context, every app with its code, the lodge with its config.
+Images, videos and build output can be rebuilt or kept elsewhere. So by default
+a backup is **slim**:
+
+- **Context is kept at any size, in any format:** `wolt/memory/`, `wolt.json`,
+  `CLAUDE.md`, `AGENTS.md`, skills, Claude transcripts, file history and todos
+  (`.claude/projects`, `.claude/file-history`, `.claude/todos`), Codex sessions
+  and state databases, opencode's session store, every file inside a `.git`
+  directory, and the lodge's `.space/` (without `.space/logs/`), `.state/` and
+  `woltspace.json`. This applies at any depth, so a lodge nested inside a wolt
+  keeps its context too.
+- **Everything else is kept when it is text or code** (Markdown, HTML, CSS,
+  JS/TS, JSON/JSONL, notebooks, Python, shell, config, SVG, …) **up to 5 MB**,
+  or has no suffix (LICENSE, a git ref) and is up to 1 MB. Build recipes
+  (`Makefile`, `Dockerfile`, `Procfile`, `Justfile`, …) are kept at any size.
+- **Databases are left out unless their owner opts in.** An app's database is
+  state, not media, but it can grow without bound, so slim lists it rather than
+  archiving it. An app opts a path back in from its `woltspace.json`, a wolt
+  from its `wolt/wolt.json`:
+
+  ```json
+  "backup": {"keep": ["data/app.db"]}
+  ```
+
+  Paths are relative to the app's directory, or to the wolt's own directory
+  (the one holding `wolt/`), globs allowed, and never reach outside it. An
+  opt-in cannot reach inside a directory slim drops whole (`cache`,
+  `node_modules`, …, below): keep the database somewhere else in the app. A kept path is kept at any size, with its SQLite
+  `-wal`, `-shm` and `-journal` files. The agents' own session databases
+  (opencode's store, Codex state) are context and are always kept; Codex's
+  debug logs (`.codex/logs_*`) are not.
+- **On top of the excludes below, these directories go**, below the top level:
+  `worktrees` at any depth (not only `wolt/worktrees`; git's own `.git/worktrees`
+  stays), `node_modules*`, `cache`, `_cacache`, `npm-cache`, `.uv-cache`,
+  `uv-cache`, `archive-v0`, `.uv-python`, `site-packages`, `lib/python3*`,
+  `ms-playwright`, `browsers`, `.bun`, `.tmp`. A wolt is never dropped.
+- **Every session transcript is kept, wherever it is.** Reproducibility is the
+  point: a Claude, Codex or opencode transcript inside a directory slim would
+  otherwise drop (a checkout, a cache, a scratch lodge under `.tmp`) is still
+  archived. Such a directory is entered for its transcripts only, and the rest
+  of it is listed as left out.
+- **Nothing left out is forgotten.** `backup-left-out.tsv`, beside the manifest
+  at the archive root, lists every file (and every dropped directory, with its
+  file count) by path and size. The manifest's `left_out` section has the totals
+  and the rules. `woltspace restore` says how many files the backup did not
+  hold.
+
+An app's images usually come back anyway: its `.git` is kept whole, so
+`git restore .` in the restored app brings back every tracked file.
+
+`--full` keeps today's wider rule instead: everything below except the named
+junk. Use it for a media backup, ideally `--out` on another drive: on a
+lived-in lodge it can be tens of gigabytes where slim is under a gigabyte.
+
+## What goes in (`--full`)
+
+Everything under `WOLTSPACE_WOLTS_DIR` that is data (a slim backup then keeps
+only the part described above):
 
 - each wolt's `wolt/` tree — `memory/`, `site/`, `sparks/`, `drafts/`, `apps/`
 - `CLAUDE.md` and `wolt.json` per wolt
@@ -178,6 +237,49 @@ boot from it with:
 
 Pointing a colony at a restored directory is the human's explicit act, never a
 side effect of unpacking a file.
+
+### A copy keeps its hands off its source
+
+A restore on the machine that made the backup shares that machine's processes,
+its tmux server and its paths. Left as archived, the copy would adopt the
+source's running apps and sessions when it boots, and stopping one in the copy
+would stop the original. So a restore disarms the copy before it returns:
+
+- **Runtime records go:** `.space/apps/*.json` (an app's "running" state, with
+  its pid) and `.space/platform/` `control-plane`, `tunnel`, `connectors` and
+  `adoption` records. The control plane rewrites them on boot; the copy boots
+  with every app stopped.
+- **Sessions come back stopped,** without their tmux name or pane, so boot
+  adopts none of them. Transcripts and resume ids are untouched: every session
+  can be resumed in the copy.
+- **Paths are re-pointed:** a session's `workdir`, `dir` and
+  `canonical_workdir`, and every auto-mode approval, that pointed inside the
+  old wolts directory now points inside the copy. So does `/workspace/wolts`,
+  where the container era saw the same lodge.
+- **What pointed outside is set aside, not re-pointed:** a session that worked
+  in a directory outside the lodge moves to `restore-quarantine/` beside the
+  copy, and an approval for such a directory is dropped, so auto mode asks
+  again.
+
+- **The copy gets its own tmux server.** A session's tmux name is its own
+  name, so a copy on the machine's shared tmux server could stop its source's
+  sessions. Restore writes `.space/platform/restored.json`, and while it is
+  there the platform runs the copy on `<target>/tmux`, whatever `TMUX_TMPDIR`
+  or `$TMUX` the copy was started with. Delete the file when the copy becomes
+  the machine's lodge.
+
+Beside a running lodge, also give the copy its own port and no tunnel, as
+`restore` prints:
+
+```bash
+WOLTSPACE_PORT=7788 WOLTSPACE_PUBLIC_TUNNEL=false \
+  WOLTSPACE_WOLTS_DIR=<target>/wolts woltspace start
+```
+
+Disarming rewrites and deletes files, so it never does that through a
+symlink: an archive with a link at the data root, in `.space`, or in a wolt's
+`.state` is refused before extraction (a top-level link pointing inside the
+lodge is fine), and disarm itself fails closed if it meets one.
 
 ### What a restore refuses
 
