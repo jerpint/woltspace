@@ -866,3 +866,160 @@ def test_slim_keeps_every_transcript_even_inside_dropped_dirs(wolts, tmp_path):
     assert "beaverwolt/worktrees/feature-z/big.mp4" in listed
     assert "beaverwolt/worktrees/feature-z/src.py" in listed
     assert "beaverwolt/wolt/apps/demo/node_modules/left-pad" in listed
+
+
+# Slim leaves databases out unless a manifest opts them in
+
+
+def test_slim_leaves_databases_out_unless_a_manifest_opts_them_in(wolts, tmp_path):
+    def write(rel: str, data: bytes) -> None:
+        path = wolts / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+    app = "beaverwolt/wolt/apps/demo"
+    write(f"{app}/woltspace.json", json.dumps({"name": "demo", "backup": {"keep": ["data/app.db"]}}).encode())
+    write(f"{app}/data/app.db", b"\0" * (backup_mod.SLIM_TEXT_MAX + 1))
+    write(f"{app}/data/app.db-wal", b"\0" * 10)
+    write(f"{app}/data/scratch.db", b"\0" * 10)
+    # A wolt opts in from its own wolt.json; a manifest never reaches outside itself.
+    write("raccoonwolt/wolt/wolt.json", json.dumps({
+        "name": "raccoonwolt", "backup": {"keep": ["notes/*.sqlite", "../beaverwolt/x.db", "/etc/hosts"]},
+    }).encode())
+    write("raccoonwolt/notes/index.sqlite", b"\0" * 10)
+    write("beaverwolt/x.db", b"\0" * 10)
+    write("raccoonwolt/.codex/logs_2.sqlite", b"\0" * 10)
+    write(f"{app}/Makefile", b"all:\n" * (backup_mod.SLIM_NO_SUFFIX_MAX // 5 + 1))
+
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    names = set(_members(result.archive))
+    for kept in (f"{app}/data/app.db", f"{app}/data/app.db-wal", f"{app}/Makefile",
+                 "raccoonwolt/notes/index.sqlite"):
+        assert f"{ARCHIVE_ROOT}/{kept}" in names, kept
+    for left in (f"{app}/data/scratch.db", "beaverwolt/x.db", "raccoonwolt/.codex/logs_2.sqlite"):
+        assert f"{ARCHIVE_ROOT}/{left}" not in names, left
+    with tarfile.open(result.archive, "r:gz") as tar:
+        listed = tar.extractfile(backup_mod.LEFT_OUT_NAME).read().decode()
+    assert f"{app}/data/scratch.db" in listed
+    assert result.manifest["left_out"]["rules"]["opted_in"] == {
+        app: ["data/app.db"], "raccoonwolt": ["notes/*.sqlite"],
+    }
+
+
+# A restored copy keeps its hands off the lodge it came from
+
+
+def _lodge_runtime(wolts: Path, live_pid: int) -> None:
+    """Runtime records as a running lodge leaves them, pointing at live processes."""
+    source = str(wolts.resolve())
+
+    def write(rel: str, data) -> None:
+        path = wolts / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data))
+
+    write(".space/platform/control-plane.json", {"instance_id": "abc", "pid": live_pid})
+    write(".space/platform/tunnel.json", {"pid": live_pid, "url": "https://example.test"})
+    write(".space/platform/connectors.json", {"connectors": [{"name": "wolf", "pid": live_pid}]})
+    write(".space/apps/demo.json", {"name": "demo", "pid": live_pid, "port": 4001, "tunnel_pid": None})
+    session = {
+        "name": "beaverwolt-s1", "wolt": "beaverwolt", "status": "running",
+        "workdir": f"{source}/beaverwolt", "dir": f"{source}/beaverwolt",
+        "target": {"wolt_id": "beaverwolt", "canonical_workdir": f"{source}/beaverwolt"},
+        "runtime": {"tmux_session_name": "beaverwolt-s1", "pane_id": "%7", "kind": "tmux"},
+        "harness_session_id": "resume-me",
+    }
+    write("beaverwolt/.state/sessions/beaverwolt-s1.json", session)
+    write("beaverwolt/.state/sessions/beaverwolt-repo.json", {
+        **session, "name": "beaverwolt-repo", "workdir": "/elsewhere/repo", "dir": "/elsewhere/repo",
+        "target": {"wolt_id": "beaverwolt", "canonical_workdir": "/elsewhere/repo"},
+    })
+    write(".space/auto-grants.json", {"grants": [
+        {"wolt_id": "beaverwolt", "canonical_workdir": f"{source}/beaverwolt", "policy_version": 1},
+        {"wolt_id": "beaverwolt", "canonical_workdir": "/elsewhere/repo", "policy_version": 1},
+    ]})
+
+
+def test_restore_disarms_the_copy(wolts, tmp_path):
+    _lodge_runtime(wolts, os.getpid())
+    archive = create_backup(wolts, out_dir=tmp_path / "out").archive
+    restored = restore_backup(archive, to=tmp_path / "back")
+    copy = restored.wolts_dir
+
+    for rel in (".space/platform/control-plane.json", ".space/platform/tunnel.json",
+                ".space/platform/connectors.json", ".space/apps/demo.json"):
+        assert not (copy / rel).exists(), rel
+    session = json.loads((copy / "beaverwolt/.state/sessions/beaverwolt-s1.json").read_text())
+    assert session["status"] == "stopped"
+    assert "runtime" not in session
+    assert session["workdir"] == session["dir"] == str(copy / "beaverwolt")
+    assert session["target"]["canonical_workdir"] == str(copy / "beaverwolt")
+    assert session["harness_session_id"] == "resume-me"
+    # Worked outside the lodge: set aside, not re-pointed, not deleted.
+    assert not (copy / "beaverwolt/.state/sessions/beaverwolt-repo.json").exists()
+    aside = restored.target / backup_mod.QUARANTINE_NAME / "beaverwolt/.state/sessions/beaverwolt-repo.json"
+    assert json.loads(aside.read_text())["harness_session_id"] == "resume-me"
+    grants = json.loads((copy / ".space/auto-grants.json").read_text())["grants"]
+    assert [g["canonical_workdir"] for g in grants] == [str(copy / "beaverwolt")]
+    # The source is untouched.
+    assert json.loads((wolts / ".space/apps/demo.json").read_text())["pid"] == os.getpid()
+    lines = backup_mod.restore_lines(restored)
+    assert any(line.startswith("disarmed: 1 app(s) and 2 session(s)") for line in lines)
+    assert any(line.startswith("set aside: 1 session(s)") for line in lines)
+    assert any("TMUX_TMPDIR=" in line and "WOLTSPACE_PORT=" in line for line in lines)
+
+
+@pytest.mark.skipif(not __import__("shutil").which("tmux"), reason="needs tmux")
+def test_a_copy_beside_its_source_only_touches_itself(wolts, tmp_path):
+    """Same machine, same session names: the copy's adopt, wake and stop stay in the copy."""
+    import subprocess
+    import tempfile
+
+    app = subprocess.Popen(["sleep", "300"])  # the source's live app
+    sockets = Path(tempfile.mkdtemp(prefix="wsb-", dir="/tmp"))  # short: socket paths are capped
+    source_tmux, copy_tmux = sockets / "src", sockets / "copy"
+    source_tmux.mkdir()
+    copy_tmux.mkdir()
+
+    def tmux(where: Path, *args: str) -> subprocess.CompletedProcess:
+        env = {**os.environ, "TMUX_TMPDIR": str(where)}
+        env.pop("TMUX", None)
+        return subprocess.run(["tmux", *args], env=env, capture_output=True, text=True)
+
+    def in_copy(code: str) -> str:
+        env = {**os.environ, "TMUX_TMPDIR": str(copy_tmux), "WOLTSPACE_WOLTS_DIR": str(copy)}
+        env.pop("TMUX", None)
+        lib = ROOT / "container" / "lib"
+        out = subprocess.run([sys.executable, "-c", f"import sys; sys.path[:0] = [{str(lib)!r}]\n{code}"],
+                             env=env, capture_output=True, text=True, timeout=60)
+        assert out.returncode == 0, out.stderr
+        return out.stdout
+
+    try:
+        _lodge_runtime(wolts, app.pid)
+        assert tmux(source_tmux, "new-session", "-d", "-s", "beaverwolt-s1", "sleep 300").returncode == 0
+        archive = create_backup(wolts, out_dir=tmp_path / "out").archive
+        copy = restore_backup(archive, to=tmp_path / "back").wolts_dir
+
+        # Boot: the copy adopts nothing of the source's.
+        report = json.loads(in_copy(
+            "import json, sessions\nprint(json.dumps(sessions.SessionRegistry().adopt_runtime_sessions()))"
+        ))
+        assert not report["adopted"]
+        # Stop in the copy: its app has no state, its session has no tmux here.
+        out = in_copy("import apps, sessions\nprint(apps.stop_app('demo'))\n"
+                      "print(sessions.stop_session('beaverwolt-s1')['was_alive'])")
+        assert out.split() == ["False", "False"]
+        # Wake in the copy (same name, its own tmux server), then stop it again.
+        assert tmux(copy_tmux, "new-session", "-d", "-s", "beaverwolt-s1", "sleep 300").returncode == 0
+        assert in_copy("import sessions\nprint(sessions.stop_session('beaverwolt-s1')['was_alive'])").split() == ["True"]
+        assert tmux(copy_tmux, "has-session", "-t", "=beaverwolt-s1").returncode != 0
+
+        # The source never noticed.
+        assert tmux(source_tmux, "has-session", "-t", "=beaverwolt-s1").returncode == 0
+        assert app.poll() is None
+    finally:
+        tmux(source_tmux, "kill-session", "-t", "=beaverwolt-s1")
+        tmux(copy_tmux, "kill-session", "-t", "=beaverwolt-s1")
+        app.kill()
+        app.wait()

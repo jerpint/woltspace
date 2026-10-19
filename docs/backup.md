@@ -30,7 +30,22 @@ a backup is **slim**:
   keeps its context too.
 - **Everything else is kept when it is text or code** (Markdown, HTML, CSS,
   JS/TS, JSON/JSONL, notebooks, Python, shell, config, SVG, …) **up to 5 MB**,
-  or has no suffix (Dockerfile, LICENSE) and is up to 1 MB.
+  or has no suffix (LICENSE, a git ref) and is up to 1 MB. Build recipes
+  (`Makefile`, `Dockerfile`, `Procfile`, `Justfile`, …) are kept at any size.
+- **Databases are left out unless their owner opts in.** An app's database is
+  state, not media, but it can grow without bound, so slim lists it rather than
+  archiving it. An app opts a path back in from its `woltspace.json`, a wolt
+  from its `wolt/wolt.json`:
+
+  ```json
+  "backup": {"keep": ["data/app.db"]}
+  ```
+
+  Paths are relative to the directory holding the manifest, globs allowed, and
+  never reach outside it. A kept path is kept at any size, with its SQLite
+  `-wal`, `-shm` and `-journal` files. The agents' own session databases
+  (opencode's store, Codex state) are context and are always kept; Codex's
+  debug logs (`.codex/logs_*`) are not.
 - **On top of the excludes below, these directories go**, below the top level:
   `worktrees` at any depth (not only `wolt/worktrees`; git's own `.git/worktrees`
   stays), `node_modules*`, `cache`, `_cacache`, `npm-cache`, `.uv-cache`,
@@ -220,6 +235,37 @@ boot from it with:
 
 Pointing a colony at a restored directory is the human's explicit act, never a
 side effect of unpacking a file.
+
+### A copy keeps its hands off its source
+
+A restore on the machine that made the backup shares that machine's processes,
+its tmux server and its paths. Left as archived, the copy would adopt the
+source's running apps and sessions when it boots, and stopping one in the copy
+would stop the original. So a restore disarms the copy before it returns:
+
+- **Runtime records go:** `.space/apps/*.json` (an app's "running" state, with
+  its pid) and `.space/platform/` `control-plane`, `tunnel`, `connectors` and
+  `adoption` records. The control plane rewrites them on boot; the copy boots
+  with every app stopped.
+- **Sessions come back stopped,** without their tmux name or pane, so boot
+  adopts none of them. Transcripts and resume ids are untouched: every session
+  can be resumed in the copy.
+- **Paths are re-pointed:** a session's `workdir`, `dir` and
+  `canonical_workdir`, and every auto-mode approval, that pointed inside the
+  old wolts directory now points inside the copy.
+- **What pointed outside is set aside, not re-pointed:** a session that worked
+  in a directory outside the lodge moves to `restore-quarantine/` beside the
+  copy, and an approval for such a directory is dropped, so auto mode asks
+  again.
+
+A session's tmux name is its own name, so the copy and its source still name
+their sessions alike. Beside a running lodge, boot the copy on its own tmux
+server and port, as `restore` prints:
+
+```bash
+TMUX_TMPDIR=<target>/tmux WOLTSPACE_PORT=7788 WOLTSPACE_PUBLIC_TUNNEL=false \
+  WOLTSPACE_WOLTS_DIR=<target>/wolts woltspace start
+```
 
 ### What a restore refuses
 

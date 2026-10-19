@@ -136,7 +136,8 @@ The data-plane snapshot, in the python CLI, identical native and in-container:
   every withheld path and `restore` prints the re-provision checklist.
 - `woltspace restore <archive> [--to DIR]` — extracts into a new directory and
   refuses a populated one; prints what to re-authenticate and the `WOLTSPACE_WOLTS_DIR=…`
-  line to boot from it.
+  line to boot from it. It disarms the copy first: runtime records go, sessions
+  come back stopped, paths inside the old lodge are re-pointed at the copy.
 
 Full guide, including what is excluded and why: `docs/backup.md`.
 

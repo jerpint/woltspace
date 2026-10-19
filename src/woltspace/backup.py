@@ -13,9 +13,10 @@ are named, excluded by name at any depth, and reported so the win is visible.
 
 By default a backup is *slim*: every piece of context (memory, identity,
 transcripts, skills, lodge config, git history) at any size, plus every other
-file that is text or code, up to a size cap. Media, binaries and the caches no
-name rule catches stay out, and every file left out is listed in the archive by
-path and size, so the whole story survives even where the bytes do not.
+file that is text or code, up to a size cap. Media, binaries, databases nobody
+opted in, and the caches no name rule catches stay out, and every file left out
+is listed in the archive by path and size, so the whole story survives even
+where the bytes do not.
 `full=True` keeps today's wider rule: everything but the named junk.
 
 Nothing here touches docker, takes a lock, or reads a credential's value. A
@@ -24,6 +25,7 @@ backup of a live colony is safe; a quiescent one only gives a tidier registry.
 
 from __future__ import annotations
 
+import fnmatch
 import io
 import json
 import os
@@ -139,6 +141,21 @@ SLIM_TEXT_SUFFIXES = frozenset({
     ".gitignore", ".gitattributes", ".gitmodules", ".dockerignore", ".plist",
     ".service", ".tmpl", ".j2", ".example", ".sample", ".tex", ".bib",
 })
+#: Build recipes are code whatever their size, and have no suffix to say so.
+SLIM_BUILD_NAMES = frozenset({
+    "Makefile", "GNUmakefile", "Dockerfile", "Containerfile", "Procfile", "Justfile",
+    "justfile", "Rakefile", "Gemfile", "Brewfile", "Vagrantfile", "Caddyfile",
+})
+#: Slim leaves databases out: an app's database is state, but it can grow
+#: without bound. A wolt or an app opts a path back in from its own manifest
+#: (`woltspace.json`, or `wolt/wolt.json` for a wolt, in that directory):
+#: `"backup": {"keep": ["data/app.db"]}`, paths relative to the directory,
+#: shell globs allowed. A kept path is kept at any size, with the SQLite
+#: companions beside it.
+BACKUP_MANIFEST_NAMES = ("woltspace.json", "wolt/wolt.json")
+SQLITE_COMPANIONS = ("-wal", "-shm", "-journal")
+_MANIFEST_READ_MAX = 1_000_000
+
 #: Slim: directories dropped below the top level, on top of the excludes above.
 #: Package and download caches, browser builds, and checkouts (`worktrees` at
 #: any depth, not only `wolt/worktrees`). A `worktrees` inside `.git` is git's
@@ -223,6 +240,8 @@ class Scan:
     full: bool = True
     #: What a slim backup left out: {"path", "kind": "file"|"dir", "bytes", "files"}.
     left_out: list[dict] = field(default_factory=list)
+    #: Slim opt-ins found on the way: {directory: [patterns]}.
+    opted_in: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def scanned_bytes(self) -> int:
@@ -243,6 +262,8 @@ class RestoreResult:
     wolts_dir: Path
     manifest: dict
     entries: int
+    #: What the restore changed so the copy cannot act on the source: see `disarm`.
+    disarmed: dict = field(default_factory=dict)
 
 
 def _rel(root: Path, path: Path) -> str:
@@ -321,6 +342,41 @@ def _holds_transcripts(path: Path, rel: str) -> bool:
     return False
 
 
+def backup_keep_patterns(directory: Path) -> list[str]:
+    """The paths a directory's own manifest opts into a slim backup."""
+    patterns: list[str] = []
+    for name in BACKUP_MANIFEST_NAMES:
+        path = directory / name
+        try:
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > _MANIFEST_READ_MAX:
+                continue
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        keep = (data.get("backup") or {}).get("keep") if isinstance(data, dict) else None
+        if not isinstance(keep, list):
+            continue
+        for pattern in keep:
+            if not isinstance(pattern, str) or not pattern.strip():
+                continue
+            pure = PurePosixPath(pattern.strip().rstrip("/"))
+            if pure.is_absolute() or ".." in pure.parts:
+                continue  # a manifest only speaks for its own directory
+            patterns.append(pure.as_posix())
+    return patterns
+
+
+def _opted_in(rel: str, keeps: dict[str, list[str]]) -> bool:
+    for base, patterns in keeps.items():
+        if base and not rel.startswith(base + "/"):
+            continue
+        tail = rel[len(base) + 1:] if base else rel
+        for candidate in (tail, *(tail[: -len(c)] for c in SQLITE_COMPANIONS if tail.endswith(c))):
+            if any(fnmatch.fnmatchcase(candidate, pattern) for pattern in patterns):
+                return True
+    return False
+
+
 def slim_keeps(rel: str, size: int) -> bool:
     """Whether a slim backup keeps a file: all context, plus text up to a cap."""
     parts = rel.split("/")
@@ -331,6 +387,8 @@ def slim_keeps(rel: str, size: int) -> bool:
     for start in range(len(parts)):
         if "/".join(parts[start:]).startswith(SLIM_CONTEXT_PREFIXES):
             return True
+    if parts[-1] in SLIM_BUILD_NAMES:
+        return True
     suffix = PurePosixPath(parts[-1]).suffix.lower()
     if suffix in SLIM_TEXT_SUFFIXES:
         return size <= SLIM_TEXT_MAX
@@ -406,6 +464,9 @@ def scan_tree(wolts_dir: Path, *, full: bool = True) -> Scan:
     def in_transcripts_only(rel: str) -> bool:
         return any(rel.startswith(prefix + "/") for prefix in transcripts_only)
 
+    # Slim: paths a manifest opted in, by the directory that holds the manifest.
+    keeps: dict[str, list[str]] = {}
+
     def drop_dir(rel: str, child: Path) -> None:
         size, files, _ = _probe_excluded(child)
         scan.excluded_bytes += size
@@ -417,6 +478,10 @@ def scan_tree(wolts_dir: Path, *, full: bool = True) -> Scan:
         here = Path(dirpath)
         if here != wolts_dir:
             scan.entries.append(Entry(here, f"{ARCHIVE_ROOT}/{_rel(wolts_dir, here)}", "dir"))
+        if not full:
+            patterns = backup_keep_patterns(here)
+            if patterns:
+                keeps["" if here == wolts_dir else _rel(wolts_dir, here)] = patterns
 
         for name in sorted(dirnames):
             child = here / name
@@ -490,7 +555,8 @@ def scan_tree(wolts_dir: Path, *, full: bool = True) -> Scan:
                 scan.unreadable.append({"path": rel, "error": "not a regular file"})
                 continue
             if not full and (
-                not is_transcript(rel) if in_transcripts_only(rel) else not slim_keeps(rel, info.st_size)
+                not is_transcript(rel) if in_transcripts_only(rel)
+                else not (slim_keeps(rel, info.st_size) or _opted_in(rel, keeps))
             ):
                 scan.excluded_bytes += info.st_size
                 scan.excluded_files += 1
@@ -506,6 +572,7 @@ def scan_tree(wolts_dir: Path, *, full: bool = True) -> Scan:
             note(rel, info.st_size, 1, included=True)
 
     scan.wolts = [per_wolt[name] for name in sorted(per_wolt)]
+    scan.opted_in = keeps
     return scan
 
 
@@ -575,8 +642,8 @@ def _left_out_summary(scan: Scan) -> dict:
         by_top[top] = by_top.get(top, 0) + item["bytes"]
     return {
         "why": (
-            "a slim backup keeps all context and code; media, binaries, caches "
-            "and checkouts are named here, not archived"
+            "a slim backup keeps all context and code; media, binaries, databases, "
+            "caches and checkouts are named here, not archived"
         ),
         "listed_in": LEFT_OUT_NAME,
         "bytes": sum(item["bytes"] for item in scan.left_out),
@@ -590,6 +657,13 @@ def _left_out_summary(scan: Scan) -> dict:
             "text_suffixes": sorted(SLIM_TEXT_SUFFIXES),
             "text_max_bytes": SLIM_TEXT_MAX,
             "no_suffix_max_bytes": SLIM_NO_SUFFIX_MAX,
+            "build_files_kept_at_any_size": sorted(SLIM_BUILD_NAMES),
+            "opt_in": (
+                '"backup": {"keep": [paths]} in a directory\'s woltspace.json '
+                "(or a wolt's wolt/wolt.json) keeps those paths at any size, "
+                "with their SQLite -wal/-shm/-journal companions"
+            ),
+            "opted_in": {base or ".": patterns for base, patterns in scan.opted_in.items()},
             "dropped_dir_names": sorted(SLIM_EXCLUDED_DIR_NAMES)
             + ["node_modules*", "lib/python3*"],
         },
@@ -799,6 +873,132 @@ def audit_members(members: list[tarfile.TarInfo], target: Path) -> None:
             )
 
 
+#: Runtime records the control plane writes about processes it runs. In a copy
+#: they name the source's processes: a copy that believed them would adopt the
+#: source's apps, tunnel and connectors as its own, and stop them on request.
+#: The control plane rewrites all of them when it boots, so a restore removes
+#: them and the copy boots with nothing running.
+RUNTIME_RECORDS = (
+    ".space/platform/control-plane.json", ".space/platform/control-plane.lock",
+    ".space/platform/tunnel.json", ".space/platform/connectors.json",
+    ".space/platform/adoption.json",
+)
+#: Where a restore sets aside session records that point outside the lodge.
+QUARANTINE_NAME = "restore-quarantine"
+#: Session statuses a control plane would adopt on boot (by tmux name).
+_LIVE_SESSION_STATUSES = ("running", "orphaned", "starting", "pending")
+_SESSION_PATH_KEYS = ("workdir", "dir")
+
+
+def _rebase(value: str, source: str, wolts_dir: Path) -> str | None:
+    """`value` moved from the source lodge into this one, or None if outside it."""
+    if value == source:
+        return str(wolts_dir)
+    if value.startswith(source + "/"):
+        return str(wolts_dir) + value[len(source):]
+    return None
+
+
+def _rebase_strings(value, source: str, wolts_dir: Path):
+    if isinstance(value, str):
+        moved = _rebase(value, source, wolts_dir)
+        return value if moved is None else moved
+    if isinstance(value, list):
+        return [_rebase_strings(item, source, wolts_dir) for item in value]
+    if isinstance(value, dict):
+        return {key: _rebase_strings(item, source, wolts_dir) for key, item in value.items()}
+    return value
+
+
+def _write_json(path: Path, data) -> None:
+    path.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def disarm(wolts_dir: Path, source: str, target: Path) -> dict:
+    """Make a restored lodge a copy that cannot reach the lodge it came from.
+
+    A copy restored on the machine that made it shares that machine's process
+    table, its tmux server and its paths. Left as archived, it would adopt the
+    source's live apps and sessions on boot, and stopping one in the copy would
+    stop the original. So the copy's runtime records go, its sessions come back
+    stopped with no runtime handle, and every path that pointed inside the old
+    lodge is re-pointed at the new one. A session that worked outside the lodge
+    is set aside, never re-pointed: its directory is not part of the backup.
+    Transcripts and resume ids are untouched, so every session can still be
+    resumed in the copy.
+    """
+    report = {
+        "source": source, "runtime_records": [], "apps": [], "sessions_stopped": 0,
+        "sessions_rebased": 0, "sessions_set_aside": [], "grants_rebased": 0,
+        "grants_dropped": [],
+    }
+    for rel in RUNTIME_RECORDS:
+        path = wolts_dir / rel
+        if path.is_file() and not path.is_symlink():
+            path.unlink()
+            report["runtime_records"].append(rel)
+    apps_state = wolts_dir / ".space" / "apps"
+    if apps_state.is_dir():
+        for path in sorted(apps_state.glob("*.json")):
+            if path.is_file() and not path.is_symlink():
+                path.unlink()  # "running" state: on boot a dead pid is restarted
+                report["apps"].append(path.stem)
+
+    for path in sorted(wolts_dir.glob("*/.state/sessions/*.json")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            record = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        workdirs = [record.get(key) for key in _SESSION_PATH_KEYS]
+        workdirs.append((record.get("target") or {}).get("canonical_workdir"))
+        outside = [
+            value for value in workdirs
+            if isinstance(value, str) and value.startswith("/")
+            and _rebase(value, source, wolts_dir) is None
+        ]
+        if record.get("status") in _LIVE_SESSION_STATUSES:
+            record["status"] = "stopped"
+            record["finished_at"] = record.get("finished_at") or int(datetime.now(timezone.utc).timestamp())
+            report["sessions_stopped"] += 1
+        record.pop("runtime", None)  # tmux name and pane belong to the source's tmux
+        rebased = _rebase_strings(record, source, wolts_dir)
+        if rebased != record:
+            report["sessions_rebased"] += 1
+        rel = _rel(wolts_dir, path)
+        if outside:
+            aside = target / QUARANTINE_NAME / rel
+            aside.parent.mkdir(parents=True, exist_ok=True)
+            _write_json(aside, rebased)
+            path.unlink()
+            report["sessions_set_aside"].append({"path": rel, "outside": sorted(set(outside))})
+            continue
+        _write_json(path, rebased)
+
+    grants_path = wolts_dir / ".space" / "auto-grants.json"
+    if grants_path.is_file() and not grants_path.is_symlink():
+        try:
+            grants = json.loads(grants_path.read_text())
+        except (OSError, ValueError):
+            grants = None
+        if isinstance(grants, dict) and isinstance(grants.get("grants"), list):
+            kept = []
+            for grant in grants["grants"]:
+                workdir = grant.get("canonical_workdir") if isinstance(grant, dict) else None
+                moved = _rebase(workdir, source, wolts_dir) if isinstance(workdir, str) else None
+                if moved is None:
+                    report["grants_dropped"].append(workdir)
+                    continue  # approval for a folder the copy does not hold: ask again
+                kept.append({**grant, "canonical_workdir": moved})
+                report["grants_rebased"] += 1
+            grants["grants"] = kept
+            _write_json(grants_path, grants)
+    return report
+
+
 def restore_backup(archive: Path | str, *, to: Path | str | None = None) -> RestoreResult:
     """Extract a snapshot into a NEW directory. Never over a populated one.
 
@@ -825,11 +1025,15 @@ def restore_backup(archive: Path | str, *, to: Path | str | None = None) -> Rest
         audit_members(members, target)
         tar.extractall(target, members=members, filter=_restore_filter)
     manifest = json.loads((target / MANIFEST_NAME).read_text())
+    wolts_dir = target / manifest.get("archive_root", ARCHIVE_ROOT)
+    disarmed = disarm(wolts_dir, manifest.get("source") or "", target) if wolts_dir.is_dir() else {}
+    (target / "tmux").mkdir(exist_ok=True)  # the copy's own tmux server, when it needs one
     return RestoreResult(
         target=target,
-        wolts_dir=target / manifest.get("archive_root", ARCHIVE_ROOT),
+        wolts_dir=wolts_dir,
         manifest=manifest,
         entries=len([m for m in members if m.name not in _META_NAMES]),
+        disarmed=disarmed,
     )
 
 
@@ -920,7 +1124,7 @@ def _left_out_lines(manifest: dict) -> list[str]:
         "mode: slim — all context and code kept",
         (
             f"left out: {human_bytes(left['bytes'])} in {left['files']} files "
-            f"(media, binaries, caches, checkouts), listed in {left['listed_in']}; "
+            f"(media, binaries, databases, caches, checkouts), listed in {left['listed_in']}; "
             "`--full` keeps them"
         ),
     ]
@@ -940,10 +1144,43 @@ def restore_lines(result: RestoreResult) -> list[str]:
             f"left out: {left['files']} files ({human_bytes(left['bytes'])}) were not in this "
             f"slim backup — named in {left['listed_in']}"
         )
+    lines.extend(disarm_lines(result))
     lines.extend(reprovision_lines(manifest))
     lines.extend([
         "",
         "boot from it with:",
         f"  WOLTSPACE_WOLTS_DIR={result.wolts_dir} woltspace start",
+        "beside a running lodge on this machine, give it its own port and tmux server:",
+        (
+            f"  TMUX_TMPDIR={result.target / 'tmux'} WOLTSPACE_PORT=7788 "
+            f"WOLTSPACE_PUBLIC_TUNNEL=false WOLTSPACE_WOLTS_DIR={result.wolts_dir} woltspace start"
+        ),
     ])
+    return lines
+
+
+def disarm_lines(result: RestoreResult) -> list[str]:
+    """Say what the restore changed so the copy keeps its hands off the source."""
+    done = result.disarmed
+    if not done:
+        return []
+    lines = [
+        f"disarmed: {len(done['apps'])} app(s) and {done['sessions_stopped']} session(s) come back "
+        "stopped; nothing from the source's runtime is adopted",
+    ]
+    if done["sessions_rebased"] or done["grants_rebased"]:
+        lines.append(
+            f"re-pointed: {done['sessions_rebased']} session(s) and {done['grants_rebased']} "
+            f"auto-mode approval(s) from {done['source']} to this copy"
+        )
+    if done["sessions_set_aside"]:
+        lines.append(
+            f"set aside: {len(done['sessions_set_aside'])} session(s) that worked outside the "
+            f"lodge, in {result.target / QUARANTINE_NAME} (transcripts kept)"
+        )
+    if done["grants_dropped"]:
+        lines.append(
+            f"approvals dropped: {len(done['grants_dropped'])} for folders outside the lodge; "
+            "auto mode asks again"
+        )
     return lines
