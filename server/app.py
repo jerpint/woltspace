@@ -108,6 +108,7 @@ from apps import (
     unshare_app,
 )
 from sites import ensure_site, site_dir
+import iwcl_log
 import wolfcore
 import wolt_archive
 from site_shell import inject_shell, load_site_config, memory_payload, shell_manifest, shell_tags, shell_wanted
@@ -864,6 +865,40 @@ async def memory_read(request: Request):
 # --- Session messaging ---
 
 async def _deliver_or_resume(safe: str, text: str, body: dict):
+    try:
+        outcome = await _deliver_or_resume_now(safe, text, body)
+    except Exception as exc:
+        failed = {"ok": False, "status": "failed", "error": str(exc)}
+        await asyncio.to_thread(_log_iwcl_message, safe, text, body, failed)
+        raise
+    await asyncio.to_thread(_log_iwcl_message, safe, text, body, outcome)
+    return outcome
+
+
+def _log_iwcl_message(safe: str, text: str, body: dict, outcome) -> None:
+    """One `.space/logs/iwcl.jsonl` line for this attempt, after its outcome."""
+    try:
+        if isinstance(outcome, JSONResponse):
+            detail = json.loads(outcome.body or b"{}")
+        else:
+            detail = dict(outcome)
+        from sessions import SessionRegistry
+        target = SessionRegistry(WOLTS_DIR).get(safe, check_alive=False) or {}
+        iwcl_log.record(
+            WOLTS_DIR, "message",
+            from_wolt=body.get("from_wolt", "") or "",
+            from_session=body.get("from_session", "") or "",
+            to_wolt=target.get("wolt", ""),
+            to_session=safe,
+            text=text,
+            status=detail.get("status") or ("delivered" if detail.get("ok") else "failed"),
+            error=detail.get("error", "") if not detail.get("ok") else "",
+        )
+    except Exception as exc:
+        print(f"[iwcl-log] not written: {exc}")
+
+
+async def _deliver_or_resume_now(safe: str, text: str, body: dict):
     result = await asyncio.to_thread(
         deliver_message,
         safe,
@@ -1125,16 +1160,27 @@ async def wolt_message(name: str, request: Request):
         resting = [s for s in registry.list(wolt=safe_wolt) if s.get("status") == "resting"]
         resting.sort(key=lambda s: (s.get("last_activity") or 0, s.get("created_at") or 0), reverse=True)
         session_id = resting[0]["name"] if resting else None
-    if not session_id:
-        return JSONResponse(
-            {"ok": False, "status": "no-session", "wolt": safe_wolt,
-             "error": f"no live session for wolt '{safe_wolt}'"},
-            status_code=404,
-        )
-    body = await request.json()
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        body = None
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
     text = body.get("text")
     if not text:
         return JSONResponse({"error": "text required"}, status_code=400)
+    if not session_id:
+        error = f"no live session for wolt '{safe_wolt}'"
+        await asyncio.to_thread(
+            iwcl_log.record, WOLTS_DIR, "message",
+            from_wolt=body.get("from_wolt", "") or "",
+            from_session=body.get("from_session", "") or "",
+            to_wolt=safe_wolt, text=text, status="no-session", error=error,
+        )
+        return JSONResponse(
+            {"ok": False, "status": "no-session", "wolt": safe_wolt, "error": error},
+            status_code=404,
+        )
     result = await _deliver_or_resume(session_id, text, body)
     if isinstance(result, dict):
         result["wolt"] = safe_wolt
@@ -1276,6 +1322,14 @@ async def session_new_lodge(request: Request):
         # Site auto-start + viewport URL handled by start_session()
         print(f"[sessions/lodge] spawned {result['name']} for {wolt}")
         await asyncio.to_thread(_touch_origin, body.get("from_session", "") or "")
+        if body.get("from_wolt"):
+            await asyncio.to_thread(
+                iwcl_log.record, WOLTS_DIR, "spawn",
+                from_wolt=body.get("from_wolt", "") or "",
+                from_session=body.get("from_session", "") or "",
+                to_wolt=wolt, to_session=result.get("name", ""),
+                text=body.get("prompt", "") or "", status="started",
+            )
         return result
     except PermissionError as e:
         return JSONResponse({"error": str(e)}, status_code=403)

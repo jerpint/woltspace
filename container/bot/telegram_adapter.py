@@ -35,6 +35,7 @@ from urllib.parse import urlparse, parse_qs
 from wolts import get_active_creature, wolt_display_name, wolt_exists
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import iwcl_log
 import outbox
 from env_compat import get_env
 from paths import space_dir
@@ -381,12 +382,20 @@ def _spawn_session(wolt: str, chat_id: int, prompt: str = "") -> dict:
     return session
 
 
+def _log_human(update, event: str, wolt: str, session: str, text: str, status: str) -> None:
+    """A human's Telegram message in the lodge-wide IWCL log (iwcl.jsonl)."""
+    user = getattr(update, "effective_user", None)
+    who = str(user.username or user.first_name or user.id) if user else ""
+    iwcl_log.record(_WOLTS_DIR, event, from_human=who, via="telegram",
+                    to_wolt=wolt, to_session=session, text=text, status=status)
+
+
 def _session_message(text: str, chat_id: int) -> str:
     """A Telegram message as its session reads it, pasted or in the opening prompt."""
     return f"[telegram message from human, chat_id={chat_id}]: {text}"
 
 
-def _spawn_session_with_message(wolt: str, chat_id: int, text: str) -> dict:
+def _spawn_session_with_message(update, wolt: str, chat_id: int, text: str) -> dict:
     """Spawn a session for an incoming message, the message in its opening prompt.
 
     Pasted into the new pane after the spawn, the message was lost: the agent
@@ -399,6 +408,7 @@ def _spawn_session_with_message(wolt: str, chat_id: int, text: str) -> dict:
     _bot_log("telegram_v2_spawn_with_message", {
         "session": session["name"], "wolt": wolt, "text": text[:200],
     })
+    _log_human(update, "spawn", wolt, session["name"], text, "started")
     _append_history(chat_id, "user", text)
     _append_message(chat_id, {
         "role": "assistant",
@@ -458,6 +468,7 @@ async def _route_to_session(update: Update, session_name: str, wolt: str, text: 
             "result": fallback,
         })
         if fallback and fallback.get("ok"):
+            _log_human(update, "message", wolt, live, text, fallback.get("status") or "delivered")
             session_link = fallback.get("url") or live
             await _reply(update, f"🪵 {session_name} is gone — delivered to {wolt}'s live session instead\n{session_link}")
             _append_message(chat_id, {
@@ -468,6 +479,7 @@ async def _route_to_session(update: Update, session_name: str, wolt: str, text: 
         # Nothing live — caller respawns
         return None
 
+    _log_human(update, "message", wolt, session_name, text, result.get("status") or "delivered")
     session_link = result.get("url") or session_name
     if result.get("status") == "revived":
         await _reply(update, f"🪵 session had exited — revived and delivered\n{session_link}")
@@ -669,7 +681,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
                 # Route failed (session truly gone) — spawn new one for that wolt
                 try:
-                    session = _spawn_session_with_message(reply_wolt, chat_id, reply_text)
+                    session = _spawn_session_with_message(update, reply_wolt, chat_id, reply_text)
                     state = _load_chat_state(chat_id)
                     state["active_wolt"] = reply_wolt
                     state["active_session"] = session["name"]
@@ -734,7 +746,7 @@ async def _route_message(update: Update, context: ContextTypes.DEFAULT_TYPE, cha
         # message_session failed (session not in registry) — spawn new
         await _reply(update, f"🪵 session expired — spawning new one for {_shown(active_wolt)}")
         try:
-            session = _spawn_session_with_message(active_wolt, chat_id, text)
+            session = _spawn_session_with_message(update, active_wolt, chat_id, text)
             state["active_session"] = session["name"]
             _save_chat_state(chat_id, state)
             tunnel_url = get_tunnel_url()
@@ -747,7 +759,7 @@ async def _route_message(update: Update, context: ContextTypes.DEFAULT_TYPE, cha
 
     # --- Has active wolt but no session: spawn one ---
     try:
-        session = _spawn_session_with_message(active_wolt, chat_id, text)
+        session = _spawn_session_with_message(update, active_wolt, chat_id, text)
         state["active_session"] = session["name"]
         _save_chat_state(chat_id, state)
         tunnel_url = get_tunnel_url()
@@ -872,7 +884,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
                 # Route failed (session truly gone) — spawn new one for that wolt
                 try:
-                    session = _spawn_session_with_message(reply_wolt, chat_id, reply_text)
+                    session = _spawn_session_with_message(update, reply_wolt, chat_id, reply_text)
                     new_state = dict(prev_state)
                     new_state["active_wolt"] = reply_wolt
                     new_state["active_session"] = session["name"]
@@ -901,7 +913,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _save_chat_state(chat_id, state)
         if not delivered:
             try:
-                session = _spawn_session_with_message(active_wolt, chat_id, voice_message)
+                session = _spawn_session_with_message(update, active_wolt, chat_id, voice_message)
                 state["active_session"] = session["name"]
                 _save_chat_state(chat_id, state)
                 tunnel_url = get_tunnel_url()
@@ -912,7 +924,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif active_wolt:
         # No active session — spawn one
         try:
-            session = _spawn_session_with_message(active_wolt, chat_id, voice_message)
+            session = _spawn_session_with_message(update, active_wolt, chat_id, voice_message)
             state["active_session"] = session["name"]
             _save_chat_state(chat_id, state)
             tunnel_url = get_tunnel_url()
@@ -977,7 +989,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _save_chat_state(chat_id, state)
         if not delivered:
             try:
-                session = _spawn_session_with_message(active_wolt, chat_id, file_msg)
+                session = _spawn_session_with_message(update, active_wolt, chat_id, file_msg)
                 state["active_session"] = session["name"]
                 _save_chat_state(chat_id, state)
                 tunnel_url = get_tunnel_url()
@@ -988,7 +1000,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif active_wolt:
         # No active session — spawn one
         try:
-            session = _spawn_session_with_message(active_wolt, chat_id, file_msg)
+            session = _spawn_session_with_message(update, active_wolt, chat_id, file_msg)
             state["active_session"] = session["name"]
             _save_chat_state(chat_id, state)
             tunnel_url = get_tunnel_url()
@@ -1059,7 +1071,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _save_chat_state(chat_id, state)
         if not delivered:
             try:
-                session = _spawn_session_with_message(active_wolt, chat_id, file_msg)
+                session = _spawn_session_with_message(update, active_wolt, chat_id, file_msg)
                 state["active_session"] = session["name"]
                 _save_chat_state(chat_id, state)
                 tunnel_url = get_tunnel_url()
@@ -1069,7 +1081,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await _reply(update, f"couldn't start session: {e}")
     elif active_wolt:
         try:
-            session = _spawn_session_with_message(active_wolt, chat_id, file_msg)
+            session = _spawn_session_with_message(update, active_wolt, chat_id, file_msg)
             state["active_session"] = session["name"]
             _save_chat_state(chat_id, state)
             tunnel_url = get_tunnel_url()
@@ -1128,7 +1140,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _save_chat_state(chat_id, state)
         if not delivered:
             try:
-                session = _spawn_session_with_message(active_wolt, chat_id, file_msg)
+                session = _spawn_session_with_message(update, active_wolt, chat_id, file_msg)
                 state["active_session"] = session["name"]
                 _save_chat_state(chat_id, state)
                 tunnel_url = get_tunnel_url()
@@ -1139,7 +1151,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif active_wolt:
         # No active session — spawn one
         try:
-            session = _spawn_session_with_message(active_wolt, chat_id, file_msg)
+            session = _spawn_session_with_message(update, active_wolt, chat_id, file_msg)
             state["active_session"] = session["name"]
             _save_chat_state(chat_id, state)
             tunnel_url = get_tunnel_url()
