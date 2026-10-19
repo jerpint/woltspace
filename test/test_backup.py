@@ -186,6 +186,8 @@ def test_round_trip_restores_the_tree_byte_for_byte(wolts, tmp_path):
 
     before = snapshot(wolts)
     after = snapshot(restored.wolts_dir)
+    # The one file a restore adds: the mark that keeps the copy on its own tmux.
+    assert after.pop(backup_mod.RESTORED_MARKER)[0] == "file"
     assert before == after
     assert restored.manifest["tag"] == result.manifest["tag"]
     assert restored.entries == result.manifest["entries"]
@@ -966,29 +968,63 @@ def test_restore_disarms_the_copy(wolts, tmp_path):
     lines = backup_mod.restore_lines(restored)
     assert any(line.startswith("disarmed: 1 app(s) and 2 session(s)") for line in lines)
     assert any(line.startswith("set aside: 1 session(s)") for line in lines)
-    assert any("TMUX_TMPDIR=" in line and "WOLTSPACE_PORT=" in line for line in lines)
+    assert any("WOLTSPACE_PORT=" in line for line in lines)
+    assert backup_mod.restored_tmux_dir(copy) == restored.target / "tmux"
+    assert backup_mod.restored_tmux_dir(wolts) is None
+
+
+def test_restore_refuses_a_link_where_it_must_disarm(tmp_path):
+    outside = tmp_path / "live" / ".space"
+    (outside / "apps").mkdir(parents=True)
+    (outside / "apps" / "demo.json").write_text('{"pid": 1}')
+
+    def build(tar):
+        _add_bytes(tar, f"{ARCHIVE_ROOT}/w/wolt/wolt.json", b"{}")
+        _add_symlink(tar, f"{ARCHIVE_ROOT}/.space", str(outside))
+        _add_bytes(tar, MANIFEST_NAME, json.dumps({"entries": 2, "source": "/src"}).encode())
+
+    archive = _write_archive(tmp_path / "evil.tar.gz", build)
+    with pytest.raises(ValueError, match="symlink where a restore must disarm"):
+        restore_backup(archive, to=tmp_path / "back")
+    assert (outside / "apps" / "demo.json").is_file()
+    assert not (tmp_path / "back" / ARCHIVE_ROOT).exists()
+
+
+def test_disarm_fails_closed_through_a_link(tmp_path):
+    outside = tmp_path / "live"
+    (outside / "apps").mkdir(parents=True)
+    (outside / "apps" / "demo.json").write_text('{"pid": 1}')
+    copy = tmp_path / "back" / "wolts"
+    copy.mkdir(parents=True)
+    (copy / ".space").symlink_to(outside)
+    with pytest.raises(ValueError, match="through a symlink"):
+        backup_mod.disarm(copy, "/source", tmp_path / "back")
+    assert (outside / "apps" / "demo.json").is_file()
 
 
 @pytest.mark.skipif(not __import__("shutil").which("tmux"), reason="needs tmux")
 def test_a_copy_beside_its_source_only_touches_itself(wolts, tmp_path):
-    """Same machine, same session names: the copy's adopt, wake and stop stay in the copy."""
+    """Same machine, same session names, started with the source's tmux in its
+    environment: the copy's boot, wake and stop still stay in the copy."""
+    import shutil
     import subprocess
     import tempfile
 
     app = subprocess.Popen(["sleep", "300"])  # the source's live app
-    sockets = Path(tempfile.mkdtemp(prefix="wsb-", dir="/tmp"))  # short: socket paths are capped
-    source_tmux, copy_tmux = sockets / "src", sockets / "copy"
+    short = Path(tempfile.mkdtemp(prefix="wsb-", dir="/tmp"))  # socket paths are capped
+    source_tmux = short / "src"
     source_tmux.mkdir()
-    copy_tmux.mkdir()
+    source_socket = source_tmux / f"tmux-{os.getuid()}" / "default"
 
-    def tmux(where: Path, *args: str) -> subprocess.CompletedProcess:
+    def tmux(*args: str, where: Path = source_tmux) -> subprocess.CompletedProcess:
         env = {**os.environ, "TMUX_TMPDIR": str(where)}
         env.pop("TMUX", None)
         return subprocess.run(["tmux", *args], env=env, capture_output=True, text=True)
 
     def in_copy(code: str) -> str:
-        env = {**os.environ, "TMUX_TMPDIR": str(copy_tmux), "WOLTSPACE_WOLTS_DIR": str(copy)}
-        env.pop("TMUX", None)
+        # The worst case: launched from a pane of the source's tmux server.
+        env = {**os.environ, "TMUX_TMPDIR": str(source_tmux), "TMUX": f"{source_socket},1,0",
+               "WOLTSPACE_WOLTS_DIR": str(copy)}
         lib = ROOT / "container" / "lib"
         out = subprocess.run([sys.executable, "-c", f"import sys; sys.path[:0] = [{str(lib)!r}]\n{code}"],
                              env=env, capture_output=True, text=True, timeout=60)
@@ -997,29 +1033,34 @@ def test_a_copy_beside_its_source_only_touches_itself(wolts, tmp_path):
 
     try:
         _lodge_runtime(wolts, app.pid)
-        assert tmux(source_tmux, "new-session", "-d", "-s", "beaverwolt-s1", "sleep 300").returncode == 0
+        assert tmux("new-session", "-d", "-s", "beaverwolt-s1", "sleep 300").returncode == 0
         archive = create_backup(wolts, out_dir=tmp_path / "out").archive
-        copy = restore_backup(archive, to=tmp_path / "back").wolts_dir
+        restored = restore_backup(archive, to=short / "back")
+        copy = restored.wolts_dir
+        own_tmux = restored.target / "tmux"
 
         # Boot: the copy adopts nothing of the source's.
         report = json.loads(in_copy(
             "import json, sessions\nprint(json.dumps(sessions.SessionRegistry().adopt_runtime_sessions()))"
         ))
         assert not report["adopted"]
-        # Stop in the copy: its app has no state, its session has no tmux here.
+        # Stop in the copy: its app has no state, its session has no tmux of its own.
         out = in_copy("import apps, sessions\nprint(apps.stop_app('demo'))\n"
                       "print(sessions.stop_session('beaverwolt-s1')['was_alive'])")
         assert out.split() == ["False", "False"]
-        # Wake in the copy (same name, its own tmux server), then stop it again.
-        assert tmux(copy_tmux, "new-session", "-d", "-s", "beaverwolt-s1", "sleep 300").returncode == 0
+        # Wake in the copy (same name), then stop it: it lands on, and leaves, the copy's own server.
+        in_copy("import subprocess, paths\n"
+                "subprocess.run(['tmux', 'new-session', '-d', '-s', 'beaverwolt-s1', 'sleep 300'], check=True)")
+        assert tmux("has-session", "-t", "=beaverwolt-s1", where=own_tmux).returncode == 0
         assert in_copy("import sessions\nprint(sessions.stop_session('beaverwolt-s1')['was_alive'])").split() == ["True"]
-        assert tmux(copy_tmux, "has-session", "-t", "=beaverwolt-s1").returncode != 0
+        assert tmux("has-session", "-t", "=beaverwolt-s1", where=own_tmux).returncode != 0
 
         # The source never noticed.
-        assert tmux(source_tmux, "has-session", "-t", "=beaverwolt-s1").returncode == 0
+        assert tmux("has-session", "-t", "=beaverwolt-s1").returncode == 0
         assert app.poll() is None
     finally:
-        tmux(source_tmux, "kill-session", "-t", "=beaverwolt-s1")
-        tmux(copy_tmux, "kill-session", "-t", "=beaverwolt-s1")
+        tmux("kill-session", "-t", "=beaverwolt-s1")
+        tmux("kill-session", "-t", "=beaverwolt-s1", where=short / "back" / "tmux")
         app.kill()
         app.wait()
+        shutil.rmtree(short, ignore_errors=True)

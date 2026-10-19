@@ -41,8 +41,10 @@ a backup is **slim**:
   "backup": {"keep": ["data/app.db"]}
   ```
 
-  Paths are relative to the directory holding the manifest, globs allowed, and
-  never reach outside it. A kept path is kept at any size, with its SQLite
+  Paths are relative to the app's directory, or to the wolt's own directory
+  (the one holding `wolt/`), globs allowed, and never reach outside it. An
+  opt-in cannot reach inside a directory slim drops whole (`cache`,
+  `node_modules`, …, below): keep the database somewhere else in the app. A kept path is kept at any size, with its SQLite
   `-wal`, `-shm` and `-journal` files. The agents' own session databases
   (opencode's store, Codex state) are context and are always kept; Codex's
   debug logs (`.codex/logs_*`) are not.
@@ -258,14 +260,25 @@ would stop the original. So a restore disarms the copy before it returns:
   copy, and an approval for such a directory is dropped, so auto mode asks
   again.
 
-A session's tmux name is its own name, so the copy and its source still name
-their sessions alike. Beside a running lodge, boot the copy on its own tmux
-server and port, as `restore` prints:
+- **The copy gets its own tmux server.** A session's tmux name is its own
+  name, so a copy on the machine's shared tmux server could stop its source's
+  sessions. Restore writes `.space/platform/restored.json`, and while it is
+  there the platform runs the copy on `<target>/tmux`, whatever `TMUX_TMPDIR`
+  or `$TMUX` the copy was started with. Delete the file when the copy becomes
+  the machine's lodge.
+
+Beside a running lodge, also give the copy its own port and no tunnel, as
+`restore` prints:
 
 ```bash
-TMUX_TMPDIR=<target>/tmux WOLTSPACE_PORT=7788 WOLTSPACE_PUBLIC_TUNNEL=false \
+WOLTSPACE_PORT=7788 WOLTSPACE_PUBLIC_TUNNEL=false \
   WOLTSPACE_WOLTS_DIR=<target>/wolts woltspace start
 ```
+
+Disarming rewrites and deletes files, so it never does that through a
+symlink: an archive with a link at the data root, in `.space`, or in a wolt's
+`.state` is refused before extraction (a top-level link pointing inside the
+lodge is fine), and disarm itself fails closed if it meets one.
 
 ### What a restore refuses
 

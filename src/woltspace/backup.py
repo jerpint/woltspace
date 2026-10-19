@@ -885,6 +885,12 @@ RUNTIME_RECORDS = (
 )
 #: Where a restore sets aside session records that point outside the lodge.
 QUARANTINE_NAME = "restore-quarantine"
+#: Written into a restored copy. While it is there, the platform runs the copy
+#: on its own tmux server (`<target>/tmux`), never the machine's shared one: a
+#: session's tmux name is its own name, so a copy on the shared server could
+#: stop its source's sessions. Delete it to make the copy the machine's lodge.
+RESTORED_MARKER = ".space/platform/restored.json"
+RESTORED_TMUX_NAME = "tmux"
 #: Session statuses a control plane would adopt on boot (by tmux name).
 _LIVE_SESSION_STATUSES = ("running", "orphaned", "starting", "pending")
 _SESSION_PATH_KEYS = ("workdir", "dir")
@@ -914,6 +920,57 @@ def _write_json(path: Path, data) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
+def restored_tmux_dir(wolts_dir: Path) -> Path | None:
+    """The private tmux directory of a restored copy, or None for a lodge."""
+    if (Path(wolts_dir) / RESTORED_MARKER).is_file():
+        return Path(wolts_dir).parent / RESTORED_TMUX_NAME
+    return None
+
+
+def _disarm_path(rel: str) -> bool:
+    """Whether a lodge-relative path is one a restore must rewrite or remove."""
+    parts = rel.split("/") if rel else []
+    if len(parts) <= 1:
+        return True  # the data root, or anything at its top level
+    if parts[0] == ".space":
+        return parts[1] in {"apps", "platform", "auto-grants.json"} and len(parts) <= 3
+    return parts[1] == ".state" and (len(parts) == 2 or (parts[2] == "sessions" and len(parts) <= 4))
+
+
+def _refuse_disarm_links(members: list[tarfile.TarInfo]) -> None:
+    """Refuse an archive whose links would carry a restore's writes elsewhere.
+
+    The audit lets a symlink point outside the target, so a link where a
+    restore rewrites or deletes runtime records (`.space`, a wolt's `.state`,
+    the data root itself) would let it rewrite or delete the files at the far
+    end: another lodge's. No backup of an ordinary lodge has one.
+    """
+    for member in members:
+        name = member.name.rstrip("/")
+        if not member.issym() or not (name == ARCHIVE_ROOT or name.startswith(ARCHIVE_ROOT + "/")):
+            continue
+        rel = name[len(ARCHIVE_ROOT) + 1:]
+        link = PurePosixPath(member.linkname)
+        if rel and "/" not in rel and not link.is_absolute() and ".." not in link.parts:
+            continue  # a top-level link to somewhere inside the lodge is disarmed there
+        if _disarm_path(rel):
+            raise ValueError(
+                f"refusing archive: {name} is a symlink where a restore must disarm "
+                "the copy, and it could reach a live lodge"
+            )
+
+
+def _guard(wolts_dir: Path, path: Path) -> Path:
+    """Fail closed when a path to rewrite or delete runs through a symlink."""
+    here = path
+    while True:
+        if here.is_symlink():
+            raise ValueError(f"refusing to disarm through a symlink: {here}")
+        if here == wolts_dir or here.parent == here:
+            return path
+        here = here.parent
+
+
 def disarm(wolts_dir: Path, source: str, target: Path) -> dict:
     """Make a restored lodge a copy that cannot reach the lodge it came from.
 
@@ -932,20 +989,31 @@ def disarm(wolts_dir: Path, source: str, target: Path) -> dict:
         "sessions_rebased": 0, "sessions_set_aside": [], "grants_rebased": 0,
         "grants_dropped": [],
     }
+    _guard(wolts_dir, wolts_dir)
     for rel in RUNTIME_RECORDS:
-        path = wolts_dir / rel
-        if path.is_file() and not path.is_symlink():
+        path = _guard(wolts_dir, wolts_dir / rel)
+        if path.is_file():
             path.unlink()
             report["runtime_records"].append(rel)
-    apps_state = wolts_dir / ".space" / "apps"
+    apps_state = _guard(wolts_dir, wolts_dir / ".space" / "apps")
     if apps_state.is_dir():
         for path in sorted(apps_state.glob("*.json")):
-            if path.is_file() and not path.is_symlink():
+            if _guard(wolts_dir, path).is_file():
                 path.unlink()  # "running" state: on boot a dead pid is restarted
                 report["apps"].append(path.stem)
 
-    for path in sorted(wolts_dir.glob("*/.state/sessions/*.json")):
-        if path.is_symlink() or not path.is_file():
+    sessions = []
+    for top in sorted(wolts_dir.iterdir()):
+        if top.is_symlink():
+            if not top.resolve().is_relative_to(wolts_dir.resolve()):
+                raise ValueError(f"refusing to disarm through a symlink: {top}")
+            continue  # points inside the lodge: disarmed under its real name
+        if top.is_dir():
+            folder = _guard(wolts_dir, top / ".state" / "sessions")
+            if folder.is_dir():
+                sessions.extend(sorted(folder.glob("*.json")))
+    for path in sessions:
+        if not _guard(wolts_dir, path).is_file():
             continue
         try:
             record = json.loads(path.read_text())
@@ -978,8 +1046,8 @@ def disarm(wolts_dir: Path, source: str, target: Path) -> dict:
             continue
         _write_json(path, rebased)
 
-    grants_path = wolts_dir / ".space" / "auto-grants.json"
-    if grants_path.is_file() and not grants_path.is_symlink():
+    grants_path = _guard(wolts_dir, wolts_dir / ".space" / "auto-grants.json")
+    if grants_path.is_file():
         try:
             grants = json.loads(grants_path.read_text())
         except (OSError, ValueError):
@@ -996,6 +1064,16 @@ def disarm(wolts_dir: Path, source: str, target: Path) -> dict:
                 report["grants_rebased"] += 1
             grants["grants"] = kept
             _write_json(grants_path, grants)
+
+    marker = _guard(wolts_dir, wolts_dir / RESTORED_MARKER)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(marker, {
+        "source": source,
+        "restored_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "tmux": f"runs on its own tmux server in ../{RESTORED_TMUX_NAME}; delete this file "
+                "to make this copy the machine's lodge",
+    })
+    (wolts_dir.parent / RESTORED_TMUX_NAME).mkdir(exist_ok=True)
     return report
 
 
@@ -1023,11 +1101,11 @@ def restore_backup(archive: Path | str, *, to: Path | str | None = None) -> Rest
         # Audit the whole member list before a single byte lands: a refusal
         # after a partial extraction is a refusal that already happened.
         audit_members(members, target)
+        _refuse_disarm_links(members)
         tar.extractall(target, members=members, filter=_restore_filter)
     manifest = json.loads((target / MANIFEST_NAME).read_text())
     wolts_dir = target / manifest.get("archive_root", ARCHIVE_ROOT)
     disarmed = disarm(wolts_dir, manifest.get("source") or "", target) if wolts_dir.is_dir() else {}
-    (target / "tmux").mkdir(exist_ok=True)  # the copy's own tmux server, when it needs one
     return RestoreResult(
         target=target,
         wolts_dir=wolts_dir,
@@ -1148,13 +1226,13 @@ def restore_lines(result: RestoreResult) -> list[str]:
     lines.extend(reprovision_lines(manifest))
     lines.extend([
         "",
-        "boot from it with:",
-        f"  WOLTSPACE_WOLTS_DIR={result.wolts_dir} woltspace start",
-        "beside a running lodge on this machine, give it its own port and tmux server:",
+        "boot from it with (beside a running lodge, give it its own port and no tunnel):",
         (
-            f"  TMUX_TMPDIR={result.target / 'tmux'} WOLTSPACE_PORT=7788 "
-            f"WOLTSPACE_PUBLIC_TUNNEL=false WOLTSPACE_WOLTS_DIR={result.wolts_dir} woltspace start"
+            f"  WOLTSPACE_PORT=7788 WOLTSPACE_PUBLIC_TUNNEL=false "
+            f"WOLTSPACE_WOLTS_DIR={result.wolts_dir} woltspace start"
         ),
+        f"it runs on its own tmux server ({result.target / RESTORED_TMUX_NAME}) until you delete",
+        f"  {result.wolts_dir / RESTORED_MARKER}",
     ])
     return lines
 
