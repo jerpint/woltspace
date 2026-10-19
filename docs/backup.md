@@ -4,18 +4,60 @@ A woltspace backup is a snapshot of the **data plane**: one `tar.gz` holding the
 wolts directory and a manifest describing it. No container, no image, no caches.
 
 ```bash
-woltspace backup                       # → woltspace-backup-<UTC timestamp>.tar.gz
+woltspace backup                       # slim → woltspace-backup-<UTC timestamp>.tar.gz
 woltspace backup --tag pre-rc5         # name it yourself
 woltspace backup --out ~/snapshots     # somewhere other than beside the wolts dir
+woltspace backup --full --out /Volumes/drive   # also keep media and other large files
 woltspace restore ~/snapshots/woltspace-backup-pre-rc5.tar.gz
 ```
 
 Both commands work the same natively and inside the container — they only ever
 touch files. Take one before an upgrade.
 
-## What goes in
+## Slim by default
 
-Everything under `WOLTSPACE_WOLTS_DIR` that is data:
+A backup is meant to bring the whole story back: every wolt with its identity,
+memory and session context, every app with its code, the lodge with its config.
+Images, videos and build output can be rebuilt or kept elsewhere. So by default
+a backup is **slim**:
+
+- **Context is kept at any size, in any format:** `wolt/memory/`, `wolt.json`,
+  `CLAUDE.md`, `AGENTS.md`, skills, Claude transcripts, file history and todos
+  (`.claude/projects`, `.claude/file-history`, `.claude/todos`), Codex sessions
+  and state databases, opencode's session store, every file inside a `.git`
+  directory, and the lodge's `.space/` (without `.space/logs/`), `.state/` and
+  `woltspace.json`. This applies at any depth, so a lodge nested inside a wolt
+  keeps its context too.
+- **Everything else is kept when it is text or code** (Markdown, HTML, CSS,
+  JS/TS, JSON/JSONL, notebooks, Python, shell, config, SVG, …) **up to 5 MB**,
+  or has no suffix (Dockerfile, LICENSE) and is up to 1 MB.
+- **On top of the excludes below, these directories go**, below the top level:
+  `worktrees` at any depth (not only `wolt/worktrees`; git's own `.git/worktrees`
+  stays), `node_modules*`, `cache`, `_cacache`, `npm-cache`, `.uv-cache`,
+  `uv-cache`, `archive-v0`, `.uv-python`, `site-packages`, `lib/python3*`,
+  `ms-playwright`, `browsers`, `.bun`, `.tmp`. A wolt is never dropped.
+- **Every session transcript is kept, wherever it is.** Reproducibility is the
+  point: a Claude, Codex or opencode transcript inside a directory slim would
+  otherwise drop (a checkout, a cache, a scratch lodge under `.tmp`) is still
+  archived. Such a directory is entered for its transcripts only, and the rest
+  of it is listed as left out.
+- **Nothing left out is forgotten.** `backup-left-out.tsv`, beside the manifest
+  at the archive root, lists every file (and every dropped directory, with its
+  file count) by path and size. The manifest's `left_out` section has the totals
+  and the rules. `woltspace restore` says how many files the backup did not
+  hold.
+
+An app's images usually come back anyway: its `.git` is kept whole, so
+`git restore .` in the restored app brings back every tracked file.
+
+`--full` keeps today's wider rule instead: everything below except the named
+junk. Use it for a media backup, ideally `--out` on another drive: on a
+lived-in lodge it can be tens of gigabytes where slim is under a gigabyte.
+
+## What goes in (`--full`)
+
+Everything under `WOLTSPACE_WOLTS_DIR` that is data (a slim backup then keeps
+only the part described above):
 
 - each wolt's `wolt/` tree — `memory/`, `site/`, `sparks/`, `drafts/`, `apps/`
 - `CLAUDE.md` and `wolt.json` per wolt

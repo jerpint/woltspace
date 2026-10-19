@@ -723,3 +723,146 @@ def test_cli_reports_a_missing_source_without_traceback(tmp_path, capsys):
     code = cli_main(["backup", "--wolts-dir", str(tmp_path / "nope"), "--out", str(tmp_path)])
     assert code == 1
     assert "backup failed" in capsys.readouterr().out
+
+
+# Slim (the default) and --full
+
+
+@pytest.fixture
+def lived_in(wolts):
+    """The same lodge after some living: media, big logs, caches, checkouts."""
+
+    def write(rel: str, data: bytes) -> None:
+        path = wolts / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+    write("beaverwolt/wolt/drafts/talk/render.mp4", b"\0" * 40_000)
+    write("beaverwolt/wolt/site/hero.png", b"\x89PNG" + b"\0" * 9_000)
+    write("beaverwolt/wolt/drafts/huge-notes.md", b"n" * (backup_mod.SLIM_TEXT_MAX + 1))
+    write("beaverwolt/wolt/drafts/plan.md", b"# plan\n")
+    write("beaverwolt/wolt/drafts/nb.ipynb", b"{}")
+    write("beaverwolt/worktrees/feature-y/README.md", b"checkout\n")
+    write("beaverwolt/wolt/sparks/tool/lib/python3.13/site.py", b"x = 1\n")
+    write("beaverwolt/wolt/sparks/npm/_cacache/index", b"c" * 100)
+    write("beaverwolt/.git/worktrees/feature-y/HEAD", b"ref: refs/heads/y\n")
+    # Context, kept at any size and in any format.
+    big = b"{}\n" * (backup_mod.SLIM_TEXT_MAX // 3 + 1)
+    write("beaverwolt/.claude/projects/-pond/session.jsonl", big)
+    write("raccoonwolt/.codex/sessions/2026/10/rollout.jsonl", big)
+    write("raccoonwolt/.codex/state_5.sqlite", b"SQLite format 3\0")
+    write("raccoonwolt/.local/share/opencode/opencode.db", b"SQLite format 3\0")
+    write("beaverwolt/wolt/.git/objects/pack/pack-1.pack", b"\0" * 30_000)
+    write("beaverwolt/wolt/memory/photo.jpg", b"\xff\xd8" + b"\0" * 100)
+    write(".space/logs/control-plane.log", b"log\n")
+    return wolts
+
+
+def test_slim_keeps_all_context_and_code_and_lists_the_rest(lived_in, tmp_path):
+    result = create_backup(lived_in, out_dir=tmp_path / "out")
+    names = set(_members(result.archive))
+
+    for kept in (
+        "beaverwolt/wolt/drafts/plan.md",
+        "beaverwolt/wolt/drafts/nb.ipynb",
+        "beaverwolt/wolt/site/index.html",
+        "beaverwolt/.claude/projects/-pond/session.jsonl",
+        "raccoonwolt/.codex/sessions/2026/10/rollout.jsonl",
+        "raccoonwolt/.codex/state_5.sqlite",
+        "raccoonwolt/.local/share/opencode/opencode.db",
+        "beaverwolt/wolt/.git/objects/pack/pack-1.pack",
+        "beaverwolt/.git/worktrees/feature-y/HEAD",
+        "beaverwolt/wolt/memory/photo.jpg",
+        ".space/platform/config.json",
+    ):
+        assert f"{ARCHIVE_ROOT}/{kept}" in names, kept
+
+    left = {
+        "beaverwolt/wolt/drafts/talk/render.mp4",
+        "beaverwolt/wolt/site/hero.png",
+        "beaverwolt/wolt/drafts/huge-notes.md",
+        "beaverwolt/worktrees",
+        "beaverwolt/wolt/sparks/tool/lib/python3.13",
+        "beaverwolt/wolt/sparks/npm/_cacache",
+        ".space/logs/control-plane.log",
+    }
+    assert not {f"{ARCHIVE_ROOT}/{rel}" for rel in left} & names
+    assert not [n for n in names if n.startswith(f"{ARCHIVE_ROOT}/beaverwolt/worktrees/")]
+
+    manifest = result.manifest
+    assert manifest["mode"] == "slim"
+    with tarfile.open(result.archive, "r:gz") as tar:
+        listed = tar.extractfile(backup_mod.LEFT_OUT_NAME).read().decode().splitlines()
+    rows = {line.split("\t")[0]: line.split("\t") for line in listed[1:]}
+    assert left <= set(rows)
+    assert rows["beaverwolt/worktrees"][1] == "dir"
+    assert int(rows["beaverwolt/wolt/drafts/talk/render.mp4"][2]) == 40_000
+    assert manifest["left_out"]["files"] == sum(int(r[3]) for r in rows.values())
+    verify_archive(result.archive)
+
+
+def test_full_keeps_media_and_writes_no_left_out_list(lived_in, tmp_path):
+    result = create_backup(lived_in, out_dir=tmp_path / "out", full=True)
+    names = set(_members(result.archive))
+    assert f"{ARCHIVE_ROOT}/beaverwolt/wolt/drafts/talk/render.mp4" in names
+    assert f"{ARCHIVE_ROOT}/beaverwolt/wolt/drafts/huge-notes.md" in names
+    assert backup_mod.LEFT_OUT_NAME not in names
+    assert result.manifest["mode"] == "full"
+    assert "left_out" not in result.manifest
+
+
+def test_slim_round_trip_restores_what_it_kept_and_says_what_it_did_not(lived_in, tmp_path):
+    result = create_backup(lived_in, out_dir=tmp_path / "out")
+    restored = restore_backup(result.archive, to=tmp_path / "back")
+    assert restored.entries == result.manifest["entries"]
+    root = restored.wolts_dir
+    session = root / "beaverwolt" / ".claude" / "projects" / "-pond" / "session.jsonl"
+    assert session.read_bytes() == (lived_in / "beaverwolt/.claude/projects/-pond/session.jsonl").read_bytes()
+    assert not (root / "beaverwolt" / "wolt" / "drafts" / "talk" / "render.mp4").exists()
+    assert (restored.target / backup_mod.LEFT_OUT_NAME).is_file()
+    lines = backup_mod.restore_lines(restored)
+    assert any(line.startswith("left out:") for line in lines)
+
+
+def test_a_wolt_at_the_root_is_never_slim_dropped_by_name(wolts, tmp_path):
+    (wolts / "cache" / "wolt").mkdir(parents=True)
+    (wolts / "cache" / "wolt" / "wolt.json").write_text(json.dumps({"name": "cache"}))
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    assert f"{ARCHIVE_ROOT}/cache/wolt/wolt.json" in _members(result.archive)
+
+
+def test_cli_full_flag(lived_in, tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(lived_in))
+    assert cli_main(["backup", "--tag", "slim", "--out", str(tmp_path / "out")]) == 0
+    assert "mode: slim" in capsys.readouterr().out
+    assert cli_main(["backup", "--full", "--tag", "full", "--out", str(tmp_path / "out"), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["manifest"]["mode"] == "full"
+
+
+def test_slim_keeps_every_transcript_even_inside_dropped_dirs(wolts, tmp_path):
+    """Reproducibility: no session transcript is ever left out of a slim backup."""
+    stores = (
+        "beaverwolt/worktrees/feature-z/.claude/projects/-z/a.jsonl",
+        "beaverwolt/wolt/worktrees/old/.codex/sessions/2026/r.jsonl",
+        "beaverwolt/wolt/sparks/.tmp/lodge/wolts/w/.claude/projects/-w/b.jsonl",
+        "beaverwolt/wolt/apps/demo/node_modules/x/.codex/archived_sessions/c.jsonl",
+        "beaverwolt/wolt/drafts/cache/home/.local/share/opencode/opencode.db",
+    )
+    for rel in stores:
+        path = wolts / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\0" * 10)
+    (wolts / "beaverwolt/worktrees/feature-z/big.mp4").write_bytes(b"\0" * 1000)
+    (wolts / "beaverwolt/worktrees/feature-z/src.py").write_text("x = 1\n")
+
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    names = set(_members(result.archive))
+    for rel in stores:
+        assert f"{ARCHIVE_ROOT}/{rel}" in names, rel
+    # Only the transcripts come out of a dropped directory; the rest is listed.
+    assert f"{ARCHIVE_ROOT}/beaverwolt/worktrees/feature-z/src.py" not in names
+    with tarfile.open(result.archive, "r:gz") as tar:
+        listed = tar.extractfile(backup_mod.LEFT_OUT_NAME).read().decode()
+    assert "beaverwolt/worktrees/feature-z/big.mp4" in listed
+    assert "beaverwolt/worktrees/feature-z/src.py" in listed
+    assert "beaverwolt/wolt/apps/demo/node_modules/left-pad" in listed

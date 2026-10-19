@@ -11,6 +11,13 @@ What is irreplaceable is data: memory, sites, sparks, drafts, apps, `.env`,
 git history inside a wolt's own repos. That is what goes in the archive. Caches
 are named, excluded by name at any depth, and reported so the win is visible.
 
+By default a backup is *slim*: every piece of context (memory, identity,
+transcripts, skills, lodge config, git history) at any size, plus every other
+file that is text or code, up to a size cap. Media, binaries and the caches no
+name rule catches stay out, and every file left out is listed in the archive by
+path and size, so the whole story survives even where the bytes do not.
+`full=True` keeps today's wider rule: everything but the named junk.
+
 Nothing here touches docker, takes a lock, or reads a credential's value. A
 backup of a live colony is safe; a quiescent one only gives a tidier registry.
 """
@@ -91,6 +98,57 @@ ROOT_EXCLUDED_DIR_NAMES = frozenset({".worktui"})
 EXCLUDED_FILE_NAMES = frozenset({".DS_Store"})
 EXCLUDED_FILE_SUFFIXES = (".pyc", ".sock")
 
+#: The list of files a slim backup left out, one `path<TAB>kind<TAB>bytes<TAB>files`
+#: row each, beside the manifest at the archive root.
+LEFT_OUT_NAME = "backup-left-out.tsv"
+_META_NAMES = frozenset({MANIFEST_NAME, LEFT_OUT_NAME})
+
+#: Slim: context is kept at any size. A path is context when, from some point
+#: down (so a nested lodge's wolts count too), it starts with one of these.
+SLIM_CONTEXT_PREFIXES = (
+    "wolt/memory/", "wolt/wolt.json", "wolt.json", "CLAUDE.md", "AGENTS.md",
+    ".claude/projects/", ".claude-state/projects/", ".claude/skills/",
+    ".agents/skills/", "skills/", ".claude/file-history/", ".claude/todos/",
+    ".claude-state/file-history/", ".claude-state/todos/", ".codex/sessions/",
+    ".codex/archived_sessions/", ".codex/state_", ".codex/memories_", ".codex/goals_",
+    ".codex/queue_", ".local/share/opencode/",
+)
+#: Session transcripts: reproducibility is the point, so a slim backup keeps
+#: every one, even inside a directory it otherwise drops (a checkout, a cache,
+#: a scratch lodge under `.tmp`). Such a directory is entered for its
+#: transcripts only; the rest of it is listed as left out.
+SLIM_TRANSCRIPT_PREFIXES = (
+    ".claude/projects/", ".claude-state/projects/", ".codex/sessions/",
+    ".codex/archived_sessions/", ".local/share/opencode/",
+)
+#: ... and at the data root, the lodge's own config. Logs are not context.
+SLIM_ROOT_CONTEXT = (".space/", ".state/", "woltspace.json")
+SLIM_ROOT_SKIPPED = (".space/logs/",)
+
+#: Slim: anything else is kept only when it is text or code of at most
+#: SLIM_TEXT_MAX bytes. A file with no suffix (Dockerfile, LICENSE, a git ref)
+#: is kept up to SLIM_NO_SUFFIX_MAX.
+SLIM_TEXT_MAX = 5_000_000
+SLIM_NO_SUFFIX_MAX = 1_000_000
+SLIM_TEXT_SUFFIXES = frozenset({
+    ".md", ".mdx", ".txt", ".rst", ".html", ".htm", ".css", ".scss", ".js", ".mjs",
+    ".cjs", ".ts", ".tsx", ".jsx", ".astro", ".vue", ".svelte", ".json", ".jsonl",
+    ".ipynb", ".py", ".sh", ".bash", ".zsh", ".fish", ".toml", ".yaml", ".yml",
+    ".ini", ".cfg", ".conf", ".csv", ".tsv", ".sql", ".go", ".rs", ".swift", ".kt",
+    ".java", ".c", ".h", ".cpp", ".hpp", ".rb", ".lua", ".svg", ".xml", ".lock",
+    ".gitignore", ".gitattributes", ".gitmodules", ".dockerignore", ".plist",
+    ".service", ".tmpl", ".j2", ".example", ".sample", ".tex", ".bib",
+})
+#: Slim: directories dropped below the top level, on top of the excludes above.
+#: Package and download caches, browser builds, and checkouts (`worktrees` at
+#: any depth, not only `wolt/worktrees`). A `worktrees` inside `.git` is git's
+#: own bookkeeping and stays.
+SLIM_EXCLUDED_DIR_NAMES = frozenset({
+    "worktrees", "cache", "_cacache", "npm-cache", ".npm-cache", ".uv-cache",
+    "uv-cache", "archive-v0", ".uv-python", "site-packages", "ms-playwright",
+    "browsers", ".bun", ".tmp",
+})
+
 #: Credentials are withheld, not backed up. Two reasons, and the first is the
 #: one that bites: a rotating OAuth chain has exactly one live owner, so
 #: restoring a *stale* credentials file replays a spent refresh token, and
@@ -162,6 +220,9 @@ class Scan:
     withheld: list[dict] = field(default_factory=list)
     unreadable: list[dict] = field(default_factory=list)
     wolts: list[dict] = field(default_factory=list)
+    full: bool = True
+    #: What a slim backup left out: {"path", "kind": "file"|"dir", "bytes", "files"}.
+    left_out: list[dict] = field(default_factory=list)
 
     @property
     def scanned_bytes(self) -> int:
@@ -229,6 +290,53 @@ def _under_root_exclude(rel: str) -> bool:
     return rel.split("/", 1)[0] in ROOT_EXCLUDED_DIR_NAMES
 
 
+def _slim_dir_dropped(name: str, rel: str, path: Path) -> bool:
+    """Whether a slim backup leaves a whole directory out."""
+    parts = rel.split("/")
+    if len(parts) < 2 or ".git" in parts[:-1] or is_wolt_dir(path):
+        return False
+    if name in SLIM_EXCLUDED_DIR_NAMES or name.startswith("node_modules"):
+        return True
+    return name.startswith("python3") and parts[-2] == "lib"  # an installed venv or tool
+
+
+def _has_prefix_tail(rel: str, prefixes: tuple[str, ...]) -> bool:
+    parts = rel.split("/")
+    return any("/".join(parts[start:]).startswith(prefixes) for start in range(len(parts)))
+
+
+def is_transcript(rel: str) -> bool:
+    return _has_prefix_tail(rel, SLIM_TRANSCRIPT_PREFIXES)
+
+
+def _holds_transcripts(path: Path, rel: str) -> bool:
+    """Whether any file under a directory about to be dropped is a transcript."""
+    if is_transcript(rel + "/"):
+        return True
+    for dirpath, dirnames, filenames in os.walk(path, followlinks=False):
+        here = rel + dirpath[len(str(path)):].replace(os.sep, "/")
+        for name in filenames:
+            if is_transcript(f"{here}/{name}"):
+                return True
+    return False
+
+
+def slim_keeps(rel: str, size: int) -> bool:
+    """Whether a slim backup keeps a file: all context, plus text up to a cap."""
+    parts = rel.split("/")
+    if ".git" in parts[:-1]:
+        return True  # history is data
+    if rel.startswith(SLIM_ROOT_CONTEXT):
+        return not rel.startswith(SLIM_ROOT_SKIPPED)
+    for start in range(len(parts)):
+        if "/".join(parts[start:]).startswith(SLIM_CONTEXT_PREFIXES):
+            return True
+    suffix = PurePosixPath(parts[-1]).suffix.lower()
+    if suffix in SLIM_TEXT_SUFFIXES:
+        return size <= SLIM_TEXT_MAX
+    return suffix == "" and size <= SLIM_NO_SUFFIX_MAX
+
+
 def _probe_excluded(path: Path) -> tuple[int, int, bool]:
     """Size a subtree about to be dropped — and check it hides no wolt.
 
@@ -258,7 +366,7 @@ def _probe_excluded(path: Path) -> tuple[int, int, bool]:
     return total, count, has_wolt
 
 
-def scan_tree(wolts_dir: Path) -> Scan:
+def scan_tree(wolts_dir: Path, *, full: bool = True) -> Scan:
     """Walk the data root once, deciding membership before anything is written.
 
     Symlinks are never followed. The plugin-delivery links point into the
@@ -267,7 +375,7 @@ def scan_tree(wolts_dir: Path) -> Scan:
     restore recreates links.
     """
     wolts_dir = Path(wolts_dir)
-    scan = Scan()
+    scan = Scan(full=full)
     per_wolt: dict[str, dict] = {}
 
     def note(rel: str, size: int, files: int, included: bool) -> None:
@@ -292,6 +400,19 @@ def scan_tree(wolts_dir: Path) -> Scan:
             "error": exc.strerror or str(exc),
         })
 
+    # Slim: directories it would drop but entered for their transcripts alone.
+    transcripts_only: list[str] = []
+
+    def in_transcripts_only(rel: str) -> bool:
+        return any(rel.startswith(prefix + "/") for prefix in transcripts_only)
+
+    def drop_dir(rel: str, child: Path) -> None:
+        size, files, _ = _probe_excluded(child)
+        scan.excluded_bytes += size
+        scan.excluded_files += files
+        scan.left_out.append({"path": rel, "kind": "dir", "bytes": size, "files": files})
+        note(rel, size, files, included=False)
+
     for dirpath, dirnames, filenames in os.walk(wolts_dir, followlinks=False, onerror=on_error):
         here = Path(dirpath)
         if here != wolts_dir:
@@ -306,8 +427,25 @@ def scan_tree(wolts_dir: Path) -> Scan:
                 dirnames.remove(name)
                 scan.entries.append(Entry(child, f"{ARCHIVE_ROOT}/{rel}", "symlink"))
                 continue
-            if _dir_excluded(name, rel, child):
-                size, files, has_wolt = _probe_excluded(child)
+            junk = _dir_excluded(name, rel, child)
+            probe = _probe_excluded(child) if junk else None
+            # A wolt lives down there: the rescue below keeps the whole subtree.
+            rescued = bool(probe and probe[2] and not _under_root_exclude(rel))
+            if not full and not rescued and (
+                in_transcripts_only(rel) or junk or _slim_dir_dropped(name, rel, child)
+            ):
+                if in_transcripts_only(rel) and is_transcript(rel + "/"):
+                    continue  # inside a transcript store: every file is kept
+                if _holds_transcripts(child, rel):
+                    if not in_transcripts_only(rel):
+                        transcripts_only.append(rel)
+                    continue
+                if not junk or in_transcripts_only(rel):
+                    dirnames.remove(name)
+                    drop_dir(rel, child)
+                    continue
+            if junk:
+                size, files, has_wolt = probe
                 # The rescue is for a wolt filed under a junk-sounding name. It
                 # is NOT for `.worktui`, whose worktrees hold *copies* of wolts,
                 # wolt.json and all — a copy of a wolt is not the wolt, and
@@ -350,6 +488,14 @@ def scan_tree(wolts_dir: Path) -> Scan:
                 # Sockets, fifos, devices: tmux leaves them lying around and
                 # none of them mean anything once restored.
                 scan.unreadable.append({"path": rel, "error": "not a regular file"})
+                continue
+            if not full and (
+                not is_transcript(rel) if in_transcripts_only(rel) else not slim_keeps(rel, info.st_size)
+            ):
+                scan.excluded_bytes += info.st_size
+                scan.excluded_files += 1
+                scan.left_out.append({"path": rel, "kind": "file", "bytes": info.st_size, "files": 1})
+                note(rel, info.st_size, 1, included=False)
                 continue
             if not os.access(child, os.R_OK):
                 scan.unreadable.append({"path": rel, "error": "unreadable"})
@@ -417,7 +563,46 @@ def build_manifest(wolts_dir: Path, tag: str, scan: Scan) -> dict:
             },
         },
         "unreadable": scan.unreadable,
+        "mode": "full" if scan.full else "slim",
+        **({} if scan.full else {"left_out": _left_out_summary(scan)}),
     }
+
+
+def _left_out_summary(scan: Scan) -> dict:
+    by_top: dict[str, int] = {}
+    for item in scan.left_out:
+        top = "/".join(item["path"].split("/")[:2])
+        by_top[top] = by_top.get(top, 0) + item["bytes"]
+    return {
+        "why": (
+            "a slim backup keeps all context and code; media, binaries, caches "
+            "and checkouts are named here, not archived"
+        ),
+        "listed_in": LEFT_OUT_NAME,
+        "bytes": sum(item["bytes"] for item in scan.left_out),
+        "files": sum(item["files"] for item in scan.left_out),
+        "by_top": dict(sorted(by_top.items(), key=lambda kv: -kv[1])),
+        "rules": {
+            "context_kept_at_any_size": list(SLIM_CONTEXT_PREFIXES),
+            "root_context": list(SLIM_ROOT_CONTEXT),
+            "root_skipped": list(SLIM_ROOT_SKIPPED),
+            "git": "every file inside a .git directory is kept",
+            "text_suffixes": sorted(SLIM_TEXT_SUFFIXES),
+            "text_max_bytes": SLIM_TEXT_MAX,
+            "no_suffix_max_bytes": SLIM_NO_SUFFIX_MAX,
+            "dropped_dir_names": sorted(SLIM_EXCLUDED_DIR_NAMES)
+            + ["node_modules*", "lib/python3*"],
+        },
+    }
+
+
+def _left_out_tsv(scan: Scan) -> bytes:
+    rows = ["path\tkind\tbytes\tfiles"]
+    rows += [
+        f"{item['path']}\t{item['kind']}\t{item['bytes']}\t{item['files']}"
+        for item in scan.left_out
+    ]
+    return ("\n".join(rows) + "\n").encode()
 
 
 def verify_archive(archive: Path) -> dict:
@@ -433,7 +618,7 @@ def verify_archive(archive: Path) -> dict:
         if payload is None:
             raise ValueError(f"{archive}: manifest missing")
         manifest = json.loads(payload.read().decode())
-        counted = len([name for name in names if name != MANIFEST_NAME])
+        counted = len([name for name in names if name not in _META_NAMES])
         if counted != manifest["entries"]:
             raise ValueError(
                 f"{archive}: manifest claims {manifest['entries']} entries, archive holds {counted}"
@@ -479,8 +664,12 @@ def _add_entry(tar: tarfile.TarFile, entry: Entry) -> None:
 
 def create_backup(
     wolts_dir: Path | str, *, out_dir: Path | str | None = None, tag: str | None = None,
+    full: bool = False,
 ) -> BackupResult:
-    """Write `woltspace-backup-<tag>.tar.gz` and verify it before returning."""
+    """Write `woltspace-backup-<tag>.tar.gz` and verify it before returning.
+
+    Slim unless `full`: see the module docstring.
+    """
     wolts_dir = Path(wolts_dir).expanduser().resolve(strict=False)
     if not wolts_dir.is_dir():
         raise FileNotFoundError(f"no wolts directory at {wolts_dir}")
@@ -489,7 +678,7 @@ def create_backup(
     out.mkdir(parents=True, exist_ok=True)
     archive = out / archive_name(tag)
 
-    scan = scan_tree(wolts_dir)
+    scan = scan_tree(wolts_dir, full=full)
     manifest = build_manifest(wolts_dir, tag, scan)
 
     with tarfile.open(archive, "w:gz") as tar:
@@ -504,12 +693,15 @@ def create_backup(
                     "error": exc.strerror or str(exc),
                 })
                 manifest["entries"] -= 1
-        blob = json.dumps(manifest, indent=2).encode()
-        info = tarfile.TarInfo(MANIFEST_NAME)
-        info.size = len(blob)
-        info.mtime = int(datetime.now(timezone.utc).timestamp())
-        info.mode = 0o644
-        tar.addfile(info, io.BytesIO(blob))
+        meta = [(MANIFEST_NAME, json.dumps(manifest, indent=2).encode())]
+        if not full:
+            meta.append((LEFT_OUT_NAME, _left_out_tsv(scan)))
+        for name, blob in meta:
+            info = tarfile.TarInfo(name)
+            info.size = len(blob)
+            info.mtime = int(datetime.now(timezone.utc).timestamp())
+            info.mode = 0o644
+            tar.addfile(info, io.BytesIO(blob))
 
     verify_archive(archive)
     return BackupResult(archive=archive, manifest=manifest, verified=True, scan=scan)
@@ -637,7 +829,7 @@ def restore_backup(archive: Path | str, *, to: Path | str | None = None) -> Rest
         target=target,
         wolts_dir=target / manifest.get("archive_root", ARCHIVE_ROOT),
         manifest=manifest,
-        entries=len([m for m in members if m.name != MANIFEST_NAME]),
+        entries=len([m for m in members if m.name not in _META_NAMES]),
     )
 
 
@@ -666,6 +858,7 @@ def summary_lines(result: BackupResult) -> list[str]:
         ),
         f"archive: {human_bytes(result.archive.stat().st_size)} · {result.manifest['entries']} entries",
     ]
+    lines.extend(_left_out_lines(result.manifest))
     for wolt in result.manifest["wolts"]:
         lines.append(
             f"  wolt {wolt['name']}: {human_bytes(wolt['bytes'])} in {wolt['files']} files"
@@ -718,6 +911,21 @@ def reprovision_lines(manifest: dict) -> list[str]:
     return lines
 
 
+def _left_out_lines(manifest: dict) -> list[str]:
+    """Say what a slim backup kept out, or that it kept everything."""
+    if manifest.get("mode") != "slim":
+        return ["mode: full — media and every other file kept"] if manifest.get("mode") else []
+    left = manifest["left_out"]
+    return [
+        "mode: slim — all context and code kept",
+        (
+            f"left out: {human_bytes(left['bytes'])} in {left['files']} files "
+            f"(media, binaries, caches, checkouts), listed in {left['listed_in']}; "
+            "`--full` keeps them"
+        ),
+    ]
+
+
 def restore_lines(result: RestoreResult) -> list[str]:
     manifest = result.manifest
     lines = [
@@ -726,6 +934,12 @@ def restore_lines(result: RestoreResult) -> list[str]:
         f"woltspace {manifest['woltspace_version']}  ·  {result.entries} entries",
         f"wolts: {', '.join(wolt['name'] for wolt in manifest['wolts']) or '(none)'}",
     ]
+    if manifest.get("mode") == "slim":
+        left = manifest["left_out"]
+        lines.append(
+            f"left out: {left['files']} files ({human_bytes(left['bytes'])}) were not in this "
+            f"slim backup — named in {left['listed_in']}"
+        )
     lines.extend(reprovision_lines(manifest))
     lines.extend([
         "",
