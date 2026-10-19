@@ -254,7 +254,8 @@ would stop the original. So a restore disarms the copy before it returns:
   can be resumed in the copy.
 - **Paths are re-pointed:** a session's `workdir`, `dir` and
   `canonical_workdir`, and every auto-mode approval, that pointed inside the
-  old wolts directory now points inside the copy.
+  old wolts directory now points inside the copy. So does `/workspace/wolts`,
+  where the container era saw the same lodge.
 - **What pointed outside is set aside, not re-pointed:** a session that worked
   in a directory outside the lodge moves to `restore-quarantine/` beside the
   copy, and an approval for such a directory is dropped, so auto mode asks

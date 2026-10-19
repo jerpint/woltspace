@@ -896,12 +896,20 @@ _LIVE_SESSION_STATUSES = ("running", "orphaned", "starting", "pending")
 _SESSION_PATH_KEYS = ("workdir", "dir")
 
 
+#: Where the container mounts the data root. A lodge that ran in the container
+#: era recorded its sessions under this path: it is the same lodge.
+CONTAINER_WOLTS_DIR = "/workspace/wolts"
+
+
 def _rebase(value: str, source: str, wolts_dir: Path) -> str | None:
     """`value` moved from the source lodge into this one, or None if outside it."""
-    if value == source:
-        return str(wolts_dir)
-    if value.startswith(source + "/"):
-        return str(wolts_dir) + value[len(source):]
+    for root in (source, CONTAINER_WOLTS_DIR):
+        if not root:
+            continue
+        if value == root:
+            return str(wolts_dir)
+        if value.startswith(root + "/"):
+            return str(wolts_dir) + value[len(root):]
     return None
 
 

@@ -936,6 +936,11 @@ def _lodge_runtime(wolts: Path, live_pid: int) -> None:
         **session, "name": "beaverwolt-repo", "workdir": "/elsewhere/repo", "dir": "/elsewhere/repo",
         "target": {"wolt_id": "beaverwolt", "canonical_workdir": "/elsewhere/repo"},
     })
+    write("beaverwolt/.state/sessions/beaverwolt-old.json", {
+        **session, "name": "beaverwolt-old", "status": "stopped",
+        "workdir": "/workspace/wolts/beaverwolt", "dir": "/workspace/wolts/beaverwolt",
+        "target": {"wolt_id": "beaverwolt", "canonical_workdir": "/workspace/wolts/beaverwolt"},
+    })
     write(".space/auto-grants.json", {"grants": [
         {"wolt_id": "beaverwolt", "canonical_workdir": f"{source}/beaverwolt", "policy_version": 1},
         {"wolt_id": "beaverwolt", "canonical_workdir": "/elsewhere/repo", "policy_version": 1},
@@ -957,6 +962,9 @@ def test_restore_disarms_the_copy(wolts, tmp_path):
     assert session["workdir"] == session["dir"] == str(copy / "beaverwolt")
     assert session["target"]["canonical_workdir"] == str(copy / "beaverwolt")
     assert session["harness_session_id"] == "resume-me"
+    # The container era saw the same lodge at /workspace/wolts: re-pointed, not set aside.
+    old = json.loads((copy / "beaverwolt/.state/sessions/beaverwolt-old.json").read_text())
+    assert old["dir"] == old["target"]["canonical_workdir"] == str(copy / "beaverwolt")
     # Worked outside the lodge: set aside, not re-pointed, not deleted.
     assert not (copy / "beaverwolt/.state/sessions/beaverwolt-repo.json").exists()
     aside = restored.target / backup_mod.QUARANTINE_NAME / "beaverwolt/.state/sessions/beaverwolt-repo.json"
