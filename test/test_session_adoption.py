@@ -50,6 +50,7 @@ def _layout(tmp_path):
 
 def test_adoption_starts_from_registry_and_preserves_session_identity(tmp_path):
     layout = _layout(tmp_path)
+    (layout.wolts_dir / "testwolt").mkdir(parents=True)  # adoption walks the wolt folders
     reg = SessionRegistry(layout.wolts_dir)
     live = reg.create(
         "live-session", wolt="testwolt", harness="claude",

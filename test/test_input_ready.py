@@ -9,6 +9,7 @@ rather than pastes, when it never does.
 Fake runtimes and a fake clock throughout: no tmux, no real waiting.
 """
 
+import json
 import os
 import pty
 import subprocess
@@ -308,7 +309,7 @@ class BootingRuntime(FakeSessionRuntime):
 
 @pytest.fixture
 def lodge(tmp_path, monkeypatch):
-    """One claude session, stamped and running, with a recording lock."""
+    """One claude session, stamped and running, with a recording registry write."""
     import paths
 
     monkeypatch.setattr(sessions, "WOLTS_DIR", tmp_path)
@@ -325,15 +326,22 @@ def lodge(tmp_path, monkeypatch):
     clock = Clock()
     monkeypatch.setattr(sessions, "time", clock)
 
-    real_lock = sessions.SessionRegistry._lock
+    real_edit = sessions.SessionRegistry.edit
 
     @contextmanager
-    def recording_lock(self, wolt, name):
+    def recording_edit(self, name, **kwargs):
         clock.events.append(("lock",))
-        with real_lock(self, wolt, name):
-            yield
+        with real_edit(self, name, **kwargs) as data:
+            yield data
 
-    monkeypatch.setattr(sessions.SessionRegistry, "_lock", recording_lock)
+    monkeypatch.setattr(sessions.SessionRegistry, "edit", recording_edit)
+    real_touch = sessions.SessionRegistry.touch
+
+    def recording_touch(self, name, **kwargs):  # delivery's claim
+        clock.events.append(("lock",))
+        return real_touch(self, name, **kwargs)
+
+    monkeypatch.setattr(sessions.SessionRegistry, "touch", recording_touch)
 
     installed = []
 
@@ -343,10 +351,9 @@ def lodge(tmp_path, monkeypatch):
         installed.append(runtime)
         return runtime
 
-    record = reg._path("pal", NAME)
     yield SimpleNamespace(
         reg=reg, clock=clock, events=clock.events, boot=boot,
-        record_text=lambda: record.read_text(),
+        record_text=lambda: json.dumps(reg._read("pal", NAME), sort_keys=True),
     )
     if installed:
         set_runtime(None)
@@ -663,7 +670,7 @@ class TestMessageRouteOnABootingAgent:
         resumed = Mock()
         monkeypatch.setattr(server_app, "resume_session", resumed)
         registry = Mock()
-        registry._lock = _unlocked
+        registry.edit = _unlocked
         registry.get.return_value = {"name": NAME, "wolt": "pal", "status": "running"}
         monkeypatch.setattr("sessions.SessionRegistry", Mock(return_value=registry))
 

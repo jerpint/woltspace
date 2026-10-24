@@ -52,6 +52,9 @@ jobs:
           test/test_release_workflow.py
           test/test_lodge_skills.py
           test/test_push_view.py
+          test/test_lodge_db.py
+          test/test_session_store.py
+          test/test_db_show_cli.py
           test/test_vulture.py
           test/test_vulture_connector.py
           test/test_session_expiry.py

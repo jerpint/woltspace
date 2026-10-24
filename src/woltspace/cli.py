@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 
 from . import __version__, lore
@@ -391,6 +392,79 @@ def _stop(args) -> int:
         lore.headline(lore.MOON, detail)
         lore.subtitle("lodge closed for the night")
     return code
+
+
+_RECORD_KEY = re.compile(r"record((?:\.[A-Za-z_][A-Za-z0-9_]*)+)")
+
+
+def _db_show(args) -> int:
+    """Print one lodge.db table, read-only, with the lodge up or down.
+
+    No SQL from the user: the table and every --where column are checked
+    against the file's own schema, and values are bound, never pasted in.
+    """
+    import sqlite3
+
+    layout = RuntimeLayout.from_env()
+    lib_dir = str(layout.runtime_lib)
+    if lib_dir not in sys.path:
+        sys.path.insert(0, lib_dir)
+    import lodge_db
+
+    try:
+        conn = lodge_db.connect(layout.wolts_dir, readonly=True)
+    except sqlite3.Error:
+        print(f"no lodge.db at {lodge_db.path(layout.wolts_dir)}", file=sys.stderr)
+        return 1
+    try:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if args.table not in tables:
+            print(f"no table {args.table}; tables: {', '.join(sorted(tables))}", file=sys.stderr)
+            return 2
+        columns = [row[1] for row in conn.execute(f'PRAGMA table_info("{args.table}")')]
+        clauses, values = [], []
+        for where in args.where:
+            column, sep, value = where.partition("=")
+            if not sep:
+                print(f"--where takes col=value, not {where!r}", file=sys.stderr)
+                return 2
+            key = _RECORD_KEY.fullmatch(column)
+            if column in columns:
+                clauses.append(f'"{column}" = ?')  # the column's affinity converts it
+                values.append(value)
+            elif column.startswith("record.") and "record" in columns:
+                if key is None:
+                    print(f"{column!r} is not a record key", file=sys.stderr)
+                    return 2
+                # JSON has no affinity: "7" and 7 are both asked for.
+                clauses.append("json_extract(record, ?) IN (?, ?)")
+                number = int(value) if value.lstrip("-").isdigit() else value
+                values.extend(["$" + key.group(1), value, number])
+            else:
+                print(f"no column {column} in {args.table}; columns: {', '.join(columns)}"
+                      + (", or record.<key>" if "record" in columns else ""), file=sys.stderr)
+                return 2
+        sql = f'SELECT * FROM "{args.table}"'
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        rows = conn.execute(sql + " ORDER BY rowid", values).fetchall()
+    finally:
+        conn.close()
+    if args.json:
+        for row in rows:
+            data = dict(row)
+            if isinstance(data.get("record"), str):
+                data["record"] = json.loads(data["record"])
+            print(json.dumps(data))
+        return 0
+    # The record column is the whole JSON: --json prints it.
+    shown = [c for c in columns if c != "record"]
+    print("| " + " | ".join(shown) + " |")
+    print("|" + "|".join("---" for _ in shown) + "|")
+    for row in rows:
+        cells = ("" if row[c] is None else str(row[c]).replace("|", "\\|") for c in shown)
+        print("| " + " | ".join(cells) + " |")
+    return 0
 
 
 def _backup(args) -> int:
@@ -1076,6 +1150,15 @@ def build_parser() -> argparse.ArgumentParser:
     restore.add_argument("--to", default="", help="target directory (must be new or empty)")
     restore.add_argument("--json", action="store_true")
     restore.set_defaults(func=_restore)
+
+    db = sub.add_parser("db", help="read the lodge's state database")
+    db_sub = db.add_subparsers(dest="db_command", required=True)
+    db_show = db_sub.add_parser("show", help="print one table, read-only")
+    db_show.add_argument("table")
+    db_show.add_argument("--where", action="append", default=[], metavar="COL=VALUE",
+                         help="a column, or record.<key>; repeat to narrow")
+    db_show.add_argument("--json", action="store_true", help="one JSON object per row")
+    db_show.set_defaults(func=_db_show)
 
     auto = sub.add_parser(
         "auto", help="manage repository-scoped Auto consent for native sessions"

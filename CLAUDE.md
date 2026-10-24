@@ -210,13 +210,15 @@ CLI: `woltspace wolf list|add|set|rm|run|runs` — a thin client of `/wolf/crons
 Background session reaper, run as the `vulture` connector (`WOLTSPACE_VULTURE` / `channels.vulture` turn it off). Every 10 minutes it rests running sessions nobody has used for longer than the lodge's idle setting (`sessions.idle_timeout_seconds`, default 1 day; use is a lodge write such as a message in or out, or a keystroke or attach in tmux, never output) unless they hold (`woltspace session hold`, for a background task), marks sessions whose tmux is gone, and stops lodge sessions whose agent exited. It never touches a tmux session the registry does not know: natively that is the owner's own.
 
 ### `container/lib/sessions.py` (Session Registry)
-Centralized session metadata — single source of truth. One JSON file per session in `.state/registry/{session_name}.json`.
+Centralized session metadata — single source of truth. One row per session in the lodge's SQLite file, `.space/lodge.db` (`container/lib/lodge_db.py`: WAL, one write transaction at a time, no lock files). The record is kept whole as JSON beside a few queried columns. Read it through `woltspace session list` or the HTTP API, never by opening the file; `woltspace db show <table> [--where col=val|record.key=val ...] [--json]` prints any table read-only, lodge up or down (a markdown table, or JSONL with the record as an object). Read-modify-write goes through `SessionRegistry.edit(name)`, which holds the lodge's one write lock: SQL only, never tmux or ps (the tests fail a subprocess inside a write). A tmux stop goes through `stop_and_settle`: the record is `stopping` while tmux dies, and a message waits for it, then wakes the session. At boot the control plane imports any old `<wolt>/.state/sessions/*.json` it still finds (then renamed `sessions.imported/`).
 
 Each entry tracks: name, wolt, creature, model, status, timestamps, routing (adapter, chat_id, user_id, thread_ts), viewport URL, session URL.
 
 API: `SessionRegistry.create()`, `.update()`, `.get()`, `.list()`, `.finish()`, `.touch()`, `.reconcile()`, `.delete()`.
 
 Used by core.py, run-session.sh, notify, and server. CLI wrapper: `session-reg`.
+
+Every lodge process must run as the lodge's user: `lodge.db` is 0600, and even a read-only open has to write its `-shm`, so `sudo` or another uid gets "unable to open database file".
 
 ### `container/bin/`
 Utility scripts available in container PATH:
@@ -310,7 +312,7 @@ Use `/viewport` for full details: URL paths, app serving, live-reload behavior.
 Multiple wolts can run in one container. They all share:
 - The same server
 - The same bot process
-- `~/.woltspace/wolts/.state/registry/` for session metadata and notification routing
+- `~/.woltspace/wolts/.space/lodge.db` for session metadata and notification routing
 
 `~/.woltspace/wolts/woltspace.json` tracks the active wolt per adapter. The bot can `switch_wolt` at runtime.
 

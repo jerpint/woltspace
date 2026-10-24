@@ -562,6 +562,7 @@ class TestOrphanedSessionsRecordWhy:
     def _registry(self, tmp_path):
         from sessions import SessionRegistry
 
+        (tmp_path / "alpha").mkdir()  # the registry no longer makes the wolt's folder
         return SessionRegistry(tmp_path)
 
     def test_reconcile_stamps_the_reason(self, tmp_path, monkeypatch):
@@ -574,8 +575,7 @@ class TestOrphanedSessionsRecordWhy:
 
         assert reg.reconcile() == ["s1"]
 
-        record = json.loads(
-            (tmp_path / "alpha" / ".state" / "sessions" / "s1.json").read_text())
+        record = reg._read("alpha", "s1")
         assert record["status"] == "orphaned"
         assert record["orphaned_reason"] == sessions.ORPHAN_TMUX_MISSING
 
@@ -592,8 +592,7 @@ class TestOrphanedSessionsRecordWhy:
 
         assert [entry["session"] for entry in report["orphaned"]] == ["s2"]
         assert report["orphaned"][0]["reason"] == sessions.ORPHAN_RUNTIME_GONE
-        record = json.loads(
-            (tmp_path / "alpha" / ".state" / "sessions" / "s2.json").read_text())
+        record = reg._read("alpha", "s2")
         assert record["orphaned_reason"] == sessions.ORPHAN_RUNTIME_GONE
 
     def test_coming_back_to_life_clears_the_reason(self, tmp_path, fake_runtime):
@@ -603,18 +602,17 @@ class TestOrphanedSessionsRecordWhy:
         reg = self._registry(tmp_path)
         reg.create(name="s4", wolt="alpha", creature="otter", model="haiku",
                    dir=str(tmp_path / "alpha"), prompt="x")
-        record_path = tmp_path / "alpha" / ".state" / "sessions" / "s4.json"
 
         fake_runtime._alive = False
         reg.adopt_runtime_sessions()
-        assert json.loads(record_path.read_text())["orphaned_reason"]
+        assert reg._read("alpha", "s4")["orphaned_reason"]
 
         # every road back to running goes through _write, so one check covers
         # adoption and all three resume branches
         fake_runtime._alive = True
         reg.update("s4", wolt="alpha", status="running")
 
-        record = json.loads(record_path.read_text())
+        record = reg._read("alpha", "s4")
         assert record["status"] == "running"
         assert "orphaned_reason" not in record
 
@@ -627,6 +625,5 @@ class TestOrphanedSessionsRecordWhy:
         monkeypatch.setattr(sessions, "_tmux_sessions", lambda: {"s3"})
 
         assert reg.reconcile() == []
-        record = json.loads(
-            (tmp_path / "alpha" / ".state" / "sessions" / "s3.json").read_text())
+        record = reg._read("alpha", "s3")
         assert "orphaned_reason" not in record

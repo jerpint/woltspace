@@ -15,6 +15,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "container" / "lib"))
 
+import lodge_db  # noqa: E402
 import sessions  # noqa: E402
 import wolfcore  # noqa: E402
 import wolt_archive  # noqa: E402
@@ -44,8 +45,13 @@ def _session(wolts_dir, wolt, name, *, status, runtime=None, **fields):
         runtime.live.add(name)
 
 
-def _record(wolt_home, name):
-    return json.loads((wolt_home / ".state" / "sessions" / f"{name}.json").read_text())
+def _record(wolts_dir, name):
+    """The stored record, archived or not: straight from the lodge's lodge.db."""
+    conn = lodge_db.connect(wolts_dir)
+    try:
+        return json.loads(conn.execute("SELECT record FROM sessions WHERE name=?", (name,)).fetchone()[0])
+    finally:
+        conn.close()
 
 
 def _owners(wolts_dir):
@@ -92,11 +98,11 @@ def test_archive_moves_the_folder_and_ends_running_sessions(tmp_path, live_runti
     assert not home.exists() and (archived / "wolt" / "wolt.json").is_file()
     assert "pal" not in _owners(tmp_path) and live_runtime.live == set()
     # With a conversation id, found or recovered, a session rests: after unarchive a message wakes it.
-    rested = _record(archived, RUNNING)
+    rested = _record(tmp_path, RUNNING)
     assert (rested["status"], rested["rested_at"], rested["rest_reason"]) == ("resting", 5000, "archived")
-    assert [_record(archived, RECOVERED)[k] for k in ("status", "harness_session_id")] == ["resting", "found-1"]
-    assert [_record(archived, NO_ID)[k] for k in ("status", "finished_at")] == ["stopped", 5000]
-    assert "rest_reason" not in _record(archived, RESTING)
+    assert [_record(tmp_path, RECOVERED)[k] for k in ("status", "harness_session_id")] == ["resting", "found-1"]
+    assert [_record(tmp_path, NO_ID)[k] for k in ("status", "finished_at")] == ["stopped", 5000]
+    assert "rest_reason" not in _record(tmp_path, RESTING)
 
 
 @pytest.mark.parametrize("taken", ["before", "during"])
@@ -121,7 +127,7 @@ def test_a_hold_refuses_the_archive_and_ends_nothing_it_holds(tmp_path, live_run
 
     assert e.value.status == 409
     assert e.value.extra["held"] == [{"session": held[0], "reason": "npm run dev"}]
-    assert held[0] in live_runtime.live and _record(tmp_path / "pal", held[0])["status"] == "running"
+    assert held[0] in live_runtime.live and _record(tmp_path, held[0])["status"] == "running"
     assert len(live_runtime.stops) == (0 if taken == "before" else 1)
     assert not (tmp_path / ".archive" / "pal").exists()
 
@@ -157,9 +163,9 @@ def test_the_sweep_ends_exact_names_only_and_recovers_no_id(tmp_path, live_runti
     assert archive_wolt("ledger", wolts_dir=tmp_path)["stopped"] == sorted([woke, fresh])
 
     archived = tmp_path / ".archive" / "ledger"
-    assert live_runtime.live == {two} and _record(tmp_path / "ledger-two", two)["status"] == "running"
-    assert [_record(archived, woke)[k] for k in ("status", "rest_reason")] == ["resting", "archived"]
-    assert _record(archived, fresh)["status"] == "stopped" and "harness_session_id" not in _record(archived, fresh)
+    assert live_runtime.live == {two} and _record(tmp_path, two)["status"] == "running"
+    assert [_record(tmp_path, woke)[k] for k in ("status", "rest_reason")] == ["resting", "archived"]
+    assert _record(tmp_path, fresh)["status"] == "stopped" and "harness_session_id" not in _record(tmp_path, fresh)
     assert not (tmp_path / ".archive" / ".state").exists()
 
 
@@ -382,13 +388,14 @@ def test_delete_never_follows_a_link_to_the_cron_stamps(tmp_path, live_runtime, 
     """A link anywhere on .space/wolf/<name> skips the stamps; the delete still goes through."""
     wolts_dir, outside = tmp_path / "wolts", tmp_path / "outside"
     _wolt(wolts_dir, "pal")
-    archive_wolt("pal", wolts_dir=wolts_dir)
     stamp = outside / ".space" / "wolf" / "pal" / "digest.last"
     stamp.parent.mkdir(parents=True)
     stamp.write_text("2026-10-17-09:00")
     if link == ".space/wolf":
         (wolts_dir / ".space").mkdir()
+    # Linked before the archive: lodge.db lives in .space, so it exists from then on.
     (wolts_dir / link).symlink_to(outside / link, target_is_directory=True)
+    archive_wolt("pal", wolts_dir=wolts_dir)
 
     assert delete_archived_wolt("pal", wolts_dir=wolts_dir)["deleted"] == "pal"
     assert stamp.read_text() == "2026-10-17-09:00" and not (wolts_dir / ".archive" / "pal").exists()
