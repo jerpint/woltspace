@@ -1,6 +1,5 @@
 """The lodge's bounded session projection stays fast and semantically exact."""
 
-import json
 import sys
 import time
 from pathlib import Path
@@ -18,9 +17,7 @@ import server.app as server_app
 
 
 def _record(root: Path, wolt: str, name: str, **fields) -> None:
-    target = root / wolt / ".state" / "sessions" / f"{name}.json"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps({
+    sessions.SessionRegistry(root)._write(wolt, name, {
         "name": name,
         "wolt": wolt,
         "status": "stopped",
@@ -31,7 +28,7 @@ def _record(root: Path, wolt: str, name: str, **fields) -> None:
         "target": {"canonical_workdir": "/private/full-target"},
         "runtime": fields.pop("runtime", {}),
         **fields,
-    }))
+    })
 
 
 def test_lodge_view_is_bounded_slim_and_tmux_open_aware(tmp_path, monkeypatch):

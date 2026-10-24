@@ -554,6 +554,7 @@ class TestUnitShareApp:
         """share_app raises ValueError when app has no running state."""
         import apps as apps_mod
         monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setattr(apps_mod, "WOLTS_DIR", tmp_path)
         with pytest.raises(ValueError, match="not running"):
             apps_mod.share_app("phantom-app")
 
@@ -561,12 +562,14 @@ class TestUnitShareApp:
         """unshare_app returns False when app has no state file."""
         import apps as apps_mod
         monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setattr(apps_mod, "WOLTS_DIR", tmp_path)
         assert apps_mod.unshare_app("phantom-app") is False
 
     def test_unshare_returns_false_if_no_tunnel(self, tmp_path, monkeypatch):
         """unshare_app returns False when state exists but no tunnel_pid."""
         import apps as apps_mod
         monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setattr(apps_mod, "WOLTS_DIR", tmp_path)
         apps_mod._write_state("my-proj", {"name": "my-proj", "port": 4500, "pid": 99})
         assert apps_mod.unshare_app("my-proj") is False
 
@@ -574,6 +577,7 @@ class TestUnitShareApp:
         """unshare_app clears tunnel_pid and tunnel_url in state."""
         import apps as apps_mod
         monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setattr(apps_mod, "WOLTS_DIR", tmp_path)
         # _is_pid_alive returns False — tunnel process already gone
         monkeypatch.setattr(apps_mod, "_is_pid_alive", lambda pid: False)
 
@@ -596,6 +600,7 @@ class TestUnitShareApp:
         """share_app returns existing quick tunnel info if tunnel process is alive."""
         import apps as apps_mod
         monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setattr(apps_mod, "WOLTS_DIR", tmp_path)
         monkeypatch.setattr(apps_mod, "_is_pid_alive", lambda pid: True)
         monkeypatch.delenv("CLOUDFLARE_TUNNEL_URL", raising=False)
 
@@ -615,6 +620,7 @@ class TestUnitShareApp:
         """share_app returns subdomain URL when CLOUDFLARE_TUNNEL_URL is set."""
         import apps as apps_mod
         monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setattr(apps_mod, "WOLTS_DIR", tmp_path)
         monkeypatch.setenv("CLOUDFLARE_TUNNEL_URL", "https://jerpint.woltspace.com")
 
         apps_mod._write_state("my-proj", {
@@ -631,6 +637,7 @@ class TestUnitShareApp:
         """share_app uses quick tunnel when CLOUDFLARE_TUNNEL_URL is not set."""
         import apps as apps_mod
         monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setattr(apps_mod, "WOLTS_DIR", tmp_path)
         monkeypatch.delenv("CLOUDFLARE_TUNNEL_URL", raising=False)
         monkeypatch.setattr(apps_mod, "_is_pid_alive", lambda pid: False)
         monkeypatch.setattr(apps_mod, "start_cloudflared", lambda port, host_header: {
@@ -652,6 +659,7 @@ class TestUnitShareApp:
         """share_app raises RuntimeError when SHARING_ENABLED is False."""
         import apps as apps_mod
         monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setattr(apps_mod, "WOLTS_DIR", tmp_path)
         monkeypatch.setattr(apps_mod, "SHARING_ENABLED", False)
 
         apps_mod._write_state("my-proj", {"name": "my-proj", "port": 4500, "pid": 99})
@@ -663,6 +671,7 @@ class TestUnitShareApp:
         """unshare_all_apps kills all tunnel processes."""
         import apps as apps_mod
         monkeypatch.setattr(apps_mod, "_RUNNING_STATE_DIR", tmp_path)
+        monkeypatch.setattr(apps_mod, "WOLTS_DIR", tmp_path)
 
         killed_pids = []
         def mock_kill(pid):

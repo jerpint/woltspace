@@ -128,7 +128,8 @@ step "restarting to trigger reconcile..."
 "$WOLTSPACE_DIR/woltspace" start 2>&1
 
 sleep 3
-FAKE_STATUS=$(docker exec "$CONTAINER_NAME" cat /workspace/wolts/testwolt/.state/sessions/fake-session.json 2>/dev/null | grep -o '"status": *"[^"]*"' | head -1)
+# The boot imports the injected file into lodge.db; read it back from there.
+FAKE_STATUS=$(docker exec "$CONTAINER_NAME" session-reg get fake-session 2>/dev/null | grep -o '"status": *"[^"]*"' | head -1)
 [[ "$FAKE_STATUS" == *"orphaned"* ]] || [[ "$FAKE_STATUS" == *"reaped"* ]] && pass "stale session reconciled on boot" || fail "stale session not reconciled ($FAKE_STATUS)"
 
 # ── backup ──

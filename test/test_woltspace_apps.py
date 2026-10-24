@@ -8,6 +8,7 @@ Usage:
 """
 
 import json
+from contextlib import closing
 import os
 import signal
 import sys
@@ -163,31 +164,71 @@ class TestRunningState:
     def test_no_running_apps(self, wolts_dir):
         assert apps.running_apps() == []
 
+    def test_state_lives_in_the_lodge_db(self, wolts_dir):
+        import lodge_db
+        apps._write_state("pal-app", {"name": "pal-app", "keeper": "pal", "port": 4001,
+                                      "pid": 7, "start_command": "npm start"})
+        apps._write_state("pal-app", {**apps._read_state("pal-app"),
+                                      "tunnel_pid": 8, "tunnel_url": "https://x"})
+
+        with closing(lodge_db.connect(wolts_dir, readonly=True)) as conn:
+            row = dict(conn.execute("SELECT name, pid, port, tunnel_pid, tunnel_url, keeper"
+                                    " FROM apps_running").fetchone())
+        assert row == {"name": "pal-app", "pid": 7, "port": 4001, "tunnel_pid": 8,
+                       "tunnel_url": "https://x", "keeper": "pal"}
+        assert apps._read_state("pal-app")["start_command"] == "npm start"
+        assert not (apps._RUNNING_STATE_DIR / "pal-app.json").exists()
+        apps._clear_state("pal-app")
+        assert apps._read_state("pal-app") is None
+
     def test_stale_state_not_listed_but_preserved(self, wolts_dir):
         """Under the intent model, dead-PID state files persist (user wants app on)
         but aren't reported as running. Boot-time apps_restore() respawns them.
         """
-        state_dir = apps._RUNNING_STATE_DIR
-        state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "dead.json").write_text(json.dumps({
+        apps._write_state("dead", {
             "name": "dead", "port": 4001, "pid": 999999,
-        }))
+        })
         assert apps.running_apps() == []
-        assert (state_dir / "dead.json").exists()
+        assert apps._read_state("dead") is not None
 
     def test_intended_apps_includes_stale(self, wolts_dir):
         """intended_apps() returns both running and stale-intent apps with alive flag."""
-        state_dir = apps._RUNNING_STATE_DIR
-        state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "dead.json").write_text(json.dumps({
+        apps._write_state("dead", {
             "name": "dead", "port": 4001, "pid": 999999,
-        }))
-        (state_dir / "alive.json").write_text(json.dumps({
+        })
+        apps._write_state("alive", {
             "name": "alive", "port": 4002, "pid": os.getpid(),
-        }))
+        })
         result = {s["name"]: s for s in apps.intended_apps()}
         assert result["dead"]["alive"] is False
         assert result["alive"]["alive"] is True
+
+    def test_a_record_without_a_name_still_restores(self, wolts_dir):
+        import lodge_db
+        with lodge_db.write(wolts_dir) as conn:
+            conn.execute("INSERT INTO apps_running (name, started_at, record)"
+                         " VALUES ('ghost', 0, '{\"pid\": 999999}')")
+        assert apps.apps_restore() == [{"name": "ghost", "action": "orphan-cleaned"}]
+
+    def test_old_state_files_are_imported_and_retired_logs_stay(self, wolts_dir):
+        import lodge_db
+        state_dir = apps._RUNNING_STATE_DIR
+        state_dir.mkdir(parents=True)
+        (state_dir / "pal-app.json").write_text(json.dumps(
+            {"name": "pal-app", "port": 4001, "pid": 7, "keeper": "pal"}))
+        (state_dir / "nunu-app.json").write_text(json.dumps({"name": "nunu-app", "pid": 8}))
+        (state_dir / "pal-app.log").write_text("log\n")
+        apps._write_state("nunu-app", {"name": "nunu-app", "pid": 9})
+
+        ran = lodge_db.run_imports(wolts_dir, {"apps": apps.import_apps})
+
+        assert ran == {"apps": {"imported": 1, "skipped": 1}}
+        assert apps._read_state("pal-app") == {"name": "pal-app", "port": 4001, "pid": 7,
+                                               "keeper": "pal"}
+        assert apps._read_state("nunu-app")["pid"] == 9
+        assert sorted(p.name for p in state_dir.iterdir()) == [
+            "nunu-app.json.imported", "pal-app.json.imported", "pal-app.log"]
+        assert lodge_db.run_imports(wolts_dir, {"apps": apps.import_apps}) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -271,11 +312,9 @@ class TestStartStop:
     @patch("apps.subprocess.Popen")
     def test_start_rejects_port_conflict_with_running(self, mock_popen, wolts_dir):
         """Can't start if another running app holds the same port."""
-        state_dir = apps._RUNNING_STATE_DIR
-        state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "occupant.json").write_text(json.dumps({
+        apps._write_state("occupant", {
             "name": "occupant", "port": 4300, "pid": os.getpid(),
-        }))
+        })
         _make_app(wolts_dir, "conflict", start="echo hi", port=4300)
         with pytest.raises(RuntimeError, match="already in use"):
             apps.start_app("conflict")
@@ -284,11 +323,9 @@ class TestStartStop:
     def test_start_returns_existing_if_alive(self, mock_popen, wolts_dir):
         """Starting an already-running app returns its existing state."""
         _make_app(wolts_dir, "already", start="echo hi", port=4005)
-        state_dir = apps._RUNNING_STATE_DIR
-        state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "already.json").write_text(json.dumps({
+        apps._write_state("already", {
             "name": "already", "port": 4005, "pid": os.getpid(),
-        }))
+        })
         state = apps.start_app("already")
         assert state["port"] == 4005
         mock_popen.assert_not_called()
@@ -299,15 +336,13 @@ class TestStartStop:
     @patch("apps.os.killpg")
     @patch("apps.os.getpgid", return_value=999)
     def test_stop_running_app(self, mock_getpgid, mock_killpg, wolts_dir):
-        state_dir = apps._RUNNING_STATE_DIR
-        state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "app.json").write_text(json.dumps({
+        apps._write_state("app", {
             "name": "app", "port": 4001, "pid": os.getpid(),
-        }))
+        })
         result = apps.stop_app("app")
         assert result is True
         mock_killpg.assert_called_once_with(999, signal.SIGTERM)
-        assert not (state_dir / "app.json").exists()
+        assert apps._read_state("app") is None
 
 
 # ---------------------------------------------------------------------------
@@ -322,11 +357,9 @@ class TestAppsRestore:
     def test_restore_survived_app(self, wolts_dir):
         """App whose PID is still alive is left alone (no respawn)."""
         _make_app(wolts_dir, "surviving", start="echo hi", port=4100)
-        state_dir = apps._RUNNING_STATE_DIR
-        state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "surviving.json").write_text(json.dumps({
+        apps._write_state("surviving", {
             "name": "surviving", "port": 4100, "pid": os.getpid(),
-        }))
+        })
         with patch("apps.subprocess.Popen") as mock_popen:
             actions = apps.apps_restore()
         mock_popen.assert_not_called()
@@ -337,11 +370,9 @@ class TestAppsRestore:
         """App with dead PID gets respawned via start_app()."""
         mock_popen.return_value.pid = 22222
         _make_app(wolts_dir, "crashed", start="node server.js", port=4101)
-        state_dir = apps._RUNNING_STATE_DIR
-        state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "crashed.json").write_text(json.dumps({
+        apps._write_state("crashed", {
             "name": "crashed", "port": 4101, "pid": 999999,  # dead
-        }))
+        })
         actions = apps.apps_restore()
         mock_popen.assert_called_once()
         assert len(actions) == 1
@@ -351,12 +382,9 @@ class TestAppsRestore:
 
     def test_restore_cleans_orphan_state(self, wolts_dir):
         """State file for an app whose manifest was deleted gets removed."""
-        state_dir = apps._RUNNING_STATE_DIR
-        state_dir.mkdir(parents=True, exist_ok=True)
-        orphan = state_dir / "ghost.json"
-        orphan.write_text(json.dumps({"name": "ghost", "port": 4102, "pid": 999999}))
+        apps._write_state("ghost", {"name": "ghost", "port": 4102, "pid": 999999})
         actions = apps.apps_restore()
-        assert not orphan.exists()
+        assert apps._read_state("ghost") is None
         assert actions == [{"name": "ghost", "action": "orphan-cleaned"}]
 
     @patch("apps.subprocess.Popen")
@@ -364,11 +392,9 @@ class TestAppsRestore:
         """If respawn fails, record the error and keep going."""
         mock_popen.side_effect = RuntimeError("boom")
         _make_app(wolts_dir, "cursed", start="node server.js", port=4103)
-        state_dir = apps._RUNNING_STATE_DIR
-        state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "cursed.json").write_text(json.dumps({
+        apps._write_state("cursed", {
             "name": "cursed", "port": 4103, "pid": 999999,
-        }))
+        })
         actions = apps.apps_restore()
         assert actions[0]["action"] == "restore-failed"
         assert "boom" in actions[0]["error"]
