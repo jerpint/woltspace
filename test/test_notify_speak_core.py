@@ -54,6 +54,7 @@ def lodge(monkeypatch, tmp_path):
         return len(OGG)
 
     (tmp_path / "tunnel.json").write_text('{"url": "https://lodge.test"}')
+    monkeypatch.setattr(notify, "WOLTS_DIR", tmp_path)                 # no woltspace.json: OpenAI defaults
     monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
     monkeypatch.setattr(notify, "OUTBOX_DIR", state.box)
     monkeypatch.setattr(notify, "WOLTS_DIR", tmp_path)  # woltspace.json `speech` lives here
@@ -353,6 +354,7 @@ def real_lodge(monkeypatch, tmp_path):
         return len(OGG)
 
     (tmp_path / "tunnel.json").write_text('{"url": "https://lodge.test"}')
+    monkeypatch.setattr(notify, "WOLTS_DIR", tmp_path)                 # no woltspace.json: OpenAI defaults
     monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
     monkeypatch.setattr(notify, "OUTBOX_DIR", tmp_path / "outbox")
     monkeypatch.setattr(notify, "dotenv_env", lambda key: env.get(key, ""))
