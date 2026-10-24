@@ -83,7 +83,7 @@ mode on purpose keeps asking even where Auto is approved, and asking for Auto
 where no grant exists is refused rather than quietly downgraded — you find out
 at spawn, not three commands into the transcript.
 
-Grants live in `<wolts>/.space/auto-grants.json`, owner-readable only, and
+Grants are rows in the lodge DB (`<wolts>/.space/lodge.db`, table `grants`), and
 `woltspace auto revoke` takes one back. Revoking does not touch a session
 already running under it: a live agent keeps the permissions it started with
 until it exits.

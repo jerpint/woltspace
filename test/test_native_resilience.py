@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT / "container" / "lib"))
 
 from session_runtime import RuntimeHandle, set_runtime  # noqa: E402
 from sessions import SessionRegistry  # noqa: E402
+from conftest import make_session  # noqa: E402
 from woltspace.adoption import adopt_runtime_sessions  # noqa: E402
 from woltspace.channel_supervisor import ChannelSupervisor, read_connector_report  # noqa: E402
 from woltspace.channels import ConnectorPlan  # noqa: E402
@@ -224,6 +225,7 @@ class AdoptionRuntime:
 class TestUpgradePath:
     def test_stop_then_start_readopts_sessions_and_the_connector(self, tmp_path, request):
         layout = _layout(tmp_path)
+        (layout.wolts_dir / "testwolt").mkdir(parents=True)
         registry = SessionRegistry(layout.wolts_dir)
         registry.create("upgrade-session", wolt="testwolt", harness="claude")
         registry.update(
@@ -670,9 +672,7 @@ class TestEntrypointsAreNotExempt:
         (layout.platform_state / "tunnel.json").write_text(json.dumps({
             "pid": 999998, "url": "https://old.example", "instance_id": "previous-boot",
         }))
-        sessions = layout.wolts_dir / "realwolt" / ".state" / "sessions"
-        sessions.mkdir(parents=True)
-        (sessions / "s.json").write_text(json.dumps({"status": "running"}))
+        make_session(SessionRegistry(layout.wolts_dir), name="s", wolt="realwolt")
 
         runner = fake_ps({})  # nothing from the old boot survived
         assert shared_data_root_check(layout, as_entrypoint=True, runner=runner) is None
@@ -683,9 +683,7 @@ class TestEntrypointsAreNotExempt:
         from woltspace.doctor import shared_data_root_check
 
         layout = _layout(tmp_path, isolation="external")
-        sessions = layout.wolts_dir / "realwolt" / ".state" / "sessions"
-        sessions.mkdir(parents=True)
-        (sessions / "s.json").write_text(json.dumps({"status": "running"}))
+        make_session(SessionRegistry(layout.wolts_dir), name="s", wolt="realwolt")
 
         assert shared_data_root_check(layout, as_entrypoint=True) is None
         # …but they still stop a guest.
@@ -837,11 +835,7 @@ class TestAStrayServeCannotTakeOverALiveDataRoot:
         (layout.platform_state / "tunnel.json").write_text(json.dumps({
             "pid": os.getpid(), "url": "https://incumbent.example", "type": "named",
         }))
-        sessions = layout.wolts_dir / "realwolt" / ".state" / "sessions"
-        sessions.mkdir(parents=True)
-        (sessions / "realwolt-live.json").write_text(json.dumps({
-            "name": "realwolt-live", "wolt": "realwolt", "status": "running",
-        }))
+        make_session(SessionRegistry(layout.wolts_dir), name="realwolt-live", wolt="realwolt")
         return layout
 
     # prepare() writes these directly; snapshot so a refused-then-allowed run

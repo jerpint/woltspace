@@ -5,7 +5,7 @@ Each Telegram chat (group or private) has an active wolt + session.
 Messages go directly to the active session. Dog only handles @mentions
 or chats with no active wolt.
 
-Chat state stored globally at wolts/.space/telegram/chats/{chat_id}.json
+Chat state stored in the lodge database (chat_state, adapter "telegram")
 Uploads stored at wolts/.space/telegram/uploads/
 History stored at wolts/.space/telegram/history/{chat_id}.jsonl
 """
@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import outbox
 from env_compat import get_env
 from paths import space_dir
+import chat_state
 from session_runtime import RuntimeHandle, get_runtime
 from sessions import resolve_active_session, wolt_harness
 from harnesses import platform_skill_invoke
@@ -54,7 +55,6 @@ _WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 
 # Global telegram state directories
 TELEGRAM_DIR = space_dir(_WOLTS_DIR) / "telegram"
-CHATS_DIR = TELEGRAM_DIR / "chats"
 HISTORY_DIR = TELEGRAM_DIR / "history"
 UPLOADS_DIR = TELEGRAM_DIR / "uploads"
 
@@ -173,38 +173,30 @@ def is_allowed(update: Update) -> bool:
 # Chat state — per chat_id, stored globally
 # ---------------------------------------------------------------------------
 
-def _chat_state_file(chat_id: int) -> Path:
-    return CHATS_DIR / f"{chat_id}.json"
-
-
 def _wolt_exists(name: str) -> bool:
     return wolt_exists(name, _WOLTS_DIR)
 
 
 def _load_chat_state(chat_id: int) -> dict:
-    """Load chat state: {active_wolt, active_session, updated_at}
+    """Load chat state: {active_wolt, active_session}
 
     A chosen wolt that is gone (archived, or removed by hand) reads as
     no choice, so every handler goes to the picker instead of a spawn that fails.
     """
-    path = _chat_state_file(chat_id)
-    if path.exists():
-        try:
-            state = json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError):
-            return {}
-        if state.get("active_wolt") and not _wolt_exists(state["active_wolt"]):
-            state.pop("active_wolt")
-            state.pop("active_session", None)
-        return state
-    return {}
+    state = chat_state.get(_WOLTS_DIR, "telegram", chat_id)
+    if state.get("active_wolt") and not _wolt_exists(state["active_wolt"]):
+        state.pop("active_wolt")
+        state.pop("active_session", None)
+    return state
 
 
 def _save_chat_state(chat_id: int, state: dict):
-    CHATS_DIR.mkdir(parents=True, exist_ok=True)
-    state["chat_id"] = chat_id
-    state["updated_at"] = datetime.now(timezone.utc).isoformat()
-    _chat_state_file(chat_id).write_text(json.dumps(state, indent=2))
+    chat_state.put(_WOLTS_DIR, "telegram", chat_id, state)
+
+
+def _forget_session(name: str):
+    """A killed session stops being any chat's active session."""
+    chat_state.forget_session(_WOLTS_DIR, "telegram", name)
 
 
 # ---------------------------------------------------------------------------
@@ -1387,16 +1379,7 @@ async def handle_kill(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = args[0]
     if kill_session(name):
         await _reply(update, f"Killed {name}.")
-        # Clear from any chat state that references this session
-        if CHATS_DIR.exists():
-            for f in CHATS_DIR.glob("*.json"):
-                try:
-                    state = json.loads(f.read_text())
-                    if state.get("active_session") == name:
-                        state["active_session"] = None
-                        f.write_text(json.dumps(state, indent=2))
-                except (json.JSONDecodeError, OSError):
-                    pass
+        _forget_session(name)
     else:
         await _reply(update, f"Couldn't kill {name}.")
 
@@ -1599,15 +1582,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name = data.split(":", 1)[1]
         if kill_session(name):
             await query.answer(f"stopped {name}")
-            if CHATS_DIR.exists():
-                for f in CHATS_DIR.glob("*.json"):
-                    try:
-                        state = json.loads(f.read_text())
-                        if state.get("active_session") == name:
-                            state["active_session"] = None
-                            f.write_text(json.dumps(state, indent=2))
-                    except (json.JSONDecodeError, OSError):
-                        pass
+            _forget_session(name)
         else:
             await query.answer("failed — session may already be gone", show_alert=True)
         text, markup = _sessions_picker_message(list_sessions(), get_tunnel_url())

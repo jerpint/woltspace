@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import re
 import shlex
 import subprocess
 import time
-from contextlib import contextmanager
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
 
+import lodge_db  # container/lib: whoever imports this module grafts it first
 
-STORE_VERSION = "woltspace.digs/v0"
+
 DEFAULT_BOOTSTRAP_DIR = ".woltspace/bootstrap"
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 _DESTINATION_RE = re.compile(r"^[A-Za-z0-9_.@:\[\]-]+$")
@@ -94,48 +94,21 @@ def resolve_ssh(
 
 
 class DigStore:
+    """Dig grants: the lodge DB's `grants` rows of kind 'dig', one per name."""
+
     def __init__(self, state_root: str | Path):
-        self.root = Path(state_root) / "digs"
-        self.path = self.root / "grants.json"
-        self.lock_path = self.root / "grants.lock"
+        self.wolts_dir = Path(state_root).parent
 
-    @contextmanager
-    def _locked(self):
-        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(self.root, 0o700)
-        fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            yield
-        finally:
-            os.close(fd)
-
-    def _read(self) -> dict:
-        if not self.path.exists():
-            return {"version": STORE_VERSION, "grants": []}
-        try:
-            payload = json.loads(self.path.read_text())
-        except (OSError, json.JSONDecodeError) as exc:
-            raise DigError("dig grant store is unreadable") from exc
-        if payload.get("version") != STORE_VERSION or not isinstance(payload.get("grants"), list):
-            raise DigError("dig grant store has an unsupported shape")
-        return payload
-
-    def _write(self, payload: dict) -> None:
-        temp = self.path.with_suffix(".tmp")
-        data = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
-        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(data)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temp, self.path)
-        finally:
-            try:
-                temp.unlink()
-            except FileNotFoundError:
-                pass
+    def _records(self, name: str | None = None) -> list[dict]:
+        if not lodge_db.path(self.wolts_dir).exists():
+            return []
+        with closing(lodge_db.connect(self.wolts_dir)) as conn:
+            rows = conn.execute(
+                "SELECT record FROM grants WHERE kind='dig'"
+                + (" AND scope=?" if name else "") + " ORDER BY approved_at, scope",
+                (name,) if name else (),
+            ).fetchall()
+        return [json.loads(row["record"]) for row in rows]
 
     def grant(
         self,
@@ -162,49 +135,45 @@ class DigStore:
             "last_connected_at": None,
             "last_exit_code": None,
         }
-        with self._locked():
-            payload = self._read()
-            if any(item.get("name") == name for item in payload["grants"]):
+        with lodge_db.write(self.wolts_dir) as conn:
+            if conn.execute("SELECT 1 FROM grants WHERE kind='dig' AND scope=?",
+                            (name,)).fetchone():
                 raise DigError(f"dig already exists: {name}")
-            payload["grants"].append(record)
-            self._write(payload)
+            conn.execute(
+                "INSERT INTO grants(kind, wolt_id, scope, approved_at, record)"
+                " VALUES ('dig', ?, ?, ?, ?)",
+                (wolt, name, now, json.dumps(record)),
+            )
         return dict(record)
 
     def get(self, name: str) -> dict:
-        _validate_name(name)
-        with self._locked():
-            for record in self._read()["grants"]:
-                if record.get("name") == name:
-                    return dict(record)
-        raise DigError(f"unknown dig: {name}")
+        found = self._records(_validate_name(name))
+        if not found:
+            raise DigError(f"unknown dig: {name}")
+        return found[0]
 
     def list(self) -> list[dict]:
-        with self._locked():
-            return [dict(item) for item in self._read()["grants"]]
+        return self._records()
 
     def revoke(self, name: str) -> bool:
         _validate_name(name)
-        with self._locked():
-            payload = self._read()
-            kept = [item for item in payload["grants"] if item.get("name") != name]
-            if len(kept) == len(payload["grants"]):
-                return False
-            payload["grants"] = kept
-            self._write(payload)
-            return True
+        with lodge_db.write(self.wolts_dir) as conn:
+            return conn.execute(
+                "DELETE FROM grants WHERE kind='dig' AND scope=?", (name,)
+            ).rowcount > 0
 
     def record_connection(self, name: str, *, exit_code: int, now: int | None = None) -> None:
         now = int(time.time()) if now is None else int(now)
-        with self._locked():
-            payload = self._read()
-            for record in payload["grants"]:
-                if record.get("name") == name:
-                    record["connect_count"] = int(record.get("connect_count", 0)) + 1
-                    record["last_connected_at"] = now
-                    record["last_exit_code"] = int(exit_code)
-                    self._write(payload)
-                    return
-        raise DigError(f"unknown dig: {name}")
+        with lodge_db.write(self.wolts_dir) as conn:
+            changed = conn.execute(
+                "UPDATE grants SET record=json_set(record,"
+                " '$.connect_count', COALESCE(json_extract(record, '$.connect_count'), 0) + 1,"
+                " '$.last_connected_at', ?, '$.last_exit_code', ?)"
+                " WHERE kind='dig' AND scope=?",
+                (now, int(exit_code), name),
+            ).rowcount
+        if not changed:
+            raise DigError(f"unknown dig: {name}")
 
 
 def connect(

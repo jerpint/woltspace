@@ -104,6 +104,7 @@ lists in the host `woltspace` launcher.
 | `WOLTSPACE_INSTANCE_ID` | Identifies one control plane, so tunnel state and ownership records can say who wrote them. | `supervisor.py`, `server/app.py`, `server/tunnel.py` | assigned per start |
 | `WOLTSPACE_ALLOW_SHARED_DATA_ROOT` | Opt out of the refusal to start a second control plane on a data root another one already owns. | `doctor.py` | unset (refuse) |
 | `WOLTSPACE_CONFIG` | Path override for `woltspace.json`. | `src/woltspace/config.py` | `<data root>/woltspace.json` |
+| `WOLTSPACE_BACKUP_AGE_RECIPIENT` | An age public key. When set, `woltspace backup` writes one `.tar.gz.age` encrypted to it, `.env` files and `config.json` inside; `age` must be on `PATH` or the backup fails. See `docs/backup.md`. | `src/woltspace/backup.py` | unset (plain archive, secrets withheld) |
 
 ## Connectors and surfaces
 

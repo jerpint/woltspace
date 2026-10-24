@@ -830,19 +830,12 @@ def _tool_wolf_jobs(args: dict, routing: dict | None) -> str:
     """Show recent wolf job log entries."""
     count = args.get("count", 10)
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from creatures.wolf import get_state_dir
-    log_file = get_state_dir() / "jobs.jsonl"
-    if not log_file.exists():
-        return json.dumps({"jobs": [], "note": "no job log yet"})
+    import wolfcore
+    from creatures.wolf import WOLTS_DIR
     try:
-        lines = log_file.read_text().strip().split("\n")
-        recent = lines[-count:]
-        jobs = []
-        for line in recent:
-            try:
-                jobs.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+        jobs = wolfcore.read_journal(WOLTS_DIR, limit=count)[::-1]  # oldest first
+        if not jobs:
+            return json.dumps({"jobs": [], "note": "no job log yet"})
         return json.dumps({"jobs": jobs, "count": len(jobs)})
     except Exception as e:
         return json.dumps({"error": str(e)})

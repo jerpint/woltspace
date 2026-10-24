@@ -1,8 +1,8 @@
 """Wolf core — the cron logic the scheduler and the lodge API share.
 
 Pure Python, no server: strict parsing, the AND of day-of-month and
-day-of-week, next_run across DST, the one due check, per-wolt stamps and their
-migration, and the locked atomic wolf.json write.
+day-of-week, next_run across DST, the one due check, per-wolt stamps, and the
+locked atomic wolf.json write.
 
 Usage: uv run pytest test/test_wolfcore.py -v
 """
@@ -193,7 +193,7 @@ class TestTheSchedulerUsesTheOneCheck:
         from creatures import wolf
         crons = [{"name": "d", "schedule": "0 6 * * *", "prompt": "p", "_owner": "nunu"}]
         now = datetime(2026, 3, 15, 6, 0).astimezone()
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
              patch("creatures.wolf.fire_cron"), \
              patch("wolfcore.due_slot", wraps=wolfcore.due_slot) as spy:
             wolf.check_and_fire(crons, now)
@@ -205,21 +205,21 @@ class TestTheSchedulerUsesTheOneCheck:
         from creatures import wolf
         crons = [{"name": "d", "schedule": "0 6 * * *", "prompt": "p", "_owner": "nunu"}]
         now = datetime(2026, 3, 15, 9, 0).astimezone()
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
              patch("creatures.wolf.fire_cron") as fire:
             wolf.catch_up(crons, now)
             wolf.catch_up(crons, now)                     # already caught up
         assert fire.call_count == 1
-        line = json.loads((tmp_path / "jobs.jsonl").read_text().splitlines()[0])
+        [line] = wolfcore.read_journal(tmp_path)
         assert line["event"] == "catch-up" and line["owner"] == "nunu"
         assert line["missed"].endswith("-06:00")
-        assert (tmp_path / "nunu" / "d.last").read_text().endswith("-06:00")
+        assert wolfcore.read_last_run(tmp_path, "nunu", "d").endswith("-06:00")
 
     def test_catch_up_false_opts_out(self, tmp_path):
         from creatures import wolf
         crons = [{"name": "d", "schedule": "0 6 * * *", "prompt": "p",
                   "_owner": "nunu", "catch_up": False}]
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
              patch("creatures.wolf.fire_cron") as fire:
             wolf.catch_up(crons, datetime(2026, 3, 15, 9, 0).astimezone())
         fire.assert_not_called()
@@ -227,7 +227,7 @@ class TestTheSchedulerUsesTheOneCheck:
     def test_one_off_fires_then_is_removed(self, tmp_path):
         from creatures import wolf
         crons = [{"name": "o", "at": "2026-03-21T20:00", "prompt": "p", "_owner": "nunu"}]
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
              patch("creatures.wolf.fire_cron") as fire, \
              patch("creatures.wolf.remove_cron") as remove:
             wolf.check_and_fire(crons, datetime(2026, 3, 21, 21, 0).astimezone())
@@ -242,14 +242,14 @@ class TestTheSchedulerUsesTheOneCheck:
             {"name": "good", "schedule": "* * * * *", "prompt": "p", "_owner": "nunu"},
         ]
         now = datetime(2026, 3, 15, 6, 0).astimezone()
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
              patch("creatures.wolf.fire_cron") as fire:
             wolf.check_and_fire(crons, now)
             wolf.check_and_fire(crons, now + timedelta(minutes=1))
         assert [c.args[0]["name"] for c in fire.call_args_list] == ["good", "good"]
         err = capsys.readouterr().err
         assert err.count("minute: 61") == 1                 # logged once, not every tick
-        assert not list(tmp_path.rglob("evil.last"))
+        assert wolfcore.read_last_run(tmp_path, "nunu", "../evil") is None
 
     def test_same_name_in_two_wolts_does_not_collide(self, tmp_path):
         from creatures import wolf
@@ -258,12 +258,12 @@ class TestTheSchedulerUsesTheOneCheck:
             {"name": "digest", "schedule": "0 6 * * *", "prompt": "p", "_owner": "beta"},
         ]
         now = datetime(2026, 3, 15, 6, 0).astimezone()
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
              patch("creatures.wolf.fire_cron") as fire:
             wolf.check_and_fire(crons, now)
         assert fire.call_count == 2
-        assert (tmp_path / "alpha" / "digest.last").exists()
-        assert (tmp_path / "beta" / "digest.last").exists()
+        assert wolfcore.read_last_run(tmp_path, "alpha", "digest")
+        assert wolfcore.read_last_run(tmp_path, "beta", "digest")
 
 
 # ---------------------------------------------------------------------------
@@ -272,67 +272,11 @@ class TestTheSchedulerUsesTheOneCheck:
 
 class TestStamps:
 
-    def test_names_that_are_not_identifiers_never_become_paths(self, tmp_path):
-        assert wolfcore.stamp_path(tmp_path, "nunu", "../x") is None
-        assert wolfcore.stamp_path(tmp_path, "..", "x") is None
-        assert wolfcore.stamp_path(tmp_path, "a b", "x") is None
-        assert wolfcore.read_last_run(tmp_path, "nunu", "../../etc/passwd") is None
-        with pytest.raises(CronError):
-            wolfcore.write_last_run(tmp_path, "nunu", "a/b", datetime.now())
-
-    def test_legacy_stamp_is_read_until_migrated(self, tmp_path):
-        (tmp_path / "digest.last").write_text("2026-03-15-06:00\n")
-        assert wolfcore.read_last_run(tmp_path, "alpha", "digest") == "2026-03-15-06:00"
-
     def test_stamp_to_iso_carries_the_offset(self, tz):
         tz("America/New_York")
         assert wolfcore.stamp_to_iso("2026-07-01-06:00") == "2026-07-01T06:00:00-04:00"
         assert wolfcore.stamp_to_iso("nonsense") is None
         assert wolfcore.stamp_to_iso(None) is None
-
-
-class TestMigration:
-
-    def test_unique_owner_gets_it_moved(self, tmp_path):
-        (tmp_path / "digest.last").write_text("2026-03-15-06:00")
-        moved = wolfcore.migrate_legacy_stamps(tmp_path, {"digest": ["alpha"]})
-        assert moved == ["alpha/digest"]
-        assert not (tmp_path / "digest.last").exists()
-        assert (tmp_path / "alpha" / "digest.last").read_text() == "2026-03-15-06:00"
-
-    def test_ambiguous_name_is_copied_to_every_owner(self, tmp_path):
-        (tmp_path / "digest.last").write_text("2026-03-15-06:00")
-        wolfcore.migrate_legacy_stamps(tmp_path, {"digest": ["alpha", "beta"]})
-        for wolt in ("alpha", "beta"):
-            assert (tmp_path / wolt / "digest.last").read_text() == "2026-03-15-06:00"
-        assert not (tmp_path / "digest.last").exists()
-
-    def test_idempotent_and_never_overwrites(self, tmp_path):
-        (tmp_path / "alpha").mkdir()
-        (tmp_path / "alpha" / "digest.last").write_text("2026-03-16-06:00")
-        (tmp_path / "digest.last").write_text("2026-03-15-06:00")
-        owners = {"digest": ["alpha"]}
-        wolfcore.migrate_legacy_stamps(tmp_path, owners)
-        assert wolfcore.migrate_legacy_stamps(tmp_path, owners) == []
-        assert (tmp_path / "alpha" / "digest.last").read_text() == "2026-03-16-06:00"
-
-    def test_orphans_and_odd_names_are_left_alone(self, tmp_path):
-        (tmp_path / "gone.last").write_text("x")
-        (tmp_path / "has space.last").write_text("x")
-        wolfcore.migrate_legacy_stamps(tmp_path, {"has space": ["alpha"]})
-        assert (tmp_path / "gone.last").exists()
-        assert (tmp_path / "has space.last").exists()
-
-    def test_the_wolf_migrates_on_start(self, tmp_path):
-        from creatures import wolf
-        state = tmp_path / ".space" / "wolf"
-        state.mkdir(parents=True)
-        (state / "digest.last").write_text("2026-03-15-06:00")
-        crons = [{"name": "digest", "_owner": "alpha"}, {"name": "digest", "_owner": "beta"}]
-        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
-            wolf.migrate_stamps(crons)
-        assert (state / "alpha" / "digest.last").exists()
-        assert (state / "beta" / "digest.last").exists()
 
 
 # ---------------------------------------------------------------------------

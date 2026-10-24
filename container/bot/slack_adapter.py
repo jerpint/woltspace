@@ -14,9 +14,7 @@ import base64
 import logging
 import asyncio
 import random
-import tempfile
 import time
-import fcntl
 import urllib.request
 import urllib.parse
 from collections import deque
@@ -35,6 +33,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from env_compat import get_env
 from paths import wolt_state_dir, wolt_chat_dir
 from notify_prompt import notify_reply_instruction
+import chat_state
+import lodge_db
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -54,13 +54,10 @@ MAX_HISTORY = 20
 
 CREATURE_EMOJIS = {"raccoon": "🦝", "beaver": "🦫", "otter": "🦦", "dog": "🐶"}
 
-# --- Thread ownership persistence ---
+# --- Thread ownership and the pending queue live in lodge.db ---
+# chat_state rows for adapter "slack": a thread ("channel:root_ts") names the
+# session that owns it; a user id names the wolt that owner last chose.
 
-ACTIVE_THREADS_FILE = CHAT_DIR / "_active_threads.json"
-THREAD_SESSIONS_FILE = CHAT_DIR / "_thread_sessions.json"
-OWNER_SELECTIONS_FILE = CHAT_DIR / "_owner_selections.json"
-PENDING_MESSAGES_FILE = CHAT_DIR / "_pending_messages.json"
-PENDING_LOCK_FILE = CHAT_DIR / "_pending_messages.lock"
 PENDING_TTL_SECONDS = 600
 PENDING_MAX_PER_OWNER = 5
 PENDING_MAX_BYTES = 32 * 1024
@@ -72,76 +69,11 @@ def _dog_name() -> str:
     return name or get_env("WOLTSPACE_WOLT_NAME", "wolt")
 
 
-def _load_active_threads() -> set[str]:
-    """Load active threads from disk."""
-    if ACTIVE_THREADS_FILE.exists():
-        try:
-            return set(json.loads(ACTIVE_THREADS_FILE.read_text()))
-        except (json.JSONDecodeError, OSError):
-            pass
-    return set()
-
-
-def _save_active_threads():
-    """Persist active threads to disk."""
-    CHAT_DIR.mkdir(parents=True, exist_ok=True)
-    ACTIVE_THREADS_FILE.write_text(json.dumps(list(_active_threads)))
-
-
-def _load_thread_sessions() -> dict[str, dict]:
-    """Load thread → session ownership map from disk.
-
-    Each entry: thread_key → {"session": name, "wolt": wolt_name, "creature": type}
-    """
-    if THREAD_SESSIONS_FILE.exists():
-        try:
-            return json.loads(THREAD_SESSIONS_FILE.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
-
-
-def _save_thread_sessions():
-    """Persist thread → session map to disk."""
-    CHAT_DIR.mkdir(parents=True, exist_ok=True)
-    THREAD_SESSIONS_FILE.write_text(json.dumps(_thread_sessions))
-
-
-_active_threads: set[str] = _load_active_threads()
-_thread_sessions: dict[str, dict] = _load_thread_sessions()
-
 RODENT_WOLT_TYPES = {"raccoon", "beaver", "otter", "rodent"}
 
 
-def _load_owner_selections() -> dict[str, str]:
-    try:
-        data = json.loads(OWNER_SELECTIONS_FILE.read_text())
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
-    return {
-        str(user): str(wolt) for user, wolt in data.items()
-        if isinstance(user, str) and isinstance(wolt, str)
-    } if isinstance(data, dict) else {}
-
-
-def _save_owner_selections(selections: dict[str, str]) -> None:
-    CHAT_DIR.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        dir=CHAT_DIR, prefix=".owner-selections-", suffix=".tmp", text=True
-    )
-    temporary = Path(temporary_name)
-    try:
-        os.fchmod(descriptor, 0o600)
-        with os.fdopen(descriptor, "w") as handle:
-            handle.write(json.dumps(selections, sort_keys=True) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, OWNER_SELECTIONS_FILE)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-_owner_selections: dict[str, str] = _load_owner_selections()
+def _remember_selection(user: str, name: str) -> None:
+    chat_state.put(_WOLTS_DIR, "slack", user, {"active_wolt": name})
 
 
 def _eligible_wolts() -> dict[str, dict]:
@@ -154,24 +86,14 @@ def _eligible_wolts() -> dict[str, dict]:
 
 
 def _selected_wolt(user: str) -> dict | None:
-    name = _owner_selections.get(user)
+    name = chat_state.get(_WOLTS_DIR, "slack", user).get("active_wolt")
     if not name:
         return None
     selected = _eligible_wolts().get(name)
     if selected is not None:
         return selected
-    _owner_selections.pop(user, None)
-    _save_owner_selections(_owner_selections)
+    chat_state.delete(_WOLTS_DIR, "slack", user)
     return None
-
-
-def _select_wolt(user: str, name: str) -> dict | None:
-    selected = _eligible_wolts().get(name)
-    if selected is None:
-        return None
-    _owner_selections[user] = name
-    _save_owner_selections(_owner_selections)
-    return selected
 
 
 def _picker_text(wolts: dict[str, dict], current: str = "") -> str:
@@ -214,95 +136,64 @@ def _picker_request(text: str) -> bool:
     return re.fullmatch(r"/?wolt\s*", text, flags=re.IGNORECASE) is not None
 
 
-def _write_private_json(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, raw = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}-", suffix=".tmp")
-    temporary = Path(raw)
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w") as handle:
-            json.dump(data, handle, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-def _pending_mutate(mutator):
-    CHAT_DIR.mkdir(parents=True, exist_ok=True)
-    with PENDING_LOCK_FILE.open("a+") as lock:
-        os.chmod(PENDING_LOCK_FILE, 0o600)
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        try:
-            data = json.loads(PENDING_MESSAGES_FILE.read_text())
-            if not isinstance(data, dict):
-                data = {}
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            data = {}
-        result = mutator(data)
-        _write_private_json(PENDING_MESSAGES_FILE, data)
-        return result
-
-
 def _pending_create(user: str, channel: str, root_ts: str, event_id: str, text: str,
                     *, now: float | None = None) -> dict:
     now = time.time() if now is None else now
     if not text or len(text.encode("utf-8")) > PENDING_MAX_BYTES:
         raise ValueError("message must be 1..32768 UTF-8 bytes")
-    key = _thread_key(channel, root_ts)
-    def mutate(data):
-        active = [r for r in data.values() if r.get("user") == user and
-                  r.get("state") == "pending" and r.get("expires_at", 0) > now]
-        if len(active) >= PENDING_MAX_PER_OWNER:
+    record = {"user": user, "channel": channel, "root_ts": root_ts,
+              "event_id": event_id, "text": text, "picker_ts": "",
+              "state": "pending", "created_at": now,
+              "expires_at": now + PENDING_TTL_SECONDS}
+    with lodge_db.write(_WOLTS_DIR) as conn:
+        (active,) = conn.execute(
+            "SELECT count(*) FROM pending_messages WHERE adapter='slack' AND user=?"
+            " AND state='pending' AND expires_at>?", (user, now)).fetchone()
+        if active >= PENDING_MAX_PER_OWNER:
             raise ValueError("too many pending conversations")
-        record = {"user": user, "channel": channel, "root_ts": root_ts,
-                  "event_id": event_id, "text": text, "picker_ts": "",
-                  "state": "pending", "created_at": now,
-                  "expires_at": now + PENDING_TTL_SECONDS}
-        data[key] = record
-        return dict(record)
-    return _pending_mutate(mutate)
+        conn.execute(
+            "INSERT OR REPLACE INTO pending_messages (id, adapter, user, channel, root_ts,"
+            " picker_ts, event_id, text, state, created_at, expires_at)"
+            " VALUES (:id, 'slack', :user, :channel, :root_ts, :picker_ts, :event_id,"
+            " :text, :state, :created_at, :expires_at)",
+            {"id": _thread_key(channel, root_ts), **record})
+    return record
 
 
 def _pending_set_picker(channel: str, root_ts: str, picker_ts: str) -> None:
-    key = _thread_key(channel, root_ts)
-    def mutate(data):
-        if key in data and data[key].get("state") == "pending":
-            data[key]["picker_ts"] = picker_ts
-    _pending_mutate(mutate)
+    with lodge_db.write(_WOLTS_DIR) as conn:
+        conn.execute("UPDATE pending_messages SET picker_ts=? WHERE id=? AND state='pending'",
+                     (picker_ts, _thread_key(channel, root_ts)))
 
 
 def _pending_claim(user: str, channel: str, picker_ts: str, wolt: str,
                    *, now: float | None = None) -> dict | None:
     now = time.time() if now is None else now
-    def mutate(data):
-        for record in data.values():
-            if (record.get("user") == user and record.get("channel") == channel and
-                    picker_ts in {record.get("picker_ts"), record.get("root_ts")} and
-                    record.get("state") == "pending"):
-                if record.get("expires_at", 0) <= now:
-                    record["state"] = "expired"
-                    record.pop("text", None)
-                    return None
-                claimed = dict(record)
-                record["state"] = "claimed"
-                record["wolt"] = wolt
-                record.pop("text", None)  # durable at-most-once boundary
-                return claimed
-        return None
-    return _pending_mutate(mutate)
+    with lodge_db.write(_WOLTS_DIR) as conn:
+        row = conn.execute(
+            "SELECT id, user, channel, root_ts, event_id, text, picker_ts, state,"
+            " created_at, expires_at FROM pending_messages"
+            " WHERE adapter='slack' AND user=? AND channel=? AND ? IN (picker_ts, root_ts)"
+            " AND state='pending' ORDER BY created_at LIMIT 1",
+            (user, channel, picker_ts)).fetchone()
+        if row is None:
+            return None
+        if row["expires_at"] <= now:
+            conn.execute("UPDATE pending_messages SET state='expired', text=NULL"
+                         " WHERE id=?", (row["id"],))
+            return None
+        # Clearing the text is the durable at-most-once boundary.
+        conn.execute("UPDATE pending_messages SET state='claimed', wolt=?, text=NULL"
+                     " WHERE id=?", (wolt, row["id"]))
+    claimed = dict(row)
+    del claimed["id"]
+    return claimed
 
 
 def _pending_finish(channel: str, root_ts: str, state: str, session: str = "") -> None:
-    key = _thread_key(channel, root_ts)
-    def mutate(data):
-        if key in data:
-            data[key]["state"] = state
-            data[key]["session"] = session
-            data[key].pop("text", None)
-    _pending_mutate(mutate)
+    with lodge_db.write(_WOLTS_DIR) as conn:
+        conn.execute("UPDATE pending_messages SET state=?, session=?, text=NULL WHERE id=?",
+                     (state, session, _thread_key(channel, root_ts)))
 
 
 # --- Dog ack messages ---
@@ -505,23 +396,22 @@ def _get_session_owner(channel: str, thread_ts: str) -> dict | None:
 
     A thread whose wolt is gone (archived, or removed by hand) is unowned.
     """
-    owner = _thread_sessions.get(_thread_key(channel, thread_ts))
-    if owner and not wolt_exists(owner.get("wolt", ""), _WOLTS_DIR):
+    state = chat_state.get(_WOLTS_DIR, "slack", _thread_key(channel, thread_ts))
+    if not state.get("active_session") or not wolt_exists(state.get("active_wolt", ""), _WOLTS_DIR):
         return None
-    return owner
+    owner = {"session": state.pop("active_session"), "wolt": state.pop("active_wolt")}
+    return {**owner, **state}
 
 
 def _set_session_owner(channel: str, thread_ts: str, session_name: str, wolt_name: str,
                        creature: str, session_link: str = ""):
     """Mark a thread as owned by a session."""
-    key = _thread_key(channel, thread_ts)
-    _thread_sessions[key] = {
-        "session": session_name,
-        "wolt": wolt_name,
+    chat_state.put(_WOLTS_DIR, "slack", _thread_key(channel, thread_ts), {
+        "active_session": session_name,
+        "active_wolt": wolt_name,
         "creature": creature,
         "session_link": session_link,
-    }
-    _save_thread_sessions()
+    })
 
 
 def _extract_session_info(result: dict) -> dict | None:
@@ -751,8 +641,7 @@ async def _route_to_session(client, channel: str, thread_ts: str, owner: dict, t
             slack_progress_mode="", slack_progress_ts="",
         )
         # Return the thread to the dog so the next owner message can recover.
-        _thread_sessions.pop(_thread_key(channel, thread_ts), None)
-        _save_thread_sessions()
+        chat_state.delete(_WOLTS_DIR, "slack", _thread_key(channel, thread_ts))
         await client.chat_postMessage(
             channel=channel,
             thread_ts=thread_ts,
@@ -796,8 +685,7 @@ def create_app():
         if claimed is None:
             logger.info("Ignoring expired, duplicate, or unbound Slack selection")
             return
-        _owner_selections[user] = name
-        _save_owner_selections(_owner_selections)
+        _remember_selection(user, name)
         await _spawn_pending(client, selected, claimed)
 
     @app.event("message")

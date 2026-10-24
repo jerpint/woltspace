@@ -105,7 +105,6 @@ def lodge(monkeypatch, tmp_path):
     monkeypatch.setattr(adapter, "_WOLTS_DIR", tmp_path / "wolts")
     (tmp_path / "wolts" / WOLT / "wolt").mkdir(parents=True)
     (tmp_path / "wolts" / WOLT / "wolt" / "wolt.json").write_text("{}")
-    monkeypatch.setattr(adapter, "CHATS_DIR", tmp_path / "chats")
     monkeypatch.setattr(adapter, "HISTORY_DIR", tmp_path / "history")
     monkeypatch.setattr(adapter, "is_allowed", lambda update: True)
     monkeypatch.setattr(adapter, "get_tunnel_url", lambda: "")

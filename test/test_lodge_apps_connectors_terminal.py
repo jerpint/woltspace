@@ -36,16 +36,14 @@ def test_tunnel_status_has_public_shape(monkeypatch):
 
 def test_keeper_update_is_atomic_and_updates_running_record(tmp_path, monkeypatch):
     _manifest(tmp_path)
-    state = tmp_path / ".space" / "apps"
-    state.mkdir(parents=True)
-    (state / "notes.json").write_text(json.dumps({"name": "notes", "keeper": "n00b", "pid": 1}))
     for attr, value in (("WOLTS_DIR", tmp_path), ("APPS_DIR", tmp_path / "apps"),
-                        ("LEGACY_PROJECTS_DIR", tmp_path / "projects"), ("_RUNNING_STATE_DIR", state)):
+                        ("LEGACY_PROJECTS_DIR", tmp_path / "projects")):
         monkeypatch.setattr(apps, attr, value)
+    apps._write_state("notes", {"name": "notes", "keeper": "n00b", "pid": 1})
     updated = apps.set_app_keeper("notes", "pixie")
     assert updated.keeper == "pixie"
     assert json.loads((tmp_path / "apps" / "notes" / "woltspace.json").read_text())["keeper"] == "pixie"
-    assert json.loads((state / "notes.json").read_text())["keeper"] == "pixie"
+    assert apps._read_state("notes")["keeper"] == "pixie"
     assert not (tmp_path / "apps" / "notes" / "woltspace.json.tmp").exists()
 
 
