@@ -11,6 +11,7 @@ Usage: uv run pytest test/test_e2e_run1_fixes.py -v
 import asyncio
 import json
 import sys
+from datetime import datetime
 import threading
 import time
 from pathlib import Path
@@ -395,25 +396,26 @@ class TestNotifyWithNowhereToSend:
 
 class TestWolfStatePathsAreDocumentedWhereTheyAre:
     """The source claimed `{wolt}/.state/wolf/jobs.jsonl`; the scheduler writes
-    lodge-global `.space/wolf/`. Ten minutes of the e2e run went to polling a
-    path that never appears."""
+    lodge-global state, now the lodge DB's wolf_runs table. Ten minutes of the
+    e2e run went to polling a path that never appears."""
 
     def test_the_module_no_longer_promises_a_per_wolt_directory(self):
         source = (ROOT / "container" / "creatures" / "wolf.py").read_text()
         header = source[:source.index('"""', 3)]
-        assert ".space/wolf/" in header
+        assert "the lodge DB's wolf_runs" in header
         assert "{wolf_wolt}/.state/wolf/" not in header
         assert "{wolt}/.state/wolf/jobs.jsonl" not in source
 
-    def test_the_skill_points_at_the_real_directory(self):
+    def test_the_skill_points_at_the_real_table(self):
         skill = (ROOT / "container" / "skills" / "wolf" / "SKILL.md").read_text()
-        assert "`.space/wolf/`" in skill
+        assert "the `wolf_runs` table of\n  the lodge DB" in skill
         assert "- Last-run timestamps stored in `.state/wolf/`" not in skill
 
 
 class TestWolfObservabilityApi:
     """F3: the only way to see a fire was to grep a connector log from inside
-    the container. Read-only, filesystem-backed, no new daemon."""
+    the container. Read-only, backed by the lodge DB's wolf_runs rows, no new
+    daemon."""
 
     @pytest.fixture
     def colony(self, tmp_path, monkeypatch):
@@ -428,18 +430,12 @@ class TestWolfObservabilityApi:
         ]}))
         (wolts / "beta" / "wolt").mkdir(parents=True)
         (wolts / "beta" / "wolt" / "wolf.json").write_text(json.dumps({"crons": []}))
-        state = wolts / ".space" / "wolf"
-        state.mkdir(parents=True)
-        (state / "digest.last").write_text("2026-09-06-06:00\n")
-        (state / "jobs.jsonl").write_text(
-            json.dumps({"ts": "2026-09-06T06:00:00", "cron": "digest",
-                        "action": "session", "event": "started", "owner": "alpha"}) + "\n" +
-            json.dumps({"ts": "2026-09-06T06:00:01", "cron": "digest",
-                        "action": "session", "event": "dispatched", "owner": "alpha"}) + "\n" +
-            "{ torn line while the wolf was mid-append\n" +
-            json.dumps({"ts": "2026-09-06T07:00:00", "cron": "sweep",
-                        "action": "session", "event": "started", "owner": "beta"}) + "\n"
-        )
+        # Through the scheduler's own writers, oldest first.
+        wolfcore = server_app.wolfcore
+        wolfcore.write_last_run(wolts, "alpha", "digest", datetime(2026, 9, 6, 6, 0))
+        wolfcore.append_journal(wolts, "digest", "started", owner="alpha")
+        wolfcore.append_journal(wolts, "digest", "dispatched", owner="alpha")
+        wolfcore.append_journal(wolts, "sweep", "started", owner="beta")
         monkeypatch.setattr(server_app, "WOLTS_DIR", wolts)
         return TestClient(server_app.app, base_url="http://localhost:7777")
 
@@ -467,10 +463,12 @@ class TestWolfObservabilityApi:
         assert beta["crons"] == []
         assert beta["error"]
 
-    def test_fires_are_newest_first_and_skip_torn_lines(self, colony):
+    def test_fires_are_newest_first_and_leave_out_the_stamps(self, colony):
+        # A torn line can no longer reach the list: the writer stores JSON it
+        # made, and the boot import skips a torn jobs.jsonl line (test_wolf_runs).
         body = colony.get("/wolf/fires").json()
 
-        assert body["count"] == 3          # the unparseable line is dropped
+        assert body["count"] == 3          # the last-run stamp is not a fire
         assert body["fires"][0]["cron"] == "sweep"
         assert body["fires"][-1]["event"] == "started"
 
@@ -530,14 +528,16 @@ class TestWolfObservabilityApi:
         assert len(colony.get("/wolf/fires?limit=99999").json()["fires"]) <= 500
         assert colony.get("/wolf/fires?limit=-5").json()["fires"] == []
 
-    def test_only_the_journals_tail_is_parsed(self, colony, monkeypatch):
-        """A colony that has fired crons for a year must not pay for all of it."""
-        monkeypatch.setattr(server_app, "_WOLF_JOURNAL_TAIL", 2)
+    def test_a_long_journal_is_served_as_a_bounded_newest_first_slice(self, colony, monkeypatch):
+        """A colony that has fired crons for a year must not pay for all of it:
+        the query carries the cap as its LIMIT."""
+        monkeypatch.setattr(server_app, "_WOLF_FIRES_MAX", 2)
 
-        body = colony.get("/wolf/fires").json()
+        body = colony.get("/wolf/fires?limit=50").json()
 
-        assert body["count"] == 1   # only the last two lines were read; one is torn
-        assert body["fires"][0]["cron"] == "sweep"
+        assert body["count"] == 2   # three journal rows, a cap of two
+        assert [(f["cron"], f["event"]) for f in body["fires"]] == [
+            ("sweep", "started"), ("digest", "dispatched")]
 
     def test_the_routes_do_not_block_the_event_loop(self):
         """Sync filesystem work in an `async def` stalls every other request."""
@@ -562,6 +562,7 @@ class TestOrphanedSessionsRecordWhy:
     def _registry(self, tmp_path):
         from sessions import SessionRegistry
 
+        (tmp_path / "alpha").mkdir()  # the registry no longer makes the wolt's folder
         return SessionRegistry(tmp_path)
 
     def test_reconcile_stamps_the_reason(self, tmp_path, monkeypatch):
@@ -574,8 +575,7 @@ class TestOrphanedSessionsRecordWhy:
 
         assert reg.reconcile() == ["s1"]
 
-        record = json.loads(
-            (tmp_path / "alpha" / ".state" / "sessions" / "s1.json").read_text())
+        record = reg._read("alpha", "s1")
         assert record["status"] == "orphaned"
         assert record["orphaned_reason"] == sessions.ORPHAN_TMUX_MISSING
 
@@ -592,8 +592,7 @@ class TestOrphanedSessionsRecordWhy:
 
         assert [entry["session"] for entry in report["orphaned"]] == ["s2"]
         assert report["orphaned"][0]["reason"] == sessions.ORPHAN_RUNTIME_GONE
-        record = json.loads(
-            (tmp_path / "alpha" / ".state" / "sessions" / "s2.json").read_text())
+        record = reg._read("alpha", "s2")
         assert record["orphaned_reason"] == sessions.ORPHAN_RUNTIME_GONE
 
     def test_coming_back_to_life_clears_the_reason(self, tmp_path, fake_runtime):
@@ -603,18 +602,17 @@ class TestOrphanedSessionsRecordWhy:
         reg = self._registry(tmp_path)
         reg.create(name="s4", wolt="alpha", creature="otter", model="haiku",
                    dir=str(tmp_path / "alpha"), prompt="x")
-        record_path = tmp_path / "alpha" / ".state" / "sessions" / "s4.json"
 
         fake_runtime._alive = False
         reg.adopt_runtime_sessions()
-        assert json.loads(record_path.read_text())["orphaned_reason"]
+        assert reg._read("alpha", "s4")["orphaned_reason"]
 
         # every road back to running goes through _write, so one check covers
         # adoption and all three resume branches
         fake_runtime._alive = True
         reg.update("s4", wolt="alpha", status="running")
 
-        record = json.loads(record_path.read_text())
+        record = reg._read("alpha", "s4")
         assert record["status"] == "running"
         assert "orphaned_reason" not in record
 
@@ -627,6 +625,5 @@ class TestOrphanedSessionsRecordWhy:
         monkeypatch.setattr(sessions, "_tmux_sessions", lambda: {"s3"})
 
         assert reg.reconcile() == []
-        record = json.loads(
-            (tmp_path / "alpha" / ".state" / "sessions" / "s3.json").read_text())
+        record = reg._read("alpha", "s3")
         assert "orphaned_reason" not in record

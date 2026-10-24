@@ -5,10 +5,9 @@ Each wolt registers its own schedule in wolt/wolf.json. The wolf discovers
 all schedules, fires crons on time, and spawns sessions for the owning wolt.
 
 Schedule config: {each_wolt}/wolt/wolf.json   (per-wolt)
-Last-run state:  {wolts_dir}/.space/wolf/     (lodge-global — one scheduler
+Last-run state:  the lodge DB's wolf_runs     (lodge-global — one scheduler
                  serves every wolt, so the stamps and the job journal that keep
-                 a cron from firing twice cannot live inside one of them;
-                 stamps are `<wolt>/<name>.last`, the journal is `jobs.jsonl`)
+                 a cron from firing twice cannot live inside one of them)
 
 This module is the loop and the dispatch. What a cron means, when it is due,
 and how wolf.json is read and written live in `lib/wolfcore.py`, shared with
@@ -87,18 +86,10 @@ def _get_tunnel_url() -> Optional[str]:
 
 # ── Config & State ──────────────────────────────────────────────────
 
-def get_state_dir() -> Path:
-    """Global wolf state directory at .space/wolf/."""
-    from paths import space_wolf_dir
-    d = space_wolf_dir(WOLTS_DIR)
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def _log_job(name: str, action: str, **kwargs):
-    """Append a job event to the lodge-global {wolts_dir}/.space/wolf/jobs.jsonl."""
+def _log_job(name: str, event: str, **kwargs):
+    """One event in the lodge's wolf journal."""
     try:
-        wolfcore.append_journal(get_state_dir(), name, action, **kwargs)
+        wolfcore.append_journal(WOLTS_DIR, name, event, **kwargs)
     except Exception as e:
         print(f"[wolf] log error: {e}", file=sys.stderr)
 
@@ -114,25 +105,12 @@ def load_schedule() -> list[dict]:
 
 def get_last_run(owner: str, name: str) -> Optional[str]:
     """The last-run stamp (YYYY-MM-DD-HH:MM, local) for one wolt's cron."""
-    return wolfcore.read_last_run(get_state_dir(), owner, name)
+    return wolfcore.read_last_run(WOLTS_DIR, owner, name)
 
 
 def set_last_run(owner: str, name: str, dt: datetime):
     """Record that one wolt's cron fired for this minute."""
-    wolfcore.write_last_run(get_state_dir(), owner, name, dt)
-
-
-def migrate_stamps(crons: list[dict]):
-    """Move pre-per-wolt `<name>.last` stamps under their owning wolt (once)."""
-    owners: dict[str, list[str]] = {}
-    for c in crons:
-        if c.get("name"):
-            owners.setdefault(c["name"], []).append(c["_owner"])
-    try:
-        for moved in wolfcore.migrate_legacy_stamps(get_state_dir(), owners):
-            print(f"[wolf] migrated last-run stamp → {moved}")
-    except OSError as e:
-        print(f"[wolf] stamp migration error: {e}", file=sys.stderr)
+    wolfcore.write_last_run(WOLTS_DIR, owner, name, dt)
 
 
 # ── Actions ─────────────────────────────────────────────────────────
@@ -242,12 +220,12 @@ def fire_cron(entry: dict):
     name = entry.get("name", "unnamed")
     owner = entry.get("_owner", "?")
 
-    _log_job(name, "session", event="started", owner=owner)
+    _log_job(name, "started", owner=owner)
 
     # Dispatch session for the owning wolt
     link = dispatch_session(entry)
 
-    _log_job(name, "session", event="dispatched", owner=owner, link=link)
+    _log_job(name, "dispatched", owner=owner, link=link)
 
     channel = wolfcore.notify_channel(entry.get("notify"))
     if not channel:
@@ -310,7 +288,7 @@ def check_and_fire(crons: list[dict], now: datetime, *, catching_up: bool = Fals
         print(f"[wolf] {'catch-up' if catching_up else 'firing'}: {name} (owner: {owner}, {when})")
         set_last_run(owner, name, slot)
         if catching_up and not one_off:
-            _log_job(name, "session", event="catch-up", owner=owner,
+            _log_job(name, "catch-up", owner=owner,
                      missed=slot.strftime(STAMP_FORMAT))
         fire_cron(entry)
         if one_off:
@@ -319,7 +297,18 @@ def check_and_fire(crons: list[dict], now: datetime, *, catching_up: bool = Fals
 
 def catch_up(crons: list[dict], now: datetime):
     """Fire any crons that were missed while the wolf was down (most recent
-    match within CATCH_UP_WINDOW, once), and any one-off whose time passed."""
+    match within CATCH_UP_WINDOW, once), and any one-off whose time passed.
+
+    Skipped while the old stamp files are still there: the boot import of them
+    failed, so the DB knows no last runs and every cron would fire again.
+    Missing one catch-up beats duplicating all of them; the next boot retries.
+    """
+    from paths import space_wolf_dir
+    state = space_wolf_dir(WOLTS_DIR)
+    if (state / wolfcore.JOURNAL).exists() or any(state.glob("*/*.last")):
+        print(f"[wolf] old stamps in {state} were not imported: no catch-up this boot",
+              file=sys.stderr)
+        return
     check_and_fire(crons, now, catching_up=True)
 
 
@@ -331,7 +320,6 @@ async def run_loop():
     # Catch up on anything missed while the wolf was down
     try:
         crons = load_schedule()
-        migrate_stamps(crons)
         if crons:
             owners = set(c.get("_owner", "?") for c in crons)
             print(f"[wolf] found {len(crons)} crons from {len(owners)} wolts: {', '.join(sorted(owners))}")
@@ -363,7 +351,7 @@ def fire_by_name(name: str, wolt: str = "") -> bool:
     for entry in load_schedule():
         if entry.get("name") == name and (not wolt or entry.get("_owner") == wolt):
             print(f"[wolf] manually firing: {name} (owner: {entry.get('_owner', '?')})")
-            _log_job(name, "session", event="manual", owner=entry.get("_owner", ""))
+            _log_job(name, "manual", owner=entry.get("_owner", ""))
             fire_cron(entry)
             return True
     print(f"[wolf] cron '{name}' not found", file=sys.stderr)

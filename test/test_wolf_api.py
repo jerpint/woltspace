@@ -59,12 +59,14 @@ def test_the_server_uses_this_worktrees_core():
         (ROOT / "container" / "lib" / "wolfcore.py").resolve()
 
 
+def _stamp(wolts, wolt="alpha"):
+    server_app.wolfcore.write_last_run(wolts, wolt, "digest", datetime(2026, 3, 15, 6, 0))
+
+
 class TestList:
 
     def test_lists_with_words_and_times(self, client, wolts):
-        state = wolts / ".space" / "wolf" / "alpha"
-        state.mkdir(parents=True)
-        (state / "digest.last").write_text("2026-03-15-06:00")
+        _stamp(wolts)
         body = client.get("/wolf/crons").json()
         assert body["tz"]
         [cron] = body["crons"]
@@ -198,15 +200,13 @@ class TestUpdate:
         assert cron["prompt"] == "once"
 
     def test_move_to_another_wolt_carries_the_stamp(self, client, wolts):
-        state = wolts / ".space" / "wolf"
-        (state / "alpha").mkdir(parents=True)
-        (state / "alpha" / "digest.last").write_text("2026-03-15-06:00")
+        _stamp(wolts)
         r = client.put("/wolf/crons/alpha/digest", json={"wolt": "beta"})
         assert r.status_code == 200 and r.json()["wolt"] == "beta"
         assert _file(wolts, "alpha")["crons"] == []
         assert _file(wolts, "beta")["crons"][0]["name"] == "digest"
-        assert (state / "beta" / "digest.last").exists()
-        assert not (state / "alpha" / "digest.last").exists()
+        assert server_app.wolfcore.read_last_run(wolts, "beta", "digest") == "2026-03-15-06:00"
+        assert server_app.wolfcore.read_last_run(wolts, "alpha", "digest") is None
 
     @pytest.mark.parametrize("path, body, status, field", [
         ("/wolf/crons/alpha/nope", {"prompt": "x"}, 404, "name"),
@@ -235,13 +235,11 @@ class TestUpdate:
 class TestDelete:
 
     def test_delete_removes_entry_and_stamp(self, client, wolts):
-        state = wolts / ".space" / "wolf" / "alpha"
-        state.mkdir(parents=True)
-        (state / "digest.last").write_text("2026-03-15-06:00")
+        _stamp(wolts)
         r = client.delete("/wolf/crons/alpha/digest")
         assert r.status_code == 200 and r.json()["deleted"] is True
         assert _file(wolts, "alpha")["crons"] == []
-        assert not (state / "digest.last").exists()
+        assert server_app.wolfcore.read_last_run(wolts, "alpha", "digest") is None
 
     def test_unknown(self, client):
         assert client.delete("/wolf/crons/alpha/nope").status_code == 404
@@ -265,9 +263,8 @@ class TestFire:
                             "url": "http://localhost:7777/tui?session=alpha-abc123"}
         assert calls == [{"wolt": "alpha", "prompt": "/digest", "routing": {"adapter": "lodge"}}]
         assert (wolts / "alpha" / "wolt" / "wolf.json").read_text() == before
-        assert not (wolts / ".space" / "wolf" / "alpha" / "digest.last").exists()
-        [line] = (wolts / ".space" / "wolf" / "jobs.jsonl").read_text().splitlines()
-        entry = json.loads(line)
+        assert server_app.wolfcore.read_last_run(wolts, "alpha", "digest") is None
+        [entry] = server_app.wolfcore.read_journal(wolts)
         assert entry["event"] == "manual" and entry["cron"] == "digest"
         assert entry["owner"] == "alpha" and entry["session"] == "alpha-abc123"
         # and it shows up where fires are read
@@ -280,7 +277,7 @@ class TestFire:
         monkeypatch.setattr(server_app, "start_session", boom)
         r = client.post("/wolf/crons/alpha/digest/fire")
         assert r.status_code == 500 and "tmux is gone" in r.json()["error"]
-        entry = json.loads((wolts / ".space" / "wolf" / "jobs.jsonl").read_text())
+        [entry] = server_app.wolfcore.read_journal(wolts)
         assert entry["event"] == "manual" and entry["error"] == "tmux is gone"
 
     def test_unknown(self, client, monkeypatch):
@@ -309,9 +306,7 @@ class TestTheGuardStillApplies:
 
 def test_schedules_reads_per_wolt_stamps(client, wolts):
     """/wolf/schedules is unchanged in shape; it now reads the per-wolt stamp."""
-    state = wolts / ".space" / "wolf" / "alpha"
-    state.mkdir(parents=True)
-    (state / "digest.last").write_text("2026-03-15-06:00")
+    _stamp(wolts)
     [alpha] = [s for s in client.get("/wolf/schedules").json()["schedules"] if s["wolt"] == "alpha"]
     assert alpha["crons"][0]["last_run"] == "2026-03-15-06:00"
     assert set(alpha["crons"][0]) == {"name", "schedule", "at", "last_run"}
