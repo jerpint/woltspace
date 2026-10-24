@@ -112,29 +112,34 @@ def _loopback(host: str) -> bool:
         return False
 
 
-def load_settings(config_path: Path) -> TranscriptionSettings:
-    """The lodge's settings, defaults when unset. Raises SettingsInvalid."""
+def read_config(config_path: Path) -> dict:
+    """`woltspace.json` as a dict, empty when missing. Raises SettingsInvalid."""
     try:
         data = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
     except (OSError, ValueError):
         raise SettingsInvalid(f"{config_path.name} does not parse") from None
     if not isinstance(data, dict):
         raise SettingsInvalid(f"{config_path.name} has an unknown shape")
-    return TranscriptionSettings.parse(data.get("transcription"))
+    return data
+
+
+def load_settings(config_path: Path) -> TranscriptionSettings:
+    """The lodge's settings, defaults when unset. Raises SettingsInvalid."""
+    return TranscriptionSettings.parse(read_config(config_path).get("transcription"))
 
 
 def save_settings(config_path: Path, settings: TranscriptionSettings | None) -> None:
     """Write (or with None, remove) `transcription`; other keys are kept."""
-    try:
-        data = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
-    except (OSError, ValueError):
-        raise SettingsInvalid(f"{config_path.name} does not parse") from None
-    if not isinstance(data, dict):
-        raise SettingsInvalid(f"{config_path.name} has an unknown shape")
-    if settings is None:
-        data.pop("transcription", None)
+    write_section(config_path, "transcription", None if settings is None else settings.as_config())
+
+
+def write_section(config_path: Path, name: str, section: dict | None) -> None:
+    """Write (or with None, remove) one top-level section; other keys are kept."""
+    data = read_config(config_path)
+    if section is None:
+        data.pop(name, None)
     else:
-        data["transcription"] = settings.as_config()
+        data[name] = section
     config_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = config_path.with_name(f".{config_path.name}.{os.getpid()}.tmp")
     try:

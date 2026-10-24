@@ -78,7 +78,7 @@ def lodge(monkeypatch, tmp_path):
     state = SimpleNamespace(box=tmp_path / "outbox", env=env, caps=[])
 
     async def fake_synthesize(text, speech_format, target, *, api_key, model, voice,
-                              max_bytes=None):
+                              max_bytes=None, **_where):
         state.caps.append(max_bytes)
         state.box_mode = target.parent.stat().st_mode & 0o777
         target.write_bytes(OGG)
@@ -89,6 +89,7 @@ def lodge(monkeypatch, tmp_path):
 
     monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
     monkeypatch.setattr(notify, "OUTBOX_DIR", state.box)
+    monkeypatch.setattr(notify, "WOLTS_DIR", tmp_path)
     monkeypatch.setattr(notify, "dotenv_env", lambda key: env.get(key, ""))
     monkeypatch.setattr(notify, "read_session_registry", lambda name: None)
     monkeypatch.setattr(notify, "append_chat_history", Mock())

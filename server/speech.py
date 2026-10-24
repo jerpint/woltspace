@@ -1,4 +1,8 @@
-"""Speech: text in, an audio file out. The one module that talks to the speech service."""
+"""Speech: text in, an audio file out. The one module that talks to the speech service.
+
+The service is any OpenAI-style `/audio/speech` endpoint: `woltspace.json` `speech`
+(container/lib/speech_settings.py) picks it; OpenAI when unset.
+"""
 
 import json
 import os
@@ -52,11 +56,13 @@ def _is_audio(speech_format: str, head: bytes) -> bool:
     )
 
 
-def _refusal(status: int, body: bytes, api_key: str) -> str:
+def _refusal(status: int, body: bytes, api_key: str, key_env: str = "OPENAI_API_KEY") -> str:
     """What to say about an answer that is not 200, in the service's words if it has any."""
     if status == 401:
+        if not key_env:
+            return "the speech service asked for a key (HTTP 401); set key_env in woltspace.json speech"
         return (
-            "the speech service refused OPENAI_API_KEY (HTTP 401); "
+            f"the speech service refused {key_env} (HTTP 401); "
             "check the key in the lodge's .env"
         )
     try:
@@ -74,7 +80,8 @@ def _refusal(status: int, body: bytes, api_key: str) -> str:
 
 async def synthesize(
     text: str, speech_format: str, target: Path, *, api_key: str, model: str, voice: str,
-    max_bytes: int | None = None,
+    max_bytes: int | None = None, url: str = SPEECH_URL, key_env: str = "OPENAI_API_KEY",
+    local: bool = False,
 ) -> int:
     """Write `text`, spoken, to the new file `target`; return its size in bytes.
 
@@ -82,12 +89,14 @@ async def synthesize(
     `max_bytes` stops the download as soon as the audio outgrows what the
     sender can carry, instead of measuring it once it is all on disk.
     A stalled or dropped request is tried once more before it fails.
+    `url` is the endpoint; an empty `api_key` sends no Authorization header, and
+    a `local` server (on this machine) is reached directly, never through a proxy.
     """
     for attempt in range(1, SPEECH_ATTEMPTS + 1):
         try:
             return await _synthesize_once(
                 text, speech_format, target, api_key=api_key, model=model, voice=voice,
-                max_bytes=max_bytes,
+                max_bytes=max_bytes, url=url, key_env=key_env, local=local,
             )
         except SpeechError as exc:
             if not exc.transient or attempt == SPEECH_ATTEMPTS:
@@ -97,26 +106,27 @@ async def synthesize(
 
 async def _synthesize_once(
     text: str, speech_format: str, target: Path, *, api_key: str, model: str, voice: str,
-    max_bytes: int | None = None,
+    max_bytes: int | None = None, url: str = SPEECH_URL, key_env: str = "OPENAI_API_KEY",
+    local: bool = False,
 ) -> int:
     if speech_format not in SPEECH_FILES:
         raise SpeechError("speech_failed", f"unknown speech format: {speech_format}")
     size, head, created, complete = 0, b"", False, False
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=False, trust_env=not local) as client:
             async with client.stream(
-                "POST", SPEECH_URL,
+                "POST", url,
                 json={
                     "model": model, "voice": voice,
                     "input": text, "response_format": speech_format,
                 },
-                headers={"Authorization": f"Bearer {api_key}"},
+                headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
                 timeout=SPEECH_TIMEOUT,
             ) as response:
                 if response.status_code != 200:
                     raise SpeechError(
                         "speech_failed",
-                        _refusal(response.status_code, await response.aread(), api_key),
+                        _refusal(response.status_code, await response.aread(), api_key, key_env),
                         transient=response.status_code >= 500,
                     )
                 descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

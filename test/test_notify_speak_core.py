@@ -43,10 +43,10 @@ def lodge(monkeypatch, tmp_path):
     )
 
     async def synthesize(text, speech_format, target, *, api_key, model, voice,
-                         max_bytes=None):
+                         max_bytes=None, **_where):
         state.spoken.append(SimpleNamespace(
             text=text, speech_format=speech_format, target=target,
-            api_key=api_key, model=model, voice=voice, max_bytes=max_bytes,
+            api_key=api_key, model=model, voice=voice, max_bytes=max_bytes, **_where,
         ))
         if state.speech_error is not None:
             raise state.speech_error
@@ -56,6 +56,7 @@ def lodge(monkeypatch, tmp_path):
     (tmp_path / "tunnel.json").write_text('{"url": "https://lodge.test"}')
     monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
     monkeypatch.setattr(notify, "OUTBOX_DIR", state.box)
+    monkeypatch.setattr(notify, "WOLTS_DIR", tmp_path)  # woltspace.json `speech` lives here
     monkeypatch.setattr(notify, "dotenv_env", lambda key: env.get(key, ""))
     monkeypatch.setattr(notify, "read_session_registry", lambda name: state.routing)
     monkeypatch.setattr(notify, "append_chat_history", state.history)
@@ -347,7 +348,7 @@ def real_lodge(monkeypatch, tmp_path):
     }
 
     async def synthesize(text, speech_format, target, *, api_key, model, voice,
-                         max_bytes=None):
+                         max_bytes=None, **_where):
         target.write_bytes(OGG)
         return len(OGG)
 
