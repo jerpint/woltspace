@@ -615,15 +615,18 @@ def _speech(args) -> int:
 def _speech_show(args) -> int:
     layout, module = _speech_module()
     try:
-        settings = module.load_settings(module.config_path(layout.wolts_dir))
+        saved = module.read_section(module.config_path(layout.wolts_dir))
+        settings = module.SpeechSettings.parse(saved)
     except module.SettingsInvalid as exc:
         print(f"woltspace speech: {exc}", file=sys.stderr)
         return 1
     payload = settings.as_config()
     if args.json:
-        print(json.dumps({"speech": payload}, indent=2))
+        print(json.dumps({"speech": payload, "saved": saved}, indent=2))
         return 0
     for key, value in payload.items():
+        if key in ("model", "voice") and key not in saved:
+            value = f"{value} (unless OPENAI_TTS_{key.upper()} is set in the lodge's .env)"
         lore.field(key, value or "(none: the server needs no key)", value_style=lore.TEAL)
     return 0
 
@@ -637,7 +640,10 @@ def _speech_set(args) -> int:
     layout, module = _speech_module()
     path = module.config_path(layout.wolts_dir)
     try:
-        current = module.load_settings(path).as_config()
+        # Only what the owner names is saved: a model or voice left out keeps
+        # following OPENAI_TTS_MODEL / OPENAI_TTS_VOICE in the lodge's .env.
+        saved = module.read_section(path)
+        current = module.SpeechSettings.parse(saved).as_config()
         if args.base_url is not None:
             from urllib.parse import urlsplit
 
@@ -656,17 +662,17 @@ def _speech_set(args) -> int:
                     file=sys.stderr,
                 )
                 return 1
-            current["base_url"] = args.base_url
+            saved["base_url"] = args.base_url.strip().rstrip("/")
         if args.model is not None:
-            current["model"] = args.model
+            saved["model"] = args.model
         if args.voice is not None:
-            current["voice"] = args.voice
+            saved["voice"] = args.voice
         if args.no_key:
-            current["key_env"] = ""
+            saved["key_env"] = ""
         elif args.key_env is not None:
-            current["key_env"] = args.key_env
-        settings = module.SpeechSettings.parse(current)
-        module.save_settings(path, settings)
+            saved["key_env"] = args.key_env
+        settings = module.SpeechSettings.parse(saved)
+        module.save_section(path, saved)
     except (module.SettingsInvalid, OSError) as exc:
         print(f"woltspace speech: {exc}", file=sys.stderr)
         return 1

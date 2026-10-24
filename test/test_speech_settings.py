@@ -208,3 +208,18 @@ def test_the_cli_never_carries_a_key_to_a_new_server(tmp_path, monkeypatch, caps
     assert load_settings(path) == SpeechSettings()
     assert cli.main(["speech", "set", "--base-url", "https://tts.example/v1", "--key-env", "TTS_KEY"]) == 0
     assert load_settings(path).key_env == "TTS_KEY"
+
+
+def test_the_cli_saves_only_what_it_is_told(tmp_path, monkeypatch, capsys):
+    """A model or voice left out keeps following OPENAI_TTS_* in the lodge's .env."""
+    cli = _cli(monkeypatch, tmp_path)
+    path = tmp_path / "woltspace.json"
+    assert cli.main(["speech", "set", "--model", "tts-1-hd"]) == 0
+    assert json.loads(path.read_text())["speech"] == {"model": "tts-1-hd"}
+    assert load_settings(path, voice="nova").voice == "nova"
+    assert cli.main(["speech", "set", "--base-url", "http://127.0.0.1:8000/v1/", "--no-key"]) == 0
+    assert json.loads(path.read_text())["speech"] == {
+        "model": "tts-1-hd", "base_url": "http://127.0.0.1:8000/v1", "key_env": ""}
+    capsys.readouterr()
+    assert cli.main(["speech", "show"]) == 0
+    assert "OPENAI_TTS_VOICE" in capsys.readouterr().out

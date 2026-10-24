@@ -31,7 +31,7 @@ DEFAULT_VOICE = "alloy"
 
 __all__ = [
     "DEFAULT_MODEL", "DEFAULT_VOICE", "SettingsInvalid", "SpeechSettings",
-    "check_base_url", "config_path", "load_settings", "save_settings",
+    "check_base_url", "config_path", "load_settings", "read_section", "save_section", "save_settings",
 ]
 
 
@@ -100,6 +100,21 @@ def load_settings(config_path: Path, *, model: str = DEFAULT_MODEL,
     older `OPENAI_TTS_MODEL` / `OPENAI_TTS_VOICE` here, so they keep working.
     """
     return SpeechSettings.parse(read_config(config_path).get("speech"), model=model, voice=voice)
+
+
+def read_section(config_path: Path) -> dict:
+    """The `speech` section as saved: only the keys the owner set. Raises SettingsInvalid."""
+    section = read_config(config_path).get("speech")
+    if section is None:
+        return {}
+    SpeechSettings.parse(section)
+    return dict(section)
+
+
+def save_section(config_path: Path, section: dict) -> None:
+    """Write `speech` with only the keys given, after checking them."""
+    SpeechSettings.parse(section)
+    write_section(config_path, "speech", section)
 
 
 def save_settings(config_path: Path, settings: SpeechSettings | None) -> None:
