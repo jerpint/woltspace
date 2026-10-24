@@ -74,6 +74,11 @@ def check_environments():
     print('Both publishing environments require jerpint approval, main or release branches only, no bypass.')
 
 
+def is_prerelease(version):
+    """rc, beta, alpha and dev versions (0.6.0rc1, 0.6.0-rc.1) are pre-releases."""
+    return re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(\.post[0-9]+)?', version) is None
+
+
 def publishing_branch():
     """The branch this run publishes from: main, or a release/X.Y maintenance branch."""
     branch = os.environ.get('GITHUB_REF_NAME', '')
@@ -154,6 +159,9 @@ def prepare():
     target = os.environ.get('REGISTRY_TARGET', 'both')
     require(target in ('python', 'npm', 'both'), 'Choose python, npm or both')
     manifest['targets'] = ['python', 'npm'] if target == 'both' else [target]
+    # npm publish has no dist-tag yet, so a pre-release TUI would become 'latest' there.
+    require('npm' not in manifest['targets'] or not is_prerelease(versions['npm']),
+            'Pre-release TUI versions are not supported yet; publish the Python package only')
     manifest['release_targets'] = [registry for registry in ('python', 'npm')
                                    if registry in manifest['targets'] or registry in previous_release_targets]
     manifest['verify_targets'] = manifest['release_targets']
@@ -289,8 +297,10 @@ def finalize():
                '-f', f'sha={manifest["commit"]}')
         require(tag_commit(tag) == (existing_commit or manifest['commit']), f'{tag}: tag commit mismatch')
         if release['isDraft']:
-            gh('release', 'edit', tag, '--repo', REPO, '--draft=false',
-               f'--latest={"true" if registry == "python" and publishing_branch() == "main" else "false"}')
+            pre = is_prerelease(manifest['versions'][registry])
+            latest = registry == 'python' and publishing_branch() == 'main' and not pre
+            gh('release', 'edit', tag, '--repo', REPO, '--draft=false', f'--prerelease={str(pre).lower()}',
+               f'--latest={str(latest).lower()}')
         print(f'Verified GitHub release {tag} at {existing_commit or manifest["commit"]}.')
 
 
