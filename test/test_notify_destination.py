@@ -57,6 +57,7 @@ def lodge(monkeypatch, tmp_path):
 
     monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
     monkeypatch.setattr(notify, "OUTBOX_DIR", state.box)
+    monkeypatch.setattr(notify, "WOLTS_DIR", tmp_path)
     monkeypatch.setattr(notify, "dotenv_env", lambda key: env.get(key, ""))
     monkeypatch.setattr(notify, "read_session_registry", lambda name: state.routing)
     monkeypatch.setattr(notify, "append_chat_history", state.history)

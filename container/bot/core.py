@@ -1464,11 +1464,18 @@ def get_response(
 
 
 def transcribe_audio(file_path: str) -> str:
-    """Transcribe audio file using OpenAI Whisper."""
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        return "[voice message — no OPENAI_API_KEY set for transcription]"
-    client = OpenAI(api_key=api_key)
-    with open(file_path, "rb") as f:
-        result = client.audio.transcriptions.create(model="whisper-1", file=f)
-    return result.text
+    """Transcribe a voice note with the lodge's transcription service.
+
+    `woltspace.json` `transcription` (see container/lib/transcription_settings),
+    read on every note; OpenAI `gpt-4o-transcribe` by default.
+    """
+    import transcription_settings as stt
+
+    try:
+        settings = stt.load_settings(stt.config_path(WOLTS_DIR))
+    except stt.SettingsInvalid as exc:
+        return f"[voice message — transcription settings unusable: {exc}]"
+    key = os.environ.get(settings.key_env) if settings.key_env else None
+    if settings.key_env and not key:
+        return f"[voice message — no {settings.key_env} set for transcription]"
+    return stt.transcribe(Path(file_path), settings, key)

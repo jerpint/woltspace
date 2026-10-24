@@ -218,11 +218,26 @@ async def _spoken(speech: _Speech, sender: Plugin, adapter: str) -> Attachment:
     if not sender.speech_format or not sender.max_attachment_bytes:
         # Asked before the words are spoken: the audio travels as an attachment.
         raise AttachmentError("speech_unsupported", f"{adapter} cannot carry a spoken message")
-    api_key = dotenv_env("OPENAI_API_KEY")
-    if not api_key:
+    import speech_settings
+
+    try:
+        # Read on every spoken message. The older .env names still pick the
+        # model and voice when the settings leave them out.
+        settings = speech_settings.load_settings(
+            speech_settings.config_path(WOLTS_DIR),
+            model=dotenv_env("OPENAI_TTS_MODEL") or DEFAULT_SPEECH_MODEL,
+            voice=dotenv_env("OPENAI_TTS_VOICE") or DEFAULT_SPEECH_VOICE,
+        )
+    except speech_settings.SettingsInvalid as exc:
         raise SpeechError(
             "speech_not_configured",
-            "speaking needs OPENAI_API_KEY in the lodge's .env; send the message as text",
+            f"the speech settings in woltspace.json are unusable ({exc}); send the message as text",
+        ) from None
+    api_key = dotenv_env(settings.key_env) if settings.key_env else ""
+    if settings.key_env and not api_key:
+        raise SpeechError(
+            "speech_not_configured",
+            f"speaking needs {settings.key_env} in the lodge's .env; send the message as text",
         )
     try:
         OUTBOX_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -236,9 +251,9 @@ async def _spoken(speech: _Speech, sender: Plugin, adapter: str) -> Attachment:
     path = OUTBOX_DIR / speech.entry_id
     size = await synthesize(
         speech.text, sender.speech_format, path, api_key=api_key,
-        model=dotenv_env("OPENAI_TTS_MODEL") or DEFAULT_SPEECH_MODEL,
-        voice=dotenv_env("OPENAI_TTS_VOICE") or DEFAULT_SPEECH_VOICE,
+        model=settings.model, voice=settings.voice,
         max_bytes=sender.max_attachment_bytes,
+        url=settings.endpoint, key_env=settings.key_env, local=settings.local,
     )
     filename, content_type = SPEECH_FILES[sender.speech_format]
     return Attachment(path, filename, size, content_type, "voice")

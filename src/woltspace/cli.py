@@ -506,6 +506,192 @@ def _auto(args) -> int:
     return 1
 
 
+def _transcribe_module():
+    """The runtime's own transcription settings: one validator, one writer."""
+    layout = RuntimeLayout.from_env()
+    lib_dir = str(layout.runtime_lib)
+    if lib_dir not in sys.path:
+        sys.path.insert(0, lib_dir)
+    import transcription_settings
+
+    return layout, transcription_settings
+
+
+def _transcription(args) -> int:
+    """A bare `woltspace transcription` names its own verbs."""
+    args.transcription_parser.print_help()
+    return 1
+
+
+def _transcription_show(args) -> int:
+    layout, module = _transcribe_module()
+    try:
+        settings = module.load_settings(module.config_path(layout.wolts_dir))
+    except module.SettingsInvalid as exc:
+        print(f"woltspace transcription: {exc}", file=sys.stderr)
+        return 1
+    payload = settings.as_config()
+    if args.json:
+        print(json.dumps({"transcription": payload}, indent=2))
+        return 0
+    for key, value in payload.items():
+        lore.field(key, value or "(none: the server needs no key)", value_style=lore.TEAL)
+    return 0
+
+
+def _transcription_set(args) -> int:
+    """Choose where voice notes are transcribed: any OpenAI-style endpoint.
+
+    Read on every voice note, so a change applies without a restart. Only the
+    name of the key's environment variable is saved, never the key.
+    """
+    layout, module = _transcribe_module()
+    path = module.config_path(layout.wolts_dir)
+    try:
+        current = module.load_settings(path).as_config()
+        if args.base_url is not None:
+            from urllib.parse import urlsplit
+
+            module.check_base_url(args.base_url.strip().rstrip("/"))  # a bad URL is a plain error
+
+            def authority(url):
+                parts = urlsplit(url.strip())
+                return (parts.scheme, (parts.hostname or "").lower(), parts.port)
+
+            if (authority(args.base_url) != authority(current["base_url"])
+                    and args.key_env is None and not args.no_key):
+                print(
+                    "woltspace transcription: a new server needs its key named: pass "
+                    "--key-env NAME (the variable holding that server's key) or --no-key, "
+                    f"so {current['key_env'] or 'no key'} is not sent to it by accident.",
+                    file=sys.stderr,
+                )
+                return 1
+            current["base_url"] = args.base_url
+        if args.model is not None:
+            current["model"] = args.model
+        if args.no_key:
+            current["key_env"] = ""
+        elif args.key_env is not None:
+            current["key_env"] = args.key_env
+        settings = module.TranscriptionSettings.parse(current)
+        module.save_settings(path, settings)
+    except (module.SettingsInvalid, OSError) as exc:
+        print(f"woltspace transcription: {exc}", file=sys.stderr)
+        return 1
+    print(f"Saved. Voice notes go to {settings.endpoint} ({settings.model}).")
+    return 0
+
+
+def _transcription_clear(args) -> int:
+    layout, module = _transcribe_module()
+    try:
+        module.save_settings(module.config_path(layout.wolts_dir), None)
+    except (module.SettingsInvalid, OSError) as exc:
+        print(f"woltspace transcription: {exc}", file=sys.stderr)
+        return 1
+    default = module.TranscriptionSettings()
+    print(f"Cleared. Voice notes go to the default, {default.endpoint} ({default.model}).")
+    return 0
+
+
+def _speech_module():
+    """The runtime's own speech settings: one validator, one writer."""
+    layout = RuntimeLayout.from_env()
+    lib_dir = str(layout.runtime_lib)
+    if lib_dir not in sys.path:
+        sys.path.insert(0, lib_dir)
+    import speech_settings
+
+    return layout, speech_settings
+
+
+def _speech(args) -> int:
+    """A bare `woltspace speech` names its own verbs."""
+    args.speech_parser.print_help()
+    return 1
+
+
+def _speech_show(args) -> int:
+    layout, module = _speech_module()
+    try:
+        saved = module.read_section(module.config_path(layout.wolts_dir))
+        settings = module.SpeechSettings.parse(saved)
+    except module.SettingsInvalid as exc:
+        print(f"woltspace speech: {exc}", file=sys.stderr)
+        return 1
+    payload = settings.as_config()
+    if args.json:
+        print(json.dumps({"speech": payload, "saved": saved}, indent=2))
+        return 0
+    for key, value in payload.items():
+        if key in ("model", "voice") and key not in saved:
+            value = f"{value} (unless OPENAI_TTS_{key.upper()} is set in the lodge's .env)"
+        lore.field(key, value or "(none: the server needs no key)", value_style=lore.TEAL)
+    return 0
+
+
+def _speech_set(args) -> int:
+    """Choose where spoken messages are made: any OpenAI-style /audio/speech endpoint.
+
+    Read on every spoken message, so a change applies without a restart. Only
+    the name of the key's environment variable is saved, never the key.
+    """
+    layout, module = _speech_module()
+    path = module.config_path(layout.wolts_dir)
+    try:
+        # Only what the owner names is saved: a model or voice left out keeps
+        # following OPENAI_TTS_MODEL / OPENAI_TTS_VOICE in the lodge's .env.
+        saved = module.read_section(path)
+        current = module.SpeechSettings.parse(saved).as_config()
+        if args.base_url is not None:
+            from urllib.parse import urlsplit
+
+            module.check_base_url(args.base_url.strip().rstrip("/"))  # a bad URL is a plain error
+
+            def authority(url):
+                parts = urlsplit(url.strip())
+                return (parts.scheme, (parts.hostname or "").lower(), parts.port)
+
+            if (authority(args.base_url) != authority(current["base_url"])
+                    and args.key_env is None and not args.no_key):
+                print(
+                    "woltspace speech: a new server needs its key named: pass "
+                    "--key-env NAME (the variable holding that server's key) or --no-key, "
+                    f"so {current['key_env'] or 'no key'} is not sent to it by accident.",
+                    file=sys.stderr,
+                )
+                return 1
+            saved["base_url"] = args.base_url.strip().rstrip("/")
+        if args.model is not None:
+            saved["model"] = args.model
+        if args.voice is not None:
+            saved["voice"] = args.voice
+        if args.no_key:
+            saved["key_env"] = ""
+        elif args.key_env is not None:
+            saved["key_env"] = args.key_env
+        settings = module.SpeechSettings.parse(saved)
+        module.save_section(path, saved)
+    except (module.SettingsInvalid, OSError) as exc:
+        print(f"woltspace speech: {exc}", file=sys.stderr)
+        return 1
+    print(f"Saved. Spoken messages come from {settings.endpoint} ({settings.model}, voice {settings.voice}).")
+    return 0
+
+
+def _speech_clear(args) -> int:
+    layout, module = _speech_module()
+    try:
+        module.save_settings(module.config_path(layout.wolts_dir), None)
+    except (module.SettingsInvalid, OSError) as exc:
+        print(f"woltspace speech: {exc}", file=sys.stderr)
+        return 1
+    default = module.SpeechSettings()
+    print(f"Cleared. Spoken messages come from the default, {default.endpoint} ({default.model}).")
+    return 0
+
+
 def _auto_runtime():
     """Borrow the runtime's own grant store and target resolver.
 
@@ -1106,6 +1292,59 @@ def build_parser() -> argparse.ArgumentParser:
     auto_list = auto_sub.add_parser("list", help="show every standing Auto grant")
     auto_list.add_argument("--json", action="store_true")
     auto_list.set_defaults(func=_auto_list)
+
+    transcription = sub.add_parser(
+        "transcription", help="show or choose the service that transcribes voice notes"
+    )
+    transcription.set_defaults(func=_transcription, transcription_parser=transcription)
+    transcription_sub = transcription.add_subparsers(dest="verb")
+    transcription_show = transcription_sub.add_parser("show", help="show the transcription settings")
+    transcription_show.add_argument("--json", action="store_true")
+    transcription_show.set_defaults(func=_transcription_show)
+    transcription_set = transcription_sub.add_parser(
+        "set", help="use any OpenAI-style /audio/transcriptions endpoint (a local server too)"
+    )
+    transcription_set.add_argument("--base-url", default=None,
+                                   help="e.g. https://api.openai.com/v1, or http://127.0.0.1:8080/v1 "
+                                        "for a server on this machine")
+    transcription_set.add_argument("--model", default=None,
+                                   help="the model name the server expects, e.g. gpt-4o-transcribe")
+    key = transcription_set.add_mutually_exclusive_group()
+    key.add_argument("--key-env", default=None,
+                     help="environment variable holding the API key (default OPENAI_API_KEY)")
+    key.add_argument("--no-key", action="store_true", help="the server needs no API key")
+    transcription_set.set_defaults(func=_transcription_set)
+    transcription_clear = transcription_sub.add_parser(
+        "clear", help="go back to the default (OpenAI, gpt-4o-transcribe)"
+    )
+    transcription_clear.set_defaults(func=_transcription_clear)
+    speech = sub.add_parser(
+        "speech", help="show or choose the service that speaks a wolt's voice notes (notify --speak)"
+    )
+    speech.set_defaults(func=_speech, speech_parser=speech)
+    speech_sub = speech.add_subparsers(dest="verb")
+    speech_show = speech_sub.add_parser("show", help="show the speech settings")
+    speech_show.add_argument("--json", action="store_true")
+    speech_show.set_defaults(func=_speech_show)
+    speech_set = speech_sub.add_parser(
+        "set", help="use any OpenAI-style /audio/speech endpoint (a local server too)"
+    )
+    speech_set.add_argument("--base-url", default=None,
+                            help="e.g. https://api.openai.com/v1, or http://127.0.0.1:8000/v1 "
+                                 "for a server on this machine")
+    speech_set.add_argument("--model", default=None,
+                            help="the model name the server expects, e.g. gpt-4o-mini-tts")
+    speech_set.add_argument("--voice", default=None,
+                            help="the voice name the server expects, e.g. alloy")
+    speech_key = speech_set.add_mutually_exclusive_group()
+    speech_key.add_argument("--key-env", default=None,
+                            help="environment variable holding the API key (default OPENAI_API_KEY)")
+    speech_key.add_argument("--no-key", action="store_true", help="the server needs no API key")
+    speech_set.set_defaults(func=_speech_set)
+    speech_clear = speech_sub.add_parser(
+        "clear", help="go back to the default (OpenAI, gpt-4o-mini-tts, alloy)"
+    )
+    speech_clear.set_defaults(func=_speech_clear)
 
     seed = sub.add_parser(
         "seed", help="create, inspect, and install shareable colony seeds"
