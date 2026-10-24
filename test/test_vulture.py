@@ -3,9 +3,8 @@
 Tests the reaping logic in container/creatures/vulture.py with mocked
 tmux and filesystem operations.
 
-Now uses the per-wolt session model: sessions live at
-wolts/{wolt}/.state/sessions/{name}.json, and the vulture iterates all
-wolt directories instead of using reg.dir.
+Sessions live in the lodge's registry (lodge.db under the wolts dir); the
+tests seed and read them through it.
 
 Usage: uv run pytest test/test_vulture.py -v
 """
@@ -50,10 +49,8 @@ def _vulture_state_in_tmp(tmp_path, monkeypatch):
 def _make_wolt_session(wolts_dir: Path, wolt: str, name: str,
                        status: str = "running", created_at: int = None,
                        finished_at: int = None) -> dict:
-    """Write a session JSON file to the wolt's .state/sessions/ dir."""
+    """Store a session record in the wolts dir's registry."""
     now = int(time.time())
-    sessions_dir = wolts_dir / wolt / ".state" / "sessions"
-    sessions_dir.mkdir(parents=True, exist_ok=True)
     data = {
         "name": name,
         "wolt": wolt,
@@ -64,14 +61,18 @@ def _make_wolt_session(wolts_dir: Path, wolt: str, name: str,
         "exit_code": None,
         "last_activity": now - 300,
     }
-    (sessions_dir / f"{name}.json").write_text(json.dumps(data))
+    _write_wolt_session(wolts_dir, wolt, name, data)
     return data
 
 
+def _write_wolt_session(wolts_dir: Path, wolt: str, name: str, data: dict) -> None:
+    from sessions import SessionRegistry
+    SessionRegistry(wolts_dir)._write(wolt, name, data)
+
+
 def _read_wolt_session(wolts_dir: Path, wolt: str, name: str) -> dict:
-    return json.loads(
-        (wolts_dir / wolt / ".state" / "sessions" / f"{name}.json").read_text()
-    )
+    from sessions import SessionRegistry
+    return SessionRegistry(wolts_dir)._read(wolt, name)
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +104,7 @@ class TestRegistryReaping:
 
         data = _make_wolt_session(tmp_path, "testwolt", "can-resume", status="running")
         data["harness_session_id"] = "abc"
-        (tmp_path / "testwolt" / ".state" / "sessions" / "can-resume.json").write_text(json.dumps(data))
+        _write_wolt_session(tmp_path, "testwolt", "can-resume", data)
 
         with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
              patch("creatures.vulture._tmux_sessions", return_value=set()):
@@ -273,13 +274,13 @@ class TestZombieTmuxCleanup:
 
 
 # ---------------------------------------------------------------------------
-# Deaths settle under the session lock
+# Deaths settle inside one registry write
 # ---------------------------------------------------------------------------
 
 class TestDeathsAreReCheckedUnderTheLock:
     """The passes work from a snapshot taken at their start. A message can wake
     a session in between (resume_session spawns a new tmux and writes running),
-    so each settle reads the record again under the session lock and asks the
+    so each settle reads the record again inside its write and asks the
     runtime again: a woken session is never written resting while it runs."""
 
     def test_a_session_woken_since_the_snapshot_is_not_settled(self, tmp_path):
@@ -317,7 +318,7 @@ class TestDeathsAreReCheckedUnderTheLock:
         def resumed_meanwhile(_record):
             data = _read_wolt_session(tmp_path, "testwolt", "back")
             data["status"] = "running"
-            (tmp_path / "testwolt" / ".state" / "sessions" / "back.json").write_text(json.dumps(data))
+            _write_wolt_session(tmp_path, "testwolt", "back", data)
             return False
 
         with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
@@ -329,25 +330,24 @@ class TestDeathsAreReCheckedUnderTheLock:
         kill.assert_not_called()
 
     def test_a_message_right_after_the_settle_keeps_its_agent(self, tmp_path, monkeypatch):
-        """Pass 2 used to write resting, release the lock, then kill tmux. A
+        """Pass 2 used to write resting, end the write, then kill tmux. A
         message in that gap read resting, revived the agent in the lingering
-        pane, and the kill took it down. The kill happens under the lock now,
-        before the write: a message that reads resting finds tmux gone and
-        wakes the session in a fresh one."""
+        pane, and the kill took it down. The kill happens inside the write now,
+        before the record changes: a message that reads resting finds tmux
+        gone and wakes the session in a fresh one."""
         import sessions
         from contextlib import contextmanager
         from creatures.vulture import reap
 
         data = _make_wolt_session(tmp_path, "testwolt", "gap", status="running")
         data["harness_session_id"] = "abc"
-        path = tmp_path / "testwolt" / ".state" / "sessions" / "gap.json"
-        path.write_text(json.dumps(data))
+        _write_wolt_session(tmp_path, "testwolt", "gap", data)
         world = {"tmux": "old", "agent": None, "killed": [], "messaged": False}
 
         def message_arrives():
             # resume_session wakes a resting record in its lingering tmux if
             # there is one, else in a new tmux.
-            current = json.loads(path.read_text())
+            current = _read_wolt_session(tmp_path, "testwolt", "gap")
             if current["status"] != "resting":
                 return
             world["messaged"] = True
@@ -356,14 +356,14 @@ class TestDeathsAreReCheckedUnderTheLock:
             else:
                 world["tmux"], world["agent"] = "new", "fresh in a new tmux"
             current["status"] = "running"
-            path.write_text(json.dumps(current))
+            _write_wolt_session(tmp_path, "testwolt", "gap", current)
 
-        real_lock = sessions.SessionRegistry._lock
+        real_edit = sessions.SessionRegistry.edit
 
         @contextmanager
-        def lock_then_message(self, wolt, name):
-            with real_lock(self, wolt, name):
-                yield
+        def edit_then_message(self, name, **kwargs):
+            with real_edit(self, name, **kwargs) as data:
+                yield data
             if name == "gap" and not world["messaged"]:
                 message_arrives()
 
@@ -373,7 +373,7 @@ class TestDeathsAreReCheckedUnderTheLock:
                 world["tmux"] = None
             return True
 
-        monkeypatch.setattr(sessions.SessionRegistry, "_lock", lock_then_message)
+        monkeypatch.setattr(sessions.SessionRegistry, "edit", edit_then_message)
         with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
              patch("creatures.vulture._tmux_sessions", return_value={"gap"}), \
              patch("creatures.vulture.session_has_agent_process", return_value=False), \
@@ -406,7 +406,7 @@ class TestDeathsAreReCheckedUnderTheLock:
 
         data = _make_wolt_session(tmp_path, "testwolt", "held-dead", status="running")
         data.update(harness_session_id="abc", hold={"until": None, "reason": "dev server", "since": 1})
-        (tmp_path / "testwolt" / ".state" / "sessions" / "held-dead.json").write_text(json.dumps(data))
+        _write_wolt_session(tmp_path, "testwolt", "held-dead", data)
         with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
              patch("creatures.vulture._tmux_sessions", return_value=set()):
             stats = reap()
@@ -437,7 +437,7 @@ def _codex_session_without_id(wolts_dir: Path, monkeypatch, name: str, *,
     data = _make_wolt_session(wolts_dir, "testwolt", name, status="running",
                               created_at=CODEX_START)
     data.update(harness="codex", dir=str(wolts_dir / "testwolt"))
-    (wolts_dir / "testwolt" / ".state" / "sessions" / f"{name}.json").write_text(json.dumps(data))
+    _write_wolt_session(wolts_dir, "testwolt", name, data)
     if rollout:
         day = wolts_dir / "testwolt" / ".codex" / "sessions" / "2026" / "09" / "27"
         day.mkdir(parents=True)
@@ -493,23 +493,23 @@ class TestRecoveredConversationIds:
         assert after["status"] == "reaped"
         assert not after.get("harness_session_id")
 
-    def test_recovery_runs_before_the_session_lock(self, tmp_path, monkeypatch):
-        """claim_resume_id holds the lodge-wide recovery lock, which resume_session
-        and the id poller take before the session lock: never inside it."""
+    def test_recovery_runs_before_the_settling_write(self, tmp_path, monkeypatch):
+        """Recovery reads the engine's files: never inside the write that
+        settles the session, which every other lodge writer waits on."""
         import sessions
         from creatures import vulture
         from contextlib import contextmanager
 
         _codex_session_without_id(tmp_path, monkeypatch, "codex-order")
         held = []
-        real_lock = sessions.SessionRegistry._lock
+        real_edit = sessions.SessionRegistry.edit
 
         @contextmanager
-        def tracking_lock(self, *args):
-            with real_lock(self, *args):
+        def tracking_edit(self, *args, **kwargs):
+            with real_edit(self, *args, **kwargs) as data:
                 held.append(True)
                 try:
-                    yield
+                    yield data
                 finally:
                     held.pop()
 
@@ -520,13 +520,13 @@ class TestRecoveredConversationIds:
             seen.append(bool(held))
             return real_recover(data, taken)
 
-        monkeypatch.setattr(sessions.SessionRegistry, "_lock", tracking_lock)
+        monkeypatch.setattr(sessions.SessionRegistry, "edit", tracking_edit)
         monkeypatch.setattr(sessions, "recover_resume_id", recover)
         with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
              patch("creatures.vulture._tmux_sessions", return_value=set()):
             vulture.reap()
 
-        assert seen and not any(seen), "recovery ran inside the session lock"
+        assert seen and not any(seen), "recovery ran inside the settling write"
         assert _read_wolt_session(tmp_path, "testwolt", "codex-order")["status"] == "resting"
 
 
@@ -537,9 +537,8 @@ class TestTheCleanupPing:
     def test_a_dead_session_that_rests_is_not_counted_as_cleaned(self, tmp_path, monkeypatch):
         from creatures.vulture import reap
 
-        _make_wolt_session(tmp_path, "testwolt", "can-wake")
-        path = tmp_path / "testwolt" / ".state" / "sessions" / "can-wake.json"
-        path.write_text(json.dumps(json.loads(path.read_text()) | {"harness_session_id": "conv-1"}))
+        data = _make_wolt_session(tmp_path, "testwolt", "can-wake")
+        _write_wolt_session(tmp_path, "testwolt", "can-wake", data | {"harness_session_id": "conv-1"})
         _codex_session_without_id(tmp_path, monkeypatch, "gone", rollout=False)
         with patch("creatures.vulture.WOLTS_DIR", tmp_path), \
              patch("creatures.vulture._tmux_sessions", return_value=set()):

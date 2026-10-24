@@ -122,26 +122,31 @@ def test_spawn_discovery_atomically_claims_a_conversation(tmp_path, monkeypatch)
 
 
 def test_two_sessions_cannot_claim_the_same_conversation(tmp_path, monkeypatch):
-    """claim_resume_id reads the taken set and writes inside one lock, so a second
-    session recovering into the same window finds the id already owned."""
+    """harness_session_id is UNIQUE in lodge.db: a second session recovering
+    into the same window, even one that read the taken set before the first
+    wrote, loses the write and finds the id already owned when it looks again."""
     import sessions
+    from conftest import make_session
     wolts, shared = _setup(tmp_path, monkeypatch)
     _rollout(shared, SID_A, str(wolts / "n00b"), ISO)
-    records = {
-        "one": {"name": "one", "wolt": "n00b", "harness": "codex", "dir": str(wolts / "n00b"), "created_at": T0},
-        "two": {"name": "two", "wolt": "n00b", "harness": "codex", "dir": str(wolts / "n00b"), "created_at": T0 + 5},
-    }
-
-    class FakeRegistry:
-        wolts_dir = wolts
-        def list(self):
-            return [dict(r) for r in records.values()]
+    reg = sessions.SessionRegistry(wolts)
+    for name, created in (("one", T0), ("two", T0 + 5)):
+        make_session(reg, name=name, wolt="n00b", harness="codex",
+                     dir=str(wolts / "n00b"), created_at=created)
 
     def writer(name):
-        return lambda d: records[name].update(harness_session_id=d["harness_session_id"])
+        return lambda d: sessions.stamp_resume_id(reg, "n00b", name, d["harness_session_id"])
 
-    reg = FakeRegistry()
-    assert sessions.claim_resume_id(reg, dict(records["one"]), writer("one")) == SID_A
-    assert sessions.claim_resume_id(reg, dict(records["two"]), writer("two")) == ""
-    assert records["one"]["harness_session_id"] == SID_A
-    assert "harness_session_id" not in records["two"]
+    assert sessions.claim_resume_id(reg, reg._read("n00b", "one"), writer("one")) == SID_A
+    real_taken = reg.taken_resume_ids
+    looks = []
+
+    def taken(exclude=""):  # the second claimer's first look predates the first write
+        looks.append(exclude)
+        return set() if len(looks) == 1 else real_taken(exclude)
+
+    monkeypatch.setattr(reg, "taken_resume_ids", taken)
+    assert sessions.claim_resume_id(reg, reg._read("n00b", "two"), writer("two")) == ""
+    assert reg._read("n00b", "one")["harness_session_id"] == SID_A
+    assert not reg._read("n00b", "two").get("harness_session_id")
+    assert looks == ["two", "two"]  # lost the write, looked again

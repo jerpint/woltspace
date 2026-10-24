@@ -84,17 +84,8 @@ def _slack_session_link(session: str, routing: dict | None) -> str:
 
 
 def read_session_registry(session: str) -> dict | None:
-    """Find a session file by scanning all per-wolt .state/sessions/ dirs."""
-    safe = sanitize_session(session)
-    for entry in WOLTS_DIR.iterdir():
-        if not entry.is_dir() or entry.name.startswith("."):
-            continue
-        f = entry / ".state" / "sessions" / f"{safe}.json"
-        if f.exists():
-            try:
-                return json.loads(f.read_text())
-            except Exception:
-                return None
+    """The session's registry record, or None."""
+    return SessionRegistry(WOLTS_DIR).get(sanitize_session(session), check_alive=False)
     return None
 
 

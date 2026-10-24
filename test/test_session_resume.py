@@ -612,16 +612,17 @@ def test_resume_replaces_a_missing_agent_pane_without_touching_user_layout(
 
 
 class TestResumeRacesARest:
-    """resume_session looks for the agent without the session lock, then
-    pastes. A rest takes that lock, stops tmux and writes resting in between.
-    The paste goes under the lock, after a second look, so the message is
-    never pasted into a pane being stopped: it wakes the session instead."""
+    """resume_session looks for the agent with a plain read, then pastes. A
+    rest stops tmux and writes resting in one registry write in between. The
+    paste claims the session in a write of its own first, after a second
+    look, so the message is never pasted into a pane being stopped: it wakes
+    the session instead."""
 
     NAME = "testwolt-chompy-dam-abc123"
 
     def _race(self, wolt_env, monkeypatch, *, after):
-        """Run resume_session until the agent is ready, then hold the lock and
-        apply `after(registry, phase)` before letting the paste go on."""
+        """Run resume_session until the agent is ready, then hold a registry
+        write and apply `after(registry, phase)` before letting the paste go on."""
         import sessions
         import threading
 
@@ -655,7 +656,7 @@ class TestResumeRacesARest:
                 outcome["error"] = exc
 
         worker = threading.Thread(target=resume, daemon=True)
-        with registry._lock("testwolt", self.NAME):
+        with registry.edit(self.NAME, wolt="testwolt"):
             worker.start()
             assert ready.wait(5), "resume never found the agent ready"
             after(registry, phase)
