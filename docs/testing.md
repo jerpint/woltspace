@@ -28,6 +28,7 @@ python -m pytest -q test/test_release_workflow.py test/test_lodge_skills.py test
   test/test_native_surfaces.py test/test_telegram_loop.py \
   test/test_notify_file_slack.py test/test_telegram_reply_caption.py \
   test/test_input_ready.py test/test_telegram_spawn_with_message.py \
+  test/test_boot_context_cap.py \
   test/test_wolts.py::TestCredentials
 npm test
 ```

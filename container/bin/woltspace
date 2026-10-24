@@ -46,7 +46,7 @@ API = os.environ.get("WOLTSPACE_API", "http://localhost:7777")
 _SESSION_RE = re.compile(r"-[0-9a-f]{6}$")
 
 
-def _req(method, path, body=None):
+def _req(method, path, body=None, *, hint=""):
     url = f"{API}{path}"
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
@@ -63,6 +63,9 @@ def _req(method, path, body=None):
     except urllib.error.URLError as e:
         print(f"cannot reach woltspace API at {API}: {e.reason}", file=sys.stderr)
         sys.exit(2)
+    except TimeoutError:
+        print(f"no answer from the lodge in 15 s; it may still be working{hint}", file=sys.stderr)
+        sys.exit(1)
 
 
 def _print_sessions(sessions, *, as_json=False):
@@ -154,6 +157,51 @@ def cmd_wolt_set(args):
             f"{result['wolt']}: {result['harness']} / {result.get('model') or 'default'} "
             f"(applies from the next session)"
         )
+
+
+WOLT_HINT = " (check: woltspace wolt archived)"
+
+
+def _refused(status, result):
+    """Print a lodge refusal, and each session a hold kept up, then exit 1."""
+    if status >= 300:
+        print(result.get("error", f"HTTP {status}"), file=sys.stderr)
+        for held in result.get("held", []):
+            print(f"  {held['session']}: {held.get('reason')}", file=sys.stderr)
+        raise SystemExit(1)
+
+
+def cmd_wolt_archive(args):
+    status, result = _req("POST", f"/wolts/{quote(args.name, safe='')}/archive", hint=WOLT_HINT)
+    _refused(status, result)
+    print(f"{args.name}: archived; sessions ended: {', '.join(result['stopped']) or 'none'}")
+
+
+def cmd_wolt_unarchive(args):
+    status, result = _req("POST", f"/wolts/archived/{quote(args.name, safe='')}/unarchive", hint=WOLT_HINT)
+    _refused(status, result)
+    print(f"{args.name}: back in the lodge")
+
+
+def cmd_wolt_archived(args):
+    status, result = _req("GET", "/wolts/archived", hint=WOLT_HINT)
+    _refused(status, result)
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return
+    if not result:
+        print("no archived wolts.")
+    for wolt in result:
+        print(f"{wolt['name']:<24} {wolt['type']:<10} {wolt.get('display_name') or ''}")
+
+
+def cmd_wolt_delete(args):
+    if not args.yes:
+        print("woltspace: wolt delete needs --yes (the wolt will not be recoverable)", file=sys.stderr)
+        raise SystemExit(2)
+    status, result = _req("DELETE", f"/wolts/archived/{quote(args.name, safe='')}", hint=WOLT_HINT)
+    _refused(status, result)
+    print(f"{args.name}: deleted; Auto grants revoked: {result['grants_revoked']}")
 
 
 def cmd_session_send(args):
@@ -595,7 +643,7 @@ def main():
     keeper.add_argument("--json", action="store_true")
     keeper.set_defaults(func=cmd_app_keeper)
 
-    wolt = sub.add_parser("wolt", help="configure a wolt")
+    wolt = sub.add_parser("wolt", help="configure, archive or delete a wolt")
     wsub = wolt.add_subparsers(dest="verb")
     wset = wsub.add_parser("set", help="set a validated harness/model pair")
     wset.add_argument("name")
@@ -603,6 +651,18 @@ def main():
     wset.add_argument("--model")
     wset.add_argument("--json", action="store_true")
     wset.set_defaults(func=cmd_wolt_set)
+    for verb, func, help_text in (
+            ("archive", cmd_wolt_archive, "end its sessions and move it out of the lodge"),
+            ("unarchive", cmd_wolt_unarchive, "bring an archived wolt back as it was"),
+            ("delete", cmd_wolt_delete, "delete an archived wolt for good")):
+        wp = wsub.add_parser(verb, help=help_text)
+        wp.add_argument("name")
+        wp.set_defaults(func=func)
+        if verb == "delete":
+            wp.add_argument("--yes", action="store_true", help="confirm: the wolt will not be recoverable")
+    warchived = wsub.add_parser("archived", help="list archived wolts")
+    warchived.add_argument("--json", action="store_true")
+    warchived.set_defaults(func=cmd_wolt_archived)
 
     auto = sub.add_parser("auto", help="manage repository-scoped Auto consent")
     asub = auto.add_subparsers(dest="verb")

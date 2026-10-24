@@ -1,0 +1,36 @@
+name: "🐛 Bug"
+description: Something broke or behaves unexpectedly
+title: "Bug: "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `woltspace --version`
+      placeholder: woltspace 0.5.21
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How do you run it?
+      options:
+        - Native (uv tool)
+        - Docker
+        - From a checkout
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 15, Ubuntu 24.04, Windows 11 + WSL
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead. Leave out secrets, tokens and private messages.
+    validations:
+      required: true

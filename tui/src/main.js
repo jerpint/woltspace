@@ -11,6 +11,15 @@ if (args.includes('--version')) {
 }
 
 async function main() {
+  // No lodge to talk to: say what is missing and where to go, before Ink
+  // takes the terminal (see setup-check.js).
+  const { BASE: base } = await import('./api.js');
+  const { checkLodge } = await import('./setup-check.js');
+  if (!(await checkLodge(base))) {
+    process.exitCode = 1;
+    return;
+  }
+
   const { default: React } = await import('react');
   const { render } = await import('ink');
   const { default: App } = await import('./ui/App.js');

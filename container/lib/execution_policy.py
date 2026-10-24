@@ -146,6 +146,15 @@ class AutoGrantStore:
                 self._write(kept)
         return changed
 
+    def revoke_wolt(self, wolt_id: str) -> int:
+        """Revoke every grant for a wolt, whatever its workdir; return how many."""
+        with self._lock():
+            grants = self._read()
+            kept = [g for g in grants if g.wolt_id != wolt_id]
+            if len(kept) != len(grants):
+                self._write(kept)
+        return len(grants) - len(kept)
+
 
 def resolve_execution_policy(
     requested: str | None,

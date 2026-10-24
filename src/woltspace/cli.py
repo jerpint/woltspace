@@ -232,15 +232,18 @@ _STATE_STYLES = {
 }
 
 
-def _session(args) -> int:
-    """Delegate the whole session noun to the bundled control client."""
+def _delegate(args) -> int:
+    """Delegate a whole noun (session, wolt) to the bundled control client."""
     layout = RuntimeLayout.from_env()
     client = layout.install_root / "container" / "bin" / "woltspace"
     if not client.is_file():
-        print(f"bundled session client not found: {client}", file=sys.stderr)
+        print(f"bundled {args.command} client not found: {client}", file=sys.stderr)
         return 2
     os.environ.setdefault("WOLTSPACE_API", layout.endpoint)
-    os.execv(str(client), [str(client), "session", *args.session_args])
+    # The bundled client uses an env-based woltspace-python shebang, but a
+    # native terminal need not have the bundle bin directory on PATH. Reuse
+    # the interpreter running this CLI instead of rediscovering one.
+    os.execv(sys.executable, [sys.executable, str(client), args.command, *args.noun_args])
     return 0
 
 
@@ -1087,13 +1090,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command")
-    session = sub.add_parser(
-        "session",
-        help="sessions (delegated to the bundled control client)",
-        add_help=False,
-    )
-    session.add_argument("session_args", nargs=argparse.REMAINDER)
-    session.set_defaults(func=_session)
+    for noun, what in (("session", "sessions"), ("wolt", "configure, archive or delete a wolt")):
+        delegated = sub.add_parser(noun, help=f"{what} (delegated to the bundled control client)",
+                                   add_help=False)
+        delegated.add_argument("noun_args", nargs=argparse.REMAINDER)
+        delegated.set_defaults(func=_delegate)
 
     paths = sub.add_parser("paths", help="show resolved native runtime paths")
     paths.add_argument("--json", action="store_true")

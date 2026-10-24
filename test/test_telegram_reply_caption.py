@@ -48,6 +48,7 @@ async def _routed_by_handle_message(update):
     context.bot.username = "testbot"
     with patch("bot.telegram_adapter.is_allowed", return_value=True), \
          patch("bot.telegram_adapter._is_session_alive", return_value=True), \
+         patch("bot.telegram_adapter._wolt_exists", return_value=True), \
          patch("bot.telegram_adapter._load_chat_state", return_value={}), \
          patch("bot.telegram_adapter._save_chat_state"), \
          patch("bot.telegram_adapter._notify_switch", new_callable=AsyncMock), \
@@ -103,6 +104,7 @@ async def test_voice_reply_to_a_file_routes_to_the_session():
          patch("bot.telegram_adapter._save_chat_state"), \
          patch("bot.telegram_adapter._notify_switch", new_callable=AsyncMock), \
          patch("bot.telegram_adapter._is_session_alive", return_value=True), \
+         patch("bot.telegram_adapter._wolt_exists", return_value=True), \
          patch("bot.telegram_adapter._route_to_session", new_callable=AsyncMock, return_value=SESSION) as route:
         await tg.handle_voice(update, context)
 
@@ -231,6 +233,7 @@ async def test_voice_reply_to_a_voice_note_routes_to_the_session():
          patch("bot.telegram_adapter._save_chat_state"), \
          patch("bot.telegram_adapter._notify_switch", new_callable=AsyncMock), \
          patch("bot.telegram_adapter._is_session_alive", return_value=True), \
+         patch("bot.telegram_adapter._wolt_exists", return_value=True), \
          patch("bot.telegram_adapter._route_to_session", new_callable=AsyncMock, return_value=SESSION) as route:
         await tg.handle_voice(update, context)
 

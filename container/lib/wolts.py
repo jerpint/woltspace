@@ -56,10 +56,10 @@ def _get_wolt_type(wolt_name: str) -> str:
         return "rodent"
 
 
-def list_wolts() -> list[dict]:
+def list_wolts(wolts_dir: Path = None) -> list[dict]:
     """Discover all wolts by scanning wolt.json files."""
     wolts = []
-    for wolt_json in sorted(WOLTS_DIR.glob("*/wolt/wolt.json")):
+    for wolt_json in sorted((wolts_dir or WOLTS_DIR).glob("*/wolt/wolt.json")):
         try:
             data = json.loads(wolt_json.read_text())
             data.setdefault("type", "rodent")
@@ -68,6 +68,14 @@ def list_wolts() -> list[dict]:
         except (json.JSONDecodeError, OSError):
             continue
     return wolts
+
+
+def wolt_exists(name: str, wolts_dir: Path = None) -> bool:
+    """A live wolt answers to this name: its folder, or, only when that misses,
+    a wolt.json "name" (the bots' pickers choose a wolt by that name)."""
+    root = wolts_dir or WOLTS_DIR
+    return bool(name) and ((root / name / "wolt" / "wolt.json").is_file()
+                           or any(w.get("name") == name for w in list_wolts(root)))
 
 
 def find_by_type(creature_type: str) -> list[dict]:
@@ -152,9 +160,15 @@ def create_creature_wolt(name: str, creature_type: str, role: str = "",
     if creature_type not in VALID_TYPES:
         raise ValueError(f"Invalid creature type: {creature_type}. Must be one of: {', '.join(sorted(VALID_TYPES))}")
 
+    # Imported here: wolt_archive brings in the whole session registry.
+    from wolt_archive import RESERVED_NAMES, in_archive
+    if name.lower() in RESERVED_NAMES:
+        raise ValueError(f"{name} is reserved for the lodge's apps; pick another name")
     wolt_dir = WOLTS_DIR / name
     if wolt_dir.exists():
         raise ValueError(f"Wolt '{name}' already exists at {wolt_dir}")
+    if in_archive(name, wolts_dir=WOLTS_DIR):
+        raise ValueError(f"an archived wolt is named {name}: unarchive or delete it first")
 
     # Check singleton constraint
     demoted = None

@@ -1,0 +1,26 @@
+{
+  "name": "woltspace",
+  "version": "0.1.0",
+  "description": "woltspace - give your wolt space to build. npx woltspace opens the terminal cockpit, or shows how to install.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jerpint/woltspace.git",
+    "directory": "npm/woltspace"
+  },
+  "homepage": "https://github.com/jerpint/woltspace",
+  "bin": {
+    "woltspace": "./bin/woltspace.js"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@woltspace/tui": ">=0.5.3 <1"
+  }
+}

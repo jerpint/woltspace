@@ -95,6 +95,7 @@
     const selected = (harnesses.harnesses || []).find(h=>h.id===eng.id) || {};
     const models = (selected.catalog || []).map(model=>({id:model.id,label:model.label || model.id}));
     box.appendChild(choiceGroup('Model',models,eng.model,id=>saveSettings({model:id},status)));
+    box.appendChild(el('p','wolt-rename-note','Effort and other engine settings: ask your wolt.'));
     if (selected.freeform_model) {
       const freeform = el('form','wolt-model-form'), input = el('input','wolt-model-input');
       input.type='text'; input.placeholder='provider/model'; input.value=eng.model || '';

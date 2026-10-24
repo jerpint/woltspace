@@ -877,8 +877,9 @@ def _tmux_paste(target: str | dict | RuntimeHandle, text: str, settle: float = 0
     submits it. See TmuxSessionRuntime.paste.
 
     settle: seconds to wait between the paste and the Enter keystroke.
-    Codex's TUI folded an immediate Enter into an unbracketed paste — its
-    harness entry keeps paste_settle=0.5. Claude takes 0.
+    Codex's TUI folded an immediate Enter into an unbracketed paste, and
+    Claude drops one while it attaches pasted image paths — every harness
+    entry keeps paste_settle=0.5.
     """
     _runtime().paste(_runtime_handle(target), text, settle=settle)
 
@@ -1182,7 +1183,7 @@ def deliver_message(session_id: str, text: str, from_wolt: str = "",
     the pane the agent is booting in.
 
     Delivery is harness-aware: it reuses _tmux_paste with the target harness's
-    paste_settle (codex needs a settle before Enter; claude takes 0).
+    paste_settle (every engine, claude included, pauses before the Enter).
     """
     reg = registry or SessionRegistry()
     existing = reg.get(session_id, check_alive=False)
@@ -1307,28 +1308,99 @@ def _adapter_context(data: dict) -> str:
     return ""
 
 
-def _wolt_boot_context(data: dict) -> str:
+# The opening prompt is one argument: claude, codex and pi take it on the
+# command line, and opencode and hermes get it through `tmux set-buffer`. Linux
+# refuses any single argument over MAX_ARG_STRLEN, 131,072 bytes, a kernel
+# constant separate from ARG_MAX that ulimit does not change. Boot memory has no
+# size limit of its own, so a wolt that outgrew it could not start a session
+# ("Argument list too long", #578; on 2026-10-17, 135,361 bytes of boot files
+# made a 135,984-byte prompt). Over this many UTF-8 bytes the boot files are
+# cut. That is 32 KB under the kernel's limit, and a healthy wolt's whole
+# prompt is about 15 KB.
+BOOT_PROMPT_MAX_BYTES = 96 * 1024
+
+
+def _cut_boot_file(path: Path, text: str, above: int, room: int) -> str:
+    """`text` cut to at most `room` UTF-8 bytes, a line saying so included.
+
+    `above` is how many lines strip() took off the top of the file. The note
+    numbers lines as the file on disk does, so the wolt reads on from the first
+    line it was not shown instead of reading the shown ones again.
+    """
+    raw = text.encode()
+    head = (f"[Cut by the lodge: {path.name} is {len(raw)} bytes and the boot "
+            f"limit is {BOOT_PROMPT_MAX_BYTES}.")
+
+    def note(shown: int) -> str:
+        if not shown:
+            return (f"{head} Nothing of it is shown. Read {path} in full, and trim "
+                    "your boot memory.]")
+        return (f"{head} Lines 1-{shown} of it are shown above. Read {path} from line "
+                f"{shown + 1} on, and trim your boot memory.]")
+
+    # Sized with the file's last line number, which no number in the note exceeds.
+    keep = room - len(note(above + raw.count(b"\n") + 1).encode())
+    # A line break is one byte that never occurs inside a UTF-8 character, so
+    # cutting just after one keeps the last line and every character whole.
+    end = raw.rfind(b"\n", 0, max(keep, 0)) + 1
+    shown = above + raw.count(b"\n", 0, end) if end else 0
+    return raw[:end].decode() + note(shown)
+
+
+def _fit_boot_files(files: list[tuple[Path, str, int]], budget: int) -> list[str]:
+    """The files' texts, in order, sharing `budget` UTF-8 bytes fairly.
+
+    Smallest first, each takes at most an equal part of what is left; a file
+    that fits stays whole and leaves the rest to the others. So in practice
+    identity.md stays whole and the largest file is cut.
+    """
+    texts = [text for _, text, _ in files]
+    by_size = sorted(range(len(texts)), key=lambda i: len(texts[i].encode()))
+    for done, i in enumerate(by_size):
+        share = budget // (len(texts) - done)
+        if len(texts[i].encode()) > share:
+            path, _, above = files[i]
+            texts[i] = _cut_boot_file(path, texts[i], above, share)
+        budget -= len(texts[i].encode())
+    return texts
+
+
+def _wolt_boot_context(data: dict, over: int = 0) -> str:
     """Load the owning wolt's lean boot memory without touching the repo.
 
     Harnesses run in arbitrary project directories, so cwd-based instruction
     discovery cannot establish wolt identity. The opening message carries the
     three documented boot files directly; HOME and the repository stay intact.
+
+    `over` is how many bytes the opening prompt is over BOOT_PROMPT_MAX_BYTES.
+    Everything around the files stays as it is, so the files give those bytes
+    up between them, and the cut is reported on stderr.
     """
     wolt = data.get("wolt_id") or data.get("wolt") or ""
     if not wolt:
         return ""
     memory_dir = WOLTS_DIR / wolt / "wolt" / "memory"
-    sections = []
+    files = []
     for filename in ("identity.md", "context.md", "learnings.md"):
         path = memory_dir / filename
         try:
-            content = path.read_text().strip()
+            text = path.read_text()
         except OSError:
             continue
+        content = text.strip()
         if content:
-            sections.append(f"## {filename}\n{content}")
-    if not sections:
+            above = text[:len(text) - len(text.lstrip())].count("\n")
+            files.append((path, content, above))
+    if not files:
         return ""
+    texts = [content for _, content, _ in files]
+    if over > 0:
+        total = sum(len(text.encode()) for text in texts)
+        texts = _fit_boot_files(files, total - over)
+        print(f"[sessions] boot memory of {wolt} cut from {total} to "
+              f"{sum(len(text.encode()) for text in texts)} bytes "
+              f"(limit {BOOT_PROMPT_MAX_BYTES}); trim wolt/memory/", file=sys.stderr)
+    sections = [f"## {path.name}\n{text}" for (path, *_), text in zip(files, texts)]
     target = SessionTarget.from_record(data, wolts_dir=WOLTS_DIR, fallback_wolt=wolt)
     return (
         "[Woltspace boot context]\n"
@@ -1377,21 +1449,31 @@ def _assemble_spawn_prompt(data: dict, prompt: str, harness: str) -> str:
     How start-chat is spelled follows how this wolt's skills were DELIVERED,
     not just which harness it runs: a copy-path wolt has `woltspace-start-chat`
     sitting in its skills directory and has never heard of `woltspace:`.
+
+    Over BOOT_PROMPT_MAX_BYTES the boot memory is cut, never the rest. Nothing
+    here raises for size: a raise in `prepare` would end run-session.sh before
+    it records the session as failed.
     """
     context = _adapter_context(data)
-    boot_context = _wolt_boot_context(data)
-    prefix = f"{boot_context}\n\n" if boot_context else ""
     wolt = data.get("wolt") or "wolt"
     delivery = wolt_skills_delivery(WOLTS_DIR / wolt)
     if _invokes_platform_skill(prompt, harness, delivery):
-        return f"{prefix}{prompt}{context}"
-    adapter = data.get("adapter") or "lodge"
-    # The template may carry a leading space of its own (opencode's palette
-    # defuse). Landing mid-prompt it is redundant, not harmful — strip it here
-    # so the assembled prompt reads cleanly, and leave the guard to the one
-    # place it matters: a prompt that OPENS with the invocation.
-    start_chat = platform_skill_invoke(harness, "start-chat", delivery=delivery).strip()
-    return f"{prefix}{prompt}{context} {start_chat} {adapter} {wolt}"
+        rest = f"{prompt}{context}"
+    else:
+        adapter = data.get("adapter") or "lodge"
+        # The template may carry a leading space of its own (opencode's palette
+        # defuse). Landing mid-prompt it is redundant, not harmful — strip it here
+        # so the assembled prompt reads cleanly, and leave the guard to the one
+        # place it matters: a prompt that OPENS with the invocation.
+        start_chat = platform_skill_invoke(harness, "start-chat", delivery=delivery).strip()
+        rest = f"{prompt}{context} {start_chat} {adapter} {wolt}"
+    boot_context = _wolt_boot_context(data)
+    if not boot_context:
+        return rest
+    over = len(f"{boot_context}\n\n{rest}".encode()) - BOOT_PROMPT_MAX_BYTES
+    if over > 0:
+        boot_context = _wolt_boot_context(data, over=over)
+    return f"{boot_context}\n\n{rest}"
 
 
 def stored_resume_id(data: dict) -> str:

@@ -1,6 +1,6 @@
 [project]
 name = "woltspace"
-version = "0.5.19"
+version = "0.5.21"
 description = "A persistent lodge for local AI agent sessions"
 readme = "README.md"
 license = { file = "LICENSE" }
