@@ -420,11 +420,19 @@ def _backup(args) -> int:
 
 
 def _restore(args) -> int:
+    import tarfile
+
     from .backup import restore_backup, restore_lines
 
     try:
-        result = restore_backup(args.archive, to=args.to or None)
-    except (FileNotFoundError, FileExistsError, OSError, ValueError) as exc:
+        identity = None
+        if args.identity == "-":
+            identity = sys.stdin.buffer.read()
+        elif args.identity:
+            with open(os.path.expanduser(args.identity), "rb") as key:
+                identity = key.read()
+        result = restore_backup(args.archive, to=args.to or None, identity=identity)
+    except (FileNotFoundError, FileExistsError, OSError, ValueError, tarfile.TarError) as exc:
         lore.failure(f"restore failed: {exc}")
         return 1
     if args.json:
@@ -1074,6 +1082,7 @@ def build_parser() -> argparse.ArgumentParser:
     restore = sub.add_parser("restore", help="extract a backup archive into a new directory")
     restore.add_argument("archive")
     restore.add_argument("--to", default="", help="target directory (must be new or empty)")
+    restore.add_argument("--identity", default="", help="age key file for an encrypted archive (- for stdin)")
     restore.add_argument("--json", action="store_true")
     restore.set_defaults(func=_restore)
 

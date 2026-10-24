@@ -131,11 +131,20 @@ The data-plane snapshot, in the python CLI, identical native and in-container:
   `backup-manifest.json` into the archive, then re-opens the archive to verify
   it. Never touches docker.
 - **Credentials are never archived** — `.env` at any depth,
-  `.claude/.credentials.json*`, `.codex/auth.json`. A restored stale OAuth
-  chain can trip reuse-detection and revoke the live one. The manifest lists
-  every withheld path and `restore` prints the re-provision checklist.
-- `woltspace restore <archive> [--to DIR]` — extracts into a new directory and
-  refuses a populated one; prints what to re-authenticate and the `WOLTSPACE_WOLTS_DIR=…`
+  `.claude/.credentials.json*`, `.codex/auth.json`, `.space/platform/config.json`.
+  A restored stale OAuth chain can trip reuse-detection and revoke the live one.
+  The manifest lists every withheld path and `restore` prints the re-provision
+  checklist. With `WOLTSPACE_BACKUP_AGE_RECIPIENT` set (and `age` on PATH, or
+  the backup fails) the whole archive is one `<archive>.tar.gz.age`, streamed
+  through `age`, the `.env` files and `config.json` inside (never the OAuth
+  files); no plaintext touches the disk.
+- `.space/lodge.db` goes in as an in-memory snapshot (SQLite backup API), every
+  row kept; its `-wal`/`-shm` stay out. Everything else goes in too (logs, chat
+  history and routing, queued messages, consents, running apps) except junk and
+  the two OAuth login files. `restore` blanks the apps' pids in the restored copy.
+- `woltspace restore <archive> [--to DIR] [--identity KEYFILE|-]` — extracts
+  into a new directory and refuses a populated one (an `.age` archive is
+  decrypted twice, never to disk: audit pass, then extraction); prints what to re-authenticate and the `WOLTSPACE_WOLTS_DIR=…`
   line to boot from it.
 
 Full guide, including what is excluded and why: `docs/backup.md`.
@@ -193,7 +202,7 @@ The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routi
 Thin Telegram layer over core. Persists chat history to `.state/chat/{chat_id}.jsonl`. Group chat support (responds when @mentioned).
 
 ### `container/skills/`
-Discovery files agents read from `~/.claude/skills/`. Platform skills live under base names (`notify`, `viewport`, …) and are delivered namespaced as `woltspace:<name>` — claude installs them as the `woltspace` plugin (`container/skills/.claude-plugin/`), codex/opencode reach the same tree through a `~/.claude/skills/woltspace` symlink. Current platform skills: `start-chat`, `create-wolt`, `notify`, `viewport`, `site`, `apps`, `new-app`, `wolf`, `update`, `session-summary`, `worktui` (derived at boot from worktui's own bundled skill — see `derive_worktui_skill` in `src/woltspace/container_entrypoint.py`, not hand-maintained), `organize-context`, `setup-telegram`, `setup-github`, `iwcl`, `cloudflare`, `hold`. A wolt opts into that delivery with `"skills_delivery": "plugin"` in its `wolt.json`; without it the old copy sync still runs, delivering the same skills under their historical `woltspace-<name>` names — directory **and** frontmatter, since claude reads one and codex the other. How a skill is spelled in a prompt follows how it was delivered: build one with `platform_skill_invoke(harness, name, delivery)`, never by hand. Retired skills live in `container/legacy-skills/`, outside the plugin root. **The full intent record — both delivery paths, the naming matrix, why it works natively, and the ratchet's end state — is `docs/skills-delivery.md`; read it before touching skill delivery or renaming a skill.**
+Discovery files agents read from `~/.claude/skills/`. Platform skills live under base names (`notify`, `viewport`, …) and are delivered namespaced as `woltspace:<name>` — claude installs them as the `woltspace` plugin (`container/skills/.claude-plugin/`), codex/opencode reach the same tree through a `~/.claude/skills/woltspace` symlink. Current platform skills: `start-chat`, `create-wolt`, `notify`, `viewport`, `site`, `apps`, `new-app`, `wolf`, `update`, `session-summary`, `worktui` (derived at boot from worktui's own bundled skill — see `derive_worktui_skill` in `src/woltspace/container_entrypoint.py`, not hand-maintained), `organize-context`, `setup-telegram`, `setup-github`, `setup-backup`, `iwcl`, `cloudflare`, `hold`. A wolt opts into that delivery with `"skills_delivery": "plugin"` in its `wolt.json`; without it the old copy sync still runs, delivering the same skills under their historical `woltspace-<name>` names — directory **and** frontmatter, since claude reads one and codex the other. How a skill is spelled in a prompt follows how it was delivered: build one with `platform_skill_invoke(harness, name, delivery)`, never by hand. Retired skills live in `container/legacy-skills/`, outside the plugin root. **The full intent record — both delivery paths, the naming matrix, why it works natively, and the ratchet's end state — is `docs/skills-delivery.md`; read it before touching skill delivery or renaming a skill.**
 
 ### `container/cron/digest.mjs`
 Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select via `claude -p` → render HTML. Writes to `wolt/sparks/`. Optional Spotify playlist curation.
