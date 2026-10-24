@@ -5,6 +5,7 @@
 #   woltspace init                    — first-time setup (or reconnect existing wolts)
 #   woltspace start                   — start, restart, or resume container
 #   woltspace stop                    — stop and remove container
+#   woltspace build                   — build the image; stop + start swaps it in
 #   woltspace rebuild                 — rebuild image + restart
 #   woltspace shell                   — enter running container
 #   woltspace chat                    — open claude in container
@@ -37,6 +38,11 @@ WOLTSPACE_DIR="$(cd "$(dirname "$0")" && pwd)"
 # See docs/environment.md for the full table and the sunset plan.
 WOLTS_DIR="${WOLTSPACE_WOLTS_DIR:-${WOLTS_DIR:-$HOME/.woltspace/wolts}}"
 WOLTS_DIR="${WOLTS_DIR/#\~/$HOME}"
+# The file docker hands the container as its environment. Read from the
+# launching shell only; a path outside the data root keeps it out of reach of
+# the container, whose first process runs as root with that environment.
+ENV_FILE="${WOLTSPACE_ENV_FILE:-$WOLTS_DIR/.env}"
+ENV_FILE="${ENV_FILE/#\~/$HOME}"
 
 # Default name for default path, hash-suffixed for custom paths (avoids collisions)
 if [ -n "${WOLTSPACE_CONTAINER:-}" ]; then
@@ -47,6 +53,16 @@ else
   _hash=$(printf '%s' "$WOLTS_DIR" | md5sum 2>/dev/null | cut -c1-6 || printf '%s' "$WOLTS_DIR" | md5 2>/dev/null | cut -c1-6)
   CONTAINER_NAME="woltspace-${_hash}"
 fi
+# The image this lodge builds and runs. A second lodge on the machine names
+# its own, or a build for one would retag the other's. Read from the launching
+# shell only, and one image reference (the desktop app's value, such as
+# woltspace/woltspace:latest, is one too), checked before any docker call, so
+# it can carry no other docker flags.
+IMAGE="${WOLTSPACE_IMAGE:-woltspace}"
+case "$IMAGE" in
+  [!A-Za-z0-9]*|*[!A-Za-z0-9_.:/@-]*)
+    echo "error: WOLTSPACE_IMAGE must be an image name (a letter or digit, then letters, digits, . _ - : / @)" >&2; exit 1 ;;
+esac
 cmd="${1:-start}"
 
 # Parse flags: --local, --branch <name>
@@ -190,7 +206,18 @@ _refuse_over_native_colony() {
   exit 1
 }
 
+# Checked by rebuild before the old container is removed, and by every build.
+_check_node_sudo() {
+  case "${WOLTSPACE_NODE_SUDO:-}" in
+    ''|true|false) ;;
+    *) echo "error: WOLTSPACE_NODE_SUDO must be true or false" >&2; exit 1 ;;
+  esac
+}
+
 _build_image() {
+  # Build args passed through from the launching shell (never from .env):
+  # docker reads each bare `--build-arg NAME` from this environment.
+  _check_node_sudo
   local cache_flag=""
   [ "$NO_CACHE" = true ] && cache_flag="--no-cache"
 
@@ -201,9 +228,11 @@ _build_image() {
     echo "  ${_D}🪵 building image from local source (wheel + local tui)${_R}"
     echo "  ${_L}   felling fresh timber...${_R}"
     echo ""
-    docker build -t woltspace $cache_flag \
+    docker build -t "$IMAGE" $cache_flag \
       --build-arg USE_LOCAL=true \
       --build-arg CACHE_BUST="$(date +%s)" \
+      --build-arg WOLTSPACE_NODE_SUDO \
+      --build-arg WOLTSPACE_CLAUDE_MANAGED_SETTINGS \
       -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR"
   else
     local version_arg=""
@@ -219,15 +248,56 @@ _build_image() {
     fi
     echo "  ${_L}   felling fresh timber...${_R}"
     echo ""
-    docker build -t woltspace $cache_flag $version_arg \
+    docker build -t "$IMAGE" $cache_flag $version_arg \
       --build-arg CACHE_BUST="$(date +%s)" \
+      --build-arg WOLTSPACE_NODE_SUDO \
+      --build-arg WOLTSPACE_CLAUDE_MANAGED_SETTINGS \
       -f "$WOLTSPACE_DIR/container/Dockerfile" "$WOLTSPACE_DIR/container"
+  fi
+}
+
+# Shared by build and rebuild, so both build the same image.
+_resolve_build_version() {
+  # Resolve version: --version > --latest > current container version
+  CURRENT_VERSION=""
+  if [ -n "$BUILD_VERSION" ]; then
+    CURRENT_VERSION="$BUILD_VERSION"
+  elif [ "$BUILD_LATEST" = true ]; then
+    CURRENT_VERSION=""  # empty = Dockerfile picks latest tag
+  elif [ "$LOCAL_BUILD" != true ] && [ "$BUILD_BRANCH" = "main" ]; then
+    CURRENT_VERSION=$(docker exec "$CONTAINER_NAME" cat /workspace/woltspace/.version 2>/dev/null || echo "")
   fi
 }
 
 _start_container() {
   local wolt_name="${1:-}"
   _refuse_over_native_colony
+  # Run settings come from the launching shell only, never from .env (the
+  # container can write that). Each must be one word of a fixed character set,
+  # so none can carry other docker flags. Checked before anything is removed.
+  local publish="${WOLTSPACE_PORT:-7777}"
+  if [ -n "${WOLTSPACE_PUBLISH_HOST:-}" ]; then
+    case "$WOLTSPACE_PUBLISH_HOST" in
+      *[!0-9a-fA-F.:]*) echo "error: WOLTSPACE_PUBLISH_HOST must be an IP address" >&2; exit 1 ;;
+    esac
+    case "$WOLTSPACE_PUBLISH_HOST" in
+      *:*) publish="[$WOLTSPACE_PUBLISH_HOST]:$publish" ;;  # IPv6
+      *) publish="$WOLTSPACE_PUBLISH_HOST:$publish" ;;
+    esac
+  fi
+  local network_args=""
+  if [ -n "${WOLTSPACE_DOCKER_NETWORK:-}" ]; then
+    case "$WOLTSPACE_DOCKER_NETWORK" in
+      host|none) echo "error: WOLTSPACE_DOCKER_NETWORK=$WOLTSPACE_DOCKER_NETWORK is not allowed (host shares the host's network, none drops the port)" >&2; exit 1 ;;
+      -*|*[!A-Za-z0-9_.-]*) echo "error: WOLTSPACE_DOCKER_NETWORK must be a network name" >&2; exit 1 ;;
+    esac
+    network_args="--network $WOLTSPACE_DOCKER_NETWORK"
+  fi
+  # An image built without sudo says so in its label. Then no setuid binary
+  # may hand a process root either.
+  local privilege_args=""
+  [ "$(docker image inspect -f '{{index .Config.Labels "woltspace.node_sudo"}}' "$IMAGE" 2>/dev/null)" = false ] \
+    && privilege_args="--security-opt no-new-privileges"
   docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
   local extra_args=""
@@ -246,14 +316,16 @@ _start_container() {
   mkdir -p "$WOLTS_DIR/.claude"
   docker run -d \
     --name "$CONTAINER_NAME" \
-    --env-file "$WOLTS_DIR/.env" \
+    --env-file "$ENV_FILE" \
     -e HOST_UID=$(id -u) \
     -e HOST_GID=$(id -g) \
     -v "$WOLTS_DIR:/workspace/wolts:rw" \
     -v "$WOLTS_DIR/.claude:/home/node/.claude:rw" \
-    -p "${WOLTSPACE_PORT:-7777}":7777 \
+    -p "$publish":7777 \
+    $network_args \
+    $privilege_args \
     $extra_args \
-    woltspace > /dev/null
+    "$IMAGE" > /dev/null
 
   sleep 2
   if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
@@ -303,7 +375,7 @@ _show_url() {
   echo ""
 
   # Check if tunnel is enabled
-  local env_file="$WOLTS_DIR/.env"
+  local env_file="$ENV_FILE"
   local tunnel_enabled
   tunnel_enabled=$(grep '^WOLTSPACE_PUBLIC_TUNNEL=' "$env_file" 2>/dev/null | cut -d= -f2-)
   tunnel_enabled="${tunnel_enabled:-true}"
@@ -390,7 +462,9 @@ if [ "$cmd" = "init" ]; then
   _refuse_over_native_colony
   _setup_path
 
-  # Detect existing lodge (wolts or just scaffold from prior init)
+  # Detect existing lodge (wolts or just scaffold from prior init). The
+  # scaffold is the data root's own .env: an external WOLTSPACE_ENV_FILE can be
+  # made before the lodge is, and says nothing about the data root.
   if [ -d "$WOLTS_DIR" ] && { [ "$(_count_wolts)" -gt 0 ] || [ -f "$WOLTS_DIR/.env" ]; }; then
     printf "\n  %b🦫%b  %b\n\n" "${_L}" "${_R}" "${_B}${_G}woltspace${_R}"
     if [ "$(_count_wolts)" -gt 0 ]; then
@@ -402,7 +476,7 @@ if [ "$cmd" = "init" ]; then
       echo "  ${_L}   resuming onboarding${_R}"
     fi
     echo ""
-    if ! docker image inspect woltspace &>/dev/null; then
+    if ! docker image inspect "$IMAGE" &>/dev/null; then
       _build_image
     fi
     _start_container
@@ -455,7 +529,7 @@ if [ "$cmd" = "init" ]; then
 
   # Create wolts dir + .env from template
   mkdir -p "$WOLTS_DIR"
-  [ ! -f "$WOLTS_DIR/.env" ] && cp "$WOLTSPACE_DIR/.env.example" "$WOLTS_DIR/.env"
+  [ ! -f "$ENV_FILE" ] && cp "$WOLTSPACE_DIR/.env.example" "$ENV_FILE"
 
   # Ensure .claude dir exists for auth persistence (entrypoint handles ownership)
   mkdir -p "$WOLTS_DIR/.claude"
@@ -463,13 +537,13 @@ if [ "$cmd" = "init" ]; then
     echo ""
     echo "  ${_G}✓${_R} public access enabled"
     # Set tunnel enabled explicitly
-    sed -i '' 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=true/' "$WOLTS_DIR/.env" 2>/dev/null || \
-    sed -i 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=true/' "$WOLTS_DIR/.env"
+    sed -i '' 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=true/' "$ENV_FILE" 2>/dev/null || \
+    sed -i 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=true/' "$ENV_FILE"
   else
     echo ""
     echo "  ${_D}no worries — localhost:7777 only. you can enable it later in .env${_R}"
-    sed -i '' 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=false/' "$WOLTS_DIR/.env" 2>/dev/null || \
-    sed -i 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=false/' "$WOLTS_DIR/.env"
+    sed -i '' 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=false/' "$ENV_FILE" 2>/dev/null || \
+    sed -i 's/^# WOLTSPACE_PUBLIC_TUNNEL=false/WOLTSPACE_PUBLIC_TUNNEL=false/' "$ENV_FILE"
   fi
   echo ""
 
@@ -494,7 +568,7 @@ if [ ! -d "$WOLTS_DIR" ] || [ "$(_count_wolts)" -eq 0 ]; then
   fi
   # Allow container-management commands even with no wolts (onboarding)
   case "$cmd" in
-    logs|shell|stop|chat) ;;  # fall through to subcommands
+    logs|shell|stop|chat|build) ;;  # fall through to subcommands
     *)
       echo ""
       echo "  🦫 no wolts found at $WOLTS_DIR"
@@ -717,17 +791,18 @@ RESTORE
     fi
     echo ""
     ;;
+  build)
+    # The image only. The running container keeps its old image until `stop`
+    # + `start` (a restart would reuse it). Neither the data root nor the
+    # port is touched, so no wolts are needed and no native colony is in
+    # the way.
+    _resolve_build_version
+    _build_image
+    ;;
   rebuild)
     _refuse_over_native_colony
-    # Resolve version: --version > --latest > current container version
-    CURRENT_VERSION=""
-    if [ -n "$BUILD_VERSION" ]; then
-      CURRENT_VERSION="$BUILD_VERSION"
-    elif [ "$BUILD_LATEST" = true ]; then
-      CURRENT_VERSION=""  # empty = Dockerfile picks latest tag
-    elif [ "$LOCAL_BUILD" != true ] && [ "$BUILD_BRANCH" = "main" ]; then
-      CURRENT_VERSION=$(docker exec "$CONTAINER_NAME" cat /workspace/woltspace/.version 2>/dev/null || echo "")
-    fi
+    _check_node_sudo
+    _resolve_build_version
     if [ "$LOCAL_BUILD" = true ]; then
       echo "  ${_D}🪵 rebuilding from local — $WOLTSPACE_DIR${_R}"
       echo "  ${_L}   felling local timber...${_R}"
@@ -770,7 +845,7 @@ RESTORE
       docker restart "$CONTAINER_NAME" > /dev/null
       _show_url
     else
-      if ! docker image inspect woltspace &>/dev/null; then
+      if ! docker image inspect "$IMAGE" &>/dev/null; then
         _build_image
       fi
       _start_container
@@ -783,8 +858,8 @@ RESTORE
     exit 2
     ;;
   *)
-    echo "usage: woltspace <init|start|stop|rebuild|backup|shell|chat|logs|update>"
-    echo "       woltspace rebuild [--latest|--version X|--nightly|--branch X|--no-cache]"
+    echo "usage: woltspace <init|start|stop|build|rebuild|backup|shell|chat|logs|update>"
+    echo "       woltspace build|rebuild [--latest|--version X|--nightly|--branch X|--no-cache]"
     echo "       woltspace backup [tag] [--bundle]"
     exit 1
     ;;

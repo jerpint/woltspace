@@ -107,6 +107,7 @@ Commands:
 - `woltspace start` — start, restart, or resume container
 - `woltspace stop` — stop and remove container
 - `woltspace backup [tag] [--bundle]` — container-era snapshot: `docker commit` + `rsync` of the whole wolts dir (`--bundle` zips it around a `docker save`). Superseded by the native command below; kept for container users.
+- `woltspace build` — build the image only; the running container keeps the old one until `stop` + `start` (not a restart, which reuses it)
 - `woltspace rebuild` — rebuild image + restart
 - `woltspace shell/chat/logs` — interact with running container
 

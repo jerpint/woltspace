@@ -46,6 +46,12 @@ HOME = Path("/home/node")
 # by `docker run -v "$WOLTSPACE_WOLTS_DIR:/workspace/wolts"`.
 DEFAULT_WOLTS_DIR = "/workspace/wolts"
 
+# Where the root phase looks for its tools. The image's PATH puts directories
+# node owns first (the bundle's container/bin, ~/.local/bin), and the root phase
+# re-owns them to node every boot, so a bare `chown` there could be a file a
+# session planted, run as root at the next container start.
+ROOT_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+
 TUNNEL_POLL_ATTEMPTS = 45
 TUNNEL_POLL_INTERVAL = 1.0
 
@@ -64,24 +70,37 @@ def run_root_phase() -> int:
     """
     host_uid = os.environ.get("HOST_UID") or "1000"
     host_gid = os.environ.get("HOST_GID") or "1000"
+    root_env = {**os.environ, "PATH": ROOT_PATH}
 
-    subprocess.run(["groupmod", "-o", "-g", host_gid, "node"], check=True)
-    subprocess.run(["usermod", "-o", "-u", host_uid, "-g", host_gid, "node"], check=True)
-    subprocess.run(["chown", "node:node", "/workspace"], check=True)
-    subprocess.run(["chown", "-R", "node:node", str(HOME)], check=True)
+    def root_run(*cmd: str) -> None:
+        subprocess.run([_root_tool(cmd[0]), *cmd[1:]], check=True, env=root_env)
+
+    root_run("groupmod", "-o", "-g", host_gid, "node")
+    root_run("usermod", "-o", "-u", host_uid, "-g", host_gid, "node")
+    root_run("chown", "node:node", "/workspace")
+    root_run("chown", "-R", "node:node", str(HOME))
     # The platform is an installed package, so this is its wheel bundle rather
     # than a checkout — a few MB, not the venv. It still has to be re-owned
     # here: `usermod` above just moved node to the host's uid, and boot writes a
     # derived skill into it (container/skills/worktui).
     bundle = resolve_install_root(os.environ.get("WOLTSPACE_DIR"))
-    subprocess.run(["chown", "-R", "node:node", str(bundle)], check=True)
+    root_run("chown", "-R", "node:node", str(bundle))
 
     # gosu leaves the environment alone apart from the user it switches to, and
     # this process was started with root's HOME. Name node's home explicitly so
     # nothing downstream depends on gosu's behaviour to find ~/.gitconfig.
     os.environ["HOME"] = str(HOME)
-    os.execvp("gosu", ["gosu", "node", "/usr/local/bin/woltspace", "container-entrypoint"])
-    return 1  # unreachable — execvp either replaces this process or raises
+    # The node phase keeps the image's PATH; only gosu itself is looked up
+    # in ROOT_PATH.
+    os.execv(_root_tool("gosu"), ["gosu", "node", "/usr/local/bin/woltspace", "container-entrypoint"])
+    return 1  # unreachable — execv either replaces this process or raises
+
+
+def _root_tool(name: str) -> str:
+    path = shutil.which(name, path=ROOT_PATH)
+    if path is None:
+        raise FileNotFoundError(f"{name} not found in {ROOT_PATH}")
+    return path
 
 
 # ---------------------------------------------------------------------------
