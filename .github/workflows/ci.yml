@@ -59,6 +59,7 @@ jobs:
           test/test_wolf_connector.py
           test/test_skills_sync.py
           test/test_session_target_api.py
+          test/test_iwcl_log.py
           test/test_execution_policy.py
           test/test_auto_grants_cli.py
           test/test_backup.py
