@@ -72,7 +72,17 @@ ADAPTERS = [
     "container/bot/telegram_adapter.py",
     "container/bot/telegram_adapter_v1.py",
     "container/bot/slack_adapter.py",
+    # The lodge's message routing, shared by connectors (RFC #617).
+    "container/lib/lodge_messages.py",
 ]
+# Where each one hands its delivery to a thread. Telegram's routing moved into
+# lodge_messages, which calls the connector's message_session port.
+HANDOFF = {
+    "container/bot/telegram_adapter.py": None,
+    "container/bot/telegram_adapter_v1.py": "asyncio.to_thread(message_session",
+    "container/bot/slack_adapter.py": "asyncio.to_thread(message_session",
+    "container/lib/lodge_messages.py": "asyncio.to_thread(p.message_session",
+}
 
 BLOCKING = {"message_session", "resume_session"}
 
@@ -91,9 +101,11 @@ def test_chat_adapters_never_resume_on_their_event_loop(relative):
         if not isinstance(node, ast.AsyncFunctionDef):
             continue
         for call in ast.walk(node):
-            if (isinstance(call, ast.Call)
-                    and isinstance(call.func, ast.Name)
-                    and call.func.id in BLOCKING):
+            if not isinstance(call, ast.Call):
+                continue
+            name = (call.func.id if isinstance(call.func, ast.Name)
+                    else call.func.attr if isinstance(call.func, ast.Attribute) else None)
+            if name in BLOCKING:
                 offenders.append(f"{node.name}:{call.lineno}")
     assert offenders == [], (
         f"{relative}: blocking session call(s) on the event loop at "
@@ -103,6 +115,10 @@ def test_chat_adapters_never_resume_on_their_event_loop(relative):
 
 def test_the_adapters_do_hand_those_calls_to_a_thread(monkeypatch):
     """The guard above passes trivially if the calls vanish — they didn't."""
-    for relative in ADAPTERS:
+    for relative, handoff in HANDOFF.items():
         source = (ROOT / relative).read_text()
-        assert "asyncio.to_thread(message_session" in source, relative
+        if handoff is None:
+            # Delivers only through the shared routing, never by itself.
+            assert "message_session(" not in source.replace("lambda name, text: message_session(name, text)", ""), relative
+            continue
+        assert handoff in source, relative

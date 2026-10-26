@@ -45,6 +45,7 @@ from harnesses import platform_skill_invoke
 from skills_sync import wolt_skills_delivery
 from notify_prompt import notify_reply_instruction
 import lodge_commands as commands
+import lodge_messages as messages
 import connector_registry
 from connector_contract import Ack, Reply
 
@@ -338,18 +339,24 @@ def _shown(wolt: str) -> str:
     return wolt_display_name(wolt, _WOLTS_DIR) if wolt else wolt
 
 
-async def _notify_switch(update: Update, old_state: dict, new_wolt: str, new_session: str):
-    """Send a brief message if active wolt or session changed."""
-    old_wolt = old_state.get("active_wolt")
-    old_session = old_state.get("active_session")
-    emoji = CREATURE_EMOJIS.get("raccoon", "🐾")  # fallback, wolt.json lookup below
-    wolt_json = _WOLTS_DIR / new_wolt / "wolt" / "wolt.json"
+def _creature_emoji(wolt: str) -> str:
+    """The wolt's creature emoji from its wolt.json; 🦝 when it has none."""
+    emoji = CREATURE_EMOJIS.get("raccoon", "🐾")
+    wolt_json = _WOLTS_DIR / wolt / "wolt" / "wolt.json"
     if wolt_json.exists():
         try:
             data = json.loads(wolt_json.read_text())
             emoji = CREATURE_EMOJIS.get(data.get("type", ""), "🐾")
         except (json.JSONDecodeError, OSError):
             pass
+    return emoji
+
+
+async def _notify_switch(update: Update, old_state: dict, new_wolt: str, new_session: str):
+    """Send a brief message if active wolt or session changed."""
+    old_wolt = old_state.get("active_wolt")
+    old_session = old_state.get("active_session")
+    emoji = _creature_emoji(new_wolt)
     if new_wolt != old_wolt:
         await _reply(update, f"🪵 now talking to {emoji} {_shown(new_wolt)} ({new_session})")
     elif new_session != old_session:
@@ -403,76 +410,13 @@ def _spawn_session_with_message(wolt: str, chat_id: int, text: str) -> dict:
 
 
 async def _route_to_session(update: Update, session_name: str, wolt: str, text: str, chat_id: int):
-    """Route a message directly to a Claude Code session.
+    """Deliver a message to a session (the lodge's routing; see lodge_messages.deliver).
 
-    Returns the name of the session the message was actually delivered to
-    (which may differ from session_name if it fell back to the wolt's live
-    session), or None if nothing could be delivered — callers save the
-    returned name as the chat's active session.
+    Returns the name of the session it reached (the wolt's live session when
+    the one asked for is gone), or None when nothing could take it.
     """
-    creature = ""  # will be filled from wolt.json by message_session
-    emoji = "🐾"
-
-    # Try to get creature emoji from wolt.json
-    wolt_json = _WOLTS_DIR / wolt / "wolt" / "wolt.json"
-    if wolt_json.exists():
-        try:
-            data = json.loads(wolt_json.read_text())
-            creature = data.get("type", "")
-            emoji = CREATURE_EMOJIS.get(creature, "🐾")
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    session_msg = (
-        f"{_session_message(text, chat_id)}\n"
-        f"{notify_reply_instruction('--telegram', chat_id)}"
-    )
-    # message_session → resume_session blocks for as long as the agent takes
-    # to come up (up to 12s). On the bot's event loop that stalls every other
-    # chat, so the wait happens in a thread.
-    result = await asyncio.to_thread(message_session, session_name, session_msg)
-    _bot_log("telegram_v2_session_route", {
-        "session": session_name, "wolt": wolt,
-        "text": text[:200], "result": result,
-    })
-
-    _append_history(chat_id, "user", text)
-
-    if not result.get("ok"):
-        # Session unroutable — not in the registry, or a foreign-runtime
-        # record left behind by a container↔native migration. Before giving
-        # up (caller spawns fresh), prefer the wolt's live session: the
-        # message still gets delivered, and the human is told where.
-        live = resolve_active_session(wolt)
-        fallback = (
-            await asyncio.to_thread(message_session, live, session_msg)
-            if live and live != session_name else None
-        )
-        _bot_log("telegram_v2_fallback_route", {
-            "from": session_name, "to": live, "wolt": wolt,
-            "result": fallback,
-        })
-        if fallback and fallback.get("ok"):
-            session_link = fallback.get("url") or live
-            await _reply(update, f"🪵 {session_name} is gone — delivered to {wolt}'s live session instead\n{session_link}")
-            _append_message(chat_id, {
-                "role": "assistant",
-                "content": f"[delivered to session {live}]",
-            })
-            return live
-        # Nothing live — caller respawns
-        return None
-
-    session_link = result.get("url") or session_name
-    if result.get("status") == "revived":
-        await _reply(update, f"🪵 session had exited — revived and delivered\n{session_link}")
-    else:
-        await _reply(update, f"🪵 sent to {session_name}\n{session_link}")
-    _append_message(chat_id, {
-        "role": "assistant",
-        "content": f"[delivered to session {session_name}]",
-    })
-    return session_name
+    return await messages.deliver(_message_ports(update, None, chat_id, wrapped=False),
+                                  session_name, wolt, text)
 
 
 # ---------------------------------------------------------------------------
@@ -599,8 +543,62 @@ def _photo_content(image_bytes: bytes, mime_type: str = "image/jpeg", caption: s
 # Handlers
 # ---------------------------------------------------------------------------
 
+def _message_ports(update: Update, context, chat_id: int, wrapped: bool = True) -> messages.MessagePorts:
+    """The lodge's message routing, as this chat sees it. Names resolve at call time."""
+    async def say(reply: Reply):
+        text, kwargs = _render(reply)
+        await _reply(update, text, **kwargs)
+
+    return messages.MessagePorts(
+        lodge=_ports(),
+        say=say,
+        message_session=lambda name, text: message_session(name, text),
+        frame=lambda text: (
+            f"{_session_message(text, chat_id)}\n"
+            f"{notify_reply_instruction('--telegram', chat_id)}"
+        ),
+        resolve_live=lambda wolt: resolve_active_session(wolt),
+        spawn_with_message=lambda wolt, text: _spawn_session_with_message(wolt, chat_id, text),
+        wolt_exists=lambda wolt: _wolt_exists(wolt),
+        creature_emoji=lambda wolt: _creature_emoji(wolt),
+        dog_available=lambda: dog_available(),
+        ask_dog=lambda text, content: _ask_dog(update, context, chat_id, text, content),
+        remember_user=lambda text: _append_history(chat_id, "user", text),
+        remember_delivery=lambda name: _append_message(chat_id, {
+            "role": "assistant", "content": f"[delivered to session {name}]",
+        }),
+        deliver=(lambda name, wolt, text: _route_to_session(update, name, wolt, text, chat_id))
+        if wrapped else None,
+        say_switch=lambda old, wolt, name: _notify_switch(update, old, wolt, name),
+        log=lambda event, data: _bot_log(f"telegram_v2_{event}", data),
+        log_error=lambda message: logger.error(message),
+    )
+
+
+def _reply_target(update: Update, text: str) -> tuple[str | None, str | None]:
+    """The session whose notification this message replies to, and the message
+    as that session should read it (quoting what it replies to)."""
+    reply_to = update.message.reply_to_message
+    reply_body, reply_file = _reply_source(reply_to) if reply_to else ("", None)
+    if not reply_body:
+        return None, None
+    session = _parse_session_from_reply(reply_body)
+    if not session:
+        return None, None
+    return session, _quote_reply(reply_body, reply_file, text, _reply_is_voice(reply_to))
+
+
+async def _route(update: Update, context, chat_id: int, text: str, dog_content=None):
+    """Hand one owner message to the lodge's routing."""
+    reply_session, reply_text = _reply_target(update, text)
+    await messages.route_message(
+        _message_ports(update, context, chat_id), chat_id, text,
+        reply_session=reply_session, reply_text=reply_text, dog_content=dog_content,
+    )
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Main message handler — routes based on chat state."""
+    """A text message: Telegram's group and mention rules, then the lodge routes it."""
     user_id = update.effective_user.id if update.effective_user else None
     logger.info(f"Message from user_id={user_id}")
     if not is_allowed(update):
@@ -612,145 +610,53 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     has_reply = bool(update.message.reply_to_message)
     _bot_log("message_received", {"chat_id": chat_id, "text": text[:100], "has_reply": has_reply})
 
-    # In group chats, only respond when @mentioned or replied to
-    chat_type = update.effective_chat.type
-    if chat_type in ("group", "supergroup"):
-        bot_id = context.bot.id
+    # In group chats, only respond when @mentioned, replied to, or already talking.
+    if update.effective_chat.type in ("group", "supergroup"):
         is_mention = _is_dog_mention(text, bot_username)
-        is_reply = (
-            update.message.reply_to_message
-            and update.message.reply_to_message.from_user
-            and update.message.reply_to_message.from_user.id == bot_id
-        )
+        reply_to = update.message.reply_to_message
+        is_reply = reply_to and reply_to.from_user and reply_to.from_user.id == context.bot.id
         if not is_mention and not is_reply:
-            # Check if there's an active session — if so, route to it
             state = _load_chat_state(chat_id)
-            if state.get("active_wolt") and state.get("active_session"):
-                # Active session exists — route to it even without mention
-                pass  # fall through to routing logic below
-            else:
-                return  # no active wolt, not mentioned — ignore
+            if not (state.get("active_wolt") and state.get("active_session")):
+                return
 
-    # --- Bot mention: dog when available, otherwise normal routing ---
+    # A mention asks the dog when there is one; otherwise it is routed as usual.
     if _is_dog_mention(text, bot_username):
         text = _strip_mention(text, bot_username)
         if dog_available():
             await _handle_dog(update, context, chat_id, text)
             return
 
-    # --- Reply-to routing: check if replying to a specific wolt's message ---
-    reply_to = update.message.reply_to_message
-    reply_body, reply_file = _reply_source(reply_to) if reply_to else ("", None)
-    if reply_body:
-        reply_session = _parse_session_from_reply(reply_body)
-        if reply_session:
-            reply_wolt = _wolt_from_session_name(reply_session)
-            # A reply to a gone wolt's old message is routed like any message.
-            if reply_wolt and _wolt_exists(reply_wolt):
-                # Build message with reply context, without the footer
-                reply_text = _quote_reply(
-                    reply_body, reply_file, text, _reply_is_voice(reply_to),
-                )
-
-                # Try routing directly — message_session handles revive internally
-                prev_state = _load_chat_state(chat_id)
-                delivered = await _route_to_session(update, reply_session, reply_wolt, reply_text, chat_id)
-                if delivered:
-                    new_state = dict(prev_state)
-                    new_state["active_wolt"] = reply_wolt
-                    new_state["active_session"] = delivered
-                    _save_chat_state(chat_id, new_state)
-                    await _notify_switch(update, prev_state, reply_wolt, delivered)
-                    return
-                # Route failed (session truly gone) — spawn new one for that wolt
-                try:
-                    session = _spawn_session_with_message(reply_wolt, chat_id, reply_text)
-                    state = _load_chat_state(chat_id)
-                    state["active_wolt"] = reply_wolt
-                    state["active_session"] = session["name"]
-                    _save_chat_state(chat_id, state)
-                    tunnel_url = get_tunnel_url()
-                    session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
-                    await _reply(update, f"🪵 session expired — new one for {reply_wolt}\n{session_link}")
-                except Exception as e:
-                    logger.error(f"Failed to spawn session for {reply_wolt}: {e}")
-                    await _reply(update, f"couldn't start session for {_shown(reply_wolt)}: {e}")
-                return
-            # else: couldn't parse wolt from session name — fall through to regular path
-
-    await _route_message(update, context, chat_id, text)
-
-
-async def _select_wolt_without_dog(update: Update, chat_id: int, state: dict) -> bool:
-    """Select the only builder, or explain how to choose without a model call."""
-    wolts = [w for w in list_wolts() if _is_wolt(w)]
-    if len(wolts) == 1:
-        state["active_wolt"] = wolts[0].get("name") or Path(wolts[0].get("dir", "")).name
-        state.pop("active_session", None)
-        _save_chat_state(chat_id, state)
-        return True
-    if wolts:
-        await _reply(
-            update,
-            _wolt_picker_header(wolts, None),
-            reply_markup=_wolt_picker_keyboard(wolts, None),
-        )
-        await _reply(update, _PICK_THEN_RESEND)
-    else:
-        await _reply(update, _NO_WOLTS_MESSAGE)
-    return False
+    await _route(update, context, chat_id, text)
 
 
 async def _route_message(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int, text: str):
-    """Share the existing active-session/spawn path across message types."""
-    # --- Load chat state ---
-    state = _load_chat_state(chat_id)
-    active_wolt = state.get("active_wolt")
-    active_session = state.get("active_session")
+    """Route without reply context: the chat's active wolt and session."""
+    await messages.route_message(_message_ports(update, context, chat_id), chat_id, text)
 
-    if not active_wolt:
-        if dog_available():
-            await _handle_dog(update, context, chat_id, text)
-            return
-        if not await _select_wolt_without_dog(update, chat_id, state):
-            return
-        active_wolt = state["active_wolt"]
-        active_session = None
 
-    # --- Has active wolt + session: route to session ---
-    if active_session:
-        # Route directly — message_session handles revive (Claude exited, tmux dead, etc.)
-        delivered = await _route_to_session(update, active_session, active_wolt, text, chat_id)
-        if delivered:
-            if delivered != active_session:
-                state["active_session"] = delivered
-                _save_chat_state(chat_id, state)
-            return
-        # message_session failed (session not in registry) — spawn new
-        await _reply(update, f"🪵 session expired — spawning new one for {_shown(active_wolt)}")
-        try:
-            session = _spawn_session_with_message(active_wolt, chat_id, text)
-            state["active_session"] = session["name"]
-            _save_chat_state(chat_id, state)
-            tunnel_url = get_tunnel_url()
-            session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
-            await _reply(update, f"🪵 new session for {_shown(active_wolt)}\n{session_link}")
-        except Exception as e:
-            logger.error(f"Failed to spawn session for {active_wolt}: {e}")
-            await _reply(update, f"couldn't start session for {_shown(active_wolt)}: {e}")
-        return
+async def _ask_dog(update: Update, context, chat_id: int, text: str, content=None):
+    if content is not None:
+        await _photo_dog(update, chat_id, content)
+    else:
+        await _handle_dog(update, context, chat_id, text)
 
-    # --- Has active wolt but no session: spawn one ---
+
+async def _photo_dog(update: Update, chat_id: int, content: dict):
+    """The dog looks at an image sent while no wolt is chosen."""
+    await _dog_ack(update)
+    history = _load_history(chat_id)
+    routing = {"adapter": "telegram", "chat_id": chat_id}
     try:
-        session = _spawn_session_with_message(active_wolt, chat_id, text)
-        state["active_session"] = session["name"]
-        _save_chat_state(chat_id, state)
-        tunnel_url = get_tunnel_url()
-        session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
-        await _reply(update, f"🪵 new session for {_shown(active_wolt)}\n{session_link}")
+        result = get_response(content["message"], conversation_history=list(history),
+                              routing=routing, user_content=content["content"])
     except Exception as e:
-        logger.error(f"Failed to spawn session for {active_wolt}: {e}")
-        await _reply(update, f"couldn't start session for {_shown(active_wolt)}: {e}")
+        await _reply(update, f"photo error: {e}")
+        return
+    _append_history(chat_id, "user", content["message"])
+    for msg in result["history_messages"]:
+        _append_message(chat_id, msg)
+    await _send_result(update, result)
 
 
 async def _handle_dog(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_message: str):
@@ -838,86 +744,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         Path(tmp_path).unlink(missing_ok=True)
 
     logger.info(f"Transcribed: {text[:100]}")
-
-    # Route transcribed text through the same logic as handle_message
-    voice_message = f"[voice message] {text}"
-
-    # --- Reply-to routing: check if replying to a specific wolt's message ---
-    reply_to = update.message.reply_to_message
-    reply_body, reply_file = _reply_source(reply_to) if reply_to else ("", None)
-    if reply_body:
-        reply_session = _parse_session_from_reply(reply_body)
-        if reply_session:
-            reply_wolt = _wolt_from_session_name(reply_session)
-            # A reply to a gone wolt's old message is routed like any message.
-            if reply_wolt and _wolt_exists(reply_wolt):
-                reply_text = _quote_reply(
-                    reply_body, reply_file, voice_message, _reply_is_voice(reply_to),
-                )
-
-                # Try routing directly — message_session handles revive internally
-                prev_state = _load_chat_state(chat_id)
-                delivered = await _route_to_session(update, reply_session, reply_wolt, reply_text, chat_id)
-                if delivered:
-                    new_state = dict(prev_state)
-                    new_state["active_wolt"] = reply_wolt
-                    new_state["active_session"] = delivered
-                    _save_chat_state(chat_id, new_state)
-                    await _notify_switch(update, prev_state, reply_wolt, delivered)
-                    return
-                # Route failed (session truly gone) — spawn new one for that wolt
-                try:
-                    session = _spawn_session_with_message(reply_wolt, chat_id, reply_text)
-                    new_state = dict(prev_state)
-                    new_state["active_wolt"] = reply_wolt
-                    new_state["active_session"] = session["name"]
-                    _save_chat_state(chat_id, new_state)
-                    tunnel_url = get_tunnel_url()
-                    session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
-                    await _reply(update, f"🪵 session expired — new one for {reply_wolt}\n{session_link}")
-                except Exception as e:
-                    logger.error(f"Failed to spawn session for {reply_wolt}: {e}")
-                    await _reply(update, f"couldn't start session for {_shown(reply_wolt)}: {e}")
-                return
-
-    if not dog_available():
-        await _route_message(update, context, chat_id, voice_message)
-        return
-
-    # --- Regular routing ---
-    state = _load_chat_state(chat_id)
-    active_wolt = state.get("active_wolt")
-    active_session = state.get("active_session")
-
-    if active_wolt and active_session:
-        delivered = await _route_to_session(update, active_session, active_wolt, voice_message, chat_id)
-        if delivered and delivered != active_session:
-            state["active_session"] = delivered
-            _save_chat_state(chat_id, state)
-        if not delivered:
-            try:
-                session = _spawn_session_with_message(active_wolt, chat_id, voice_message)
-                state["active_session"] = session["name"]
-                _save_chat_state(chat_id, state)
-                tunnel_url = get_tunnel_url()
-                session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
-                await _reply(update, f"🪵 new session for {_shown(active_wolt)}\n{session_link}")
-            except Exception as e:
-                await _reply(update, f"couldn't start session: {e}")
-    elif active_wolt:
-        # No active session — spawn one
-        try:
-            session = _spawn_session_with_message(active_wolt, chat_id, voice_message)
-            state["active_session"] = session["name"]
-            _save_chat_state(chat_id, state)
-            tunnel_url = get_tunnel_url()
-            session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
-            await _reply(update, f"🪵 new session for {_shown(active_wolt)}\n{session_link}")
-        except Exception as e:
-            await _reply(update, f"couldn't start session: {e}")
-    else:
-        # No active wolt — dog handles
-        await _handle_dog(update, context, chat_id, voice_message)
+    await _route(update, context, chat_id, f"[voice message] {text}")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -944,7 +771,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _say_download_failed(update, "image")
         return
 
-    # Save to disk
     ext = mime_type.split("/")[-1] if "/" in mime_type else "jpg"
     if ext == "jpeg":
         ext = "jpg"
@@ -952,61 +778,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     saved_path = _save_upload(file_name, image_bytes)
     logger.info(f"Saved photo: {saved_path} ({mime_type}, {len(image_bytes)} bytes)")
 
-    chat_id = update.effective_chat.id
-    state = _load_chat_state(chat_id)
-    active_wolt = state.get("active_wolt")
-    active_session = state.get("active_session")
-
     file_msg = f"[image received] {file_name} ({mime_type}, {len(image_bytes)} bytes) saved at {saved_path}"
     if caption:
         file_msg += f"\nCaption: {caption}"
-
-    if not dog_available():
-        await _route_message(update, context, chat_id, file_msg)
-        return
-
-    if active_wolt and active_session:
-        delivered = await _route_to_session(update, active_session, active_wolt, file_msg, chat_id)
-        if delivered and delivered != active_session:
-            state["active_session"] = delivered
-            _save_chat_state(chat_id, state)
-        if not delivered:
-            try:
-                session = _spawn_session_with_message(active_wolt, chat_id, file_msg)
-                state["active_session"] = session["name"]
-                _save_chat_state(chat_id, state)
-                tunnel_url = get_tunnel_url()
-                session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
-                await _reply(update, f"🪵 new session for {_shown(active_wolt)}\n{session_link}")
-            except Exception as e:
-                await _reply(update, f"couldn't start session: {e}")
-    elif active_wolt:
-        # No active session — spawn one
-        try:
-            session = _spawn_session_with_message(active_wolt, chat_id, file_msg)
-            state["active_session"] = session["name"]
-            _save_chat_state(chat_id, state)
-            tunnel_url = get_tunnel_url()
-            session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
-            await _reply(update, f"🪵 new session for {_shown(active_wolt)}\n{session_link}")
-        except Exception as e:
-            await _reply(update, f"couldn't start session: {e}")
-    else:
-        # No active wolt — dog handles with vision
-        user_content = _photo_content(image_bytes, mime_type, caption)
-        user_message = f"[image] {caption}" if caption else "[image]"
-        await _dog_ack(update)
-        history = _load_history(chat_id)
-        routing = {"adapter": "telegram", "chat_id": chat_id}
-        try:
-            result = get_response(user_message, conversation_history=list(history), routing=routing, user_content=user_content)
-        except Exception as e:
-            await _reply(update, f"photo error: {e}")
-            return
-        _append_history(chat_id, "user", user_message)
-        for msg in result["history_messages"]:
-            _append_message(chat_id, msg)
-        await _send_result(update, result)
+    # With no wolt chosen, the dog sees the image itself.
+    dog_content = {
+        "message": f"[image] {caption}" if caption else "[image]",
+        "content": _photo_content(image_bytes, mime_type, caption),
+    }
+    await _route(update, context, update.effective_chat.id, file_msg, dog_content)
 
 
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1035,45 +815,13 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     saved_path = _save_upload(file_name, file_bytes)
     logger.info(f"Saved video: {saved_path} ({mime_type}, {len(file_bytes)} bytes)")
 
-    chat_id = update.effective_chat.id
-    state = _load_chat_state(chat_id)
-    active_wolt = state.get("active_wolt")
-    active_session = state.get("active_session")
-
     file_msg = (
         f"[video received] {file_name} ({mime_type}, {len(file_bytes)} bytes) "
         f"saved at {saved_path}"
     )
     if caption:
         file_msg += f"\nCaption: {caption}"
-
-    if active_wolt and active_session:
-        delivered = await _route_to_session(update, active_session, active_wolt, file_msg, chat_id)
-        if delivered and delivered != active_session:
-            state["active_session"] = delivered
-            _save_chat_state(chat_id, state)
-        if not delivered:
-            try:
-                session = _spawn_session_with_message(active_wolt, chat_id, file_msg)
-                state["active_session"] = session["name"]
-                _save_chat_state(chat_id, state)
-                tunnel_url = get_tunnel_url()
-                session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
-                await _reply(update, f"🪵 new session for {_shown(active_wolt)}\n{session_link}")
-            except Exception as e:
-                await _reply(update, f"couldn't start session: {e}")
-    elif active_wolt:
-        try:
-            session = _spawn_session_with_message(active_wolt, chat_id, file_msg)
-            state["active_session"] = session["name"]
-            _save_chat_state(chat_id, state)
-            tunnel_url = get_tunnel_url()
-            session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
-            await _reply(update, f"🪵 new session for {_shown(active_wolt)}\n{session_link}")
-        except Exception as e:
-            await _reply(update, f"couldn't start session: {e}")
-    else:
-        await _reply(update, "no active wolt — set one with /wolt first.")
+    await _route(update, context, update.effective_chat.id, file_msg)
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1100,51 +848,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     saved_path = _save_upload(file_name, file_bytes)
     logger.info(f"Saved document: {saved_path} ({mime_type}, {len(file_bytes)} bytes)")
 
-    chat_id = update.effective_chat.id
-    state = _load_chat_state(chat_id)
-    active_wolt = state.get("active_wolt")
-    active_session = state.get("active_session")
-
     file_msg = (
         f"[file received] {file_name} ({mime_type}, {len(file_bytes)} bytes) "
         f"saved at {saved_path}"
     )
     if caption:
         file_msg += f"\nCaption: {caption}"
-
-    if not dog_available():
-        await _route_message(update, context, chat_id, file_msg)
-        return
-
-    if active_wolt and active_session:
-        delivered = await _route_to_session(update, active_session, active_wolt, file_msg, chat_id)
-        if delivered and delivered != active_session:
-            state["active_session"] = delivered
-            _save_chat_state(chat_id, state)
-        if not delivered:
-            try:
-                session = _spawn_session_with_message(active_wolt, chat_id, file_msg)
-                state["active_session"] = session["name"]
-                _save_chat_state(chat_id, state)
-                tunnel_url = get_tunnel_url()
-                session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
-                await _reply(update, f"🪵 new session for {_shown(active_wolt)}\n{session_link}")
-            except Exception as e:
-                await _reply(update, f"couldn't start session: {e}")
-    elif active_wolt:
-        # No active session — spawn one
-        try:
-            session = _spawn_session_with_message(active_wolt, chat_id, file_msg)
-            state["active_session"] = session["name"]
-            _save_chat_state(chat_id, state)
-            tunnel_url = get_tunnel_url()
-            session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
-            await _reply(update, f"🪵 new session for {_shown(active_wolt)}\n{session_link}")
-        except Exception as e:
-            await _reply(update, f"couldn't start session: {e}")
-    else:
-        # No active wolt — dog handles
-        await _handle_dog(update, context, chat_id, file_msg)
+    await _route(update, context, update.effective_chat.id, file_msg)
 
 
 # ---------------------------------------------------------------------------
@@ -1167,10 +877,7 @@ HELP_TIPS = (
 WOLT_TYPE_EMOJI = commands.WOLT_TYPE_EMOJI
 RODENT_WOLT_TYPES = commands.RODENT_WOLT_TYPES
 _NO_WOLTS_MESSAGE = commands.NO_WOLTS_MESSAGE
-_PICK_THEN_RESEND = (
-    "your message was not delivered: pick a wolt above (or send /wolt <name>), "
-    "then send it again."
-)
+_PICK_THEN_RESEND = messages.PICK_THEN_RESEND
 _IDLE_CHOICES = commands.IDLE_CHOICES
 _IDLE_LABELS = commands.IDLE_LABELS
 _wolt_of = commands.wolt_of
