@@ -203,6 +203,8 @@ class TestSlackPlan:
     def test_an_image_missing_dependencies_falls_back_to_the_bot_project(self, layout, monkeypatch):
         """A container built some other way keeps the uv project it always had."""
         monkeypatch.setattr(channels, "_module_available", lambda name: False)
+        # Such an image has uv; a test runner need not.
+        monkeypatch.setattr(channels.shutil, "which", lambda name: "/usr/local/bin/uv")
         plan = TelegramConnector().plan(self._container(layout), {
             "WOLTSPACE_ENTRYPOINT": "1",
             "ENABLE_TELEGRAM_BOT": "true",
