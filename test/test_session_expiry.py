@@ -37,14 +37,25 @@ def _client():
     return TestClient(server_app.app, base_url="http://localhost:7777")
 
 
-@contextmanager
-def _unlocked(*_args):
-    yield
-
-
 def _registry_mock():
+    """A Mock registry whose edit() yields get()'s record and _write()s it if changed; claim() always wins."""
     registry = Mock()
-    registry._lock = _unlocked
+
+    @contextmanager
+    def edit(name, *, wolt=None):
+        data = registry.get.return_value
+        before = json.dumps(data, sort_keys=True)
+        yield data
+        if json.dumps(data, sort_keys=True) != before:
+            registry._write(data.get("wolt", ""), name, data)
+
+    def claim(name, seen, status, *, wolt=None):
+        with edit(name, wolt=wolt) as data:
+            data["status"] = status
+        return True
+
+    registry.edit = edit
+    registry.claim = claim
     return registry
 
 
@@ -199,7 +210,7 @@ def test_message_lock_wait_does_not_block_the_event_loop(monkeypatch):
 
     answered_in, health, delivery = asyncio.run(scenario())
     assert health.status_code == 200
-    assert answered_in < 0.3, f"/health waited {answered_in:.2f}s on the session lock"
+    assert answered_in < 0.3, f"/health waited {answered_in:.2f}s on a blocked delivery"
     assert delivery.status_code == 200
 
 
@@ -553,7 +564,7 @@ def test_rest_records_why_it_rested(monkeypatch):
 
 
 def _real_registry(tmp_path, monkeypatch, **fields):
-    """A real registry on disk, so locks, raw writes and update() behave as in the lodge."""
+    """A real registry on disk, so edit(), raw writes and update() behave as in the lodge."""
     from sessions import SessionRegistry
     registry = SessionRegistry(tmp_path)
     registry.create("friend", wolt="pal", harness="codex")
@@ -568,24 +579,24 @@ def _real_registry(tmp_path, monkeypatch, **fields):
     return registry, runtime
 
 
-def test_rest_recovers_the_id_before_taking_the_session_lock(tmp_path, monkeypatch):
-    """claim_resume_id holds the lodge-wide recovery lock; resume_session and the
-    id poller take it before the session lock. /rest must too, or the two deadlock."""
+def test_rest_recovers_the_id_before_its_write(tmp_path, monkeypatch):
+    """Recovery reads the engine's files: never inside the write that judges
+    and stops the session, which every other lodge writer waits on."""
     import sessions
     registry, runtime = _real_registry(tmp_path, monkeypatch, status="running", last_activity=1000)
     held = []
-    real_lock = registry._lock
+    real_edit = registry.edit
 
     @contextmanager
-    def tracking_lock(*args):
-        with real_lock(*args):
+    def tracking_edit(*args, **kwargs):
+        with real_edit(*args, **kwargs) as data:
             held.append(True)
             try:
-                yield
+                yield data
             finally:
                 held.pop()
 
-    registry._lock = tracking_lock
+    registry.edit = tracking_edit
     seen = []
 
     def recover(data, taken):
@@ -594,13 +605,13 @@ def test_rest_recovers_the_id_before_taking_the_session_lock(tmp_path, monkeypat
 
     monkeypatch.setattr(sessions, "recover_resume_id", recover)
     response = _client().post("/sessions/friend/rest", json={"idle_since": 1000})
-    assert seen == [False], "recovery ran inside the session lock"
+    assert seen == [False], "recovery ran inside a registry write"
     assert response.status_code == 200
 
 
 def test_a_recovered_id_does_not_count_as_use(tmp_path, monkeypatch):
     """The id is stamped raw: update() would move last_activity to now and the
-    check under the lock would refuse the rest as "used since"."""
+    check inside the write would refuse the rest as "used since"."""
     import sessions
     registry, runtime = _real_registry(tmp_path, monkeypatch, status="running", last_activity=1000)
     monkeypatch.setattr(sessions, "recover_resume_id", lambda data, taken: "conv-recovered")

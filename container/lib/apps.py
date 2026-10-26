@@ -16,10 +16,12 @@ import os
 import signal
 import subprocess
 import time
+from contextlib import closing
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+import lodge_db
 from env_compat import get_env
 from paths import space_apps_dir
 from tunnel import start_cloudflared, stop_cloudflared
@@ -32,7 +34,7 @@ VALID_STACKS = {"python", "vite", "node", "html"}
 
 MANIFEST = "woltspace.json"
 
-# Running app state — now at .space/apps/
+# Running app state is the apps_running table; app logs stay in .space/apps/
 _RUNNING_STATE_DIR = space_apps_dir(WOLTS_DIR)
 
 # Credentials of the lodge's own services: the chat adapters, the GitHub bot,
@@ -142,34 +144,66 @@ def get_app(name: str) -> WoltspaceApp | None:
 # --- Running state ---
 
 
-def _state_file(name: str) -> Path:
-    return _RUNNING_STATE_DIR / f"{name}.json"
-
-
 def app_log_file(name: str) -> Path:
     """Return the package-owned log path for an app process."""
     return _RUNNING_STATE_DIR / f"{name}.log"
 
 
+def _all_states() -> list[dict]:
+    with closing(lodge_db.connect(WOLTS_DIR)) as conn:
+        rows = conn.execute("SELECT name, record FROM apps_running ORDER BY name").fetchall()
+    # The row's name wins: an old record without one must not stop a loop.
+    return [{**json.loads(row["record"]), "name": row["name"]} for row in rows]
+
+
 def _read_state(name: str) -> dict | None:
-    f = _state_file(name)
-    if not f.exists():
-        return None
-    try:
-        return json.loads(f.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
+    with closing(lodge_db.connect(WOLTS_DIR)) as conn:
+        row = conn.execute("SELECT record FROM apps_running WHERE name=?", (name,)).fetchone()
+    return json.loads(row["record"]) if row else None
+
+
+_INSERT_STATE = ("INSERT{} INTO apps_running (name, pid, port, tunnel_pid, tunnel_url, keeper,"
+                 " started_at, record) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+
+
+def _state_row(name: str, state: dict) -> tuple:
+    return (name, state.get("pid"), state.get("port"), state.get("tunnel_pid"),
+            state.get("tunnel_url"), state.get("keeper"), int(time.time()), json.dumps(state))
 
 
 def _write_state(name: str, state: dict) -> None:
-    _RUNNING_STATE_DIR.mkdir(parents=True, exist_ok=True)
-    _state_file(name).write_text(json.dumps(state, indent=2) + "\n")
+    with lodge_db.write(WOLTS_DIR) as conn:
+        conn.execute(
+            _INSERT_STATE.format("") +
+            " ON CONFLICT(name) DO UPDATE SET pid=excluded.pid, port=excluded.port,"
+            " tunnel_pid=excluded.tunnel_pid, tunnel_url=excluded.tunnel_url,"
+            " keeper=excluded.keeper, record=excluded.record",
+            _state_row(name, state),
+        )
+
+
+def import_apps(conn, wolts_dir) -> tuple[dict, list[Path]]:
+    """Import .space/apps/<name>.json from older releases; a row already here wins.
+
+    lodge_db.run_imports retires the files it returns; the .log files stay.
+    """
+    counts = {"imported": 0, "skipped": 0}
+    files = sorted(space_apps_dir(Path(wolts_dir)).glob("*.json"))
+    for path in files:
+        try:
+            state = json.loads(path.read_text())
+        except (OSError, ValueError) as exc:
+            print(f"[apps] import: skipping unreadable {path}: {exc}")
+            counts["skipped"] += 1
+            continue
+        cursor = conn.execute(_INSERT_STATE.format(" OR IGNORE"), _state_row(path.stem, state))
+        counts["imported" if cursor.rowcount else "skipped"] += 1
+    return counts, files
 
 
 def _clear_state(name: str) -> None:
-    f = _state_file(name)
-    if f.exists():
-        f.unlink()
+    with lodge_db.write(WOLTS_DIR) as conn:
+        conn.execute("DELETE FROM apps_running WHERE name=?", (name,))
 
 
 def _is_pid_alive(pid: int) -> bool:
@@ -183,24 +217,16 @@ def _is_pid_alive(pid: int) -> bool:
 def running_apps() -> list[dict]:
     """List all currently running apps with their state.
 
-    State file semantics (intent model):
-    - file present + PID alive = running
-    - file present + PID dead  = wanted but down (apps_restore will respawn at next boot)
-    - no file                  = explicitly off
+    State row semantics (intent model):
+    - row present + PID alive = running
+    - row present + PID dead  = wanted but down (apps_restore will respawn at next boot)
+    - no row                  = explicitly off
 
-    We do NOT delete stale files here. Deletion only happens on explicit stop_app()
+    We do NOT delete stale rows here. Deletion only happens on explicit stop_app()
     or when the manifest is gone (cleaned up by apps_restore).
     """
     running = []
-    if not _RUNNING_STATE_DIR.exists():
-        return running
-    for f in sorted(_RUNNING_STATE_DIR.iterdir()):
-        if not f.name.endswith(".json"):
-            continue
-        try:
-            state = json.loads(f.read_text())
-        except (json.JSONDecodeError, OSError):
-            continue
+    for state in _all_states():
         pid = state.get("pid")
         if pid and _is_pid_alive(pid):
             state["alive"] = True
@@ -209,21 +235,13 @@ def running_apps() -> list[dict]:
 
 
 def intended_apps() -> list[dict]:
-    """List all apps the user has expressed intent to run (state file present).
+    """List all apps the user has expressed intent to run (state row present).
 
     Returns state dicts with an added `alive` bool indicating actual running status.
     Used by apps_restore() and by callers that want to show stale-intent apps.
     """
     intended = []
-    if not _RUNNING_STATE_DIR.exists():
-        return intended
-    for f in sorted(_RUNNING_STATE_DIR.iterdir()):
-        if not f.name.endswith(".json"):
-            continue
-        try:
-            state = json.loads(f.read_text())
-        except (json.JSONDecodeError, OSError):
-            continue
+    for state in _all_states():
         pid = state.get("pid")
         state["alive"] = bool(pid and _is_pid_alive(pid))
         intended.append(state)
@@ -305,33 +323,22 @@ def start_app(name: str) -> dict:
 def apps_restore() -> list[dict]:
     """Restore apps on container boot.
 
-    For each state file in .space/apps/:
-    - Manifest missing  → orphan, delete state file
+    For each apps_running row:
+    - Manifest missing  → orphan, delete the row
     - PID alive         → leave it (survived the restart)
     - PID dead          → respawn via start_app()
 
     Returns a summary list of actions for logging.
     """
     actions = []
-    if not _RUNNING_STATE_DIR.exists():
-        return actions
-    for f in sorted(_RUNNING_STATE_DIR.iterdir()):
-        if not f.name.endswith(".json"):
-            continue
-        name = f.stem
-        try:
-            state = json.loads(f.read_text())
-        except (json.JSONDecodeError, OSError):
-            continue
+    for state in _all_states():
+        name = state["name"]
 
         # Manifest gone — app was removed while container was down
         if get_app(name) is None:
-            try:
-                f.unlink()
-                actions.append({"name": name, "action": "orphan-cleaned"})
-                print(f"[apps] orphan {name} cleaned (no manifest)")
-            except OSError:
-                pass
+            _clear_state(name)
+            actions.append({"name": name, "action": "orphan-cleaned"})
+            print(f"[apps] orphan {name} cleaned (no manifest)")
             continue
 
         pid = state.get("pid")
@@ -447,7 +454,7 @@ def share_app(name: str) -> dict:
     Without a custom domain: falls back to a per-app quick tunnel
     with --http-host-header localhost for Vite 6+ compatibility.
 
-    Stores tunnel_pid and tunnel_url in .space/apps/{name}.json.
+    Stores tunnel_pid and tunnel_url in the app's apps_running row.
     Also sets public=true in woltspace.json.
     Returns dict with tunnel_url and pid.
     Raises ValueError if app is not running.
@@ -520,15 +527,10 @@ def unshare_all_apps() -> list[str]:
     Returns list of app names that were unshared.
     """
     unshared = []
-    if not _RUNNING_STATE_DIR.exists():
-        return unshared
-    for f in sorted(_RUNNING_STATE_DIR.iterdir()):
-        if not f.name.endswith(".json"):
-            continue
+    for state in _all_states():
+        name = state["name"]
+        tunnel_pid = state.get("tunnel_pid")
         try:
-            state = json.loads(f.read_text())
-            name = state.get("name", f.stem)
-            tunnel_pid = state.get("tunnel_pid")
             if tunnel_pid and stop_cloudflared(tunnel_pid):
                 state["tunnel_pid"] = None
                 state["tunnel_url"] = None

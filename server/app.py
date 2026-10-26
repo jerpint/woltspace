@@ -4,12 +4,12 @@ import asyncio
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import threading
 import time
 import contextlib
 import unicodedata
-from collections import deque
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -265,6 +265,7 @@ async def health():
     from woltspace.layout import RuntimeLayout
 
     layout = RuntimeLayout.from_env()
+    adoption = read_adoption_report(layout)
     return {
         "ok": True,
         # The lodge's own version. The tui reads it to check the minimum
@@ -274,9 +275,28 @@ async def health():
         "pid": os.getpid(),
         "wolts_dir": str(WOLTS_DIR),
         "isolation": os.environ.get("WOLTSPACE_ISOLATION", "external"),
-        "adoption": read_adoption_report(layout),
+        "adoption": adoption,
         "connectors": read_connector_report(layout).get("connectors", []),
+        "db": _db_health(adoption),
     }
+
+
+def _db_health(adoption: dict) -> dict:
+    """Where lodge.db is, which migrations it has, what was imported into it."""
+    import lodge_db
+    db = {"path": str(lodge_db.path(WOLTS_DIR)), "schema": [], "imported": {}}
+    try:
+        conn = lodge_db.connect(WOLTS_DIR, readonly=True)
+        try:
+            db["schema"] = lodge_db.applied_migrations(conn)
+            db["imported"] = lodge_db.imports(conn)
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        db["error"] = f"{type(exc).__name__}: {exc}"
+    if adoption.get("import_errors"):
+        db["import_error"] = adoption["import_errors"]
+    return db
 
 # --- Templates & Static ---
 
@@ -953,13 +973,7 @@ def _hold_reason(value) -> str:
 
 def _hold_locked(safe: str, seconds: int | None, reason: str):
     from sessions import SessionRegistry
-    registry = SessionRegistry(WOLTS_DIR)
-    data = registry.get(safe, check_alive=False)
-    if data is None:
-        return JSONResponse({"error": "session not found"}, status_code=404)
-    wolt = data.get("wolt", "")
-    with registry._lock(wolt, safe):
-        data = registry.get(safe, wolt=wolt, check_alive=False)
+    with SessionRegistry(WOLTS_DIR).edit(safe) as data:
         if data is None:
             return JSONResponse({"error": "session not found"}, status_code=404)
         if data.get("status") != "running":
@@ -968,25 +982,16 @@ def _hold_locked(safe: str, seconds: int | None, reason: str):
         now = int(time.time())
         data["hold"] = {"until": None if seconds is None else now + seconds, "reason": reason, "since": now}
         data["last_activity"] = now  # taking a hold is use
-        registry._write(wolt, safe, data)
     return {"ok": True, "session": safe, "hold": data["hold"]}
 
 
 def _release_hold_locked(safe: str):
     from sessions import SessionRegistry
-    registry = SessionRegistry(WOLTS_DIR)
-    data = registry.get(safe, check_alive=False)
-    if data is None:
-        return JSONResponse({"error": "session not found"}, status_code=404)
-    wolt = data.get("wolt", "")
-    with registry._lock(wolt, safe):
-        data = registry.get(safe, wolt=wolt, check_alive=False)
+    with SessionRegistry(WOLTS_DIR).edit(safe) as data:
         if data is None:
             return JSONResponse({"error": "session not found"}, status_code=404)
-        if "hold" in data:
-            # A raw write: releasing is not use, so an idle session rests on the next sweep.
-            data.pop("hold")
-            registry._write(wolt, safe, data)
+        # A raw write: releasing is not use, so an idle session rests on the next sweep.
+        data.pop("hold", None)
     return {"ok": True, "session": safe, "hold": None}
 
 
@@ -1042,54 +1047,57 @@ async def session_message(session_id: str, request: Request):
 def _rest_session_locked(safe: str, idle_since: int):
     """Verify and stop one idle session without blocking the server event loop.
 
-    The authority judges the rule itself, under the session lock: the session
-    is running, can come back, holds nothing, and nobody has used it since
-    idle_since or for the whole window.
+    The authority judges the rule itself: the session is running, can come
+    back, holds nothing, and nobody has used it since idle_since or for the
+    whole window. stop_and_settle then claims it `stopping` only if no use, hold
+    or resume came after the judgment, and stops tmux outside any write.
     """
-    from sessions import SessionRegistry, stamp_resume_id
+    from sessions import SessionRegistry, stamp_resume_id, stop_and_settle
     registry = SessionRegistry(WOLTS_DIR)
     data = registry.get(safe, check_alive=False)
     if data is None:
         return JSONResponse({"error": "session not found"}, status_code=404)
     wolt = data.get("wolt", "")
-    # Resting must be reversible: recover a missing id first. Before the session
-    # lock, never inside it: claim_resume_id holds the lodge-wide recovery lock,
-    # which resume_session and the id poller take before the session lock.
+    # Resting must be reversible: recover a missing id first, outside the write
+    # below (recovery reads the engine's files).
     if data.get("status") == "running" and not stored_resume_id(data):
         claim_resume_id(registry, data, lambda d: stamp_resume_id(
             registry, wolt, safe, d["harness_session_id"]))
-    with registry._lock(wolt, safe):
-        data = registry.get(safe, wolt=wolt, check_alive=False)
-        if data is None:
-            return JSONResponse({"error": "session not found"}, status_code=404)
-        if data.get("status") != "running":
-            return {"ok": True, "status": data.get("status"), "session": safe}
-        if not stored_resume_id(data):
-            return JSONResponse({"error": "session has no conversation to resume; not resting it"}, status_code=409)
-        now = int(time.time())
-        if hold_active(data, now):
-            return JSONResponse({"error": "session is held; not resting it"}, status_code=409)
-        try:
-            used = last_use(data, get_runtime().last_keys())
-        except Exception:
-            used = None
-        if used is None:
-            return JSONResponse({"error": "session activity could not be verified"}, status_code=409)
-        if used > idle_since:
-            return JSONResponse({"error": "session was used since; rest aborted"}, status_code=409)
-        # The authority judges the quiet window itself, never the caller. This
-        # also closes the same-second gap: use in the second the vulture
-        # looked is "now", far inside any window.
-        timeout = get_idle_timeout()
-        if timeout is None or now - used < timeout:
-            return JSONResponse({"error": "session is not idle long enough; rest aborted"}, status_code=409)
-        if not get_runtime().stop(RuntimeHandle.from_record(data)):
-            return JSONResponse({"error": "session could not be stopped; still running"}, status_code=409)
-        data["status"] = "resting"
-        data["rested_at"] = now
-        data["rest_reason"] = "idle"
-        registry._write(wolt, safe, data)
-        return {"ok": True, "status": "resting", "session": safe, "rested_at": now}
+    data = registry.get(safe, wolt=wolt, check_alive=False)
+    if data is None:
+        return JSONResponse({"error": "session not found"}, status_code=404)
+    if data.get("status") != "running":
+        return {"ok": True, "status": data.get("status"), "session": safe}
+    if not stored_resume_id(data):
+        return JSONResponse({"error": "session has no conversation to resume; not resting it"}, status_code=409)
+    now = int(time.time())
+    if hold_active(data, now):
+        return JSONResponse({"error": "session is held; not resting it"}, status_code=409)
+    try:
+        used = last_use(data, get_runtime().last_keys())
+    except Exception:
+        used = None
+    if used is None:
+        return JSONResponse({"error": "session activity could not be verified"}, status_code=409)
+    if used > idle_since:
+        return JSONResponse({"error": "session was used since; rest aborted"}, status_code=409)
+    # The authority judges the quiet window itself, never the caller. This
+    # also closes the same-second gap: use in the second the vulture
+    # looked is "now", far inside any window.
+    timeout = get_idle_timeout()
+    if timeout is None or now - used < timeout:
+        return JSONResponse({"error": "session is not idle long enough; rest aborted"}, status_code=409)
+    stopped = stop_and_settle(
+        registry, safe, data,
+        lambda seen: get_runtime().stop(RuntimeHandle.from_record(seen)),
+        lambda record: record.update(status="resting", rested_at=now, rest_reason="idle"),
+        wolt=wolt,
+    )
+    if stopped is None:
+        return JSONResponse({"error": "session was used since; rest aborted"}, status_code=409)
+    if not stopped:
+        return JSONResponse({"error": "session could not be stopped; still running"}, status_code=409)
+    return {"ok": True, "status": "resting", "session": safe, "rested_at": now}
 
 
 @app.post("/sessions/{session_id}/rest")
@@ -1122,7 +1130,7 @@ async def wolt_message(name: str, request: Request):
     registry = SessionRegistry(WOLTS_DIR)
     session_id = resolve_active_session(safe_wolt, registry=registry)
     if not session_id:
-        resting = [s for s in registry.list(wolt=safe_wolt) if s.get("status") == "resting"]
+        resting = [s for s in registry.list(wolt=safe_wolt) if s.get("status") in ("resting", "stopping")]
         resting.sort(key=lambda s: (s.get("last_activity") or 0, s.get("created_at") or 0), reverse=True)
         session_id = resting[0]["name"] if resting else None
     if not session_id:
@@ -1498,27 +1506,6 @@ async def list_wolts():
 # work, and they are deliberately not in the response.
 
 _WOLF_FIRES_MAX = 500
-# Enough of the journal's tail to satisfy the largest allowed page even when
-# every line is filtered out; the file is append-only and never rewritten.
-_WOLF_JOURNAL_TAIL = 5000
-
-
-def _wolf_state_dir() -> Path:
-    from paths import space_wolf_dir
-
-    return space_wolf_dir(WOLTS_DIR)
-
-
-def _wolf_last_run(state_dir: Path, wolt: str, cron_name: str) -> str | None:
-    """The `YYYY-MM-DD-HH:MM` stamp the scheduler writes after each fire.
-
-    A cron name comes from a wolt's own `wolf.json`, which is a file a wolt can
-    write — so it is untrusted input on the way to a path join. `../../secret`
-    reads outside the state dir otherwise. `wolfcore.stamp_path` holds both
-    gates: wolt and name must look like plain identifiers, and the resolved
-    path must still be inside the state dir.
-    """
-    return wolfcore.read_last_run(state_dir, wolt, cron_name)
 
 
 @app.get("/wolf/schedules")
@@ -1529,7 +1516,6 @@ def wolf_schedules():
     A plain `def`: this walks the filesystem, and doing that on the event loop
     blocks every other request while it runs.
     """
-    state_dir = _wolf_state_dir()
     schedules = []
     for wolf_json in sorted(WOLTS_DIR.glob("*/wolt/wolf.json")):
         wolt = wolf_json.parent.parent.name
@@ -1545,7 +1531,7 @@ def wolf_schedules():
                 # recurring crons carry `schedule`, one-offs carry `at`
                 "schedule": cron.get("schedule", ""),
                 "at": cron.get("at", ""),
-                "last_run": _wolf_last_run(state_dir, wolt, cron.get("name", "")),
+                "last_run": wolfcore.read_last_run(WOLTS_DIR, wolt, cron.get("name", "")),
             } for cron in crons],
         })
     return {"wolts_dir": str(WOLTS_DIR), "schedules": schedules}
@@ -1555,35 +1541,12 @@ def wolf_schedules():
 def wolf_fires(limit: int = 50, cron: str = "", wolt: str = ""):
     """Recent cron fires, newest first, from the scheduler's job journal.
 
-    `limit` caps the response; `cron` and `wolt` narrow it. A journal that does
-    not exist yet is an empty list, not an error — a colony whose wolf has never
-    fired is a normal colony. Only the journal's tail is parsed: this answers
-    "what happened lately", and a colony that has been firing crons for a year
-    should not pay for all of it to serve `limit=1`.
+    `limit` caps the response; `cron` and `wolt` narrow it. A colony whose wolf
+    has never fired has an empty list, not an error.
     """
     limit = max(0, min(limit, _WOLF_FIRES_MAX))
-    journal = _wolf_state_dir() / "jobs.jsonl"
-    fires = []
-    try:
-        with journal.open() as handle:
-            tail = deque(handle, maxlen=_WOLF_JOURNAL_TAIL)
-    except OSError:
-        tail = ()
-    for line in tail:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue  # a torn last line while the wolf is mid-append
-        if cron and entry.get("cron") != cron:
-            continue
-        if wolt and entry.get("owner") != wolt:
-            continue
-        fires.append(entry)
-    fires.reverse()
-    return {"count": len(fires), "fires": fires[:limit]}
+    fires = wolfcore.read_journal(WOLTS_DIR, limit=limit, cron=cron, wolt=wolt)
+    return {"count": len(fires), "fires": fires}
 
 
 # --- Wolf crons: the management API ---
@@ -1660,9 +1623,8 @@ def wolf_crons():
     wolf fires on the clock of the machine the lodge runs on.
     """
     now = wolfcore.now_local()
-    state_dir = _wolf_state_dir()
     crons, errors = wolfcore.load_all(WOLTS_DIR)
-    out = [wolfcore.describe(c, c["_owner"], state_dir, now) for c in crons]
+    out = [wolfcore.describe(c, c["_owner"], WOLTS_DIR, now) for c in crons]
     far = datetime.max.replace(tzinfo=timezone.utc)
     out.sort(key=lambda c: datetime.fromisoformat(c["next_run"]) if c["next_run"] else far)
     return {
@@ -1708,7 +1670,7 @@ def wolf_cron_add(payload: dict | None = Body(None), dry_run: bool = False):
         wolfcore.atomic_write(path, after)
     print(f"[wolf] added {wolt}/{entry['name']}")
     return JSONResponse(
-        wolfcore.describe(entry, wolt, _wolf_state_dir(), now), status_code=201)
+        wolfcore.describe(entry, wolt, WOLTS_DIR, now), status_code=201)
 
 
 def _wolf_find(wolt: str, name: str):
@@ -1778,9 +1740,9 @@ def wolf_cron_update(wolt: str, name: str, payload: dict | None = Body(None)):
             wolfcore.atomic_write(target_path, wolfcore.dump_wolf_json(target_data))
             del data["crons"][index]
             wolfcore.atomic_write(path, wolfcore.dump_wolf_json(data))
-            wolfcore.move_last_run(_wolf_state_dir(), wolt, name, target, name)
+            wolfcore.move_last_run(WOLTS_DIR, wolt, name, target, name)
     print(f"[wolf] updated {wolt}/{name}" + (f" → {target}" if target != wolt else ""))
-    return wolfcore.describe(entry, target, _wolf_state_dir(), wolfcore.now_local())
+    return wolfcore.describe(entry, target, WOLTS_DIR, wolfcore.now_local())
 
 
 @app.delete("/wolf/crons/{wolt}/{name}")
@@ -1794,9 +1756,7 @@ def wolf_cron_delete(wolt: str, name: str):
             return data
         del data["crons"][index]
         wolfcore.atomic_write(path, wolfcore.dump_wolf_json(data))
-    stamp = wolfcore.stamp_path(_wolf_state_dir(), wolt, name)
-    if stamp is not None:
-        stamp.unlink(missing_ok=True)
+    wolfcore.forget_last_run(WOLTS_DIR, wolt, name)
     print(f"[wolf] deleted {wolt}/{name}")
     return {"deleted": True, "wolt": wolt, "name": name}
 
@@ -1810,7 +1770,6 @@ def wolf_cron_fire(wolt: str, name: str):
     if path is None:
         return data
     entry = data["crons"][index]
-    state_dir = _wolf_state_dir()
     try:
         result = start_session(
             wolt=wolt,
@@ -1818,13 +1777,11 @@ def wolf_cron_fire(wolt: str, name: str):
             routing={"adapter": "lodge"},
         )
     except Exception as exc:
-        wolfcore.append_journal(state_dir, name, "session", event="manual",
-                                owner=wolt, error=str(exc))
+        wolfcore.append_journal(WOLTS_DIR, name, "manual", owner=wolt, error=str(exc))
         status = 403 if isinstance(exc, PermissionError) else 500
         return _wolf_error(status, str(exc))
     session, url = result.get("name"), result.get("url")
-    wolfcore.append_journal(state_dir, name, "session", event="manual",
-                            owner=wolt, session=session, link=url)
+    wolfcore.append_journal(WOLTS_DIR, name, "manual", owner=wolt, session=session, link=url)
     print(f"[wolf] manual run {wolt}/{name} → {session}")
     return {"session": session, "url": url}
 

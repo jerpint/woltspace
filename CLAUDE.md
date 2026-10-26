@@ -107,6 +107,7 @@ Commands:
 - `woltspace start` — start, restart, or resume container
 - `woltspace stop` — stop and remove container
 - `woltspace backup [tag] [--bundle]` — container-era snapshot: `docker commit` + `rsync` of the whole wolts dir (`--bundle` zips it around a `docker save`). Superseded by the native command below; kept for container users.
+- `woltspace build` — build the image only; the running container keeps the old one until `stop` + `start` (not a restart, which reuses it)
 - `woltspace rebuild` — rebuild image + restart
 - `woltspace shell/chat/logs` — interact with running container
 
@@ -124,20 +125,36 @@ The only mount is `$WOLTSPACE_WOLTS_DIR:/workspace/wolts`. Everything else is ba
 
 The data-plane snapshot, in the python CLI, identical native and in-container:
 
-- `woltspace backup [--tag T] [--out DIR]` — one `woltspace-backup-<tag>.tar.gz`
+- `woltspace backup [--full] [--tag T] [--out DIR]` — one `woltspace-backup-<tag>.tar.gz`
   of the wolts tree (memory, sites, sparks, apps, `woltspace.json`, `.state`,
   `.space`, `.git` history), with caches and build products excluded by name
   below the root and symlinks archived as links. Writes a
   `backup-manifest.json` into the archive, then re-opens the archive to verify
   it. Never touches docker.
 - **Credentials are never archived** — `.env` at any depth,
-  `.claude/.credentials.json*`, `.codex/auth.json`. A restored stale OAuth
-  chain can trip reuse-detection and revoke the live one. The manifest lists
-  every withheld path and `restore` prints the re-provision checklist.
-- `woltspace restore <archive> [--to DIR]` — extracts into a new directory and
-  refuses a populated one; prints what to re-authenticate and the `WOLTSPACE_WOLTS_DIR=…`
-  line to boot from it. It disarms the copy first: runtime records go, sessions
-  come back stopped, paths inside the old lodge are re-pointed at the copy.
+  `.claude/.credentials.json*`, `.codex/auth.json`, `.space/platform/config.json`.
+  A restored stale OAuth chain can trip reuse-detection and revoke the live one.
+  The manifest lists every withheld path and `restore` prints the re-provision
+  checklist. With `WOLTSPACE_BACKUP_AGE_RECIPIENT` set (and `age` on PATH, or
+  the backup fails) the whole archive is one `<archive>.tar.gz.age`, streamed
+  through `age`, the `.env` files and `config.json` inside (never the OAuth
+  files); no plaintext touches the disk.
+- Backups are **slim** by default: all context (memory, identity, transcripts,
+  skills, lodge config, `.state`/`.space`, git history) at any size, plus text
+  and code up to 5MB a file. Media, binaries and other large files are left out
+  and listed by path and size in `backup-left-out.tsv`; app databases only by
+  opt-in (`"backup": {"keep": [...]}` in a `woltspace.json`). `--full` keeps
+  everything but the named junk.
+- `.space/lodge.db` is always kept, as an in-memory snapshot (SQLite backup
+  API), every row; its `-wal`/`-shm` stay out.
+- `woltspace restore <archive> [--to DIR] [--identity KEYFILE|-]` — extracts
+  into a new directory and refuses a populated one (an `.age` archive is
+  decrypted twice, never to disk: audit pass, then extraction); prints what to
+  re-authenticate and the `WOLTSPACE_WOLTS_DIR=…` line to boot from it. It
+  disarms the copy first, in the copy's own `lodge.db` (and any pre-lodge.db
+  state files): runtime records go, app pids are blanked, sessions come back
+  stopped, paths inside the old lodge are re-pointed at the copy, and the copy
+  runs on its own tmux server.
 
 Full guide, including what is excluded and why: `docs/backup.md`.
 
@@ -194,7 +211,7 @@ The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routi
 Thin Telegram layer over core. Persists chat history to `.state/chat/{chat_id}.jsonl`. Group chat support (responds when @mentioned).
 
 ### `container/skills/`
-Discovery files agents read from `~/.claude/skills/`. Platform skills live under base names (`notify`, `viewport`, …) and are delivered namespaced as `woltspace:<name>` — claude installs them as the `woltspace` plugin (`container/skills/.claude-plugin/`), codex/opencode reach the same tree through a `~/.claude/skills/woltspace` symlink. Current platform skills: `start-chat`, `create-wolt`, `notify`, `viewport`, `site`, `apps`, `new-app`, `wolf`, `update`, `session-summary`, `worktui` (derived at boot from worktui's own bundled skill — see `derive_worktui_skill` in `src/woltspace/container_entrypoint.py`, not hand-maintained), `organize-context`, `setup-telegram`, `setup-github`, `iwcl`, `cloudflare`, `hold`. A wolt opts into that delivery with `"skills_delivery": "plugin"` in its `wolt.json`; without it the old copy sync still runs, delivering the same skills under their historical `woltspace-<name>` names — directory **and** frontmatter, since claude reads one and codex the other. How a skill is spelled in a prompt follows how it was delivered: build one with `platform_skill_invoke(harness, name, delivery)`, never by hand. Retired skills live in `container/legacy-skills/`, outside the plugin root. **The full intent record — both delivery paths, the naming matrix, why it works natively, and the ratchet's end state — is `docs/skills-delivery.md`; read it before touching skill delivery or renaming a skill.**
+Discovery files agents read from `~/.claude/skills/`. Platform skills live under base names (`notify`, `viewport`, …) and are delivered namespaced as `woltspace:<name>` — claude installs them as the `woltspace` plugin (`container/skills/.claude-plugin/`), codex/opencode reach the same tree through a `~/.claude/skills/woltspace` symlink. Current platform skills: `start-chat`, `create-wolt`, `notify`, `viewport`, `site`, `apps`, `new-app`, `wolf`, `update`, `session-summary`, `worktui` (derived at boot from worktui's own bundled skill — see `derive_worktui_skill` in `src/woltspace/container_entrypoint.py`, not hand-maintained), `organize-context`, `setup-telegram`, `setup-github`, `setup-backup`, `iwcl`, `cloudflare`, `hold`. A wolt opts into that delivery with `"skills_delivery": "plugin"` in its `wolt.json`; without it the old copy sync still runs, delivering the same skills under their historical `woltspace-<name>` names — directory **and** frontmatter, since claude reads one and codex the other. How a skill is spelled in a prompt follows how it was delivered: build one with `platform_skill_invoke(harness, name, delivery)`, never by hand. Retired skills live in `container/legacy-skills/`, outside the plugin root. **The full intent record — both delivery paths, the naming matrix, why it works natively, and the ratchet's end state — is `docs/skills-delivery.md`; read it before touching skill delivery or renaming a skill.**
 
 ### `container/cron/digest.mjs`
 Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select via `claude -p` → render HTML. Writes to `wolt/sparks/`. Optional Spotify playlist curation.
@@ -203,7 +220,7 @@ Daily digest pipeline (3 phases): fetch (HN, HuggingFace, Lobsters) → select v
 No-LLM update checker. Compares stored version (`.state/woltspace-version`) against remote HEAD via `git ls-remote`. Available for on-demand use but not registered as a default wolf cron — wolves are loud, update checking is quiet surveillance.
 
 ### `container/creatures/wolf.py` (Wolf Scheduler 🐺)
-Background cron service, run as the `wolf` connector. Every 30s it reads each wolt's `wolt/wolf.json`, fires due crons by starting a session for the owning wolt, and pings the human on the channel a cron names in `notify` (telegram or slack; none = quiet). Times are the lodge machine's local time. The rules (strict cron parsing, the one due check, next run, locked wolf.json writes) live in `container/lib/wolfcore.py`, shared with the lodge's `/wolf/crons` API. Last-run stamps (`<wolt>/<name>.last`) and the `jobs.jsonl` journal are lodge-global in `.space/wolf/`. See the `/wolf` skill.
+Background cron service, run as the `wolf` connector. Every 30s it reads each wolt's `wolt/wolf.json`, fires due crons by starting a session for the owning wolt, and pings the human on the channel a cron names in `notify` (telegram or slack; none = quiet). Times are the lodge machine's local time. The rules (strict cron parsing, the one due check, next run, locked wolf.json writes) live in `container/lib/wolfcore.py`, shared with the lodge's `/wolf/crons` API. Last-run stamps and the job journal are lodge-global rows of the lodge DB's `wolf_runs` table. See the `/wolf` skill.
 
 CLI: `woltspace wolf list|add|set|rm|run|runs` — a thin client of `/wolf/crons`.
 
@@ -211,13 +228,15 @@ CLI: `woltspace wolf list|add|set|rm|run|runs` — a thin client of `/wolf/crons
 Background session reaper, run as the `vulture` connector (`WOLTSPACE_VULTURE` / `channels.vulture` turn it off). Every 10 minutes it rests running sessions nobody has used for longer than the lodge's idle setting (`sessions.idle_timeout_seconds`, default 1 day; use is a lodge write such as a message in or out, or a keystroke or attach in tmux, never output) unless they hold (`woltspace session hold`, for a background task), marks sessions whose tmux is gone, and stops lodge sessions whose agent exited. It never touches a tmux session the registry does not know: natively that is the owner's own.
 
 ### `container/lib/sessions.py` (Session Registry)
-Centralized session metadata — single source of truth. One JSON file per session in `.state/registry/{session_name}.json`.
+Centralized session metadata — single source of truth. One row per session in the lodge's SQLite file, `.space/lodge.db` (`container/lib/lodge_db.py`: WAL, one write transaction at a time, no lock files). The record is kept whole as JSON beside a few queried columns. Read it through `woltspace session list` or the HTTP API, never by opening the file; `woltspace db show <table> [--where col=val|record.key=val ...] [--json]` prints any table read-only, lodge up or down (a markdown table, or JSONL with the record as an object). Read-modify-write goes through `SessionRegistry.edit(name)`, which holds the lodge's one write lock: SQL only, never tmux or ps (the tests fail a subprocess inside a write). A tmux stop goes through `stop_and_settle`: the record is `stopping` while tmux dies, and a message waits for it, then wakes the session. At boot the control plane imports any old `<wolt>/.state/sessions/*.json` it still finds (then renamed `sessions.imported/`).
 
 Each entry tracks: name, wolt, creature, model, status, timestamps, routing (adapter, chat_id, user_id, thread_ts), viewport URL, session URL.
 
 API: `SessionRegistry.create()`, `.update()`, `.get()`, `.list()`, `.finish()`, `.touch()`, `.reconcile()`, `.delete()`.
 
 Used by core.py, run-session.sh, notify, and server. CLI wrapper: `session-reg`.
+
+Every lodge process must run as the lodge's user: `lodge.db` is 0600, and even a read-only open has to write its `-shm`, so `sudo` or another uid gets "unable to open database file".
 
 ### `container/bin/`
 Utility scripts available in container PATH:
@@ -311,7 +330,7 @@ Use `/viewport` for full details: URL paths, app serving, live-reload behavior.
 Multiple wolts can run in one container. They all share:
 - The same server
 - The same bot process
-- `~/.woltspace/wolts/.state/registry/` for session metadata and notification routing
+- `~/.woltspace/wolts/.space/lodge.db` for session metadata and notification routing
 
 `~/.woltspace/wolts/woltspace.json` tracks the active wolt per adapter. The bot can `switch_wolt` at runtime.
 

@@ -44,7 +44,7 @@ def wolts(tmp_path):
     write(".env", f"TELEGRAM_BOT_TOKEN={SECRET}\n")
     write("woltspace.json", json.dumps({"active": {"telegram": "beaverwolt"}}))
     write(".state/registry/session-1.json", json.dumps({"name": "session-1"}))
-    write(".space/platform/config.json", json.dumps({"channels": {}}))
+    write(".space/platform/adoption.json", json.dumps({"adopted": []}))
 
     for name in ("beaverwolt", "raccoonwolt"):
         write(f"{name}/CLAUDE.md", f"# {name}\n")
@@ -86,7 +86,7 @@ def test_excludes_drop_the_junk_and_keep_the_data(wolts, tmp_path):
     for kept in (
         f"{ARCHIVE_ROOT}/woltspace.json",
         f"{ARCHIVE_ROOT}/.state/registry/session-1.json",
-        f"{ARCHIVE_ROOT}/.space/platform/config.json",
+        f"{ARCHIVE_ROOT}/.space/platform/adoption.json",
         f"{ARCHIVE_ROOT}/beaverwolt/wolt/wolt.json",
         f"{ARCHIVE_ROOT}/beaverwolt/wolt/memory/identity.md",
         f"{ARCHIVE_ROOT}/beaverwolt/wolt/.git/HEAD",
@@ -427,7 +427,7 @@ def test_the_manifest_names_every_withheld_path(wolts_with_credentials, tmp_path
         "beaverwolt/home/.codex/auth.json": "codex-auth",
     }
     assert {rule["rule"] for rule in withheld["rules"]} == {
-        "dotenv", "claude-credentials", "codex-auth",
+        "dotenv", "claude-credentials", "codex-auth", "platform-config",
     }
     assert SECRET not in json.dumps(result.manifest)
     assert "8 credential file(s)" in "\n".join(backup_mod.summary_lines(result))
@@ -1072,3 +1072,650 @@ def test_a_copy_beside_its_source_only_touches_itself(wolts, tmp_path):
         app.kill()
         app.wait()
         shutil.rmtree(short, ignore_errors=True)
+
+# ---------------------------------------------------------------------------
+# The lodge database: one consistent snapshot, never the live sidecars
+# ---------------------------------------------------------------------------
+
+def _live_lodge_db(wolts: Path, rows: int = 3):
+    """A lodge.db as a running lodge leaves it: WAL mode, rows still in the -wal."""
+    import sqlite3
+
+    db = wolts / ".space" / "lodge.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db, isolation_level=None)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA wal_autocheckpoint=0")
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("CREATE TABLE sessions (name TEXT PRIMARY KEY, record TEXT)")
+    for i in range(rows):
+        conn.execute("INSERT INTO sessions VALUES (?, '{}')", (f"pal-{i}",))
+    assert (wolts / ".space" / "lodge.db-wal").stat().st_size > 0
+    return conn
+
+
+def test_the_lodge_db_goes_in_as_one_consistent_snapshot(wolts, tmp_path):
+    import sqlite3
+
+    live = _live_lodge_db(wolts)
+    try:
+        result = create_backup(wolts, out_dir=tmp_path / "out")
+    finally:
+        live.close()
+    names = _members(result.archive)
+    assert f"{ARCHIVE_ROOT}/.space/lodge.db" in names
+    assert f"{ARCHIVE_ROOT}/.space/lodge.db-wal" not in names
+    assert f"{ARCHIVE_ROOT}/.space/lodge.db-shm" not in names
+    assert result.manifest["lodge_db"]["tables"] == {"meta": 0, "sessions": 3}
+
+    restored = restore_backup(result.archive, to=tmp_path / "back")
+    db = restored.wolts_dir / ".space" / "lodge.db"
+    conn = sqlite3.connect(db)
+    try:
+        assert conn.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert conn.execute("SELECT count(*) FROM sessions").fetchone() == (3,)
+    finally:
+        conn.close()
+
+
+def test_the_backup_folds_the_wal_and_still_restores(wolts, tmp_path):
+    import sqlite3
+
+    live = _live_lodge_db(wolts, rows=500)
+    wal = wolts / ".space" / "lodge.db-wal"
+    try:
+        assert wal.stat().st_size > 100_000
+        result = create_backup(wolts, out_dir=tmp_path / "out")
+        assert wal.stat().st_size == 0
+    finally:
+        live.close()
+    db = restore_backup(result.archive, to=tmp_path / "back").wolts_dir / ".space" / "lodge.db"
+    conn = sqlite3.connect(db)
+    try:
+        assert conn.execute("SELECT count(*) FROM sessions").fetchone() == (500,)
+    finally:
+        conn.close()
+
+
+def test_a_busy_checkpoint_is_one_line_and_the_backup_goes_on(wolts, tmp_path, capsys):
+    live = _live_lodge_db(wolts)
+    try:
+        live.execute("BEGIN")
+        live.execute("SELECT count(*) FROM sessions").fetchone()  # a reader pins the WAL
+        result = create_backup(wolts, out_dir=tmp_path / "out")
+    finally:
+        live.close()
+    assert result.manifest["lodge_db"]["tables"]["sessions"] == 3
+    lines = [line for line in capsys.readouterr().err.splitlines() if "checkpoint" in line]
+    assert len(lines) == 1, lines
+
+
+def test_no_lodge_db_means_no_lodge_db_in_the_manifest(wolts, tmp_path):
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    assert "lodge_db" not in result.manifest
+    assert result.verified
+
+
+def test_an_apps_own_sqlite_wal_is_kept(wolts, tmp_path):
+    """Only the lodge's sidecars go: an app's -wal can hold committed rows."""
+    app = wolts / "beaverwolt" / "wolt" / "apps" / "shop"
+    app.mkdir(parents=True)
+    for name in ("shop.db", "shop.db-wal", "shop.db-shm"):
+        (app / name).write_bytes(b"rows")
+    names = _members(create_backup(wolts, out_dir=tmp_path / "out").archive)
+    for name in ("shop.db", "shop.db-wal", "shop.db-shm"):
+        assert f"{ARCHIVE_ROOT}/beaverwolt/wolt/apps/shop/{name}" in names
+
+
+def test_a_lodge_db_that_cannot_be_snapshotted_fails_the_backup(wolts, tmp_path):
+    """A backup without the lodge's state in it is not a backup."""
+    (wolts / ".space" / "lodge.db").write_bytes(b"not a database at all" * 100)
+    with pytest.raises(ValueError, match="lodge.db"):
+        create_backup(wolts, out_dir=tmp_path / "out")
+    assert list((tmp_path / "out").iterdir()) == []
+
+
+def test_cli_reports_an_unsnapshottable_lodge_db_without_traceback(wolts, tmp_path, capsys):
+    (wolts / ".space" / "lodge.db").write_bytes(b"not a database at all" * 100)
+    code = cli_main(["backup", "--wolts-dir", str(wolts), "--out", str(tmp_path / "out")])
+    assert code == 1
+    captured = capsys.readouterr()
+    assert "backup failed" in captured.out
+    assert "lodge.db" in captured.out
+    assert "Traceback" not in captured.out + captured.err
+
+
+def test_a_lodge_db_the_scan_cannot_read_fails_before_writing(wolts, tmp_path):
+    os.mkfifo(wolts / ".space" / "lodge.db")
+    with pytest.raises(ValueError, match="lodge.db"):
+        create_backup(wolts, out_dir=tmp_path / "out")
+    assert list((tmp_path / "out").iterdir()) == []
+
+
+def test_an_unlistable_space_dir_fails_before_writing(wolts, tmp_path, monkeypatch):
+    """`.space` unreadable: the scan can't say whether a lodge.db is there."""
+    space = (wolts / ".space").resolve()  # create_backup walks the resolved path
+    real_scandir = os.scandir
+
+    def scandir(path="."):
+        if Path(path) == space:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", scandir)
+    with pytest.raises(ValueError, match="lodge.db"):
+        create_backup(wolts, out_dir=tmp_path / "out")
+    assert list((tmp_path / "out").iterdir()) == []
+
+
+def test_an_ordinary_file_vanishing_mid_write_stays_a_warning(wolts, tmp_path, monkeypatch):
+    gone = wolts / "beaverwolt" / "wolt" / "memory" / "identity.md"
+    real_add = backup_mod._add_entry
+
+    def add_entry(tar, entry):
+        if entry.path == gone:
+            gone.unlink()
+        return real_add(tar, entry)
+
+    monkeypatch.setattr(backup_mod, "_add_entry", add_entry)
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    assert result.verified
+    assert "beaverwolt/wolt/memory/identity.md" in {
+        item["path"] for item in result.manifest["unreadable"]
+    }
+    assert f"{ARCHIVE_ROOT}/beaverwolt/wolt/memory/identity.md" not in _members(result.archive)
+
+
+@pytest.mark.parametrize("rel", [".space/pal.pipe", "beaverwolt/.space/lodge.db"])
+def test_only_the_lodges_own_db_is_required(wolts, tmp_path, rel):
+    (wolts / rel).parent.mkdir(parents=True, exist_ok=True)
+    os.mkfifo(wolts / rel)
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    assert rel in {item["path"] for item in result.manifest["unreadable"]}
+    assert result.verified
+
+
+# ---------------------------------------------------------------------------
+# A recipient set: the whole archive goes through age, secrets inside
+# ---------------------------------------------------------------------------
+
+RECIPIENT = "age1pal0000000000000000000000000000000000000000000000000000000"
+FAKE_KEY = b"AGE-SECRET-KEY-1PALFAKE\n"
+AGE_HEADER = b"age-encryption.org/v1\n"
+
+
+@pytest.fixture
+def fake_age(tmp_path, monkeypatch):
+    """An `age` on PATH that base64s instead of encrypting, and decrypts back.
+
+    Every call is logged to `calls` (with the mode of the file it writes to),
+    so a test can see how age was driven. `swap` makes the second decryption
+    hand back a different archive. The real round trip is a test of its own.
+    """
+    bin_dir = tmp_path / "fake-bin"
+    bin_dir.mkdir()
+    script = bin_dir / "age"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import base64, json, os, sys\n"
+        f"HEADER, KEY, LOG = {AGE_HEADER!r}, {FAKE_KEY!r}, {str(bin_dir / 'calls')!r}\n"
+        "args = sys.argv[1:]\n"
+        "call = {'args': args, 'out_mode': oct(os.fstat(1).st_mode & 0o777)}\n"
+        "open(LOG, 'a').write(json.dumps(call) + '\\n')\n"
+        "if '-d' in args:\n"
+        "    if sys.stdin.buffer.read() != KEY:\n"
+        "        sys.exit('age: error: no identity matched any of the recipients')\n"
+        "    data = open(args[-1], 'rb').read()\n"
+        "    swap = args[-1] + '.swap'\n"
+        "    if os.path.exists(swap) and sum('-d' in l for l in open(LOG)) > 1:\n"
+        "        data = open(swap, 'rb').read()\n"
+        "    sys.stdout.buffer.write(base64.b64decode(data[len(HEADER):]))\n"
+        "    sys.exit(0)\n"
+        "if args[args.index('-r') + 1] == 'age1broken':\n"
+        "    sys.exit('age: error: malformed recipient')\n"
+        "sys.stdout.buffer.write(HEADER + base64.b64encode(sys.stdin.buffer.read()))\n"
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("WOLTSPACE_BACKUP_AGE_RECIPIENT", RECIPIENT)
+    return bin_dir
+
+
+def _age_calls(fake_age: Path) -> list[dict]:
+    log = fake_age / "calls"
+    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+
+def _fake_encrypt(plain: bytes) -> bytes:
+    import base64
+    return AGE_HEADER + base64.b64encode(plain)
+
+
+def _fake_open(path: Path) -> dict[str, bytes]:
+    """The members of a fake-encrypted archive, by name."""
+    import base64
+    import io as io_mod
+
+    data = path.read_bytes()
+    assert data.startswith(AGE_HEADER)
+    files = {}
+    with tarfile.open(fileobj=io_mod.BytesIO(base64.b64decode(data[len(AGE_HEADER):]))) as tar:
+        for member in tar.getmembers():
+            files[member.name] = tar.extractfile(member).read() if member.isreg() else b""
+    return files
+
+
+def test_a_recipient_encrypts_the_whole_archive_secrets_inside(
+    wolts_with_credentials, fake_age, tmp_path,
+):
+    (wolts_with_credentials / ".space" / "platform" / "config.json").write_text(
+        json.dumps({"telegram": {"token": SECRET}})
+    )
+    result = create_backup(wolts_with_credentials, out_dir=tmp_path / "out", tag="t1")
+    assert result.archive == tmp_path / "out" / "woltspace-backup-t1.tar.gz.age"
+    assert sorted(p.name for p in (tmp_path / "out").iterdir()) == [result.archive.name]
+    assert SECRET.encode() not in result.archive.read_bytes()
+
+    (call,) = _age_calls(fake_age)
+    assert call["args"] == ["-r", RECIPIENT]  # no -o: age writes into our 0600 fd
+    assert call["out_mode"] == "0o600"
+
+    files = _fake_open(result.archive)
+    for rel in (".env", ".space/platform/config.json", "beaverwolt/wolt/apps/shop/.env",
+                "beaverwolt/wolt/apps/shop/.env.local", "beaverwolt/wolt/apps/shop/.env.production"):
+        assert SECRET.encode() in files[f"{ARCHIVE_ROOT}/{rel}"], rel
+    # OAuth chains stay withheld forever, encrypted or not.
+    assert not [name for name in files if "credentials.json" in name or "auth.json" in name]
+    manifest = json.loads(files[MANIFEST_NAME])
+    assert manifest["secrets"] == {"present": True, "recipient": RECIPIENT}
+    assert manifest["entries"] == len(files) - 1
+    report = "\n".join(backup_mod.summary_lines(result))
+    assert f"encrypted to {RECIPIENT}" in report
+
+
+def test_no_plaintext_touches_the_disk(wolts, fake_age, tmp_path, monkeypatch):
+    import tempfile
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+    live = _live_lodge_db(wolts)
+    try:
+        result = create_backup(wolts, out_dir=tmp_path / "out", tag="t2")
+    finally:
+        live.close()
+    assert list(scratch.iterdir()) == []
+    assert sorted(p.name for p in (tmp_path / "out").iterdir()) == [result.archive.name]
+    assert result.manifest["lodge_db"]["tables"] == {"meta": 0, "sessions": 3}
+
+
+def test_without_a_recipient_the_archive_is_plain_and_secrets_withheld(
+    wolts, fake_age, tmp_path, monkeypatch,
+):
+    monkeypatch.delenv("WOLTSPACE_BACKUP_AGE_RECIPIENT")
+    result = create_backup(wolts, out_dir=tmp_path / "out", tag="t3")
+    assert result.archive.name == "woltspace-backup-t3.tar.gz"
+    assert _age_calls(fake_age) == []
+    secrets = result.manifest["secrets"]
+    assert secrets["present"] is False and "not set" in secrets["reason"]
+    assert ".env" in {item["path"] for item in result.manifest["withheld"]["paths"]}
+    assert f"{ARCHIVE_ROOT}/.env" not in _members(result.archive)
+
+
+def test_a_recipient_without_age_fails_rather_than_write_in_the_clear(
+    wolts, fake_age, tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))
+    code = cli_main([
+        "backup", "--wolts-dir", str(wolts), "--out", str(tmp_path / "out"), "--tag", "t4",
+    ])
+    assert code == 1
+    assert "age is not on PATH" in capsys.readouterr().out
+    assert not list((tmp_path / "out").glob("*t4*"))
+
+
+def test_an_age_failure_fails_the_backup_and_leaves_nothing(
+    wolts, fake_age, tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.setenv("WOLTSPACE_BACKUP_AGE_RECIPIENT", "age1broken")
+    code = cli_main([
+        "backup", "--wolts-dir", str(wolts), "--out", str(tmp_path / "out"), "--tag", "t5",
+    ])
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "backup failed" in out and "malformed recipient" in out
+    assert not list((tmp_path / "out").glob("*t5*"))
+
+
+@pytest.mark.parametrize("recipient", [True, False])
+def test_backup_files_are_owner_only(wolts, fake_age, tmp_path, monkeypatch, recipient):
+    """Whatever the umask or an older file's mode, nobody but the owner reads a snapshot."""
+    if not recipient:
+        monkeypatch.delenv("WOLTSPACE_BACKUP_AGE_RECIPIENT")
+    suffix = ".tar.gz.age" if recipient else ".tar.gz"
+    stale = tmp_path / "out" / f"woltspace-backup-t7{suffix}"
+    stale.parent.mkdir()
+    stale.write_bytes(b"older run")
+    stale.chmod(0o644)
+    old = os.umask(0o022)
+    try:
+        create_backup(wolts, out_dir=tmp_path / "out", tag="t6")
+        create_backup(wolts, out_dir=tmp_path / "out", tag="t7")
+    finally:
+        os.umask(old)
+    for tag in ("t6", "t7"):
+        path = tmp_path / "out" / f"woltspace-backup-{tag}{suffix}"
+        assert (path.stat().st_mode & 0o777) == 0o600, path.name
+
+
+def test_a_symlinked_env_is_not_followed_into_the_archive(wolts, fake_age, tmp_path):
+    elsewhere = tmp_path / "elsewhere" / "id_key"
+    elsewhere.parent.mkdir()
+    elsewhere.write_text("not-a-dotenv-0123456789")
+    (wolts / "beaverwolt" / ".env").symlink_to(elsewhere)
+    result = create_backup(wolts, out_dir=tmp_path / "out", tag="t8")
+
+    files = _fake_open(result.archive)
+    assert f"{ARCHIVE_ROOT}/.env" in files
+    assert f"{ARCHIVE_ROOT}/beaverwolt/.env" not in files
+    assert all(b"not-a-dotenv" not in data for data in files.values())
+    skipped = {item["path"]: item["error"] for item in result.manifest["unreadable"]}
+    assert "symlink" in skipped["beaverwolt/.env"]
+    restored = restore_backup(result.archive, to=tmp_path / "back", identity=FAKE_KEY)
+    assert "beaverwolt/.env" in "\n".join(backup_mod.restore_lines(restored))
+
+
+def test_an_encrypted_restore_brings_the_secrets_back(wolts_with_credentials, fake_age, tmp_path):
+    result = create_backup(wolts_with_credentials, out_dir=tmp_path / "out", tag="t10")
+    restored = restore_backup(result.archive, to=tmp_path / "back", identity=FAKE_KEY)
+    assert SECRET in (restored.wolts_dir / ".env").read_text()
+    assert SECRET in (restored.wolts_dir / "beaverwolt/wolt/apps/shop/.env.local").read_text()
+    assert not (restored.wolts_dir / ".claude" / ".credentials.json").exists()
+    assert (restored.wolts_dir / "beaverwolt" / "wolt" / "wolt.json").is_file()
+    assert restored.target == tmp_path / "back"
+    out = "\n".join(backup_mod.restore_lines(restored))
+    assert "claude login" in out and "copy .env.example" not in out
+
+
+def test_restore_of_an_encrypted_archive_wants_the_key(wolts, fake_age, tmp_path):
+    result = create_backup(wolts, out_dir=tmp_path / "out", tag="t11")
+    with pytest.raises(ValueError, match="--identity"):
+        restore_backup(result.archive, to=tmp_path / "back")
+    assert not (tmp_path / "back").exists()
+    with pytest.raises(OSError, match="no identity matched"):
+        restore_backup(result.archive, to=tmp_path / "back", identity=b"AGE-SECRET-KEY-1WRONG\n")
+    assert list((tmp_path / "back").iterdir()) == []
+
+
+def test_an_encrypted_archive_is_audited_before_a_byte_lands(fake_age, tmp_path):
+    plain = tmp_path / "plain.tar.gz"
+    _write_archive(plain, lambda tar: (
+        _add_bytes(tar, f"{ARCHIVE_ROOT}/fine.txt"),
+        _add_bytes(tar, "../escaped.txt"),
+    ))
+    sealed = tmp_path / "evil.tar.gz.age"
+    sealed.write_bytes(_fake_encrypt(plain.read_bytes()))
+    with pytest.raises(Exception):
+        restore_backup(sealed, to=tmp_path / "back", identity=FAKE_KEY)
+    assert list((tmp_path / "back").iterdir()) == []
+    assert not (tmp_path / "escaped.txt").exists()
+    assert sum("-d" in call["args"] for call in _age_calls(fake_age)) == 1  # no extraction pass
+
+
+def test_an_archive_that_changes_between_the_passes_is_refused(wolts, fake_age, tmp_path):
+    result = create_backup(wolts, out_dir=tmp_path / "out", tag="t12")
+    other = tmp_path / "other.tar.gz"
+    _write_archive(other, lambda tar: _add_bytes(tar, f"{ARCHIVE_ROOT}/planted.txt"))
+    Path(f"{result.archive}.swap").write_bytes(_fake_encrypt(other.read_bytes()))
+    with pytest.raises(ValueError, match="changed between"):
+        restore_backup(result.archive, to=tmp_path / "back", identity=FAKE_KEY)
+    assert not (tmp_path / "back" / ARCHIVE_ROOT / "planted.txt").exists()
+
+
+@pytest.mark.parametrize("from_stdin", [False, True])
+def test_cli_restore_takes_the_key_from_a_file_or_stdin(
+    wolts, fake_age, tmp_path, monkeypatch, capsys, from_stdin,
+):
+    import io as io_mod
+
+    result = create_backup(wolts, out_dir=tmp_path / "out", tag="t13")
+    if from_stdin:
+        monkeypatch.setattr(sys, "stdin", io_mod.TextIOWrapper(io_mod.BytesIO(FAKE_KEY)))
+        identity = "-"
+    else:
+        (tmp_path / "key.txt").write_bytes(FAKE_KEY)
+        identity = str(tmp_path / "key.txt")
+    code = cli_main(["restore", str(result.archive), "--to", str(tmp_path / "back"),
+                     "--identity", identity])
+    assert code == 0
+    assert SECRET in (tmp_path / "back" / ARCHIVE_ROOT / ".env").read_text()
+    assert "WOLTSPACE_WOLTS_DIR=" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("case", ["no recipient", "plaintext archive", "encrypted"])
+def test_the_documented_upload_never_sends_plaintext(tmp_path, case):
+    """The upload script in docs/backup.md, run against stand-in woltspace and rclone."""
+    import subprocess
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    suffix = ".tar.gz" if case == "plaintext archive" else ".tar.gz.age"
+    (bin_dir / "woltspace").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = --version ]; then echo "woltspace 0.0.0"; exit 0; fi\n'
+        f'mkdir -p "$5" && printf x > "$5/woltspace-backup-$3{suffix}"\n'
+    )
+    (bin_dir / "rclone").write_text(f'#!/bin/sh\necho "$@" >> {tmp_path / "rclone.log"}\n')
+    for tool in ("woltspace", "rclone"):
+        (bin_dir / tool).chmod(0o755)
+    env = {"HOME": str(tmp_path), "PATH": f"{bin_dir}:/usr/bin:/bin"}
+    if case != "no recipient":
+        env["WOLTSPACE_BACKUP_AGE_RECIPIENT"] = RECIPIENT
+    run = subprocess.run(["bash", "-c", _doc_script("**The daily upload.**")], env=env,
+                         capture_output=True, text=True)
+    uploads = (tmp_path / "rclone.log").read_text() if (tmp_path / "rclone.log").exists() else ""
+    if case == "encrypted":
+        assert run.returncode == 0, run.stderr
+        assert ".tar.gz.age" in uploads and "latest.json" in uploads
+        assert not [line for line in uploads.splitlines() if line.split()[1].endswith(".tar.gz")]
+        latest = json.loads((tmp_path / ".woltspace" / "backups" / "latest.json").read_text())
+        assert sorted(latest) == ["sha256", "tag", "taken_at", "version"]
+    else:
+        assert run.returncode != 0
+        assert uploads == ""
+        assert "unencrypted" in run.stderr or "WOLTSPACE_BACKUP_AGE_RECIPIENT" in run.stderr
+
+
+def _doc_script(after: str) -> str:
+    text = (ROOT / "docs" / "backup.md").read_text()
+    return text.split(after, 1)[1].split("```bash\n", 1)[1].split("```", 1)[0]
+
+
+@pytest.mark.parametrize("case", ["ok", "latest points back", "sha mismatch", "plaintext", "stale"])
+def test_the_documented_weekly_check_needs_no_key(tmp_path, case):
+    """The on-lodge check in docs/backup.md, against a directory standing in for the bucket."""
+    import hashlib
+    import subprocess
+    from datetime import datetime, timedelta, timezone
+
+    bucket = tmp_path / "bucket" / "lodges" / "<lodge>"
+    (bucket / "snapshots").mkdir(parents=True)
+    for tag in ("20260101-000000", "20260102-000000"):
+        body = (b"PK not age\n" if case == "plaintext" else AGE_HEADER) + os.urandom(1_000_000)
+        (bucket / "snapshots" / f"woltspace-backup-{tag}.tar.gz.age").write_bytes(body)
+    newest = bucket / "snapshots" / "woltspace-backup-20260102-000000.tar.gz.age"
+    hours = 72 if case == "stale" else 1
+    taken = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    latest = {"tag": "20260102-000000", "taken_at": taken,
+              "sha256": hashlib.sha256(newest.read_bytes()).hexdigest()}
+    if case == "latest points back":
+        latest["tag"] = "20260101-000000"
+    if case == "sha mismatch":
+        latest["sha256"] = "0" * 64
+    (bucket / "latest.json").write_text(json.dumps(latest))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "rclone").write_text(
+        f"#!{sys.executable}\n"
+        "import fnmatch, os, shutil, sys\n"
+        f"ROOT = {str(tmp_path / 'bucket')!r}\n"
+        "local = lambda r: os.path.join(ROOT, r.split('/', 1)[1])\n"
+        "verb, src, dst = sys.argv[1], sys.argv[2], sys.argv[3]\n"
+        "if verb == 'copyto':\n"
+        "    shutil.copy(local(src), dst)\n"
+        "else:\n"
+        "    pattern = sys.argv[sys.argv.index('--include') + 1]\n"
+        "    print('\\n'.join(n for n in sorted(os.listdir(local(src))) if fnmatch.fnmatch(n, pattern)))\n"
+    )
+    (bin_dir / "rclone").chmod(0o755)
+    run = subprocess.run(
+        ["bash", "-c", _doc_script("**Weekly, on the lodge, no key.**")],
+        env={"HOME": str(tmp_path), "PATH": f"{bin_dir}:/usr/bin:/bin", "TMPDIR": str(tmp_path)},
+        capture_output=True, text=True,
+    )
+    if case == "ok":
+        assert run.returncode == 0, run.stderr
+        assert "backup check ok" in run.stdout
+    else:
+        assert run.returncode != 0
+        assert "backup check FAILED" in run.stderr
+        if case == "stale":
+            assert "72 hours old" in run.stderr
+
+
+def test_the_documented_monthly_check_boots_without_secrets_or_crons(tmp_path):
+    """The by-hand restore check: every secret gone, then a lodge with nothing live."""
+    import subprocess
+
+    wolts = tmp_path / "restore-check" / "wolts"
+    secrets = [".env", ".env.local", "pal/wolt/apps/shop/.env", "pal/wolt/apps/shop/.env.production",
+               ".space/platform/config.json"]
+    kept = [".env.example", "pal/wolt/apps/shop/.env.sample", "pal/wolt/memory/identity.md"]
+    for rel in secrets + kept:
+        (wolts / rel).parent.mkdir(parents=True, exist_ok=True)
+        (wolts / rel).write_text(SECRET)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "woltspace").write_text(f'#!/bin/sh\nenv > {tmp_path / "boot.env"}\necho "$@" >> {tmp_path / "boot.env"}\n')
+    (bin_dir / "woltspace").chmod(0o755)
+    block = _doc_script("**Delete every restored secret").replace("/tmp/restore-check", str(tmp_path / "restore-check"))
+    run = subprocess.run(["bash", "-c", block], env={"PATH": f"{bin_dir}:/usr/bin:/bin"},
+                         capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    assert [rel for rel in secrets if (wolts / rel).exists()] == []
+    assert all((wolts / rel).exists() for rel in kept)
+    boot = (tmp_path / "boot.env").read_text()
+    for switch in ("ENABLE_TELEGRAM_BOT=false", "ENABLE_SLACK_BOT=false", "WOLTSPACE_WOLF=false",
+                   "WOLTSPACE_VULTURE=false", "WOLTSPACE_PUBLIC_TUNNEL=false"):
+        assert switch in boot.splitlines()
+    assert "serve --port 7778" in boot
+
+
+@pytest.mark.skipif(
+    not (__import__("shutil").which("age") and __import__("shutil").which("age-keygen")),
+    reason="age is not installed",
+)
+def test_real_age_round_trip(wolts, tmp_path, monkeypatch):
+    import subprocess
+
+    key = tmp_path / "key.txt"
+    subprocess.run(["age-keygen", "-o", str(key)], check=True, capture_output=True)
+    recipient = subprocess.run(
+        ["age-keygen", "-y", str(key)], check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    monkeypatch.setenv("WOLTSPACE_BACKUP_AGE_RECIPIENT", recipient)
+    live = _live_lodge_db(wolts)
+    try:
+        result = create_backup(wolts, out_dir=tmp_path / "out", tag="t14")
+    finally:
+        live.close()
+    raw = result.archive.read_bytes()
+    assert raw.startswith(AGE_HEADER)
+    assert SECRET.encode() not in raw and b"beaverwolt" not in raw
+
+    restored = restore_backup(result.archive, to=tmp_path / "back", identity=key.read_bytes())
+    assert SECRET in (restored.wolts_dir / ".env").read_text()
+    assert (restored.wolts_dir / ".space" / "lodge.db").is_file()
+    assert restored.manifest["secrets"]["present"] is True
+
+
+def test_every_lodge_db_row_goes_into_the_snapshot(wolts, tmp_path):
+    """Chat routing, the Slack queue, running apps and consents travel too."""
+    live = _live_lodge_db(wolts)
+    marker = "pal-said-0xMARKER"
+    live.execute("CREATE TABLE pending_messages (id TEXT PRIMARY KEY, text TEXT)")
+    live.execute("CREATE TABLE chat_state (chat_id TEXT PRIMARY KEY, record TEXT)")
+    live.execute("CREATE TABLE grants (scope TEXT PRIMARY KEY, record TEXT)")
+    live.execute("CREATE TABLE apps_running (name TEXT PRIMARY KEY, pid INTEGER,"
+                 " tunnel_pid INTEGER, tunnel_url TEXT, record TEXT)")
+    for table, row in (("pending_messages", ("m1", marker)),
+                       ("chat_state", ("c1", "{}")),
+                       ("grants", ("/home/pal/nunu", "{}")),
+                       ("apps_running", ("shop", 1, None, None, "{}"))):
+        live.execute(f"INSERT INTO {table} VALUES ({', '.join('?' * len(row))})", row)
+    try:
+        result = create_backup(wolts, out_dir=tmp_path / "out")
+    finally:
+        live.close()
+
+    assert result.manifest["lodge_db"] == {"tables": {
+        "apps_running": 1, "chat_state": 1, "grants": 1, "meta": 0,
+        "pending_messages": 1, "sessions": 3,
+    }}
+    with tarfile.open(result.archive, "r:gz") as tar:
+        snapshot = tar.extractfile(f"{ARCHIVE_ROOT}/.space/lodge.db").read()
+    assert marker.encode() in snapshot
+
+    restored = restore_backup(result.archive, to=tmp_path / "back")
+    assert ("consents came back with the lodge: review them with woltspace auto list"
+            in "\n".join(backup_mod.restore_lines(restored)))
+
+
+def test_a_restored_app_row_forgets_its_process_ids(wolts, tmp_path):
+    """On another machine an old pid may be any live process: the app must be
+    started again, never taken as running, never signalled through it."""
+    import sqlite3
+
+    live = _live_lodge_db(wolts)
+    live.execute("CREATE TABLE apps_running (name TEXT PRIMARY KEY, pid INTEGER, port INTEGER,"
+                 " tunnel_pid INTEGER, tunnel_url TEXT, record TEXT)")
+    state = {"pid": os.getpid(), "port": 8100, "keeper": "pal", "tunnel_pid": os.getpid(),
+             "tunnel_url": "https://x.example"}
+    live.execute("INSERT INTO apps_running VALUES ('shop', ?, 8100, ?, 'https://x.example', ?)",
+                 (os.getpid(), os.getpid(), json.dumps(state)))
+    try:
+        result = create_backup(wolts, out_dir=tmp_path / "out")
+    finally:
+        live.close()
+
+    restored = restore_backup(result.archive, to=tmp_path / "back")
+    conn = sqlite3.connect(restored.wolts_dir / ".space" / "lodge.db")
+    try:
+        row = conn.execute("SELECT pid, port, tunnel_pid, tunnel_url, record FROM apps_running").fetchone()
+    finally:
+        conn.close()
+    # The lodge reads its app state from the record, so the pids go there too.
+    assert row[:4] == (None, 8100, None, None)
+    assert json.loads(row[4]) == {"port": 8100, "keeper": "pal"}
+
+
+def test_runtime_state_goes_into_the_archive(wolts, tmp_path):
+    """Logs, chat history and routing, spools, consents, and the *.imported
+    copies lodge.db's importers leave behind: all of it is data now."""
+    paths = (
+        ".space/logs/control-plane.log",
+        ".space/outbox/abc123",
+        ".space/telegram/history/42.jsonl",
+        ".space/telegram/chats.imported/42.json",
+        ".space/auto-grants.json.imported",
+        ".space/apps/shop.json",
+        "pal/.state/chat/slack/_pending_messages.json",
+    )
+    for rel in paths:
+        (wolts / rel).parent.mkdir(parents=True, exist_ok=True)
+        (wolts / rel).write_text("x")
+
+    result = create_backup(wolts, out_dir=tmp_path / "out")
+    names = set(_members(result.archive))
+    assert [rel for rel in paths if f"{ARCHIVE_ROOT}/{rel}" not in names] == []
+    assert "ephemeral" not in result.manifest["excludes"]

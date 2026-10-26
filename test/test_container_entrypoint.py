@@ -342,27 +342,48 @@ class TestPhaseDispatch:
         """The root phase rewrites HOME; never leak /home/node into the suite."""
         monkeypatch.setenv("HOME", "/root")
 
+    @pytest.fixture(autouse=True)
+    def _root_tools(self, monkeypatch):
+        """Tools resolve only through ROOT_PATH, never the image's PATH."""
+        monkeypatch.setattr(boot.shutil, "which", lambda name, path=None:
+                            f"/root-path/{name}" if path == boot.ROOT_PATH else None)
+
     def test_root_does_the_uid_fixup_then_re_execs_itself_as_node(self, monkeypatch):
-        commands = []
+        commands, paths = [], set()
         monkeypatch.setattr(boot.os, "getuid", lambda: 0)
-        monkeypatch.setattr(boot.subprocess, "run",
-                            lambda command, **kw: commands.append(list(command)))
+
+        def run(command, **kw):
+            commands.append(list(command))
+            paths.add(kw["env"]["PATH"])
+        monkeypatch.setattr(boot.subprocess, "run", run)
         monkeypatch.setenv("HOST_UID", "501")
         monkeypatch.setenv("HOST_GID", "20")
+        monkeypatch.setenv("PATH", "/node-owned/bin:/usr/bin")
         execs = []
-        monkeypatch.setattr(boot.os, "execvp", lambda f, a: execs.append((f, a)))
+        monkeypatch.setattr(boot.os, "execv", lambda f, a: execs.append((f, a)))
 
         boot.main()
 
-        assert commands[0] == ["groupmod", "-o", "-g", "20", "node"]
-        assert commands[1] == ["usermod", "-o", "-u", "501", "-g", "20", "node"]
-        assert commands[2] == ["chown", "node:node", "/workspace"]
-        assert commands[3] == ["chown", "-R", "node:node", "/home/node"]
+        assert commands[0] == ["/root-path/groupmod", "-o", "-g", "20", "node"]
+        assert commands[1] == ["/root-path/usermod", "-o", "-u", "501", "-g", "20", "node"]
+        assert commands[2] == ["/root-path/chown", "node:node", "/workspace"]
+        assert commands[3] == ["/root-path/chown", "-R", "node:node", "/home/node"]
         # ...and the bundle, which boot writes the derived worktui skill into
-        assert commands[4][:3] == ["chown", "-R", "node:node"]
-        assert execs == [("gosu", [
+        assert commands[4][:3] == ["/root-path/chown", "-R", "node:node"]
+        assert paths == {boot.ROOT_PATH}
+        assert execs == [("/root-path/gosu", [
             "gosu", "node", "/usr/local/bin/woltspace", "container-entrypoint",
         ])]
+        # the node phase keeps the image's PATH
+        assert boot.os.environ["PATH"] == "/node-owned/bin:/usr/bin"
+
+    def test_root_refuses_a_tool_missing_from_root_path(self, monkeypatch):
+        monkeypatch.setattr(boot.os, "getuid", lambda: 0)
+        monkeypatch.setattr(boot.shutil, "which", lambda name, path=None: None)
+        monkeypatch.setattr(boot.subprocess, "run", lambda command, **kw: None)
+
+        with pytest.raises(FileNotFoundError, match="groupmod"):
+            boot.main()
 
     def test_root_defaults_to_the_first_linux_user(self, monkeypatch):
         commands = []
@@ -371,17 +392,17 @@ class TestPhaseDispatch:
                             lambda command, **kw: commands.append(list(command)))
         monkeypatch.delenv("HOST_UID", raising=False)
         monkeypatch.delenv("HOST_GID", raising=False)
-        monkeypatch.setattr(boot.os, "execvp", lambda f, a: None)
+        monkeypatch.setattr(boot.os, "execv", lambda f, a: None)
 
         boot.main()
 
-        assert commands[1] == ["usermod", "-o", "-u", "1000", "-g", "1000", "node"]
+        assert commands[1] == ["/root-path/usermod", "-o", "-u", "1000", "-g", "1000", "node"]
 
     def test_root_names_nodes_home_before_dropping_privileges(self, monkeypatch):
         """gosu leaves the environment alone; root's HOME is /root."""
         monkeypatch.setattr(boot.os, "getuid", lambda: 0)
         monkeypatch.setattr(boot.subprocess, "run", lambda command, **kw: None)
-        monkeypatch.setattr(boot.os, "execvp", lambda f, a: None)
+        monkeypatch.setattr(boot.os, "execv", lambda f, a: None)
 
         boot.main()
 

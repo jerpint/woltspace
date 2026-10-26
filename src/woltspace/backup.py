@@ -17,10 +17,11 @@ file that is text or code, up to a size cap. Media, binaries, databases nobody
 opted in, and the caches no name rule catches stay out, and every file left out
 is listed in the archive by path and size, so the whole story survives even
 where the bytes do not.
-`full=True` keeps today's wider rule: everything but the named junk.
+`full=True` keeps the wider rule: everything but the named junk.
 
-Nothing here touches docker, takes a lock, or reads a credential's value. A
-backup of a live colony is safe; a quiescent one only gives a tidier registry.
+Nothing here touches docker or takes a lock, and a credential's value is only
+ever read on its way into `age`. A backup of a live colony is safe; a quiescent
+one only gives a tidier registry.
 """
 
 from __future__ import annotations
@@ -29,9 +30,14 @@ import fnmatch
 import io
 import json
 import os
+import shutil
 import socket
+import sqlite3
 import stat
+import subprocess
+import sys
 import tarfile
+from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -79,7 +85,15 @@ EXCLUDED_PATH_SUFFIXES = (
     "wolt/worktrees",
     ".local/share/claude",
     ".codex/shell_snapshots",
+    ".space/lodge.db-wal",
+    ".space/lodge.db-shm",
 )
+
+#: The lodge's own database goes in as an in-memory snapshot: one member,
+#: consistent even while the lodge writes. Its live `-wal` and `-shm` stay out
+#: (above). Only the lodge's: another SQLite file's `-wal` holds committed rows,
+#: so an app's database is archived as it lies, sidecars and all.
+LODGE_DB = ".space/lodge.db"
 
 #: `.codex/shell_snapshots` earns its place twice over. Codex snapshots the
 #: shell environment into runnable `.sh` files, so every exported secret — the
@@ -180,7 +194,15 @@ SECRET_RULES = (
     ("dotenv", ".env or .env.* at any depth, except .example / .sample templates"),
     ("claude-credentials", ".credentials.json* directly inside a .claude directory"),
     ("codex-auth", "auth.json directly inside a .codex directory"),
+    ("platform-config", ".space/platform/config.json at the data root (bot tokens)"),
 )
+
+#: The withheld files that travel inside the archive when it is encrypted.
+#: Never the OAuth chains: encrypted or not, a restored stale one revokes the
+#: live one.
+ENCRYPTED_RULES = ("dotenv", "platform-config")
+AGE_RECIPIENT_ENV = "WOLTSPACE_BACKUP_AGE_RECIPIENT"
+AGE_HEADER = b"age-encryption.org/v1\n"
 
 
 #: `.env.local`, `.env.production`, `.env.staging` — in every app ecosystem a
@@ -203,6 +225,8 @@ def secret_rule(rel: str) -> str | None:
         return "claude-credentials"
     if parent == ".codex" and name == "auth.json":
         return "codex-auth"
+    if rel == ".space/platform/config.json":
+        return "platform-config"
     return None
 
 #: `.git` is deliberately absent from all of the above: a wolt's history is
@@ -213,8 +237,8 @@ def default_tag() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
 
 
-def archive_name(tag: str) -> str:
-    return f"woltspace-backup-{tag}.tar.gz"
+def archive_name(tag: str, encrypted: bool = False) -> str:
+    return f"woltspace-backup-{tag}.tar.gz" + (".age" if encrypted else "")
 
 
 @dataclass
@@ -271,7 +295,9 @@ def _rel(root: Path, path: Path) -> str:
 
 
 def _path_excluded(rel: str) -> bool:
-    return any(rel == suffix or rel.endswith("/" + suffix) for suffix in EXCLUDED_PATH_SUFFIXES)
+    return any(
+        rel == suffix or rel.endswith("/" + suffix) for suffix in EXCLUDED_PATH_SUFFIXES
+    )
 
 
 def is_wolt_dir(path: Path) -> bool:
@@ -736,13 +762,89 @@ def _add_entry(tar: tarfile.TarFile, entry: Entry) -> None:
         tar.addfile(info)
 
 
+def snapshot_lodge_db(db: Path) -> tuple[bytes, dict]:
+    """A consistent copy of the lodge database, in memory, and its row counts.
+
+    The backup changes no rows: it first folds the WAL into the file (a
+    TRUNCATE checkpoint, skipped with one line on stderr when busy or failed),
+    then SQLite's backup API takes a consistent cut even mid-transaction, WAL
+    rows included, every row kept. The copy never touches the disk.
+    """
+    try:
+        with closing(sqlite3.connect(f"{Path(db).as_uri()}?mode=rw", uri=True, timeout=1)) as conn:
+            busy = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0]
+        problem = "busy" if busy else None
+    except sqlite3.Error as exc:
+        problem = str(exc)
+    if problem:
+        print(f"woltspace backup: lodge.db WAL checkpoint skipped ({problem})", file=sys.stderr)
+    source = sqlite3.connect(f"{Path(db).as_uri()}?mode=ro", uri=True)
+    copy = sqlite3.connect(":memory:", isolation_level=None)
+    try:
+        source.backup(copy)
+        names = [row[0] for row in copy.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        )]
+        tables = {
+            name: copy.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0]
+            for name in names
+        }
+        return copy.serialize(), {"tables": tables}
+    finally:
+        copy.close()
+        source.close()
+
+
+def _owner_only(path: Path) -> int:
+    """Open `path` for writing as 0600, whatever the umask or an older file's mode."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
+    return fd
+
+
+def _encryption() -> tuple[str, str] | None:
+    """`(age, recipient)` when the owner asked for encryption, else None.
+
+    A recipient without `age` is an error, never a quiet fall back to a
+    plaintext archive of the whole lodge.
+    """
+    recipient = os.environ.get(AGE_RECIPIENT_ENV, "").strip()
+    if not recipient:
+        return None
+    age = shutil.which("age")
+    if not age:
+        raise OSError(
+            f"{AGE_RECIPIENT_ENV} is set but age is not on PATH — "
+            "refusing to write the lodge in the clear"
+        )
+    return age, recipient
+
+
+def keep_secrets(wolts_dir: Path, scan: Scan) -> None:
+    """Move the `.env` files and bot tokens from withheld into the archive.
+
+    Only for an encrypted archive. A `.env` that is a symlink could point at
+    anything: it is never read through, and stays on the restore checklist.
+    """
+    for item in scan.withheld:
+        if item["rule"] not in ENCRYPTED_RULES:
+            continue
+        if (wolts_dir / item["path"]).is_symlink():
+            scan.unreadable.append({"path": item["path"], "error": "symlink, not followed"})
+            continue
+        scan.entries.append(Entry(wolts_dir / item["path"], f"{ARCHIVE_ROOT}/{item['path']}", "file"))
+
+
 def create_backup(
     wolts_dir: Path | str, *, out_dir: Path | str | None = None, tag: str | None = None,
     full: bool = False,
 ) -> BackupResult:
-    """Write `woltspace-backup-<tag>.tar.gz` and verify it before returning.
+    """Write `woltspace-backup-<tag>.tar.gz[.age]` and verify it before returning.
 
-    Slim unless `full`: see the module docstring.
+    Slim unless `full`: see the module docstring. With a recipient the tar is
+    streamed through `age`, secrets included, into a file opened 0600 before
+    age writes a byte: no plaintext reaches the disk.
     """
     wolts_dir = Path(wolts_dir).expanduser().resolve(strict=False)
     if not wolts_dir.is_dir():
@@ -750,35 +852,94 @@ def create_backup(
     tag = tag or default_tag()
     out = Path(out_dir).expanduser().resolve(strict=False) if out_dir else wolts_dir.parent
     out.mkdir(parents=True, exist_ok=True)
-    archive = out / archive_name(tag)
+    encryption = _encryption()
+    archive = out / archive_name(tag, encrypted=bool(encryption))
 
     scan = scan_tree(wolts_dir, full=full)
+    for item in scan.unreadable:
+        if item["path"] in (".space", LODGE_DB):
+            raise ValueError(f"lodge.db could not be read: {item['path']}: {item['error']}")
+    if encryption:
+        keep_secrets(wolts_dir, scan)
+        secrets = {"present": True, "recipient": encryption[1]}
+    else:
+        secrets = {"present": False, "reason": f"{AGE_RECIPIENT_ENV} is not set"}
     manifest = build_manifest(wolts_dir, tag, scan)
+    manifest["secrets"] = secrets
 
-    with tarfile.open(archive, "w:gz") as tar:
-        for entry in scan.entries:
+    fd = _owner_only(archive)
+    age = None
+    try:
+        if encryption:
             try:
-                _add_entry(tar, entry)
-            except OSError as exc:
-                # A file that vanished or turned unreadable between the scan
-                # and the write is a warning, never a failed backup.
-                manifest["unreadable"].append({
-                    "path": entry.arcname[len(ARCHIVE_ROOT) + 1:],
-                    "error": exc.strerror or str(exc),
-                })
-                manifest["entries"] -= 1
-        meta = [(MANIFEST_NAME, json.dumps(manifest, indent=2).encode())]
-        if not full:
-            meta.append((LEFT_OUT_NAME, _left_out_tsv(scan)))
-        for name, blob in meta:
-            info = tarfile.TarInfo(name)
-            info.size = len(blob)
-            info.mtime = int(datetime.now(timezone.utc).timestamp())
-            info.mode = 0o644
-            tar.addfile(info, io.BytesIO(blob))
+                age = subprocess.Popen(
+                    [encryption[0], "-r", encryption[1]],
+                    stdin=subprocess.PIPE, stdout=fd, stderr=subprocess.PIPE,
+                )
+            finally:
+                os.close(fd)
+            sink = age.stdin
+        else:
+            sink = os.fdopen(fd, "wb")
+        with sink, tarfile.open(fileobj=sink, mode="w|gz") as tar:
+            _write_members(tar, scan, manifest)
+        if age:
+            error = age.stderr.read().decode(errors="replace").strip()
+            if age.wait() != 0:
+                raise OSError(f"age could not encrypt the archive: {error}")
+    except BaseException as exc:
+        archive.unlink(missing_ok=True)
+        if age is None:
+            raise
+        if age.poll() is None:
+            age.kill()
+        error = age.stderr.read().decode(errors="replace").strip()
+        age.wait()
+        if isinstance(exc, OSError) and error:
+            # A broken pipe means age gave up first; its stderr says why.
+            raise OSError(f"age could not encrypt the archive: {error}") from exc
+        raise
 
-    verify_archive(archive)
+    if encryption:
+        with archive.open("rb") as sealed:
+            if sealed.read(len(AGE_HEADER)) != AGE_HEADER:
+                raise ValueError(f"{archive}: not an age file")
+    else:
+        verify_archive(archive)
     return BackupResult(archive=archive, manifest=manifest, verified=True, scan=scan)
+
+
+def _write_members(tar: tarfile.TarFile, scan: Scan, manifest: dict) -> None:
+    for entry in scan.entries:
+        if entry.arcname == f"{ARCHIVE_ROOT}/{LODGE_DB}":
+            # The lodge's state is the one file a backup cannot do without.
+            try:
+                data, manifest["lodge_db"] = snapshot_lodge_db(entry.path)
+                info = tar.gettarinfo(str(entry.path), entry.arcname)
+            except (OSError, sqlite3.Error) as exc:
+                raise ValueError(f"lodge.db could not be snapshotted: {exc}") from exc
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+            continue
+        try:
+            _add_entry(tar, entry)
+        except OSError as exc:
+            # A file that vanished or turned unreadable between the scan
+            # and the write is a warning, never a failed backup.
+            manifest["unreadable"].append({
+                "path": entry.arcname[len(ARCHIVE_ROOT) + 1:],
+                "error": getattr(exc, "strerror", None) or str(exc),
+            })
+            manifest["entries"] -= 1
+    meta = [(MANIFEST_NAME, json.dumps(manifest, indent=2).encode())]
+    if not scan.full:
+        meta.append((LEFT_OUT_NAME, _left_out_tsv(scan)))
+    for name, blob in meta:
+        info = tarfile.TarInfo(name)
+        info.size = len(blob)
+        info.mtime = int(datetime.now(timezone.utc).timestamp())
+        info.mode = 0o644
+        tar.addfile(info, io.BytesIO(blob))
 
 
 def _restore_filter(member: tarfile.TarInfo, path: str) -> tarfile.TarInfo:
@@ -1085,8 +1246,14 @@ def disarm(wolts_dir: Path, source: str, target: Path) -> dict:
     return report
 
 
-def restore_backup(archive: Path | str, *, to: Path | str | None = None) -> RestoreResult:
+def restore_backup(
+    archive: Path | str, *, to: Path | str | None = None, identity: bytes | None = None,
+) -> RestoreResult:
     """Extract a snapshot into a NEW directory. Never over a populated one.
+
+    An encrypted archive needs the owner's age `identity` (the key file's
+    bytes). It is decrypted twice, never to disk: one pass to audit every
+    member, then the extraction pass, which must see the same members.
 
     There is no `--force`. Restoring is half the job; pointing a live colony at
     the result is the other half, and that half stays a human's explicit act.
@@ -1094,8 +1261,11 @@ def restore_backup(archive: Path | str, *, to: Path | str | None = None) -> Rest
     archive = Path(archive).expanduser().resolve(strict=False)
     if not archive.is_file():
         raise FileNotFoundError(f"no archive at {archive}")
+    encrypted = archive.name.endswith(".age")
+    if encrypted and not identity:
+        raise ValueError(f"{archive.name} is encrypted: pass --identity <age key file> (or - for stdin)")
     stem = archive.name
-    for suffix in (".tar.gz", ".tgz"):
+    for suffix in (".tar.gz.age", ".tar.gz", ".tgz"):
         if stem.endswith(suffix):
             stem = stem[: -len(suffix)]
             break
@@ -1104,15 +1274,24 @@ def restore_backup(archive: Path | str, *, to: Path | str | None = None) -> Rest
         raise FileExistsError(f"{target} exists and is not empty — restore wants a fresh directory")
     target.mkdir(parents=True, exist_ok=True)
 
-    with tarfile.open(archive, "r:gz") as tar:
-        members = tar.getmembers()
+    if encrypted:
+        with _decrypted(archive, identity) as stream, tarfile.open(fileobj=stream, mode="r|gz") as tar:
+            members = list(tar)
         # Audit the whole member list before a single byte lands: a refusal
         # after a partial extraction is a refusal that already happened.
         audit_members(members, target)
         _refuse_disarm_links(members)
-        tar.extractall(target, members=members, filter=_restore_filter)
+        with _decrypted(archive, identity) as stream, tarfile.open(fileobj=stream, mode="r|gz") as tar:
+            tar.extractall(target, members=_same_members(tar, members), filter=_restore_filter)
+    else:
+        with tarfile.open(archive, "r:gz") as tar:
+            members = tar.getmembers()
+            audit_members(members, target)
+            _refuse_disarm_links(members)
+            tar.extractall(target, members=members, filter=_restore_filter)
     manifest = json.loads((target / MANIFEST_NAME).read_text())
     wolts_dir = target / manifest.get("archive_root", ARCHIVE_ROOT)
+    _forget_app_pids(wolts_dir / LODGE_DB)
     disarmed = disarm(wolts_dir, manifest.get("source") or "", target) if wolts_dir.is_dir() else {}
     return RestoreResult(
         target=target,
@@ -1121,6 +1300,60 @@ def restore_backup(archive: Path | str, *, to: Path | str | None = None) -> Rest
         entries=len([m for m in members if m.name not in _META_NAMES]),
         disarmed=disarmed,
     )
+
+
+def _forget_app_pids(db: Path) -> None:
+    """On the machine a backup lands on, an old pid may be any live process:
+    the lodge would take the app as running, and stopping it would signal
+    that process. Blank them in the restored copy, so the lodge starts it."""
+    if db.is_symlink() or not db.is_file():
+        return
+    with closing(sqlite3.connect(db, isolation_level=None)) as conn:
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='apps_running'").fetchone():
+            conn.execute("UPDATE apps_running SET pid=NULL, tunnel_pid=NULL, tunnel_url=NULL,"
+                         " record=json_remove(record, '$.pid', '$.tunnel_pid', '$.tunnel_url')")
+
+
+@contextmanager
+def _decrypted(archive: Path, identity: bytes):
+    """`age -d` of `archive` as a stream; the key goes in on stdin, never to disk."""
+    age = shutil.which("age")
+    if not age:
+        raise OSError("age is not on PATH — it is needed to open an encrypted backup")
+    proc = subprocess.Popen(
+        [age, "-d", "-i", "-", str(archive)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    proc.stdin.write(identity)
+    proc.stdin.close()
+    try:
+        yield proc.stdout
+        proc.stdout.read()  # the tar's trailing padding, so age can finish
+    except BaseException as exc:
+        proc.kill()
+        error = proc.stderr.read().decode(errors="replace").strip()
+        proc.wait()
+        if error:
+            raise OSError(f"age could not decrypt {archive.name}: {error}") from exc
+        raise
+    error = proc.stderr.read().decode(errors="replace").strip()
+    if proc.wait() != 0:
+        raise OSError(f"age could not decrypt {archive.name}: {error}")
+
+
+def _same_members(tar: tarfile.TarFile, audited: list[tarfile.TarInfo]):
+    """Yield the extraction pass's members, refusing any the audit did not see."""
+    def shape(member: tarfile.TarInfo) -> tuple:
+        return member.name, member.type, member.size, member.linkname
+
+    count = 0
+    for member in tar:
+        if count >= len(audited) or shape(member) != shape(audited[count]):
+            raise ValueError("the archive changed between the audit and the extraction")
+        count += 1
+        yield member
+    if count != len(audited):
+        raise ValueError("the archive changed between the audit and the extraction")
 
 
 def human_bytes(count: int) -> str:
@@ -1160,6 +1393,11 @@ def summary_lines(result: BackupResult) -> list[str]:
             f"withheld: {len(withheld)} credential file(s) — not in the archive, "
             f"listed in {MANIFEST_NAME}"
         )
+    secrets = result.manifest["secrets"]
+    if secrets["present"]:
+        lines.append(f"encrypted to {secrets['recipient']}, .env files and bot tokens inside")
+    elif any(item["rule"] in ENCRYPTED_RULES for item in withheld):
+        lines.append(f"secrets: not kept — {secrets['reason']}")
     unreadable = result.manifest["unreadable"]
     if unreadable:
         lines.append(f"warnings: {len(unreadable)} path(s) skipped")
@@ -1167,7 +1405,10 @@ def summary_lines(result: BackupResult) -> list[str]:
             lines.append(f"  {item['path']}: {item['error']}")
         if len(unreadable) > 5:
             lines.append(f"  … {len(unreadable) - 5} more (see {MANIFEST_NAME} in the archive)")
-    lines.append("verified: manifest parses, entry count matches, wolt.json readable")
+    if secrets["present"]:
+        lines.append("verified: age wrote it; only a restore with the key opens it")
+    else:
+        lines.append("verified: manifest parses, entry count matches, wolt.json readable")
     return lines
 
 
@@ -1178,12 +1419,19 @@ REPROVISION = {
     "dotenv": "recreate it — copy .env.example and fill in the tokens",
     "claude-credentials": "re-authenticate Claude: `woltspace init`, or `claude login`",
     "codex-auth": "re-authenticate codex: `codex login`",
+    "platform-config": "re-provision config.json (bot tokens) — reconnect the channels",
 }
 
 
 def reprovision_lines(manifest: dict) -> list[str]:
     """The checklist a human works through after a restore."""
     withheld = (manifest.get("withheld") or {}).get("paths") or []
+    if (manifest.get("secrets") or {}).get("present"):
+        skipped = {item["path"] for item in manifest.get("unreadable") or []}
+        withheld = [
+            item for item in withheld
+            if item["rule"] not in ENCRYPTED_RULES or item["path"] in skipped
+        ]
     if not withheld:
         return []
     by_rule: dict[str, list[str]] = {}
@@ -1232,6 +1480,12 @@ def restore_lines(result: RestoreResult) -> list[str]:
         )
     lines.extend(disarm_lines(result))
     lines.extend(reprovision_lines(manifest))
+    if "lodge_db" in manifest:
+        lines.extend([
+            "",
+            "consents came back with the lodge: review them with woltspace auto list /",
+            "  woltspace dig list and revoke what this machine should not have",
+        ])
     lines.extend([
         "",
         "boot from it with (beside a running lodge, give it its own port and no tunnel):",

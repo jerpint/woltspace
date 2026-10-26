@@ -11,6 +11,10 @@ Tags and GitHub releases are created only after both pinned registry versions
 are available and their downloads verify.
 The TUI release is created first without becoming Latest; the primary Python
 release becomes Latest last, because lodge update checks read releases/latest.
+Pre-release versions (`0.6.0rc1`, `0.6.0b1`, `0.6.0.dev0`) are published as
+GitHub pre-releases and never become Latest, even from `main`. A pre-release
+TUI version is refused while planning, because the npm step has no dist-tag
+yet; publish release candidates with `registry=python`.
 
 ## Owner setup before enabling publishing
 
@@ -88,7 +92,9 @@ and ordinary CI success do not prove registry trust or approval configuration.
 
 ## Maintenance branches
 
-`main` carries the next minor line (including its release candidates). To keep
+`main` carries the next minor line (including its release candidates). The
+contributor view of this model, with diagrams, is in
+[CONTRIBUTING.md](../CONTRIBUTING.md). To keep
 shipping patches for the previous line, cut `release/X.Y` from its last tag
 (for example `git branch release/0.5 v0.5.12`; the tag must already contain
 this workflow), land fixes on `main` first, cherry-pick them
@@ -96,9 +102,12 @@ into the release branch by pull request, then prepare and publish the patch
 version from that branch exactly as from `main`.
 
 Enabling this is an owner setting: in each environment (`pypi`, `npm`) add a
-second **Branch** rule `release/*` beside `main`. Also cover `release/*` in the
+second **Branch** rule `release/*` beside `main`. Also cover `release/**/*` in the
 repository ruleset that protects `main`, so maintenance branches need a reviewed
-pull request too. The workflow accepts only `main` and `release/X.Y`, a
+pull request too, and turn on **Restrict creations** there so only the owner
+can cut a release branch. Otherwise any token with write access could create
+`release/X.Y` at an unreviewed commit, and the next publish approval would be
+for code nobody picked. The workflow accepts only `main` and `release/X.Y`, a
 recovery run must resume a run of the same branch, and a release published from
 a maintenance branch is never marked Latest.
 

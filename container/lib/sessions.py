@@ -3,8 +3,9 @@ from __future__ import annotations
 """
 Session Registry & Spawning — single source of truth for session lifecycle.
 
-Wolt-centric model: each session lives at wolts/{wolt}/.state/sessions/{name}.json.
-Viewport URL is stored in the session JSON itself — no separate current-url files.
+Each session is one row in the lodge's SQLite file (lodge_db), its record kept
+whole as JSON. Viewport URL is stored in the record itself — no separate
+current-url files.
 
 Usage:
     from sessions import SessionRegistry, start_session
@@ -13,24 +14,25 @@ Usage:
 """
 
 import fcntl
+import hashlib
 import json
 import os
 import random
 import re
 import shlex
+import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
-from threading import Lock
 
+import lodge_db
 from env_compat import get_env
 from paths import (
     WOLTS_DIR as _PATHS_WOLTS_DIR,
-    wolt_sessions_dir,
     tunnel_state_file,
     space_dir,
 )
@@ -88,30 +90,102 @@ ORPHAN_AGENT_GONE = "agent-process-missing"
 
 # The fields get(check_alive=True) and list() compute rather than read off disk.
 LIVENESS_FIELDS = frozenset({"alive", "tmux_alive", "agent_alive"})
-_LODGE_RECORD_CACHE: dict[Path, tuple[tuple[int, int], dict]] = {}
-_LODGE_RECORD_CACHE_LOCK = Lock()
+# A session whose tmux is being stopped outside any write (stop_and_settle).
+STOPPING = "stopping"
+# What decides whether a session may be stopped: a claim compares these only.
+_CLAIM_FIELDS = ("status", "last_activity", "hold", "harness_session_id")
+# How long a message waits for a stop in progress before it goes on.
+STOPPING_WAIT = 30
+
+# One write transaction per thread per lodge, shared by nested registry calls.
+_TX = threading.local()
 
 
-def _read_lodge_record(path: Path, wolt: str) -> dict | None:
-    """Read only the session fields the lodge UI consumes, with mtime caching."""
-    try:
-        stat = path.stat()
-        signature = (stat.st_mtime_ns, stat.st_size)
-    except OSError:
-        return None
-    with _LODGE_RECORD_CACHE_LOCK:
-        cached = _LODGE_RECORD_CACHE.get(path)
-        if cached and cached[0] == signature:
-            return dict(cached[1])
-    try:
-        raw = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
-    if not isinstance(raw, dict):
-        return None
+_COLUMNS = ("name, wolt, status, created_at, last_activity, finished_at,"
+            " harness, harness_session_id, record, updated_at")
+
+
+def _row_values(record: dict) -> tuple:
+    return (
+        record["name"], record.get("wolt") or "", record.get("status") or "stopped",
+        int(record.get("created_at") or 0), record.get("last_activity"),
+        record.get("finished_at"), record.get("harness"),
+        record.get("harness_session_id") or None,
+        json.dumps(record), int(time.time()),
+    )
+
+
+def put_session(conn, record: dict) -> None:
+    """Write one session row: the whole record as JSON, the queried fields as columns.
+
+    An upsert on the name, never INSERT OR REPLACE: a REPLACE would delete
+    another session that holds the same harness_session_id, where this must
+    fail with IntegrityError so the second claimer of a conversation loses.
+    """
+    conn.execute(
+        f"INSERT INTO sessions ({_COLUMNS}) VALUES (?,?,?,?,?,?,?,?,?,?)"
+        " ON CONFLICT(name) DO UPDATE SET wolt=excluded.wolt, status=excluded.status,"
+        " created_at=excluded.created_at, last_activity=excluded.last_activity,"
+        " finished_at=excluded.finished_at, harness=excluded.harness,"
+        " harness_session_id=excluded.harness_session_id, record=excluded.record,"
+        " updated_at=excluded.updated_at",
+        _row_values(record),
+    )
+
+
+def import_sessions(conn, wolts_dir) -> tuple[dict, list]:
+    """Bring the old per-wolt session files into lodge.db (see lodge_db.run_imports).
+
+    Reads every <wolt>/.state/sessions/*.json, archived wolts' too. A row
+    already in the DB wins over a file, and of two files claiming one
+    conversation id the newer one wins; every file not taken is logged and
+    counted as skipped. Returns the counts and the folders to retire, with
+    the lodge-wide resume-id-recovery.lock the old recovery used.
+    """
+    wolts_dir = Path(wolts_dir)
+    folders = sorted(wolts_dir.glob("*/.state/sessions")) + sorted(
+        wolts_dir.glob(".archive/*/.state/sessions"))
+    found = []
+    skipped = 0
+    for folder in folders:
+        wolt = folder.parent.parent.name
+        for path in sorted(folder.glob("*.json")):
+            try:
+                data = json.loads(path.read_text())
+                if not isinstance(data, dict):
+                    raise ValueError("not a JSON object")
+            except (OSError, ValueError) as exc:
+                print(f"[sessions] import skipped unreadable {path}: {exc}", file=sys.stderr)
+                skipped += 1
+                continue
+            data.setdefault("name", path.stem)
+            data.setdefault("wolt", wolt)
+            found.append((data, path))
+    found.sort(key=lambda item: item[0].get("created_at") or 0, reverse=True)
+    imported = 0
+    for data, path in found:
+        cursor = conn.execute(
+            f"INSERT OR IGNORE INTO sessions ({_COLUMNS}) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            _row_values(data),
+        )
+        if cursor.rowcount:
+            imported += 1
+        else:
+            print(f"[sessions] import skipped {path}: its name or conversation id "
+                  "is already in lodge.db", file=sys.stderr)
+            skipped += 1
+    retire = list(folders)
+    recovery_lock = wolts_dir / ".state" / "resume-id-recovery.lock"
+    if recovery_lock.exists():
+        retire.append(recovery_lock)
+    return {"imported": imported, "skipped": skipped}, retire
+
+
+def _lodge_record(raw: dict) -> dict:
+    """Only the session fields the lodge UI consumes."""
     record = {
-        "name": raw.get("name") or path.stem,
-        "wolt": raw.get("wolt") or wolt,
+        "name": raw["name"],
+        "wolt": raw.get("wolt") or "",
         "status": raw.get("status") or "stopped",
     }
     if raw.get("last_activity") is not None:
@@ -121,7 +195,6 @@ def _read_lodge_record(path: Path, wolt: str) -> dict | None:
     for field in ("title", "summary"):
         if raw.get(field):
             record[field] = raw[field]
-    # Only a hold in force; one that ends while cached is dropped by the route.
     if hold_active(raw, int(time.time())):
         record["hold"] = public_hold(raw["hold"])
     record["openable"] = bool(
@@ -130,9 +203,7 @@ def _read_lodge_record(path: Path, wolt: str) -> dict | None:
     record["_tmux_session_name"] = (
         RuntimeHandle.from_record(raw).tmux_session_name or record["name"]
     )
-    with _LODGE_RECORD_CACHE_LOCK:
-        _LODGE_RECORD_CACHE[path] = (signature, record)
-    return dict(record)
+    return record
 
 
 class ResumeUnavailable(Exception):
@@ -186,46 +257,86 @@ AGENT_INPUT_READY_AGE = 3
 
 
 class SessionRegistry:
-    """Per-wolt session registry.
+    """The lodge's session registry: one row per session in lodge.db.
 
-    Sessions are stored at wolts/{wolt}/.state/sessions/{name}.json.
-    The wolt field is required for create. For lookups by name only,
-    the registry scans all wolts.
+    An archived wolt's sessions drop out of every lookup and come back with
+    it. db_dir names the lodge whose database holds the rows (default
+    wolts_dir): the archive's sweep reads wolts/.archive through the lodge's
+    own file.
     """
 
-    def __init__(self, wolts_dir: str | Path = None):
+    def __init__(self, wolts_dir: str | Path = None, *, db_dir: str | Path = None):
         self.wolts_dir = Path(wolts_dir or WOLTS_DIR)
+        self.db_dir = Path(db_dir) if db_dir else self.wolts_dir
 
-    def _sessions_dir(self, wolt: str) -> Path:
-        d = wolt_sessions_dir(wolt, self.wolts_dir)
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+    # --- Storage ---
 
-    def _path(self, wolt: str, name: str) -> Path:
-        return self._sessions_dir(wolt) / f"{name}.json"
+    @contextmanager
+    def _tx(self):
+        """A write transaction, shared by nested registry calls on this thread."""
+        key = str(lodge_db.path(self.db_dir))
+        conns = _TX.__dict__.setdefault("conns", {})
+        if key in conns:
+            yield conns[key]
+            return
+        with lodge_db.write(self.db_dir) as conn:
+            conns[key] = conn
+            try:
+                yield conn
+            finally:
+                del conns[key]
 
-    def _read(self, wolt: str, name: str) -> dict | None:
-        return self._read_path(wolt, self._path(wolt, name))
-
-    def _read_path(self, wolt: str, path: Path) -> dict | None:
-        """Read and normalize one registry record from an already-known path."""
-        if not path.exists():
-            return None
+    @contextmanager
+    def _reader(self):
+        conn = getattr(_TX, "conns", {}).get(str(lodge_db.path(self.db_dir)))
+        if conn is not None:
+            yield conn
+            return
+        if lodge_db.path(self.db_dir).exists():
+            conn = lodge_db.connect(self.db_dir, readonly=True)
+        else:  # no lodge here (yet): no sessions, and no new file
+            conn = sqlite3.connect(":memory:", isolation_level=None)
+            conn.row_factory = sqlite3.Row
+            lodge_db.ensure_schema(conn)
         try:
-            data = json.loads(path.read_text())
+            yield conn
+        finally:
+            conn.close()
+
+    def _visible(self, wolt: str) -> bool:
+        """False only while the wolt is archived: gone from here, in .archive (wolt_archive)."""
+        return bool(wolt) and (
+            (self.wolts_dir / wolt).is_dir() or not (self.wolts_dir / ".archive" / wolt).is_dir())
+
+    def _load(self, row) -> dict | None:
+        try:
+            data = json.loads(row["record"])
             self._normalize_description(data)
             return normalize_session_target(
-                data, wolts_dir=self.wolts_dir, fallback_wolt=wolt
+                data, wolts_dir=self.wolts_dir, fallback_wolt=row["wolt"]
             )
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, TypeError, ValueError):
             return None
 
-    def _write(self, wolt: str, name: str, data: dict):
-        path = self._path(wolt, name)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
+    def _row(self, conn, name: str, wolt: str | None = None) -> dict | None:
+        row = conn.execute("SELECT wolt, record FROM sessions WHERE name=?", (name,)).fetchone()
+        if row is None or (wolt and row["wolt"] != wolt) or not self._visible(row["wolt"]):
+            return None
+        return self._load(row)
+
+    def _rows(self, conn, wolt: str | None = None) -> list[dict]:
+        if wolt:
+            rows = conn.execute("SELECT wolt, record FROM sessions WHERE wolt=?", (wolt,))
+        else:
+            rows = conn.execute("SELECT wolt, record FROM sessions")
+        visible = {}
+        loaded = (self._load(row) for row in rows
+                  if visible.setdefault(row["wolt"], self._visible(row["wolt"])))
+        return [data for data in loaded if data is not None]
+
+    def _put(self, conn, data: dict) -> None:
         normalized = normalize_session_target(
-            data, wolts_dir=self.wolts_dir, fallback_wolt=wolt
+            data, wolts_dir=self.wolts_dir, fallback_wolt=data.get("wolt", "")
         )
         # The reason belongs to the orphaned state and dies with it. Enforced
         # here rather than at each writer because there are many ways back to
@@ -237,20 +348,62 @@ class SessionRegistry:
         # Same rule for a hold: it covered a task running in this session, and
         # that task died with it. Every write that leaves running (rest, death,
         # stop, finish, orphaned) drops it, so a woken session never inherits one.
-        if normalized.get("status") != "running":
+        if normalized.get("status") not in ("running", STOPPING):
             normalized.pop("hold", None)
-        tmp.write_text(json.dumps(normalized, indent=2) + "\n")
-        tmp.rename(path)
+        put_session(conn, normalized)
 
-    def _find_wolt(self, name: str) -> str | None:
-        """Find which wolt owns a session by scanning all wolts."""
-        for entry in self.wolts_dir.iterdir():
-            if not entry.is_dir() or entry.name.startswith("."):
-                continue
-            session_file = entry / ".state" / "sessions" / f"{name}.json"
-            if session_file.exists():
-                return entry.name
-        return None
+    def _read(self, wolt: str, name: str) -> dict | None:
+        """One stored record, without liveness."""
+        with self._reader() as conn:
+            return self._row(conn, name, wolt)
+
+    def _write(self, wolt: str, name: str, data: dict) -> None:
+        """Store one record as given: a raw write, no last_activity stamp."""
+        with self._tx() as conn:
+            self._put(conn, {**data, "name": name, "wolt": data.get("wolt") or wolt})
+
+    @contextmanager
+    def edit(self, name: str, *, wolt: str = None):
+        """Read-modify-write one session in a single write transaction.
+
+        Yields the record, or None when there is none. Changes made to it are
+        written when the block ends; an exception writes nothing. Nothing else
+        can write any session in between, so a check inside the block and the
+        write it guards cannot be separated. Keep the block short: every other
+        lodge writer waits for it.
+        """
+        with self._tx() as conn:
+            data = self._row(conn, name, wolt)
+            before = json.dumps(data, sort_keys=True, default=str)
+            yield data
+            if data is not None and json.dumps(data, sort_keys=True, default=str) != before:
+                self._put(conn, data)
+
+    def claim(self, name: str, seen: dict, status: str, *, wolt: str = None) -> bool:
+        """Move a session to `status` only if what decides a stop is still as `seen`.
+
+        Compares status, last_activity, hold and the resume id, never the
+        whole record: a title or viewport written meanwhile must not cancel a
+        rest. False when a use, a hold or a resume came first.
+        """
+        with self.edit(name, wolt=wolt) as current:
+            if not still_as_seen(current, seen):
+                return False
+            current["status"] = status
+        return True
+
+    def records(self, *, wolt: str = None) -> list[dict]:
+        """Every visible session as stored, with no liveness work."""
+        with self._reader() as conn:
+            return self._rows(conn, wolt)
+
+    def taken_resume_ids(self, exclude: str = "") -> set[str]:
+        """Conversation ids already owned by another session."""
+        with self._reader() as conn:
+            rows = conn.execute(
+                "SELECT harness_session_id FROM sessions"
+                " WHERE harness_session_id IS NOT NULL AND name != ?", (exclude,))
+            return {row[0] for row in rows}
 
     # --- Core API ---
 
@@ -357,7 +510,8 @@ class SessionRegistry:
         data["user_id"] = user_id
         data["thread_ts"] = thread_ts
 
-        self._write(wolt, name, data)
+        with self._tx() as conn:
+            self._put(conn, data)
         return data
 
     def describe(self, name: str, title: str, summary: str, *, wolt: str = None) -> dict | None:
@@ -369,71 +523,36 @@ class SessionRegistry:
             summary=summary,
         )
 
-    @contextmanager
-    def _lock(self, wolt: str, name: str):
-        """Serialize one session's read-modify-write across processes.
-
-        start_session writes the runtime handle immediately after spawning,
-        while the spawned run-session.sh has already started and writes
-        harness_session_id via `session-reg prepare` — two processes, same
-        file. Unserialized, whichever reads first wins and the other's field
-        vanishes: a lost runtime handle is cosmetic, a lost harness_session_id
-        breaks --resume. Best-effort — a filesystem without flock just falls
-        through to the old unlocked behavior rather than failing the write.
-        """
-        path = self._path(wolt, name)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            handle = open(path.with_suffix(".lock"), "w")
-        except OSError:
-            yield
-            return
-        try:
-            try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            except OSError:
-                pass
-            yield
-        finally:
-            handle.close()
-
     def update(self, name: str, *, wolt: str = None, **fields) -> dict | None:
         """Update fields on an existing session. Returns updated dict or None.
 
-        Merges into whatever is on disk at write time, under a per-session
-        lock, so concurrent writers touching different fields don't clobber
-        each other.
+        Merges into the stored record inside one write transaction, so
+        concurrent writers touching different fields don't clobber each other.
         """
-        if not wolt:
-            wolt = self._find_wolt(name)
-        if not wolt:
-            return None
-        with self._lock(wolt, name):
-            data = self._read(wolt, name)
+        with self.edit(name, wolt=wolt) as data:
             if data is None:
                 return None
             data.update(fields)
             data["last_activity"] = int(time.time())
-            self._write(wolt, name, data)
         return data
 
     def touch(self, name: str, *, wolt: str = None) -> bool:
         """Stamp last_activity on a running session. Returns True if stamped.
 
-        Under the session lock, and only while running: a touch racing a rest
-        must never write running back over resting while tmux is gone.
+        Only while running, in the UPDATE itself: a touch racing a rest must
+        never write running back over resting while tmux is gone.
         """
-        if not wolt:
-            wolt = self._find_wolt(name)
-        if not wolt:
-            return False
-        with self._lock(wolt, name):
-            data = self._read(wolt, name)
-            if data is None or data.get("status") != "running":
+        now = int(time.time())
+        with self._tx() as conn:
+            row = conn.execute("SELECT wolt FROM sessions WHERE name=?", (name,)).fetchone()
+            if row is None or (wolt and row["wolt"] != wolt) or not self._visible(row["wolt"]):
                 return False
-            data["last_activity"] = int(time.time())
-            self._write(wolt, name, data)
-        return True
+            return conn.execute(
+                "UPDATE sessions SET last_activity=?, updated_at=?,"
+                " record=json_set(record, '$.last_activity', ?)"
+                " WHERE name=? AND status='running'",
+                (now, now, now, name),
+            ).rowcount == 1
 
     def finish(self, name: str, exit_code: int, *, wolt: str = None) -> dict | None:
         """Mark a session as completed/failed."""
@@ -463,11 +582,8 @@ class SessionRegistry:
         destructive — delivery pastes text a shell would EXECUTE — must gate on
         `agent_alive is True` instead, and deliver_message does.
         """
-        if not wolt:
-            wolt = self._find_wolt(name)
-        if not wolt:
-            return None
-        data = self._read(wolt, name)
+        with self._reader() as conn:
+            data = self._row(conn, name, wolt)
         if data is None:
             return None
         if check_alive:
@@ -523,17 +639,12 @@ class SessionRegistry:
 
     def clear_redirect(self, name: str, *, wolt: str = None) -> str | None:
         """Read and clear a pending redirect. Returns target session name or None."""
-        if not wolt:
-            wolt = self._find_wolt(name)
-        if not wolt:
-            return None
-        data = self._read(wolt, name)
-        if not data or not data.get("redirect_to"):
-            return None
-        target = data["redirect_to"]
-        data["redirect_to"] = None
-        data["last_activity"] = int(time.time())
-        self._write(wolt, name, data)
+        with self.edit(name, wolt=wolt) as data:
+            if not data or not data.get("redirect_to"):
+                return None
+            target = data["redirect_to"]
+            data["redirect_to"] = None
+            data["last_activity"] = int(time.time())
         return target
 
     def list(self, *, alive_only: bool = False, wolt: str = None) -> list[dict]:
@@ -565,35 +676,27 @@ class SessionRegistry:
         agent_sessions = sessions_with_agent_process()
         results = []
 
-        wolts_to_scan = [wolt] if wolt else self._all_wolts()
-        for w in wolts_to_scan:
-            sessions_dir = self.wolts_dir / w / ".state" / "sessions"
-            if not sessions_dir.exists():
-                continue
-            for path in sessions_dir.glob("*.json"):
-                if path.suffix == ".tmp":
-                    continue
-                data = self._read_path(w, path)
-                if data is None:
-                    continue
-                name = data.get("name", path.stem)
-                tmux_name = RuntimeHandle.from_record(data).tmux_session_name or name
-                tmux_alive = tmux_name in live_sessions
-                agent_alive = (
-                    tmux_alive if agent_sessions is None
-                    else tmux_name in agent_sessions
+        with self._reader() as conn:
+            records = self._rows(conn, wolt)
+        for data in records:
+            name = data.get("name", "")
+            tmux_name = RuntimeHandle.from_record(data).tmux_session_name or name
+            tmux_alive = tmux_name in live_sessions
+            agent_alive = (
+                tmux_alive if agent_sessions is None
+                else tmux_name in agent_sessions
+            )
+            data["tmux_alive"] = tmux_alive
+            data["agent_alive"] = agent_alive
+            data["alive"] = agent_alive
+            if data["status"] == "running" and not agent_alive:
+                data["status"] = "orphaned"
+                data["orphaned_reason"] = (
+                    ORPHAN_TMUX_MISSING if not tmux_alive else ORPHAN_AGENT_GONE
                 )
-                data["tmux_alive"] = tmux_alive
-                data["agent_alive"] = agent_alive
-                data["alive"] = agent_alive
-                if data["status"] == "running" and not agent_alive:
-                    data["status"] = "orphaned"
-                    data["orphaned_reason"] = (
-                        ORPHAN_TMUX_MISSING if not tmux_alive else ORPHAN_AGENT_GONE
-                    )
-                if alive_only and not agent_alive:
-                    continue
-                results.append(data)
+            if alive_only and not agent_alive:
+                continue
+            results.append(data)
 
         return sorted(results, key=lambda s: s.get("created_at") or 0, reverse=True)
 
@@ -606,31 +709,8 @@ class SessionRegistry:
         only display/state fields, keeps the newest rows needed by each wolt
         expander, and never performs liveness work for terminal records.
         """
-        paths: list[tuple[Path, str]] = []
-        for wolt in self._all_wolts():
-            sessions_dir = self.wolts_dir / wolt / ".state" / "sessions"
-            if sessions_dir.exists():
-                paths.extend((path, wolt) for path in sessions_dir.glob("*.json"))
-
-        records: list[dict] = []
-        missing: list[tuple[Path, str]] = []
-        for path, wolt in paths:
-            try:
-                stat = path.stat()
-                signature = (stat.st_mtime_ns, stat.st_size)
-            except OSError:
-                continue
-            with _LODGE_RECORD_CACHE_LOCK:
-                cached = _LODGE_RECORD_CACHE.get(path)
-                record = dict(cached[1]) if cached and cached[0] == signature else None
-            if record is None:
-                missing.append((path, wolt))
-            else:
-                records.append(record)
-        if missing:
-            with ThreadPoolExecutor(max_workers=min(64, len(missing))) as pool:
-                loaded = pool.map(lambda item: _read_lodge_record(*item), missing)
-                records.extend(record for record in loaded if record is not None)
+        with self._reader() as conn:
+            records = [_lodge_record(data) for data in self._rows(conn)]
 
         totals: dict[str, int] = {}
         by_wolt: dict[str, list[dict]] = {}
@@ -680,23 +760,13 @@ class SessionRegistry:
         """Check all 'running' sessions against tmux. Mark dead ones as orphaned."""
         live_sessions = _tmux_sessions()
         orphaned = []
-        for w in self._all_wolts():
-            sessions_dir = self.wolts_dir / w / ".state" / "sessions"
-            if not sessions_dir.exists():
-                continue
-            for path in sessions_dir.glob("*.json"):
-                if path.suffix == ".tmp":
-                    continue
-                try:
-                    data = json.loads(path.read_text())
-                except (json.JSONDecodeError, OSError):
-                    continue
+        with self._tx() as conn:
+            for data in self._rows(conn):
                 if data.get("status") == "running" and data.get("name") not in live_sessions:
                     data["status"] = "orphaned"
                     data["orphaned_reason"] = ORPHAN_TMUX_MISSING
                     data["last_activity"] = int(time.time())
-                    wolt_name = data.get("wolt", w)
-                    self._write(wolt_name, data["name"], data)
+                    self._put(conn, data)
                     orphaned.append(data["name"])
         return orphaned
 
@@ -713,31 +783,29 @@ class SessionRegistry:
             "adopted": [],
             "orphaned": [],
             "unchanged": [],
+            "settled": [],
         }
         runtime = _runtime()
         for wolt in self._all_wolts():
-            sessions_dir = self.wolts_dir / wolt / ".state" / "sessions"
-            if not sessions_dir.exists():
-                continue
-            for path in sorted(sessions_dir.glob("*.json")):
-                if path.suffix == ".tmp":
-                    continue
-                try:
-                    data = normalize_session_target(
-                        json.loads(path.read_text()),
-                        wolts_dir=self.wolts_dir,
-                        fallback_wolt=wolt,
-                    )
-                except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+            with self._reader() as conn:
+                rows = conn.execute(
+                    "SELECT name, wolt, record FROM sessions WHERE wolt=? ORDER BY name", (wolt,)
+                ).fetchall()
+            for row in rows:
+                data = self._load(row)
+                if data is None:
                     report["unchanged"].append({
-                        "session": path.stem,
+                        "session": row["name"],
                         "wolt": wolt,
-                        "reason": f"unreadable registry record: {type(exc).__name__}",
+                        "reason": "unreadable registry record",
                     })
                     continue
 
-                name = data.get("name") or path.stem
+                name = data.get("name") or row["name"]
                 previous = data.get("status") or ""
+                if previous == STOPPING:
+                    report["settled"].append(self._finish_stop(name, wolt, data, runtime))
+                    continue
                 if previous not in {"running", "orphaned"}:
                     report["unchanged"].append({
                         "session": name,
@@ -750,12 +818,10 @@ class SessionRegistry:
                 handle = RuntimeHandle.from_record(data)
                 if not runtime.is_alive(handle):
                     if previous != "orphaned":
-                        with self._lock(wolt, name):
-                            current = self._read(wolt, name)
+                        with self.edit(name, wolt=wolt) as current:
                             if current is not None:
                                 current["status"] = "orphaned"
                                 current["orphaned_reason"] = ORPHAN_RUNTIME_GONE
-                                self._write(wolt, name, current)
                     report["orphaned"].append({
                         "session": name,
                         "wolt": wolt,
@@ -773,12 +839,10 @@ class SessionRegistry:
                 adopted_handle = resolved or handle
                 changed = previous != "running" or adopted_handle != handle
                 if changed:
-                    with self._lock(wolt, name):
-                        current = self._read(wolt, name)
+                    with self.edit(name, wolt=wolt) as current:
                         if current is not None:
                             current["status"] = "running"
                             current["runtime"] = adopted_handle.to_record()
-                            self._write(wolt, name, current)
                 report["adopted"].append({
                     "session": name,
                     "wolt": wolt,
@@ -788,26 +852,39 @@ class SessionRegistry:
                 })
         return report
 
+    def _finish_stop(self, name: str, wolt: str, data: dict, runtime) -> dict:
+        """Settle a session a control plane left `stopping` when it died."""
+        handle = RuntimeHandle.from_record(data)
+        if runtime.is_alive(handle):
+            runtime.stop(handle)
+        now = int(time.time())
+        with self.edit(name, wolt=wolt) as current:
+            if current is not None and current.get("status") == STOPPING:
+                if stored_resume_id(current):
+                    current.update(status="resting", rested_at=now,
+                                   rest_reason=current.get("rest_reason") or "interrupted")
+                else:
+                    current.update(status="stopped", finished_at=now)
+        return {"session": name, "wolt": wolt, "status": (current or {}).get("status")}
+
     def delete(self, name: str, *, wolt: str = None) -> bool:
-        """Remove a session file. Returns True if it existed."""
-        if not wolt:
-            wolt = self._find_wolt(name)
-        if not wolt:
-            return False
-        path = self._path(wolt, name)
-        if path.exists():
-            path.unlink()
-            return True
-        return False
+        """Remove a session. Returns True if it existed."""
+        with self._tx() as conn:
+            if self._row(conn, name, wolt) is None:
+                return False
+            conn.execute("DELETE FROM sessions WHERE name=?", (name,))
+        return True
+
+    def forget_wolt(self, wolt: str) -> int:
+        """Remove every session of a wolt, visible or not. Returns how many."""
+        with self._tx() as conn:
+            return conn.execute("DELETE FROM sessions WHERE wolt=?", (wolt,)).rowcount
 
     def _all_wolts(self) -> list[str]:
-        """List all wolt directory names."""
-        if not self.wolts_dir.exists():
-            return []
-        return [
-            d.name for d in sorted(self.wolts_dir.iterdir())
-            if d.is_dir() and not d.name.startswith(".")
-        ]
+        """Every visible wolt that has sessions, sorted."""
+        with self._reader() as conn:
+            wolts = [row[0] for row in conn.execute("SELECT DISTINCT wolt FROM sessions ORDER BY wolt")]
+        return [wolt for wolt in wolts if self._visible(wolt)]
 
 
 # --- Helpers ---
@@ -844,6 +921,36 @@ def _tmux_alive(session: str | dict | RuntimeHandle) -> bool:
     (resolve_delivery_pane), never whether the session counts as alive.
     """
     return _runtime().is_alive(_runtime_handle(session))
+
+
+# One paste at a time per session: the tmux paste buffer is per session, so
+# two pastes at once (server threads, a chat bot, the CLI) can lose or merge a
+# message. A flock, so it holds across processes, on one of PASTE_LOCKS fixed
+# files: a session's file is a stable hash of its name, and two sessions that
+# share one only wait for each other. Best-effort, like any lock file here: a
+# filesystem without flock falls through. Hold it around _tmux_paste alone,
+# never inside a lodge_db write.
+PASTE_LOCKS = 32
+
+
+@contextmanager
+def _paste_lock(session: str, wolts_dir: Path):
+    k = int(hashlib.sha256(session.encode()).hexdigest(), 16) % PASTE_LOCKS
+    lock = space_dir(Path(wolts_dir)) / "run" / "paste" / f"{k}.lock"
+    try:
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(lock, os.O_CREAT | os.O_WRONLY, 0o600)
+    except OSError:
+        yield
+        return
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError:
+            pass
+        yield
+    finally:
+        os.close(fd)
 
 
 def _tmux_paste(target: str | dict | RuntimeHandle, text: str, settle: float = 0.0):
@@ -991,8 +1098,8 @@ def _await_input_ready(target: str | dict | RuntimeHandle, harness: str | None,
     launching), or nothing is booting to wait for — no agent and no launching
     shim, which the caller's own checks then name (agent-gone, session-dead).
 
-    Never call this under a session lock. It can run for the whole timeout,
-    and every writer of the record queues on that lock.
+    Never call this inside registry.edit(). It can run for the whole timeout,
+    and every lodge writer queues on that transaction.
 
     Read from the module globals at call time so a test can shorten them.
     """
@@ -1170,9 +1277,8 @@ def deliver_message(session_id: str, text: str, from_wolt: str = "",
       * a *booting* agent — a launching one is counted as alive everywhere
         else, so a booting session is not reported orphaned, but a TUI that
         has not mounted its input yet loses a paste. Delivery first waits for
-        the agent to take input (_await_input_ready), before and never under
-        the session lock, then finds the agent again under the lock without
-        waiting; its age only grows, so that is not asked again. Detection
+        the agent to take input (_await_input_ready), then finds the agent
+        again without waiting; its age only grows, so that is not asked again. Detection
         uses include_launching=False and hands back the exact pane, so a
         session found in one window can never be pasted into another.
 
@@ -1186,41 +1292,46 @@ def deliver_message(session_id: str, text: str, from_wolt: str = "",
     paste_settle (every engine, claude included, pauses before the Enter).
     """
     reg = registry or SessionRegistry()
-    existing = reg.get(session_id, check_alive=False)
+    existing = wait_out_stopping(reg, session_id)
     if existing is None:
         return {"status": "no-session", "session": session_id}
     wolt = existing.get("wolt", "")
     ready = _await_input_ready(existing, resolve_harness(existing.get("harness")))
-    with reg._lock(wolt, session_id):
-        data = reg.get(session_id, wolt=wolt)
-        if data is None:
-            return {"status": "no-session", "session": session_id}
-        if not data.get("tmux_alive", data.get("alive")):
-            return {"status": "session-dead", "session": session_id}
-        harness = resolve_harness(data.get("harness"))
-        if data.get("agent_alive") is not True:
-            return {
-                "status": "agent-gone",
-                "session": session_id,
-                "detail": (
-                    "tmux session is up but could not be confirmed to hold a live "
-                    f"{harness} agent — resume it and retry"
-                ),
-            }
-        target = resolve_agent_handle(data, harness, include_launching=False)
-        if target is None or ready is None:
-            return {
-                "status": "agent-booting",
-                "session": session_id,
-                "detail": "the agent is still booting",
-            }
-        settle = get_harness(harness).get("paste_settle", 0.0)
-        body = format_attributed_message(text, from_wolt, from_session)
+    data = reg.get(session_id, wolt=wolt)
+    if data is None:
+        return {"status": "no-session", "session": session_id}
+    if not data.get("tmux_alive", data.get("alive")):
+        return {"status": "session-dead", "session": session_id}
+    harness = resolve_harness(data.get("harness"))
+    if data.get("agent_alive") is not True:
+        return {
+            "status": "agent-gone",
+            "session": session_id,
+            "detail": (
+                "tmux session is up but could not be confirmed to hold a live "
+                f"{harness} agent — resume it and retry"
+            ),
+        }
+    target = resolve_agent_handle(data, harness, include_launching=False)
+    if target is None or ready is None:
+        return {
+            "status": "agent-booting",
+            "session": session_id,
+            "detail": "the agent is still booting",
+        }
+    # The delivery claims the session before it pastes, as a rest does: one
+    # guarded UPDATE of last_activity WHERE status='running' (touch). A rest
+    # claims by comparing that last_activity, so whichever commits first
+    # wins: this one, and the rest's claim loses; the rest's, and this finds
+    # no running row, waits the stop out, and the caller wakes the session.
+    if not reg.touch(session_id, wolt=wolt):
+        wait_out_stopping(reg, session_id)
+        return {"status": "session-dead", "session": session_id}
+    settle = get_harness(harness).get("paste_settle", 0.0)
+    body = format_attributed_message(text, from_wolt, from_session)
+    with _paste_lock(session_id, reg.db_dir):
         _tmux_paste(target, _guard_paste_text(harness, body), settle=settle)
-        current = reg._read(wolt, session_id) or existing
-        current["last_activity"] = int(time.time())
-        reg._write(wolt, session_id, current)
-        return {"status": "delivered", "session": session_id, "harness": harness}
+    return {"status": "delivered", "session": session_id, "harness": harness}
 
 
 # ---------------------------------------------------------------------------
@@ -1496,54 +1607,77 @@ def taken_resume_ids(records: list[dict], exclude: str = "") -> set[str]:
     return {rid for d in records if d.get("name") != exclude for rid in [stored_resume_id(d)] if rid}
 
 
-@contextmanager
-def _resume_id_recovery_lock(wolts_dir: Path):
-    """One lodge-wide lock around recover-then-write, so two sessions can never
-    claim the same recovered conversation. Best-effort like the session locks."""
-    path = Path(wolts_dir) / ".state" / "resume-id-recovery.lock"
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        handle = open(path, "w")
-    except OSError:
-        yield
-        return
-    try:
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        except OSError:
-            pass
-        yield
-    finally:
-        handle.close()
-
-
 def claim_resume_id(registry: "SessionRegistry", data: dict, write) -> str:
-    """The stored id, or recover one and persist it with `write(data)` while
-    holding the recovery lock (the taken-set is read inside the same lock)."""
+    """The stored id, or recover one and persist it with `write(data)`.
+
+    Two sessions can never own one conversation: harness_session_id is UNIQUE
+    in lodge.db, so a second claimer's write fails with IntegrityError, and it
+    looks again with the winner's id now in the taken set.
+    """
     existing = stored_resume_id(data)
     if existing:
         return existing
-    with _resume_id_recovery_lock(registry.wolts_dir):
-        recovered = recover_resume_id(data, taken_resume_ids(registry.list(), exclude=data.get("name", "")))
-        if recovered:
-            data["harness_session_id"] = recovered
+    for _ in range(3):
+        recovered = recover_resume_id(data, registry.taken_resume_ids(exclude=data.get("name", "")))
+        if not recovered:
+            return ""
+        data["harness_session_id"] = recovered
+        try:
             write(data)
-    return recovered
+            return recovered
+        except sqlite3.IntegrityError:
+            data.pop("harness_session_id", None)
+    return ""
 
 
 def stamp_resume_id(registry: "SessionRegistry", wolt: str, name: str, resume_id: str) -> None:
     """Persist a recovered conversation id and nothing else.
 
-    A raw write under the session lock, never update(): update() stamps
-    last_activity, and a recovered id is not use. Call it outside the session
-    lock (claim_resume_id's write callback runs under the recovery lock, which
-    is always taken first).
+    Never update(): update() stamps last_activity, and a recovered id is not
+    use. Raises IntegrityError when another session already owns the id.
     """
-    with registry._lock(wolt, name):
-        current = registry._read(wolt, name)
+    with registry.edit(name, wolt=wolt) as current:
         if current is not None and not stored_resume_id(current):
             current["harness_session_id"] = resume_id
-            registry._write(wolt, name, current)
+
+
+def still_as_seen(record: dict | None, seen: dict) -> bool:
+    """Nothing that decides a stop or a settle changed since `seen` was read."""
+    return record is not None and all(record.get(k) == seen.get(k) for k in _CLAIM_FIELDS)
+
+
+def stop_and_settle(registry: "SessionRegistry", name: str, seen: dict, stop, settle,
+                    *, wolt: str = None) -> bool | None:
+    """Stop a session's tmux with no write transaction around the stop.
+
+    A write holds the lodge's one lock, and a slow tmux must not hold up every
+    other session. So: claim the record `stopping` if it is still as `seen`
+    (the judgment), run stop(seen) outside any write, then settle(record) in a
+    write. A message that finds `stopping` waits for it to end, then wakes the
+    session (wait_out_stopping), so it never lands in a pane being stopped.
+    A failed stop gives back the judged status and nothing else, so what was
+    written meanwhile stays. None: the claim lost. False: the stop failed.
+    """
+    if not registry.claim(name, seen, STOPPING, wolt=wolt):
+        return None
+    stopped = bool(stop(seen))
+    with registry.edit(name, wolt=wolt) as current:
+        if current is not None and current.get("status") == STOPPING:
+            if stopped:
+                settle(current)
+            else:
+                current["status"] = seen.get("status")
+    return stopped
+
+
+def wait_out_stopping(registry: "SessionRegistry", name: str) -> dict | None:
+    """The session's record once no stop is in progress (or after STOPPING_WAIT)."""
+    deadline = time.monotonic() + STOPPING_WAIT
+    while True:
+        data = registry.get(name, check_alive=False)
+        if data is None or data.get("status") != STOPPING or time.monotonic() > deadline:
+            return data
+        time.sleep(0.2)
 
 
 def recover_resume_id(data: dict, taken: set[str]) -> str:
@@ -1685,24 +1819,24 @@ def discover_session_id_for(name: str, timeout: int = 90) -> str:
     since = time.time() - 15
     deadline = time.time() + timeout
     while time.time() < deadline:
-        # Discovery and persistence are one lodge-wide claim. Without this,
-        # concurrent Codex pollers can both observe the same newest rollout
-        # before either per-session update becomes visible to the other.
-        with _resume_id_recovery_lock(registry.wolts_dir):
-            current = registry.get(name, check_alive=False)
-            if current is None:
-                return ""
-            existing = stored_resume_id(current)
-            if existing:
-                return existing
-            taken = taken_resume_ids(registry.list(), exclude=name)
-            session_id = discover(current, since, taken)
-            if session_id:
+        current = registry.get(name, check_alive=False)
+        if current is None:
+            return ""
+        existing = stored_resume_id(current)
+        if existing:
+            return existing
+        session_id = discover(current, since, registry.taken_resume_ids(exclude=name))
+        if session_id:
+            # Concurrent Codex pollers can both see the same newest rollout;
+            # the UNIQUE id refuses the second, which looks again next round.
+            try:
                 registry.update(
                     name, wolt=current.get("wolt", ""),
                     harness_session_id=session_id,
                 )
                 return session_id
+            except sqlite3.IntegrityError:
+                pass
         time.sleep(2)
     return ""
 
@@ -1965,29 +2099,36 @@ def start_session(
 
 def _paste_into_live_agent(registry: "SessionRegistry", wolt: str, name: str,
                            seen_status: str, harness: str, prompt: str) -> bool:
-    """Deliver a resume prompt to the agent found running, under the session lock.
+    """Deliver a resume prompt to the agent found running.
 
-    The look that found the agent was not locked. A rest takes this lock, stops
-    the runtime and writes `resting`; a paste after that sends the message into
-    a dead pane and writes `running` over a stopped session. So re-read under
-    the lock and paste only while the record still has the status we saw and
-    the agent is still there (the shape deliver_message has). False when the
-    session changed under us: the caller wakes it instead.
+    A rest claims the session `stopping` before it stops tmux; a paste after
+    that sends the message into a dying pane and writes `running` over a
+    stopped session. So find the pane first, then claim in one write: only
+    while the record still has the status we saw and nobody used, held or
+    rested it since, it goes back to running with this use on record, and a
+    rest after it loses its own claim. Then paste. False when the session
+    changed under us: a stop in progress is waited out, and the caller wakes it.
     """
-    with registry._lock(wolt, name):
-        current = registry._read(wolt, name)
-        if current is None or current.get("status") != seen_status:
-            return False
-        target = resolve_agent_handle(current, harness, include_launching=False)
-        if target is None:
-            return False
-        if prompt:
+    seen = registry.get(name, wolt=wolt, check_alive=False)
+    if seen is None or seen.get("status") != seen_status:
+        wait_out_stopping(registry, name)
+        return False
+    target = resolve_agent_handle(seen, harness, include_launching=False)
+    if target is None:
+        return False
+    with registry.edit(name, wolt=wolt) as current:
+        lost = not still_as_seen(current, seen)
+        if not lost:
+            current["status"] = "running"
+            current["runtime"] = target.to_record()
+            current["last_activity"] = int(time.time())  # a message is use
+    if lost:
+        wait_out_stopping(registry, name)
+        return False
+    if prompt:
+        with _paste_lock(name, registry.db_dir):
             _tmux_paste(target, _guard_paste_text(harness, prompt),
                         settle=get_harness(harness).get("paste_settle", 0.0))
-        current["status"] = "running"
-        current["runtime"] = target.to_record()
-        current["last_activity"] = int(time.time())  # a message is use
-        registry._write(wolt, name, current)
     return True
 
 
@@ -2014,7 +2155,7 @@ def resume_session(name: str, prompt: str = "") -> dict:
     did not come up — or, in step 2, did not take input within the wait.
     """
     registry = SessionRegistry()
-    data = registry.get(name, check_alive=False)
+    data = wait_out_stopping(registry, name)
     if data is None:
         raise ValueError(f"session '{name}' not found in registry")
 
@@ -2059,9 +2200,9 @@ def resume_session(name: str, prompt: str = "") -> dict:
             registry.update(name, wolt=wolt, status="running", runtime=target.to_record())
             return {"name": name, "url": session_url, "status": "delivered",
                     "detail": "agent booting, nothing to send"}
-        # Wait for the agent to take input before the session lock, never under
-        # it: the wait can run INPUT_READY_TIMEOUT, and a rest takes the same
-        # lock. _paste_into_live_agent finds the pane again under the lock.
+        # Wait for the agent to take input before any write, never inside one:
+        # the wait can run INPUT_READY_TIMEOUT. _paste_into_live_agent finds
+        # the pane again when it claims the session.
         if prompt and _await_input_ready(target, harness) is None:
             raise ResumeFailed(
                 f"session '{name}': the {harness} agent is still booting — it "
@@ -2131,7 +2272,8 @@ def resume_session(name: str, prompt: str = "") -> dict:
         if _runtime().handle_is_alive(target):
             # The exact dedicated pane survived; reuse it rather than creating
             # a new window on every ordinary agent exit.
-            _tmux_paste(target, resume_cmd)
+            with _paste_lock(name, registry.db_dir):
+                _tmux_paste(target, resume_cmd)
             registry.update(name, wolt=wolt, status="running")
             detail = "agent exited, restarted with --resume in existing pane"
         else:

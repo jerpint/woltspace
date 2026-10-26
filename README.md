@@ -51,4 +51,5 @@ Working on Woltspace itself: [CLAUDE.md](CLAUDE.md).
 - [Updates](docs/updates.md): ask your wolt, or `woltspace update`
 - [Shared lodge skills](docs/shared-skills.md) · [Colony seeds](docs/colony-seeds.md)
 - [Backups](docs/backup.md): `woltspace backup` and `woltspace restore`
+- [Contributing](CONTRIBUTING.md) · [Releasing](docs/releasing.md)
 - [Testing](docs/testing.md) · [Desktop shell](desktop/README.md)

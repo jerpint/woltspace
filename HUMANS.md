@@ -55,6 +55,7 @@ woltspace start
 | `woltspace stop` | Stop and remove container |
 | `woltspace backup [tag]` | Snapshot container + wolts (tag defaults to datetime) |
 | `woltspace backup [tag] --bundle` | Same, but zipped into one portable file |
+| `woltspace build` | Build the image only; the running container keeps the old one until `woltspace stop` + `start` |
 | `woltspace rebuild` | Rebuild image from `main` + restart |
 | `woltspace shell` | Shell into running container |
 | `woltspace chat` | Open Claude directly in container |

@@ -126,7 +126,7 @@ Exactly one of `schedule` or `at`.
 ## Where state lives
 
 - Schedules: each wolt's own `wolt/wolf.json`
-- Last-run stamps and the job journal are lodge-global, in `.space/wolf/`
-  (`<wolt>/<name>.last`, `jobs.jsonl`)
+- Last-run stamps and the job journal are lodge-global: the `wolf_runs` table of
+  the lodge DB (`woltspace wolf runs`, `woltspace db show wolf_runs`)
 - Lodge API behind the CLI: `GET/POST /wolf/crons`, `PUT/DELETE /wolf/crons/<wolt>/<name>`,
   `POST /wolf/crons/<wolt>/<name>/fire`; read-only views: `GET /wolf/schedules`, `GET /wolf/fires`

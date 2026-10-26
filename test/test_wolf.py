@@ -18,6 +18,8 @@ import pytest
 # Add container to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container"))
 
+import wolfcore  # noqa: E402
+
 
 # ---------------------------------------------------------------------------
 # Cron expression parser
@@ -267,7 +269,7 @@ class TestStateTracking:
 
     def test_get_set_last_run(self, tmp_path):
         from creatures.wolf import get_last_run, set_last_run
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
             assert get_last_run("nunu", "test") is None
             set_last_run("nunu", "test", datetime(2026, 3, 15, 6, 0))
             assert get_last_run("nunu", "test") == "2026-03-15-06:00"
@@ -275,7 +277,7 @@ class TestStateTracking:
     def test_idempotent_check(self, tmp_path):
         """Same minute stamp should prevent re-firing."""
         from creatures.wolf import get_last_run, set_last_run
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
             dt = datetime(2026, 3, 15, 6, 0)
             set_last_run("nunu", "x", dt)
             stamp = dt.strftime("%Y-%m-%d-%H:%M")
@@ -296,7 +298,7 @@ class TestCheckAndFire:
         ]
         now = datetime(2026, 3, 15, 6, 0).astimezone()
 
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
              patch("creatures.wolf.fire_cron") as mock_fire:
             check_and_fire(crons, now)
             mock_fire.assert_called_once_with(crons[0])
@@ -308,7 +310,7 @@ class TestCheckAndFire:
         ]
         now = datetime(2026, 3, 15, 10, 0).astimezone()  # 10am, not 6am
 
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
              patch("creatures.wolf.fire_cron") as mock_fire:
             check_and_fire(crons, now)
             mock_fire.assert_not_called()
@@ -320,7 +322,7 @@ class TestCheckAndFire:
         ]
         now = datetime(2026, 3, 15, 6, 0).astimezone()
 
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
             # Pre-mark as fired
             set_last_run("nunu", "test", now)
             with patch("creatures.wolf.fire_cron") as mock_fire:
@@ -332,7 +334,7 @@ class TestCheckAndFire:
         crons = [{"schedule": "0 6 * * *", "prompt": "do stuff"}]
         now = datetime(2026, 3, 15, 6, 0).astimezone()
 
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
              patch("creatures.wolf.fire_cron") as mock_fire:
             check_and_fire(crons, now)
             mock_fire.assert_not_called()
@@ -350,7 +352,6 @@ class TestFireCron:
         entry = {"name": "t", "prompt": "do stuff", "_owner": "nunu", "_owner_dir": "/workspace/wolts/nunu"}
         with patch("creatures.wolf.dispatch_session", return_value=None) as mock, \
              patch("creatures.wolf.send_wolf_notify"), \
-             patch("creatures.wolf.get_state_dir", return_value=Path("/tmp")), \
              patch("creatures.wolf._log_job"):
             fire_cron(entry)
             mock.assert_called_once_with(entry)
@@ -361,7 +362,6 @@ class TestFireCron:
         entry = {"name": "t", "prompt": "do stuff", "_owner": "nunu", "notify": "telegram"}
         with patch("creatures.wolf.send_wolf_notify", side_effect=lambda *a: call_order.append("notify")), \
              patch("creatures.wolf.dispatch_session", side_effect=lambda e: call_order.append("session")), \
-             patch("creatures.wolf.get_state_dir", return_value=Path("/tmp")), \
              patch("creatures.wolf._log_job"):
             fire_cron(entry)
         assert call_order == ["session", "notify"]
@@ -372,7 +372,6 @@ class TestFireCron:
         entry = {"name": "t", "prompt": "do stuff", "_owner": "nunu"}
         with patch("creatures.wolf.send_wolf_notify") as mock_notify, \
              patch("creatures.wolf.dispatch_session", return_value=None), \
-             patch("creatures.wolf.get_state_dir", return_value=Path("/tmp")), \
              patch("creatures.wolf._log_job"):
             fire_cron(entry)
             mock_notify.assert_not_called()
@@ -382,7 +381,6 @@ class TestFireCron:
         entry = {"name": "t", "prompt": "do stuff", "_owner": "nunu", "notify": "slack"}
         with patch("creatures.wolf.send_wolf_notify") as mock_notify, \
              patch("creatures.wolf.dispatch_session", return_value=None), \
-             patch("creatures.wolf.get_state_dir", return_value=Path("/tmp")), \
              patch("creatures.wolf._log_job"):
             fire_cron(entry)
             assert mock_notify.call_args[0][1] == "slack"
@@ -392,7 +390,6 @@ class TestFireCron:
         entry = {"name": "t", "prompt": "do stuff", "_owner": "nunu", "notify": "telegram"}
         with patch("creatures.wolf.send_wolf_notify") as mock_notify, \
              patch("creatures.wolf.dispatch_session", return_value="https://example.com/tui?session=nunu-abc"), \
-             patch("creatures.wolf.get_state_dir", return_value=Path("/tmp")), \
              patch("creatures.wolf._log_job"):
             fire_cron(entry)
             msg = mock_notify.call_args[0][0]
@@ -464,10 +461,7 @@ class TestWolfSchedulesTool:
         (wolt_dir / "wolf.json").write_text(json.dumps({
             "crons": [{"name": "digest", "schedule": "0 6 * * *", "prompt": "/digest"}]
         }))
-        # Set up last-run state at .space/wolf/ (global wolf state)
-        state_dir = tmp_path / ".space" / "wolf"
-        state_dir.mkdir(parents=True)
-        (state_dir / "digest.last").write_text("2026-03-15-06:00")
+        wolfcore.write_last_run(tmp_path, "testwolt", "digest", datetime(2026, 3, 15, 6, 0))
 
         with patch("creatures.wolf.WOLTS_DIR", tmp_path):
             result = json.loads(_tool_wolf_schedules({}, None))
@@ -649,60 +643,43 @@ class TestNotifyFooter:
 # ---------------------------------------------------------------------------
 
 class TestJobLogging:
-    """Unit: _log_job writes valid JSONL to .state/wolf/jobs.jsonl."""
+    """Unit: _log_job adds one event to the lodge's wolf journal."""
 
-    def test_creates_log_file(self, tmp_path):
+    def test_writes_one_event_with_its_fields(self, tmp_path):
         from creatures.wolf import _log_job
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
-            _log_job("test-cron", "script", event="started")
-        log_file = tmp_path / "jobs.jsonl"
-        assert log_file.exists()
-
-    def test_writes_valid_jsonl(self, tmp_path):
-        from creatures.wolf import _log_job
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
-            _log_job("digest", "script", event="started", command="echo hi")
-        log_file = tmp_path / "jobs.jsonl"
-        entry = json.loads(log_file.read_text().strip())
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
+            _log_job("digest", "started", owner="nunu", command="echo hi")
+        [entry] = wolfcore.read_journal(tmp_path)
         assert entry["cron"] == "digest"
-        assert entry["action"] == "script"
+        assert entry["action"] == "session"
         assert entry["event"] == "started"
         assert entry["command"] == "echo hi"
         assert "ts" in entry
 
     def test_appends_multiple_entries(self, tmp_path):
         from creatures.wolf import _log_job
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
-            _log_job("digest", "script", event="started")
-            _log_job("digest", "script", event="dispatched", session="wolf-digest-abc123")
-            _log_job("update-check", "session", event="started")
-        log_file = tmp_path / "jobs.jsonl"
-        lines = log_file.read_text().strip().split("\n")
-        assert len(lines) == 3
-        # Each line is valid JSON
-        for line in lines:
-            json.loads(line)
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
+            _log_job("digest", "started", owner="nunu")
+            _log_job("digest", "dispatched", owner="nunu", session="wolf-digest-abc123")
+            _log_job("update-check", "started", owner="nunu")
+        assert len(wolfcore.read_journal(tmp_path)) == 3
 
     def test_includes_error_field(self, tmp_path):
         from creatures.wolf import _log_job
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path):
-            _log_job("broken", "script", event="error", error="tmux failed")
-        entry = json.loads((tmp_path / "jobs.jsonl").read_text().strip())
-        assert entry["error"] == "tmux failed"
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
+            _log_job("broken", "manual", owner="nunu", error="tmux failed")
+        assert wolfcore.read_journal(tmp_path)[0]["error"] == "tmux failed"
 
     def test_fire_cron_logs_started_and_dispatched(self, tmp_path):
         """fire_cron should log both 'started' and 'dispatched' events."""
         from creatures.wolf import fire_cron
         entry = {"name": "test", "prompt": "do stuff", "_owner": "nunu"}
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
              patch("creatures.wolf.dispatch_session", return_value=None), \
              patch("creatures.wolf.send_wolf_notify"):
             fire_cron(entry)
-        log_file = tmp_path / "jobs.jsonl"
-        lines = log_file.read_text().strip().split("\n")
-        events = [json.loads(l)["event"] for l in lines]
-        assert "started" in events
-        assert "dispatched" in events
+        events = [line["event"] for line in wolfcore.read_journal(tmp_path)]
+        assert events == ["dispatched", "started"]
 
 
 # ---------------------------------------------------------------------------
@@ -719,46 +696,14 @@ class TestWolfJobsTool:
         assert result["jobs"] == []
         assert "no job log" in result["note"]
 
-    def test_returns_recent_jobs(self, tmp_path):
+    def test_returns_recent_jobs_oldest_first(self, tmp_path):
         from bot.core import _tool_wolf_jobs
-        log_dir = tmp_path / ".space" / "wolf"
-        log_dir.mkdir(parents=True)
-        log_file = log_dir / "jobs.jsonl"
-        entries = [
-            json.dumps({"ts": "2026-03-15T06:00:00", "cron": "digest", "event": "started"}),
-            json.dumps({"ts": "2026-03-15T06:00:01", "cron": "digest", "event": "dispatched"}),
-        ]
-        log_file.write_text("\n".join(entries))
-        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
-            result = json.loads(_tool_wolf_jobs({}, None))
-        assert result["count"] == 2
-        assert result["jobs"][0]["cron"] == "digest"
-
-    def test_respects_count_param(self, tmp_path):
-        from bot.core import _tool_wolf_jobs
-        log_dir = tmp_path / ".space" / "wolf"
-        log_dir.mkdir(parents=True)
-        log_file = log_dir / "jobs.jsonl"
-        entries = [
-            json.dumps({"ts": f"2026-03-15T0{i}:00:00", "cron": f"job-{i}", "event": "started"})
-            for i in range(5)
-        ]
-        log_file.write_text("\n".join(entries))
+        for i in range(5):
+            wolfcore.append_journal(tmp_path, f"job-{i}", "started", owner="nunu")
         with patch("creatures.wolf.WOLTS_DIR", tmp_path):
             result = json.loads(_tool_wolf_jobs({"count": 2}, None))
         assert result["count"] == 2
-        assert result["jobs"][0]["cron"] == "job-3"
-        assert result["jobs"][1]["cron"] == "job-4"
-
-    def test_handles_corrupted_lines(self, tmp_path):
-        from bot.core import _tool_wolf_jobs
-        log_dir = tmp_path / ".space" / "wolf"
-        log_dir.mkdir(parents=True)
-        log_file = log_dir / "jobs.jsonl"
-        log_file.write_text('{"cron":"ok","event":"started"}\nnot json\n{"cron":"also-ok","event":"done"}\n')
-        with patch("creatures.wolf.WOLTS_DIR", tmp_path):
-            result = json.loads(_tool_wolf_jobs({}, None))
-        assert result["count"] == 2  # skipped the bad line
+        assert [job["cron"] for job in result["jobs"]] == ["job-3", "job-4"]
 
 
 # ---------------------------------------------------------------------------
@@ -816,7 +761,7 @@ class TestOneOffCrons:
         from creatures.wolf import check_and_fire
         crons = [{"name": "ci-check", "at": "2026-03-21T20:00", "prompt": "check CI", "_owner": "nunu", "_owner_dir": str(tmp_path / "nunu")}]
         now = datetime(2026, 3, 21, 21, 0).astimezone()
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
              patch("creatures.wolf.fire_cron") as mock_fire, \
              patch("creatures.wolf.remove_cron"):
             check_and_fire(crons, now)
@@ -826,7 +771,7 @@ class TestOneOffCrons:
         from creatures.wolf import check_and_fire
         crons = [{"name": "ci-check", "at": "2026-03-21T20:00", "prompt": "check CI", "_owner": "nunu", "_owner_dir": str(tmp_path / "nunu")}]
         now = datetime(2026, 3, 21, 19, 0).astimezone()
-        with patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+        with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
              patch("creatures.wolf.fire_cron") as mock_fire:
             check_and_fire(crons, now)
             mock_fire.assert_not_called()
@@ -909,7 +854,7 @@ class TestHowlNotification:
 
         entry = {"name": "morning-playlist", "prompt": "/music", "_owner": "nunu", "notify": "morning playlist time"}
         with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
-             patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+             patch("creatures.wolf.WOLTS_DIR", tmp_path), \
              patch("creatures.wolf.dispatch_session", return_value="https://example.com/tui?session=nunu-abc"), \
              patch("creatures.wolf.send_wolf_notify") as mock_notify:
             fire_cron(entry)
@@ -926,7 +871,7 @@ class TestHowlNotification:
 
         entry = {"name": "test", "prompt": "do stuff\nand more", "_owner": "nunu", "notify": "telegram"}
         with patch("creatures.wolf.WOLTS_DIR", tmp_path), \
-             patch("creatures.wolf.get_state_dir", return_value=tmp_path), \
+             patch("creatures.wolf.WOLTS_DIR", tmp_path), \
              patch("creatures.wolf.dispatch_session", return_value=None), \
              patch("creatures.wolf.send_wolf_notify") as mock_notify:
             fire_cron(entry)

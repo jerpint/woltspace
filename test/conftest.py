@@ -240,9 +240,18 @@ def tmp_registry(tmp_path):
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
     from sessions import SessionRegistry
-    # Per-wolt model: registry uses WOLTS_DIR as root, sessions land in
-    # wolts_dir/{wolt}/.state/sessions/{name}.json
     return SessionRegistry(tmp_path)
+
+
+def make_session(reg, **fields) -> dict:
+    """Store one session record as given (name and wolt required), as a test seed.
+
+    A raw write into the registry's lodge.db: no defaults beyond a running
+    status and a creation time, and no last_activity stamp.
+    """
+    record = {"status": "running", "created_at": int(time.time()), **fields}
+    reg._write(record["wolt"], record["name"], record)
+    return record
 
 
 @pytest.fixture
@@ -307,10 +316,8 @@ def _stop_shadow_sessions(wolts_dir: Path):
     """Stop every session the shadow wolt spawned — through the server if it is up."""
     import urllib.request
 
-    sessions_dir = wolts_dir / SHADOW_WOLT / ".state" / "sessions"
-    names = []
-    if sessions_dir.is_dir():
-        names = [path.stem for path in sessions_dir.glob("*.json")]
+    from sessions import SessionRegistry
+    names = [r["name"] for r in SessionRegistry(wolts_dir).records(wolt=SHADOW_WOLT)]
     for name in names:
         body = json.dumps({}).encode()
         request = urllib.request.Request(
@@ -371,6 +378,22 @@ def tunnel_url():
 # Session runtime test double
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _no_subprocess_inside_a_lodge_write(monkeypatch):
+    """A lodge.db write holds the lodge's one lock: SQL only, never tmux or ps."""
+    import subprocess as _subprocess
+    import lodge_db
+
+    def guarded(real):
+        def call(*args, **kwargs):
+            assert not lodge_db.in_write(), f"subprocess inside a lodge.db write: {args[:1]}"
+            return real(*args, **kwargs)
+        return call
+
+    monkeypatch.setattr(_subprocess, "run", guarded(_subprocess.run))
+    monkeypatch.setattr(_subprocess, "Popen", guarded(_subprocess.Popen))
+
+
 class FakeSessionRuntime:
     """Recording stand-in for TmuxSessionRuntime.
 
@@ -387,6 +410,13 @@ class FakeSessionRuntime:
     pane — True (raw), False (still cooked) or None (unreadable). age: what
     agent_age reports, in seconds — an agent long up by default — or None.
     """
+
+    def __getattribute__(self, name):
+        value = object.__getattribute__(self, name)
+        if callable(value) and not name.startswith("_"):
+            import lodge_db
+            assert not lodge_db.in_write(), f"runtime.{name} inside a lodge.db write"
+        return value
 
     def __init__(self, *, alive: bool = True, capture_text: str = "",
                  next_pane: str = "%1", panes=None, agents=(),

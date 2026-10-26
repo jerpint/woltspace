@@ -104,6 +104,7 @@ lists in the host `woltspace` launcher.
 | `WOLTSPACE_INSTANCE_ID` | Identifies one control plane, so tunnel state and ownership records can say who wrote them. | `supervisor.py`, `server/app.py`, `server/tunnel.py` | assigned per start |
 | `WOLTSPACE_ALLOW_SHARED_DATA_ROOT` | Opt out of the refusal to start a second control plane on a data root another one already owns. | `doctor.py` | unset (refuse) |
 | `WOLTSPACE_CONFIG` | Path override for `woltspace.json`. | `src/woltspace/config.py` | `<data root>/woltspace.json` |
+| `WOLTSPACE_BACKUP_AGE_RECIPIENT` | An age public key. When set, `woltspace backup` writes one `.tar.gz.age` encrypted to it, `.env` files and `config.json` inside; `age` must be on `PATH` or the backup fails. See `docs/backup.md`. | `src/woltspace/backup.py` | unset (plain archive, secrets withheld) |
 
 ## Connectors and surfaces
 
@@ -127,14 +128,48 @@ by the platform runtime.
 |---|---|---|---|
 | `WOLTSPACE_CONTAINER` | Container name to operate on, for running more than one lodge. | the host launcher, `tui/src/attach.js` | `woltspace`, hash-suffixed for a custom data root |
 | `WOLTSPACE_CONTAINER_HOME` | The per-wolt `$HOME` the container image builds. Containers are the only isolation mode that owns a home outright, so harness credentials sit at a fixed path rather than wherever `$HOME` points. | `server/config.py` | `/home/node` |
-| `WOLTSPACE_IMAGE` | Docker image to run. | `desktop/src-tauri/src/docker.rs` | the published image |
+| `WOLTSPACE_IMAGE` | Docker image to run. The desktop app pulls and runs it. The host launcher builds and tags the image locally under this name, and inspects and runs that tag; an exported published name such as `woltspace/woltspace:latest` therefore gets a local build under it. A second lodge on one machine sets both `WOLTSPACE_CONTAINER` and `WOLTSPACE_IMAGE`, or a build for one lodge retags the other's image. For the launcher, one image reference (a letter or digit, then letters, digits, `.` `_` `-` `:` `/` `@`); read from the launching shell only. | `desktop/src-tauri/src/docker.rs`, the host launcher | the published image (desktop), `woltspace` (launcher) |
+| `WOLTSPACE_PUBLISH_HOST` | Host address the container's port is published on, e.g. `127.0.0.1` to keep the lodge off the local network (unset, docker publishes on every interface, past most host firewalls). Read from the launching shell only. | the host launcher | unset (all interfaces) |
+| `WOLTSPACE_DOCKER_NETWORK` | Docker network the container joins, e.g. one whose only way out is an egress proxy (pair it with `HTTPS_PROXY`/`NO_PROXY` in the container's env file). One network name, not `host` or `none`; read from the launching shell only. | the host launcher | unset (docker's default bridge) |
+| `WOLTSPACE_ENV_FILE` | The env file the launcher seeds and passes to `docker run --env-file`. A path outside the data root keeps it out of the container's reach (the container's first process runs as root with that environment). The lodge lets the process environment win over the data root's `.env`, so it needs no copy there. `init` seeds it from `.env.example` only when it is missing, and turns its commented `# WOLTSPACE_PUBLIC_TUNNEL=false` line, if there is one, into the public-link answer (`false` when non-interactive), in a file you made too. A file made before the lodge does not make `init` treat an empty data root as an existing lodge. Read from the launching shell only. | the host launcher | `<data root>/.env` |
 | `WOLTSPACE_LOCAL` | Sticky equivalent of `--local`: build the image from this checkout. | the host launcher | `false` |
 | `WOLTSPACE_NONINTERACTIVE` | Run `init` without prompting. Pair with `WOLTSPACE_INIT_WOLT_NAME` to name the first wolt. | the host launcher | unset |
 | `WOLTSPACE_INIT_WOLT_NAME` | Which wolt a fresh non-interactive `init` should **create**. A different question from `WOLTSPACE_WOLT_NAME`, which names the wolt a shell already belongs to — see the note below. | the host launcher | unset (the lodge asks) |
 | `WOLTSPACE_BRANCH` | Build arg naming the branch the image installs from. | `container/Dockerfile` | `main` |
 | `WOLTSPACE_PYPI_VERSION` | Build arg: the `woltspace` version the image installs. | `container/Dockerfile` | the release being built |
 | `WOLTSPACE_TUI_VERSION` | Build arg: the `@woltspace/tui` version the image installs. The tui declares the minimum `woltspace` version it needs; woltspace does not check the tui's version, so the two are installed and upgraded on their own. | `container/Dockerfile` | `latest` |
+| `WOLTSPACE_NODE_SUDO` | Build arg: `false` builds an image where `node` cannot become root (no sudoers rule, no `sudo`). A session can then no longer `apt-get install`, nor install into the root-owned global npm/uv dirs; bake such tools into the image. The launcher passes it through from the launching shell on every build, so set it for every `build` and `rebuild`. The image records the value as the label `woltspace.node_sudo`; when it says `false`, the launcher runs the container with `--security-opt no-new-privileges`, so no setuid binary can raise a process's privileges either. | `container/Dockerfile`, the host launcher | `true` |
+| `WOLTSPACE_CLAUDE_MANAGED_SETTINGS` | Build arg: a path inside the build context (the checkout for `--local`, `container/` otherwise) installed as `/etc/claude-code/managed-settings.json`, root-owned 0644: the Claude Code settings no user or project file can override. Must be valid JSON. Passed through from the launching shell on every build. | `container/Dockerfile`, the host launcher | unset (none) |
 | `HOST_UID` / `HOST_GID` | The host user the container's `node` user is matched to, so files a wolt writes are readable on the host. | `container_entrypoint.run_root_phase` | the invoking user |
+
+### A second, hardened lodge
+
+The launcher's options only add up to a locked-down lodge when they are set
+together. They are read from the launching shell only, so keep them in a small
+script you run for that lodge, never in its data root's `.env`:
+
+```bash
+export WOLTSPACE_WOLTS_DIR=~/lodge-b
+export WOLTSPACE_CONTAINER=lodge-b
+export WOLTSPACE_IMAGE=lodge-b
+export WOLTSPACE_PORT=7778
+export WOLTSPACE_NODE_SUDO=false
+export WOLTSPACE_CLAUDE_MANAGED_SETTINGS=managed-settings.json
+export WOLTSPACE_ENV_FILE=~/lodge-b.env
+export WOLTSPACE_PUBLISH_HOST=127.0.0.1
+export WOLTSPACE_DOCKER_NETWORK=lodge-b-egress
+woltspace init
+```
+
+- `WOLTSPACE_WOLTS_DIR`: its own data root, so the two lodges share no wolts or state.
+- `WOLTSPACE_CONTAINER`: its own container, so `start` and `stop` never touch the other lodge's.
+- `WOLTSPACE_IMAGE`: its own image, so a build for either lodge never retags the other's.
+- `WOLTSPACE_PORT`: its own host port, since the other lodge holds 7777.
+- `WOLTSPACE_NODE_SUDO=false`: `node` cannot become root, and the launcher adds `no-new-privileges`.
+- `WOLTSPACE_CLAUDE_MANAGED_SETTINGS`: Claude Code settings no session can override (a JSON file in the build context).
+- `WOLTSPACE_ENV_FILE`: outside the data root, so a session cannot write variables the root phase receives at the next create.
+- `WOLTSPACE_PUBLISH_HOST=127.0.0.1`: the port is reachable from this machine only.
+- `WOLTSPACE_DOCKER_NETWORK`: a network you made whose only way out is your egress proxy (`HTTPS_PROXY` in the env file).
 
 ### Creating a wolt vs. being one
 
@@ -191,11 +226,18 @@ Slack. Text is not held to these lists.
 to litellm and the image generator.
 
 **Voice** — `OPENAI_API_KEY` is also the key that transcribes a voice note the
-human sends and speaks a message a wolt sends with `notify --speak`.
-`OPENAI_TTS_MODEL` (default `gpt-4o-mini-tts`) and `OPENAI_TTS_VOICE` (default
-`alloy`) pick the model and the voice of the spoken message. Read by
-`server/notify.py`; each spoken message is one OpenAI API request,
-billed to that key.
+human sends (by default: `woltspace.json` `transcription`, set with
+`woltspace transcription set`, picks any OpenAI-style endpoint, its model and
+the variable holding its key) and speaks a message a wolt sends with
+`notify --speak`.
+The spoken message goes to `woltspace.json` `speech`, set with
+`woltspace speech set`: any OpenAI-style `/audio/speech` endpoint (OpenAI by
+default, or a speech model on this machine over `http://127.0.0.1`), its
+model, its voice and the variable holding its key (`--no-key` for a local
+server). `OPENAI_TTS_MODEL` (default `gpt-4o-mini-tts`) and `OPENAI_TTS_VOICE`
+(default `alloy`) still pick the model and the voice when `speech` leaves them
+out. Read by `server/notify.py` on every spoken message; with OpenAI, each one
+is an API request billed to that key.
 
 **Harnesses** — `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`,
 `CLAUDE_CODE_DISABLE_AUTO_MEMORY`, `CODEX_HOME`, `OPENCODE_CONFIG_DIR` and the

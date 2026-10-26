@@ -68,9 +68,18 @@ RUN apt-get update && apt-get install -y \
     && apt-get update && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Allow node user to install packages at runtime
-RUN echo "node ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/node \
-    && chmod 0440 /etc/sudoers.d/node
+# Allow node user to install packages at runtime. WOLTSPACE_NODE_SUDO=false
+# leaves node no way back to root: no sudoers rule and no sudo binary (sudo
+# refuses its own removal without SUDO_FORCE_REMOVE). Boot is unaffected: the
+# root phase runs before gosu, not through sudo.
+ARG WOLTSPACE_NODE_SUDO=true
+LABEL woltspace.node_sudo="${WOLTSPACE_NODE_SUDO:-true}"
+RUN case "$WOLTSPACE_NODE_SUDO" in \
+      ""|true) echo "node ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/node \
+               && chmod 0440 /etc/sudoers.d/node ;; \
+      false) SUDO_FORCE_REMOVE=yes apt-get purge -y sudo && rm -rf /etc/sudoers.d ;; \
+      *) echo "WOLTSPACE_NODE_SUDO must be true or false" >&2; exit 1 ;; \
+    esac
 
 # Install uv (fast Python package manager)
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
@@ -113,7 +122,7 @@ RUN git clone https://github.com/jerpint/worktui.git /home/node/worktui \
 ENV WORKTUI_DIR="/workspace/wolts/.worktui"
 
 # --- The woltspace runtime, from the registries ---
-ARG WOLTSPACE_PYPI_VERSION=0.5.21
+ARG WOLTSPACE_PYPI_VERSION=0.5.23
 # `latest`, not a pin — the two artifacts are versioned independently. Pass an
 # explicit version to reproduce an older image.
 ARG WOLTSPACE_TUI_VERSION=0.5.3
@@ -124,6 +133,10 @@ ARG USE_LOCAL=false
 # Changing CACHE_BUST invalidates the install layer (and everything after it)
 # but keeps the heavy layers above (node, claude, apt, uv, cloudflared) cached.
 ARG CACHE_BUST=
+# A path inside the build context. When set, that file becomes Claude Code's
+# managed settings, root-owned 0644: they outrank every user and project
+# settings file, and node cannot edit them. Unset: no managed settings.
+ARG WOLTSPACE_CLAUDE_MANAGED_SETTINGS=
 
 # uv's tool store lives somewhere predictable and node-owned, and the console
 # scripts land straight on PATH.
@@ -143,6 +156,14 @@ ENV PYTHONUNBUFFERED=1
 # Local source (only read when USE_LOCAL=true). Last COPY in the file so the
 # layers above stay cached.
 COPY . /tmp/local-src/
+
+# Claude refuses to start on an unparseable managed settings file, so a bad one
+# fails the build here rather than every session later.
+RUN if [ -n "$WOLTSPACE_CLAUDE_MANAGED_SETTINGS" ]; then \
+      f="/tmp/local-src/$WOLTSPACE_CLAUDE_MANAGED_SETTINGS"; \
+      python3 -m json.tool "$f" > /dev/null \
+      && install -D -o root -g root -m 0644 "$f" /etc/claude-code/managed-settings.json; \
+    fi
 
 # One RUN, on purpose. The wheel's bundle is the install root — `server/`,
 # `container/lib`, `container/bin`, skills and templates all live inside it —

@@ -613,8 +613,10 @@ class TestOptionalDog:
         model.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_voice_missing_transcription_key_preserves_notice(self, routing, monkeypatch):
+    async def test_voice_missing_transcription_key_preserves_notice(self, routing, monkeypatch, tmp_path):
+        from bot import core
         adapter, update, context, state, spawn, route, model = routing
+        monkeypatch.setattr(core, "WOLTS_DIR", tmp_path)               # no woltspace.json: OpenAI defaults
         file = MagicMock()
         file.download_as_bytearray = AsyncMock(return_value=bytearray(b"ogg"))
         context.bot.get_file = AsyncMock(return_value=file)

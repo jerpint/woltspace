@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "container" / "lib"))
 
+import lodge_db  # noqa: E402
 from execution_policy import AutoGrantStore, resolve_execution_policy  # noqa: E402
 from session_targets import SessionTarget  # noqa: E402
 from woltspace.cli import main as cli_main  # noqa: E402
@@ -117,7 +118,7 @@ class TestGrant:
     def test_an_unknown_wolt_is_refused_and_writes_nothing(self, colony, capsys):
         assert cli_main(["auto", "grant", "nosuchwolt"]) == 1
         assert "auto grant failed" in capsys.readouterr().out
-        assert not _store(colony).path.exists()
+        assert not lodge_db.path(colony).exists()
 
     def test_a_workdir_that_does_not_exist_is_refused(self, colony, tmp_path, capsys):
         missing = tmp_path / "not-here"
@@ -125,7 +126,7 @@ class TestGrant:
             ["auto", "grant", "testwolt", "--workdir", str(missing)]
         ) == 1
         assert "auto grant failed" in capsys.readouterr().out
-        assert not _store(colony).path.exists()
+        assert not lodge_db.path(colony).exists()
 
 
 class TestRevoke:
@@ -218,7 +219,7 @@ class TestTheCommandReadsTheColonyTheCliReads:
         assert cli_main(["auto", "grant", "testwolt"]) == 0
 
         assert AutoGrantStore(elsewhere).list()
-        assert not _store(colony).path.exists()
+        assert not lodge_db.path(colony).exists()
 
     def test_a_bare_auto_names_its_verbs(self, colony, capsys):
         assert cli_main(["auto"]) == 1
