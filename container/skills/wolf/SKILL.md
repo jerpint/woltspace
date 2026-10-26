@@ -19,6 +19,9 @@ instead of a cron that silently never fires.
 **The wolf fires in the lodge machine's local time.** `0 9 * * *` means 09:00 on
 the clock of the machine the lodge runs on — no UTC conversion. `woltspace wolf
 list` prints the zone it is using, and every time it shows is in that zone.
+A container lodge runs on UTC unless its env file sets `TZ`; to choose the
+zone and move existing crons safely, see
+[Time zone](../../../docs/environment.md#time-zone).
 
 ## Add
 
