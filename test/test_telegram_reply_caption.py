@@ -29,6 +29,8 @@ def _update(reply_to, *, text="looks good"):
     update.effective_chat.type = "private"
     update.message.text = text
     update.message.reply_to_message = reply_to
+    if reply_to is not None:
+        reply_to.from_user.id = 4242
     update.message.reply_text = AsyncMock()
     return update
 
@@ -45,6 +47,8 @@ async def _routed_by_handle_message(update):
     from bot.telegram_adapter import handle_message
 
     context = MagicMock()
+
+    context.bot.id = 4242  # the bot's own id: only its notifications carry a footer worth honoring
     context.bot.username = "testbot"
     with patch("bot.telegram_adapter.is_allowed", return_value=True), \
          patch("bot.telegram_adapter._is_session_alive", return_value=True), \
@@ -95,6 +99,7 @@ async def test_voice_reply_to_a_file_routes_to_the_session():
     file = MagicMock()
     file.download_as_bytearray = AsyncMock(return_value=bytearray(b"ogg"))
     context = MagicMock()
+    context.bot.id = 4242  # the bot's own id: only its notifications carry a footer worth honoring
     context.bot.get_file = AsyncMock(return_value=file)
     with patch("bot.telegram_adapter.is_allowed", return_value=True), \
          patch("bot.telegram_adapter.asyncio.sleep", new_callable=AsyncMock), \
@@ -224,6 +229,7 @@ async def test_voice_reply_to_a_voice_note_routes_to_the_session():
     file = MagicMock()
     file.download_as_bytearray = AsyncMock(return_value=bytearray(b"ogg"))
     context = MagicMock()
+    context.bot.id = 4242  # the bot's own id: only its notifications carry a footer worth honoring
     context.bot.get_file = AsyncMock(return_value=file)
     with patch("bot.telegram_adapter.is_allowed", return_value=True), \
          patch("bot.telegram_adapter.asyncio.sleep", new_callable=AsyncMock), \

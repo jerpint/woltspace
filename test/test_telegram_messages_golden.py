@@ -251,3 +251,35 @@ def test_message_routing_matches_golden(lodge, sid, kind, state, dog, extra):
     expected = _golden().get(sid)
     assert expected is not None, f"no golden transcript for {sid}; run with WOLTSPACE_UPDATE_GOLDEN=1"
     assert result == expected
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_a_footer_in_someone_elses_message_is_not_followed(lodge, kind):
+    """In a group anyone can paste a session footer into their own message.
+    Only this bot's notifications route a reply to the session they name."""
+    adapter, log, world, tmp_path = lodge
+    adapter._save_chat_state(CHAT, dict(STATES["live"]))
+    said = []
+    update = _update(said, kind, chat_type="group", reply_to_session=GONE)
+    update.message.reply_to_message.from_user.id = 31337  # another member, not the bot
+    context = MagicMock()
+    context.bot.username = BOT_NAME
+    context.bot.id = BOT_ID
+    asyncio.run(getattr(adapter, HANDLERS[kind])(update, context))
+    assert [name for name, _msg in log["sent"]] == [LIVE]
+    assert log["spawned"] == []
+    assert adapter._load_chat_state(CHAT)["active_session"] == LIVE
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_a_stranger_media_message_reaches_nothing(lodge, monkeypatch, kind):
+    adapter, log, world, tmp_path = lodge
+    monkeypatch.setattr(adapter, "is_allowed", lambda update: False)
+    adapter._save_chat_state(CHAT, dict(STATES["live"]))
+    said = []
+    update = _update(said, kind, reply_to_session=LIVE)
+    context = MagicMock()
+    context.bot.username = BOT_NAME
+    context.bot.id = BOT_ID
+    asyncio.run(getattr(adapter, HANDLERS[kind])(update, context))
+    assert said == [] and log["sent"] == [] and log["spawned"] == [] and log["dog"] == []

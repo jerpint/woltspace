@@ -575,10 +575,20 @@ def _message_ports(update: Update, context, chat_id: int, wrapped: bool = True) 
     )
 
 
-def _reply_target(update: Update, text: str) -> tuple[str | None, str | None]:
+def _from_this_bot(message, context) -> bool:
+    """Whether a message was sent by this bot. Only its own notifications carry a
+    footer worth honoring: in a group anyone can paste one into theirs."""
+    bot_id = getattr(getattr(context, "bot", None), "id", None)
+    author = getattr(getattr(message, "from_user", None), "id", None)
+    return isinstance(bot_id, int) and not isinstance(bot_id, bool) and author == bot_id
+
+
+def _reply_target(update: Update, text: str, context=None) -> tuple[str | None, str | None]:
     """The session whose notification this message replies to, and the message
     as that session should read it (quoting what it replies to)."""
     reply_to = update.message.reply_to_message
+    if reply_to and not _from_this_bot(reply_to, context):
+        return None, None
     reply_body, reply_file = _reply_source(reply_to) if reply_to else ("", None)
     if not reply_body:
         return None, None
@@ -590,7 +600,7 @@ def _reply_target(update: Update, text: str) -> tuple[str | None, str | None]:
 
 async def _route(update: Update, context, chat_id: int, text: str, dog_content=None):
     """Hand one owner message to the lodge's routing."""
-    reply_session, reply_text = _reply_target(update, text)
+    reply_session, reply_text = _reply_target(update, text, context)
     await messages.route_message(
         _message_ports(update, context, chat_id), chat_id, text,
         reply_session=reply_session, reply_text=reply_text, dog_content=dog_content,

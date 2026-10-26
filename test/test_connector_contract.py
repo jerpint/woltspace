@@ -105,3 +105,9 @@ def test_every_builtin_manifest_has_a_way_out():
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from server import notify
     assert set(connector_registry.BUILTIN) <= set(notify.OUTBOUND) <= set(notify.SENDERS)
+
+
+def test_route_keys_cannot_collide_through_separators():
+    a = Route("slack", conversation_id="c", account_id="a:b")
+    b = Route("slack", conversation_id="b:c", account_id="a")
+    assert a.key() != b.key()

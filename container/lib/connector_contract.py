@@ -10,6 +10,7 @@ Pure types and helpers: no provider SDK, no storage, no network.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 
@@ -77,9 +78,12 @@ class Route:
     account_id: str = ""
 
     def key(self) -> str:
-        """A stable conversation key: same chat and thread, same key."""
-        parts = [self.connector, self.account_id, self.conversation_id, self.thread_id or ""]
-        return ":".join(parts)
+        """A stable conversation key: same chat and thread, same key.
+
+        JSON-encoded, so no field can smuggle a separator into another.
+        """
+        return json.dumps([self.connector, self.account_id, self.conversation_id, self.thread_id],
+                          separators=(",", ":"), ensure_ascii=True)
 
 
 @dataclass(frozen=True)

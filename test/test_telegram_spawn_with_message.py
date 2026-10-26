@@ -76,6 +76,7 @@ def _update(kind: str, replying: bool):
         reply_to = MagicMock()
         reply_to.text = "🦦 nunu: done" + FOOTER
         reply_to.caption = None
+        reply_to.from_user.id = 4242
         msg.reply_to_message = reply_to
     if kind == "voice":
         msg.voice.file_id = "f1"
@@ -136,6 +137,7 @@ def lodge(monkeypatch, tmp_path):
 
 async def _handle(adapter, kind: str, update):
     context = MagicMock()
+    context.bot.id = 4242  # the bot's own id: only its notifications carry a footer worth honoring
     context.bot.username = "testbot"
     await getattr(adapter, "handle_" + kind)(update, context)
 

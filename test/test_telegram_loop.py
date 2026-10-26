@@ -140,9 +140,12 @@ class TestReplyToRouting:
         update.message.text = "love this track"
         update.message.reply_to_message = MagicMock()
         update.message.reply_to_message.text = reply_msg_text
+        update.message.reply_to_message.from_user.id = 4242
         update.message.reply_text = AsyncMock()
 
         context = MagicMock()
+
+        context.bot.id = 4242  # the bot's own id: only its notifications carry a footer worth honoring
         context.bot.username = "testbot"
 
         with patch("bot.telegram_adapter.is_allowed", return_value=True), \
@@ -173,6 +176,8 @@ class TestReplyToRouting:
         update.message.reply_text = AsyncMock()
 
         context = MagicMock()
+
+        context.bot.id = 4242  # the bot's own id: only its notifications carry a footer worth honoring
         context.bot.username = "testbot"
 
         with patch("bot.telegram_adapter.is_allowed", return_value=True), \
@@ -341,6 +346,7 @@ class TestSessionsAliveFilter:
         update.effective_user.id = 99
         update.message.reply_text = AsyncMock()
         context = MagicMock()
+        context.bot.id = 4242  # the bot's own id: only its notifications carry a footer worth honoring
 
         with patch("bot.telegram_adapter.is_allowed", return_value=True), \
              patch("bot.telegram_adapter.list_sessions", return_value=sessions), \
@@ -364,6 +370,7 @@ class TestSessionsAliveFilter:
         update.effective_user.id = 99
         update.message.reply_text = AsyncMock()
         context = MagicMock()
+        context.bot.id = 4242  # the bot's own id: only its notifications carry a footer worth honoring
 
         with patch("bot.telegram_adapter.is_allowed", return_value=True), \
              patch("bot.telegram_adapter.list_sessions", return_value=sessions), \
@@ -384,6 +391,8 @@ class TestErrorHandler:
         from bot.telegram_adapter import _error_handler
 
         context = MagicMock()
+
+        context.bot.id = 4242  # the bot's own id: only its notifications carry a footer worth honoring
         context.error = TimedOut("timed out")
         # Should not raise
         await _error_handler(None, context)
@@ -394,6 +403,8 @@ class TestErrorHandler:
         from bot.telegram_adapter import _error_handler
 
         context = MagicMock()
+
+        context.bot.id = 4242  # the bot's own id: only its notifications carry a footer worth honoring
         context.error = RuntimeError("unexpected")
         with patch("bot.telegram_adapter.logger") as mock_logger:
             await _error_handler(None, context)
@@ -497,6 +508,7 @@ class TestOptionalDog:
         update.message.reply_to_message = None
         update.message.reply_text = AsyncMock()
         context = MagicMock()
+        context.bot.id = 4242  # the bot's own id: only its notifications carry a footer worth honoring
         context.bot.username = "testbot"
         state = {}
         monkeypatch.setattr(adapter, "is_allowed", lambda update: True)
