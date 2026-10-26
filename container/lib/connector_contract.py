@@ -202,3 +202,75 @@ def plain_text_reply(reply: Reply) -> str:
         return text
     lines = [f"{i}. {c.label}" + (f" ({c.url})" if c.url else "") for i, c in enumerate(numbered, 1)]
     return text + "\n\n" + "\n".join(lines)
+
+
+# --- routes as text, owned by each connector -----------------------------------
+
+@dataclass(frozen=True)
+class RouteCodec:
+    """How one connector spells, checks and binds its destinations.
+
+    A route is a dict of the connector's own fields (Telegram: chat_id; Slack:
+    channel and thread_ts). The codec is the only place that knows their shape:
+    the lodge never guesses a route from a regex of its own.
+    """
+
+    # The fields of a route, in the order they are written.
+    fields: tuple[str, ...]
+    # "123" or "C1:1712.5" -> {"chat_id": "123"}; raises ValueError when malformed.
+    parse: object
+    # The session record's own route, or None when it has none for this connector.
+    from_record: object
+    # The legacy CLI flag and its arguments, when the connector has one (--telegram 123).
+    legacy_args: object = None
+
+    def format(self, route: dict) -> str:
+        return ":".join(str(route[field]) for field in self.fields)
+
+    def canonical(self, text: str) -> dict:
+        """Parse `text`, and refuse anything that does not read back the same."""
+        route = self.parse(text)
+        if not isinstance(route, dict) or set(route) != set(self.fields):
+            raise ValueError("route does not have this connector's fields")
+        if self.format(route) != text:
+            raise ValueError("route is not in its canonical form")
+        return route
+
+    def matches(self, route: dict, record: dict | None) -> bool:
+        """Exact binding: the route is the session record's own route."""
+        bound = self.from_record(record or {}) if record else None
+        return bound is not None and bound == route
+
+
+@dataclass(frozen=True)
+class ConnectorSpec:
+    """A connector as the lodge knows it: its manifest and how its parts are found.
+
+    `launch` (a module run as `python -m`) and `outbound` (a "module:attr" whose
+    attribute is the connector's sender Plugin) are import paths. The lodge
+    resolves them only for connectors listed in its own registry; a connector
+    from outside the repository will talk to the lodge over a socket instead.
+    """
+
+    manifest: Manifest
+    codec: RouteCodec
+    title: str
+    launch: str = ""
+    outbound: str = ""
+    # The import the launched process needs (a provider SDK), checked before start.
+    dependency: str = ""
+    # Each declared secret's key in the data root's channels.<name> config.
+    config_keys: tuple[tuple[str, str], ...] = ()
+    # Turns the connector on from the environment, at the platform entrypoint only.
+    enable_env: str = ""
+
+    @property
+    def name(self) -> str:
+        return self.manifest.name
+
+    def reply_args(self, route: dict) -> list[str]:
+        """The notify arguments that reply on `route`: the legacy flag when the
+        connector has one (a stable alias), else the generic --to form."""
+        if self.codec.legacy_args:
+            return list(self.codec.legacy_args(route))
+        return ["--to", f"{self.name}:{self.codec.format(route)}"]

@@ -1396,27 +1396,23 @@ def _title_from_prompt(prompt: str) -> str:
 
 
 def _adapter_context(data: dict) -> str:
-    """Adapter-specific context so the wolt knows how to communicate from the start."""
-    adapter = data.get("adapter", "")
-    session_url = data.get("session_url", "")
-    if adapter == "slack":
-        channel = data.get("chat_id", "")
-        thread_ts = data.get("thread_ts", "")
-        if channel and thread_ts:
-            return (
-                "\nThis session was started from Slack.\n"
-                f"{notify_reply_instruction('--slack', channel, thread_ts)}\n"
-                f"Session link: {session_url}"
-            )
-    elif adapter == "telegram":
-        chat_id = data.get("chat_id", "")
-        if chat_id:
-            return (
-                "\nThis session was started from Telegram.\n"
-                f"{notify_reply_instruction('--telegram', chat_id)}\n"
-                f"Session link: {session_url}"
-            )
-    return ""
+    """Adapter-specific context so the wolt knows how to communicate from the start.
+
+    The connector's codec reads the session's own bound route; the reply
+    instruction is built from it (escaped like any notify argv), never from a
+    template a connector supplies.
+    """
+    import connector_registry
+
+    spec = connector_registry.spec(data.get("adapter", ""))
+    route = spec.codec.from_record(data) if spec else None
+    if not route:
+        return ""
+    return (
+        f"\nThis session was started from {spec.title}.\n"
+        f"{notify_reply_instruction(*spec.reply_args(route))}\n"
+        f"Session link: {data.get('session_url', '')}"
+    )
 
 
 # The opening prompt is one argument: claude, codex and pi take it on the
