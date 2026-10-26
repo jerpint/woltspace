@@ -188,6 +188,8 @@ def test_round_trip_restores_the_tree_byte_for_byte(wolts, tmp_path):
     after = snapshot(restored.wolts_dir)
     # The one file a restore adds: the mark that keeps the copy on its own tmux.
     assert after.pop(backup_mod.RESTORED_MARKER)[0] == "file"
+    # The one it removes: a runtime record of the source's processes.
+    assert before.pop(".space/platform/adoption.json")[0] == "file"
     assert before == after
     assert restored.manifest["tag"] == result.manifest["tag"]
     assert restored.entries == result.manifest["entries"]
@@ -775,7 +777,7 @@ def test_slim_keeps_all_context_and_code_and_lists_the_rest(lived_in, tmp_path):
         "beaverwolt/wolt/.git/objects/pack/pack-1.pack",
         "beaverwolt/.git/worktrees/feature-y/HEAD",
         "beaverwolt/wolt/memory/photo.jpg",
-        ".space/platform/config.json",
+        ".space/platform/adoption.json",
     ):
         assert f"{ARCHIVE_ROOT}/{kept}" in names, kept
 
@@ -912,7 +914,7 @@ def test_slim_leaves_databases_out_unless_a_manifest_opts_them_in(wolts, tmp_pat
 
 
 def _lodge_runtime(wolts: Path, live_pid: int) -> None:
-    """Runtime records as a running lodge leaves them, pointing at live processes."""
+    """Runtime records as a lodge before lodge.db left them, pointing at live processes."""
     source = str(wolts.resolve())
 
     def write(rel: str, data) -> None:
@@ -947,15 +949,28 @@ def _lodge_runtime(wolts: Path, live_pid: int) -> None:
     ]})
 
 
-def test_restore_disarms_the_copy(wolts, tmp_path):
+def test_a_pre_lodge_db_archive_is_disarmed_in_its_files(wolts, tmp_path):
+    """A slim archive from before lodge.db holds its state in JSON files, which
+    the copy's first boot imports: they are disarmed where they lie."""
     _lodge_runtime(wolts, os.getpid())
+    # What an import left behind, and a downgrade would put back.
+    imported = wolts / "beaverwolt/.state/sessions.imported/beaverwolt-was.json"
+    imported.parent.mkdir(parents=True)
+    imported.write_text(json.dumps({
+        "name": "beaverwolt-was", "wolt": "beaverwolt", "status": "running",
+        "workdir": f"{wolts.resolve()}/beaverwolt", "runtime": {"tmux_session_name": "x"},
+    }))
     archive = create_backup(wolts, out_dir=tmp_path / "out").archive
     restored = restore_backup(archive, to=tmp_path / "back")
     copy = restored.wolts_dir
+    assert restored.manifest["mode"] == "slim"
+    assert not (copy / ".space" / "lodge.db").exists()
 
     for rel in (".space/platform/control-plane.json", ".space/platform/tunnel.json",
-                ".space/platform/connectors.json", ".space/apps/demo.json"):
+                ".space/platform/connectors.json"):
         assert not (copy / rel).exists(), rel
+    # The app is still wanted, but no longer claims the source's process.
+    assert json.loads((copy / ".space/apps/demo.json").read_text()) == {"name": "demo", "port": 4001}
     session = json.loads((copy / "beaverwolt/.state/sessions/beaverwolt-s1.json").read_text())
     assert session["status"] == "stopped"
     assert "runtime" not in session
@@ -969,16 +984,218 @@ def test_restore_disarms_the_copy(wolts, tmp_path):
     assert not (copy / "beaverwolt/.state/sessions/beaverwolt-repo.json").exists()
     aside = restored.target / backup_mod.QUARANTINE_NAME / "beaverwolt/.state/sessions/beaverwolt-repo.json"
     assert json.loads(aside.read_text())["harness_session_id"] == "resume-me"
+    was = json.loads((copy / "beaverwolt/.state/sessions.imported/beaverwolt-was.json").read_text())
+    assert (was["status"], was["workdir"], "runtime" in was) == ("stopped", str(copy / "beaverwolt"), False)
     grants = json.loads((copy / ".space/auto-grants.json").read_text())["grants"]
     assert [g["canonical_workdir"] for g in grants] == [str(copy / "beaverwolt")]
     # The source is untouched.
     assert json.loads((wolts / ".space/apps/demo.json").read_text())["pid"] == os.getpid()
     lines = backup_mod.restore_lines(restored)
-    assert any(line.startswith("disarmed: 1 app(s) and 2 session(s)") for line in lines)
+    assert any(line.startswith("disarmed: 3 session(s) come back stopped and 1 app(s)")
+               for line in lines)
     assert any(line.startswith("set aside: 1 session(s)") for line in lines)
     assert any("WOLTSPACE_PORT=" in line for line in lines)
     assert backup_mod.restored_tmux_dir(copy) == restored.target / "tmux"
     assert backup_mod.restored_tmux_dir(wolts) is None
+
+
+def _container_lib(name: str):
+    import importlib
+
+    lib = str(ROOT / "container" / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    return importlib.import_module(name)
+
+
+def _lodge_db_runtime(wolts: Path, live_pid: int) -> None:
+    """The same runtime as `_lodge_runtime`, the way 0.5.23 keeps it: rows in
+    lodge.db, with the real schema, and only the platform records as files."""
+    lodge_db = _container_lib("lodge_db")
+
+    source = str(wolts.resolve())
+    for rel, data in ((".space/platform/control-plane.json", {"pid": live_pid}),
+                      (".space/platform/tunnel.json", {"pid": live_pid})):
+        (wolts / rel).parent.mkdir(parents=True, exist_ok=True)
+        (wolts / rel).write_text(json.dumps(data))
+    session = {
+        "name": "beaverwolt-s1", "wolt": "beaverwolt", "status": "running", "created_at": 1,
+        "workdir": f"{source}/beaverwolt", "dir": f"{source}/beaverwolt",
+        "target": {"wolt_id": "beaverwolt", "canonical_workdir": f"{source}/beaverwolt"},
+        "runtime": {"tmux_session_name": "beaverwolt-s1", "pane_id": "%7", "kind": "tmux"},
+        "harness_session_id": "resume-me",
+    }
+    sessions = [
+        session,
+        {**session, "name": "beaverwolt-repo", "harness_session_id": "resume-repo",
+         "workdir": "/elsewhere/repo", "dir": "/elsewhere/repo",
+         "target": {"wolt_id": "beaverwolt", "canonical_workdir": "/elsewhere/repo"}},
+        {**session, "name": "beaverwolt-old", "status": "resting", "harness_session_id": "resume-old",
+         "workdir": "/workspace/wolts/beaverwolt", "dir": "/workspace/wolts/beaverwolt",
+         "target": {"wolt_id": "beaverwolt", "canonical_workdir": "/workspace/wolts/beaverwolt"}},
+    ]
+    app = {"name": "demo", "keeper": "beaverwolt", "port": 4001, "pid": live_pid,
+           "tunnel_pid": live_pid, "tunnel_url": "https://demo.example"}
+    with lodge_db.write(wolts) as conn:
+        for record in sessions:
+            conn.execute(
+                "INSERT INTO sessions (name, wolt, status, created_at, harness_session_id,"
+                " record, updated_at) VALUES (?, ?, ?, 1, ?, ?, 1)",
+                (record["name"], record["wolt"], record["status"], record["harness_session_id"],
+                 json.dumps(record)),
+            )
+        conn.executemany(
+            "INSERT INTO grants (kind, wolt_id, scope, policy_version, approved_at, record)"
+            " VALUES (?, 'beaverwolt', ?, 1, 1, ?)",
+            [("auto", f"{source}/beaverwolt", None), ("auto", "/workspace/wolts/beaverwolt", None),
+             ("auto", "/elsewhere/repo", None), ("dig", "pi", json.dumps({"host": "pi.lan"}))],
+        )
+        conn.execute(
+            "INSERT INTO apps_running (name, pid, port, tunnel_pid, tunnel_url, keeper,"
+            " started_at, record) VALUES ('demo', ?, 4001, ?, ?, 'beaverwolt', 1, ?)",
+            (live_pid, live_pid, app["tunnel_url"], json.dumps(app)),
+        )
+
+
+def _rows(db: Path, sql: str) -> list[tuple]:
+    import sqlite3
+
+    conn = sqlite3.connect(f"{db.as_uri()}?mode=ro", uri=True)
+    try:
+        return conn.execute(sql).fetchall()
+    finally:
+        conn.close()
+
+
+def test_restore_disarms_the_copys_lodge_db(wolts, tmp_path):
+    _lodge_db_runtime(wolts, os.getpid())
+    live_db = wolts / ".space" / "lodge.db"
+    before = _rows(live_db, "SELECT name, status, record FROM sessions ORDER BY name")
+    archive = create_backup(wolts, out_dir=tmp_path / "out").archive
+    restored = restore_backup(archive, to=tmp_path / "back")
+    copy = restored.wolts_dir
+    db = copy / ".space" / "lodge.db"
+
+    assert not (copy / ".space/platform/control-plane.json").exists()
+    assert not (copy / ".space/platform/tunnel.json").exists()
+    sessions = {name: (status, json.loads(record)) for name, status, record in
+                _rows(db, "SELECT name, status, record FROM sessions")}
+    assert sorted(sessions) == ["beaverwolt-old", "beaverwolt-s1"]
+    status, s1 = sessions["beaverwolt-s1"]
+    assert status == s1["status"] == "stopped" and s1["finished_at"]
+    assert "runtime" not in s1
+    assert s1["workdir"] == s1["dir"] == s1["target"]["canonical_workdir"] == str(copy / "beaverwolt")
+    assert s1["harness_session_id"] == "resume-me"
+    # Resting is not live: it keeps its status, and its container-era paths move.
+    status, old = sessions["beaverwolt-old"]
+    assert status == old["status"] == "resting"
+    assert old["dir"] == str(copy / "beaverwolt")
+    # Worked outside the lodge: out of the copy's database, into the quarantine,
+    # in the shape the importer reads.
+    aside = restored.target / backup_mod.QUARANTINE_NAME / "beaverwolt/.state/sessions/beaverwolt-repo.json"
+    repo = json.loads(aside.read_text())
+    assert (repo["name"], repo["harness_session_id"], repo["status"]) == (
+        "beaverwolt-repo", "resume-repo", "stopped")
+    assert repo["workdir"] == "/elsewhere/repo" and "runtime" not in repo
+    # Auto approvals: re-pointed (two that land on one folder are one), or dropped.
+    assert _rows(db, "SELECT kind, scope FROM grants ORDER BY kind") == [
+        ("auto", str(copy / "beaverwolt")), ("dig", "pi"),
+    ]
+    # Apps: still wanted, but no pid of anyone's.
+    (pid, port, tunnel_pid, tunnel_url, record), = _rows(
+        db, "SELECT pid, port, tunnel_pid, tunnel_url, record FROM apps_running")
+    assert (pid, port, tunnel_pid, tunnel_url) == (None, 4001, None, None)
+    assert json.loads(record) == {"name": "demo", "keeper": "beaverwolt", "port": 4001}
+
+    # The source's database is untouched.
+    assert _rows(live_db, "SELECT name, status, record FROM sessions ORDER BY name") == before
+    assert _rows(live_db, "SELECT pid FROM apps_running") == [(os.getpid(),)]
+    done = restored.disarmed
+    assert (done["sessions_stopped"], done["apps"], done["grants_dropped"]) == (
+        2, ["demo"], ["/elsewhere/repo"])
+    lines = "\n".join(backup_mod.restore_lines(restored))
+    assert "set aside: 1 session(s)" in lines and "approvals dropped: 1" in lines
+
+
+def test_a_set_aside_session_comes_back_through_the_importer(wolts, tmp_path):
+    """Moved into the copy, a quarantined row is what the boot import reads."""
+    lodge_db = _container_lib("lodge_db")
+    import_sessions = _container_lib("sessions").import_sessions
+
+    _lodge_db_runtime(wolts, os.getpid())
+    restored = restore_backup(create_backup(wolts, out_dir=tmp_path / "out").archive,
+                              to=tmp_path / "back")
+    aside = restored.target / backup_mod.QUARANTINE_NAME / "beaverwolt/.state/sessions"
+    home = restored.wolts_dir / "beaverwolt/.state/sessions"
+    home.mkdir(parents=True)
+    (aside / "beaverwolt-repo.json").rename(home / "beaverwolt-repo.json")
+    ran = lodge_db.run_imports(restored.wolts_dir, {"sessions": import_sessions})
+    assert ran["sessions"] == {"imported": 1, "skipped": 0}
+    assert _rows(restored.wolts_dir / ".space/lodge.db",
+                 "SELECT status FROM sessions WHERE name='beaverwolt-repo'") == [("stopped",)]
+
+
+def test_slim_always_keeps_the_lodge_db_and_never_its_sidecars(wolts, tmp_path):
+    live = _live_lodge_db(wolts)
+    app = wolts / "beaverwolt" / "wolt" / "apps" / "shop"
+    app.mkdir(parents=True)
+    (app / "shop.db").write_bytes(b"rows")
+    try:
+        result = create_backup(wolts, out_dir=tmp_path / "out")
+    finally:
+        live.close()
+    assert result.manifest["mode"] == "slim"
+    names = _members(result.archive)
+    assert f"{ARCHIVE_ROOT}/.space/lodge.db" in names
+    assert f"{ARCHIVE_ROOT}/.space/lodge.db-wal" not in names
+    assert f"{ARCHIVE_ROOT}/.space/lodge.db-shm" not in names
+    assert result.manifest["lodge_db"]["tables"]["sessions"] == 3
+    left = {item["path"] for item in result.scan.left_out}
+    assert not [path for path in left if "lodge.db" in path]
+    # An app's database is still opt-in.
+    assert "beaverwolt/wolt/apps/shop/shop.db" in left
+
+
+def test_slim_and_encrypted_round_trip(wolts_with_credentials, fake_age, tmp_path):
+    """The two together: one sealed file, slim inside, disarmed on the way out."""
+    wolts = wolts_with_credentials
+    _lodge_db_runtime(wolts, os.getpid())
+    media = wolts / "beaverwolt" / "wolt" / "site" / "hero.png"
+    media.write_bytes(b"\x89PNG" + b"0" * 64)
+    result = create_backup(wolts, out_dir=tmp_path / "out", tag="slim-age")
+    assert result.archive.name == "woltspace-backup-slim-age.tar.gz.age"
+    files = _fake_open(result.archive)
+    assert f"{ARCHIVE_ROOT}/beaverwolt/wolt/site/hero.png" not in files
+    assert "beaverwolt/wolt/site/hero.png" in files[backup_mod.LEFT_OUT_NAME].decode()
+    manifest = json.loads(files[MANIFEST_NAME])
+    assert manifest["mode"] == "slim" and manifest["secrets"]["present"] is True
+
+    restored = restore_backup(result.archive, to=tmp_path / "back", identity=FAKE_KEY)
+    copy = restored.wolts_dir
+    assert SECRET in (copy / ".env").read_text()
+    assert not (copy / "beaverwolt/wolt/site/hero.png").exists()
+    assert (restored.target / backup_mod.LEFT_OUT_NAME).is_file()
+    assert _rows(copy / ".space/lodge.db", "SELECT pid FROM apps_running") == [(None,)]
+    assert _rows(copy / ".space/lodge.db",
+                 "SELECT status FROM sessions WHERE name='beaverwolt-s1'") == [("stopped",)]
+    assert (copy / backup_mod.RESTORED_MARKER).is_file()
+    out = "\n".join(backup_mod.restore_lines(restored))
+    assert "left out: 1 files" in out and "disarmed: 2 session(s)" in out
+
+
+def test_restore_refuses_a_link_at_the_lodge_db(tmp_path):
+    outside = tmp_path / "live.db"
+    outside.write_bytes(b"live")
+
+    def build(tar):
+        _add_bytes(tar, f"{ARCHIVE_ROOT}/w/wolt/wolt.json", b"{}")
+        _add_symlink(tar, f"{ARCHIVE_ROOT}/.space/lodge.db", str(outside))
+        _add_bytes(tar, MANIFEST_NAME, json.dumps({"entries": 2, "source": "/src"}).encode())
+
+    archive = _write_archive(tmp_path / "evil.tar.gz", build)
+    with pytest.raises(ValueError, match="symlink where a restore must disarm"):
+        restore_backup(archive, to=tmp_path / "back")
+    assert outside.read_bytes() == b"live"
 
 
 def test_restore_refuses_a_link_where_it_must_disarm(tmp_path):
@@ -1040,7 +1257,7 @@ def test_a_copy_beside_its_source_only_touches_itself(wolts, tmp_path):
         return out.stdout
 
     try:
-        _lodge_runtime(wolts, app.pid)
+        _lodge_db_runtime(wolts, app.pid)
         assert tmux("new-session", "-d", "-s", "beaverwolt-s1", "sleep 300").returncode == 0
         archive = create_backup(wolts, out_dir=tmp_path / "out").archive
         restored = restore_backup(archive, to=short / "back")
@@ -1052,10 +1269,11 @@ def test_a_copy_beside_its_source_only_touches_itself(wolts, tmp_path):
             "import json, sessions\nprint(json.dumps(sessions.SessionRegistry().adopt_runtime_sessions()))"
         ))
         assert not report["adopted"]
-        # Stop in the copy: its app has no state, its session has no tmux of its own.
+        # Stop in the copy: its app is wanted but has no pid to signal, its
+        # session has no tmux of its own.
         out = in_copy("import apps, sessions\nprint(apps.stop_app('demo'))\n"
                       "print(sessions.stop_session('beaverwolt-s1')['was_alive'])")
-        assert out.split() == ["False", "False"]
+        assert out.split() == ["True", "False"]
         # Wake in the copy (same name), then stop it: it lands on, and leaves, the copy's own server.
         in_copy("import subprocess, paths\n"
                 "subprocess.run(['tmux', 'new-session', '-d', '-s', 'beaverwolt-s1', 'sleep 300'], check=True)")
@@ -1162,7 +1380,8 @@ def test_an_apps_own_sqlite_wal_is_kept(wolts, tmp_path):
     app.mkdir(parents=True)
     for name in ("shop.db", "shop.db-wal", "shop.db-shm"):
         (app / name).write_bytes(b"rows")
-    names = _members(create_backup(wolts, out_dir=tmp_path / "out").archive)
+    # Slim leaves an app's database out unless the app opts in: --full keeps it.
+    names = _members(create_backup(wolts, out_dir=tmp_path / "out", full=True).archive)
     for name in ("shop.db", "shop.db-wal", "shop.db-shm"):
         assert f"{ARCHIVE_ROOT}/beaverwolt/wolt/apps/shop/{name}" in names
 
@@ -1328,7 +1547,7 @@ def test_a_recipient_encrypts_the_whole_archive_secrets_inside(
     assert not [name for name in files if "credentials.json" in name or "auth.json" in name]
     manifest = json.loads(files[MANIFEST_NAME])
     assert manifest["secrets"] == {"present": True, "recipient": RECIPIENT}
-    assert manifest["entries"] == len(files) - 1
+    assert manifest["entries"] == len(files) - 2  # the manifest and the slim left-out list
     report = "\n".join(backup_mod.summary_lines(result))
     assert f"encrypted to {RECIPIENT}" in report
 
@@ -1715,7 +1934,15 @@ def test_runtime_state_goes_into_the_archive(wolts, tmp_path):
         (wolts / rel).parent.mkdir(parents=True, exist_ok=True)
         (wolts / rel).write_text("x")
 
-    result = create_backup(wolts, out_dir=tmp_path / "out")
+    result = create_backup(wolts, out_dir=tmp_path / "out", full=True)
     names = set(_members(result.archive))
     assert [rel for rel in paths if f"{ARCHIVE_ROOT}/{rel}" not in names] == []
     assert "ephemeral" not in result.manifest["excludes"]
+
+    # Slim keeps all of it but the logs, which it lists.
+    slim = create_backup(wolts, out_dir=tmp_path / "slim")
+    names = set(_members(slim.archive))
+    assert [rel for rel in paths if f"{ARCHIVE_ROOT}/{rel}" not in names] == [
+        ".space/logs/control-plane.log",
+    ]
+    assert ".space/logs/control-plane.log" in {item["path"] for item in slim.scan.left_out}
