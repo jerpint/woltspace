@@ -1,0 +1,1002 @@
+{
+ "apps": {
+  "app_actions": [],
+  "calls": [
+   {
+    "buttons": [
+     [
+      [
+       "📝 blog",
+       "https://blog.example",
+       null
+      ],
+      [
+       "⏹",
+       null,
+       "astop:blog"
+      ]
+     ],
+     [
+      [
+       "📦 wiki",
+       null,
+       "noop:wiki"
+      ],
+      [
+       "⏹",
+       null,
+       "astop:wiki"
+      ]
+     ],
+     [
+      [
+       "🎮 game (off)",
+       null,
+       "noop:game"
+      ],
+      [
+       "▶",
+       null,
+       "astart:game"
+      ]
+     ]
+    ],
+    "kind": "reply",
+    "parse_mode": "Markdown",
+    "text": "*3 apps* · 2 running"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "cb-astart-fails": {
+  "app_actions": [
+   [
+    "game",
+    "start"
+   ]
+  ],
+  "calls": [
+   {
+    "kind": "answer",
+    "show_alert": true,
+    "text": "failed to start game"
+   },
+   {
+    "buttons": [
+     [
+      [
+       "📝 blog",
+       "https://blog.example",
+       null
+      ],
+      [
+       "⏹",
+       null,
+       "astop:blog"
+      ]
+     ],
+     [
+      [
+       "📦 wiki",
+       null,
+       "noop:wiki"
+      ],
+      [
+       "⏹",
+       null,
+       "astop:wiki"
+      ]
+     ],
+     [
+      [
+       "🎮 game (off)",
+       null,
+       "noop:game"
+      ],
+      [
+       "▶",
+       null,
+       "astart:game"
+      ]
+     ]
+    ],
+    "kind": "edit",
+    "parse_mode": "Markdown",
+    "text": "*3 apps* · 2 running"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "cb-astart-ok": {
+  "app_actions": [
+   [
+    "wiki",
+    "start"
+   ]
+  ],
+  "calls": [
+   {
+    "kind": "answer",
+    "show_alert": false,
+    "text": "started wiki"
+   },
+   {
+    "buttons": [
+     [
+      [
+       "📝 blog",
+       "https://blog.example",
+       null
+      ],
+      [
+       "⏹",
+       null,
+       "astop:blog"
+      ]
+     ],
+     [
+      [
+       "📦 wiki",
+       null,
+       "noop:wiki"
+      ],
+      [
+       "⏹",
+       null,
+       "astop:wiki"
+      ]
+     ],
+     [
+      [
+       "🎮 game (off)",
+       null,
+       "noop:game"
+      ],
+      [
+       "▶",
+       null,
+       "astart:game"
+      ]
+     ]
+    ],
+    "kind": "edit",
+    "parse_mode": "Markdown",
+    "text": "*3 apps* · 2 running"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "cb-astop-ask": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "answer"
+   },
+   {
+    "buttons": [
+     [
+      [
+       "✓ stop",
+       null,
+       "astop-confirm:blog"
+      ],
+      [
+       "cancel",
+       null,
+       "astop-cancel"
+      ]
+     ]
+    ],
+    "kind": "edit",
+    "parse_mode": "Markdown",
+    "text": "stop app `blog`?"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "cb-astop-cancel": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "answer"
+   },
+   {
+    "buttons": [
+     [
+      [
+       "📝 blog",
+       "https://blog.example",
+       null
+      ],
+      [
+       "⏹",
+       null,
+       "astop:blog"
+      ]
+     ],
+     [
+      [
+       "📦 wiki",
+       null,
+       "noop:wiki"
+      ],
+      [
+       "⏹",
+       null,
+       "astop:wiki"
+      ]
+     ],
+     [
+      [
+       "🎮 game (off)",
+       null,
+       "noop:game"
+      ],
+      [
+       "▶",
+       null,
+       "astart:game"
+      ]
+     ]
+    ],
+    "kind": "edit",
+    "parse_mode": "Markdown",
+    "text": "*3 apps* · 2 running"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "cb-astop-confirm": {
+  "app_actions": [
+   [
+    "blog",
+    "stop"
+   ]
+  ],
+  "calls": [
+   {
+    "kind": "answer",
+    "show_alert": false,
+    "text": "stopped blog"
+   },
+   {
+    "buttons": [
+     [
+      [
+       "📝 blog",
+       "https://blog.example",
+       null
+      ],
+      [
+       "⏹",
+       null,
+       "astop:blog"
+      ]
+     ],
+     [
+      [
+       "📦 wiki",
+       null,
+       "noop:wiki"
+      ],
+      [
+       "⏹",
+       null,
+       "astop:wiki"
+      ]
+     ],
+     [
+      [
+       "🎮 game (off)",
+       null,
+       "noop:game"
+      ],
+      [
+       "▶",
+       null,
+       "astart:game"
+      ]
+     ]
+    ],
+    "kind": "edit",
+    "parse_mode": "Markdown",
+    "text": "*3 apps* · 2 running"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "cb-noop": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "answer"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "cb-sstop-ask": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "answer"
+   },
+   {
+    "buttons": [
+     [
+      [
+       "✓ stop",
+       null,
+       "sstop-confirm:bud-birch-b2c3d4"
+      ],
+      [
+       "cancel",
+       null,
+       "sstop-cancel"
+      ]
+     ]
+    ],
+    "kind": "edit",
+    "parse_mode": "Markdown",
+    "text": "stop 🦫 `bud-birch-b2c3d4`?"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "cb-sstop-cancel": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "answer"
+   },
+   {
+    "buttons": [
+     [
+      [
+       "🦫 pal-maple-a1b2c3",
+       "https://lodge.example/tui?session=pal-maple-a1b2c3",
+       null
+      ],
+      [
+       "⏹",
+       null,
+       "sstop:pal-maple-a1b2c3"
+      ]
+     ],
+     [
+      [
+       "🦫 bud-birch-b2c3d4",
+       "https://lodge.example/tui?session=bud-birch-b2c3d4",
+       null
+      ],
+      [
+       "⏹",
+       null,
+       "sstop:bud-birch-b2c3d4"
+      ]
+     ]
+    ],
+    "kind": "edit",
+    "parse_mode": "Markdown",
+    "text": "*2 active sessions*\n🦫 pal-maple-a1b2c3 (1) · 🦫 bud-birch-b2c3d4 (1)"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "cb-sstop-confirm": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "answer",
+    "text": "stopped bud-birch-b2c3d4"
+   },
+   {
+    "buttons": [
+     [
+      [
+       "🦫 pal-maple-a1b2c3",
+       "https://lodge.example/tui?session=pal-maple-a1b2c3",
+       null
+      ],
+      [
+       "⏹",
+       null,
+       "sstop:pal-maple-a1b2c3"
+      ]
+     ],
+     [
+      [
+       "🦫 bud-birch-b2c3d4",
+       "https://lodge.example/tui?session=bud-birch-b2c3d4",
+       null
+      ],
+      [
+       "⏹",
+       null,
+       "sstop:bud-birch-b2c3d4"
+      ]
+     ]
+    ],
+    "kind": "edit",
+    "parse_mode": "Markdown",
+    "text": "*2 active sessions*\n🦫 pal-maple-a1b2c3 (1) · 🦫 bud-birch-b2c3d4 (1)"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": "bud"
+  },
+  "killed": [
+   "bud-birch-b2c3d4"
+  ],
+  "spawned": []
+ },
+ "cb-sstop-fails": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "answer",
+    "show_alert": true,
+    "text": "failed — session may already be gone"
+   },
+   {
+    "buttons": [
+     [
+      [
+       "🦫 pal-maple-a1b2c3",
+       "https://lodge.example/tui?session=pal-maple-a1b2c3",
+       null
+      ],
+      [
+       "⏹",
+       null,
+       "sstop:pal-maple-a1b2c3"
+      ]
+     ],
+     [
+      [
+       "🦫 bud-birch-b2c3d4",
+       "https://lodge.example/tui?session=bud-birch-b2c3d4",
+       null
+      ],
+      [
+       "⏹",
+       null,
+       "sstop:bud-birch-b2c3d4"
+      ]
+     ]
+    ],
+    "kind": "edit",
+    "parse_mode": "Markdown",
+    "text": "*2 active sessions*\n🦫 pal-maple-a1b2c3 (1) · 🦫 bud-birch-b2c3d4 (1)"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [
+   "ghost-session"
+  ],
+  "spawned": []
+ },
+ "cb-unknown": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "answer"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "cb-wolt": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "answer",
+    "text": "switched to bud"
+   },
+   {
+    "buttons": [
+     [
+      [
+       "🦝 pal",
+       null,
+       "wolt:pal"
+      ],
+      [
+       "🦦 ots",
+       null,
+       "wolt:ots"
+      ]
+     ]
+    ],
+    "kind": "edit",
+    "text": "active: 🦫 bud\n\ntap to switch"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": "bud"
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "cb-wolt-gone": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "answer",
+    "show_alert": true,
+    "text": "that wolt no longer exists"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "help-active": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "reply",
+    "text": "📋 Commands:\n\n/new — start a fresh session with the active wolt\n/new <name> — start a fresh session with a specific wolt\n/wolt — show active wolt and available wolts\n/wolt <name> — switch active wolt\n/sessions — list active sessions with links\n/holds — sessions kept up by a hold, with release buttons\n/idle — how long idle sessions stay up (lodge-wide)\n/kill <session> — kill a session\n/apps — list all apps with status and public links\n/help — this message\n\n💬 Messaging:\n• Send a message → goes to active session (or starts one)\n• Reply to a wolt's message → routes to that wolt\n• @dog → ask the dog for help\n\nActive wolt: pal\nActive session: pal-maple-a1b2c3"
+   }
+  ],
+  "chat_state": {
+   "active_session": "pal-maple-a1b2c3",
+   "active_wolt": "pal"
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "help-empty": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "reply",
+    "text": "📋 Commands:\n\n/new — start a fresh session with the active wolt\n/new <name> — start a fresh session with a specific wolt\n/wolt — show active wolt and available wolts\n/wolt <name> — switch active wolt\n/sessions — list active sessions with links\n/holds — sessions kept up by a hold, with release buttons\n/idle — how long idle sessions stay up (lodge-wide)\n/kill <session> — kill a session\n/apps — list all apps with status and public links\n/help — this message\n\n💬 Messaging:\n• Send a message → goes to active session (or starts one)\n• Reply to a wolt's message → routes to that wolt\n• @dog → ask the dog for help\n\nActive wolt: none\nActive session: none"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "kill-active": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "reply",
+    "text": "Killed pal-maple-a1b2c3."
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": "pal"
+  },
+  "killed": [
+   "pal-maple-a1b2c3"
+  ],
+  "spawned": []
+ },
+ "kill-fails": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "reply",
+    "text": "Couldn't kill ghost-session."
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [
+   "ghost-session"
+  ],
+  "spawned": []
+ },
+ "kill-usage": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "reply",
+    "text": "Usage: /kill <session-name>"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "new-active": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for pal\nhttps://lodge.example/tui?session=pal-fresh-000001"
+   }
+  ],
+  "chat_state": {
+   "active_session": "pal-fresh-000001",
+   "active_wolt": "pal"
+  },
+  "killed": [],
+  "spawned": [
+   "pal"
+  ]
+ },
+ "new-named": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for bud\nhttps://lodge.example/tui?session=bud-fresh-000001"
+   }
+  ],
+  "chat_state": {
+   "active_session": "bud-fresh-000001",
+   "active_wolt": "bud"
+  },
+  "killed": [],
+  "spawned": [
+   "bud"
+  ]
+ },
+ "new-no-active": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "reply",
+    "text": "No active wolt. Use /wolt <name> first."
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "new-spawn-fails": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "reply",
+    "text": "couldn't start session for ots: engine not logged in"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": [
+   "ots"
+  ]
+ },
+ "new-unknown": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "reply",
+    "text": "No wolt named 'nobody' found."
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "sessions": {
+  "app_actions": [],
+  "calls": [
+   {
+    "buttons": [
+     [
+      [
+       "🦫 pal-maple-a1b2c3",
+       "https://lodge.example/tui?session=pal-maple-a1b2c3",
+       null
+      ],
+      [
+       "⏹",
+       null,
+       "sstop:pal-maple-a1b2c3"
+      ]
+     ],
+     [
+      [
+       "🦫 bud-birch-b2c3d4",
+       "https://lodge.example/tui?session=bud-birch-b2c3d4",
+       null
+      ],
+      [
+       "⏹",
+       null,
+       "sstop:bud-birch-b2c3d4"
+      ]
+     ]
+    ],
+    "kind": "reply",
+    "parse_mode": "Markdown",
+    "text": "*2 active sessions*\n🦫 pal-maple-a1b2c3 (1) · 🦫 bud-birch-b2c3d4 (1)"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "start": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "reply",
+    "text": "Hey. Send a message and it goes to your wolt. /wolt picks which one."
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "stranger-handle_apps": {
+  "app_actions": [],
+  "calls": [],
+  "chat_state": {
+   "active_session": "pal-maple-a1b2c3",
+   "active_wolt": "pal"
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "stranger-handle_callback": {
+  "app_actions": [],
+  "calls": [],
+  "chat_state": {
+   "active_session": "pal-maple-a1b2c3",
+   "active_wolt": "pal"
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "stranger-handle_help": {
+  "app_actions": [],
+  "calls": [],
+  "chat_state": {
+   "active_session": "pal-maple-a1b2c3",
+   "active_wolt": "pal"
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "stranger-handle_holds": {
+  "app_actions": [],
+  "calls": [],
+  "chat_state": {
+   "active_session": "pal-maple-a1b2c3",
+   "active_wolt": "pal"
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "stranger-handle_idle": {
+  "app_actions": [],
+  "calls": [],
+  "chat_state": {
+   "active_session": "pal-maple-a1b2c3",
+   "active_wolt": "pal"
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "stranger-handle_kill": {
+  "app_actions": [],
+  "calls": [],
+  "chat_state": {
+   "active_session": "pal-maple-a1b2c3",
+   "active_wolt": "pal"
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "stranger-handle_new": {
+  "app_actions": [],
+  "calls": [],
+  "chat_state": {
+   "active_session": "pal-maple-a1b2c3",
+   "active_wolt": "pal"
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "stranger-handle_sessions": {
+  "app_actions": [],
+  "calls": [],
+  "chat_state": {
+   "active_session": "pal-maple-a1b2c3",
+   "active_wolt": "pal"
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "stranger-handle_setwolt": {
+  "app_actions": [],
+  "calls": [],
+  "chat_state": {
+   "active_session": "pal-maple-a1b2c3",
+   "active_wolt": "pal"
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "stranger-handle_start": {
+  "app_actions": [],
+  "calls": [],
+  "chat_state": {
+   "active_session": "pal-maple-a1b2c3",
+   "active_wolt": "pal"
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "wolt-picker-none-active": {
+  "app_actions": [],
+  "calls": [
+   {
+    "buttons": [
+     [
+      [
+       "🦝 pal",
+       null,
+       "wolt:pal"
+      ],
+      [
+       "🦫 bud",
+       null,
+       "wolt:bud"
+      ]
+     ],
+     [
+      [
+       "🦦 ots",
+       null,
+       "wolt:ots"
+      ]
+     ]
+    ],
+    "kind": "reply",
+    "text": "active: none\n\ntap to switch"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "wolt-picker-pal-active": {
+  "app_actions": [],
+  "calls": [
+   {
+    "buttons": [
+     [
+      [
+       "🦫 bud",
+       null,
+       "wolt:bud"
+      ],
+      [
+       "🦦 ots",
+       null,
+       "wolt:ots"
+      ]
+     ]
+    ],
+    "kind": "reply",
+    "text": "active: 🦝 pal\n\ntap to switch"
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": "pal"
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "wolt-set": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "reply",
+    "text": "active wolt set to bud. next message starts a session."
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": "bud"
+  },
+  "killed": [],
+  "spawned": []
+ },
+ "wolt-unknown": {
+  "app_actions": [],
+  "calls": [
+   {
+    "kind": "reply",
+    "text": "no wolt named 'nobody' found."
+   }
+  ],
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "killed": [],
+  "spawned": []
+ }
+}
