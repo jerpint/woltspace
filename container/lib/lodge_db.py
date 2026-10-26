@@ -125,6 +125,18 @@ _MIGRATIONS: list[tuple[int, tuple[str, ...]]] = [
             record     TEXT NOT NULL
         )""",
     )),
+    (4, (
+        # Events a connector handed in, by its own id: a resend after a
+        # reconnect is answered "duplicate" and not dispatched again. Pruned
+        # after a week (connector_events.prune).
+        """CREATE TABLE IF NOT EXISTS connector_events (
+            connector TEXT NOT NULL,
+            event_id  TEXT NOT NULL,
+            ts        REAL NOT NULL,
+            PRIMARY KEY (connector, event_id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS connector_events_ts ON connector_events(ts)",
+    )),
 ]
 _BREAKING: set[int] = set()
 
