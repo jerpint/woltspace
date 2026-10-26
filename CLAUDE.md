@@ -199,8 +199,8 @@ The bot brain. Loaded by Telegram/Slack adapters. Uses **litellm** for LLM routi
 - When `claude_code` is called: spawns a tmux session running `run-session.sh` → Claude Code CLI
 - Session metadata (status, routing, creature, viewport) stored in the **session registry** — see `container/lib/sessions.py`
 
-### `container/bot/telegram_adapter.py`
-Thin Telegram layer over core. Persists chat history to `.state/chat/{chat_id}.jsonl`. Group chat support (responds when @mentioned).
+### `container/connectors/telegram/`
+Telegram as a connector the lodge ships: its own process, talking to the lodge over a unix socket (`container/lib/connector_*.py`). The lodge's side, shared by every connector, is `container/lib/chat_lodge.py`: owner check, commands, routing, the dog. Group chat support (responds when @mentioned). See `docs/connectors.md`.
 
 ### `container/skills/`
 Discovery files agents read from `~/.claude/skills/`. Platform skills live under base names (`notify`, `viewport`, …) and are delivered namespaced as `woltspace:<name>` — claude installs them as the `woltspace` plugin (`container/skills/.claude-plugin/`), codex/opencode reach the same tree through a `~/.claude/skills/woltspace` symlink. Current platform skills: `start-chat`, `create-wolt`, `notify`, `viewport`, `site`, `apps`, `new-app`, `wolf`, `update`, `session-summary`, `worktui` (derived at boot from worktui's own bundled skill — see `derive_worktui_skill` in `src/woltspace/container_entrypoint.py`, not hand-maintained), `organize-context`, `setup-telegram`, `setup-github`, `setup-backup`, `iwcl`, `cloudflare`, `hold`. A wolt opts into that delivery with `"skills_delivery": "plugin"` in its `wolt.json`; without it the old copy sync still runs, delivering the same skills under their historical `woltspace-<name>` names — directory **and** frontmatter, since claude reads one and codex the other. How a skill is spelled in a prompt follows how it was delivered: build one with `platform_skill_invoke(harness, name, delivery)`, never by hand. Retired skills live in `container/legacy-skills/`, outside the plugin root. **The full intent record — both delivery paths, the naming matrix, why it works natively, and the ratchet's end state — is `docs/skills-delivery.md`; read it before touching skill delivery or renaming a skill.**
@@ -332,7 +332,7 @@ Multiple wolts can run in one container. They all share:
 
 Currently supported: **Telegram**, **Slack**. WhatsApp is planned.
 
-Each adapter is a thin Python file over `core.py`. To add a new adapter: copy `telegram_adapter.py`, implement message send/receive, set `BOT_ADAPTER` env var, and give it a `ChannelConnector` in `src/woltspace/channels.py`.
+A new chat app is a connector: a folder with `connector.json` and a program that talks to the lodge over its socket. Try it in a lodge from `<data root>/.space/connectors/<name>/`, then contribute the same folder under `container/connectors/<name>/`. See `docs/connectors.md`.
 
 ---
 

@@ -291,7 +291,7 @@ woltspace restart
 woltspace status
 ```
 
-`connector telegram: running · bot.telegram_adapter from … · pid N` means it
+`connector telegram: running · Telegram · bundled connector … · pid N` means it
 is up. If it says `degraded` with a 409, the other bot is still polling that
 token. If it says `disabled · enabled but python-telegram-bot is not
 installed`, you skipped the extra — this is the exact output when that happens:
