@@ -14,10 +14,14 @@ woltspace restore ~/snapshots/woltspace-backup-pre-rc5.tar.gz
 Both commands work the same natively and inside the container — they only ever
 touch files. Take one before an upgrade.
 
-With `WOLTSPACE_BACKUP_AGE_RECIPIENT` set, the backup is one
-`woltspace-backup-<tag>.tar.gz.age` instead: the same tar, secrets included,
-encrypted to that key, and restored with `--identity` (see "Encrypted
-backups").
+A backup is **slim** unless you pass `--full`: all context and code, with
+media and other large files listed rather than archived (below). Either way
+`.space/lodge.db`, the lodge's state, goes in whole. With
+`WOLTSPACE_BACKUP_AGE_RECIPIENT` set, the backup is one
+`woltspace-backup-<tag>.tar.gz.age` instead: the same tar, slim or full,
+secrets included, encrypted to that key, and restored with `--identity` (see
+"Encrypted backups"). A restore disarms the copy it makes, so it cannot act on
+the lodge it came from (see "A copy keeps its hands off its source").
 
 ## Slim by default
 
@@ -30,7 +34,8 @@ a backup is **slim**:
   `CLAUDE.md`, `AGENTS.md`, skills, Claude transcripts, file history and todos
   (`.claude/projects`, `.claude/file-history`, `.claude/todos`), Codex sessions
   and state databases, opencode's session store, every file inside a `.git`
-  directory, and the lodge's `.space/` (without `.space/logs/`), `.state/` and
+  directory, and the lodge's `.space/` (without `.space/logs/`, and with
+  `lodge.db` always, see "The lodge database"), `.state/` and
   `woltspace.json`. This applies at any depth, so a lodge nested inside a wolt
   keeps its context too.
 - **Everything else is kept when it is text or code** (Markdown, HTML, CSS,
@@ -72,37 +77,40 @@ a backup is **slim**:
 An app's images usually come back anyway: its `.git` is kept whole, so
 `git restore .` in the restored app brings back every tracked file.
 
-`--full` keeps today's wider rule instead: everything below except the named
-junk. Use it for a media backup, ideally `--out` on another drive: on a
-lived-in lodge it can be tens of gigabytes where slim is under a gigabyte.
+`--full` keeps the wider rule instead (next section): media, binaries, app
+databases and logs too, minus the named caches. Use it for a media backup,
+ideally `--out` on another drive: on a lived-in lodge it can be tens of gigabytes where slim is under a gigabyte.
 
 ## What goes in (`--full`)
 
-Everything under `WOLTSPACE_WOLTS_DIR` that is data (a slim backup then keeps
-only the part described above):
+With `--full`, everything under `WOLTSPACE_WOLTS_DIR` that is data goes in (a
+slim backup keeps only the part described above):
 
 - each wolt's `wolt/` tree — `memory/`, `site/`, `sparks/`, `drafts/`, `apps/`
 - `CLAUDE.md` and `wolt.json` per wolt
 - `woltspace.json` (but not `.env`, unless the backup is encrypted — see
   "Secrets are not backed up")
 - `.state/` (session registry, wolf state) and `.space/` (platform metadata)
-- `.space/lodge.db`, the lodge's database, as a snapshot taken with SQLite's
-  backup API into memory (never a temporary file): consistent even while the
-  lodge writes to it. Its live `lodge.db-wal`
-  and `lodge.db-shm` stay out. Any other SQLite file (an app's own) is archived
-  as it lies, `-wal` included, because that is where its newest rows are.
-  Every row goes in, chat routing, the Slack queue and the Auto and dig
-  consents included. On restore, the apps' pids (and tunnel pids) are blanked
-  in the restored copy: on another machine an old pid can be any live
-  process, so the lodge starts the app again instead of trusting it
-  (pre-lodge.db app files, `.space/apps/<name>.json`, come back as they were)
+- `.space/lodge.db` (see "The lodge database"); any other SQLite file (an
+  app's own) is archived as it lies, `-wal` included, because that is where
+  its newest rows are
 - logs, chat history, spools and the `.imported` copies lodge.db's importers
-  leave behind: everything except junk (below) and the two OAuth login files
+  leave behind, minus the junk (below) and the withheld credential files
 - `.git` directories — a wolt's history is data, so it is archived in full
 
 Symlinks are archived **as symlinks** and never followed. The skill-delivery
 links point into the installed wheel; following them would swallow the platform
 a backup is not supposed to be backing up.
+
+## The lodge database
+
+`.space/lodge.db` holds the lodge's state: sessions, Auto and dig consents,
+the wolf's runs, chat routing, the Slack queue, running apps. It is always in
+the backup, slim or full, as a snapshot taken with SQLite's backup API into
+memory (never a temporary file): consistent even while the lodge writes to
+it, every row included. Its live `lodge.db-wal` and `lodge.db-shm` stay out.
+A restore disarms its copy of it (see "A copy keeps its hands off its
+source").
 
 ## What is excluded, and why
 
@@ -308,32 +316,44 @@ written anywhere. The archive is decrypted twice, never to disk: once to audit
 every member (below), then again to extract, and the second pass must see
 exactly the members the first one audited.
 
-On the first boot the lodge finds no tmux behind the sessions that were
-`running` and marks them `orphaned`; `resting` sessions keep their conversation
-id. Re-authenticate the harnesses, as the checklist says.
+Every session comes back stopped (below), with its conversation id, so it
+can be resumed. Re-authenticate the harnesses, as the checklist says.
 
 ### A copy keeps its hands off its source
 
 A restore on the machine that made the backup shares that machine's processes,
 its tmux server and its paths. Left as archived, the copy would adopt the
 source's running apps and sessions when it boots, and stopping one in the copy
-would stop the original. So a restore disarms the copy before it returns:
+would stop the original. So a restore disarms the copy before it returns. It
+opens only the copy: its own `lodge.db` under the restore target, never the
+live lodge's.
 
-- **Runtime records go:** `.space/apps/*.json` (an app's "running" state, with
-  its pid) and `.space/platform/` `control-plane`, `tunnel`, `connectors` and
-  `adoption` records. The control plane rewrites them on boot; the copy boots
-  with every app stopped.
+- **Runtime records go:** the `.space/platform/` `control-plane`, `tunnel`,
+  `connectors` and `adoption` records. The control plane rewrites them on boot.
+- **Apps forget their pids:** each `apps_running` row keeps the owner's wish to
+  run the app, but its pid, tunnel pid and tunnel URL are blanked. On the
+  machine the copy lands on an old pid can be any live process: the copy's
+  lodge starts its own app instead of taking someone else's as running, or
+  signalling it.
 - **Sessions come back stopped,** without their tmux name or pane, so boot
   adopts none of them. Transcripts and resume ids are untouched: every session
   can be resumed in the copy.
 - **Paths are re-pointed:** a session's `workdir`, `dir` and
-  `canonical_workdir`, and every auto-mode approval, that pointed inside the
+  `canonical_workdir`, and every Auto approval, that pointed inside the
   old wolts directory now points inside the copy. So does `/workspace/wolts`,
   where the container era saw the same lodge.
 - **What pointed outside is set aside, not re-pointed:** a session that worked
-  in a directory outside the lodge moves to `restore-quarantine/` beside the
-  copy, and an approval for such a directory is dropped, so auto mode asks
-  again.
+  in a directory outside the lodge leaves the copy's database for
+  `restore-quarantine/<wolt>/.state/sessions/<name>.json` beside the copy, the
+  file shape the importer reads: moved into the copy's
+  `<wolt>/.state/sessions/`, it is imported on the next boot. An Auto approval
+  for such a directory is dropped, so Auto asks again. Dig consents name
+  other machines and stay; `restore` says to review them.
+- **Older state files get the same treatment.** An archive from before
+  `lodge.db` holds `<wolt>/.state/sessions/*.json`, `.space/auto-grants.json`
+  and `.space/apps/*.json`, which the copy's first boot imports; the
+  `.imported` copies a newer lodge left behind are what a downgrade puts back.
+  Both are disarmed in place by the rules above.
 
 - **The copy gets its own tmux server.** A session's tmux name is its own
   name, so a copy on the machine's shared tmux server could stop its source's
@@ -351,8 +371,9 @@ WOLTSPACE_PORT=7788 WOLTSPACE_PUBLIC_TUNNEL=false \
 ```
 
 Disarming rewrites and deletes files, so it never does that through a
-symlink: an archive with a link at the data root, in `.space`, or in a wolt's
-`.state` is refused before extraction (a top-level link pointing inside the
+symlink: an archive with a link at the data root, in `.space` (`lodge.db`
+and its companions included), or in a wolt's `.state` is refused before
+extraction (a top-level link pointing inside the
 lodge is fine), and disarm itself fails closed if it meets one.
 
 ### What a restore refuses
