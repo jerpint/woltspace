@@ -30,6 +30,7 @@ import fnmatch
 import io
 import json
 import os
+import re
 import shutil
 import socket
 import sqlite3
@@ -137,7 +138,8 @@ SLIM_TRANSCRIPT_PREFIXES = (
     ".claude/projects/", ".claude-state/projects/", ".codex/sessions/",
     ".codex/archived_sessions/", ".local/share/opencode/",
 )
-#: ... and at the data root, the lodge's own config. Logs are not context.
+#: ... and at the data root, the lodge's own config and state, `lodge.db`
+#: included (it is the lodge, not an app's database). Logs are not context.
 SLIM_ROOT_CONTEXT = (".space/", ".state/", "woltspace.json")
 SLIM_ROOT_SKIPPED = (".space/logs/",)
 
@@ -1036,9 +1038,8 @@ def audit_members(members: list[tarfile.TarInfo], target: Path) -> None:
 
 #: Runtime records the control plane writes about processes it runs. In a copy
 #: they name the source's processes: a copy that believed them would adopt the
-#: source's apps, tunnel and connectors as its own, and stop them on request.
-#: The control plane rewrites all of them when it boots, so a restore removes
-#: them and the copy boots with nothing running.
+#: source's tunnel and connectors as its own, and stop them on request. The
+#: control plane rewrites all of them when it boots, so a restore removes them.
 RUNTIME_RECORDS = (
     ".space/platform/control-plane.json", ".space/platform/control-plane.lock",
     ".space/platform/tunnel.json", ".space/platform/connectors.json",
@@ -1055,6 +1056,10 @@ RESTORED_TMUX_NAME = "tmux"
 #: Session statuses a control plane would adopt on boot (by tmux name).
 _LIVE_SESSION_STATUSES = ("running", "orphaned", "starting", "pending")
 _SESSION_PATH_KEYS = ("workdir", "dir")
+#: What an app's state says about the processes behind it.
+_APP_PID_KEYS = ("pid", "tunnel_pid", "tunnel_url")
+#: A pre-lodge.db state file, or the copy lodge.db's importer left of it.
+_LEGACY_JSON = re.compile(r".+\.json(\.imported(\.\d+)?)?")
 
 
 #: Where the container mounts the data root. A lodge that ran in the container
@@ -1089,6 +1094,13 @@ def _write_json(path: Path, data) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
+def _read_json(path: Path):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
 def restored_tmux_dir(wolts_dir: Path) -> Path | None:
     """The private tmux directory of a restored copy, or None for a lodge."""
     if (Path(wolts_dir) / RESTORED_MARKER).is_file():
@@ -1099,20 +1111,28 @@ def restored_tmux_dir(wolts_dir: Path) -> Path | None:
 def _disarm_path(rel: str) -> bool:
     """Whether a lodge-relative path is one a restore must rewrite or remove."""
     parts = rel.split("/") if rel else []
+    if parts[:1] == [".archive"]:
+        parts = parts[1:]  # an archived wolt keeps its sessions too
     if len(parts) <= 1:
         return True  # the data root, or anything at its top level
     if parts[0] == ".space":
-        return parts[1] in {"apps", "platform", "auto-grants.json"} and len(parts) <= 3
-    return parts[1] == ".state" and (len(parts) == 2 or (parts[2] == "sessions" and len(parts) <= 4))
+        name = parts[1]
+        return len(parts) <= 3 and (
+            name in {"apps", "platform"} or name.startswith(("lodge.db", "auto-grants.json"))
+        )
+    return parts[1] == ".state" and (
+        len(parts) == 2 or (parts[2].startswith("sessions") and len(parts) <= 4)
+    )
 
 
 def _refuse_disarm_links(members: list[tarfile.TarInfo]) -> None:
     """Refuse an archive whose links would carry a restore's writes elsewhere.
 
     The audit lets a symlink point outside the target, so a link where a
-    restore rewrites or deletes runtime records (`.space`, a wolt's `.state`,
-    the data root itself) would let it rewrite or delete the files at the far
-    end: another lodge's. No backup of an ordinary lodge has one.
+    restore rewrites or deletes runtime records (`.space`, `lodge.db`, a
+    wolt's `.state`, the data root itself) would let it rewrite or delete the
+    files at the far end: another lodge's. No backup of an ordinary lodge has
+    one.
     """
     for member in members:
         name = member.name.rstrip("/")
@@ -1140,18 +1160,202 @@ def _guard(wolts_dir: Path, path: Path) -> Path:
         here = here.parent
 
 
+def _wolt_dirs(wolts_dir: Path) -> list[Path]:
+    """Every directory that can hold a wolt's `.state`, archived wolts too."""
+    found = []
+    for parent in (wolts_dir, wolts_dir / ".archive"):
+        if parent.is_symlink() or not parent.is_dir():
+            continue  # a linked `.archive` is checked below, as a top-level link
+        for top in sorted(parent.iterdir()):
+            if top.is_symlink():
+                if not top.resolve().is_relative_to(wolts_dir.resolve()):
+                    raise ValueError(f"refusing to disarm through a symlink: {top}")
+                continue  # points inside the lodge: disarmed under its real name
+            if top.is_dir():
+                found.append(top)
+    return found
+
+
+def _disarm_session(record: dict, source: str, wolts_dir: Path, report: dict) -> tuple[dict, list]:
+    """One session, stopped, without its runtime handle, its paths re-pointed.
+
+    Returns the new record and the absolute paths it names outside the lodge.
+    """
+    workdirs = [record.get(key) for key in _SESSION_PATH_KEYS]
+    workdirs.append((record.get("target") or {}).get("canonical_workdir"))
+    outside = sorted({
+        value for value in workdirs
+        if isinstance(value, str) and value.startswith("/")
+        and _rebase(value, source, wolts_dir) is None
+    })
+    record = dict(record)
+    if record.get("status") in _LIVE_SESSION_STATUSES:
+        record["status"] = "stopped"
+        record["finished_at"] = record.get("finished_at") or int(datetime.now(timezone.utc).timestamp())
+        report["sessions_stopped"] += 1
+    record.pop("runtime", None)  # tmux name and pane belong to the source's tmux
+    rebased = _rebase_strings(record, source, wolts_dir)
+    if rebased != record:
+        report["sessions_rebased"] += 1
+    return rebased, outside
+
+
+def _safe_name(value) -> str:
+    """A database value as one path component under the quarantine."""
+    name = str(value or "").replace("/", "_").replace("\\", "_")
+    return "_" if name in ("", ".", "..") else name
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f'PRAGMA table_info("{table}")')}
+
+
+def _disarm_lodge_db(wolts_dir: Path, source: str, target: Path, report: dict) -> None:
+    """Disarm the copy's own `lodge.db`, the one under the restore target.
+
+    Sessions, auto-mode approvals and app state live here from 0.5.23 on. A
+    session that worked outside the lodge leaves the database for the
+    quarantine, written the way a pre-lodge.db release kept it
+    (`<wolt>/.state/sessions/<name>.json`): moved back into the copy, the next
+    boot imports it. A table without the columns the lodge reads is one no
+    lodge acts on, and is left as it is.
+    """
+    db = _guard(wolts_dir, wolts_dir / LODGE_DB)
+    for companion in SQLITE_COMPANIONS:
+        _guard(wolts_dir, db.with_name(db.name + companion))
+    if not db.is_file():
+        return
+    with closing(sqlite3.connect(db, isolation_level=None)) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        conn.execute("BEGIN IMMEDIATE")
+        if "apps_running" in tables and {"name", "record"} <= _columns(conn, "apps_running"):
+            # On the machine a backup lands on, an old pid may be any live
+            # process: the lodge would take the app as running, and stopping
+            # it would signal that process. Without them, the lodge starts it.
+            blank = [key for key in _APP_PID_KEYS if key in _columns(conn, "apps_running")]
+            paths = ", ".join(f"'$.{key}'" for key in _APP_PID_KEYS)
+            conn.execute(
+                "UPDATE apps_running SET "
+                + "".join(f"{key}=NULL, " for key in blank)
+                + f"record=json_remove(record, {paths})"
+            )
+            report["apps"] += [row[0] for row in conn.execute("SELECT name FROM apps_running")]
+        if "sessions" in tables and {"name", "record"} <= _columns(conn, "sessions"):
+            columns = _columns(conn, "sessions")
+            for name, raw in conn.execute("SELECT name, record FROM sessions").fetchall():
+                try:
+                    record = json.loads(raw)
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                rebased, outside = _disarm_session(record, source, wolts_dir, report)
+                if outside:
+                    rel = f"{_safe_name(rebased.get('wolt'))}/.state/sessions/{_safe_name(name)}.json"
+                    aside = target / QUARANTINE_NAME / rel
+                    aside.parent.mkdir(parents=True, exist_ok=True)
+                    _write_json(aside, {"name": name, **rebased})
+                    conn.execute("DELETE FROM sessions WHERE name=?", (name,))
+                    report["sessions_set_aside"].append({"path": rel, "outside": outside})
+                    continue
+                sets = {"record": json.dumps(rebased)}
+                for key in ("status", "finished_at"):
+                    if key in columns and key in rebased:
+                        sets[key] = rebased[key]
+                conn.execute(
+                    f"UPDATE sessions SET {', '.join(f'{key}=?' for key in sets)} WHERE name=?",
+                    (*sets.values(), name),
+                )
+        if "grants" in tables and {"kind", "wolt_id", "scope"} <= _columns(conn, "grants"):
+            rows = conn.execute(
+                "SELECT rowid, wolt_id, scope FROM grants WHERE kind='auto'").fetchall()
+            for rowid, wolt_id, scope in rows:
+                moved = _rebase(scope, source, wolts_dir) if isinstance(scope, str) else None
+                if moved is None:
+                    conn.execute("DELETE FROM grants WHERE rowid=?", (rowid,))
+                    report["grants_dropped"].append(scope)
+                    continue  # approval for a folder the copy does not hold: ask again
+                # Two approvals that land on one folder (source path and
+                # /workspace/wolts) are one approval in the copy.
+                conn.execute("UPDATE OR REPLACE grants SET scope=? WHERE rowid=?", (moved, rowid))
+                report["grants_rebased"] += 1
+        conn.execute("COMMIT")
+
+
+def _disarm_legacy_files(wolts_dir: Path, source: str, target: Path, report: dict) -> None:
+    """The same disarm for the state files a release before lodge.db wrote.
+
+    An older archive holds nothing else, and the copy's first boot imports
+    them into its lodge.db. The `.imported` copies an import leaves behind
+    are disarmed too: going back to an older release puts them back.
+    """
+    apps_state = _guard(wolts_dir, wolts_dir / ".space" / "apps")
+    if apps_state.is_dir():
+        for path in sorted(apps_state.iterdir()):
+            if not _LEGACY_JSON.fullmatch(path.name) or not _guard(wolts_dir, path).is_file():
+                continue
+            state = _read_json(path)
+            if isinstance(state, dict):
+                _write_json(path, {k: v for k, v in state.items() if k not in _APP_PID_KEYS})
+                report["apps"].append(path.name.split(".json", 1)[0])
+
+    for top in _wolt_dirs(wolts_dir):
+        state_dir = _guard(wolts_dir, top / ".state")
+        if not state_dir.is_dir():
+            continue
+        for folder in sorted(state_dir.iterdir()):
+            if not folder.name.startswith("sessions") or not _guard(wolts_dir, folder).is_dir():
+                continue
+            for path in sorted(folder.glob("*.json")):
+                record = _read_json(_guard(wolts_dir, path)) if path.is_file() else None
+                if not isinstance(record, dict):
+                    continue
+                rebased, outside = _disarm_session(record, source, wolts_dir, report)
+                rel = _rel(wolts_dir, path)
+                if outside:
+                    aside = target / QUARANTINE_NAME / rel
+                    aside.parent.mkdir(parents=True, exist_ok=True)
+                    _write_json(aside, rebased)
+                    path.unlink()
+                    report["sessions_set_aside"].append({"path": rel, "outside": outside})
+                    continue
+                _write_json(path, rebased)
+
+    space = _guard(wolts_dir, wolts_dir / ".space")
+    for grants_path in sorted(space.glob("auto-grants.json*")) if space.is_dir() else []:
+        if not _LEGACY_JSON.fullmatch(grants_path.name) or not _guard(wolts_dir, grants_path).is_file():
+            continue
+        grants = _read_json(grants_path)
+        if not (isinstance(grants, dict) and isinstance(grants.get("grants"), list)):
+            continue
+        kept = []
+        for grant in grants["grants"]:
+            workdir = grant.get("canonical_workdir") if isinstance(grant, dict) else None
+            moved = _rebase(workdir, source, wolts_dir) if isinstance(workdir, str) else None
+            if moved is None:
+                report["grants_dropped"].append(workdir)
+                continue  # approval for a folder the copy does not hold: ask again
+            kept.append({**grant, "canonical_workdir": moved})
+            report["grants_rebased"] += 1
+        grants["grants"] = kept
+        _write_json(grants_path, grants)
+
+
 def disarm(wolts_dir: Path, source: str, target: Path) -> dict:
     """Make a restored lodge a copy that cannot reach the lodge it came from.
 
     A copy restored on the machine that made it shares that machine's process
     table, its tmux server and its paths. Left as archived, it would adopt the
     source's live apps and sessions on boot, and stopping one in the copy would
-    stop the original. So the copy's runtime records go, its sessions come back
-    stopped with no runtime handle, and every path that pointed inside the old
-    lodge is re-pointed at the new one. A session that worked outside the lodge
-    is set aside, never re-pointed: its directory is not part of the backup.
-    Transcripts and resume ids are untouched, so every session can still be
-    resumed in the copy.
+    stop the original. So the copy's runtime records go, its apps forget their
+    pids, its sessions come back stopped with no runtime handle, and every path
+    that pointed inside the old lodge is re-pointed at the new one. A session
+    that worked outside the lodge is set aside, never re-pointed: its directory
+    is not part of the backup. Transcripts and resume ids are untouched, so
+    every session can still be resumed in the copy.
+
+    Only the copy is opened: its `lodge.db`, and the older state files beside
+    it, all under `wolts_dir`.
     """
     report = {
         "source": source, "runtime_records": [], "apps": [], "sessions_stopped": 0,
@@ -1164,75 +1368,8 @@ def disarm(wolts_dir: Path, source: str, target: Path) -> dict:
         if path.is_file():
             path.unlink()
             report["runtime_records"].append(rel)
-    apps_state = _guard(wolts_dir, wolts_dir / ".space" / "apps")
-    if apps_state.is_dir():
-        for path in sorted(apps_state.glob("*.json")):
-            if _guard(wolts_dir, path).is_file():
-                path.unlink()  # "running" state: on boot a dead pid is restarted
-                report["apps"].append(path.stem)
-
-    sessions = []
-    for top in sorted(wolts_dir.iterdir()):
-        if top.is_symlink():
-            if not top.resolve().is_relative_to(wolts_dir.resolve()):
-                raise ValueError(f"refusing to disarm through a symlink: {top}")
-            continue  # points inside the lodge: disarmed under its real name
-        if top.is_dir():
-            folder = _guard(wolts_dir, top / ".state" / "sessions")
-            if folder.is_dir():
-                sessions.extend(sorted(folder.glob("*.json")))
-    for path in sessions:
-        if not _guard(wolts_dir, path).is_file():
-            continue
-        try:
-            record = json.loads(path.read_text())
-        except (OSError, ValueError):
-            continue
-        if not isinstance(record, dict):
-            continue
-        workdirs = [record.get(key) for key in _SESSION_PATH_KEYS]
-        workdirs.append((record.get("target") or {}).get("canonical_workdir"))
-        outside = [
-            value for value in workdirs
-            if isinstance(value, str) and value.startswith("/")
-            and _rebase(value, source, wolts_dir) is None
-        ]
-        if record.get("status") in _LIVE_SESSION_STATUSES:
-            record["status"] = "stopped"
-            record["finished_at"] = record.get("finished_at") or int(datetime.now(timezone.utc).timestamp())
-            report["sessions_stopped"] += 1
-        record.pop("runtime", None)  # tmux name and pane belong to the source's tmux
-        rebased = _rebase_strings(record, source, wolts_dir)
-        if rebased != record:
-            report["sessions_rebased"] += 1
-        rel = _rel(wolts_dir, path)
-        if outside:
-            aside = target / QUARANTINE_NAME / rel
-            aside.parent.mkdir(parents=True, exist_ok=True)
-            _write_json(aside, rebased)
-            path.unlink()
-            report["sessions_set_aside"].append({"path": rel, "outside": sorted(set(outside))})
-            continue
-        _write_json(path, rebased)
-
-    grants_path = _guard(wolts_dir, wolts_dir / ".space" / "auto-grants.json")
-    if grants_path.is_file():
-        try:
-            grants = json.loads(grants_path.read_text())
-        except (OSError, ValueError):
-            grants = None
-        if isinstance(grants, dict) and isinstance(grants.get("grants"), list):
-            kept = []
-            for grant in grants["grants"]:
-                workdir = grant.get("canonical_workdir") if isinstance(grant, dict) else None
-                moved = _rebase(workdir, source, wolts_dir) if isinstance(workdir, str) else None
-                if moved is None:
-                    report["grants_dropped"].append(workdir)
-                    continue  # approval for a folder the copy does not hold: ask again
-                kept.append({**grant, "canonical_workdir": moved})
-                report["grants_rebased"] += 1
-            grants["grants"] = kept
-            _write_json(grants_path, grants)
+    _disarm_lodge_db(wolts_dir, source, target, report)
+    _disarm_legacy_files(wolts_dir, source, target, report)
 
     marker = _guard(wolts_dir, wolts_dir / RESTORED_MARKER)
     marker.parent.mkdir(parents=True, exist_ok=True)
@@ -1291,7 +1428,6 @@ def restore_backup(
             tar.extractall(target, members=members, filter=_restore_filter)
     manifest = json.loads((target / MANIFEST_NAME).read_text())
     wolts_dir = target / manifest.get("archive_root", ARCHIVE_ROOT)
-    _forget_app_pids(wolts_dir / LODGE_DB)
     disarmed = disarm(wolts_dir, manifest.get("source") or "", target) if wolts_dir.is_dir() else {}
     return RestoreResult(
         target=target,
@@ -1300,18 +1436,6 @@ def restore_backup(
         entries=len([m for m in members if m.name not in _META_NAMES]),
         disarmed=disarmed,
     )
-
-
-def _forget_app_pids(db: Path) -> None:
-    """On the machine a backup lands on, an old pid may be any live process:
-    the lodge would take the app as running, and stopping it would signal
-    that process. Blank them in the restored copy, so the lodge starts it."""
-    if db.is_symlink() or not db.is_file():
-        return
-    with closing(sqlite3.connect(db, isolation_level=None)) as conn:
-        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='apps_running'").fetchone():
-            conn.execute("UPDATE apps_running SET pid=NULL, tunnel_pid=NULL, tunnel_url=NULL,"
-                         " record=json_remove(record, '$.pid', '$.tunnel_pid', '$.tunnel_url')")
 
 
 @contextmanager
@@ -1505,8 +1629,9 @@ def disarm_lines(result: RestoreResult) -> list[str]:
     if not done:
         return []
     lines = [
-        f"disarmed: {len(done['apps'])} app(s) and {done['sessions_stopped']} session(s) come back "
-        "stopped; nothing from the source's runtime is adopted",
+        f"disarmed: {done['sessions_stopped']} session(s) come back stopped and "
+        f"{len(done['apps'])} app(s) without their pids; nothing from the source's runtime "
+        "is adopted",
     ]
     if done["sessions_rebased"] or done["grants_rebased"]:
         lines.append(
