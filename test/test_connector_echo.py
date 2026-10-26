@@ -204,3 +204,92 @@ def test_an_outside_connector_is_never_imported(notify, monkeypatch):
     module, _records = notify
     with pytest.raises(KeyError):
         module._sender("discord")
+
+
+# --- the spawned process's real environment -----------------------------------
+
+def _env_dumper(path):
+    script = ("import json, os, sys, time; "
+              f"open({str(path)!r}, 'w').write(json.dumps(dict(os.environ))); time.sleep(30)")
+    return (sys.executable, "-c", script)
+
+
+def _wait_for(path, timeout=10.0):
+    import time
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if path.exists() and path.stat().st_size:
+            return json.loads(path.read_text())
+        time.sleep(0.05)
+    raise AssertionError(f"{path} never written")
+
+
+def test_the_spawned_process_gets_only_its_own_secret(layout, tmp_path, monkeypatch):
+    """Checked on the real child, beside a built-in connector, with every
+    connector's secret in the control plane's own environment."""
+    import dataclasses
+    from woltspace.channel_supervisor import ChannelSupervisor
+    from woltspace.channels import ConnectorPlan
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "telegram-secret")
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "slack-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
+    _config(layout, {"channels": {"echo": {"enabled": True, "token": "s3cret"}}})
+    echo = dataclasses.replace(_echo_plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"}),
+                               command=_env_dumper(tmp_path / "echo.json"))
+    builtin = ConnectorPlan("telegram", True, "built-in", _env_dumper(tmp_path / "telegram.json"),
+                            str(ROOT), {"TELEGRAM_BOT_TOKEN": "telegram-secret"})
+    sup = ChannelSupervisor(layout, [builtin, echo])
+    sup.start(watch=False)
+    try:
+        echo_env = _wait_for(tmp_path / "echo.json")
+        builtin_env = _wait_for(tmp_path / "telegram.json")
+    finally:
+        sup.stop()
+    assert echo_env["ECHO_TOKEN"] == "s3cret"
+    for secret in ("TELEGRAM_BOT_TOKEN", "SLACK_BOT_TOKEN", "OPENAI_API_KEY"):
+        assert secret not in echo_env
+    assert "PATH" in echo_env and echo_env["WOLTSPACE_API"]
+    # A built-in connector with its own class inherits the environment, as before.
+    assert builtin_env["TELEGRAM_BOT_TOKEN"] == "telegram-secret"
+
+
+# --- files to its own route only ---------------------------------------------
+
+def test_a_file_goes_to_the_sessions_own_route_and_nowhere_else(notify, monkeypatch, tmp_path):
+    import dataclasses
+    from server.notification_types import Attachment
+    module, records = notify
+    # A two-field route (room and thread), so the bound route is not just chat_id.
+    def parse(text):
+        room, _, thread = text.partition(":")
+        if ROOM.fullmatch(room) is None or not thread.isdigit():
+            raise ValueError("room:thread")
+        return {"room": room, "thread": thread}
+
+    def from_record(record):
+        try:
+            return parse(f"{record.get('chat_id')}:{record.get('thread_ts')}")
+        except ValueError:
+            return None
+
+    file_echo = dataclasses.replace(
+        ECHO,
+        manifest=dataclasses.replace(ECHO.manifest, capabilities=frozenset({"text", "files"}),
+                                     route_fields=("room", "thread")),
+        codec=RouteCodec(("room", "thread"), parse, from_record),
+        outbound=f"{__name__}:FILE_PLUGIN")
+    monkeypatch.setitem(connector_registry.SPECS, "echo", file_echo)
+    record = {"name": "s1", "wolt": "pal", "adapter": "echo", "chat_id": "room1", "thread_ts": "7"}
+    path = tmp_path / "note.txt"
+    path.write_text("hi")
+    attachment = Attachment(path, "note.txt", 2, "text/plain")
+    asyncio.run(module._send("echo", "s1", "here", "room1:7", routing=record,
+                             attachments=(attachment,), session_record=record))
+    assert SENT[-1]["destination"] == {"room": "room1", "thread": "7"}
+    for other in ("room1:8", "room2:7"):
+        with pytest.raises(module.AttachmentError):
+            asyncio.run(module._send("echo", "", "here", other,
+                                     attachments=(attachment,), session_record=record))
+
+
+FILE_PLUGIN = Plugin("echo", _send, secrets=("ECHO_TOKEN",), max_attachment_bytes=1024)

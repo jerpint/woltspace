@@ -98,6 +98,10 @@ class ConnectorPlan:
     # ends in "bot/", and the module name appears inside any file *named* after
     # it (`tail -f bot.telegram_adapter.log`). A token pair cannot.
     process_signature: tuple[str, ...] = ()
+    # When set, the child starts from a small system allowlist plus `env`, not
+    # from the control plane's environment (which holds every connector's
+    # secrets). Declared connectors run this way: they get only their own.
+    isolated_env: bool = False
 
     def to_record(self) -> dict:
         """Public description. Never includes `env` — that carries the token."""
@@ -584,6 +588,7 @@ class DeclaredConnector:
         return ConnectorPlan(
             self.name, True, f"{spec.title} · {module} from {bot_dir}",
             (sys.executable, "-m", module), bot_dir, child_env, remedy, ("-m", module),
+            isolated_env=True,
         )
 
 

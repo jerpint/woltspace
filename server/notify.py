@@ -160,6 +160,9 @@ class _Outbound:
     history_subdir: str = ""
     # A last-resort destination when nothing else routes the message.
     default_chat: Callable[[], str | None] | None = None
+    # The session record's own destination, in the form `destination` returns
+    # it; None means its record's chat_id, as for the built-ins.
+    bound_chat: Callable[[dict], str | None] | None = None
 
 
 def _tunnel_url() -> str:
@@ -296,6 +299,8 @@ def _declared_outbound(spec) -> _Outbound:
         explicit=explicit,
         from_session=from_session,
         history_subdir=spec.name,
+        bound_chat=lambda record: (codec.format(codec.from_record(record))
+                                   if codec.from_record(record) else None),
     )
 
 
@@ -436,7 +441,12 @@ def _own_chats(adapter: str, session_record: dict | None) -> set[str]:
     """The chats that are this lodge's own: the ones it is set up with, and the session's."""
     chats = set(_outbound(adapter).owner_chats())
     if session_record and session_record.get("adapter") == adapter:
-        chats.add(str(session_record.get("chat_id") or ""))
+        outbound = _outbound(adapter)
+        if outbound.bound_chat is not None:
+            # A declared connector's own route, read by its codec: exact, all fields.
+            chats.add(outbound.bound_chat(session_record) or "")
+        else:
+            chats.add(str(session_record.get("chat_id") or ""))
     chats.discard("")
     return chats
 
