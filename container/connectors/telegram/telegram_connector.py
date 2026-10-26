@@ -400,6 +400,9 @@ async def on_ack(frame: dict) -> None:
 
 
 UPLOAD_TIMEOUT = 300.0
+# The Bot API's limit for a file a bot uploads. Checked here, at the send: a
+# staged file can be replaced or grow after the lodge measured it.
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 _UPLOADS = {"document": ("send_document", "document"), "voice": ("send_voice", "voice"),
             "audio": ("send_audio", "audio")}
 
@@ -412,6 +415,8 @@ def _outbox_file(path: str) -> Path:
     resolved = Path(path).resolve(strict=True)
     if not resolved.is_relative_to(Path(root).resolve()) or not resolved.is_file():
         raise PermissionError("not a staged file")
+    if resolved.stat().st_size > MAX_UPLOAD_BYTES:
+        raise PermissionError(f"larger than Telegram's {MAX_UPLOAD_BYTES} byte limit")
     return resolved
 
 

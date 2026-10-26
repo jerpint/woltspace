@@ -142,6 +142,8 @@ class ChatLodge:
         self.wolts_dir = wolts_dir()
         self.data_dir = space_dir(self.wolts_dir) / self.name
         self.history_dir = self.data_dir / "history"
+        # Where the connector saves what it downloads; nothing else it hands in is read.
+        self.uploads_dir = self.data_dir / "uploads"
 
     # --- the event entry point ----------------------------------------------------
 
@@ -226,10 +228,14 @@ class ChatLodge:
         return self.spec.codec.parse(str(chat))
 
     def _inside_uploads(self, path: str) -> bool:
-        """Only files the connector saved in its own data dir reach a session."""
+        """Only files the connector saved in its uploads dir reach a session.
+
+        The connector is trusted code: this catches its mistakes (a path into
+        the chat history beside it, a symlink out), it does not contain it.
+        """
         try:
             resolved = Path(path).resolve(strict=True)
-            return resolved.is_file() and resolved.is_relative_to(self.data_dir.resolve())
+            return resolved.is_file() and resolved.is_relative_to(self.uploads_dir.resolve())
         except (OSError, ValueError):
             return False
 

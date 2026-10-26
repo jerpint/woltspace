@@ -5,6 +5,10 @@ who owns each one, and writes that to `.space/run/connectors/lodge.json`
 (0600). The server reads it at startup and serves one socket per connector,
 each answered by a ChatLodge. Owner ids come from the lodge's own settings,
 never from a connector's manifest.
+
+lodge.json is a handoff between two lodge processes, not a boundary: code
+running as the same OS user (a connector included) can read or change it,
+as it can the lodge's config. Turning a connector on is trusting its code.
 """
 
 from __future__ import annotations

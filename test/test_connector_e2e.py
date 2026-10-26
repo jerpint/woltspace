@@ -279,6 +279,40 @@ def test_an_attachment_outside_the_connector_s_folder_is_not_passed_on(world, mo
     asyncio.run(main())
 
 
+def test_a_file_elsewhere_in_the_connector_s_data_dir_is_not_passed_on(world):
+    async def main():
+        broker = world["broker"]()
+        await broker.start()
+        client = world["client"](connector_broker.new_token(world["run_dir"], "telegram"))
+        history = world["wolts"] / ".space" / "telegram" / "history" / f"{CHAT}.jsonl"
+        history.parent.mkdir(parents=True)
+        history.write_text("{}\n")
+        await client.connect()
+        await client.event("attachment", {"chat_id": str(CHAT)}, str(OWNER), {
+            "media": "file", "path": str(history), "name": "h", "mime": "text/plain", "size": 3,
+        }, "tg-13")
+        await broker.drain("telegram")
+        assert world["sent"] == []
+        await client.close()
+        await broker.stop()
+    asyncio.run(main())
+
+
+def test_a_staged_file_over_telegram_s_limit_is_refused_at_the_send(world, monkeypatch):
+    async def main():
+        outbox = world["wolts"] / ".space" / "outbox"
+        outbox.mkdir(parents=True)
+        staged = outbox / "grew"
+        staged.write_bytes(b"x" * 11)
+        monkeypatch.setattr(tg, "MAX_UPLOAD_BYTES", 10)
+        tg.APP.bot.send_document = AsyncMock()
+        result = await tg.on_send({"route": {"chat_id": "1"}, "method": "document", "path": str(staged),
+                                   "filename": "a.bin", "content_type": "application/octet-stream", "text": ""})
+        assert result["status"] == "refused" and "limit" in result["error"]
+        tg.APP.bot.send_document.assert_not_awaited()
+    asyncio.run(main())
+
+
 def test_the_connector_sends_files_only_from_the_outbox(world):
     async def main():
         outbox = world["wolts"] / ".space" / "outbox"
