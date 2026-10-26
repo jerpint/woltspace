@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "container" / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "container"))
 
 import lodge_commands  # noqa: E402
 from connector_contract import (  # noqa: E402
@@ -89,3 +90,18 @@ def test_without_buttons_choices_become_a_numbered_list():
 def test_the_registry_is_the_menu():
     assert NAMES == ("sessions", "holds", "idle", "wolt", "new", "apps", "kill", "help", "start")
     assert set(lodge_commands.HELP_ORDER) <= set(NAMES)
+
+
+def test_builtin_manifests_match_the_lodge():
+    import connector_registry
+    from bot import telegram_adapter
+    assert telegram_adapter.MANIFEST is connector_registry.TELEGRAM
+    assert connector_registry.manifest("telegram").secrets == ("TELEGRAM_BOT_TOKEN",)
+    assert connector_registry.manifest("discord") is None
+
+
+def test_every_builtin_manifest_has_a_way_out():
+    import connector_registry
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from server import notify
+    assert set(connector_registry.BUILTIN) <= set(notify.OUTBOUND) <= set(notify.SENDERS)

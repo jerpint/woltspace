@@ -45,7 +45,8 @@ from harnesses import platform_skill_invoke
 from skills_sync import wolt_skills_delivery
 from notify_prompt import notify_reply_instruction
 import lodge_commands as commands
-from connector_contract import Ack, Manifest, Reply
+import connector_registry
+from connector_contract import Ack, Reply
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -1154,15 +1155,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # every connector. Telegram verifies the sender, hands the command or button to
 # the lodge, and renders the neutral reply as text and inline keyboards.
 
-MANIFEST = Manifest(
-    name="telegram",
-    capabilities=frozenset({"text", "files", "voice_in", "voice_out", "images", "edit", "reply_to", "status"}),
-    command_input=frozenset({"native", "buttons"}),
-    events=frozenset({"message", "command", "selection", "attachment"}),
-    route_fields=("chat_id",),
-    secrets=("TELEGRAM_BOT_TOKEN",),
-    owner_env="TELEGRAM_ALLOWED_USERS",
-)
+MANIFEST = connector_registry.TELEGRAM
 
 # Telegram's own ways to talk to a wolt, listed under /help.
 HELP_TIPS = (

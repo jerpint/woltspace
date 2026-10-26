@@ -9,6 +9,7 @@ import logging
 import mimetypes
 import time
 import urllib.parse
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from secrets import token_hex
@@ -93,10 +94,10 @@ def append_chat_history(adapter: str, chat_id: str, content: str):
     """Write notify messages into the bot's chat history."""
     from datetime import datetime, timezone
 
-    if adapter == "slack":
-        subdir = STATE_DIR / "chat" / "slack"
-    else:
-        subdir = STATE_DIR / "chat"
+    outbound = OUTBOUND.get(adapter)
+    subdir = STATE_DIR / "chat"
+    if outbound and outbound.history_subdir:
+        subdir = subdir / outbound.history_subdir
     subdir.mkdir(parents=True, exist_ok=True)
     chat_file = subdir / f"{chat_id}.jsonl"
 
@@ -135,6 +136,117 @@ SENDERS = {
         route_state=("slack_progress_mode", "slack_progress_ts"),
         max_attachment_bytes=SLACK_MAX_ATTACHMENT_BYTES,
         speech_format="mp3",
+    ),
+}
+
+
+# --- how core reaches each connector's chats (RFC #617) -----------------------
+# Everything that differs between connectors on the way out lives in one
+# _Outbound per connector; _send and _route below only loop over them. Hooks
+# read this module's names (dotenv_env, SPACE_PLATFORM_DIR) at call time.
+
+@dataclass(frozen=True)
+class _Outbound:
+    # The key naming the destination in a send's result ("chat_id", "channel").
+    route_key: str
+    # (session, chat_id, thread_ts, routing, secrets) -> (destination, chat_id, session_link)
+    destination: Callable
+    # The chats the lodge is set up with, where files and voice may go.
+    owner_chats: Callable[[], set]
+    # (session, explicit, routing) -> {"session", "chat_id", "thread_ts", "routing"} or None
+    explicit: Callable
+    # (routing) -> (chat_id, thread_ts) when the session's record routes here, or None
+    from_session: Callable
+    history_subdir: str = ""
+    # A last-resort destination when nothing else routes the message.
+    default_chat: Callable[[], str | None] | None = None
+
+
+def _tunnel_url() -> str:
+    try:
+        state = json.loads((SPACE_PLATFORM_DIR / "tunnel.json").read_text())
+        return state.get("url", "").strip()
+    except Exception:
+        return ""
+
+
+def _telegram_destination(session, chat_id, thread_ts, routing, secrets):
+    if not secrets.get("TELEGRAM_BOT_TOKEN"):
+        raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
+    session_link = ""
+    if session:
+        tunnel_url = _tunnel_url()
+        session_link = f"{tunnel_url}/tui?session={session}" if tunnel_url else f"session={session}"
+    return {"chat_id": chat_id}, chat_id, session_link
+
+
+def _telegram_allowed() -> list[str]:
+    return [s.strip() for s in dotenv_env("TELEGRAM_ALLOWED_USERS").split(",") if s.strip()]
+
+
+def _telegram_explicit(session, explicit, routing):
+    chat_id = explicit.get("chat_id", "")
+    if not chat_id:
+        return None
+    return {"session": session, "chat_id": str(chat_id), "thread_ts": None, "routing": None}
+
+
+def _telegram_from_session(routing):
+    chat_id = routing.get("chat_id", "")
+    return (str(chat_id), routing.get("thread_ts")) if chat_id else None
+
+
+def _telegram_default() -> str | None:
+    allowed = _telegram_allowed()
+    if dotenv_env("TELEGRAM_BOT_TOKEN") and allowed:
+        return allowed[0]
+    return None
+
+
+def _slack_destination(session, chat_id, thread_ts, routing, secrets):
+    if not secrets.get("SLACK_BOT_TOKEN"):
+        raise RuntimeError("SLACK_BOT_TOKEN not set")
+    if not chat_id:
+        chat_id = dotenv_env("SLACK_NOTIFY_CHANNEL")
+    if not chat_id:
+        raise RuntimeError("no slack channel provided and SLACK_NOTIFY_CHANNEL not set")
+    destination = {"channel": chat_id}
+    if thread_ts is not None:
+        destination["thread_ts"] = thread_ts
+    return destination, chat_id, _slack_session_link(session, routing)
+
+
+def _slack_explicit(session, explicit, routing):
+    """A progress surface is usable only when the route is exactly the session's own."""
+    channel = explicit.get("channel", "")
+    thread_ts = explicit.get("thread_ts")
+    exact = bool(
+        routing
+        and routing.get("adapter") == "slack"
+        and routing.get("chat_id") == channel
+        and routing.get("thread_ts") == thread_ts
+    )
+    return {"session": session if exact else "", "chat_id": channel, "thread_ts": thread_ts,
+            "routing": routing if exact else None}
+
+
+# Keyed by connector name; a connector with a manifest must match it.
+OUTBOUND = {
+    "telegram": _Outbound(
+        route_key="chat_id",
+        destination=_telegram_destination,
+        owner_chats=lambda: {e.strip() for e in dotenv_env("TELEGRAM_ALLOWED_USERS").split(",")},
+        explicit=_telegram_explicit,
+        from_session=_telegram_from_session,
+        default_chat=_telegram_default,
+    ),
+    "slack": _Outbound(
+        route_key="channel",
+        destination=_slack_destination,
+        owner_chats=lambda: {dotenv_env("SLACK_NOTIFY_CHANNEL")},
+        explicit=_slack_explicit,
+        from_session=lambda routing: (routing.get("chat_id", ""), routing.get("thread_ts")),
+        history_subdir="slack",
     ),
 }
 
@@ -252,10 +364,7 @@ async def _spoken(speech: _Speech, sender: Plugin, adapter: str) -> Attachment:
 
 def _own_chats(adapter: str, session_record: dict | None) -> set[str]:
     """The chats that are this lodge's own: the ones it is set up with, and the session's."""
-    if adapter == "telegram":
-        chats = {entry.strip() for entry in dotenv_env("TELEGRAM_ALLOWED_USERS").split(",")}
-    else:
-        chats = {dotenv_env("SLACK_NOTIFY_CHANNEL")}
+    chats = set(OUTBOUND[adapter].owner_chats())
     if session_record and session_record.get("adapter") == adapter:
         chats.add(str(session_record.get("chat_id") or ""))
     chats.discard("")
@@ -276,30 +385,9 @@ async def _send(
     """
     sender = SENDERS[adapter]
     secrets = {key: dotenv_env(key) for key in sender.secrets}
-    session_link = ""
-    if adapter == "telegram":
-        if not secrets.get("TELEGRAM_BOT_TOKEN"):
-            raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
-        tunnel_url = ""
-        try:
-            state = json.loads((SPACE_PLATFORM_DIR / "tunnel.json").read_text())
-            tunnel_url = state.get("url", "").strip()
-        except Exception:
-            pass
-        if session:
-            session_link = f"{tunnel_url}/tui?session={session}" if tunnel_url else f"session={session}"
-        destination = {"chat_id": chat_id}
-    else:
-        if not secrets.get("SLACK_BOT_TOKEN"):
-            raise RuntimeError("SLACK_BOT_TOKEN not set")
-        if not chat_id:
-            chat_id = dotenv_env("SLACK_NOTIFY_CHANNEL")
-        if not chat_id:
-            raise RuntimeError("no slack channel provided and SLACK_NOTIFY_CHANNEL not set")
-        session_link = _slack_session_link(session, routing)
-        destination = {"channel": chat_id}
-        if thread_ts is not None:
-            destination["thread_ts"] = thread_ts
+    destination, chat_id, session_link = OUTBOUND[adapter].destination(
+        session, chat_id, thread_ts, routing, secrets,
+    )
 
     if (attachments or speech is not None) and str(chat_id) not in _own_chats(
         adapter, session_record,
@@ -362,7 +450,7 @@ async def _send(
         f"{a.filename}, {a.content_type}, {a.size} bytes]"
         for a in attachments
     ))
-    result = {"adapter": adapter, "chat_id" if adapter == "telegram" else "channel": chat_id}
+    result = {"adapter": adapter, OUTBOUND[adapter].route_key: chat_id}
     if attachments:
         # Metadata only: this dict is logged and returned to the caller. A voice
         # note is marked, so `notify` can tell it from audio that went as a document.
@@ -432,56 +520,37 @@ async def _route(
     """Pick the destination: explicit route, then the session's, then the Telegram default."""
     routing = read_session_registry(session) if session else None
 
-    # 1. Explicit routing — caller knows exactly where to send. A temporary
-    # progress surface is usable only when the explicit route exactly matches
-    # the authoritative session record.
+    # 1. Explicit routing — caller knows exactly where to send.
     if explicit and explicit.get("adapter"):
         adapter = explicit["adapter"]
-        if adapter == "slack":
-            channel = explicit.get("channel", "")
-            thread_ts = explicit.get("thread_ts")
-            exact = bool(
-                routing
-                and routing.get("adapter") == "slack"
-                and routing.get("chat_id") == channel
-                and routing.get("thread_ts") == thread_ts
-            )
+        outbound = OUTBOUND.get(adapter)
+        plan = outbound.explicit(session, explicit, routing) if outbound else None
+        if plan is not None:
             return await _send(
-                adapter, session if exact else "", message, channel, thread_ts,
-                routing if exact else None, attachments=attachments, speech=speech,
-                session_record=routing,
+                adapter, plan["session"], message, plan["chat_id"], plan["thread_ts"],
+                plan["routing"], attachments=attachments, speech=speech, session_record=routing,
             )
-        if adapter == "telegram":
-            chat_id = explicit.get("chat_id", "")
-            if chat_id:
-                return await _send(
-                    adapter, session, message, str(chat_id), attachments=attachments,
-                    speech=speech, session_record=routing,
-                )
 
     # 2. Session registry lookup — find routing from session metadata
-    if session:
-        if routing:
-            adapter = routing.get("adapter")
-            chat_id = routing.get("chat_id", "")
-            if adapter == "slack" or (adapter == "telegram" and chat_id):
-                return await _send(
-                    adapter, session, message,
-                    str(chat_id) if adapter == "telegram" else chat_id,
-                    routing.get("thread_ts"), routing, attachments=attachments,
-                    speech=speech, session_record=routing,
-                )
+    if session and routing:
+        adapter = routing.get("adapter")
+        outbound = OUTBOUND.get(adapter)
+        target = outbound.from_session(routing) if outbound else None
+        if target is not None:
+            chat_id, thread_ts = target
+            return await _send(
+                adapter, session, message, chat_id, thread_ts, routing,
+                attachments=attachments, speech=speech, session_record=routing,
+            )
 
-    # 3. Telegram default — fall back to first allowed user
-    telegram_token = dotenv_env("TELEGRAM_BOT_TOKEN")
-    allowed = [s.strip() for s in dotenv_env("TELEGRAM_ALLOWED_USERS").split(",") if s.strip()]
-    telegram_chat_id = allowed[0] if allowed else None
-
-    if telegram_token and telegram_chat_id:
-        return await _send(
-            "telegram", session, message, telegram_chat_id, attachments=attachments,
-            speech=speech, session_record=routing,
-        )
+    # 3. A connector's default chat — today Telegram's first allowed user
+    for adapter, outbound in OUTBOUND.items():
+        chat_id = outbound.default_chat() if outbound.default_chat else None
+        if chat_id:
+            return await _send(
+                adapter, session, message, chat_id, attachments=attachments,
+                speech=speech, session_record=routing,
+            )
 
     raise NoNotificationTarget(
         "no notification target — set TELEGRAM_BOT_TOKEN + TELEGRAM_ALLOWED_USERS "
