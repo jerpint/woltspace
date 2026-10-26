@@ -292,12 +292,15 @@ each one it read to `<name>.imported`: `<wolt>/.state/sessions/` (a folder),
 `.space/auto-grants.json`, `.space/digs/grants.json`, `.space/wolf/` stamps
 and `jobs.jsonl`, `.space/telegram/chats/*.json`, the slack files under
 `<wolt>/.state/chat/slack/`, `.space/apps/*.json`. The app logs stay. A store
-that fails to import keeps its files, and the next boot tries it again.
+that fails to import keeps its files, and the next boot tries it again. A
+single session or app file that isn't valid JSON is skipped and logged, not
+retried: it stays only in the renamed `.imported` folder or file, to fix by
+hand.
 
 The lodge answers `/health` with 200 either way, so read readiness from the
 body: `db.error` (the file cannot be opened) and `db.import_error` (one entry
-per store that failed) must both be absent, and `db.imported` names every
-store taken in.
+per store that failed) must both be absent, and `db.imported` names the
+stores that were imported.
 
 To go back to the older release:
 
@@ -328,9 +331,9 @@ Set `lodge.db` aside as above, every time. If it stays, upgrading again keeps
 its rows and only adds new ones from the files: a grant revoked on the older
 release would come back, and a session's newer status would be ignored.
 
-Cron runs made on the newer release are recorded only in `lodge.db`, so each
-cron that ran in the last 24 hours runs once more when the older release
-starts (its catch-up looks back 24 hours).
+Cron runs made on the newer release are recorded only in `lodge.db`. When the
+older release starts, its catch-up looks back 24 hours, so a recurring cron
+with catch-up on that ran in that window can run once more.
 
 ## Running colonies
 

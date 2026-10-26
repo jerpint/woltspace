@@ -26,15 +26,18 @@ Python **0.5.23** is published by itself. **@woltspace/tui** stays at
 
 - **The first boot imports the old state files** into `lodge.db` and renames
   each one it read to `<name>.imported`. A store that fails to import keeps
-  its files and is tried again at the next boot. Read `/health`: `db.error`
-  and `db.import_error` must be absent and `db.imported` lists every store.
+  its files and is tried again at the next boot. A single file that isn't
+  valid JSON is skipped and logged, and is kept only under `.imported`. Read
+  `/health`: `db.error` and `db.import_error` must be absent, and
+  `db.imported` lists the stores that were imported.
 - **A `lodge.db` this build can't open stops the boot** with one line naming
   the file and the reason, before anything is imported. The file is left
   untouched.
 - **Going back to 0.5.22 needs the steps in `docs/backup.md`** ("First boot on
   the lodge DB, and how to go back"): put the old files back and set
-  `lodge.db` aside. State written on 0.5.23 doesn't carry back, and crons
-  that ran in the last 24 hours run once more on the older release.
+  `lodge.db` aside. State written on 0.5.23 doesn't carry back, and a
+  recurring cron with catch-up on that ran in the last 24 hours can run once
+  more on the older release.
 - **Plaintext backups no longer include `.space/platform/config.json`**, which
   holds bot tokens. Encrypted backups still do. After restoring a plaintext
   backup, enter the tokens again.
