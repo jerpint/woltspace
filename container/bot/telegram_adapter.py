@@ -44,6 +44,8 @@ from sessions import resolve_active_session, wolt_harness
 from harnesses import platform_skill_invoke
 from skills_sync import wolt_skills_delivery
 from notify_prompt import notify_reply_instruction
+import lodge_commands as commands
+from connector_contract import Ack, Manifest, Reply
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -1148,97 +1150,159 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Commands
 # ---------------------------------------------------------------------------
 
-async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_allowed(update):
-        return
-    if dog_available():
-        await _reply(update, f"Hey. I'm {_dog_name()}. Talk to me and I'll connect you to a wolt.")
-    else:
-        await _reply(update, "Hey. Send a message and it goes to your wolt. /wolt picks which one.")
+# The owner's commands are the lodge's (lodge_commands): one implementation for
+# every connector. Telegram verifies the sender, hands the command or button to
+# the lodge, and renders the neutral reply as text and inline keyboards.
+
+MANIFEST = Manifest(
+    name="telegram",
+    capabilities=frozenset({"text", "files", "voice_in", "voice_out", "images", "edit", "reply_to", "status"}),
+    command_input=frozenset({"native", "buttons"}),
+    events=frozenset({"message", "command", "selection", "attachment"}),
+    route_fields=("chat_id",),
+    secrets=("TELEGRAM_BOT_TOKEN",),
+    owner_env="TELEGRAM_ALLOWED_USERS",
+)
+
+# Telegram's own ways to talk to a wolt, listed under /help.
+HELP_TIPS = (
+    "• Send a message → goes to active session (or starts one)",
+    "• Reply to a wolt's message → routes to that wolt",
+    "• @dog → ask the dog for help",
+)
+
+WOLT_TYPE_EMOJI = commands.WOLT_TYPE_EMOJI
+RODENT_WOLT_TYPES = commands.RODENT_WOLT_TYPES
+_NO_WOLTS_MESSAGE = commands.NO_WOLTS_MESSAGE
+_PICK_THEN_RESEND = (
+    "your message was not delivered: pick a wolt above (or send /wolt <name>), "
+    "then send it again."
+)
+_IDLE_CHOICES = commands.IDLE_CHOICES
+_IDLE_LABELS = commands.IDLE_LABELS
+_wolt_of = commands.wolt_of
+_clock = commands.clock
+_is_wolt = commands.is_chat_wolt
+_idle_text = commands.idle_text
 
 
-def _wolt_of(session_name: str) -> str:
-    """Extract the wolt name from a session slug: {wolt}-{word}-{word}-{hex}."""
-    parts = session_name.rsplit("-", 3)
-    return parts[0] if len(parts) == 4 else session_name
-
-
-def _sessions_picker_message(sessions: list, tunnel_url: str | None) -> tuple[str, InlineKeyboardMarkup | None]:
-    """Build header + keyboard for the /sessions picker. Most recently active first."""
-    alive = [s for s in sessions if s.get("alive")]
-    if not alive:
-        return "no active sessions.", None
-
-    alive.sort(key=lambda s: s.get("last_activity") or s.get("started") or 0, reverse=True)
-
-    types_by_wolt = {
-        (w.get("name") or Path(w.get("dir", "")).name): w.get("type", "")
-        for w in list_wolts()
-    }
-
-    wolt_counts: dict[str, int] = {}
-    rows = []
-    for s in alive:
-        name = s["name"]
-        wolt = _wolt_of(name)
-        emoji = WOLT_TYPE_EMOJI.get(types_by_wolt.get(wolt, ""), "🦫")
-        wolt_counts[wolt] = wolt_counts.get(wolt, 0) + 1
-        url = f"{tunnel_url}/tui?session={name}" if tunnel_url else None
-        label = f"{emoji} 📌 {name}" if s.get("hold") else f"{emoji} {name}"
-        open_btn = (
-            InlineKeyboardButton(label, url=url)
-            if url else
-            InlineKeyboardButton(label, callback_data=f"noop:{name}")
-        )
-        stop_btn = InlineKeyboardButton("⏹", callback_data=f"sstop:{name}")
-        rows.append([open_btn, stop_btn])
-
-    summary = " · ".join(
-        f"{WOLT_TYPE_EMOJI.get(types_by_wolt.get(w, ''), '🦫')} {w} ({c})"
-        for w, c in sorted(wolt_counts.items(), key=lambda kv: -kv[1])
+def _ports() -> commands.Ports:
+    """The lodge as the commands see it. Each name resolves at call time."""
+    return commands.Ports(
+        list_wolts=lambda: list_wolts(),
+        list_sessions=lambda: list_sessions(),
+        tunnel_url=lambda: get_tunnel_url(),
+        wolt_exists=lambda name: (_WOLTS_DIR / name / "wolt").is_dir(),
+        shown=lambda name: _shown(name),
+        session_emoji=lambda name: _session_emoji(name),
+        load_chat=lambda chat: _load_chat_state(chat),
+        save_chat=lambda chat, state: _save_chat_state(chat, state),
+        forget_session=lambda name: _forget_session(name),
+        kill_session=lambda name: kill_session(name),
+        spawn_session=lambda wolt, chat: _spawn_session(wolt, chat),
+        dog_available=lambda: dog_available(),
+        dog_name=lambda: _dog_name(),
+        fetch_apps=lambda: _fetch_apps(),
+        app_action=lambda name, action: _app_action(name, action),
+        release_hold=lambda name: _release_hold(name),
+        idle_setting=lambda body=None: _idle_setting(body),
+        log_error=lambda message: logger.error(message),
     )
-    total = len(alive)
-    header = (
-        f"*{total} active session{'s' if total != 1 else ''}*\n"
-        f"{summary}"
-    )
-    return header, InlineKeyboardMarkup(rows)
 
 
-def _clock(epoch: int) -> str:
-    """17:20 today, or "Oct 18 17:20" on another day (the lodge's local time)."""
-    when = datetime.fromtimestamp(epoch)
-    if when.date() == datetime.now().date():
-        return when.strftime("%H:%M")
-    return f"{when.strftime('%b')} {when.day} {when.strftime('%H:%M')}"
+# --- rendering ---------------------------------------------------------------
+
+def _telegram_markdown(text: str) -> str:
+    """Light markdown to Telegram's legacy Markdown: **bold** is *bold*."""
+    return re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
 
 
-def _holds_message(sessions: list, tunnel_url: str | None) -> tuple[str, InlineKeyboardMarkup | None]:
-    """Header + keyboard for /holds: every running session a hold keeps up,
-    oldest hold first, each with its open link and a release button.
+def _keyboard(choices) -> InlineKeyboardMarkup | None:
+    if not choices:
+        return None
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(c.label, url=c.url) if c.url
+         else InlineKeyboardButton(c.label, callback_data=c.action)
+         for c in row]
+        for row in choices
+    ])
 
-    Plain text, no Markdown: a reason is the wolt's own words.
-    """
-    held = [s for s in sessions if s.get("hold") and s.get("alive")]
-    if not held:
-        return "no held sessions.", None
-    held.sort(key=lambda s: s["hold"].get("since") or 0)
-    lines = [f"📌 {len(held)} held session{'s' if len(held) != 1 else ''}"]
-    rows = []
-    for s in held:
-        name, hold = s["name"], s["hold"]
-        emoji = _session_emoji(name)
-        span = "forever" if hold.get("until") is None else f"until {_clock(hold['until'])}"
-        since = f" · since {_clock(hold['since'])}" if hold.get("since") else ""
-        lines.append(f"{emoji} {name} · {span} · {hold.get('reason', '')}{since}")
-        url = f"{tunnel_url}/tui?session={name}" if tunnel_url else None
-        open_btn = (
-            InlineKeyboardButton(f"{emoji} {name}", url=url)
-            if url else
-            InlineKeyboardButton(f"{emoji} {name}", callback_data=f"noop:{name}")
-        )
-        rows.append([open_btn, InlineKeyboardButton("🔓", callback_data=f"hrel:{name}")])
-    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+def _render(reply: Reply) -> tuple[str, dict]:
+    text, kwargs = reply.text, {}
+    if reply.markdown:
+        text = _telegram_markdown(text)
+        kwargs["parse_mode"] = "Markdown"
+    if reply.choices is not None:
+        kwargs["reply_markup"] = _keyboard(reply.choices)
+    return text, kwargs
+
+
+def _rendered(reply: Reply) -> tuple[str, InlineKeyboardMarkup | None]:
+    text, kwargs = _render(reply)
+    return text, kwargs.get("reply_markup")
+
+
+# The builders, as Telegram renders them (kept for callers and tests).
+
+def _wolt_picker_keyboard(wolts: list, active: str | None) -> InlineKeyboardMarkup | None:
+    return _keyboard(commands.wolt_picker_choices(_ports(), wolts, active))
+
+
+def _wolt_picker_header(wolts: list, active: str | None) -> str:
+    return commands.wolt_picker(_ports(), wolts, active).text
+
+
+def _sessions_picker_message(sessions: list, tunnel_url: str | None):
+    return _rendered(commands.sessions_picker(_ports(), sessions, tunnel_url))
+
+
+def _holds_message(sessions: list, tunnel_url: str | None):
+    return _rendered(commands.holds_list(_ports(), sessions, tunnel_url))
+
+
+def _apps_picker_message(apps: list):
+    return _rendered(commands.apps_list(apps))
+
+
+def _idle_keyboard(current) -> InlineKeyboardMarkup:
+    return _keyboard(commands.idle_choices(current))
+
+
+def _set_active_wolt(chat_id: int, name: str) -> None:
+    commands.set_active_wolt(_ports(), chat_id, name)
+
+
+def _session_emoji(session_name: str) -> str:
+    wolt = _wolt_of(session_name)
+    types_by_wolt = {commands.wolt_name(w): w.get("type", "") for w in list_wolts()}
+    return WOLT_TYPE_EMOJI.get(types_by_wolt.get(wolt, ""), "🦫")
+
+
+# --- the lodge's services, over its API ----------------------------------------
+
+def _api() -> str:
+    """The control plane that spawned this adapter — see WolfConnector/notify."""
+    return os.environ.get("WOLTSPACE_API", "http://localhost:7777")
+
+
+async def _fetch_apps() -> list[dict]:
+    import httpx
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{_api()}/apps", timeout=5)
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def _app_action(name: str, action: str) -> bool:
+    """POST /apps/{name}/{start|stop} via the local server."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(f"{_api()}/apps/{name}/{action}", timeout=15)
+            return resp.status_code < 400
+        except Exception:
+            return False
 
 
 async def _release_hold(name: str) -> bool:
@@ -1251,46 +1315,6 @@ async def _release_hold(name: str) -> bool:
             return resp.status_code < 400
         except Exception:
             return False
-
-
-async def handle_holds(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_allowed(update):
-        return
-    text, markup = _holds_message(list_sessions(), get_tunnel_url())
-    await _reply(update, text, reply_markup=markup)
-
-
-async def _refresh_holds_message(query):
-    text, markup = _holds_message(list_sessions(), get_tunnel_url())
-    try:
-        await query.edit_message_text(text, reply_markup=markup)
-    except Exception:
-        pass
-
-
-# The lodge's idle window: the same four choices as the Settings page.
-_IDLE_CHOICES = ((None, "Never"), (3600, "1 hour"), (14400, "4 hours"), (86400, "1 day"))
-_IDLE_LABELS = dict(_IDLE_CHOICES)
-
-
-def _idle_text(value, mode: str = "is") -> str:
-    """mode "is" answers /idle, "now" a change, "still" a refused change."""
-    if value is None:
-        return {"is": "Idle sessions stay open (whole lodge).",
-                "now": "Idle sessions now stay open.",
-                "still": "Idle sessions still stay open."}[mode]
-    label = _IDLE_LABELS.get(value, f"{value} seconds")
-    return {"is": f"Idle sessions rest after {label} (whole lodge).",
-            "now": f"Idle sessions now rest after {label}.",
-            "still": f"Idle sessions still rest after {label}."}[mode]
-
-
-def _idle_keyboard(current) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton(f"✓ {label}" if value == current else label,
-                             callback_data=f"idle:{'never' if value is None else value}")
-        for value, label in _IDLE_CHOICES
-    ]])
 
 
 async def _idle_setting(body: dict | None = None) -> tuple[int, dict]:
@@ -1307,474 +1331,79 @@ async def _idle_setting(body: dict | None = None) -> tuple[int, dict]:
     return resp.status_code, data if isinstance(data, dict) else {}
 
 
-async def handle_idle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /idle — show the lodge's idle window and pick another."""
+# --- handlers ----------------------------------------------------------------
+
+async def _command(update: Update, context: ContextTypes.DEFAULT_TYPE, name: str):
+    """One owner command: the lodge runs it, Telegram says what it answered."""
     if not is_allowed(update):
         return
-    try:
-        status, data = await _idle_setting()
-        if status >= 400:
-            raise RuntimeError(data.get("error") or f"HTTP {status}")
-    except Exception as e:
-        await _reply(update, f"couldn't read the idle setting: {e}")
-        return
-    value = data.get("idle_timeout_seconds")
-    await _reply(update, _idle_text(value), reply_markup=_idle_keyboard(value))
+    reply = await commands.run_command(
+        _ports(), update.effective_chat.id, name, list(context.args or []), tips=HELP_TIPS,
+    )
+    text, kwargs = _render(reply)
+    await _reply(update, text, **kwargs)
 
 
-async def _pick_idle(query, choice: str):
-    value = None if choice == "never" else int(choice) if choice.isdigit() else -1
-    if value not in _IDLE_LABELS:
-        await query.answer("unknown choice", show_alert=True)
-        return
-    try:
-        status, data = await _idle_setting({"idle_timeout_seconds": value})
-        error = None if status < 400 else (data.get("error") or f"HTTP {status}")
-    except Exception as e:
-        error = str(e) or type(e).__name__
-    if error is None:
-        saved = data.get("idle_timeout_seconds", value)
-        await query.answer()
-        text, markup = _idle_text(saved, "now"), _idle_keyboard(saved)
-    else:
-        await query.answer("not changed", show_alert=True)
-        # The setting is unchanged: say what it still is, if the lodge can tell.
-        text, markup = f"couldn't change it: {error}", None
-        try:
-            status, data = await _idle_setting()
-            if status < 400:
-                still = data.get("idle_timeout_seconds")
-                text, markup = f"{text}\n{_idle_text(still, 'still')}", _idle_keyboard(still)
-        except Exception:
-            pass
-    try:
-        await query.edit_message_text(text, reply_markup=markup)
-    except Exception:
-        pass
+async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _command(update, context, "start")
 
 
-def _session_emoji(session_name: str) -> str:
-    wolt = _wolt_of(session_name)
-    types_by_wolt = {
-        (w.get("name") or Path(w.get("dir", "")).name): w.get("type", "")
-        for w in list_wolts()
-    }
-    return WOLT_TYPE_EMOJI.get(types_by_wolt.get(wolt, ""), "🦫")
-
-
-async def handle_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_allowed(update):
-        return
-    text, markup = _sessions_picker_message(list_sessions(), get_tunnel_url())
-    await _reply(update, text, parse_mode="Markdown", reply_markup=markup)
-
-
-async def handle_kill(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_allowed(update):
-        return
-    args = context.args
-    if not args:
-        await _reply(update, "Usage: /kill <session-name>")
-        return
-    name = args[0]
-    if kill_session(name):
-        await _reply(update, f"Killed {name}.")
-        _forget_session(name)
-    else:
-        await _reply(update, f"Couldn't kill {name}.")
-
-
-WOLT_TYPE_EMOJI = {
-    "raccoon": "🦝",
-    "beaver": "🦫",
-    "otter": "🦦",
-    "rodent": "🦫",
-    "wolf": "🐺",
-    "dog": "🐶",
-}
-
-RODENT_WOLT_TYPES = {"raccoon", "beaver", "otter", "rodent"}
-_NO_WOLTS_MESSAGE = "no wolts found. create a wolt in the lodge first."
-_PICK_THEN_RESEND = (
-    "your message was not delivered: pick a wolt above (or send /wolt <name>), "
-    "then send it again."
-)
-
-
-def _is_wolt(w: dict) -> bool:
-    """Wolves and dogs are singletons, not chat targets — exclude them from pickers."""
-    return w.get("type", "") in RODENT_WOLT_TYPES
-
-
-def _wolt_picker_keyboard(wolts: list, active: str | None) -> InlineKeyboardMarkup | None:
-    """Build a grid of wolt-select buttons, excluding the active wolt. Two per row."""
-    rows, row = [], []
-    for w in wolts:
-        name = w.get("name") or Path(w.get("dir", "")).name
-        if not name or name == active:
-            continue
-        emoji = WOLT_TYPE_EMOJI.get(w.get("type", ""), "🦫")
-        row.append(InlineKeyboardButton(
-            f"{emoji} {_shown(name)}",
-            callback_data=f"wolt:{name}",
-        ))
-        if len(row) == 2:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    return InlineKeyboardMarkup(rows) if rows else None
-
-
-def _wolt_picker_header(wolts: list, active: str | None) -> str:
-    """Header text that highlights the active wolt with its creature emoji."""
-    if active:
-        active_type = next(
-            (w.get("type", "") for w in wolts
-             if (w.get("name") or Path(w.get("dir", "")).name) == active),
-            "",
-        )
-        emoji = WOLT_TYPE_EMOJI.get(active_type, "🦫")
-        line = f"active: {emoji} {_shown(active)}"
-    else:
-        line = "active: none"
-    others = [w for w in wolts if (w.get("name") or Path(w.get("dir", "")).name) != active]
-    if others:
-        return f"{line}\n\ntap to switch"
-    return f"{line}\n\nno other wolts yet."
-
-
-def _set_active_wolt(chat_id: int, name: str) -> None:
-    state = _load_chat_state(chat_id)
-    state["active_wolt"] = name
-    state["active_session"] = None  # will spawn on next message
-    _save_chat_state(chat_id, state)
+async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _command(update, context, "help")
 
 
 async def handle_setwolt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /wolt [name] — show picker or set the active wolt for this chat."""
-    if not is_allowed(update):
-        return
-    args = context.args
-    chat_id = update.effective_chat.id
+    await _command(update, context, "wolt")
 
-    if args:
-        name = args[0]
-        wolt_dir = _WOLTS_DIR / name / "wolt"
-        if not wolt_dir.is_dir():
-            await _reply(update, f"no wolt named '{name}' found.")
-            return
-        _set_active_wolt(chat_id, name)
-        await _reply(update, f"active wolt set to {_shown(name)}. next message starts a session.")
-        return
 
-    state = _load_chat_state(chat_id)
-    active = state.get("active_wolt")
-    wolts = [w for w in list_wolts() if _is_wolt(w)]
-    if not wolts:
-        await _reply(update, _NO_WOLTS_MESSAGE)
-        return
+async def handle_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /new [wolt-name] — spawn a fresh session immediately."""
+    await _command(update, context, "new")
 
-    await _reply(
-        update,
-        _wolt_picker_header(wolts, active),
-        reply_markup=_wolt_picker_keyboard(wolts, active),
-    )
+
+async def handle_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _command(update, context, "sessions")
+
+
+async def handle_holds(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _command(update, context, "holds")
+
+
+async def handle_idle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /idle — show the lodge's idle window and pick another."""
+    await _command(update, context, "idle")
+
+
+async def handle_kill(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _command(update, context, "kill")
+
+
+async def handle_apps(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /apps — inline keyboard with open / start / stop per app."""
+    await _command(update, context, "apps")
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Dispatch callback_query events from inline keyboards."""
+    """A button press: the lodge runs its action, Telegram acks and edits the message."""
     if not is_allowed(update):
         return
     query = update.callback_query
     data = query.data or ""
     chat_id = query.message.chat.id if query.message else update.effective_chat.id
-
-    if data.startswith("astart:"):
-        name = data.split(":", 1)[1]
-        ok = await _app_action(name, "start")
-        await query.answer(f"{'started' if ok else 'failed to start'} {name}", show_alert=not ok)
-        await _refresh_apps_message(query)
-        return
-
-    if data.startswith("astop:"):
-        name = data.split(":", 1)[1]
-        await query.answer()
-        confirm = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✓ stop", callback_data=f"astop-confirm:{name}"),
-            InlineKeyboardButton("cancel", callback_data="astop-cancel"),
-        ]])
+    outcome = await commands.run_selection(_ports(), chat_id, data)
+    ack = outcome.ack or Ack()
+    kwargs = {} if ack.alert is None else {"show_alert": ack.alert}
+    if ack.text is None:
+        await query.answer(**kwargs)
+    else:
+        await query.answer(ack.text, **kwargs)
+    if outcome.edit is not None:
+        text, kwargs = _render(outcome.edit)
         try:
-            await query.edit_message_text(
-                f"stop app `{name}`?",
-                parse_mode="Markdown",
-                reply_markup=confirm,
-            )
+            await query.edit_message_text(text, **kwargs)
         except Exception:
             pass
-        return
-
-    if data.startswith("astop-confirm:"):
-        name = data.split(":", 1)[1]
-        ok = await _app_action(name, "stop")
-        await query.answer(f"{'stopped' if ok else 'failed to stop'} {name}", show_alert=not ok)
-        await _refresh_apps_message(query)
-        return
-
-    if data == "astop-cancel":
-        await query.answer()
-        await _refresh_apps_message(query)
-        return
-
-    if data.startswith("idle:"):
-        await _pick_idle(query, data.split(":", 1)[1])
-        return
-
-    if data.startswith("hrel:"):
-        name = data.split(":", 1)[1]
-        await query.answer()
-        confirm = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✓ release", callback_data=f"hrel-confirm:{name}"),
-            InlineKeyboardButton("cancel", callback_data="hrel-cancel"),
-        ]])
-        try:
-            await query.edit_message_text(
-                f"release the hold on {_session_emoji(name)} {name}? "
-                f"It rests at the next sweep if nobody is using it.",
-                reply_markup=confirm,
-            )
-        except Exception:
-            pass
-        return
-
-    if data.startswith("hrel-confirm:"):
-        name = data.split(":", 1)[1]
-        if await _release_hold(name):
-            await query.answer(f"released {name}")
-        else:
-            await query.answer("failed — the session may be gone", show_alert=True)
-        await _refresh_holds_message(query)
-        return
-
-    if data == "hrel-cancel":
-        await query.answer()
-        await _refresh_holds_message(query)
-        return
-
-    if data.startswith("sstop:"):
-        name = data.split(":", 1)[1]
-        await query.answer()
-        confirm = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✓ stop", callback_data=f"sstop-confirm:{name}"),
-            InlineKeyboardButton("cancel", callback_data="sstop-cancel"),
-        ]])
-        try:
-            await query.edit_message_text(
-                f"stop {_session_emoji(name)} `{name}`?",
-                parse_mode="Markdown",
-                reply_markup=confirm,
-            )
-        except Exception:
-            pass
-        return
-
-    if data.startswith("sstop-confirm:"):
-        name = data.split(":", 1)[1]
-        if kill_session(name):
-            await query.answer(f"stopped {name}")
-            _forget_session(name)
-        else:
-            await query.answer("failed — session may already be gone", show_alert=True)
-        text, markup = _sessions_picker_message(list_sessions(), get_tunnel_url())
-        try:
-            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
-        except Exception:
-            pass
-        return
-
-    if data == "sstop-cancel":
-        await query.answer()
-        text, markup = _sessions_picker_message(list_sessions(), get_tunnel_url())
-        try:
-            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
-        except Exception:
-            pass
-        return
-
-    if data.startswith("noop:"):
-        await query.answer()
-        return
-
-    if data.startswith("wolt:"):
-        name = data.split(":", 1)[1]
-        wolt_dir = _WOLTS_DIR / name / "wolt"
-        if not wolt_dir.is_dir():
-            await query.answer("that wolt no longer exists", show_alert=True)
-            return
-        _set_active_wolt(chat_id, name)
-        await query.answer(f"switched to {name}")
-        wolts = [w for w in list_wolts() if _is_wolt(w)]
-        try:
-            await query.edit_message_text(
-                _wolt_picker_header(wolts, name),
-                reply_markup=_wolt_picker_keyboard(wolts, name),
-            )
-        except Exception:
-            pass
-        return
-
-    await query.answer()
-
-
-async def handle_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /new [wolt-name] — spawn a fresh session immediately."""
-    if not is_allowed(update):
-        return
-    chat_id = update.effective_chat.id
-    state = _load_chat_state(chat_id)
-    args = context.args
-
-    if args:
-        # /new <wolt-name> — set wolt and spawn
-        name = args[0]
-        wolt_dir = _WOLTS_DIR / name / "wolt"
-        if not wolt_dir.is_dir():
-            await _reply(update, f"No wolt named '{name}' found.")
-            return
-        state["active_wolt"] = name
-
-    if not state.get("active_wolt"):
-        await _reply(update, "No active wolt. Use /wolt <name> first.")
-        return
-
-    wolt = state["active_wolt"]
-    try:
-        session = _spawn_session(wolt, chat_id)
-        state["active_session"] = session["name"]
-        _save_chat_state(chat_id, state)
-        tunnel_url = get_tunnel_url()
-        session_link = f"{tunnel_url}/tui?session={session['name']}" if tunnel_url else session["name"]
-        await _reply(update, f"🪵 new session for {_shown(wolt)}\n{session_link}")
-    except Exception as e:
-        logger.error(f"Failed to spawn session for {wolt}: {e}")
-        await _reply(update, f"couldn't start session for {_shown(wolt)}: {e}")
-
-
-def _api() -> str:
-    """The control plane that spawned this adapter — see WolfConnector/notify."""
-    return os.environ.get("WOLTSPACE_API", "http://localhost:7777")
-
-
-async def _fetch_apps() -> list[dict]:
-    import httpx
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(f"{_api()}/apps", timeout=5)
-        resp.raise_for_status()
-        return resp.json()
-
-
-def _apps_picker_message(apps: list) -> tuple[str, InlineKeyboardMarkup | None]:
-    """Build header + keyboard for /apps. Running first, alpha within group."""
-    if not apps:
-        return "no apps yet.", None
-
-    apps_sorted = sorted(apps, key=lambda a: (not a.get("running"), a.get("name", "")))
-    running = sum(1 for a in apps if a.get("running"))
-
-    rows = []
-    for a in apps_sorted:
-        name = a.get("name", "?")
-        emoji = a.get("emoji") or "📦"
-        is_running = bool(a.get("running"))
-        tunnel = a.get("tunnel_url")
-
-        label = f"{emoji} {name}" if is_running else f"{emoji} {name} (off)"
-        if is_running and tunnel:
-            primary = InlineKeyboardButton(label, url=tunnel)
-        else:
-            primary = InlineKeyboardButton(label, callback_data=f"noop:{name}")
-
-        toggle = (
-            InlineKeyboardButton("⏹", callback_data=f"astop:{name}")
-            if is_running else
-            InlineKeyboardButton("▶", callback_data=f"astart:{name}")
-        )
-        rows.append([primary, toggle])
-
-    total = len(apps)
-    header = f"*{total} app{'s' if total != 1 else ''}* · {running} running"
-    return header, InlineKeyboardMarkup(rows)
-
-
-async def handle_apps(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /apps — inline keyboard with open / start / stop per app."""
-    if not is_allowed(update):
-        return
-    try:
-        apps = await _fetch_apps()
-    except Exception as e:
-        await _reply(update, f"couldn't fetch apps: {e}")
-        return
-    text, markup = _apps_picker_message(apps)
-    await _reply(update, text, parse_mode="Markdown", reply_markup=markup)
-
-
-async def _refresh_apps_message(query):
-    try:
-        apps = await _fetch_apps()
-    except Exception as e:
-        await query.edit_message_text(f"couldn't refresh apps: {e}")
-        return
-    text, markup = _apps_picker_message(apps)
-    try:
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
-    except Exception:
-        pass
-
-
-async def _app_action(name: str, action: str) -> bool:
-    """POST /apps/{name}/{start|stop} via the local server."""
-    import httpx
-    async with httpx.AsyncClient() as client:
-        try:
-            resp = await client.post(f"{_api()}/apps/{name}/{action}", timeout=15)
-            return resp.status_code < 400
-        except Exception:
-            return False
-
-
-async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /help — show available commands."""
-    if not is_allowed(update):
-        return
-    chat_id = update.effective_chat.id
-    state = _load_chat_state(chat_id)
-    active_wolt = state.get("active_wolt", "none")
-    active_session = state.get("active_session", "none")
-
-    text = (
-        "📋 Commands:\n"
-        "\n"
-        "/new — start a fresh session with the active wolt\n"
-        "/new <name> — start a fresh session with a specific wolt\n"
-        "/wolt — show active wolt and available wolts\n"
-        "/wolt <name> — switch active wolt\n"
-        "/sessions — list active sessions with links\n"
-        "/holds — sessions kept up by a hold, with release buttons\n"
-        "/idle — how long idle sessions stay up (lodge-wide)\n"
-        "/kill <session> — kill a session\n"
-        "/apps — list all apps with status and public links\n"
-        "/help — this message\n"
-        "\n"
-        "💬 Messaging:\n"
-        "• Send a message → goes to active session (or starts one)\n"
-        "• Reply to a wolt's message → routes to that wolt\n"
-        "• @dog → ask the dog for help\n"
-        "\n"
-        f"Active wolt: {active_wolt}\n"
-        f"Active session: {active_session}"
-    )
-    await _reply(update, text)
 
 
 # ---------------------------------------------------------------------------
@@ -1795,17 +1424,7 @@ async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 # Run
 # ---------------------------------------------------------------------------
 
-BOT_COMMANDS = [
-    BotCommand("sessions", "list active sessions"),
-    BotCommand("holds", "list sessions kept up by a hold"),
-    BotCommand("idle", "how long idle sessions stay up"),
-    BotCommand("wolt", "switch or show the active wolt"),
-    BotCommand("new", "start a fresh session"),
-    BotCommand("apps", "list apps with public links"),
-    BotCommand("kill", "stop a session by slug"),
-    BotCommand("help", "show commands and messaging cheatsheet"),
-    BotCommand("start", "onboard and show current state"),
-]
+BOT_COMMANDS = [BotCommand(c.name, c.description) for c in commands.COMMANDS]
 
 
 async def _register_commands(app):

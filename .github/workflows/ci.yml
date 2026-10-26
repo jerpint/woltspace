@@ -97,6 +97,7 @@ jobs:
           test/test_input_ready.py
           test/test_telegram_spawn_with_message.py
           test/test_telegram_golden.py
+          test/test_connector_contract.py
           test/test_transcription_settings.py
           test/test_speech_settings.py
           test/test_boot_context_cap.py
