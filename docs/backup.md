@@ -308,6 +308,11 @@ cd "${WOLTSPACE_WOLTS_DIR:?set it to the lodge data root}"
 find . -maxdepth 5 \( -path './*/.state/*' -o -path './.space/*' -o -path './.archive/*' \) \
      \( -name '*.imported' -o -name '*.imported.[0-9]*' \) -prune -print | sort -rV |
 while read -r p; do b=${p%.imported*}; [ -e "$b" ] || mv "$p" "$b"; done
+# set lodge.db aside, so a later upgrade imports the files as they are then:
+t=$(date +%Y%m%d-%H%M%S)
+for f in .space/lodge.db .space/lodge.db-wal .space/lodge.db-shm; do
+  if [ -e "$f" ]; then mv "$f" "$f.rolled-back-$t"; fi
+done
 woltspace start
 ```
 
@@ -317,8 +322,15 @@ A file imported more than once (upgrade, downgrade, upgrade again) left
 The older release reads the files and never `lodge.db`, so everything written
 after the import (new sessions, grants, cron runs, chat routing) is lost on
 the way back; restore the `pre-upgrade` backup instead if the lodge ran for a
-while. Upgrading again imports what the older release wrote in between, and a
-row already in `lodge.db` wins over a file.
+while.
+
+Set `lodge.db` aside as above, every time. If it stays, upgrading again keeps
+its rows and only adds new ones from the files: a grant revoked on the older
+release would come back, and a session's newer status would be ignored.
+
+Cron runs made on the newer release are recorded only in `lodge.db`, so each
+cron that ran in the last 24 hours runs once more when the older release
+starts (its catch-up looks back 24 hours).
 
 ## Running colonies
 

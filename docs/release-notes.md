@@ -1,58 +1,57 @@
-# Woltspace 0.5.22
+# Woltspace 0.5.23
 
-Python **0.5.22** is published by itself. **@woltspace/tui** stays at
+Python **0.5.23** is published by itself. **@woltspace/tui** stays at
 **0.5.3**: nothing in the TUI changed.
 
 ## Thank you
 
-- [@asharakeh](https://github.com/asharakeh) added the options for running a
-  second, locked-down container lodge on one host, and hardened the
-  container's root phase for everyone (#604).
+- [@asharakeh](https://github.com/asharakeh) moved the lodge's state into one
+  database and rebuilt backups around it (#598, from #593 to #597).
 
 ## What's new
 
-- **Voice notes go to any transcription service.** Telegram voice notes are
-  transcribed by the service set in `woltspace.json` `transcription`: any
-  OpenAI-style `/audio/transcriptions` endpoint, its model and the variable
-  in `.env` that holds its key. Set it with `woltspace transcription
-  show|set|clear`. A model on this machine works over `http://127.0.0.1`
-  with `--no-key`. The key never goes into the file, and a key is never sent
-  to a new server unless you name it (#567).
-- **Spoken messages from any speech service.** `notify --speak` uses
-  `woltspace.json` `speech`: any OpenAI-style `/audio/speech` endpoint, its
-  model, voice and key variable, set with `woltspace speech show|set|clear`.
-  It's the same rules as transcription, including a local model with
-  `--no-key`. `OPENAI_TTS_MODEL` and `OPENAI_TTS_VOICE` still apply when
-  `speech` leaves them out (#605).
-- **A second, locked-down container lodge.** New opt-in launcher and build
-  options, all off by default: `WOLTSPACE_NODE_SUDO=false` (no sudo, and the
-  container runs with `no-new-privileges`), `WOLTSPACE_CLAUDE_MANAGED_SETTINGS`,
-  `WOLTSPACE_PUBLISH_HOST`, `WOLTSPACE_DOCKER_NETWORK` and `WOLTSPACE_ENV_FILE`.
-  `woltspace build` builds the image without stopping the running lodge,
-  so the downtime is only the restart (#604).
-- **A contributing guide.** `CONTRIBUTING.md` covers how changes get in,
-  branches and release lines, and the conventions for contributing from a
-  lodge (#602). Every path now has a code owner (#600).
+- **Lodge state lives in one database.** Sessions, auto-grants and dig grants,
+  cron run records, chat routing, the Slack queue and running apps move from
+  hundreds of small JSON files and lock files into `.space/lodge.db`
+  (SQLite). Writes no longer race, and the state can be backed up as one
+  consistent piece. Memory, manifests, sites, drafts and skills stay plain
+  files. The CLI and API wolts use are unchanged (#598).
+- **`woltspace db show <table>`** prints any table of the lodge database,
+  read only, with `--where COL=VALUE` and `--json` (#598).
+- **Backups take a consistent database snapshot** and can encrypt the whole
+  archive. `docs/backup.md` has a recipe for an off-machine bucket
+  (Cloudflare R2) and a new setup-backup skill walks through it (#598).
 
 ## Changes to know about
 
-- **The default transcription model is now `gpt-4o-transcribe`** (it was
-  `whisper-1`). With no `transcription` section, voice notes still go to
-  OpenAI with `OPENAI_API_KEY`, using the newer model. To keep the old one:
-  `woltspace transcription set --model whisper-1` (#567).
-- **The container's root phase calls system tools by absolute path**, so a
-  file a session leaves on `PATH` can't run as root at the next start. This
-  applies to every container lodge (#604).
+- **The first boot imports the old state files** into `lodge.db` and renames
+  each one it read to `<name>.imported`. A store that fails to import keeps
+  its files and is tried again at the next boot. Read `/health`: `db.error`
+  and `db.import_error` must be absent and `db.imported` lists every store.
+- **A `lodge.db` this build can't open stops the boot** with one line naming
+  the file and the reason, before anything is imported. The file is left
+  untouched.
+- **Going back to 0.5.22 needs the steps in `docs/backup.md`** ("First boot on
+  the lodge DB, and how to go back"): put the old files back and set
+  `lodge.db` aside. State written on 0.5.23 doesn't carry back, and crons
+  that ran in the last 24 hours run once more on the older release.
+- **Plaintext backups no longer include `.space/platform/config.json`**, which
+  holds bot tokens. Encrypted backups still do. After restoring a plaintext
+  backup, enter the tokens again.
 
 ## Upgrade notes
 
+Take a backup first, with the release you are leaving:
+
 ```sh
+woltspace backup --tag pre-upgrade
 woltspace update
 ```
 
-No colony-data migration is required. Native upgrades stop and restart the
-control plane while preserving tmux sessions. Container lodges update from the
-host as before.
+Native upgrades stop and restart the control plane while preserving tmux
+sessions. Container lodges update from the host as before. On Docker Desktop,
+don't open `lodge.db` from the host; `docs/backup.md` has the commands to run
+inside the container.
 
 The TUI is unchanged at 0.5.3.
 
