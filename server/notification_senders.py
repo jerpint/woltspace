@@ -32,61 +32,56 @@ class TelegramRefused(RuntimeError):
     """
 
 
-async def _telegram_upload(
-    method: str, field: str, token: str, chat_id: str, attachment: Attachment, caption: str,
-) -> dict:
-    fields = {"chat_id": chat_id}
-    if caption:
-        fields["caption"] = caption
-    with open(attachment.path, "rb") as upload:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"https://api.telegram.org/bot{token}/{method}",
-                data=fields,
-                files={field: (attachment.filename, upload, attachment.content_type)},
-                timeout=UPLOAD_TIMEOUT,
-            )
-            try:
-                data = resp.json()
-            except ValueError:
-                # A proxy in front of the API answers an oversized upload in HTML.
-                raise TelegramRefused(f"telegram answered HTTP {resp.status_code}") from None
-            if not data.get("ok"):
-                raise TelegramRefused(data.get("description", "telegram error"))
-            return data
+async def _via_connector(method: str, chat_id: str, text: str,
+                         attachment: Attachment | None = None) -> dict:
+    """Have the Telegram connector send, over its socket; the lodge holds no bot token.
+
+    A refusal (Telegram answered, and not ok) is TelegramRefused; anything
+    else, including an answer that may have arrived, is a RuntimeError, so
+    nothing is sent twice.
+    """
+    import connector_broker
+
+    broker = connector_broker.current()
+    if broker is None:
+        raise RuntimeError("telegram is not connected to the lodge")
+    extra = {}
+    if attachment is not None:
+        extra = dict(path=str(attachment.path), filename=attachment.filename,
+                     content_type=attachment.content_type)
+    try:
+        return await broker.send("telegram", {"chat_id": str(chat_id)}, method, text, **extra)
+    except connector_broker.SendFailed as exc:
+        if exc.status == "refused":
+            raise TelegramRefused(str(exc)) from None
+        raise RuntimeError(f"telegram {exc.status}: {exc}") from None
+    except connector_broker.ConnectorUnavailable as exc:
+        raise RuntimeError(str(exc)) from None
 
 
 async def telegram_send_document(
     token: str, chat_id: str, attachment: Attachment, caption: str
 ) -> dict:
     """Upload one file as a document: it arrives byte-for-byte, whatever its type."""
-    return await _telegram_upload("sendDocument", "document", token, chat_id, attachment, caption)
+    return await _via_connector("document", chat_id, caption, attachment)
 
 
 async def telegram_send_voice(
     token: str, chat_id: str, attachment: Attachment, caption: str
 ) -> dict:
     """Upload audio Telegram shows as a voice note: Ogg Opus, MP3 or M4A."""
-    return await _telegram_upload("sendVoice", "voice", token, chat_id, attachment, caption)
+    return await _via_connector("voice", chat_id, caption, attachment)
 
 
 async def telegram_send_audio(
     token: str, chat_id: str, attachment: Attachment, caption: str
 ) -> dict:
     """Upload audio Telegram shows in its music player: MP3 or M4A."""
-    return await _telegram_upload("sendAudio", "audio", token, chat_id, attachment, caption)
+    return await _via_connector("audio", chat_id, caption, attachment)
 
 
 async def telegram_send(token: str, chat_id: str, text: str) -> dict:
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": text},
-        )
-        data = resp.json()
-        if not data.get("ok"):
-            raise RuntimeError(data.get("description", "telegram error"))
-        return data
+    return await _via_connector("message", chat_id, text)
 
 
 SLACK_MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
@@ -235,7 +230,8 @@ def telegram_sender(transport, send_document=None, send_voice=None, send_audio=N
             await send_document(token, chat_id, attachment, caption)
 
     async def send(message: OutboundMessage, destination, context: SendContext) -> None:
-        token, chat_id = context.secrets["TELEGRAM_BOT_TOKEN"], destination["chat_id"]
+        # The token stays with the connector; the transports keep their old shape.
+        token, chat_id = context.secrets.get("TELEGRAM_BOT_TOKEN", ""), destination["chat_id"]
         footer = ""
         if message.session_link:
             footer = f"\n\n---{DEN_REPLY_FOOTER}\n{message.session_link}"

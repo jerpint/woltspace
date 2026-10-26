@@ -23,6 +23,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "container" / "connectors" / "telegram"))
 
 from conftest import (
     requires_live_send,
@@ -73,11 +74,30 @@ class TestDenReplyDetection:
         assert self._extract_session(msg) == "first-abc123"
 
 
+async def _route_text(update, context, state=None):
+    """Run the connector's handle_message against the lodge side; the delivery mock."""
+    import chat_lodge
+    import telegram_connector
+    from connector_loopback import telegram
+
+    with pytest.MonkeyPatch.context() as mp:
+        connector, side = telegram(mp, Path("/nonexistent-wolts"), owners=("12345",))
+        mp.setattr(connector, "is_allowed", lambda update: True)
+        mp.setattr(side, "_wolt_exists", lambda name: True)
+        mp.setattr(side, "_load_chat_state", lambda chat: dict(state or {}))
+        mp.setattr(side, "_save_chat_state", lambda chat, value: None)
+        mp.setattr(chat_lodge, "_bot_log", lambda *a: None)
+        route = AsyncMock(return_value=True)
+        mp.setattr(side, "_route_to_session", route)
+        await telegram_connector.handle_message(update, context)
+    return route
+
+
 class TestReplyToRouting:
-    """Test reply-to session parsing and wolt extraction from adapter code."""
+    """Test reply-to session parsing and wolt extraction from the lodge side."""
 
     def test_parse_session_from_full_url(self):
-        from bot.telegram_adapter import _parse_session_from_reply
+        from chat_lodge import parse_session_from_reply as _parse_session_from_reply
         msg = (
             "🦦 nunu: here's your playlist!\n\n"
             "---\n"
@@ -87,16 +107,16 @@ class TestReplyToRouting:
         assert _parse_session_from_reply(msg) == "nunu-swift-marsh-a1b2c3"
 
     def test_parse_session_no_footer(self):
-        from bot.telegram_adapter import _parse_session_from_reply
+        from chat_lodge import parse_session_from_reply as _parse_session_from_reply
         assert _parse_session_from_reply("just a regular message") is None
 
     def test_parse_session_footer_no_url(self):
-        from bot.telegram_adapter import _parse_session_from_reply
+        from chat_lodge import parse_session_from_reply as _parse_session_from_reply
         msg = "some text\n↩️ reply to this message to talk to this session directly"
         assert _parse_session_from_reply(msg) is None
 
     def test_parse_session_fallback_format(self):
-        from bot.telegram_adapter import _parse_session_from_reply
+        from chat_lodge import parse_session_from_reply as _parse_session_from_reply
         msg = (
             "🦫 neowolt: done\n\n"
             "---\n"
@@ -106,26 +126,24 @@ class TestReplyToRouting:
         assert _parse_session_from_reply(msg) == "neowolt-chompy-dam-a3f1e2"
 
     def test_wolt_from_session_name(self):
-        from bot.telegram_adapter import _wolt_from_session_name
+        from lodge_messages import wolt_from_session_name as _wolt_from_session_name
         assert _wolt_from_session_name("nunu-swift-marsh-a1b2c3") == "nunu"
         assert _wolt_from_session_name("uxwolt-scrappy-log-02e806") == "uxwolt"
         assert _wolt_from_session_name("neowolt-chompy-dam-a3f1e2") == "neowolt"
 
     def test_wolt_from_session_name_empty(self):
-        from bot.telegram_adapter import _wolt_from_session_name
+        from lodge_messages import wolt_from_session_name as _wolt_from_session_name
         assert _wolt_from_session_name("") is None
         assert _wolt_from_session_name(None) is None
 
     def test_wolt_from_session_name_unexpected_format(self):
-        from bot.telegram_adapter import _wolt_from_session_name
+        from lodge_messages import wolt_from_session_name as _wolt_from_session_name
         # Not enough segments
         assert _wolt_from_session_name("just-two") is None
 
     @pytest.mark.asyncio
     async def test_reply_routes_to_correct_session(self):
         """Replying to a wolt message routes to that wolt's session."""
-        from bot.telegram_adapter import handle_message
-
         reply_msg_text = (
             "🦦 nunu: here's your playlist!\n\n"
             "---\n"
@@ -148,24 +166,18 @@ class TestReplyToRouting:
         context.bot.id = 4242  # the bot's own id: only its notifications carry a footer worth honoring
         context.bot.username = "testbot"
 
-        with patch("bot.telegram_adapter.is_allowed", return_value=True), \
-             patch("bot.telegram_adapter._is_session_alive", return_value=True), \
-             patch("bot.telegram_adapter._wolt_exists", return_value=True), \
-             patch("bot.telegram_adapter._route_to_session", new_callable=AsyncMock, return_value=True) as mock_route:
-            await handle_message(update, context)
-            mock_route.assert_called_once()
-            # Verify it routed to nunu's session, not the active wolt
-            call_args = mock_route.call_args
-            assert call_args[0][1] == "nunu-swift-marsh-a1b2c3"  # session name
-            assert call_args[0][2] == "nunu"  # wolt name
-            # Verify reply context is included
-            assert "[replying to:" in call_args[0][3]
+        mock_route = await _route_text(update, context)
+        mock_route.assert_called_once()
+        # Verify it routed to nunu's session, not the active wolt
+        session, wolt, text = mock_route.call_args[0][2:5]
+        assert session == "nunu-swift-marsh-a1b2c3"
+        assert wolt == "nunu"
+        # Verify reply context is included
+        assert "[replying to:" in text
 
     @pytest.mark.asyncio
     async def test_reply_without_footer_falls_through(self):
         """Replying to a message without footer uses regular routing."""
-        from bot.telegram_adapter import handle_message
-
         update = MagicMock()
         update.effective_user.id = 12345
         update.effective_chat.id = 99999
@@ -180,30 +192,32 @@ class TestReplyToRouting:
         context.bot.id = 4242  # the bot's own id: only its notifications carry a footer worth honoring
         context.bot.username = "testbot"
 
-        with patch("bot.telegram_adapter.is_allowed", return_value=True), \
-             patch("bot.telegram_adapter._load_chat_state", return_value={"active_wolt": "uxwolt", "active_session": "uxwolt-test-123-abc"}), \
-             patch("bot.telegram_adapter._is_session_alive", return_value=True), \
-             patch("bot.telegram_adapter._route_to_session", new_callable=AsyncMock, return_value=True) as mock_route:
-            await handle_message(update, context)
-            # Should route to active wolt (uxwolt), not try reply routing
-            call_args = mock_route.call_args
-            assert call_args[0][1] == "uxwolt-test-123-abc"
+        mock_route = await _route_text(
+            update, context, {"active_wolt": "uxwolt", "active_session": "uxwolt-test-123-abc"})
+        # Should route to active wolt (uxwolt), not try reply routing
+        assert mock_route.call_args[0][2] == "uxwolt-test-123-abc"
+
+
+def _chat_lodge():
+    import chat_lodge
+    import connector_registry
+    return chat_lodge.ChatLodge(connector_registry.spec("telegram"), ())
 
 
 class TestResponseFormatting:
-    """Test how bot responses are formatted for Telegram."""
+    """Test how the dog's answers are formatted."""
 
     def test_text_response_format(self):
-        from bot.telegram_adapter import format_response
-        with patch("bot.telegram_adapter._dog_name", return_value="testdog"):
+        lodge = _chat_lodge()
+        with patch.object(lodge, "_dog_name", return_value="testdog"):
             result = {"type": "text", "text": "hello world"}
-            formatted = format_response(result)
+            formatted = lodge.format_response(result)
             assert "🐶" in formatted
             assert "testdog" in formatted
             assert "hello world" in formatted
 
     def test_session_response_with_text(self):
-        from bot.telegram_adapter import format_response
+        format_response = _chat_lodge().format_response
         with patch.dict(os.environ, {"WOLTSPACE_WOLT_NAME": "neowolt"}):
             result = {
                 "type": "session",
@@ -214,7 +228,7 @@ class TestResponseFormatting:
             assert "session started" in formatted
 
     def test_image_response_format(self):
-        from bot.telegram_adapter import format_response
+        format_response = _chat_lodge().format_response
         with patch.dict(os.environ, {"WOLTSPACE_WOLT_NAME": "neowolt"}):
             result = {"type": "image", "text": "cool image", "path": "/tmp/img.png"}
             formatted = format_response(result)
@@ -225,7 +239,7 @@ class TestToolCallLogging:
     """Test the tool call log formatting."""
 
     def test_format_tool_log_new_session(self):
-        from bot.telegram_adapter import _format_tool_log
+        from chat_lodge import format_tool_log as _format_tool_log
         tc = {
             "tool": "new_session",
             "creature": "raccoon",
@@ -239,7 +253,7 @@ class TestToolCallLogging:
         assert "https://example.com" in line
 
     def test_format_tool_log_no_creature(self):
-        from bot.telegram_adapter import _format_tool_log
+        from chat_lodge import format_tool_log as _format_tool_log
         tc = {"tool": "list_sessions", "args": {}}
         line = _format_tool_log(tc)
         assert "🪵" in line
@@ -250,16 +264,16 @@ class TestAllowedUsers:
     """Test user allowlist logic."""
 
     def test_no_allowlist_means_deny_all(self):
-        from bot.telegram_adapter import ALLOWED_USERS
+        from telegram_connector import ALLOWED_USERS
         # When empty, all users should be denied (secure default)
         ALLOWED_USERS.clear()
         mock_update = MagicMock()
         mock_update.effective_user.id = 99999
-        from bot.telegram_adapter import is_allowed
+        from telegram_connector import is_allowed
         assert is_allowed(mock_update) is False
 
     def test_allowlist_blocks_unknown(self):
-        from bot.telegram_adapter import ALLOWED_USERS, is_allowed
+        from telegram_connector import ALLOWED_USERS, is_allowed
         ALLOWED_USERS.clear()
         ALLOWED_USERS.add(12345)
         mock_update = MagicMock()
@@ -268,7 +282,7 @@ class TestAllowedUsers:
         ALLOWED_USERS.clear()  # cleanup
 
     def test_allowlist_permits_known(self):
-        from bot.telegram_adapter import ALLOWED_USERS, is_allowed
+        from telegram_connector import ALLOWED_USERS, is_allowed
         ALLOWED_USERS.clear()
         ALLOWED_USERS.add(12345)
         mock_update = MagicMock()
@@ -284,7 +298,7 @@ class TestReplyRetry:
     async def test_retry_on_timeout(self):
         """_reply retries once after TimedOut and succeeds."""
         from telegram.error import TimedOut
-        from bot.telegram_adapter import _reply
+        from telegram_connector import _reply
 
         update = MagicMock()
         update.message.reply_text = AsyncMock(
@@ -296,7 +310,7 @@ class TestReplyRetry:
     @pytest.mark.asyncio
     async def test_success_no_retry(self):
         """_reply doesn't retry when reply_text succeeds."""
-        from bot.telegram_adapter import _reply
+        from telegram_connector import _reply
 
         update = MagicMock()
         update.message.reply_text = AsyncMock(return_value=MagicMock())
@@ -306,7 +320,7 @@ class TestReplyRetry:
     @pytest.mark.asyncio
     async def test_non_timeout_error_bubbles(self):
         """_reply doesn't retry on non-TimedOut errors."""
-        from bot.telegram_adapter import _reply
+        from telegram_connector import _reply
 
         update = MagicMock()
         update.message.reply_text = AsyncMock(side_effect=RuntimeError("boom"))
@@ -318,7 +332,7 @@ class TestReplyRetry:
     async def test_double_timeout_raises(self):
         """_reply raises if both attempts time out."""
         from telegram.error import TimedOut
-        from bot.telegram_adapter import _reply
+        from telegram_connector import _reply
 
         update = MagicMock()
         update.message.reply_text = AsyncMock(
@@ -329,14 +343,27 @@ class TestReplyRetry:
         assert update.message.reply_text.call_count == 2
 
 
+async def _run_command(name, update, context, sessions=()):
+    import chat_lodge
+    import telegram_connector
+    from connector_loopback import telegram
+
+    update.effective_chat.id = 99999
+    with pytest.MonkeyPatch.context() as mp:
+        connector, side = telegram(mp, Path("/nonexistent-wolts"), owners=(str(update.effective_user.id),))
+        mp.setattr(connector, "is_allowed", lambda update: True)
+        mp.setattr(chat_lodge, "list_sessions", lambda: list(sessions))
+        mp.setattr(chat_lodge, "list_wolts", lambda: [])
+        mp.setattr(chat_lodge, "get_tunnel_url", lambda: None)
+        await telegram_connector.command_handler(name)(update, context)
+
+
 class TestSessionsAliveFilter:
     """Test /sessions only returns alive sessions."""
 
     @pytest.mark.asyncio
     async def test_sessions_filters_dead(self):
         """handle_sessions only shows alive sessions."""
-        from bot.telegram_adapter import handle_sessions
-
         sessions = [
             {"name": "wolt-a-1", "alive": True},
             {"name": "wolt-b-2", "alive": False},
@@ -348,10 +375,7 @@ class TestSessionsAliveFilter:
         context = MagicMock()
         context.bot.id = 4242  # the bot's own id: only its notifications carry a footer worth honoring
 
-        with patch("bot.telegram_adapter.is_allowed", return_value=True), \
-             patch("bot.telegram_adapter.list_sessions", return_value=sessions), \
-             patch("bot.telegram_adapter.get_tunnel_url", return_value=None):
-            await handle_sessions(update, context)
+        await _run_command("sessions", update, context, sessions=sessions)
 
         reply_text = update.message.reply_text.call_args[0][0]
         assert "wolt-a-1" in reply_text
@@ -361,8 +385,6 @@ class TestSessionsAliveFilter:
     @pytest.mark.asyncio
     async def test_sessions_all_dead(self):
         """handle_sessions says 'no active sessions' when all are dead."""
-        from bot.telegram_adapter import handle_sessions
-
         sessions = [
             {"name": "wolt-a-1", "alive": False},
         ]
@@ -372,10 +394,7 @@ class TestSessionsAliveFilter:
         context = MagicMock()
         context.bot.id = 4242  # the bot's own id: only its notifications carry a footer worth honoring
 
-        with patch("bot.telegram_adapter.is_allowed", return_value=True), \
-             patch("bot.telegram_adapter.list_sessions", return_value=sessions), \
-             patch("bot.telegram_adapter.get_tunnel_url", return_value=None):
-            await handle_sessions(update, context)
+        await _run_command("sessions", update, context, sessions=sessions)
 
         reply_text = update.message.reply_text.call_args[0][0]
         assert reply_text == "no active sessions."
@@ -388,7 +407,7 @@ class TestErrorHandler:
     async def test_timeout_swallowed(self):
         """TimedOut errors are logged but not re-raised."""
         from telegram.error import TimedOut
-        from bot.telegram_adapter import _error_handler
+        from telegram_connector import _error_handler
 
         context = MagicMock()
 
@@ -400,13 +419,14 @@ class TestErrorHandler:
     @pytest.mark.asyncio
     async def test_other_errors_logged(self):
         """Non-TimedOut errors are logged with exc_info."""
-        from bot.telegram_adapter import _error_handler
+        from telegram_connector import _error_handler
 
         context = MagicMock()
 
         context.bot.id = 4242  # the bot's own id: only its notifications carry a footer worth honoring
         context.error = RuntimeError("unexpected")
-        with patch("bot.telegram_adapter.logger") as mock_logger:
+        import telegram_connector
+        with patch.object(telegram_connector, "logger") as mock_logger:
             await _error_handler(None, context)
             mock_logger.error.assert_called_once()
 
@@ -500,8 +520,12 @@ class TestOptionalDog:
 
     @pytest.fixture
     def routing(self, monkeypatch, tmp_path):
-        from bot import telegram_adapter as adapter
+        import chat_lodge
+        from connector_loopback import Pair, telegram
+
+        connector, side = telegram(monkeypatch, tmp_path / "wolts", owners=("1",))
         update = MagicMock()
+        update.effective_user.id = 1
         update.effective_chat.id = 123
         update.effective_chat.type = "private"
         update.message.text = "hello"
@@ -511,22 +535,25 @@ class TestOptionalDog:
         context.bot.id = 4242  # the bot's own id: only its notifications carry a footer worth honoring
         context.bot.username = "testbot"
         state = {}
-        monkeypatch.setattr(adapter, "is_allowed", lambda update: True)
-        monkeypatch.setattr(adapter, "dog_available", lambda: False)
-        monkeypatch.setattr(adapter, "_load_chat_state", lambda chat_id: dict(state))
-        monkeypatch.setattr(adapter, "_save_chat_state", lambda chat_id, value: state.update(value))
-        monkeypatch.setattr(adapter, "_bot_log", lambda *args: None)
-        monkeypatch.setattr(adapter, "get_tunnel_url", lambda: "")
-        monkeypatch.setattr(adapter, "list_wolts", lambda: [{"name": "nunu", "type": "otter"}])
+        monkeypatch.setattr(connector, "is_allowed", lambda update: True)
+        monkeypatch.setattr(chat_lodge, "dog_available", lambda: False)
+        monkeypatch.setattr(side, "_load_chat_state", lambda chat_id: dict(state))
+        monkeypatch.setattr(side, "_save_chat_state", lambda chat_id, value: state.update(value))
+        monkeypatch.setattr(side, "_wolt_exists", lambda name: True)
+        monkeypatch.setattr(chat_lodge, "_bot_log", lambda *args: None)
+        monkeypatch.setattr(chat_lodge, "get_tunnel_url", lambda: "")
+        monkeypatch.setattr(chat_lodge, "list_wolts", lambda: [{"name": "nunu", "type": "otter"}])
         spawn = MagicMock(return_value={"name": "nunu-swift-marsh-abc123"})
         route = AsyncMock(return_value="nunu-swift-marsh-abc123")
         model = MagicMock(side_effect=AssertionError("No model call allowed"))
-        monkeypatch.setattr(adapter, "_spawn_session", spawn)
-        monkeypatch.setattr(adapter, "_route_to_session", route)
-        monkeypatch.setattr(adapter, "get_response", model)
-        monkeypatch.setattr(adapter, "_save_upload", lambda *args: tmp_path / "upload")
-        monkeypatch.setattr(adapter, "HISTORY_DIR", tmp_path / "history")
-        return adapter, update, context, state, spawn, route, model
+        monkeypatch.setattr(side, "_spawn_session", spawn)
+        monkeypatch.setattr(side, "_route_to_session", route)
+        monkeypatch.setattr(chat_lodge, "get_response", model)
+        monkeypatch.setattr(connector, "_save_upload", lambda *args: tmp_path / "upload")
+        monkeypatch.setattr(side, "_inside_uploads", lambda path: True)
+        monkeypatch.setattr(side, "_read_upload", lambda path: b"content")
+        monkeypatch.setattr(side, "history_dir", tmp_path / "history")
+        return Pair(connector, side), update, context, state, spawn, route, model
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("mention", [False, True])
@@ -538,7 +565,7 @@ class TestOptionalDog:
         await adapter.handle_message(update, context)
         # The message rides in the spawn's opening prompt, never pasted after (#555).
         spawn.assert_called_once()
-        assert spawn.call_args.args[:2] == ("nunu", 123)
+        assert spawn.call_args.args[:2] == ("nunu", "123")
         assert spawn.call_args.args[2].endswith("chat_id=123]: hello")
         route.assert_not_awaited()
         assert state["active_wolt"] == "nunu"
@@ -552,7 +579,7 @@ class TestOptionalDog:
         update.message.text = "@testbot hello"
         await adapter.handle_message(update, context)
         spawn.assert_not_called()
-        assert route.await_args.args[1:4] == ("other-swift-marsh-123abc", "other", "hello")
+        assert route.await_args.args[2:5] == ("other-swift-marsh-123abc", "other", "hello")
         model.assert_not_called()
 
     @pytest.mark.asyncio
@@ -563,17 +590,21 @@ class TestOptionalDog:
          "then send it again."),
     ])
     async def test_selection_is_plain_text(self, routing, monkeypatch, builders, expected):
+        import chat_lodge
+        import lodge_commands as commands
         adapter, update, context, state, spawn, route, model = routing
-        monkeypatch.setattr(adapter, "list_wolts", lambda: builders + [
+        monkeypatch.setattr(chat_lodge, "list_wolts", lambda: builders + [
             {"name": "doggo", "type": "dog"}, {"name": "wolfie", "type": "wolf"}])
         await adapter.handle_message(update, context)
         if builders:
             calls = update.message.reply_text.await_args_list
             assert len(calls) == 2
-            assert calls[0].args == (adapter._wolt_picker_header(builders, None),)
+            ports = adapter.side.ports({"chat_id": "123"})
+            assert calls[0].args == (commands.wolt_picker(ports, builders, None).text,)
             # plain text: no parse mode, so a typed name can never break the message
             assert calls[0].kwargs == {
-                "reply_markup": adapter._wolt_picker_keyboard(builders, None),
+                "reply_markup": adapter.connector._keyboard(
+                    commands.wolt_picker_choices(ports, builders, None)),
             }
             assert calls[1].args == (expected,)
             assert calls[1].kwargs == {}
@@ -587,27 +618,30 @@ class TestOptionalDog:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("mention", [False, True])
     async def test_available_dog_uses_existing_model_path(self, routing, monkeypatch, mention):
+        import chat_lodge
         adapter, update, context, state, spawn, route, model = routing
-        monkeypatch.setattr(adapter, "dog_available", lambda: True)
-        monkeypatch.setattr(adapter, "_dog_ack", AsyncMock())
-        monkeypatch.setattr(adapter, "_load_history", lambda chat_id: [])
-        monkeypatch.setattr(adapter, "_append_history", lambda *args: None)
+        monkeypatch.setattr(chat_lodge, "dog_available", lambda: True)
+        monkeypatch.setattr(adapter.side, "_dog_ack", AsyncMock())
+        monkeypatch.setattr(adapter.side, "_load_history", lambda chat_id: [])
+        monkeypatch.setattr(adapter.side, "_append_history", lambda *args: None)
         send = AsyncMock()
-        monkeypatch.setattr(adapter, "_send_result", send)
+        monkeypatch.setattr(adapter.side, "_send_result", send)
         model.side_effect = None
         model.return_value = {"history_messages": [], "type": "text", "text": "woof"}
         if mention:
             state.update(active_wolt="nunu", active_session="existing")
             update.message.text = "@testbot hello"
         await adapter.handle_message(update, context)
-        model.assert_called_once_with("hello", conversation_history=[], routing={"adapter": "telegram", "chat_id": 123})
-        send.assert_awaited_once_with(update, model.return_value)
+        model.assert_called_once_with("hello", conversation_history=[], routing={"adapter": "telegram", "chat_id": "123"})
+        send.assert_awaited_once()
+        assert send.await_args.args[1] == model.return_value
         spawn.assert_not_called()
         route.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("kind", ["voice", "photo", "document"])
     async def test_media_without_dog_routes_to_wolt(self, routing, monkeypatch, kind):
+        import chat_lodge
         adapter, update, context, state, spawn, route, model = routing
         file = MagicMock()
         file.download_to_drive = AsyncMock()
@@ -616,10 +650,10 @@ class TestOptionalDog:
         update.message.caption = "caption"
         update.message.document.file_name = "note.txt"
         update.message.document.mime_type = "text/plain"
-        monkeypatch.setattr(adapter, "transcribe_audio", lambda path: "hello")
+        monkeypatch.setattr(chat_lodge, "transcribe_audio", lambda path: "hello")
         await getattr(adapter, "handle_" + kind)(update, context)
         spawn.assert_called_once()
-        assert spawn.call_args.args[:2] == ("nunu", 123)
+        assert spawn.call_args.args[:2] == ("nunu", "123")
         route.assert_not_awaited()
         assert state["active_wolt"] == "nunu"
         model.assert_not_called()
@@ -635,11 +669,10 @@ class TestOptionalDog:
         monkeypatch.setenv("OPENAI_API_KEY", "")
         await adapter.handle_voice(update, context)
         spawn.assert_called_once()
-        assert spawn.call_args.args[:2] == ("nunu", 123)
+        assert spawn.call_args.args[:2] == ("nunu", "123")
         route.assert_not_awaited()
         assert "no OPENAI_API_KEY set for transcription" in spawn.call_args.args[2]
         model.assert_not_called()
-
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("available,expected", [
@@ -647,25 +680,33 @@ class TestOptionalDog:
         (True, "Hey. I'm doggo. Talk to me and I'll connect you to a wolt."),
     ])
     async def test_start_with_optional_dog(self, routing, monkeypatch, available, expected):
+        import chat_lodge
         adapter, update, context, state, spawn, route, model = routing
-        monkeypatch.setattr(adapter, "dog_available", lambda: available)
-        monkeypatch.setattr(adapter, "_dog_name", lambda: "doggo")
-        await adapter.handle_start(update, context)
+        monkeypatch.setattr(chat_lodge, "dog_available", lambda: available)
+        monkeypatch.setattr(adapter.side, "_dog_name", lambda: "doggo")
+        await adapter.command_handler("start")(update, context)
         update.message.reply_text.assert_awaited_once_with(expected)
         model.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_same_wolt_new_session_switch_notice(self, routing, monkeypatch, tmp_path):
+        import lodge_messages
         adapter, update, context, state, spawn, route, model = routing
-        monkeypatch.setattr(adapter, "_WOLTS_DIR", tmp_path)
+        monkeypatch.setattr(adapter.side, "wolts_dir", tmp_path)
         manifest = tmp_path / "nunu" / "wolt" / "wolt.json"
         manifest.parent.mkdir(parents=True)
         manifest.write_text(json.dumps({"type": "otter"}))
-        await adapter._notify_switch(
-            update, {"active_wolt": "nunu", "active_session": "old"}, "nunu", "new")
-        emoji = adapter.CREATURE_EMOJIS["otter"]
-        update.message.reply_text.assert_awaited_once_with(
-            f"🪵 now talking to {emoji} nunu (new)")
+        said = []
+
+        class Out:
+            async def say(self, reply):
+                said.append(reply.text)
+        await lodge_messages.say_switch(
+            adapter.side._message_ports({"chat_id": "123"}, Out()),
+            {"active_wolt": "nunu", "active_session": "old"}, "nunu", "new")
+        import chat_lodge
+        emoji = chat_lodge.CREATURE_EMOJIS["otter"]
+        assert said == [f"🪵 now talking to {emoji} nunu (new)"]
 
 
 class TestDisplayNamesInTelegram:
@@ -673,7 +714,10 @@ class TestDisplayNamesInTelegram:
 
     @pytest.fixture
     def wolts(self, monkeypatch, tmp_path):
-        import bot.telegram_adapter as adapter
+        import lodge_commands as commands
+        import telegram_connector
+
+        lodge = _chat_lodge()
 
         def make(slug, creature, display_name=None):
             home = tmp_path / slug / "wolt"
@@ -684,8 +728,22 @@ class TestDisplayNamesInTelegram:
             (home / "wolt.json").write_text(json.dumps(config))
             return config
 
-        monkeypatch.setattr(adapter, "_WOLTS_DIR", tmp_path)
-        return adapter, [
+        monkeypatch.setattr(lodge, "wolts_dir", tmp_path)
+        ports = lodge.ports({"chat_id": "1"})
+
+        class View:
+            _shown = staticmethod(lodge._shown)
+
+            @staticmethod
+            def _wolt_picker_keyboard(listed, active):
+                return telegram_connector._keyboard(commands.wolt_picker_choices(ports, listed, active))
+
+            @staticmethod
+            def _wolt_picker_header(listed, active):
+                return commands.wolt_picker(ports, listed, active).text
+
+        View.side = lodge
+        return View, [
             make("justin-beaver", "beaver", "Justin Beaver"),
             make("chip", "otter"),
             make("snake-case", "raccoon", "Sn_ake *Case*"),
@@ -709,7 +767,6 @@ class TestDisplayNamesInTelegram:
         assert adapter._wolt_picker_header(listed, "snake-case").startswith(
             "active: 🦝 Sn_ake *Case*\n")
         assert adapter._wolt_picker_header(listed, "chip").startswith("active: 🦦 chip\n")
-        assert not hasattr(adapter, "_md")
 
     def test_shown_falls_back_to_the_slug(self, wolts):
         adapter, _ = wolts
@@ -719,13 +776,16 @@ class TestDisplayNamesInTelegram:
 
     @pytest.mark.asyncio
     async def test_switch_notice_uses_the_display_name(self, wolts, monkeypatch):
+        import lodge_messages
         adapter, _ = wolts
-        reply = AsyncMock()
-        monkeypatch.setattr(adapter, "_reply", reply)
-        await adapter._notify_switch(
-            MagicMock(), {"active_wolt": "chip", "active_session": "old"},
+        said = []
+
+        class Out:
+            async def say(self, reply):
+                said.append(reply.text)
+        await lodge_messages.say_switch(
+            adapter.side._message_ports({"chat_id": "1"}, Out()),
+            {"active_wolt": "chip", "active_session": "old"},
             "justin-beaver", "justin-beaver-a-b-123456",
         )
-        assert reply.await_args.args[1] == (
-            "🪵 now talking to 🦫 Justin Beaver (justin-beaver-a-b-123456)"
-        )
+        assert said == ["🪵 now talking to 🦫 Justin Beaver (justin-beaver-a-b-123456)"]

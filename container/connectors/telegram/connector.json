@@ -1,0 +1,52 @@
+{
+  "name": "telegram",
+  "title": "Telegram",
+  "protocol": 1,
+  "command": [
+    "{python}",
+    "telegram_connector.py"
+  ],
+  "dependency": "telegram",
+  "dependency_label": "python-telegram-bot",
+  "capabilities": [
+    "text",
+    "files",
+    "voice_in",
+    "voice_out",
+    "images",
+    "edit",
+    "reply_to",
+    "status"
+  ],
+  "command_input": [
+    "native",
+    "buttons"
+  ],
+  "events": [
+    "message",
+    "command",
+    "selection",
+    "attachment"
+  ],
+  "route": [
+    [
+      "chat_id",
+      "-?[0-9]+"
+    ]
+  ],
+  "secrets": [
+    [
+      "TELEGRAM_BOT_TOKEN",
+      "token"
+    ]
+  ],
+  "enable_env": "ENABLE_TELEGRAM_BOT",
+  "owners_env": "TELEGRAM_ALLOWED_USERS",
+  "owners_config": "allowed_users",
+  "legacy_flag": "--telegram",
+  "help": [
+    "• Send a message → goes to active session (or starts one)",
+    "• Reply to a wolt's message → routes to that wolt",
+    "• @dog → ask the dog for help"
+  ]
+}

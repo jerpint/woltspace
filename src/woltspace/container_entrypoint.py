@@ -332,14 +332,6 @@ def seed_wolf_json(wolt_dir: Path, woltspace_dir: Path):
         print(f"seeded default wolf.json for {wolt_dir.name}")
 
 
-def resolve_bot_module(wolt_dir: Path, woltspace_dir: Path, adapter: str) -> tuple:
-    """Returns (bot_dir, bot_module) — custom wolt bot or platform default."""
-    custom = wolt_dir / "wolt" / "bot" / f"{adapter}_adapter.py"
-    if custom.is_file():
-        return str(wolt_dir), f"wolt.bot.{adapter}_adapter"
-    return str(woltspace_dir / "container"), f"bot.{adapter}_adapter"
-
-
 # ---------------------------------------------------------------------------
 # Phase 2 — node: environment
 # ---------------------------------------------------------------------------
@@ -359,14 +351,11 @@ def build_environment(
     go straight into the environment they were always destined for.
     """
     source = os.environ if env is None else env
-    tg_dir, tg_mod = resolve_bot_module(wolt_dir, woltspace_dir, "telegram")
     return export_both({
         "WOLTSPACE_WOLT_NAME": wolt_name,
         "WOLTSPACE_WOLT_DIR": str(wolt_dir),
         "WOLTSPACE_WOLTS_DIR": str(wolts_dir),
         "DEV_MODE": "true" if dev_mode else "false",
-        "TELEGRAM_BOT_DIR": tg_dir,
-        "TELEGRAM_BOT_MODULE": tg_mod,
         "PYTHONPATH": f"{woltspace_dir}/container/lib:{source.get('PYTHONPATH', '')}",
         "PATH": f"{woltspace_dir}/container/bin:{source.get('PATH', '')}",
         "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",

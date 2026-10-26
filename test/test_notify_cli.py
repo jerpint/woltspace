@@ -1212,6 +1212,9 @@ def test_voice_request_and_answer_are_the_ones_the_lodge_really_reads_and_writes
     monkeypatch.setattr(notify, "slack_send", AsyncMock())
     monkeypatch.setattr(notify, "slack_upload_file", upload)
     monkeypatch.setattr(notify, "dotenv_env", lambda key: lodge_env.get(key, ""))
+    # Telegram sends through its connector: connected here while the lodge has its token.
+    monkeypatch.setattr(notify, "_connector_up",
+                        lambda name: name != "telegram" or bool(lodge_env.get("TELEGRAM_BOT_TOKEN")))
     monkeypatch.setattr(notify, "OUTBOX_DIR", box)
     monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
     monkeypatch.setattr(notify, "read_session_registry", lambda name: None)
@@ -1282,6 +1285,9 @@ def test_speak_request_and_answer_are_the_ones_the_lodge_really_reads_and_writes
     monkeypatch.setattr(notify, "slack_send", AsyncMock())
     monkeypatch.setattr(notify, "slack_upload_file", upload)
     monkeypatch.setattr(notify, "dotenv_env", lambda key: lodge_env.get(key, ""))
+    # Telegram sends through its connector: connected here while the lodge has its token.
+    monkeypatch.setattr(notify, "_connector_up",
+                        lambda name: name != "telegram" or bool(lodge_env.get("TELEGRAM_BOT_TOKEN")))
     monkeypatch.setattr(notify, "OUTBOX_DIR", box)
     monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
     monkeypatch.setattr(notify, "read_session_registry", lambda name: None)
@@ -1335,6 +1341,9 @@ def test_a_file_for_a_chat_that_is_not_the_lodge_s_own_is_refused_and_removed(
     monkeypatch.setattr(notify, "telegram_send", AsyncMock())
     monkeypatch.setattr(notify, "telegram_send_document", telegram_send_document)
     monkeypatch.setattr(notify, "dotenv_env", lambda key: lodge_env.get(key, ""))
+    # Telegram sends through its connector: connected here while the lodge has its token.
+    monkeypatch.setattr(notify, "_connector_up",
+                        lambda name: name != "telegram" or bool(lodge_env.get("TELEGRAM_BOT_TOKEN")))
     monkeypatch.setattr(notify, "OUTBOX_DIR", box)
     monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
     monkeypatch.setattr(notify, "read_session_registry", lambda name: None)

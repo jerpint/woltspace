@@ -149,10 +149,11 @@ class TestSlackPlan:
         })
         plan = TelegramConnector().plan(layout, {})
         assert plan.enabled is True
-        assert plan.command[-2:] == ("-m", "bot.telegram_adapter")
+        assert plan.command[-2:] == (sys.executable, "telegram_connector.py")
         assert plan.env["TELEGRAM_BOT_TOKEN"] == TOKEN
         assert plan.env["TELEGRAM_ALLOWED_USERS"] == "7,8"
-        assert plan.env["WOLTS_DIR"] == str(layout.wolts_dir)
+        assert plan.owners == ("7", "8")
+        assert plan.env["WOLTSPACE_CONNECTOR_DATA"] == str(layout.wolts_dir / ".space" / "telegram")
 
     def test_environment_overrides_the_config_file(self, layout):
         write_config(layout, {
@@ -174,7 +175,7 @@ class TestSlackPlan:
         write_config(layout, {"channels": {"telegram": {"enabled": True}}})
         plan = TelegramConnector().plan(layout, {})
         assert plan.enabled is False
-        assert "token" in plan.detail
+        assert "TELEGRAM_BOT_TOKEN" in plan.detail
         assert "TELEGRAM_BOT_TOKEN" in plan.remedy
 
     def _container(self, layout):
@@ -194,13 +195,10 @@ class TestSlackPlan:
             "WOLTSPACE_ENTRYPOINT": "1",
             "ENABLE_TELEGRAM_BOT": "true",
             "TELEGRAM_BOT_TOKEN": TOKEN,
-            "TELEGRAM_BOT_DIR": str(ROOT / "container"),
-            "TELEGRAM_BOT_MODULE": "bot.telegram_adapter",
         })
         assert plan.enabled is True
-        assert plan.cwd == str(ROOT / "container")
-        assert plan.command[0] == sys.executable
-        assert plan.command[-2:] == ("-m", "bot.telegram_adapter")
+        assert plan.cwd == str(ROOT / "container" / "connectors" / "telegram")
+        assert plan.command == (sys.executable, "telegram_connector.py")
 
     def test_an_image_missing_dependencies_falls_back_to_the_bot_project(self, layout, monkeypatch):
         """A container built some other way keeps the uv project it always had."""
@@ -209,49 +207,24 @@ class TestSlackPlan:
             "WOLTSPACE_ENTRYPOINT": "1",
             "ENABLE_TELEGRAM_BOT": "true",
             "TELEGRAM_BOT_TOKEN": TOKEN,
-            "TELEGRAM_BOT_DIR": str(ROOT / "container"),
-            "TELEGRAM_BOT_MODULE": "bot.telegram_adapter",
         })
         assert plan.enabled is True
         assert plan.command[0].endswith("uv")
         assert plan.command[1:5] == ("run", "--project", str(ROOT / "container" / "bot"), "python")
-        assert plan.command[-2:] == ("-m", "bot.telegram_adapter")
+        assert plan.command[-1] == "telegram_connector.py"
 
     def test_dev_mode_keeps_hot_reload_as_one_supervised_child(self, layout):
         plan = TelegramConnector().plan(self._container(layout), {
             "WOLTSPACE_ENTRYPOINT": "1",
             "ENABLE_TELEGRAM_BOT": "true",
             "TELEGRAM_BOT_TOKEN": TOKEN,
-            "TELEGRAM_BOT_DIR": str(ROOT / "container"),
             "DEV_MODE": "true",
         })
         assert plan.enabled is True
         assert "watchfiles" in plan.command
-        assert plan.command[-1] == "bot/"
-        assert "bot.telegram_adapter" in plan.command[-2]
+        assert plan.command[-1] == str(ROOT / "container" / "connectors" / "telegram")
+        assert plan.command[-2].endswith(" telegram_connector.py")
         assert "dev reload" in plan.detail
-
-    def test_a_custom_wolt_adapter_still_finds_an_interpreter_with_telegram(self, layout, monkeypatch):
-        """A wolt's own adapter lives at <wolt>/wolt/bot, not <wolt>/bot.
-
-        Probing only the latter fell through to an interpreter without
-        python-telegram-bot and then reported a missing dependency. Only reachable in
-        an image whose own environment lacks the dependency.
-        """
-        monkeypatch.setattr(channels, "_module_available", lambda name: False)
-        plan = TelegramConnector().plan(self._container(layout), {
-            "WOLTSPACE_ENTRYPOINT": "1",
-            "ENABLE_TELEGRAM_BOT": "true",
-            "TELEGRAM_BOT_TOKEN": TOKEN,
-            "TELEGRAM_BOT_DIR": "/workspace/wolts/mywolt",
-            "TELEGRAM_BOT_MODULE": "wolt.bot.telegram_adapter",
-        })
-        assert plan.enabled is True
-        assert plan.cwd == "/workspace/wolts/mywolt"
-        assert plan.command[-1] == "wolt.bot.telegram_adapter"
-        # Falls back to the platform's bot project, which owns the dependency.
-        assert str(ROOT / "container" / "bot") in plan.command
-
 
 class TestAmbientEnvironmentIsNeverEnough:
     """A stray `woltspace serve` in the container must not spawn a rival bot.
@@ -647,18 +620,11 @@ class TestStatusRendering:
 
 class TestContainerEntrypoint:
     def test_boot_no_longer_launches_a_second_telegram_bot(self):
-        """Boot resolves the telegram module but must never start it itself."""
+        """Boot must never start a chat connector itself."""
         from woltspace import container_entrypoint
 
         source = Path(container_entrypoint.__file__).read_text()
         assert "ChannelConnector" in source
-        # The module resolves the telegram adapter for the connector to use...
-        env = container_entrypoint.build_environment(
-            wolt_name="mywolt", wolt_dir=Path("/workspace/wolts/mywolt"),
-            wolts_dir=Path("/workspace/wolts"), woltspace_dir=ROOT,
-            dev_mode=False, env={},
-        )
-        assert env["TELEGRAM_BOT_MODULE"] == "bot.telegram_adapter"
         # No chat adapter is launched by hand; the connector supervisor owns
         # both Telegram and Slack. A second poller on one token is the bug.
         launchers = [name for name in vars(container_entrypoint)

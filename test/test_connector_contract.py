@@ -94,17 +94,20 @@ def test_the_registry_is_the_menu():
 
 def test_builtin_manifests_match_the_lodge():
     import connector_registry
-    from bot import telegram_adapter
-    assert telegram_adapter.MANIFEST is connector_registry.TELEGRAM
-    assert connector_registry.manifest("telegram").secrets == ("TELEGRAM_BOT_TOKEN",)
+    telegram = connector_registry.spec("telegram")
+    assert telegram.bundled and telegram.launchable
+    assert telegram.manifest.secrets == ("TELEGRAM_BOT_TOKEN",)
     assert connector_registry.manifest("discord") is None
 
 
-def test_every_builtin_manifest_has_a_way_out():
+def test_every_builtin_connector_has_a_way_out():
     import connector_registry
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from server import notify
-    assert set(connector_registry.BUILTIN) <= set(notify.OUTBOUND) <= set(notify.SENDERS)
+    # Classes in the lodge (Slack) have an outbound entry; folder connectors
+    # (Telegram) send through their socket, from the sender the lodge registers.
+    assert set(connector_registry.SPECS) <= set(notify.OUTBOUND) <= set(notify.SENDERS)
+    assert "telegram" in notify.OUTBOUND and "telegram" in notify.SENDERS
 
 
 def test_route_keys_cannot_collide_through_separators():

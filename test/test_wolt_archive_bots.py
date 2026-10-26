@@ -25,22 +25,29 @@ LIVE = "wolt-a-swift-marsh-abc123"
 def telegram(monkeypatch, tmp_path):
     # bot.core makes its log dir under the wolts dir at import: keep it here.
     monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
-    from bot import telegram_adapter as adapter
+    import chat_lodge
+    from connector_loopback import Pair, telegram as wire_telegram
 
     wolts = tmp_path / "wolts"
     for name in ("wolt-a", "kit"):
         (wolts / name / "wolt").mkdir(parents=True)
         (wolts / name / "wolt" / "wolt.json").write_text(json.dumps({"name": name, "type": "beaver"}))
+    connector, side = wire_telegram(monkeypatch, wolts, owners=("12345",))
     start = MagicMock(return_value={"name": "pal-new-reed-654321", "url": ""})
     deliver = MagicMock(side_effect=lambda name, msg: {"ok": name == LIVE, "url": ""})
+    monkeypatch.setattr(side, "history_dir", tmp_path / "history")
+    monkeypatch.setattr(side, "_inside_uploads", lambda path: True)
     for name, value in [
-            ("_WOLTS_DIR", wolts), ("HISTORY_DIR", tmp_path / "history"),
             ("list_wolts", lambda: [{"name": n, "type": "beaver", "dir": str(wolts / n)} for n in ("wolt-a", "kit")]),
-            ("is_allowed", lambda update: True), ("get_tunnel_url", lambda: ""), ("dog_available", lambda: False),
-            ("transcribe_audio", lambda path: "hi"), ("_download_bytes", AsyncMock(return_value=b"ogg")),
-            ("_save_upload", lambda name, data: tmp_path / name),
+            ("get_tunnel_url", lambda: ""), ("dog_available", lambda: False),
+            ("transcribe_audio", lambda path: "hi"),
             ("start_claude_session", start), ("message_session", deliver)]:
-        monkeypatch.setattr(adapter, name, value)
+        monkeypatch.setattr(chat_lodge, name, value)
+    for name, value in [
+            ("is_allowed", lambda update: True), ("_download_bytes", AsyncMock(return_value=b"ogg")),
+            ("_save_upload", lambda name, data: tmp_path / name)]:
+        monkeypatch.setattr(connector, name, value)
+    adapter = Pair(connector, side)
     return adapter, wolts, start, deliver
 
 
@@ -55,6 +62,9 @@ async def _handle(adapter, kind="message", reply_to_gone=False):
             f"https://x.trycloudflare.com/tui?session={GONE}"))
     context = MagicMock()
     context.bot.username = "testbot"
+    context.bot.id = 4242
+    if reply_to_gone:
+        update.message.reply_to_message.from_user.id = 4242  # the bot's own notification
     await getattr(adapter, f"handle_{kind}")(update, context)
     return update
 
@@ -69,7 +79,8 @@ async def test_chat_pointing_at_a_gone_wolt_goes_to_the_picker(telegram):
     start.assert_not_called()
     deliver.assert_not_called()
     replies = [c.args[0] for c in update.message.reply_text.await_args_list]
-    assert replies[-1] == adapter._PICK_THEN_RESEND
+    import lodge_messages
+    assert replies[-1] == lodge_messages.PICK_THEN_RESEND
     assert "active_wolt" not in adapter._load_chat_state(CHAT)
     assert not (wolts / "pal").exists()
 

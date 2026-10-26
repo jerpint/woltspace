@@ -40,7 +40,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -87,7 +87,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -164,7 +164,7 @@
     "message": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     }
    }
   ],
@@ -240,7 +240,7 @@
     "message": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     }
    }
   ],
@@ -295,7 +295,7 @@
     "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "pal"
    }
@@ -338,7 +338,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\n[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -381,7 +381,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\n[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -676,7 +676,7 @@
     "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "ots"
    }
@@ -715,7 +715,7 @@
     "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "ots"
    }
@@ -749,7 +749,7 @@
     "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "pal"
    }
@@ -783,7 +783,7 @@
     "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "pal"
    }
@@ -830,7 +830,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -877,7 +877,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -954,7 +954,7 @@
     "message": "[image] look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     }
    }
   ],
@@ -1030,7 +1030,7 @@
     "message": "[image] look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     }
    }
   ],
@@ -1085,7 +1085,7 @@
     "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "pal"
    }
@@ -1128,7 +1128,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\n[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -1171,7 +1171,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\n[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -1466,7 +1466,7 @@
     "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "ots"
    }
@@ -1505,7 +1505,7 @@
     "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "ots"
    }
@@ -1539,7 +1539,7 @@
     "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "pal"
    }
@@ -1573,7 +1573,7 @@
     "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "pal"
    }
@@ -1590,7 +1590,7 @@
     "message": "please spawn bud",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     }
    }
   ],
@@ -1662,7 +1662,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: hello there",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -1709,7 +1709,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: hello there",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -1756,7 +1756,7 @@
     "message": "hi",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     }
    }
   ],
@@ -1811,7 +1811,7 @@
     "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: hi",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "pal"
    }
@@ -1856,7 +1856,7 @@
     "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: hello there",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "pal"
    }
@@ -1933,7 +1933,7 @@
     "message": "help",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     }
    }
   ],
@@ -1971,7 +1971,7 @@
     "message": "hello there",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     }
    }
   ],
@@ -2047,7 +2047,7 @@
     "message": "hello there",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     }
    }
   ],
@@ -2102,7 +2102,7 @@
     "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: hello there",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "pal"
    }
@@ -2145,7 +2145,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\nhello there",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -2188,7 +2188,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\nhello there",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -2483,7 +2483,7 @@
     "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: hello there",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "ots"
    }
@@ -2522,7 +2522,7 @@
     "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: hello there",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "ots"
    }
@@ -2556,7 +2556,7 @@
     "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: hello there",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "pal"
    }
@@ -2590,7 +2590,7 @@
     "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: hello there",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "pal"
    }
@@ -2637,7 +2637,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -2684,7 +2684,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -2761,7 +2761,7 @@
     "message": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     }
    }
   ],
@@ -2837,7 +2837,7 @@
     "message": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     }
    }
   ],
@@ -2892,7 +2892,7 @@
     "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "pal"
    }
@@ -2935,7 +2935,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\n[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -2978,7 +2978,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\n[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -3273,7 +3273,7 @@
     "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "ots"
    }
@@ -3312,7 +3312,7 @@
     "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "ots"
    }
@@ -3346,7 +3346,7 @@
     "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "pal"
    }
@@ -3380,7 +3380,7 @@
     "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "pal"
    }
@@ -3431,7 +3431,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [voice message] spoken words",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -3482,7 +3482,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [voice message] spoken words",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -3567,7 +3567,7 @@
     "message": "[voice message] spoken words",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     }
    }
   ],
@@ -3651,7 +3651,7 @@
     "message": "[voice message] spoken words",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     }
    }
   ],
@@ -3714,7 +3714,7 @@
     "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [voice message] spoken words",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "pal"
    }
@@ -3761,7 +3761,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\n[voice message] spoken words",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -3808,7 +3808,7 @@
     "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\n[voice message] spoken words",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "bud"
    }
@@ -4139,7 +4139,7 @@
     "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: [voice message] spoken words",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "ots"
    }
@@ -4182,7 +4182,7 @@
     "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: [voice message] spoken words",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "ots"
    }
@@ -4220,7 +4220,7 @@
     "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [voice message] spoken words",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "pal"
    }
@@ -4258,7 +4258,7 @@
     "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [voice message] spoken words",
     "routing": {
      "adapter": "telegram",
-     "chat_id": 4242
+     "chat_id": "4242"
     },
     "wolt": "pal"
    }

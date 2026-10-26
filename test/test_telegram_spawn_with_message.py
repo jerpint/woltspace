@@ -101,36 +101,40 @@ def lodge(monkeypatch, tmp_path):
     message_session finds OLD gone and delivers to anything else, so the
     untouched spawn-then-paste code runs to the end instead of crashing.
     """
-    from bot import telegram_adapter as adapter
+    import chat_lodge
+    from connector_loopback import Pair, telegram
 
-    monkeypatch.setattr(adapter, "_WOLTS_DIR", tmp_path / "wolts")
     (tmp_path / "wolts" / WOLT / "wolt").mkdir(parents=True)
     (tmp_path / "wolts" / WOLT / "wolt" / "wolt.json").write_text("{}")
-    monkeypatch.setattr(adapter, "HISTORY_DIR", tmp_path / "history")
-    monkeypatch.setattr(adapter, "is_allowed", lambda update: True)
-    monkeypatch.setattr(adapter, "get_tunnel_url", lambda: "")
-    monkeypatch.setattr(adapter, "resolve_active_session", lambda wolt: None)
-    monkeypatch.setattr(adapter, "_download_bytes", AsyncMock(return_value=b"content"))
-    monkeypatch.setattr(adapter, "_save_upload", lambda name, data: tmp_path / "uploads" / name)
-    monkeypatch.setattr(adapter, "transcribe_audio", lambda path: "hello")
-    monkeypatch.setattr(adapter, "get_response", MagicMock(side_effect=AssertionError("no model call")))
+    connector, side = telegram(monkeypatch, tmp_path / "wolts", owners=("12345",))
+    adapter = Pair(connector, side)
+    monkeypatch.setattr(side, "history_dir", tmp_path / "history")
+    monkeypatch.setattr(connector, "is_allowed", lambda update: True)
+    monkeypatch.setattr(chat_lodge, "get_tunnel_url", lambda: "")
+    monkeypatch.setattr(chat_lodge, "resolve_active_session", lambda wolt: None)
+    monkeypatch.setattr(connector, "_download_bytes", AsyncMock(return_value=b"content"))
+    monkeypatch.setattr(connector, "_save_upload", lambda name, data: tmp_path / "uploads" / name)
+    monkeypatch.setattr(side, "_inside_uploads", lambda path: True)
+    monkeypatch.setattr(side, "_read_upload", lambda path: b"content")
+    monkeypatch.setattr(chat_lodge, "transcribe_audio", lambda path: "hello")
+    monkeypatch.setattr(chat_lodge, "get_response", MagicMock(side_effect=AssertionError("no model call")))
     events = []
-    monkeypatch.setattr(adapter, "_bot_log", lambda event, data: events.append((event, data)))
+    monkeypatch.setattr(chat_lodge, "_bot_log", lambda event, data: events.append((event, data)))
     start = MagicMock(return_value={"name": NEW, "url": ""})
-    monkeypatch.setattr(adapter, "start_claude_session", start)
+    monkeypatch.setattr(chat_lodge, "start_claude_session", start)
     deliver = MagicMock(side_effect=lambda name, msg: {"ok": name != OLD, "url": ""})
-    monkeypatch.setattr(adapter, "message_session", deliver)
+    monkeypatch.setattr(chat_lodge, "message_session", deliver)
 
     def history():
-        path = adapter._history_file(CHAT)
+        path = side._history_file(CHAT)
         if not path.exists():
             return []
         return [(e["role"], e["content"]) for e in map(json.loads, path.read_text().splitlines())]
 
     def setup(dog: bool, state: dict):
-        monkeypatch.setattr(adapter, "dog_available", lambda: dog)
+        monkeypatch.setattr(chat_lodge, "dog_available", lambda: dog)
         if state:
-            adapter._save_chat_state(CHAT, dict(state))
+            side._save_chat_state(CHAT, dict(state))
 
     return adapter, start, deliver, events, history, setup
 
@@ -174,7 +178,7 @@ async def test_spawning_message_is_in_the_opening_prompt(lodge, kind, dog, state
     # Nothing is pasted into the new session; only the dead one was tried.
     expired = bool(state.get("active_session")) or replying
     assert [c.args[0] for c in deliver.call_args_list] == ([OLD] if expired else [])
-    assert ("telegram_v2_spawn_with_message",
+    assert ("telegram_spawn_with_message",
             {"session": NEW, "wolt": WOLT, "text": text[:200]}) in events
     saved = adapter._load_chat_state(CHAT)
     assert (saved["active_wolt"], saved["active_session"]) == (WOLT, NEW)
@@ -221,7 +225,7 @@ async def test_failed_spawn_is_reported_and_records_no_delivery(lodge, kind, dog
     assert replies[-1].endswith(": boom")
     assert NEW not in [c.args[0] for c in deliver.call_args_list]
     assert not [c for _, c in history() if c.startswith("[delivered to session")]
-    assert not [e for e, _ in events if e == "telegram_v2_spawn_with_message"]
+    assert not [e for e, _ in events if e == "telegram_spawn_with_message"]
 
 
 @pytest.mark.asyncio

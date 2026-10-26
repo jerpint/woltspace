@@ -1,295 +1,250 @@
-"""A connector the lodge has never seen, declared only in the registry (RFC #617).
+"""A connector from outside the repository: one folder in the data root, no core edits.
 
-"echo" exists nowhere in the core: no class in channels.py, no entry in
-server/notify.py, no flag in the notify CLI, no branch in the session boot
-text. These tests add its spec to the registry and nothing else, then check
-that the lodge can start it, route a wolt's reply to it, bind it to a session,
-and tell a session how to answer on it. That is the claim of the contract:
-one connector, no core edits.
+"echo" lives only in this test's `<data root>/.space/connectors/echo/`. The
+lodge finds it, plans it, starts its program as its own process with only its
+own secrets, talks to it over its socket, routes `notify --to echo:<room>` to
+it, and never imports it. Bad folders are skipped, and a local folder can
+never replace a connector the lodge ships.
 """
 
 import asyncio
 import json
-import re
+import shutil
 import sys
+import tempfile
+import time
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "container" / "lib"))
+sys.path.insert(0, str(ROOT))
 
+import connector_broker  # noqa: E402
 import connector_registry  # noqa: E402
-from connector_contract import ConnectorSpec, Manifest, RouteCodec  # noqa: E402
-from server.notification_types import Plugin  # noqa: E402
+from connector_contract import Reply  # noqa: E402
+from woltspace.channels import FolderConnector, TelegramConnector, all_connectors  # noqa: E402
+from woltspace.layout import RuntimeLayout  # noqa: E402
 
-ROOM = re.compile(r"[a-z0-9]{1,32}")
-SENT = []
+MANIFEST = {
+    "name": "echo",
+    "title": "Echo",
+    "protocol": 1,
+    "command": ["{python}", "echo_connector.py"],
+    "capabilities": ["text", "files"],
+    "command_input": ["text"],
+    "events": ["message", "command"],
+    "route": [["room", "[a-z0-9]+"]],
+    "secrets": [["ECHO_KEY", "key"]],
+    # A local folder cannot use these: they are for connectors the lodge ships.
+    "enable_env": "ENABLE_ECHO",
+    "owners_env": "ECHO_OWNERS",
+    "legacy_flag": "--echo",
+}
 
+PROGRAM = '''
+import asyncio, json, os
+from pathlib import Path
+import connector_client
 
-async def _send(message, destination, context):
-    SENT.append({"text": message.text, "link": message.session_link,
-                 "destination": dict(destination), "token": context.secrets.get("ECHO_TOKEN")})
+DATA = Path(os.environ["WOLTSPACE_CONNECTOR_DATA"])
+DATA.mkdir(parents=True, exist_ok=True)
 
+def log(entry):
+    with open(DATA / "log.jsonl", "a") as f:
+        f.write(json.dumps(entry) + "\\n")
 
-# The connector's own sender, named by its spec as "<module>:ECHO_PLUGIN".
-ECHO_PLUGIN = Plugin("echo", _send, secrets=("ECHO_TOKEN",))
+async def on_say(frame):
+    log({"say": frame})
 
+async def on_send(frame):
+    log({"send": {k: frame.get(k) for k in ("route", "method", "text", "filename")}})
+    return {"status": "delivered", "message_id": "1"}
 
-def _parse(text):
-    if not isinstance(text, str) or ROOM.fullmatch(text) is None:
-        raise ValueError("an echo room is lowercase letters and digits")
-    return {"room": text}
-
-
-def _from_record(record):
-    room = str(record.get("chat_id") or "")
-    return {"room": room} if record.get("adapter") == "echo" and ROOM.fullmatch(room) else None
-
-
-ECHO = ConnectorSpec(
-    Manifest(name="echo", capabilities=frozenset({"text"}), command_input=frozenset({"text"}),
-             route_fields=("room",), secrets=("ECHO_TOKEN",)),
-    RouteCodec(("room",), _parse, _from_record),
-    title="Echo",
-    launch="bot.echo_adapter",
-    outbound=f"{__name__}:ECHO_PLUGIN",
-    config_keys=(("ECHO_TOKEN", "token"),),
-    enable_env="ENABLE_ECHO",
-)
-
-
-@pytest.fixture(autouse=True)
-def echo_registered(monkeypatch):
-    monkeypatch.setitem(connector_registry.SPECS, "echo", ECHO)
-    SENT.clear()
-    yield
-
-
-# --- launch ------------------------------------------------------------------
-
-@pytest.fixture
-def layout(tmp_path):
-    from woltspace.layout import RuntimeLayout
-    return RuntimeLayout(wolts_dir=tmp_path / "wolts", install_root=ROOT, port=7799)
-
-
-def _config(layout, payload):
-    layout.platform_state.mkdir(parents=True, exist_ok=True)
-    (layout.platform_state / "config.json").write_text(json.dumps(payload))
-
-
-def _echo_plan(layout, env):
-    from woltspace.channels import plan_connectors
-    return {p.name: p for p in plan_connectors(layout, env)}["echo"]
-
-
-def test_the_launcher_plans_it_from_its_spec_alone(layout):
-    _config(layout, {"channels": {"echo": {"enabled": True, "token": "s3cret"}}})
-    plan = _echo_plan(layout, {"WOLTSPACE_ENTRYPOINT": "1", "TELEGRAM_BOT_TOKEN": "not-echo's"})
-    assert plan.enabled
-    assert plan.command[-2:] == ("-m", "bot.echo_adapter")
-    assert plan.process_signature == ("-m", "bot.echo_adapter")
-    # It receives its own declared secret, and no other connector's.
-    assert plan.env["ECHO_TOKEN"] == "s3cret"
-    assert "TELEGRAM_BOT_TOKEN" not in plan.env
-    assert "s3cret" not in json.dumps(plan.to_record())
-
-
-def test_it_stays_off_until_declared_and_needs_its_secret(layout):
-    assert not _echo_plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"}).enabled
-    _config(layout, {"channels": {"echo": {"enabled": True}}})
-    plan = _echo_plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"})
-    assert not plan.enabled and "ECHO_TOKEN" in plan.detail
-
-
-def test_an_inherited_environment_never_starts_a_second_one(layout):
-    plan = _echo_plan(layout, {"ENABLE_ECHO": "1", "ECHO_TOKEN": "x"})
-    assert not plan.enabled and "entrypoint" in plan.detail
-
-
-def test_its_secret_is_shared_with_the_lodge_only_when_enabled(layout):
-    from woltspace.channels import connector_secrets, plan_connectors
-    _config(layout, {"channels": {"echo": {"enabled": True, "token": "s3cret"}}})
-    assert connector_secrets(plan_connectors(layout, {"WOLTSPACE_ENTRYPOINT": "1"}))["ECHO_TOKEN"] == "s3cret"
-
-
-# --- the notify CLI ----------------------------------------------------------
-
-def test_notify_to_names_it_and_its_codec_checks_the_route():
-    from notify_prompt import validate_argv
-    validate_argv(["notify", "--to", "echo:room1"])
-    for bad in ("echo:Room1", "echo:room 1", "echo:", "nowhere:room1", "echo"):
-        with pytest.raises(ValueError):
-            validate_argv(["notify", "--to", bad])
-
-
-def test_the_legacy_flags_still_work():
-    from notify_prompt import validate_argv
-    validate_argv(["notify", "--telegram", "-100123"])
-    validate_argv(["notify", "--slack", "C123", "1712.5"])
-    validate_argv(["notify", "--to", "telegram:-100123"])
-    validate_argv(["notify", "--to", "slack:C123:1712.5"])
-
-
-# --- the boot text -----------------------------------------------------------
-
-def test_a_session_started_from_it_is_told_how_to_answer():
-    from sessions import _adapter_context
-    text = _adapter_context({"adapter": "echo", "chat_id": "room1", "session_url": "https://l/tui?session=s"})
-    assert "This session was started from Echo." in text
-    assert "notify --to echo:room1 <<'WOLTSPACE_NOTIFY_" in text
-    # A record whose route the codec rejects gets no instruction at all.
-    assert _adapter_context({"adapter": "echo", "chat_id": "room 1; rm -rf ~"}) == ""
-
-
-def test_telegram_and_slack_boot_text_is_unchanged():
-    from sessions import _adapter_context
-    tg = _adapter_context({"adapter": "telegram", "chat_id": "42", "session_url": "u"})
-    assert tg.startswith("\nThis session was started from Telegram.\n") and "notify --telegram 42 <<" in tg
-    sl = _adapter_context({"adapter": "slack", "chat_id": "C1", "thread_ts": "1.2", "session_url": "u"})
-    assert sl.startswith("\nThis session was started from Slack.\n") and "notify --slack C1 1.2 <<" in sl
-    assert _adapter_context({"adapter": "slack", "chat_id": "C1"}) == ""
-
-
-# --- outbound ----------------------------------------------------------------
-
-@pytest.fixture
-def notify(monkeypatch, tmp_path):
-    from server import notify as module
-    monkeypatch.setattr(module, "dotenv_env", lambda key: {"ECHO_TOKEN": "s3cret"}.get(key, ""))
-    monkeypatch.setattr(module, "append_chat_history", lambda *a: None)
-    monkeypatch.setattr(module, "SPACE_PLATFORM_DIR", tmp_path)
-    monkeypatch.setattr(module, "OUTBOX_DIR", tmp_path / "outbox")
-    records = {}
-    monkeypatch.setattr(module, "read_session_registry", lambda name: records.get(name))
-    return module, records
-
-
-def test_a_wolt_reply_reaches_it_by_explicit_route(notify):
-    module, _records = notify
-    result = asyncio.run(module.send_notification("", "hi", explicit={"adapter": "echo", "route": "room1"}))
-    assert result == {"adapter": "echo", "route": "room1"}
-    assert SENT == [{"text": "hi", "link": None, "destination": {"room": "room1"}, "token": "s3cret"}]
-
-
-def test_a_session_bound_to_it_replies_there_with_its_link(notify):
-    module, records = notify
-    records["s1"] = {"name": "s1", "wolt": "pal", "adapter": "echo", "chat_id": "room1"}
-    asyncio.run(module.send_notification("s1", "done"))
-    assert SENT[-1]["destination"] == {"room": "room1"}
-    assert SENT[-1]["link"] == "session=s1"
-
-
-def test_binding_is_exact(notify):
-    """Another room is reachable by name, but not as the session's own route."""
-    module, records = notify
-    records["s1"] = {"name": "s1", "wolt": "pal", "adapter": "echo", "chat_id": "room1"}
-    asyncio.run(module.send_notification("s1", "hi", explicit={"adapter": "echo", "route": "room2"}))
-    assert SENT[-1]["destination"] == {"room": "room2"} and SENT[-1]["link"] is None
-
-
-def test_a_malformed_route_is_refused(notify):
-    module, _records = notify
-    with pytest.raises(ValueError):
-        asyncio.run(module.send_notification("", "hi", explicit={"adapter": "echo", "route": "../etc"}))
-    assert SENT == []
-
-
-def test_an_outside_connector_is_never_imported(notify, monkeypatch):
-    """Only specs in the lodge's registry are resolved; a name it does not know
-    has no sender, whatever a caller asks for."""
-    module, _records = notify
-    with pytest.raises(KeyError):
-        module._sender("discord")
-
-
-# --- the spawned process's real environment -----------------------------------
-
-def _env_dumper(path):
-    script = ("import json, os, sys, time; "
-              f"open({str(path)!r}, 'w').write(json.dumps(dict(os.environ))); time.sleep(30)")
-    return (sys.executable, "-c", script)
-
-
-def _wait_for(path, timeout=10.0):
-    import time
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if path.exists() and path.stat().st_size:
-            return json.loads(path.read_text())
-        time.sleep(0.05)
-    raise AssertionError(f"{path} never written")
-
-
-def test_the_spawned_process_gets_only_its_own_secret(layout, tmp_path, monkeypatch):
-    """Checked on the real child, beside a built-in connector, with every
-    connector's secret in the control plane's own environment."""
-    import dataclasses
-    from woltspace.channel_supervisor import ChannelSupervisor
-    from woltspace.channels import ConnectorPlan
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "telegram-secret")
-    monkeypatch.setenv("SLACK_BOT_TOKEN", "slack-secret")
-    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
-    _config(layout, {"channels": {"echo": {"enabled": True, "token": "s3cret"}}})
-    echo = dataclasses.replace(_echo_plan(layout, {"WOLTSPACE_ENTRYPOINT": "1"}),
-                               command=_env_dumper(tmp_path / "echo.json"))
-    builtin = ConnectorPlan("telegram", True, "built-in", _env_dumper(tmp_path / "telegram.json"),
-                            str(ROOT), {"TELEGRAM_BOT_TOKEN": "telegram-secret"})
-    sup = ChannelSupervisor(layout, [builtin, echo])
-    sup.start(watch=False)
-    try:
-        echo_env = _wait_for(tmp_path / "echo.json")
-        builtin_env = _wait_for(tmp_path / "telegram.json")
-    finally:
-        sup.stop()
-    assert echo_env["ECHO_TOKEN"] == "s3cret"
-    for secret in ("TELEGRAM_BOT_TOKEN", "SLACK_BOT_TOKEN", "OPENAI_API_KEY"):
-        assert secret not in echo_env
-    assert "PATH" in echo_env and echo_env["WOLTSPACE_API"]
-    # A built-in connector with its own class inherits the environment, as before.
-    assert builtin_env["TELEGRAM_BOT_TOKEN"] == "telegram-secret"
-
-
-# --- files to its own route only ---------------------------------------------
-
-def test_a_file_goes_to_the_sessions_own_route_and_nowhere_else(notify, monkeypatch, tmp_path):
-    import dataclasses
-    from server.notification_types import Attachment
-    module, records = notify
-    # A two-field route (room and thread), so the bound route is not just chat_id.
-    def parse(text):
-        room, _, thread = text.partition(":")
-        if ROOM.fullmatch(room) is None or not thread.isdigit():
-            raise ValueError("room:thread")
-        return {"room": room, "thread": thread}
-
-    def from_record(record):
+async def main():
+    log({"env": sorted(os.environ)})
+    client = connector_client.Client("echo", on_say=on_say, on_send=on_send)
+    while True:
         try:
-            return parse(f"{record.get('chat_id')}:{record.get('thread_ts')}")
-        except ValueError:
-            return None
+            await client.connect()
+            break
+        except OSError:
+            await asyncio.sleep(0.1)
+    status = await client.event("message", {"room": "r1"}, "owner-1", {"text": "hello"}, "echo-1")
+    log({"receipt": status})
+    await client.run_forever()
 
-    file_echo = dataclasses.replace(
-        ECHO,
-        manifest=dataclasses.replace(ECHO.manifest, capabilities=frozenset({"text", "files"}),
-                                     route_fields=("room", "thread")),
-        codec=RouteCodec(("room", "thread"), parse, from_record),
-        outbound=f"{__name__}:FILE_PLUGIN")
-    monkeypatch.setitem(connector_registry.SPECS, "echo", file_echo)
-    record = {"name": "s1", "wolt": "pal", "adapter": "echo", "chat_id": "room1", "thread_ts": "7"}
-    path = tmp_path / "note.txt"
-    path.write_text("hi")
-    attachment = Attachment(path, "note.txt", 2, "text/plain")
-    asyncio.run(module._send("echo", "s1", "here", "room1:7", routing=record,
-                             attachments=(attachment,), session_record=record))
-    assert SENT[-1]["destination"] == {"room": "room1", "thread": "7"}
-    for other in ("room1:8", "room2:7"):
-        with pytest.raises(module.AttachmentError):
-            asyncio.run(module._send("echo", "", "here", other,
-                                     attachments=(attachment,), session_record=record))
+asyncio.run(main())
+'''
 
 
-FILE_PLUGIN = Plugin("echo", _send, secrets=("ECHO_TOKEN",), max_attachment_bytes=1024)
+@pytest.fixture
+def lodge():
+    # Unix socket paths are short (104 bytes on macOS): not under pytest's tmp_path.
+    root = Path(tempfile.mkdtemp(prefix="wse", dir="/tmp"))
+    wolts = root / "w"
+    folder = wolts / ".space" / "connectors" / "echo"
+    folder.mkdir(parents=True)
+    (folder / "connector.json").write_text(json.dumps(MANIFEST))
+    (folder / "echo_connector.py").write_text(PROGRAM)
+    config = wolts / ".space" / "platform" / "config.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({"channels": {"echo": {
+        "enabled": True, "key": "s3cret", "owners": ["owner-1"]}}}))
+    layout = RuntimeLayout(wolts_dir=wolts, install_root=ROOT, host="127.0.0.1", port=7798,
+                           isolation="host")
+    yield layout
+    shutil.rmtree(root, ignore_errors=True)
+
+
+ENV = {"WOLTSPACE_ENTRYPOINT": "1", "PARENT_SECRET": "leak", "TELEGRAM_BOT_TOKEN": "1:tg"}
+
+
+# --- found, declared, planned ------------------------------------------------------
+
+def test_a_local_folder_is_found_with_what_it_declares(lodge):
+    spec = connector_registry.spec("echo", lodge.wolts_dir)
+    assert spec is not None and spec.launchable and not spec.bundled
+    assert spec.manifest.route_fields == ("room",)
+    assert spec.codec.canonical("r1") == {"room": "r1"}
+    with pytest.raises(ValueError):
+        spec.codec.canonical("R1:x")
+    # What only a shipped connector may have is not taken from a local folder.
+    assert spec.enable_env == spec.owners_env == ""
+    assert spec.reply_args({"room": "r1"}) == ["--to", "echo:r1"]
+    assert "echo" in [c.name for c in all_connectors(lodge)]
+
+
+def test_the_plan_gives_the_program_only_its_own_secrets_and_its_socket(lodge):
+    plan = FolderConnector(connector_registry.spec("echo", lodge.wolts_dir)).plan(lodge, ENV)
+    assert plan.enabled, plan.detail
+    assert plan.isolated_env and plan.owners == ("owner-1",)
+    assert plan.command == (sys.executable, "echo_connector.py")
+    assert plan.cwd == str((lodge.wolts_dir / ".space" / "connectors" / "echo").resolve())
+    assert plan.env["ECHO_KEY"] == "s3cret"
+    assert plan.env["WOLTSPACE_CONNECTOR_SOCKET"].endswith("/connectors/echo.sock")
+    assert "PARENT_SECRET" not in plan.env and "TELEGRAM_BOT_TOKEN" not in plan.env
+    assert "ECHO_OWNERS" not in plan.env
+
+
+def test_a_local_folder_is_off_until_its_config_says_on(lodge):
+    config = lodge.wolts_dir / ".space" / "platform" / "config.json"
+    config.write_text(json.dumps({"channels": {"echo": {"key": "s3cret"}}}))
+    spec = connector_registry.spec("echo", lodge.wolts_dir)
+    # Its manifest's enable_env is ignored: the environment cannot turn it on.
+    assert not FolderConnector(spec).plan(lodge, {**ENV, "ENABLE_ECHO": "1"}).enabled
+
+
+def test_a_local_folder_cannot_replace_the_bundled_telegram(lodge):
+    fake = lodge.wolts_dir / ".space" / "connectors" / "telegram"
+    fake.mkdir()
+    (fake / "connector.json").write_text(json.dumps({**MANIFEST, "name": "telegram"}))
+    spec = connector_registry.spec("telegram", lodge.wolts_dir)
+    assert spec.bundled and spec.folder == str(ROOT / "container" / "connectors" / "telegram")
+    assert TelegramConnector().spec.folder == spec.folder
+
+
+@pytest.mark.parametrize("change", [
+    {"name": "other"},                       # must match its folder
+    {"protocol": 2},                         # unknown versions fail closed
+    {"route": [["room", "("]]},              # a pattern that does not compile
+    {"route": [["adapter", ".+"]]},          # a field the session record already uses
+    {"command": []},
+    {"capabilities": ["telepathy"]},
+    {"secrets": [["lower_case", "k"]]},
+])
+def test_an_unusable_folder_is_skipped(lodge, change):
+    path = lodge.wolts_dir / ".space" / "connectors" / "echo" / "connector.json"
+    path.write_text(json.dumps({**MANIFEST, **change}))
+    assert connector_registry.spec("echo", lodge.wolts_dir) is None
+    assert "echo" not in [c.name for c in all_connectors(lodge)]
+
+
+# --- launched, connected, routed ---------------------------------------------------
+
+def _log(lodge) -> list[dict]:
+    path = lodge.wolts_dir / ".space" / "echo" / "log.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+async def _until(predicate, timeout=20.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError("timed out")
+
+
+def test_the_program_runs_connects_and_carries_both_ways(lodge, monkeypatch):
+    from woltspace import channel_supervisor
+
+    plan = FolderConnector(connector_registry.spec("echo", lodge.wolts_dir)).plan(lodge, ENV)
+    real_child_environment = channel_supervisor.child_environment
+    # The control plane's own environment holds other secrets; the child must not see them.
+    monkeypatch.setattr(channel_supervisor, "child_environment",
+                        lambda p: real_child_environment(p, {**ENV, "PATH": "/usr/bin:/bin"}))
+    events = []
+
+    async def handle(event, out):
+        events.append(event)
+        await out.say(Reply("pong"))
+
+    async def main():
+        run_dir = Path(plan.socket_dir)
+        seen = set()
+
+        def dedup(name, event_id):
+            fresh = (name, event_id) not in seen
+            seen.add((name, event_id))
+            return fresh
+
+        broker = connector_broker.Broker(run_dir, dedup)
+        broker.add("echo", handle)
+        await broker.start()
+        supervisor = channel_supervisor.ChannelSupervisor(lodge, [plan], already_reaped=True)
+        supervisor.start(watch=False)
+        try:
+            await _until(lambda: any("receipt" in e for e in _log(lodge)))
+            assert {"receipt": "accepted"} in _log(lodge)
+            assert events[0]["route"] == {"room": "r1"} and events[0]["body"]["text"] == "hello"
+            await _until(lambda: any("say" in e for e in _log(lodge)))
+
+            # Notify, through the lodge's own outbound path, by the connector's route.
+            from server import notify
+            monkeypatch.setattr(connector_broker, "_BROKER", broker)
+            monkeypatch.setattr(notify, "WOLTS_DIR", lodge.wolts_dir)
+            monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", lodge.wolts_dir / ".space" / "platform")
+            monkeypatch.setattr(notify, "read_session_registry", lambda name: None)
+            monkeypatch.setattr(notify, "append_chat_history", Mock())
+            result = await notify.send_notification("", "hi from a wolt\n", {"adapter": "echo", "route": "r1"})
+            assert result["adapter"] == "echo"
+            await _until(lambda: any("send" in e for e in _log(lodge)))
+            [sent] = [e["send"] for e in _log(lodge) if "send" in e]
+            assert sent == {"route": {"room": "r1"}, "method": "message",
+                            "text": "hi from a wolt\n", "filename": None}
+
+            # The program saw its own secret and socket, and nothing of the lodge's.
+            env = next(e["env"] for e in _log(lodge) if "env" in e)
+            assert "ECHO_KEY" in env and "WOLTSPACE_CONNECTOR_TOKEN" in env
+            assert "PARENT_SECRET" not in env and "TELEGRAM_BOT_TOKEN" not in env
+
+            # The lodge restarts: the program reconnects by itself and still carries.
+            await broker.stop()
+            broker = connector_broker.Broker(run_dir, dedup)
+            broker.add("echo", handle)
+            await broker.start()
+            monkeypatch.setattr(connector_broker, "_BROKER", broker)
+            await _until(lambda: broker.connected("echo"))
+            await broker.send("echo", {"room": "r1"}, "message", "after the restart")
+            await _until(lambda: len([e for e in _log(lodge) if "send" in e]) == 2)
+        finally:
+            supervisor.stop(timeout=5)
+            await broker.stop()
+
+    asyncio.run(main())

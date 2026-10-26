@@ -244,29 +244,44 @@ class RouteCodec:
 
 @dataclass(frozen=True)
 class ConnectorSpec:
-    """A connector as the lodge knows it: its manifest and how its parts are found.
+    """A connector as the lodge knows it: its manifest, its routes, how it runs.
 
-    `launch` (a module run as `python -m`) and `outbound` (a "module:attr" whose
-    attribute is the connector's sender Plugin) are import paths. The lodge
-    resolves them only for connectors listed in its own registry; a connector
-    from outside the repository will talk to the lodge over a socket instead.
+    A connector in a folder (`connector.json` plus its program) runs as its own
+    process and talks to the lodge over a socket; the lodge never imports it.
+    `folder` and `command` say how to start it. A connector without a folder
+    (Slack, for now) still has its own classes in the lodge.
     """
 
     manifest: Manifest
     codec: RouteCodec
     title: str
-    launch: str = ""
-    outbound: str = ""
-    # The import the launched process needs (a provider SDK), checked before start.
+    # The connector's folder, and the argv run from it ("{python}" is the lodge's).
+    folder: str = ""
+    command: tuple[str, ...] = ()
+    # Shipped with the lodge (in its repository), as opposed to a local folder.
+    bundled: bool = False
+    # The import the program needs (a provider SDK), checked before start,
+    # and the name a person installs it by.
     dependency: str = ""
+    dependency_label: str = ""
     # Each declared secret's key in the data root's channels.<name> config.
     config_keys: tuple[tuple[str, str], ...] = ()
     # Turns the connector on from the environment, at the platform entrypoint only.
     enable_env: str = ""
+    # The connector's own ways to talk to a wolt, listed under /help.
+    help: tuple[str, ...] = ()
+    # Where a bundled connector's owner ids were kept before the lodge's own
+    # setting (an env name and a config key). Never read for a local folder.
+    owners_env: str = ""
+    owners_config: str = ""
 
     @property
     def name(self) -> str:
         return self.manifest.name
+
+    @property
+    def launchable(self) -> bool:
+        return bool(self.folder and self.command)
 
     def reply_args(self, route: dict) -> list[str]:
         """The notify arguments that reply on `route`: the legacy flag when the

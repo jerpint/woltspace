@@ -91,6 +91,10 @@ def lodge(monkeypatch, tmp_path):
     monkeypatch.setattr(notify, "OUTBOX_DIR", state.box)
     monkeypatch.setattr(notify, "WOLTS_DIR", tmp_path)
     monkeypatch.setattr(notify, "dotenv_env", lambda key: env.get(key, ""))
+    # Telegram sends through its connector: here it is connected while the
+    # lodge has a bot token, so the old "no token" cases are "not connected".
+    monkeypatch.setattr(notify, "_connector_up",
+                        lambda name: name != "telegram" or bool(env.get("TELEGRAM_BOT_TOKEN")))
     monkeypatch.setattr(notify, "read_session_registry", lambda name: None)
     monkeypatch.setattr(notify, "append_chat_history", Mock())
     monkeypatch.setattr(notify, "SessionRegistry", lambda root: Mock())

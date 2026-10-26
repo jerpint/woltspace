@@ -190,6 +190,28 @@ def child_environment(plan, parent=None) -> dict:
     return env
 
 
+def _connector_token(layout: RuntimeLayout, plan) -> str:
+    from .channels import _registry
+
+    _registry(layout)  # puts the runtime library on sys.path
+    import connector_broker
+
+    return connector_broker.new_token(Path(plan.socket_dir), plan.name)
+
+
+def publish_socket_connectors(layout: RuntimeLayout, plans) -> None:
+    """Tell the lodge's server which folder connectors to serve, and their owners."""
+    from .channels import _registry
+
+    _registry(layout)
+    import connector_host
+
+    connector_host.write_lodge_file(layout.wolts_dir, [
+        {"name": plan.name, "owners": list(plan.owners)}
+        for plan in plans if plan.enabled and plan.socket_dir
+    ])
+
+
 class ChannelSupervisor:
     """Start, watch, bounded-restart, and stop connector child processes."""
 
@@ -328,6 +350,10 @@ class ChannelSupervisor:
         log_path = self._log_path(name)
         state.log = str(log_path)
         env = child_environment(plan)
+        if plan.socket_dir:
+            # A fresh token for every launch: a process left from an earlier
+            # one is turned away by the lodge's socket.
+            env["WOLTSPACE_CONNECTOR_TOKEN"] = _connector_token(self.layout, plan)
         try:
             handle = log_path.open("a")
             # The adapter may log a request URL, and a request URL carries the

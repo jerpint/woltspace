@@ -18,7 +18,6 @@ OGG = b"OggS" + b"\x00" * 60
 WORDS = {"text": "The build is green."}
 # Named here and not inside a test: test_shadow_wolt.py reads the Telegram host
 # in a test body as a live call. Nothing below leaves the process.
-SEND_VOICE_URL = "https://api.telegram.org/bottelegram-token/sendVoice"
 
 
 def _recorder(sent, adapter):
@@ -59,6 +58,10 @@ def lodge(monkeypatch, tmp_path):
     monkeypatch.setattr(notify, "OUTBOX_DIR", state.box)
     monkeypatch.setattr(notify, "WOLTS_DIR", tmp_path)  # woltspace.json `speech` lives here
     monkeypatch.setattr(notify, "dotenv_env", lambda key: env.get(key, ""))
+    # Telegram sends through its connector: here it is connected while the
+    # lodge has a bot token, so the old "no token" cases are "not connected".
+    monkeypatch.setattr(notify, "_connector_up",
+                        lambda name: name != "telegram" or bool(env.get("TELEGRAM_BOT_TOKEN")))
     monkeypatch.setattr(notify, "read_session_registry", lambda name: state.routing)
     monkeypatch.setattr(notify, "append_chat_history", state.history)
     monkeypatch.setattr(notify, "SessionRegistry", lambda root: Mock())
@@ -288,7 +291,7 @@ async def test_a_missing_token_is_reported_before_anything_is_spoken(lodge):
     lodge.env["TELEGRAM_BOT_TOKEN"] = ""
     explicit = {"adapter": "telegram", "chat_id": "101"}
 
-    with pytest.raises(RuntimeError, match="TELEGRAM_BOT_TOKEN not set"):
+    with pytest.raises(RuntimeError, match="telegram is not connected to the lodge"):
         await notify.send_notification("test-session", "hi\n", explicit, (), WORDS)
 
     assert lodge.spoken == []
@@ -358,6 +361,10 @@ def real_lodge(monkeypatch, tmp_path):
     monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
     monkeypatch.setattr(notify, "OUTBOX_DIR", tmp_path / "outbox")
     monkeypatch.setattr(notify, "dotenv_env", lambda key: env.get(key, ""))
+    # Telegram sends through its connector: here it is connected while the
+    # lodge has a bot token, so the old "no token" cases are "not connected".
+    monkeypatch.setattr(notify, "_connector_up",
+                        lambda name: name != "telegram" or bool(env.get("TELEGRAM_BOT_TOKEN")))
     monkeypatch.setattr(notify, "read_session_registry", lambda name: None)
     monkeypatch.setattr(notify, "append_chat_history", Mock())
     monkeypatch.setattr(notify, "SessionRegistry", lambda root: Mock())
@@ -381,7 +388,7 @@ async def test_end_to_end_a_spoken_message_goes_out_through_send_voice(real_lodg
     )
 
     token, chat_id, attachment, caption = send_voice.await_args.args
-    assert (token, chat_id) == ("telegram-token", "101")
+    assert (token, chat_id) == ("", "101")  # the token stays with the connector
     assert (attachment.filename, attachment.content_type, attachment.kind) == (
         "voice-note.ogg", "audio/ogg", "voice",
     )
@@ -397,36 +404,37 @@ async def test_end_to_end_a_spoken_message_goes_out_through_send_voice(real_lodg
 
 @pytest.mark.asyncio
 async def test_end_to_end_the_service_s_audio_is_what_telegram_is_handed(real_lodge, monkeypatch):
+    from connector_loopback import install_fake_broker
+
     requests = []
 
     def handler(request):
         requests.append(request)
-        if str(request.url) == speech.SPEECH_URL:
-            return httpx.Response(200, content=OGG)
-        return httpx.Response(200, json={"ok": True, "result": {"message_id": 7}})
+        return httpx.Response(200, content=OGG)
 
     class Client(httpx.AsyncClient):
         def __init__(self, **kwargs):
             super().__init__(transport=httpx.MockTransport(handler), **kwargs)
 
-    # The speech client and the Telegram transport are both the real ones here;
-    # only the network under them is a stand-in.
+    # The speech client and the Telegram sender are both the real ones here;
+    # only the network under the speech client and the connector are stand-ins.
     monkeypatch.setattr(httpx, "AsyncClient", Client)
     monkeypatch.setattr(notify, "synthesize", speech.synthesize)
+    connector = install_fake_broker(monkeypatch)
 
     result = await notify.send_notification(
         "test-session", "🦝 Bob: The build is green.\n", None, (), {"text": "The build is green."},
     )
 
-    said, sent = requests
+    [said] = requests
     assert said.headers["authorization"] == "Bearer sk-test"
     assert json.loads(said.content) == {
         "model": "gpt-4o-mini-tts", "voice": "alloy",
         "input": "The build is green.", "response_format": "opus",
     }
-    assert str(sent.url) == SEND_VOICE_URL
-    assert b'name="voice"; filename="voice-note.ogg"' in sent.content
-    assert OGG in sent.content
-    assert "🦝 Bob: The build is green.".encode() in sent.content
+    [sent] = connector.frames
+    assert (sent["connector"], sent["route"], sent["method"]) == ("telegram", {"chat_id": "101"}, "voice")
+    assert (sent["filename"], sent["bytes"]) == ("voice-note.ogg", OGG)
+    assert sent["text"].startswith("🦝 Bob: The build is green.")
     assert result["attachments"][0]["kind"] == "voice"
     assert list(real_lodge.iterdir()) == []

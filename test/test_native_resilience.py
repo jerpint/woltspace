@@ -1384,15 +1384,16 @@ class TestTheReaperMarkerIsSpecific:
             "DEV_MODE": "true",
         })
 
-    def test_the_dev_command_still_ends_in_the_generic_directory(self, tmp_path):
-        """The shape that made command[-1] unusable as a marker."""
+    def test_the_dev_command_ends_in_the_connector_folder(self, tmp_path):
+        """Not a generic directory: the folder that only this connector has."""
         plan = self._dev_command(tmp_path)
-        assert plan.command[-1] == "bot/"
+        assert plan.command[-1] == str(ROOT / "container" / "connectors" / "telegram")
 
     def test_but_the_signature_is_a_token_pair(self, tmp_path):
         plan = self._dev_command(tmp_path)
-        assert plan.process_signature == ("-m", "bot.telegram_adapter")
-        assert plan.to_record()["process_signature"] == ["-m", "bot.telegram_adapter"]
+        folder = str(ROOT / "container" / "connectors" / "telegram")
+        assert plan.process_signature == ("telegram_connector.py", folder)
+        assert plan.to_record()["process_signature"] == list(plan.process_signature)
 
     def test_the_real_dev_process_matches(self, tmp_path):
         from woltspace.channel_supervisor import _matches_connector
@@ -1415,6 +1416,9 @@ class TestTheReaperMarkerIsSpecific:
             "tail -f /tmp/logs/bot.telegram_adapter.log",
             "less /var/log/bot.telegram_adapter",
             "grep -r bot.telegram_adapter /srv",
+            "vim telegram_connector.py",
+            "tail -f telegram_connector.py.log",
+            f"ls {ROOT / 'container' / 'connectors' / 'telegram'}",
         ):
             assert _matches_connector(
                 4242, plan.to_record(), runner=fake_ps({4242: impostor})

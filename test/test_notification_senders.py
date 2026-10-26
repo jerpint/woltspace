@@ -19,7 +19,7 @@ from server.notification_types import Plugin
     "unknown_session_adapter_falls_through", "no_tunnel", "no_session",
     "explicit_slack_exact", "explicit_slack_mismatch", "slack_thread_mismatch",
     "session_slack", "slack_default_channel", "slack_missing_channel",
-    "telegram_missing_token", "slack_missing_token", "no_target",
+    "telegram_not_connected", "slack_missing_token", "no_target",
 ])
 async def test_dispatch_preserves_routes_and_telegram_footer(case, monkeypatch, tmp_path):
     session = "test-session"
@@ -65,6 +65,8 @@ async def test_dispatch_preserves_routes_and_telegram_footer(case, monkeypatch, 
             explicit["thread_ts"] = "9.9"
         if case in ("slack_default_channel", "slack_missing_channel"):
             routing["chat_id"], expected_chat = "", "CDEFAULT"
+    if case == "telegram_not_connected":
+        expected_error = "telegram is not connected to the lodge"
     if case.endswith("missing_token"):
         adapter = case.split("_")[0]
         env[f"{adapter.upper()}_BOT_TOKEN"] = ""
@@ -80,6 +82,7 @@ async def test_dispatch_preserves_routes_and_telegram_footer(case, monkeypatch, 
     monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
     monkeypatch.setattr(notify, "dotenv_env", lambda key: env.get(key, ""))
     monkeypatch.setattr(notify, "read_session_registry", lambda name: routing)
+    monkeypatch.setattr(notify, "_connector_up", lambda name: case != "telegram_not_connected")
     telegram, slack, status = AsyncMock(), AsyncMock(), AsyncMock()
     history, update = Mock(), Mock()
     monkeypatch.setattr(notify, "telegram_send", telegram)
@@ -104,7 +107,8 @@ async def test_dispatch_preserves_routes_and_telegram_footer(case, monkeypatch, 
     if expected_adapter == "telegram":
         link = f"{tunnel}/tui?session={session}" if tunnel else f"session={session}"
         footer = f"\n\n---{DEN_REPLY_FOOTER}\n{link}" if session else ""
-        telegram.assert_awaited_once_with("telegram-token", expected_chat, text + footer)
+        # The token stays with the connector: the transport is handed none.
+        telegram.assert_awaited_once_with("", expected_chat, text + footer)
         slack.assert_not_awaited()
         status.assert_not_awaited()
         update.assert_not_called()

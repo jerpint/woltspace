@@ -76,12 +76,13 @@ def test_forget_session_clears_it_from_that_adapters_chats_only(tmp_path):
 def _telegram(monkeypatch, tmp_path):
     # bot.core makes its log dir under the wolts dir at import: keep it here.
     monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
-    from bot import telegram_adapter as adapter
+    import chat_lodge
+    import connector_registry
 
     (tmp_path / "pal" / "wolt").mkdir(parents=True)
     (tmp_path / "pal" / "wolt" / "wolt.json").write_text("{}")
-    monkeypatch.setattr(adapter, "_WOLTS_DIR", tmp_path)
-    return adapter
+    # The lodge's side of the Telegram connector keeps its chats.
+    return chat_lodge.ChatLodge(connector_registry.spec("telegram"), ())
 
 
 def test_telegram_chat_state_lives_in_the_lodge_db(monkeypatch, tmp_path):

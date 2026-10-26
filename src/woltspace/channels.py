@@ -41,17 +41,9 @@ def _module_available(name: str) -> bool:
 
 
 def _bot_project(bot_dir: str, install_root: Path) -> Path | None:
-    """Locate the uv project that owns python-telegram-bot.
-
-    A wolt with its own adapter has `TELEGRAM_BOT_DIR=<wolt_dir>` and the
-    module at `<wolt_dir>/wolt/bot/`, so probing only `<bot_dir>/bot` misses it
-    and silently falls back to an interpreter with no telegram library — which
-    then reports a remedy about the wrong thing. Fall back to the platform's
-    own bot project, which is what actually has the dependency.
-    """
+    """Locate the uv project that owns python-telegram-bot (the container's)."""
     candidates = (
         Path(bot_dir) / "bot" / "pyproject.toml",
-        Path(bot_dir) / "wolt" / "bot" / "pyproject.toml",
         install_root / "container" / "bot" / "pyproject.toml",
     )
     for candidate in candidates:
@@ -102,6 +94,11 @@ class ConnectorPlan:
     # from the control plane's environment (which holds every connector's
     # secrets). Declared connectors run this way: they get only their own.
     isolated_env: bool = False
+    # A folder connector talks to the lodge over a socket in this directory;
+    # the supervisor mints a fresh token for it at every launch.
+    socket_dir: str = ""
+    # The owner ids the lodge checks this connector's events against.
+    owners: tuple[str, ...] = ()
 
     def to_record(self) -> dict:
         """Public description. Never includes `env` — that carries the token."""
@@ -124,138 +121,6 @@ class ChannelConnector(Protocol):
         self, layout: RuntimeLayout, env: Mapping[str, str] | None = None
     ) -> ConnectorPlan:
         """Describe how to run this connector under the current configuration."""
-
-
-class TelegramConnector:
-    """The existing Telegram adapter, behind the seam.
-
-    Token resolution order: `TELEGRAM_BOT_TOKEN` in the environment, then
-    `channels.telegram.token` in the data-root config. Enablement follows the
-    same shape via `ENABLE_TELEGRAM_BOT` / `channels.telegram.enabled`, and a
-    connector configured without a token stays disabled with a named remedy
-    rather than crash-looping.
-    """
-
-    name = "telegram"
-
-    def plan(
-        self, layout: RuntimeLayout, env: Mapping[str, str] | None = None
-    ) -> ConnectorPlan:
-        values = dict(os.environ if env is None else env)
-        settings = channel_config(layout, self.name, values)
-        path = config_path(layout, values)
-
-        # Two independent sources, deliberately not equal in authority.
-        # The data root's own config is a *deliberate* statement: someone wrote
-        # that file for this directory. The environment is ambient — the
-        # container exports ENABLE_TELEGRAM_BOT and the production token into
-        # every process it hosts, so any stray `woltspace serve` inherits them.
-        configured = bool(settings.get("enabled", False))
-        raw_enabled = values.get("ENABLE_TELEGRAM_BOT")
-        from_env = _truthy(raw_enabled) if raw_enabled is not None else False
-        env_disables = raw_enabled is not None and not from_env
-
-        token = (values.get("TELEGRAM_BOT_TOKEN") or settings.get("token") or "").strip()
-        remedy = (
-            f'Set channels.telegram = {{"enabled": true, "token": "<bot token>"}} '
-            f"in {path} (or export TELEGRAM_BOT_TOKEN)."
-        )
-
-        if env_disables or not (configured or from_env):
-            return ConnectorPlan(self.name, False, "disabled", remedy=remedy)
-
-        # Read the entrypoint marker from the same mapping as everything else,
-        # so a plan is a pure function of (layout, environment).
-        entrypoint = _truthy(values.get("WOLTSPACE_ENTRYPOINT", ""))
-        if not configured and not entrypoint:
-            # Ambient environment alone. Spawning here would put a second
-            # long-poller on a token whose first poller is, by construction,
-            # already running in the process that exported it — and Telegram
-            # answers the loser of that race with 409.
-            return ConnectorPlan(
-                self.name,
-                False,
-                "enabled only by the ambient environment, and this is not the "
-                "platform entrypoint",
-                remedy=(
-                    f"This process inherited ENABLE_TELEGRAM_BOT from its parent. To "
-                    f"run a connector here, declare it for this data root in {path} "
-                    f"— and use a different bot token, because one token can only be "
-                    f"polled by one process."
-                ),
-            )
-        if not token:
-            return ConnectorPlan(
-                self.name, False, "enabled without a bot token", remedy=remedy
-            )
-
-        bot_dir = values.get("TELEGRAM_BOT_DIR") or str(layout.install_root / "container")
-        module = values.get("TELEGRAM_BOT_MODULE") or "bot.telegram_adapter"
-        child_env = export_both({
-            "TELEGRAM_BOT_TOKEN": token,
-            "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
-            "WOLTSPACE_DIR": str(layout.install_root),
-            "WOLTSPACE_ISOLATION": layout.isolation,
-            "WOLTSPACE_HOST": layout.host,
-            "WOLTSPACE_PORT": str(layout.port),
-            "WOLTSPACE_API": layout.endpoint,
-            "PYTHONPATH": os.pathsep.join(
-                part
-                for part in (
-                    bot_dir,
-                    str(layout.runtime_lib),
-                    values.get("PYTHONPATH", ""),
-                )
-                if part
-            ),
-        })
-        allowed = values.get("TELEGRAM_ALLOWED_USERS") or settings.get("allowed_users")
-        if isinstance(allowed, (list, tuple)):
-            allowed = ",".join(str(item) for item in allowed)
-        if allowed:
-            child_env["TELEGRAM_ALLOWED_USERS"] = str(allowed)
-
-        # In the container the adapter has always run from the `bot` uv project,
-        # which owns python-telegram-bot. Natively that dependency comes from
-        # this very interpreter — check it here so missing dependencies
-        # have a named remedy instead of a crash loop.
-        interpreter = _interpreter(bot_dir, layout.isolation, layout.install_root)
-        if interpreter == (sys.executable,) and not _module_available("telegram"):
-            return ConnectorPlan(
-                self.name,
-                False,
-                "enabled but python-telegram-bot is not installed",
-                remedy=(
-                    "Reinstall woltspace to restore its dependencies: "
-                    "`uv tool install --force woltspace` "
-                    "(from a checkout: `uv tool install --force .`), "
-                    "then `woltspace start`."
-                ),
-            )
-
-        detail = f"{module} from {bot_dir}"
-        if _truthy(values.get("DEV_MODE", "")) and _module_available("watchfiles"):
-            # Keep the container's dev hot-reload, still as one supervised child.
-            command = (
-                *interpreter, "-m", "watchfiles", "--filter", "python",
-                f"{' '.join(interpreter)} -m {module}", "bot/",
-            )
-            detail += " (dev reload)"
-        else:
-            command = (*interpreter, "-m", module)
-
-        return ConnectorPlan(
-            name=self.name,
-            enabled=True,
-            detail=detail,
-            command=command,
-            cwd=bot_dir,
-            env=child_env,
-            remedy=remedy,
-            # `-m <module>` is present as an adjacent pair in both the plain
-            # and the dev-reload argv, and no filename can produce it.
-            process_signature=("-m", module),
-        )
 
 
 class SlackConnector:
@@ -522,18 +387,37 @@ class VultureConnector(_CreatureConnector):
     without = "idle sessions are never closed and dead ones are never cleaned up"
 
 
-class DeclaredConnector:
-    """A chat connector planned from its spec in the connector registry (RFC #617).
+class FolderConnector:
+    """A chat connector that runs from its folder and talks over a socket (RFC #617).
 
-    Enabled by `channels.<name>.enabled` in the data root's config, or by its
-    `enable_env` at the platform entrypoint only (an inherited environment
-    never starts a second poller). It needs every secret its manifest declares,
-    from the environment or its config key, and receives only those.
+    Bundled (`container/connectors/<name>/`, Telegram) or local
+    (`<data root>/.space/connectors/<name>/`). Enabled by
+    `channels.<name>.enabled` in the data root's config; a bundled connector
+    may also be enabled by its `enable_env`, at the platform entrypoint only
+    (an inherited environment never starts a second poller). It needs every
+    secret its manifest declares, from the environment or its config key, and
+    its process receives only those, plus its socket.
+
+    Its owners are the lodge's setting, `channels.<name>.owners`; a bundled
+    connector also reads where its owners were kept before (Telegram:
+    TELEGRAM_ALLOWED_USERS, channels.telegram.allowed_users).
     """
 
     def __init__(self, spec):
         self.spec = spec
         self.name = spec.name
+
+    def _owners(self, values: Mapping[str, str], settings: dict) -> tuple[str, ...]:
+        spec = self.spec
+        raw = settings.get("owners")
+        if raw in (None, "", []) and spec.bundled:
+            raw = (values.get(spec.owners_env) if spec.owners_env else None) or (
+                settings.get(spec.owners_config) if spec.owners_config else None)
+        if isinstance(raw, (list, tuple)):
+            items = [str(item) for item in raw]
+        else:
+            items = str(raw or "").split(",")
+        return tuple(item.strip() for item in items if item.strip())
 
     def plan(
         self, layout: RuntimeLayout, env: Mapping[str, str] | None = None
@@ -552,43 +436,79 @@ class DeclaredConnector:
         from_env = _truthy(raw_enabled) if raw_enabled is not None else False
         if (raw_enabled is not None and not from_env) or not (configured or from_env):
             return ConnectorPlan(self.name, False, "disabled", remedy=remedy)
-        if not _truthy(values.get("WOLTSPACE_ENTRYPOINT", "")):
+        if not configured and not _truthy(values.get("WOLTSPACE_ENTRYPOINT", "")):
+            # Ambient environment alone: the process that exported it already
+            # runs this connector, and one bot token can only be polled once.
             return ConnectorPlan(
-                self.name, False, "not the platform entrypoint",
-                remedy="Run the control plane through `woltspace start`.",
+                self.name, False,
+                "enabled only by the ambient environment, and this is not the platform entrypoint",
+                remedy=(f"This process inherited {spec.enable_env} from its parent. To run a "
+                        f"connector here, declare it for this data root in {path} — and use a "
+                        f"different bot token, because one token can only be polled by one process."),
             )
         secrets = {}
         for name in spec.manifest.secrets:
-            value = (values.get(name) or settings.get(keys.get(name, name.lower())) or "")
+            value = values.get(name) or settings.get(keys.get(name, name.lower())) or ""
             secrets[name] = str(value).strip()
         missing = [name for name, value in secrets.items() if not value]
         if missing:
             return ConnectorPlan(self.name, False, f"enabled without {', '.join(missing)}",
                                  remedy=remedy)
+
+        folder = spec.folder
         bot_dir = str(layout.install_root / "container")
-        module = spec.launch
-        if spec.dependency and not _module_available(spec.dependency):
+        if spec.bundled:
+            interpreter = _interpreter(bot_dir, layout.isolation, layout.install_root,
+                                       spec.dependency or "telegram")
+        else:
+            interpreter = (sys.executable,)
+        if (spec.dependency and interpreter == (sys.executable,)
+                and not _module_available(spec.dependency)):
             return ConnectorPlan(
-                self.name, False, f"enabled but {spec.dependency} is not installed",
-                remedy="Install the connector's dependency, then `woltspace start`.",
+                self.name, False,
+                f"enabled but {spec.dependency_label or spec.dependency} is not installed",
+                remedy=("Reinstall woltspace to restore its dependencies: "
+                        "`uv tool install --force woltspace` "
+                        "(from a checkout: `uv tool install --force .`), then `woltspace start`."
+                        if spec.bundled else
+                        f"Install {spec.dependency} for the lodge's Python, then `woltspace start`."),
             )
+        command = tuple(part for arg in spec.command
+                        for part in (interpreter if arg == "{python}" else (arg,)))
+        # Its last two argv tokens: the interpreter and the program. An editor
+        # or a `tail` naming the program file has no interpreter before it.
+        signature = tuple(command[-2:])
+        dev = ""
+        if _truthy(values.get("DEV_MODE", "")) and _module_available("watchfiles"):
+            # The container's dev hot-reload, still as one supervised child:
+            # restart the program when a file in its folder changes.
+            inner = " ".join(command)
+            # A process table loses argv boundaries: the program, then its folder.
+            signature = (command[-1], folder)
+            command = (*interpreter, "-m", "watchfiles", "--filter", "python", inner, folder)
+            dev = " (dev reload)"
+        owners = self._owners(values, settings)
+        socket_dir = Path(layout.wolts_dir) / ".space" / "run" / "connectors"
         child_env = export_both({
             **secrets,
-            "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
-            "WOLTSPACE_DIR": str(layout.install_root),
-            "WOLTSPACE_ISOLATION": layout.isolation,
-            "WOLTSPACE_HOST": layout.host,
-            "WOLTSPACE_PORT": str(layout.port),
-            "WOLTSPACE_API": layout.endpoint,
+            "WOLTSPACE_CONNECTOR_NAME": self.name,
+            "WOLTSPACE_CONNECTOR_SOCKET": str(socket_dir / f"{self.name}.sock"),
+            "WOLTSPACE_CONNECTOR_DATA": str(Path(layout.wolts_dir) / ".space" / self.name),
+            "WOLTSPACE_CONNECTOR_OUTBOX": str(Path(layout.wolts_dir) / ".space" / "outbox"),
+            "WOLTSPACE_CONNECTOR_OWNERS": ",".join(owners),
             "PYTHONPATH": os.pathsep.join(
-                part for part in (bot_dir, str(layout.runtime_lib), values.get("PYTHONPATH", ""))
-                if part
+                part for part in (str(layout.runtime_lib), values.get("PYTHONPATH", "")) if part
             ),
         })
+        if spec.owners_env and spec.bundled:
+            # The connector filters on the provider side too, under its old name.
+            child_env[spec.owners_env] = ",".join(owners)
+        where = "bundled" if spec.bundled else "local"
         return ConnectorPlan(
-            self.name, True, f"{spec.title} · {module} from {bot_dir}",
-            (sys.executable, "-m", module), bot_dir, child_env, remedy, ("-m", module),
-            isolated_env=True,
+            self.name, True, f"{spec.title} · {where} connector {folder}{dev}",
+            command, folder, child_env, remedy,
+            process_signature=signature,
+            isolated_env=True, socket_dir=str(socket_dir), owners=owners,
         )
 
 
@@ -608,19 +528,33 @@ def _registry(layout: RuntimeLayout | None = None):
 
 
 CONNECTORS: tuple[ChannelConnector, ...] = (
-    TelegramConnector(), SlackConnector(), WolfConnector(), VultureConnector(),
+    SlackConnector(), WolfConnector(), VultureConnector(),
 )
 
 
-def all_connectors(layout: RuntimeLayout | None = None) -> tuple[ChannelConnector, ...]:
-    """The built-in classes, then every connector declared in the registry."""
-    bespoke = {c.name for c in CONNECTORS}
+def folder_connectors(layout: RuntimeLayout | None = None) -> list[FolderConnector]:
+    """Every connector folder, bundled first (Telegram), then the data root's own."""
     try:
-        declared = [DeclaredConnector(spec) for spec in _registry(layout).declared()
-                    if spec.name not in bespoke]
+        registry = _registry(layout)
     except ImportError:
-        declared = []
-    return (*CONNECTORS, *declared)
+        return []
+    wolts_dir = layout.wolts_dir if layout is not None else None
+    bespoke = {c.name for c in CONNECTORS}
+    return [FolderConnector(spec) for spec in registry.declared(wolts_dir)
+            if spec.name not in bespoke]
+
+
+def TelegramConnector() -> FolderConnector:
+    """Telegram, the connector the lodge ships in its own folder."""
+    spec = _registry().spec("telegram")
+    if spec is None:
+        raise RuntimeError("the bundled telegram connector folder is missing")
+    return FolderConnector(spec)
+
+
+def all_connectors(layout: RuntimeLayout | None = None) -> tuple[ChannelConnector, ...]:
+    """The connector folders, then the built-in classes."""
+    return (*folder_connectors(layout), *CONNECTORS)
 
 
 def plan_connectors(
@@ -634,7 +568,7 @@ def _declared_secrets(name: str) -> tuple[str, ...]:
         spec = _registry().spec(name)
     except ImportError:
         return ()
-    return spec.manifest.secrets if spec is not None and spec.launch else ()
+    return spec.manifest.secrets if spec is not None and spec.launchable else ()
 
 
 def connector_secrets(plans: list[ConnectorPlan]) -> dict[str, str]:

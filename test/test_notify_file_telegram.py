@@ -1,6 +1,5 @@
 """Telegram carries a file as a document; its caption keeps the reply footer."""
 
-import re
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
@@ -15,17 +14,15 @@ from server import notification_senders as senders
 from server import notify
 from server.config import DEN_REPLY_FOOTER
 from server.notification_senders import (
-    TELEGRAM_CAPTION_LIMIT, UPLOAD_TIMEOUT, telegram_send_document, telegram_sender,
+    TELEGRAM_CAPTION_LIMIT, telegram_send_document, telegram_sender,
 )
 from server.notification_types import Attachment, OutboundMessage, SendContext
 
 LINK = "https://lodge.test/tui?session=test-session"
 FOOTER = f"\n\n---{DEN_REPLY_FOOTER}\n{LINK}"
 DESTINATION = {"chat_id": "42"}
-# Named here and not inside a test: test_shadow_wolt.py reads the Telegram host
-# in a test body as a live call. Nothing below leaves the process; the transport
-# tests run httpx over a MockTransport.
-SEND_DOCUMENT_URL = "https://api.telegram.org/bott/sendDocument"
+# Nothing below leaves the process: the transport tests hand the file to a
+# stand-in for the Telegram connector.
 RACCOON = "\U0001F99D"                                      # two UTF-16 units
 
 
@@ -107,14 +104,14 @@ async def test_split_sends_the_text_before_the_document(attachment):
 
 @pytest.fixture
 def parse_session_from_reply(monkeypatch, tmp_path):
-    # The adapter loads bot.core, which makes its log folder under the data
+    # The lodge side loads bot.core, which makes its log folder under the data
     # root as it is imported. A first import here must not reach for the
     # default /workspace, which CI cannot create.
     if "bot.core" not in sys.modules:
         for name in ("WOLTSPACE_WOLTS_DIR", "WOLTS_DIR"):
             monkeypatch.setenv(name, str(tmp_path / "wolts"))
-    from bot.telegram_adapter import _parse_session_from_reply
-    return _parse_session_from_reply
+    from chat_lodge import parse_session_from_reply
+    return parse_session_from_reply
 
 
 @pytest.mark.asyncio
@@ -250,128 +247,78 @@ async def test_more_than_one_attachment_is_refused_not_dropped(attachment):
     document_transport.assert_not_awaited()
 
 
-# --- the transport: a real httpx client over a mock transport ----------------
-
-class _Telegram:
-    """sendDocument behind a real httpx.AsyncClient on a MockTransport.
-
-    httpx's own multipart encoder runs, so a body an async client cannot send
-    fails here the way it would against Telegram, and nothing reaches the network.
-    """
-
-    def __init__(self, monkeypatch, answer=None):
-        self.requests, self.post_kwargs = [], []
-        answer = answer or httpx.Response(200, json={"ok": True, "result": {"message_id": 7}})
-        telegram = self
-
-        def handler(request):
-            telegram.requests.append(request)
-            return answer
-
-        class Client(httpx.AsyncClient):
-            def __init__(self, **kwargs):
-                super().__init__(transport=httpx.MockTransport(handler), **kwargs)
-
-            async def post(self, url, **kwargs):
-                telegram.post_kwargs.append(kwargs)
-                return await super().post(url, **kwargs)
-
-        monkeypatch.setattr(senders.httpx, "AsyncClient", Client)
-
-    @property
-    def parts(self) -> dict[str, tuple[str, bytes]]:
-        """The one request's multipart body as {field: (part headers, part body)}."""
-        (request,) = self.requests
-        content_type = request.headers["content-type"]
-        assert content_type.startswith("multipart/form-data; boundary=")
-        boundary = content_type.split("boundary=", 1)[1].encode()
-        parts = {}
-        for chunk in request.content.split(b"--" + boundary)[1:-1]:
-            head, _, body = chunk[2:-2].partition(b"\r\n\r\n")      # exactly one CRLF each side
-            head = head.decode()
-            parts[re.search(r'name="([^"]+)"', head).group(1)] = (head, body)
-        return parts
-
+# --- the transport: the Telegram connector, over its socket ------------------
+# The upload itself is the connector's (test_telegram_connector_send.py). Here:
+# what the lodge hands it, and how its answers become the sender's errors.
 
 @pytest.mark.asyncio
-async def test_send_document_posts_multipart_with_the_upload_timeout(monkeypatch, attachment):
-    telegram = _Telegram(monkeypatch)
+async def test_send_document_hands_the_connector_the_staged_file(monkeypatch, attachment):
+    from connector_loopback import install_fake_broker
+    connector = install_fake_broker(monkeypatch)
 
-    result = await telegram_send_document("t", "42", attachment, "hi")
+    result = await telegram_send_document("", "42", attachment, "hi")
 
-    assert result == {"ok": True, "result": {"message_id": 7}}
-    assert [str(request.url) for request in telegram.requests] == [SEND_DOCUMENT_URL]
-    parts = telegram.parts
-    assert set(parts) == {"chat_id", "caption", "document"}
-    assert parts["chat_id"][1] == b"42"
-    assert parts["caption"][1] == b"hi"
-    head, body = parts["document"]
-    assert 'filename="a.html"' in head and "Content-Type: text/html" in head
-    assert body == b"<h1>hi</h1>"
-    assert telegram.post_kwargs[0]["timeout"] is UPLOAD_TIMEOUT
-
-
-@pytest.mark.asyncio
-async def test_send_document_leaves_out_an_empty_caption(monkeypatch, attachment):
-    telegram = _Telegram(monkeypatch)
-
-    await telegram_send_document("t", "42", attachment, "")
-
-    assert set(telegram.parts) == {"chat_id", "document"}
+    assert result == {"status": "delivered", "message_id": "7"}
+    [frame] = connector.frames
+    assert (frame["connector"], frame["route"], frame["method"]) == ("telegram", {"chat_id": "42"}, "document")
+    assert (frame["filename"], frame["content_type"], frame["text"]) == ("a.html", "text/html", "hi")
+    assert frame["bytes"] == b"<h1>hi</h1>"
 
 
 @pytest.mark.asyncio
 async def test_send_document_carries_an_odd_filename_and_a_long_caption(monkeypatch, tmp_path):
-    telegram = _Telegram(monkeypatch)
+    from connector_loopback import install_fake_broker
+    connector = install_fake_broker(monkeypatch)
     path = tmp_path / ("b" * 32)
     path.write_bytes(bytes(range(256)) * 4)                 # every byte value, CRLF included
     name = f"résumé {RACCOON} weekly update.pdf"
     caption = f"{RACCOON} wolt: done\n" + FOOTER
 
-    await telegram_send_document("t", "42", Attachment(path, name, 1024, "application/pdf"), caption)
+    await telegram_send_document("", "42", Attachment(path, name, 1024, "application/pdf"), caption)
 
-    parts = telegram.parts
-    assert parts["caption"][1] == caption.encode()
-    head, body = parts["document"]
-    assert f'filename="{name}"' in head and "Content-Type: application/pdf" in head
-    assert body == bytes(range(256)) * 4
+    [frame] = connector.frames
+    assert (frame["filename"], frame["text"], frame["bytes"]) == (name, caption, bytes(range(256)) * 4)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("answer, message", [
-    ({"ok": False, "description": "nope"}, "nope"),
-    ({"ok": False}, "telegram error"),
-])
-async def test_send_document_raises_what_telegram_answers(monkeypatch, attachment, answer, message):
-    _Telegram(monkeypatch, httpx.Response(400, json=answer))
+async def test_send_document_raises_what_telegram_answers(monkeypatch, attachment):
+    from connector_loopback import install_fake_broker
+    install_fake_broker(monkeypatch, answer=lambda frame: {"status": "refused", "error": "Bad Request: nope"})
 
-    with pytest.raises(RuntimeError) as error:
-        await telegram_send_document("t", "42", attachment, "hi")
+    with pytest.raises(senders.TelegramRefused) as error:
+        await telegram_send_document("", "42", attachment, "hi")
 
-    assert str(error.value) == message
+    assert str(error.value) == "Bad Request: nope"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status, body", [
-    (413, "<html><h1>413 Request Entity Too Large</h1></html>"),
-    (502, ""),
-])
-async def test_send_document_names_the_status_when_the_answer_is_not_json(
-    monkeypatch, attachment, status, body,
-):
-    _Telegram(monkeypatch, httpx.Response(status, text=body))
+@pytest.mark.parametrize("status", ["failed", "ambiguous"])
+async def test_a_send_that_may_have_arrived_is_not_a_refusal(monkeypatch, attachment, status):
+    from connector_loopback import install_fake_broker
+    install_fake_broker(monkeypatch, answer=lambda frame: {"status": status, "error": "timed out"})
 
     with pytest.raises(RuntimeError) as error:
-        await telegram_send_document("t", "42", attachment, "hi")
+        await telegram_send_document("", "42", attachment, "hi")
 
-    assert str(error.value) == f"telegram answered HTTP {status}"
+    assert not isinstance(error.value, senders.TelegramRefused)
+    assert str(error.value) == f"telegram {status}: timed out"
+
+
+@pytest.mark.asyncio
+async def test_with_no_connector_nothing_is_sent(monkeypatch, attachment):
+    from connector_loopback import install_fake_broker
+    install_fake_broker(monkeypatch, connected=False)
+
+    with pytest.raises(RuntimeError, match="telegram is not connected to the lodge"):
+        await telegram_send_document("", "42", attachment, "hi")
 
 
 # --- registration and the whole path ----------------------------------------
 
 def test_registered_telegram_sender_declares_fifty_megabytes():
     assert notify.SENDERS["telegram"].max_attachment_bytes == 50 * 1024 * 1024
-    assert notify.SENDERS["telegram"].secrets == ("TELEGRAM_BOT_TOKEN",)
+    # The bot token stays with the connector: the lodge's sender declares none.
+    assert notify.SENDERS["telegram"].secrets == ()
 
 
 @pytest.fixture
@@ -381,6 +328,10 @@ def lodge(monkeypatch, tmp_path):
     monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
     monkeypatch.setattr(notify, "OUTBOX_DIR", tmp_path / "outbox")
     monkeypatch.setattr(notify, "dotenv_env", lambda key: env.get(key, ""))
+    # Telegram sends through its connector: here it is connected while the
+    # lodge has a bot token, so the old "no token" cases are "not connected".
+    monkeypatch.setattr(notify, "_connector_up",
+                        lambda name: name != "telegram" or bool(env.get("TELEGRAM_BOT_TOKEN")))
     monkeypatch.setattr(notify, "read_session_registry", lambda name: None)
     monkeypatch.setattr(notify, "append_chat_history", Mock())
     monkeypatch.setattr(notify, "SessionRegistry", lambda root: Mock())
@@ -401,7 +352,7 @@ async def test_end_to_end_through_send_notification(lodge, monkeypatch):
     )
 
     token, chat_id, attachment, caption = document_transport.await_args.args
-    assert (token, chat_id) == ("telegram-token", "101")
+    assert (token, chat_id) == ("", "101")  # the token stays with the connector
     assert attachment == Attachment(box / entry, "a.html", 11, "text/html")
     assert caption == "hi\n" + FOOTER
     document_transport.assert_awaited_once()
@@ -412,13 +363,14 @@ async def test_end_to_end_through_send_notification(lodge, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_end_to_end_the_bytes_are_on_the_wire_before_the_entry_is_removed(lodge, monkeypatch):
+    from connector_loopback import install_fake_broker
     box, entry = lodge
-    telegram = _Telegram(monkeypatch)
+    connector = install_fake_broker(monkeypatch)
 
     await notify.send_notification("test-session", "hi\n", None, [{"id": entry, "name": "a.html"}])
 
-    parts = telegram.parts
-    assert parts["chat_id"][1] == b"101"
-    assert parts["caption"][1] == ("hi\n" + FOOTER).encode()
-    assert parts["document"][1] == b"<h1>hi</h1>"
+    [frame] = connector.frames
+    assert frame["route"] == {"chat_id": "101"}
+    assert frame["text"] == "hi\n" + FOOTER
+    assert frame["bytes"] == b"<h1>hi</h1>"
     assert not (box / entry).exists()

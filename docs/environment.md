@@ -210,10 +210,11 @@ These keep the names their own platform gave them, and are configured in
 `TELEGRAM_ALLOWED_USERS`, `TELEGRAM_CHAT_ID`, `ENABLE_SLACK_BOT`,
 `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_OWNER_USER`,
 `SLACK_NOTIFY_CHANNEL`. Read by
-`src/woltspace/channels.py` when planning connectors and by the adapters in
-`container/bot/`. `TELEGRAM_BOT_DIR` / `TELEGRAM_BOT_MODULE` point its
-connector at an owner-customized Telegram adapter. Slack always uses the
-platform's owner-DM Agent View adapter; there is no custom Slack module path.
+`src/woltspace/channels.py` when planning connectors, by the Telegram
+connector (`container/connectors/telegram/`) and by the Slack adapter in
+`container/bot/`. A customized Telegram is a connector folder of its own under
+`<data root>/.space/connectors/<name>/` (see `docs/connectors.md`). Slack
+always uses the platform's owner-DM Agent View adapter.
 `TELEGRAM_ALLOWED_USERS` and `SLACK_NOTIFY_CHANNEL` also name the chats a
 wolt may send a file, a voice note or a spoken message to, beside the chat
 its session was started from (`server/notify.py`). With no

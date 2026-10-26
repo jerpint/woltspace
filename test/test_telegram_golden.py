@@ -104,38 +104,64 @@ def _context(args=None):
     return context
 
 
+HANDLER_COMMANDS = {
+    "handle_start": "start", "handle_help": "help", "handle_setwolt": "wolt", "handle_new": "new",
+    "handle_sessions": "sessions", "handle_holds": "holds", "handle_idle": "idle",
+    "handle_kill": "kill", "handle_apps": "apps",
+}
+
+
+class _Adapter:
+    """The Telegram connector's handlers by their old names, and the lodge side's state."""
+
+    def __init__(self, connector, side):
+        self.connector, self.side = connector, side
+
+    def handler(self, name):
+        if name == "handle_callback":
+            return self.connector.handle_callback
+        return self.connector.command_handler(HANDLER_COMMANDS[name])
+
+    def _save_chat_state(self, chat, state):
+        self.side._save_chat_state(chat, state)
+
+    def _load_chat_state(self, chat):
+        return self.side._load_chat_state(chat)
+
+
 @pytest.fixture
 def lodge(monkeypatch, tmp_path):
-    """The adapter on a temporary lodge: real chat state, faked sessions and apps."""
-    from bot import telegram_adapter as adapter
+    """The connector and the lodge side on a temporary lodge: real chat state, faked sessions and apps."""
+    import chat_lodge
+    from connector_loopback import telegram
 
     wolts_dir = tmp_path / "wolts"
     for w in WOLTS:
         (wolts_dir / w["name"] / "wolt").mkdir(parents=True)
         (wolts_dir / w["name"] / "wolt" / "wolt.json").write_text(json.dumps({"creature": w["type"]}))
-    monkeypatch.setattr(adapter, "_WOLTS_DIR", wolts_dir)
-    monkeypatch.setattr(adapter, "HISTORY_DIR", tmp_path / "history")
-    monkeypatch.setattr(adapter, "ALLOWED_USERS", {OWNER})
-    monkeypatch.setattr(adapter, "list_wolts", lambda: [dict(w) for w in WOLTS])
-    monkeypatch.setattr(adapter, "list_sessions", lambda: [dict(s) for s in SESSIONS])
-    monkeypatch.setattr(adapter, "get_tunnel_url", lambda: TUNNEL)
-    monkeypatch.setattr(adapter, "dog_available", lambda: False)
-    monkeypatch.setattr(adapter, "_shown", lambda name: name)
-    monkeypatch.setattr(adapter, "_session_emoji", lambda name: "🦫")
+    connector, lodge_side = telegram(monkeypatch, wolts_dir, owners=(str(OWNER),))
+    monkeypatch.setattr(lodge_side, "history_dir", tmp_path / "history")
+    monkeypatch.setattr(connector, "ALLOWED_USERS", {OWNER})
+    monkeypatch.setattr(chat_lodge, "list_wolts", lambda: [dict(w) for w in WOLTS])
+    monkeypatch.setattr(chat_lodge, "list_sessions", lambda: [dict(s) for s in SESSIONS])
+    monkeypatch.setattr(chat_lodge, "get_tunnel_url", lambda: TUNNEL)
+    monkeypatch.setattr(chat_lodge, "dog_available", lambda: False)
+    monkeypatch.setattr(lodge_side, "_shown", lambda name: name)
+    monkeypatch.setattr(lodge_side, "_session_emoji", lambda name: "🦫")
 
     side = {"killed": [], "spawned": [], "app_actions": []}
 
     def kill(name):
         side["killed"].append(name)
         return name != "ghost-session"
-    monkeypatch.setattr(adapter, "kill_session", kill)
+    monkeypatch.setattr(chat_lodge, "kill_session", kill)
 
     def spawn(wolt, chat_id, prompt=""):
         side["spawned"].append(wolt)
         if wolt == "ots":
             raise RuntimeError("engine not logged in")
         return {"name": f"{wolt}-fresh-000001", "url": ""}
-    monkeypatch.setattr(adapter, "_spawn_session", spawn)
+    monkeypatch.setattr(lodge_side, "_spawn_session", spawn)
 
     apps_state = {"fail": False}
 
@@ -143,14 +169,14 @@ def lodge(monkeypatch, tmp_path):
         if apps_state["fail"]:
             raise RuntimeError("lodge unreachable")
         return [dict(a) for a in APPS]
-    monkeypatch.setattr(adapter, "_fetch_apps", fetch_apps)
+    monkeypatch.setattr(lodge_side, "_fetch_apps", fetch_apps)
 
     async def app_action(name, action):
         side["app_actions"].append((name, action))
         return name != "game" or action != "start"
-    monkeypatch.setattr(adapter, "_app_action", app_action)
+    monkeypatch.setattr(lodge_side, "_app_action", app_action)
 
-    return adapter, side, apps_state
+    return _Adapter(connector, lodge_side), side, apps_state
 
 
 def _state(adapter):
@@ -219,7 +245,7 @@ def _run(lodge, setup, handler, args, callback, user):
         adapter._save_chat_state(CHAT, dict(setup))
     transcript = Transcript()
     update = _update(transcript, user=user, callback=callback)
-    asyncio.run(getattr(adapter, handler)(update, _context(args)))
+    asyncio.run(adapter.handler(handler)(update, _context(args)))
     return {
         "calls": transcript.calls,
         "chat_state": _state(adapter),
@@ -269,9 +295,9 @@ def test_apps_failure_is_reported(lodge):
 
 
 def test_the_command_menu_is_pinned():
-    """The '/' menu Telegram shows, in order. The core registry must reproduce it."""
-    from bot import telegram_adapter as adapter
-    assert [(c.command, c.description) for c in adapter.BOT_COMMANDS] == [
+    """The '/' menu Telegram shows, in order: the lodge's registry, sent in its welcome."""
+    import lodge_commands
+    assert [(c.name, c.description) for c in lodge_commands.COMMANDS] == [
         ("sessions", "list active sessions"),
         ("holds", "list sessions kept up by a hold"),
         ("idle", "how long idle sessions stay up"),
@@ -285,32 +311,13 @@ def test_the_command_menu_is_pinned():
 
 
 def test_every_menu_command_has_a_handler(monkeypatch):
-    """run() wires a CommandHandler for each menu entry, and nothing unlisted."""
-    from bot import telegram_adapter as adapter
-    registered = []
+    """The connector wires a CommandHandler for each command the lodge's welcome lists, and nothing else."""
+    import lodge_commands
+    from connector_loopback import ROOT as _root  # noqa: F401  (puts the connector on sys.path)
+    import telegram_connector
 
-    class FakeApp:
-        bot = MagicMock()
-
-        def add_handler(self, handler):
-            if handler.__class__.__name__ == "CommandHandler":
-                registered.extend(sorted(handler.commands))
-
-        def add_error_handler(self, _handler):
-            pass
-
-        def run_polling(self, *a, **k):
-            pass
-
-    builder = MagicMock()
-    builder.token.return_value.build.return_value = FakeApp()
-    builder.token.return_value.post_init.return_value.build.return_value = FakeApp()
-    monkeypatch.setattr(adapter, "ApplicationBuilder", lambda: builder)
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "x")
-    monkeypatch.setattr(adapter, "load_allowed_users", lambda: None)
-    try:
-        adapter.run()
-    except Exception:
-        pass  # anything after handler registration is out of scope here
-    menu = {c.command for c in adapter.BOT_COMMANDS}
-    assert menu <= set(registered), sorted(menu - set(registered))
+    menu = [(c.name, c.description) for c in lodge_commands.COMMANDS]
+    app = telegram_connector.build_app("123:abc", menu)
+    registered = sorted(name for group in app.handlers.values() for h in group
+                        if h.__class__.__name__ == "CommandHandler" for name in h.commands)
+    assert registered == sorted(name for name, _ in menu)

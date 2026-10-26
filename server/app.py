@@ -242,6 +242,11 @@ async def lifespan(app: FastAPI):
     _start_file_watcher()
     _start_tool_gc()
     tunnel_mgr.start_tunnel()
+    try:
+        import connector_host
+        await connector_host.start(WOLTS_DIR)
+    except Exception as exc:  # a connector must never keep the lodge from starting
+        print(f"[connectors] socket broker not started: {type(exc).__name__}: {exc}")
     print(f"""
   woltspace server (python) · http://localhost:{PORT}
   wolt: {WOLT_NAME}
@@ -251,6 +256,11 @@ async def lifespan(app: FastAPI):
     yield
     # Watchers first: they are what used to outlive the shutdown window.
     stop_file_watchers()
+    try:
+        import connector_host
+        await connector_host.stop()
+    except Exception as exc:
+        print(f"[connectors] socket broker did not stop cleanly: {exc}")
     tunnel_mgr.stop_tunnel()
 
 

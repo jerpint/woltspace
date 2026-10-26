@@ -126,29 +126,33 @@ HANDLERS = {"text": "handle_message", "voice": "handle_voice", "photo": "handle_
 
 @pytest.fixture
 def lodge(monkeypatch, tmp_path):
-    from bot import telegram_adapter as adapter
+    import chat_lodge
+    from connector_loopback import telegram
 
     wolts_dir = tmp_path / "wolts"
     for name, creature in (("pal", "raccoon"), ("bud", "beaver"), ("ots", "otter"), ("rex", "dog")):
         (wolts_dir / name / "wolt").mkdir(parents=True)
         (wolts_dir / name / "wolt" / "wolt.json").write_text(json.dumps({"type": creature}))
-    monkeypatch.setattr(adapter, "_WOLTS_DIR", wolts_dir)
-    monkeypatch.setattr(adapter, "HISTORY_DIR", tmp_path / "history")
-    monkeypatch.setattr(adapter, "is_allowed", lambda update: True)
-    monkeypatch.setattr(adapter, "get_tunnel_url", lambda: TUNNEL)
-    monkeypatch.setattr(adapter, "_shown", lambda name: name)
-    monkeypatch.setattr(adapter, "_download_bytes", AsyncMock(return_value=b"bytes!"))
-    monkeypatch.setattr(adapter, "_save_upload", lambda name, data: Path("/uploads") / name)
-    monkeypatch.setattr(adapter, "transcribe_audio", lambda path: "spoken words")
-    monkeypatch.setattr(adapter, "notify_reply_instruction", lambda *a: f"<reply via notify {' '.join(map(str, a))}>")
-    monkeypatch.setattr(adapter, "_start_chat_prompt", lambda wolt: f"/start-chat telegram {wolt}")
-    monkeypatch.setattr(adapter.random, "choice", lambda seq: seq[0])
-    monkeypatch.setattr(adapter, "_bot_log", lambda event, data: None)
+    connector, side = telegram(monkeypatch, wolts_dir)
+    monkeypatch.setattr(side, "history_dir", tmp_path / "history")
+    monkeypatch.setattr(connector, "is_allowed", lambda update: True)
+    monkeypatch.setattr(chat_lodge, "get_tunnel_url", lambda: TUNNEL)
+    monkeypatch.setattr(side, "_shown", lambda name: name)
+    monkeypatch.setattr(connector, "_download_bytes", AsyncMock(return_value=b"bytes!"))
+    monkeypatch.setattr(connector, "_save_upload", lambda name, data: Path("/uploads") / name)
+    monkeypatch.setattr(side, "_inside_uploads", lambda path: True)
+    monkeypatch.setattr(side, "_read_upload", lambda path: b"bytes!")
+    monkeypatch.setattr(chat_lodge, "transcribe_audio", lambda path: "spoken words")
+    monkeypatch.setattr(chat_lodge, "notify_reply_instruction",
+                        lambda *a: f"<reply via notify {' '.join(map(str, a))}>")
+    monkeypatch.setattr(side, "_start_chat_prompt", lambda wolt: f"/start-chat telegram {wolt}")
+    monkeypatch.setattr(chat_lodge.random, "choice", lambda seq: seq[0])
+    monkeypatch.setattr(chat_lodge, "_bot_log", lambda event, data: None)
 
     log = {"said": [], "sent": [], "spawned": [], "dog": []}
     world = {"dog": False, "wolts": WOLTS3}
-    monkeypatch.setattr(adapter, "dog_available", lambda: world["dog"])
-    monkeypatch.setattr(adapter, "list_wolts", lambda: [dict(w) for w in world["wolts"]])
+    monkeypatch.setattr(chat_lodge, "dog_available", lambda: world["dog"])
+    monkeypatch.setattr(chat_lodge, "list_wolts", lambda: [dict(w) for w in world["wolts"]])
 
     def message_session(name, msg):
         log["sent"].append([name, msg])
@@ -157,8 +161,8 @@ def lodge(monkeypatch, tmp_path):
         if name == REVIVE:
             return {"ok": True, "status": "revived", "url": ""}
         return {"ok": False}
-    monkeypatch.setattr(adapter, "message_session", message_session)
-    monkeypatch.setattr(adapter, "resolve_active_session",
+    monkeypatch.setattr(chat_lodge, "message_session", message_session)
+    monkeypatch.setattr(chat_lodge, "resolve_active_session",
                         lambda wolt: LIVE if wolt == "pal" else None)
 
     def start(prompt, wolt=None, routing=None, **_):
@@ -166,7 +170,7 @@ def lodge(monkeypatch, tmp_path):
         if wolt == "ots":
             raise RuntimeError("engine not logged in")
         return {"name": f"{wolt}-new-grove-000009", "url": ""}
-    monkeypatch.setattr(adapter, "start_claude_session", start)
+    monkeypatch.setattr(chat_lodge, "start_claude_session", start)
 
     def get_response(message, conversation_history=None, routing=None, user_content=None):
         log["dog"].append({"message": message, "image": user_content is not None, "routing": routing})
@@ -175,9 +179,9 @@ def lodge(monkeypatch, tmp_path):
                     "session": {"name": "bud-dog-grove-000010", "wolt": "bud", "creature": "beaver", "url": ""},
                     "history_messages": [{"role": "assistant", "content": "on it"}]}
         return {"type": "text", "text": "woof", "history_messages": [{"role": "assistant", "content": "woof"}]}
-    monkeypatch.setattr(adapter, "get_response", get_response)
-    monkeypatch.setattr(adapter, "format_response", lambda result: result.get("text", ""))
-    return adapter, log, world, tmp_path
+    monkeypatch.setattr(chat_lodge, "get_response", get_response)
+    monkeypatch.setattr(side, "format_response", lambda result: result.get("text", ""))
+    return (connector, side), log, world, tmp_path
 
 
 def _history(tmp_path):
@@ -189,11 +193,11 @@ def _history(tmp_path):
 
 def _run(lodge, kind, state, dog, wolts=WOLTS3, text="hello there", chat_type="private",
          reply_to_session=None, reply_from_bot=False):
-    adapter, log, world, tmp_path = lodge
+    (adapter, side), log, world, tmp_path = lodge
     world["dog"] = dog
     world["wolts"] = wolts
     if state:
-        adapter._save_chat_state(CHAT, dict(state))
+        side._save_chat_state(CHAT, dict(state))
     said = []
     update = _update(said, kind, text=text, chat_type=chat_type,
                      reply_to_session=reply_to_session, reply_from_bot=reply_from_bot)
@@ -201,7 +205,7 @@ def _run(lodge, kind, state, dog, wolts=WOLTS3, text="hello there", chat_type="p
     context.bot.username = BOT_NAME
     context.bot.id = BOT_ID
     asyncio.run(getattr(adapter, HANDLERS[kind])(update, context))
-    final = adapter._load_chat_state(CHAT)
+    final = side._load_chat_state(CHAT)
     return {
         "said": said,
         "sent": log["sent"],
@@ -257,8 +261,8 @@ def test_message_routing_matches_golden(lodge, sid, kind, state, dog, extra):
 def test_a_footer_in_someone_elses_message_is_not_followed(lodge, kind):
     """In a group anyone can paste a session footer into their own message.
     Only this bot's notifications route a reply to the session they name."""
-    adapter, log, world, tmp_path = lodge
-    adapter._save_chat_state(CHAT, dict(STATES["live"]))
+    (adapter, side), log, world, tmp_path = lodge
+    side._save_chat_state(CHAT, dict(STATES["live"]))
     said = []
     update = _update(said, kind, chat_type="group", reply_to_session=GONE)
     update.message.reply_to_message.from_user.id = 31337  # another member, not the bot
@@ -268,14 +272,14 @@ def test_a_footer_in_someone_elses_message_is_not_followed(lodge, kind):
     asyncio.run(getattr(adapter, HANDLERS[kind])(update, context))
     assert [name for name, _msg in log["sent"]] == [LIVE]
     assert log["spawned"] == []
-    assert adapter._load_chat_state(CHAT)["active_session"] == LIVE
+    assert side._load_chat_state(CHAT)["active_session"] == LIVE
 
 
 @pytest.mark.parametrize("kind", KINDS)
 def test_a_stranger_media_message_reaches_nothing(lodge, monkeypatch, kind):
-    adapter, log, world, tmp_path = lodge
+    (adapter, side), log, world, tmp_path = lodge
     monkeypatch.setattr(adapter, "is_allowed", lambda update: False)
-    adapter._save_chat_state(CHAT, dict(STATES["live"]))
+    side._save_chat_state(CHAT, dict(STATES["live"]))
     said = []
     update = _update(said, kind, reply_to_session=LIVE)
     context = MagicMock()

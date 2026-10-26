@@ -122,7 +122,8 @@ SENDERS = {
             lambda *args: telegram_send_voice(*args),
             lambda *args: telegram_send_audio(*args),
         ),
-        secrets=("TELEGRAM_BOT_TOKEN",),
+        # Sent by the Telegram connector, over its socket: no secret here.
+        secrets=(),
         max_attachment_bytes=TELEGRAM_MAX_ATTACHMENT_BYTES,
         speech_format="opus",
     ),
@@ -173,9 +174,18 @@ def _tunnel_url() -> str:
         return ""
 
 
+def _connector_up(name: str) -> bool:
+    """Whether a folder connector is connected to this lodge's broker right now."""
+    import connector_broker
+
+    broker = connector_broker.current()
+    return broker is not None and broker.connected(name)
+
+
 def _telegram_destination(session, chat_id, thread_ts, routing, secrets):
-    if not secrets.get("TELEGRAM_BOT_TOKEN"):
-        raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
+    # Asked first, before a file is checked or words are spoken (and billed).
+    if not _connector_up("telegram"):
+        raise RuntimeError("telegram is not connected to the lodge")
     session_link = ""
     if session:
         tunnel_url = _tunnel_url()
@@ -254,25 +264,25 @@ OUTBOUND = {
 }
 
 
-# --- connectors declared in the registry (container/lib/connector_registry) ----
-# A declared connector needs no entry above: its route codec builds its _Outbound,
-# and its sender is the Plugin its spec names. Only the lodge's own registry is
-# read, so only built-in import paths are ever resolved here.
+# --- connectors that run from a folder (container/lib/connector_registry) -------
+# A folder connector needs no entry above: its route codec builds its _Outbound,
+# and it sends through its socket (connector_broker). Nothing of it is imported.
 
 def _declared(adapter: str):
     import connector_registry
 
-    spec = connector_registry.spec(adapter)
-    return spec if spec is not None and spec.outbound else None
+    if adapter in OUTBOUND:
+        return None
+    spec = connector_registry.spec(adapter, WOLTS_DIR)
+    return spec if spec is not None and spec.launchable else None
 
 
 def _declared_outbound(spec) -> _Outbound:
     codec = spec.codec
 
     def destination(session, route_text, thread_ts, routing, secrets):
-        missing = [key for key in spec.manifest.secrets if not secrets.get(key)]
-        if missing:
-            raise RuntimeError(f"{', '.join(missing)} not set")
+        if not _connector_up(spec.name):
+            raise RuntimeError(f"{spec.name} is not connected to the lodge")
         route = codec.canonical(route_text)
         session_link = ""
         if session:
@@ -304,6 +314,43 @@ def _declared_outbound(spec) -> _Outbound:
     )
 
 
+SOCKET_MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
+
+
+def _socket_sender(spec) -> Plugin:
+    """Send through a folder connector's socket: text, or one file or voice note."""
+    import connector_broker
+
+    async def send(message: OutboundMessage, destination, context: SendContext) -> None:
+        broker = connector_broker.current()
+        if broker is None:
+            raise RuntimeError(f"{spec.name} is not connected to the lodge")
+        text = message.text
+        if message.session_link:
+            text += f"\n\n---{DEN_REPLY_FOOTER}\n{message.session_link}"
+        if len(message.attachments) > 1:
+            raise RuntimeError(f"{spec.name} sender carries one file per message")
+        extra, method = {}, "message"
+        if message.attachments:
+            attachment = message.attachments[0]
+            method = "voice" if attachment.kind == "voice" else "document"
+            extra = dict(path=str(attachment.path), filename=attachment.filename,
+                         content_type=attachment.content_type)
+        try:
+            await broker.send(spec.name, destination, method, text, **extra)
+        except connector_broker.SendFailed as exc:
+            raise RuntimeError(f"{spec.name} {exc.status}: {exc}") from None
+        except connector_broker.ConnectorUnavailable as exc:
+            raise RuntimeError(str(exc)) from None
+
+    manifest = spec.manifest
+    return Plugin(
+        spec.name, send, secrets=(),
+        max_attachment_bytes=SOCKET_MAX_ATTACHMENT_BYTES if manifest.can("files") else 0,
+        speech_format="opus" if manifest.can("voice_out") else "",
+    )
+
+
 def _outbound(adapter: str) -> _Outbound | None:
     if adapter in OUTBOUND:
         return OUTBOUND[adapter]
@@ -317,13 +364,7 @@ def _sender(adapter: str) -> Plugin:
     spec = _declared(adapter)
     if spec is None:
         raise KeyError(adapter)
-    import importlib
-
-    module, _, attr = spec.outbound.partition(":")
-    plugin = getattr(importlib.import_module(module), attr)
-    if not isinstance(plugin, Plugin) or plugin.id != spec.name:
-        raise RuntimeError(f"{spec.name}: its outbound is not a sender Plugin of that name")
-    return plugin
+    return _socket_sender(spec)
 
 
 def _resolve_attachments(attachments) -> tuple[Attachment, ...]:
