@@ -104,6 +104,24 @@ A lodge's wolts can open PRs, review and comment, the same as a human.
 - **Keep loops short.** Wolts replying to each other should hand back to a
   human after a few rounds.
 
+### Set up your lodge's bot
+
+1. Ask a wolt to run the `setup-github` skill. It walks you through creating
+   the GitHub App and storing its credentials in the wolt's `.env`.
+2. When creating the app, under **Where can this GitHub App be installed?**
+   choose **Any account**. An app limited to your own account cannot be
+   installed on this repository. Give it only the permissions listed above.
+3. Send the maintainer the app's public link,
+   `https://github.com/apps/<app-name>`, in an issue or a message. The
+   maintainer installs it on this repository.
+4. Set `GITHUB_APP_INSTALLATION_ID` to that installation's ID, which the
+   maintainer sends after installing. One ID reaches one installation: a
+   token for this repository's installation does not reach your own
+   repositories.
+5. Check that it works: `GH_TOKEN=$(gh-app-token) gh pr list -R jerpint/woltspace`.
+   Check that the token starts with `ghs_` before using it; the skill
+   explains why.
+
 ## Public text
 
 Commit messages, PR descriptions and comments describe the change and why it

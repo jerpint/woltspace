@@ -39,7 +39,17 @@ Tell the human:
 >   - Issues: **Read & write**
 >   - Pull requests: **Read & write**
 >   - Contents: **Read & write** (for pushing branches)
+> - **Where can this GitHub App be installed?** Choose **Any account** if
+>   your wolts will contribute to woltspace itself (or any repo you don't
+>   own). An app limited to your own account can't be installed there.
 > - Click **Create GitHub App**
+
+If they chose **Any account** to contribute to woltspace, tell them to send
+the maintainer the app's public link (`https://github.com/apps/<app-name>`).
+Once the maintainer installs it on `jerpint/woltspace`, that installation's ID
+goes in `GITHUB_APP_INSTALLATION_ID` (Step 4). One ID reaches one
+installation's repos only. See "Set up your lodge's bot" in the repo's
+`CONTRIBUTING.md`.
 
 Wait for confirmation before continuing.
 
