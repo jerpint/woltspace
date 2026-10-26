@@ -23,11 +23,12 @@ ROOT = Path(__file__).resolve().parents[1]
 for part in ("container", "container/lib", "container/connectors/telegram"):
     sys.path.insert(0, str(ROOT / part))
 
-import chat_lodge  # noqa: E402
 import connector_broker  # noqa: E402
 import connector_client  # noqa: E402
-import connector_registry  # noqa: E402
-import telegram_connector as tg  # noqa: E402
+
+# Imported by the fixture once the data root is set: the lodge side loads
+# bot.core, which makes its log folder under the data root as it is imported.
+chat_lodge = connector_registry = tg = None
 
 OWNER = 111
 CHAT = 4242
@@ -36,11 +37,15 @@ LIVE = "pal-live-grove-000001"
 
 @pytest.fixture
 def world(monkeypatch):
+    global chat_lodge, connector_registry, tg
     root = Path(tempfile.mkdtemp(prefix="wsx", dir="/tmp"))
     wolts = root / "w"
     (wolts / "pal" / "wolt").mkdir(parents=True)
     (wolts / "pal" / "wolt" / "wolt.json").write_text('{"type": "raccoon"}')
     monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(wolts))
+    import chat_lodge
+    import connector_registry
+    import telegram_connector as tg
     side = chat_lodge.ChatLodge(connector_registry.spec("telegram"), [str(OWNER)])
     sent = []
 
