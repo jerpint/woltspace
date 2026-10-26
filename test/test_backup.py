@@ -1946,3 +1946,16 @@ def test_runtime_state_goes_into_the_archive(wolts, tmp_path):
         ".space/logs/control-plane.log",
     ]
     assert ".space/logs/control-plane.log" in {item["path"] for item in slim.scan.left_out}
+
+
+@pytest.mark.parametrize("status, after", [
+    ("running", "stopped"), ("starting", "stopped"), ("stopping", "stopped"),
+    ("orphaned", "stopped"), ("resting", "resting"), ("completed", "completed"),
+])
+def test_disarm_stops_every_live_status_and_keeps_the_rest(tmp_path, status, after):
+    """A snapshot can catch a session mid-stop: the copy never inherits that."""
+    report = {"sessions_stopped": 0, "sessions_rebased": 0}
+    record = {"name": "beaverwolt-s1", "status": status, "runtime": {"pane_id": "%1"}}
+    out, outside = backup_mod._disarm_session(record, "/old/wolts", tmp_path, report)
+    assert (out["status"], "runtime" in out, outside) == (after, False, [])
+    assert report["sessions_stopped"] == (after != status)

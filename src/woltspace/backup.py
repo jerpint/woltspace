@@ -1054,7 +1054,7 @@ QUARANTINE_NAME = "restore-quarantine"
 RESTORED_MARKER = ".space/platform/restored.json"
 RESTORED_TMUX_NAME = "tmux"
 #: Session statuses a control plane would adopt on boot (by tmux name).
-_LIVE_SESSION_STATUSES = ("running", "orphaned", "starting", "pending")
+_LIVE_SESSION_STATUSES = ("running", "orphaned", "starting", "pending", "stopping")
 _SESSION_PATH_KEYS = ("workdir", "dir")
 #: What an app's state says about the processes behind it.
 _APP_PID_KEYS = ("pid", "tunnel_pid", "tunnel_url")

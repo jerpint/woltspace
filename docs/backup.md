@@ -316,8 +316,8 @@ written anywhere. The archive is decrypted twice, never to disk: once to audit
 every member (below), then again to extract, and the second pass must see
 exactly the members the first one audited.
 
-Every session comes back stopped (below), with its conversation id, so it
-can be resumed. Re-authenticate the harnesses, as the checklist says.
+Every live session comes back stopped (below), with its conversation id, so
+it can be resumed; a resting or finished one keeps its status. Re-authenticate the harnesses, as the checklist says.
 
 ### A copy keeps its hands off its source
 
@@ -335,8 +335,9 @@ live lodge's.
   machine the copy lands on an old pid can be any live process: the copy's
   lodge starts its own app instead of taking someone else's as running, or
   signalling it.
-- **Sessions come back stopped,** without their tmux name or pane, so boot
-  adopts none of them. Transcripts and resume ids are untouched: every session
+- **Live sessions come back stopped** (running, starting, stopping, orphaned);
+  resting and finished ones keep their status. None keeps its tmux name or
+  pane, so boot adopts none of them. Transcripts and resume ids are untouched: every session
   can be resumed in the copy.
 - **Paths are re-pointed:** a session's `workdir`, `dir` and
   `canonical_workdir`, and every Auto approval, that pointed inside the
