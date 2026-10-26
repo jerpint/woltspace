@@ -518,15 +518,118 @@ class VultureConnector(_CreatureConnector):
     without = "idle sessions are never closed and dead ones are never cleaned up"
 
 
+class DeclaredConnector:
+    """A chat connector planned from its spec in the connector registry (RFC #617).
+
+    Enabled by `channels.<name>.enabled` in the data root's config, or by its
+    `enable_env` at the platform entrypoint only (an inherited environment
+    never starts a second poller). It needs every secret its manifest declares,
+    from the environment or its config key, and receives only those.
+    """
+
+    def __init__(self, spec):
+        self.spec = spec
+        self.name = spec.name
+
+    def plan(
+        self, layout: RuntimeLayout, env: Mapping[str, str] | None = None
+    ) -> ConnectorPlan:
+        spec = self.spec
+        values = dict(os.environ if env is None else env)
+        settings = channel_config(layout, self.name, values)
+        path = config_path(layout, values)
+        keys = dict(spec.config_keys)
+        example = ", ".join(f'"{keys.get(name, name.lower())}": "<{name}>"'
+                            for name in spec.manifest.secrets)
+        remedy = (f'Set channels.{self.name} = {{"enabled": true'
+                  f'{", " + example if example else ""}}} in {path}.')
+        configured = bool(settings.get("enabled", False))
+        raw_enabled = values.get(spec.enable_env) if spec.enable_env else None
+        from_env = _truthy(raw_enabled) if raw_enabled is not None else False
+        if (raw_enabled is not None and not from_env) or not (configured or from_env):
+            return ConnectorPlan(self.name, False, "disabled", remedy=remedy)
+        if not _truthy(values.get("WOLTSPACE_ENTRYPOINT", "")):
+            return ConnectorPlan(
+                self.name, False, "not the platform entrypoint",
+                remedy="Run the control plane through `woltspace start`.",
+            )
+        secrets = {}
+        for name in spec.manifest.secrets:
+            value = (values.get(name) or settings.get(keys.get(name, name.lower())) or "")
+            secrets[name] = str(value).strip()
+        missing = [name for name, value in secrets.items() if not value]
+        if missing:
+            return ConnectorPlan(self.name, False, f"enabled without {', '.join(missing)}",
+                                 remedy=remedy)
+        bot_dir = str(layout.install_root / "container")
+        module = spec.launch
+        if spec.dependency and not _module_available(spec.dependency):
+            return ConnectorPlan(
+                self.name, False, f"enabled but {spec.dependency} is not installed",
+                remedy="Install the connector's dependency, then `woltspace start`.",
+            )
+        child_env = export_both({
+            **secrets,
+            "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
+            "WOLTSPACE_DIR": str(layout.install_root),
+            "WOLTSPACE_ISOLATION": layout.isolation,
+            "WOLTSPACE_HOST": layout.host,
+            "WOLTSPACE_PORT": str(layout.port),
+            "WOLTSPACE_API": layout.endpoint,
+            "PYTHONPATH": os.pathsep.join(
+                part for part in (bot_dir, str(layout.runtime_lib), values.get("PYTHONPATH", ""))
+                if part
+            ),
+        })
+        return ConnectorPlan(
+            self.name, True, f"{spec.title} · {module} from {bot_dir}",
+            (sys.executable, "-m", module), bot_dir, child_env, remedy, ("-m", module),
+        )
+
+
+def _registry(layout: RuntimeLayout | None = None):
+    """The connector registry, from this install's runtime library."""
+    lib_dir = str(Path(__file__).resolve().parent / "_bundle" / "container" / "lib")
+    candidates = [str(layout.runtime_lib)] if layout is not None else []
+    candidates += [lib_dir, str(Path(__file__).resolve().parents[2] / "container" / "lib")]
+    for candidate in candidates:
+        if Path(candidate, "connector_registry.py").is_file():
+            if candidate not in sys.path:
+                sys.path.insert(0, candidate)
+            break
+    import connector_registry
+
+    return connector_registry
+
+
 CONNECTORS: tuple[ChannelConnector, ...] = (
     TelegramConnector(), SlackConnector(), WolfConnector(), VultureConnector(),
 )
 
 
+def all_connectors(layout: RuntimeLayout | None = None) -> tuple[ChannelConnector, ...]:
+    """The built-in classes, then every connector declared in the registry."""
+    bespoke = {c.name for c in CONNECTORS}
+    try:
+        declared = [DeclaredConnector(spec) for spec in _registry(layout).declared()
+                    if spec.name not in bespoke]
+    except ImportError:
+        declared = []
+    return (*CONNECTORS, *declared)
+
+
 def plan_connectors(
     layout: RuntimeLayout, env: Mapping[str, str] | None = None
 ) -> list[ConnectorPlan]:
-    return [connector.plan(layout, env) for connector in CONNECTORS]
+    return [connector.plan(layout, env) for connector in all_connectors(layout)]
+
+
+def _declared_secrets(name: str) -> tuple[str, ...]:
+    try:
+        spec = _registry().spec(name)
+    except ImportError:
+        return ()
+    return spec.manifest.secrets if spec is not None and spec.launch else ()
 
 
 def connector_secrets(plans: list[ConnectorPlan]) -> dict[str, str]:
@@ -541,6 +644,7 @@ def connector_secrets(plans: list[ConnectorPlan]) -> dict[str, str]:
         for key in (
             "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USERS",
             "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_OWNER_USER",
+            *_declared_secrets(plan.name),
         ):
             value = plan.env.get(key)
             if value:

@@ -94,7 +94,7 @@ def append_chat_history(adapter: str, chat_id: str, content: str):
     """Write notify messages into the bot's chat history."""
     from datetime import datetime, timezone
 
-    outbound = OUTBOUND.get(adapter)
+    outbound = _outbound(adapter)
     subdir = STATE_DIR / "chat"
     if outbound and outbound.history_subdir:
         subdir = subdir / outbound.history_subdir
@@ -251,6 +251,76 @@ OUTBOUND = {
 }
 
 
+# --- connectors declared in the registry (container/lib/connector_registry) ----
+# A declared connector needs no entry above: its route codec builds its _Outbound,
+# and its sender is the Plugin its spec names. Only the lodge's own registry is
+# read, so only built-in import paths are ever resolved here.
+
+def _declared(adapter: str):
+    import connector_registry
+
+    spec = connector_registry.spec(adapter)
+    return spec if spec is not None and spec.outbound else None
+
+
+def _declared_outbound(spec) -> _Outbound:
+    codec = spec.codec
+
+    def destination(session, route_text, thread_ts, routing, secrets):
+        missing = [key for key in spec.manifest.secrets if not secrets.get(key)]
+        if missing:
+            raise RuntimeError(f"{', '.join(missing)} not set")
+        route = codec.canonical(route_text)
+        session_link = ""
+        if session:
+            tunnel_url = _tunnel_url()
+            session_link = f"{tunnel_url}/tui?session={session}" if tunnel_url else f"session={session}"
+        return dict(route), route_text, session_link
+
+    def explicit(session, explicit, routing):
+        text = str(explicit.get("route", ""))
+        route = codec.canonical(text)
+        # Exact binding: the session's own route keeps the session (and its link).
+        exact = codec.matches(route, routing)
+        return {"session": session if exact else "", "chat_id": text, "thread_ts": None,
+                "routing": routing if exact else None}
+
+    def from_session(routing):
+        route = codec.from_record(routing)
+        return (codec.format(route), None) if route else None
+
+    return _Outbound(
+        route_key="route",
+        destination=destination,
+        owner_chats=lambda: set(),
+        explicit=explicit,
+        from_session=from_session,
+        history_subdir=spec.name,
+    )
+
+
+def _outbound(adapter: str) -> _Outbound | None:
+    if adapter in OUTBOUND:
+        return OUTBOUND[adapter]
+    spec = _declared(adapter)
+    return _declared_outbound(spec) if spec else None
+
+
+def _sender(adapter: str) -> Plugin:
+    if adapter in SENDERS:
+        return SENDERS[adapter]
+    spec = _declared(adapter)
+    if spec is None:
+        raise KeyError(adapter)
+    import importlib
+
+    module, _, attr = spec.outbound.partition(":")
+    plugin = getattr(importlib.import_module(module), attr)
+    if not isinstance(plugin, Plugin) or plugin.id != spec.name:
+        raise RuntimeError(f"{spec.name}: its outbound is not a sender Plugin of that name")
+    return plugin
+
+
 def _resolve_attachments(attachments) -> tuple[Attachment, ...]:
     """Turn the request's outbox ids into attachments, measured and named by core."""
     if (
@@ -364,7 +434,7 @@ async def _spoken(speech: _Speech, sender: Plugin, adapter: str) -> Attachment:
 
 def _own_chats(adapter: str, session_record: dict | None) -> set[str]:
     """The chats that are this lodge's own: the ones it is set up with, and the session's."""
-    chats = set(OUTBOUND[adapter].owner_chats())
+    chats = set(_outbound(adapter).owner_chats())
     if session_record and session_record.get("adapter") == adapter:
         chats.add(str(session_record.get("chat_id") or ""))
     chats.discard("")
@@ -383,9 +453,9 @@ async def _send(
     thread, and carries its progress state. `session_record` is that record
     whatever the route, and is read only to tell whose chat this is.
     """
-    sender = SENDERS[adapter]
+    sender = _sender(adapter)
     secrets = {key: dotenv_env(key) for key in sender.secrets}
-    destination, chat_id, session_link = OUTBOUND[adapter].destination(
+    destination, chat_id, session_link = _outbound(adapter).destination(
         session, chat_id, thread_ts, routing, secrets,
     )
 
@@ -450,7 +520,7 @@ async def _send(
         f"{a.filename}, {a.content_type}, {a.size} bytes]"
         for a in attachments
     ))
-    result = {"adapter": adapter, OUTBOUND[adapter].route_key: chat_id}
+    result = {"adapter": adapter, _outbound(adapter).route_key: chat_id}
     if attachments:
         # Metadata only: this dict is logged and returned to the caller. A voice
         # note is marked, so `notify` can tell it from audio that went as a document.
@@ -523,7 +593,7 @@ async def _route(
     # 1. Explicit routing — caller knows exactly where to send.
     if explicit and explicit.get("adapter"):
         adapter = explicit["adapter"]
-        outbound = OUTBOUND.get(adapter)
+        outbound = _outbound(adapter)
         plan = outbound.explicit(session, explicit, routing) if outbound else None
         if plan is not None:
             return await _send(
@@ -534,7 +604,7 @@ async def _route(
     # 2. Session registry lookup — find routing from session metadata
     if session and routing:
         adapter = routing.get("adapter")
-        outbound = OUTBOUND.get(adapter)
+        outbound = _outbound(adapter)
         target = outbound.from_session(routing) if outbound else None
         if target is not None:
             chat_id, thread_ts = target

@@ -16,7 +16,7 @@ You were invoked with two arguments: `<mode> <wolt-name>`.
 
 ## What to do
 
-1. **Read your mode file** from `modes/<mode>.md` beside this `SKILL.md` — this tells you how to behave in this session (notification style, viewport usage, constraints). The delivered skill always carries its `modes/` directory with it.
+1. **Read your mode file** from `modes/<mode>.md` beside this `SKILL.md` (`modes/connector.md` when there is no file for your mode) — this tells you how to behave in this session (notification style, viewport usage, constraints). The delivered skill always carries its `modes/` directory with it.
 
 2. **Read your identity** from `wolt/memory/` in your current wolt directory. Start with `identity.md` if it exists, then `context.md` and `learnings.md`. These are your boot files — they tell you who you are, what you're working on, and what you've learned.
 

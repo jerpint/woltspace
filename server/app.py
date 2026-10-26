@@ -813,6 +813,9 @@ async def post_notify(request: Request):
             explicit["thread_ts"] = body.get("thread_ts")
         elif body["adapter"] == "telegram":
             explicit["chat_id"] = body.get("chat_id", "")
+        else:
+            # A connector declared in the registry: its own route text (notify --to).
+            explicit["route"] = body.get("route", "")
     # Outbox entries `notify --file` staged: [{"id", "name"}]. Never a path.
     attachments = body.get("attachments") or []
     # `notify --speak`: {"text"}, the words the lodge is to say. Passed on only

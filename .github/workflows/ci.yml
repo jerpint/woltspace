@@ -99,6 +99,7 @@ jobs:
           test/test_telegram_golden.py
           test/test_telegram_messages_golden.py
           test/test_connector_contract.py
+          test/test_connector_echo.py
           test/test_transcription_settings.py
           test/test_speech_settings.py
           test/test_boot_context_cap.py
