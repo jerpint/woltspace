@@ -1,0 +1,4127 @@
+{
+ "document-gone-dog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "document-gone-nodog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session expired — spawning new one for bud"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 new session for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "document-live-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "document-live-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "document-none-dog": {
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "dog": [
+   {
+    "image": false,
+    "message": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    }
+   }
+  ],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "woof",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *tail wags vigorously*"
+   },
+   {
+    "kind": "reply",
+    "text": "woof"
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "document-none-nodog": {
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "dog": [],
+  "history": [],
+  "said": [
+   {
+    "buttons": [
+     [
+      [
+       "🦝 pal",
+       "wolt:pal"
+      ],
+      [
+       "🦫 bud",
+       "wolt:bud"
+      ]
+     ],
+     [
+      [
+       "🦦 ots",
+       "wolt:ots"
+      ]
+     ]
+    ],
+    "kind": "reply",
+    "text": "active: none\n\ntap to switch"
+   },
+   {
+    "kind": "reply",
+    "text": "your message was not delivered: pick a wolt above (or send /wolt <name>), then send it again."
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "document-none-onewolt-dog": {
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "dog": [
+   {
+    "image": false,
+    "message": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    }
+   }
+  ],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "woof",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *tail wags vigorously*"
+   },
+   {
+    "kind": "reply",
+    "text": "woof"
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "document-none-onewolt-nodog": {
+  "chat_state": {
+   "active_session": "pal-new-grove-000009",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for pal\nhttps://lodge.example/tui?session=pal-new-grove-000009"
+   }
+  ],
+  "sent": [],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "pal"
+   }
+  ]
+ },
+ "document-reply-gone-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "document-reply-gone-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "document-reply-live-while-bud-dog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "document-reply-live-while-bud-nodog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session expired — spawning new one for bud"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 new session for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "document-reply-unknown-wolt-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "document-reply-unknown-wolt-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "document-revive-dog": {
+  "chat_state": {
+   "active_session": "pal-sleepy-grove-000002",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-sleepy-grove-000002]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session had exited — revived and delivered\npal-sleepy-grove-000002"
+   }
+  ],
+  "sent": [
+   [
+    "pal-sleepy-grove-000002",
+    "[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "document-revive-nodog": {
+  "chat_state": {
+   "active_session": "pal-sleepy-grove-000002",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-sleepy-grove-000002]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session had exited — revived and delivered\npal-sleepy-grove-000002"
+   }
+  ],
+  "sent": [
+   [
+    "pal-sleepy-grove-000002",
+    "[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "document-sibling-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 pal-gone-grove-000003 is gone — delivered to pal's live session instead\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-gone-grove-000003",
+    "[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look\n<reply via notify --telegram 4242>"
+   ],
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "document-sibling-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 pal-gone-grove-000003 is gone — delivered to pal's live session instead\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-gone-grove-000003",
+    "[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look\n<reply via notify --telegram 4242>"
+   ],
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "document-spawnfail-dog": {
+  "chat_state": {
+   "active_session": "ots-gone-grove-000005",
+   "active_wolt": "ots"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "couldn't start session: engine not logged in"
+   }
+  ],
+  "sent": [
+   [
+    "ots-gone-grove-000005",
+    "[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "ots"
+   }
+  ]
+ },
+ "document-spawnfail-nodog": {
+  "chat_state": {
+   "active_session": "ots-gone-grove-000005",
+   "active_wolt": "ots"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session expired — spawning new one for ots"
+   },
+   {
+    "kind": "reply",
+    "text": "couldn't start session for ots: engine not logged in"
+   }
+  ],
+  "sent": [
+   [
+    "ots-gone-grove-000005",
+    "[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "ots"
+   }
+  ]
+ },
+ "document-wolt-dog": {
+  "chat_state": {
+   "active_session": "pal-new-grove-000009",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for pal\nhttps://lodge.example/tui?session=pal-new-grove-000009"
+   }
+  ],
+  "sent": [],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "pal"
+   }
+  ]
+ },
+ "document-wolt-nodog": {
+  "chat_state": {
+   "active_session": "pal-new-grove-000009",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for pal\nhttps://lodge.example/tui?session=pal-new-grove-000009"
+   }
+  ],
+  "sent": [],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [file received] note.txt (text/plain, 6 bytes) saved at /uploads/note.txt\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "pal"
+   }
+  ]
+ },
+ "photo-gone-dog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "photo-gone-nodog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session expired — spawning new one for bud"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 new session for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "photo-live-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "photo-live-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "photo-none-dog": {
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "dog": [
+   {
+    "image": true,
+    "message": "[image] look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    }
+   }
+  ],
+  "history": [
+   {
+    "content": "[image] look",
+    "role": "user"
+   },
+   {
+    "content": "woof",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *tail wags vigorously*"
+   },
+   {
+    "kind": "reply",
+    "text": "woof"
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "photo-none-nodog": {
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "dog": [],
+  "history": [],
+  "said": [
+   {
+    "buttons": [
+     [
+      [
+       "🦝 pal",
+       "wolt:pal"
+      ],
+      [
+       "🦫 bud",
+       "wolt:bud"
+      ]
+     ],
+     [
+      [
+       "🦦 ots",
+       "wolt:ots"
+      ]
+     ]
+    ],
+    "kind": "reply",
+    "text": "active: none\n\ntap to switch"
+   },
+   {
+    "kind": "reply",
+    "text": "your message was not delivered: pick a wolt above (or send /wolt <name>), then send it again."
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "photo-none-onewolt-dog": {
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "dog": [
+   {
+    "image": true,
+    "message": "[image] look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    }
+   }
+  ],
+  "history": [
+   {
+    "content": "[image] look",
+    "role": "user"
+   },
+   {
+    "content": "woof",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *tail wags vigorously*"
+   },
+   {
+    "kind": "reply",
+    "text": "woof"
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "photo-none-onewolt-nodog": {
+  "chat_state": {
+   "active_session": "pal-new-grove-000009",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for pal\nhttps://lodge.example/tui?session=pal-new-grove-000009"
+   }
+  ],
+  "sent": [],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "pal"
+   }
+  ]
+ },
+ "photo-reply-gone-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "photo-reply-gone-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "photo-reply-live-while-bud-dog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "photo-reply-live-while-bud-nodog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session expired — spawning new one for bud"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 new session for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "photo-reply-unknown-wolt-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "photo-reply-unknown-wolt-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "photo-revive-dog": {
+  "chat_state": {
+   "active_session": "pal-sleepy-grove-000002",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-sleepy-grove-000002]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session had exited — revived and delivered\npal-sleepy-grove-000002"
+   }
+  ],
+  "sent": [
+   [
+    "pal-sleepy-grove-000002",
+    "[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "photo-revive-nodog": {
+  "chat_state": {
+   "active_session": "pal-sleepy-grove-000002",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-sleepy-grove-000002]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session had exited — revived and delivered\npal-sleepy-grove-000002"
+   }
+  ],
+  "sent": [
+   [
+    "pal-sleepy-grove-000002",
+    "[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "photo-sibling-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 pal-gone-grove-000003 is gone — delivered to pal's live session instead\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-gone-grove-000003",
+    "[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look\n<reply via notify --telegram 4242>"
+   ],
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "photo-sibling-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 pal-gone-grove-000003 is gone — delivered to pal's live session instead\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-gone-grove-000003",
+    "[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look\n<reply via notify --telegram 4242>"
+   ],
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "photo-spawnfail-dog": {
+  "chat_state": {
+   "active_session": "ots-gone-grove-000005",
+   "active_wolt": "ots"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "couldn't start session: engine not logged in"
+   }
+  ],
+  "sent": [
+   [
+    "ots-gone-grove-000005",
+    "[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "ots"
+   }
+  ]
+ },
+ "photo-spawnfail-nodog": {
+  "chat_state": {
+   "active_session": "ots-gone-grove-000005",
+   "active_wolt": "ots"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session expired — spawning new one for ots"
+   },
+   {
+    "kind": "reply",
+    "text": "couldn't start session for ots: engine not logged in"
+   }
+  ],
+  "sent": [
+   [
+    "ots-gone-grove-000005",
+    "[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "ots"
+   }
+  ]
+ },
+ "photo-wolt-dog": {
+  "chat_state": {
+   "active_session": "pal-new-grove-000009",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for pal\nhttps://lodge.example/tui?session=pal-new-grove-000009"
+   }
+  ],
+  "sent": [],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "pal"
+   }
+  ]
+ },
+ "photo-wolt-nodog": {
+  "chat_state": {
+   "active_session": "pal-new-grove-000009",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for pal\nhttps://lodge.example/tui?session=pal-new-grove-000009"
+   }
+  ],
+  "sent": [],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [image received] photo_u1.jpg (image/jpeg, 6 bytes) saved at /uploads/photo_u1.jpg\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "pal"
+   }
+  ]
+ },
+ "text-dog-spawns": {
+  "chat_state": {
+   "active_session": "bud-dog-grove-000010",
+   "active_wolt": "bud"
+  },
+  "dog": [
+   {
+    "image": false,
+    "message": "please spawn bud",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    }
+   }
+  ],
+  "history": [
+   {
+    "content": "please spawn bud",
+    "role": "user"
+   },
+   {
+    "content": "on it",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *tail wags vigorously*"
+   },
+   {
+    "kind": "reply",
+    "text": "on it"
+   },
+   {
+    "kind": "reply",
+    "text": "🦫 bud is now active in this chat — messages go directly to this session"
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "text-gone-dog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session expired — spawning new one for bud"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 new session for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: hello there\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: hello there",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "text-gone-nodog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session expired — spawning new one for bud"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 new session for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: hello there\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: hello there",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "text-group-active": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: hello there\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "text-group-mention-dog": {
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "dog": [
+   {
+    "image": false,
+    "message": "hi",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    }
+   }
+  ],
+  "history": [
+   {
+    "content": "hi",
+    "role": "user"
+   },
+   {
+    "content": "woof",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *tail wags vigorously*"
+   },
+   {
+    "kind": "reply",
+    "text": "woof"
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "text-group-mention-nodog": {
+  "chat_state": {
+   "active_session": "pal-new-grove-000009",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "hi",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for pal\nhttps://lodge.example/tui?session=pal-new-grove-000009"
+   }
+  ],
+  "sent": [],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: hi",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "pal"
+   }
+  ]
+ },
+ "text-group-quiet": {
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "dog": [],
+  "history": [],
+  "said": [],
+  "sent": [],
+  "spawned": []
+ },
+ "text-group-reply-to-bot": {
+  "chat_state": {
+   "active_session": "pal-new-grove-000009",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for pal\nhttps://lodge.example/tui?session=pal-new-grove-000009"
+   }
+  ],
+  "sent": [],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: hello there",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "pal"
+   }
+  ]
+ },
+ "text-live-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: hello there\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "text-live-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: hello there\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "text-mention-dog-private": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [
+   {
+    "image": false,
+    "message": "help",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    }
+   }
+  ],
+  "history": [
+   {
+    "content": "help",
+    "role": "user"
+   },
+   {
+    "content": "woof",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *tail wags vigorously*"
+   },
+   {
+    "kind": "reply",
+    "text": "woof"
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "text-none-dog": {
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "dog": [
+   {
+    "image": false,
+    "message": "hello there",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    }
+   }
+  ],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "woof",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *tail wags vigorously*"
+   },
+   {
+    "kind": "reply",
+    "text": "woof"
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "text-none-nodog": {
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "dog": [],
+  "history": [],
+  "said": [
+   {
+    "buttons": [
+     [
+      [
+       "🦝 pal",
+       "wolt:pal"
+      ],
+      [
+       "🦫 bud",
+       "wolt:bud"
+      ]
+     ],
+     [
+      [
+       "🦦 ots",
+       "wolt:ots"
+      ]
+     ]
+    ],
+    "kind": "reply",
+    "text": "active: none\n\ntap to switch"
+   },
+   {
+    "kind": "reply",
+    "text": "your message was not delivered: pick a wolt above (or send /wolt <name>), then send it again."
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "text-none-onewolt-dog": {
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "dog": [
+   {
+    "image": false,
+    "message": "hello there",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    }
+   }
+  ],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "woof",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *tail wags vigorously*"
+   },
+   {
+    "kind": "reply",
+    "text": "woof"
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "text-none-onewolt-nodog": {
+  "chat_state": {
+   "active_session": "pal-new-grove-000009",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for pal\nhttps://lodge.example/tui?session=pal-new-grove-000009"
+   }
+  ],
+  "sent": [],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: hello there",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "pal"
+   }
+  ]
+ },
+ "text-reply-gone-dog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[replying to: 🦝 pal: done\n]\nhello there",
+    "role": "user"
+   },
+   {
+    "content": "[replying to: 🦝 pal: done\n]\nhello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session expired — new one for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\nhello there\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\nhello there",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "text-reply-gone-nodog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[replying to: 🦝 pal: done\n]\nhello there",
+    "role": "user"
+   },
+   {
+    "content": "[replying to: 🦝 pal: done\n]\nhello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session expired — new one for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\nhello there\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\nhello there",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "text-reply-live-while-bud-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[replying to: 🦝 pal: done\n]\nhello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 now talking to 🦝 pal (pal-live-grove-000001)"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\nhello there\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "text-reply-live-while-bud-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[replying to: 🦝 pal: done\n]\nhello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 now talking to 🦝 pal (pal-live-grove-000001)"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\nhello there\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "text-reply-unknown-wolt-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: hello there\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "text-reply-unknown-wolt-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: hello there\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "text-revive-dog": {
+  "chat_state": {
+   "active_session": "pal-sleepy-grove-000002",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-sleepy-grove-000002]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session had exited — revived and delivered\npal-sleepy-grove-000002"
+   }
+  ],
+  "sent": [
+   [
+    "pal-sleepy-grove-000002",
+    "[telegram message from human, chat_id=4242]: hello there\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "text-revive-nodog": {
+  "chat_state": {
+   "active_session": "pal-sleepy-grove-000002",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-sleepy-grove-000002]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session had exited — revived and delivered\npal-sleepy-grove-000002"
+   }
+  ],
+  "sent": [
+   [
+    "pal-sleepy-grove-000002",
+    "[telegram message from human, chat_id=4242]: hello there\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "text-sibling-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 pal-gone-grove-000003 is gone — delivered to pal's live session instead\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-gone-grove-000003",
+    "[telegram message from human, chat_id=4242]: hello there\n<reply via notify --telegram 4242>"
+   ],
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: hello there\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "text-sibling-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 pal-gone-grove-000003 is gone — delivered to pal's live session instead\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-gone-grove-000003",
+    "[telegram message from human, chat_id=4242]: hello there\n<reply via notify --telegram 4242>"
+   ],
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: hello there\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "text-spawnfail-dog": {
+  "chat_state": {
+   "active_session": "ots-gone-grove-000005",
+   "active_wolt": "ots"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session expired — spawning new one for ots"
+   },
+   {
+    "kind": "reply",
+    "text": "couldn't start session for ots: engine not logged in"
+   }
+  ],
+  "sent": [
+   [
+    "ots-gone-grove-000005",
+    "[telegram message from human, chat_id=4242]: hello there\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: hello there",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "ots"
+   }
+  ]
+ },
+ "text-spawnfail-nodog": {
+  "chat_state": {
+   "active_session": "ots-gone-grove-000005",
+   "active_wolt": "ots"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session expired — spawning new one for ots"
+   },
+   {
+    "kind": "reply",
+    "text": "couldn't start session for ots: engine not logged in"
+   }
+  ],
+  "sent": [
+   [
+    "ots-gone-grove-000005",
+    "[telegram message from human, chat_id=4242]: hello there\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: hello there",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "ots"
+   }
+  ]
+ },
+ "text-wolt-dog": {
+  "chat_state": {
+   "active_session": "pal-new-grove-000009",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for pal\nhttps://lodge.example/tui?session=pal-new-grove-000009"
+   }
+  ],
+  "sent": [],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: hello there",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "pal"
+   }
+  ]
+ },
+ "text-wolt-nodog": {
+  "chat_state": {
+   "active_session": "pal-new-grove-000009",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "hello there",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for pal\nhttps://lodge.example/tui?session=pal-new-grove-000009"
+   }
+  ],
+  "sent": [],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: hello there",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "pal"
+   }
+  ]
+ },
+ "video-gone-dog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "video-gone-nodog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "video-live-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "video-live-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "video-none-dog": {
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "dog": [],
+  "history": [],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "no active wolt — set one with /wolt first."
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "video-none-nodog": {
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "dog": [],
+  "history": [],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "no active wolt — set one with /wolt first."
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "video-none-onewolt-dog": {
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "dog": [],
+  "history": [],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "no active wolt — set one with /wolt first."
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "video-none-onewolt-nodog": {
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "dog": [],
+  "history": [],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "no active wolt — set one with /wolt first."
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "video-reply-gone-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "video-reply-gone-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "video-reply-live-while-bud-dog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "video-reply-live-while-bud-nodog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "video-reply-unknown-wolt-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "video-reply-unknown-wolt-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "video-revive-dog": {
+  "chat_state": {
+   "active_session": "pal-sleepy-grove-000002",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-sleepy-grove-000002]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session had exited — revived and delivered\npal-sleepy-grove-000002"
+   }
+  ],
+  "sent": [
+   [
+    "pal-sleepy-grove-000002",
+    "[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "video-revive-nodog": {
+  "chat_state": {
+   "active_session": "pal-sleepy-grove-000002",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-sleepy-grove-000002]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 session had exited — revived and delivered\npal-sleepy-grove-000002"
+   }
+  ],
+  "sent": [
+   [
+    "pal-sleepy-grove-000002",
+    "[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "video-sibling-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 pal-gone-grove-000003 is gone — delivered to pal's live session instead\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-gone-grove-000003",
+    "[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look\n<reply via notify --telegram 4242>"
+   ],
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "video-sibling-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 pal-gone-grove-000003 is gone — delivered to pal's live session instead\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-gone-grove-000003",
+    "[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look\n<reply via notify --telegram 4242>"
+   ],
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "video-spawnfail-dog": {
+  "chat_state": {
+   "active_session": "ots-gone-grove-000005",
+   "active_wolt": "ots"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "couldn't start session: engine not logged in"
+   }
+  ],
+  "sent": [
+   [
+    "ots-gone-grove-000005",
+    "[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "ots"
+   }
+  ]
+ },
+ "video-spawnfail-nodog": {
+  "chat_state": {
+   "active_session": "ots-gone-grove-000005",
+   "active_wolt": "ots"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "couldn't start session: engine not logged in"
+   }
+  ],
+  "sent": [
+   [
+    "ots-gone-grove-000005",
+    "[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "ots"
+   }
+  ]
+ },
+ "video-wolt-dog": {
+  "chat_state": {
+   "active_session": "pal-new-grove-000009",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for pal\nhttps://lodge.example/tui?session=pal-new-grove-000009"
+   }
+  ],
+  "sent": [],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "pal"
+   }
+  ]
+ },
+ "video-wolt-nodog": {
+  "chat_state": {
+   "active_session": "pal-new-grove-000009",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🪵 new session for pal\nhttps://lodge.example/tui?session=pal-new-grove-000009"
+   }
+  ],
+  "sent": [],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [video received] clip.mp4 (video/mp4, 6 bytes) saved at /uploads/clip.mp4\nCaption: look",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "pal"
+   }
+  ]
+ },
+ "voice-gone-dog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 new session for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: [voice message] spoken words\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [voice message] spoken words",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "voice-gone-nodog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 session expired — spawning new one for bud"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 new session for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: [voice message] spoken words\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [voice message] spoken words",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "voice-live-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [voice message] spoken words\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "voice-live-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [voice message] spoken words\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "voice-none-dog": {
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "dog": [
+   {
+    "image": false,
+    "message": "[voice message] spoken words",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    }
+   }
+  ],
+  "history": [
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "woof",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🐶 *tail wags vigorously*"
+   },
+   {
+    "kind": "reply",
+    "text": "woof"
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "voice-none-nodog": {
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "dog": [],
+  "history": [],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "buttons": [
+     [
+      [
+       "🦝 pal",
+       "wolt:pal"
+      ],
+      [
+       "🦫 bud",
+       "wolt:bud"
+      ]
+     ],
+     [
+      [
+       "🦦 ots",
+       "wolt:ots"
+      ]
+     ]
+    ],
+    "kind": "reply",
+    "text": "active: none\n\ntap to switch"
+   },
+   {
+    "kind": "reply",
+    "text": "your message was not delivered: pick a wolt above (or send /wolt <name>), then send it again."
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "voice-none-onewolt-dog": {
+  "chat_state": {
+   "active_session": null,
+   "active_wolt": null
+  },
+  "dog": [
+   {
+    "image": false,
+    "message": "[voice message] spoken words",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    }
+   }
+  ],
+  "history": [
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "woof",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🐶 *tail wags vigorously*"
+   },
+   {
+    "kind": "reply",
+    "text": "woof"
+   }
+  ],
+  "sent": [],
+  "spawned": []
+ },
+ "voice-none-onewolt-nodog": {
+  "chat_state": {
+   "active_session": "pal-new-grove-000009",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 new session for pal\nhttps://lodge.example/tui?session=pal-new-grove-000009"
+   }
+  ],
+  "sent": [],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [voice message] spoken words",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "pal"
+   }
+  ]
+ },
+ "voice-reply-gone-dog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[replying to: 🦝 pal: done\n]\n[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[replying to: 🦝 pal: done\n]\n[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 session expired — new one for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\n[voice message] spoken words\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\n[voice message] spoken words",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "voice-reply-gone-nodog": {
+  "chat_state": {
+   "active_session": "bud-new-grove-000009",
+   "active_wolt": "bud"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[replying to: 🦝 pal: done\n]\n[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[replying to: 🦝 pal: done\n]\n[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session bud-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 session expired — new one for bud\nhttps://lodge.example/tui?session=bud-new-grove-000009"
+   }
+  ],
+  "sent": [
+   [
+    "bud-gone-grove-000004",
+    "[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\n[voice message] spoken words\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram bud\n\n[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\n[voice message] spoken words",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "bud"
+   }
+  ]
+ },
+ "voice-reply-live-while-bud-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[replying to: 🦝 pal: done\n]\n[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 now talking to 🦝 pal (pal-live-grove-000001)"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\n[voice message] spoken words\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "voice-reply-live-while-bud-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[replying to: 🦝 pal: done\n]\n[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 now talking to 🦝 pal (pal-live-grove-000001)"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [replying to: 🦝 pal: done\n]\n[voice message] spoken words\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "voice-reply-unknown-wolt-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [voice message] spoken words\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "voice-reply-unknown-wolt-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 sent to pal-live-grove-000001\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [voice message] spoken words\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "voice-revive-dog": {
+  "chat_state": {
+   "active_session": "pal-sleepy-grove-000002",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-sleepy-grove-000002]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 session had exited — revived and delivered\npal-sleepy-grove-000002"
+   }
+  ],
+  "sent": [
+   [
+    "pal-sleepy-grove-000002",
+    "[telegram message from human, chat_id=4242]: [voice message] spoken words\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "voice-revive-nodog": {
+  "chat_state": {
+   "active_session": "pal-sleepy-grove-000002",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-sleepy-grove-000002]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 session had exited — revived and delivered\npal-sleepy-grove-000002"
+   }
+  ],
+  "sent": [
+   [
+    "pal-sleepy-grove-000002",
+    "[telegram message from human, chat_id=4242]: [voice message] spoken words\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "voice-sibling-dog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 pal-gone-grove-000003 is gone — delivered to pal's live session instead\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-gone-grove-000003",
+    "[telegram message from human, chat_id=4242]: [voice message] spoken words\n<reply via notify --telegram 4242>"
+   ],
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [voice message] spoken words\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "voice-sibling-nodog": {
+  "chat_state": {
+   "active_session": "pal-live-grove-000001",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-live-grove-000001]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 pal-gone-grove-000003 is gone — delivered to pal's live session instead\nhttps://lodge.example/tui?session=pal-live-grove-000001"
+   }
+  ],
+  "sent": [
+   [
+    "pal-gone-grove-000003",
+    "[telegram message from human, chat_id=4242]: [voice message] spoken words\n<reply via notify --telegram 4242>"
+   ],
+   [
+    "pal-live-grove-000001",
+    "[telegram message from human, chat_id=4242]: [voice message] spoken words\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": []
+ },
+ "voice-spawnfail-dog": {
+  "chat_state": {
+   "active_session": "ots-gone-grove-000005",
+   "active_wolt": "ots"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "couldn't start session: engine not logged in"
+   }
+  ],
+  "sent": [
+   [
+    "ots-gone-grove-000005",
+    "[telegram message from human, chat_id=4242]: [voice message] spoken words\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: [voice message] spoken words",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "ots"
+   }
+  ]
+ },
+ "voice-spawnfail-nodog": {
+  "chat_state": {
+   "active_session": "ots-gone-grove-000005",
+   "active_wolt": "ots"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 session expired — spawning new one for ots"
+   },
+   {
+    "kind": "reply",
+    "text": "couldn't start session for ots: engine not logged in"
+   }
+  ],
+  "sent": [
+   [
+    "ots-gone-grove-000005",
+    "[telegram message from human, chat_id=4242]: [voice message] spoken words\n<reply via notify --telegram 4242>"
+   ]
+  ],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram ots\n\n[telegram message from human, chat_id=4242]: [voice message] spoken words",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "ots"
+   }
+  ]
+ },
+ "voice-wolt-dog": {
+  "chat_state": {
+   "active_session": "pal-new-grove-000009",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 new session for pal\nhttps://lodge.example/tui?session=pal-new-grove-000009"
+   }
+  ],
+  "sent": [],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [voice message] spoken words",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "pal"
+   }
+  ]
+ },
+ "voice-wolt-nodog": {
+  "chat_state": {
+   "active_session": "pal-new-grove-000009",
+   "active_wolt": "pal"
+  },
+  "dog": [],
+  "history": [
+   {
+    "content": "[voice message] spoken words",
+    "role": "user"
+   },
+   {
+    "content": "[delivered to session pal-new-grove-000009]",
+    "role": "assistant"
+   }
+  ],
+  "said": [
+   {
+    "kind": "reply",
+    "text": "🐶 *ear perks up*"
+   },
+   {
+    "kind": "reply",
+    "text": "🪵 new session for pal\nhttps://lodge.example/tui?session=pal-new-grove-000009"
+   }
+  ],
+  "sent": [],
+  "spawned": [
+   {
+    "prompt": "/start-chat telegram pal\n\n[telegram message from human, chat_id=4242]: [voice message] spoken words",
+    "routing": {
+     "adapter": "telegram",
+     "chat_id": 4242
+    },
+    "wolt": "pal"
+   }
+  ]
+ }
+}
