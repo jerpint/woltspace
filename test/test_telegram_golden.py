@@ -321,3 +321,24 @@ def test_every_menu_command_has_a_handler(monkeypatch):
     registered = sorted(name for group in app.handlers.values() for h in group
                         if h.__class__.__name__ == "CommandHandler" for name in h.commands)
     assert registered == sorted(name for name, _ in menu)
+
+
+def test_a_custom_creature_wolt_shows_its_own_emoji_and_stays_pickable(lodge, monkeypatch):
+    """A custom creature (#633) is a rodent of its size: /wolt lists it, with its own emoji."""
+    import chat_lodge
+
+    wolts_dir = Path(os.environ["WOLTSPACE_WOLTS_DIR"])
+    (wolts_dir / "woltspace.json").write_text(json.dumps(
+        {"creatures": {"custom": {"star": {"emoji": "⭐", "size": "raccoon"}}}}))
+    (wolts_dir / "nova" / "wolt").mkdir(parents=True)
+    (wolts_dir / "nova" / "wolt" / "wolt.json").write_text(json.dumps({"type": "star"}))
+    wolts = WOLTS + [{"name": "nova", "type": "star"}]
+    monkeypatch.setattr(chat_lodge, "list_wolts", lambda: [dict(w) for w in wolts])
+
+    picker = _run(lodge, {}, "handle_setwolt", [], None, OWNER)["calls"][0]
+    buttons = [b for row in picker["buttons"] for b in row]
+    assert ["⭐ nova", None, "wolt:nova"] in buttons
+    assert not any(b[2] in ("wolt:rex", "wolt:howl") for b in buttons)   # dog and wolf stay out
+
+    active = _run(lodge, {"active_wolt": "nova"}, "handle_setwolt", [], None, OWNER)["calls"][0]
+    assert active["text"].startswith("active: ⭐ nova")
