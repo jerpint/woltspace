@@ -13,6 +13,10 @@
 
 set -euo pipefail
 
+# A control-plane process may have loaded connector secrets. They must never
+# reach a harness, even when a tmux server predates the current code.
+unset WHATSAPP_AGENT_TOKEN
+
 # Log session startup for debugging — capture errors if the session dies instantly
 WOLTSPACE_WOLTS_ROOT="${WOLTSPACE_WOLTS_DIR:-${WOLTS_DIR:-/workspace/wolts}}"
 SESSION_LOG="$WOLTSPACE_WOLTS_ROOT/.space/logs/session-boot.log"

@@ -160,7 +160,8 @@ def codex_supports_no_daemon() -> bool:
 
 def _codex_command(entry: dict, mode: str, *, session_id: str = "",
                    session_name: str = "", model: str = "", prompt: str = "",
-                   resume_id: str = "", execution_policy=None) -> str:
+                   resume_id: str = "", execution_policy=None,
+                   notify_owner_overrides: list[str] | None = None) -> str:
     """Build a Codex CLI command line (verified against codex-cli 0.144).
 
     Codex can't preset a session id at spawn — run-session.sh discovers the
@@ -186,6 +187,8 @@ def _codex_command(entry: dict, mode: str, *, session_id: str = "",
     # Each woltspace session runs its own codex process instead.
     if codex_supports_no_daemon():
         parts.append("--no-daemon")
+    if notify_owner_overrides:
+        parts.extend(notify_owner_overrides)
     # Codex's own help: "Intended solely for running in environments that are
     # externally sandboxed" — which is exactly the woltspace container.
     if policy_mode(execution_policy) == "auto":

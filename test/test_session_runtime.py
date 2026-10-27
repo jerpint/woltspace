@@ -248,9 +248,45 @@ class TestTmuxSessionRuntime:
         command = runner.commands()[0]
         assert command[:-1] == [
             "tmux", "new-window", "-d", "-P", "-F", "#{pane_id}",
+            "-e", "WHATSAPP_AGENT_TOKEN=",
             "-t", "=named-session", "-c", str(tmp_path),
         ]
         assert command[-1].endswith(" cat")
+        assert command[-1].startswith("env -u WHATSAPP_AGENT_TOKEN ")
+
+    def test_launch_command_removes_synthetic_whatsapp_secret(self, monkeypatch):
+        import session_runtime
+
+        marker = "synthetic-whatsapp-secret"
+        monkeypatch.setenv("WHATSAPP_AGENT_TOKEN", marker)
+        command = session_runtime.TmuxSessionRuntime._launch_command("run-session.sh x")
+        assert marker not in command
+        assert "WHATSAPP_AGENT_TOKEN=" not in command
+        assert command.startswith("env -u WHATSAPP_AGENT_TOKEN ")
+
+    def test_spawn_sets_empty_whatsapp_secret_in_tmux_environment(self, monkeypatch, tmp_path):
+        import session_runtime
+
+        marker = "synthetic-whatsapp-secret"
+        monkeypatch.setenv("WHATSAPP_AGENT_TOKEN", marker)
+        runner = FakeRunner(["%17\n"])
+        runtime = TmuxSessionRuntime(context(tmp_path), runner=runner)
+        runtime.spawn("named-session", str(tmp_path), "cat")
+        command = runner.calls[0][0]
+        assert marker not in str(command)
+        assert command[command.index("-e") + 1] == "WHATSAPP_AGENT_TOKEN="
+        assert command[-1].startswith("env -u WHATSAPP_AGENT_TOKEN ")
+        assert "WHATSAPP_AGENT_TOKEN" not in runner.calls[0][1]["env"]
+        handle = runtime.spawn_in_session(
+            RuntimeHandle("named-session", "named-session", "%17"), str(tmp_path), "cat"
+        )
+        assert "WHATSAPP_AGENT_TOKEN" not in runner.calls[1][1]["env"]
+        assert runner.calls[1][0][runner.calls[1][0].index("-e") + 1] == "WHATSAPP_AGENT_TOKEN="
+
+    def test_run_session_wrapper_unsets_whatsapp_secret_before_agent_bootstrap(self):
+        wrapper = Path(__file__).resolve().parents[1] / "container" / "bin" / "run-session.sh"
+        source = wrapper.read_text()
+        assert source.index("unset WHATSAPP_AGENT_TOKEN") < source.index('SESSION_NAME="$1"')
 
     def test_liveness_false_only_when_session_has_no_panes(self, tmp_path):
         runtime = TmuxSessionRuntime(context(tmp_path), runner=FakeRunner([""]))
