@@ -90,11 +90,20 @@ Docker, operating system). The bug report template asks for both.
 ## Contributing from a lodge
 
 A lodge's wolts can open PRs, review and comment, the same as a human.
+There are two tiers:
 
-- **One GitHub App per lodge.** The lodge's owner creates it, and the
-  maintainer installs it on this repository. The app needs contents, pull
-  requests and issues (read and write). Never workflows, administration or
-  secrets. The app's login is the only verified identity.
+- **Everyone works from a fork.** The lodge's bot pushes branches to the
+  contributor's own fork of this repository, and the contributor opens the
+  pull request. The bot gets no access to this repository.
+- **Trusted lodges, by invitation.** The maintainer installs the lodge's
+  GitHub App on this repository, so its wolts push branches and open PRs here
+  directly. The maintainer invites; don't ask for it in your first PR.
+
+Either way:
+
+- **One GitHub App per lodge.** The lodge's owner creates it. It needs
+  contents, pull requests and issues (read and write). Never workflows,
+  administration or secrets. The app's login is the only verified identity.
 - **Name the wolt.** Start every post with the wolt's emoji, name and creature,
   for example `🦝 softie (raccoon):`. This is a convention, not proof of who
   wrote it: anything using that lodge's app can write any name.
@@ -104,23 +113,28 @@ A lodge's wolts can open PRs, review and comment, the same as a human.
 - **Keep loops short.** Wolts replying to each other should hand back to a
   human after a few rounds.
 
-### Set up your lodge's bot
+### Set up your lodge's bot (from a fork)
 
-1. Ask a wolt to run the `setup-github` skill. It walks you through creating
-   the GitHub App and storing its credentials in the wolt's `.env`.
-2. When creating the app, under **Where can this GitHub App be installed?**
-   choose **Any account**. An app limited to your own account cannot be
-   installed on this repository. Give it only the permissions listed above.
-3. Send the maintainer the app's public link,
-   `https://github.com/apps/<app-name>`, in an issue or a message. The
-   maintainer installs it on this repository.
-4. Set `GITHUB_APP_INSTALLATION_ID` to that installation's ID, which the
-   maintainer sends after installing. One ID reaches one installation: a
-   token for this repository's installation does not reach your own
-   repositories.
-5. Check that it works: `GH_TOKEN=$(gh-app-token) gh pr list -R jerpint/woltspace`.
+1. Fork this repository to your account.
+2. Ask a wolt to run the `setup-github` skill. It walks you through creating
+   the GitHub App, installing it on your fork, and storing its credentials in
+   the wolt's `.env`. Give it only the permissions listed above.
+3. Check that it works: `GH_TOKEN=$(gh-app-token) gh repo view <you>/woltspace`.
    Check that the token starts with `ghs_` before using it; the skill
    explains why.
+4. Your wolts push a branch to the fork. You open the pull request from it
+   into `main` here, with GitHub's **Compare & pull request** button or
+   `gh pr create -R jerpint/woltspace --head <you>:<branch>` as yourself.
+   CI may wait for the maintainer's approval on your first PRs.
+
+### If you're invited
+
+The maintainer asks for your app's public link,
+`https://github.com/apps/<app-name>`. Your app must be installable on any
+account (the app's settings, **Advanced**, **Make public**). Once it is
+installed here, set `GITHUB_APP_INSTALLATION_ID` to the ID the maintainer
+sends. One ID reaches one installation: a token for this repository does not
+reach your fork or your other repositories.
 
 ## Public text
 
