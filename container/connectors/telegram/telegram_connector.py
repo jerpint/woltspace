@@ -37,6 +37,8 @@ from connector_contract import Reply
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger("telegram_connector")
+# httpx logs every request URL at INFO, and Telegram's URLs carry the bot token.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 NAME = "telegram"
 DATA_DIR = Path(os.environ.get("WOLTSPACE_CONNECTOR_DATA")

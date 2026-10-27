@@ -342,3 +342,21 @@ def test_a_custom_creature_wolt_shows_its_own_emoji_and_stays_pickable(lodge, mo
 
     active = _run(lodge, {"active_wolt": "nova"}, "handle_setwolt", [], None, OWNER)["calls"][0]
     assert active["text"].startswith("active: ⭐ nova")
+
+
+
+def test_the_connector_never_logs_request_urls():
+    """Telegram's request URLs carry the bot token: httpx's per-request INFO lines stay off.
+
+    Checked in a fresh interpreter, as the connector process starts: other
+    imports in this test session can change the logger.
+    """
+    import subprocess
+    paths = [str(ROOT / p) for p in ("container", "container/lib", "container/connectors/telegram")]
+    probe = (
+        "import sys, logging; sys.path[:0] = %r; import telegram_connector; "
+        "print(logging.getLogger('httpx').level)" % paths
+    )
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    assert int(out.stdout.split()[-1]) >= 30    # logging.WARNING
