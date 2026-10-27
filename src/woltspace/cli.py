@@ -1262,6 +1262,92 @@ def _wolf_runs(args) -> int:
     return 0
 
 
+# --- woltspace creature: the lodge's custom creatures ---------------------
+# A thin client of /creatures, like `woltspace wolf`: the lodge validates and
+# writes, so this command and the creatures skill share one path.
+
+def _creature(args) -> int:
+    args.creature_parser.print_help()
+    return 1
+
+
+def _creature_list(args) -> int:
+    status, body = _wolf_request("GET", "/creatures")
+    if _wolf_done(status, body, args.json):
+        return 1
+    if args.json:
+        print(json.dumps(body, indent=2, ensure_ascii=False))
+        return 0
+    sizes = "  ".join(f"{s['emoji']} {s['id']}" for s in body.get("sizes", []))
+    lore.headline(lore.BEAVER, "creatures")
+    lore.labelled("sizes", sizes)
+    custom = body.get("custom", [])
+    if not custom:
+        lore.subtitle("no custom creatures yet: woltspace creature add")
+        return 0
+    for c in custom:
+        models = ", ".join(f"{h}: {m}" for h, m in sorted((c.get("models") or {}).items()))
+        detail = f"{c['size']}-sized" + (f"  ·  {models}" if models else "")
+        lore.labelled(f"{c['emoji']} {c['id']}", detail)
+        if c.get("role"):
+            lore.plain(f"{lore.SUBINDENT}{c['role']}", lore.BARK)
+        if c.get("wolts"):
+            lore.plain(f"{lore.SUBINDENT}wolts: {', '.join(c['wolts'])}", lore.BARK)
+    return 0
+
+
+def _creature_add(args) -> int:
+    body = {"id": args.name, "emoji": args.emoji, "size": args.size}
+    models = {}
+    for pair in args.model or []:
+        harness, sep, model = pair.partition("=")
+        if not sep or not harness or not model:
+            lore.failure(f"--model is HARNESS=MODEL, got {pair!r}", subtitle_text="")
+            return 2
+        models[harness] = model
+    if models:
+        body["models"] = models
+    if args.role:
+        body["role"] = args.role
+    status, result = _wolf_request("POST", "/creatures", body)
+    if _wolf_done(status, result, args.json):
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        lore.headline(result["emoji"], f"{args.name} joins the lodge, {result['size']}-sized")
+        lore.subtitle(f"give it to a wolt: woltspace creature assign <wolt> {args.name}")
+    return 0
+
+
+def _creature_rm(args) -> int:
+    status, result = _wolf_request("DELETE", f"/creatures/{args.name}")
+    if _wolf_done(status, result, args.json):
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        lore.headline(lore.MOON, f"removed {args.name}")
+    return 0
+
+
+def _creature_assign(args) -> int:
+    status, result = _wolf_request("POST", f"/wolts/{args.wolt}/creature", {"type": args.type})
+    if _wolf_done(status, result, args.json):
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0
+    lore.headline(result["emoji"], f"{args.wolt} is now a {result['type']} (was {result['previous_type']})")
+    lore.subtitle("applies from its next session; a running session keeps what it has")
+    lore.labelled("next session", f"{result['harness']} · {result.get('model') or 'default'}")
+    for key, value in (result.get("kept") or {}).items():
+        lore.labelled(f"kept {key}", str(value))
+    if result.get("site_emoji_updated"):
+        lore.labelled("site", f"emoji now {result['emoji']}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="woltspace",
@@ -1570,6 +1656,38 @@ def build_parser() -> argparse.ArgumentParser:
     wolf_runs.add_argument("--limit", type=int, default=20)
     wolf_runs.add_argument("--json", action="store_true")
     wolf_runs.set_defaults(func=_wolf_runs)
+
+    creature = sub.add_parser("creature", help="custom creatures: list, add, remove, assign to a wolt")
+    creature.set_defaults(func=_creature, creature_parser=creature)
+    creature_sub = creature.add_subparsers(dest="creature_command")
+
+    creature_list = creature_sub.add_parser("list", help="the sizes and the lodge's custom creatures")
+    creature_list.add_argument("--json", action="store_true")
+    creature_list.set_defaults(func=_creature_list)
+
+    creature_add = creature_sub.add_parser(
+        "add", help="register a custom creature: its own emoji on one of the three sizes")
+    creature_add.add_argument("name", help="lowercase id, e.g. star")
+    creature_add.add_argument("--emoji", required=True)
+    creature_add.add_argument("--size", required=True, choices=["otter", "beaver", "raccoon"],
+                              help="what it behaves like")
+    creature_add.add_argument("--model", action="append", metavar="HARNESS=MODEL",
+                              help="its own model on a harness (repeatable)")
+    creature_add.add_argument("--role", default="", help="default role for new wolts of this creature")
+    creature_add.add_argument("--json", action="store_true")
+    creature_add.set_defaults(func=_creature_add)
+
+    creature_rm = creature_sub.add_parser("rm", help="remove a custom creature no wolt uses")
+    creature_rm.add_argument("name")
+    creature_rm.add_argument("--json", action="store_true")
+    creature_rm.set_defaults(func=_creature_rm)
+
+    creature_assign = creature_sub.add_parser(
+        "assign", help="change a wolt's creature; applies from its next session")
+    creature_assign.add_argument("wolt")
+    creature_assign.add_argument("type", help="otter, beaver, raccoon, or a custom creature")
+    creature_assign.add_argument("--json", action="store_true")
+    creature_assign.set_defaults(func=_creature_assign)
 
     tui = sub.add_parser("tui", help="open the terminal UI")
     tui.add_argument("--dry-run", action="store_true", help="show resolution without launching")

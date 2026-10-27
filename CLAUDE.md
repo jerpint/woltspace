@@ -64,6 +64,7 @@ Every wolt has a fixed **creature type** (`"type"` in `wolt.json`). The type det
 - Creating a new wolf/dog demotes the old one to rodent (with notification)
 - Discovery: scan `/workspace/wolts/*/wolt/wolt.json` or use `lib/wolts.py`
 - CLI: `create-creature-wolt <name> <type>` creates creature-wolts
+- **Custom creatures:** a new name and emoji on one of the three sizes, in `woltspace.json` → `creatures.custom`, managed with `woltspace creature add|list|rm|assign`. A custom type behaves like its size (`creature_types.base_type`) and is shown with its own emoji (`creature_types.emoji_from` / `/wolts` `emoji`). See `docs/custom-creatures.md`.
 
 ```
 woltspace

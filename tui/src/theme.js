@@ -16,7 +16,8 @@ export const glyph = {
   rodent: '🐭',
 };
 
-export const creatureGlyph = (creature) => glyph[creature] || glyph.rodent;
+// A custom creature has no glyph here; the lodge sends its emoji on /wolts.
+export const creatureGlyph = (creature, emoji) => glyph[creature] || emoji || glyph.rodent;
 
 export const adapterTag = { lodge: 'ld', telegram: 'tg', slack: 'sk', create: 'cr' };
 
