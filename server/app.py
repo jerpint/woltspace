@@ -816,6 +816,8 @@ async def post_notify(request: Request):
             explicit["thread_ts"] = body.get("thread_ts")
         elif body["adapter"] == "telegram":
             explicit["chat_id"] = body.get("chat_id", "")
+        elif body["adapter"] == "whatsapp":
+            explicit["participant"] = body.get("participant", "")
     # Outbox entries `notify --file` staged: [{"id", "name"}]. Never a path.
     attachments = body.get("attachments") or []
     # `notify --speak`: {"text"}, the words the lodge is to say. Passed on only

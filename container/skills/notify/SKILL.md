@@ -5,6 +5,10 @@ description: Push a message, a file or a voice note back to the user on Telegram
 
 # Notify — Push Messages to the User
 
+WhatsApp is available through the official Agent Platform for text-only
+messages. Use `notify --whatsapp 'user:<digits>'` with the exact participant
+identifier from a recent inbound message. Files and audio are unsupported.
+
 Sessions can send messages back to the user at any time. Use this when you finish something worth reporting, hit a blocker that needs input, or find something the user should know about mid-task.
 
 ## Usage
@@ -35,6 +39,26 @@ quotes, or other metacharacters.
 
 `notify` accepts no message argument. This keeps message text out of the shell
 command itself on every harness.
+
+## Local API access and normal approval
+
+`notify` calls the session's configured local Woltspace API; the lodge performs
+provider delivery. The model's shell does not need direct WhatsApp access.
+If sandbox networking blocks that local API before a send, request normal
+one-time approval for the same notify command through the shell tool's
+escalation mechanism, explaining that it needs to reach the local lodge API.
+Keep the exact route and literal standard input. For Codex shell tools this
+means `sandbox_permissions="require_escalated"` with a concrete justification.
+For a known blocked environment, request approval before the first send.
+
+An approved command runs outside the command sandbox for that execution;
+this is not an exact-port permission. Preserve the existing reviewer and
+approval policy. Do not add a persistent prefix grant, enable networking or a
+proxy, change sandbox settings, or answer approval dialogs automatically.
+If approval is unavailable or denied, report the blocker. If waiting, tell
+the user that approval is needed. Existing feature authorization does not
+replace runtime approval. A timeout or otherwise ambiguous send outcome must
+not trigger a blind resend: the lodge may already be delivering the message.
 
 ## Send a file
 
