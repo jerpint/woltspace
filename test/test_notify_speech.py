@@ -298,9 +298,18 @@ async def test_a_refusal_is_not_retried(monkeypatch, tmp_path):
     assert len(service.requests) == 1
 
 
-def test_a_stall_is_cut_off_well_inside_a_two_minute_caller():
-    """Two tries at the read timeout must finish before the CLI's own two minutes."""
-    assert speech.SPEECH_TIMEOUT.read * speech.SPEECH_ATTEMPTS < 120
+def test_two_read_waits_stay_under_a_two_minute_caller():
+    """Only the read waits: connecting and sending have their own limits, so this
+    is no bound on the whole call."""
+    timeout = speech.SPEECH_TIMEOUT
+    assert (timeout.connect, timeout.write, timeout.pool, timeout.read, speech.SPEECH_ATTEMPTS) == (
+        30.0, 30.0, 30.0, 50.0, 2)
+    assert timeout.read * speech.SPEECH_ATTEMPTS < 120
+
+
+def test_a_slow_start_gets_more_than_thirty_seconds():
+    """A long message on a busy service can take over 30 s before the first byte."""
+    assert speech.SPEECH_TIMEOUT.read >= 50
 
 
 @pytest.mark.asyncio
