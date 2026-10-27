@@ -62,6 +62,8 @@ packages = ["src/woltspace"]
 "docs/digging-v0.md" = "woltspace/_bundle/docs/digging-v0.md"
 "docs/slack-dm-agent-mvp.md" = "woltspace/_bundle/docs/slack-dm-agent-mvp.md"
 "docs/sandboxed-adapter-callbacks.md" = "woltspace/_bundle/docs/sandboxed-adapter-callbacks.md"
+"docs/whatsapp-agent-platform.md" = "woltspace/_bundle/docs/whatsapp-agent-platform.md"
+"docs/whatsapp-owner-test.md" = "woltspace/_bundle/docs/whatsapp-owner-test.md"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -78,5 +80,7 @@ include = [
     "/docs/digging-v0.md",
     "/docs/slack-dm-agent-mvp.md",
     "/docs/sandboxed-adapter-callbacks.md",
+    "/docs/whatsapp-agent-platform.md",
+    "/docs/whatsapp-owner-test.md",
     "/LICENSE",
 ]

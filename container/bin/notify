@@ -27,6 +27,7 @@ from paths import space_outbox_dir  # noqa: E402
 USAGE = f"""Usage:
   notify [--file PATH] [--voice PATH] [--speak]
   notify --telegram CHAT_ID [--file PATH] [--voice PATH] [--speak]
+  notify --whatsapp PARTICIPANT_ID
   notify --slack CHANNEL THREAD_TS [--file PATH] [--voice PATH] [--speak]
 
 Message text is read from standard input. Use a single-quoted heredoc.
@@ -116,6 +117,11 @@ def _parse_route(argv: list[str]) -> tuple[list[str], str, str, str, list[str]]:
             raise ValueError("--telegram requires CHAT_ID")
         adapter, route_id = "telegram", argv[1]
         route_argv, remaining = ["notify", *argv[:2]], argv[2:]
+    elif argv[:1] == ["--whatsapp"]:
+        if len(argv) < 2:
+            raise ValueError("--whatsapp requires a participant ID")
+        adapter, route_id = "whatsapp", argv[1]
+        route_argv, remaining = ["notify", *argv[:2]], argv[2:]
     elif argv[:1] == ["--"]:
         route_argv, remaining = ["notify"], argv[1:]
     elif argv and argv[0].startswith("--"):
@@ -141,6 +147,12 @@ def _creature_emoji(session: str, session_reg: Path) -> str:
         "otter": "🦦",
         "wolf": "🐺",
     }, result.stdout.strip(), "🦫")
+
+
+def _format_full_message(session: str, wolt_name: str, message: str,
+                         session_reg: Path) -> str:
+    """Format the actual transport payload, including the standard identity prefix."""
+    return f"{_creature_emoji(session, session_reg)} {wolt_name}: {message}"
 
 
 def _safe_transport_detail(stderr: str, secrets: tuple[str, ...]) -> str:
@@ -219,12 +231,14 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         pass  # the plain name is always a fine prefix
     session_reg = Path(__file__).resolve().parent / "session-reg"
-    full_message = f"{_creature_emoji(session, session_reg)} {wolt_name}: {message}"
+    full_message = _format_full_message(session, wolt_name, message, session_reg)
     payload: dict[str, object] = {"session": session, "message": full_message}
     if adapter == "slack":
         payload.update(adapter="slack", channel=route_id, thread_ts=slack_thread)
     elif adapter == "telegram":
         payload.update(adapter="telegram", chat_id=route_id)
+    elif adapter == "whatsapp":
+        payload.update(adapter="whatsapp", participant=route_id)
     if kind == "speak":
         # The words alone: the lodge reads them aloud without the name prefix.
         payload["speak"] = {"text": words}

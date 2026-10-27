@@ -10,6 +10,12 @@ from pathlib import Path
 
 import pytest
 
+# Source tests must not inherit the running lodge's installed bundle. In
+# particular server.config prepends WOLTSPACE_DIR/container/lib during collection,
+# ahead of PYTHONPATH. Set this before importing any server/runtime modules;
+# individual config-override tests can still monkeypatch it locally.
+os.environ["WOLTSPACE_DIR"] = str(Path(__file__).resolve().parent.parent)
+
 # The platform modules. Put on sys.path only when missing: tests hand
 # os.pathsep.join(sys.path) to child processes as PYTHONPATH, and an insert on
 # every fixture use grew that one variable past the kernel's 128 KiB limit for
