@@ -53,6 +53,7 @@ from harnesses import (
     PLATFORM_SKILL_NAMESPACE,
     LEGACY_PLATFORM_SKILL_PREFIX,
 )
+from creature_types import is_custom
 from skills_sync import wolt_skills_delivery
 from sites import ensure_site
 from session_expiry import hold_active, public_hold
@@ -1983,7 +1984,7 @@ def start_session(
         try:
             wolt_data = json.loads(wolt_json_path.read_text())
             wolt_type = wolt_data.get("type", "")
-            if wolt_type in CREATURE_MODELS:
+            if wolt_type in CREATURE_MODELS or is_custom(wolt_type):
                 creature = wolt_type
             if not harness:
                 harness = wolt_data.get("harness", "")

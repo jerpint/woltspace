@@ -81,7 +81,7 @@ def _refusal(status: int, body: bytes, api_key: str, key_env: str = "OPENAI_API_
 async def synthesize(
     text: str, speech_format: str, target: Path, *, api_key: str, model: str, voice: str,
     max_bytes: int | None = None, url: str = SPEECH_URL, key_env: str = "OPENAI_API_KEY",
-    local: bool = False,
+    local: bool = False, instructions: str | None = None,
 ) -> int:
     """Write `text`, spoken, to the new file `target`; return its size in bytes.
 
@@ -91,12 +91,14 @@ async def synthesize(
     A stalled or dropped request is tried once more before it fails.
     `url` is the endpoint; an empty `api_key` sends no Authorization header, and
     a `local` server (on this machine) is reached directly, never through a proxy.
+    `instructions`, a hint on how to speak, goes in the request only when set.
     """
     for attempt in range(1, SPEECH_ATTEMPTS + 1):
         try:
             return await _synthesize_once(
                 text, speech_format, target, api_key=api_key, model=model, voice=voice,
                 max_bytes=max_bytes, url=url, key_env=key_env, local=local,
+                instructions=instructions,
             )
         except SpeechError as exc:
             if not exc.transient or attempt == SPEECH_ATTEMPTS:
@@ -107,7 +109,7 @@ async def synthesize(
 async def _synthesize_once(
     text: str, speech_format: str, target: Path, *, api_key: str, model: str, voice: str,
     max_bytes: int | None = None, url: str = SPEECH_URL, key_env: str = "OPENAI_API_KEY",
-    local: bool = False,
+    local: bool = False, instructions: str | None = None,
 ) -> int:
     if speech_format not in SPEECH_FILES:
         raise SpeechError("speech_failed", f"unknown speech format: {speech_format}")
@@ -119,7 +121,7 @@ async def _synthesize_once(
                 json={
                     "model": model, "voice": voice,
                     "input": text, "response_format": speech_format,
-                },
+                } | ({"instructions": instructions} if instructions else {}),
                 headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
                 timeout=SPEECH_TIMEOUT,
             ) as response:

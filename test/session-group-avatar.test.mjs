@@ -33,6 +33,7 @@ function loadRenderSessions({ filter = 'online', online = () => true } = {}) {
     sessionFilter: filter,
     WOLT_EMOJI: { raccoon: '🦝', beaver: '🦫', otter: '🦦' },
     woltSpriteAvatar: (type, size) => `<sprite ${type} ${size}>`,
+    woltEmoji: (w, f = '🦫') => ({ raccoon: '🦝', beaver: '🦫', otter: '🦦' })[w && w.type] || (w && w.emoji) || f,
     woltLabel: w => (w ? w.display_name || w.name : ''),
     sessionIsOnline: online,
     updateSessionRow: () => {},

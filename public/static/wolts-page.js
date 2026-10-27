@@ -77,7 +77,7 @@
 
     const avatar = el('div', 'wolts-avatar');
     const sprite = woltSpriteAvatar(w.type, 36);
-    if (sprite) avatar.innerHTML = sprite; else avatar.textContent = WOLT_EMOJI[w.type] || '🦫';
+    if (sprite) avatar.innerHTML = sprite; else avatar.textContent = woltEmoji(w);
 
     const body = el('div', 'wolts-body');
     const label = woltLabel(w) || name;
@@ -99,7 +99,7 @@
     body.appendChild(countLine);
     row.append(avatar, body);
 
-    if (RODENT_TYPES.has(w.type)) {
+    if (RODENT_TYPES.has(woltBaseType(w))) {
       const add = el('button', 'wolts-add', '+');
       add.title = `New chat with ${woltLabel(w) || name}`; add.setAttribute('aria-label', add.title);
       add.onclick = e => { e.stopPropagation(); startSession(name); };
@@ -139,7 +139,7 @@
 
   window.renderWoltsPage = function () {
     if (!view.classList.contains('active')) return;
-    const all = allWolts.filter(w => WOLT_TYPES.has(w.type)).map(woltSessionSummary)
+    const all = allWolts.filter(w => WOLT_TYPES.has(woltBaseType(w))).map(woltSessionSummary)
       .sort((a, b) => ((b.online.length > 0) - (a.online.length > 0)) || (b.last - a.last));
     const q = query.trim().toLowerCase();
     const hits = all.filter(x => !q || x.name.toLowerCase().includes(q) || woltLabel(x.w).toLowerCase().includes(q) || (x.w.type || '').includes(q));

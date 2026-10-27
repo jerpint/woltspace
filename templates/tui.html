@@ -338,7 +338,7 @@
   fetch('/wolts').then(r => r.json()).then(wolts => {
     const w = wolts.find(w => (w.name || w.dir) === woltName);
     if (w) {
-      document.getElementById('wolt-avatar').textContent = WOLT_EMOJI[w.type] || '🦫';
+      document.getElementById('wolt-avatar').textContent = woltEmoji(w);
     }
   }).catch(() => {});
 

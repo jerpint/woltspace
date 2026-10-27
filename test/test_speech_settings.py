@@ -14,7 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "container"))
 sys.path.insert(0, str(ROOT / "container" / "lib"))
 
-from speech_settings import SettingsInvalid, SpeechSettings, load_settings, save_settings  # noqa: E402
+from speech_settings import (  # noqa: E402
+    SettingsInvalid, SpeechSettings, load_settings, parse_wolt_speech, save_settings,
+)
 
 from server import notify, speech  # noqa: E402
 from server.speech import SpeechError  # noqa: E402
@@ -53,6 +55,31 @@ def test_older_env_names_fill_only_what_the_file_leaves_out(tmp_path):
     path.write_text(json.dumps({"speech": {"voice": "alba"}}))
     settings = load_settings(path, model="tts-1", voice="nova")
     assert (settings.model, settings.voice) == ("tts-1", "alba")
+
+
+@pytest.mark.parametrize("section, wolt", [
+    (None, {}), ({}, {}), ({"voice": "nova"}, {"voice": "nova"}),
+    ({"instructions": "  Speak slowly.\n"}, {"instructions": "Speak slowly."}),
+    ({"instructions": " " + "a" * 500 + " "}, {"instructions": "a" * 500}),  # counted after strip
+])
+def test_a_wolt_keeps_only_the_speech_keys_it_sets(section, wolt):
+    assert parse_wolt_speech(section) == wolt
+
+
+@pytest.mark.parametrize("section, reason", [
+    ("nova", "speech must be an object"),
+    ({"model": "tts-1"}, "unknown speech keys: model"),
+    ({"voice": "two words"}, "voice must be a voice name"),
+    ({"voice": 3}, "voice must be a voice name"),
+    ({"instructions": 3}, "instructions must be text"),
+    ({"instructions": "  "}, "instructions must be 1 to 500 characters"),
+    ({"instructions": "a" * 501}, "instructions must be 1 to 500 characters"),
+    ({"instructions": "Speak\x00slowly."}, "instructions must not hold control characters"),
+    ({"instructions": "Speak\nslowly."}, "instructions must not hold control characters"),
+])
+def test_unusable_wolt_speech_settings_are_refused(section, reason):
+    with pytest.raises(SettingsInvalid, match=f"^{reason}$"):
+        parse_wolt_speech(section)
 
 
 def test_save_keeps_other_keys_and_clear_removes_only_its_own(tmp_path):
@@ -151,6 +178,7 @@ async def test_notify_uses_openai_until_told_otherwise(spoken):
     assert spoken.calls[-1] == {
         "api_key": "sk-test", "model": "gpt-4o-mini-tts", "voice": "alloy", "max_bytes": 1024 * 1024,
         "url": "https://api.openai.com/v1/audio/speech", "key_env": "OPENAI_API_KEY", "local": False,
+        "instructions": None,
     }
 
 

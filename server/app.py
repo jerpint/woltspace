@@ -61,6 +61,8 @@ from .pty_bridge import (
 # Session spawning — shared with bot
 import sys as _sys
 _sys.path.insert(0, str(WOLTSPACE_DIR / "container" / "lib"))
+from creature_types import base_type, creature_emoji, custom_creature_models
+from settings_files import settings_lock, write_json_atomic, write_text_atomic
 from sessions import (
     resume_session, start_session, stop_session,
     deliver_message, resolve_active_session, format_attributed_message,
@@ -88,6 +90,7 @@ from harnesses import (
     is_valid_model,
     model_catalog,
     tier_default_model,
+    creature_model,
     HARNESSES,
     refresh_model_catalogs,
 )
@@ -1172,7 +1175,8 @@ async def session_new_create(request: Request):
 
     Expects JSON body with:
       - name: wolt name (required, lowercase alphanumeric + hyphens)
-      - type: creature type (required, one of: otter, beaver, raccoon)
+      - type: creature type (required: otter, beaver, raccoon, or one of the
+        lodge's custom creatures)
       - harness: engine for this wolt (optional, lodge default otherwise)
       - model: model for this wolt (optional, the tier default otherwise)
 
@@ -1205,9 +1209,12 @@ async def session_new_create(request: Request):
             {"detail": f"a wolt named {wolt_name} already exists"}, status_code=409,
         )
 
-    # Validate type — only rodent types can be created from the lodge
-    if wolt_type not in ("otter", "beaver", "raccoon"):
-        return JSONResponse({"detail": "type must be otter, beaver, or raccoon"}, status_code=400)
+    # Validate type — only rodent types can be created from the lodge: the
+    # three sizes, or a custom creature (which is one of them underneath).
+    from creature_types import is_custom
+    if wolt_type not in ("otter", "beaver", "raccoon") and not is_custom(wolt_type):
+        return JSONResponse(
+            {"detail": "type must be otter, beaver, raccoon, or a custom creature"}, status_code=400)
     if selected_harness not in HARNESSES:
         return JSONResponse({"detail": f"unknown harness: {selected_harness}"}, status_code=400)
     requested_model = body.get("model") or ""
@@ -1492,6 +1499,14 @@ def _configured_wolts() -> list[dict]:
                     "dir": entry.name,
                     "home": str(entry.resolve()),
                     **config,
+                    # How every surface shows this wolt; a custom creature's
+                    # own emoji included (creature_types).
+                    "emoji": creature_emoji(config.get("type") or "rodent"),
+                    # What it behaves like: a custom creature's size, else its type.
+                    "base_type": base_type(config.get("type") or "rodent"),
+                    # A custom creature's own model per engine, so pages show
+                    # the model a session would really get (see woltDefaultModel).
+                    "creature_models": custom_creature_models(config.get("type")),
                 })
             except Exception:
                 pass
@@ -1908,7 +1923,7 @@ def _wolt_settings_response(safe: str, cfg: dict) -> dict:
     harness = cfg.get("harness") or get_default_harness()
     creature = cfg.get("type") or "raccoon"
     pinned_model = cfg.get("model") or ""
-    model = pinned_model if is_valid_model(harness, pinned_model) else tier_default_model(harness, creature)
+    model = pinned_model if is_valid_model(harness, pinned_model) else creature_model(harness, creature)
     return {
         "wolt": safe,
         "harness": harness,
@@ -1921,9 +1936,8 @@ def _wolt_settings_response(safe: str, cfg: dict) -> dict:
 
 
 def _write_wolt_settings(wolt_json: Path, cfg: dict) -> None:
-    tmp = wolt_json.with_suffix(".tmp")
-    tmp.write_text(json.dumps(cfg, indent=2) + "\n")
-    tmp.replace(wolt_json)
+    """Callers hold settings_lock(wolt_json) from their read to this write."""
+    write_json_atomic(wolt_json, cfg)
 
 
 def _apply_display_name(cfg: dict, safe: str, value: object) -> None:
@@ -1944,6 +1958,12 @@ def _apply_display_name(cfg: dict, safe: str, value: object) -> None:
 def _update_wolt_settings(name: str, body: dict) -> dict:
     if not body or not set(body).issubset({"harness", "model", "display_name"}):
         raise ValueError("body must contain harness, model and/or display_name only")
+    _safe, path = _wolt_settings_path(name)
+    with settings_lock(path):
+        return _update_wolt_settings_locked(name, body)
+
+
+def _update_wolt_settings_locked(name: str, body: dict) -> dict:
     safe, wolt_json, cfg = _load_wolt_settings(name)
     # Validate everything before the single write below.
     if "display_name" in body:
@@ -1964,7 +1984,7 @@ def _update_wolt_settings(name: str, body: dict) -> dict:
         raise ValueError(f"unknown harness: {requested_harness}")
     creature = cfg.get("type") or "raccoon"
     harness_changed = "harness" in body and chosen_harness != (cfg.get("harness") or get_default_harness())
-    tier_model = tier_default_model(chosen_harness, creature)
+    tier_model = creature_model(chosen_harness, creature)
     if "model" in body:
         requested_model = body.get("model")
         model_is_tier_default = requested_model in (None, "")
@@ -2000,6 +2020,121 @@ def _update_wolt_settings(name: str, body: dict) -> dict:
     result = _wolt_settings_response(safe, cfg)
     result.update({"ok": True, "harness": chosen_harness, "model": chosen_model})
     return result
+
+
+# --- Creatures ---
+# The lodge's custom creatures (creature_types). Every write goes through
+# these routes, so the woltspace CLI and the creatures skill share one
+# validated path, the same way the wolf's crons do.
+
+def _creatures_payload() -> dict:
+    from creature_types import SIZES, custom_creatures, wolts_using
+
+    custom = custom_creatures()
+    return {
+        "sizes": [{"id": size, "emoji": creature_emoji(size)} for size in SIZES],
+        "custom": [
+            {"id": cid, **entry, "wolts": wolts_using(cid, WOLTS_DIR)}
+            for cid, entry in sorted(custom.items())
+        ],
+    }
+
+
+@app.get("/creatures")
+def list_creatures():
+    return _creatures_payload()
+
+
+@app.post("/creatures")
+async def add_creature(request: Request):
+    from creature_types import add_custom
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    entry = dict(body)
+    cid = entry.pop("id", None)
+    try:
+        clean = await asyncio.to_thread(add_custom, cid, entry)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return {"ok": True, "id": cid, **clean}
+
+
+@app.delete("/creatures/{cid}")
+async def remove_creature(cid: str):
+    from creature_types import remove_custom
+
+    try:
+        await asyncio.to_thread(remove_custom, cid)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return {"ok": True, "id": cid}
+
+
+def _assign_creature(name: str, new_type: object) -> dict:
+    """Change only a wolt's creature type. Its own harness, model and role pins
+    are kept and reported, and the change applies from its next session: a
+    running session keeps the model it was spawned with (see resume_session)."""
+    from creature_types import SIZES, is_custom
+    from wolts import SINGLETON_TYPES
+
+    _safe, path = _wolt_settings_path(name)
+    # Lodge lock first: removing a creature checks no wolt is one under it.
+    with settings_lock(WOLTS_DIR / "woltspace.json"), settings_lock(path):
+        safe, wolt_json, cfg = _load_wolt_settings(name)
+        old_type = cfg.get("type") or "rodent"
+        if not isinstance(new_type, str) or not new_type:
+            raise ValueError("type is required")
+        if old_type in SINGLETON_TYPES:
+            raise ValueError(f"{safe} is the lodge's {old_type}; its creature does not change here")
+        if new_type not in SIZES and not is_custom(new_type):
+            raise ValueError("type must be otter, beaver, raccoon, or a custom creature")
+        cfg["type"] = new_type
+        _write_wolt_settings(wolt_json, cfg)
+        # Under the same locks: two assignments must leave the site with the
+        # emoji of the one that wrote wolt.json last.
+        site_emoji = _follow_site_emoji(safe, old_type, new_type)
+    kept = {k: cfg[k] for k in ("harness", "model", "role") if cfg.get(k)}
+    result = _wolt_settings_response(safe, cfg)
+    result.update({
+        "ok": True, "type": new_type, "previous_type": old_type,
+        "emoji": creature_emoji(new_type), "kept": kept, "site_emoji_updated": site_emoji,
+    })
+    return result
+
+
+def _follow_site_emoji(wolt: str, old_type: str, new_type: str) -> bool:
+    """A starter site.json carries a copy of the creature's emoji. When it is
+    still that copy, it follows the new creature; a wolt's own choice stays."""
+    site_json = WOLTS_DIR / wolt / "wolt" / "site" / "site.json"
+    try:
+        site = json.loads(site_json.read_text())
+        tokens = site.get("tokens")
+        if not isinstance(tokens, dict) or tokens.get("emoji") != creature_emoji(old_type):
+            return False
+        tokens["emoji"] = creature_emoji(new_type)
+        write_text_atomic(site_json, json.dumps(site, ensure_ascii=False) + "\n")
+        return True
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return False
+
+
+@app.post("/wolts/{name}/creature")
+async def assign_creature(name: str, request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON object body required"}, status_code=400)
+    if not isinstance(body, dict) or set(body) != {"type"}:
+        return JSONResponse({"error": "body must be {\"type\": ...}"}, status_code=400)
+    try:
+        return await asyncio.to_thread(_assign_creature, name, body["type"])
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
+        return _wolt_settings_error(exc)
 
 
 def _wolt_settings_error(exc: Exception) -> JSONResponse:
@@ -2934,7 +3069,7 @@ async def wolves_page(request: Request):
     the /wolf/crons API, the same one `woltspace wolf` drives.
     """
     wolts = [
-        {"name": wolt["dir"], "type": wolt.get("type", "rodent")}
+        {"name": wolt["dir"], "type": wolt.get("type", "rodent"), "emoji": wolt["emoji"]}
         for wolt in _configured_wolts()
     ]
     return templates.TemplateResponse(request, "wolves.html", context={

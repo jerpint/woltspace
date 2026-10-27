@@ -108,6 +108,7 @@ jobs:
           test/test_transcription_settings.py
           test/test_speech_settings.py
           test/test_boot_context_cap.py
+          test/test_creature_types.py
           test/test_wolts.py::TestCredentials
           test/test_wolts.py::TestSyncClaudeMdPlatformSection
           test/test_update_cli.py

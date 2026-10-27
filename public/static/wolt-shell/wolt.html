@@ -49,7 +49,7 @@
   var map = { accent: '--s-accent', bg: '--s-bg', ink: '--s-ink', muted: '--s-muted', line: '--s-line', display_font: '--s-display', body_font: '--s-body' };
   for (var k in map) if (t[k]) document.documentElement.style.setProperty(map[k], t[k]);
   if (site.fonts_href) { var f = document.createElement('link'); f.rel = 'stylesheet'; f.href = site.fonts_href; document.head.appendChild(f); }
-  var emoji = t.emoji || EMOJI[w.type] || '🌲';
+  var emoji = t.emoji || EMOJI[w.type] || w.emoji || '🌲';
   var name = site.title || w.display_name || w.name;
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }

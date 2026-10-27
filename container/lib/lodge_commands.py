@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from connector_contract import Ack, Choice, Outcome, Reply
+from creature_types import base_type, emoji_from
 
 WOLT_TYPE_EMOJI = {
     "raccoon": "🦝",
@@ -100,7 +101,7 @@ def wolt_name(w: dict) -> str:
 
 
 def is_chat_wolt(w: dict) -> bool:
-    return w.get("type", "") in RODENT_WOLT_TYPES
+    return base_type(w.get("type", "")) in RODENT_WOLT_TYPES
 
 
 def wolt_of(session_name: str) -> str:
@@ -132,7 +133,7 @@ def wolt_picker(ports: Ports, wolts: list, active: str | None) -> Reply:
     """Header naming the active wolt, and a two-per-row grid of the others."""
     if active:
         active_type = next((w.get("type", "") for w in wolts if wolt_name(w) == active), "")
-        line = f"active: {WOLT_TYPE_EMOJI.get(active_type, '🦫')} {ports.shown(active)}"
+        line = f"active: {emoji_from(WOLT_TYPE_EMOJI, active_type, '🦫')} {ports.shown(active)}"
     else:
         line = "active: none"
     others = [w for w in wolts if wolt_name(w) != active]
@@ -146,7 +147,7 @@ def wolt_picker_choices(ports: Ports, wolts: list, active: str | None):
         name = wolt_name(w)
         if not name or name == active:
             continue
-        emoji = WOLT_TYPE_EMOJI.get(w.get("type", ""), "🦫")
+        emoji = emoji_from(WOLT_TYPE_EMOJI, w.get("type", ""), "🦫")
         buttons.append(Choice(f"{emoji} {ports.shown(name)}", action=f"wolt:{name}"))
     return _rows(buttons, 2)
 
@@ -163,14 +164,14 @@ def sessions_picker(ports: Ports, sessions: list, tunnel_url: str | None) -> Rep
     for s in alive:
         name = s["name"]
         wolt = wolt_of(name)
-        emoji = WOLT_TYPE_EMOJI.get(types_by_wolt.get(wolt, ""), "🦫")
+        emoji = emoji_from(WOLT_TYPE_EMOJI, types_by_wolt.get(wolt, ""), "🦫")
         counts[wolt] = counts.get(wolt, 0) + 1
         url = _session_link(tunnel_url, name)
         label = f"{emoji} 📌 {name}" if s.get("hold") else f"{emoji} {name}"
         opener = Choice(label, url=url) if url else Choice(label, action=f"noop:{name}")
         rows.append((opener, Choice("⏹", action=f"sstop:{name}")))
     summary = " · ".join(
-        f"{WOLT_TYPE_EMOJI.get(types_by_wolt.get(w, ''), '🦫')} {w} ({c})"
+        f"{emoji_from(WOLT_TYPE_EMOJI, types_by_wolt.get(w, ''), '🦫')} {w} ({c})"
         for w, c in sorted(counts.items(), key=lambda kv: -kv[1])
     )
     total = len(alive)

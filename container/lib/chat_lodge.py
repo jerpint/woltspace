@@ -31,6 +31,7 @@ import lodge_commands as commands
 import lodge_messages as messages
 import outbox
 from connector_contract import Ack, Reply
+from creature_types import emoji_from
 from env_compat import get_env
 from harnesses import platform_skill_invoke
 from notify_prompt import notify_reply_instruction
@@ -121,7 +122,7 @@ def photo_content(image_bytes: bytes, mime_type: str = "image/jpeg", caption: st
 def format_tool_log(tc: dict) -> str:
     name = tc["tool"]
     creature = tc.get("creature") or tc.get("args", {}).get("creature", "")
-    emoji = CREATURE_EMOJIS.get(creature, "")
+    emoji = emoji_from(CREATURE_EMOJIS, creature, "")
     wolt = tc.get("args", {}).get("wolt", "")
     recipient = f"{emoji} {wolt}".strip()
     line = f"🪵 {recipient} — {name}" if recipient else f"🪵 {name}"
@@ -298,7 +299,7 @@ class ChatLodge:
         wolt_json = self.wolts_dir / wolt / "wolt" / "wolt.json"
         if wolt_json.exists():
             try:
-                emoji = CREATURE_EMOJIS.get(json.loads(wolt_json.read_text()).get("type", ""), "🐾")
+                emoji = emoji_from(CREATURE_EMOJIS, json.loads(wolt_json.read_text()).get("type", ""), "🐾")
             except (json.JSONDecodeError, OSError):
                 pass
         return emoji
@@ -306,7 +307,7 @@ class ChatLodge:
     def _session_emoji(self, session_name: str) -> str:
         wolt = commands.wolt_of(session_name)
         types_by_wolt = {commands.wolt_name(w): w.get("type", "") for w in list_wolts()}
-        return commands.WOLT_TYPE_EMOJI.get(types_by_wolt.get(wolt, ""), "🦫")
+        return emoji_from(commands.WOLT_TYPE_EMOJI, types_by_wolt.get(wolt, ""), "🦫")
 
     def _start_chat_prompt(self, wolt: str) -> str:
         """The bare boot prompt: start-chat in this connector's mode."""
@@ -545,7 +546,7 @@ class ChatLodge:
                 state["active_wolt"] = wolt_name
                 state["active_session"] = session_name
                 self._save_chat_state(chat, state)
-                emoji = CREATURE_EMOJIS.get(session.get("creature", ""), "🐾")
+                emoji = emoji_from(CREATURE_EMOJIS, session.get("creature", ""), "🐾")
                 handoff = f"{emoji} {wolt_name} is now active in this chat — messages go directly to this session"
                 if session.get("url"):
                     handoff += f"\n{session['url']}"

@@ -432,8 +432,36 @@ def _speech_request(speak, attachments) -> _Speech | None:
     return _Speech(text, token_hex(16))
 
 
-async def _spoken(speech: _Speech, sender: Plugin, adapter: str) -> Attachment:
-    """Have the speech service say the words, into the outbox entry set aside for them."""
+def _wolt_speech(wolt: str) -> dict:
+    """The sending wolt's own `speech` in its wolt.json; {} when it has none to read.
+
+    `wolt` is the session record's, never the request's. A wolt.json that is
+    missing or broken is not a speech problem: the lodge's settings stand.
+    """
+    if not wolt or wolt in (".", "..") or Path(wolt).name != wolt:
+        return {}
+    try:
+        config = json.loads((WOLTS_DIR / wolt / "wolt" / "wolt.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(config, dict):
+        return {}
+    import speech_settings
+
+    try:
+        return speech_settings.parse_wolt_speech(config.get("speech"))
+    except speech_settings.SettingsInvalid as exc:
+        raise SpeechError(
+            "speech_not_configured",
+            f"the speech settings in wolt.json are unusable ({exc}); send the message as text",
+        ) from None
+
+
+async def _spoken(speech: _Speech, sender: Plugin, adapter: str, wolt: str = "") -> Attachment:
+    """Have the speech service say the words, into the outbox entry set aside for them.
+
+    `wolt`, the sending session's, may pick its own voice and a hint on how to speak.
+    """
     if not sender.speech_format or not sender.max_attachment_bytes:
         # Asked before the words are spoken: the audio travels as an attachment.
         raise AttachmentError("speech_unsupported", f"{adapter} cannot carry a spoken message")
@@ -452,6 +480,10 @@ async def _spoken(speech: _Speech, sender: Plugin, adapter: str) -> Attachment:
             "speech_not_configured",
             f"the speech settings in woltspace.json are unusable ({exc}); send the message as text",
         ) from None
+    # A wolt's own voice goes to any server; its hint is an OpenAI field.
+    wolt_speech = _wolt_speech(wolt)
+    if settings.base_url != speech_settings.DEFAULT_BASE_URL:
+        wolt_speech.pop("instructions", None)
     api_key = dotenv_env(settings.key_env) if settings.key_env else ""
     if settings.key_env and not api_key:
         raise SpeechError(
@@ -470,9 +502,10 @@ async def _spoken(speech: _Speech, sender: Plugin, adapter: str) -> Attachment:
     path = OUTBOX_DIR / speech.entry_id
     size = await synthesize(
         speech.text, sender.speech_format, path, api_key=api_key,
-        model=settings.model, voice=settings.voice,
+        model=settings.model, voice=wolt_speech.get("voice", settings.voice),
         max_bytes=sender.max_attachment_bytes,
         url=settings.endpoint, key_env=settings.key_env, local=settings.local,
+        instructions=wolt_speech.get("instructions"),
     )
     filename, content_type = SPEECH_FILES[sender.speech_format]
     return Attachment(path, filename, size, content_type, "voice")
@@ -526,7 +559,9 @@ async def _send(
         # Only now that there is somewhere to send it: every spoken message is
         # an OpenAI request billed to the lodge's key, and its words leave the lodge.
         try:
-            attachments = (await _spoken(speech, sender, adapter),)
+            attachments = (await _spoken(
+                speech, sender, adapter, (session_record or {}).get("wolt") or "",
+            ),)
         except SpeechError as exc:
             if exc.reason != "speech_failed":
                 raise

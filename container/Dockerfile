@@ -53,6 +53,7 @@ RUN apt-get update && apt-get install -y \
     gosu \
     openssh-client \
     sudo \
+    tini \
     tmux \
     python3 \
     make \
@@ -212,4 +213,5 @@ EXPOSE 7777
 # Boot is a subcommand of the installed CLI — the wheel ships no bash. The
 # command runs twice: once as root (uid/gid fixup) and once as node, which it
 # re-execs itself as through gosu.
-ENTRYPOINT ["/usr/local/bin/woltspace", "container-entrypoint"]
+# tini is PID 1 and collects orphaned processes; it passes stop signals on.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/woltspace", "container-entrypoint"]
