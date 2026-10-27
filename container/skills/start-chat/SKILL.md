@@ -11,7 +11,7 @@ You are starting a new session. Your arguments tell you how you got here and who
 
 You were invoked with two arguments: `<mode> <wolt-name>`.
 
-- **mode** — how this session was started: `lodge`, `telegram`, or `slack`
+- **mode** — how this session was started: `lodge`, `telegram`, `slack`, or `whatsapp`
 - **wolt-name** — the wolt you are (e.g. `neowolt`, `UXwolt`, `blabo`)
 
 ## What to do

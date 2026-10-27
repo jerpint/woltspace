@@ -345,6 +345,46 @@ class SlackConnector:
         )
 
 
+class WhatsAppConnector:
+    """Opt-in poller for the official WhatsApp Agent Platform."""
+
+    name = "whatsapp"
+
+    def plan(self, layout: RuntimeLayout, env: Mapping[str, str] | None = None) -> ConnectorPlan:
+        values = dict(os.environ if env is None else env)
+        settings = channel_config(layout, self.name, values)
+        raw_enabled = values.get("ENABLE_WHATSAPP_AGENT")
+        enabled = _truthy(raw_enabled) if raw_enabled is not None else bool(settings.get("enabled", False))
+        path = config_path(layout, values)
+        remedy = f'Set channels.whatsapp = {{"enabled": true, "agent_token": "<API key>"}} in {path}.'
+        if not enabled:
+            return ConnectorPlan(self.name, False, "disabled", remedy=remedy)
+        if not _truthy(values.get("WOLTSPACE_ENTRYPOINT", "")):
+            return ConnectorPlan(self.name, False, "not the platform entrypoint", remedy="Run the control plane through `woltspace start`.")
+        token = (values.get("WHATSAPP_AGENT_TOKEN") or settings.get("agent_token") or "").strip()
+        if not token:
+            return ConnectorPlan(self.name, False, "enabled without an Agent API key", remedy=remedy)
+        module = "bot.whatsapp_adapter"
+        bot_dir = str(layout.install_root / "container")
+        child_env = export_both({
+            "WHATSAPP_AGENT_TOKEN": token,
+            "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
+            "WOLTSPACE_DIR": str(layout.install_root),
+            "WOLTSPACE_ISOLATION": layout.isolation,
+            "WOLTSPACE_HOST": layout.host,
+            "WOLTSPACE_PORT": str(layout.port),
+            "WOLTSPACE_API": layout.endpoint,
+            "PYTHONPATH": os.pathsep.join(
+                filter(None, (bot_dir, str(layout.runtime_lib), values.get("PYTHONPATH", "")))
+            ),
+        })
+        return ConnectorPlan(
+            self.name, True, f"official Agent Platform · {module}",
+            (sys.executable, "-m", module), bot_dir, child_env,
+            remedy, ("-m", module),
+        )
+
+
 TOKEN_BUSY_DETAIL = "another process is already polling this bot token"
 TOKEN_BUSY_REMEDY = (
     "One bot token can only be polled by one process. Stop the other poller, or "
@@ -519,7 +559,7 @@ class VultureConnector(_CreatureConnector):
 
 
 CONNECTORS: tuple[ChannelConnector, ...] = (
-    TelegramConnector(), SlackConnector(), WolfConnector(), VultureConnector(),
+    TelegramConnector(), SlackConnector(), WhatsAppConnector(), WolfConnector(), VultureConnector(),
 )
 
 
@@ -538,6 +578,8 @@ def connector_secrets(plans: list[ConnectorPlan]) -> dict[str, str]:
     for plan in plans:
         if not plan.enabled:
             continue
+        if plan.name == "whatsapp":
+            secrets["WHATSAPP_AGENT_TOKEN"] = plan.env.get("WHATSAPP_AGENT_TOKEN", "")
         for key in (
             "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USERS",
             "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_OWNER_USER",

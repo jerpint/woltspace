@@ -218,3 +218,49 @@ async def test_route_state_is_filtered(eligible, monkeypatch, caplog):
         update.assert_not_called()
     for key in ("adapter", "chat_id", "harness_session_id"):
         assert f"Ignored undeclared notification state key: {key}" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("registered", [False, True])
+async def test_unhandled_adapter_rejected_before_credentials_or_send(registered, monkeypatch):
+    adapter = "future-adapter"
+    send, history = AsyncMock(), Mock()
+    credentials = Mock(side_effect=AssertionError("unsupported adapter must not resolve secrets"))
+    if registered:
+        # Registering transport alone must not opt into WhatsApp routing.
+        monkeypatch.setitem(notify.SENDERS, adapter, Plugin(
+            adapter, send, ("WHATSAPP_AGENT_TOKEN",), (),
+        ))
+    else:
+        monkeypatch.delitem(notify.SENDERS, adapter, raising=False)
+    monkeypatch.setattr(notify, "dotenv_env", credentials)
+    monkeypatch.setattr(notify, "append_chat_history", history)
+    with pytest.raises(RuntimeError, match="unsupported notification adapter"):
+        await notify._send(adapter, "synthetic-session", "synthetic text", "user:7")
+    credentials.assert_not_called()
+    send.assert_not_awaited()
+    history.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("adapter,key,destination", [
+    ("telegram", "TELEGRAM_BOT_TOKEN", {"chat_id": "101"}),
+    ("slack", "SLACK_BOT_TOKEN", {"channel": "101"}),
+    ("whatsapp", "WHATSAPP_AGENT_TOKEN", {"participant": "101"}),
+])
+async def test_supported_adapter_has_explicit_destination(
+    adapter, key, destination, monkeypatch, tmp_path,
+):
+    import hashlib
+    send = AsyncMock()
+    monkeypatch.setitem(notify.SENDERS, adapter, Plugin(adapter, send, (key,), ()))
+    monkeypatch.setattr(notify, "dotenv_env", lambda name: "synthetic-token" if name == key else "")
+    monkeypatch.setattr(notify, "append_chat_history", Mock())
+    monkeypatch.setattr(notify, "SPACE_PLATFORM_DIR", tmp_path)
+    route = {"adapter": adapter, "chat_id": "101",
+             "whatsapp_account": hashlib.sha256(b"synthetic-token").hexdigest()[:20]}
+    result = await notify._send(adapter, "synthetic-session", "text", "101", routing=route)
+    send.assert_awaited_once()
+    assert send.await_args.args[1] == destination
+    assert send.await_args.args[2].secrets == {key: "synthetic-token"}
+    assert result == {"adapter": adapter, **destination}

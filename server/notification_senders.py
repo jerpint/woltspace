@@ -1,5 +1,6 @@
 """Provider transport and formatting. Senders never write lodge state."""
 
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -136,6 +137,50 @@ async def slack_set_agent_status(
         if not data.get("ok"):
             raise RuntimeError(data.get("error", "agents.sessions.setStatus error"))
         return data
+
+
+async def whatsapp_send(token: str, participant: str, text: str) -> dict:
+    """Send text through the official WhatsApp Agent Platform API."""
+    if len(text) > 4096:
+        raise RuntimeError("WhatsApp text exceeds the 4096 character limit")
+    from woltspace.whatsapp_rate_limit import async_request_slot
+    from .config import SPACE_DIR
+    for attempt in range(3):
+        async with async_request_slot(SPACE_DIR / "whatsapp", token, 12, "send"):
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                response = await client.post(
+                    "https://api.whatsapp.com/agent/v1/messages",
+                    headers={"Authorization": f"Bearer {token}"},
+                    json={"messaging_product": "whatsapp", "to": participant,
+                          "type": "text", "text": {"body": text}},
+                )
+        if response.status_code == 429:
+            if attempt == 2:
+                raise RuntimeError("WhatsApp rate limit reached after bounded retries")
+            try:
+                retry_after = max(1, min(60, int(response.headers.get("Retry-After", "5"))))
+            except (TypeError, ValueError):
+                retry_after = 5
+            await asyncio.sleep(retry_after)
+            continue
+        if response.status_code >= 400:
+            raise RuntimeError(f"WhatsApp Agent API answered HTTP {response.status_code}")
+        try:
+            return response.json()
+        except ValueError:
+            return {}
+
+
+def whatsapp_sender(transport) -> Send:
+    """WhatsApp Agent Platform supports only text in this initial sender."""
+    async def send(message: OutboundMessage, destination, context: SendContext) -> None:
+        if message.attachments:
+            raise RuntimeError("WhatsApp file and media delivery is not supported yet")
+        text = message.text
+        if message.session_link:
+            text += f"\n\nOpen session: {message.session_link}"
+        await transport(context.secrets["WHATSAPP_AGENT_TOKEN"], destination["participant"], text)
+    return send
 
 
 def _slack_upload_data(response: httpx.Response, method: str) -> dict:

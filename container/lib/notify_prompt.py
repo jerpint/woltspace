@@ -157,6 +157,10 @@ def _validate_notify_argv(argv: tuple[str, ...]) -> None:
         if _TELEGRAM_CHAT_ID_RE.fullmatch(route_args[1]) is None:
             raise ValueError("Telegram chat ID must be an integer")
         return
+    if route_args[0] == "--whatsapp" and len(route_args) == 2:
+        if re.fullmatch(r"user:[0-9]+", route_args[1]) is None:
+            raise ValueError("WhatsApp participant must be a user:<digits> identifier")
+        return
     raise ValueError("invalid notify route arguments")
 
 

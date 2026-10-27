@@ -110,6 +110,11 @@ jobs:
           test/test_native_session_cli.py
           test/test_seed.py
           test/test_container_entrypoint.py::test_boot_never_picks_a_name_only_the_archive_holds
+      - name: WhatsApp offline checks
+        run: >-
+          python -m pytest -q
+          test/test_whatsapp_agent.py
+          test/test_whatsapp_commands.py
       - name: notify command
         # The script runs under woltspace-python, which needs a Python that
         # has the test install's dependencies.

@@ -443,6 +443,7 @@ class SessionRegistry:
         chat_id: str = "",
         user_id: str = "",
         thread_ts: str = "",
+        whatsapp_account: str = "",
         session_url: str = "",
         target: SessionTarget | None = None,
         execution_policy: ExecutionPolicy | dict | str | None = None,
@@ -504,12 +505,15 @@ class SessionRegistry:
                 entry["user_id"] = user_id
             if thread_ts:
                 entry["thread_ts"] = thread_ts
+            if whatsapp_account:
+                entry["whatsapp_account"] = whatsapp_account
             data["routing"].append(entry)
         # Backwards compat — keep flat fields for existing consumers
         data["adapter"] = adapter
         data["chat_id"] = chat_id
         data["user_id"] = user_id
         data["thread_ts"] = thread_ts
+        data["whatsapp_account"] = whatsapp_account
 
         with self._tx() as conn:
             self._put(conn, data)
@@ -1417,6 +1421,15 @@ def _adapter_context(data: dict) -> str:
                 f"{notify_reply_instruction('--telegram', chat_id)}\n"
                 f"Session link: {session_url}"
             )
+    elif adapter == "whatsapp":
+        participant = data.get("chat_id", "")
+        if participant:
+            return (
+                "\nThis session was started from WhatsApp Agent Platform.\n"
+                f"{notify_reply_instruction('--whatsapp', participant)}\n"
+                "This session's WhatsApp account is bound to the key active when it started.\n"
+                f"Session link: {session_url}"
+            )
     return ""
 
 
@@ -2046,6 +2059,7 @@ def start_session(
         chat_id=str((routing or {}).get("chat_id", "")),
         user_id=str((routing or {}).get("user_id", "")),
         thread_ts=str((routing or {}).get("thread_ts", "")),
+        whatsapp_account=str((routing or {}).get("whatsapp_account", "")),
         session_url=session_url,
     )
 
