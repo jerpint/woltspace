@@ -1982,3 +1982,23 @@ def test_disarm_stops_every_live_status_and_keeps_the_rest(tmp_path, status, aft
     out, outside = backup_mod._disarm_session(record, "/old/wolts", tmp_path, report)
     assert (out["status"], "runtime" in out, outside) == (after, False, [])
     assert report["sessions_stopped"] == (after != status)
+
+
+def test_all_skipped_credentials_are_never_reported_inside(wolts_with_credentials, fake_age, tmp_path):
+    root = wolts_with_credentials
+    paths = [item["path"] for item in scan_tree(root).withheld
+             if item["rule"] in backup_mod.ENCRYPTED_RULES]
+    assert paths
+    for rel in paths:
+        (root / rel).unlink()
+        (root / rel).symlink_to(tmp_path / "missing-dummy.env")
+    result = create_backup(root, out_dir=tmp_path / "out", tag="all-skipped")
+    files = _fake_open(result.archive)
+    assert not any(f"{ARCHIVE_ROOT}/{rel}" in files for rel in paths)
+    assert result.manifest["secrets"]["present"] is True
+    report = "\n".join(backup_mod.summary_lines(result))
+    count = len(result.manifest["withheld"]["paths"])
+    assert f"{count} not in the archive" in report
+    assert f"encrypted to {RECIPIENT}" in report
+    assert SECRET not in report
+    assert "inside" not in report
