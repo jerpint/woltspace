@@ -49,8 +49,7 @@ function woltHarness(w) {
   const pinned = !!w.harness;
   const id = w.harness || harnessDefault;
   const info = harnessInfo(id);
-  const models = info.models || {};
-  const tierDefault = models[w.type] || models.raccoon || '';  // rodent (legacy) → raccoon tier
+  const tierDefault = woltDefaultModel(w, { ...info, id });  // rodent (legacy) → raccoon tier
   // per-wolt model pin wins IF valid for this engine (mirrors backend resolve_model:
   // a pin is harness-scoped, so an invalid one falls back to the tier default)
   const catalog = info.catalog || [];
@@ -297,7 +296,7 @@ function woltStateText(x) {
 }
 
 function renderSidebarWolts() {
-  const all = allWolts.filter(w => WOLT_TYPES.has(w.type)).map(woltSessionSummary);
+  const all = allWolts.filter(w => WOLT_TYPES.has(woltBaseType(w))).map(woltSessionSummary);
   const container = document.getElementById('sidebar-wolts');
   const label = document.querySelector('#sidebar-team-section .sidebar-section-label');
   const everyone = all.length <= SIDEBAR_ALL_UP_TO;
@@ -324,7 +323,7 @@ function renderSidebarWolts() {
     card.onkeydown = e => { if (e.target === card && (e.key === 'Enter' || e.key === ' ')) card.click(); };
     const avatar = document.createElement('div'); avatar.className = 'wolt-avatar';
     const sprite = woltSpriteAvatar(w.type, 36);
-    if (sprite) avatar.innerHTML = sprite; else avatar.textContent = WOLT_EMOJI[w.type] || '🦫';
+    if (sprite) avatar.innerHTML = sprite; else avatar.textContent = woltEmoji(w);
     if (online.length) {
       const dot = document.createElement('div');
       dot.className = 'wolt-status-dot running';
@@ -336,7 +335,7 @@ function renderSidebarWolts() {
     const sub = document.createElement('div'); sub.className = 'wolt-type';
     sub.textContent = everyone ? w.type : woltStateText(x);
     info.append(nameEl, sub); card.append(avatar, info);
-    if (RODENT_TYPES.has(w.type)) { const add = document.createElement('button'); add.className = 'wolt-quick-session'; add.textContent = '+'; add.title = `New session with ${name}`; add.setAttribute('aria-label', add.title); add.onclick = e => { e.stopPropagation(); startSession(name); }; card.appendChild(add); }
+    if (RODENT_TYPES.has(woltBaseType(w))) { const add = document.createElement('button'); add.className = 'wolt-quick-session'; add.textContent = '+'; add.title = `New session with ${name}`; add.setAttribute('aria-label', add.title); add.onclick = e => { e.stopPropagation(); startSession(name); }; card.appendChild(add); }
     container.appendChild(card);
   });
   if (!everyone) {
@@ -389,7 +388,7 @@ function openEnginePicker(anchorEl, name) {
     button.type = 'button';
     button.appendChild(lodgeElement('span', 'engine-radio', selected ? '●' : '○'));
     button.appendChild(lodgeElement('span', 'engine-opt-label', h.label));
-    const model = modelFor(h.id, w.type);
+    const model = woltDefaultModel(w, harnessInfo(h.id));
     const sub = model + (h.id === harnessDefault ? ' · default' : '');
     if (sub) button.appendChild(lodgeElement('span', 'engine-opt-sub', sub));
     button.addEventListener('click', event => {
@@ -485,7 +484,7 @@ function renderApps() {
     const canToggle = !!p.start;
     const keeper = p.keeper || 'unassigned';
     const keeperWolt = allWolts.find(w => (w.name || w.dir) === keeper);
-    const keeperEmoji = keeperWolt ? (WOLT_EMOJI[keeperWolt.type] || '🦫') : '📦';
+    const keeperEmoji = keeperWolt ? woltEmoji(keeperWolt) : '📦';
     const keeperSprite = keeperWolt ? woltSpriteAvatar(keeperWolt.type, 24) : null;
     const body = lodgeElement('div', 'app-card-body');
     const top = lodgeElement('div', 'app-card-top');
@@ -629,7 +628,7 @@ function paintSessionGroupHeader(group, wolt) {
   const avatar = group.querySelector('.sessions-group-avatar');
   if (avatar && avatar.dataset.type !== type) {
     const sprite = woltData ? woltSpriteAvatar(woltData.type, 20) : null;
-    if (sprite) avatar.innerHTML = sprite; else avatar.textContent = WOLT_EMOJI[type] || '🦫';
+    if (sprite) avatar.innerHTML = sprite; else avatar.textContent = woltEmoji(woltData);
     avatar.dataset.type = type;
   }
   const label = group.querySelector('.sessions-group-name');

@@ -33,6 +33,7 @@ from bot.core import (
 )
 from urllib.parse import urlparse, parse_qs
 from wolts import get_active_creature, wolt_display_name, wolt_exists
+from creature_types import emoji_from
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import outbox
@@ -281,7 +282,7 @@ def format_response(result: dict) -> str:
 def _format_tool_log(tc: dict) -> str:
     name = tc["tool"]
     creature = tc.get("creature") or tc.get("args", {}).get("creature", "")
-    emoji = CREATURE_EMOJIS.get(creature, "")
+    emoji = emoji_from(CREATURE_EMOJIS, creature, "")
     wolt = tc.get("args", {}).get("wolt", "")
     recipient = f"{emoji} {wolt}".strip()
     line = f"🪵 {recipient} — {name}" if recipient else f"🪵 {name}"
@@ -346,7 +347,7 @@ def _creature_emoji(wolt: str) -> str:
     if wolt_json.exists():
         try:
             data = json.loads(wolt_json.read_text())
-            emoji = CREATURE_EMOJIS.get(data.get("type", ""), "🐾")
+            emoji = emoji_from(CREATURE_EMOJIS, data.get("type", ""), "🐾")
         except (json.JSONDecodeError, OSError):
             pass
     return emoji
@@ -704,7 +705,7 @@ async def _handle_dog(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_i
             state["active_session"] = session_name
             _save_chat_state(chat_id, state)
 
-            emoji = CREATURE_EMOJIS.get(session.get("creature", ""), "🐾")
+            emoji = emoji_from(CREATURE_EMOJIS, session.get("creature", ""), "🐾")
             session_link = session.get("url") or ""
             handoff = f"{emoji} {wolt_name} is now active in this chat — messages go directly to this session"
             if session_link:
@@ -986,7 +987,7 @@ def _set_active_wolt(chat_id: int, name: str) -> None:
 def _session_emoji(session_name: str) -> str:
     wolt = _wolt_of(session_name)
     types_by_wolt = {commands.wolt_name(w): w.get("type", "") for w in list_wolts()}
-    return WOLT_TYPE_EMOJI.get(types_by_wolt.get(wolt, ""), "🦫")
+    return emoji_from(WOLT_TYPE_EMOJI, types_by_wolt.get(wolt, ""), "🦫")
 
 
 # --- the lodge's services, over its API ----------------------------------------

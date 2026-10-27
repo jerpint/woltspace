@@ -28,6 +28,7 @@ from bot.core import (
     _sanitize_history,
 )
 from wolts import get_active_creature, list_wolts, wolt_exists
+from creature_types import base_type, emoji_from
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from env_compat import get_env
@@ -80,7 +81,7 @@ def _eligible_wolts() -> dict[str, dict]:
     eligible = {}
     for wolt in sorted(list_wolts(), key=lambda item: item.get("name", "").casefold()):
         name = wolt.get("name", "")
-        if name and wolt.get("type") in RODENT_WOLT_TYPES:
+        if name and base_type(wolt.get("type")) in RODENT_WOLT_TYPES:
             eligible[name] = wolt
     return eligible
 
@@ -376,7 +377,7 @@ def _format_tool_log(tc: dict) -> str:
     """Format a single tool call as a compact log line."""
     name = tc["tool"]
     creature = tc.get("creature") or tc.get("args", {}).get("creature", "")
-    emoji = CREATURE_EMOJIS.get(creature, "")
+    emoji = emoji_from(CREATURE_EMOJIS, creature, "")
     wolt = tc.get("args", {}).get("wolt", "")
     recipient = f"{emoji} {wolt}".strip()
 
@@ -565,7 +566,7 @@ async def _post_result(client, channel: str, thread_ts: str, user: str, result: 
     session_info = _extract_session_info(result)
     if session_info:
         _set_session_owner(channel, thread_ts, session_info["session"], session_info["wolt"], session_info["creature"])
-        emoji = CREATURE_EMOJIS.get(session_info["creature"], "🐾")
+        emoji = emoji_from(CREATURE_EMOJIS, session_info["creature"], "🐾")
         wolt = session_info["wolt"]
         session_link = result.get("session", {}).get("url") or ""
         handoff_text = f"{emoji} {wolt} is now active in this thread — messages here go directly to this session"

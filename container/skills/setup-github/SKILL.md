@@ -41,6 +41,11 @@ Tell the human:
 >   - Contents: **Read & write** (for pushing branches)
 > - Click **Create GitHub App**
 
+If the app is for contributing to woltspace, it goes on their own fork of
+`jerpint/woltspace` (Step 4), and the human opens PRs from the fork. Only a
+lodge the maintainer invites has its app installed on `jerpint/woltspace`
+itself. See "Contributing from a lodge" in the repo's `CONTRIBUTING.md`.
+
 Wait for confirmation before continuing.
 
 ## Step 2: Generate a private key

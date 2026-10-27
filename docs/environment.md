@@ -201,6 +201,56 @@ The deprecated step 2 goes away at 1.0 with the rest of the legacy names.
 
 ---
 
+## Time zone
+
+The lodge runs on the container's local time, and so does everything that
+reads the clock: the wolf fires `0 9 * * *` at 09:00 on that clock, and
+`woltspace wolf list` shows that zone in its header and every next run in it.
+The image sets no zone, so a container lodge runs on UTC by default. A native
+lodge uses its machine's own zone.
+
+To run on a named zone instead, put the standard `TZ` variable with an IANA
+name in the container's env file (`WOLTSPACE_ENV_FILE`, by default
+`<data root>/.env`); the image ships the zone database:
+
+```bash
+# any IANA name, e.g. Asia/Tokyo
+TZ=Europe/Berlin
+```
+
+A named zone follows its daylight-saving changes, so a cron keeps its local
+hour across them without edits; DST gaps and repeated hours still need review.
+UTC never shifts, which suits schedules tied to a global time. A fixed offset
+such as `Etc/GMT-2` never changes for DST either.
+
+The env file is read only when the container is created. Recreate it with
+`woltspace stop` then `woltspace start` (or `woltspace rebuild`); `start` on a
+stopped container restarts it with its old environment, and setting `TZ` in
+a shell changes nothing for the running lodge. Then check the zone and the
+next runs:
+
+```bash
+woltspace wolf list    # header: "lodge time · Europe/Berlin"
+```
+
+**Moving an existing lodge.** Nothing rewrites schedules for you; review them
+together before you recreate the container:
+
+- **Recurring crons** keep their hours on the new clock. An hour that was
+  converted from local time to UTC by hand goes back to the local hour.
+- **One-offs** (`at`) without an offset are wall-clock times, read in the new
+  zone: each moves by the zone difference, and one already past fires as soon
+  as the wolf starts. An `at` with an explicit offset keeps its moment.
+- **Manual DST reminders** (crons that tell you to shift the others twice a
+  year) are no longer needed once the zone is named; remove them.
+- **Catch-up.** Last-run stamps are wall-clock minutes without a zone, and
+  they are kept. On the first start in the new zone, a cron that already ran
+  that day can match its last 24 hours again and fire once more. Set
+  `"catch_up": false` on the crons where a repeat matters, and put it back after
+  the first day if you want catch-up.
+
+Per-cron zones do not exist; one zone serves the whole lodge.
+
 ## Variables we consume but do not own
 
 These keep the names their own platform gave them, and are configured in
@@ -238,6 +288,13 @@ server). `OPENAI_TTS_MODEL` (default `gpt-4o-mini-tts`) and `OPENAI_TTS_VOICE`
 (default `alloy`) still pick the model and the voice when `speech` leaves them
 out. Read by `server/notify.py` on every spoken message; with OpenAI, each one
 is an API request billed to that key.
+A wolt may speak in its own voice: `"speech": {"voice": "coral", "instructions":
+"Speak slowly."}` in its `wolt/wolt.json`, both keys optional. The wolt is the
+sending session's; its voice comes before the lodge's, and `instructions` (at
+most 500 characters, sent only when set) is a hint on how to speak. Server,
+model and key stay the lodge's. The voice must be one the lodge's speech server
+knows (`coral` is OpenAI's); one it refuses sends the message as text. The
+hint goes to OpenAI only.
 
 **Harnesses** — `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`,
 `CLAUDE_CODE_DISABLE_AUTO_MEMORY`, `CODEX_HOME`, `OPENCODE_CONFIG_DIR` and the

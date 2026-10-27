@@ -1,7 +1,8 @@
 """Container boot, as a subcommand of the installed CLI.
 
-`ENTRYPOINT ["/usr/local/bin/woltspace", "container-entrypoint"]`. The wheel
-ships no bash: what used to be `container/entrypoint.sh` (root) →
+`ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/woltspace", "container-entrypoint"]`:
+tini is PID 1 and collects orphaned processes, this command is its child. The
+wheel ships no bash: what used to be `container/entrypoint.sh` (root) →
 `container/start.sh` (node) → `container/entrypoint_setup.py` (config) is one
 command with two phases, dispatched on uid.
 
@@ -14,8 +15,9 @@ into the per-wolt HOME (container-only by design — native reuses your own logi
 and copies nothing), assembles the environment every child inherits, opens the
 tmux window the human lands in, and then runs the control plane **in-process**:
 the same `serve` a native user runs, from the same installed package. No exec,
-no shell in between — docker's SIGTERM lands on the process that owns the
-connectors, which is the guarantee bash's `exec` used to provide.
+no shell in between — docker's SIGTERM, passed on by tini, lands on the
+process that owns the connectors, which is the guarantee bash's `exec` used to
+provide.
 
 Why the entrypoint co-versions with the wheel: an image built on an older
 release ran that release's entrypoint. Now there is only one artifact.

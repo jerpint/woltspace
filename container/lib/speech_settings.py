@@ -10,6 +10,7 @@ without a restart.
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,10 +29,11 @@ from transcription_settings import (
 
 DEFAULT_MODEL = "gpt-4o-mini-tts"
 DEFAULT_VOICE = "alloy"
+INSTRUCTIONS_MAX_CHARS = 500
 
 __all__ = [
     "DEFAULT_MODEL", "DEFAULT_VOICE", "SettingsInvalid", "SpeechSettings",
-    "check_base_url", "config_path", "load_settings", "read_section", "save_section", "save_settings",
+    "check_base_url", "config_path", "load_settings", "parse_wolt_speech", "read_section", "save_section", "save_settings",
 ]
 
 
@@ -90,6 +92,37 @@ class SpeechSettings:
     def as_config(self) -> dict:
         return {"base_url": self.base_url, "model": self.model, "voice": self.voice,
                 "key_env": self.key_env}
+
+
+def parse_wolt_speech(section: object) -> dict:
+    """A wolt's own `speech` in its wolt.json: only the keys it sets. Raises SettingsInvalid.
+
+    `voice` overrides the lodge's; `instructions` is a short hint on how to speak.
+    The server, model and key stay the lodge's.
+    """
+    if section is None:
+        return {}
+    if not isinstance(section, dict):
+        raise SettingsInvalid("speech must be an object")
+    unknown = set(section) - {"voice", "instructions"}
+    if unknown:
+        raise SettingsInvalid(f"unknown speech keys: {', '.join(sorted(unknown))}")
+    wolt = {}
+    if "voice" in section:
+        if not isinstance(section["voice"], str) or not _MODEL_RE.match(section["voice"]):
+            raise SettingsInvalid("voice must be a voice name")
+        wolt["voice"] = section["voice"]
+    if "instructions" in section:
+        instructions = section["instructions"]
+        if not isinstance(instructions, str):
+            raise SettingsInvalid("instructions must be text")
+        instructions = instructions.strip()
+        if not 0 < len(instructions) <= INSTRUCTIONS_MAX_CHARS:
+            raise SettingsInvalid(f"instructions must be 1 to {INSTRUCTIONS_MAX_CHARS} characters")
+        if any(unicodedata.category(char) == "Cc" for char in instructions):
+            raise SettingsInvalid("instructions must not hold control characters")
+        wolt["instructions"] = instructions
+    return wolt
 
 
 def load_settings(config_path: Path, *, model: str = DEFAULT_MODEL,

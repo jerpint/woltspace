@@ -9,6 +9,7 @@ Usage: uv run pytest test/test_container_entrypoint.py -v
 """
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -425,3 +426,19 @@ def test_boot_never_picks_a_name_only_the_archive_holds(tmp_path, monkeypatch):
     assert boot.resolve_wolt_name(tmp_path) == "bob"
     monkeypatch.setenv("WOLTSPACE_WOLT_NAME", "pal")
     assert boot.resolve_wolt_name(tmp_path) == "bob"
+
+
+def test_the_image_boots_through_tini():
+    """PID 1 must collect orphans; the entrypoint never does, so tini runs it."""
+    dockerfile = (ROOT / "container" / "Dockerfile").read_text()
+    final_stage = re.split(r"(?im)^\s*FROM\s", dockerfile)[-1]
+    # Docker drops comment lines, even inside a continued RUN, and reads
+    # keywords in any case.
+    lines = [line.strip() for line in final_stage.splitlines()]
+    lines = [line for line in lines if line and not line.startswith("#")]
+    entrypoint = [line.split(None, 1) for line in lines if line.split()[0].upper() == "ENTRYPOINT"]
+    assert [json.loads(args) for _, args in entrypoint] == [
+        ["/usr/bin/tini", "--", "/usr/local/bin/woltspace", "container-entrypoint"]
+    ]
+    apt_list = "\n".join(lines).split("apt-get install -y \\\n", 1)[1].split("&&", 1)[0]
+    assert "tini" in apt_list.split()
