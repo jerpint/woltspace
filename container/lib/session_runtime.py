@@ -58,6 +58,7 @@ _SESSION_ENV_KEYS = (
     "WOLT_SESSION",
     "WOLTSPACE_DIR",
     "WOLTSPACE_ISOLATION",
+    "WOLTSPACE_NOTIFY_TOOL",
     # Which control plane this session belongs to. A session that reaches its
     # lodge — `notify`, `push-view`, `woltspace session send` — dials
     # WOLTSPACE_API, and tmux hands panes the *server's*
@@ -449,13 +450,24 @@ class TmuxSessionRuntime:
         # `export_both` fills in the other spelling of every renamed
         # variable, so a session inherits `WOLT_NAME` even when this process
         # was only handed `WOLTSPACE_WOLT_NAME` (and the reverse).
-        source = export_both(os.environ)
+        source = export_both({
+            key: value for key, value in os.environ.items()
+            if key != "WHATSAPP_AGENT_TOKEN"
+        })
         values = [
             shlex.quote(f"{key}={_session_env_value(key, source[key])}")
             for key in _SESSION_ENV_KEYS
             if source.get(key) not in (None, "")
         ]
-        return f"env {' '.join(values)} {command}" if values else command
+        prefix = "env -u WHATSAPP_AGENT_TOKEN"
+        return f"{prefix} {' '.join(values)} {command}" if values else f"{prefix} {command}"
+
+    @staticmethod
+    def _tmux_environment() -> dict[str, str]:
+        """Keep connector credentials out of the tmux client/server env."""
+        env = os.environ.copy()
+        env.pop("WHATSAPP_AGENT_TOKEN", None)
+        return env
 
     def spawn(self, session_id: str, cwd: str, command: str) -> RuntimeHandle:
         """Create one named tmux session and return its exact initial pane.
@@ -474,6 +486,8 @@ class TmuxSessionRuntime:
                 "-P",
                 "-F",
                 "#{pane_id}",
+                "-e",
+                "WHATSAPP_AGENT_TOKEN=",
                 "-s",
                 session_id,
                 "-c",
@@ -484,6 +498,7 @@ class TmuxSessionRuntime:
             text=True,
             check=True,
             timeout=_TMUX_TIMEOUT,
+            env=self._tmux_environment(),
         )
         stdout = result.stdout if isinstance(result.stdout, str) else ""
         pane_id = stdout.strip() if stdout.strip().startswith("%") else ""
@@ -509,6 +524,8 @@ class TmuxSessionRuntime:
                 "-P",
                 "-F",
                 "#{pane_id}",
+                "-e",
+                "WHATSAPP_AGENT_TOKEN=",
                 "-t",
                 f"={handle.tmux_session_name}",
                 "-c",
@@ -519,6 +536,7 @@ class TmuxSessionRuntime:
             text=True,
             check=True,
             timeout=_TMUX_TIMEOUT,
+            env=self._tmux_environment(),
         )
         stdout = result.stdout if isinstance(result.stdout, str) else ""
         pane_id = stdout.strip() if stdout.strip().startswith("%") else ""

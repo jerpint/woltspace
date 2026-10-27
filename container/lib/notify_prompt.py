@@ -157,6 +157,10 @@ def _validate_notify_argv(argv: tuple[str, ...]) -> None:
         if _TELEGRAM_CHAT_ID_RE.fullmatch(route_args[1]) is None:
             raise ValueError("Telegram chat ID must be an integer")
         return
+    if route_args[0] == "--whatsapp" and len(route_args) == 2:
+        if re.fullmatch(r"user:[0-9]+", route_args[1]) is None:
+            raise ValueError("WhatsApp participant must be a user:<digits> identifier")
+        return
     raise ValueError("invalid notify route arguments")
 
 
@@ -223,14 +227,20 @@ def notify_heredoc(
 
 def notify_reply_instruction(*route_args: object) -> str:
     """Build a notify reply instruction, falling back to session routing."""
+    tool_hint = (
+        "If this session exposes notify_owner, use that tool with message text only "
+        "for this reply; its owner route is already fixed. Do not resend after an "
+        "ambiguous outcome. Otherwise use the following CLI reply.\n"
+        if route_args and route_args[0] == "--whatsapp" else ""
+    )
     try:
-        return reply_instruction(
+        return tool_hint + reply_instruction(
             ["notify", *route_args], prefix="WOLTSPACE_NOTIFY"
         )
     except ValueError:
         # Bad adapter metadata should not break message routing. The unrouted
         # command can still resolve the destination through the session registry.
-        return reply_instruction(["notify"], prefix="WOLTSPACE_NOTIFY")
+        return tool_hint + reply_instruction(["notify"], prefix="WOLTSPACE_NOTIFY")
 
 
 def session_send_argv(

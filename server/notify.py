@@ -5,6 +5,7 @@ Falls back to session registry lookup, then Telegram default.
 """
 
 import json
+import hashlib
 import logging
 import mimetypes
 import time
@@ -15,6 +16,7 @@ from secrets import token_hex
 
 from .notification_senders import (
     slack_send, slack_sender, slack_set_agent_status, telegram_send, telegram_sender,
+    whatsapp_send, whatsapp_sender,
     TELEGRAM_MAX_ATTACHMENT_BYTES, telegram_send_audio, telegram_send_document,
     telegram_send_voice,
     SLACK_MAX_ATTACHMENT_BYTES, slack_upload_file,
@@ -93,8 +95,8 @@ def append_chat_history(adapter: str, chat_id: str, content: str):
     """Write notify messages into the bot's chat history."""
     from datetime import datetime, timezone
 
-    if adapter == "slack":
-        subdir = STATE_DIR / "chat" / "slack"
+    if adapter in {"slack", "whatsapp"}:
+        subdir = STATE_DIR / "chat" / adapter
     else:
         subdir = STATE_DIR / "chat"
     subdir.mkdir(parents=True, exist_ok=True)
@@ -135,6 +137,10 @@ SENDERS = {
         route_state=("slack_progress_mode", "slack_progress_ts"),
         max_attachment_bytes=SLACK_MAX_ATTACHMENT_BYTES,
         speech_format="mp3",
+    ),
+    "whatsapp": Plugin(
+        "whatsapp", whatsapp_sender(lambda *args: whatsapp_send(*args)),
+        secrets=("WHATSAPP_AGENT_TOKEN",),
     ),
 }
 
@@ -287,8 +293,10 @@ def _own_chats(adapter: str, session_record: dict | None) -> set[str]:
     """The chats that are this lodge's own: the ones it is set up with, and the session's."""
     if adapter == "telegram":
         chats = {entry.strip() for entry in dotenv_env("TELEGRAM_ALLOWED_USERS").split(",")}
-    else:
+    elif adapter == "slack":
         chats = {dotenv_env("SLACK_NOTIFY_CHANNEL")}
+    else:
+        chats = set()
     if session_record and session_record.get("adapter") == adapter:
         chats.add(str(session_record.get("chat_id") or ""))
     chats.discard("")
@@ -307,6 +315,8 @@ async def _send(
     thread, and carries its progress state. `session_record` is that record
     whatever the route, and is read only to tell whose chat this is.
     """
+    if adapter not in {"telegram", "slack", "whatsapp"}:
+        raise RuntimeError("unsupported notification adapter")
     sender = SENDERS[adapter]
     secrets = {key: dotenv_env(key) for key in sender.secrets}
     session_link = ""
@@ -322,7 +332,7 @@ async def _send(
         if session:
             session_link = f"{tunnel_url}/tui?session={session}" if tunnel_url else f"session={session}"
         destination = {"chat_id": chat_id}
-    else:
+    elif adapter == "slack":
         if not secrets.get("SLACK_BOT_TOKEN"):
             raise RuntimeError("SLACK_BOT_TOKEN not set")
         if not chat_id:
@@ -333,6 +343,18 @@ async def _send(
         destination = {"channel": chat_id}
         if thread_ts is not None:
             destination["thread_ts"] = thread_ts
+    elif adapter == "whatsapp":
+        if not secrets.get("WHATSAPP_AGENT_TOKEN"):
+            raise RuntimeError("WHATSAPP_AGENT_TOKEN not set")
+        if not chat_id:
+            raise RuntimeError("WhatsApp destination participant is required")
+        expected = hashlib.sha256(secrets["WHATSAPP_AGENT_TOKEN"].encode()).hexdigest()[:20]
+        if session and (
+            not routing or routing.get("adapter") != "whatsapp"
+            or routing.get("whatsapp_account") != expected
+        ):
+            raise RuntimeError("WhatsApp session belongs to a different Agent API key")
+        destination = {"participant": chat_id}
 
     if (attachments or speech is not None) and str(chat_id) not in _own_chats(
         adapter, session_record,
@@ -397,7 +419,8 @@ async def _send(
         f"{a.filename}, {a.content_type}, {a.size} bytes]"
         for a in attachments
     ))
-    result = {"adapter": adapter, "chat_id" if adapter == "telegram" else "channel": chat_id}
+    route_key = {"telegram": "chat_id", "slack": "channel", "whatsapp": "participant"}[adapter]
+    result = {"adapter": adapter, route_key: chat_id}
     if attachments:
         # Metadata only: this dict is logged and returned to the caller. A voice
         # note is marked, so `notify` can tell it from audio that went as a document.
@@ -493,16 +516,31 @@ async def _route(
                     adapter, session, message, str(chat_id), attachments=attachments,
                     speech=speech, session_record=routing,
                 )
+        if adapter == "whatsapp":
+            participant = explicit.get("participant", "")
+            if not participant:
+                raise RuntimeError("WhatsApp participant is required")
+            if session and (
+                not routing or routing.get("adapter") != "whatsapp"
+                or routing.get("chat_id") != participant
+            ):
+                raise RuntimeError("WhatsApp destination does not match this session")
+            return await _send(
+                adapter, session, message, str(participant), attachments=attachments,
+                routing=routing, speech=speech, session_record=routing,
+            )
 
     # 2. Session registry lookup — find routing from session metadata
     if session:
         if routing:
             adapter = routing.get("adapter")
             chat_id = routing.get("chat_id", "")
-            if adapter == "slack" or (adapter == "telegram" and chat_id):
+            if adapter == "whatsapp" and not chat_id:
+                raise RuntimeError("WhatsApp session has no bound participant")
+            if adapter == "slack" or (adapter in {"telegram", "whatsapp"} and chat_id):
                 return await _send(
                     adapter, session, message,
-                    str(chat_id) if adapter == "telegram" else chat_id,
+                    str(chat_id),
                     routing.get("thread_ts"), routing, attachments=attachments,
                     speech=speech, session_record=routing,
                 )
