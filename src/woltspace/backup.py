@@ -1528,7 +1528,7 @@ def summary_lines(result: BackupResult) -> list[str]:
             f"listed in {MANIFEST_NAME}"
         )
     if secrets["present"]:
-        lines.append(f"encrypted to {secrets['recipient']}, .env files and bot tokens inside")
+        lines.append(f"encrypted to {secrets['recipient']}")  # what is inside: the withheld line above
     elif any(item["rule"] in ENCRYPTED_RULES for item in withheld):
         lines.append(f"secrets: not kept — {secrets['reason']}")
     unreadable = result.manifest["unreadable"]
