@@ -443,6 +443,7 @@ class SessionRegistry:
         chat_id: str = "",
         user_id: str = "",
         thread_ts: str = "",
+        whatsapp_account: str = "",
         session_url: str = "",
         target: SessionTarget | None = None,
         execution_policy: ExecutionPolicy | dict | str | None = None,
@@ -504,12 +505,15 @@ class SessionRegistry:
                 entry["user_id"] = user_id
             if thread_ts:
                 entry["thread_ts"] = thread_ts
+            if whatsapp_account:
+                entry["whatsapp_account"] = whatsapp_account
             data["routing"].append(entry)
         # Backwards compat — keep flat fields for existing consumers
         data["adapter"] = adapter
         data["chat_id"] = chat_id
         data["user_id"] = user_id
         data["thread_ts"] = thread_ts
+        data["whatsapp_account"] = whatsapp_account
 
         with self._tx() as conn:
             self._put(conn, data)
@@ -1417,6 +1421,15 @@ def _adapter_context(data: dict) -> str:
                 f"{notify_reply_instruction('--telegram', chat_id)}\n"
                 f"Session link: {session_url}"
             )
+    elif adapter == "whatsapp":
+        participant = data.get("chat_id", "")
+        if participant:
+            return (
+                "\nThis session was started from WhatsApp Agent Platform.\n"
+                f"{notify_reply_instruction('--whatsapp', participant)}\n"
+                "This session's WhatsApp account is bound to the key active when it started.\n"
+                f"Session link: {session_url}"
+            )
     return ""
 
 
@@ -1711,6 +1724,23 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
     wolt = data.get("wolt", "")
     model = data.get("model", "")
 
+    tool_kwargs = {}
+    if (harness == "codex" and data.get("adapter") == "whatsapp"
+            and get_env("WOLTSPACE_NOTIFY_TOOL", "") == "1"):
+        from harnesses import codex_supports_no_daemon, WCODEX
+        from notify_owner_mcp import codex_overrides, verify_codex_definition
+        if not codex_supports_no_daemon():
+            raise ValueError("owner notification tool requires per-session Codex")
+        if (data.get("status") != "running" or not data.get("chat_id")
+                or not data.get("whatsapp_account")):
+            raise ValueError("owner notification tool requires a current WhatsApp route")
+        target = SessionTarget.from_record(data, wolts_dir=WOLTS_DIR, fallback_wolt=wolt)
+        data = dict(data, notify_owner_generation=uuid.uuid4().hex)
+        overrides = codex_overrides(data, get_env("WOLTSPACE_API", "http://localhost:7777"),
+                                   [target.canonical_workdir, WOLTS_DIR / wolt])
+        verify_codex_definition(overrides, WCODEX, target.canonical_workdir)
+        tool_kwargs["notify_owner_overrides"] = overrides
+
     if wolt and (WOLTS_DIR / wolt / "wolt" / "wolt.json").is_file():
         from lodge_skills import sync_lodge_skills
         sync_lodge_skills(WOLTS_DIR, WOLTS_DIR / wolt)
@@ -1743,12 +1773,17 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
         if get_harness(harness).get("prompt_via_paste"):
             updates["pending_boot_prompt"] = full_prompt
             full_prompt = ""
-        registry.update(name, wolt=wolt, **updates)
+        if tool_kwargs:
+            updates["notify_owner_generation"] = data["notify_owner_generation"]
+        updated = registry.update(name, wolt=wolt, **updates)
+        if tool_kwargs and (not updated or updated.get("notify_owner_generation") != data["notify_owner_generation"]):
+            raise ValueError("owner notification launch binding was not persisted")
         return build_command(
             harness, "spawn",
             session_id=session_id, session_name=name,
             model=model, prompt=full_prompt,
             execution_policy=data.get("execution_policy"),
+            **tool_kwargs,
         )
 
     if mode == "resume":
@@ -1786,9 +1821,14 @@ def prepare_session_command(name: str, mode: str, prompt: str = "") -> str:
                 merged = f"{pending} {prompt}".strip() if pending else prompt
                 registry.update(name, wolt=wolt, pending_boot_prompt=merged)
             prompt = ""
+        if tool_kwargs:
+            updated = registry.update(name, wolt=wolt, notify_owner_generation=data["notify_owner_generation"])
+            if not updated or updated.get("notify_owner_generation") != data["notify_owner_generation"]:
+                raise ValueError("owner notification launch binding was not persisted")
         return build_command(
             harness, "resume", resume_id=resume_id, model=model, prompt=prompt,
             execution_policy=data.get("execution_policy"),
+            **tool_kwargs,
         )
 
     raise ValueError(f"unknown mode: {mode}")
@@ -2046,6 +2086,7 @@ def start_session(
         chat_id=str((routing or {}).get("chat_id", "")),
         user_id=str((routing or {}).get("user_id", "")),
         thread_ts=str((routing or {}).get("thread_ts", "")),
+        whatsapp_account=str((routing or {}).get("whatsapp_account", "")),
         session_url=session_url,
     )
 

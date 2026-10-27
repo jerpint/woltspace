@@ -783,6 +783,26 @@ async def views_history():
 
 # --- Notify ---
 
+@app.post("/notify/owner")
+async def post_owner_notify(request: Request):
+    from notify_owner_mcp import MAX_FRAME_BYTES
+    from .owner_notify import deliver
+    chunks = bytearray()
+    async for chunk in request.stream():
+        if len(chunks) + len(chunk) > MAX_FRAME_BYTES:
+            return JSONResponse({"status": "invalid_message"}, status_code=413)
+        chunks.extend(chunk)
+    try:
+        body = json.loads(chunks)
+    except (ValueError, UnicodeError):
+        return JSONResponse({"status": "invalid_message"}, status_code=400)
+    try:
+        status = await deliver(body)
+    except Exception:
+        status = "ambiguous"
+    # Body/route-blind responses, unlike the legacy general notify endpoint.
+    return {"status": status}
+
 def _touch_origin(name: str) -> None:
     """A session that talks is in use: its own notify, message or spawn stamps it.
 
@@ -816,6 +836,8 @@ async def post_notify(request: Request):
             explicit["thread_ts"] = body.get("thread_ts")
         elif body["adapter"] == "telegram":
             explicit["chat_id"] = body.get("chat_id", "")
+        elif body["adapter"] == "whatsapp":
+            explicit["participant"] = body.get("participant", "")
     # Outbox entries `notify --file` staged: [{"id", "name"}]. Never a path.
     attachments = body.get("attachments") or []
     # `notify --speak`: {"text"}, the words the lodge is to say. Passed on only
