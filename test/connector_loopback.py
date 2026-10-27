@@ -149,6 +149,7 @@ class TelegramFacade:
 
         connector, side = telegram(monkeypatch, wolts_dir)
         monkeypatch.setattr(side, "owners", _Everyone())
+        object.__setattr__(self, "_monkeypatch", monkeypatch)
         object.__setattr__(self, "connector", connector)
         object.__setattr__(self, "side", side)
         object.__setattr__(self, "services", chat_lodge)
@@ -180,8 +181,15 @@ class TelegramFacade:
         raise AttributeError(name)
 
     def __setattr__(self, name, value):
+        # Patched where it lives, through the test's own monkeypatch, so its undo
+        # restores the owner's value whatever pytest recorded for the facade.
         for owner in (self.connector, self.side, self.services):
             if hasattr(owner, name):
-                setattr(owner, name, value)
+                self._monkeypatch.setattr(owner, name, value)
                 return
         raise AttributeError(name)
+
+    def __delattr__(self, name):
+        # monkeypatch's undo for a name the facade only forwards: the owner's
+        # own entry, recorded in __setattr__, puts the value back.
+        pass
