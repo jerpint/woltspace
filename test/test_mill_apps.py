@@ -371,6 +371,7 @@ def test_an_app_starts_on_loopback(tmp_path, monkeypatch):
                                                stack="python", start="serve", keeper="softie",
                                                public=False)
         monkeypatch.setattr(apps_lib, "_read_state", lambda name: None)
+        monkeypatch.setattr(apps_lib, "_RUNNING_STATE_DIR", tmp_path / "state")
         monkeypatch.setattr(apps_lib, "app_log_file", lambda name: tmp_path / "log")
         apps_lib.start_app("board")
     env = popen.call_args.kwargs["env"]
