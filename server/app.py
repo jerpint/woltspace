@@ -701,6 +701,41 @@ async def _remote_visitor(headers: dict[str, str]):
     return "owner", float(exp) if isinstance(exp, (int, float)) else None
 
 
+def _public_origin_ok(scope, headers: dict[str, str], content: "_Content") -> bool:
+    """A write or a WebSocket through the tunnel must come from the content's
+    own public page: `Origin` exactly `https://<its host>`, checked before the
+    request is rewritten to its local form. Another origin, a local-form one,
+    `null`, or a cross-site fetch is refused. Reads may carry any Origin."""
+    origin = headers.get("origin")
+    write = scope["type"] == "websocket" or scope.get("method", "GET").upper() not in _READ_ONLY_HTTP_METHODS
+    if not write:
+        return True
+    if headers.get("sec-fetch-site", "").lower() == "cross-site":
+        return False
+    if origin is None:
+        return scope["type"] != "websocket"  # a non-browser write, as on the lodge
+    return origin == f"https://{content.remote}"
+
+
+def _remote_sites_enabled(wolt: str) -> bool:
+    """Remote sites are off until the owner turns them on.
+
+    `site-<wolt>.<domain>` may once have been an app's origin, whose
+    storage and service workers outlive it in visitors' browsers. Only the
+    owner knows no app ever used those names: `"mill": {"remote_sites": true}`
+    in woltspace.json says so. Even then, a current app named `site-<wolt>`
+    keeps the name from the site.
+    """
+    try:
+        config = json.loads((Path(WOLTS_DIR) / "woltspace.json").read_text())
+    except (OSError, ValueError):
+        return False
+    mill = config.get("mill") if isinstance(config, dict) else None
+    if not (isinstance(mill, dict) and mill.get("remote_sites") is True):
+        return False
+    return get_app(f"site-{wolt}") is None
+
+
 def _as_local(scope, content: "_Content") -> dict:
     """The same request as if it had come to `<app>.localhost` on this lodge's
     port: the Mill names apps by their local host, and an Origin from the
@@ -713,7 +748,9 @@ def _as_local(scope, content: "_Content") -> dict:
         name = key.lower()
         if name == b"host":
             value = local.encode("latin-1")
-        elif name == b"origin" and value.decode("latin-1").rstrip("/") == public_origin:
+        elif name == b"origin":
+            if value.decode("latin-1") != public_origin:
+                continue  # only the content's own page's Origin is carried
             value = f"http://{local}".encode("latin-1")
         rewritten.append((key, value))
     return dict(scope, headers=rewritten)
@@ -762,6 +799,16 @@ class MillForwardMiddleware:
     async def _remote(self, scope, receive, send, headers, content):
         """A site or app through the tunnel: Access says who, then the same
         path as local."""
+        if content.kind == "site" and not _remote_sites_enabled(content.name):
+            if scope["type"] == "websocket":
+                return await send({"type": "websocket.close", "code": 1008})
+            response = HTMLResponse(
+                "<h1>Wolt sites aren't served through the tunnel on this lodge</h1>"
+                "<p>See docs/mill.md: remote sites are turned on in woltspace.json.</p>",
+                status_code=503)
+            return await response(scope, receive, send)
+        if not _public_origin_ok(scope, headers, content):
+            return await self._refuse(scope, receive, send, 403, "Cross-site request rejected")
         visitor, expires_at = await _remote_visitor(headers)
         if visitor is None:
             return await self._refuse(scope, receive, send, 403, "This app is the owner's")
@@ -978,6 +1025,9 @@ async def open_site(request: Request, wolt: str = "", path: str = "/"):
     target = _safe_next(path)
     headers = {"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"}
     remote = _remote_base(request, f"site-{label}")
+    if remote and not _remote_sites_enabled(label):
+        return JSONResponse({"error": "wolt sites aren't served through the tunnel on this lodge"},
+                            status_code=503)
     if remote:
         # Through the tunnel: Cloudflare Access is the site's door.
         return RedirectResponse(remote + target, status_code=303, headers=headers)

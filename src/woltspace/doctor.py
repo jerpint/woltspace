@@ -435,6 +435,25 @@ def _apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
     )
 
 
+def _app_tunnels_check(layout: RuntimeLayout) -> DoctorCheck | None:
+    """Per-app quick tunnels from an older lodge that are still running."""
+    try:
+        import apps
+        states = apps.intended_apps()
+        live = [s["name"] for s in states
+                if s.get("tunnel_pid") and apps.is_cloudflared(int(s["tunnel_pid"]))]
+    except Exception:
+        return None
+    if not live:
+        return None
+    return DoctorCheck(
+        "app-tunnels", "fail",
+        f"old per-app quick tunnels still running for: {', '.join(sorted(live))}",
+        "They reach an app around Access and the Mill. Restart the lodge (it retires them at "
+        "boot), or stop them yourself.",
+    )
+
+
 def _remote_apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
     """Apps and sites through a tunnel need Access settings the lodge can check."""
     import json
@@ -575,7 +594,7 @@ def run_doctor(
             f"{layout.host}:{layout.port} is {'available' if available else 'already in use'}",
             "Stop the existing service or choose --port <free-port>." if not available else "",
         ))
-    for extra in (_apps_check(layout), _remote_apps_check(layout)):
+    for extra in (_apps_check(layout), _remote_apps_check(layout), _app_tunnels_check(layout)):
         if extra is not None:
             checks.append(extra)
     return checks

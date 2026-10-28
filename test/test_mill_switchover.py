@@ -150,7 +150,12 @@ def test_a_write_from_the_apps_public_page_is_its_own_page(lodge):
     assert foreign.status_code == 403
 
 
+def _remote_sites_on(root):
+    (root / "woltspace.json").write_text(json.dumps({"mill": {"remote_sites": True}}))
+
+
 def test_a_wolts_site_through_the_tunnel(lodge):
+    _remote_sites_on(lodge)
     response = _through_tunnel(f"site-softie.{DOMAIN}").get("/", headers={"cf-access-jwt-assertion": "good"})
     assert response.status_code == 200 and "softie's site" in response.text
     assert _through_tunnel(f"site-softie.{DOMAIN}").get("/").status_code == 403
@@ -161,6 +166,7 @@ def test_the_lodge_through_the_tunnel_is_still_the_lodge(lodge):
 
 
 def test_opening_from_the_lodge_through_the_tunnel_goes_to_the_public_address(lodge):
+    _remote_sites_on(lodge)
     lodge_client = _through_tunnel(LODGE_HOST)
     site = lodge_client.get("/sites/open?wolt=softie&path=/a.html", follow_redirects=False)
     assert site.headers["location"] == f"https://site-softie.{DOMAIN}/a.html"
@@ -351,3 +357,110 @@ def test_the_lodge_lets_in_only_the_owners_verified_email(signer, monkeypatch, e
     assert visitor == expected
     lodge_token = signer.token(aud="lodge-aud")
     assert asyncio.run(server_app._remote_visitor({"cf-access-jwt-assertion": lodge_token}))[0] is None
+
+
+# --- Review: Origin through the tunnel, old quick tunnels, site- names -----------------------
+
+@pytest.mark.parametrize("origin", [
+    "http://board.localhost:7777",                 # the local form, before the rewrite
+    f"https://evil.{DOMAIN}",                      # a sibling
+    f"http://board.{DOMAIN}",                      # wrong scheme
+    f"https://board.{DOMAIN}:8443",                # wrong port
+    "null",
+])
+def test_a_write_through_the_tunnel_needs_the_apps_own_public_origin(lodge, origin):
+    before = len(_Seen.requests)
+    response = _through_tunnel(f"board.{DOMAIN}").post("/x", headers={
+        "cf-access-jwt-assertion": "good", "origin": origin})
+    assert response.status_code == 403
+    assert len(_Seen.requests) == before  # nothing reached the app
+
+
+def test_a_cross_site_write_through_the_tunnel_is_refused(lodge):
+    response = _through_tunnel(f"board.{DOMAIN}").post("/x", headers={
+        "cf-access-jwt-assertion": "good", "sec-fetch-site": "cross-site"})
+    assert response.status_code == 403
+
+
+def test_a_websocket_through_the_tunnel_needs_the_public_origin(lodge):
+    from starlette.websockets import WebSocketDisconnect
+    host = f"board.{DOMAIN}"
+    for origin in (None, "http://board.localhost:7777"):
+        headers = {"host": host, "cf-access-jwt-assertion": "good"}
+        if origin:
+            headers["origin"] = origin
+        with pytest.raises(WebSocketDisconnect):
+            with _through_tunnel(host).websocket_connect("/ws", headers=headers):
+                pass
+
+
+def test_remote_sites_are_off_until_the_owner_turns_them_on(lodge, monkeypatch):
+    client = _through_tunnel(f"site-softie.{DOMAIN}")
+    assert client.get("/", headers={"cf-access-jwt-assertion": "good"}).status_code == 503
+    assert _through_tunnel(LODGE_HOST).get("/sites/open?wolt=softie", follow_redirects=False).status_code == 503
+    _remote_sites_on(lodge)
+    assert client.get("/", headers={"cf-access-jwt-assertion": "good"}).status_code == 200
+    # An app that holds the name keeps it from the site.
+    monkeypatch.setattr(server_app, "get_app",
+                        lambda name: SimpleNamespace(can_start=lambda: True) if name == "site-softie" else None)
+    assert client.get("/", headers={"cf-access-jwt-assertion": "good"}).status_code == 503
+
+
+@pytest.fixture
+def tunnel_records(monkeypatch):
+    import apps
+    rows = {}
+    monkeypatch.setattr(apps, "_all_states", lambda: [dict(v) for v in rows.values()])
+    monkeypatch.setattr(apps, "_write_state", lambda name, state: rows.__setitem__(name, dict(state)))
+    alive, killed = set(), []
+    monkeypatch.setattr(apps, "is_cloudflared", lambda pid: pid in alive)
+
+    def stop(pid):
+        killed.append(pid)
+        if pid != 999:  # 999 ignores the signal
+            alive.discard(pid)
+        return True
+
+    monkeypatch.setattr(apps, "stop_cloudflared", stop)
+    return SimpleNamespace(apps=apps, rows=rows, alive=alive, killed=killed)
+
+
+def test_old_quick_tunnels_are_retired_once_and_only_when_verified(tunnel_records, monkeypatch):
+    t = tunnel_records
+    monkeypatch.setattr(t.apps.time, "sleep", lambda s: None)
+    t.rows.update({
+        "live": {"name": "live", "tunnel_pid": 101, "tunnel_url": "https://a.trycloudflare.com"},
+        "reused": {"name": "reused", "tunnel_pid": 202, "tunnel_url": "https://b.trycloudflare.com"},
+        "stuck": {"name": "stuck", "tunnel_pid": 999, "tunnel_url": "https://c.trycloudflare.com"},
+        "plain": {"name": "plain", "tunnel_pid": None, "tunnel_url": None},
+    })
+    t.alive.update({101, 999})  # 202's pid now belongs to something else
+    results = {r["name"]: r["action"] for r in t.apps.retire_app_tunnels()}
+    assert results == {"live": "tunnel-retired", "reused": "tunnel-retired", "stuck": "tunnel-still-running"}
+    assert 202 not in t.killed  # a reused pid is never signalled
+    assert t.rows["live"]["tunnel_pid"] is None and t.rows["live"]["tunnel_url"] is None
+    assert t.rows["stuck"]["tunnel_pid"] == 999  # still reported next time
+    t.alive.discard(999)
+    again = {r["name"]: r["action"] for r in t.apps.retire_app_tunnels()}
+    assert again == {"stuck": "tunnel-retired"}
+    assert t.apps.retire_app_tunnels() == []
+
+
+def test_boot_retires_old_tunnels_before_restoring_apps(monkeypatch):
+    import apps
+    order = []
+    monkeypatch.setattr(apps, "retire_app_tunnels", lambda: order.append("retire") or [])
+    monkeypatch.setattr(apps, "_all_states", lambda: order.append("restore") or [])
+    apps.apps_restore()
+    assert order == ["retire", "restore"]
+
+
+def test_doctor_fails_while_an_old_tunnel_still_runs(monkeypatch, tmp_path):
+    import apps
+    from woltspace import doctor
+    monkeypatch.setattr(apps, "intended_apps", lambda: [{"name": "blog", "tunnel_pid": 77}])
+    monkeypatch.setattr(apps, "is_cloudflared", lambda pid: True)
+    check = doctor._app_tunnels_check(_layout(tmp_path))
+    assert check.status == "fail" and "blog" in check.detail
+    monkeypatch.setattr(apps, "is_cloudflared", lambda pid: False)
+    assert doctor._app_tunnels_check(_layout(tmp_path)) is None

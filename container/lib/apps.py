@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 import lodge_db
 from env_compat import get_env
 from paths import space_apps_dir
-from tunnel import stop_cloudflared
+from tunnel import is_cloudflared, stop_cloudflared
 
 WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 APPS_DIR = WOLTS_DIR / "apps"
@@ -314,6 +314,38 @@ def start_app(name: str) -> dict:
     return state
 
 
+def retire_app_tunnels() -> list[dict]:
+    """Stop the per-app quick tunnels an older lodge started; they're gone in 0.6.
+
+    A quick tunnel reached an app's port directly, around Cloudflare Access
+    and the Mill. Each recorded tunnel is stopped only if its pid is still a
+    cloudflared (a reused pid is left alone), and its record is cleared only
+    once nothing of it is running, so a failed stop is reported again at the
+    next boot and by `woltspace doctor`. Running this twice changes nothing.
+    """
+    results = []
+    for state in _all_states():
+        pid, url = state.get("tunnel_pid"), state.get("tunnel_url")
+        if not pid and not url:
+            continue
+        name = state["name"]
+        if pid and is_cloudflared(pid):
+            stop_cloudflared(pid)
+            for _ in range(20):
+                if not is_cloudflared(pid):
+                    break
+                time.sleep(0.1)
+            if is_cloudflared(pid):
+                results.append({"name": name, "action": "tunnel-still-running", "pid": pid})
+                print(f"[apps] {name}: its old quick tunnel (pid {pid}) did not stop")
+                continue
+        state["tunnel_pid"], state["tunnel_url"] = None, None
+        _write_state(name, state)
+        results.append({"name": name, "action": "tunnel-retired", "pid": pid})
+        print(f"[apps] {name}: retired its old quick tunnel")
+    return results
+
+
 def apps_restore() -> list[dict]:
     """Restore apps on container boot.
 
@@ -322,9 +354,10 @@ def apps_restore() -> list[dict]:
     - PID alive         → leave it (survived the restart)
     - PID dead          → respawn via start_app()
 
-    Returns a summary list of actions for logging.
+    Returns a summary list of actions for logging. Old per-app quick tunnels
+    are retired first.
     """
-    actions = []
+    actions = retire_app_tunnels()
     for state in _all_states():
         name = state["name"]
 
