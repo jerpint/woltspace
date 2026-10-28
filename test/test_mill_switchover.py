@@ -536,3 +536,29 @@ def test_doctor_names_apps_on_the_reserved_site_prefix(tmp_path):
     _manifest(tmp_path, "site-old", "site-old", "npm run dev")
     check = doctor._apps_check(_layout(tmp_path))
     assert check.status == "warn" and "site-old" in check.detail and "reserved" in check.detail
+
+
+@pytest.mark.parametrize("raw", [
+    {"team_domain": "t.cloudflareaccess.com", "lodge_aud": "a", "apps_aud": "b"},          # no owner_email
+    {"team_domain": "t", "lodge_aud": "a", "apps_aud": "b", "owner_email": "o@example.com"},
+    {"team_domain": "t.cloudflareaccess.com", "lodge_aud": "a", "apps_aud": "b", "owner_email": "nope"},
+    {"team_domain": "t.cloudflareaccess.com", "lodge_aud": "a", "apps_aud": "a", "owner_email": "o@example.com"},
+    {"team_domain": "t.cloudflareaccess.com", "lodge_aud": "a", "apps_aud": "b", "owner_email": "o@example.com"},
+])
+def test_doctor_agrees_with_the_lodge_on_access_settings(raw):
+    from woltspace import doctor
+    try:
+        access.validate_access_settings(raw)
+        lodge_accepts = True
+    except ValueError:
+        lodge_accepts = False
+    assert (doctor._access_settings_problem(raw) == "") is lodge_accepts
+
+
+def test_doctor_finds_a_native_lodges_tunnel_in_its_env_file(tmp_path, monkeypatch):
+    from woltspace import doctor
+    monkeypatch.delenv("CLOUDFLARE_TUNNEL_URL", raising=False)
+    assert doctor._remote_apps_check(_layout(tmp_path)) is None
+    (tmp_path / ".env").write_text("CLOUDFLARE_TUNNEL_URL=https://owner.woltspace.test\n")
+    check = doctor._remote_apps_check(_layout(tmp_path))
+    assert check is not None and check.status == "warn"

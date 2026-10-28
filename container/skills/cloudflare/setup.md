@@ -249,7 +249,7 @@ curl -s -X POST \
   }"
 ```
 
-The auth cookie is scoped to `.{domain}`, so logging in once (at the lodge or any app) covers all subdomains. After this, any app with `"public": true` in `woltspace.json` is automatically accessible at `{app-name}.{domain}`.
+The auth cookie is scoped to `.{domain}`, so logging in once (at the lodge or any app) covers all subdomains. This Access application's AUD tag is the `apps_aud` the lodge needs: with the `access` settings in `woltspace.json` (see `container/migrations/v0.6.0.md`), every app is reachable by its owner at `{app-name}.{domain}`, through the Mill.
 
 See `docs/wildcard-subdomain-setup.md` for full details and troubleshooting.
 

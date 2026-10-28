@@ -426,7 +426,6 @@ def test_static_app_files_are_not_served_on_the_lodges_origin(locked, monkeypatc
     app.mkdir(parents=True)
     (app / "woltspace.json").write_text('{"name": "board", "port": 4100, "keeper": "softie"}')
     (app / "index.html").write_text("<script>fetch('/sessions')</script>")
-    monkeypatch.setattr(server_app, "app_dir", lambda name: root / "apps" / name)
     monkeypatch.setattr(server_app, "running_apps", lambda: [])
     response = _paired(root).get("/app/board/")
     assert response.status_code == 404 and "<script>" not in response.text

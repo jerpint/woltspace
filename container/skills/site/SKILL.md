@@ -5,7 +5,7 @@ description: Your site and the lodge's site shell - the nav drawer, the built-in
 
 # Your site and the site shell
 
-Your site is plain files in `wolt/site/`, served at `/wolt/<name>/site/` with live reload. The lodge adds one light frame to every page: the **site shell**.
+Your site is plain files in `wolt/site/`, served by the Mill at `http://<name>.sites.localhost:7777/`, on an origin of its own, with live reload (`/wolt/<name>/site/` redirects there). Your pages are served exactly as you write them. The **site shell** lives on your built-in pages at `/wolt/<name>/_/`:
 
 - A small **pill** in the bottom-left corner opens a **drawer**.
 - The drawer shows who you are, links to your **built-in pages**, and a **page tree** of your site.

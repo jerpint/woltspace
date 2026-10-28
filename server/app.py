@@ -18,7 +18,6 @@ from urllib.parse import quote, urlsplit
 import httpx
 from fastapi import Body, FastAPI, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import (
-    FileResponse,
     HTMLResponse,
     JSONResponse,
     PlainTextResponse,
@@ -106,7 +105,6 @@ from apps import (
     apps_restore,
     discover_apps,
     get_app,
-    app_dir,
     app_log_file,
     running_apps,
     start_app,
@@ -117,7 +115,7 @@ from apps import (
 from sites import ensure_site, site_dir
 import wolfcore
 import wolt_archive
-from site_shell import inject_shell, load_site_config, memory_payload, shell_manifest, shell_tags, shell_wanted
+from site_shell import load_site_config, memory_payload, shell_manifest, shell_tags, shell_wanted
 from .state import (
     bot_log,
     get_current_meta,
@@ -329,7 +327,6 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
-_APP_HOST_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]*$")
 
 
 def _split_host(host_header: str) -> tuple[str, int | None]:
@@ -1050,93 +1047,6 @@ def _shell_quote(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
 
 
-def _app_not_found(name: str) -> str:
-    """Styled 404 page for an app that doesn't exist."""
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{name} — not found</title>
-<style>
-  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{
-    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-    background: #1a1a1a; color: #c8b89a;
-    display: flex; align-items: center; justify-content: center;
-    min-height: 100vh; padding: 2rem;
-  }}
-  .card {{
-    max-width: 420px; width: 100%; text-align: center;
-    border: 1px solid #3a3a2a; border-radius: 12px;
-    padding: 2.5rem 2rem; background: #222218;
-  }}
-  .emoji {{ font-size: 3rem; margin-bottom: 1rem; }}
-  h1 {{ font-size: 1.3rem; color: #e8d8b8; margin-bottom: 0.5rem; }}
-  .desc {{ font-size: 0.85rem; color: #8a8060; margin-bottom: 1.5rem; }}
-  .hint {{ font-size: 0.75rem; color: #5a5a4a; }}
-</style>
-</head>
-<body>
-<div class="card">
-  <div class="emoji">🌲</div>
-  <h1>{name}</h1>
-  <p class="desc">This app doesn't exist yet.</p>
-  <p class="hint">Ask your wolt to create it, or check the name.</p>
-</div>
-</body>
-</html>"""
-
-
-def _app_placeholder(name: str, app_obj: "WoltspaceApp | None" = None) -> str:
-    """Styled placeholder page for an app that has no servable content."""
-    emoji = app_obj.emoji if app_obj else "📦"
-    desc = app_obj.description if app_obj and app_obj.description else "No description yet"
-    keeper = app_obj.keeper if app_obj else "unknown"
-    start_cmd = app_obj.start if app_obj and app_obj.start else None
-    status = "Press start to start your app" if start_cmd else "No start command configured"
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{name} — off</title>
-<style>
-  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{
-    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-    background: #1a1a1a; color: #c8b89a;
-    display: flex; align-items: center; justify-content: center;
-    min-height: 100vh; padding: 2rem;
-  }}
-  .card {{
-    max-width: 420px; width: 100%; text-align: center;
-    border: 1px solid #3a3a2a; border-radius: 12px;
-    padding: 2.5rem 2rem; background: #222218;
-  }}
-  .emoji {{ font-size: 3rem; margin-bottom: 1rem; }}
-  h1 {{ font-size: 1.3rem; color: #e8d8b8; margin-bottom: 0.5rem; }}
-  .desc {{ font-size: 0.85rem; color: #8a8060; margin-bottom: 1.5rem; }}
-  .status {{
-    font-size: 0.8rem; color: #6a7a4a;
-    border-top: 1px solid #3a3a2a; padding-top: 1rem;
-  }}
-  .keeper {{ font-size: 0.75rem; color: #5a5a4a; margin-top: 0.8rem; }}
-</style>
-</head>
-<body>
-<div class="card">
-  <div class="emoji">{emoji}</div>
-  <h1>{name}</h1>
-  <p class="desc">{desc}</p>
-  <p class="status">{status}</p>
-  <p class="keeper">keeper: {keeper}</p>
-</div>
-</body>
-</html>"""
-
-
-# jerpint: what trickery is this well need to revise all these hacks
 def _inject_livereload(html: str) -> str:
     if "</body>" in html:
         return html.replace("</body>", LIVERELOAD_SCRIPT + "</body>")

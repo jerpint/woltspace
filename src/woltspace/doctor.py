@@ -459,28 +459,65 @@ def _app_tunnels_check(layout: RuntimeLayout) -> DoctorCheck | None:
     )
 
 
+def _tunnel_url(layout: RuntimeLayout) -> str:
+    """The lodge's named tunnel URL: exported, or in the data root's .env,
+    which is where a native lodge keeps it (the supervisor loads it too)."""
+    value = (os.environ.get("CLOUDFLARE_TUNNEL_URL") or "").strip()
+    if value:
+        return value
+    env_file = layout.wolts_dir / ".env"
+    if env_file.is_file():
+        from dotenv import dotenv_values
+        return (dotenv_values(env_file).get("CLOUDFLARE_TUNNEL_URL") or "").strip()
+    return ""
+
+
+def _access_settings_problem(raw) -> str:
+    """Why the lodge would refuse these access settings, or "" if it takes them.
+
+    The same rules as server/access.py validate_access_settings.
+    """
+    import re
+    keys = {"team_domain", "lodge_aud", "apps_aud", "owner_email"}
+    if not isinstance(raw, dict):
+        return "no access settings in woltspace.json"
+    if set(raw) != keys:
+        missing = sorted(keys - set(raw))
+        extra = sorted(set(raw) - keys)
+        return ("access settings need exactly team_domain, lodge_aud, apps_aud and owner_email"
+                + (f" (missing: {', '.join(missing)})" if missing else "")
+                + (f" (unexpected: {', '.join(extra)})" if extra else ""))
+    team = str(raw["team_domain"]).strip().lower().rstrip(".")
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?", team) or "." not in team or ".." in team:
+        return "team_domain must be a domain name, like <team>.cloudflareaccess.com"
+    lodge_aud, apps_aud = str(raw["lodge_aud"]).strip(), str(raw["apps_aud"]).strip()
+    if not lodge_aud or not apps_aud or len(lodge_aud) > 512 or len(apps_aud) > 512:
+        return "lodge_aud and apps_aud must both be Access AUD tags"
+    if lodge_aud == apps_aud:
+        return "one Access application for both the lodge and its apps (lodge_aud == apps_aud)"
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", str(raw["owner_email"]).strip()):
+        return "owner_email must be an email address"
+    return ""
+
+
 def _remote_apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
-    """Apps and sites through a tunnel need Access settings the lodge can check."""
+    """Apps and sites through a tunnel need Access settings the lodge accepts."""
     import json
-    values = dict(os.environ)
-    if not (values.get("CLOUDFLARE_TUNNEL_URL") or "").strip():
+    if not _tunnel_url(layout):
         return None
     try:
         config = json.loads((layout.wolts_dir / "woltspace.json").read_text())
     except (OSError, ValueError):
         config = {}
-    access = config.get("access") if isinstance(config, dict) else None
-    if isinstance(access, dict) and access.get("apps_aud") and access.get("lodge_aud") \
-            and access["apps_aud"] != access["lodge_aud"]:
+    problem = _access_settings_problem(config.get("access") if isinstance(config, dict) else None)
+    if not problem:
         return DoctorCheck("remote-apps", "pass", "Access settings for apps through the tunnel")
     return DoctorCheck(
         "remote-apps", "warn",
-        "apps and wolt sites through the tunnel are refused: no Access settings, or one Access "
-        "app for both the lodge and its apps",
-        'Add "access" to woltspace.json (team_domain, lodge_aud, apps_aud, owner_email) with a '
-        "second Access application for *.<your domain>, so its audience differs from the lodge's.",
+        f"apps and wolt sites through the tunnel are refused: {problem}",
+        'Set "access" in woltspace.json (team_domain, lodge_aud, apps_aud, owner_email), with '
+        "a separate Access application for *.<your domain>; see container/migrations/v0.6.0.md.",
     )
-
 
 def run_doctor(
     layout: RuntimeLayout, *, check_port: bool = True, as_entrypoint: bool = False

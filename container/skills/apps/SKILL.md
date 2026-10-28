@@ -97,44 +97,19 @@ push-view http://my-app.localhost:7777/
 
 Use the **subdomain pattern** `http://<app-name>.localhost:7777/` to push an app to the viewport.
 
-> **Why not `/app/my-app/`?** The `/app/` path triggers a 302 redirect to the app's bare port (e.g. `localhost:4010`). This works locally but breaks through the Cloudflare tunnel, since the redirect target isn't reachable from the outside. The subdomain pattern avoids the redirect entirely.
+> **Why not `/app/my-app/`?** `/app/<name>/` only redirects to the app's own address now. The subdomain is the app's real home: the Mill serves it there, on an origin of its own.
 
 ## Ports
 
 Each app declares its own port in `woltspace.json` (required). Use the **4000-5999** range for apps. The port is permanent — it never changes between restarts. Pick one that doesn't conflict with other apps. If two apps claim the same port, the second one to start gets an error — just pick a different port.
 
-Wolt sites auto-allocate in the **6000+** range, so no collisions. The platform also sets the `PORT` env var to match your manifest port when starting. Avoid 7777 (platform server) and 3001 (TUI).
+The platform sets `PORT` to your manifest port and `HOST=127.0.0.1` when starting: pass `--host $HOST`, not `0.0.0.0`, so the app is reached only through the Mill (`woltspace doctor` names apps that bind `0.0.0.0`). Names starting with `site-` are reserved for wolt sites and aren't served. Avoid 7777 (platform server) and 3001 (TUI).
 
-## Sharing (public access)
+## Reaching an app from elsewhere
 
-Apps are private by default — only accessible locally. Set `"public": true` in `woltspace.json` to share, or use the API:
+Apps are private: locally, the owner reaches `http://<app-name>.localhost:7777/`; through the lodge's tunnel, `https://<app-name>.<domain>/`. Both go through the Mill (see `docs/mill.md`). Through the tunnel, the lodge lets a request in only with the owner's Cloudflare Access token for the apps' Access application. That needs `access` settings in `woltspace.json`, which only the human sets (`container/migrations/v0.6.0.md`).
 
-```bash
-# Share a running app
-curl -X POST http://localhost:7777/apps/my-app/share
-
-# Unshare
-curl -X POST http://localhost:7777/apps/my-app/unshare
-
-# Panic button — unshare ALL apps
-curl -X POST http://localhost:7777/apps/unshare-all
-```
-
-### How sharing works
-
-There are two modes, selected automatically:
-
-**Subdomain routing (named tunnel):** If the lodge has a named tunnel (`CLOUDFLARE_TUNNEL_URL` is set), public apps are served at `{app-name}.{domain}` — e.g. `corework.woltspace.com`. No per-app tunnel is spawned. The server's subdomain proxy middleware routes requests to the app's port. URLs are stable, auth-protected by Cloudflare Access, and work automatically for any app.
-
-**Quick tunnels (fallback):** If there's no named tunnel, a per-app `cloudflared` tunnel starts with a random `trycloudflare.com` URL. Uses `--http-host-header localhost` so Vite/Next.js/Astro allowedHosts checks pass. URLs are random and change on restart.
-
-The mode is automatic — wolts don't need to know or care which is active.
-
-### Setup for subdomain routing
-
-Requires a one-time Cloudflare setup after the named tunnel is configured: wildcard DNS, tunnel ingress rule, and Access policy. See `docs/wildcard-subdomain-setup.md` for step-by-step instructions, or load the woltspace cloudflare skill, which covers this.
-
-**Kill switch:** Set `WOLTSPACE_SHARING_ENABLED=0` to disable all sharing. The API will reject share requests and `public: true` is ignored.
+There is no per-app public sharing any more: the share routes, `"public": true` and quick tunnels are gone. If your human wants someone else to see an app, that's a change to who the Access application lets in, made by the human.
 
 ## Secrets
 

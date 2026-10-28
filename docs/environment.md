@@ -116,7 +116,6 @@ lists in the host `woltspace` launcher.
 | `WOLTSPACE_TUI_BIN` | Path to the terminal cockpit binary. | `src/woltspace/tui.py` | resolved from `PATH` |
 | `WOLTSPACE_WOLF` | Enable or disable the cron scheduler connector. | `channels.py` | enabled for the entrypoint |
 | `WOLTSPACE_VULTURE` | Enable or disable the session reaper connector (closes idle sessions, cleans up dead ones). | `channels.py` | enabled for the entrypoint |
-| `WOLTSPACE_SHARING_ENABLED` | Whether apps may be given public tunnels. | `container/lib/apps.py` | on |
 | `WOLTSPACE_USER` | Display name for the human in the cockpit. `HUMAN_NAME` is honoured as a second-choice source. | `tui/src/ui/App.js` | the OS username |
 | `WOLTSPACE_TMUX_BIN` | `tmux` binary, for a host that keeps it somewhere unusual. | `container/lib/runtime_context.py`, `session_runtime.py` | `tmux` |
 | `WOLTSPACE_PS_BIN` | `ps` binary, same reason. | `container/lib/runtime_context.py`, `container/lib/tunnel.py` | `ps` |
