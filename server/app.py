@@ -49,6 +49,11 @@ from .config import (
     load_dotenv,
 )
 from . import tunnel as tunnel_mgr
+from .app_proxy import (
+    client_response_headers,
+    upstream_request_headers,
+    websocket_upstream_headers,
+)
 from .notify import AttachmentError, NoNotificationTarget, send_notification
 from .speech import SpeechError
 from .sparks import get_spark_with_chain, list_sparks
@@ -433,6 +438,10 @@ class AppWebSocketRoutingMiddleware:
 app.add_middleware(AppWebSocketRoutingMiddleware)
 
 
+def _app_http_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(timeout=httpx.Timeout(None, connect=10.0))
+
+
 @app.middleware("http")
 async def subdomain_proxy(request: Request, call_next):
     """Proxy subdomain requests to app ports.
@@ -458,41 +467,41 @@ async def subdomain_proxy(request: Request, call_next):
             path = request.url.path
             qs = f"?{request.url.query}" if request.url.query else ""
             upstream = f"http://localhost:{port}{path}{qs}"
-            # Use a streaming proxy so SSE/chunked responses (like Vite HMR)
-            # flow through without buffering the entire response first.
-            client = httpx.AsyncClient()
-            headers = dict(request.headers)
-            headers["host"] = f"localhost:{port}"
-            body = await request.body()
+            # Stream both ways: the request body goes up as it arrives, and the
+            # response (SSE, Vite HMR, video) comes back without buffering.
+            # Cloudflare Access credentials never reach the app (app_proxy).
+            # A request without a body sends none: an empty chunked body would
+            # be read as a stray request by simple keep-alive servers.
+            has_body = "content-length" in request.headers or "transfer-encoding" in request.headers
+            client = _app_http_client()
             req = client.build_request(
                 method=request.method,
                 url=upstream,
-                headers=headers,
-                content=body,
+                headers=upstream_request_headers(request.headers.items(), port),
+                content=request.stream() if has_body else None,
             )
-            resp = await client.send(req, stream=True, follow_redirects=False)
-            # Preserve content-length so 206 Partial Content (video Range requests)
-            # validate correctly in browsers. transfer-encoding/content-encoding
-            # are hop-by-hop and re-added by StreamingResponse.
-            excluded = {"transfer-encoding", "content-encoding"}
-            resp_headers = {
-                k: v for k, v in resp.headers.items()
-                if k.lower() not in excluded
-            }
+            try:
+                resp = await client.send(req, stream=True, follow_redirects=False)
+            except BaseException:
+                await client.aclose()
+                raise
 
+            # The body is relayed raw (still compressed), so content-encoding
+            # and content-length stay true, and 206 Range replies validate.
             async def stream_body():
                 try:
-                    async for chunk in resp.aiter_bytes():
+                    async for chunk in resp.aiter_raw():
                         yield chunk
                 finally:
                     await resp.aclose()
                     await client.aclose()
 
-            return StreamingResponse(
-                content=stream_body(),
-                status_code=resp.status_code,
-                headers=resp_headers,
-            )
+            response = StreamingResponse(content=stream_body(), status_code=resp.status_code)
+            response.raw_headers = [
+                (name.encode("latin-1"), value.encode("latin-1"))
+                for name, value in client_response_headers(resp.headers.multi_items())
+            ]
+            return response
         except httpx.ConnectError:
             return HTMLResponse(
                 f"<h1>Cannot reach app '{app_name}' on port {port}</h1>",
@@ -2980,29 +2989,47 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
         async with websockets.connect(
             upstream_url,
             subprotocols=subprotocols or None,
-            additional_headers={"host": f"localhost:{port}"},
+            additional_headers=websocket_upstream_headers(ws.headers.items(), port),
+            max_size=None,
+            proxy=None,
         ) as upstream:
+            # Frames keep their type both ways: Vite and other dev servers
+            # send binary frames, and a text-only relay drops them.
             async def client_to_upstream():
-                try:
-                    while True:
-                        data = await ws.receive_text()
-                        await upstream.send(data)
-                except WebSocketDisconnect:
-                    pass
+                while True:
+                    message = await ws.receive()
+                    if message["type"] == "websocket.disconnect":
+                        return
+                    if message.get("bytes") is not None:
+                        await upstream.send(message["bytes"])
+                    elif message.get("text") is not None:
+                        await upstream.send(message["text"])
 
             async def upstream_to_client():
-                try:
-                    async for msg in upstream:
+                async for msg in upstream:
+                    if isinstance(msg, bytes):
+                        await ws.send_bytes(msg)
+                    else:
                         await ws.send_text(msg)
-                except Exception:
-                    pass
 
-            await asyncio.gather(client_to_upstream(), upstream_to_client())
+            # When either side ends, stop the other: a closed tab must not
+            # leave the app's socket open, and a closed app must close the tab's.
+            tasks = [
+                asyncio.ensure_future(client_to_upstream()),
+                asyncio.ensure_future(upstream_to_client()),
+            ]
+            try:
+                await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
     except Exception:
-        try:
-            await ws.close()
-        except Exception:
-            pass
+        pass
+    try:
+        await ws.close()
+    except Exception:
+        pass
 
 
 # --- Pages (HTML) ---

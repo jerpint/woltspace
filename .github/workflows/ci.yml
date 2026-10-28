@@ -58,6 +58,8 @@ jobs:
           test/test_lodge_boot_import.py
           test/test_db_show_cli.py
           test/test_vulture.py
+          test/test_app_proxy.py
+          test/test_http_request_security.py
           test/test_vulture_connector.py
           test/test_session_expiry.py
           test/test_session_runtime.py
