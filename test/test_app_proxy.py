@@ -364,3 +364,30 @@ def test_every_proxy_wait_is_bounded():
     timeout = server_app.APP_PROXY_TIMEOUT
     for value in (timeout.connect, timeout.read, timeout.write, timeout.pool):
         assert value is not None and 0 < value <= 300
+
+
+def test_a_tool_never_sees_access_credentials(monkeypatch):
+    seen = []
+
+    async def capture(request):
+        seen.append(request)
+        return httpx.Response(200, text="ok", headers=[("set-cookie", "CF_Authorization=forged")])
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(server_app.tool_registry, "get", lambda name: {"port": 4998})
+    monkeypatch.setattr(server_app.httpx, "AsyncClient",
+                        lambda **kw: real(transport=httpx.MockTransport(capture)))
+
+    response = TestClient(server_app.app, base_url="http://localhost:7777").get(
+        "/tools/board/api", headers={
+            "cf-access-jwt-assertion": "jwt-for-the-owner",
+            "cookie": "CF_Authorization=jwt-cookie; tool=1",
+            "authorization": "Bearer tool-token",
+        })
+
+    assert response.status_code == 200 and response.text == "ok"
+    sent = seen[0].headers
+    assert "cf-access-jwt-assertion" not in sent
+    assert sent["cookie"] == "tool=1" and sent["authorization"] == "Bearer tool-token"
+    assert "set-cookie" not in response.headers
+    assert response.headers["content-length"] == "2"

@@ -2873,14 +2873,22 @@ async def proxy_tool(tool_name: str, path: str, request: Request):
     target = f"http://127.0.0.1:{tool['port']}/{path}"
     if request.url.query:
         target += f"?{request.url.query}"
+    # A tool is a backend like an app: Access credentials stay behind, both ways.
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.request(
                 request.method, target,
-                headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
+                headers=upstream_request_headers(request.headers.items(), tool["port"]),
                 content=await request.body(),
             )
-            return Response(resp.content, status_code=resp.status_code, headers=dict(resp.headers))
+            # The body comes back decoded, so its encoding and length go too.
+            reply = Response(resp.content, status_code=resp.status_code)
+            reply.raw_headers = [
+                (name.encode("latin-1"), value.encode("latin-1"))
+                for name, value in client_response_headers(resp.headers.multi_items())
+                if name.lower() not in {"content-encoding", "content-length"}
+            ] + [(b"content-length", str(len(resp.content)).encode())]
+            return reply
         except httpx.ConnectError:
             return PlainTextResponse("tool unavailable", status_code=502)
 
