@@ -9,7 +9,14 @@ The Mill serves wolt sites, each on an origin of its own, so a page a wolt wrote
 - **The Mill itself:** its own process, supervised like the other connectors. It listens only on a unix socket, `<data root>/.space/run/mill/mill.sock`, whose folder is the owner's alone (`0700`). It has no TCP port.
 - **If the Mill is down:** sites answer `502` and the lodge keeps working.
 
-The old `/wolt/<name>/site/` address keeps working for now. Remote sites (through a tunnel) come later.
+The old `/wolt/<name>/site/` address keeps working while lodge auth is off. With lodge auth on, the lodge never serves a wolt's pages on its own origin:
+- the old address redirects to `/sites/open`;
+- the lodge's root no longer falls back to the current wolt's site files;
+- a static app's files aren't served from `/app/<name>/` until the Mill serves apps.
+
+Remote sites (through a tunnel) come later.
+
+**The trust limit:** the socket's folder keeps other users of the machine out. A program running as the owner (a wolt's tools, an app) can still connect to it and claim to be the owner. The Mill protects the owner's browser from a wolt's pages; it does not contain code running as the owner.
 
 ## Who may see a site
 

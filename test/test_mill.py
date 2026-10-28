@@ -396,3 +396,38 @@ def test_forgetting_browsers_closes_site_sessions(locked):
     assert lodge_auth.site_session_ok(root, "softie", token)
     lodge_auth.forget_browsers(root)
     assert not lodge_auth.site_session_ok(root, "softie", token)
+
+
+# --- The lodge's origin never serves a wolt's pages when auth is on ------------------
+
+def test_old_site_links_go_to_the_mill_and_serve_nothing(locked, monkeypatch):
+    root, _ = locked
+    site = root / "softie" / "wolt" / "site"
+    (site / "evil.html").write_text("<script>fetch('/sessions')</script>")
+    monkeypatch.setattr(server_app, "SITE_DIR", site)
+    lodge = _paired(root)
+
+    old = lodge.get("/wolt/softie/site/evil.html", follow_redirects=False)
+    assert old.status_code == 303
+    assert old.headers["location"] == "/sites/open?wolt=softie&path=/evil.html"
+    assert "<script>" not in old.text
+
+    assert "<script>" not in lodge.get("/evil.html").text   # the catch-all
+    assert lodge.get("/sites").json()[0]["url"].startswith("/sites/open?wolt=")
+    assert lodge.get("/sites/softie").json()["url"] == "/sites/open?wolt=softie&path=/"
+
+
+def test_static_app_files_are_not_served_on_the_lodges_origin(locked, monkeypatch):
+    root, _ = locked
+    app = root / "apps" / "board"
+    app.mkdir(parents=True)
+    (app / "woltspace.json").write_text('{"name": "board", "port": 4100, "keeper": "softie"}')
+    (app / "index.html").write_text("<script>fetch('/sessions')</script>")
+    monkeypatch.setattr(server_app, "app_dir", lambda name: root / "apps" / name)
+    monkeypatch.setattr(server_app, "running_apps", lambda: [])
+    response = _paired(root).get("/app/board/")
+    assert response.status_code == 404 and "<script>" not in response.text
+
+
+def test_auth_off_keeps_the_old_site_links(running_mill):
+    assert _lodge("localhost:7777").get("/sites/softie").json()["url"] == "/wolt/softie/site/"

@@ -2920,8 +2920,19 @@ async def list_sites_api():
         if not wolt_dir.is_dir() or wolt_dir.name.startswith("."):
             continue
         if (wolt_dir / "wolt" / "site").is_dir():
-            found.append({"wolt": wolt_dir.name, "url": f"/wolt/{wolt_dir.name}/site/"})
+            found.append({"wolt": wolt_dir.name, "url": _site_link(wolt_dir.name)})
     return found
+
+
+def _site_link(wolt_name: str, path: str = "/") -> str:
+    """Where a wolt's site opens: on its own origin when lodge auth is on.
+
+    With lodge auth on, the lodge never serves a wolt's pages on its own
+    origin, where their script would run as the owner.
+    """
+    if lodge_auth.enabled():
+        return f"/sites/open?wolt={wolt_name.lower()}&path={quote(_safe_next(path), safe='/')}"
+    return f"/wolt/{wolt_name}/site{path}"
 
 
 @app.get("/sites/{wolt_name}")
@@ -2930,7 +2941,7 @@ async def site_detail(wolt_name: str):
     sdir = site_dir(wolt_name)
     return {
         "wolt": wolt_name,
-        "url": f"/wolt/{wolt_name}/site/",
+        "url": _site_link(wolt_name),
         "dir_exists": sdir.exists(),
     }
 
@@ -2941,6 +2952,8 @@ async def serve_wolt_site(wolt_name: str, request: Request, path: str = ""):
     """Serve a wolt's site directly from disk, injecting the livereload script."""
     if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_-]*", wolt_name):
         return JSONResponse({"error": "invalid wolt name"}, status_code=400)
+    if lodge_auth.enabled():
+        return RedirectResponse(_site_link(wolt_name, "/" + path), status_code=303)
 
     wolt_dir = WOLTS_DIR / wolt_name
     if not wolt_dir.exists():
@@ -3157,6 +3170,11 @@ async def serve_app(app_name: str, request: Request, path: str = ""):
             port_part = f":{request.url.port}" if request.url.port else ""
             target = f"{request.url.scheme}://{app_name}.localhost{port_part}{sub_path}{qs}"
         return RedirectResponse(target, status_code=302)
+
+    # A static app's files are a wolt's pages too: with lodge auth on they
+    # never run on the lodge's origin.
+    if lodge_auth.enabled():
+        return PlainTextResponse(f"{app_name} isn't running", status_code=404)
 
     # Static fallback: serve from dist/ when not running
     dist_dir = adir / "dist"
@@ -3490,8 +3508,9 @@ async def catch_all(path: str, request: Request):
             "cache_bust": int(time.time()),
         })
 
-    # Try wolt site first, then platform public dir
-    resp = await _serve_static(f"/{path}", request)
+    # Try wolt site first, then platform public dir. With lodge auth on, a
+    # wolt's own pages never run on the lodge's origin.
+    resp = None if lodge_auth.enabled() else await _serve_static(f"/{path}", request)
     if resp:
         return resp
     resp = await _serve_platform_file(path)
