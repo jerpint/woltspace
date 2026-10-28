@@ -109,13 +109,10 @@ from apps import (
     app_dir,
     app_log_file,
     running_apps,
-    share_app,
     start_app,
     stop_app,
     restart_app,
     set_app_keeper,
-    unshare_all_apps,
-    unshare_app,
 )
 from sites import ensure_site, site_dir
 import wolfcore
@@ -420,27 +417,6 @@ def _extract_app_subdomain(host_header: str) -> str | None:
     return None
 
 
-class AppWebSocketRoutingMiddleware:
-    """Route every app-host websocket to the app proxy before FastAPI routing."""
-
-    def __init__(self, inner):
-        self.inner = inner
-
-    async def __call__(self, scope, receive, send):
-        if scope.get("type") == "websocket":
-            headers = {
-                key.decode("latin-1").lower(): value.decode("latin-1")
-                for key, value in scope.get("headers", [])
-            }
-            if _extract_app_subdomain(headers.get("host", "")) is not None:
-                original = scope.get("path", "/")
-                scope = dict(scope)
-                scope["path"] = f"/__woltspace_app_ws__{original}"
-                scope["raw_path"] = scope["path"].encode()
-        await self.inner(scope, receive, send)
-
-
-app.add_middleware(AppWebSocketRoutingMiddleware)
 
 
 from .app_proxy import APP_PROXY_TIMEOUT, APP_WS_MAX_MESSAGE  # noqa: E402
@@ -448,86 +424,6 @@ from .app_proxy import APP_PROXY_TIMEOUT, APP_WS_MAX_MESSAGE  # noqa: E402
 
 def _is_lodge_key(token: str) -> bool:
     return bool(token) and lodge_auth.key_scope(WOLTS_DIR, token) is not None
-
-
-def _app_http_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=APP_PROXY_TIMEOUT)
-
-
-@app.middleware("http")
-async def subdomain_proxy(request: Request, call_next):
-    """Proxy subdomain requests to app ports.
-
-    blog.localhost:7777 → proxy to localhost:{blog's port}
-    corework.woltspace.com → proxy to localhost:{corework's port}
-    Any *.localhost or *.{tunnel_domain} hostname triggers this.
-    """
-    host = request.headers.get("host") or ""
-    app_name = _extract_app_subdomain(host)
-    if app_name:
-        try:
-            from apps import running_apps
-            running = {r["name"]: r for r in running_apps()}
-            run_state = running.get(app_name)
-            if not run_state:
-                return HTMLResponse(
-                    f"<h1>App '{app_name}' is not running</h1>",
-                    status_code=503,
-                )
-            port = run_state["port"]
-            # Build the upstream URL preserving path and query string
-            path = request.url.path
-            qs = f"?{request.url.query}" if request.url.query else ""
-            upstream = f"http://localhost:{port}{path}{qs}"
-            # Stream both ways: the request body goes up as it arrives, and the
-            # response (SSE, Vite HMR, video) comes back without buffering.
-            # Cloudflare Access credentials never reach the app (app_proxy).
-            # A request without a body sends none: an empty chunked body would
-            # be read as a stray request by simple keep-alive servers.
-            has_body = "content-length" in request.headers or "transfer-encoding" in request.headers
-            client = _app_http_client()
-            req = client.build_request(
-                method=request.method,
-                url=upstream,
-                headers=upstream_request_headers(request.headers.items(), port,
-                                                 is_lodge_key=_is_lodge_key),
-                content=request.stream() if has_body else None,
-            )
-            try:
-                resp = await client.send(req, stream=True, follow_redirects=False)
-            except BaseException:
-                await client.aclose()
-                raise
-
-            # The body is relayed raw (still compressed), so content-encoding
-            # and content-length stay true, and 206 Range replies validate.
-            async def stream_body():
-                try:
-                    async for chunk in resp.aiter_raw():
-                        yield chunk
-                finally:
-                    await resp.aclose()
-                    await client.aclose()
-
-            response = StreamingResponse(content=stream_body(), status_code=resp.status_code)
-            response.raw_headers = [
-                (name.encode("latin-1"), value.encode("latin-1"))
-                for name, value in client_response_headers(resp.headers.multi_items())
-            ]
-            return response
-        except httpx.ConnectError:
-            return HTMLResponse(
-                f"<h1>Cannot reach app '{app_name}' on port {port}</h1>",
-                status_code=502,
-            )
-        except httpx.TimeoutException:
-            return HTMLResponse(
-                f"<h1>App '{app_name}' did not answer in time</h1>",
-                status_code=504,
-            )
-        except Exception as e:
-            return HTMLResponse(f"<h1>Proxy error: {e}</h1>", status_code=502)
-    return await call_next(request)
 
 
 # Security boundary for the localhost control plane. Host is checked on every
@@ -620,7 +516,6 @@ class LodgeAuthMiddleware:
         path = scope.get("path", "/")
         if (
             _extract_app_subdomain(headers.get("host", ""))
-            or path.startswith("/__woltspace_app_ws__/")
             or path in _LODGE_AUTH_OPEN_PATHS
             or path.startswith("/static/")
         ):
@@ -739,6 +634,7 @@ class _Content:
     kind: str        # "site" or "app"
     name: str
     grant_label: str
+    remote: str = ""   # the public host, when it came through the tunnel
 
     @property
     def open_path(self) -> str:
@@ -753,7 +649,77 @@ def _content_host(host: str) -> _Content | None:
     app_host = parse_app_host(host)
     if app_host is not None:
         return _Content("app", app_host.name, f"app:{app_host.name}")
+    remote = _remote_content_host(host)
+    if remote is not None:
+        return remote
     return None
+
+
+def _remote_content_host(host_header: str) -> _Content | None:
+    """`<app>.<tunnel domain>` and `site-<wolt>.<tunnel domain>`: an app or a
+    wolt's site reached through Cloudflare. `site-` is reserved for sites, so
+    no app can take a site's name."""
+    from .content_hosts import split_host
+    split = split_host(host_header)
+    domain = tunnel_mgr.get_tunnel_domain().lower().rstrip(".")
+    if split is None or not domain:
+        return None
+    host, _port = split
+    if host == tunnel_mgr.get_tunnel_hostname().lower().rstrip(".") or not host.endswith(f".{domain}"):
+        return None
+    label = host.removesuffix(f".{domain}")
+    if label.startswith("site-"):
+        wolt = label.removeprefix("site-")
+        if parse_site_host(f"{wolt}.sites.localhost") is None:
+            return None
+        return _Content("site", wolt, wolt, remote=host)
+    if parse_app_host(f"{label}.localhost") is None:
+        return None
+    return _Content("app", label, f"app:{label}", remote=host)
+
+
+async def _remote_visitor(headers: dict[str, str]):
+    """(identity, expires_at) for a request through the tunnel, or (None, None).
+
+    Cloudflare Access has let the visitor in; the lodge checks the token it
+    attached (signature, audience, issuer, expiry) against the apps' audience
+    and the owner's email. Without Access settings, nobody gets in.
+    """
+    from .access import access_token_verifier, load_access_settings
+    try:
+        settings = load_access_settings(Path(WOLTS_DIR))
+    except RuntimeError:
+        return None, None
+    token = headers.get("cf-access-jwt-assertion", "").strip()
+    if settings is None or not token:
+        return None, None
+    try:
+        claims = await access_token_verifier.verify(token, settings, settings.apps_aud)
+    except Exception:
+        return None, None
+    email = str(claims.get("email") or "").strip().lower()
+    if email != settings.owner_email:
+        return None, None
+    exp = claims.get("exp")
+    return "owner", float(exp) if isinstance(exp, (int, float)) else None
+
+
+def _as_local(scope, content: "_Content") -> dict:
+    """The same request as if it had come to `<app>.localhost` on this lodge's
+    port: the Mill names apps by their local host, and an Origin from the
+    app's public page becomes the local one so the Mill's same-page check holds."""
+    local = (f"{content.name}.sites.localhost:{PORT}" if content.kind == "site"
+             else f"{content.name}.localhost:{PORT}")
+    public_origin = f"https://{content.remote}"
+    rewritten = []
+    for key, value in scope.get("headers", []):
+        name = key.lower()
+        if name == b"host":
+            value = local.encode("latin-1")
+        elif name == b"origin" and value.decode("latin-1").rstrip("/") == public_origin:
+            value = f"http://{local}".encode("latin-1")
+        rewritten.append((key, value))
+    return dict(scope, headers=rewritten)
 
 
 class MillForwardMiddleware:
@@ -776,6 +742,8 @@ class MillForwardMiddleware:
                    for key, value in scope.get("headers", [])}
         content = contents[0]
         _host, port = mill_server_split(hosts[0])
+        if content.remote:
+            return await self._remote(scope, receive, send, headers, content)
         if scope["type"] == "http" and scope.get("path") == _SITE_GRANT_PATH:
             return await self._grant(scope, receive, send, content.grant_label)
         visitor = _site_visitor(scope, headers, content.grant_label)
@@ -793,6 +761,19 @@ class MillForwardMiddleware:
         if scope["type"] == "websocket":
             return await self._websocket(scope, receive, send, headers, content)
         return await self._http(scope, receive, send, headers, content)
+
+    async def _remote(self, scope, receive, send, headers, content):
+        """A site or app through the tunnel: Access says who, then the same
+        path as local."""
+        visitor, expires_at = await _remote_visitor(headers)
+        if visitor is None:
+            return await self._refuse(scope, receive, send, 403, "This app is the owner's")
+        local = _as_local(scope, content)
+        local_headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in local["headers"]}
+        if scope["type"] == "websocket":
+            return await self._websocket(local, receive, send, local_headers, content,
+                                         expires_at=expires_at)
+        return await self._http(local, receive, send, local_headers, content)
 
     @staticmethod
     async def _refuse(scope, receive, send, status, message):
@@ -866,7 +847,7 @@ class MillForwardMiddleware:
         ]
         return await response(scope, receive, send)
 
-    async def _websocket(self, scope, receive, send, headers, content):
+    async def _websocket(self, scope, receive, send, headers, content, expires_at=None):
         from websockets.asyncio.client import unix_connect
         ws = WebSocket(scope, receive, send)
         query = scope.get("query_string") or b""
@@ -891,7 +872,11 @@ class MillForwardMiddleware:
 
         async def authority_holds():
             # On a monotonic timer, whatever the traffic: an expired or
-            # forgotten site session ends the socket too.
+            # forgotten session ends the socket too. Through the tunnel, the
+            # Access token's expiry is the bound.
+            if content.remote:
+                await asyncio.sleep(max(0.0, (expires_at or time.time()) - time.time()))
+                return
             while True:
                 await asyncio.sleep(SITE_SOCKET_RECHECK_SECONDS)
                 if _site_visitor(scope, headers, label) is None:
@@ -948,6 +933,18 @@ def mill_server_split(host_header: str) -> tuple[str, int | None]:
 app.add_middleware(MillForwardMiddleware)
 
 
+def _remote_base(request: Request, label: str) -> str:
+    """`https://<label>.<tunnel domain>` when the lodge was reached through the
+    tunnel, else "": a remote browser can't open a `*.localhost` address."""
+    from .content_hosts import split_host
+    host = (split_host(request.headers.get("host", "")) or ("", None))[0]
+    lodge_host = tunnel_mgr.get_tunnel_hostname().lower().rstrip(".")
+    domain = tunnel_mgr.get_tunnel_domain().lower().rstrip(".")
+    if host and domain and host == lodge_host:
+        return f"https://{label}.{domain}"
+    return ""
+
+
 @app.get("/apps/open")
 async def open_app(request: Request, app_name: str = Query("", alias="app"), path: str = "/"):
     """Open an app on its own origin, with a one-time grant when auth is on."""
@@ -960,6 +957,9 @@ async def open_app(request: Request, app_name: str = Query("", alias="app"), pat
     target = _safe_next(path)
     base = f"http://{name}.localhost{f':{port}' if port else ''}"
     headers = {"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"}
+    remote = _remote_base(request, name)
+    if remote:
+        return RedirectResponse(remote + target, status_code=303, headers=headers)
     if not lodge_auth.enabled():
         return RedirectResponse(base + target, status_code=303, headers=headers)
     code = lodge_auth.new_site_grant(WOLTS_DIR, f"app:{name}")
@@ -980,6 +980,10 @@ async def open_site(request: Request, wolt: str = "", path: str = "/"):
     _host, port = mill_server_split(request.headers.get("host", ""))
     target = _safe_next(path)
     headers = {"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"}
+    remote = _remote_base(request, f"site-{label}")
+    if remote:
+        # Through the tunnel: Cloudflare Access is the site's door.
+        return RedirectResponse(remote + target, status_code=303, headers=headers)
     if not lodge_auth.enabled():
         return RedirectResponse(_site_url(label, port, target), status_code=303, headers=headers)
     code = lodge_auth.new_site_grant(WOLTS_DIR, label)
@@ -1928,8 +1932,8 @@ async def history_meta(spark_id: str):
 OPAQUE_PAGE_CSP = "sandbox allow-scripts allow-forms allow-popups allow-modals"
 
 
-def _opaque_when_locked() -> dict[str, str]:
-    return {"content-security-policy": OPAQUE_PAGE_CSP} if lodge_auth.enabled() else {}
+def _opaque_page() -> dict[str, str]:
+    return {"content-security-policy": OPAQUE_PAGE_CSP}
 
 
 @app.get("/history/{spark_id}")
@@ -1939,7 +1943,7 @@ async def history_detail(spark_id: str):
         return HTMLResponse(
             data["html"],
             headers={
-                **_opaque_when_locked(),
+                **_opaque_page(),
                 "x-spark-id": data["id"],
                 "x-spark-parent": data.get("parentId") or "",
                 "x-spark-child": data.get("childId") or "",
@@ -2922,45 +2926,6 @@ async def app_update(name: str, request: Request):
         return JSONResponse({"error": str(exc)}, status_code=404)
 
 
-@app.post("/apps/{name}/share")
-async def app_share(name: str):
-    """Start a cloudflared tunnel to the app port and return the public URL."""
-    if invalid := _invalid_app_name(name):
-        return invalid
-    import asyncio
-    try:
-        # share_app blocks (polls cloudflared log up to 30s) — run in thread
-        result = await asyncio.to_thread(share_app, name)
-        print(f"[apps] shared {name} at {result['tunnel_url']}")
-        return result
-    except ValueError as e:
-        return JSONResponse({"error": str(e)}, status_code=404)
-    except RuntimeError as e:
-        return JSONResponse({"error": str(e)}, status_code=503)
-
-
-@app.post("/apps/{name}/unshare")
-async def app_unshare(name: str):
-    """Stop the cloudflared tunnel for an app."""
-    if invalid := _invalid_app_name(name):
-        return invalid
-    was_sharing = unshare_app(name)
-    if was_sharing:
-        print(f"[apps] unshared {name}")
-        return {"ok": True, "name": name}
-    return JSONResponse({"error": f"{name} has no active tunnel"}, status_code=404)
-
-
-@app.post("/apps/unshare-all")
-async def app_unshare_all():
-    """Panic button — stop ALL app tunnels."""
-    unshared = unshare_all_apps()
-    print(f"[apps] unshare-all: stopped {len(unshared)} tunnels: {unshared}")
-    return {"ok": True, "unshared": unshared}
-
-
-# --- Session resume ---
-
 @app.post("/sessions/{name}/resume")
 async def session_resume(name: str, request: Request):
     """Resume a stopped/orphaned session by name."""
@@ -3037,14 +3002,12 @@ def _open_site_page(wolt_name: str, path: str) -> str:
 
 
 def _site_link(wolt_name: str, path: str = "/") -> str:
-    """Where a wolt's site opens: on its own origin when lodge auth is on.
+    """Where a wolt's site opens: on its own origin, through the Mill.
 
-    With lodge auth on, the lodge never serves a wolt's pages on its own
-    origin, where their script would run as the owner.
+    The lodge never serves a wolt's pages on its own origin, where their
+    script would run as the owner.
     """
-    if lodge_auth.enabled():
-        return f"/sites/open?wolt={wolt_name.lower()}&path={quote(_safe_next(path), safe='/')}"
-    return f"/wolt/{wolt_name}/site{path}"
+    return f"/sites/open?wolt={wolt_name.lower()}&path={quote(_safe_next(path), safe='/')}"
 
 
 @app.get("/sites/{wolt_name}")
@@ -3061,80 +3024,15 @@ async def site_detail(wolt_name: str):
 @app.api_route("/wolt/{wolt_name}/site/{path:path}", methods=["GET", "HEAD"])
 @app.api_route("/wolt/{wolt_name}/site", methods=["GET", "HEAD"])
 async def serve_wolt_site(wolt_name: str, request: Request, path: str = ""):
-    """Serve a wolt's site directly from disk, injecting the livereload script."""
+    """An old site link: the site lives on its own origin now, through the Mill."""
     if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_-]*", wolt_name):
         return JSONResponse({"error": "invalid wolt name"}, status_code=400)
-    if lodge_auth.enabled():
-        if request.headers.get("sec-fetch-dest", "") in ("iframe", "frame"):
-            # A frame can't keep the site's cookie from a cross-site
-            # navigation, so redirecting would only spend a grant on a page
-            # that then can't open. The lodge's own frame offers a link.
-            return HTMLResponse(_open_site_page(wolt_name, "/" + path))
-        return RedirectResponse(_site_link(wolt_name, "/" + path), status_code=303)
-
-    wolt_dir = WOLTS_DIR / wolt_name
-    if not wolt_dir.exists():
-        # Self-refresh: the viewport can load this URL before the wolt dir
-        # exists (first-boot race) — recover without a manual refresh.
-        return HTMLResponse(
-            f"<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head>"
-            f"<body>Wolt {wolt_name} not found"
-            f"<script>setTimeout(()=>location.reload(), 2000)</script></body></html>",
-            status_code=404,
-        )
-
-    # HTTP GET stays read-only. Session creation/resume owns site scaffolding;
-    # merely requesting a guessed wolt URL must never create files.
-    sdir = site_dir(wolt_name)
-    if not sdir.is_dir():
-        return PlainTextResponse("Site not found", status_code=404)
-
-    target = (sdir / path) if path else sdir
-    # Security: stay inside the site dir (also catches symlinks pointing out)
-    try:
-        target.resolve().relative_to(sdir.resolve())
-    except ValueError:
-        return PlainTextResponse("Not found", status_code=404)
-
-    if target.is_dir():
-        # Canonicalize directory URLs to a trailing slash so relative
-        # links inside index.html resolve against the directory.
-        if not request.url.path.endswith("/"):
-            return RedirectResponse(request.url.path + "/", status_code=308)
-        # A site with no home page yet lands on the wolt's About page, which
-        # the lodge renders from identity.md - a real page from minute zero.
-        if not path and not (target / "index.html").is_file():
-            return RedirectResponse(f"/wolt/{wolt_name}/_/", status_code=307)
-        target = target / "index.html"
-    if not target.is_file():
-        return PlainTextResponse("Not found", status_code=404)
-
-    if target.suffix in (".html", ".htm"):
-        text = target.read_text(encoding="utf-8", errors="replace")
-        # Inject the reload script using a wolt-scoped WS path
-        reload_script = (
-            '<script>(function(){'
-            'var p=location.protocol==="https:"?"wss:":"ws:";'
-            f'function c(){{var ws=new WebSocket(p+"//"+location.host+"/wolt/{wolt_name}/site/livereload");'
-            'ws.onmessage=function(){location.reload()};'
-            'ws.onclose=function(){setTimeout(c,3000)}}'
-            'c()})()</script>'
-        )
-        if '</body>' in text:
-            text = text.replace('</body>', reload_script + '</body>')
-        else:
-            text += reload_script
-        # The site shell: nav drawer + built-in pages, owned by the lodge and
-        # skinned by the wolt's site.json. See container/lib/site_shell.py.
-        site_cfg = load_site_config(sdir)
-        if shell_wanted(site_cfg, text):
-            text = inject_shell(text, shell_manifest(wolt_name, wolt_dir, sdir, site_cfg))
-        return HTMLResponse(
-            text, headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
-        )
-    return FileResponse(
-        target, headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
-    )
+    if lodge_auth.enabled() and request.headers.get("sec-fetch-dest", "") in ("iframe", "frame"):
+        # A frame can't keep the site's cookie from a cross-site navigation,
+        # so redirecting would only spend a grant on a page that then can't
+        # open. The lodge's own frame offers a link.
+        return HTMLResponse(_open_site_page(wolt_name, "/" + path))
+    return RedirectResponse(_site_link(wolt_name, "/" + path), status_code=303)
 
 
 _WOLT_NAME_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9_-]*")
@@ -3249,86 +3147,13 @@ async def site_livereload_ws(wolt_name: str, ws: WebSocket):
 @app.get("/app/{app_name}/{path:path}")
 @app.get("/app/{app_name}")
 async def serve_app(app_name: str, request: Request, path: str = ""):
-    """Serve an app — static fallback only (dist/ or root files when not running).
-
-    When an app is running, the viewport iframe connects directly to the
-    app port (no proxy). Accessing /app/{name}/ while it's running
-    redirects to the direct port URL so the browser lands on the right origin.
-    """
+    """An old app link: apps live on their own origin, through the Mill."""
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", app_name):
         return JSONResponse({"error": "invalid app name"}, status_code=400)
-    adir = app_dir(app_name)
-    if not adir.exists():
-        return HTMLResponse(_app_not_found(app_name), status_code=404)
-
-    sub_path = "/" + path if path else "/"
-
-    # When running, redirect to the app's own origin at root. The
-    # subdomain_proxy middleware forwards that host to the app's in-container
-    # port, so the app always sees itself at the root of its own hostname —
-    # identical behavior in a browser, the PWA, the desktop shell, and through
-    # the tunnel. We never redirect to the raw app port: it isn't published to
-    # the host (only 7777 is), so a direct-port redirect is a dead end for
-    # every client except a same-host browser that happens to expose the port.
-    running = {r["name"]: r for r in running_apps()}
-    run_state = running.get(app_name)
-    if run_state:
-        qs = f"?{request.url.query}" if request.url.query else ""
-        td = tunnel_mgr.get_tunnel_domain()
-        hostname = request.url.hostname or ""
-        is_local = hostname in ("localhost", "127.0.0.1") or hostname.endswith(".localhost")
-        if td and not is_local:
-            # Public/tunnel access → app subdomain on the tunnel domain.
-            target = f"{request.url.scheme}://{app_name}.{td}{sub_path}{qs}"
-        else:
-            # Local access (localhost, 127.0.0.1, or the desktop shell) → app
-            # subdomain on .localhost, preserving the lodge's port. *.localhost
-            # resolves to loopback, so WebKit/Chromium reach it without DNS.
-            port_part = f":{request.url.port}" if request.url.port else ""
-            target = f"{request.url.scheme}://{app_name}.localhost{port_part}{sub_path}{qs}"
-        return RedirectResponse(target, status_code=302)
-
-    # A static app's files are a wolt's pages too: with lodge auth on they
-    # never run on the lodge's origin.
-    if lodge_auth.enabled():
-        return PlainTextResponse(f"{app_name} isn't running", status_code=404)
-
-    # Static fallback: serve from dist/ when not running
-    dist_dir = adir / "dist"
-    if dist_dir.exists():
-        candidates = [dist_dir / path, dist_dir / path / "index.html"]
-        for candidate in candidates:
-            resolved = candidate.resolve()
-            if not str(resolved).startswith(str(dist_dir.resolve())):
-                continue
-            if resolved.exists() and resolved.is_file():
-                ext = resolved.suffix
-                mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
-                return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
-        return PlainTextResponse("Not found in app", status_code=404)
-
-    # Static fallback: serve files directly from app root (simple HTML apps)
-    candidates = [adir / path, adir / path / "index.html"]
-    if not path:
-        candidates = [adir / "index.html"]
-    for candidate in candidates:
-        resolved = candidate.resolve()
-        if not str(resolved).startswith(str(adir.resolve())):
-            continue
-        if resolved.exists() and resolved.is_file():
-            ext = resolved.suffix
-            mime = MIME_TYPES.get(ext) or APP_MIME_TYPES.get(ext, "application/octet-stream")
-            return Response(resolved.read_bytes(), media_type=mime, headers={"Cache-Control": "no-cache"})
-
-    # Off-state placeholder — app exists but has no servable content
-    app_obj = get_app(app_name)
-    return HTMLResponse(_app_placeholder(app_name, app_obj))
+    target = quote(_safe_next("/" + path), safe="/")
+    return RedirectResponse(f"/apps/open?app={app_name.lower()}&path={target}", status_code=303)
 
 
-# --- Tools ---
-
-# jerpint: this is for the telegram bots right? good idea to have them all in one place, but maybe we can have this in a
-# separate /bot/ route
 @app.get("/tools")
 async def list_tools():
     return tool_registry.list_all()
@@ -3374,12 +3199,11 @@ async def proxy_tool(tool_name: str, path: str, request: Request):
                 for name, value in client_response_headers(resp.headers.multi_items())
                 if name.lower() not in {"content-encoding", "content-length"}
             ] + [(b"content-length", str(len(resp.content)).encode())]
-            # A tool's page is a wolt's page too: opaque on the lodge's origin
-            # when auth is on, so its script can't use the owner's cookie.
-            if lodge_auth.enabled():
-                reply.raw_headers = [(k, v) for k, v in reply.raw_headers
-                                     if k.lower() != b"content-security-policy"]
-                reply.raw_headers.append((b"content-security-policy", OPAQUE_PAGE_CSP.encode()))
+            # A tool's page is a wolt's page too: opaque on the lodge's origin,
+            # so its script can't act as the owner.
+            reply.raw_headers = [(k, v) for k, v in reply.raw_headers
+                                 if k.lower() != b"content-security-policy"]
+            reply.raw_headers.append((b"content-security-policy", OPAQUE_PAGE_CSP.encode()))
             return reply
         except httpx.ConnectError:
             return PlainTextResponse("tool unavailable", status_code=502)
@@ -3464,58 +3288,6 @@ async def tui_proxy(ws: WebSocket):
         for task in tasks:
             task.cancel()
         await attachment.close()
-
-
-@app.websocket("/__woltspace_app_ws__/{path:path}")
-async def subdomain_ws_proxy(ws: WebSocket, path: str):
-    """Proxy WebSocket connections for subdomain apps (e.g. Vite HMR).
-
-    blog.localhost:7777/any/path → ws://localhost:{port}/any/path
-    corework.woltspace.com/any/path → ws://localhost:{port}/any/path
-    """
-    import asyncio
-    import websockets
-
-    if not _websocket_request_allowed(ws):
-        await ws.close(code=1008)
-        return
-
-    host = ws.headers.get("host") or ""
-    app_name = _extract_app_subdomain(host)
-    if not app_name:
-        await ws.close(code=1008)
-        return
-    from apps import running_apps
-    running = {r["name"]: r for r in running_apps()}
-    run_state = running.get(app_name)
-    if not run_state:
-        await ws.close(code=1008)
-        return
-
-    port = run_state["port"]
-    # Preserve subprotocols (Vite uses "vite-ping" for keep-alive checks)
-    subprotocols = ws.headers.get("sec-websocket-protocol", "").split(", ")
-    subprotocols = [s for s in subprotocols if s]
-    qs = f"?{ws.query_params}" if ws.query_params else ""
-    upstream_url = f"ws://localhost:{port}/{path}{qs}"
-
-    await ws.accept(subprotocol=subprotocols[0] if subprotocols else None)
-    try:
-        async with websockets.connect(
-            upstream_url,
-            subprotocols=subprotocols or None,
-            additional_headers=websocket_upstream_headers(ws.headers.items(), port,
-                                                          is_lodge_key=_is_lodge_key),
-            max_size=APP_WS_MAX_MESSAGE,
-            proxy=None,
-        ) as upstream:
-            await relay_websocket(ws, upstream)
-    except Exception:
-        pass
-    try:
-        await ws.close()
-    except Exception:
-        pass
 
 
 # --- Pages (HTML) ---
@@ -3631,11 +3403,8 @@ async def catch_all(path: str, request: Request):
             "cache_bust": int(time.time()),
         })
 
-    # Try wolt site first, then platform public dir. With lodge auth on, a
-    # wolt's own pages never run on the lodge's origin.
-    resp = None if lodge_auth.enabled() else await _serve_static(f"/{path}", request)
-    if resp:
-        return resp
+    # The platform's public files. A wolt's own pages never run on the
+    # lodge's origin: they're on their site's, through the Mill.
     resp = await _serve_platform_file(path)
     if resp:
         return resp

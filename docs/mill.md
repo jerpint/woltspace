@@ -9,12 +9,15 @@ The Mill serves wolt sites and apps, each on an origin of its own, so a page a w
 - **The Mill itself:** its own process, supervised like the other connectors. It listens only on a unix socket, `<data root>/.space/run/mill/mill.sock`. The socket itself is `0666`, as uvicorn makes it; its folder is the owner's alone (`0700`), and that's what keeps other users out. It has no TCP port.
 - **If the Mill is down:** sites answer `502` and the lodge keeps working.
 
-The old `/wolt/<name>/site/` address keeps working while lodge auth is off. With lodge auth on, the lodge never serves a wolt's pages on its own origin:
-- the old address redirects to `/sites/open`. Inside one of the lodge's own frames (the wolt page's site tab, a session's viewport) it shows an "open it" link instead, because a frame can't keep the site's cookie;
-- the lodge's root no longer falls back to the current wolt's site files;
-- a static app's files aren't served from `/app/<name>/` until the Mill serves apps.
+The old addresses redirect: `/wolt/<name>/site/...` goes to `/sites/open`, and `/app/<name>/...` goes to `/apps/open`. The lodge never serves a wolt's pages on its own origin. Inside one of the lodge's own frames, with lodge auth on, the old site address shows an "open it" link instead. The lodge's sparks (`/history/...`) and tool pages (`/tools/...`) run in an opaque sandbox.
 
-Remote sites (through a tunnel) come later.
+## Through the tunnel
+
+`https://<app>.<your domain>/` and `https://site-<wolt>.<your domain>/` go through the lodge's port to the Mill, but only after the lodge checks the Cloudflare Access token: signature, audience (the apps' Access application), issuer and expiry, for the owner's email. The token never goes further. That needs `access` settings in `woltspace.json` (see `container/migrations/v0.6.0.md`). Without them, nothing through the tunnel opens. `site-` is reserved for sites, so no app can take that name.
+
+From the lodge reached through the tunnel, `/sites/open` and `/apps/open` send the browser to those public addresses.
+
+Cloudflare's rule still points everything at the lodge's port. Pointing site and app hosts straight at the Mill's socket (`unix:`) waits until the Mill checks Access tokens itself.
 
 **The trust limit:** the socket's folder keeps other users of the machine out. A program running as the owner (a wolt's tools, an app) can still connect to it and claim to be the owner. The Mill protects the owner's browser from a wolt's pages; it does not contain code running as the owner.
 
@@ -40,7 +43,7 @@ The Mill forwards only content-negotiation, caching, range and browser-provenanc
 
 ## Apps
 
-`http://<app>.localhost:7777/` goes through the Mill too. Apps reached through a tunnel still go through the lodge's own proxy until the switch-over step.
+`http://<app>.localhost:7777/` goes through the Mill too. Apps reached through the tunnel go through the Mill too (see above).
 
 - **Running apps:** the Mill proxies to the app's process on `127.0.0.1`, both ways streamed. That covers HTTP, uploads, server-sent events and WebSockets with their subprotocol. The app's own cookies and `Authorization` pass through. The lodge's and Access's credentials never do.
 - **Static apps** (no `start` command): the Mill serves the app's real `dist/` folder if there is one, else its folder, with the site policy headers. Nothing whose real path has a dot-named part (`.git`, `.env`) is served, even through a symlink.

@@ -114,63 +114,14 @@ class TestSiteConfig:
 
 
 class TestInjection:
-    def test_site_page_gets_manifest_and_shell_before_body_end(self, client):
-        html = client.get("/wolt/testwolt/site/").text
-        assert re.search(r'<script src="/static/wolt-shell/shell\.js\?v=\d+-\d+"></script>', html)
-        assert html.index("shell.js") < html.rindex("</body>")
-        m = manifest_of(html)
-        assert m["wolt"]["name"] == "testwolt" and m["wolt"]["type"] == "beaver"
-        assert m["base"] == "/wolt/testwolt/site/" and m["builtin"] == "/wolt/testwolt/_/"
-        assert [i.get("path") for i in m["tree"]][0] == "index.html"
+    """A wolt's pages are served by the Mill, on their own origin, as written;
+    the old address redirects there. The shell lives on in the lodge's own
+    built-in pages."""
 
-    def test_livereload_still_injected(self, client):
-        assert "/wolt/testwolt/site/livereload" in client.get("/wolt/testwolt/site/").text
-
-    def test_manifest_carries_the_display_name(self, client, tmp_wolts):
-        cfg_path = tmp_wolts / "testwolt" / "wolt" / "wolt.json"
-        cfg = json.loads(cfg_path.read_text())
-        cfg["display_name"] = "Test Wolt"
-        cfg_path.write_text(json.dumps(cfg))
-        m = manifest_of(client.get("/wolt/testwolt/site/").text)
-        assert m["wolt"]["display_name"] == "Test Wolt"
-        assert m["wolt"]["name"] == "testwolt"
-
-    def test_only_public_wolt_fields_reach_the_page(self, client):
-        html = client.get("/wolt/testwolt/site/").text
-        assert "DO-NOT-LEAK" not in html
-        assert "secret_token" not in html
-
-    def test_site_json_look_is_passed_through(self, client, tmp_wolts):
-        (site_dir(tmp_wolts) / "site.json").write_text(json.dumps({
-            "title": "Dam Works", "tokens": {"accent": "#123456"}, "custom_css": "shell.css", "shell": True,
-        }))
-        m = manifest_of(client.get("/wolt/testwolt/site/").text)
-        assert m["site"] == {"title": "Dam Works", "tokens": {"accent": "#123456"}, "custom_css": "shell.css"}
-
-    def test_takeover_by_site_json(self, client, tmp_wolts):
-        (site_dir(tmp_wolts) / "site.json").write_text('{"shell": false}')
-        html = client.get("/wolt/testwolt/site/").text
-        assert "__WOLT_SHELL__" not in html and SHELL_TAG not in html
-        assert "<h1>home</h1>" in html
-
-    def test_takeover_by_page_meta(self, client, tmp_wolts):
-        (site_dir(tmp_wolts) / "own.html").write_text(
-            '<html><head><meta name="wolt-shell" content="off"></head><body>mine</body></html>')
-        assert SHELL_TAG not in client.get("/wolt/testwolt/site/own.html").text
-
-    def test_assets_untouched(self, client):
-        assert "shell" not in client.get("/wolt/testwolt/site/style.css").text
-
-    def test_page_text_cannot_break_out_of_the_inline_script(self, client, tmp_wolts):
-        (site_dir(tmp_wolts) / "evil.html").write_text(
-            "<title></script><script>alert(1)</script></title><body>x</body>")
-        html = client.get("/wolt/testwolt/site/").text
-        inline = re.search(r"<script>window\.__WOLT_SHELL__=.*?</script>", html, re.S).group(0)
-        # The first </script> after the manifest is its own closing tag, and the
-        # hostile title survives intact as data inside it.
-        assert inline.endswith("};</script>")
-        titles = [i.get("title") for i in manifest_of(html)["tree"]]
-        assert "</script><script>alert(1)</script>" in titles
+    def test_the_old_site_address_redirects_to_the_mill(self, client):
+        response = client.get("/wolt/testwolt/site/", follow_redirects=False)
+        assert response.status_code == 303
+        assert response.headers["location"] == "/sites/open?wolt=testwolt&path=/"
 
     def test_no_body_tag_appends(self):
         out = site_shell.inject_shell("<h1>bare</h1>", {"v": 1})
@@ -207,12 +158,6 @@ class TestBuiltinPages:
         m = client.get("/wolt/testwolt/_/manifest.json").json()
         assert m["wolt"]["role"] == "builds dams"
         assert "secret_token" not in json.dumps(m)
-
-    def test_site_without_home_lands_on_about(self, client, tmp_wolts):
-        (site_dir(tmp_wolts) / "index.html").unlink()
-        resp = client.get("/wolt/testwolt/site/", follow_redirects=False)
-        assert resp.status_code == 307
-        assert resp.headers["location"] == "/wolt/testwolt/_/"
 
     def test_static_shell_assets_are_served(self, client):
         for name in ("shell.js", "shell.css"):

@@ -18,25 +18,21 @@ sys.path.insert(0, str(ROOT / "container" / "lib"))
 
 import apps as apps_lib
 import server.app as server_app
+import server.mill as mill_server
 from server.app_proxy import (
     client_response_headers,
     upstream_request_headers,
     websocket_upstream_headers,
 )
 
-# A tunnel app host: local app hosts go to the Mill, and remote ones still
-# go through this proxy until a remote way in hands them over.
-APP_HOST = "notes.woltspace.test"
-
-
-@pytest.fixture(autouse=True)
-def tunnel(monkeypatch):
-    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
-    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
+# The Mill is where apps are proxied now; the lodge only forwards to it.
+APP_HOST = "notes.localhost:7777"
 
 
 def _client() -> TestClient:
-    return TestClient(server_app.app, base_url=f"http://{APP_HOST}")
+    """The Mill, told by the lodge that this visitor is the owner."""
+    return TestClient(mill_server.Mill(ROOT / "no-wolts"), base_url=f"http://{APP_HOST}",
+                      headers={mill_server.IDENTITY_HEADER: mill_server.OWNER})
 
 
 def _running(monkeypatch, port: int) -> None:
@@ -64,10 +60,10 @@ def _upstream(monkeypatch, handler) -> list[httpx.Request]:
         return httpx.Response(reply.status_code, headers=reply.headers.multi_items(),
                               stream=_Stream(b"".join(reply.stream)))
 
-    monkeypatch.setattr(
-        server_app, "_app_http_client",
-        lambda: httpx.AsyncClient(transport=httpx.MockTransport(record)),
-    )
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient",
+                        lambda **kw: real(transport=httpx.MockTransport(record),
+                                          timeout=kw.get("timeout")))
     _running(monkeypatch, 4999)
     return seen
 
@@ -303,7 +299,7 @@ def test_websocket_handshake_carries_app_cookies_but_no_access_credentials(echo_
         assert ws.receive_text() == "ping"
 
     sent = handshakes[0]
-    assert sent.get_all("Host") == [f"localhost:{port}"]
+    assert sent.get_all("Host") == [f"127.0.0.1:{port}"]  # exactly one, a loopback address
     assert sent["Cookie"] == "app_session=abc"
     assert "cf-access-jwt-assertion" not in sent
     assert "jwt" not in str(sent)
@@ -320,7 +316,7 @@ def test_websocket_handshake_headers_leave_out_what_the_client_library_writes():
 def test_an_over_cap_websocket_message_closes_the_relay(echo_app, monkeypatch):
     port, _ = echo_app
     _running(monkeypatch, port)
-    monkeypatch.setattr(server_app, "APP_WS_MAX_MESSAGE", 1024)
+    monkeypatch.setattr(mill_server, "APP_WS_MAX_MESSAGE", 1024)
 
     with _client().websocket_connect("/hmr", headers={
         "host": APP_HOST, "origin": f"http://{APP_HOST}",
@@ -361,7 +357,7 @@ def silent_app():
 
 def test_an_app_that_never_answers_times_out(silent_app, monkeypatch):
     _running(monkeypatch, silent_app)
-    monkeypatch.setattr(server_app, "APP_PROXY_TIMEOUT", httpx.Timeout(0.5))
+    monkeypatch.setattr(mill_server, "APP_PROXY_TIMEOUT", httpx.Timeout(0.5))
 
     response = _client().get("/")
 

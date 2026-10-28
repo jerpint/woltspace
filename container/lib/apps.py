@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 import lodge_db
 from env_compat import get_env
 from paths import space_apps_dir
-from tunnel import start_cloudflared, stop_cloudflared
+from tunnel import stop_cloudflared
 
 WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 APPS_DIR = WOLTS_DIR / "apps"
@@ -311,15 +311,6 @@ def start_app(name: str) -> dict:
     }
     _write_state(name, state)
 
-    # Auto-share if public=true and sharing is enabled
-    if app.public and SHARING_ENABLED:
-        try:
-            share_result = share_app(name)
-            state["tunnel_url"] = share_result.get("tunnel_url")
-            state["tunnel_pid"] = share_result.get("pid")
-        except Exception:
-            pass  # Non-fatal — app starts even if tunnel fails
-
     return state
 
 
@@ -419,140 +410,3 @@ def set_app_keeper(name: str, keeper: str) -> WoltspaceApp:
         state["keeper"] = keeper
         _write_state(name, state)
     return updated
-
-
-# --- Sharing (cloudflared tunnels) ---
-
-# Env var kill switch — if set to anything falsy, sharing is disabled entirely.
-# Default: sharing is enabled (no env var needed).
-SHARING_ENABLED = os.environ.get("WOLTSPACE_SHARING_ENABLED", "1").lower() not in ("0", "false", "no", "off")
-
-
-def _check_sharing_enabled():
-    """Raise if sharing is disabled by env var."""
-    if not SHARING_ENABLED:
-        raise RuntimeError("Sharing is disabled (WOLTSPACE_SHARING_ENABLED=0)")
-
-
-def _get_subdomain_url(app_name: str) -> str | None:
-    """Return the wildcard subdomain URL for an app, or None if not available."""
-    tunnel_url = os.environ.get("CLOUDFLARE_TUNNEL_URL", "")
-    if not tunnel_url:
-        return None
-    from urllib.parse import urlparse
-    parsed = urlparse(tunnel_url)
-    hostname = parsed.hostname or ""
-    parts = hostname.split(".", 1)
-    if len(parts) != 2:
-        return None
-    return f"{parsed.scheme}://{app_name}.{parts[1]}"
-
-
-def share_app(name: str) -> dict:
-    """Share an app publicly.
-
-    With a named tunnel + custom domain: returns the subdomain URL
-    (e.g. corework.woltspace.com) — no per-app tunnel needed.
-
-    Without a custom domain: falls back to a per-app quick tunnel
-    with --http-host-header localhost for Vite 6+ compatibility.
-
-    Stores tunnel_pid and tunnel_url in the app's apps_running row.
-    Also sets public=true in woltspace.json.
-    Returns dict with tunnel_url and pid.
-    Raises ValueError if app is not running.
-    Raises RuntimeError if sharing is disabled or tunnel fails.
-    """
-    _check_sharing_enabled()
-
-    state = _read_state(name)
-    if not state:
-        raise ValueError(f"App {name} is not running")
-
-    # Subdomain routing: stable URL, no per-app tunnel needed
-    subdomain_url = _get_subdomain_url(name)
-    if subdomain_url:
-        state["tunnel_url"] = subdomain_url
-        state["tunnel_pid"] = None
-        _write_state(name, state)
-        _set_public(name, True)
-        return {"tunnel_url": subdomain_url, "pid": None}
-
-    # Fallback: per-app quick tunnel
-    port = state["port"]
-
-    # Return existing tunnel if still alive
-    tunnel_pid = state.get("tunnel_pid")
-    if tunnel_pid and _is_pid_alive(tunnel_pid):
-        return {
-            "tunnel_url": state.get("tunnel_url", ""),
-            "pid": tunnel_pid,
-        }
-
-    result = start_cloudflared(port=port, host_header="localhost")
-
-    state["tunnel_pid"] = result["pid"]
-    state["tunnel_url"] = result["url"]
-    _write_state(name, state)
-
-    # Persist public=true in woltspace.json
-    _set_public(name, True)
-
-    return {"tunnel_url": result["url"], "pid": result["pid"]}
-
-
-def unshare_app(name: str) -> bool:
-    """Stop the cloudflared tunnel for an app.
-
-    Sets public=false in woltspace.json.
-    Returns True if a tunnel was running and stopped.
-    """
-    state = _read_state(name)
-    if not state:
-        return False
-
-    tunnel_pid = state.get("tunnel_pid")
-    stopped = stop_cloudflared(tunnel_pid) if tunnel_pid else False
-
-    state["tunnel_pid"] = None
-    state["tunnel_url"] = None
-    _write_state(name, state)
-
-    # Persist public=false in woltspace.json
-    _set_public(name, False)
-
-    return stopped or tunnel_pid is not None
-
-
-def unshare_all_apps() -> list[str]:
-    """Panic button — stop ALL cloudflared tunnels across all apps.
-
-    Returns list of app names that were unshared.
-    """
-    unshared = []
-    for state in _all_states():
-        name = state["name"]
-        tunnel_pid = state.get("tunnel_pid")
-        try:
-            if tunnel_pid and stop_cloudflared(tunnel_pid):
-                state["tunnel_pid"] = None
-                state["tunnel_url"] = None
-                _write_state(name, state)
-                _set_public(name, False)
-                unshared.append(name)
-        except (json.JSONDecodeError, OSError):
-            continue
-    return unshared
-
-
-def _set_public(name: str, public: bool) -> None:
-    """Update the public field in an app's woltspace.json."""
-    manifest = app_dir(name) / MANIFEST
-    if not manifest.exists():
-        return
-    try:
-        data = json.loads(manifest.read_text())
-        data["public"] = public
-        manifest.write_text(json.dumps(data, indent=2) + "\n")
-    except (json.JSONDecodeError, OSError):
-        pass

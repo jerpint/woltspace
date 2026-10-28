@@ -91,9 +91,12 @@ class LocalAppNaming:
         if not host.endswith(self.suffix):
             return None
         label = host.removesuffix(self.suffix)
+        if label.startswith(SITE_PREFIX):
+            return None  # reserved: remotely, `site-<wolt>` is a wolt's site
         return label if _APP_LABEL_RE.fullmatch(label) else None
 
 
+SITE_PREFIX = "site-"
 LOCAL_APPS = LocalAppNaming()
 
 

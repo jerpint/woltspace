@@ -184,9 +184,6 @@ WOLT_POLICY = {
     ("POST", "/auto-grants/grant"): False,
     ("POST", "/auto-grants/revoke"): False,
     ("PUT", "/apps/{name}"): False,
-    ("POST", "/apps/{name}/share"): False,
-    ("POST", "/apps/{name}/unshare"): False,
-    ("POST", "/apps/unshare-all"): False,
 }
 
 
@@ -399,41 +396,6 @@ def _paired_client(root) -> TestClient:
     client = _client()
     client.get(f"/pair?code={lodge_auth.new_pairing_code(root)}")
     return client
-
-
-def test_an_app_never_sees_the_lodges_credentials(lodge, monkeypatch):
-    import apps
-    import httpx
-    root, keys = lodge
-    seen = []
-
-    class Empty(httpx.AsyncByteStream):
-        async def __aiter__(self):
-            yield b""
-
-    async def capture(request):
-        seen.append(request)
-        return httpx.Response(200, headers=[("set-cookie", "woltspace-lodge=forged; Path=/"),
-                                            ("set-cookie", "app=1; Path=/")], stream=Empty())
-
-    monkeypatch.setattr(apps, "running_apps", lambda: [{"name": "notes", "port": 4999}])
-    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
-    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
-    monkeypatch.setattr(server_app, "_app_http_client",
-                        lambda: httpx.AsyncClient(transport=httpx.MockTransport(capture)))
-    response = _client().get("/", headers={
-        "host": "notes.woltspace.test",
-        "x-woltspace-key": keys["owner"],
-        "authorization": f"Bearer {keys['wolt']}",
-        "cookie": f"{lodge_auth.COOKIE_PLAIN}-7777=t; {lodge_auth.COOKIE_SECURE}=t; "
-                  "woltspace-site=t; app=1",
-    })
-
-    sent = seen[0].headers
-    assert "x-woltspace-key" not in sent and "authorization" not in sent
-    assert sent["cookie"] == "app=1"
-    assert keys["owner"] not in str(seen[0].headers.raw) and keys["wolt"] not in str(seen[0].headers.raw)
-    assert response.headers.get_list("set-cookie") == ["app=1; Path=/"]
 
 
 def test_an_apps_own_bearer_still_passes(lodge):

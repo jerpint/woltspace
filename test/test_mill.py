@@ -432,8 +432,10 @@ def test_static_app_files_are_not_served_on_the_lodges_origin(locked, monkeypatc
     assert response.status_code == 404 and "<script>" not in response.text
 
 
-def test_auth_off_keeps_the_old_site_links(running_mill):
-    assert _lodge("localhost:7777").get("/sites/softie").json()["url"] == "/wolt/softie/site/"
+def test_with_auth_off_old_site_links_go_to_the_mill_too(running_mill):
+    assert _lodge("localhost:7777").get("/sites/softie").json()["url"] == "/sites/open?wolt=softie&path=/"
+    old = _lodge("localhost:7777").get("/wolt/softie/site/data.txt", follow_redirects=False)
+    assert old.headers["location"] == "/sites/open?wolt=softie&path=/data.txt"
 
 
 # --- What else the lodge shows of a wolt's, and revocation ---------------------------

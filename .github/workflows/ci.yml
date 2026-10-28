@@ -62,6 +62,7 @@ jobs:
           test/test_lodge_auth.py
           test/test_mill.py
           test/test_mill_apps.py
+          test/test_mill_switchover.py
           test/test_vulture_connector.py
           test/test_session_expiry.py
           test/test_session_runtime.py

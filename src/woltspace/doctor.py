@@ -397,6 +397,67 @@ def _graft_runtime_lib(layout: RuntimeLayout) -> None:
         sys.path.insert(0, lib_dir)
 
 
+def _apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
+    """What the Mill can't fix for an app: a wide bind or a shared name.
+
+    Read-only: it reads manifests and changes nothing.
+    """
+    import json
+    apps_dir = layout.wolts_dir / "apps"
+    if not apps_dir.is_dir():
+        return None
+    names: dict[str, list[str]] = {}
+    wide: list[str] = []
+    for manifest in sorted(apps_dir.glob("*/woltspace.json")):
+        try:
+            data = json.loads(manifest.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        name = str(data.get("name") or manifest.parent.name)
+        names.setdefault(name, []).append(manifest.parent.name)
+        if "0.0.0.0" in str(data.get("start") or ""):
+            wide.append(name)
+    shared = {name: dirs for name, dirs in names.items() if len(dirs) > 1}
+    problems = []
+    if wide:
+        problems.append(f"listen on every interface (0.0.0.0): {', '.join(sorted(set(wide)))}")
+    if shared:
+        problems.append("share a name: " + "; ".join(
+            f"{name} in {', '.join(dirs)}" for name, dirs in sorted(shared.items())))
+    if not problems:
+        return DoctorCheck("apps", "pass", f"{sum(len(d) for d in names.values())} apps, all on loopback")
+    return DoctorCheck(
+        "apps", "warn", "apps that " + " and apps that ".join(problems),
+        "Pass `--host $HOST` (the lodge sets HOST=127.0.0.1) instead of 0.0.0.0, so an app is "
+        "reached only through the Mill; give each app its own name.",
+    )
+
+
+def _remote_apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
+    """Apps and sites through a tunnel need Access settings the lodge can check."""
+    import json
+    values = dict(os.environ)
+    if not (values.get("CLOUDFLARE_TUNNEL_URL") or "").strip():
+        return None
+    try:
+        config = json.loads((layout.wolts_dir / "woltspace.json").read_text())
+    except (OSError, ValueError):
+        config = {}
+    access = config.get("access") if isinstance(config, dict) else None
+    if isinstance(access, dict) and access.get("apps_aud") and access.get("lodge_aud") \
+            and access["apps_aud"] != access["lodge_aud"]:
+        return DoctorCheck("remote-apps", "pass", "Access settings for apps through the tunnel")
+    return DoctorCheck(
+        "remote-apps", "warn",
+        "apps and wolt sites through the tunnel are refused: no Access settings, or one Access "
+        "app for both the lodge and its apps",
+        'Add "access" to woltspace.json (team_domain, lodge_aud, apps_aud, owner_email) with a '
+        "second Access application for *.<your domain>, so its audience differs from the lodge's.",
+    )
+
+
 def run_doctor(
     layout: RuntimeLayout, *, check_port: bool = True, as_entrypoint: bool = False
 ) -> list[DoctorCheck]:
@@ -514,6 +575,9 @@ def run_doctor(
             f"{layout.host}:{layout.port} is {'available' if available else 'already in use'}",
             "Stop the existing service or choose --port <free-port>." if not available else "",
         ))
+    for extra in (_apps_check(layout), _remote_apps_check(layout)):
+        if extra is not None:
+            checks.append(extra)
     return checks
 
 
