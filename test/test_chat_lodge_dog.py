@@ -14,10 +14,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "container"))
 sys.path.insert(0, str(ROOT / "container" / "lib"))
 
-import chat_lodge  # noqa: E402
 
+def test_two_dogs_never_overlap(monkeypatch, tmp_path):
+    # The lodge side reads its data root on import: give it a scratch one.
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+    import chat_lodge
 
-def test_two_dogs_never_overlap(monkeypatch):
     running, overlaps = [0], []
     guard = threading.Lock()
 
