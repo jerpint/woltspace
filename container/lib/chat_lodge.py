@@ -364,7 +364,9 @@ class ChatLodge:
     async def _fetch_apps(self) -> list[dict]:
         import httpx
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{self._api()}/apps", timeout=5)
+            import lodge_auth
+            resp = await client.get(f"{self._api()}/apps", timeout=5,
+                                    headers=lodge_auth.client_headers())
             resp.raise_for_status()
             return resp.json()
 

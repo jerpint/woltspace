@@ -13,6 +13,44 @@ from .envvars import get_env, warn_legacy_once
 from .layout import RuntimeLayout
 
 
+def _lodge_auth_module(layout: RuntimeLayout):
+    lib = str(layout.runtime_lib)
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    import lodge_auth
+    return lodge_auth
+
+
+def _pair(args) -> int:
+    """Print a one-time link that pairs a browser with this lodge."""
+    layout = RuntimeLayout.from_env()
+    lodge_auth = _lodge_auth_module(layout)
+    if get_env("WOLTSPACE_WOLT_SESSION"):
+        lore.failure("pairing is for the owner: run `woltspace pair` in your own terminal, not in a wolt session",
+                     subtitle_text="a wolt can't let a browser in")
+        return 1
+    lodge_auth.ensure_keys(layout.wolts_dir)
+    if args.forget:
+        lodge_auth.forget_browsers(layout.wolts_dir)
+        lore.note("every paired browser was unpaired")
+    code = lodge_auth.new_pairing_code(layout.wolts_dir)
+    links = [f"{layout.endpoint.rstrip('/')}/pair?code={code}"]
+    from .lifecycle import read_tunnel_url
+    tunnel = (read_tunnel_url(layout) or "").rstrip("/")
+    if tunnel:
+        links.append(f"{tunnel}/pair?code={code}")
+    if args.json:
+        print(json.dumps({"links": links, "expires_in": lodge_auth.PAIRING_TTL,
+                          "enabled": lodge_auth.enabled(os.environ)}))
+        return 0
+    for url in links:
+        lore.link(url)
+    lore.note("works once, for ten minutes; open it in the browser to pair")
+    if not lodge_auth.enabled(os.environ):
+        lore.warn("lodge auth is off: set WOLTSPACE_LODGE_AUTH=1 in the lodge's .env and restart to require it")
+    return 0
+
+
 def _paths(args) -> int:
     layout = RuntimeLayout.from_env()
     payload = {
@@ -1073,7 +1111,9 @@ def _wolf_request(method: str, path: str, body: dict | None = None) -> tuple[int
 
     url = f"{_wolf_api()}{path}"
     data = json.dumps(body).encode() if body is not None else None
-    request = urllib.request.Request(url, data=data, method=method)
+    layout = RuntimeLayout.from_env()
+    headers = _lodge_auth_module(layout).client_headers(wolts_dir=layout.wolts_dir)
+    request = urllib.request.Request(url, data=data, method=method, headers=headers)
     if data is not None:
         request.add_header("Content-Type", "application/json")
     try:
@@ -1367,6 +1407,11 @@ def build_parser() -> argparse.ArgumentParser:
                                    add_help=False)
         delegated.add_argument("noun_args", nargs=argparse.REMAINDER)
         delegated.set_defaults(func=_delegate)
+
+    pair = sub.add_parser("pair", help="print a one-time link that pairs a browser with the lodge")
+    pair.add_argument("--forget", action="store_true", help="unpair every browser first")
+    pair.add_argument("--json", action="store_true")
+    pair.set_defaults(func=_pair)
 
     paths = sub.add_parser("paths", help="show resolved native runtime paths")
     paths.add_argument("--json", action="store_true")

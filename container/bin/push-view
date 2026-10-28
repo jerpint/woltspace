@@ -36,6 +36,10 @@ WOLT="${WOLTSPACE_WOLT_NAME:-${WOLT_NAME:-}}"
 # comes from. The literal is the container's baked-in default only.
 API="${WOLTSPACE_API:-http://localhost:7777}"
 
+# The lodge key travels to curl on stdin (`-K -`), never on its command line.
+LIB_DIR="$(cd "$(dirname "$0")/../lib" && pwd)"
+KEY_CFG=$("${WOLTSPACE_PYTHON:-python3}" -c 'import sys; sys.path.insert(0, sys.argv[1]); import lodge_auth; print(lodge_auth.curl_config(), end="")' "$LIB_DIR" 2>/dev/null || true)
+
 # A file on disk under some wolt's `wolt/site/` becomes that site's URL, so an
 # agent can pass the path it just wrote. Anything else not starting with `/`
 # or a scheme is a page on this wolt's own site: `page.html`, `./page.html`,
@@ -81,7 +85,7 @@ esac
 case "$URL" in
   /*)
     CHECK_URL=$(printf '%s' "$URL" | sed 's/ /%20/g')
-    CODE=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' "${API}${CHECK_URL}" 2>/dev/null || true)
+    CODE=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' -K - "${API}${CHECK_URL}" <<<"$KEY_CFG" 2>/dev/null || true)
     case "$CODE" in
       2??|3??) ;;
       000|"")
@@ -109,7 +113,7 @@ JSON_URL=$(printf '%s' "$URL" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
 # tool can do to an agent checking its own work. Fail loudly instead.
 if ! RESPONSE=$(curl -sS -f --max-time 5 -X POST "${API}/current?session=${SESSION}" \
   -H 'Content-Type: application/json' \
-  -d "{\"url\":\"${JSON_URL}\"}" 2>&1); then
+  -d "{\"url\":\"${JSON_URL}\"}" -K - <<<"$KEY_CFG" 2>&1); then
   echo "[viewport:${SESSION}] failed to reach ${API}: ${RESPONSE}" >&2
   exit 1
 fi

@@ -7,11 +7,35 @@
 // behind it for anyone who set it by hand before the stamp existed. Falling
 // through to 7777 when a colony runs elsewhere means driving the wrong lodge's
 // sessions, so the stamp wins.
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 export const BASE = (
   process.env.WOLTSPACE_API?.trim() ||
   process.env.WOLTSPACE_URL?.trim() ||
   'http://localhost:7777'
 ).replace(/\/$/, '');
+
+// With lodge auth on, every request carries a lodge key, read the same way the
+// Python clients read it (container/lib/lodge_auth.py): WOLTSPACE_LODGE_KEY,
+// else the wolt key inside a wolt session and the owner key outside one.
+export function lodgeKey(env = process.env) {
+  const explicit = env.WOLTSPACE_LODGE_KEY?.trim();
+  if (explicit) return explicit;
+  const root = env.WOLTSPACE_WOLTS_DIR || env.WOLTS_DIR;
+  if (!root) return '';
+  const scope = env.WOLTSPACE_WOLT_SESSION || env.WOLT_SESSION ? 'wolt' : 'owner';
+  try {
+    return readFileSync(join(root, '.space', 'run', 'lodge', `${scope}.key`), 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
+const withKey = (opts) => {
+  const key = lodgeKey();
+  return key ? { ...opts, headers: { ...(opts.headers || {}), 'X-Woltspace-Key': key } } : opts;
+};
 
 const unreachable = (e) =>
   `lodge unreachable at ${BASE} (${e.cause?.code || e.message}); run woltspace start, then retry`;
@@ -32,7 +56,8 @@ const unreachable = (e) =>
 // second session.
 const idempotent = (opts) => !opts.method || opts.method.toUpperCase() === 'GET';
 
-async function req(path, opts = {}) {
+async function req(path, rawOpts = {}) {
+  const opts = withKey(rawOpts);
   let res;
   try {
     res = await fetch(BASE + path, opts);

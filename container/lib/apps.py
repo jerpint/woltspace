@@ -42,8 +42,9 @@ _RUNNING_STATE_DIR = space_apps_dir(WOLTS_DIR)
 # for those services, and an app would otherwise inherit them all. An app that
 # really needs one keeps its own copy in its own .env.
 LODGE_ONLY_ENV_PREFIXES = ("TELEGRAM_", "SLACK_", "GITHUB_APP_", "CLOUDFLARE_")
-# The owner's own Claude Code login, for wolt sessions only.
-LODGE_ONLY_ENV_KEYS = frozenset({"CLAUDE_CODE_OAUTH_TOKEN"})
+# The owner's own Claude Code login, for wolt sessions only, and a lodge API
+# key handed to a script.
+LODGE_ONLY_ENV_KEYS = frozenset({"CLAUDE_CODE_OAUTH_TOKEN", "WOLTSPACE_LODGE_KEY"})
 
 
 def app_environment(**extra: str) -> dict[str, str]:

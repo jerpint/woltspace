@@ -81,6 +81,7 @@ from session_expiry import (
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
 from execution_policy import AutoGrantStore, POLICY_VERSION
+import lodge_auth
 from runtime_context import RuntimeContext
 from harness_auth import auth_source, claude_authenticated
 from skills_sync import wolt_skills_delivery
@@ -249,6 +250,9 @@ async def lifespan(app: FastAPI):
     apps_restore()
     _start_file_watcher()
     _start_tool_gc()
+    if lodge_auth.enabled():
+        lodge_auth.ensure_keys(WOLTS_DIR)
+        print("[lodge auth] on: pair a browser with `woltspace pair`")
     tunnel_mgr.start_tunnel()
     try:
         import connector_host
@@ -550,6 +554,116 @@ async def request_origin_guard(request: Request, call_next):
             return JSONResponse({"error": "cross-origin request rejected"}, status_code=403)
 
     return await call_next(request)
+
+
+# --- Lodge auth (opt-in: WOLTSPACE_LODGE_AUTH=1) ---------------------------
+# Being on localhost is not proof of being the owner: any program on the
+# machine can send whatever Host and Origin it likes. With lodge auth on,
+# every lodge request carries a key (programs) or a paired browser's cookie.
+# App hosts are proxied to their app and are not gated here.
+
+_LODGE_AUTH_OPEN_PATHS = ("/pair", "/health", "/favicon.svg")
+_pairing_failures = lodge_auth.FailureLimit()
+
+_UNPAIRED_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Pair this browser</title>
+<style>body{margin:0;font:16px/1.5 system-ui,sans-serif;background:#EDE8DE;color:#2a2622}
+main{max-width:520px;margin:0 auto;padding:48px 16px}h1{font:400 26px Georgia,serif;color:#C4531E}
+code{background:#e4ddd0;padding:2px 6px;border-radius:4px}</style></head><body><main>
+<h1>Pair this browser</h1><p>This lodge only opens in a paired browser.</p>
+<p>On the lodge's machine, run <code>woltspace pair</code> and open the link it prints.
+The link works once, for ten minutes.</p></main></body></html>"""
+
+
+def _lodge_auth_scope(headers) -> str | None:
+    """The caller's scope from a key or a paired-browser cookie, else None."""
+    presented = headers.get(lodge_auth.KEY_HEADER, "")
+    if not presented:
+        scheme, _, value = headers.get("authorization", "").partition(" ")
+        if scheme.lower() == "bearer":
+            presented = value.strip()
+    if presented:
+        return lodge_auth.key_scope(WOLTS_DIR, presented)
+    from http.cookies import SimpleCookie
+    jar = SimpleCookie()
+    try:
+        jar.load(headers.get("cookie", ""))
+    except Exception:
+        return None
+    for name in (lodge_auth.COOKIE_SECURE, lodge_auth.COOKIE_PLAIN):
+        if name in jar and lodge_auth.browser_paired(WOLTS_DIR, jar[name].value):
+            return lodge_auth.OWNER
+    return None
+
+
+class LodgeAuthMiddleware:
+    """Refuse lodge HTTP and WebSocket requests without a key or paired browser."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") not in ("http", "websocket") or not lodge_auth.enabled():
+            return await self.inner(scope, receive, send)
+        headers = {
+            key.decode("latin-1").lower(): value.decode("latin-1")
+            for key, value in scope.get("headers", [])
+        }
+        path = scope.get("path", "/")
+        if (
+            _extract_app_subdomain(headers.get("host", "")) is not None
+            or path.startswith("/__woltspace_app_ws__/")
+            or path in _LODGE_AUTH_OPEN_PATHS
+            or path.startswith("/static/")
+        ):
+            return await self.inner(scope, receive, send)
+
+        caller = _lodge_auth_scope(headers)
+        if scope["type"] == "websocket":
+            if caller is None:
+                return await send({"type": "websocket.close", "code": 1008})
+            return await self.inner(scope, receive, send)
+
+        method = scope.get("method", "GET")
+        if caller is None:
+            if method == "GET" and "text/html" in headers.get("accept", ""):
+                response = HTMLResponse(_UNPAIRED_PAGE, status_code=401)
+            else:
+                response = JSONResponse({"error": "lodge key or paired browser required"}, status_code=401)
+            return await response(scope, receive, send)
+        if caller == lodge_auth.WOLT and lodge_auth.owner_only(method, path):
+            response = JSONResponse({"error": "only the owner can do this"}, status_code=403)
+            return await response(scope, receive, send)
+        return await self.inner(scope, receive, send)
+
+
+app.add_middleware(LodgeAuthMiddleware)
+
+
+@app.get("/pair")
+async def pair_browser(request: Request, code: str = ""):
+    """Turn a one-time code from `woltspace pair` into this browser's cookie."""
+    if not lodge_auth.enabled():
+        return JSONResponse({"error": "lodge auth is off"}, status_code=404)
+    no_leak = {"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"}
+    if _pairing_failures.blocked():
+        return JSONResponse({"error": "too many attempts; wait a minute"}, status_code=429, headers=no_leak)
+    token = lodge_auth.redeem_pairing_code(WOLTS_DIR, code)
+    if token is None:
+        _pairing_failures.record()
+        return HTMLResponse(
+            _UNPAIRED_PAGE.replace("<p>This lodge only opens in a paired browser.</p>",
+                                   "<p>That pairing link was already used, or has expired.</p>"),
+            status_code=403, headers=no_leak,
+        )
+    secure = (request.url.scheme == "https"
+              or request.headers.get("x-forwarded-proto", "").lower() == "https")
+    response = RedirectResponse("/", status_code=303, headers=no_leak)
+    response.set_cookie(
+        lodge_auth.COOKIE_SECURE if secure else lodge_auth.COOKIE_PLAIN, token,
+        max_age=lodge_auth.BROWSER_TTL, path="/", httponly=True, samesite="lax", secure=secure,
+    )
+    return response
 
 
 @app.options("/{path:path}")

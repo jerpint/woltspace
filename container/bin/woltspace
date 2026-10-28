@@ -33,6 +33,7 @@ from pathlib import Path
 # its own copy. Nothing else here needs the runtime tree.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from env_compat import get_env  # noqa: E402
+import lodge_auth  # noqa: E402
 from notify_prompt import (  # noqa: E402
     MessageInputError,
     read_message_input,
@@ -49,7 +50,7 @@ _SESSION_RE = re.compile(r"-[0-9a-f]{6}$")
 def _req(method, path, body=None, *, hint=""):
     url = f"{API}{path}"
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
+    req = urllib.request.Request(url, data=data, method=method, headers=lodge_auth.client_headers())
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
