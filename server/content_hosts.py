@@ -1,11 +1,12 @@
-"""Which wolt site a host names, under each way into the lodge.
+"""Which wolt site or app a host names, under each way into the lodge.
 
 A wolt's site lives on an origin of its own, so a page a wolt wrote never runs
 with the lodge's origin. How that origin is spelled depends on the way in, so
 naming is a list of schemes rather than one pattern. Each way in brings its
 own:
 
-    local        <wolt>.sites.localhost[:port]
+    local        <wolt>.sites.localhost[:port]    a wolt's site
+                 <app>.localhost[:port]           an app
 
 Remote ways in (Cloudflare, Tailscale) add theirs when they start serving
 sites; nothing in the Mill or the lodge's router changes when they do.
@@ -68,6 +69,52 @@ LOCAL = SuffixNaming("local", ".sites.localhost")
 def site_namings() -> tuple[SiteNaming, ...]:
     """The naming schemes in force. Only the local one serves sites so far."""
     return (LOCAL,)
+
+
+_APP_LABEL_RE = re.compile(r"[a-z][a-z0-9_-]{0,62}")
+
+
+@dataclass(frozen=True)
+class AppHost:
+    name: str
+    way_in: str
+
+
+@dataclass(frozen=True)
+class LocalAppNaming:
+    """`<app>.localhost`, on any port: one label, an app's name."""
+
+    way_in: str = "local"
+    suffix: str = ".localhost"
+
+    def name(self, host: str, port: int | None) -> str | None:
+        if not host.endswith(self.suffix):
+            return None
+        label = host.removesuffix(self.suffix)
+        return label if _APP_LABEL_RE.fullmatch(label) else None
+
+
+LOCAL_APPS = LocalAppNaming()
+
+
+def app_namings() -> tuple:
+    """App naming schemes the Mill serves. Remote app hosts still go through
+    the lodge's own proxy until a remote way in hands them to the Mill."""
+    return (LOCAL_APPS,)
+
+
+def parse_app_host(host_header: str, namings=None) -> AppHost | None:
+    split = split_host(host_header)
+    if split is None:
+        return None
+    host, port = split
+    if parse_site_host(host_header) is not None:
+        return None  # a site host is never an app
+    for naming in (app_namings() if namings is None else namings):
+        name = naming.name(host, port)
+        if name is not None:
+            return AppHost(name, naming.way_in)
+    return None
 
 
 def split_host(host_header: str) -> tuple[str, int | None] | None:

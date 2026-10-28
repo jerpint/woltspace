@@ -32,7 +32,15 @@ from fastapi import WebSocket
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from .config import WOLTS_DIR
-from .content_hosts import anchored_site_root, find_wolt_dir, parse_site_host
+from .app_proxy import (
+    APP_PROXY_TIMEOUT,
+    APP_WS_MAX_MESSAGE,
+    client_response_headers,
+    relay_websocket,
+    upstream_request_headers,
+    websocket_upstream_headers,
+)
+from .content_hosts import anchored_site_root, find_wolt_dir, parse_app_host, parse_site_host
 from .site_livereload import hub as livereload_hub, serve_site_livereload
 from .site_server import LIVERELOAD_PATH, SITE_HEADERS, SiteContext, serve_site
 
@@ -101,9 +109,39 @@ async def _lifespan(receive, send):
             return
 
 
+_READ_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def _apps_module():
+    import apps
+    return apps
+
+
+def static_app_root(app_dir: Path) -> Path | None:
+    """A static app's files: its real `dist/` if there is one, else its folder.
+
+    Neither may be a symlink, so the root is always inside the app.
+    """
+    app_dir = Path(app_dir)
+    if os.path.islink(app_dir) or not app_dir.is_dir():
+        return None
+    dist = app_dir / "dist"
+    if os.path.islink(dist):
+        return None
+    root = dist if dist.is_dir() else app_dir
+    real = os.path.realpath(root)
+    inside = os.path.commonpath([real, os.path.realpath(app_dir)]) == os.path.realpath(app_dir)
+    return Path(real) if inside else None
+
+
 class Mill:
-    def __init__(self, wolts_dir=None):
+    def __init__(self, wolts_dir=None, apps=None):
         self.wolts_dir = Path(wolts_dir or WOLTS_DIR)
+        self._apps = apps
+
+    @property
+    def apps(self):
+        return self._apps if self._apps is not None else _apps_module()
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") == "lifespan":
@@ -117,6 +155,9 @@ class Mill:
         hosts = [v for k, v in scope.get("headers", []) if k.lower() == b"host"]
         site = parse_site_host(headers.get("host", "")) if len(hosts) == 1 else None
         if site is None:
+            app_host = parse_app_host(headers.get("host", "")) if len(hosts) == 1 else None
+            if app_host is not None:
+                return await self._app(scope, receive, send, headers, refuse, app_host.name)
             return await refuse(404, "unknown-host", "Not found")
         if scope["type"] == "http":
             if scope.get("method", "GET").upper() not in _SITE_METHODS:
@@ -154,6 +195,115 @@ class Mill:
         _log(scope, headers, 101, "owner")
         await serve_site_livereload(WebSocket(scope, receive, send), str(root),
                                     still_authorized=still_there)
+
+
+    async def _app(self, scope, receive, send, headers, refuse, name: str):
+        """An app: proxied to its process on 127.0.0.1, or a static app's files."""
+        if scope["type"] == "websocket":
+            if not _origin_is_this_site(headers):
+                return await refuse(403, "bad-origin", "Invalid websocket origin")
+        elif scope.get("method", "GET").upper() not in _READ_METHODS and (
+                headers.get("sec-fetch-site", "").lower() == "cross-site"
+                or (headers.get("origin") and not _origin_is_this_site(headers))):
+            # A browser write must come from the app's own page.
+            return await refuse(403, "cross-site", "Cross-site request rejected")
+        if headers.get(IDENTITY_HEADER) != OWNER:
+            return await refuse(403, "not-owner", "This app is the owner's")
+
+        running = {r["name"]: r for r in self.apps.running_apps()}
+        state = running.get(name)
+        if state is not None:
+            if scope["type"] == "websocket":
+                return await self._app_websocket(scope, receive, send, headers, int(state["port"]))
+            return await self._app_http(scope, receive, send, headers, name, int(state["port"]))
+
+        app = self.apps.get_app(name)
+        if app is None:
+            return await refuse(404, "unknown-app", "Not found")
+        if app.can_start():
+            return await refuse(503, "stopped", f"App '{name}' is not running")
+        root = static_app_root(self.apps.app_dir(name))
+        if scope["type"] == "websocket" or root is None:
+            return await refuse(404, "no-static-root", "Not found")
+        if scope.get("method", "GET").upper() not in _SITE_METHODS:
+            return await refuse(405, "method", "A static app is read-only", allow="GET, HEAD")
+        # A static app's folder may be a whole repository: no dotfiles (.git,
+        # .env), at any depth.
+        if any(part.startswith(".") for part in scope.get("path", "/").split("/") if part):
+            return await refuse(404, "dotfile", "Not found")
+        ctx = SiteContext(wolt_name=name, wolt_dir=root, root=root, owner=False)
+        response = serve_site(scope, ctx)
+        _log(scope, headers, response.status_code, "static-app")
+        return await response(scope, receive, send)
+
+    async def _app_http(self, scope, receive, send, headers, name: str, port: int):
+        import httpx
+        from starlette.requests import Request
+        from starlette.responses import StreamingResponse
+        request = Request(scope, receive)
+        raw = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope.get("headers", [])]
+        has_body = "content-length" in headers or "transfer-encoding" in headers
+        query = scope.get("query_string") or b""
+        url = f"http://127.0.0.1:{port}{scope.get('path', '/')}" + (
+            "?" + query.decode("latin-1") if query else "")
+        client = httpx.AsyncClient(timeout=APP_PROXY_TIMEOUT)
+        try:
+            req = client.build_request(scope.get("method", "GET"), url,
+                                       headers=upstream_request_headers(raw, port),
+                                       content=request.stream() if has_body else None)
+            resp = await client.send(req, stream=True, follow_redirects=False)
+        except httpx.ConnectError:
+            await client.aclose()
+            response = HTMLResponse(f"<h1>Cannot reach app '{name}'</h1>", status_code=502)
+            _log(scope, headers, 502, "upstream-down")
+            return await response(scope, receive, send)
+        except httpx.TimeoutException:
+            await client.aclose()
+            response = HTMLResponse(f"<h1>App '{name}' did not answer in time</h1>", status_code=504)
+            _log(scope, headers, 504, "upstream-timeout")
+            return await response(scope, receive, send)
+
+        async def body():
+            try:
+                async for chunk in resp.aiter_raw():
+                    yield chunk
+            finally:
+                await resp.aclose()
+                await client.aclose()
+
+        response = StreamingResponse(body(), status_code=resp.status_code)
+        response.raw_headers = [
+            (k.encode("latin-1"), v.encode("latin-1"))
+            for k, v in client_response_headers(resp.headers.multi_items())
+        ]
+        _log(scope, headers, resp.status_code, "app")
+        return await response(scope, receive, send)
+
+    async def _app_websocket(self, scope, receive, send, headers, port: int):
+        import websockets
+        ws = WebSocket(scope, receive, send)
+        raw = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope.get("headers", [])]
+        protocols = [p.strip() for p in headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
+        query = scope.get("query_string") or b""
+        url = f"ws://127.0.0.1:{port}{scope.get('path', '/')}" + (
+            "?" + query.decode("latin-1") if query else "")
+        try:
+            upstream = await websockets.connect(
+                url, subprotocols=protocols or None, max_size=APP_WS_MAX_MESSAGE, proxy=None,
+                additional_headers=websocket_upstream_headers(raw, port))
+        except Exception:
+            _log(scope, headers, 502, "upstream-ws-down")
+            return await send({"type": "websocket.close", "code": 1011})
+        try:
+            await ws.accept(subprotocol=upstream.subprotocol)
+            _log(scope, headers, 101, "app")
+            await relay_websocket(ws, upstream)
+        finally:
+            await upstream.close()
+            try:
+                await ws.close()
+            except Exception:
+                pass
 
 
 app = Mill()

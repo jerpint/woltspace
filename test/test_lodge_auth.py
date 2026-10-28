@@ -308,11 +308,11 @@ def test_health_and_static_assets_stay_open(lodge):
     assert _client().get("/static/does-not-exist.css").status_code == 404
 
 
-def test_app_hosts_are_not_gated_here(lodge, monkeypatch):
-    import apps
-    monkeypatch.setattr(apps, "running_apps", lambda: [])
-    response = _client().get("/", headers={"host": "notes.localhost:7777"})
-    assert response.status_code == 503  # the app isn't running; the gate let it through
+def test_local_app_hosts_need_their_own_grant_not_the_lodge_key(lodge):
+    _, keys = lodge
+    response = _client().get("/", headers={"host": "notes.localhost:7777",
+                                           "x-woltspace-key": keys["owner"]})
+    assert response.status_code == 401 and "/apps/open?app=notes" in response.text
 
 
 def test_pairing_turns_a_code_into_a_cookie_once(lodge):
@@ -417,10 +417,12 @@ def test_an_app_never_sees_the_lodges_credentials(lodge, monkeypatch):
                                             ("set-cookie", "app=1; Path=/")], stream=Empty())
 
     monkeypatch.setattr(apps, "running_apps", lambda: [{"name": "notes", "port": 4999}])
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
     monkeypatch.setattr(server_app, "_app_http_client",
                         lambda: httpx.AsyncClient(transport=httpx.MockTransport(capture)))
     response = _client().get("/", headers={
-        "host": "notes.localhost:7777",
+        "host": "notes.woltspace.test",
         "x-woltspace-key": keys["owner"],
         "authorization": f"Bearer {keys['wolt']}",
         "cookie": f"{lodge_auth.COOKIE_PLAIN}-7777=t; {lodge_auth.COOKIE_SECURE}=t; "

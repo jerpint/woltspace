@@ -16,7 +16,7 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 import httpx
-from fastapi import Body, FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -443,14 +443,7 @@ class AppWebSocketRoutingMiddleware:
 app.add_middleware(AppWebSocketRoutingMiddleware)
 
 
-# How long the proxy waits on an app: to connect, for each upload write, and
-# for each read (the reply's start, then any quiet gap in a streamed body).
-# Long enough for a slow dev build or a quiet event stream, but a hung app
-# can't hold a request open forever.
-APP_PROXY_TIMEOUT = httpx.Timeout(connect=10.0, write=60.0, read=300.0, pool=10.0)
-# The largest WebSocket message relayed from an app, matching uvicorn's
-# default cap for messages from the browser.
-APP_WS_MAX_MESSAGE = 16 * 1024 * 1024
+from .app_proxy import APP_PROXY_TIMEOUT, APP_WS_MAX_MESSAGE  # noqa: E402
 
 
 def _is_lodge_key(token: str) -> bool:
@@ -689,7 +682,8 @@ async def pair_browser(request: Request, code: str = ""):
 # header; the visitor's own credentials stay behind.
 
 from . import mill as mill_server  # noqa: E402
-from .content_hosts import find_wolt_dir as _find_wolt_dir, parse_site_host  # noqa: E402
+from .content_hosts import find_wolt_dir as _find_wolt_dir, parse_app_host, parse_site_host  # noqa: E402
+from dataclasses import dataclass  # noqa: E402
 
 # What a site's request may carry to the Mill: content negotiation, caching,
 # ranges and browser provenance. No cookie, no Authorization, no lodge key.
@@ -739,8 +733,31 @@ def _site_url(label: str, port: int | None, path: str = "/") -> str:
     return f"http://{label}.sites.localhost{f':{port}' if port else ''}{path}"
 
 
+@dataclass(frozen=True)
+class _Content:
+    """A site or app host the Mill serves, as the lodge sees it."""
+    kind: str        # "site" or "app"
+    name: str
+    grant_label: str
+
+    @property
+    def open_path(self) -> str:
+        return (f"/sites/open?wolt={self.name}" if self.kind == "site"
+                else f"/apps/open?app={self.name}")
+
+
+def _content_host(host: str) -> _Content | None:
+    site = parse_site_host(host)
+    if site is not None:
+        return _Content("site", site.label, site.label)
+    app_host = parse_app_host(host)
+    if app_host is not None:
+        return _Content("app", app_host.name, f"app:{app_host.name}")
+    return None
+
+
 class MillForwardMiddleware:
-    """Send site hosts to the Mill; everything else on to the lodge."""
+    """Send site and local app hosts to the Mill; everything else on to the lodge."""
 
     def __init__(self, inner):
         self.inner = inner
@@ -750,32 +767,32 @@ class MillForwardMiddleware:
             return await self.inner(scope, receive, send)
         hosts = [value.decode("latin-1") for key, value in scope.get("headers", [])
                  if key.lower() == b"host"]
-        sites = [parse_site_host(host) for host in hosts]
-        if not any(sites):
+        contents = [_content_host(host) for host in hosts]
+        if not any(contents):
             return await self.inner(scope, receive, send)
         if len(hosts) != 1:
             return await self._refuse(scope, receive, send, 400, "exactly one Host header required")
         headers = {key.decode("latin-1").lower(): value.decode("latin-1")
                    for key, value in scope.get("headers", [])}
-        site = sites[0]
+        content = contents[0]
         _host, port = mill_server_split(hosts[0])
         if scope["type"] == "http" and scope.get("path") == _SITE_GRANT_PATH:
-            return await self._grant(scope, receive, send, site.label)
-        visitor = _site_visitor(scope, headers, site.label)
+            return await self._grant(scope, receive, send, content.grant_label)
+        visitor = _site_visitor(scope, headers, content.grant_label)
         if visitor is None:
             if scope["type"] == "http" and lodge_auth.enabled():
                 lodge = f"http://localhost{f':{port}' if port else ''}"
                 target = _safe_next(scope.get("path", "/"))
-                link = f"{lodge}/sites/open?wolt={site.label}&path={quote(target, safe='/')}"
+                link = f"{lodge}{content.open_path}&path={quote(target, safe='/')}"
                 response = HTMLResponse(
-                    f"<h1>Open this site from the lodge</h1><p><a href=\"{link}\">"
-                    f"Open {site.label}'s site</a></p>", status_code=401,
+                    f"<h1>Open this {content.kind} from the lodge</h1><p><a href=\"{link}\">"
+                    f"Open {content.name}</a></p>", status_code=401,
                     headers={"Cache-Control": "no-store"})
                 return await response(scope, receive, send)
-            return await self._refuse(scope, receive, send, 403, "This site is the owner's")
+            return await self._refuse(scope, receive, send, 403, f"This {content.kind} is the owner's")
         if scope["type"] == "websocket":
-            return await self._websocket(scope, receive, send, headers)
-        return await self._http(scope, receive, send, headers)
+            return await self._websocket(scope, receive, send, headers, content)
+        return await self._http(scope, receive, send, headers, content)
 
     @staticmethod
     async def _refuse(scope, receive, send, status, message):
@@ -786,25 +803,44 @@ class MillForwardMiddleware:
 
     @staticmethod
     def _upstream_headers(headers: dict[str, str]) -> list[tuple[str, str]]:
+        """A site's request to the Mill: an allow-list, nothing that identifies."""
         out = [("host", headers["host"]), (mill_server.IDENTITY_HEADER, mill_server.OWNER)]
         out += [(name, value) for name, value in headers.items() if name in _MILL_REQUEST_HEADERS]
         return out
 
-    async def _http(self, scope, receive, send, headers):
+    @staticmethod
+    def _app_headers(scope, *, websocket: bool) -> list[tuple[str, str]]:
+        """An app's request to the Mill: what the app's own page sent, minus the
+        lodge's and Access's credentials, with the original host kept so the
+        Mill knows which app."""
+        raw = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope.get("headers", [])]
+        helper = websocket_upstream_headers if websocket else upstream_request_headers
+        filtered = [(k, v) for k, v in helper(raw, 0, is_lodge_key=_is_lodge_key)
+                    if k.lower() != "host"]
+        host = next(v for k, v in raw if k.lower() == "host")
+        identity = [(mill_server.IDENTITY_HEADER, mill_server.OWNER)]
+        return identity + filtered if websocket else [("host", host)] + identity + filtered
+
+    async def _http(self, scope, receive, send, headers, content):
         path = scope.get("raw_path") or scope.get("path", "/").encode()
         query = scope.get("query_string") or b""
         url = "http://mill" + path.decode("latin-1") + (("?" + query.decode("latin-1")) if query else "")
+        is_app = content.kind == "app"
         client = httpx.AsyncClient(
             transport=httpx.AsyncHTTPTransport(uds=str(mill_server.socket_path(WOLTS_DIR))),
-            timeout=MILL_TIMEOUT,
+            timeout=APP_PROXY_TIMEOUT if is_app else MILL_TIMEOUT,
         )
+        has_body = is_app and ("content-length" in headers or "transfer-encoding" in headers)
         try:
-            req = client.build_request(scope.get("method", "GET"), url,
-                                       headers=self._upstream_headers(headers))
+            req = client.build_request(
+                scope.get("method", "GET"), url,
+                headers=self._app_headers(scope, websocket=False) if is_app else self._upstream_headers(headers),
+                content=Request(scope, receive).stream() if has_body else None,
+            )
             resp = await client.send(req, stream=True, follow_redirects=False)
         except (httpx.ConnectError, FileNotFoundError, ConnectionRefusedError):
             await client.aclose()
-            response = HTMLResponse("<h1>The Mill isn't running, so wolt sites are down</h1>"
+            response = HTMLResponse("<h1>The Mill isn't running, so wolt sites and apps are down</h1>"
                                     "<p>The lodge itself still works.</p>", status_code=502)
             return await response(scope, receive, send)
         except httpx.TimeoutException:
@@ -827,21 +863,28 @@ class MillForwardMiddleware:
         ]
         return await response(scope, receive, send)
 
-    async def _websocket(self, scope, receive, send, headers):
+    async def _websocket(self, scope, receive, send, headers, content):
         from websockets.asyncio.client import unix_connect
         ws = WebSocket(scope, receive, send)
         query = scope.get("query_string") or b""
         uri = f"ws://{headers['host']}{scope.get('path', '/')}" + (
             "?" + query.decode("latin-1") if query else "")
-        extra = [(mill_server.IDENTITY_HEADER, mill_server.OWNER)]
-        if headers.get("origin"):
-            extra.append(("Origin", headers["origin"]))
+        protocols = None
+        if content.kind == "app":
+            extra = self._app_headers(scope, websocket=True)
+            protocols = [p.strip() for p in headers.get("sec-websocket-protocol", "").split(",")
+                         if p.strip()] or None
+        else:
+            extra = [(mill_server.IDENTITY_HEADER, mill_server.OWNER)]
+            if headers.get("origin"):
+                extra.append(("Origin", headers["origin"]))
         try:
             upstream = await unix_connect(str(mill_server.socket_path(WOLTS_DIR)), uri,
-                                          additional_headers=extra, max_size=APP_WS_MAX_MESSAGE)
+                                          additional_headers=extra, subprotocols=protocols,
+                                          max_size=APP_WS_MAX_MESSAGE)
         except Exception:
             return await send({"type": "websocket.close", "code": 1008})
-        label = parse_site_host(headers["host"]).label
+        label = content.grant_label
 
         async def authority_holds():
             # On a monotonic timer, whatever the traffic: an expired or
@@ -852,7 +895,7 @@ class MillForwardMiddleware:
                     return
 
         try:
-            await ws.accept()
+            await ws.accept(subprotocol=upstream.subprotocol)
             tasks = [asyncio.ensure_future(relay_websocket(ws, upstream)),
                      asyncio.ensure_future(authority_holds())]
             try:
@@ -870,7 +913,7 @@ class MillForwardMiddleware:
 
     @staticmethod
     async def _grant(scope, receive, send, label):
-        """Turn a one-time grant from /sites/open into this site's own cookie."""
+        """Turn a one-time grant from /sites/open or /apps/open into this host's own cookie."""
         request = Request(scope, receive)
         no_leak = {"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"}
         if not lodge_auth.enabled() or request.method != "GET":
@@ -884,7 +927,7 @@ class MillForwardMiddleware:
         if token is None:
             _pairing_failures.record()
             response = HTMLResponse("<h1>That link was already used, or has expired</h1>"
-                                    "<p>Open the site from the lodge again.</p>",
+                                    "<p>Open it from the lodge again.</p>",
                                     status_code=403, headers=no_leak)
             return await response(scope, receive, send)
         response = RedirectResponse(_safe_next(request.query_params.get("next", "/")),
@@ -900,6 +943,25 @@ def mill_server_split(host_header: str) -> tuple[str, int | None]:
 
 
 app.add_middleware(MillForwardMiddleware)
+
+
+@app.get("/apps/open")
+async def open_app(request: Request, app_name: str = Query("", alias="app"), path: str = "/"):
+    """Open an app on its own origin, with a one-time grant when auth is on."""
+    if lodge_auth.enabled() and _lodge_auth_scope(request.headers) != lodge_auth.OWNER:
+        return JSONResponse({"error": "only the owner can open an app"}, status_code=403)
+    name = (app_name or "").lower()
+    if parse_app_host(f"{name}.localhost") is None or get_app(name) is None:
+        return JSONResponse({"error": "no such app"}, status_code=404)
+    _host, port = mill_server_split(request.headers.get("host", ""))
+    target = _safe_next(path)
+    base = f"http://{name}.localhost{f':{port}' if port else ''}"
+    headers = {"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"}
+    if not lodge_auth.enabled():
+        return RedirectResponse(base + target, status_code=303, headers=headers)
+    code = lodge_auth.new_site_grant(WOLTS_DIR, f"app:{name}")
+    grant = f"{_SITE_GRANT_PATH}?code={code}&next={quote(target, safe='/')}"
+    return RedirectResponse(base + grant, status_code=303, headers=headers)
 
 
 @app.get("/sites/open")

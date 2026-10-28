@@ -1,6 +1,6 @@
 # The Mill
 
-The Mill serves wolt sites, each on an origin of its own, so a page a wolt wrote never runs with the lodge's origin. On the lodge's origin, its script could call the lodge's API as the owner.
+The Mill serves wolt sites and apps, each on an origin of its own, so a page a wolt wrote never runs with the lodge's origin. On the lodge's origin, its script could call the lodge's API as the owner.
 
 ## How a site is reached
 
@@ -38,6 +38,16 @@ The Mill forwards only content-negotiation, caching, range and browser-provenanc
 - **Service workers:** refused.
 - **Live reload:** owner pages get a reload client. Its socket, `/_woltspace/livereload`, only accepts the site's own origin.
 
+## Apps
+
+`http://<app>.localhost:7777/` goes through the Mill too. Apps reached through a tunnel still go through the lodge's own proxy until the switch-over step.
+
+- **Running apps:** the Mill proxies to the app's process on `127.0.0.1`, both ways streamed. That covers HTTP, uploads, server-sent events and WebSockets with their subprotocol. The app's own cookies and `Authorization` pass through. The lodge's and Access's credentials never do.
+- **Static apps** (no `start` command): the Mill serves the app's real `dist/` folder if there is one, else its folder, with the site policy headers. Dotfiles (`.git`, `.env`) are never served.
+- **Who:** the owner only, decided the same way as for sites. With lodge auth on, an app opens from `/apps/open?app=<name>`, and a site's grant never opens an app (or the reverse).
+- **Writes:** a browser write must come from the app's own page.
+- **Ports:** an app gets `PORT` (its manifest's port when free, else any free one) and `HOST=127.0.0.1`. A command that passes `--host $HOST` stays on loopback. One that binds `0.0.0.0` itself is still reachable on the network.
+
 ## Naming
 
-How a site host is spelled depends on the way in, so naming is a list (`server/content_hosts.py`). The local scheme is `<wolt>.sites.localhost`. Remote ways in add theirs when they start serving sites. A site label is a DNS label, so a wolt whose name has `_` or is over 63 characters has no site host.
+How a site host is spelled depends on the way in, so naming is a list (`server/content_hosts.py`). The local schemes are `<wolt>.sites.localhost` and `<app>.localhost`. Remote ways in add theirs when they start serving sites. A site label is a DNS label, so a wolt whose name has `_` or is over 63 characters has no site host.

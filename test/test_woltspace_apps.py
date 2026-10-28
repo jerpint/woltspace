@@ -310,14 +310,17 @@ class TestStartStop:
         assert state["port"] == 4321
 
     @patch("apps.subprocess.Popen")
-    def test_start_rejects_port_conflict_with_running(self, mock_popen, wolts_dir):
-        """Can't start if another running app holds the same port."""
+    def test_start_moves_off_a_port_another_running_app_holds(self, mock_popen, wolts_dir):
+        """A manifest port is a preference: another app holding it means another port."""
+        mock_popen.return_value.pid = 99999
         apps._write_state("occupant", {
             "name": "occupant", "port": 4300, "pid": os.getpid(),
         })
         _make_app(wolts_dir, "conflict", start="echo hi", port=4300)
-        with pytest.raises(RuntimeError, match="already in use"):
-            apps.start_app("conflict")
+        state = apps.start_app("conflict")
+        assert state["port"] != 4300
+        env = mock_popen.call_args.kwargs["env"]
+        assert env["PORT"] == str(state["port"]) and env["HOST"] == "127.0.0.1"
 
     @patch("apps.subprocess.Popen")
     def test_start_returns_existing_if_alive(self, mock_popen, wolts_dir):

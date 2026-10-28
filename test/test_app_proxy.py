@@ -24,7 +24,15 @@ from server.app_proxy import (
     websocket_upstream_headers,
 )
 
-APP_HOST = "notes.localhost:7777"
+# A tunnel app host: local app hosts go to the Mill, and remote ones still
+# go through this proxy until a remote way in hands them over.
+APP_HOST = "notes.woltspace.test"
+
+
+@pytest.fixture(autouse=True)
+def tunnel(monkeypatch):
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_hostname", "owner.woltspace.test")
+    monkeypatch.setattr(server_app.tunnel_mgr, "_tunnel_domain", "woltspace.test")
 
 
 def _client() -> TestClient:

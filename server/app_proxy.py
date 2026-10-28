@@ -11,6 +11,17 @@ import asyncio
 import base64
 import json
 
+import httpx
+
+# How long a proxy waits on an app: to connect, for each upload write, and
+# for each read (the reply's start, then any quiet gap in a streamed body).
+# Long enough for a slow dev build or a quiet event stream, but a hung app
+# can't hold a request open forever.
+APP_PROXY_TIMEOUT = httpx.Timeout(connect=10.0, write=60.0, read=300.0, pool=10.0)
+# The largest WebSocket message relayed from an app, matching uvicorn's
+# default cap for messages from the browser.
+APP_WS_MAX_MESSAGE = 16 * 1024 * 1024
+
 # Hop-by-hop headers (RFC 9110 section 7.6.1) belong to one connection, never
 # to the next hop. `host` is set to the app's own address by the caller.
 HOP_BY_HOP = frozenset({
