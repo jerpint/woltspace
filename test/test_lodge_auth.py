@@ -207,20 +207,41 @@ def test_every_write_route_has_a_wolt_policy():
         assert lodge_auth.wolt_may(method, _concrete(template)) is allowed, (method, template)
 
 
+def _through_gate(method: str, path: str, key: str) -> tuple[int, bool]:
+    """Run one request through the gate alone; (status, reached the route)."""
+    import asyncio
+    reached, sent = [], []
+
+    async def route(scope, receive, send):
+        reached.append(path)
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    async def run():
+        scope = {"type": "http", "method": method, "path": path, "raw_path": path.encode(),
+                 "query_string": b"", "headers": [(b"host", b"localhost:7777"),
+                                                  (b"x-woltspace-key", key.encode())],
+                 "scheme": "http", "server": ("127.0.0.1", 7777), "client": ("127.0.0.1", 5000),
+                 "http_version": "1.1", "root_path": ""}
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            sent.append(message)
+
+        await server_app.LodgeAuthMiddleware(route)(scope, receive, send)
+
+    asyncio.run(run())
+    return sent[0]["status"], bool(reached)
+
+
 @pytest.mark.parametrize("method,template", [k for k, v in WOLT_POLICY.items() if not v])
 def test_a_wolt_key_cannot_do_owner_only_things(lodge, method, template):
     _, keys = lodge
     path = _concrete(template)
-    refused = _client().request(method, path, json={}, headers={"x-woltspace-key": keys["wolt"]})
-    assert refused.status_code == 403
-    assert refused.json() == {"error": "only the owner can do this"}
-
-    owner = _client().request(method, path, json={}, headers={"x-woltspace-key": keys["owner"]})
-    assert owner.status_code != 401
-    try:
-        assert owner.json() != {"error": "only the owner can do this"}
-    except ValueError:
-        pass
+    assert _through_gate(method, path, keys["wolt"]) == (403, False)
+    assert _through_gate(method, path, keys["owner"]) == (204, True)
 
 
 def test_a_wolt_key_reads_and_does_wolt_things(lodge):
@@ -280,21 +301,6 @@ def test_a_websocket_without_exactly_one_host_is_closed(lodge):
 
     asyncio.run(run())
     assert sent == [{"type": "websocket.close", "code": 1008}]
-
-
-def test_the_chat_lodge_calls_the_lodge_with_the_owner_key(lodge, monkeypatch):
-    import asyncio
-    sys.path.insert(0, str(ROOT / "container"))
-    import chat_lodge
-    root, keys = lodge
-    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(root))
-    monkeypatch.setenv("WOLTSPACE_WOLT_SESSION", "softie-x-abc123")  # a lodge started from a session
-
-    async def headers():
-        async with chat_lodge.ChatLodge._lodge_client() as client:
-            return dict(client.headers)
-
-    assert asyncio.run(headers())["x-woltspace-key"] == keys["owner"]
 
 
 def test_health_and_static_assets_stay_open(lodge):
@@ -385,3 +391,138 @@ def test_pair_prints_a_link_and_refuses_inside_a_wolt_session(tmp_path, monkeypa
 
     monkeypatch.setenv("WOLTSPACE_WOLT_SESSION", "softie-x-abc123")
     assert cli.main(["pair", "--json"]) == 1
+
+
+# --- The lodge's credentials stay in the lodge ------------------------------------
+
+def _paired_client(root) -> TestClient:
+    client = _client()
+    client.get(f"/pair?code={lodge_auth.new_pairing_code(root)}")
+    return client
+
+
+def test_an_app_never_sees_the_lodges_credentials(lodge, monkeypatch):
+    import apps
+    import httpx
+    root, keys = lodge
+    seen = []
+
+    class Empty(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b""
+
+    async def capture(request):
+        seen.append(request)
+        return httpx.Response(200, headers=[("set-cookie", "woltspace-lodge=forged; Path=/"),
+                                            ("set-cookie", "app=1; Path=/")], stream=Empty())
+
+    monkeypatch.setattr(apps, "running_apps", lambda: [{"name": "notes", "port": 4999}])
+    monkeypatch.setattr(server_app, "_app_http_client",
+                        lambda: httpx.AsyncClient(transport=httpx.MockTransport(capture)))
+    response = _client().get("/", headers={
+        "host": "notes.localhost:7777",
+        "x-woltspace-key": keys["owner"],
+        "authorization": f"Bearer {keys['wolt']}",
+        "cookie": f"{lodge_auth.COOKIE_PLAIN}=t; {lodge_auth.COOKIE_SECURE}=t; "
+                  "woltspace-site=t; app=1",
+    })
+
+    sent = seen[0].headers
+    assert "x-woltspace-key" not in sent and "authorization" not in sent
+    assert sent["cookie"] == "app=1"
+    assert keys["owner"] not in str(seen[0].headers.raw) and keys["wolt"] not in str(seen[0].headers.raw)
+    assert response.headers.get_list("set-cookie") == ["app=1; Path=/"]
+
+
+def test_an_apps_own_bearer_still_passes(lodge):
+    from server.app_proxy import upstream_request_headers
+    out = upstream_request_headers([("Authorization", "Bearer app-token")], 4999,
+                                   is_lodge_key=server_app._is_lodge_key)
+    assert ("Authorization", "Bearer app-token") in out
+
+
+def test_a_tool_never_sees_the_lodges_credentials(lodge, monkeypatch):
+    import httpx
+    root, keys = lodge
+    seen = []
+
+    async def capture(request):
+        seen.append(request)
+        return httpx.Response(200, text="ok", headers=[("set-cookie", "woltspace-lodge=forged")])
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(server_app.tool_registry, "get", lambda name: {"port": 4998})
+    monkeypatch.setattr(server_app.httpx, "AsyncClient",
+                        lambda **kw: real(transport=httpx.MockTransport(capture)))
+    client = _paired_client(root)
+
+    response = client.get("/tools/board/api", headers={"x-woltspace-key": keys["owner"]})
+
+    assert response.status_code == 200 and response.text == "ok"
+    sent = seen[0].headers
+    assert "x-woltspace-key" not in sent and "cookie" not in sent
+    assert "set-cookie" not in response.headers
+
+
+# --- One writer at a time ---------------------------------------------------------
+
+def _pause_on_read(monkeypatch, filename: str):
+    """Pause the next thread that reads `filename` until released."""
+    import threading
+    paused, release = threading.Event(), threading.Event()
+    real = lodge_auth._read_json
+    armed = [True]
+
+    def read(path):
+        data = real(path)
+        if armed[0] and path.name == filename:
+            armed[0] = False
+            paused.set()
+            release.wait(5)
+        return data
+
+    monkeypatch.setattr(lodge_auth, "_read_json", read)
+    return paused, release
+
+
+def test_a_spent_code_cannot_come_back_from_a_concurrent_mint(tmp_path, monkeypatch):
+    import threading
+    code = lodge_auth.new_pairing_code(tmp_path)
+    paused, release = _pause_on_read(monkeypatch, "pairing.json")
+    minter = threading.Thread(target=lodge_auth.new_pairing_code, args=(tmp_path,))
+    minter.start()
+    assert paused.wait(5)  # the mint has read the codes, code A among them
+
+    redeemed = []
+    redeemer = threading.Thread(target=lambda: redeemed.append(
+        lodge_auth.redeem_pairing_code(tmp_path, code)))
+    redeemer.start()
+    redeemer.join(0.3)
+    assert redeemer.is_alive()  # waiting for the mint's lock
+    release.set()
+    minter.join(5)
+    redeemer.join(5)
+
+    assert redeemed[0]
+    assert lodge_auth.redeem_pairing_code(tmp_path, code) is None
+
+
+def test_forgetting_browsers_cannot_be_undone_by_a_concurrent_pairing(tmp_path, monkeypatch):
+    import threading
+    code = lodge_auth.new_pairing_code(tmp_path)
+    paused, release = _pause_on_read(monkeypatch, "browsers.json")
+    tokens = []
+    redeemer = threading.Thread(target=lambda: tokens.append(
+        lodge_auth.redeem_pairing_code(tmp_path, code)))
+    redeemer.start()
+    assert paused.wait(5)
+
+    forgetter = threading.Thread(target=lodge_auth.forget_browsers, args=(tmp_path,))
+    forgetter.start()
+    forgetter.join(0.3)
+    assert forgetter.is_alive()
+    release.set()
+    redeemer.join(5)
+    forgetter.join(5)
+
+    assert tokens[0] and not lodge_auth.browser_paired(tmp_path, tokens[0])

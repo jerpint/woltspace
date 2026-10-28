@@ -210,3 +210,19 @@ def test_the_lodge_view_shows_the_hold_and_no_closing_time(tmp_path, monkeypatch
     rows = {row["name"]: row for row in client.get("/sessions?view=lodge").json()["sessions"]}
     assert rows[DEV]["hold"] == HOLD
     assert "closes_in_seconds" not in rows[DEV]
+
+
+def test_the_chat_lodge_calls_the_lodge_with_the_owner_key(adapter, monkeypatch, tmp_path):
+    """Even when the lodge was started from a wolt session's shell."""
+    import asyncio
+    import chat_lodge
+    import lodge_auth
+    keys = lodge_auth.ensure_keys(tmp_path)
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+    monkeypatch.setenv("WOLTSPACE_WOLT_SESSION", "softie-x-abc123")
+
+    async def headers():
+        async with chat_lodge.ChatLodge._lodge_client() as client:
+            return dict(client.headers)
+
+    assert asyncio.run(headers())["x-woltspace-key"] == keys["owner"]

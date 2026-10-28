@@ -452,6 +452,10 @@ APP_PROXY_TIMEOUT = httpx.Timeout(connect=10.0, write=60.0, read=300.0, pool=10.
 APP_WS_MAX_MESSAGE = 16 * 1024 * 1024
 
 
+def _is_lodge_key(token: str) -> bool:
+    return bool(token) and lodge_auth.key_scope(WOLTS_DIR, token) is not None
+
+
 def _app_http_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=APP_PROXY_TIMEOUT)
 
@@ -491,7 +495,8 @@ async def subdomain_proxy(request: Request, call_next):
             req = client.build_request(
                 method=request.method,
                 url=upstream,
-                headers=upstream_request_headers(request.headers.items(), port),
+                headers=upstream_request_headers(request.headers.items(), port,
+                                                 is_lodge_key=_is_lodge_key),
                 content=request.stream() if has_body else None,
             )
             try:
@@ -2997,12 +3002,14 @@ async def proxy_tool(tool_name: str, path: str, request: Request):
     target = f"http://127.0.0.1:{tool['port']}/{path}"
     if request.url.query:
         target += f"?{request.url.query}"
-    # A tool is a backend like an app: Access credentials stay behind, both ways.
+    # A tool is a backend like an app: the lodge's and Access's credentials
+    # stay behind, both ways.
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.request(
                 request.method, target,
-                headers=upstream_request_headers(request.headers.items(), tool["port"]),
+                headers=upstream_request_headers(request.headers.items(), tool["port"],
+                                                 is_lodge_key=_is_lodge_key),
                 content=await request.body(),
             )
             # The body comes back decoded, so its encoding and length go too.
@@ -3136,7 +3143,8 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
         async with websockets.connect(
             upstream_url,
             subprotocols=subprotocols or None,
-            additional_headers=websocket_upstream_headers(ws.headers.items(), port),
+            additional_headers=websocket_upstream_headers(ws.headers.items(), port,
+                                                          is_lodge_key=_is_lodge_key),
             max_size=APP_WS_MAX_MESSAGE,
             proxy=None,
         ) as upstream:

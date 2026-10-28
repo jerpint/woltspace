@@ -1112,12 +1112,13 @@ def _wolf_request(method: str, path: str, body: dict | None = None) -> tuple[int
     url = f"{_wolf_api()}{path}"
     data = json.dumps(body).encode() if body is not None else None
     layout = RuntimeLayout.from_env()
-    headers = _lodge_auth_module(layout).client_headers(wolts_dir=layout.wolts_dir)
+    lodge_auth = _lodge_auth_module(layout)
+    headers = lodge_auth.client_headers(wolts_dir=layout.wolts_dir)
     request = urllib.request.Request(url, data=data, method=method, headers=headers)
     if data is not None:
         request.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with lodge_auth.urlopen(request, timeout=30) as response:
             return response.status, json.loads(response.read().decode() or "{}")
     except urllib.error.HTTPError as exc:
         try:

@@ -34,7 +34,10 @@ export function lodgeKey(env = process.env) {
 
 const withKey = (opts) => {
   const key = lodgeKey();
-  return key ? { ...opts, headers: { ...(opts.headers || {}), 'X-Woltspace-Key': key } } : opts;
+  // A redirect is never followed with the key: fetch would carry it along.
+  return key
+    ? { ...opts, redirect: 'manual', headers: { ...(opts.headers || {}), 'X-Woltspace-Key': key } }
+    : opts;
 };
 
 const unreachable = (e) =>

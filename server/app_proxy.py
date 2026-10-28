@@ -25,6 +25,12 @@ ACCESS_HEADERS = frozenset({
     "cf-access-client-id", "cf-access-client-secret",
 })
 ACCESS_COOKIES = frozenset({"CF_Authorization", "CF_AppSession"})
+# The lodge's own credentials (container/lib/lodge_auth.py): a paired
+# browser's cookies and a lodge key. An app or tool never sees them, and can't
+# set those cookies either.
+LODGE_COOKIES = frozenset({"woltspace-lodge", "__Host-woltspace-lodge", "woltspace-site"})
+PRIVATE_COOKIES = ACCESS_COOKIES | LODGE_COOKIES
+LODGE_HEADERS = frozenset({"x-woltspace-key", "x-woltspace-mill-identity"})
 
 
 def _connection_named(headers: list[tuple[str, str]]) -> set[str]:
@@ -39,7 +45,7 @@ def _without_access_cookies(value: str) -> str:
     kept = []
     for part in value.split(";"):
         name = part.split("=", 1)[0].strip()
-        if name and name not in ACCESS_COOKIES:
+        if name and name not in PRIVATE_COOKIES:
             kept.append(part.strip())
     return "; ".join(kept)
 
@@ -88,9 +94,20 @@ def is_access_authorization(value: str) -> bool:
     return issuer.endswith(".cloudflareaccess.com")
 
 
-def upstream_request_headers(headers: list[tuple[str, str]], port: int) -> list[tuple[str, str]]:
-    """Headers to send an app on 127.0.0.1:`port`, duplicates kept in order."""
-    drop = HOP_BY_HOP | ACCESS_HEADERS | _connection_named(headers) | {"host"}
+def _bearer(value: str) -> str:
+    scheme, _, token = value.strip().partition(" ")
+    return token.strip() if scheme.lower() == "bearer" else ""
+
+
+def upstream_request_headers(
+    headers: list[tuple[str, str]], port: int, *, is_lodge_key=lambda token: False,
+) -> list[tuple[str, str]]:
+    """Headers to send an app on 127.0.0.1:`port`, duplicates kept in order.
+
+    `is_lodge_key` says whether a bearer token is one of the lodge's keys,
+    which is stripped like an Access credential; any other bearer passes.
+    """
+    drop = HOP_BY_HOP | ACCESS_HEADERS | LODGE_HEADERS | _connection_named(headers) | {"host"}
     out = [("host", f"localhost:{port}")]
     for name, value in headers:
         lower = name.lower()
@@ -100,7 +117,8 @@ def upstream_request_headers(headers: list[tuple[str, str]], port: int) -> list[
             value = _without_access_cookies(value)
             if not value:
                 continue
-        if lower == "authorization" and is_access_authorization(value):
+        if lower == "authorization" and (
+                is_access_authorization(value) or is_lodge_key(_bearer(value))):
             continue
         out.append((name, value))
     return out
@@ -127,14 +145,16 @@ def client_response_headers(headers: list[tuple[str, str]]) -> list[tuple[str, s
             continue
         if lower == "set-cookie":
             cookie_name = value.split("=", 1)[0].strip()
-            if cookie_name in ACCESS_COOKIES:
+            if cookie_name in PRIVATE_COOKIES:
                 continue
             value = _host_only_set_cookie(value)
         out.append((name, value))
     return out
 
 
-def websocket_upstream_headers(headers: list[tuple[str, str]], port: int) -> list[tuple[str, str]]:
+def websocket_upstream_headers(
+    headers: list[tuple[str, str]], port: int, *, is_lodge_key=lambda token: False,
+) -> list[tuple[str, str]]:
     """Headers for the app's WebSocket handshake: the app's own cookies,
     origin and auth, without Access credentials. The client library writes
     `host` and the handshake's own fields itself, and appends extra headers
@@ -144,7 +164,7 @@ def websocket_upstream_headers(headers: list[tuple[str, str]], port: int) -> lis
         "sec-websocket-extensions", "sec-websocket-protocol", "content-length",
     }
     return [
-        (name, value) for name, value in upstream_request_headers(headers, port)
+        (name, value) for name, value in upstream_request_headers(headers, port, is_lodge_key=is_lodge_key)
         if name.lower() not in handshake
     ]
 

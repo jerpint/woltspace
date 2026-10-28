@@ -145,7 +145,7 @@ def _rest_via_api(session_name: str, idle_since: int) -> bool:
         headers={"Content-Type": "application/json", **lodge_auth.client_headers()},
     )
     try:
-        with urlrequest.urlopen(req, timeout=15) as response:
+        with lodge_auth.urlopen(req, timeout=15) as response:
             return 200 <= response.status < 300
     except (OSError, urlerror.URLError):
         return False

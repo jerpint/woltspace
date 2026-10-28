@@ -21,6 +21,8 @@ settings; they don't contain hostile code running as the owner.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import hashlib
 import hmac
 import json
@@ -29,6 +31,7 @@ import re
 import secrets
 import tempfile
 import time
+import urllib.request
 from pathlib import Path
 
 from env_compat import get_env
@@ -119,20 +122,34 @@ def _read_json(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+@contextlib.contextmanager
+def _locked(wolts_dir):
+    """Hold the lodge auth lock: the CLI and the lodge both update these files,
+    and a read-modify-write that interleaves could bring a spent code back."""
+    directory = _prepare(auth_dir(wolts_dir))
+    fd = os.open(directory / ".lock", os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0), 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield directory
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
 def ensure_keys(wolts_dir) -> dict[str, str]:
     """Create the owner and wolt keys if missing; return {scope: key}."""
-    directory = _prepare(auth_dir(wolts_dir))
     keys = {}
-    for scope in (OWNER, WOLT):
-        path = directory / f"{scope}.key"
-        try:
-            key = path.read_text().strip()
-        except OSError:
-            key = ""
-        if len(key) < 32:
-            key = secrets.token_urlsafe(32)
-            _write_private(path, key + "\n")
-        keys[scope] = key
+    with _locked(wolts_dir) as directory:
+        for scope in (OWNER, WOLT):
+            path = directory / f"{scope}.key"
+            try:
+                key = path.read_text().strip()
+            except OSError:
+                key = ""
+            if len(key) < 32:
+                key = secrets.token_urlsafe(32)
+                _write_private(path, key + "\n")
+            keys[scope] = key
     return keys
 
 
@@ -164,11 +181,13 @@ def wolt_may(method: str, path: str) -> bool:
 def new_pairing_code(wolts_dir, ttl: int = PAIRING_TTL, now: float | None = None) -> str:
     """A single-use code; the lodge turns it into a browser session."""
     now = time.time() if now is None else now
-    path = _prepare(auth_dir(wolts_dir)) / "pairing.json"
-    codes = {h: exp for h, exp in _read_json(path).items() if isinstance(exp, (int, float)) and exp > now}
     code = secrets.token_urlsafe(24)
-    codes[_hash(code)] = now + ttl
-    _write_private(path, json.dumps(codes))
+    with _locked(wolts_dir) as directory:
+        path = directory / "pairing.json"
+        codes = {h: exp for h, exp in _read_json(path).items()
+                 if isinstance(exp, (int, float)) and exp > now}
+        codes[_hash(code)] = now + ttl
+        _write_private(path, json.dumps(codes))
     return code
 
 
@@ -177,19 +196,22 @@ def redeem_pairing_code(wolts_dir, code: str, now: float | None = None) -> str |
     now = time.time() if now is None else now
     if not code or len(code) > 128:
         return None
-    path = auth_dir(wolts_dir) / "pairing.json"
-    codes = _read_json(path)
-    expires = codes.pop(_hash(code), None)
-    if expires is None:
-        return None
-    _write_private(path, json.dumps({h: e for h, e in codes.items() if isinstance(e, (int, float)) and e > now}))
-    if not isinstance(expires, (int, float)) or expires <= now:
-        return None
-    token = secrets.token_urlsafe(32)
-    browsers_path = auth_dir(wolts_dir) / "browsers.json"
-    browsers = {h: e for h, e in _read_json(browsers_path).items() if isinstance(e, (int, float)) and e > now}
-    browsers[_hash(token)] = now + BROWSER_TTL
-    _write_private(browsers_path, json.dumps(browsers))
+    with _locked(wolts_dir) as directory:
+        path = directory / "pairing.json"
+        codes = _read_json(path)
+        expires = codes.pop(_hash(code), None)
+        if expires is None:
+            return None
+        _write_private(path, json.dumps(
+            {h: e for h, e in codes.items() if isinstance(e, (int, float)) and e > now}))
+        if not isinstance(expires, (int, float)) or expires <= now:
+            return None
+        token = secrets.token_urlsafe(32)
+        browsers_path = directory / "browsers.json"
+        browsers = {h: e for h, e in _read_json(browsers_path).items()
+                    if isinstance(e, (int, float)) and e > now}
+        browsers[_hash(token)] = now + BROWSER_TTL
+        _write_private(browsers_path, json.dumps(browsers))
     return token
 
 
@@ -203,9 +225,8 @@ def browser_paired(wolts_dir, token: str, now: float | None = None) -> bool:
 
 def forget_browsers(wolts_dir) -> None:
     """Unpair every browser."""
-    path = auth_dir(wolts_dir) / "browsers.json"
-    if path.exists():
-        _write_private(path, "{}")
+    with _locked(wolts_dir) as directory:
+        _write_private(directory / "browsers.json", "{}")
 
 
 class FailureLimit:
@@ -249,6 +270,17 @@ def curl_config(env=os.environ, wolts_dir=None) -> str:
     """curl `-K -` input carrying the key, so it never shows in a process list."""
     key = client_key(env, wolts_dir)
     return f'header = "X-Woltspace-Key: {key}"\n' if key else ""
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def urlopen(request, timeout: float):
+    """urllib's urlopen for a keyed request, without following redirects:
+    urllib copies custom headers onto the next hop, the key included."""
+    return urllib.request.build_opener(_NoRedirect).open(request, timeout=timeout)
 
 
 def client_headers(env=os.environ, wolts_dir=None) -> dict[str, str]:
