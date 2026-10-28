@@ -573,3 +573,49 @@ def test_the_bot_core_signs_its_calls_to_the_lodge():
     call = next(node for node in ast.walk(ast.parse(source))
                 if isinstance(node, ast.FunctionDef) and node.name == "_call_server")
     assert "lodge_auth.sign(req)" in ast.get_source_segment(source, call)
+
+
+# --- Access log -----------------------------------------------------------------
+
+def test_codes_are_redacted_from_request_targets():
+    assert lodge_auth.redact_codes("/pair?code=abc-DEF_1") == "/pair?code=[redacted]"
+    assert (lodge_auth.redact_codes("/_woltspace/grant?code=xyz&next=/a.html")
+            == "/_woltspace/grant?code=[redacted]&next=/a.html")
+    assert lodge_auth.redact_codes("/x?zipcode=1&a=2") == "/x?zipcode=1&a=2"
+    assert lodge_auth.redact_codes("/api/wolts") == "/api/wolts"
+
+
+def test_a_rate_limited_pairing_never_logs_its_live_code(lodge, monkeypatch):
+    """A refused attempt leaves the code valid, so the access line must not hold it."""
+    import logging
+    import logging.config
+    from uvicorn.config import LOGGING_CONFIG
+
+    root, _ = lodge
+    # Uvicorn configures its loggers after the app is imported: the filter must survive it.
+    logging.config.dictConfig(LOGGING_CONFIG)
+    lodge_auth.redact_access_log()
+    logging.config.dictConfig(LOGGING_CONFIG)
+    access = logging.getLogger("uvicorn.access")
+    assert any(isinstance(f, lodge_auth.RedactCodes) for f in access.filters)
+
+    blocked = lodge_auth.FailureLimit(limit=0)
+    monkeypatch.setattr(server_app, "_pairing_failures", blocked)
+    code = lodge_auth.new_pairing_code(root)
+    target = f"/pair?code={code}"
+    assert _client().get(target).status_code == 429
+
+    lines = []
+
+    class Keep(logging.Handler):
+        def emit(self, record):
+            lines.append(record.getMessage())
+
+    keep = Keep()
+    access.addHandler(keep)
+    try:
+        access.info('%s - "%s %s HTTP/%s" %d', "127.0.0.1:5000", "GET", target, "1.1", 429)
+    finally:
+        access.removeHandler(keep)
+    assert len(lines) == 1 and code not in lines[0] and "code=[redacted]" in lines[0]
+    assert lodge_auth.redeem_pairing_code(root, code)  # still live, and never logged

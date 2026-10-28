@@ -19,7 +19,7 @@ from woltspace import cli, lifecycle
 def desk(tmp_path, monkeypatch):
     """A started lodge on a throwaway data root, at a desktop terminal."""
     monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
-    for name in ("WOLTSPACE_LODGE_AUTH", "WOLTSPACE_WOLT_SESSION", "SSH_CONNECTION", "SSH_TTY"):
+    for name in ("WOLTSPACE_LODGE_AUTH", "WOLTSPACE_WOLT_SESSION", "WOLT_SESSION", "SSH_CONNECTION", "SSH_TTY"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("DISPLAY", ":0")
     monkeypatch.setattr(lifecycle, "start", lambda layout, timeout: (
@@ -83,6 +83,7 @@ def test_the_shell_setting_wins_over_the_env_file(desk, monkeypatch):
 
 @pytest.mark.parametrize("setup", [
     lambda mp: mp.setenv("WOLTSPACE_WOLT_SESSION", "softie-a-b-123456"),
+    lambda mp: mp.setenv("WOLT_SESSION", "softie-a-b-123456"),
     lambda mp: mp.setenv("SSH_CONNECTION", "10.0.0.2 5000 10.0.0.1 22"),
     lambda mp: mp.setenv("SSH_TTY", "/dev/ttys001"),
     lambda mp: mp.setattr(cli, "_at_a_terminal", lambda: False),

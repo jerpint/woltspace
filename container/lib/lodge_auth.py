@@ -26,6 +26,7 @@ import fcntl
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
@@ -39,6 +40,32 @@ from env_compat import get_env
 KEY_HEADER = "x-woltspace-key"
 COOKIE_SECURE = "__Host-woltspace-lodge"
 COOKIE_PLAIN = "woltspace-lodge"
+
+
+# One-time codes travel in a URL's query (`/pair?code=`, a site's grant), and
+# Uvicorn's access log writes every request target. A code is spent on use,
+# but a refused attempt (rate limit) leaves it valid: never log one.
+_CODE_IN_QUERY = re.compile(r"([?&]code=)[^&#\s]*")
+
+
+def redact_codes(target: str) -> str:
+    return _CODE_IN_QUERY.sub(r"\1[redacted]", target)
+
+
+class RedactCodes(logging.Filter):
+    """Blank `code=` values in Uvicorn's access log lines."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(redact_codes(a) if isinstance(a, str) else a for a in record.args)
+        return True
+
+
+def redact_access_log() -> None:
+    """Install the filter on Uvicorn's access logger, once."""
+    logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, RedactCodes) for f in logger.filters):
+        logger.addFilter(RedactCodes())
 
 
 def cookie_name(host_header: str, secure: bool) -> str:
