@@ -69,6 +69,17 @@ def is_access_authorization(value: str) -> bool:
     text = value.strip()
     if "cf-access-client" in text.lower():
         return True
+    if text.startswith("{"):
+        # JSON may spell a key with escapes; judge the decoded keys.
+        try:
+            decoded = json.loads(text)
+        except ValueError:
+            decoded = None
+        if isinstance(decoded, dict) and any(
+            isinstance(key, str) and key.strip().lower().startswith("cf-access-")
+            for key in decoded
+        ):
+            return True
     scheme, _, rest = text.partition(" ")
     token = rest.strip() if scheme.lower() == "bearer" else text
     if token.lower().startswith("oauth:"):

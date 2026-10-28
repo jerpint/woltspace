@@ -438,8 +438,18 @@ class AppWebSocketRoutingMiddleware:
 app.add_middleware(AppWebSocketRoutingMiddleware)
 
 
+# How long the proxy waits on an app: to connect, for each upload write, and
+# for each read (the reply's start, then any quiet gap in a streamed body).
+# Long enough for a slow dev build or a quiet event stream, but a hung app
+# can't hold a request open forever.
+APP_PROXY_TIMEOUT = httpx.Timeout(connect=10.0, write=60.0, read=300.0, pool=10.0)
+# The largest WebSocket message relayed from an app, matching uvicorn's
+# default cap for messages from the browser.
+APP_WS_MAX_MESSAGE = 16 * 1024 * 1024
+
+
 def _app_http_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=httpx.Timeout(None, connect=10.0))
+    return httpx.AsyncClient(timeout=APP_PROXY_TIMEOUT)
 
 
 @app.middleware("http")
@@ -506,6 +516,11 @@ async def subdomain_proxy(request: Request, call_next):
             return HTMLResponse(
                 f"<h1>Cannot reach app '{app_name}' on port {port}</h1>",
                 status_code=502,
+            )
+        except httpx.TimeoutException:
+            return HTMLResponse(
+                f"<h1>App '{app_name}' did not answer in time</h1>",
+                status_code=504,
             )
         except Exception as e:
             return HTMLResponse(f"<h1>Proxy error: {e}</h1>", status_code=502)
@@ -2990,7 +3005,7 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
             upstream_url,
             subprotocols=subprotocols or None,
             additional_headers=websocket_upstream_headers(ws.headers.items(), port),
-            max_size=None,
+            max_size=APP_WS_MAX_MESSAGE,
             proxy=None,
         ) as upstream:
             # Frames keep their type both ways: Vite and other dev servers

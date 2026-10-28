@@ -10,6 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -110,6 +111,7 @@ def _jwt(claims: dict) -> str:
     '{"cf-access-client-id":"id.access","cf-access-client-secret":"secret"}',
     "Bearer " + _jwt({"iss": "https://team.cloudflareaccess.com", "aud": ["a"]}),
     _jwt({"iss": "https://team.cloudflareaccess.com/"}),
+    '{"\\u0063f-access-client-id":"id.access","\\u0063f-access-client-secret":"secret"}',
     "Bearer oauth:CvNooExampleOpaqueToken",
     "bearer OAUTH:CvNooExampleOpaqueToken",
 ])
@@ -245,7 +247,10 @@ def echo_app():
     async def echo(conn):
         handshakes.append(conn.request.headers)
         async for msg in conn:
-            await conn.send(msg)
+            if msg == "big":  # one message, sent as three fragments of 600 bytes
+                await conn.send([b"x" * 600, b"y" * 600, b"z" * 600])
+            else:
+                await conn.send(msg)
 
     async def main():
         loop = asyncio.get_running_loop()
@@ -302,3 +307,60 @@ def test_websocket_handshake_headers_leave_out_what_the_client_library_writes():
         ("Sec-WebSocket-Protocol", "vite-hmr"), ("Origin", f"http://{APP_HOST}"),
     ], 4999)
     assert out == [("Origin", f"http://{APP_HOST}")]
+
+
+def test_an_over_cap_websocket_message_closes_the_relay(echo_app, monkeypatch):
+    port, _ = echo_app
+    _running(monkeypatch, port)
+    monkeypatch.setattr(server_app, "APP_WS_MAX_MESSAGE", 1024)
+
+    with _client().websocket_connect("/hmr", headers={
+        "host": APP_HOST, "origin": f"http://{APP_HOST}",
+    }) as ws:
+        ws.send_text("small")
+        assert ws.receive_text() == "small"
+        ws.send_text("big")
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_bytes()
+
+
+def test_the_relay_caps_websocket_messages_by_default():
+    assert server_app.APP_WS_MAX_MESSAGE == 16 * 1024 * 1024
+
+
+@pytest.fixture
+def silent_app():
+    """An app that accepts connections and never answers."""
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(8)
+    held = []
+
+    def accept():
+        while True:
+            try:
+                conn, _ = server.accept()
+            except OSError:
+                return
+            held.append(conn)
+
+    threading.Thread(target=accept, daemon=True).start()
+    yield server.getsockname()[1]
+    server.close()
+    for conn in held:
+        conn.close()
+
+
+def test_an_app_that_never_answers_times_out(silent_app, monkeypatch):
+    _running(monkeypatch, silent_app)
+    monkeypatch.setattr(server_app, "APP_PROXY_TIMEOUT", httpx.Timeout(0.5))
+
+    response = _client().get("/")
+
+    assert response.status_code == 504
+
+
+def test_every_proxy_wait_is_bounded():
+    timeout = server_app.APP_PROXY_TIMEOUT
+    for value in (timeout.connect, timeout.read, timeout.write, timeout.pool):
+        assert value is not None and 0 < value <= 300
