@@ -6,8 +6,8 @@ and never goes in a backup.
 
 - owner.key  the owner's key: the CLI in a terminal, and the lodge's own calls.
 - wolt.key   the key a wolt session's tools (`notify`, `push-view`,
-             `woltspace ...`) send. It can't do the owner-only things in
-             OWNER_ONLY below.
+             `woltspace ...`) send. It reads, and writes only what
+             WOLT_WRITES below allows; nothing else, and no WebSocket.
 - pairing.json  outstanding one-time pairing codes, hashed, with expiry.
 - browsers.json paired browsers' session tokens, hashed, with expiry.
 
@@ -31,6 +31,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from env_compat import get_env
+
 KEY_HEADER = "x-woltspace-key"
 COOKIE_SECURE = "__Host-woltspace-lodge"
 COOKIE_PLAIN = "woltspace-lodge"
@@ -39,14 +41,34 @@ OWNER, WOLT = "owner", "wolt"
 PAIRING_TTL = 10 * 60
 BROWSER_TTL = 30 * 24 * 3600
 
-# A wolt's key can't grant itself auto mode, publish an app, or change the
-# lodge's settings. Matched against (method, path).
-OWNER_ONLY = (
-    ("POST", re.compile(r"^/auto-grants/(grant|revoke)$")),
-    ("POST", re.compile(r"^/apps/[^/]+/share$")),
-    ("POST", re.compile(r"^/settings/")),
-    ("POST", re.compile(r"^/harness/(default|tiers)$")),
-)
+# What a wolt's key may change: its sessions, messages, the viewport, crons,
+# running apps and tools. Everything else that writes is the owner's: lodge
+# and harness settings, auto-mode grants, creatures, a wolt's settings,
+# archive and deletion, app keepers and sharing. A route added later is the
+# owner's until it is listed here. Matched against (method, path).
+_SEG = r"[^/]+"
+WOLT_WRITES = tuple((method, re.compile(pattern)) for method, pattern in (
+    ("POST", r"^/current$"),
+    ("POST", r"^/sessions/redirect$"),
+    ("POST", r"^/notify$"),
+    ("POST", r"^/memory/read$"),
+    ("POST", rf"^/sessions/{_SEG}/(describe|hold|message|rest|resume|stop)$"),
+    ("DELETE", rf"^/sessions/{_SEG}/hold$"),
+    ("POST", r"^/sessions/new/(create|lodge|telegram|slack)$"),
+    ("POST", rf"^/wolts/{_SEG}/message$"),
+    ("POST", r"^/wolf/crons$"),
+    ("PUT", rf"^/wolf/crons/{_SEG}/{_SEG}$"),
+    ("DELETE", rf"^/wolf/crons/{_SEG}/{_SEG}$"),
+    ("POST", rf"^/wolf/crons/{_SEG}/{_SEG}/fire$"),
+    ("POST", r"^/auto-grants/check$"),
+    ("POST", rf"^/apps/{_SEG}/(start|stop|restart)$"),
+    ("POST", r"^/tools/spawn$"),
+    ("POST", rf"^/tools/{_SEG}/.*$"),
+    ("PUT", rf"^/tools/{_SEG}/.*$"),
+    ("DELETE", rf"^/tools/{_SEG}/.*$"),
+    ("PATCH", rf"^/tools/{_SEG}/.*$"),
+))
+_READS = {"GET", "HEAD", "OPTIONS"}
 
 
 def enabled(env=os.environ) -> bool:
@@ -129,8 +151,12 @@ def key_scope(wolts_dir, presented: str) -> str | None:
     return found
 
 
-def owner_only(method: str, path: str) -> bool:
-    return any(method.upper() == m and pattern.match(path) for m, pattern in OWNER_ONLY)
+def wolt_may(method: str, path: str) -> bool:
+    """Whether a wolt's key may make this HTTP request."""
+    method = method.upper()
+    if method in _READS:
+        return True
+    return any(method == m and pattern.match(path) for m, pattern in WOLT_WRITES)
 
 
 # --- Pairing a browser --------------------------------------------------------
@@ -209,10 +235,10 @@ def client_key(env=os.environ, wolts_dir=None) -> str:
     explicit = (env.get("WOLTSPACE_LODGE_KEY") or "").strip()
     if explicit:
         return explicit
-    root = wolts_dir or env.get("WOLTSPACE_WOLTS_DIR") or env.get("WOLTS_DIR")
+    root = wolts_dir or get_env("WOLTSPACE_WOLTS_DIR", env=env)
     if not root:
         return ""
-    in_session = bool(env.get("WOLTSPACE_WOLT_SESSION") or env.get("WOLT_SESSION"))
+    in_session = bool(get_env("WOLTSPACE_WOLT_SESSION", env=env))
     try:
         return (auth_dir(root) / f"{WOLT if in_session else OWNER}.key").read_text().strip()
     except OSError:
@@ -227,4 +253,15 @@ def curl_config(env=os.environ, wolts_dir=None) -> str:
 
 def client_headers(env=os.environ, wolts_dir=None) -> dict[str, str]:
     key = client_key(env, wolts_dir)
+    return {"X-Woltspace-Key": key} if key else {}
+
+
+def owner_headers(wolts_dir) -> dict[str, str]:
+    """The owner key's header, for the lodge's own calls to itself."""
+    if not wolts_dir:
+        return {}
+    try:
+        key = (auth_dir(wolts_dir) / f"{OWNER}.key").read_text().strip()
+    except OSError:
+        return {}
     return {"X-Woltspace-Key": key} if key else {}

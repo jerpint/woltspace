@@ -149,6 +149,9 @@ def test_release_calls_delete_on_the_lodge(adapter, monkeypatch):
     calls = []
 
     class FakeClient:
+        def __init__(self, **kwargs):  # the lodge client carries its key header
+            pass
+
         async def __aenter__(self):
             return self
 

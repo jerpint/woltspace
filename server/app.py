@@ -605,9 +605,18 @@ class LodgeAuthMiddleware:
     async def __call__(self, scope, receive, send):
         if scope.get("type") not in ("http", "websocket") or not lodge_auth.enabled():
             return await self.inner(scope, receive, send)
+        raw = scope.get("headers", [])
+        hosts = [value for key, value in raw if key.lower() == b"host"]
+        if len(hosts) != 1:
+            # Starlette reads the first Host, a dict the last: two Hosts could
+            # pass this gate as an app host and reach the lodge as itself.
+            if scope["type"] == "websocket":
+                return await send({"type": "websocket.close", "code": 1008})
+            response = JSONResponse({"error": "exactly one Host header required"}, status_code=400)
+            return await response(scope, receive, send)
         headers = {
             key.decode("latin-1").lower(): value.decode("latin-1")
-            for key, value in scope.get("headers", [])
+            for key, value in raw
         }
         path = scope.get("path", "/")
         if (
@@ -620,7 +629,8 @@ class LodgeAuthMiddleware:
 
         caller = _lodge_auth_scope(headers)
         if scope["type"] == "websocket":
-            if caller is None:
+            # Terminals and reload sockets are the owner's; wolt tools use HTTP.
+            if caller != lodge_auth.OWNER:
                 return await send({"type": "websocket.close", "code": 1008})
             return await self.inner(scope, receive, send)
 
@@ -631,7 +641,7 @@ class LodgeAuthMiddleware:
             else:
                 response = JSONResponse({"error": "lodge key or paired browser required"}, status_code=401)
             return await response(scope, receive, send)
-        if caller == lodge_auth.WOLT and lodge_auth.owner_only(method, path):
+        if caller == lodge_auth.WOLT and not lodge_auth.wolt_may(method, path):
             response = JSONResponse({"error": "only the owner can do this"}, status_code=403)
             return await response(scope, receive, send)
         return await self.inner(scope, receive, send)

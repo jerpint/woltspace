@@ -137,19 +137,164 @@ def test_owner_and_wolt_keys_open_the_api(lodge):
         assert _client().get("/version", headers={"authorization": f"Bearer {key}"}).status_code == 200
 
 
-@pytest.mark.parametrize("path", [
-    "/auto-grants/grant", "/auto-grants/revoke", "/apps/blog/share",
-    "/settings/session-expiry", "/harness/default", "/harness/tiers",
-])
-def test_a_wolt_key_cannot_do_owner_only_things(lodge, path):
+# Every lodge route that writes, and whether a wolt's key may use it. A new
+# route fails test_every_write_route_has_a_wolt_policy until it is listed.
+WOLT_POLICY = {
+    ("POST", "/current"): True,
+    ("POST", "/sessions/redirect"): True,
+    ("POST", "/notify"): True,
+    ("POST", "/memory/read"): True,
+    ("POST", "/sessions/{session_id}/describe"): True,
+    ("POST", "/sessions/{session_id}/hold"): True,
+    ("DELETE", "/sessions/{session_id}/hold"): True,
+    ("POST", "/sessions/{session_id}/message"): True,
+    ("POST", "/sessions/{session_id}/rest"): True,
+    ("POST", "/wolts/{name}/message"): True,
+    ("POST", "/sessions/new/create"): True,
+    ("POST", "/sessions/new/lodge"): True,
+    ("POST", "/sessions/new/telegram"): True,
+    ("POST", "/sessions/new/slack"): True,
+    ("POST", "/wolf/crons"): True,
+    ("PUT", "/wolf/crons/{wolt}/{name}"): True,
+    ("DELETE", "/wolf/crons/{wolt}/{name}"): True,
+    ("POST", "/wolf/crons/{wolt}/{name}/fire"): True,
+    ("POST", "/auto-grants/check"): True,
+    ("POST", "/apps/{name}/start"): True,
+    ("POST", "/apps/{name}/stop"): True,
+    ("POST", "/apps/{name}/restart"): True,
+    ("POST", "/sessions/{name}/resume"): True,
+    ("POST", "/sessions/{name}/stop"): True,
+    ("POST", "/tools/spawn"): True,
+    ("POST", "/tools/{tool_name}/{path:path}"): True,
+    ("PUT", "/tools/{tool_name}/{path:path}"): True,
+    ("DELETE", "/tools/{tool_name}/{path:path}"): True,
+    ("PATCH", "/tools/{tool_name}/{path:path}"): True,
+    ("POST", "/settings/session-expiry"): False,
+    ("POST", "/onboarding/harness"): False,
+    ("POST", "/harness/default"): False,
+    ("POST", "/harness/tiers"): False,
+    ("POST", "/creatures"): False,
+    ("DELETE", "/creatures/{cid}"): False,
+    ("POST", "/wolts/{name}/creature"): False,
+    ("PATCH", "/wolts/{name}/settings"): False,
+    ("POST", "/wolts/{name}/harness"): False,
+    ("POST", "/wolts/{name}/archive"): False,
+    ("POST", "/wolts/archived/{name}/unarchive"): False,
+    ("DELETE", "/wolts/archived/{name}"): False,
+    ("POST", "/auto-grants/grant"): False,
+    ("POST", "/auto-grants/revoke"): False,
+    ("PUT", "/apps/{name}"): False,
+    ("POST", "/apps/{name}/share"): False,
+    ("POST", "/apps/{name}/unshare"): False,
+    ("POST", "/apps/unshare-all"): False,
+}
+
+
+def _concrete(template: str) -> str:
+    import re
+    return re.sub(r"\{[^}]+\}", "x", template)
+
+
+def test_every_write_route_has_a_wolt_policy():
+    from starlette.routing import Route
+    writes = {
+        (method, route.path)
+        for route in server_app.app.routes if isinstance(route, Route)
+        for method in (route.methods or ()) if method not in {"GET", "HEAD", "OPTIONS"}
+    }
+    assert writes == set(WOLT_POLICY)
+    for (method, template), allowed in WOLT_POLICY.items():
+        assert lodge_auth.wolt_may(method, _concrete(template)) is allowed, (method, template)
+
+
+@pytest.mark.parametrize("method,template", [k for k, v in WOLT_POLICY.items() if not v])
+def test_a_wolt_key_cannot_do_owner_only_things(lodge, method, template):
     _, keys = lodge
-    refused = _client().post(path, json={}, headers={"x-woltspace-key": keys["wolt"]})
+    path = _concrete(template)
+    refused = _client().request(method, path, json={}, headers={"x-woltspace-key": keys["wolt"]})
     assert refused.status_code == 403
     assert refused.json() == {"error": "only the owner can do this"}
 
-    owner = _client().post(path, json={}, headers={"x-woltspace-key": keys["owner"]})
+    owner = _client().request(method, path, json={}, headers={"x-woltspace-key": keys["owner"]})
     assert owner.status_code != 401
-    assert owner.json() != {"error": "only the owner can do this"}
+    try:
+        assert owner.json() != {"error": "only the owner can do this"}
+    except ValueError:
+        pass
+
+
+def test_a_wolt_key_reads_and_does_wolt_things(lodge):
+    _, keys = lodge
+    wolt = {"x-woltspace-key": keys["wolt"]}
+    assert _client().get("/version", headers=wolt).status_code == 200
+    response = _client().post("/current?session=main", json={"url": "/"}, headers=wolt)
+    assert response.status_code != 403 and response.status_code != 401
+
+
+@pytest.mark.parametrize("hosts", [
+    [b"localhost:7777", b"notes.localhost:7777"],
+    [b"notes.localhost:7777", b"localhost:7777"],
+    [],
+])
+def test_a_request_without_exactly_one_host_is_refused(lodge, hosts):
+    import asyncio
+
+    sent = []
+
+    async def run():
+        scope = {"type": "http", "method": "GET", "path": "/version", "raw_path": b"/version",
+                 "query_string": b"", "headers": [(b"host", h) for h in hosts],
+                 "scheme": "http", "server": ("127.0.0.1", 7777), "client": ("127.0.0.1", 5000),
+                 "http_version": "1.1", "root_path": ""}
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            sent.append(message)
+
+        await server_app.LodgeAuthMiddleware(server_app.app.router)(scope, receive, send)
+
+    asyncio.run(run())
+    assert sent[0]["status"] == 400
+
+
+def test_a_websocket_without_exactly_one_host_is_closed(lodge):
+    import asyncio
+
+    sent = []
+
+    async def run():
+        scope = {"type": "websocket", "path": "/tui", "raw_path": b"/tui", "query_string": b"",
+                 "headers": [(b"host", b"localhost:7777"), (b"host", b"notes.localhost:7777")],
+                 "scheme": "ws", "server": ("127.0.0.1", 7777), "client": ("127.0.0.1", 5000),
+                 "root_path": "", "subprotocols": []}
+
+        async def receive():
+            return {"type": "websocket.connect"}
+
+        async def send(message):
+            sent.append(message)
+
+        await server_app.LodgeAuthMiddleware(server_app.app.router)(scope, receive, send)
+
+    asyncio.run(run())
+    assert sent == [{"type": "websocket.close", "code": 1008}]
+
+
+def test_the_chat_lodge_calls_the_lodge_with_the_owner_key(lodge, monkeypatch):
+    import asyncio
+    sys.path.insert(0, str(ROOT / "container"))
+    import chat_lodge
+    root, keys = lodge
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(root))
+    monkeypatch.setenv("WOLTSPACE_WOLT_SESSION", "softie-x-abc123")  # a lodge started from a session
+
+    async def headers():
+        async with chat_lodge.ChatLodge._lodge_client() as client:
+            return dict(client.headers)
+
+    assert asyncio.run(headers())["x-woltspace-key"] == keys["owner"]
 
 
 def test_health_and_static_assets_stay_open(lodge):
@@ -212,11 +357,13 @@ def test_a_paired_browser_still_needs_a_same_origin_write(lodge):
     assert response.status_code == 403
 
 
-def test_websockets_need_a_key_or_paired_browser(lodge):
-    with pytest.raises(WebSocketDisconnect) as refused:
-        with _client().websocket_connect("/tui?session=main"):
-            pass
-    assert refused.value.code == 1008
+def test_websockets_need_the_owner(lodge):
+    _, keys = lodge
+    for headers in ({}, {"x-woltspace-key": keys["wolt"]}):
+        with pytest.raises(WebSocketDisconnect) as refused:
+            with _client().websocket_connect("/tui?session=main", headers=headers):
+                pass
+        assert refused.value.code == 1008
 
 
 # --- The CLI ---------------------------------------------------------------------
