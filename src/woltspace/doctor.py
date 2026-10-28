@@ -436,7 +436,7 @@ def _apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
     return DoctorCheck(
         "apps", "warn", "apps that " + " and apps that ".join(problems),
         "Pass `--host $HOST` (the lodge sets HOST=127.0.0.1) instead of 0.0.0.0, so an app is "
-        "reached only through the Mill; give each app its own name, not starting with site-.",
+        "reachable from this machine only; give each app its own name, not starting with site-.",
     )
 
 

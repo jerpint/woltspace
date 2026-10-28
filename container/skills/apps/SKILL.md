@@ -54,7 +54,7 @@ Then write `woltspace.json` — **this is required** for the platform to discove
 | `stack` | no | `python`, `vite`, `node`, or `html` |
 | `install` | no | Install command |
 | `port` | yes | Fixed port for this app. Permanent — survives restarts. Avoid 7777 and 3001. |
-| `start` | no | Start command. Use `$PORT` and `--host $HOST` (the platform sets `HOST=127.0.0.1`, so only the Mill reaches the app). Never `0.0.0.0`. Null = a static app, served by the Mill from `dist/` or the app folder. |
+| `start` | no | Start command. Use `$PORT` and `--host $HOST` (the platform sets `HOST=127.0.0.1`: the app is reachable from this machine only, and the browser goes through the Mill). Never `0.0.0.0`. Null = a static app, served by the Mill from `dist/` or the app folder. |
 | `source` | no | Origin URL if cloned |
 | `emoji` | no | Display emoji (auto-assigned) |
 | `public` | no | Ignored since 0.6: there is no per-app public sharing. Leave it out. |
@@ -102,7 +102,7 @@ Use the **subdomain pattern** `http://<app-name>.localhost:7777/` to push an app
 
 Each app declares its own port in `woltspace.json` (required). Use the **4000-5999** range for apps. The port is permanent — it never changes between restarts. Pick one that doesn't conflict with other apps. If two apps claim the same port, the second one to start gets an error — just pick a different port.
 
-The platform sets `PORT` to your manifest port and `HOST=127.0.0.1` when starting: pass `--host $HOST`, not `0.0.0.0`, so the app is reached only through the Mill (`woltspace doctor` names apps that bind `0.0.0.0`). Names starting with `site-` are reserved for wolt sites and aren't served. Avoid 7777 (platform server) and 3001 (TUI).
+The platform sets `PORT` to your manifest port and `HOST=127.0.0.1` when starting: pass `--host $HOST`, not `0.0.0.0`, so the app is reachable from this machine only, not the network (`woltspace doctor` names apps that bind `0.0.0.0`). Names starting with `site-` are reserved for wolt sites and aren't served. Avoid 7777 (platform server) and 3001 (TUI).
 
 ## Reaching an app from elsewhere
 
