@@ -342,11 +342,14 @@ def _split_host(host_header: str) -> tuple[str, int | None]:
 
 
 def _allowed_http_hostname(hostname: str) -> bool:
-    """Allow only the lodge's loopback/tunnel names and valid app subdomains."""
+    """Allow only the lodge's own names: loopback and its tunnel host.
+
+    A site or app host never reaches the lodge's routes: the Mill forwarder
+    takes every one it recognises, and anything else shaped like one (a
+    reserved `site-` name, an invalid label) is refused here.
+    """
     if hostname in {"localhost", "127.0.0.1", "::1"}:
         return True
-    if hostname.endswith(".localhost"):
-        return bool(_APP_HOST_RE.fullmatch(hostname.removesuffix(".localhost")))
 
     tunnel_hostname = tunnel_mgr.get_tunnel_hostname().lower().rstrip(".")
     if tunnel_hostname and hostname == tunnel_hostname:
@@ -362,10 +365,6 @@ def _allowed_http_hostname(hostname: str) -> bool:
         current_tunnel_hostname = ""
     if current_tunnel_hostname and hostname == current_tunnel_hostname:
         return True
-    tunnel_domain = tunnel_mgr.get_tunnel_domain().lower().rstrip(".")
-    if tunnel_domain and hostname.endswith(f".{tunnel_domain}"):
-        app_name = hostname.removesuffix(f".{tunnel_domain}")
-        return bool(_APP_HOST_RE.fullmatch(app_name))
     return False
 
 
@@ -514,11 +513,9 @@ class LodgeAuthMiddleware:
             for key, value in raw
         }
         path = scope.get("path", "/")
-        if (
-            _extract_app_subdomain(headers.get("host", ""))
-            or path in _LODGE_AUTH_OPEN_PATHS
-            or path.startswith("/static/")
-        ):
+        # Site and app hosts never get here (the Mill forwarder takes them),
+        # so every host is the lodge's: no exemption by host name.
+        if path in _LODGE_AUTH_OPEN_PATHS or path.startswith("/static/"):
             return await self.inner(scope, receive, send)
 
         caller = _lodge_auth_scope(headers)

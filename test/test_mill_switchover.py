@@ -253,3 +253,101 @@ def test_doctor_asks_for_access_settings_when_there_is_a_tunnel(tmp_path, monkey
     assert doctor._remote_apps_check(_layout(tmp_path)).status == "pass"
     monkeypatch.delenv("CLOUDFLARE_TUNNEL_URL")
     assert doctor._remote_apps_check(_layout(tmp_path)) is None
+
+
+# --- Host names that are neither the lodge nor a content host ------------------------------
+
+@pytest.mark.parametrize("auth", [False, True])
+@pytest.mark.parametrize("host", [
+    "site-foo.localhost:7777", "-x.localhost:7777", f"site-_foo.{DOMAIN}", f"a.b.{DOMAIN}",
+    f"-x.{DOMAIN}",
+])
+def test_a_content_shaped_host_never_reaches_lodge_routes(lodge, monkeypatch, host, auth):
+    from starlette.websockets import WebSocketDisconnect
+    if auth:
+        monkeypatch.setenv("WOLTSPACE_LODGE_AUTH", "1")
+    response = TestClient(server_app.app, base_url=f"http://{host}",
+                          client=("127.0.0.1", 50000)).get("/version")
+    assert response.status_code in (401, 403)
+    assert "version" not in response.text.lower() or "error" in response.text
+    with pytest.raises(WebSocketDisconnect):
+        with TestClient(server_app.app, base_url=f"http://{host}", client=("127.0.0.1", 50000)
+                        ).websocket_connect("/tui?session=main", headers={"host": host}):
+            pass
+
+
+# --- The real Access token check (RS256, JWKS), with locally signed tokens ----------------
+
+@pytest.fixture
+def signer(monkeypatch):
+    """A team signing key served as Cloudflare's certs endpoint would, and a token maker."""
+    import asyncio
+    import httpx
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from jwt.algorithms import RSAAlgorithm
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    jwk = json.loads(RSAAlgorithm.to_jwk(key.public_key()))
+    jwk["kid"] = "team-key"
+    fetched = []
+
+    def certs(request):
+        fetched.append(str(request.url))
+        return httpx.Response(200, json={"keys": [jwk]})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(access.httpx, "AsyncClient",
+                        lambda **kw: real(transport=httpx.MockTransport(certs)))
+
+    def token(*, aud="apps-aud", iss="https://team.cloudflareaccess.com", exp=600,
+              email="owner@example.com", kid="team-key", signing=None, alg="RS256"):
+        now = int(time.time())
+        claims = {"aud": [aud], "iss": iss, "iat": now, "exp": now + exp, "email": email}
+        headers = {"kid": kid} if kid else {}
+        signer_key = signing or key
+        if alg == "HS256":
+            return jwt.encode(claims, "secret", algorithm="HS256", headers=headers)
+        return jwt.encode(claims, signer_key, algorithm=alg, headers=headers)
+
+    def verify(tok, audience="apps-aud"):
+        return asyncio.run(access.AccessTokenVerifier().verify(tok, SETTINGS, audience))
+
+    return SimpleNamespace(token=token, verify=verify, other=other, fetched=fetched)
+
+
+def test_a_real_owner_token_for_the_apps_audience_verifies(signer):
+    claims = signer.verify(signer.token())
+    assert claims["email"] == "owner@example.com"
+    assert signer.fetched == ["https://team.cloudflareaccess.com/cdn-cgi/access/certs"]
+
+
+@pytest.mark.parametrize("bad", [
+    dict(signing="other"),                               # wrong signature
+    dict(aud="lodge-aud"),                               # the lodge's audience
+    dict(iss="https://evil.cloudflareaccess.com"),       # another team
+    dict(exp=-60),                                       # expired
+    dict(kid="unknown-key"),                             # a key the team doesn't have
+    dict(kid=None),                                      # no key id
+    dict(alg="HS256"),                                   # not RS256
+])
+def test_a_wrong_token_fails_closed(signer, bad):
+    if bad.get("signing") == "other":
+        bad = dict(bad, signing=signer.other)
+    with pytest.raises(Exception):
+        signer.verify(signer.token(**bad))
+
+
+@pytest.mark.parametrize("email,expected", [("owner@example.com", "owner"),
+                                            ("OWNER@example.com", "owner"),
+                                            ("someone@example.com", None)])
+def test_the_lodge_lets_in_only_the_owners_verified_email(signer, monkeypatch, email, expected):
+    import asyncio
+    monkeypatch.setattr(access, "load_access_settings", lambda root: SETTINGS)
+    monkeypatch.setattr(access, "access_token_verifier", access.AccessTokenVerifier())
+    visitor, _exp = asyncio.run(server_app._remote_visitor(
+        {"cf-access-jwt-assertion": signer.token(email=email)}))
+    assert visitor == expected
+    lodge_token = signer.token(aud="lodge-aud")
+    assert asyncio.run(server_app._remote_visitor({"cf-access-jwt-assertion": lodge_token}))[0] is None
