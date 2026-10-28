@@ -240,9 +240,10 @@ def browser_paired(wolts_dir, token: str, now: float | None = None) -> bool:
 
 
 def forget_browsers(wolts_dir) -> None:
-    """Unpair every browser, and close every site session it opened."""
+    """Unpair every browser, close every site session, and void every code
+    and grant not yet spent, so nothing issued before can open anything."""
     with _locked(wolts_dir) as directory:
-        for name in ("browsers.json", "site-sessions.json"):
+        for name in ("browsers.json", "site-sessions.json", "pairing.json", "site-grants.json"):
             _write_private(directory / name, "{}")
 
 

@@ -431,3 +431,66 @@ def test_static_app_files_are_not_served_on_the_lodges_origin(locked, monkeypatc
 
 def test_auth_off_keeps_the_old_site_links(running_mill):
     assert _lodge("localhost:7777").get("/sites/softie").json()["url"] == "/wolt/softie/site/"
+
+
+# --- What else the lodge shows of a wolt's, and revocation ---------------------------
+
+def test_a_spark_runs_opaque_on_the_lodges_origin_when_auth_is_on(locked, monkeypatch):
+    root, _ = locked
+
+    async def spark(spark_id):
+        return {"id": spark_id, "html": "<script>fetch('/sessions')</script>", "version": 1,
+                "totalVersions": 1}
+
+    monkeypatch.setattr(server_app, "get_spark_with_chain", spark)
+    response = _paired(root).get("/history/abc")
+    csp = response.headers["content-security-policy"]
+    assert csp.startswith("sandbox") and "allow-same-origin" not in csp
+
+
+def test_a_tools_page_runs_opaque_on_the_lodges_origin_when_auth_is_on(locked, monkeypatch):
+    import httpx
+    root, _ = locked
+
+    async def page(request):
+        return httpx.Response(200, html="<script>fetch('/sessions')</script>",
+                              headers={"content-security-policy": "default-src *"})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(server_app.tool_registry, "get", lambda name: {"port": 4998})
+    monkeypatch.setattr(server_app.httpx, "AsyncClient",
+                        lambda **kw: real(transport=httpx.MockTransport(page)))
+    response = _paired(root).get("/tools/board/")
+    assert response.headers.get_list("content-security-policy") == [server_app.OPAQUE_PAGE_CSP]
+    assert "allow-same-origin" not in server_app.OPAQUE_PAGE_CSP
+
+
+def test_forgetting_browsers_voids_unspent_grants_and_codes(locked):
+    root, _ = locked
+    grant = lodge_auth.new_site_grant(root, "softie")
+    code = lodge_auth.new_pairing_code(root)
+    lodge_auth.forget_browsers(root)
+    assert lodge_auth.redeem_site_grant(root, "softie", grant) is None
+    assert lodge_auth.redeem_pairing_code(root, code) is None
+
+
+def _site_socket(root):
+    token = lodge_auth.redeem_site_grant(root, "softie", lodge_auth.new_site_grant(root, "softie"))
+    return _lodge().websocket_connect("/_woltspace/livereload", headers={
+        "host": SITE, "origin": f"http://{SITE}", "cookie": f"{lodge_auth.SITE_COOKIE}={token}"})
+
+
+@pytest.mark.parametrize("active", [False, True])
+def test_a_forgotten_site_session_closes_its_open_socket(locked, monkeypatch, active):
+    root, _ = locked
+    monkeypatch.setattr(server_app, "SITE_SOCKET_RECHECK_SECONDS", 0.3)
+    page = root / "softie" / "wolt" / "site" / "data.txt"
+    with _site_socket(root) as ws:
+        lodge_auth.forget_browsers(root)
+        deadline = time.monotonic() + 5
+        with pytest.raises(WebSocketDisconnect):
+            while time.monotonic() < deadline:
+                if active:
+                    page.write_text(str(time.monotonic()))  # reload traffic keeps flowing
+                ws.receive_text()
+        assert time.monotonic() < deadline

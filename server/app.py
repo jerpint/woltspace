@@ -702,6 +702,8 @@ _FORWARDING_HEADERS = ("forwarded", "x-forwarded-for", "x-forwarded-host", "x-re
                        "cf-connecting-ip")
 _SITE_GRANT_PATH = "/_woltspace/grant"
 MILL_TIMEOUT = httpx.Timeout(connect=5.0, write=30.0, read=60.0, pool=5.0)
+# How often an open site socket rechecks that its visitor may still be there.
+SITE_SOCKET_RECHECK_SECONDS = 30.0
 
 
 def _cookie(headers: dict[str, str], name: str) -> str:
@@ -839,9 +841,26 @@ class MillForwardMiddleware:
                                           additional_headers=extra, max_size=APP_WS_MAX_MESSAGE)
         except Exception:
             return await send({"type": "websocket.close", "code": 1008})
+        label = parse_site_host(headers["host"]).label
+
+        async def authority_holds():
+            # On a monotonic timer, whatever the traffic: an expired or
+            # forgotten site session ends the socket too.
+            while True:
+                await asyncio.sleep(SITE_SOCKET_RECHECK_SECONDS)
+                if _site_visitor(scope, headers, label) is None:
+                    return
+
         try:
             await ws.accept()
-            await relay_websocket(ws, upstream)
+            tasks = [asyncio.ensure_future(relay_websocket(ws, upstream)),
+                     asyncio.ensure_future(authority_holds())]
+            try:
+                await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
         finally:
             await upstream.close()
             try:
@@ -1836,6 +1855,16 @@ async def history_meta(spark_id: str):
         return JSONResponse({"error": "not found"}, status_code=404)
 
 
+# A sandbox without allow-same-origin runs a page in an opaque origin: its
+# script can't read the lodge's responses or send a same-origin write, so
+# wolt-written HTML the lodge must still show can't act as the owner.
+OPAQUE_PAGE_CSP = "sandbox allow-scripts allow-forms allow-popups allow-modals"
+
+
+def _opaque_when_locked() -> dict[str, str]:
+    return {"content-security-policy": OPAQUE_PAGE_CSP} if lodge_auth.enabled() else {}
+
+
 @app.get("/history/{spark_id}")
 async def history_detail(spark_id: str):
     try:
@@ -1843,6 +1872,7 @@ async def history_detail(spark_id: str):
         return HTMLResponse(
             data["html"],
             headers={
+                **_opaque_when_locked(),
                 "x-spark-id": data["id"],
                 "x-spark-parent": data.get("parentId") or "",
                 "x-spark-child": data.get("childId") or "",
@@ -3257,6 +3287,12 @@ async def proxy_tool(tool_name: str, path: str, request: Request):
                 for name, value in client_response_headers(resp.headers.multi_items())
                 if name.lower() not in {"content-encoding", "content-length"}
             ] + [(b"content-length", str(len(resp.content)).encode())]
+            # A tool's page is a wolt's page too: opaque on the lodge's origin
+            # when auth is on, so its script can't use the owner's cookie.
+            if lodge_auth.enabled():
+                reply.raw_headers = [(k, v) for k, v in reply.raw_headers
+                                     if k.lower() != b"content-security-policy"]
+                reply.raw_headers.append((b"content-security-policy", OPAQUE_PAGE_CSP.encode()))
             return reply
         except httpx.ConnectError:
             return PlainTextResponse("tool unavailable", status_code=502)
