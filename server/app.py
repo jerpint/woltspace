@@ -589,14 +589,14 @@ def _lodge_auth_scope(headers) -> str | None:
             presented = value.strip()
     if presented:
         return lodge_auth.key_scope(WOLTS_DIR, presented)
-    from http.cookies import SimpleCookie
-    jar = SimpleCookie()
-    try:
-        jar.load(headers.get("cookie", ""))
-    except Exception:
-        return None
-    for name in (lodge_auth.COOKIE_SECURE, lodge_auth.COOKIE_PLAIN):
-        if name in jar and lodge_auth.browser_paired(WOLTS_DIR, jar[name].value):
+    # Lenient parsing: other servers on localhost share this cookie jar, and
+    # one malformed cookie of theirs must not lock the owner out.
+    from starlette.requests import cookie_parser
+    jar = cookie_parser(headers.get("cookie", ""))
+    host = headers.get("host", "")
+    for secure in (True, False):
+        token = jar.get(lodge_auth.cookie_name(host, secure), "")
+        if token and lodge_auth.browser_paired(WOLTS_DIR, token):
             return lodge_auth.OWNER
     return None
 
@@ -625,7 +625,7 @@ class LodgeAuthMiddleware:
         }
         path = scope.get("path", "/")
         if (
-            _extract_app_subdomain(headers.get("host", "")) is not None
+            _extract_app_subdomain(headers.get("host", ""))
             or path.startswith("/__woltspace_app_ws__/")
             or path in _LODGE_AUTH_OPEN_PATHS
             or path.startswith("/static/")
@@ -675,7 +675,7 @@ async def pair_browser(request: Request, code: str = ""):
               or request.headers.get("x-forwarded-proto", "").lower() == "https")
     response = RedirectResponse("/", status_code=303, headers=no_leak)
     response.set_cookie(
-        lodge_auth.COOKIE_SECURE if secure else lodge_auth.COOKIE_PLAIN, token,
+        lodge_auth.cookie_name(request.headers.get("host", ""), secure), token,
         max_age=lodge_auth.BROWSER_TTL, path="/", httponly=True, samesite="lax", secure=secure,
     )
     return response

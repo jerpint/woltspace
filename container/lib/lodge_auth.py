@@ -40,6 +40,22 @@ KEY_HEADER = "x-woltspace-key"
 COOKIE_SECURE = "__Host-woltspace-lodge"
 COOKIE_PLAIN = "woltspace-lodge"
 
+
+def cookie_name(host_header: str, secure: bool) -> str:
+    """The paired-browser cookie's name for this host.
+
+    Cookies ignore ports, so two lodges on one machine (7777, 8080) would
+    overwrite each other's pairing: the port is part of the name, as Jupyter
+    does. Behind a tunnel there is no port and the name is plain.
+    """
+    from urllib.parse import urlsplit
+    try:
+        port = urlsplit(f"//{host_header}").port
+    except ValueError:
+        port = None
+    base = COOKIE_SECURE if secure else COOKIE_PLAIN
+    return f"{base}-{port}" if port else base
+
 OWNER, WOLT = "owner", "wolt"
 PAIRING_TTL = 10 * 60
 BROWSER_TTL = 30 * 24 * 3600

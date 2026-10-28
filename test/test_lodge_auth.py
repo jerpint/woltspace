@@ -325,7 +325,7 @@ def test_pairing_turns_a_code_into_a_cookie_once(lodge):
     assert paired.headers["location"] == "/"
     assert paired.headers["referrer-policy"] == "no-referrer"
     cookie = paired.headers["set-cookie"]
-    assert cookie.startswith(f"{lodge_auth.COOKIE_PLAIN}=")
+    assert cookie.startswith(f"{lodge_auth.COOKIE_PLAIN}-7777=")
     assert "HttpOnly" in cookie and "SameSite=lax" in cookie and "Secure" not in cookie
 
     assert client.get("/version").status_code == 200  # the cookie opens the lodge
@@ -338,7 +338,7 @@ def test_pairing_over_https_sets_a_secure_host_cookie(lodge):
     paired = _client().get(f"/pair?code={code}", follow_redirects=False,
                            headers={"x-forwarded-proto": "https"})
     cookie = paired.headers["set-cookie"]
-    assert cookie.startswith(f"{lodge_auth.COOKIE_SECURE}=")
+    assert cookie.startswith(f"{lodge_auth.COOKIE_SECURE}-7777=")
     assert "Secure" in cookie and "Domain" not in cookie and "Path=/" in cookie
 
 
@@ -350,7 +350,7 @@ def test_guessing_pairing_codes_is_rate_limited(lodge):
 
 def test_a_forged_or_expired_cookie_is_refused(lodge):
     client = _client()
-    client.cookies.set(lodge_auth.COOKIE_PLAIN, "forged")
+    client.cookies.set(f"{lodge_auth.COOKIE_PLAIN}-7777", "forged")
     assert client.get("/version").status_code == 401
 
 
@@ -423,7 +423,7 @@ def test_an_app_never_sees_the_lodges_credentials(lodge, monkeypatch):
         "host": "notes.localhost:7777",
         "x-woltspace-key": keys["owner"],
         "authorization": f"Bearer {keys['wolt']}",
-        "cookie": f"{lodge_auth.COOKIE_PLAIN}=t; {lodge_auth.COOKIE_SECURE}=t; "
+        "cookie": f"{lodge_auth.COOKIE_PLAIN}-7777=t; {lodge_auth.COOKIE_SECURE}=t; "
                   "woltspace-site=t; app=1",
     })
 
@@ -538,3 +538,38 @@ def test_urllib_never_carries_the_key_across_a_redirect(tmp_path):
     nxt = handler.redirect_request(request, None, 302, "Found", {}, "http://elsewhere.example/")
     assert nxt.get_header("X-woltspace-key") is None
     assert keys["owner"] not in str(nxt.header_items())
+
+
+@pytest.mark.parametrize("cookie", [
+    "{name}={token}; a=b=c; d",
+    "bad cookie here; {name}={token}",
+    'x={{"a":1}}; {name}={token}',
+])
+def test_a_malformed_sibling_cookie_does_not_lock_the_owner_out(lodge, cookie):
+    root, _ = lodge
+    token = lodge_auth.redeem_pairing_code(root, lodge_auth.new_pairing_code(root))
+    header = cookie.format(name=f"{lodge_auth.COOKIE_PLAIN}-7777", token=token)
+    assert _client().get("/version", headers={"cookie": header}).status_code == 200
+
+
+def test_two_lodges_on_one_machine_keep_their_own_pairing(lodge):
+    root, _ = lodge
+    token = lodge_auth.redeem_pairing_code(root, lodge_auth.new_pairing_code(root))
+    other_port = TestClient(server_app.app, base_url="http://localhost:8080")
+    assert other_port.get("/version", headers={
+        "cookie": f"{lodge_auth.COOKIE_PLAIN}-7777={token}"}).status_code == 401
+    assert lodge_auth.cookie_name("localhost:8080", False) == "woltspace-lodge-8080"
+    assert lodge_auth.cookie_name("lodge.example.com", True) == "__Host-woltspace-lodge"
+
+
+def test_an_empty_app_label_is_not_exempt_from_the_gate(lodge):
+    response = _client().get("/version", headers={"host": ".localhost:7777"})
+    assert response.status_code in (401, 403)
+
+
+def test_the_bot_core_signs_its_calls_to_the_lodge():
+    import ast
+    source = (ROOT / "container" / "bot" / "core.py").read_text()
+    call = next(node for node in ast.walk(ast.parse(source))
+                if isinstance(node, ast.FunctionDef) and node.name == "_call_server")
+    assert "lodge_auth.sign(req)" in ast.get_source_segment(source, call)

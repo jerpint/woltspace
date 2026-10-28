@@ -30,6 +30,11 @@ ACCESS_COOKIES = frozenset({"CF_Authorization", "CF_AppSession"})
 # set those cookies either.
 LODGE_COOKIES = frozenset({"woltspace-lodge", "__Host-woltspace-lodge", "woltspace-site"})
 PRIVATE_COOKIES = ACCESS_COOKIES | LODGE_COOKIES
+
+
+def _private_cookie(name: str) -> bool:
+    """Access's and the lodge's cookies, port-suffixed ones included."""
+    return name in PRIVATE_COOKIES or any(name.startswith(f"{base}-") for base in LODGE_COOKIES)
 LODGE_HEADERS = frozenset({"x-woltspace-key", "x-woltspace-mill-identity"})
 
 
@@ -45,7 +50,7 @@ def _without_access_cookies(value: str) -> str:
     kept = []
     for part in value.split(";"):
         name = part.split("=", 1)[0].strip()
-        if name and name not in PRIVATE_COOKIES:
+        if name and not _private_cookie(name):
             kept.append(part.strip())
     return "; ".join(kept)
 
@@ -145,7 +150,7 @@ def client_response_headers(headers: list[tuple[str, str]]) -> list[tuple[str, s
             continue
         if lower == "set-cookie":
             cookie_name = value.split("=", 1)[0].strip()
-            if cookie_name in PRIVATE_COOKIES:
+            if _private_cookie(cookie_name):
                 continue
             value = _host_only_set_cookie(value)
         out.append((name, value))
