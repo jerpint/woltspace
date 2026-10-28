@@ -10,9 +10,8 @@ Pure types and helpers: no provider SDK, no storage, no network.
 
 from __future__ import annotations
 
-import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 PROTOCOL_VERSION = 1
 
@@ -23,7 +22,7 @@ CAPABILITIES = frozenset({
 })
 # How owner commands reach the lodge through a connector.
 COMMAND_INPUTS = frozenset({"native", "text", "buttons"})
-EVENT_TYPES = frozenset({"message", "command", "selection", "attachment", "reaction"})
+EVENT_TYPES = frozenset({"message", "command", "selection", "attachment"})
 
 
 class ManifestError(ValueError):
@@ -66,24 +65,6 @@ class Manifest:
 
     def can(self, capability: str) -> bool:
         return capability in self.capabilities
-
-
-@dataclass(frozen=True)
-class Route:
-    """One destination, tagged with its connector so routes never mix."""
-
-    connector: str
-    conversation_id: str
-    thread_id: str | None = None
-    account_id: str = ""
-
-    def key(self) -> str:
-        """A stable conversation key: same chat and thread, same key.
-
-        JSON-encoded, so no field can smuggle a separator into another.
-        """
-        return json.dumps([self.connector, self.account_id, self.conversation_id, self.thread_id],
-                          separators=(",", ":"), ensure_ascii=True)
 
 
 @dataclass(frozen=True)
@@ -134,31 +115,6 @@ class Command:
 
     name: str
     args: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class Selection:
-    """The owner picked a choice the lodge offered (a button, a numbered item)."""
-
-    action: str
-
-
-@dataclass(frozen=True)
-class Reaction:
-    """The owner reacted to a message (e.g. 👍)."""
-
-    emoji: str
-    message_id: str = ""
-
-
-@dataclass(frozen=True)
-class Message:
-    """Plain text for the active wolt's session."""
-
-    text: str
-    message_id: str = ""
-    reply_to: str = ""
-    attachments: tuple[dict, ...] = field(default_factory=tuple)
 
 
 # --- typed commands from plain text ------------------------------------------

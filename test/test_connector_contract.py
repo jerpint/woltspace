@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "container"))
 
 import lodge_commands  # noqa: E402
 from connector_contract import (  # noqa: E402
-    Choice, Command, Manifest, ManifestError, Reply, Route, parse_command, plain_text_reply,
+    Choice, Command, Manifest, ManifestError, Reply, parse_command, plain_text_reply,
 )
 
 NAMES = lodge_commands.COMMAND_NAMES
@@ -41,13 +41,6 @@ def test_an_unknown_manifest_fails_closed(kwargs):
 def test_a_connector_name_is_a_short_slug(name):
     with pytest.raises(ManifestError):
         Manifest(name)
-
-
-def test_routes_are_tagged_by_connector():
-    a = Route("telegram", "42")
-    b = Route("slack", "42")
-    assert a.key() != b.key()
-    assert Route("slack", "C1", "1.2").key() != Route("slack", "C1").key()
 
 
 # --- typed commands from text: the six safety rules ---------------------------
@@ -108,9 +101,3 @@ def test_every_builtin_connector_has_a_way_out():
     # (Telegram) send through their socket, from the sender the lodge registers.
     assert set(connector_registry.SPECS) <= set(notify.OUTBOUND) <= set(notify.SENDERS)
     assert "telegram" in notify.OUTBOUND and "telegram" in notify.SENDERS
-
-
-def test_route_keys_cannot_collide_through_separators():
-    a = Route("slack", conversation_id="c", account_id="a:b")
-    b = Route("slack", conversation_id="b:c", account_id="a")
-    assert a.key() != b.key()
