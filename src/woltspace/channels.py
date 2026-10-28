@@ -527,8 +527,52 @@ def _registry(layout: RuntimeLayout | None = None):
     return connector_registry
 
 
+class MillConnector:
+    """The Mill: wolt sites on origins of their own, on a unix socket.
+
+    The lodge forwards `<wolt>.sites.localhost` to it. It never listens on a
+    TCP port, so nothing but the lodge (and later the lodge's own ways in)
+    reaches it.
+    """
+
+    name: str = "mill"
+
+    def plan(
+        self, layout: RuntimeLayout, env: Mapping[str, str] | None = None,
+    ) -> ConnectorPlan:
+        values = dict(os.environ if env is None else env)
+        if not _truthy(values.get("WOLTSPACE_ENTRYPOINT", "")):
+            return ConnectorPlan(
+                self.name, False,
+                "not the platform entrypoint; a guest never runs the Mill",
+                remedy="Run the control plane through `woltspace start`.",
+            )
+        socket = layout.wolts_dir / ".space" / "run" / "mill" / "mill.sock"
+        child_env = export_both({
+            "WOLTSPACE_WOLTS_DIR": str(layout.wolts_dir),
+            "WOLTSPACE_DIR": str(layout.install_root),
+            "WOLTSPACE_ISOLATION": layout.isolation,
+            "PYTHONPATH": os.pathsep.join(
+                part for part in (
+                    str(layout.install_root), str(layout.runtime_lib),
+                    values.get("PYTHONPATH", ""),
+                ) if part
+            ),
+        })
+        return ConnectorPlan(
+            name=self.name,
+            enabled=True,
+            detail=f"wolt sites on {socket}",
+            command=(sys.executable, "-m", "server.mill", "--socket", str(socket)),
+            cwd=str(layout.install_root),
+            env=child_env,
+            remedy="Wolt sites are down without it; the lodge itself still runs.",
+            process_signature=("-m", "server.mill"),
+        )
+
+
 CONNECTORS: tuple[ChannelConnector, ...] = (
-    SlackConnector(), WolfConnector(), VultureConnector(),
+    SlackConnector(), WolfConnector(), VultureConnector(), MillConnector(),
 )
 
 

@@ -13,7 +13,7 @@ import unicodedata
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import httpx
 from fastapi import Body, FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -51,6 +51,7 @@ from .config import (
 from . import tunnel as tunnel_mgr
 from .app_proxy import (
     client_response_headers,
+    relay_websocket,
     upstream_request_headers,
     websocket_upstream_headers,
 )
@@ -679,6 +680,225 @@ async def pair_browser(request: Request, code: str = ""):
         max_age=lodge_auth.BROWSER_TTL, path="/", httponly=True, samesite="lax", secure=secure,
     )
     return response
+
+
+# --- Wolt sites, through the Mill -----------------------------------------------
+# `<wolt>.sites.localhost` is a wolt's site on an origin of its own. The lodge
+# only forwards it, over the Mill's unix socket, and never runs a lodge route
+# for it. Who the visitor is gets decided here and handed to the Mill in one
+# header; the visitor's own credentials stay behind.
+
+from . import mill as mill_server  # noqa: E402
+from .content_hosts import find_wolt_dir as _find_wolt_dir, parse_site_host  # noqa: E402
+
+# What a site's request may carry to the Mill: content negotiation, caching,
+# ranges and browser provenance. No cookie, no Authorization, no lodge key.
+_MILL_REQUEST_HEADERS = frozenset({
+    "accept", "accept-language", "cache-control", "if-modified-since", "if-none-match",
+    "if-range", "origin", "pragma", "range", "sec-fetch-dest", "sec-fetch-mode",
+    "sec-fetch-site", "sec-fetch-user", "service-worker", "user-agent",
+})
+_FORWARDING_HEADERS = ("forwarded", "x-forwarded-for", "x-forwarded-host", "x-real-ip",
+                       "cf-connecting-ip")
+_SITE_GRANT_PATH = "/_woltspace/grant"
+MILL_TIMEOUT = httpx.Timeout(connect=5.0, write=30.0, read=60.0, pool=5.0)
+
+
+def _cookie(headers: dict[str, str], name: str) -> str:
+    from starlette.requests import cookie_parser
+    return cookie_parser(headers.get("cookie", "")).get(name, "")
+
+
+def _site_visitor(scope, headers: dict[str, str], label: str) -> str | None:
+    """"owner", or None: a site is the owner's only, locally, for now.
+
+    With lodge auth on, the owner holds this site's own cookie (from
+    /sites/open). With it off, the owner is a loopback caller that came
+    straight in, not through a tunnel, as for the lodge's old site route.
+    """
+    if lodge_auth.enabled():
+        token = _cookie(headers, lodge_auth.SITE_COOKIE)
+        return "owner" if lodge_auth.site_session_ok(WOLTS_DIR, label, token) else None
+    client = (scope.get("client") or ("", 0))[0]
+    if client not in {"127.0.0.1", "::1"} or any(h in headers for h in _FORWARDING_HEADERS):
+        return None
+    return "owner"
+
+
+def _safe_next(value: str) -> str:
+    """A path on this same host, or "/"."""
+    if not value.startswith("/") or value.startswith("//") or "\\" in value or any(
+            ord(ch) < 32 for ch in value):
+        return "/"
+    return value
+
+
+def _site_url(label: str, port: int | None, path: str = "/") -> str:
+    return f"http://{label}.sites.localhost{f':{port}' if port else ''}{path}"
+
+
+class MillForwardMiddleware:
+    """Send site hosts to the Mill; everything else on to the lodge."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") not in ("http", "websocket"):
+            return await self.inner(scope, receive, send)
+        hosts = [value.decode("latin-1") for key, value in scope.get("headers", [])
+                 if key.lower() == b"host"]
+        sites = [parse_site_host(host) for host in hosts]
+        if not any(sites):
+            return await self.inner(scope, receive, send)
+        if len(hosts) != 1:
+            return await self._refuse(scope, receive, send, 400, "exactly one Host header required")
+        headers = {key.decode("latin-1").lower(): value.decode("latin-1")
+                   for key, value in scope.get("headers", [])}
+        site = sites[0]
+        _host, port = mill_server_split(hosts[0])
+        if scope["type"] == "http" and scope.get("path") == _SITE_GRANT_PATH:
+            return await self._grant(scope, receive, send, site.label)
+        visitor = _site_visitor(scope, headers, site.label)
+        if visitor is None:
+            if scope["type"] == "http" and lodge_auth.enabled():
+                lodge = f"http://localhost{f':{port}' if port else ''}"
+                target = _safe_next(scope.get("path", "/"))
+                link = f"{lodge}/sites/open?wolt={site.label}&path={quote(target, safe='/')}"
+                response = HTMLResponse(
+                    f"<h1>Open this site from the lodge</h1><p><a href=\"{link}\">"
+                    f"Open {site.label}'s site</a></p>", status_code=401,
+                    headers={"Cache-Control": "no-store"})
+                return await response(scope, receive, send)
+            return await self._refuse(scope, receive, send, 403, "This site is the owner's")
+        if scope["type"] == "websocket":
+            return await self._websocket(scope, receive, send, headers)
+        return await self._http(scope, receive, send, headers)
+
+    @staticmethod
+    async def _refuse(scope, receive, send, status, message):
+        if scope["type"] == "websocket":
+            return await send({"type": "websocket.close", "code": 1008})
+        response = JSONResponse({"error": message}, status_code=status)
+        return await response(scope, receive, send)
+
+    @staticmethod
+    def _upstream_headers(headers: dict[str, str]) -> list[tuple[str, str]]:
+        out = [("host", headers["host"]), (mill_server.IDENTITY_HEADER, mill_server.OWNER)]
+        out += [(name, value) for name, value in headers.items() if name in _MILL_REQUEST_HEADERS]
+        return out
+
+    async def _http(self, scope, receive, send, headers):
+        path = scope.get("raw_path") or scope.get("path", "/").encode()
+        query = scope.get("query_string") or b""
+        url = "http://mill" + path.decode("latin-1") + (("?" + query.decode("latin-1")) if query else "")
+        client = httpx.AsyncClient(
+            transport=httpx.AsyncHTTPTransport(uds=str(mill_server.socket_path(WOLTS_DIR))),
+            timeout=MILL_TIMEOUT,
+        )
+        try:
+            req = client.build_request(scope.get("method", "GET"), url,
+                                       headers=self._upstream_headers(headers))
+            resp = await client.send(req, stream=True, follow_redirects=False)
+        except (httpx.ConnectError, FileNotFoundError, ConnectionRefusedError):
+            await client.aclose()
+            response = HTMLResponse("<h1>The Mill isn't running, so wolt sites are down</h1>"
+                                    "<p>The lodge itself still works.</p>", status_code=502)
+            return await response(scope, receive, send)
+        except httpx.TimeoutException:
+            await client.aclose()
+            response = HTMLResponse("<h1>The Mill did not answer in time</h1>", status_code=504)
+            return await response(scope, receive, send)
+
+        async def body():
+            try:
+                async for chunk in resp.aiter_raw():
+                    yield chunk
+            finally:
+                await resp.aclose()
+                await client.aclose()
+
+        response = StreamingResponse(body(), status_code=resp.status_code)
+        response.raw_headers = [
+            (name.encode("latin-1"), value.encode("latin-1"))
+            for name, value in client_response_headers(resp.headers.multi_items())
+        ]
+        return await response(scope, receive, send)
+
+    async def _websocket(self, scope, receive, send, headers):
+        from websockets.asyncio.client import unix_connect
+        ws = WebSocket(scope, receive, send)
+        query = scope.get("query_string") or b""
+        uri = f"ws://{headers['host']}{scope.get('path', '/')}" + (
+            "?" + query.decode("latin-1") if query else "")
+        extra = [(mill_server.IDENTITY_HEADER, mill_server.OWNER)]
+        if headers.get("origin"):
+            extra.append(("Origin", headers["origin"]))
+        try:
+            upstream = await unix_connect(str(mill_server.socket_path(WOLTS_DIR)), uri,
+                                          additional_headers=extra, max_size=APP_WS_MAX_MESSAGE)
+        except Exception:
+            return await send({"type": "websocket.close", "code": 1008})
+        try:
+            await ws.accept()
+            await relay_websocket(ws, upstream)
+        finally:
+            await upstream.close()
+            try:
+                await ws.close()
+            except Exception:
+                pass
+
+    @staticmethod
+    async def _grant(scope, receive, send, label):
+        """Turn a one-time grant from /sites/open into this site's own cookie."""
+        request = Request(scope, receive)
+        no_leak = {"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"}
+        if not lodge_auth.enabled() or request.method != "GET":
+            response = JSONResponse({"error": "not found"}, status_code=404)
+            return await response(scope, receive, send)
+        if _pairing_failures.blocked():
+            response = JSONResponse({"error": "too many attempts; wait a minute"},
+                                    status_code=429, headers=no_leak)
+            return await response(scope, receive, send)
+        token = lodge_auth.redeem_site_grant(WOLTS_DIR, label, request.query_params.get("code", ""))
+        if token is None:
+            _pairing_failures.record()
+            response = HTMLResponse("<h1>That link was already used, or has expired</h1>"
+                                    "<p>Open the site from the lodge again.</p>",
+                                    status_code=403, headers=no_leak)
+            return await response(scope, receive, send)
+        response = RedirectResponse(_safe_next(request.query_params.get("next", "/")),
+                                    status_code=303, headers=no_leak)
+        response.set_cookie(lodge_auth.SITE_COOKIE, token, max_age=lodge_auth.SITE_SESSION_TTL,
+                            path="/", httponly=True, samesite="lax")
+        return await response(scope, receive, send)
+
+
+def mill_server_split(host_header: str) -> tuple[str, int | None]:
+    from .content_hosts import split_host
+    return split_host(host_header) or ("", None)
+
+
+app.add_middleware(MillForwardMiddleware)
+
+
+@app.get("/sites/open")
+async def open_site(request: Request, wolt: str = "", path: str = "/"):
+    """Open a wolt's site on its own origin, with a one-time grant when auth is on."""
+    if lodge_auth.enabled() and _lodge_auth_scope(request.headers) != lodge_auth.OWNER:
+        return JSONResponse({"error": "only the owner can open a site"}, status_code=403)
+    label = (wolt or "").lower()
+    if parse_site_host(f"{label}.sites.localhost") is None or _find_wolt_dir(WOLTS_DIR, label) is None:
+        return JSONResponse({"error": "no such wolt site"}, status_code=404)
+    _host, port = mill_server_split(request.headers.get("host", ""))
+    target = _safe_next(path)
+    headers = {"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"}
+    if not lodge_auth.enabled():
+        return RedirectResponse(_site_url(label, port, target), status_code=303, headers=headers)
+    code = lodge_auth.new_site_grant(WOLTS_DIR, label)
+    grant = f"{_SITE_GRANT_PATH}?code={code}&next={quote(target, safe='/')}"
+    return RedirectResponse(_site_url(label, port, grant), status_code=303, headers=headers)
 
 
 @app.options("/{path:path}")
@@ -3148,37 +3368,7 @@ async def subdomain_ws_proxy(ws: WebSocket, path: str):
             max_size=APP_WS_MAX_MESSAGE,
             proxy=None,
         ) as upstream:
-            # Frames keep their type both ways: Vite and other dev servers
-            # send binary frames, and a text-only relay drops them.
-            async def client_to_upstream():
-                while True:
-                    message = await ws.receive()
-                    if message["type"] == "websocket.disconnect":
-                        return
-                    if message.get("bytes") is not None:
-                        await upstream.send(message["bytes"])
-                    elif message.get("text") is not None:
-                        await upstream.send(message["text"])
-
-            async def upstream_to_client():
-                async for msg in upstream:
-                    if isinstance(msg, bytes):
-                        await ws.send_bytes(msg)
-                    else:
-                        await ws.send_text(msg)
-
-            # When either side ends, stop the other: a closed tab must not
-            # leave the app's socket open, and a closed app must close the tab's.
-            tasks = [
-                asyncio.ensure_future(client_to_upstream()),
-                asyncio.ensure_future(upstream_to_client()),
-            ]
-            try:
-                await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            finally:
-                for task in tasks:
-                    task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
+            await relay_websocket(ws, upstream)
     except Exception:
         pass
     try:

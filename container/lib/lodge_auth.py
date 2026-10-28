@@ -240,9 +240,10 @@ def browser_paired(wolts_dir, token: str, now: float | None = None) -> bool:
 
 
 def forget_browsers(wolts_dir) -> None:
-    """Unpair every browser."""
+    """Unpair every browser, and close every site session it opened."""
     with _locked(wolts_dir) as directory:
-        _write_private(directory / "browsers.json", "{}")
+        for name in ("browsers.json", "site-sessions.json"):
+            _write_private(directory / name, "{}")
 
 
 class FailureLimit:
@@ -311,3 +312,60 @@ def owner_headers(wolts_dir) -> dict[str, str]:
     except OSError:
         return {}
     return {"X-Woltspace-Key": key} if key else {}
+
+
+# --- Opening a wolt's site ------------------------------------------------------
+# A site has its own origin, so the lodge's cookie never reaches it. With lodge
+# auth on, the lodge hands a paired browser a one-time grant for one site; the
+# site's host turns it into a cookie of its own, good for that site only.
+
+SITE_COOKIE = "woltspace-site"
+SITE_GRANT_TTL = 60
+SITE_SESSION_TTL = 12 * 3600
+
+
+def _bound(path: Path, now: float) -> dict:
+    return {
+        h: v for h, v in _read_json(path).items()
+        if isinstance(v, list) and len(v) == 2 and isinstance(v[1], (int, float)) and v[1] > now
+    }
+
+
+def new_site_grant(wolts_dir, label: str, now: float | None = None) -> str:
+    now = time.time() if now is None else now
+    code = secrets.token_urlsafe(24)
+    with _locked(wolts_dir) as directory:
+        path = directory / "site-grants.json"
+        grants = _bound(path, now)
+        grants[_hash(code)] = [label, now + SITE_GRANT_TTL]
+        _write_private(path, json.dumps(grants))
+    return code
+
+
+def redeem_site_grant(wolts_dir, label: str, code: str, now: float | None = None) -> str | None:
+    """Spend a grant for this site; return a session token for it, or None."""
+    now = time.time() if now is None else now
+    if not code or len(code) > 128:
+        return None
+    with _locked(wolts_dir) as directory:
+        path = directory / "site-grants.json"
+        grants = _bound(path, now)
+        entry = grants.pop(_hash(code), None)
+        _write_private(path, json.dumps(grants))
+        if entry is None or entry[0] != label:
+            return None
+        token = secrets.token_urlsafe(32)
+        sessions_path = directory / "site-sessions.json"
+        sessions = _bound(sessions_path, now)
+        sessions[_hash(token)] = [label, now + SITE_SESSION_TTL]
+        _write_private(sessions_path, json.dumps(sessions))
+    return token
+
+
+def site_session_ok(wolts_dir, label: str, token: str, now: float | None = None) -> bool:
+    if not token or len(token) > 128:
+        return False
+    now = time.time() if now is None else now
+    entry = _read_json(auth_dir(wolts_dir) / "site-sessions.json").get(_hash(token))
+    return (isinstance(entry, list) and len(entry) == 2 and entry[0] == label
+            and isinstance(entry[1], (int, float)) and entry[1] > now)

@@ -7,6 +7,7 @@ those an app could replay the owner's login against the lodge or another app.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 
@@ -173,3 +174,40 @@ def websocket_upstream_headers(
         if name.lower() not in handshake
     ]
 
+
+
+async def relay_websocket(ws, upstream) -> None:
+    """Relay frames between a browser's socket and an upstream one.
+
+    Frames keep their type both ways: Vite and other dev servers send binary
+    frames, and a text-only relay drops them. When either side ends, the other
+    is stopped: a closed tab must not leave the upstream socket open, and a
+    closed upstream must close the tab's.
+    """
+    async def client_to_upstream():
+        while True:
+            message = await ws.receive()
+            if message["type"] == "websocket.disconnect":
+                return
+            if message.get("bytes") is not None:
+                await upstream.send(message["bytes"])
+            elif message.get("text") is not None:
+                await upstream.send(message["text"])
+
+    async def upstream_to_client():
+        async for msg in upstream:
+            if isinstance(msg, bytes):
+                await ws.send_bytes(msg)
+            else:
+                await ws.send_text(msg)
+
+    tasks = [
+        asyncio.ensure_future(client_to_upstream()),
+        asyncio.ensure_future(upstream_to_client()),
+    ]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
