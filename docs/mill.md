@@ -6,11 +6,11 @@ The Mill serves wolt sites, each on an origin of its own, so a page a wolt wrote
 
 - **The address:** `http://<wolt>.sites.localhost:7777/`, on the lodge's one port. Browsers resolve `*.localhost` to this machine with no DNS setup.
 - **The forwarding:** the lodge recognises a site host and forwards it to the Mill. It never runs a lodge route for it.
-- **The Mill itself:** its own process, supervised like the other connectors. It listens only on a unix socket, `<data root>/.space/run/mill/mill.sock`, whose folder is the owner's alone (`0700`). It has no TCP port.
+- **The Mill itself:** its own process, supervised like the other connectors. It listens only on a unix socket, `<data root>/.space/run/mill/mill.sock`. The socket itself is `0666`, as uvicorn makes it; its folder is the owner's alone (`0700`), and that's what keeps other users out. It has no TCP port.
 - **If the Mill is down:** sites answer `502` and the lodge keeps working.
 
 The old `/wolt/<name>/site/` address keeps working while lodge auth is off. With lodge auth on, the lodge never serves a wolt's pages on its own origin:
-- the old address redirects to `/sites/open`;
+- the old address redirects to `/sites/open`. Inside one of the lodge's own frames (the wolt page's site tab, a session's viewport) it shows an "open it" link instead, because a frame can't keep the site's cookie;
 - the lodge's root no longer falls back to the current wolt's site files;
 - a static app's files aren't served from `/app/<name>/` until the Mill serves apps.
 
@@ -22,7 +22,7 @@ Remote sites (through a tunnel) come later.
 
 For now, only the owner. The lodge decides, and tells the Mill in one header after stripping any copy the visitor sent:
 
-- **Lodge auth off** (the default): a visitor on this machine who came straight in, not through a tunnel. This is the same rule as the old site address.
+- **Lodge auth off** (the default): a visitor on this machine who came straight in, not through a tunnel. That's stricter than the old site address, which served anyone who reached the lodge. In a container lodge the browser's connection doesn't come from the container's loopback, so Mill sites need lodge auth there for now. The old address keeps working.
 - **Lodge auth on** (`WOLTSPACE_LODGE_AUTH=1`): a site has its own origin, so the lodge's cookie never reaches it.
   1. Open the site from the lodge, at `/sites/open?wolt=<name>&path=/page.html`. This needs the paired browser or the owner key.
   2. The lodge hands over a one-time grant, good for one minute and for that site only.
@@ -34,7 +34,7 @@ The Mill forwards only content-negotiation, caching, range and browser-provenanc
 ## What a site can do
 
 - **Requests:** `GET` and `HEAD`, for files under the wolt's real `wolt/site/` folder. A symlinked site folder, symlinked files leading outside it, `..` and encoded separators all answer `404`.
-- **Response headers:** every response carries `nosniff`, `Content-Security-Policy: sandbox allow-scripts allow-same-origin`, and `Cache-Control: private, no-store`.
+- **Response headers:** every response carries `nosniff`, a sandbox that keeps the site's own origin and lets ordinary pages use forms, new tabs, dialogs and downloads (`sandbox allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads`), and `Cache-Control: private, no-store`. So a revoked session leaves nothing cached, and a browser refetches each file.
 - **Service workers:** refused.
 - **Live reload:** owner pages get a reload client. Its socket, `/_woltspace/livereload`, only accepts the site's own origin.
 

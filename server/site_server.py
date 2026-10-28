@@ -29,7 +29,12 @@ LIVERELOAD_PATH = "/_woltspace/livereload"
 
 SITE_HEADERS = {
     "x-content-type-options": "nosniff",
-    "content-security-policy": "sandbox allow-scripts allow-same-origin",
+    # The site's own origin, with what ordinary pages need: forms, new tabs,
+    # dialogs and downloads. Its script still can't reach the lodge's origin.
+    "content-security-policy": (
+        "sandbox allow-scripts allow-same-origin allow-forms allow-popups "
+        "allow-modals allow-downloads"
+    ),
     "cache-control": "private, no-store",
 }
 

@@ -101,7 +101,10 @@ def test_the_owner_gets_files_with_the_site_policy(wolts):
     response = _mill(wolts).get("/data.txt", headers=OWNER)
     assert response.status_code == 200 and response.text == "0123456789"
     assert response.headers["x-content-type-options"] == "nosniff"
-    assert response.headers["content-security-policy"] == "sandbox allow-scripts allow-same-origin"
+    csp = response.headers["content-security-policy"]
+    assert csp.startswith("sandbox allow-scripts allow-same-origin")
+    for allowed in ("allow-forms", "allow-popups", "allow-modals", "allow-downloads"):
+        assert allowed in csp
     assert response.headers["cache-control"] == "private, no-store"
 
 
@@ -250,7 +253,7 @@ def _lodge(host: str = SITE, client=("127.0.0.1", 50000)) -> TestClient:
 def test_the_lodge_port_serves_a_site_through_the_mill(running_mill):
     response = _lodge().get("/data.txt")
     assert response.status_code == 200 and response.text == "0123456789"
-    assert response.headers["content-security-policy"] == "sandbox allow-scripts allow-same-origin"
+    assert response.headers["content-security-policy"].startswith("sandbox allow-scripts allow-same-origin")
     assert _lodge("localhost:7777").get("/version").status_code == 200  # the lodge is still itself
 
 
@@ -494,3 +497,21 @@ def test_a_forgotten_site_session_closes_its_open_socket(locked, monkeypatch, ac
                     page.write_text(str(time.monotonic()))  # reload traffic keeps flowing
                 ws.receive_text()
         assert time.monotonic() < deadline
+
+
+def test_the_lodges_own_frame_offers_a_link_instead_of_spending_a_grant(locked):
+    root, _ = locked
+    lodge = _paired(root)
+    framed = lodge.get("/wolt/softie/site/", headers={"sec-fetch-dest": "iframe"},
+                       follow_redirects=False)
+    assert framed.status_code == 200
+    assert 'href="/sites/open?wolt=softie&amp;path=/"' in framed.text and 'target="_blank"' in framed.text
+    assert not lodge_auth._read_json(lodge_auth.auth_dir(root) / "site-grants.json")
+
+
+def test_opening_a_wolt_without_a_site_is_not_found(locked):
+    root, keys = locked
+    (root / "nosite" / "wolt").mkdir(parents=True)
+    response = _lodge("localhost:7777").get("/sites/open?wolt=nosite",
+                                            headers={"x-woltspace-key": keys["owner"]})
+    assert response.status_code == 404

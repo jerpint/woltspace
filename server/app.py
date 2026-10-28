@@ -908,7 +908,9 @@ async def open_site(request: Request, wolt: str = "", path: str = "/"):
     if lodge_auth.enabled() and _lodge_auth_scope(request.headers) != lodge_auth.OWNER:
         return JSONResponse({"error": "only the owner can open a site"}, status_code=403)
     label = (wolt or "").lower()
-    if parse_site_host(f"{label}.sites.localhost") is None or _find_wolt_dir(WOLTS_DIR, label) is None:
+    from .content_hosts import anchored_site_root
+    wolt_dir = _find_wolt_dir(WOLTS_DIR, label) if parse_site_host(f"{label}.sites.localhost") else None
+    if wolt_dir is None or anchored_site_root(wolt_dir) is None:
         return JSONResponse({"error": "no such wolt site"}, status_code=404)
     _host, port = mill_server_split(request.headers.get("host", ""))
     target = _safe_next(path)
@@ -2954,6 +2956,21 @@ async def list_sites_api():
     return found
 
 
+def _open_site_page(wolt_name: str, path: str) -> str:
+    """The lodge's own small page where a site's frame would be."""
+    from html import escape
+    link = escape(_site_link(wolt_name, path), quote=True)
+    name = escape(wolt_name)
+    return (
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        "<style>body{margin:0;font:16px/1.5 system-ui,sans-serif;display:grid;place-items:center;"
+        "min-height:100vh;background:#EDE8DE;color:#2a2622}a{color:#3A6644}</style></head><body>"
+        f"<p>{name}'s site opens on its own address. "
+        f"<a href=\"{link}\" target=\"_blank\" rel=\"noopener\">Open it</a></p></body></html>"
+    )
+
+
 def _site_link(wolt_name: str, path: str = "/") -> str:
     """Where a wolt's site opens: on its own origin when lodge auth is on.
 
@@ -2983,6 +3000,11 @@ async def serve_wolt_site(wolt_name: str, request: Request, path: str = ""):
     if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_-]*", wolt_name):
         return JSONResponse({"error": "invalid wolt name"}, status_code=400)
     if lodge_auth.enabled():
+        if request.headers.get("sec-fetch-dest", "") in ("iframe", "frame"):
+            # A frame can't keep the site's cookie from a cross-site
+            # navigation, so redirecting would only spend a grant on a page
+            # that then can't open. The lodge's own frame offers a link.
+            return HTMLResponse(_open_site_page(wolt_name, "/" + path))
         return RedirectResponse(_site_link(wolt_name, "/" + path), status_code=303)
 
     wolt_dir = WOLTS_DIR / wolt_name
