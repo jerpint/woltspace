@@ -98,6 +98,8 @@ jobs:
           test/test_telegram_spawn_with_message.py
           test/test_telegram_golden.py
           test/test_telegram_messages_golden.py
+          test/test_golden_store.py
+          test/test_chat_lodge_dog.py
           test/test_connector_contract.py
           test/test_connector_echo.py
           test/test_connector_socket.py

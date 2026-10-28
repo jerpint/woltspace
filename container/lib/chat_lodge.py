@@ -18,6 +18,7 @@ import base64
 import json
 import logging
 import random
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -132,6 +133,18 @@ def format_tool_log(tc: dict) -> str:
         line += f"\n{url}"
     return line
 
+
+
+# The dog's tools change process-wide state (switch_wolt rewrites the active
+# wolt's directories and environment), so two dogs must never run at once,
+# even for different connectors. The call runs off the dispatch loop, one at
+# a time.
+_DOG_LOCK = threading.Lock()
+
+
+def _dog_response(*args, **kwargs):
+    with _DOG_LOCK:
+        return get_response(*args, **kwargs)
 
 class ChatLodge:
     """Everything the lodge does for one connector's chats."""
@@ -508,7 +521,7 @@ class ChatLodge:
         history = self._load_history(chat)
         try:
             result = await asyncio.to_thread(
-                get_response, content["message"], conversation_history=list(history),
+                _dog_response, content["message"], conversation_history=list(history),
                 routing=self._routing(chat), user_content=content["content"])
         except Exception as e:
             await out.say(Reply(f"photo error: {e}"))
@@ -528,7 +541,7 @@ class ChatLodge:
         history = self._load_history(chat)
         try:
             result = await asyncio.to_thread(
-                get_response, user_message, conversation_history=list(history),
+                _dog_response, user_message, conversation_history=list(history),
                 routing=self._routing(chat))
         except Exception as e:
             logger.error(f"Error getting response: {e}")
