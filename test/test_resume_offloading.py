@@ -71,7 +71,6 @@ def test_a_slow_resume_leaves_the_control_plane_answering(monkeypatch):
 ADAPTERS = [
     "container/connectors/telegram/telegram_connector.py",
     "container/lib/chat_lodge.py",
-    "container/bot/telegram_adapter_v1.py",
     "container/bot/slack_adapter.py",
     # The lodge's message routing, shared by connectors (RFC #617).
     "container/lib/lodge_messages.py",
@@ -81,7 +80,6 @@ ADAPTERS = [
 # the message_session port from a thread.
 HANDOFF = {
     "container/lib/chat_lodge.py": None,
-    "container/bot/telegram_adapter_v1.py": "asyncio.to_thread(message_session",
     "container/bot/slack_adapter.py": "asyncio.to_thread(message_session",
     "container/lib/lodge_messages.py": "asyncio.to_thread(p.message_session",
 }
