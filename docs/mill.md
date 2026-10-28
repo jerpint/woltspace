@@ -44,7 +44,8 @@ The Mill forwards only content-negotiation, caching, range and browser-provenanc
 
 - **Running apps:** the Mill proxies to the app's process on `127.0.0.1`, both ways streamed. That covers HTTP, uploads, server-sent events and WebSockets with their subprotocol. The app's own cookies and `Authorization` pass through. The lodge's and Access's credentials never do.
 - **Static apps** (no `start` command): the Mill serves the app's real `dist/` folder if there is one, else its folder, with the site policy headers. Nothing whose real path has a dot-named part (`.git`, `.env`) is served, even through a symlink.
-- **Who:** the owner only, decided the same way as for sites. With lodge auth on, an app opens from `/apps/open?app=<name>`, and a site's grant never opens an app (or the reverse).
+- **Who:** the owner only, decided the same way as for sites. With lodge auth on, an app opens in its own tab from `/apps/open?app=<name>`, and a site's grant never opens an app (or the reverse). The lodge's split view can't show it in a frame: the app's cookie isn't sent to a cross-site frame over http.
+- **WebSockets** need an `Origin` naming the app itself, so a native client without one is refused. The app sees `Host: 127.0.0.1:<port>` on a WebSocket and `localhost:<port>` on HTTP.
 - **Writes:** a browser write must come from the app's own page.
 - **Ports:** an app gets `PORT`, its manifest's port, and `HOST=127.0.0.1`. A command that passes `--host $HOST` stays on loopback. One that binds `0.0.0.0` itself is still reachable on the network.
 - **The port limit:** the Mill reaches an app by the port the lodge recorded, without checking which process holds it. Making sure the app's own process owns that port is a later step.
