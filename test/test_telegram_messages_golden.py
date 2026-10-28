@@ -23,6 +23,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import golden_store
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "container"))
 sys.path.insert(0, str(ROOT / "container" / "lib"))
@@ -240,7 +242,7 @@ SCENARIOS += [
 
 
 def _golden() -> dict:
-    return json.loads(GOLDEN.read_text()) if GOLDEN.exists() else {}
+    return golden_store.load(GOLDEN)
 
 
 @pytest.mark.parametrize("sid,kind,state,dog,extra", SCENARIOS, ids=[s[0] for s in SCENARIOS])
@@ -249,8 +251,7 @@ def test_message_routing_matches_golden(lodge, sid, kind, state, dog, extra):
     if UPDATE:
         data = _golden()
         data[sid] = result
-        GOLDEN.parent.mkdir(exist_ok=True)
-        GOLDEN.write_text(json.dumps(data, indent=1, ensure_ascii=False, sort_keys=True) + "\n")
+        golden_store.save(GOLDEN, data)
         return
     expected = _golden().get(sid)
     assert expected is not None, f"no golden transcript for {sid}; run with WOLTSPACE_UPDATE_GOLDEN=1"

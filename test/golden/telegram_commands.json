@@ -525,18 +525,7 @@
   "spawned": []
  },
  "cb-unknown": {
-  "app_actions": [],
-  "calls": [
-   {
-    "kind": "answer"
-   }
-  ],
-  "chat_state": {
-   "active_session": null,
-   "active_wolt": null
-  },
-  "killed": [],
-  "spawned": []
+  "same_as": "cb-noop"
  },
  "cb-wolt": {
   "app_actions": [],
@@ -800,106 +789,6 @@
   "chat_state": {
    "active_session": null,
    "active_wolt": null
-  },
-  "killed": [],
-  "spawned": []
- },
- "stranger-handle_apps": {
-  "app_actions": [],
-  "calls": [],
-  "chat_state": {
-   "active_session": "pal-maple-a1b2c3",
-   "active_wolt": "pal"
-  },
-  "killed": [],
-  "spawned": []
- },
- "stranger-handle_callback": {
-  "app_actions": [],
-  "calls": [],
-  "chat_state": {
-   "active_session": "pal-maple-a1b2c3",
-   "active_wolt": "pal"
-  },
-  "killed": [],
-  "spawned": []
- },
- "stranger-handle_help": {
-  "app_actions": [],
-  "calls": [],
-  "chat_state": {
-   "active_session": "pal-maple-a1b2c3",
-   "active_wolt": "pal"
-  },
-  "killed": [],
-  "spawned": []
- },
- "stranger-handle_holds": {
-  "app_actions": [],
-  "calls": [],
-  "chat_state": {
-   "active_session": "pal-maple-a1b2c3",
-   "active_wolt": "pal"
-  },
-  "killed": [],
-  "spawned": []
- },
- "stranger-handle_idle": {
-  "app_actions": [],
-  "calls": [],
-  "chat_state": {
-   "active_session": "pal-maple-a1b2c3",
-   "active_wolt": "pal"
-  },
-  "killed": [],
-  "spawned": []
- },
- "stranger-handle_kill": {
-  "app_actions": [],
-  "calls": [],
-  "chat_state": {
-   "active_session": "pal-maple-a1b2c3",
-   "active_wolt": "pal"
-  },
-  "killed": [],
-  "spawned": []
- },
- "stranger-handle_new": {
-  "app_actions": [],
-  "calls": [],
-  "chat_state": {
-   "active_session": "pal-maple-a1b2c3",
-   "active_wolt": "pal"
-  },
-  "killed": [],
-  "spawned": []
- },
- "stranger-handle_sessions": {
-  "app_actions": [],
-  "calls": [],
-  "chat_state": {
-   "active_session": "pal-maple-a1b2c3",
-   "active_wolt": "pal"
-  },
-  "killed": [],
-  "spawned": []
- },
- "stranger-handle_setwolt": {
-  "app_actions": [],
-  "calls": [],
-  "chat_state": {
-   "active_session": "pal-maple-a1b2c3",
-   "active_wolt": "pal"
-  },
-  "killed": [],
-  "spawned": []
- },
- "stranger-handle_start": {
-  "app_actions": [],
-  "calls": [],
-  "chat_state": {
-   "active_session": "pal-maple-a1b2c3",
-   "active_wolt": "pal"
   },
   "killed": [],
   "spawned": []

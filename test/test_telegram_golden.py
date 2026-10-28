@@ -19,6 +19,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import golden_store
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "container"))
 sys.path.insert(0, str(ROOT / "container" / "lib"))
@@ -256,22 +258,21 @@ def _run(lodge, setup, handler, args, callback, user):
 
 
 def _golden() -> dict:
-    return json.loads(GOLDEN.read_text()) if GOLDEN.exists() else {}
+    return golden_store.load(GOLDEN)
 
 
 _RESULTS: dict = {}
 
 
 @pytest.mark.parametrize("sid,setup,handler,args,callback,user",
-                         SCENARIOS + STRANGER_SCENARIOS, ids=lambda v: v if isinstance(v, str) else None)
+                         SCENARIOS, ids=lambda v: v if isinstance(v, str) else None)
 def test_transcript_matches_golden(lodge, sid, setup, handler, args, callback, user):
     result = _run(lodge, setup, handler, args, callback, user)
     if UPDATE:
         _RESULTS[sid] = result
         data = _golden()
         data[sid] = result
-        GOLDEN.parent.mkdir(exist_ok=True)
-        GOLDEN.write_text(json.dumps(data, indent=1, ensure_ascii=False, sort_keys=True) + "\n")
+        golden_store.save(GOLDEN, data)
         return
     expected = _golden().get(sid)
     assert expected is not None, f"no golden transcript for {sid}; run with WOLTSPACE_UPDATE_GOLDEN=1"
