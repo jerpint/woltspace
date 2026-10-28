@@ -62,14 +62,17 @@ def is_access_authorization(value: str) -> bool:
 
     Access can be set to read a service token from one header, `Authorization`
     included, as JSON with `cf-access-client-id` and `cf-access-client-secret`;
-    and an Access JWT can be sent as a bearer token. Either is stripped. Any
-    other value is the app's own and passes.
+    an Access JWT can be sent as a bearer token; and Managed OAuth issues
+    opaque bearer tokens prefixed `oauth:`. All are stripped. Any other value
+    is the app's own and passes.
     """
     text = value.strip()
     if "cf-access-client" in text.lower():
         return True
     scheme, _, rest = text.partition(" ")
     token = rest.strip() if scheme.lower() == "bearer" else text
+    if token.lower().startswith("oauth:"):
+        return True
     issuer = _jwt_issuer(token).lower().rstrip("/")
     return issuer.endswith(".cloudflareaccess.com")
 

@@ -110,6 +110,8 @@ def _jwt(claims: dict) -> str:
     '{"cf-access-client-id":"id.access","cf-access-client-secret":"secret"}',
     "Bearer " + _jwt({"iss": "https://team.cloudflareaccess.com", "aud": ["a"]}),
     _jwt({"iss": "https://team.cloudflareaccess.com/"}),
+    "Bearer oauth:CvNooExampleOpaqueToken",
+    "bearer OAUTH:CvNooExampleOpaqueToken",
 ])
 def test_access_credentials_in_authorization_never_reach_the_app(value):
     for helper in (upstream_request_headers, websocket_upstream_headers):
