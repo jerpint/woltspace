@@ -422,19 +422,26 @@ def tunnel_records(monkeypatch):
         return True
 
     monkeypatch.setattr(apps, "stop_cloudflared", stop)
-    return SimpleNamespace(apps=apps, rows=rows, alive=alive, killed=killed)
+    commands = {}
+    monkeypatch.setattr(apps, "process_command", lambda pid: commands.get(pid, ""))
+    return SimpleNamespace(apps=apps, rows=rows, alive=alive, killed=killed, commands=commands)
+
+
+def _quick(port):
+    return f"cloudflared tunnel --url http://localhost:{port} --http-host-header localhost"
 
 
 def test_old_quick_tunnels_are_retired_once_and_only_when_verified(tunnel_records, monkeypatch):
     t = tunnel_records
     monkeypatch.setattr(t.apps.time, "sleep", lambda s: None)
     t.rows.update({
-        "live": {"name": "live", "tunnel_pid": 101, "tunnel_url": "https://a.trycloudflare.com"},
-        "reused": {"name": "reused", "tunnel_pid": 202, "tunnel_url": "https://b.trycloudflare.com"},
-        "stuck": {"name": "stuck", "tunnel_pid": 999, "tunnel_url": "https://c.trycloudflare.com"},
-        "plain": {"name": "plain", "tunnel_pid": None, "tunnel_url": None},
+        "live": {"name": "live", "port": 4001, "tunnel_pid": 101, "tunnel_url": "https://a.trycloudflare.com"},
+        "reused": {"name": "reused", "port": 4002, "tunnel_pid": 202, "tunnel_url": "https://b.trycloudflare.com"},
+        "stuck": {"name": "stuck", "port": 4003, "tunnel_pid": 999, "tunnel_url": "https://c.trycloudflare.com"},
+        "plain": {"name": "plain", "port": 4004, "tunnel_pid": None, "tunnel_url": None},
     })
     t.alive.update({101, 999})  # 202's pid now belongs to something else
+    t.commands.update({101: _quick(4001), 999: _quick(4003)})
     results = {r["name"]: r["action"] for r in t.apps.retire_app_tunnels()}
     assert results == {"live": "tunnel-retired", "reused": "tunnel-retired", "stuck": "tunnel-still-running"}
     assert 202 not in t.killed  # a reused pid is never signalled
@@ -464,3 +471,68 @@ def test_doctor_fails_while_an_old_tunnel_still_runs(monkeypatch, tmp_path):
     assert check.status == "fail" and "blog" in check.detail
     monkeypatch.setattr(apps, "is_cloudflared", lambda pid: False)
     assert doctor._app_tunnels_check(_layout(tmp_path)) is None
+
+
+@pytest.mark.parametrize("has_manifest", [False, True])
+def test_a_tunnel_that_wont_stop_keeps_its_app_record_until_it_does(tunnel_records, monkeypatch,
+                                                                     has_manifest, tmp_path):
+    from woltspace import doctor
+    t = tunnel_records
+    monkeypatch.setattr(t.apps.time, "sleep", lambda s: None)
+    cleared, started = [], []
+    monkeypatch.setattr(t.apps, "_clear_state", lambda name: (cleared.append(name), t.rows.pop(name, None)))
+    monkeypatch.setattr(t.apps, "get_app", lambda name: SimpleNamespace() if has_manifest else None)
+    monkeypatch.setattr(t.apps, "_is_pid_alive", lambda pid: False)  # the app itself is down
+
+    def start(name):
+        started.append(name)
+        t.rows[name] = {"name": name, "pid": 1, "port": 4000}
+        return t.rows[name]
+
+    monkeypatch.setattr(t.apps, "start_app", start)
+    monkeypatch.setattr(t.apps, "intended_apps", lambda: [dict(v) for v in t.rows.values()])
+    t.rows["blog"] = {"name": "blog", "pid": 5, "port": 4005, "tunnel_pid": 999,
+                      "tunnel_url": "https://x.trycloudflare.com"}
+    t.alive.add(999)  # 999 ignores the signal
+    t.commands[999] = _quick(4005)
+
+    actions = {a["name"] + ":" + a["action"] for a in t.apps.apps_restore()}
+    assert actions == {"blog:tunnel-still-running", "blog:held-for-tunnel"}
+    assert not cleared and not started and t.rows["blog"]["tunnel_pid"] == 999
+    assert doctor._app_tunnels_check(_layout(tmp_path)).status == "fail"
+
+    t.alive.discard(999)  # it finally stops
+    actions = [a["action"] for a in t.apps.apps_restore()]
+    assert actions[0] == "tunnel-retired"
+    assert (cleared == ["blog"]) if not has_manifest else (started == ["blog"])
+    assert doctor._app_tunnels_check(_layout(tmp_path)) is None
+
+
+
+@pytest.mark.parametrize("command", [
+    "cloudflared tunnel run --token abc",                          # the lodge's own named tunnel
+    "cloudflared tunnel --url http://localhost:9999",              # another app's, or someone else's
+    "cloudflared access tcp --hostname x",                         # not a quick tunnel at all
+])
+def test_a_reused_pid_running_another_cloudflared_is_never_signalled(tunnel_records, command):
+    t = tunnel_records
+    t.rows["blog"] = {"name": "blog", "port": 4005, "tunnel_pid": 303, "tunnel_url": "https://y.trycloudflare.com"}
+    t.alive.add(303)
+    t.commands[303] = command
+    results = t.apps.retire_app_tunnels()
+    assert results == [{"name": "blog", "action": "tunnel-pid-ambiguous", "pid": 303}]
+    assert t.killed == [] and t.rows["blog"]["tunnel_pid"] == 303
+
+
+def test_a_write_through_the_tunnel_without_an_origin_is_refused(lodge):
+    before = len(_Seen.requests)
+    assert _through_tunnel(f"board.{DOMAIN}").post(
+        "/x", headers={"cf-access-jwt-assertion": "good"}).status_code == 403
+    assert len(_Seen.requests) == before
+
+
+def test_doctor_names_apps_on_the_reserved_site_prefix(tmp_path):
+    from woltspace import doctor
+    _manifest(tmp_path, "site-old", "site-old", "npm run dev")
+    check = doctor._apps_check(_layout(tmp_path))
+    assert check.status == "warn" and "site-old" in check.detail and "reserved" in check.detail

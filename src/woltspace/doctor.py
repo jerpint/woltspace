@@ -408,6 +408,7 @@ def _apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
         return None
     names: dict[str, list[str]] = {}
     wide: list[str] = []
+    reserved: list[str] = []
     for manifest in sorted(apps_dir.glob("*/woltspace.json")):
         try:
             data = json.loads(manifest.read_text())
@@ -419,10 +420,14 @@ def _apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
         names.setdefault(name, []).append(manifest.parent.name)
         if "0.0.0.0" in str(data.get("start") or ""):
             wide.append(name)
+        if name.startswith("site-"):
+            reserved.append(name)
     shared = {name: dirs for name, dirs in names.items() if len(dirs) > 1}
     problems = []
     if wide:
         problems.append(f"listen on every interface (0.0.0.0): {', '.join(sorted(set(wide)))}")
+    if reserved:
+        problems.append(f"use the reserved site- prefix and aren't served: {', '.join(sorted(set(reserved)))}")
     if shared:
         problems.append("share a name: " + "; ".join(
             f"{name} in {', '.join(dirs)}" for name, dirs in sorted(shared.items())))
@@ -431,7 +436,7 @@ def _apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
     return DoctorCheck(
         "apps", "warn", "apps that " + " and apps that ".join(problems),
         "Pass `--host $HOST` (the lodge sets HOST=127.0.0.1) instead of 0.0.0.0, so an app is "
-        "reached only through the Mill; give each app its own name.",
+        "reached only through the Mill; give each app its own name, not starting with site-.",
     )
 
 

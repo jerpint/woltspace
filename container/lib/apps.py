@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 import lodge_db
 from env_compat import get_env
 from paths import space_apps_dir
-from tunnel import is_cloudflared, stop_cloudflared
+from tunnel import is_cloudflared, process_command, stop_cloudflared
 
 WOLTS_DIR = Path(get_env("WOLTSPACE_WOLTS_DIR", "/workspace/wolts"))
 APPS_DIR = WOLTS_DIR / "apps"
@@ -314,6 +314,18 @@ def start_app(name: str) -> dict:
     return state
 
 
+def _is_apps_quick_tunnel(pid: int, port) -> bool:
+    """Whether a cloudflared pid is the quick tunnel an older lodge started for
+    an app: `cloudflared tunnel --url http://localhost:<the app's port>`."""
+    try:
+        command = process_command(pid).split()
+    except Exception:
+        return False
+    target = f"http://localhost:{port}" if port else None
+    return (target is not None and "--url" in command
+            and command[command.index("--url") + 1:command.index("--url") + 2] == [target])
+
+
 def retire_app_tunnels() -> list[dict]:
     """Stop the per-app quick tunnels an older lodge started; they're gone in 0.6.
 
@@ -329,6 +341,13 @@ def retire_app_tunnels() -> list[dict]:
         if not pid and not url:
             continue
         name = state["name"]
+        if pid and is_cloudflared(pid) and not _is_apps_quick_tunnel(pid, state.get("port")):
+            # A cloudflared, but not this app's quick tunnel: the pid was
+            # reused, perhaps by the lodge's own tunnel. Never signal it;
+            # keep the record so the owner sees it.
+            results.append({"name": name, "action": "tunnel-pid-ambiguous", "pid": pid})
+            print(f"[apps] {name}: pid {pid} is a cloudflared that isn't its old quick tunnel; left alone")
+            continue
         if pid and is_cloudflared(pid):
             stop_cloudflared(pid)
             for _ in range(20):
@@ -358,8 +377,17 @@ def apps_restore() -> list[dict]:
     are retired first.
     """
     actions = retire_app_tunnels()
+    # An app whose old tunnel won't stop keeps its row untouched: cleaning it
+    # up or restarting the app would lose the record of a tunnel that still
+    # reaches it directly, and the next boot and `doctor` need that record.
+    stuck = {a["name"] for a in actions
+             if a["action"] in ("tunnel-still-running", "tunnel-pid-ambiguous")}
     for state in _all_states():
         name = state["name"]
+        if name in stuck:
+            actions.append({"name": name, "action": "held-for-tunnel"})
+            print(f"[apps] {name} left as is until its old quick tunnel stops")
+            continue
 
         # Manifest gone — app was removed while container was down
         if get_app(name) is None:

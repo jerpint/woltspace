@@ -712,8 +712,8 @@ def _public_origin_ok(scope, headers: dict[str, str], content: "_Content") -> bo
         return True
     if headers.get("sec-fetch-site", "").lower() == "cross-site":
         return False
-    if origin is None:
-        return scope["type"] != "websocket"  # a non-browser write, as on the lodge
+    # Through the tunnel every caller is a browser past Access, and browsers
+    # send Origin on every write: a write without one is refused too.
     return origin == f"https://{content.remote}"
 
 
@@ -723,8 +723,9 @@ def _remote_sites_enabled(wolt: str) -> bool:
     `site-<wolt>.<domain>` may once have been an app's origin, whose
     storage and service workers outlive it in visitors' browsers. Only the
     owner knows no app ever used those names: `"mill": {"remote_sites": true}`
-    in woltspace.json says so. Even then, a current app named `site-<wolt>`
-    keeps the name from the site.
+    in woltspace.json says so. Even then, while an app named `site-<wolt>`
+    still exists (it's no longer served: the name is reserved), the matching
+    site stays off.
     """
     try:
         config = json.loads((Path(WOLTS_DIR) / "woltspace.json").read_text())
