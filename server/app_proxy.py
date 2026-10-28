@@ -7,6 +7,9 @@ those an app could replay the owner's login against the lodge or another app.
 
 from __future__ import annotations
 
+import base64
+import json
+
 # Hop-by-hop headers (RFC 9110 section 7.6.1) belong to one connection, never
 # to the next hop. `host` is set to the app's own address by the caller.
 HOP_BY_HOP = frozenset({
@@ -15,7 +18,8 @@ HOP_BY_HOP = frozenset({
 })
 
 # Cloudflare Access credentials, as a header or as a cookie. The app's own
-# `Authorization` header and cookies pass through untouched.
+# `Authorization` header and cookies pass through, unless the value is shaped
+# like an Access credential (see `is_access_authorization`).
 ACCESS_HEADERS = frozenset({
     "cf-access-jwt-assertion", "cf-access-token",
     "cf-access-client-id", "cf-access-client-secret",
@@ -40,6 +44,36 @@ def _without_access_cookies(value: str) -> str:
     return "; ".join(kept)
 
 
+def _jwt_issuer(token: str) -> str:
+    parts = token.split(".")
+    if len(parts) != 3:
+        return ""
+    try:
+        padded = parts[1] + "=" * (-len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(padded))
+    except (ValueError, TypeError):
+        return ""
+    issuer = claims.get("iss") if isinstance(claims, dict) else None
+    return issuer if isinstance(issuer, str) else ""
+
+
+def is_access_authorization(value: str) -> bool:
+    """True for an `Authorization` value that carries an Access credential.
+
+    Access can be set to read a service token from one header, `Authorization`
+    included, as JSON with `cf-access-client-id` and `cf-access-client-secret`;
+    and an Access JWT can be sent as a bearer token. Either is stripped. Any
+    other value is the app's own and passes.
+    """
+    text = value.strip()
+    if "cf-access-client" in text.lower():
+        return True
+    scheme, _, rest = text.partition(" ")
+    token = rest.strip() if scheme.lower() == "bearer" else text
+    issuer = _jwt_issuer(token).lower().rstrip("/")
+    return issuer.endswith(".cloudflareaccess.com")
+
+
 def upstream_request_headers(headers: list[tuple[str, str]], port: int) -> list[tuple[str, str]]:
     """Headers to send an app on 127.0.0.1:`port`, duplicates kept in order."""
     drop = HOP_BY_HOP | ACCESS_HEADERS | _connection_named(headers) | {"host"}
@@ -52,6 +86,8 @@ def upstream_request_headers(headers: list[tuple[str, str]], port: int) -> list[
             value = _without_access_cookies(value)
             if not value:
                 continue
+        if lower == "authorization" and is_access_authorization(value):
+            continue
         out.append((name, value))
     return out
 

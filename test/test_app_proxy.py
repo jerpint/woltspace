@@ -100,6 +100,34 @@ def test_the_app_keeps_its_own_authorization_and_cookies(monkeypatch):
     assert sent["host"] == "localhost:4999"
 
 
+def _jwt(claims: dict) -> str:
+    import base64, json
+    enc = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+    return f"{enc({'alg': 'RS256', 'kid': 'k'})}.{enc(claims)}.c2ln"
+
+
+@pytest.mark.parametrize("value", [
+    '{"cf-access-client-id":"id.access","cf-access-client-secret":"secret"}',
+    "Bearer " + _jwt({"iss": "https://team.cloudflareaccess.com", "aud": ["a"]}),
+    _jwt({"iss": "https://team.cloudflareaccess.com/"}),
+])
+def test_access_credentials_in_authorization_never_reach_the_app(value):
+    for helper in (upstream_request_headers, websocket_upstream_headers):
+        out = helper([("Authorization", value)], 4999)
+        assert all(name.lower() != "authorization" for name, _ in out)
+        assert "secret" not in str(out) and "cloudflareaccess" not in str(out)
+
+
+@pytest.mark.parametrize("value", [
+    "Bearer app-invite-token",
+    "Bearer " + _jwt({"iss": "https://auth.example.com"}),
+    "Basic dXNlcjpwYXNz",
+])
+def test_an_apps_own_authorization_passes(value):
+    out = upstream_request_headers([("Authorization", value)], 4999)
+    assert ("Authorization", value) in out
+
+
 def test_a_cookie_header_of_only_access_cookies_is_dropped():
     out = upstream_request_headers([("Cookie", "CF_Authorization=jwt")], 4999)
     assert [n.lower() for n, _ in out] == ["host"]
