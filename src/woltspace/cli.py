@@ -21,6 +21,67 @@ def _lodge_auth_module(layout: RuntimeLayout):
     return lodge_auth
 
 
+def _pair_link(endpoint: str, code: str) -> str:
+    return f"{endpoint.rstrip('/')}/pair?code={code}"
+
+
+def _lodge_auth_on(layout: RuntimeLayout, lodge_auth) -> bool:
+    """Whether the lodge requires auth: the shell's setting, else the data
+    root's `.env`, which the lodge itself loads at start."""
+    if "WOLTSPACE_LODGE_AUTH" in os.environ:
+        return lodge_auth.enabled(os.environ)
+    from dotenv import dotenv_values
+    env_file = layout.wolts_dir / ".env"
+    values = dotenv_values(env_file) if env_file.is_file() else {}
+    return lodge_auth.enabled({"WOLTSPACE_LODGE_AUTH": values.get("WOLTSPACE_LODGE_AUTH") or ""})
+
+
+def _at_a_terminal() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _can_open_browser() -> bool:
+    """Only for the owner at a desktop terminal: never in a wolt session, over
+    SSH, without a display, or with output going to a file or another program."""
+    if get_env("WOLTSPACE_WOLT_SESSION"):
+        return False
+    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):
+        return False
+    if not _at_a_terminal():
+        return False
+    if sys.platform.startswith("linux") and not (
+        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+    ):
+        return False
+    return True
+
+
+def _open_lodge(layout: RuntimeLayout, endpoint: str, *, allowed: bool = True) -> None:
+    """Open the lodge in the owner's browser after `start`. With lodge auth on,
+    the address carries a fresh one-time pairing code, so the browser comes
+    in paired, like Jupyter's token link. The code works once, for ten
+    minutes, and is never printed."""
+    lodge_auth = _lodge_auth_module(layout)
+    auth_on = _lodge_auth_on(layout, lodge_auth)
+    if not (allowed and _can_open_browser()):
+        if auth_on:
+            lore.note("to open it in a browser: woltspace pair")
+        return
+    url = endpoint
+    if auth_on:
+        lodge_auth.ensure_keys(layout.wolts_dir)
+        url = _pair_link(endpoint, lodge_auth.new_pairing_code(layout.wolts_dir))
+    import webbrowser
+    try:
+        opened = webbrowser.open(url)
+    except Exception:  # noqa: BLE001 — a browser that won't open never fails a start
+        opened = False
+    if opened:
+        lore.note("opened in your browser")
+    elif auth_on:
+        lore.note("to open it in a browser: woltspace pair")
+
+
 def _pair(args) -> int:
     """Print a one-time link that pairs a browser with this lodge."""
     layout = RuntimeLayout.from_env()
@@ -34,11 +95,11 @@ def _pair(args) -> int:
         lodge_auth.forget_browsers(layout.wolts_dir)
         lore.note("every paired browser was unpaired")
     code = lodge_auth.new_pairing_code(layout.wolts_dir)
-    links = [f"{layout.endpoint.rstrip('/')}/pair?code={code}"]
+    links = [_pair_link(layout.endpoint, code)]
     from .lifecycle import read_tunnel_url
     tunnel = (read_tunnel_url(layout) or "").rstrip("/")
     if tunnel:
-        links.append(f"{tunnel}/pair?code={code}")
+        links.append(_pair_link(tunnel, code))
     if args.json:
         print(json.dumps({"links": links, "expires_in": lodge_auth.PAIRING_TTL,
                           "enabled": lodge_auth.enabled(os.environ)}))
@@ -382,6 +443,7 @@ def _start(args) -> int:
         if result.get("hooks_normalize_error"):
             lore.note(f"hooks: not normalized ({result['hooks_normalize_error']})")
         lore.note("status: woltspace status")
+        _open_lodge(layout, endpoint, allowed=not args.no_browser)
         lore.blank()
     else:
         lore.banner()
@@ -1440,6 +1502,8 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--port", type=int, default=0)
     start.add_argument("--timeout", type=float, default=15.0)
     start.add_argument("--json", action="store_true")
+    start.add_argument("--no-browser", action="store_true",
+                       help="don't open the lodge in a browser")
     start.set_defaults(func=_start)
 
     status = sub.add_parser("status", help="inspect native control-plane ownership")
