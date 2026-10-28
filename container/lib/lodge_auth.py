@@ -272,15 +272,13 @@ def curl_config(env=os.environ, wolts_dir=None) -> str:
     return f'header = "X-Woltspace-Key: {key}"\n' if key else ""
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *args, **kwargs):
-        return None
-
-
-def urlopen(request, timeout: float):
-    """urllib's urlopen for a keyed request, without following redirects:
-    urllib copies custom headers onto the next hop, the key included."""
-    return urllib.request.build_opener(_NoRedirect).open(request, timeout=timeout)
+def sign(request: urllib.request.Request, env=os.environ, wolts_dir=None) -> urllib.request.Request:
+    """Add the key to a urllib request as an unredirected header: urllib
+    copies ordinary headers onto a redirect's next hop, but never these."""
+    key = client_key(env, wolts_dir)
+    if key:
+        request.add_unredirected_header("X-Woltspace-Key", key)
+    return request
 
 
 def client_headers(env=os.environ, wolts_dir=None) -> dict[str, str]:

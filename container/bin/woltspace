@@ -50,11 +50,11 @@ _SESSION_RE = re.compile(r"-[0-9a-f]{6}$")
 def _req(method, path, body=None, *, hint=""):
     url = f"{API}{path}"
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(url, data=data, method=method, headers=lodge_auth.client_headers())
+    req = lodge_auth.sign(urllib.request.Request(url, data=data, method=method))
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
-        with lodge_auth.urlopen(req, timeout=15) as r:
+        with urllib.request.urlopen(req, timeout=15) as r:
             return r.status, json.loads(r.read().decode() or "{}")
     except urllib.error.HTTPError as e:
         try:

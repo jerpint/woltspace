@@ -526,3 +526,15 @@ def test_forgetting_browsers_cannot_be_undone_by_a_concurrent_pairing(tmp_path, 
     forgetter.join(5)
 
     assert tokens[0] and not lodge_auth.browser_paired(tmp_path, tokens[0])
+
+
+def test_urllib_never_carries_the_key_across_a_redirect(tmp_path):
+    import urllib.request
+    keys = lodge_auth.ensure_keys(tmp_path)
+    request = lodge_auth.sign(urllib.request.Request("http://localhost:7777/x"),
+                              env={"WOLTSPACE_WOLTS_DIR": str(tmp_path)})
+    assert request.get_header("X-woltspace-key") == keys["owner"]
+    handler = urllib.request.HTTPRedirectHandler()
+    nxt = handler.redirect_request(request, None, 302, "Found", {}, "http://elsewhere.example/")
+    assert nxt.get_header("X-woltspace-key") is None
+    assert keys["owner"] not in str(nxt.header_items())
