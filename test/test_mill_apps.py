@@ -297,23 +297,81 @@ def test_auth_off_opening_an_app_just_redirects(lodge_with_board):
     assert opened.headers["location"] == "http://board.localhost:7777/x"
 
 
-# --- Ports -----------------------------------------------------------------------------------
+# --- Review fixes -----------------------------------------------------------------------------
 
-def test_an_app_keeps_its_manifest_port_when_free():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        free = s.getsockname()[1]
-    assert apps_lib.choose_port(free, set()) == free
+def test_a_symlink_never_reaches_a_static_apps_dotfiles(tmp_path):
+    app_dir = tmp_path / "apps" / "board"
+    (app_dir / ".git").mkdir(parents=True)
+    (app_dir / ".git" / "config").write_text("secret")
+    (app_dir / ".env").write_text("KEY=1")
+    (app_dir / "public.txt").symlink_to(app_dir / ".env")
+    (app_dir / "repo").symlink_to(app_dir / ".git")
+    client = _mill(tmp_path, static={"board": app_dir})
+    for path in ("/public.txt", "/repo/config"):
+        response = client.get(path, headers=OWNER)
+        assert response.status_code == 404 and "secret" not in response.text and "KEY" not in response.text
 
 
-def test_an_app_gets_another_port_when_its_own_is_held():
-    held = socket.socket()
-    held.bind(("127.0.0.1", 0))
-    held.listen(1)
-    try:
-        port = held.getsockname()[1]
-        chosen = apps_lib.choose_port(port, set())
-        assert chosen != port
-        assert apps_lib.choose_port(chosen, {chosen}) != chosen  # another app's record counts too
-    finally:
-        held.close()
+def test_the_apps_target_keeps_its_escapes(tmp_path, board):
+    _mill(tmp_path, running={"board": board}).get("/objects/a%3Fb%23c%2Fd?original=1", headers=OWNER)
+    _method, path, _sent = _Seen.requests[-1]
+    assert path == "/objects/a%3Fb%23c%2Fd?original=1"
+
+
+class _Failing:
+    """An httpx client whose transport fails before any response, recording aclose."""
+    closed: list = []
+
+    def __new__(cls, *args, **kwargs):
+        import httpx
+
+        def fail(request):
+            raise RuntimeError("transport broke")
+
+        client = _RealAsyncClient(transport=httpx.MockTransport(fail))
+        original = client.aclose
+
+        async def aclose():
+            cls.closed.append(True)
+            await original()
+
+        client.aclose = aclose
+        return client
+
+
+import httpx as _httpx  # noqa: E402
+_RealAsyncClient = _httpx.AsyncClient
+
+
+def test_the_mill_closes_its_client_on_any_failure_before_a_response(tmp_path, board, monkeypatch):
+    _Failing.closed = []
+    monkeypatch.setattr(_httpx, "AsyncClient", _Failing)
+    client = TestClient(mill_server.Mill(tmp_path, apps=FakeApps(tmp_path, running={"board": board})),
+                        base_url=f"http://{APP}", raise_server_exceptions=False)
+    assert client.get("/", headers=OWNER).status_code == 500
+    assert _Failing.closed == [True]
+
+
+def test_the_lodge_closes_its_client_on_any_failure_before_a_response(lodge_with_board, monkeypatch):
+    _Failing.closed = []
+    monkeypatch.setattr(server_app.httpx, "AsyncClient", _Failing)
+    lodge = TestClient(server_app.app, base_url=f"http://{APP}", client=("127.0.0.1", 50000),
+                       raise_server_exceptions=False)
+    assert lodge.get("/").status_code == 500
+    assert _Failing.closed == [True]
+
+
+def test_an_app_starts_on_loopback(tmp_path, monkeypatch):
+    from unittest.mock import patch
+    monkeypatch.setattr(apps_lib, "running_apps", lambda: [])
+    with patch("apps.subprocess.Popen") as popen, patch("apps.get_app") as get_app, \
+            patch("apps._write_state"), patch("apps.app_dir", return_value=tmp_path):
+        popen.return_value.pid = 4242
+        get_app.return_value = SimpleNamespace(can_start=lambda: True, port=4100, install=None,
+                                               stack="python", start="serve", keeper="softie",
+                                               public=False)
+        monkeypatch.setattr(apps_lib, "_read_state", lambda name: None)
+        monkeypatch.setattr(apps_lib, "app_log_file", lambda name: tmp_path / "log")
+        apps_lib.start_app("board")
+    env = popen.call_args.kwargs["env"]
+    assert env["PORT"] == "4100" and env["HOST"] == "127.0.0.1"

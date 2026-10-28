@@ -231,7 +231,7 @@ class Mill:
         # .env), at any depth.
         if any(part.startswith(".") for part in scope.get("path", "/").split("/") if part):
             return await refuse(404, "dotfile", "Not found")
-        ctx = SiteContext(wolt_name=name, wolt_dir=root, root=root, owner=False)
+        ctx = SiteContext(wolt_name=name, wolt_dir=root, root=root, owner=False, hide_dotfiles=True)
         response = serve_site(scope, ctx)
         _log(scope, headers, response.status_code, "static-app")
         return await response(scope, receive, send)
@@ -244,8 +244,10 @@ class Mill:
         raw = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope.get("headers", [])]
         has_body = "content-length" in headers or "transfer-encoding" in headers
         query = scope.get("query_string") or b""
-        url = f"http://127.0.0.1:{port}{scope.get('path', '/')}" + (
-            "?" + query.decode("latin-1") if query else "")
+        # The raw target, as sent: decoding it would turn %3F or %23 into a
+        # query or a fragment.
+        raw_path = (scope.get("raw_path") or scope.get("path", "/").encode()).decode("latin-1")
+        url = f"http://127.0.0.1:{port}{raw_path}" + ("?" + query.decode("latin-1") if query else "")
         client = httpx.AsyncClient(timeout=APP_PROXY_TIMEOUT)
         try:
             req = client.build_request(scope.get("method", "GET"), url,
@@ -262,6 +264,9 @@ class Mill:
             response = HTMLResponse(f"<h1>App '{name}' did not answer in time</h1>", status_code=504)
             _log(scope, headers, 504, "upstream-timeout")
             return await response(scope, receive, send)
+        except BaseException:
+            await client.aclose()  # cancelled, or any other failure before a response
+            raise
 
         async def body():
             try:
@@ -285,8 +290,8 @@ class Mill:
         raw = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope.get("headers", [])]
         protocols = [p.strip() for p in headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
         query = scope.get("query_string") or b""
-        url = f"ws://127.0.0.1:{port}{scope.get('path', '/')}" + (
-            "?" + query.decode("latin-1") if query else "")
+        raw_path = (scope.get("raw_path") or scope.get("path", "/").encode()).decode("latin-1")
+        url = f"ws://127.0.0.1:{port}{raw_path}" + ("?" + query.decode("latin-1") if query else "")
         try:
             upstream = await websockets.connect(
                 url, subprotocols=protocols or None, max_size=APP_WS_MAX_MESSAGE, proxy=None,

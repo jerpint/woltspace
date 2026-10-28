@@ -59,6 +59,10 @@ class SiteContext:
     wolt_dir: Path
     root: Path          # canonical site root (realpath, anchored)
     owner: bool
+    # A static app's folder may be a whole repository: nothing whose real
+    # path, under the root, has a dot-named part (.git, .env) is served,
+    # however the request reached it (a symlink included).
+    hide_dotfiles: bool = False
 
 
 _ENCODED_SEPARATOR = re.compile(rb"%(?:2f|5c)", re.I)
@@ -274,6 +278,9 @@ def serve_site(scope, ctx: SiteContext) -> Response:
         except OSError:
             return not_found()
     if not stat.S_ISREG(st.st_mode):
+        return not_found()
+    if ctx.hide_dotfiles and any(
+            part.startswith(".") for part in Path(os.path.relpath(target, ctx.root)).parts):
         return not_found()
     if target.lower().endswith((".html", ".htm")):
         return _html_response(scope, target, ctx)

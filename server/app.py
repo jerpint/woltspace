@@ -847,6 +847,9 @@ class MillForwardMiddleware:
             await client.aclose()
             response = HTMLResponse("<h1>The Mill did not answer in time</h1>", status_code=504)
             return await response(scope, receive, send)
+        except BaseException:
+            await client.aclose()  # cancelled, or any other failure before a response
+            raise
 
         async def body():
             try:
@@ -867,8 +870,8 @@ class MillForwardMiddleware:
         from websockets.asyncio.client import unix_connect
         ws = WebSocket(scope, receive, send)
         query = scope.get("query_string") or b""
-        uri = f"ws://{headers['host']}{scope.get('path', '/')}" + (
-            "?" + query.decode("latin-1") if query else "")
+        raw_path = (scope.get("raw_path") or scope.get("path", "/").encode()).decode("latin-1")
+        uri = f"ws://{headers['host']}{raw_path}" + ("?" + query.decode("latin-1") if query else "")
         protocols = None
         if content.kind == "app":
             extra = self._app_headers(scope, websocket=True)

@@ -249,39 +249,11 @@ def intended_apps() -> list[dict]:
     return intended
 
 
-def _port_free(port: int) -> bool:
-    import socket
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        try:
-            probe.bind(("127.0.0.1", port))
-        except OSError:
-            return False
-    return True
-
-
-def choose_port(preferred: int, taken: set[int]) -> int:
-    """The manifest's port when it's free, else any free loopback port.
-
-    The Mill reaches an app by its recorded port, so a fixed port is only a
-    preference: two lodges, or another program, may already hold it.
-    """
-    if preferred and preferred not in taken and _port_free(preferred):
-        return preferred
-    import socket
-    for _ in range(20):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            probe.bind(("127.0.0.1", 0))
-            port = probe.getsockname()[1]
-        if port not in taken:
-            return port
-    raise RuntimeError("no free port for the app")
-
-
 def start_app(name: str) -> dict:
     """Start an app's dev server. Returns state dict with port and pid.
 
-    The app gets PORT (its manifest's port when free, else a free one) and
-    HOST=127.0.0.1: the Mill reaches it on loopback, and nothing else needs to.
+    The app gets PORT, its manifest's port, and HOST=127.0.0.1: the Mill
+    reaches it on loopback, and nothing else needs to.
     """
     app = get_app(name)
     if not app:
@@ -294,7 +266,11 @@ def start_app(name: str) -> dict:
     if existing and _is_pid_alive(existing.get("pid", 0)):
         return existing
 
-    port = choose_port(app.port, {int(r["port"]) for r in running_apps()})
+    # Use port from manifest — check for conflicts with running apps
+    port = app.port
+    for r in running_apps():
+        if r["port"] == port:
+            raise RuntimeError(f"Port {port} already in use by running app '{r['name']}'")
 
     work_dir = app_dir(name)
 
