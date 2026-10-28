@@ -578,33 +578,39 @@ def test_the_bot_core_signs_its_calls_to_the_lodge():
 # --- Access log -----------------------------------------------------------------
 
 def test_codes_are_redacted_from_request_targets():
+    from starlette.datastructures import QueryParams
+
     assert lodge_auth.redact_codes("/pair?code=abc-DEF_1") == "/pair?code=[redacted]"
     assert (lodge_auth.redact_codes("/_woltspace/grant?code=xyz&next=/a.html")
             == "/_woltspace/grant?code=[redacted]&next=/a.html")
     assert lodge_auth.redact_codes("/x?zipcode=1&a=2") == "/x?zipcode=1&a=2"
     assert lodge_auth.redact_codes("/api/wolts") == "/api/wolts"
+    # Any spelling the app would read as `code` is blanked, every copy of it.
+    for query in ("%63ode=S", "%63%6F%64%65=S", "c%6fde=S&x=1", "a=1&code=T&%63ode=S",
+                  "x=#&code=S", "code=S&code=T"):
+        assert QueryParams(query).get("code") in {"S", "T"}
+        redacted = lodge_auth.redact_codes(f"/pair?{query}")
+        assert "=S" not in redacted and "=T" not in redacted, query
 
 
-def test_a_rate_limited_pairing_never_logs_its_live_code(lodge, monkeypatch):
-    """A refused attempt leaves the code valid, so the access line must not hold it."""
+def _uvicorn_loggers():
+    """Uvicorn's own logging setup, before and after the lodge's filter."""
     import logging
     import logging.config
     from uvicorn.config import LOGGING_CONFIG
 
-    root, _ = lodge
-    # Uvicorn configures its loggers after the app is imported: the filter must survive it.
     logging.config.dictConfig(LOGGING_CONFIG)
     lodge_auth.redact_access_log()
+    lodge_auth.redact_access_log()
     logging.config.dictConfig(LOGGING_CONFIG)
-    access = logging.getLogger("uvicorn.access")
-    assert any(isinstance(f, lodge_auth.RedactCodes) for f in access.filters)
+    loggers = {name: logging.getLogger(name) for name in ("uvicorn.access", "uvicorn.error")}
+    for logger in loggers.values():
+        assert sum(isinstance(f, lodge_auth.RedactCodes) for f in logger.filters) == 1
+    return loggers
 
-    blocked = lodge_auth.FailureLimit(limit=0)
-    monkeypatch.setattr(server_app, "_pairing_failures", blocked)
-    code = lodge_auth.new_pairing_code(root)
-    target = f"/pair?code={code}"
-    assert _client().get(target).status_code == 429
 
+def _emitted(logger, *args) -> str:
+    import logging
     lines = []
 
     class Keep(logging.Handler):
@@ -612,10 +618,41 @@ def test_a_rate_limited_pairing_never_logs_its_live_code(lodge, monkeypatch):
             lines.append(record.getMessage())
 
     keep = Keep()
-    access.addHandler(keep)
+    logger.addHandler(keep)
     try:
-        access.info('%s - "%s %s HTTP/%s" %d', "127.0.0.1:5000", "GET", target, "1.1", 429)
+        logger.info(*args)
     finally:
-        access.removeHandler(keep)
-    assert len(lines) == 1 and code not in lines[0] and "code=[redacted]" in lines[0]
+        logger.removeHandler(keep)
+    assert len(lines) == 1
+    return lines[0]
+
+
+@pytest.mark.parametrize("name", ["code", "%63ode"])
+def test_a_rate_limited_pairing_never_logs_its_live_code(lodge, monkeypatch, name):
+    """A refused attempt leaves the code valid, so the access line must not hold it."""
+    root, _ = lodge
+    access = _uvicorn_loggers()["uvicorn.access"]
+    monkeypatch.setattr(server_app, "_pairing_failures", lodge_auth.FailureLimit(limit=0))
+    code = lodge_auth.new_pairing_code(root)
+    target = f"/pair?{name}={code}"
+    assert _client().get(target).status_code == 429
+
+    line = _emitted(access, '%s - "%s %s HTTP/%s" %d', "127.0.0.1:5000", "GET", target, "1.1", 429)
+    assert code not in line and "=[redacted]" in line
     assert lodge_auth.redeem_pairing_code(root, code)  # still live, and never logged
+
+
+def test_a_refused_websocket_upgrade_never_logs_its_live_code(lodge):
+    """Uvicorn logs WebSocket targets on its error logger, the access one sees nothing."""
+    root, _ = lodge
+    error = _uvicorn_loggers()["uvicorn.error"]
+    code = lodge_auth.new_pairing_code(root)
+    target = f"/pair?%63ode={code}"
+    with pytest.raises(WebSocketDisconnect):
+        with _client().websocket_connect(target):
+            pass
+
+    # The line Uvicorn's websocket protocols write for a refused upgrade.
+    line = _emitted(error, '%s - "WebSocket %s" 403', "127.0.0.1:5000", target)
+    assert code not in line and "=[redacted]" in line
+    assert lodge_auth.redeem_pairing_code(root, code)
