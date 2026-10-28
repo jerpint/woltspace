@@ -1,6 +1,6 @@
 ---
 name: site
-description: Your site and the lodge's site shell - the nav drawer, the built-in About / Memory / Settings pages, and how to skin it with site.json or take the site over entirely. Use when building, organizing, restyling or redesigning your site, or when a page count starts to grow.
+description: Your site, served by the Mill on its own origin, and the lodge's built-in About / Memory / Settings pages with their nav drawer, skinned with site.json. Use when building, organizing, restyling or redesigning your site, or when a page count starts to grow.
 ---
 
 # Your site and the site shell
@@ -11,9 +11,9 @@ Your site is plain files in `wolt/site/`, served by the Mill at `http://<name>.s
 - The drawer shows who you are, links to your **built-in pages**, and a **page tree** of your site.
 - The tree builds itself from your files. You never maintain a nav.
 
-**Your site is private by default.** It sits behind the same lodge protection as everything else, for your human only, like every app and spark. Your human can choose to share it (for example to build in public, or to show you off when sharing you). A shared site is served on its own address, away from the lodge, and carries your pages and your About card only, never your Memory or Settings. Never tell anyone a page is shared unless your human shared it. Since `identity.md` becomes your public About card when a site is shared, keep it presentable: no secrets, no private details.
+**Your site is private.** It's for your human only, locally and, if they turn it on, through the lodge's tunnel behind Cloudflare Access. There is no sharing a site with other people. Never tell anyone a page is shared.
 
-The shell is not in your folder. The lodge injects it when it serves a page, next to live reload, and it lives in a shadow root: your CSS cannot break it and it cannot restyle your page.
+The shell is not in your folder, and it isn't added to your pages: they're served exactly as you write them. It frames the built-in pages, in a shadow root.
 
 ## Built-in pages
 
@@ -25,7 +25,7 @@ Every wolt gets these, rendered by the lodge from your own files:
 | Memory | `/wolt/<name>/_/memory` | your boot files, windowed the way a session reads them |
 | Settings | `/wolt/<name>/_/settings` | wolt.json basics and your site.json look (read-only) |
 
-A site with no `index.html` lands on About, so a brand new wolt has a real home page from its first minute. Keep `identity.md` good: it is your front door.
+Give your site an `index.html`: a site folder without one has no home page. Your About page at `/wolt/<name>/_/` always exists, from `identity.md`, so keep that good.
 
 ## Keep the tree readable
 
@@ -34,9 +34,9 @@ A site with no `index.html` lands on About, so a brand new wolt has a real home 
 - Names starting with `_` or `.` are hidden from the tree. Use `_drafts/` for work in progress.
 - `index.html` always sorts first.
 
-## Make it yours: four levels
+## Make the built-in pages yours: four levels
 
-Pick the smallest level that gets you the look you want.
+Pick the smallest level that gets you the look you want. These skin the drawer and the built-in pages; your own pages are styled by you.
 
 **1. Tokens** - `wolt/site/site.json`:
 
@@ -58,13 +58,7 @@ Every field is optional. The same tokens skin the built-in pages. By default the
 
 **3. Slots** - `"header_html": "header.html"` and `"footer_html": "footer.html"` drop your HTML into the top and bottom of the drawer: a banner, links, a mascot. Slot files are not listed as pages.
 
-**4. Take the site over** - `"shell": false` in site.json turns the shell off for your whole site. For one page only, add to its `<head>`:
-
-```html
-<meta name="wolt-shell" content="off">
-```
-
-To put it back, delete that line. Nothing was ever copied into your files, so there is nothing to restore. The built-in pages stay reachable by URL either way.
+**4. Turn the drawer off** - `"shell": false` in site.json turns it off on the built-in pages. Your own pages never had it: they're yours, as written.
 
 Livereload covers all of this: edit `site.json` or `shell.css` and the page reloads.
 

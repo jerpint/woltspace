@@ -5,20 +5,20 @@ description: Work with apps — the isolated workspace for building apps, script
 
 # Apps — Isolated Workspaces
 
-Apps are things you ship — apps, tools, services. They live at `wolts/apps/{name}/` and are served at `/app/{name}/`. Each app is self-contained with its own code, deps, and server.
+Apps are things you ship — apps, tools, services. They live at `wolts/apps/{name}/` and are served by the Mill at `http://{name}.localhost:7777/`, each on an origin of its own. Each app is self-contained with its own code, deps, and server.
 
-**Apps are an escalation from sites.** Your site (`wolt/site/`) is your lightweight private workspace. An app is for when the work needs its own server, dependencies, or is meant to be shared. Always confirm with the user before creating one.
+**Apps are an escalation from sites.** Your site (`wolt/site/`) is your lightweight private workspace. An app is for when the work needs its own server or dependencies. Always confirm with the user before creating one.
 
 ## Sites vs Apps
 
 | | Site (`wolt/site/`) | App (`wolts/apps/`) |
 |---|---|---|
 | **Purpose** | Your private workspace | Something you ship |
-| **Visibility** | Private to the wolt owner | Can be public |
+| **Visibility** | The owner only | The owner only, locally and through the lodge's tunnel |
 | **Complexity** | Static HTML/CSS/JS, lightweight | Own server, deps, manifest |
 | **Created by** | Wolts, freely | User opts in |
 | **Manifest** | None needed | `woltspace.json` required |
-| **Example** | Personal digest, scratch mockups | Workout tracker, shared tool |
+| **Example** | Personal digest, scratch mockups | Workout tracker, a tool with its own server |
 
 **When to suggest an app:** the user wants a backend, deps, sharing, or something that outgrows static HTML. Say: "This is getting complex — want me to set it up as an app?"
 
@@ -39,9 +39,8 @@ Then write `woltspace.json` — **this is required** for the platform to discove
   "stack": "node",
   "port": 4010,
   "install": "npm install",
-  "start": "npm run dev --port $PORT --host 0.0.0.0",
-  "keeper": "your-wolt-name",
-  "public": false
+  "start": "npm run dev --port $PORT --host $HOST",
+  "keeper": "your-wolt-name"
 }
 ```
 
@@ -55,10 +54,10 @@ Then write `woltspace.json` — **this is required** for the platform to discove
 | `stack` | no | `python`, `vite`, `node`, or `html` |
 | `install` | no | Install command |
 | `port` | yes | Fixed port for this app. Permanent — survives restarts. Avoid 7777 and 3001. |
-| `start` | no | Start command. Use `$PORT` — the platform expands it. Add `--host 0.0.0.0` for network access. Null = can't start from lodge. |
+| `start` | no | Start command. Use `$PORT` and `--host $HOST` (the platform sets `HOST=127.0.0.1`, so only the Mill reaches the app). Never `0.0.0.0`. Null = a static app, served by the Mill from `dist/` or the app folder. |
 | `source` | no | Origin URL if cloned |
 | `emoji` | no | Display emoji (auto-assigned) |
-| `public` | no | If `true`, the app is shared publicly when started. With a named tunnel: served at `{name}.{domain}` (e.g. `corework.woltspace.com`). Without: a random quick tunnel URL. Default: `false`. |
+| `public` | no | Ignored since 0.6: there is no per-app public sharing. Leave it out. |
 
 **Important:** Only `woltspace.json` is recognized. Not `project.json`, not `app.json`.
 
@@ -66,11 +65,11 @@ Then write `woltspace.json` — **this is required** for the platform to discove
 
 ### Running dev server (primary mode)
 
-The platform starts the server and sets the `PORT` env var. The viewport iframe loads the app's port **directly** — no proxy. This means internal links, WebSockets, and SSE all work naturally.
+The platform starts the server with `PORT` and `HOST=127.0.0.1`. The Mill proxies `http://{name}.localhost:7777/` to it, streamed both ways: internal links, WebSockets and SSE work as on the app's own port.
 
 ### Static files (fallback)
 
-If the app isn't running, static files in `dist/` or the app root are served at `/app/{name}/`.
+An app with no `start` command is served by the Mill from its `dist/` folder, or its folder if there's none, at `http://{name}.localhost:7777/`. Dotfiles (`.env`, `.git`) are never served.
 
 ## Starting and stopping
 
@@ -109,7 +108,7 @@ The platform sets `PORT` to your manifest port and `HOST=127.0.0.1` when startin
 
 Apps are private: locally, the owner reaches `http://<app-name>.localhost:7777/`; through the lodge's tunnel, `https://<app-name>.<domain>/`. Both go through the Mill (see `docs/mill.md`). Through the tunnel, the lodge lets a request in only with the owner's Cloudflare Access token for the apps' Access application. That needs `access` settings in `woltspace.json`, which only the human sets (`container/migrations/v0.6.0.md`).
 
-There is no per-app public sharing any more: the share routes, `"public": true` and quick tunnels are gone. If your human wants someone else to see an app, that's a change to who the Access application lets in, made by the human.
+There is no sharing an app with other people in 0.6: the share routes, `"public": true` and quick tunnels are gone, and the lodge lets only the owner's email in. Never tell anyone an app is shared.
 
 ## Secrets
 
@@ -128,4 +127,4 @@ An app keeps its own secrets in its own folder, never the lodge's.
 - **Apps are portable** — should work if copied out of woltspace
 - **Write woltspace.json after setup** — or the app is invisible
 - **Use `$PORT` in start commands** — the platform expands it to your manifest port
-- **Add `--host 0.0.0.0`** — required for the dev server to accept tunnel traffic
+- **Use `--host $HOST`, never `0.0.0.0`**: the Mill reaches the app on loopback, tunnel traffic included
