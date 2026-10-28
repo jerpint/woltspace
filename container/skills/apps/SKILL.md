@@ -20,7 +20,7 @@ Apps are things you ship — apps, tools, services. They live at `wolts/apps/{na
 | **Manifest** | None needed | `woltspace.json` required |
 | **Example** | Personal digest, scratch mockups | Workout tracker, a tool with its own server |
 
-**When to suggest an app:** the user wants a backend, deps, sharing, or something that outgrows static HTML. Say: "This is getting complex — want me to set it up as an app?"
+**When to suggest an app:** the user wants a backend, deps, a build step, or something that outgrows static HTML. Say: "This is getting complex — want me to set it up as an app?"
 
 ## Creating an app
 

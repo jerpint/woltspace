@@ -60,7 +60,7 @@ curl -X PUT \
 
 **Important:** The wildcard rule must come AFTER any specific hostname rules (like the lodge or apps with dedicated ports like `deck`). Cloudflare matches rules top-to-bottom, first match wins. The catch-all `http_status:404` must always be last.
 
-### 3. Cloudflare Access policy (recommended)
+### 3. Cloudflare Access application (required)
 
 Without this step, Cloudflare lets anyone through to the lodge, and the lodge refuses them all: it opens an app only for the owner's Access token for this application. Add the Access application, and put its AUD in `woltspace.json` as `apps_aud`:
 
