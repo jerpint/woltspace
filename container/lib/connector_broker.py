@@ -10,7 +10,8 @@ dispatched, once. Dispatch runs on its own thread and event loop: the lodge's
 handlers start sessions and read the disk, and none of that may stall the web
 server this broker shares a process with. Events are dispatched in order, one
 connector at a time, from a bounded queue: a connector that floods is told
-`failed` and nothing else is slowed.
+`failed`. Every connector shares this one dispatch loop, so a handler must not
+block it: slow service calls (the dog, transcription) run in worker threads.
 
 A receipt means "accepted for one dispatch attempt". If the lodge dies after
 the receipt and before the dispatch, the event is lost, and a resend is a

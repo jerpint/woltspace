@@ -13,6 +13,7 @@ them here (list_wolts, message_session, start_claude_session, ...).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -198,7 +199,7 @@ class ChatLodge:
         caption = body.get("caption") or ""
         if media == "voice":
             try:
-                text = transcribe_audio(path)
+                text = await asyncio.to_thread(transcribe_audio, path)
             except Exception as e:
                 logger.error(f"Transcription failed: {e}")
                 await out.say(Reply("Couldn't transcribe that voice message."))
@@ -506,8 +507,9 @@ class ChatLodge:
         await self._dog_ack(out)
         history = self._load_history(chat)
         try:
-            result = get_response(content["message"], conversation_history=list(history),
-                                  routing=self._routing(chat), user_content=content["content"])
+            result = await asyncio.to_thread(
+                get_response, content["message"], conversation_history=list(history),
+                routing=self._routing(chat), user_content=content["content"])
         except Exception as e:
             await out.say(Reply(f"photo error: {e}"))
             return
@@ -525,8 +527,9 @@ class ChatLodge:
         await self._dog_ack(out)
         history = self._load_history(chat)
         try:
-            result = get_response(user_message, conversation_history=list(history),
-                                  routing=self._routing(chat))
+            result = await asyncio.to_thread(
+                get_response, user_message, conversation_history=list(history),
+                routing=self._routing(chat))
         except Exception as e:
             logger.error(f"Error getting response: {e}")
             await out.say(Reply("Something broke on my end. Try again in a sec."))
