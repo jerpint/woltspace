@@ -1550,6 +1550,26 @@ def test_a_recipient_encrypts_the_whole_archive_secrets_inside(
     assert manifest["entries"] == len(files) - 2  # the manifest and the slim left-out list
     report = "\n".join(backup_mod.summary_lines(result))
     assert f"encrypted to {RECIPIENT}" in report
+    withheld = manifest["withheld"]["paths"]
+    inside = sum(item["rule"] in backup_mod.ENCRYPTED_RULES for item in withheld)
+    assert inside and len(withheld) > inside
+    assert f"{len(withheld) - inside} not in the archive, {inside} inside, encrypted" in report
+
+
+def test_a_symlinked_env_is_not_counted_inside_the_encrypted_archive(
+    wolts_with_credentials, fake_age, tmp_path,
+):
+    env = wolts_with_credentials / "beaverwolt" / "wolt" / "apps" / "shop" / ".env"
+    env.unlink()
+    env.symlink_to(tmp_path / "elsewhere.env")
+    result = create_backup(wolts_with_credentials, out_dir=tmp_path / "out", tag="t4")
+    withheld = result.manifest["withheld"]["paths"]
+    inside = sum(
+        item["rule"] in backup_mod.ENCRYPTED_RULES and item["path"] != "beaverwolt/wolt/apps/shop/.env"
+        for item in withheld
+    )
+    report = "\n".join(backup_mod.summary_lines(result))
+    assert f"{len(withheld) - inside} not in the archive, {inside} inside, encrypted" in report
 
 
 def test_no_plaintext_touches_the_disk(wolts, fake_age, tmp_path, monkeypatch):
@@ -1579,6 +1599,9 @@ def test_without_a_recipient_the_archive_is_plain_and_secrets_withheld(
     assert secrets["present"] is False and "not set" in secrets["reason"]
     assert ".env" in {item["path"] for item in result.manifest["withheld"]["paths"]}
     assert f"{ARCHIVE_ROOT}/.env" not in _members(result.archive)
+    report = "\n".join(backup_mod.summary_lines(result))
+    assert "inside, encrypted" not in report
+    assert f"{len(result.manifest['withheld']['paths'])} not in the archive" in report
 
 
 def test_a_recipient_without_age_fails_rather_than_write_in_the_clear(
@@ -1959,3 +1982,23 @@ def test_disarm_stops_every_live_status_and_keeps_the_rest(tmp_path, status, aft
     out, outside = backup_mod._disarm_session(record, "/old/wolts", tmp_path, report)
     assert (out["status"], "runtime" in out, outside) == (after, False, [])
     assert report["sessions_stopped"] == (after != status)
+
+
+def test_all_skipped_credentials_are_never_reported_inside(wolts_with_credentials, fake_age, tmp_path):
+    root = wolts_with_credentials
+    paths = [item["path"] for item in scan_tree(root).withheld
+             if item["rule"] in backup_mod.ENCRYPTED_RULES]
+    assert paths
+    for rel in paths:
+        (root / rel).unlink()
+        (root / rel).symlink_to(tmp_path / "missing-dummy.env")
+    result = create_backup(root, out_dir=tmp_path / "out", tag="all-skipped")
+    files = _fake_open(result.archive)
+    assert not any(f"{ARCHIVE_ROOT}/{rel}" in files for rel in paths)
+    assert result.manifest["secrets"]["present"] is True
+    report = "\n".join(backup_mod.summary_lines(result))
+    count = len(result.manifest["withheld"]["paths"])
+    assert f"{count} not in the archive" in report
+    assert f"encrypted to {RECIPIENT}" in report
+    assert SECRET not in report
+    assert "inside" not in report
