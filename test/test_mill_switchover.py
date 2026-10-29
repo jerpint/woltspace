@@ -819,7 +819,7 @@ def test_the_sweep_stops_only_this_lodges_untracked_share_tunnels(tmp_path):
     live = _share(tmp_path, tunnels=tunnels)
     with app_sharing._locked(tmp_path):
         data = app_sharing._read(tmp_path)
-        data["launching"].append({"name": "notes", "token": "a" * 24, "at": time.time()})
+        data["launching"].append(app_sharing._new_launch("notes", "a" * 24))
         app_sharing._write(tmp_path, data)
     stale = "b" * 24
 
@@ -1133,3 +1133,98 @@ def test_a_way_ins_identity_header_never_reaches_a_tool(lodge, testnet, monkeypa
     monkeypatch.setattr(server_app.tool_registry, "get", lambda name: {"name": name, "port": 4999}, raising=False)
     _local().get("/tools/t/x", headers={"x-testnet-user": "owner@example.com", "x-other": "1"})
     assert seen.get("x-other") == "1" and "x-testnet-user" not in seen
+
+
+def test_a_publish_that_fails_after_its_replace_is_taken_back(lodge, monkeypatch):
+    tunnels = _Tunnels(alive=True)
+    real_fsync_dir, calls = app_sharing._fsync_dir, []
+
+    def flaky(directory):
+        calls.append(1)
+        state = app_sharing._read(lodge)
+        if "board" in state["shares"] and len([c for c in calls]) and not getattr(flaky, "failed", False):
+            flaky.failed = True
+            raise OSError("fsync failed")          # the share is on disk, its sync isn't
+        real_fsync_dir(directory)
+    monkeypatch.setattr(app_sharing, "_fsync_dir", flaky)
+    with pytest.raises(RuntimeError, match="nothing shared"):
+        _share(lodge, tunnels=tunnels, domain_url=f"https://board.{DOMAIN}")
+    assert app_sharing.shared(lodge, "board") is None and 101 in tunnels.stopped
+    assert _through_tunnel(f"board.{DOMAIN}").get("/").status_code == 403
+
+
+def test_a_publish_that_cant_be_taken_back_says_it_is_live(lodge, monkeypatch):
+    tunnels = _Tunnels(alive=True)
+    real_write = app_sharing._write
+
+    def stuck(root, data):
+        if "board" in data["shares"]:
+            stuck.published = True
+            real_write(root, data)
+            raise OSError("disk trouble")          # it lands, then reports failure
+        if getattr(stuck, "published", False):
+            raise OSError("disk trouble")          # and the undo can't be saved at all
+        real_write(root, data)
+    monkeypatch.setattr(app_sharing, "_write", stuck)
+    with pytest.raises(RuntimeError, match="is live"):
+        _share(lodge, tunnels=tunnels)
+    assert app_sharing.shared(lodge, "board") is not None   # what it says is what's on disk
+
+
+def test_after_a_crash_the_old_lodges_launches_and_tunnels_are_swept(lodge):
+    tunnels = _Tunnels(alive=True)
+    live = _share(lodge, tunnels=tunnels)
+    with app_sharing._locked(lodge):        # what a lodge that crashed mid-restart leaves
+        data = app_sharing._read(lodge)
+        data["launching"].append({**app_sharing._new_launch("board", live["token"]), "instance": "f" * 16})
+        app_sharing._write(lodge, data)
+    ghost = (77, "/usr/bin/cloudflared tunnel --url http://localhost:7777 --http-host-header "
+                 + app_sharing.share_host("board", live["token"], 7777))
+    stopped = app_sharing.sweep_orphans(lodge, 7777, processes=lambda: [ghost], stop=tunnels.stop,
+                                        is_ours=lambda pid, *a: pid not in tunnels.stopped)
+    assert stopped == [77] and app_sharing._read(lodge)["launching"] == []
+
+
+@pytest.mark.parametrize("launch", [
+    {"name": "board", "token": "a" * 24, "at": "broken", "instance": "f" * 16, "id": "0" * 16},
+    {"name": "board", "token": "a" * 24, "at": 1.0, "instance": "f" * 16},                 # no id
+    {"name": "Board!", "token": "a" * 24, "at": 1.0, "instance": "f" * 16, "id": "0" * 16},
+])
+def test_a_bad_launch_entry_is_an_invalid_state(tmp_path, launch):
+    app_sharing.sharing_dir(tmp_path).mkdir(parents=True)
+    (app_sharing.sharing_dir(tmp_path) / "shared.json").write_text(
+        json.dumps({"shares": {}, "retired": [], "launching": [launch]}))
+    assert app_sharing.state_problem(tmp_path)
+
+
+def test_a_retired_entry_with_a_bad_token_is_an_invalid_state(tmp_path):
+    app_sharing.sharing_dir(tmp_path).mkdir(parents=True)
+    (app_sharing.sharing_dir(tmp_path) / "shared.json").write_text(json.dumps(
+        {"shares": {}, "retired": [{"name": "board", "pid": 5, "token": "zz"}], "launching": []}))
+    assert app_sharing.state_problem(tmp_path)
+
+
+def test_if_way_in_headers_cant_be_known_nothing_reaches_a_tool(lodge, monkeypatch):
+    import httpx
+    sent = []
+
+    async def fake_send(self, request, **kw):
+        sent.append(request)
+        return httpx.Response(200, content=b"ok")
+    monkeypatch.setattr(httpx.AsyncClient, "send", fake_send)
+    monkeypatch.setattr(server_app.tool_registry, "get", lambda name: {"name": name, "port": 4999}, raising=False)
+
+    def broken():
+        raise RuntimeError("registry broken")
+    monkeypatch.setattr(server_app.ways_in, "credential_headers", broken)
+    response = TestClient(server_app.app, base_url="http://localhost:7777", client=("127.0.0.1", 50000),
+                          raise_server_exceptions=False).get("/tools/t/x")
+    assert response.status_code >= 500 and sent == []
+
+
+def test_a_partial_log_line_never_joins_the_next(tmp_path):
+    path = app_sharing.log_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text('{"event": "share-req')          # a write that stopped part way
+    app_sharing._log(tmp_path, "unshare", "board")
+    assert json.loads(path.read_text().splitlines()[-1])["event"] == "unshare"

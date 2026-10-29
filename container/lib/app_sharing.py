@@ -50,6 +50,10 @@ _SHARE_HOST_RE = re.compile(r"^(?P<name>[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)--(?P<to
 STOP_WAIT_SECONDS = 2.0
 # A launch the sweep leaves alone: cloudflared takes up to 15 s to start.
 LAUNCH_GRACE_SECONDS = 300
+# This lodge process. A launch belongs to the process that wrote it; one
+# lodge serves a data root at a time, so a launch from any other instance (an
+# earlier lodge, before a crash or restart) is never in flight here.
+INSTANCE = secrets.token_hex(8)
 
 
 # --- Storage -----------------------------------------------------------------------
@@ -71,26 +75,51 @@ class Corrupt(Exception):
 
 
 _TOKEN_RE = re.compile(r"[0-9a-f]{24}")
+_LAUNCH_ID_RE = re.compile(r"[0-9a-f]{16}")
+_NAME_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+
+
+def _is_pid(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _is_url(value) -> bool:
+    return value is None or (isinstance(value, str) and value.startswith("https://") and " " not in value)
+
+
+def _is_time(value) -> bool:
+    import math
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _check(data) -> dict:
-    """The state exactly as written, or Corrupt: nothing is normalised away."""
+    """The state exactly as written, or Corrupt: every field a reader uses is
+    checked, and nothing is normalised away."""
     if not isinstance(data, dict) or set(data) - {"shares", "retired", "launching"}:
         raise Corrupt("not a sharing state")
     shares, retired, launching = data.get("shares", {}), data.get("retired", []), data.get("launching", [])
     if not isinstance(shares, dict) or not isinstance(retired, list) or not isinstance(launching, list):
         raise Corrupt("shares, retired or launching has the wrong type")
     for name, record in shares.items():
-        if (not isinstance(record, dict) or not _TOKEN_RE.fullmatch(str(record.get("token", "")))
-                or not isinstance(record.get("tunnel_pid"), (int, type(None)))):
+        ok = (isinstance(name, str) and _NAME_RE.fullmatch(name) and isinstance(record, dict)
+              and isinstance(record.get("token"), str) and _TOKEN_RE.fullmatch(record["token"])
+              and (record.get("tunnel_pid") is None or _is_pid(record.get("tunnel_pid")))
+              and _is_url(record.get("tunnel_url")) and _is_url(record.get("domain_url"))
+              and all(isinstance(record.get(k, ""), str) for k in ("by", "said_by", "since")))
+        if not ok:
             raise Corrupt(f"bad share record for {name!r}")
-    for entry in [*retired, *launching]:
-        if (not isinstance(entry, dict) or not isinstance(entry.get("name"), str)
-                or not isinstance(entry.get("token", ""), str)):
-            raise Corrupt("bad retired or launching entry")
     for entry in retired:
-        if not isinstance(entry.get("pid"), int):
-            raise Corrupt("a retired entry without a pid")
+        if not (isinstance(entry, dict) and isinstance(entry.get("name"), str) and _NAME_RE.fullmatch(entry["name"])
+                and _is_pid(entry.get("pid")) and isinstance(entry.get("token"), str)
+                and _TOKEN_RE.fullmatch(entry["token"])):
+            raise Corrupt("bad retired entry")
+    for entry in launching:
+        if not (isinstance(entry, dict) and isinstance(entry.get("id"), str) and _LAUNCH_ID_RE.fullmatch(entry["id"])
+                and isinstance(entry.get("name"), str) and _NAME_RE.fullmatch(entry["name"])
+                and isinstance(entry.get("token"), str) and _TOKEN_RE.fullmatch(entry["token"])
+                and _is_time(entry.get("at")) and isinstance(entry.get("instance"), str)
+                and _LAUNCH_ID_RE.fullmatch(entry["instance"])):
+            raise Corrupt("bad launching entry")
     return {"shares": shares, "retired": retired, "launching": launching}
 
 
@@ -181,10 +210,15 @@ def _log(wolts_dir, event: str, name: str, **fields) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     line = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "event": event, "app": name, **fields}
-    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_CLOEXEC", 0), 0o600)
+    created = not path.exists()
+    fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_CLOEXEC", 0), 0o600)
     try:
         os.fchmod(fd, 0o600)
-        data = memoryview((json.dumps(line) + "\n").encode())
+        text = json.dumps(line) + "\n"
+        size = os.fstat(fd).st_size
+        if size and os.pread(fd, 1, size - 1) != b"\n":
+            text = "\n" + text          # a partial line before this one stays its own line
+        data = memoryview(text.encode())
         while data:
             written = os.write(fd, data)
             if written <= 0:
@@ -193,6 +227,8 @@ def _log(wolts_dir, event: str, name: str, **fields) -> None:
         os.fsync(fd)
     finally:
         os.close(fd)
+    if created:
+        _fsync_dir(path.parent)       # the new file's entry, too
 
 
 def _log_quietly(wolts_dir, event: str, name: str, **fields) -> bool:
@@ -322,9 +358,13 @@ def sweep_orphans(wolts_dir, lodge_port: int, *, processes=None, stop=None, is_o
     with _locked(wolts_dir):
         data = _read(wolts_dir)
         now = time.time()
-        data["launching"] = [r for r in data["launching"]
-                             if now - float(r.get("at", 0)) < LAUNCH_GRACE_SECONDS]
-        _write(wolts_dir, data)
+        # A launch counts only while its process lives and within the grace:
+        # one a crashed or earlier lodge left behind is dropped, so its
+        # tunnel is swept, and its starter (if any) can no longer publish.
+        live = [r for r in data["launching"] if _launch_live(r, now)]
+        if live != data["launching"]:
+            data["launching"] = live
+            _write(wolts_dir, data)
         # Kept: a share's own recorded tunnel, and any launch in flight. A
         # tunnel with a current token but another pid (a restart whose result
         # was never recorded) is an orphan too.
@@ -363,6 +403,16 @@ def settle_retired(wolts_dir, lodge_port: int, *, stop=None, is_ours=None) -> li
         return list(data["retired"])
 
 
+def _new_launch(name: str, token: str) -> dict:
+    """A launch in flight, owned by this process: when this process is gone,
+    so is the launch, and the sweep may stop its tunnel."""
+    return {"id": secrets.token_hex(8), "name": name, "token": token, "at": time.time(), "instance": INSTANCE}
+
+
+def _launch_live(entry: dict, now: float) -> bool:
+    return entry["instance"] == INSTANCE and now - entry["at"] < LAUNCH_GRACE_SECONDS
+
+
 def _retire(data: dict, name: str, record: dict) -> None:
     if record.get("tunnel_pid"):
         data["retired"].append({"name": name, "pid": record["tunnel_pid"], "token": record.get("token", ""),
@@ -386,7 +436,7 @@ def share(wolts_dir, name: str, lodge_port: int, *, by: str, said_by: str = "",
     if existing is not None:
         return existing
     token = secrets.token_hex(12)
-    launch = {"id": secrets.token_hex(8), "name": name, "token": token, "at": time.time()}
+    launch = _new_launch(name, token)
     try:
         with _locked(wolts_dir):
             data = _read(wolts_dir)
@@ -455,6 +505,25 @@ def share(wolts_dir, name: str, lodge_port: int, *, by: str, said_by: str = "",
         undo()
         raise RuntimeError("nothing shared: the share was cancelled, or its tunnel took too long to start")
     except OSError as exc:
+        # The publishing write may have landed (a failure after the replace):
+        # take back exactly this token's share before calling it unshared.
+        try:
+            with _locked(wolts_dir):
+                data = _read(wolts_dir, strict=True)
+                if (data["shares"].get(name) or {}).get("token") == token:
+                    data["shares"].pop(name)
+                    landed(data)
+                    _write(wolts_dir, data)
+        except (OSError, Corrupt) as again:
+            # Say what's on disk now, as far as it can be read. Live: the
+            # record tracks its tunnel. Gone: the tunnel is debt. Unreadable:
+            # the next sweep reconciles the tunnel against whatever is there.
+            live = (shared(wolts_dir, name) or {}).get("token") == token
+            if not live:
+                undo()
+            raise RuntimeError(
+                f"the share of {name} {'is live' if live else 'may be live'}: saving failed, then undoing "
+                f"failed ({again}); run `woltspace app unshare {name}`") from exc
         undo()
         raise RuntimeError(f"nothing shared: could not record or log the share: {exc}") from exc
     # shared.json says whether a share is live; this line confirms it. If it
@@ -514,7 +583,7 @@ def _relaunch(wolts_dir, name, token, lodge_port, *, start, stop, is_ours) -> di
     """Start a new tunnel for a share that lost its own, the same way `share`
     does: registered before the spawn, published only if this launch and the
     share are both still current, and never left running untracked."""
-    launch = {"id": secrets.token_hex(8), "name": name, "token": token, "at": time.time()}
+    launch = _new_launch(name, token)
     with _locked(wolts_dir):
         data = _read(wolts_dir)
         if (data["shares"].get(name) or {}).get("token") != token:
@@ -543,11 +612,17 @@ def _relaunch(wolts_dir, name, token, lodge_port, *, start, stop, is_ours) -> di
         # Superseded, cancelled, or the state couldn't be saved: the new
         # tunnel must not run untracked. One that won't stop is debt; if even
         # that can't be saved, the sweep finds it (its pid isn't recorded).
-        if pid and not _stop_and_confirm(pid, name, lodge_port, token, stop=stop, is_ours=is_ours):
-            with contextlib.suppress(OSError, Corrupt), _locked(wolts_dir):
-                data = _read(wolts_dir)
+        gone = not pid or _stop_and_confirm(pid, name, lodge_port, token, stop=stop, is_ours=is_ours)
+        with contextlib.suppress(OSError, Corrupt), _locked(wolts_dir):
+            data = _read(wolts_dir)
+            data["launching"] = [r for r in data["launching"] if r.get("id") != launch["id"]]
+            current = data["shares"].get(name)
+            if current is not None and current.get("token") == token and current.get("tunnel_pid") == pid and pid:
+                # The publishing write landed after all: keep it, it's tracked.
+                gone = True
+            elif not gone:
                 _retire(data, name, {"tunnel_pid": pid, "token": token})
-                _write(wolts_dir, data)
+            _write(wolts_dir, data)
         if isinstance(exc, _Expired):
             return {"name": name, "action": "superseded"}
         print(f"[sharing] {name}: could not record its new tunnel: {exc}")

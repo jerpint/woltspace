@@ -118,12 +118,10 @@ def _bearer(value: str) -> str:
 
 def _ways_in_headers() -> frozenset[str]:
     """Every way in's identity headers (server/ways_in.py): never forwarded to
-    any backend, whichever way a request came, so none can be forged to one."""
-    try:
-        from .ways_in import credential_headers
-        return credential_headers()
-    except Exception:
-        return frozenset()
+    any backend, whichever way a request came, so none can be forged to one.
+    If they can't be known, this raises and nothing is forwarded at all."""
+    from .ways_in import credential_headers
+    return credential_headers()
 
 
 def upstream_request_headers(
