@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
 from starlette.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -172,6 +173,37 @@ def test_app_cli_twins_only_call_api(capsys):
     client["cmd_app_action"](argparse.Namespace(name="notes", verb="restart", json=False))
     assert calls == [("POST", "/apps/notes/restart", None)]
     assert "restart ok" in capsys.readouterr().out
+
+
+def test_app_list_shows_each_apps_own_port(capsys):
+    client = runpy.run_path(str(ROOT / "container" / "bin" / "woltspace"))
+    calls = []
+    apps_json = [{"name": "notes", "start": "npm start", "running": True, "port": 4321, "configured_port": 4321},
+                 {"name": "blog", "start": "npm start", "running": False, "port": None, "configured_port": 4012},
+                 {"name": "pages", "start": None, "running": False, "port": None, "configured_port": 4002}]
+    client["cmd_app_list"].__globals__["_req"] = lambda method, path, body=None: (calls.append((method, path)) or (200, apps_json))
+    client["cmd_app_list"](argparse.Namespace(json=False))
+    out = capsys.readouterr().out
+    assert calls == [("GET", "/apps")]
+    assert "notes" in out and "on" in out and "127.0.0.1:4321" in out
+    assert "blog" in out and "off" in out and "127.0.0.1:4012" in out
+    assert "static" in out and "127.0.0.1:4002" not in out
+
+
+def test_app_list_fails_on_a_refused_call(capsys):
+    client = runpy.run_path(str(ROOT / "container" / "bin" / "woltspace"))
+    client["cmd_app_list"].__globals__["_req"] = lambda method, path, body=None: (401, {"error": "lodge key required"})
+    with pytest.raises(SystemExit):
+        client["cmd_app_list"](argparse.Namespace(json=False))
+    assert "lodge key required" in capsys.readouterr().err
+
+
+def test_apps_skill_sends_wolts_to_the_apps_own_port():
+    skill = (ROOT / "container" / "skills" / "apps" / "SKILL.md").read_text()
+    assert "woltspace app start my-app" in skill
+    assert "curl -X POST http://localhost:7777/apps/my-app/start" not in skill
+    assert "127.0.0.1:" in skill and "Never go through the lodge's port" in skill
+    assert "these routes need the owner key" not in skill
 
 
 def test_ui_keeps_sharing_read_only_and_guards_terminal_resize():

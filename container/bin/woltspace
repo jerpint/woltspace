@@ -127,6 +127,24 @@ def cmd_app_logs(args):
         print("\n".join(result.get("lines", [])))
 
 
+def cmd_app_list(args):
+    status, result = _req("GET", "/apps")
+    if status >= 300 or not isinstance(result, list):
+        print(result.get("error", f"HTTP {status}") if isinstance(result, dict) else f"HTTP {status}",
+              file=sys.stderr)
+        raise SystemExit(1)
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return
+    for entry in result:
+        if not entry.get("start"):
+            print(f"{entry.get('name', '?'):<24} static (no server, files only)")
+            continue
+        port = entry.get("port") or entry.get("configured_port")
+        state = "on" if entry.get("running") else "off"
+        print(f"{entry.get('name', '?'):<24} {state:<4} 127.0.0.1:{port}")
+
+
 def cmd_app_keeper(args):
     status, result = _req("PUT", f"/apps/{args.name}", {"keeper": args.keeper})
     if args.json:
@@ -633,6 +651,9 @@ def main():
         action.add_argument("name")
         action.add_argument("--json", action="store_true")
         action.set_defaults(func=cmd_app_action)
+    app_list = app_sub.add_parser("list", help="every app, whether it runs, and its own port")
+    app_list.add_argument("--json", action="store_true")
+    app_list.set_defaults(func=cmd_app_list)
     logs = app_sub.add_parser("logs")
     logs.add_argument("name")
     logs.add_argument("--tail", type=int, default=200)
