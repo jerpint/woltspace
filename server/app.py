@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import math
 import os
 import re
 import sqlite3
@@ -669,10 +670,23 @@ async def _remote_visitor(scope, headers: dict[str, str], content: "_Content"):
     """(identity, expires_at) for a request through a way in, or (None, None):
     the way in it came through proves the owner its own way."""
     way = ways_in.named(content.way)
-    visitor = await way.owner(headers, scope) if way is not None else None
-    if visitor is None:
+    try:
+        visitor = await way.owner(headers, scope) if way is not None else None
+    except Exception:
         return None, None
-    return visitor.identity, visitor.expires_at
+    # A way in only ever proves the owner. Anything else it returns (another
+    # identity, a typo, a proof already expired or not a number) is nobody.
+    if visitor is None or getattr(visitor, "identity", None) != "owner":
+        return None, None
+    expires_at = getattr(visitor, "expires_at", None)
+    if expires_at is not None:
+        try:
+            expires_at = float(expires_at)
+        except (TypeError, ValueError):
+            return None, None
+        if not math.isfinite(expires_at) or expires_at <= time.time():
+            return None, None
+    return "owner", expires_at
 
 
 def _public_origin_ok(scope, headers: dict[str, str], content: "_Content") -> bool:
@@ -831,11 +845,8 @@ class MillForwardMiddleware:
         Mill knows which app."""
         raw = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope.get("headers", [])]
         helper = websocket_upstream_headers if websocket else upstream_request_headers
-        # Every way in's identity headers are dropped too, whichever way the
-        # request came, so none can be forged to an app.
-        vouching = ways_in.credential_headers()
         filtered = [(k, v) for k, v in helper(raw, 0, is_lodge_key=_is_lodge_key)
-                    if k.lower() != "host" and k.lower() not in vouching]
+                    if k.lower() != "host"]
         host = next(v for k, v in raw if k.lower() == "host")
         identity = [(mill_server.IDENTITY_HEADER,
                      mill_server.PUBLIC if visitor == app_sharing.PUBLIC else mill_server.OWNER)]

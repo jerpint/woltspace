@@ -116,15 +116,26 @@ def _bearer(value: str) -> str:
     return token.strip() if scheme.lower() == "bearer" else ""
 
 
+def _ways_in_headers() -> frozenset[str]:
+    """Every way in's identity headers (server/ways_in.py): never forwarded to
+    any backend, whichever way a request came, so none can be forged to one."""
+    try:
+        from .ways_in import credential_headers
+        return credential_headers()
+    except Exception:
+        return frozenset()
+
+
 def upstream_request_headers(
     headers: list[tuple[str, str]], port: int, *, is_lodge_key=lambda token: False,
 ) -> list[tuple[str, str]]:
-    """Headers to send an app on 127.0.0.1:`port`, duplicates kept in order.
+    """Headers to send an app or tool on 127.0.0.1:`port`, duplicates kept in order.
 
     `is_lodge_key` says whether a bearer token is one of the lodge's keys,
     which is stripped like an Access credential; any other bearer passes.
     """
-    drop = HOP_BY_HOP | ACCESS_HEADERS | LODGE_HEADERS | _connection_named(headers) | {"host"}
+    drop = (HOP_BY_HOP | ACCESS_HEADERS | LODGE_HEADERS | _connection_named(headers) | {"host"}
+            | _ways_in_headers())
     out = [("host", f"localhost:{port}")]
     for name, value in headers:
         lower = name.lower()
