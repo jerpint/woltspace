@@ -203,6 +203,7 @@ def test_apps_skill_sends_wolts_to_the_apps_own_port():
     assert "woltspace app start my-app" in skill
     assert "curl -X POST http://localhost:7777/apps/my-app/start" not in skill
     assert "127.0.0.1:" in skill and "Never go through the lodge's port" in skill
+    assert "these routes need the owner key" not in skill
 
 
 def test_ui_keeps_sharing_read_only_and_guards_terminal_resize():

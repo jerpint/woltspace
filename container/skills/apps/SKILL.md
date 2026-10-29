@@ -107,7 +107,7 @@ curl http://127.0.0.1:4321/api/entries   # the app's own API
 push-view http://my-app.localhost:7777/
 ```
 
-Use the **subdomain pattern** `http://<app-name>.localhost:7777/` to push an app to the viewport.
+Use the **subdomain pattern** `http://<app-name>.localhost:7777/` to push an app to the viewport. That URL is for the owner's browser; your own calls to the app go to its port (see above).
 
 > **Why not `/app/my-app/`?** The `/app/` path triggers a 302 redirect to the app's bare port (e.g. `localhost:4010`). This works locally but breaks through the Cloudflare tunnel, since the redirect target isn't reachable from the outside. The subdomain pattern avoids the redirect entirely.
 
@@ -119,7 +119,7 @@ Wolt sites auto-allocate in the **6000+** range, so no collisions. The platform 
 
 ## Sharing (public access)
 
-Apps are private by default — only accessible locally. Sharing is the owner's call: with lodge auth on, these routes need the owner key, so ask the human. Set `"public": true` in `woltspace.json` to share, or use the API:
+Apps are private by default — only accessible locally. **Sharing is the owner's call: never share an app, or set `"public": true`, unless the human asked for it.** The owner sets `"public": true` in `woltspace.json` to share, or uses the API:
 
 ```bash
 # Share a running app
