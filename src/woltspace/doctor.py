@@ -466,8 +466,15 @@ def _shared_apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
         shared = app_sharing.all_shared(layout.wolts_dir)
         stuck = app_sharing.stuck_tunnels(layout.wolts_dir, layout.port)
         corrupt = app_sharing.corrupt_files(layout.wolts_dir)
+        invalid = app_sharing.state_problem(layout.wolts_dir)
     except Exception:
         return None
+    if invalid:
+        return DoctorCheck(
+            "shared-apps", "fail", f"the sharing state is invalid ({invalid}): every app is private",
+            "The lodge keeps it aside the next time sharing changes. Read it, then share again "
+            "what should be shared.",
+        )
     if stuck:
         return DoctorCheck(
             "shared-apps", "fail",

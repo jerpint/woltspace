@@ -23,10 +23,14 @@ The lodge does the rest the same way whichever way a request came:
 
 ## Rules a way in must keep
 
-- **Each site and app gets an authority of its own.** An origin is scheme, host and port, and two sites on one origin could read each other's storage. A subdomain each (`<app>.example.com`) works, and so does a port each on one host (`machine.example.ts.net:8443`). A path each (`/apps/<app>/`) doesn't.
+- **Each site and app gets an authority of its own.** An origin is scheme, host and port, and two sites on one origin could read each other's storage and script. A subdomain each (`<app>.example.com`) is best. A port each on one host (`machine.example.ts.net:8443`) gives each its own origin, but **cookies ignore ports**: every app on that host sees, and can set, cookies for the others and the lodge. The lodge strips its own cookies before an app and keeps an app's `Set-Cookie` host-only, but apps' own cookies aren't isolated from each other. Say so to users of such a way in. A path each (`/apps/<app>/`) doesn't work.
 - **`authority` is exactly what the browser sends**, host plus `:port` when it isn't 443. The lodge compares `Origin` against `https://<authority>`.
 - **`owner()` fails closed.** Anything unexpected (a missing header, an error, a request that didn't come through your proxy) returns `None`. Return "owner" only for the owner's verified identity, never for "anyone signed in".
-- **Trust only what your proxy sets.** If your way in names the visitor in a header (as Tailscale Serve does with `Tailscale-User-Login`), check that the request really came from your proxy, such as a loopback client with your proxy's markers. Anyone can send that header to the lodge's port.
+- **Trust only what your proxy sets, through a boundary that holds.** If your way in names the visitor in a header (as Tailscale Serve does with `Tailscale-User-Login`), anyone who can reach the lodge's port can send that header, including any other process on the machine. "From loopback" alone proves nothing. Use a boundary another local process can't cross:
+  - ask the proxy itself who the connection is (Tailscale's LocalAPI `whois` on the peer address);
+  - or have the proxy reach the lodge over something only it holds, such as a private unix socket or a secret it sends.
+
+  This stays within the lodge's stated limit (code running as the owner can read the lodge's keys anyway), but it must not let other users on the machine, or apps, pass as the owner.
 - **Gate the lodge's own hosts.** Requests to `lodge_hosts()` reach the lodge's routes, which trust lodge auth (keys, paired browsers). With lodge auth off, the way in itself must keep strangers out, as Cloudflare Access does in front of the lodge's tunnel host.
 - **List every identity header in `credential_headers`.** The lodge drops them before an app sees a request, so an app can never be fooled by a forged one.
 - **Don't claim another way's hosts.** The first way in whose `content_host` matches a host wins.
@@ -56,6 +60,7 @@ Tailscale gives a machine one name on the tailnet (`machine.tailnet.ts.net`) and
 
 - **Lodge:** `tailscale serve --https=443 http://localhost:7777` → `lodge_hosts()` is `{"machine.tailnet.ts.net"}`.
 - **Each app or site:** `tailscale serve --https=<port> http://localhost:7777`, with the proxy sending `Host: machine.tailnet.ts.net:<port>`. `content_host` maps each port to its app or site, from a small table the plugin keeps.
-- **Owner:** Tailscale Serve adds `Tailscale-User-Login` for tailnet users. `owner()` accepts it only from loopback, and only when it equals the owner's login. Write that check carefully.
+- **Owner:** Tailscale Serve adds `Tailscale-User-Login` for tailnet users. Don't trust the header alone: confirm with tailscaled's LocalAPI `whois` that the connection really is that tailnet user, and accept only the owner's login.
+- **Cookies:** with one host and a port each, apps share cookies across ports (see the rules above). Tell users, and prefer Tailscale Services or a domain of your own if you need full isolation.
 - **`credential_headers`:** `tailscale-user-login`, `tailscale-user-name`, `tailscale-user-profile-pic`, `tailscale-app-capabilities`.
 - **Shared apps:** sharing has its own way out (a quick tunnel per app, `docs/mill.md`). A way in's hosts stay owner-only for a shared app unless the share records that exact public address, as it does for the Cloudflare domain today. Opening shares through Tailscale Funnel would need the same.

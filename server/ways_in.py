@@ -153,16 +153,39 @@ _installed: list | None = None
 
 def register(way) -> None:
     """Add a way in from code (tests, or a lodge that wires its own)."""
+    if not _valid(way):
+        raise TypeError("not a way in (see docs/ways-in.md)")
     _registered.append(way)
 
 
+_METHODS = ("lodge_hosts", "content_host", "owner", "public_base")
+
+
+def _valid(way) -> bool:
+    """A way in object, not a class: a str name, a set of header names, and
+    the four methods, bound."""
+    if isinstance(way, type) or not isinstance(getattr(way, "name", None), str) or not way.name:
+        return False
+    headers = getattr(way, "credential_headers", None)
+    if not isinstance(headers, (set, frozenset)) or not all(isinstance(h, str) for h in headers):
+        return False
+    return all(callable(getattr(way, method, None)) for method in _METHODS)
+
+
 def _from_entry_points() -> list:
+    """Installed ways in: an entry point names a way in, or a class or
+    function that makes one. Anything else is skipped and logged."""
     from importlib.metadata import entry_points
     found = []
     for entry in entry_points(group="woltspace.ways_in"):
         try:
-            way = entry.load()
-            found.append(way() if callable(way) and not hasattr(way, "content_host") else way)
+            target = entry.load()
+            way = target() if isinstance(target, type) or not _valid(target) else target
+            if not _valid(way):
+                raise TypeError("not a way in (see docs/ways-in.md)")
+            if any(way.name == other.name for other in (*_BUILTIN, *found)):
+                raise ValueError(f"a way in named {way.name!r} is already loaded")
+            found.append(way)
         except Exception as exc:  # a broken plugin must never keep the lodge from starting
             print(f"[ways in] {entry.name} not loaded: {type(exc).__name__}: {exc}")
     return found
@@ -179,15 +202,28 @@ def named(name: str):
     return next((way for way in all_ways() if way.name == name), None)
 
 
+def _ask(way, method: str, *args, default=None):
+    """A way in's answer; a plugin that raises answers nothing."""
+    try:
+        return getattr(way, method)(*args)
+    except Exception as exc:
+        print(f"[ways in] {getattr(way, 'name', '?')}.{method} failed: {type(exc).__name__}: {exc}")
+        return default
+
+
 def lodge_hosts() -> set[str]:
-    return {host for way in all_ways() for host in way.lodge_hosts()}
+    hosts = set()
+    for way in all_ways():
+        answer = _ask(way, "lodge_hosts", default=set())
+        hosts |= {h for h in (answer or ()) if isinstance(h, str) and h}
+    return hosts
 
 
 def content_host(host_header: str):
     """(way, PublicHost) for the first way in that claims this host, or (None, None)."""
     for way in all_ways():
-        public = way.content_host(host_header)
-        if public is not None:
+        public = _ask(way, "content_host", host_header)
+        if isinstance(public, PublicHost) and public.kind in ("site", "app"):
             return way, public
     return None, None
 
@@ -198,7 +234,7 @@ def credential_headers() -> frozenset[str]:
 
 def public_base(lodge_host: str, kind: str, name: str) -> str:
     for way in all_ways():
-        base = way.public_base(lodge_host, kind, name)
-        if base:
+        base = _ask(way, "public_base", lodge_host, kind, name)
+        if isinstance(base, str) and base.startswith("https://"):
             return base
     return ""

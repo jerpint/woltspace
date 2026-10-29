@@ -826,15 +826,16 @@ def test_the_sweep_stops_only_this_lodges_untracked_share_tunnels(tmp_path):
     def cmd(host, port=7777):
         return f"/usr/bin/cloudflared tunnel --url http://localhost:{port} --http-host-header {host}"
     processes = [
-        (1, cmd(app_sharing.share_host("board", live["token"], 7777))),   # current: kept
+        (live["tunnel_pid"], cmd(app_sharing.share_host("board", live["token"], 7777))),  # recorded: kept
+        (6, cmd(app_sharing.share_host("board", live["token"], 7777))),   # current token, unrecorded pid
         (2, cmd(app_sharing.share_host("notes", "a" * 24, 7777))),         # launching: kept
         (3, cmd(app_sharing.share_host("board", stale, 7777))),            # orphan: stopped
         (4, cmd(app_sharing.share_host("board", stale, 7788), 7788)),     # another lodge: kept
         (5, "/usr/bin/cloudflared tunnel run --token x"),                  # the lodge's own tunnel
     ]
     stopped = app_sharing.sweep_orphans(tmp_path, 7777, processes=lambda: processes, stop=tunnels.stop,
-                                        is_ours=lambda pid, *a: True)
-    assert stopped == [3]
+                                        is_ours=lambda pid, *a: pid not in tunnels.stopped)
+    assert sorted(stopped) == [3, 6]
 
 
 def test_an_unreadable_sharing_state_is_kept_aside_and_shares_fail_closed(tmp_path):
@@ -942,6 +943,31 @@ def test_a_new_way_in_names_the_lodge_and_where_its_browsers_open_apps(lodge, te
     assert opened.headers["location"] == "https://board.testnet.example/x"
 
 
+@pytest.mark.parametrize("target", ["class", "factory", "instance"])
+def test_an_installed_way_in_may_be_a_class_a_factory_or_an_instance(monkeypatch, target):
+    from server import ways_in
+
+    class Entry:
+        name = "testnet"
+
+        def load(self):
+            return {"class": _TestNet, "factory": lambda: _TestNet(), "instance": _TestNet()}[target]
+    monkeypatch.setattr("importlib.metadata.entry_points", lambda group: [Entry()])
+    monkeypatch.setattr(ways_in, "_installed", None)
+    loaded = [way for way in ways_in.all_ways() if way.name == "testnet"]
+    assert len(loaded) == 1 and not isinstance(loaded[0], type)
+    assert ways_in.lodge_hosts() >= {"lodge.testnet.example"}
+    monkeypatch.setattr(ways_in, "_installed", None)
+
+
+def test_a_way_in_that_isnt_one_is_refused(monkeypatch):
+    from server import ways_in
+    with pytest.raises(TypeError):
+        ways_in.register(_TestNet)          # the class, not a way in
+    with pytest.raises(TypeError):
+        ways_in.register(object())
+
+
 def test_ways_in_load_from_installed_packages_and_a_broken_one_is_skipped(monkeypatch):
     from server import ways_in
 
@@ -959,3 +985,151 @@ def test_ways_in_load_from_installed_packages_and_a_broken_one_is_skipped(monkey
     names = [way.name for way in ways_in.all_ways()]
     assert names == ["cloudflare", "testnet"]
     monkeypatch.setattr(ways_in, "_installed", None)
+
+
+@pytest.mark.parametrize("proof", [
+    ("public", lambda: time.time() + 600),
+    ("owenr", lambda: time.time() + 600),
+    ("owner", lambda: time.time() - 1),           # already expired
+    ("owner", lambda: float("nan")),
+    ("owner", lambda: "soon"),
+])
+def test_a_way_in_can_only_ever_prove_the_owner(lodge, testnet, monkeypatch, proof):
+    from server.ways_in import PublicHost, Visitor
+    identity, expires = proof
+
+    async def owner(headers, scope):
+        return Visitor(identity, expires())
+    monkeypatch.setattr(testnet, "owner", owner)
+    monkeypatch.setattr(testnet, "content_host", lambda host: {
+        "board.testnet.example": PublicHost("app", "board", host),
+        "softie.testnet.example": PublicHost("site", "softie", host)}.get(host))
+    _remote_sites_on(lodge)
+    assert _via_testnet().get("/").status_code == 403
+    assert _via_testnet("softie.testnet.example").get("/").status_code == 403
+
+
+def test_a_way_in_that_raises_lets_nobody_in(lodge, testnet, monkeypatch):
+    async def owner(headers, scope):
+        raise RuntimeError("plugin bug")
+    monkeypatch.setattr(testnet, "owner", owner)
+    assert _via_testnet(**{"x-testnet-user": "owner@example.com"}).get("/").status_code == 403
+
+
+def test_an_orphan_that_wont_stop_becomes_tracked_debt(tmp_path, monkeypatch):
+    stale = "e" * 24
+    command = (f"/usr/bin/cloudflared tunnel --url http://localhost:7777 "
+               f"--http-host-header {app_sharing.share_host('board', stale, 7777)}")
+    monkeypatch.setattr(app_sharing, "STOP_WAIT_SECONDS", 0.2)
+    always = lambda pid, *a: True  # noqa: E731
+    stopped = app_sharing.sweep_orphans(tmp_path, 7777, processes=lambda: [(9, command)],
+                                        stop=lambda pid: None, is_ours=always)
+    assert stopped == []
+    assert [r["pid"] for r in app_sharing.stuck_tunnels(tmp_path, 7777, is_ours=always)] == [9]
+
+
+def test_a_short_write_still_logs_the_whole_line(tmp_path, monkeypatch):
+    real_write = app_sharing.os.write
+    calls = []
+
+    def short(fd, data):
+        calls.append(1)
+        return real_write(fd, bytes(data[:5]) if len(calls) == 1 else data)
+    monkeypatch.setattr(app_sharing.os, "write", short)
+    app_sharing._log(tmp_path, "share-requested", "board")
+    assert json.loads(app_sharing.log_path(tmp_path).read_text())["event"] == "share-requested"
+    monkeypatch.setattr(app_sharing.os, "write", lambda fd, data: 0)
+    with pytest.raises(RuntimeError, match="nothing shared"):
+        _share(tmp_path)
+    assert app_sharing.shared(tmp_path, "board") is None
+
+
+@pytest.mark.parametrize("revoke", ["one", "all"])
+def test_revoking_cancels_a_share_whose_tunnel_is_still_starting(lodge, revoke):
+    tunnels = _Tunnels(alive=True)
+    seen = {}
+
+    def start_then_revoke(**kw):
+        result = tunnels.start(**kw)
+        if revoke == "one":
+            seen["revoked"] = app_sharing.unshare(lodge, "board", 7777, by="owner",
+                                                  stop=tunnels.stop, is_ours=tunnels.is_ours)
+        else:
+            seen["revoked"] = app_sharing.unshare_all(lodge, 7777, by="owner",
+                                                      stop=tunnels.stop, is_ours=tunnels.is_ours)
+        return result
+    with pytest.raises(RuntimeError, match="cancelled"):
+        app_sharing.share(lodge, "board", 7777, by="owner", start=start_then_revoke,
+                          stop=tunnels.stop, is_ours=tunnels.is_ours)
+    assert seen["revoked"] in (True, ["board"])
+    assert app_sharing.shared(lodge, "board") is None and 101 in tunnels.stopped
+
+
+def test_restore_that_cant_record_its_new_tunnel_stops_it(lodge, monkeypatch):
+    tunnels = _Tunnels(alive=True)
+    _share(lodge, tunnels=tunnels)
+    tunnels.stopped.append(101)            # the old tunnel died
+    real_write, writes = app_sharing._write, []
+
+    def flaky(root, data):
+        if (data["shares"].get("board") or {}).get("tunnel_pid") == 102:   # restore publishing it
+            raise OSError("disk full")
+        real_write(root, data)
+    monkeypatch.setattr(app_sharing, "_write", flaky)
+    actions = app_sharing.restore(lodge, 7777, start=tunnels.start, stop=tunnels.stop,
+                                  is_ours=tunnels.is_ours, processes=lambda: [])
+    assert [a["action"] for a in actions] == ["failed"] and 102 in tunnels.stopped
+
+
+def test_a_crash_between_restarts_spawn_and_record_is_swept_next_boot(lodge):
+    tunnels = _Tunnels(alive=True)
+    live = _share(lodge, tunnels=tunnels)
+    # A tunnel for the current token whose pid was never recorded.
+    ghost = (77, "/usr/bin/cloudflared tunnel --url http://localhost:7777 --http-host-header "
+                 + app_sharing.share_host("board", live["token"], 7777))
+    stopped = app_sharing.sweep_orphans(lodge, 7777, processes=lambda: [ghost], stop=tunnels.stop,
+                                        is_ours=lambda pid, *a: pid not in tunnels.stopped)
+    assert stopped == [77] and app_sharing.shared(lodge, "board")["tunnel_pid"] == 101
+
+
+@pytest.mark.parametrize("state", [
+    {"shares": {}, "retired": "broken", "launching": []},
+    {"shares": {"board": {"token": "nope"}}, "retired": [], "launching": []},
+    {"shares": {}, "retired": [{"name": "board", "token": "a" * 24}], "launching": []},   # no pid
+    {"shares": {}, "retired": [], "launching": [], "extra": 1},
+])
+def test_an_invalid_state_is_quarantined_not_normalised(tmp_path, state):
+    app_sharing.sharing_dir(tmp_path).mkdir(parents=True)
+    (app_sharing.sharing_dir(tmp_path) / "shared.json").write_text(json.dumps(state))
+    assert app_sharing.state_problem(tmp_path)          # doctor sees it before anything moves it
+    _share(tmp_path)
+    _share(tmp_path, name="notes")                     # a second quarantine never overwrites the first
+    assert len(app_sharing.corrupt_files(tmp_path)) == 1
+    assert json.loads(app_sharing.corrupt_files(tmp_path)[0].read_text()) == state
+    assert app_sharing.state_problem(tmp_path) is None
+
+
+def test_two_quarantines_in_one_second_keep_both(tmp_path):
+    for _ in range(2):
+        app_sharing.sharing_dir(tmp_path).mkdir(parents=True, exist_ok=True)
+        (app_sharing.sharing_dir(tmp_path) / "shared.json").write_text("{bad")
+        _share(tmp_path)
+        app_sharing.unshare(tmp_path, "board", 7777, by="owner", stop=lambda pid: None)
+    assert len(app_sharing.corrupt_files(tmp_path)) == 2
+
+
+def test_a_way_ins_identity_header_never_reaches_a_tool(lodge, testnet, monkeypatch):
+    seen = {}
+
+    class Response:
+        status_code, headers, content = 200, {}, b"ok"
+
+    async def fake_send(self, request, **kw):
+        seen.update({k.lower(): v for k, v in request.headers.items()})
+        import httpx
+        return httpx.Response(200, content=b"ok")
+    import httpx
+    monkeypatch.setattr(httpx.AsyncClient, "send", fake_send)
+    monkeypatch.setattr(server_app.tool_registry, "get", lambda name: {"name": name, "port": 4999}, raising=False)
+    _local().get("/tools/t/x", headers={"x-testnet-user": "owner@example.com", "x-other": "1"})
+    assert seen.get("x-other") == "1" and "x-testnet-user" not in seen
