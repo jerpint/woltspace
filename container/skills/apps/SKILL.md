@@ -74,20 +74,35 @@ If the app isn't running, static files in `dist/` or the app root are served at 
 
 ## Starting and stopping
 
-**ALWAYS use the platform API. Never run the start command directly.**
+**ALWAYS use the `woltspace app` CLI. Never run the start command directly.**
 
 Running `npm run dev`, `python server.py`, or any start command directly bypasses the platform. The app will show as "off" in the viewport even if the server is running.
 
 ```bash
-# Start an app
-curl -X POST http://localhost:7777/apps/my-app/start
-
-# Stop an app
-curl -X POST http://localhost:7777/apps/my-app/stop
-
-# List all apps + running state
-curl http://localhost:7777/apps
+woltspace app start my-app
+woltspace app stop my-app
+woltspace app restart my-app
+woltspace app logs my-app --tail 50
+woltspace app list          # every app, on or off, and its own port
 ```
+
+The CLI sends your lodge key. A raw `curl` to `localhost:7777` doesn't, so with lodge auth on it gets `401`.
+
+## Using an app from a wolt
+
+From a wolt session, read or change an app's data through its API by calling the app **on its own port**:
+
+```bash
+woltspace app list                       # notes  on  127.0.0.1:4321
+curl http://127.0.0.1:4321/api/entries   # the app's own API
+```
+
+- **`127.0.0.1` is the lodge's own machine.** In a container lodge that means inside the container, where wolts and apps run together; the host doesn't need those ports.
+- **An app that's `off`** has no listener: start it first (`woltspace app start`), then use the listed port.
+- **A `static` app has no server and no API.** Read its files; to preview it, push its browser address to the viewport.
+- **Never go through the lodge's port** (`http://my-app.localhost:7777/`, `/app/my-app/`). Those addresses are for the owner's browser and the viewport, and they are moving behind the Mill, which lets only the owner through.
+- **If the app has its own login**, send the app's own token. Never send the lodge key to an app.
+- **Prefer the app's API to editing its data directly**, so the app's own checks run. Change a running app's database by hand only when the human asked, and respect its locking and schema (stop the app first if unsure).
 
 ## Pushing to the viewport
 
@@ -95,7 +110,7 @@ curl http://localhost:7777/apps
 push-view http://my-app.localhost:7777/
 ```
 
-Use the **subdomain pattern** `http://<app-name>.localhost:7777/` to push an app to the viewport.
+Use the **subdomain pattern** `http://<app-name>.localhost:7777/` to push an app to the viewport. That URL is for the owner's browser; your own calls to the app go to its port (see above).
 
 > **Why not `/app/my-app/`?** The `/app/` path triggers a 302 redirect to the app's bare port (e.g. `localhost:4010`). This works locally but breaks through the Cloudflare tunnel, since the redirect target isn't reachable from the outside. The subdomain pattern avoids the redirect entirely.
 
@@ -107,7 +122,7 @@ Wolt sites auto-allocate in the **6000+** range, so no collisions. The platform 
 
 ## Sharing (public access)
 
-Apps are private by default — only accessible locally. Set `"public": true` in `woltspace.json` to share, or use the API:
+Apps are private by default — only accessible locally. **Sharing is the owner's call: never share an app, or set `"public": true`, unless the human asked for it.** The owner sets `"public": true` in `woltspace.json` to share, or uses the API:
 
 ```bash
 # Share a running app
@@ -148,7 +163,8 @@ An app keeps its own secrets in its own folder, never the lodge's.
 
 ## Key rules
 
-- **Always use the API to start/stop** — never run start commands directly
+- **Always use `woltspace app start/stop`** — never run start commands directly
+- **Call apps on their own port** (`127.0.0.1:<port>`), never through 7777
 - **Never edit `$WOLTSPACE_DIR/`** — that's the platform install
 - **Apps are portable** — should work if copied out of woltspace
 - **Write woltspace.json after setup** — or the app is invisible
