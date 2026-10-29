@@ -445,6 +445,7 @@ async def request_origin_guard(request: Request, call_next):
 
 _LODGE_AUTH_OPEN_PATHS = ("/pair", "/health", "/favicon.svg")
 _pairing_failures = lodge_auth.FailureLimit()
+lodge_auth.redact_access_log()
 
 _UNPAIRED_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Pair this browser</title>

@@ -26,6 +26,7 @@ import fcntl
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
@@ -39,6 +40,50 @@ from env_compat import get_env
 KEY_HEADER = "x-woltspace-key"
 COOKIE_SECURE = "__Host-woltspace-lodge"
 COOKIE_PLAIN = "woltspace-lodge"
+
+
+# One-time codes travel in a URL's query (`/pair?code=`, a site's grant), and
+# Uvicorn logs each request target: HTTP on `uvicorn.access`, WebSocket
+# upgrades on `uvicorn.error`. A code is spent on use, but a refused attempt
+# (rate limit, a refused upgrade) leaves it valid: never log one.
+_REDACTED_PARAMS = {"code"}
+_LOGGERS = ("uvicorn.access", "uvicorn.error")
+
+
+def redact_codes(target: str) -> str:
+    """Blank the value of every query parameter the app would read as `code`.
+
+    Names are decoded the way Starlette decodes them (`%63ode`, `co+de`
+    variants), so an encoded name can't slip a live code into a log."""
+    path, sep, query = target.partition("?")
+    if not sep:
+        return target
+    from urllib.parse import unquote_plus
+    parts = []
+    for part in query.split("&"):
+        name, eq, _ = part.partition("=")
+        if eq and unquote_plus(name) in _REDACTED_PARAMS:
+            part = f"{name}=[redacted]"
+        parts.append(part)
+    return f"{path}?{'&'.join(parts)}"
+
+
+class RedactCodes(logging.Filter):
+    """Blank one-time codes in the request targets Uvicorn logs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(redact_codes(a) if isinstance(a, str) and "?" in a else a
+                                for a in record.args)
+        return True
+
+
+def redact_access_log() -> None:
+    """Install the filter on Uvicorn's loggers, once each."""
+    for name in _LOGGERS:
+        logger = logging.getLogger(name)
+        if not any(isinstance(f, RedactCodes) for f in logger.filters):
+            logger.addFilter(RedactCodes())
 
 
 def cookie_name(host_header: str, secure: bool) -> str:
