@@ -248,7 +248,9 @@ async def lifespan(app: FastAPI):
     tool_registry.restore()
     apps_restore()
     # Shared apps' quick tunnels, in the background: each can take seconds.
-    threading.Thread(target=app_sharing.restore, args=(WOLTS_DIR, PORT), daemon=True).start()
+    # Then every minute: stop retired and orphaned share tunnels, so a launch
+    # that expires is cleaned up without waiting for the next boot.
+    threading.Thread(target=_sharing_upkeep, daemon=True).start()
     _start_file_watcher()
     _start_tool_gc()
     if lodge_auth.enabled():
@@ -2786,6 +2788,23 @@ async def app_detail(name: str):
     entry["url"] = f"/app/{name}/"
     entry["shared"] = _share_summary(name)
     return entry
+
+
+SHARING_UPKEEP_SECONDS = 60
+
+
+def _sharing_upkeep() -> None:
+    try:
+        app_sharing.restore(WOLTS_DIR, PORT)
+    except Exception as exc:
+        print(f"[sharing] restore failed: {type(exc).__name__}: {exc}")
+    while True:
+        time.sleep(SHARING_UPKEEP_SECONDS)
+        try:
+            app_sharing.settle_retired(WOLTS_DIR, PORT)
+            app_sharing.sweep_orphans(WOLTS_DIR, PORT)
+        except Exception as exc:
+            print(f"[sharing] upkeep failed: {type(exc).__name__}: {exc}")
 
 
 def _share_summary(name: str) -> dict | None:
