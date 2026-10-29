@@ -350,11 +350,11 @@ def test_the_lodge_lets_in_only_the_owners_verified_email(signer, monkeypatch, e
     import asyncio
     monkeypatch.setattr(access, "load_access_settings", lambda root: SETTINGS)
     monkeypatch.setattr(access, "access_token_verifier", access.AccessTokenVerifier())
-    visitor, _exp = asyncio.run(server_app._remote_visitor(
-        {"cf-access-jwt-assertion": signer.token(email=email)}))
-    assert visitor == expected
+    cloudflare = server_app.ways_in.named("cloudflare")
+    visitor = asyncio.run(cloudflare.owner({"cf-access-jwt-assertion": signer.token(email=email)}, {}))
+    assert (visitor.identity if visitor else None) == expected
     lodge_token = signer.token(aud="lodge-aud")
-    assert asyncio.run(server_app._remote_visitor({"cf-access-jwt-assertion": lodge_token}))[0] is None
+    assert asyncio.run(cloudflare.owner({"cf-access-jwt-assertion": lodge_token}, {})) is None
 
 
 # --- Review: Origin through the tunnel, old quick tunnels, site- names -----------------------
@@ -569,51 +569,118 @@ import app_sharing  # noqa: E402
 TUNNEL = "https://quiet-otter.trycloudflare.com"
 
 
-def _share(root, name="board", url=TUNNEL, domain_url=None):
-    return app_sharing.share(root, name, 7777, by="owner", domain_url=domain_url,
-                             start=lambda **kw: {"url": url, "pid": None})
+class _Tunnels:
+    """Fake cloudflared: `start` hands out pids, `stop` records them."""
+
+    def __init__(self, url=TUNNEL, alive=False):
+        self.url, self.alive, self.started, self.stopped, self.next_pid = url, alive, [], [], 100
+
+    def start(self, **kw):
+        self.next_pid += 1
+        self.started.append((self.next_pid, kw["host_header"]))
+        return {"url": self.url, "pid": self.next_pid}
+
+    def stop(self, pid):
+        self.stopped.append(pid)
+
+    def is_ours(self, pid, name, port, token):
+        return bool(pid) and self.alive and pid not in self.stopped
 
 
-def _through_quick_tunnel(name="board") -> TestClient:
-    # cloudflared on this machine, `--http-host-header <app>.localhost:7777`.
-    return TestClient(server_app.app, base_url=f"http://{name}.localhost:7777", client=("127.0.0.1", 50000),
-                      headers={"cf-connecting-ip": "203.0.113.9", "x-forwarded-for": "203.0.113.9"})
+def _share(root, name="board", tunnels=None, **kw):
+    tunnels = tunnels or _Tunnels()
+    return app_sharing.share(root, name, 7777, by="owner", start=tunnels.start, stop=tunnels.stop,
+                             is_ours=tunnels.is_ours, **kw)
+
+
+def _via_tunnel(record, name="board", **headers) -> TestClient:
+    # What cloudflared sends: the share host it was given, from loopback. No
+    # forwarding headers here on purpose: the share host alone makes it public.
+    host = app_sharing.share_host(name, record["token"], 7777)
+    return TestClient(server_app.app, base_url=f"http://{host}", client=("127.0.0.1", 50000), headers=headers)
 
 
 @pytest.mark.parametrize("auth", [False, True])
-def test_a_shared_app_opens_for_anyone_through_its_quick_tunnel(lodge, monkeypatch, auth):
+def test_a_shared_app_opens_for_anyone_through_its_share_host(lodge, monkeypatch, auth):
+    import lodge_auth
     if auth:
         monkeypatch.setenv("WOLTSPACE_LODGE_AUTH", "1")
-    assert _through_quick_tunnel().get("/").status_code in (401, 403)
-    _share(lodge)
-    response = _through_quick_tunnel().get("/", headers={"cookie": "app=1"})
+    record = _share(lodge)
+    key = lodge_auth.ensure_keys(lodge)[lodge_auth.OWNER]
+    response = _via_tunnel(record).get("/", headers={"cookie": "app=1", "x-woltspace-key": key})
     assert response.status_code == 200 and response.text == "board says hi"
     _method, _path, sent = _Seen.requests[-1]
-    assert mill_server.IDENTITY_HEADER not in sent and sent["cookie"] == "app=1"
+    assert sent["cookie"] == "app=1" and "x-woltspace-key" not in sent
+    assert mill_server.IDENTITY_HEADER not in sent and "share.localhost" not in sent["host"]
 
 
-def test_a_shared_apps_writes_must_come_from_its_public_page(lodge):
-    _share(lodge)
-    ok = _through_quick_tunnel().post("/x", headers={"origin": TUNNEL})
-    assert ok.status_code == 200 and ok.text == "posted"
-    foreign = _through_quick_tunnel().post("/x", headers={"origin": "https://evil.example"})
-    assert foreign.status_code == 403
-    cross = _through_quick_tunnel().post("/x", headers={"sec-fetch-site": "cross-site"})
+@pytest.mark.parametrize("origin,ok", [
+    (TUNNEL, True),
+    (None, False),                                  # a write must say where it's from
+    ("http://board.localhost:7777", False),          # the internal local form is no credential
+    (TUNNEL + "/", False),                          # exact, not normalised
+    ("https://evil.example", False),
+    ("null", False),
+])
+def test_a_shared_apps_writes_must_come_from_its_public_page(lodge, origin, ok):
+    record = _share(lodge)
+    headers = {"origin": origin} if origin else {}
+    response = _via_tunnel(record).post("/x", headers=headers)
+    assert (response.status_code == 200) is ok
+    cross = _via_tunnel(record).post("/x", headers={"origin": TUNNEL, "sec-fetch-site": "cross-site"})
     assert cross.status_code == 403
 
 
-def test_unsharing_closes_it_again(lodge):
+def test_unshare_and_re_share_end_the_old_link(lodge):
+    tunnels = _Tunnels()
+    old = _share(lodge, tunnels=tunnels)
+    assert app_sharing.unshare(lodge, "board", 7777, by="owner", stop=tunnels.stop, is_ours=tunnels.is_ours)
+    assert _via_tunnel(old).get("/").status_code == 404
+    new = _share(lodge, tunnels=tunnels)
+    assert new["token"] != old["token"]
+    assert _via_tunnel(old).get("/").status_code == 404      # a surviving old tunnel reaches nothing
+    assert _via_tunnel(new).get("/").status_code == 200
+    assert app_sharing.current_share(lodge, "board", old["token"]) is None   # its sockets close too
+
+
+@pytest.mark.parametrize("host", [
+    "board--" + "0" * 24 + ".share.localhost:7777",   # a token that was never shared
+    "board--short.share.localhost:7777",
+    "share.localhost:7777",
+    "x.y.share.localhost.:7777",
+])
+def test_a_share_shaped_host_that_isnt_a_current_share_reaches_nothing(lodge, host):
     _share(lodge)
-    assert app_sharing.unshare(lodge, "board", 7777, by="owner", stop=lambda pid: None)
-    assert _through_quick_tunnel().get("/").status_code == 403
+    client = TestClient(server_app.app, base_url=f"http://{host}", client=("127.0.0.1", 50000))
+    for path in ("/", "/sessions", "/_woltspace/grant?code=x"):
+        assert client.get(path).status_code == 404
+
+
+def test_the_apps_local_address_is_never_public(lodge):
+    _share(lodge)
+    # Through anything but the share host, `<app>.localhost` is the owner's only.
+    forwarded = _through_quick_tunnel_shaped()
+    assert forwarded.get("/").status_code == 403
+
+
+def _through_quick_tunnel_shaped():
+    return TestClient(server_app.app, base_url="http://board.localhost:7777", client=("127.0.0.1", 50000),
+                      headers={"cf-connecting-ip": "203.0.113.9"})
+
+
+def test_a_share_host_is_never_the_owner_and_never_a_grant(lodge, monkeypatch):
+    monkeypatch.setenv("WOLTSPACE_LODGE_AUTH", "1")
+    record = _share(lodge)
+    response = _via_tunnel(record).get("/_woltspace/grant?code=anything")
+    assert response.text == "board says hi"       # the app's own page, not a lodge grant
+    assert "set-cookie" not in {k.lower() for k in response.headers}
 
 
 def test_a_wolts_site_and_the_lodge_are_never_shared(lodge, monkeypatch):
     monkeypatch.setenv("WOLTSPACE_LODGE_AUTH", "1")
-    _share(lodge, name="softie")   # even a share record by a site's name
-    site = TestClient(server_app.app, base_url="http://softie.sites.localhost:7777",
-                      client=("127.0.0.1", 50000), headers={"cf-connecting-ip": "203.0.113.9"})
-    assert site.get("/").status_code in (401, 403)
+    record = _share(lodge, name="softie")   # a share by a wolt's name reaches an app of that name, not its site
+    response = _via_tunnel(record, name="softie").get("/")
+    assert "softie's site" not in response.text and response.status_code == 404
     lodge_api = TestClient(server_app.app, base_url="http://localhost:7777",
                            client=("127.0.0.1", 50000), headers={"cf-connecting-ip": "203.0.113.9"})
     assert lodge_api.get("/sessions").status_code == 401
@@ -623,73 +690,272 @@ def test_the_mill_refuses_a_public_visitor_on_an_app_that_isnt_shared(lodge):
     import httpx
     transport = httpx.HTTPTransport(uds=str(server_app.mill_server.socket_path(lodge)))
     with httpx.Client(transport=transport) as mill:
-        url, host = "http://mill/", {"host": "board.localhost:7777"}
-        public = {**host, mill_server.IDENTITY_HEADER: mill_server.PUBLIC}
-        assert mill.get(url, headers=public).status_code == 403
+        public = {"host": "board.localhost:7777", mill_server.IDENTITY_HEADER: mill_server.PUBLIC}
+        assert mill.get("http://mill/", headers=public).status_code == 403
         _share(lodge)
-        assert mill.get(url, headers=public).status_code == 200
+        assert mill.get("http://mill/", headers=public).status_code == 200
 
 
 def test_a_shared_app_on_your_domain_opens_without_an_access_token(lodge):
     assert _through_tunnel(f"board.{DOMAIN}").get("/").status_code == 403
-    _share(lodge, url=None, domain_url=f"https://board.{DOMAIN}")
+    _share(lodge, domain_url=f"https://board.{DOMAIN}")
     response = _through_tunnel(f"board.{DOMAIN}").get("/")
     assert response.status_code == 200 and response.text == "board says hi"
-    foreign = _through_tunnel(f"board.{DOMAIN}").post("/x", headers={"origin": "https://evil.example"})
-    assert foreign.status_code == 403
+    assert _through_tunnel(f"board.{DOMAIN}").post("/x", headers={"origin": "https://evil.example"}).status_code == 403
+    assert _through_tunnel(f"board.{DOMAIN}").post("/x").status_code == 403
 
 
 def test_a_wolt_can_share_when_asked_and_every_share_is_logged(lodge, monkeypatch):
     import lodge_auth
     monkeypatch.setenv("WOLTSPACE_LODGE_AUTH", "1")
     keys = lodge_auth.ensure_keys(lodge)
-    monkeypatch.setattr(app_sharing, "start_cloudflared", lambda **kw: {"url": TUNNEL, "pid": None})
+    tunnels = _Tunnels()
+    monkeypatch.setattr(app_sharing, "start_cloudflared", tunnels.start)
+    monkeypatch.setattr(app_sharing, "stop_cloudflared", tunnels.stop)
     wolt = _local()
     wolt.headers["x-woltspace-key"] = keys[lodge_auth.WOLT]
-    shared = wolt.post("/apps/board/share", json={"said_by": "softie"})
-    assert shared.status_code == 200 and shared.json()["tunnel_url"] == TUNNEL
-    assert "Anyone with this link" in shared.json()["warning"]
-    assert shared.json()["by"] == lodge_auth.WOLT and shared.json()["said_by"] == "softie"
-    assert server_app._share_summary("board")["tunnel_url"] == TUNNEL
+    shared = wolt.post("/apps/board/share", json={"said_by": "softie"}).json()
+    assert shared["tunnel_url"] == TUNNEL and "Anyone with this link" in shared["warning"]
+    assert shared["by"] == lodge_auth.WOLT and shared["said_by"] == "softie" and "token" not in shared
+    assert tunnels.started[0][1].startswith("board--") and tunnels.started[0][1].endswith(".share.localhost:7777")
     assert wolt.post("/apps/unshare-all").json()["unshared"] == ["board"]
-    events = [json.loads(line)["event"] for line in app_sharing.log_path(lodge).read_text().splitlines()]
-    assert events == ["share", "unshare"]
+    log = app_sharing.log_path(lodge)
+    assert [json.loads(line)["event"] for line in log.read_text().splitlines()] == [
+        "share-requested", "shared", "unshare"]
+    assert log.stat().st_mode & 0o777 == 0o600
 
 
-def test_sharing_without_cloudflared_or_a_domain_shares_nothing(lodge, monkeypatch):
-    def no_cloudflared(**kw):
-        raise OSError("cloudflared not found")
-    with pytest.raises(RuntimeError):
-        app_sharing.share(lodge, "board", 7777, by="owner", start=no_cloudflared)
-    assert app_sharing.shared(lodge, "board") is None
+def test_no_share_goes_live_unlogged(lodge, monkeypatch):
+    tunnels = _Tunnels(alive=True)
+    app_sharing.log_path(lodge).parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(app_sharing, "log_path", lambda root: Path("/dev/null/nope/sharing.log"))
+    with pytest.raises(RuntimeError, match="nothing shared"):
+        _share(lodge, tunnels=tunnels)
+    assert app_sharing.shared(lodge, "board") is None and tunnels.stopped == [101]
+    assert app_sharing._read(lodge)["launching"] == []
 
 
-def test_only_the_apps_own_sharing_tunnel_is_ever_stopped():
-    ours = "cloudflared tunnel --url http://localhost:7777 --http-host-header board.localhost:7777"
-    assert app_sharing.is_sharing_tunnel(7, "board", 7777, command=lambda pid: ours, cloudflared=lambda pid: True)
-    for other in ("cloudflared tunnel run --token x",                      # the lodge's own tunnel
-                  "cloudflared tunnel --url http://localhost:4001",       # an old per-app tunnel
-                  ours.replace("board.", "notes.")):                      # another app's
-        assert not app_sharing.is_sharing_tunnel(7, "board", 7777, command=lambda pid, o=other: o,
-                                                 cloudflared=lambda pid: True)
-    assert not app_sharing.is_sharing_tunnel(7, "board", 7777, command=lambda pid: ours,
-                                             cloudflared=lambda pid: False)
+def test_a_failed_save_after_the_tunnel_started_stops_it(lodge, monkeypatch):
+    tunnels = _Tunnels(alive=True)
+    real_write, writes = app_sharing._write, []
+
+    def flaky(root, data):
+        writes.append(1)
+        if len(writes) == 2:          # the publishing write
+            raise OSError("disk full")
+        real_write(root, data)
+    monkeypatch.setattr(app_sharing, "_write", flaky)
+    with pytest.raises(RuntimeError, match="nothing shared"):
+        _share(lodge, tunnels=tunnels)
+    assert app_sharing.shared(lodge, "board") is None and tunnels.stopped == [101]
+
+
+def test_a_tunnel_that_wont_stop_stays_tracked_and_reaches_nothing(lodge):
+    class Stuck(_Tunnels):
+        def is_ours(self, pid, name, port, token):
+            return bool(pid)      # never stops
+    tunnels = Stuck()
+    old = _share(lodge, tunnels=tunnels)
+    app_sharing.unshare(lodge, "board", 7777, by="owner", stop=tunnels.stop, is_ours=tunnels.is_ours)
+    assert app_sharing.stuck_tunnels(lodge, 7777, is_ours=tunnels.is_ours) == [
+        {**app_sharing._read(lodge)["retired"][0]}]
+    new = _share(lodge, tunnels=tunnels)
+    assert _via_tunnel(old).get("/").status_code == 404 and _via_tunnel(new).get("/").status_code == 200
+
+
+def test_a_launch_the_sweep_expired_is_never_published(lodge):
+    tunnels = _Tunnels(alive=True)
+
+    def slow_start(**kw):
+        result = tunnels.start(**kw)
+        with app_sharing._locked(lodge):     # as the sweep does once the grace has passed
+            data = app_sharing._read(lodge)
+            data["launching"] = []
+            app_sharing._write(lodge, data)
+        return result
+    with pytest.raises(RuntimeError, match="too long"):
+        app_sharing.share(lodge, "board", 7777, by="owner", start=slow_start, stop=tunnels.stop,
+                          is_ours=tunnels.is_ours)
+    assert app_sharing.shared(lodge, "board") is None and tunnels.stopped == [101]
+
+
+def test_restore_never_overwrites_a_newer_share(lodge):
+    tunnels = _Tunnels(alive=True)
+    first = _share(lodge, tunnels=tunnels)
+    with app_sharing._locked(lodge):     # its tunnel is gone after a reboot
+        data = app_sharing._read(lodge)
+        data["shares"]["board"]["tunnel_pid"] = None
+        app_sharing._write(lodge, data)
+
+    def start_while_reshared(**kw):
+        result = tunnels.start(**kw)
+        app_sharing.unshare(lodge, "board", 7777, by="owner", stop=tunnels.stop, is_ours=tunnels.is_ours)
+        _share(lodge, tunnels=tunnels)
+        return result
+    actions = app_sharing.restore(lodge, 7777, start=start_while_reshared, stop=tunnels.stop,
+                                  is_ours=tunnels.is_ours, processes=lambda: [])
+    current = app_sharing.shared(lodge, "board")
+    assert [a["action"] for a in actions] == ["superseded"]
+    assert current["token"] != first["token"] and current["tunnel_pid"] == 103
+    assert 102 in tunnels.stopped        # restore's stale tunnel
 
 
 def test_restore_keeps_a_live_tunnel_and_restarts_a_dead_one(tmp_path):
-    app_sharing.share(tmp_path, "board", 7777, by="owner", start=lambda **kw: {"url": TUNNEL, "pid": 11})
-    app_sharing.share(tmp_path, "notes", 7777, by="owner", start=lambda **kw: {"url": TUNNEL, "pid": 12})
-    actions = app_sharing.restore(tmp_path, 7777, is_ours=lambda pid, name, port: pid == 11,
-                                  start=lambda **kw: {"url": "https://new.trycloudflare.com", "pid": 13})
+    tunnels = _Tunnels(alive=True)
+    _share(tmp_path, "board", tunnels=tunnels)
+    _share(tmp_path, "notes", tunnels=tunnels)
+    tunnels.stopped.append(102)          # notes' tunnel died
+    actions = app_sharing.restore(tmp_path, 7777, start=tunnels.start, stop=tunnels.stop,
+                                  is_ours=tunnels.is_ours, processes=lambda: [])
     assert {a["name"]: a["action"] for a in actions} == {"board": "kept", "notes": "restarted"}
-    assert app_sharing.shared(tmp_path, "notes")["tunnel_url"] == "https://new.trycloudflare.com"
+    assert app_sharing.shared(tmp_path, "notes")["tunnel_pid"] == 103
+    events = [json.loads(line)["event"] for line in app_sharing.log_path(tmp_path).read_text().splitlines()]
+    assert events.count("live-at-boot") == 2
     assert (app_sharing.sharing_dir(tmp_path).stat().st_mode & 0o777) == 0o700
 
 
-def test_doctor_lists_every_shared_app(tmp_path):
+def test_the_sweep_stops_only_this_lodges_untracked_share_tunnels(tmp_path):
+    tunnels = _Tunnels(alive=True)
+    live = _share(tmp_path, tunnels=tunnels)
+    with app_sharing._locked(tmp_path):
+        data = app_sharing._read(tmp_path)
+        data["launching"].append({"name": "notes", "token": "a" * 24, "at": time.time()})
+        app_sharing._write(tmp_path, data)
+    stale = "b" * 24
+
+    def cmd(host, port=7777):
+        return f"/usr/bin/cloudflared tunnel --url http://localhost:{port} --http-host-header {host}"
+    processes = [
+        (1, cmd(app_sharing.share_host("board", live["token"], 7777))),   # current: kept
+        (2, cmd(app_sharing.share_host("notes", "a" * 24, 7777))),         # launching: kept
+        (3, cmd(app_sharing.share_host("board", stale, 7777))),            # orphan: stopped
+        (4, cmd(app_sharing.share_host("board", stale, 7788), 7788)),     # another lodge: kept
+        (5, "/usr/bin/cloudflared tunnel run --token x"),                  # the lodge's own tunnel
+    ]
+    stopped = app_sharing.sweep_orphans(tmp_path, 7777, processes=lambda: processes, stop=tunnels.stop,
+                                        is_ours=lambda pid, *a: True)
+    assert stopped == [3]
+
+
+def test_an_unreadable_sharing_state_is_kept_aside_and_shares_fail_closed(tmp_path):
+    app_sharing.sharing_dir(tmp_path).mkdir(parents=True)
+    (app_sharing.sharing_dir(tmp_path) / "shared.json").write_text("{not json")
+    assert app_sharing.shared(tmp_path, "board") is None
+    _share(tmp_path)
+    assert len(app_sharing.corrupt_files(tmp_path)) == 1
+    assert app_sharing.corrupt_files(tmp_path)[0].read_text() == "{not json"
+
+
+def test_only_the_shares_own_tunnel_is_ever_stopped():
+    token = "c" * 24
+    ours = f"cloudflared tunnel --url http://localhost:7777 --http-host-header board--{token}.share.localhost:7777"
+    check = lambda command, alive=True: app_sharing.is_sharing_tunnel(  # noqa: E731
+        7, "board", 7777, token, command=lambda pid: command, cloudflared=lambda pid: alive)
+    assert check(ours)
+    for other in ("cloudflared tunnel run --token x",
+                  "cloudflared tunnel --url http://localhost:4001",
+                  ours.replace("board--", "notes--"),
+                  ours.replace(token, "d" * 24),
+                  ours.replace("localhost:7777 --", "localhost:7788 --")):
+        assert not check(other)
+    assert not check(ours, alive=False)
+
+
+def test_doctor_lists_every_shared_app_and_stuck_tunnel(tmp_path, monkeypatch):
     from woltspace import doctor
     assert doctor._shared_apps_check(_layout(tmp_path)) is None
     _share(tmp_path)
     check = doctor._shared_apps_check(_layout(tmp_path))
     assert check.status == "warn" and "PUBLIC" in check.detail and "board" in check.detail
     assert TUNNEL in check.detail and "woltspace app unshare" in check.remedy
+    monkeypatch.setattr(app_sharing, "stuck_tunnels", lambda root, port: [{"name": "old", "pid": 9}])
+    assert doctor._shared_apps_check(_layout(tmp_path)).status == "fail"
+
+
+# --- Ways in: anyone can add their own ---------------------------------------------------------
+
+class _TestNet:
+    """A made-up way in, as a plugin would write one: a VPN whose proxy runs on
+    this machine and names the visitor in one header."""
+    name = "testnet"
+    credential_headers = frozenset({"x-testnet-user"})
+
+    def lodge_hosts(self):
+        return {"lodge.testnet.example"}
+
+    def content_host(self, host):
+        from server.ways_in import PublicHost
+        if host == "board.testnet.example":
+            return PublicHost("app", "board", host)
+        return None
+
+    async def owner(self, headers, scope):
+        from server.ways_in import Visitor
+        from_proxy = (scope.get("client") or ("", 0))[0] == "127.0.0.1"
+        if from_proxy and headers.get("x-testnet-user") == "owner@example.com":
+            return Visitor("owner", time.time() + 600)
+        return None
+
+    def public_base(self, lodge_host, kind, name):
+        return f"https://{name}.testnet.example" if lodge_host == "lodge.testnet.example" else None
+
+
+@pytest.fixture
+def testnet():
+    from server import ways_in
+    way = _TestNet()
+    ways_in.register(way)
+    yield way
+    ways_in._registered.remove(way)
+
+
+def _via_testnet(host="board.testnet.example", **headers):
+    return TestClient(server_app.app, base_url=f"https://{host}", client=("127.0.0.1", 50000), headers=headers)
+
+
+def test_a_new_way_in_opens_an_app_for_the_owner_it_proves(lodge, testnet):
+    response = _via_testnet(**{"x-testnet-user": "owner@example.com"}).get("/")
+    assert response.status_code == 200 and response.text == "board says hi"
+    _method, _path, sent = _Seen.requests[-1]
+    assert "x-testnet-user" not in sent and mill_server.IDENTITY_HEADER not in sent
+    assert _via_testnet(**{"x-testnet-user": "someone@example.com"}).get("/").status_code == 403
+    assert _via_testnet().get("/").status_code == 403
+
+
+def test_a_new_way_ins_writes_must_come_from_its_public_page(lodge, testnet):
+    owner = {"x-testnet-user": "owner@example.com"}
+    assert _via_testnet(**owner).post("/x", headers={"origin": "https://board.testnet.example"}).status_code == 200
+    assert _via_testnet(**owner).post("/x", headers={"origin": "https://evil.example"}).status_code == 403
+
+
+def test_a_way_ins_identity_header_is_never_forwarded_to_an_app(lodge, testnet):
+    # Forged on a local request, it's dropped all the same.
+    _local("board.localhost:7777").get("/", headers={"x-testnet-user": "owner@example.com"})
+    _method, _path, sent = _Seen.requests[-1]
+    assert "x-testnet-user" not in sent
+
+
+def test_a_new_way_in_names_the_lodge_and_where_its_browsers_open_apps(lodge, testnet):
+    client = _via_testnet("lodge.testnet.example")
+    assert client.get("/version").status_code == 200
+    opened = client.get("/apps/open?app=board&path=/x", follow_redirects=False)
+    assert opened.headers["location"] == "https://board.testnet.example/x"
+
+
+def test_ways_in_load_from_installed_packages_and_a_broken_one_is_skipped(monkeypatch):
+    from server import ways_in
+
+    class Entry:
+        def __init__(self, name, target):
+            self.name, self.target = name, target
+
+        def load(self):
+            if isinstance(self.target, Exception):
+                raise self.target
+            return self.target
+    monkeypatch.setattr("importlib.metadata.entry_points",
+                        lambda group: [Entry("testnet", _TestNet), Entry("broken", ImportError("nope"))])
+    monkeypatch.setattr(ways_in, "_installed", None)
+    names = [way.name for way in ways_in.all_ways()]
+    assert names == ["cloudflare", "testnet"]
+    monkeypatch.setattr(ways_in, "_installed", None)

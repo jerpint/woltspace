@@ -464,8 +464,24 @@ def _shared_apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
     try:
         import app_sharing
         shared = app_sharing.all_shared(layout.wolts_dir)
+        stuck = app_sharing.stuck_tunnels(layout.wolts_dir, layout.port)
+        corrupt = app_sharing.corrupt_files(layout.wolts_dir)
     except Exception:
         return None
+    if stuck:
+        return DoctorCheck(
+            "shared-apps", "fail",
+            "unshared apps' quick tunnels still running: " + ", ".join(
+                f"{r.get('name')} (pid {r.get('pid')})" for r in stuck),
+            "They reach nothing (their share is gone), but should stop: restart the lodge, "
+            "or stop those pids.",
+        )
+    if corrupt:
+        return DoctorCheck(
+            "shared-apps", "warn",
+            f"an unreadable sharing state was kept aside: {', '.join(p.name for p in corrupt)}",
+            "Every app was made private. Read it, share again what should be, then delete it.",
+        )
     if not shared:
         return None
     listed = "; ".join(

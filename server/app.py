@@ -48,6 +48,7 @@ from .config import (
     load_dotenv,
 )
 from . import tunnel as tunnel_mgr
+from . import ways_in
 from .app_proxy import (
     client_response_headers,
     relay_websocket,
@@ -350,22 +351,8 @@ def _allowed_http_hostname(hostname: str) -> bool:
     """
     if hostname in {"localhost", "127.0.0.1", "::1"}:
         return True
-
-    tunnel_hostname = tunnel_mgr.get_tunnel_hostname().lower().rstrip(".")
-    if tunnel_hostname and hostname == tunnel_hostname:
-        return True
-    # Quick tunnels have no wildcard app domain, so tunnel.py intentionally
-    # does not derive one from configuration. Their exact runtime URL is still
-    # a valid lodge host.
-    try:
-        current_tunnel_hostname = (
-            urlsplit(tunnel_mgr.get_tunnel_url()).hostname or ""
-        ).lower().rstrip(".")
-    except ValueError:
-        current_tunnel_hostname = ""
-    if current_tunnel_hostname and hostname == current_tunnel_hostname:
-        return True
-    return False
+    # Each way in (server/ways_in.py) names the lodge its own way.
+    return hostname in ways_in.lodge_hosts()
 
 
 def _same_http_authority(origin: str, host_header: str) -> bool:
@@ -575,7 +562,7 @@ async def pair_browser(request: Request, code: str = ""):
 
 from . import mill as mill_server  # noqa: E402
 from .content_hosts import find_wolt_dir as _find_wolt_dir, parse_app_host, parse_site_host  # noqa: E402
-from dataclasses import dataclass  # noqa: E402
+from dataclasses import dataclass, replace  # noqa: E402
 
 # What a site's request may carry to the Mill: content negotiation, caching,
 # ranges and browser provenance. No cookie, no Authorization, no lodge key.
@@ -613,30 +600,18 @@ def _site_visitor(scope, headers: dict[str, str], label: str) -> str | None:
     return "owner"
 
 
-def _visitor(scope, headers: dict[str, str], content: "_Content") -> str | None:
-    """"owner", "public" (anyone, on a shared app), or None.
-
-    Only an app is ever shared. A wolt's site and the lodge never are."""
-    if not content.remote and _site_visitor(scope, headers, content.grant_label) == "owner":
-        return "owner"
-    if content.kind == "app" and app_sharing.shared(WOLTS_DIR, content.name) is not None:
-        return app_sharing.PUBLIC
-    return None
-
-
-def _shared_origin_as_local(scope, content: "_Content") -> dict:
-    """A shared app's visitor through its quick tunnel: an Origin from the
-    app's public page becomes the local one, so the Mill's same-page check
-    holds. Any other Origin is kept as sent, and the Mill refuses its writes."""
-    record = app_sharing.shared(WOLTS_DIR, content.name) or {}
-    public = app_sharing.public_origins(record)
-    local = f"http://{content.name}.localhost:{PORT}".encode("latin-1")
-    rewritten = []
-    for key, value in scope.get("headers", []):
-        if key.lower() == b"origin" and value.decode("latin-1").rstrip("/") in public:
-            value = local
-        rewritten.append((key, value))
-    return dict(scope, headers=rewritten)
+def _share_content(host_header: str) -> "_Content | None | bool":
+    """A quick tunnel's share host: the shared app as `_Content` (way "share"),
+    False for a host shaped like one that isn't a current share, None for
+    any other host."""
+    if not app_sharing.is_share_host_shaped(host_header):
+        return None
+    parsed = app_sharing.parse_share_host(host_header)
+    record = app_sharing.current_share(WOLTS_DIR, *parsed) if parsed else None
+    if record is None or not record.get("tunnel_url"):
+        return False
+    public = urlsplit(record["tunnel_url"]).netloc
+    return _Content("app", parsed[0], f"app:{parsed[0]}", remote=public, way="share", token=parsed[1])
 
 
 def _safe_next(value: str) -> str:
@@ -657,7 +632,9 @@ class _Content:
     kind: str        # "site" or "app"
     name: str
     grant_label: str
-    remote: str = ""   # the public host, when it came through the tunnel
+    remote: str = ""   # the public authority, when it came through a way in
+    way: str = ""      # which way in (server/ways_in.py), or "share"
+    token: str = ""    # a quick tunnel's share token
 
     @property
     def open_path(self) -> str:
@@ -679,52 +656,23 @@ def _content_host(host: str) -> _Content | None:
 
 
 def _remote_content_host(host_header: str) -> _Content | None:
-    """`<app>.<tunnel domain>` and `site-<wolt>.<tunnel domain>`: an app or a
-    wolt's site reached through Cloudflare. `site-` is reserved for sites, so
-    no app can take a site's name."""
-    from .content_hosts import split_host
-    split = split_host(host_header)
-    domain = tunnel_mgr.get_tunnel_domain().lower().rstrip(".")
-    if split is None or not domain:
+    """A wolt's site or an app reached through a way in (server/ways_in.py),
+    such as `<app>.<tunnel domain>` through Cloudflare."""
+    way, public = ways_in.content_host(host_header)
+    if public is None:
         return None
-    host, _port = split
-    if host == tunnel_mgr.get_tunnel_hostname().lower().rstrip(".") or not host.endswith(f".{domain}"):
-        return None
-    label = host.removesuffix(f".{domain}")
-    if label.startswith("site-"):
-        wolt = label.removeprefix("site-")
-        if parse_site_host(f"{wolt}.sites.localhost") is None:
-            return None
-        return _Content("site", wolt, wolt, remote=host)
-    if parse_app_host(f"{label}.localhost") is None:
-        return None
-    return _Content("app", label, f"app:{label}", remote=host)
+    label = public.name if public.kind == "site" else f"app:{public.name}"
+    return _Content(public.kind, public.name, label, remote=public.authority, way=way.name)
 
 
-async def _remote_visitor(headers: dict[str, str]):
-    """(identity, expires_at) for a request through the tunnel, or (None, None).
-
-    Cloudflare Access has let the visitor in; the lodge checks the token it
-    attached (signature, audience, issuer, expiry) against the apps' audience
-    and the owner's email. Without Access settings, nobody gets in.
-    """
-    from .access import access_token_verifier, load_access_settings
-    try:
-        settings = load_access_settings(Path(WOLTS_DIR))
-    except RuntimeError:
+async def _remote_visitor(scope, headers: dict[str, str], content: "_Content"):
+    """(identity, expires_at) for a request through a way in, or (None, None):
+    the way in it came through proves the owner its own way."""
+    way = ways_in.named(content.way)
+    visitor = await way.owner(headers, scope) if way is not None else None
+    if visitor is None:
         return None, None
-    token = headers.get("cf-access-jwt-assertion", "").strip()
-    if settings is None or not token:
-        return None, None
-    try:
-        claims = await access_token_verifier.verify(token, settings, settings.apps_aud)
-    except Exception:
-        return None, None
-    email = str(claims.get("email") or "").strip().lower()
-    if email != settings.owner_email:
-        return None, None
-    exp = claims.get("exp")
-    return "owner", float(exp) if isinstance(exp, (int, float)) else None
+    return visitor.identity, visitor.expires_at
 
 
 def _public_origin_ok(scope, headers: dict[str, str], content: "_Content") -> bool:
@@ -794,6 +742,15 @@ class MillForwardMiddleware:
             return await self.inner(scope, receive, send)
         hosts = [value.decode("latin-1") for key, value in scope.get("headers", [])
                  if key.lower() == b"host"]
+        # A quick tunnel's share host is only ever public: it never reaches
+        # the owner's checks, grants or the lodge, whatever it carries.
+        shares = [_share_content(host) for host in hosts]
+        if any(share is not None for share in shares):
+            if len(hosts) != 1 or shares[0] is False:
+                return await self._refuse(scope, receive, send, 404, "Not found")
+            headers = {key.decode("latin-1").lower(): value.decode("latin-1")
+                       for key, value in scope.get("headers", [])}
+            return await self._remote(scope, receive, send, headers, shares[0])
         contents = [_content_host(host) for host in hosts]
         if not any(contents):
             return await self.inner(scope, receive, send)
@@ -807,11 +764,7 @@ class MillForwardMiddleware:
             return await self._remote(scope, receive, send, headers, content)
         if scope["type"] == "http" and scope.get("path") == _SITE_GRANT_PATH:
             return await self._grant(scope, receive, send, content.grant_label)
-        visitor = _visitor(scope, headers, content)
-        if visitor == app_sharing.PUBLIC:
-            scope = _shared_origin_as_local(scope, content)
-            headers = {key.decode("latin-1").lower(): value.decode("latin-1")
-                       for key, value in scope.get("headers", [])}
+        visitor = _site_visitor(scope, headers, content.grant_label)
         if visitor is None:
             if scope["type"] == "http" and lodge_auth.enabled():
                 lodge = f"http://localhost{f':{port}' if port else ''}"
@@ -840,9 +793,14 @@ class MillForwardMiddleware:
             return await response(scope, receive, send)
         if not _public_origin_ok(scope, headers, content):
             return await self._refuse(scope, receive, send, 403, "Cross-site request rejected")
-        visitor, expires_at = await _remote_visitor(headers)
-        if visitor is None and content.kind == "app" and app_sharing.shared(WOLTS_DIR, content.name):
+        if content.way == "share":
             visitor, expires_at = app_sharing.PUBLIC, None
+        else:
+            visitor, expires_at = await _remote_visitor(scope, headers, content)
+            shared = app_sharing.shared(WOLTS_DIR, content.name) if content.kind == "app" else None
+            if visitor is None and shared and shared.get("domain_url") == f"https://{content.remote}":
+                visitor, expires_at = app_sharing.PUBLIC, None
+                content = replace(content, token=shared.get("token", ""))
         if visitor is None:
             return await self._refuse(scope, receive, send, 403, "This app is the owner's")
         local = _as_local(scope, content)
@@ -873,8 +831,11 @@ class MillForwardMiddleware:
         Mill knows which app."""
         raw = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope.get("headers", [])]
         helper = websocket_upstream_headers if websocket else upstream_request_headers
+        # Every way in's identity headers are dropped too, whichever way the
+        # request came, so none can be forged to an app.
+        vouching = ways_in.credential_headers()
         filtered = [(k, v) for k, v in helper(raw, 0, is_lodge_key=_is_lodge_key)
-                    if k.lower() != "host"]
+                    if k.lower() != "host" and k.lower() not in vouching]
         host = next(v for k, v in raw if k.lower() == "host")
         identity = [(mill_server.IDENTITY_HEADER,
                      mill_server.PUBLIC if visitor == app_sharing.PUBLIC else mill_server.OWNER)]
@@ -953,11 +914,12 @@ class MillForwardMiddleware:
             # On a monotonic timer, whatever the traffic: an expired or
             # forgotten session ends the socket too. Through the tunnel, the
             # Access token's expiry is the bound.
-            # A shared app's visitor holds only while the app stays shared.
+            # A shared app's visitor holds only while that same share does: an
+            # unshare and re-share ends the old share's sockets too.
             if visitor == app_sharing.PUBLIC:
                 while True:
                     await asyncio.sleep(SITE_SOCKET_RECHECK_SECONDS)
-                    if app_sharing.shared(WOLTS_DIR, content.name) is None:
+                    if app_sharing.current_share(WOLTS_DIR, content.name, content.token) is None:
                         return
             if content.remote:
                 await asyncio.sleep(max(0.0, (expires_at or time.time()) - time.time()))
@@ -1018,16 +980,13 @@ def mill_server_split(host_header: str) -> tuple[str, int | None]:
 app.add_middleware(MillForwardMiddleware)
 
 
-def _remote_base(request: Request, label: str) -> str:
-    """`https://<label>.<tunnel domain>` when the lodge was reached through the
-    tunnel, else "": a remote browser can't open a `*.localhost` address."""
+def _remote_base(request: Request, kind: str, name: str) -> str:
+    """Where a browser that reached the lodge through a way in opens this site
+    or app (`https://<app>.<tunnel domain>` through Cloudflare), else "": a
+    remote browser can't open a `*.localhost` address."""
     from .content_hosts import split_host
     host = (split_host(request.headers.get("host", "")) or ("", None))[0]
-    lodge_host = tunnel_mgr.get_tunnel_hostname().lower().rstrip(".")
-    domain = tunnel_mgr.get_tunnel_domain().lower().rstrip(".")
-    if host and domain and host == lodge_host:
-        return f"https://{label}.{domain}"
-    return ""
+    return ways_in.public_base(host, kind, name)
 
 
 @app.get("/apps/open")
@@ -1042,7 +1001,7 @@ async def open_app(request: Request, app_name: str = Query("", alias="app"), pat
     target = _safe_next(path)
     base = f"http://{name}.localhost{f':{port}' if port else ''}"
     headers = {"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"}
-    remote = _remote_base(request, name)
+    remote = _remote_base(request, "app", name)
     if remote:
         return RedirectResponse(remote + target, status_code=303, headers=headers)
     if not lodge_auth.enabled():
@@ -1065,7 +1024,7 @@ async def open_site(request: Request, wolt: str = "", path: str = "/"):
     _host, port = mill_server_split(request.headers.get("host", ""))
     target = _safe_next(path)
     headers = {"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"}
-    remote = _remote_base(request, f"site-{label}")
+    remote = _remote_base(request, "site", label)
     if remote and not _remote_sites_enabled(label):
         return JSONResponse({"error": "wolt sites aren't served through the tunnel on this lodge"},
                             status_code=503)
