@@ -74,20 +74,32 @@ If the app isn't running, static files in `dist/` or the app root are served at 
 
 ## Starting and stopping
 
-**ALWAYS use the platform API. Never run the start command directly.**
+**ALWAYS use the `woltspace app` CLI. Never run the start command directly.**
 
 Running `npm run dev`, `python server.py`, or any start command directly bypasses the platform. The app will show as "off" in the viewport even if the server is running.
 
 ```bash
-# Start an app
-curl -X POST http://localhost:7777/apps/my-app/start
-
-# Stop an app
-curl -X POST http://localhost:7777/apps/my-app/stop
-
-# List all apps + running state
-curl http://localhost:7777/apps
+woltspace app start my-app
+woltspace app stop my-app
+woltspace app restart my-app
+woltspace app logs my-app --tail 50
+woltspace app list          # every app, on or off, and its own port
 ```
+
+The CLI sends your lodge key. A raw `curl` to `localhost:7777` doesn't, so with lodge auth on it gets `401`.
+
+## Using an app from a wolt
+
+To read or change an app's data through its API, call the app **on its own port**:
+
+```bash
+woltspace app list                       # notes  on  127.0.0.1:4321
+curl http://127.0.0.1:4321/api/entries   # the app's own API
+```
+
+- **Never go through the lodge's port** (`http://my-app.localhost:7777/`, `/app/my-app/`). Those addresses are for the owner's browser and the viewport, and they are moving behind the Mill, which lets only the owner through.
+- **If the app has its own login**, send the app's own token. Never send the lodge key to an app.
+- **Editing the app's files or database directly** is fine too. Prefer the app's API when it has one, so the app's own checks run.
 
 ## Pushing to the viewport
 
@@ -107,7 +119,7 @@ Wolt sites auto-allocate in the **6000+** range, so no collisions. The platform 
 
 ## Sharing (public access)
 
-Apps are private by default — only accessible locally. Set `"public": true` in `woltspace.json` to share, or use the API:
+Apps are private by default — only accessible locally. Sharing is the owner's call: with lodge auth on, these routes need the owner key, so ask the human. Set `"public": true` in `woltspace.json` to share, or use the API:
 
 ```bash
 # Share a running app
@@ -148,7 +160,8 @@ An app keeps its own secrets in its own folder, never the lodge's.
 
 ## Key rules
 
-- **Always use the API to start/stop** — never run start commands directly
+- **Always use `woltspace app start/stop`** — never run start commands directly
+- **Call apps on their own port** (`127.0.0.1:<port>`), never through 7777
 - **Never edit `$WOLTSPACE_DIR/`** — that's the platform install
 - **Apps are portable** — should work if copied out of woltspace
 - **Write woltspace.json after setup** — or the app is invisible
