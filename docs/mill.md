@@ -55,6 +55,18 @@ The Mill forwards only content-negotiation, caching, range and browser-provenanc
 - **Ports:** an app gets `PORT`, its manifest's port, and `HOST=127.0.0.1`. A command that passes `--host $HOST` stays on loopback. One that binds `0.0.0.0` itself is still reachable on the network.
 - **The port limit:** the Mill reaches an app by the port the lodge recorded, without checking which process holds it. Making sure the app's own process owns that port is a later step.
 
+## Sharing an app
+
+An app can be shared with anyone who has its link: an explicit choice, one app at a time (`container/lib/app_sharing.py`). The human makes it, and a wolt may carry it out when asked (the apps skill says so).
+
+- **Commands:** `woltspace app share <app>`, `woltspace app unshare <app>`, `woltspace app unshare-all`, or `POST /apps/<app>/share`, `/unshare` and `/apps/unshare-all`. Starting an app never shares it, and `"public"` in a manifest does nothing.
+- **The link, with no domain:** a quick tunnel for that one app, `cloudflared tunnel --url http://localhost:<lodge port> --http-host-header <app>.localhost:<lodge port>`. Every request it carries names that app's host, so it reaches that app through the Mill and nothing else. Its `trycloudflare.com` address changes when the tunnel restarts; the lodge restarts it at boot.
+- **The link, with the lodge's domain:** `https://<app>.<domain>/` also opens without the owner's Access token, once the owner's Access policy lets visitors through for that host. The lodge can't change Access.
+- **The visitor:** the lodge tells the Mill `public`, never `owner`, and the Mill checks the share record too. The visitor's request is filtered like the owner's: no lodge or Access credentials reach the app. Writes and WebSockets must come from the app's public page.
+- **Never shared:** the lodge itself, wolt sites, and every other app. A site host is never `public`, whatever is recorded.
+- **Record and log:** `<data root>/.space/run/sharing/shared.json` (private), and every share and unshare appended to `<data root>/.space/logs/sharing.log`. `woltspace app list` and `woltspace doctor` (`shared-apps`) show every shared app. Unsharing removes the record before stopping the tunnel, so nothing is served after it.
+- **Open sockets** recheck every 30 s and close once the app is unshared.
+
 ## Naming
 
 How a site host is spelled depends on the way in, so naming is a list (`server/content_hosts.py`). The local schemes are `<wolt>.sites.localhost` and `<app>.localhost`. Remote ways in add theirs when they start serving sites. A site label is a DNS label, so a wolt whose name has `_` or is over 63 characters has no site host.

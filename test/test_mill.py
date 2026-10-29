@@ -427,8 +427,10 @@ def test_static_app_files_are_not_served_on_the_lodges_origin(locked, monkeypatc
     (app / "woltspace.json").write_text('{"name": "board", "port": 4100, "keeper": "softie"}')
     (app / "index.html").write_text("<script>fetch('/sessions')</script>")
     monkeypatch.setattr(server_app, "running_apps", lambda: [])
-    response = _paired(root).get("/app/board/")
-    assert response.status_code == 404 and "<script>" not in response.text
+    # The lodge's own answer, not wherever a redirect leads: on this
+    # machine `board` may be a real app the lodge would send the browser to.
+    response = _paired(root).get("/app/board/", follow_redirects=False)
+    assert response.status_code in (303, 404) and "<script>" not in response.text
 
 
 def test_with_auth_off_old_site_links_go_to_the_mill_too(running_mill):

@@ -81,6 +81,10 @@ WOLT_WRITES = tuple((method, re.compile(pattern)) for method, pattern in (
     ("POST", rf"^/wolf/crons/{_SEG}/{_SEG}/fire$"),
     ("POST", r"^/auto-grants/check$"),
     ("POST", rf"^/apps/{_SEG}/(start|stop|restart)$"),
+    # Sharing an app is the human's choice, which a wolt may carry out when
+    # asked (the apps skill says so); every share is logged.
+    ("POST", rf"^/apps/{_SEG}/(share|unshare)$"),
+    ("POST", r"^/apps/unshare-all$"),
     ("POST", r"^/tools/spawn$"),
     ("POST", rf"^/tools/{_SEG}/.*$"),
     ("PUT", rf"^/tools/{_SEG}/.*$"),

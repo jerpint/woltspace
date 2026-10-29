@@ -214,3 +214,28 @@ def test_ui_keeps_sharing_read_only_and_guards_terminal_resize():
     assert "offsetWidth<50" in terminal_js
     assert "term.cols>=20&&term.rows>=5" in terminal_js
     assert (ROOT / "public" / "static" / "SymbolsNerdFontMono-Regular.woff2").stat().st_size > 1000
+
+
+def test_app_share_cli_says_plainly_that_the_app_is_public(capsys, monkeypatch):
+    client = runpy.run_path(str(ROOT / "container" / "bin" / "woltspace"))
+    calls = []
+    reply = {"ok": True, "tunnel_url": "https://quiet-otter.trycloudflare.com",
+             "warning": "Anyone with this link can use this app."}
+    client["cmd_app_share"].__globals__["_req"] = lambda method, path, body=None: (calls.append((method, path, body)) or (200, reply))
+    monkeypatch.setenv("WOLTSPACE_WOLT_NAME", "softie")
+    client["cmd_app_share"](argparse.Namespace(name="notes", verb="share", json=False))
+    out = capsys.readouterr().out
+    assert calls == [("POST", "/apps/notes/share", {"said_by": "softie"})]
+    assert "PUBLIC" in out and "quiet-otter" in out and "Anyone with this link" in out
+    assert "woltspace app unshare notes" in out
+    client["cmd_app_share"](argparse.Namespace(name=None, verb="unshare-all", json=False))
+    assert calls[-1][:2] == ("POST", "/apps/unshare-all")
+
+
+def test_app_list_flags_a_public_app(capsys):
+    client = runpy.run_path(str(ROOT / "container" / "bin" / "woltspace"))
+    apps_json = [{"name": "notes", "start": "npm start", "running": True, "port": 4321,
+                  "shared": {"tunnel_url": "https://quiet-otter.trycloudflare.com"}}]
+    client["cmd_app_list"].__globals__["_req"] = lambda method, path, body=None: (200, apps_json)
+    client["cmd_app_list"](argparse.Namespace(json=False))
+    assert "PUBLIC https://quiet-otter.trycloudflare.com" in capsys.readouterr().out

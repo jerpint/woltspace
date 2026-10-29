@@ -459,6 +459,26 @@ def _app_tunnels_check(layout: RuntimeLayout) -> DoctorCheck | None:
     )
 
 
+def _shared_apps_check(layout: RuntimeLayout) -> DoctorCheck | None:
+    """Apps anyone with the link can use: shown every time, so a share is never forgotten."""
+    try:
+        import app_sharing
+        shared = app_sharing.all_shared(layout.wolts_dir)
+    except Exception:
+        return None
+    if not shared:
+        return None
+    listed = "; ".join(
+        f"{name} ({record.get('tunnel_url') or record.get('domain_url') or 'no address yet'}, "
+        f"since {record.get('since', '?')}, by {record.get('by', '?')})"
+        for name, record in sorted(shared.items()))
+    return DoctorCheck(
+        "shared-apps", "warn", f"PUBLIC: anyone with the link can use: {listed}",
+        "Stop with `woltspace app unshare <name>`, or `woltspace app unshare-all`. "
+        "The log is .space/logs/sharing.log.",
+    )
+
+
 def _tunnel_url(layout: RuntimeLayout) -> str:
     """The lodge's named tunnel URL: exported, or in the data root's .env,
     which is where a native lodge keeps it (the supervisor loads it too)."""
@@ -636,7 +656,8 @@ def run_doctor(
             f"{layout.host}:{layout.port} is {'available' if available else 'already in use'}",
             "Stop the existing service or choose --port <free-port>." if not available else "",
         ))
-    for extra in (_apps_check(layout), _remote_apps_check(layout), _app_tunnels_check(layout)):
+    for extra in (_apps_check(layout), _remote_apps_check(layout), _app_tunnels_check(layout),
+                  _shared_apps_check(layout)):
         if extra is not None:
             checks.append(extra)
     return checks

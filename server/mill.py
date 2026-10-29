@@ -46,6 +46,8 @@ from .site_server import LIVERELOAD_PATH, SITE_HEADERS, SiteContext, serve_site
 
 IDENTITY_HEADER = "x-woltspace-mill-identity"
 OWNER = "owner"
+# Anyone, on an app the owner (or a wolt they asked) shared. Never a site.
+PUBLIC = "public"
 _SITE_METHODS = {"GET", "HEAD"}
 # A unix socket path must fit sockaddr_un (104 bytes on macOS, 108 on Linux).
 SOCKET_PATH_MAX = 100
@@ -139,6 +141,12 @@ class Mill:
         self.wolts_dir = Path(wolts_dir or WOLTS_DIR)
         self._apps = apps
 
+    def _shared(self, name: str) -> bool:
+        """The lodge says who the visitor is; the Mill checks a public one
+        against the share record too."""
+        import app_sharing
+        return app_sharing.shared(self.wolts_dir, name) is not None
+
     @property
     def apps(self):
         return self._apps if self._apps is not None else _apps_module()
@@ -207,7 +215,10 @@ class Mill:
                 or (headers.get("origin") and not _origin_is_this_site(headers))):
             # A browser write must come from the app's own page.
             return await refuse(403, "cross-site", "Cross-site request rejected")
-        if headers.get(IDENTITY_HEADER) != OWNER:
+        identity = headers.get(IDENTITY_HEADER)
+        if identity == PUBLIC and not self._shared(name):
+            return await refuse(403, "not-shared", "This app is the owner's")
+        if identity not in (OWNER, PUBLIC):
             return await refuse(403, "not-owner", "This app is the owner's")
 
         running = {r["name"]: r for r in self.apps.running_apps()}

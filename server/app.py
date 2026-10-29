@@ -81,6 +81,7 @@ from session_expiry import (
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
 from execution_policy import AutoGrantStore, POLICY_VERSION
+import app_sharing
 import lodge_auth
 from runtime_context import RuntimeContext
 from harness_auth import auth_source, claude_authenticated
@@ -244,6 +245,8 @@ async def lifespan(app: FastAPI):
     refresh_model_catalogs()
     tool_registry.restore()
     apps_restore()
+    # Shared apps' quick tunnels, in the background: each can take seconds.
+    threading.Thread(target=app_sharing.restore, args=(WOLTS_DIR, PORT), daemon=True).start()
     _start_file_watcher()
     _start_tool_gc()
     if lodge_auth.enabled():
@@ -610,6 +613,32 @@ def _site_visitor(scope, headers: dict[str, str], label: str) -> str | None:
     return "owner"
 
 
+def _visitor(scope, headers: dict[str, str], content: "_Content") -> str | None:
+    """"owner", "public" (anyone, on a shared app), or None.
+
+    Only an app is ever shared. A wolt's site and the lodge never are."""
+    if not content.remote and _site_visitor(scope, headers, content.grant_label) == "owner":
+        return "owner"
+    if content.kind == "app" and app_sharing.shared(WOLTS_DIR, content.name) is not None:
+        return app_sharing.PUBLIC
+    return None
+
+
+def _shared_origin_as_local(scope, content: "_Content") -> dict:
+    """A shared app's visitor through its quick tunnel: an Origin from the
+    app's public page becomes the local one, so the Mill's same-page check
+    holds. Any other Origin is kept as sent, and the Mill refuses its writes."""
+    record = app_sharing.shared(WOLTS_DIR, content.name) or {}
+    public = app_sharing.public_origins(record)
+    local = f"http://{content.name}.localhost:{PORT}".encode("latin-1")
+    rewritten = []
+    for key, value in scope.get("headers", []):
+        if key.lower() == b"origin" and value.decode("latin-1").rstrip("/") in public:
+            value = local
+        rewritten.append((key, value))
+    return dict(scope, headers=rewritten)
+
+
 def _safe_next(value: str) -> str:
     """A path on this same host, or "/"."""
     if not value.startswith("/") or value.startswith("//") or "\\" in value or any(
@@ -778,7 +807,11 @@ class MillForwardMiddleware:
             return await self._remote(scope, receive, send, headers, content)
         if scope["type"] == "http" and scope.get("path") == _SITE_GRANT_PATH:
             return await self._grant(scope, receive, send, content.grant_label)
-        visitor = _site_visitor(scope, headers, content.grant_label)
+        visitor = _visitor(scope, headers, content)
+        if visitor == app_sharing.PUBLIC:
+            scope = _shared_origin_as_local(scope, content)
+            headers = {key.decode("latin-1").lower(): value.decode("latin-1")
+                       for key, value in scope.get("headers", [])}
         if visitor is None:
             if scope["type"] == "http" and lodge_auth.enabled():
                 lodge = f"http://localhost{f':{port}' if port else ''}"
@@ -791,8 +824,8 @@ class MillForwardMiddleware:
                 return await response(scope, receive, send)
             return await self._refuse(scope, receive, send, 403, f"This {content.kind} is the owner's")
         if scope["type"] == "websocket":
-            return await self._websocket(scope, receive, send, headers, content)
-        return await self._http(scope, receive, send, headers, content)
+            return await self._websocket(scope, receive, send, headers, content, visitor=visitor)
+        return await self._http(scope, receive, send, headers, content, visitor=visitor)
 
     async def _remote(self, scope, receive, send, headers, content):
         """A site or app through the tunnel: Access says who, then the same
@@ -808,14 +841,16 @@ class MillForwardMiddleware:
         if not _public_origin_ok(scope, headers, content):
             return await self._refuse(scope, receive, send, 403, "Cross-site request rejected")
         visitor, expires_at = await _remote_visitor(headers)
+        if visitor is None and content.kind == "app" and app_sharing.shared(WOLTS_DIR, content.name):
+            visitor, expires_at = app_sharing.PUBLIC, None
         if visitor is None:
             return await self._refuse(scope, receive, send, 403, "This app is the owner's")
         local = _as_local(scope, content)
         local_headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in local["headers"]}
         if scope["type"] == "websocket":
             return await self._websocket(local, receive, send, local_headers, content,
-                                         expires_at=expires_at)
-        return await self._http(local, receive, send, local_headers, content)
+                                         expires_at=expires_at, visitor=visitor)
+        return await self._http(local, receive, send, local_headers, content, visitor=visitor)
 
     @staticmethod
     async def _refuse(scope, receive, send, status, message):
@@ -832,7 +867,7 @@ class MillForwardMiddleware:
         return out
 
     @staticmethod
-    def _app_headers(scope, *, websocket: bool) -> list[tuple[str, str]]:
+    def _app_headers(scope, *, websocket: bool, visitor: str = "owner") -> list[tuple[str, str]]:
         """An app's request to the Mill: what the app's own page sent, minus the
         lodge's and Access's credentials, with the original host kept so the
         Mill knows which app."""
@@ -841,10 +876,11 @@ class MillForwardMiddleware:
         filtered = [(k, v) for k, v in helper(raw, 0, is_lodge_key=_is_lodge_key)
                     if k.lower() != "host"]
         host = next(v for k, v in raw if k.lower() == "host")
-        identity = [(mill_server.IDENTITY_HEADER, mill_server.OWNER)]
+        identity = [(mill_server.IDENTITY_HEADER,
+                     mill_server.PUBLIC if visitor == app_sharing.PUBLIC else mill_server.OWNER)]
         return identity + filtered if websocket else [("host", host)] + identity + filtered
 
-    async def _http(self, scope, receive, send, headers, content):
+    async def _http(self, scope, receive, send, headers, content, visitor="owner"):
         path = scope.get("raw_path") or scope.get("path", "/").encode()
         query = scope.get("query_string") or b""
         url = "http://mill" + path.decode("latin-1") + (("?" + query.decode("latin-1")) if query else "")
@@ -857,7 +893,8 @@ class MillForwardMiddleware:
         try:
             req = client.build_request(
                 scope.get("method", "GET"), url,
-                headers=self._app_headers(scope, websocket=False) if is_app else self._upstream_headers(headers),
+                headers=(self._app_headers(scope, websocket=False, visitor=visitor) if is_app
+                         else self._upstream_headers(headers)),
                 content=Request(scope, receive).stream() if has_body else None,
             )
             resp = await client.send(req, stream=True, follow_redirects=False)
@@ -889,7 +926,7 @@ class MillForwardMiddleware:
         ]
         return await response(scope, receive, send)
 
-    async def _websocket(self, scope, receive, send, headers, content, expires_at=None):
+    async def _websocket(self, scope, receive, send, headers, content, expires_at=None, visitor="owner"):
         from websockets.asyncio.client import unix_connect
         ws = WebSocket(scope, receive, send)
         query = scope.get("query_string") or b""
@@ -897,7 +934,7 @@ class MillForwardMiddleware:
         uri = f"ws://{headers['host']}{raw_path}" + ("?" + query.decode("latin-1") if query else "")
         protocols = None
         if content.kind == "app":
-            extra = self._app_headers(scope, websocket=True)
+            extra = self._app_headers(scope, websocket=True, visitor=visitor)
             protocols = [p.strip() for p in headers.get("sec-websocket-protocol", "").split(",")
                          if p.strip()] or None
         else:
@@ -916,6 +953,12 @@ class MillForwardMiddleware:
             # On a monotonic timer, whatever the traffic: an expired or
             # forgotten session ends the socket too. Through the tunnel, the
             # Access token's expiry is the bound.
+            # A shared app's visitor holds only while the app stays shared.
+            if visitor == app_sharing.PUBLIC:
+                while True:
+                    await asyncio.sleep(SITE_SOCKET_RECHECK_SECONDS)
+                    if app_sharing.shared(WOLTS_DIR, content.name) is None:
+                        return
             if content.remote:
                 await asyncio.sleep(max(0.0, (expires_at or time.time()) - time.time()))
                 return
@@ -2750,8 +2793,7 @@ async def list_apps_api():
         entry["running"] = run_state is not None
         entry["port"] = run_state["port"] if run_state else None
         entry["url"] = f"/app/{a.name}/"
-        entry["tunnel_url"] = run_state.get("tunnel_url") if run_state else None
-        entry["sharing"] = bool(run_state.get("tunnel_pid") and run_state.get("tunnel_url")) if run_state else False
+        entry["shared"] = _share_summary(a.name)
         result.append(entry)
     return result
 
@@ -2771,9 +2813,71 @@ async def app_detail(name: str):
     entry["running"] = run_state is not None
     entry["port"] = run_state["port"] if run_state else None
     entry["url"] = f"/app/{name}/"
-    entry["tunnel_url"] = run_state.get("tunnel_url") if run_state else None
-    entry["sharing"] = bool(run_state.get("tunnel_pid") and run_state.get("tunnel_url")) if run_state else False
+    entry["shared"] = _share_summary(name)
     return entry
+
+
+def _share_summary(name: str) -> dict | None:
+    """What a shared app's listing shows: its public addresses, since when, by whom."""
+    record = app_sharing.shared(WOLTS_DIR, name)
+    if record is None:
+        return None
+    return {k: record.get(k) for k in ("tunnel_url", "domain_url", "since", "by", "said_by")}
+
+
+def _share_by(request: Request) -> str:
+    if not lodge_auth.enabled():
+        return "local"
+    return _lodge_auth_scope(request.headers) or "unknown"
+
+
+async def _said_by(request: Request) -> str:
+    try:
+        body = await request.json()
+    except Exception:
+        return ""
+    value = body.get("said_by", "") if isinstance(body, dict) else ""
+    return str(value)[:64] if isinstance(value, str) else ""
+
+
+@app.post("/apps/unshare-all")
+async def apps_unshare_all(request: Request):
+    """Make every shared app private again."""
+    names = await asyncio.to_thread(app_sharing.unshare_all, WOLTS_DIR, PORT,
+                                    by=_share_by(request), said_by=await _said_by(request))
+    return {"ok": True, "unshared": names}
+
+
+@app.post("/apps/{name}/share")
+async def app_share(name: str, request: Request):
+    """Let anyone with the link use this app. An explicit choice, logged."""
+    if invalid := _invalid_app_name(name):
+        return invalid
+    if get_app(name) is None:
+        return JSONResponse({"error": f"app {name} not found"}, status_code=404)
+    domain = tunnel_mgr.get_tunnel_domain().lower().rstrip(".")
+    try:
+        record = await asyncio.to_thread(
+            app_sharing.share, WOLTS_DIR, name, PORT, by=_share_by(request),
+            said_by=await _said_by(request),
+            domain_url=f"https://{name}.{domain}" if domain else None)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
+    print(f"[sharing] {name} shared: {record.get('tunnel_url') or record.get('domain_url')}")
+    return {"ok": True, "name": name, "warning": app_sharing.WARNING, **_share_summary(name)}
+
+
+@app.post("/apps/{name}/unshare")
+async def app_unshare(name: str, request: Request):
+    """Make a shared app private again."""
+    if invalid := _invalid_app_name(name):
+        return invalid
+    was = await asyncio.to_thread(app_sharing.unshare, WOLTS_DIR, name, PORT,
+                                  by=_share_by(request), said_by=await _said_by(request))
+    if not was:
+        return JSONResponse({"error": f"{name} is not shared"}, status_code=404)
+    print(f"[sharing] {name} unshared")
+    return {"ok": True, "name": name}
 
 
 @app.post("/apps/{name}/start")

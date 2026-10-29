@@ -142,7 +142,35 @@ def cmd_app_list(args):
             continue
         port = entry.get("port") or entry.get("configured_port")
         state = "on" if entry.get("running") else "off"
-        print(f"{entry.get('name', '?'):<24} {state:<4} 127.0.0.1:{port}")
+        shared = entry.get("shared") or {}
+        public = shared.get("tunnel_url") or shared.get("domain_url")
+        print(f"{entry.get('name', '?'):<24} {state:<4} 127.0.0.1:{port}"
+              + (f"  PUBLIC {public}" if public else "  PUBLIC (no address yet)" if shared else ""))
+
+
+def cmd_app_share(args):
+    body = {"said_by": get_env("WOLTSPACE_WOLT_NAME", "")}
+    path = "/apps/unshare-all" if args.verb == "unshare-all" else f"/apps/{args.name}/{args.verb}"
+    status, result = _req("POST", path, body)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    elif status >= 300:
+        print(result.get("error", f"HTTP {status}"), file=sys.stderr)
+        raise SystemExit(1)
+    elif args.verb == "share":
+        print(f"{args.name} is PUBLIC.")
+        for key in ("tunnel_url", "domain_url"):
+            if result.get(key):
+                print(f"  {result[key]}")
+        if result.get("domain_url") and not result.get("tunnel_url"):
+            print("  (your Cloudflare Access policy must let visitors through for this host)")
+        print(result.get("warning", ""))
+        print(f"Stop with: woltspace app unshare {args.name}")
+    elif args.verb == "unshare":
+        print(f"{args.name} is private again.")
+    else:
+        names = result.get("unshared", [])
+        print("Private again: " + ", ".join(names) if names else "Nothing was shared.")
 
 
 def cmd_app_keeper(args):
@@ -651,6 +679,15 @@ def main():
         action.add_argument("name")
         action.add_argument("--json", action="store_true")
         action.set_defaults(func=cmd_app_action)
+    for verb, help_text in (("share", "let ANYONE with the link use this app (only when the human asks)"),
+                            ("unshare", "make a shared app private again")):
+        sharing = app_sub.add_parser(verb, help=help_text)
+        sharing.add_argument("name")
+        sharing.add_argument("--json", action="store_true")
+        sharing.set_defaults(func=cmd_app_share, verb=verb)
+    every = app_sub.add_parser("unshare-all", help="make every shared app private again")
+    every.add_argument("--json", action="store_true")
+    every.set_defaults(func=cmd_app_share, verb="unshare-all", name=None)
     app_list = app_sub.add_parser("list", help="every app, whether it runs, and its own port")
     app_list.add_argument("--json", action="store_true")
     app_list.set_defaults(func=cmd_app_list)

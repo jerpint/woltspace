@@ -57,7 +57,7 @@ Then write `woltspace.json` — **this is required** for the platform to discove
 | `start` | no | Start command. Use `$PORT` and `--host $HOST` (the platform sets `HOST=127.0.0.1`: the app is reachable from this machine only, and the browser goes through the Mill). Never `0.0.0.0`. Null = a static app, served by the Mill from `dist/` or the app folder. |
 | `source` | no | Origin URL if cloned |
 | `emoji` | no | Display emoji (auto-assigned) |
-| `public` | no | Ignored since 0.6: there is no per-app public sharing. Leave it out. |
+| `public` | no | Ignored since 0.6: sharing is `woltspace app share`, never a manifest field. Leave it out. |
 
 **Important:** Only `woltspace.json` is recognized. Not `project.json`, not `app.json`.
 
@@ -123,7 +123,24 @@ The platform sets `PORT` to your manifest port and `HOST=127.0.0.1` when startin
 
 Apps are private: locally, the owner reaches `http://<app-name>.localhost:7777/`; through the lodge's tunnel, `https://<app-name>.<domain>/`. Both go through the Mill (see `docs/mill.md`). Through the tunnel, the lodge lets a request in only with the owner's Cloudflare Access token for the apps' Access application. That needs `access` settings in `woltspace.json`, which only the human sets (`container/migrations/v0.6.0.md`).
 
-There is no sharing an app with other people in 0.6: the share routes, `"public": true` and quick tunnels are gone, and the lodge lets only the owner's email in. Never tell anyone an app is shared.
+## Sharing an app with anyone
+
+Sharing lets **anyone with the link** use one app. It's the human's choice. You may carry it out **only when the human asks** for that app.
+
+```bash
+woltspace app share my-app       # prints the public link and the warning
+woltspace app unshare my-app     # private again
+woltspace app unshare-all        # every app private again
+```
+
+- **Before sharing, tell the human plainly:** "Anyone with this link can use my-app and do whatever it can do: read and change its data, use its API keys." Share only after they confirm. An app with its own login keeps that login.
+- **The link:** a quick tunnel (`https://<random>.trycloudflare.com`) needs no domain. It changes when the lodge restarts, so give the human the new one from `woltspace app list`. With the lodge's own domain, `https://my-app.<domain>/` works too, once the human's Cloudflare Access policy lets visitors through for that host.
+- **What stays protected:** a visitor reaches only that app, through the Mill. They never get the human's identity or credentials, the lodge, wolt sites or other apps.
+- **Every share is logged** (`.space/logs/sharing.log`) and listed by `woltspace app list` and `woltspace doctor`. Unshare when the human is done.
+
+### The lodge is never shared
+
+The lodge (port 7777, its tunnel address, its terminals and API) is the human's control room. **Never expose it:** no tunnel, port-forward, proxy or `0.0.0.0` bind that reaches it, and no sharing of a wolt's site. If the human asks for that, warn them that anyone who reaches the lodge can act as them. Suggest sharing the one app they need instead. Refuse unless they insist explicitly, knowing that risk.
 
 ## Secrets
 
@@ -139,6 +156,7 @@ An app keeps its own secrets in its own folder, never the lodge's.
 
 - **Always use `woltspace app start/stop`** — never run start commands directly
 - **Call apps on their own port** (`127.0.0.1:<port>`), never through 7777
+- **Share an app only when the human asks**, with the warning above. Never expose the lodge
 - **Never edit `$WOLTSPACE_DIR/`** — that's the platform install
 - **Apps are portable** — should work if copied out of woltspace
 - **Write woltspace.json after setup** — or the app is invisible
