@@ -14,7 +14,7 @@ or directly:
 
 ```bash
 cd tui && bun install
-node src/main.js       # node >= 18 or bun, host or in-container
+node src/main.js       # node >= 22 or bun, host or in-container
 ```
 
 ## Keys

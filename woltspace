@@ -608,7 +608,7 @@ case "$cmd" in
     ;;
   tui)
     # Terminal cockpit — runs HOST-SIDE (talks to the API on localhost:7777,
-    # attaches via docker exec). Needs node >= 18 or bun on the host.
+    # attaches via docker exec). Needs node >= 22 or bun on the host.
     TUI_DIR="$WOLTSPACE_DIR/tui"
     if [ ! -d "$TUI_DIR" ]; then
       echo "  ${_D}tui/ not found in $WOLTSPACE_DIR${_R}"
@@ -626,7 +626,7 @@ case "$cmd" in
     if command -v node >/dev/null 2>&1; then exec node "$TUI_DIR/src/main.js"
     elif command -v bun >/dev/null 2>&1; then exec bun run "$TUI_DIR/src/main.js"
     else
-      echo "  ${_D}need node >= 18 or bun on the host to run the tui${_R}"
+      echo "  ${_D}need node >= 22 or bun on the host to run the tui${_R}"
       exit 1
     fi
     ;;

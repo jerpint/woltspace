@@ -112,11 +112,11 @@ def resolve_tui(
             node_major = int(match.group(1)) if match else 0
         except (OSError, subprocess.SubprocessError, ValueError):
             node_major = 0
-    if node_major < 18:
+    if node_major < 22:
         found = f" Found Node.js {node_major}." if node_major else ""
         raise TuiResolutionError(
-            f"{tui_spec()} requires Node.js 18 or newer.{found} "
-            "Install Node.js 18 or newer, then rerun `woltspace tui`."
+            f"{tui_spec()} requires Node.js 22 or newer.{found} "
+            "Install Node.js 22 or newer, then rerun `woltspace tui`."
         )
 
     npx = which("npx")
