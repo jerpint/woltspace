@@ -23,7 +23,7 @@ this walkthrough uses a **fresh data root** and never touches the container's.
 
 ## 1. Prerequisites
 
-You need three things on PATH: `tmux`, Node 18+, and `uv`.
+You need three things on PATH: `tmux`, Node 22+, and `uv`.
 
 ```bash
 tmux -V
