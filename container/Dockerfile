@@ -153,6 +153,8 @@ ENV UV_TOOL_DIR=/opt/woltspace/tools \
 # the tunnel URL until the container exits. Set for every python in the image,
 # the entrypoint and its children alike.
 ENV PYTHONUNBUFFERED=1
+# So a `docker exec`, which skips the entrypoint, finds the same lodge.
+ENV WOLTSPACE_WOLTS_DIR=/workspace/wolts WOLTSPACE_ISOLATION=external
 
 # Local source (only read when USE_LOCAL=true). Last COPY in the file so the
 # layers above stay cached.

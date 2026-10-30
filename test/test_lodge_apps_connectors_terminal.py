@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import json
 import runpy
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -93,6 +94,14 @@ def test_keeper_update_failure_paths_are_400(monkeypatch):
     response = client.put("/apps/notes", json={"keeper": "missing"})
     assert response.status_code == 400
     assert response.json() == {"error": "keeper must name an existing wolt"}
+
+
+def test_a_stopped_app_is_not_alive_though_nothing_has_reaped_it():
+    proc = subprocess.Popen(["sh", "-c", "exit 0"])
+    deadline = time.monotonic() + 5
+    while apps._is_pid_alive(proc.pid) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not apps._is_pid_alive(proc.pid)
 
 
 def test_restart_waits_for_old_pid_and_verifies_new_one(monkeypatch):

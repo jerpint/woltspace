@@ -208,6 +208,12 @@ def _clear_state(name: str) -> None:
 
 
 def _is_pid_alive(pid: int) -> bool:
+    # A stopped app stays a zombie, which signals as alive, until it's reaped.
+    try:
+        if os.waitpid(pid, os.WNOHANG)[0] == pid:
+            return False
+    except OSError:
+        pass  # not our child
     try:
         os.kill(pid, 0)
         return True
