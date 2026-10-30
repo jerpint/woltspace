@@ -367,6 +367,8 @@ def build_environment(
         # control plane refuses to act as owner unless it sees this.
         "WOLTSPACE_ENTRYPOINT": "1",
         "WOLTSPACE_ISOLATION": "external",
+        # On the container's own disk: the data root's mount can't always host a unix socket.
+        "WOLTSPACE_MILL_SOCKET": "/tmp/woltspace-mill/mill.sock",
         "WOLTSPACE_PYTHON": sys.executable,
         "LANG": "C.UTF-8",
     })
