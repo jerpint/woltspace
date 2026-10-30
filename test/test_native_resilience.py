@@ -748,7 +748,7 @@ class TestPrePublishTuiRemedy:
             return "/usr/bin/node" if name == "node" else None
 
         def runner(command, **kwargs):
-            return subprocess.CompletedProcess(command, 0, "v20.11.0", "")
+            return subprocess.CompletedProcess(command, 0, "v22.11.0", "")
 
         with pytest.raises(TuiResolutionError) as caught:
             resolve_tui({}, which=which, runner=runner)
