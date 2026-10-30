@@ -52,6 +52,10 @@ SOCKET_PATH_MAX = 100
 
 
 def socket_path(wolts_dir) -> Path:
+    # A container's data root is often a bind mount, which can't always host a
+    # unix socket (Docker Desktop on a Mac can't chmod one), so it keeps its own.
+    if override := os.environ.get("WOLTSPACE_MILL_SOCKET"):
+        return Path(override)
     return Path(wolts_dir) / ".space" / "run" / "mill" / "mill.sock"
 
 

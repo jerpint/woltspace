@@ -204,6 +204,12 @@ def test_a_live_socket_is_never_taken_over():
         live.close()
 
 
+def test_a_container_keeps_the_socket_off_its_data_root(monkeypatch, tmp_path):
+    assert mill_server.socket_path(tmp_path) == tmp_path / ".space" / "run" / "mill" / "mill.sock"
+    monkeypatch.setenv("WOLTSPACE_MILL_SOCKET", "/tmp/woltspace-mill/mill.sock")
+    assert mill_server.socket_path(tmp_path) == Path("/tmp/woltspace-mill/mill.sock")
+
+
 def test_a_socket_path_too_long_is_refused_clearly():
     with pytest.raises(SystemExit) as stop:
         mill_server.prepare_socket(Path("/tmp") / ("x" * 120) / "mill.sock")
