@@ -123,10 +123,10 @@ RUN git clone https://github.com/jerpint/worktui.git /home/node/worktui \
 ENV WORKTUI_DIR="/workspace/wolts/.worktui"
 
 # --- The woltspace runtime, from the registries ---
-ARG WOLTSPACE_PYPI_VERSION=0.5.24
+ARG WOLTSPACE_PYPI_VERSION=0.5.25
 # `latest`, not a pin — the two artifacts are versioned independently. Pass an
 # explicit version to reproduce an older image.
-ARG WOLTSPACE_TUI_VERSION=0.5.3
+ARG WOLTSPACE_TUI_VERSION=0.5.4
 # --build-arg USE_LOCAL=true installs a wheel built from the build context
 # instead of PyPI (and the context's tui/ instead of npm). Same install shape,
 # same code path — only the source of the artifact differs.
