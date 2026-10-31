@@ -1,6 +1,7 @@
 """Release admission and immutable-artifact recovery, without registry writes."""
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -187,8 +188,6 @@ def fake_releases(monkeypatch, artifacts, existing=None):
     def fake_gh(*args):
         calls.append(args)
         if args[:1] == ('api',):
-            if args[1].endswith('/releases/latest'):
-                return json.dumps({'tag_name': next((tag for tag, value in releases.items() if value.get('latest')), 'v0.0.1')})
             if args[1].endswith('/git/refs'):
                 fields = dict(arg.split('=', 1) for arg in args if arg.startswith(('ref=', 'sha=')))
                 tag = fields['ref'].removeprefix('refs/tags/')
@@ -215,6 +214,8 @@ def fake_releases(monkeypatch, artifacts, existing=None):
                 releases[tag].update(prerelease=True, latest=False)
         return ''
     monkeypatch.setattr(release, 'gh', fake_gh)
+    monkeypatch.setattr(release, 'latest_tag', lambda: next((tag for tag, value in releases.items() if value.get('latest')), None))
+    monkeypatch.setattr(release.time, 'sleep', lambda seconds: None)
     monkeypatch.setattr(release, 'tag_commit', lambda tag: tags.get(tag))
     monkeypatch.setattr(release, 'registry_state', lambda registry, manifest: [])
     (release.ROOT / 'docs').mkdir()
@@ -286,6 +287,29 @@ def test_finalize_fails_when_a_marked_rc_is_still_latest(artifacts, monkeypatch)
     fake_releases(monkeypatch, artifacts, _public_rc(artifacts, prerelease=True, latest=True))
     with pytest.raises(RuntimeError, match='still GitHub Latest'):
         release.finalize()
+
+
+def test_finalize_waits_for_github_to_catch_up(artifacts, monkeypatch):
+    existing = _public_rc(artifacts, prerelease=True, latest=True)
+    fake_releases(monkeypatch, artifacts, existing)
+    answers = iter(['v0.6.0rc1', 'v0.6.0rc1', 'v0.5.25'])
+    monkeypatch.setattr(release, 'latest_tag', lambda: next(answers))
+    release.finalize()
+
+
+@pytest.mark.parametrize('returncode, stdout, stderr, expected', [
+    (0, '{"tag_name": "v0.5.25"}', '', 'v0.5.25'),
+    (1, '', 'gh: Not Found (HTTP 404)', None),
+])
+def test_latest_tag(monkeypatch, returncode, stdout, stderr, expected):
+    monkeypatch.setattr(release.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(a[0], returncode, stdout, stderr))
+    assert release.latest_tag() == expected
+
+
+def test_latest_tag_never_swallows_other_errors(monkeypatch):
+    monkeypatch.setattr(release.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(a[0], 1, '', 'gh: Server Error (HTTP 500)'))
+    with pytest.raises(subprocess.CalledProcessError):
+        release.latest_tag()
 
 
 def test_a_public_final_release_is_never_edited_on_retry(artifacts, monkeypatch):

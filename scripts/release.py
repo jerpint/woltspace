@@ -252,6 +252,29 @@ def gh(*args):
     return subprocess.check_output(['gh', *args], text=True).strip()
 
 
+def latest_tag():
+    """The tag GitHub calls Latest; None only when GitHub says it has none."""
+    done = subprocess.run(['gh', 'api', f'repos/{REPO}/releases/latest'], capture_output=True, text=True)
+    if done.returncode and 'HTTP 404' in done.stderr:
+        return None
+    if done.returncode:
+        raise subprocess.CalledProcessError(done.returncode, done.args, done.stdout, done.stderr)
+    return json.loads(done.stdout)['tag_name']
+
+
+def require_prerelease_settled(tag):
+    """Lodges read releases/latest, so this is checked rather than assumed; GitHub gets a moment to catch up."""
+    for attempt in range(6):
+        if attempt:
+            time.sleep(5)
+        marked = json.loads(gh('release', 'view', tag, '--repo', REPO, '--json', 'isPrerelease'))['isPrerelease']
+        latest = latest_tag() == tag
+        if marked and not latest:
+            return
+    require(marked, f'{tag}: still not marked as a pre-release')
+    require(not latest, f'{tag}: a pre-release is still GitHub Latest')
+
+
 def tag_commit(tag):
     refs = json.loads(gh('api', f'repos/{REPO}/git/matching-refs/tags/{tag}'))
     exact = [ref for ref in refs if ref['ref'] == f'refs/tags/{tag}']
@@ -312,11 +335,7 @@ def finalize():
             # Already public as an ordinary release: only ever corrected towards pre-release.
             gh('release', 'edit', tag, '--repo', REPO, '--prerelease=true', '--latest=false')
         if pre:
-            # Lodges read releases/latest, so this is checked rather than assumed.
-            view = json.loads(gh('release', 'view', tag, '--repo', REPO, '--json', 'isPrerelease'))
-            require(view['isPrerelease'], f'{tag}: still not marked as a pre-release')
-            current = json.loads(gh('api', f'repos/{REPO}/releases/latest'))
-            require(current['tag_name'] != tag, f'{tag}: a pre-release is still GitHub Latest')
+            require_prerelease_settled(tag)
         print(f'Verified GitHub release {tag} at {existing_commit or manifest["commit"]}.')
 
 
