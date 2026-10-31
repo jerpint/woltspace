@@ -38,6 +38,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
 from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1194,6 +1195,8 @@ def _disarm_session(record: dict, source: str, wolts_dir: Path, report: dict) ->
         record["finished_at"] = record.get("finished_at") or int(datetime.now(timezone.utc).timestamp())
         report["sessions_stopped"] += 1
     record.pop("runtime", None)  # tmux name and pane belong to the source's tmux
+    record.pop("launching", None)  # the source's launches and native wiring are not this copy's
+    record.pop("native", None)
     rebased = _rebase_strings(record, source, wolts_dir)
     if rebased != record:
         report["sessions_rebased"] += 1
@@ -1210,6 +1213,123 @@ def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row[1] for row in conn.execute(f'PRAGMA table_info("{table}")')}
 
 
+# --- Inbox mail refuses a restore ---
+# Disarming rewrites sessions and drops runtime records; a copy holding inbox
+# mail, acknowledged keys included, would come back with that custody silently
+# changed. Such a copy is refused before anything in it is touched, and stays
+# as extracted for a person to reconcile. Only an offline copy is supported.
+# Mailboxes, usage, events and sequences alone restore as they are (ids are
+# never reused); every reader is revoked in the disarm write. No clock here:
+# an acknowledged row past its 30 days still refuses until the lodge's next
+# inbox write prunes it.
+_KNOWN_SCHEMA = 5  # lodge_db's newest migration this check understands
+# The inbox tables exactly as lodge_db's migration 5 makes them; any other
+# layout (a table or column more or less) is one this check cannot read.
+_INBOX_COLUMNS = {
+    "inbox_mailboxes": {"id", "wolt", "state", "created_at", "wake"},
+    "inbox_readers": {"hash", "mailbox", "session", "created_at", "revoked", "acks"},
+    "inbox_messages": {"seq", "sender", "sender_name", "key", "mailbox", "priority", "body", "size",
+                       "digest", "state", "reader", "claim", "created_at", "acked_at"},
+    "inbox_events": {"cursor", "seq", "state", "reason", "repeats"},
+    "inbox_usage": {"scope", "pending", "bytes", "keys"},
+}
+_REFUSED = {
+    "safe_state_present": "it holds inbox mail",
+    "safe_state_unknown": "its lodge.db could not be read as one without inbox state",
+    "inspect_path_unsafe": "a path to inspect runs through a symlink or out of the copy",
+}
+
+
+class RestoreRefused(ValueError):
+    """The copy holds inbox state, or could not be inspected safely (`code`:
+    safe_state_present, safe_state_unknown, inspect_path_unsafe). Nothing in
+    it was changed, and it is not a usable restore."""
+
+    def __init__(self, code: str):
+        super().__init__(f"restore refused ({code}): {_REFUSED[code]};"
+                         " the copy was left as extracted and is not usable")
+        self.code = code
+
+
+def _inspect_root(target: Path, wolts_dir: Path) -> None:
+    """The copy to inspect lies inside the extraction target, through real
+    directories only, and its lodge.db files are plain files (or absent)."""
+    target, wolts_dir = Path(target), Path(wolts_dir)
+    try:  # as written, not normalized: a link/.. pair must not cancel out
+        rel = wolts_dir.relative_to(target)
+    except ValueError:
+        raise RestoreRefused("inspect_path_unsafe") from None
+    if ".." in rel.parts or target.is_symlink() or not target.is_dir():
+        raise RestoreRefused("inspect_path_unsafe")
+    here = target
+    for part in rel.parts:
+        here = here / part
+        if here.is_symlink() or here.exists() and not here.is_dir():
+            raise RestoreRefused("inspect_path_unsafe")
+    db = wolts_dir / LODGE_DB
+    space = db.parent
+    if space.is_symlink() or space.exists() and not space.is_dir():
+        raise RestoreRefused("inspect_path_unsafe")
+    for path in (db, *(db.with_name(db.name + c) for c in SQLITE_COMPANIONS)):
+        if path.is_symlink() or path.exists() and not path.is_file():
+            raise RestoreRefused("inspect_path_unsafe")
+    if wolts_dir.exists() and os.path.realpath(wolts_dir) != os.path.join(os.path.realpath(target), *rel.parts):
+        raise RestoreRefused("inspect_path_unsafe")
+
+
+def _refuse_inbox_state(conn: sqlite3.Connection) -> None:
+    """A fixed set of existence checks; no message body is ever read."""
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    inbox = {t for t in tables if t.startswith("inbox")}
+    binding = {c for c in _columns(conn, "sessions") if c.startswith("inbox")} if "sessions" in tables else set()
+    migrated = "meta" in tables and conn.execute("SELECT 1 FROM meta WHERE key='migration:5'").fetchone()
+    if binding or (inbox or migrated) and {table: _columns(conn, table) for table in inbox} != _INBOX_COLUMNS:
+        raise RestoreRefused("safe_state_unknown")
+    if conn.execute("PRAGMA user_version").fetchone()[0] != 0:  # lodge_db never sets it
+        raise RestoreRefused("safe_state_unknown")
+    if inbox and "meta" not in tables:  # the schema floor went with it
+        raise RestoreRefused("safe_state_unknown")
+    if inbox and conn.execute("SELECT 1 FROM inbox_messages LIMIT 1").fetchone():
+        raise RestoreRefused("safe_state_present")  # acknowledged too: its key is still custody
+    if inbox and conn.execute("SELECT 1 FROM inbox_usage WHERE pending OR bytes OR keys LIMIT 1").fetchone():
+        raise RestoreRefused("safe_state_unknown")  # charges without mail: drift, not restored
+    if "meta" in tables:
+        if conn.execute("SELECT 1 FROM meta WHERE key LIKE 'inbox:%' LIMIT 1").fetchone():
+            raise RestoreRefused("safe_state_present")
+        floor = conn.execute("SELECT value FROM meta WHERE key='min_schema'").fetchone()
+        if floor is not None and not (str(floor[0]).isdigit() and int(floor[0]) <= _KNOWN_SCHEMA):
+            raise RestoreRefused("safe_state_unknown")
+
+
+def _refuse_native_state(target: Path, wolts_dir: Path) -> None:
+    """Refuse a copy with inbox state, judged on a private copy of its lodge.db
+    and WAL so the original's bytes (and its -shm) stay as extracted."""
+    _inspect_root(target, wolts_dir)
+    db = wolts_dir / LODGE_DB
+    if db.with_name(db.name + "-journal").exists():
+        # A rollback journal may hold what an open would recover into the
+        # original: judged unknown before anything is read, copied or opened.
+        raise RestoreRefused("safe_state_unknown")
+    wal = db.with_name(db.name + "-wal")
+    if not db.exists():
+        if any(db.with_name(db.name + c).exists() for c in SQLITE_COMPANIONS):
+            raise RestoreRefused("safe_state_unknown")  # what is left of a lodge.db is not none
+        return  # no lodge.db: a release before it, nothing of the inbox
+    scratch = None
+    try:
+        scratch = Path(tempfile.mkdtemp(prefix="woltspace-inspect-"))
+        shutil.copyfile(db, scratch / "lodge.db")
+        if wal.exists():
+            shutil.copyfile(wal, scratch / "lodge.db-wal")
+        with closing(sqlite3.connect(scratch / "lodge.db", isolation_level=None)) as conn:
+            _refuse_inbox_state(conn)
+    except (sqlite3.Error, OSError):
+        raise RestoreRefused("safe_state_unknown") from None
+    finally:
+        if scratch is not None:
+            shutil.rmtree(scratch, ignore_errors=True)
+
+
 def _disarm_lodge_db(wolts_dir: Path, source: str, target: Path, report: dict) -> None:
     """Disarm the copy's own `lodge.db`, the one under the restore target.
 
@@ -1218,16 +1338,24 @@ def _disarm_lodge_db(wolts_dir: Path, source: str, target: Path, report: dict) -
     quarantine, written the way a pre-lodge.db release kept it
     (`<wolt>/.state/sessions/<name>.json`): moved back into the copy, the next
     boot imports it. A table without the columns the lodge reads is one no
-    lodge acts on, and is left as it is.
+    lodge acts on, and is left as it is. A copy with inbox state is refused
+    before anything is opened for writing (_refuse_native_state).
     """
+    _refuse_native_state(target, wolts_dir)
     db = _guard(wolts_dir, wolts_dir / LODGE_DB)
     for companion in SQLITE_COMPANIONS:
         _guard(wolts_dir, db.with_name(db.name + companion))
     if not db.is_file():
         return
     with closing(sqlite3.connect(db, isolation_level=None)) as conn:
-        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         conn.execute("BEGIN IMMEDIATE")
+        try:
+            _refuse_inbox_state(conn)  # again, in the transaction that writes
+        except sqlite3.Error:
+            raise RestoreRefused("safe_state_unknown") from None
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "inbox_readers" in tables:  # no reader of the old lodge reads here
+            conn.execute("UPDATE inbox_readers SET revoked=1")
         if "apps_running" in tables and {"name", "record"} <= _columns(conn, "apps_running"):
             # On the machine a backup lands on, an old pid may be any live
             # process: the lodge would take the app as running, and stopping
@@ -1362,6 +1490,7 @@ def disarm(wolts_dir: Path, source: str, target: Path) -> dict:
         "sessions_rebased": 0, "sessions_set_aside": [], "grants_rebased": 0,
         "grants_dropped": [],
     }
+    _refuse_native_state(target, wolts_dir)  # first: before any other check or removal
     _guard(wolts_dir, wolts_dir)
     for rel in RUNTIME_RECORDS:
         path = _guard(wolts_dir, wolts_dir / rel)
@@ -1428,6 +1557,7 @@ def restore_backup(
             tar.extractall(target, members=members, filter=_restore_filter)
     manifest = json.loads((target / MANIFEST_NAME).read_text())
     wolts_dir = target / manifest.get("archive_root", ARCHIVE_ROOT)
+    _inspect_root(target, wolts_dir)  # before is_dir() can pass over an unsafe root
     disarmed = disarm(wolts_dir, manifest.get("source") or "", target) if wolts_dir.is_dir() else {}
     return RestoreResult(
         target=target,

@@ -15,9 +15,19 @@
 # but we set XDG_DATA_HOME/XDG_CONFIG_HOME explicitly so isolation doesn't depend
 # on how opencode resolves defaults.
 
+# A launch with a native inbox attempt runs opencode against the session's own backend
+# (native/launch.py); any other launch runs opencode itself, as before.
+run_engine() {
+    if [ -n "${WOLTSPACE_NATIVE_DIR:-}" ]; then
+        BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+        exec "$BIN_DIR/woltspace-python" "$BIN_DIR/../lib/native/launch.py" opencode "$@"
+    fi
+    exec opencode "$@"
+}
+
 if [ "${WOLTSPACE_ISOLATION:-external}" = "host" ]; then
     # Preserve host HOME/XDG authentication and configuration untouched.
-    exec opencode "$@"
+    run_engine "$@"
 fi
 
 WOLTSPACE_HOME_DIR="${WOLTSPACE_WOLT_HOME:-$(echo "$PWD" | sed -n 's|\(/workspace/wolts/[^/]*\).*|\1|p')}"
@@ -111,4 +121,4 @@ fi
 # shell — confirm live; if it uses a curated env instead, add the opencode config
 # equivalent here.
 
-exec opencode "$@"
+run_engine "$@"

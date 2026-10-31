@@ -85,13 +85,13 @@ def quoted_heredoc(
 
 
 def reply_instruction(
-    argv: Sequence[object], *, prefix: str = "WOLTSPACE_MSG"
+    argv: Sequence[object], *, prefix: str = "WOLTSPACE_MSG", delimiter: str | None = None
 ) -> str:
     """Tell an agent exactly how to reply without loading a skill."""
     return (
         f"Reply by replacing {_REPLY_PLACEHOLDER} in this exact single-quoted "
         "heredoc, then run it:\n"
-        f"{quoted_heredoc(argv, prefix=prefix)}"
+        f"{quoted_heredoc(argv, prefix=prefix, delimiter=delimiter)}"
     )
 
 
@@ -236,16 +236,18 @@ def notify_heredoc(
     )
 
 
-def notify_reply_instruction(*route_args: object) -> str:
-    """Build a notify reply instruction, falling back to session routing."""
+def notify_reply_instruction(*route_args: object, delimiter: str | None = None) -> str:
+    """Build a notify reply instruction, falling back to session routing.
+
+    A fixed ``delimiter`` makes the text the same each time it is built."""
     try:
         return reply_instruction(
-            ["notify", *route_args], prefix="WOLTSPACE_NOTIFY"
+            ["notify", *route_args], prefix="WOLTSPACE_NOTIFY", delimiter=delimiter
         )
     except ValueError:
         # Bad adapter metadata should not break message routing. The unrouted
         # command can still resolve the destination through the session registry.
-        return reply_instruction(["notify"], prefix="WOLTSPACE_NOTIFY")
+        return reply_instruction(["notify"], prefix="WOLTSPACE_NOTIFY", delimiter=delimiter)
 
 
 def session_send_argv(
@@ -261,10 +263,10 @@ def session_send_argv(
     return argv
 
 
-def session_send_reply_instruction(target: object) -> str:
+def session_send_reply_instruction(target: object, delimiter: str | None = None) -> str:
     """Build an IWCL reply instruction for one exact sender session."""
     return reply_instruction(
-        session_send_argv(target), prefix="WOLTSPACE_IWCL"
+        session_send_argv(target), prefix="WOLTSPACE_IWCL", delimiter=delimiter
     )
 
 

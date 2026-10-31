@@ -245,7 +245,7 @@ class SessionRuntime(Protocol):
     def agent_age(
         self, handle: RuntimeHandle, process_names: Iterable[str]
     ) -> int | None: ...
-    def last_keys(self) -> dict[str, int]: ...
+    def last_keys(self, timeout: float | None = None) -> dict[str, int]: ...
     def stop(self, handle: RuntimeHandle) -> bool: ...
     def list_session_names(self, include_main: bool = False) -> set[str]: ...
     def has_descendant_process(
@@ -368,6 +368,18 @@ class TmuxSessionRuntime:
         delivery (`resolve_delivery_pane`), not existence.
         """
         return bool(self.panes_for_session(handle.tmux_session_name))
+
+    def session_exists(self, handle: RuntimeHandle) -> bool | None:
+        """Like is_alive, but only a tmux that answered says False (no such session, or
+        no server): a timeout or a missing binary is None, unknown."""
+        try:
+            self._run([self.tmux, "has-session", "-t", f"={handle.tmux_session_name}"],
+                      capture_output=True, text=True, check=True, timeout=_TMUX_TIMEOUT)
+        except subprocess.CalledProcessError:
+            return False
+        except (subprocess.SubprocessError, OSError):
+            return None
+        return True
 
     def handle_is_alive(self, handle: RuntimeHandle) -> bool:
         """Whether this handle's exact persisted execution surface exists."""
@@ -668,7 +680,7 @@ class TmuxSessionRuntime:
                     ages.append(seconds)
         return min(ages) if ages else None
 
-    def last_keys(self) -> dict[str, int]:
+    def last_keys(self, timeout: float | None = None) -> dict[str, int]:
         """Unix time each session was last used, by session name.
 
         tmux keeps this itself (`session_activity`): a client attaching and
@@ -677,13 +689,14 @@ class TmuxSessionRuntime:
         (checked on tmux 3.6), so an agent's redraws and the lodge's own
         deliveries never count. One call covers every session. Raises when
         tmux cannot answer, so callers treat unknown as in use.
+        timeout: a shorter bound than the usual tmux one.
         """
         result = self._run(
             [self.tmux, "list-sessions", "-F", "#{session_name}\t#{session_activity}"],
             capture_output=True,
             text=True,
             check=True,
-            timeout=_TMUX_TIMEOUT,
+            timeout=timeout or _TMUX_TIMEOUT,
         )
         stamps: dict[str, int] = {}
         for line in str(result.stdout).splitlines():

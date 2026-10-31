@@ -6,9 +6,19 @@
 # auth, and session rollouts. Credentials are copied from the shared seed on
 # first run (not symlinked — codex rewrites auth.json on token refresh).
 
+# A launch with a native inbox attempt runs codex against the session's own backend
+# (native/launch.py); any other launch runs codex itself, as before.
+run_engine() {
+    if [ -n "${WOLTSPACE_NATIVE_DIR:-}" ]; then
+        BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+        exec "$BIN_DIR/woltspace-python" "$BIN_DIR/../lib/native/launch.py" codex "$@"
+    fi
+    exec codex "$@"
+}
+
 if [ "${WOLTSPACE_ISOLATION:-external}" = "host" ]; then
     # Preserve host HOME, CODEX_HOME, authentication, trust, and config.
-    exec codex "$@"
+    run_engine "$@"
 fi
 
 WOLTSPACE_HOME_DIR="${WOLTSPACE_WOLT_HOME:-$(echo "$PWD" | sed -n 's|\(/workspace/wolts/[^/]*\).*|\1|p')}"
@@ -52,4 +62,4 @@ if [ -n "$WOLTSPACE_HOME_DIR" ] && [ -d "$WOLTSPACE_HOME_DIR" ]; then
     fi
 fi
 
-exec codex "$@"
+run_engine "$@"

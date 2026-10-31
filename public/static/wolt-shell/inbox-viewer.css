@@ -1,0 +1,18 @@
+/* The lodge inbox viewer (inbox-viewer.js). On a wolt site it sits in a shadow
+   root next to shell.css, whose .pill, .drawer and .scrim it reuses on the
+   right; on the lodge Inbox page the page's own colors apply. */
+:host { --border: var(--s-line); --ink: var(--s-ink); --ink-2: var(--s-muted); --terra: var(--s-accent); --surface: var(--s-bg); }
+.pill.wi-right { left: auto; right: 14px; }
+.drawer.wi-right { left: auto; right: 0; width: min(420px, 92vw); border-right: 0; border-left: 1px solid var(--s-line); transform: translateX(102%); }
+.wi-badge { min-width: 20px; padding: 3px 6px; border-radius: 999px; background: var(--s-accent); color: #fff; font-size: 12px; text-align: center; }
+.wi-bar { display: flex; gap: 8px; margin: 10px 0; }
+.wi-button { height: 40px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; }
+.wi-button:hover { border-color: var(--terra); }
+.wi-status { color: var(--ink-2); }
+.wi-list { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 8px; }
+.wi-row { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--ink); }
+.wi-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12.5px; color: var(--ink-2); }
+a.wi-sender { display: inline; padding: 0; color: var(--terra); text-decoration: underline; }
+b.wi-sender { color: var(--ink); }
+.wi-text { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 ui-monospace, monospace; }
+.inbox-page .wi-viewer { max-width: 760px; margin-top: 28px; }

@@ -1984,6 +1984,15 @@ def test_disarm_stops_every_live_status_and_keeps_the_rest(tmp_path, status, aft
     assert report["sessions_stopped"] == (after != status)
 
 
+def test_disarm_drops_a_launch_marker_and_native_wiring(tmp_path):
+    """A snapshot taken mid-launch restores a plain stopped row, never an unresolved one."""
+    report = {"sessions_stopped": 0, "sessions_rebased": 0}
+    record = {"name": "beaverwolt-s1", "status": "running", "launching": {"attempt": "a1"},
+              "native": {"kind": "claude", "addr": "/old/wolts/.space/native/x", "attempt": "a0"}, "attempt": "a0"}
+    out, _ = backup_mod._disarm_session(record, "/old/wolts", tmp_path, report)
+    assert out["status"] == "stopped" and "launching" not in out and "native" not in out
+
+
 def test_all_skipped_credentials_are_never_reported_inside(wolts_with_credentials, fake_age, tmp_path):
     root = wolts_with_credentials
     paths = [item["path"] for item in scan_tree(root).withheld

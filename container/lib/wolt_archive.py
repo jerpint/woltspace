@@ -20,6 +20,8 @@ import threading
 import time
 from pathlib import Path
 
+import inbox
+import lifecycle
 from execution_policy import AutoGrantStore
 from paths import space_wolf_dir
 from wolfcore import forget_last_run
@@ -123,6 +125,8 @@ def _end_session(registry: SessionRegistry, name: str, wolt: str, now: int, *,
         handle = RuntimeHandle.from_record(data or {})
         if data is None or not get_runtime().is_alive(handle):
             return False
+        if data.get("launching"):
+            raise ArchiveError(409, f"session {name} has an unresolved launch")
         # A hold may have come since the check before the move.
         if not sweep and hold_active(data, now):
             raise ArchiveError(409, f"{wolt} has a session that holds", held=[_held(data)])
@@ -147,11 +151,21 @@ def _end_live(registry: SessionRegistry, name: str, now: int, *, sweep: bool = F
             if r.get("tmux_alive") and _end_session(registry, r["name"], name, now, sweep=sweep)]
 
 
+def _mailbox(name: str, wolts_dir: Path, state: str) -> None:
+    """The wolt's inbox mailbox follows it (inbox.py); nothing without one."""
+    try:
+        inbox.Store(wolts_dir, inbox.LIMITS).set_state(name, state)
+    except inbox.Refused:
+        raise ArchiveError(409, f"{name} still holds unacknowledged inbox mail") from None
+    except inbox.InboxError as exc:
+        raise ArchiveError(500, f"the inbox could not be updated ({exc.code})") from None
+
+
 def archive_wolt(name: str, *, wolts_dir: Path, now: int | None = None) -> dict:
     check_wolt_name(name)
     wolts_dir = Path(wolts_dir)
     home = wolts_dir / name
-    with _LOCK:
+    with _LOCK, lifecycle.agent_lock(wolts_dir, name):  # no start or wake meanwhile
         target = _archive_root(wolts_dir) / name
         _no_link(home, wolts_dir)  # a linked wolt folder would be archived as the link
         # Before any registry call: a lookup creates the wolt's sessions folder.
@@ -164,11 +178,17 @@ def archive_wolt(name: str, *, wolts_dir: Path, now: int | None = None) -> dict:
         held = [_held(r) for r in registry.list(wolt=name) if hold_active(r, now)]
         if held:
             raise ArchiveError(409, f"{name} has a session that holds", held=held)
-        stopped = _end_live(registry, name, now)
+        _mailbox(name, wolts_dir, "archived")  # no new mail or claims from here on
+        try:
+            stopped = _end_live(registry, name, now)
+        except Exception:  # the wolt stays live: so does its mailbox
+            _mailbox(name, wolts_dir, "open")
+            raise
         target.parent.mkdir(exist_ok=True)
         try:
             os.rename(home, target)
         except OSError as exc:
+            _mailbox(name, wolts_dir, "open")
             raise ArchiveError(500, f"could not move {name} into {ARCHIVE_DIRNAME}: {exc}")
         # A message can wake a session, or a new one start, between the stop
         # pass and the move. The registry shows only wolts in wolts/, so look
@@ -233,7 +253,7 @@ def unarchive_wolt(name: str, *, wolts_dir: Path) -> dict:
     check_wolt_name(name)
     wolts_dir = Path(wolts_dir)
     home = wolts_dir / name
-    with _LOCK:
+    with _LOCK, lifecycle.agent_lock(wolts_dir, name):  # no start or wake meanwhile
         source = _no_link(_archive_root(wolts_dir) / name, wolts_dir)
         if not is_archived(name, wolts_dir=wolts_dir):
             raise ArchiveError(404, f"no archived wolt named {name}")
@@ -243,6 +263,7 @@ def unarchive_wolt(name: str, *, wolts_dir: Path) -> dict:
             os.rename(source, home)
         except OSError as exc:
             raise ArchiveError(500, f"could not move {name} back: {exc}")
+        _mailbox(name, wolts_dir, "open")
     return {"unarchived": name}
 
 
@@ -284,7 +305,7 @@ _ON_ERROR = "onexc" if sys.version_info >= (3, 12) else "onerror"
 def delete_archived_wolt(name: str, *, wolts_dir: Path) -> dict:
     check_wolt_name(name)
     wolts_dir = Path(wolts_dir)
-    with _LOCK:
+    with _LOCK, lifecycle.agent_lock(wolts_dir, name):  # no start or wake meanwhile
         target = _archive_root(wolts_dir) / name
         # Only from the archive: a live wolt is archived first. No wolt.json
         # needed, so a delete that failed halfway can run again.
@@ -292,7 +313,9 @@ def delete_archived_wolt(name: str, *, wolts_dir: Path) -> dict:
             raise ArchiveError(404, f"no archived wolt named {name}")
         # Grants, cron stamps and sessions are keyed by name: a later wolt with this
         # name must not inherit them. They go first, so a delete that fails
-        # halfway never leaves a grant behind.
+        # halfway never leaves a grant behind. Its mailbox closes first, and only
+        # once it holds no unacknowledged mail: a new wolt of this name gets a new one.
+        _mailbox(name, wolts_dir, "closed")
         revoked = AutoGrantStore(wolts_dir).revoke_wolt(name)
         SessionRegistry(wolts_dir).forget_wolt(name)
         forget_last_run(wolts_dir, name)

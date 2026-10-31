@@ -53,6 +53,10 @@ class MessagePorts:
     deliver: Callable[[str, str, str], Awaitable[str | None]] | None = None
     # say_switch(old_state, wolt, session): tell the owner the chat now talks elsewhere.
     say_switch: Callable[[dict, str, str], Awaitable[None]] | None = None
+    # admit(wolt, text, session): queue the message in the wolt's inbox instead of
+    # delivering it to a session; session is the one the owner meant, a wake
+    # preference only. None (the inbox is off) keeps delivery.
+    admit: Callable[[str, str, str | None], Awaitable[None]] | None = None
     log: Callable[[str, dict], None] = lambda event, data: None
     log_error: Callable[[str], None] = lambda message: None
 
@@ -159,6 +163,9 @@ async def route_message(p: MessagePorts, chat, text: str, *, reply_session: str 
         # A reply to a gone wolt's old message is routed like any message.
         if wolt and p.wolt_exists(wolt):
             framed_text = reply_text if reply_text is not None else text
+            if p.admit:
+                await p.admit(wolt, framed_text, reply_session)
+                return
             previous = p.lodge.load_chat(chat)
             delivered = await _deliver(p, reply_session, wolt, framed_text)
             if delivered:
@@ -187,6 +194,10 @@ async def route_message(p: MessagePorts, chat, text: str, *, reply_session: str 
             return
         wolt = state["active_wolt"]
         session_name = None
+
+    if p.admit:
+        await p.admit(wolt, text, session_name)
+        return
 
     if session_name:
         delivered = await _deliver(p, session_name, wolt, text)

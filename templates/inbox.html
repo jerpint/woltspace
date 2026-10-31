@@ -1,0 +1,11 @@
+{% extends 'base.html' %}
+{% block title %}Inbox · Woltspace{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/lodge-tools.css?v={{ cache_bust }}"><link rel="stylesheet" href="/static/wolt-shell/inbox-viewer.css?v={{ cache_bust }}">{% endblock %}
+{% block content %}
+<div class="ds-page inbox-page">
+  <header class="main-header"><div><h1 class="main-title">Inbox</h1><p class="main-subtitle">Mail waiting for each wolt. Read-only: viewing never fetches, acknowledges or wakes anything.</p></div></header>
+  <div id="inbox-list" class="connector-list" aria-live="polite"><p>loading…</p></div>
+  <section class="wi-viewer" aria-labelledby="inbox-messages-title"><h2 id="inbox-messages-title">Messages</h2><div id="inbox-messages"></div></section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/wolt-shell/inbox-viewer.js?v={{ cache_bust }}"></script><script src="/static/inbox.js?v={{ cache_bust }}"></script>{% endblock %}
