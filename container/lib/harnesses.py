@@ -1234,6 +1234,19 @@ def get_default_harness() -> str:
         return DEFAULT_HARNESS
 
 
+def get_default_level(harness: str | None, isolation: str) -> str | None:
+    """woltspace.json "sessions.default_execution_policy" if this engine offers that
+    level here, else None (the built-in default applies)."""
+    try:
+        cfg = json.loads(_woltspace_json_path().read_text())
+        level = cfg.get("sessions", {}).get("default_execution_policy")
+    except (json.JSONDecodeError, OSError, AttributeError):
+        return None
+    if not isinstance(level, str):  # a malformed value must not break every spawn
+        return None
+    return level if level in levels(isolation).get(resolve_harness(harness), {}) else None
+
+
 def _load_lodge_settings_for_write() -> tuple[Path, dict]:
     """woltspace.json as a dict, for a writer that will replace the file.
 

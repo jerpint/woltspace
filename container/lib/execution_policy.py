@@ -197,12 +197,23 @@ def import_grants(conn, wolts_dir: str | Path) -> tuple[dict, list[Path]]:
     return counts, retire
 
 
+def default_mode(isolation: str, granted: bool, lodge_default: str | None = None) -> str:
+    """The level of a session that asks for none: the lodge's own choice where it
+    needs no grant or has one, else Bypass where granted or isolated, else Ask."""
+    if lodge_default in VALID_MODES and (
+        lodge_default not in GRANTED_MODES or isolation != "host" or granted
+    ):
+        return lodge_default
+    return "bypass" if isolation == "external" or granted else "prompt"
+
+
 def resolve_execution_policy(
     requested: str | None,
     *,
     isolation: str,
     target: SessionTarget,
     grants: AutoGrantStore,
+    lodge_default: str | None = None,
 ) -> tuple[ExecutionPolicy, AutoGrant | None]:
     """Resolve defaults and enforce host consent for the exact target.
 
@@ -216,11 +227,11 @@ def resolve_execution_policy(
     One grant allows both Auto and Bypass. Explicit still beats implicit in
     both directions: `requested="prompt"` keeps asking even where the grant
     exists, and Auto or Bypass without a grant is refused rather than quietly
-    downgraded.
+    downgraded. `lodge_default` (woltspace.json sessions.default_execution_policy,
+    already checked against the engine) replaces that default; see default_mode.
     """
     grant = grants.find(target) if isolation == "host" else None
-    default = "bypass" if isolation == "external" or grant is not None else "prompt"
-    mode = requested or default
+    mode = requested or default_mode(isolation, grant is not None, lodge_default)
     policy = ExecutionPolicy(mode=mode, isolation=isolation)
     if mode in GRANTED_MODES and isolation == "host" and grant is None:
         raise PermissionError(

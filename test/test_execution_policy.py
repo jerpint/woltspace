@@ -245,3 +245,51 @@ def test_an_old_session_file_imported_after_the_migration_resumes_as_bypass(
     command = sessions.prepare_session_command("testwolt-old", "resume")
     assert "--dangerously-skip-permissions" in command
     assert "--resume 00000000-0000-4000-8000-000000000001" in command
+
+
+@pytest.mark.parametrize("isolation,granted,lodge,want", [
+    ("host", True, "auto", "auto"),        # the lodge's choice, where the grant allows it
+    ("host", False, "auto", "prompt"),     # no grant, no Auto: the built-in default stays
+    ("external", False, "auto", "auto"),
+    ("host", True, "prompt", "prompt"),    # Ask needs no grant
+    ("host", True, None, "bypass"),        # unset: nothing changes
+    ("host", True, "nonsense", "bypass"),
+])
+def test_the_lodge_default_level_applies_only_where_allowed(isolation, granted, lodge, want):
+    from execution_policy import default_mode
+    assert default_mode(isolation, granted, lodge) == want
+
+
+def test_the_lodge_default_level_is_read_per_engine(tmp_path, monkeypatch):
+    from harnesses import get_default_level
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(tmp_path))
+    assert get_default_level("claude", "host") is None  # no woltspace.json
+    (tmp_path / "woltspace.json").write_text(
+        json.dumps({"sessions": {"default_execution_policy": "auto"}}))
+    assert get_default_level("claude", "host") == "auto"
+    assert get_default_level("codex", "host") == "auto"
+    assert get_default_level("codex", "external") is None  # Codex offers no Auto there
+    assert get_default_level("pi", "host") is None
+    (tmp_path / "woltspace.json").write_text(
+        json.dumps({"sessions": {"default_execution_policy": []}}))
+    assert get_default_level("claude", "host") is None  # malformed: ignored, not a crash
+
+
+def test_a_spawn_that_asks_for_nothing_gets_the_lodge_default_level(
+    tmp_path, monkeypatch, fake_runtime
+):
+    import sessions
+
+    wolts = _host_wolt(tmp_path, monkeypatch)
+    monkeypatch.setenv("WOLTSPACE_ISOLATION", "host")
+    monkeypatch.setenv("WOLTSPACE_WOLTS_DIR", str(wolts))
+    (wolts / "woltspace.json").write_text(
+        json.dumps({"sessions": {"default_execution_policy": "auto"}}))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    AutoGrantStore(wolts).grant(SessionTarget.resolve("testwolt", repo, wolts_dir=wolts))
+
+    implicit = sessions.start_session(wolt="testwolt", workdir=repo)
+    assert implicit["execution_policy"]["mode"] == "auto"
+    explicit = sessions.start_session(wolt="testwolt", workdir=repo, execution_policy="bypass")
+    assert explicit["execution_policy"]["mode"] == "bypass"

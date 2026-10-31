@@ -75,13 +75,14 @@ from session_expiry import (
 )
 from session_runtime import RuntimeHandle, get_runtime
 from session_targets import SessionTarget
-from execution_policy import AutoGrantStore, POLICY_VERSION, RECORD_VERSION
+from execution_policy import AutoGrantStore, POLICY_VERSION, RECORD_VERSION, default_mode
 from runtime_context import RuntimeContext
 from harness_auth import auth_source, claude_authenticated
 from skills_sync import wolt_skills_delivery
 from harnesses import (
     harness_metadata,
     get_default_harness,
+    get_default_level,
     set_default_harness,
     set_tier_defaults,
     resolve_harness,
@@ -1237,9 +1238,11 @@ async def session_new_create(request: Request):
     if problem:
         return JSONResponse({"detail": problem}, status_code=400)
     # The level too, before scaffolding. A new wolt has no grant, so its default is
-    # resolve_execution_policy's: prompt on the host, bypass elsewhere.
+    # resolve_execution_policy's: the lodge's level where it needs no grant, else
+    # prompt on the host, bypass elsewhere.
     isolation = RuntimeContext.from_env().isolation
-    level = body.get("execution_policy") or ("prompt" if isolation == "host" else "bypass")
+    level = body.get("execution_policy") or default_mode(
+        isolation, False, get_default_level(selected_harness, isolation))
     try:
         policy_flags(selected_harness, {"mode": level, "isolation": isolation, "policy_version": 2})
     except ValueError as e:
