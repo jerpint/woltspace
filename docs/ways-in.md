@@ -10,7 +10,7 @@ The code is `server/ways_in.py`. Its Cloudflare class, `CloudflareAccess`, is th
 |---|---|---|
 | 1 | `lodge_hosts()` | The names this way gives the **lodge itself** (`owner.example.com`). Requests to them go to the lodge's own routes. |
 | 2 | `content_host(host)` | Whether a `Host` header names a **wolt's site or an app** through this way: a `PublicHost(kind, name, authority)`, or `None`. |
-| 3 | `owner(headers, scope)` | Whether this request is **the owner**, proven this way's own way: a `Visitor("owner", expires_at)`, or `None` for anyone else. |
+| 3 | `owner(headers, scope)` | Whether this request is **the owner**, proven this way's own way: a `Visitor("owner", expires_at)`, or `None` for anyone else. It opens the content this way serves, and the lodge at this way's `lodge_hosts()` when lodge auth is on. |
 | 4 | `credential_headers` | The headers this way uses to say who the visitor is. They're **stripped before anything reaches an app**, on every request, whichever way it came. |
 | 5 | `public_base(lodge_host, kind, name)` | Where a browser that reached the lodge at `lodge_host` through this way opens a site or app (for `/sites/open` and `/apps/open`), or `None`. |
 
@@ -31,7 +31,7 @@ The lodge does the rest the same way whichever way a request came:
   - or have the proxy reach the lodge over something only it holds, such as a private unix socket or a secret it sends.
 
   This stays within the lodge's stated limit (code running as the owner can read the lodge's keys anyway), but it must not let other users on the machine, or apps, pass as the owner.
-- **Gate the lodge's own hosts.** Requests to `lodge_hosts()` reach the lodge's routes, which trust lodge auth (keys, paired browsers). With lodge auth off, the way in itself must keep strangers out, as Cloudflare Access does in front of the lodge's tunnel host.
+- **Gate the lodge's own hosts.** Requests to `lodge_hosts()` reach the lodge's routes. With lodge auth on, they need a key, a paired browser, or `owner()`. With lodge auth off, the way in itself must keep strangers out, as Cloudflare Access does in front of the lodge's tunnel host.
 - **List every identity header in `credential_headers`.** The lodge drops them before an app sees a request, so an app can never be fooled by a forged one.
 - **Don't claim another way's hosts.** The first way in whose `content_host` matches a host wins.
 - **Keep your settings under your own name:** `"ways_in": {"<name>": {...}}` in `woltspace.json`, as Cloudflare does. Nothing outside your way in reads them.

@@ -481,10 +481,25 @@ def _lodge_auth_scope(headers) -> str | None:
 
 
 class LodgeAuthMiddleware:
-    """Refuse lodge HTTP and WebSocket requests without a key or paired browser."""
+    """Refuse lodge HTTP and WebSocket requests without a key, a paired browser,
+    or the proof of the owner from the way in that named this lodge."""
 
     def __init__(self, inner):
         self.inner = inner
+
+    @staticmethod
+    async def _through_way_in(scope, headers: dict[str, str], host: str):
+        """(lodge_auth.OWNER, expires_at) for the owner past a way in. The proof
+        comes from something the browser sends by itself, so a write or a socket
+        must also come from the lodge's own public page."""
+        way = ways_in.for_lodge_host(host)
+        if way is None:
+            return None, None
+        write = scope["type"] == "websocket" or scope.get("method", "GET").upper() not in _READ_ONLY_HTTP_METHODS
+        if write and headers.get("origin") != f"https://{host}":
+            return None, None
+        visitor, expires_at = await _way_in_visitor(way, scope, headers)
+        return (lodge_auth.OWNER, expires_at) if visitor == "owner" else (None, None)
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") not in ("http", "websocket") or not lodge_auth.enabled():
@@ -509,11 +524,23 @@ class LodgeAuthMiddleware:
             return await self.inner(scope, receive, send)
 
         caller = _lodge_auth_scope(headers)
+        expires_at = None
+        if caller is None:
+            caller, expires_at = await self._through_way_in(scope, headers, hosts[0].decode("latin-1"))
         if scope["type"] == "websocket":
             # Terminals and reload sockets are the owner's; wolt tools use HTTP.
             if caller != lodge_auth.OWNER:
                 return await send({"type": "websocket.close", "code": 1008})
-            return await self.inner(scope, receive, send)
+            if expires_at is None:
+                return await self.inner(scope, receive, send)
+            # A way in's proof ends, and a socket opened with it ends then too.
+            try:
+                return await asyncio.wait_for(self.inner(scope, receive, send),
+                                              max(0.0, expires_at - time.time()))
+            except asyncio.TimeoutError:
+                with contextlib.suppress(Exception):
+                    await send({"type": "websocket.close", "code": 1008})
+                return None
 
         method = scope.get("method", "GET")
         if caller is None:
@@ -671,7 +698,10 @@ def _remote_content_host(host_header: str) -> _Content | None:
 async def _remote_visitor(scope, headers: dict[str, str], content: "_Content"):
     """(identity, expires_at) for a request through a way in, or (None, None):
     the way in it came through proves the owner its own way."""
-    way = ways_in.named(content.way)
+    return await _way_in_visitor(ways_in.named(content.way), scope, headers)
+
+
+async def _way_in_visitor(way, scope, headers: dict[str, str]):
     try:
         visitor = await way.owner(headers, scope) if way is not None else None
     except Exception:

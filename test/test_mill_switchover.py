@@ -1257,3 +1257,86 @@ def test_cloudflare_settings_live_under_their_own_name(tmp_path):
         (tmp_path / "woltspace.json").write_text(json.dumps(config))
         access._CONFIG_CACHE.clear()
         assert (access.load_access_settings(tmp_path) is not None) is found
+
+
+# --- The lodge itself, with lodge auth on ------------------------------------------------------
+
+@pytest.fixture
+def lodge_auth_on(lodge, monkeypatch):
+    monkeypatch.setenv("WOLTSPACE_LODGE_AUTH", "1")
+    return lodge
+
+
+def test_with_lodge_auth_on_the_owners_login_opens_the_lodge(lodge_auth_on):
+    client = _through_tunnel(LODGE_HOST)
+    assert client.get("/tunnel", headers={"cf-access-jwt-assertion": "good"}).status_code == 200
+
+
+@pytest.mark.parametrize("headers", [
+    {}, {"cf-access-jwt-assertion": "forged"}, {"cf-access-jwt-assertion": "stranger"},
+])
+def test_with_lodge_auth_on_nobody_else_opens_the_lodge(lodge_auth_on, headers):
+    assert _through_tunnel(LODGE_HOST).get("/tunnel", headers=headers).status_code == 401
+
+
+def test_the_owners_login_opens_only_the_host_of_its_way_in(lodge_auth_on):
+    client = TestClient(server_app.app, base_url="http://localhost:7777", client=("127.0.0.1", 50000))
+    assert client.get("/tunnel", headers={"cf-access-jwt-assertion": "good"}).status_code == 401
+
+
+@pytest.mark.parametrize("headers", [
+    {},                                                 # a write always says where it came from
+    {"origin": "https://evil.example"},
+    {"origin": f"http://{LODGE_HOST}"},
+])
+def test_a_login_alone_cant_write_from_elsewhere(lodge_auth_on, headers):
+    response = _through_tunnel(LODGE_HOST).post(
+        "/current", json={"url": "/"}, headers={"cf-access-jwt-assertion": "good", **headers})
+    assert response.status_code in (401, 403)
+
+
+def test_the_owners_login_can_write_from_the_lodges_own_page(lodge_auth_on):
+    response = _through_tunnel(LODGE_HOST).post(
+        "/current", json={"url": "/"},
+        headers={"cf-access-jwt-assertion": "good", "origin": f"https://{LODGE_HOST}"})
+    assert response.status_code not in (401, 403)
+
+
+def test_a_socket_opens_only_from_the_lodges_own_page(lodge_auth_on):
+    from starlette.websockets import WebSocketDisconnect
+    client = _through_tunnel(LODGE_HOST)
+    with client.websocket_connect(f"wss://{LODGE_HOST}/livereload", headers={
+            "cf-access-jwt-assertion": "good", "origin": f"https://{LODGE_HOST}"}):
+        pass
+    for origin in ("https://evil.example", None):
+        headers = {"cf-access-jwt-assertion": "good"}
+        if origin:
+            headers["origin"] = origin
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect(f"wss://{LODGE_HOST}/livereload", headers=headers):
+                pass
+
+
+def test_a_socket_closes_when_the_login_ends(lodge_auth_on, monkeypatch):
+    from starlette.websockets import WebSocketDisconnect
+
+    async def verify(token, settings, audience):
+        return {"email": "owner@example.com", "exp": time.time() + 0.3}
+
+    monkeypatch.setattr(access.access_token_verifier, "verify", verify)
+    client = _through_tunnel(LODGE_HOST)
+    with client.websocket_connect(f"wss://{LODGE_HOST}/livereload", headers={
+            "cf-access-jwt-assertion": "good", "origin": f"https://{LODGE_HOST}"}) as socket:
+        with pytest.raises(WebSocketDisconnect) as closed:
+            socket.receive_text()
+    assert closed.value.code == 1008
+
+
+def test_a_broken_way_in_opens_nothing(lodge_auth_on, monkeypatch):
+    from server import ways_in
+
+    async def broken(*_args):
+        raise RuntimeError("no")
+    monkeypatch.setattr(ways_in.named("cloudflare"), "owner", broken, raising=False)
+    client = _through_tunnel(LODGE_HOST)
+    assert client.get("/tunnel", headers={"cf-access-jwt-assertion": "good"}).status_code == 401

@@ -6,7 +6,8 @@ for the visitor. Each such way in answers four questions, and nothing else in
 the lodge or the Mill depends on which way a request came:
 
 1. `lodge_hosts()`: the names this way gives the lodge itself, whose requests
-   go to the lodge's routes under lodge auth as usual.
+   go to the lodge's routes. With lodge auth on, they need a key, a paired
+   browser, or this way's proof of the owner.
 2. `content_host(host)`: whether a Host names a wolt's site or an app through
    this way, as a `PublicHost`. Each site and app must get an authority (host
    and port) of its own, so each keeps its own origin.
@@ -230,6 +231,18 @@ def content_host(host_header: str):
 
 def credential_headers() -> frozenset[str]:
     return frozenset(h.lower() for way in all_ways() for h in way.credential_headers)
+
+
+def for_lodge_host(host_header: str):
+    """The way in that gave the lodge this name, or None."""
+    split = _split(host_header)
+    if split is None:
+        return None
+    host, _port = split
+    for way in all_ways():
+        if host in (_ask(way, "lodge_hosts", default=set()) or ()):
+            return way
+    return None
 
 
 def public_base(lodge_host: str, kind: str, name: str) -> str:
