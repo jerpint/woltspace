@@ -57,6 +57,7 @@ jobs:
           test/test_inbox_api.py
           test/test_inbox_core_independent.py
           test/test_inbox_wake.py
+          test/test_inbox_paste.py
           test/test_inbox_review_fixes.py
           test/test_inbox_flow.py
           test/test_inbox_flow_independent.py

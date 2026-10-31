@@ -245,7 +245,7 @@ class SessionRuntime(Protocol):
     def agent_age(
         self, handle: RuntimeHandle, process_names: Iterable[str]
     ) -> int | None: ...
-    def last_keys(self) -> dict[str, int]: ...
+    def last_keys(self, timeout: float | None = None) -> dict[str, int]: ...
     def stop(self, handle: RuntimeHandle) -> bool: ...
     def list_session_names(self, include_main: bool = False) -> set[str]: ...
     def has_descendant_process(
@@ -680,7 +680,7 @@ class TmuxSessionRuntime:
                     ages.append(seconds)
         return min(ages) if ages else None
 
-    def last_keys(self) -> dict[str, int]:
+    def last_keys(self, timeout: float | None = None) -> dict[str, int]:
         """Unix time each session was last used, by session name.
 
         tmux keeps this itself (`session_activity`): a client attaching and
@@ -689,13 +689,14 @@ class TmuxSessionRuntime:
         (checked on tmux 3.6), so an agent's redraws and the lodge's own
         deliveries never count. One call covers every session. Raises when
         tmux cannot answer, so callers treat unknown as in use.
+        timeout: a shorter bound than the usual tmux one.
         """
         result = self._run(
             [self.tmux, "list-sessions", "-F", "#{session_name}\t#{session_activity}"],
             capture_output=True,
             text=True,
             check=True,
-            timeout=_TMUX_TIMEOUT,
+            timeout=timeout or _TMUX_TIMEOUT,
         )
         stamps: dict[str, int] = {}
         for line in str(result.stdout).splitlines():

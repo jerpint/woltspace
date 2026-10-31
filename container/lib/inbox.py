@@ -2,7 +2,8 @@
 The lodge inbox: a mailbox for each agent, which its sessions pull from.
 
 Off unless woltspace.json says `"inbox": {"enabled": true}`; importing this
-module opens nothing. Callers hand it a wolts dir and explicit Limits.
+module opens nothing. Once on, a session hears of new mail by a pasted hint, or
+through its engine's native hooks with `"native_hints": true` (native_hints). Callers hand it a wolts dir and explicit Limits.
 
 A message is queued only once its row, its usage and its event have committed
 together, in a durable (synchronous=FULL) write. The sender's key makes a
@@ -61,6 +62,18 @@ def enabled(wolts_dir) -> bool:
         return config.get("inbox", {}).get("enabled") is True
     except (OSError, ValueError, AttributeError):
         return False
+
+
+def native_hints(wolts_dir) -> bool:
+    """woltspace.json `inbox.native_hints`: True for native hooks, missing or false for a
+    pasted hint. Any other value is Invalid (a launch refuses before its effects)."""
+    try:
+        value = json.loads((Path(wolts_dir) / "woltspace.json").read_text()).get("inbox", {}).get("native_hints", False)
+    except (OSError, ValueError, AttributeError):
+        return False
+    if isinstance(value, bool):
+        return value
+    raise Invalid("inbox.native_hints must be true or false")
 
 
 class InboxError(Exception):

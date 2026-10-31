@@ -32,7 +32,7 @@ def flow(tmp_path, monkeypatch, store, server):
     import chat_lodge
     import connector_registry
     (tmp_path / ".space").mkdir(exist_ok=True)
-    (tmp_path / "woltspace.json").write_text(json.dumps({"inbox": {"enabled": True}}))
+    (tmp_path / "woltspace.json").write_text(json.dumps({"inbox": {"enabled": True, "native_hints": True}}))
     monkeypatch.setattr(sessions, "WOLTS_DIR", tmp_path)
     monkeypatch.setattr(inbox, "LIMITS", store.limits)
     seen = types.SimpleNamespace(spawned=[], hints=[])

@@ -34,7 +34,7 @@ def lodge(tmp_path, monkeypatch):
     """A lodge with the inbox on, the wolt pal (auto policy), a fake tmux and transport."""
     (tmp_path / ".space").mkdir()
     monkeypatch.setenv("WOLTSPACE_ISOLATION", "external")  # auto policy, whatever ran before
-    (tmp_path / "woltspace.json").write_text(json.dumps({"inbox": {"enabled": True}}))
+    (tmp_path / "woltspace.json").write_text(json.dumps({"inbox": {"enabled": True, "native_hints": True}}))
     wolt(tmp_path, "pal")
     for module, attr in ((sessions, "WOLTS_DIR"),):
         monkeypatch.setattr(module, attr, tmp_path)
@@ -123,7 +123,7 @@ def test_a_start_marks_the_attempt_before_the_spawn_and_publishes_it_in_one_writ
 
 def test_publication_needs_the_exact_attempt(lodge):
     sessions.start_session(wolt="pal", name="pal-a-b-c")
-    attempt = sessions.mark_launching(lodge.registry, "pal-a-b-c", "pal", "claude")
+    attempt = sessions.mark_launching(lodge.registry, "pal-a-b-c", "pal", "claude", "native")
     assert not sessions.publish_runtime(lodge.registry, "pal-a-b-c", "pal", "other", {"x": 1})
     assert record(lodge, "pal-a-b-c")["launching"]["attempt"] == attempt
     assert sessions.publish_runtime(lodge.registry, "pal-a-b-c", "pal", attempt, {"x": 1})

@@ -10,20 +10,28 @@ one wake. A wake re-reads the agent's real mailbox and sessions under its
 lifecycle lock, never the caller's seq or state:
 
 - nothing queued, the mailbox not open, or the wake inhibited: nothing.
-- a live session: a body-free hint naming the senders, through its native input, sent after
-  the lock is released (native_adapters.deliver), even while the wake is
-  inhibited: an inhibition only ever stops a start. submitted, pending, unknown,
-  unavailable and failed are transport facts; none changes custody, and none
-  is retried here. Mail waits for the agent's own fetch and ack. A busy Claude or
-  Codex engine gets the hint inside its running turn (a tool step's hook, a steer);
-  any other busy engine (deliver says pending/busy) gets none: the owner hears it is
-  busy. Either way the end of its turn (ready kind=turn_end) is a wake that hints
-  once if mail is still queued.
+- a live session: a body-free hint naming the senders, sent after the lock is
+  released, even while the wake is inhibited: an inhibition only ever stops a start.
+  The hint goes the way the session's launch attempt recorded (inbox_adapter, chosen
+  by inbox.native_hints at each real launch; a record without one but with a native
+  locator is native, one with neither is unavailable), never another way:
+  - paste (the default): once the agent takes input (_await_input_ready) and nobody
+    has typed in the session for QUIET seconds (at most QUIET_CAP per pass; unknown
+    activity waits the whole cap), the senders are read again and the hint is pasted
+    with Enter by sessions.hint_live_agent, under the agent's lock, only into the same
+    attempt's own pane. It can submit a human's unfinished draft; a running turn
+    queues it. Not ready in time: unanswered, until a later wake.
+  - native: native_adapters.deliver. A busy Claude or Codex engine gets the hint inside
+    its running turn (a tool step's hook, a steer); any other busy engine (deliver says
+    pending/busy) gets none: the owner hears it is busy. Either way the end of its turn
+    (ready kind=turn_end) is a wake that hints once if mail is still queued.
+  submitted, pending, unknown, unavailable and failed are transport facts; none changes
+  custody, and none is retried here. Mail waits for the agent's own fetch and ack.
 - no live session: all mail brings the wolt up (the owner's rule). The wolt's
   newest resting session is resumed without a prompt (the post-publication pickup
   and its backend's ready call hint it); with none, one fresh session, reserved
   by name first and started with the fixed fetch instruction. Either runs in the
-  wolt's own recorded mode. The owner's explicit stop or archive of a session
+  wolt's own recorded mode. A start's fetch instruction is that attempt's hint. The owner's explicit stop or archive of a session
   marks that record (wake_inhibit): that conversation is never auto-resumed, and
   nothing else. While any launch of the agent is unresolved, whoever made it,
   nothing starts and rearm refuses.
@@ -60,6 +68,7 @@ HINT = ("New inbox mail{sender}. Fetch your inbox (`woltspace inbox fetch`). ACK
         "Release a claim if you cannot accept it (`woltspace inbox release <seq> <claim>`). Fetch again "
         "for the next message (nonce {nonce}).")
 BUSY_RETRIES, BUSY_PAUSE = 5, 2.0
+QUIET, QUIET_CAP = 2.0, 5.0  # paste mode: seconds with no keystroke; the most one pass defers for typing
 SENDERS = 3  # names in a hint; more are counted
 OUTCOMES = 50  # per-message outcomes kept in the wake state
 _GUARD = threading.Lock()
@@ -168,6 +177,7 @@ def _worker(root: str, wolt: str, once: bool = False) -> None:
 def _wake(root: str, wolt: str, *, once: bool = False) -> None:
     """once: hint a live session only if its current attempt has had none yet."""
     store, registry = inbox.Store(root, inbox.LIMITS), sessions.SessionRegistry(root)
+    hinted = None
     with lifecycle.agent_lock(root, wolt):
         facts = store.wake_facts(wolt)
         if not facts or not facts["open"] or not facts["queued"]:
@@ -184,6 +194,10 @@ def _wake(root: str, wolt: str, *, once: bool = False) -> None:
             # All mail brings the wolt up (the owner's rule): with no live session it resumes or
             # starts one; only an unresolved launch holds it (in _start). A live session is hinted.
             how, what = (None, None) if live else _start(store, registry, wolt, facts, prefer)
+            if how == "started":  # its START prompt is the published attempt's hint: its pickup adds none
+                started = registry.get(what, wolt=wolt, check_alive=False) or {}
+                if started.get("attempt") and not started.get("launching"):
+                    hinted = {"session": what, "attempt": started["attempt"]}
             if live:
                 record = registry.get(live, wolt=wolt, check_alive=False) or {}
                 hinted = {"session": live, "attempt": record.get("attempt")}
@@ -208,14 +222,19 @@ def _wake(root: str, wolt: str, *, once: bool = False) -> None:
             _notice(root, wolt, what)
             _answer(root, wolt, how, reason=what)
         elif how:
-            _answer(root, wolt, how, session=what)
+            _answer(root, wolt, how, session=what, hinted=hinted)
         return
     hint = HINT.format(sender=_sender(facts), nonce=uuid.uuid4().hex[:8])
     fresh = registry.get(live, wolt=wolt, check_alive=False)  # the fence: re-read just before placing
-    if not fresh or any(fresh.get(k) != record.get(k) for k in ("attempt", "native", "launching")):
+    if not fresh or any(fresh.get(k) != record.get(k) for k in ("attempt", "native", "launching", "inbox_adapter")):
         log.info("inbox hint for %s via %s: not placed, the session changed since the wake", wolt, live)
         return  # a wait, unanswered: its new attempt's ready pickup hints
-    status, code = _deliver(fresh, hint)
+    status, code = _paste(store, registry, wolt, fresh) if _mode(fresh) == "paste" else _deliver(fresh, hint)
+    if status is None or code == "taken":  # changed under the lock; or a reader took the mail meanwhile
+        log.info("inbox hint for %s via %s: not placed (%s)", wolt, live, code)
+        if code == "taken":
+            _answer(root, wolt)
+        return
     log.info("inbox hint for %s via %s: %s (%s)", wolt, live, status, code)
     if status == "submitted" or (status, code) == ("pending", "placed"):  # only a hint that reached the engine
         _answer(root, wolt, "hinted", session=live, hinted=hinted)
@@ -224,6 +243,41 @@ def _wake(root: str, wolt: str, *, once: bool = False) -> None:
     elif status != "pending":
         _answer(root, wolt, "blocked", reason=f"hint_{status}")
     # pending, not placed: a wait, unanswered; the hint of its ready pickup answers it
+
+
+def _mode(record: dict) -> str | None:
+    """The transport this attempt recorded; a legacy record with a locator is native."""
+    mode = record.get("inbox_adapter")
+    return mode if mode in ("paste", "native") else "native" if record.get("native") else None
+
+
+def _paste(store, registry, wolt: str, record: dict) -> tuple[str | None, str]:
+    """Paste mode: wait for input and for quiet, outside every lock; then re-read who the
+    mail is from and hand the hint to sessions.hint_live_agent, which checks the session
+    again under the locks."""
+    if sessions._await_input_ready(record, sessions.resolve_harness(record.get("harness"))) is None:
+        return "pending", "not_ready"
+    _quiet(sessions.RuntimeHandle.from_record(record).tmux_session_name)
+    facts = store.wake_facts(wolt)  # the last chance to read it, before the paste
+    if not facts or not facts["open"] or not facts["queued"]:
+        return "pending", "taken"
+    return sessions.hint_live_agent(registry, record, HINT.format(sender=_sender(facts), nonce=uuid.uuid4().hex[:8]))
+
+
+def _quiet(tmux_name: str, clock=time.monotonic, now=time.time, sleep=time.sleep) -> None:
+    """Return once tmux says nobody typed in the session for QUIET seconds, or at QUIET_CAP from
+    now, one deadline: keys meanwhile never extend it. Unknown activity (no answer, no such
+    session) waits; each probe gets only the time left. session_activity is coarse: it counts
+    a client attaching, and an idle composer may still hold a draft."""
+    deadline = clock() + QUIET_CAP
+    while (left := deadline - clock()) > 0:
+        try:
+            stamp = sessions._runtime().last_keys(timeout=max(0.1, left)).get(tmux_name)
+        except Exception:
+            stamp = None
+        if stamp is not None and now() - stamp >= QUIET:
+            return
+        sleep(max(0.0, min(0.5, deadline - clock())))
 
 
 def _sender(facts: dict) -> str:

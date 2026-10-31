@@ -1342,6 +1342,34 @@ def deliver_message(session_id: str, text: str, from_wolt: str = "",
     return {"status": "delivered", "session": session_id, "harness": harness}
 
 
+def hint_live_agent(registry: "SessionRegistry", seen: dict, text: str) -> tuple[str | None, str]:
+    """The inbox's pasted hint, into the agent's own pane, only while the session is still
+    exactly as `seen` (running, published, same attempt, runtime, locator and mode).
+    Checked and pasted under the agent's lifecycle lock, then the paste lock: a stop,
+    rest, archive or relaunch lands wholly before (nothing is pasted) or after the Enter.
+    No waits and no writes here: the caller waited for input and for quiet first.
+    Returns (None, "changed"), ("unavailable", "agent_gone") when no agent is in the
+    recorded pane, ("unknown", error) when the paste failed and may have landed, or
+    ("submitted", "pasted")."""
+    name, wolt = seen.get("name", ""), seen.get("wolt", "")
+    harness = resolve_harness(seen.get("harness"))
+    with lifecycle.agent_lock(registry.wolts_dir, wolt):
+        fresh = registry.get(name, wolt=wolt, check_alive=False)
+        if (not fresh or fresh.get("status") != "running" or fresh.get("launching")
+                or any(fresh.get(k) != seen.get(k) for k in ("attempt", "runtime", "native", "inbox_adapter"))):
+            return None, "changed"
+        target = resolve_agent_handle(fresh, harness, include_launching=False)
+        if target is None or target.pane_id != RuntimeHandle.from_record(fresh).pane_id:
+            return "unavailable", "agent_gone"  # never another pane
+        try:
+            with _paste_lock(name, registry.db_dir):
+                _tmux_paste(target, _guard_paste_text(harness, text),
+                            settle=get_harness(harness).get("paste_settle", 0.0))
+        except Exception as exc:
+            return "unknown", type(exc).__name__
+    return "submitted", "pasted"
+
+
 # ---------------------------------------------------------------------------
 # Session naming
 # ---------------------------------------------------------------------------
@@ -1650,16 +1678,26 @@ def still_as_seen(record: dict | None, seen: dict) -> bool:
     return record is not None and all(record.get(k) == seen.get(k) for k in _CLAIM_FIELDS)
 
 
-def mark_launching(registry: "SessionRegistry", name: str, wolt: str, harness: str) -> str:
-    """Commit a new launch attempt (and its native locator) before the external
-    launch. Call under the agent's lifecycle lock. With the inbox off nothing is
-    written and the attempt is "": the launch runs as it did before markers."""
-    if not _markers_on(registry.wolts_dir):
+def inbox_mode(root) -> str | None:
+    """How a launch's sessions hear of inbox mail: None (inbox off), "paste" or "native".
+    Read before any launch effect: a malformed switch raises inbox.Invalid there."""
+    import inbox
+    if not inbox.enabled(root):
+        return None
+    return "native" if inbox.native_hints(root) else "paste"
+
+
+def mark_launching(registry: "SessionRegistry", name: str, wolt: str, harness: str, mode: str | None) -> str:
+    """Commit a new launch attempt (its inbox mode, and in native mode its locator)
+    before the external launch. Call under the agent's lifecycle lock. With the inbox
+    off (mode None) nothing is written and the attempt is "": the launch runs as it did
+    before markers. In paste mode there is no locator: the command is the original one."""
+    if not mode:
         return ""
     attempt = lifecycle.new_attempt()
-    native = _native_adapters()
+    native = _native_adapters() if mode == "native" else None
     registry.update(name, wolt=wolt, launching={
-        "attempt": attempt, "at": int(time.time()),
+        "attempt": attempt, "at": int(time.time()), "inbox_adapter": mode,
         # {kind, addr: a new private attempt dir, attempt}, or None: no native input
         "native": native.prepare(registry.wolts_dir, name, resolve_harness(harness), attempt)
         if native else None})
@@ -1681,10 +1719,11 @@ def publish_runtime(registry: "SessionRegistry", name: str, wolt: str, attempt: 
             return False
         current.update(fields, runtime=runtime, attempt=attempt, last_activity=int(time.time()))
         current.pop("launching")
-        if marker.get("native"):
-            current["native"] = marker["native"]
-        else:
-            current.pop("native", None)
+        for key in ("native", "inbox_adapter"):
+            if marker.get(key):
+                current[key] = marker[key]
+            else:
+                current.pop(key, None)
     return True
 
 
@@ -2184,9 +2223,10 @@ def start_session(
 
 def _create_and_launch(registry, name, wolt, harness, target, prompt, fields) -> None:
     """Create the row, mark the attempt, spawn, publish: under the agent's lock."""
+    mode = inbox_mode(registry.wolts_dir)  # before the row: a malformed switch starts nothing
     registry.create(name, wolt=wolt, harness=harness, dir=str(target.canonical_workdir),
                     target=target, prompt=prompt, **fields)
-    attempt = mark_launching(registry, name, wolt, harness)
+    attempt = mark_launching(registry, name, wolt, harness, mode)
     with _launch_step(registry, name, wolt, attempt, name, settle=True):
         handle = _tmux_spawn(name, str(target.canonical_workdir), build_session_command(name, prompt))
     publish_runtime(registry, name, wolt, attempt, handle.to_record())
@@ -2282,8 +2322,9 @@ def _relaunch(registry: "SessionRegistry", name: str, wolt: str, harness: str, o
                              or any(unresolved_launch(r) for r in registry.records(wolt=wolt))):
             raise ResumeFailed(f"session '{name}' is no longer resting, was stopped by the owner, or the agent"
                                " is launching; the wake does not revive it")
+        mode = inbox_mode(registry.wolts_dir)  # chosen afresh, before the old locator is retired
         invalidate_native(registry, name, wolt, current)
-        yield mark_launching(registry, name, wolt, harness)
+        yield mark_launching(registry, name, wolt, harness, mode)
 
 
 def resume_session(name: str, prompt: str = "", *, only_resting: bool = False) -> dict:
