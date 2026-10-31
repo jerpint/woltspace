@@ -187,6 +187,8 @@ def fake_releases(monkeypatch, artifacts, existing=None):
     def fake_gh(*args):
         calls.append(args)
         if args[:1] == ('api',):
+            if args[1].endswith('/releases/latest'):
+                return json.dumps({'tag_name': next((tag for tag, value in releases.items() if value.get('latest')), 'v0.0.1')})
             if args[1].endswith('/git/refs'):
                 fields = dict(arg.split('=', 1) for arg in args if arg.startswith(('ref=', 'sha=')))
                 tag = fields['ref'].removeprefix('refs/tags/')
@@ -200,7 +202,7 @@ def fake_releases(monkeypatch, artifacts, existing=None):
             releases[tag] = {'draft': True, 'commit': artifacts['commit'], 'assets': []}
         elif action == 'view':
             value = releases[tag]
-            return json.dumps({'isDraft': value['draft'], 'targetCommitish': value['commit'], 'assets': [{'name': n} for n in value['assets']]})
+            return json.dumps({'isDraft': value['draft'], 'isPrerelease': value.get('prerelease', False), 'targetCommitish': value['commit'], 'assets': [{'name': n} for n in value['assets']]})
         elif action == 'upload':
             releases[tag]['assets'].append(Path(args[3]).name)
         elif action == 'download':
@@ -209,6 +211,8 @@ def fake_releases(monkeypatch, artifacts, existing=None):
             target.write_bytes((release.ROOT / 'dist' / name).read_bytes())
         elif action == 'edit':
             releases[tag]['draft'] = False
+            if '--prerelease=true' in args and not releases[tag].get('stuck'):
+                releases[tag].update(prerelease=True, latest=False)
         return ''
     monkeypatch.setattr(release, 'gh', fake_gh)
     monkeypatch.setattr(release, 'tag_commit', lambda tag: tags.get(tag))
@@ -247,6 +251,65 @@ def test_python_pre_release_from_main_is_never_marked_latest(artifacts, monkeypa
     release.finalize()
     python_edit = [call for call in calls if call[:3] == ('release', 'edit', f'v{version}')]
     assert python_edit and '--latest=false' in python_edit[0] and '--prerelease=true' in python_edit[0]
+
+
+def _public_rc(artifacts, **state):
+    artifacts['versions']['python'] = '0.6.0rc1'
+    (release.ROOT / 'release-manifest.json').write_text(json.dumps(artifacts))
+    return {'v0.6.0rc1': {'draft': False, 'commit': artifacts['commit'], **state,
+                          'assets': ['woltspace-0.5.5-py3-none-any.whl', 'woltspace-0.5.5.tar.gz']},
+            'tui-v0.5.2': {'draft': False, 'commit': artifacts['commit'], 'assets': ['woltspace-tui-0.5.2.tgz']}}
+
+
+def test_a_retry_corrects_an_rc_already_public_as_an_ordinary_release(artifacts, monkeypatch):
+    existing = _public_rc(artifacts, latest=True)
+    calls, _ = fake_releases(monkeypatch, artifacts, existing)
+    release.finalize()
+    edit = next(call for call in calls if call[:3] == ('release', 'edit', 'v0.6.0rc1'))
+    assert '--prerelease=true' in edit and '--latest=false' in edit
+    assert existing['v0.6.0rc1']['prerelease'] and not existing['v0.6.0rc1']['latest']
+
+
+def test_a_retry_leaves_a_correct_public_rc_alone(artifacts, monkeypatch):
+    calls, _ = fake_releases(monkeypatch, artifacts, _public_rc(artifacts, prerelease=True))
+    release.finalize()
+    assert not [call for call in calls if call[:3] == ('release', 'edit', 'v0.6.0rc1')]
+
+
+def test_finalize_fails_when_an_rc_stays_latest(artifacts, monkeypatch):
+    fake_releases(monkeypatch, artifacts, _public_rc(artifacts, latest=True, stuck=True))
+    with pytest.raises(RuntimeError, match='still not marked'):
+        release.finalize()
+
+
+def test_finalize_fails_when_a_marked_rc_is_still_latest(artifacts, monkeypatch):
+    fake_releases(monkeypatch, artifacts, _public_rc(artifacts, prerelease=True, latest=True))
+    with pytest.raises(RuntimeError, match='still GitHub Latest'):
+        release.finalize()
+
+
+def test_a_public_final_release_is_never_edited_on_retry(artifacts, monkeypatch):
+    existing = {'v0.5.5': {'draft': False, 'commit': artifacts['commit'],
+                           'assets': ['woltspace-0.5.5-py3-none-any.whl', 'woltspace-0.5.5.tar.gz']},
+                'tui-v0.5.2': {'draft': False, 'commit': artifacts['commit'], 'assets': ['woltspace-tui-0.5.2.tgz']}}
+    calls, _ = fake_releases(monkeypatch, artifacts, existing)
+    release.finalize()
+    assert not [call for call in calls if call[:2] == ('release', 'edit')]
+
+
+@pytest.mark.parametrize('version', ['0.6', '0.6.0.1', '1!0.6.0', '0.6.0-rc.1', '0.6.0.post', '0.6.0rev2', 'v0.6.0'])
+def test_planning_refuses_python_versions_outside_the_supported_forms(artifacts, monkeypatch, version):
+    configure_prepare(monkeypatch)
+    (release.ROOT / 'pyproject.toml').write_text(f'[project]\nversion="{version}"\n')
+    monkeypatch.setenv('EXPECTED_PYTHON', version)
+    monkeypatch.setenv('REGISTRY_TARGET', 'python')
+    with pytest.raises(RuntimeError, match='Unsupported Python version'):
+        release.prepare()
+
+
+@pytest.mark.parametrize('version', ['0.6.0', '0.6.0rc1', '0.6.0b2', '0.6.0a1', '0.6.0.dev3', '1.0.0.post1'])
+def test_supported_python_version_forms(version):
+    assert release.PYTHON_VERSION.fullmatch(version)
 
 
 def test_final_python_release_from_main_is_latest_and_not_pre_release(artifacts, monkeypatch):

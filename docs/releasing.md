@@ -12,7 +12,9 @@ are available and their downloads verify.
 The TUI release is created first without becoming Latest; the primary Python
 release becomes Latest last, because lodge update checks read releases/latest.
 Pre-release versions (`0.6.0rc1`, `0.6.0b1`, `0.6.0.dev0`) are published as
-GitHub pre-releases and never become Latest, even from `main`. A pre-release
+GitHub pre-releases and never become Latest, even from `main`. A retry corrects
+one already public as an ordinary release, and the run fails if it is still
+Latest afterwards. Other Python version spellings stop at planning. A pre-release
 TUI version is refused while planning, because the npm step has no dist-tag
 yet; publish release candidates with `registry=python`.
 
