@@ -273,7 +273,6 @@ def running_mill(wolts, monkeypatch):
     monkeypatch.setattr(server_app, "WOLTS_DIR", wolts)
     monkeypatch.setattr(server_app.mill_server, "socket_path", lambda _root: path)
     monkeypatch.delenv("WOLTSPACE_LODGE_AUTH", raising=False)
-    monkeypatch.setattr(server_app, "_pairing_failures", lodge_auth.FailureLimit())
     yield wolts
     server.should_exit = True
     thread.join(5)

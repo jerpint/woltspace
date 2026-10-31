@@ -106,4 +106,4 @@ flowchart TD
 
 ## Naming
 
-How a site host is spelled depends on the way in, so naming is a list (`server/content_hosts.py`). Remote ways in (Cloudflare today) are plugins with their own names and owner check: see `docs/ways-in.md`. The local schemes are `<wolt>.sites.localhost` and `<app>.localhost`. Remote ways in add theirs when they start serving sites. A site label is a DNS label, so a wolt whose name has `_` or is over 63 characters has no site host.
+How a site host is spelled depends on the way in, so naming is a list (`server/content_hosts.py`). Remote ways in (Cloudflare today) are plugins with their own names and owner check: see `docs/ways-in.md`. The local schemes are `<wolt>.sites.localhost` and `<app>.localhost`. Remote ways in add theirs when they start serving sites. A site label is a DNS label, so a wolt whose name has `_` or is over 63 characters has no site host (`woltspace doctor` names it). Sites share the parent `sites.localhost`, so a site's page can set a cookie that other sites receive. Sites are read-only and their session cookies are tied to one site, so at worst this logs a site's visitor out with lodge auth on.

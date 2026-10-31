@@ -253,21 +253,6 @@ def forget_browsers(wolts_dir) -> None:
             _write_private(directory / name, "{}")
 
 
-class FailureLimit:
-    """At most `limit` failed pairing attempts per `window` seconds, lodge-wide."""
-
-    def __init__(self, limit: int = 10, window: float = 60.0):
-        self.limit, self.window, self.failures = limit, window, []
-
-    def blocked(self, now: float | None = None) -> bool:
-        now = time.monotonic() if now is None else now
-        self.failures = [t for t in self.failures if now - t < self.window]
-        return len(self.failures) >= self.limit
-
-    def record(self, now: float | None = None) -> None:
-        self.failures.append(time.monotonic() if now is None else now)
-
-
 # --- Clients ------------------------------------------------------------------
 
 def client_key(env=os.environ, wolts_dir=None) -> str:

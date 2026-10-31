@@ -437,7 +437,12 @@ async def request_origin_guard(request: Request, call_next):
         if origin and not _same_http_authority(origin, host_header):
             return JSONResponse({"error": "cross-origin request rejected"}, status_code=403)
 
-    return await call_next(request)
+    response = await call_next(request)
+    # A wolt's page lives on another origin, and must not be able to put the
+    # lodge in a frame and walk the owner into clicking it.
+    # Pages with a policy of their own run in an opaque sandbox, with no login.
+    response.headers.setdefault("content-security-policy", "frame-ancestors 'self'")
+    return response
 
 
 # --- Lodge auth (opt-in: WOLTSPACE_LODGE_AUTH=1) ---------------------------
@@ -447,7 +452,6 @@ async def request_origin_guard(request: Request, call_next):
 # App hosts are proxied to their app and are not gated here.
 
 _LODGE_AUTH_OPEN_PATHS = ("/pair", "/health", "/favicon.svg")
-_pairing_failures = lodge_auth.FailureLimit()
 
 _UNPAIRED_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Pair this browser</title>
@@ -507,6 +511,24 @@ class LodgeAuthMiddleware:
         visitor, expires_at = await _way_in_visitor(way, scope, headers)
         return (lodge_auth.OWNER, expires_at) if visitor == "owner" else (None, None)
 
+    async def _until_forgotten(self, scope, receive, send, headers):
+        """Run a socket while what opened it still holds: `woltspace pair
+        --forget` ends a lost browser's terminals too."""
+        task = asyncio.ensure_future(self.inner(scope, receive, send))
+        try:
+            while True:
+                done, _ = await asyncio.wait({task}, timeout=SITE_SOCKET_RECHECK_SECONDS)
+                if done:
+                    return task.result()
+                if _lodge_auth_scope(headers) != lodge_auth.OWNER:
+                    break
+        finally:
+            task.cancel()
+        with contextlib.suppress(Exception, asyncio.CancelledError):
+            await task
+        with contextlib.suppress(Exception):
+            await send({"type": "websocket.close", "code": 1008})
+
     async def __call__(self, scope, receive, send):
         if scope.get("type") not in ("http", "websocket") or not lodge_auth.enabled():
             return await self.inner(scope, receive, send)
@@ -539,7 +561,7 @@ class LodgeAuthMiddleware:
             if caller != lodge_auth.OWNER:
                 return await send({"type": "websocket.close", "code": 1008})
             if expires_at is None:
-                return await self.inner(scope, receive, send)
+                return await self._until_forgotten(scope, receive, send, headers)
             # A way in's proof ends, and a socket opened with it ends then too.
             try:
                 return await asyncio.wait_for(self.inner(scope, receive, send),
@@ -571,11 +593,8 @@ async def pair_browser(request: Request, code: str = ""):
     if not lodge_auth.enabled():
         return JSONResponse({"error": "lodge auth is off"}, status_code=404)
     no_leak = {"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"}
-    if _pairing_failures.blocked():
-        return JSONResponse({"error": "too many attempts; wait a minute"}, status_code=429, headers=no_leak)
     token = lodge_auth.redeem_pairing_code(WOLTS_DIR, code)
     if token is None:
-        _pairing_failures.record()
         return HTMLResponse(
             _UNPAIRED_PAGE.replace("<p>This lodge only opens in a paired browser.</p>",
                                    "<p>That pairing link was already used, or has expired.</p>"),
@@ -1004,13 +1023,8 @@ class MillForwardMiddleware:
         if not lodge_auth.enabled() or request.method != "GET":
             response = JSONResponse({"error": "not found"}, status_code=404)
             return await response(scope, receive, send)
-        if _pairing_failures.blocked():
-            response = JSONResponse({"error": "too many attempts; wait a minute"},
-                                    status_code=429, headers=no_leak)
-            return await response(scope, receive, send)
         token = lodge_auth.redeem_site_grant(WOLTS_DIR, label, request.query_params.get("code", ""))
         if token is None:
-            _pairing_failures.record()
             response = HTMLResponse("<h1>That link was already used, or has expired</h1>"
                                     "<p>Open it from the lodge again.</p>",
                                     status_code=403, headers=no_leak)
@@ -3090,19 +3104,21 @@ async def list_sites_api():
     return found
 
 
-def _open_site_page(wolt_name: str, path: str) -> str:
-    """The lodge's own small page where a site's frame would be."""
+def _open_own_address_page(what: str, link: str) -> str:
+    """The lodge's own small page where a site's or app's frame would be."""
     from html import escape
-    link = escape(_site_link(wolt_name, path), quote=True)
-    name = escape(wolt_name)
     return (
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
         "<style>body{margin:0;font:16px/1.5 system-ui,sans-serif;display:grid;place-items:center;"
         "min-height:100vh;background:#EDE8DE;color:#2a2622}a{color:#3A6644}</style></head><body>"
-        f"<p>{name}'s site opens on its own address. "
-        f"<a href=\"{link}\" target=\"_blank\" rel=\"noopener\">Open it</a></p></body></html>"
+        f"<p>{escape(what)} on its own address. "
+        f"<a href=\"{escape(link, quote=True)}\" target=\"_blank\" rel=\"noopener\">Open it</a></p></body></html>"
     )
+
+
+def _open_site_page(wolt_name: str, path: str) -> str:
+    return _open_own_address_page(f"{wolt_name}'s site opens", _site_link(wolt_name, path))
 
 
 def _site_link(wolt_name: str, path: str = "/") -> str:
@@ -3255,7 +3271,11 @@ async def serve_app(app_name: str, request: Request, path: str = ""):
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", app_name):
         return JSONResponse({"error": "invalid app name"}, status_code=400)
     target = quote(_safe_next("/" + path), safe="/")
-    return RedirectResponse(f"/apps/open?app={app_name.lower()}&path={target}", status_code=303)
+    link = f"/apps/open?app={app_name.lower()}&path={target}"
+    if lodge_auth.enabled() and request.headers.get("sec-fetch-dest", "") in ("iframe", "frame"):
+        # As for a site: a grant spent in a frame opens nothing.
+        return HTMLResponse(_open_own_address_page(f"{app_name} opens", link))
+    return RedirectResponse(link, status_code=303)
 
 
 @app.get("/tools")

@@ -237,7 +237,6 @@ def lodge_with_board(tmp_path, monkeypatch, board, echo_app):
     monkeypatch.setattr(server_app, "WOLTS_DIR", tmp_path)
     monkeypatch.setattr(server_app.mill_server, "socket_path", lambda _root: path)
     monkeypatch.delenv("WOLTSPACE_LODGE_AUTH", raising=False)
-    monkeypatch.setattr(server_app, "_pairing_failures", lodge_auth.FailureLimit())
     monkeypatch.setattr(server_app, "get_app", lambda name: fake.get_app(name))
     yield tmp_path
     server.should_exit = True

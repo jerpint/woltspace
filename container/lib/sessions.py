@@ -607,25 +607,7 @@ class SessionRegistry:
         return data
 
     def set_viewport(self, name: str, url: str, *, wolt: str = None, port: int = 7777) -> dict | None:
-        """Update the viewport URL for a session.
-
-        For app URLs (/app/{name}/...), viewport_port is the primary
-        field — split.html uses it to connect directly to the app port,
-        bypassing the FastAPI proxy. If port is not explicitly given, the
-        running app's port is looked up automatically.
-        """
-        if port == 7777:
-            app_match = re.match(r"^/app/([^/]+)", url)
-            if app_match:
-                try:
-                    from apps import running_apps
-                    app_name = app_match.group(1)
-                    running = {r["name"]: r for r in running_apps()}
-                    if app_name in running:
-                        port = running[app_name]["port"]
-                except Exception:
-                    pass
-
+        """Update the viewport URL for a session."""
         return self.update(
             name,
             wolt=wolt,

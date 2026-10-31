@@ -23,7 +23,6 @@ def lodge(tmp_path, monkeypatch):
     """Lodge auth on, against a throwaway data root; returns the keys."""
     monkeypatch.setattr(server_app, "WOLTS_DIR", tmp_path)
     monkeypatch.setenv("WOLTSPACE_LODGE_AUTH", "1")
-    monkeypatch.setattr(server_app, "_pairing_failures", lodge_auth.FailureLimit())
     keys = lodge_auth.ensure_keys(tmp_path)
     return tmp_path, keys
 
@@ -87,15 +86,6 @@ def test_clients_send_the_wolt_key_from_a_session_and_the_owner_key_otherwise(tm
     assert lodge_auth.curl_config(root) == f'header = "X-Woltspace-Key: {keys["owner"]}"\n'
     assert lodge_auth.curl_config({}) == ""
     assert lodge_auth.client_headers(root) == {"X-Woltspace-Key": keys["owner"]}
-
-
-def test_the_failure_limit_blocks_after_ten_misses_a_minute():
-    limit = lodge_auth.FailureLimit()
-    for i in range(10):
-        assert not limit.blocked(now=i)
-        limit.record(now=i)
-    assert limit.blocked(now=10)
-    assert not limit.blocked(now=75)
 
 
 def test_app_processes_do_not_inherit_a_lodge_key(monkeypatch):
@@ -343,10 +333,12 @@ def test_pairing_over_https_sets_a_secure_host_cookie(lodge):
     assert "Secure" in cookie and "Domain" not in cookie and "Path=/" in cookie
 
 
-def test_guessing_pairing_codes_is_rate_limited(lodge):
-    for _ in range(10):
+def test_a_page_guessing_codes_cant_lock_the_owner_out(lodge):
+    root, _keys = lodge
+    for _ in range(20):
         assert _client().get("/pair?code=guess").status_code == 403
-    assert _client().get("/pair?code=guess").status_code == 429
+    code = lodge_auth.new_pairing_code(root)
+    assert _client().get(f"/pair?code={code}", follow_redirects=False).status_code == 303
 
 
 def test_a_forged_or_expired_cookie_is_refused(lodge):

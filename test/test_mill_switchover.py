@@ -1305,6 +1305,48 @@ def test_a_name_sharing_cant_hold_says_so_and_changes_nothing(lodge):
     assert app_sharing.state_problem(lodge) is None
 
 
+def test_an_app_link_in_a_frame_offers_a_link_and_spends_no_grant(lodge_auth_on):
+    import lodge_auth
+    key = lodge_auth.ensure_keys(lodge_auth_on)[lodge_auth.OWNER]
+    response = _local().get("/app/board/", headers={"sec-fetch-dest": "iframe", lodge_auth.KEY_HEADER: key},
+                            follow_redirects=False)
+    assert response.status_code == 200 and "/apps/open?app=board" in response.text
+
+
+def test_the_split_view_opens_apps_through_the_mill():
+    root = Path(__file__).resolve().parent.parent
+    assert "directPortUrl" not in (root / "templates" / "tui.html").read_text()
+
+
+def test_only_the_lodges_own_pages_can_frame_it(lodge):
+    response = _local().get("/health")
+    assert response.headers["content-security-policy"] == "frame-ancestors 'self'"
+
+
+def test_a_forgotten_browsers_socket_closes(lodge_auth_on, monkeypatch):
+    import lodge_auth
+    from starlette.websockets import WebSocketDisconnect
+    monkeypatch.setattr(server_app, "SITE_SOCKET_RECHECK_SECONDS", 0.05)
+    token = lodge_auth.redeem_pairing_code(lodge_auth_on, lodge_auth.new_pairing_code(lodge_auth_on))
+    client = _local()
+    headers = {"cookie": f"{lodge_auth.cookie_name('localhost:7777', False)}={token}",
+               "origin": "http://localhost:7777"}
+    with client.websocket_connect("ws://localhost:7777/livereload", headers=headers) as socket:
+        lodge_auth.forget_browsers(lodge_auth_on)
+        with pytest.raises(WebSocketDisconnect):
+            socket.receive_text()
+
+
+def test_doctor_names_a_wolt_whose_site_has_no_address(tmp_path):
+    from woltspace.doctor import _wolt_sites_check
+    from woltspace.layout import RuntimeLayout
+    layout = RuntimeLayout.from_env({"WOLTSPACE_WOLTS_DIR": str(tmp_path)})
+    (tmp_path / "fine" / "wolt" / "site").mkdir(parents=True)
+    assert _wolt_sites_check(layout) is None
+    (tmp_path / "my_wolt" / "wolt" / "site").mkdir(parents=True)
+    assert "my_wolt" in _wolt_sites_check(layout).detail
+
+
 def test_the_owners_login_opens_only_the_host_of_its_way_in(lodge_auth_on):
     client = TestClient(server_app.app, base_url="http://localhost:7777", client=("127.0.0.1", 50000))
     assert client.get("/tunnel", headers={"cf-access-jwt-assertion": "good"}).status_code == 401

@@ -92,14 +92,20 @@ def _with_values(text: str, values: dict[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def current_url(layout: RuntimeLayout) -> str:
+def _known_urls(layout: RuntimeLayout) -> list[str]:
+    """Every address the lodge has now, in the order startup reads them: what
+    the process was given, then `.env`, then the tunnel it's running."""
+    from dotenv import dotenv_values
+    from .lifecycle import read_tunnel_url
     env_file = layout.wolts_dir / ".env"
-    if not env_file.is_file():
-        return ""
-    for line in env_file.read_text().splitlines():
-        if line.startswith("CLOUDFLARE_TUNNEL_URL="):
-            return line.split("=", 1)[1].strip().strip("\"'")
-    return ""
+    found = [os.environ.get("CLOUDFLARE_TUNNEL_URL"),
+             dotenv_values(env_file).get("CLOUDFLARE_TUNNEL_URL") if env_file.is_file() else None,
+             read_tunnel_url(layout)]
+    return [url.strip() for url in found if url and url.strip()]
+
+
+def current_url(layout: RuntimeLayout) -> str:
+    return next(iter(_known_urls(layout)), "")
 
 
 def _reserved_app_names(layout: RuntimeLayout) -> list[str]:
@@ -114,7 +120,7 @@ def _domain(url: str) -> str:
 
 def apply(layout: RuntimeLayout, connection: Connection) -> dict:
     """Save the connection. Running it twice changes nothing the second time."""
-    new_domain = _domain(current_url(layout)) != _domain(connection.url)
+    new_domain = _domain(connection.url) not in {_domain(url) for url in _known_urls(layout)}
     env_file = layout.wolts_dir / ".env"
     text = env_file.read_text() if env_file.is_file() else ""
     _write_private(env_file, _with_values(text, {

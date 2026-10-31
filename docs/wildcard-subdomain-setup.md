@@ -109,7 +109,7 @@ Browser → corework.yourdomain.com
   → response flows back
 ```
 
-The server reads `CLOUDFLARE_TUNNEL_URL` at boot to determine the parent domain. When a request arrives at `corework.woltspace.com`, the lodge checks the Access token against the `access` settings in `woltspace.json` (this Access application's AUD is `apps_aud`), then hands the request to the Mill, which proxies it to the app. The app sees clean requests at `/` on its own port. See `docs/mill.md`.
+The server reads `CLOUDFLARE_TUNNEL_URL` at boot to determine the parent domain. When a request arrives at `corework.woltspace.com`, the lodge checks the Access token against the `ways_in.cloudflare` settings in `woltspace.json` (this Access application's AUD is `apps_aud`), then hands the request to the Mill, which proxies it to the app. The app sees clean requests at `/` on its own port. See `docs/mill.md`.
 
 ## Verifying the setup
 

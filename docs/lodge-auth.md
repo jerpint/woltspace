@@ -10,7 +10,7 @@ With it **off**, anything that gets through to the port is treated as the owner.
 |---|---|---|
 | A web page writing to the lodge across sites | Refused | Refused |
 | A web page using DNS rebinding | Refused (the `Host` check) | Refused |
-| A wolt's site or an app, in your browser | Its write is refused, as another origin | Refused |
+| A wolt's site or an app, in your browser | Its write is refused, as another origin, and it can't put the lodge in a frame | Refused |
 | Another user on the machine | Acts as you | Refused: the keys are `0600` |
 | A wolt's tools | Everything you can do | Reads, and only the writes in `WOLT_WRITES`: no lodge settings, no auto mode. It may share an app, when asked; every share is logged |
 | A program running as you | Acts as you | **Can read the keys, so still acts as you** |
@@ -69,7 +69,7 @@ sequenceDiagram
   L-->>B: A cookie, good for 30 days
 ```
 
-`woltspace pair --forget` unpairs every browser and closes every site session.
+`woltspace pair --forget` unpairs every browser, closes every site session, and ends those browsers' open terminals within 30 seconds.
 
 ### Opening a site with lodge auth on
 

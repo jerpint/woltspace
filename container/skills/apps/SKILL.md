@@ -121,7 +121,7 @@ The platform sets `PORT` to your manifest port and `HOST=127.0.0.1` when startin
 
 ## Reaching an app from elsewhere
 
-Apps are private: locally, the owner reaches `http://<app-name>.localhost:7777/`; through the lodge's tunnel, `https://<app-name>.<domain>/`. Both go through the Mill (see `docs/mill.md`). Through the tunnel, the lodge lets a request in only with the owner's Cloudflare Access token for the apps' Access application. That needs `access` settings in `woltspace.json`, which only the human sets (`container/migrations/v0.6.0.md`).
+Apps are private: locally, the owner reaches `http://<app-name>.localhost:7777/`; through the lodge's tunnel, `https://<app-name>.<domain>/`. Both go through the Mill (see `docs/mill.md`). Through the tunnel, the lodge lets a request in only with the owner's Cloudflare Access token for the apps' Access application. That needs `ways_in.cloudflare` settings in `woltspace.json`, which only the human sets (`container/migrations/v0.6.0.md`).
 
 ## Sharing an app with anyone
 

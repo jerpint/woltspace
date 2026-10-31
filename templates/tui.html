@@ -518,27 +518,8 @@
     setCurrent(url);
   };
 
-  const isLocal = ['localhost', '127.0.0.1', '0.0.0.0'].includes(location.hostname);
-
-  function directPortUrl(port, subPath) {
-    if (!isLocal) return null;
-    return location.protocol + '//' + location.hostname + ':' + port + (subPath || '/');
-  }
-
   function loadView(url, title, pushToStack = true) {
-    const meta = currentViewportMeta;
-    if (meta && meta.port && meta.port !== 7777 && url && url.startsWith('/app/')) {
-      const direct = directPortUrl(meta.port);
-      if (direct) {
-        preview.src = direct;
-      } else if (meta.tunnel_url) {
-        preview.src = meta.tunnel_url;
-      } else {
-        preview.src = url;
-      }
-    } else {
-      preview.src = url;
-    }
+    preview.src = url;
     lastUrl = url;
     renderHist();
   }

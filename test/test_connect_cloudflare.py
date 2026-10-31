@@ -19,6 +19,11 @@ FIELDS = {
 }
 
 
+@pytest.fixture(autouse=True)
+def no_address_from_the_session(monkeypatch):
+    monkeypatch.delenv("CLOUDFLARE_TUNNEL_URL", raising=False)
+
+
 def code(**changes):
     body = json.dumps({**FIELDS, **changes}).encode()
     return connect.PREFIX + base64.urlsafe_b64encode(body).decode().rstrip("=")
@@ -95,6 +100,19 @@ def test_a_code_never_overrides_the_owners_refusal(tmp_path, env):
     (tmp_path / "woltspace.json").write_text(json.dumps({"mill": {"remote_sites": False}}))
     connect.apply(layout(tmp_path), connect.decode(code()))
     assert _settings(tmp_path)["mill"]["remote_sites"] is False
+
+
+def test_a_domain_in_use_is_found_wherever_the_lodge_reads_it(tmp_path, monkeypatch):
+    used = "https://other.ery.woltspace.app"
+    (tmp_path / ".env").write_text(f"export CLOUDFLARE_TUNNEL_URL={used}\n")
+    assert connect.current_url(layout(tmp_path)) == used
+    (tmp_path / ".env").write_text("")
+    monkeypatch.setattr("woltspace.lifecycle.read_tunnel_url", lambda _layout: used)
+    assert connect.current_url(layout(tmp_path)) == used
+    monkeypatch.setattr("woltspace.lifecycle.read_tunnel_url", lambda _layout: "")
+    monkeypatch.setenv("CLOUDFLARE_TUNNEL_URL", used)
+    assert connect.current_url(layout(tmp_path)) == used
+    assert connect.apply(layout(tmp_path), connect.decode(code()))["remote_sites"] is False
 
 
 def test_moving_to_a_new_domain_turns_remote_sites_on(tmp_path):
