@@ -2774,6 +2774,22 @@ def _invalid_app_name(name: str) -> JSONResponse | None:
         return JSONResponse({"error": "invalid app name"}, status_code=400)
     return None
 
+_tunnel_reconnect_lock = asyncio.Lock()
+
+
+@app.post("/tunnel/reconnect")
+async def tunnel_reconnect():
+    """Start the tunnel from what's in the lodge's `.env` now, without a restart."""
+    from woltspace.layout import RuntimeLayout
+    layout = RuntimeLayout.from_env()
+    if layout.isolation != "host" and not layout.is_entrypoint:
+        return JSONResponse({"error": "this lodge doesn't publish a tunnel"}, status_code=409)
+    async with _tunnel_reconnect_lock:
+        if not await asyncio.to_thread(tunnel_mgr.reconnect, layout.wolts_dir / ".env"):
+            return JSONResponse({"error": "the tunnel didn't start; see the lodge's log"}, status_code=502)
+    return {"mode": tunnel_mgr.get_tunnel_mode(), "url": tunnel_mgr.get_tunnel_url()}
+
+
 @app.get("/tunnel")
 async def tunnel_status():
     """Describe the lodge tunnel without exposing credentials or process state."""

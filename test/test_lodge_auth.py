@@ -159,6 +159,7 @@ WOLT_POLICY = {
     ("DELETE", "/wolf/crons/{wolt}/{name}"): True,
     ("POST", "/wolf/crons/{wolt}/{name}/fire"): True,
     ("POST", "/auto-grants/check"): True,
+    ("POST", "/tunnel/reconnect"): True,
     ("POST", "/apps/{name}/start"): True,
     ("POST", "/apps/{name}/stop"): True,
     ("POST", "/apps/{name}/restart"): True,

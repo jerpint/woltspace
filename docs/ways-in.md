@@ -36,6 +36,10 @@ The lodge does the rest the same way whichever way a request came:
 - **Don't claim another way's hosts.** The first way in whose `content_host` matches a host wins.
 - **Keep your settings under your own name:** `"ways_in": {"<name>": {...}}` in `woltspace.json`, as Cloudflare does. Nothing outside your way in reads them.
 
+## Connecting with a code
+
+Cloudflare's way in can be set up from one code: `woltspace connect cloudflare` reads it from stdin and saves what it holds (`src/woltspace/connect_cloudflare.py`). It's a convenience of that way in, not part of the interface. Another way in can add its own choice to `woltspace connect`.
+
 ## Installing one
 
 A way in ships as a Python package with an entry point in the `woltspace.ways_in` group:

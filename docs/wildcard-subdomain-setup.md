@@ -62,7 +62,7 @@ curl -X PUT \
 
 ### 3. Cloudflare Access application (required)
 
-Without this step, Cloudflare lets anyone through to the lodge, and the lodge refuses them all: it opens an app only for the owner's Access token for this application. Add the Access application, and put its AUD in `woltspace.json` as `apps_aud`:
+Without this step, Cloudflare lets anyone through to the lodge, and the lodge refuses them all: it opens an app only for the owner's Access token for this application. Add the Access application, and put its AUD in `woltspace.json` as `ways_in.cloudflare.apps_aud` (see `container/migrations/v0.6.0.md`):
 
 ```bash
 # Create Access application

@@ -134,6 +134,21 @@ def start_tunnel():
         _write_state({})
 
 
+def reconnect(env_file) -> bool:
+    """Replace the running tunnel with the one the env file names now. True
+    once a tunnel is up. The file wins here, as it was just written on purpose;
+    other settings stay as the lodge booted with them."""
+    from dotenv import dotenv_values
+    global _tunnel_url
+    values = dotenv_values(env_file)
+    for key in ("WOLTSPACE_PUBLIC_TUNNEL", "CLOUDFLARE_TUNNEL_URL", "CLOUDFLARE_TUNNEL_TOKEN"):
+        if values.get(key):
+            os.environ[key] = values[key]
+    _tunnel_url = ""
+    start_tunnel()
+    return bool(get_tunnel_url())
+
+
 def stop_tunnel():
     """Stop the lodge tunnel. Called at server shutdown.
 
