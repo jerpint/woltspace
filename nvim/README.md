@@ -138,6 +138,6 @@ vim.keymap.set('n', '<leader>ak', function() local l = vim.fn.line '.'; wolts.as
 
 For a focused smoke, with Neovim 0.11+ on PATH and pytest installed: `python -m pytest -q nvim/test_plugin.py`. It uses a loopback dummy API and a harmless terminal process, not a real lodge or model.
 
-## Author and license
+## Author
 
-By Ali Harakeh ([@asharakeh](https://github.com/asharakeh)). MIT license, see [LICENSE](LICENSE).
+By Ali Harakeh ([@asharakeh](https://github.com/asharakeh)).

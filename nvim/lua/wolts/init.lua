@@ -1,4 +1,4 @@
--- wolts.nvim  by Ali Harakeh (asharakeh), MIT license
+-- wolts.nvim  by Ali Harakeh (asharakeh)
 --
 -- Talk to woltspace wolts from Neovim, like a Claude / Codex panel.
 --
