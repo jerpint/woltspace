@@ -9,7 +9,7 @@ The Mill serves wolt sites and apps, each on an origin of its own, so a page a w
 - **The Mill itself:** its own process, supervised like the other connectors. It listens only on a unix socket, `<data root>/.space/run/mill/mill.sock`. The socket itself is `0666`, as uvicorn makes it; its folder is the owner's alone (`0700`), and that's what keeps other users out. It has no TCP port.
 - **If the Mill is down:** sites answer `502` and the lodge keeps working.
 
-The old `/wolt/<name>/site/` address keeps working while lodge auth is off. With lodge auth on, the lodge never serves a wolt's pages on its own origin:
+A page's link to its own site's old address (`/wolt/<name>/site/<page>`) redirects to `/<page>` on the site. The old `/wolt/<name>/site/` address keeps working while lodge auth is off. With lodge auth on, the lodge never serves a wolt's pages on its own origin:
 - the old address redirects to `/sites/open`. Inside one of the lodge's own frames (the wolt page's site tab, a session's viewport) it shows an "open it" link instead, because a frame can't keep the site's cookie;
 - the lodge's root no longer falls back to the current wolt's site files;
 - a static app's files aren't served from `/app/<name>/` until the Mill serves apps.
