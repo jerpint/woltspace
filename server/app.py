@@ -511,7 +511,7 @@ class LodgeAuthMiddleware:
         visitor, expires_at = await _way_in_visitor(way, scope, headers)
         return (lodge_auth.OWNER, expires_at) if visitor == "owner" else (None, None)
 
-    async def _until_forgotten(self, scope, receive, send, headers):
+    async def _until_forgotten(self, scope, receive, send, still_owner):
         """Run a socket while what opened it still holds: `woltspace pair
         --forget` ends a lost browser's terminals too."""
         task = asyncio.ensure_future(self.inner(scope, receive, send))
@@ -520,7 +520,7 @@ class LodgeAuthMiddleware:
                 done, _ = await asyncio.wait({task}, timeout=SITE_SOCKET_RECHECK_SECONDS)
                 if done:
                     return task.result()
-                if _lodge_auth_scope(headers) != lodge_auth.OWNER:
+                if not await still_owner():
                     break
         finally:
             task.cancel()
@@ -553,7 +553,8 @@ class LodgeAuthMiddleware:
 
         caller = _lodge_auth_scope(headers)
         expires_at = None
-        if caller is None:
+        through_way_in = caller is None
+        if through_way_in:
             caller, expires_at = await self._through_way_in(scope, headers, hosts[0].decode("latin-1"))
         scope["woltspace.lodge_caller"] = caller
         if scope["type"] == "websocket":
@@ -561,7 +562,12 @@ class LodgeAuthMiddleware:
             if caller != lodge_auth.OWNER:
                 return await send({"type": "websocket.close", "code": 1008})
             if expires_at is None:
-                return await self._until_forgotten(scope, receive, send, headers)
+                async def still_owner():
+                    if through_way_in:
+                        found, _expires = await self._through_way_in(scope, headers, hosts[0].decode("latin-1"))
+                        return found == lodge_auth.OWNER
+                    return _lodge_auth_scope(headers) == lodge_auth.OWNER
+                return await self._until_forgotten(scope, receive, send, still_owner)
             # A way in's proof ends, and a socket opened with it ends then too.
             try:
                 return await asyncio.wait_for(self.inner(scope, receive, send),

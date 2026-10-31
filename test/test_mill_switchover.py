@@ -1337,6 +1337,23 @@ def test_a_forgotten_browsers_socket_closes(lodge_auth_on, monkeypatch):
             socket.receive_text()
 
 
+def test_a_way_ins_socket_with_no_expiry_lasts_as_long_as_its_login(lodge_auth_on, monkeypatch):
+    import lodge_auth
+    from starlette.websockets import WebSocketDisconnect
+    monkeypatch.setattr(server_app, "SITE_SOCKET_RECHECK_SECONDS", 0.05)
+    answers = iter([(lodge_auth.OWNER, None)] * 3)
+
+    async def through_way_in(scope, headers, host):
+        return next(answers, (None, None))
+    monkeypatch.setattr(server_app.LodgeAuthMiddleware, "_through_way_in", staticmethod(through_way_in))
+    with _local().websocket_connect("ws://localhost:7777/livereload",
+                                    headers={"origin": "http://localhost:7777"}) as socket:
+        with pytest.raises(WebSocketDisconnect):
+            socket.receive_text()
+    # It was asked again each time, and closed only when the login ended.
+    assert next(answers, "spent") == "spent"
+
+
 def test_doctor_names_a_wolt_whose_site_has_no_address(tmp_path):
     from woltspace.doctor import _wolt_sites_check
     from woltspace.layout import RuntimeLayout
