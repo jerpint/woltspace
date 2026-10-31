@@ -80,6 +80,8 @@ WOLT_WRITES = tuple((method, re.compile(pattern)) for method, pattern in (
     ("DELETE", rf"^/wolf/crons/{_SEG}/{_SEG}$"),
     ("POST", rf"^/wolf/crons/{_SEG}/{_SEG}/fire$"),
     ("POST", r"^/auto-grants/check$"),
+    # Only starts the tunnel the lodge's `.env` already names.
+    ("POST", r"^/tunnel/reconnect$"),
     ("POST", rf"^/apps/{_SEG}/(start|stop|restart)$"),
     # Sharing an app is the human's choice, which a wolt may carry out when
     # asked (the apps skill says so); every share is logged.

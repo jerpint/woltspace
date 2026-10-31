@@ -1130,6 +1130,46 @@ def _wolf_request(method: str, path: str, body: dict | None = None) -> tuple[int
         raise SystemExit(2)
 
 
+def _connect(args) -> int:
+    """Read a connection code from stdin, never argv: it holds a secret."""
+    from . import connect_cloudflare
+    layout = RuntimeLayout.from_env()
+    try:
+        connection = connect_cloudflare.decode(sys.stdin.read())
+    except connect_cloudflare.BadCode as exc:
+        lore.failure(str(exc), subtitle_text="ask for a new code")
+        return 1
+    current = connect_cloudflare.current_url(layout)
+    if current and current.rstrip("/") != connection.url.rstrip("/") and not args.replace:
+        lore.failure(f"this lodge is already at {current}",
+                     subtitle_text="to move it, ask the owner, then run this again with --replace")
+        return 1
+    result = connect_cloudflare.apply(layout, connection)
+    if result["remote_sites_held_by"]:
+        lore.warn("sites through the tunnel stay off: rename these apps first, the name is reserved: "
+                  + ", ".join(result["remote_sites_held_by"]))
+    import urllib.error
+    import urllib.request
+    try:
+        request = _lodge_auth_module(layout).sign(
+            urllib.request.Request(f"{_wolf_api()}/tunnel/reconnect", data=b"", method="POST"),
+            wolts_dir=layout.wolts_dir)
+        with urllib.request.urlopen(request, timeout=30) as response:
+            live = json.loads(response.read().decode() or "{}").get("url") == connection.url
+    except urllib.error.HTTPError as exc:
+        lore.failure(f"saved, but the lodge couldn't start the tunnel (HTTP {exc.code})",
+                     subtitle_text="woltspace doctor, then woltspace restart")
+        return 1
+    except urllib.error.URLError:
+        lore.note(f"saved: {connection.url} opens the next time this lodge starts")
+        return 0
+    if not live:
+        lore.failure("saved, but the tunnel didn't come up", subtitle_text="woltspace doctor, then woltspace restart")
+        return 1
+    lore.note(f"connected: {connection.url} opens for {result['owner_email']}. A new address can take a few minutes.")
+    return 0
+
+
 def _wolf_time(iso: str | None) -> str:
     """`2026-03-22T06:00:00-04:00` → `2026-03-22 06:00`, the lodge's wall clock."""
     if not iso:
@@ -1451,6 +1491,11 @@ def build_parser() -> argparse.ArgumentParser:
     stop.add_argument("--timeout", type=float, default=10.0)
     stop.add_argument("--json", action="store_true")
     stop.set_defaults(func=_stop)
+
+    connect = sub.add_parser("connect", help="connect this lodge through a way in, with a code you were given")
+    connect.add_argument("way", choices=["cloudflare"])
+    connect.add_argument("--replace", action="store_true", help="replace the address this lodge already has")
+    connect.set_defaults(func=_connect)
 
     restart = sub.add_parser("restart", help="stop and start the lodge on the same address, then check health")
     restart.add_argument("--json", action="store_true")

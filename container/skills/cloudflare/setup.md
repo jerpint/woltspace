@@ -253,6 +253,21 @@ The auth cookie is scoped to `.{domain}`, so logging in once (at the lodge or an
 
 See `docs/wildcard-subdomain-setup.md` for full details and troubleshooting.
 
+**Tell the lodge about it** (0.6 and newer), or sites and apps through the tunnel answer `403`. Add this to `woltspace.json`, with `result.aud` from `APP_RESULT` above, your team's domain from Zero Trust → Settings → Custom Pages, and the same email as the policy:
+
+```json
+"ways_in": {
+  "cloudflare": {
+    "team_domain": "<team>.cloudflareaccess.com",
+    "apps_aud": "<the AUD>",
+    "owner_email": "<user-email>"
+  }
+},
+"mill": {"remote_sites": true}
+```
+
+Only set `remote_sites` if no app was ever named `site-…` on this domain. Then run `woltspace doctor`: the `remote-apps` check should pass.
+
 ## Step 7: Test the tunnel
 
 Start the named tunnel manually to verify:
