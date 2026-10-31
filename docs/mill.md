@@ -9,6 +9,8 @@ The Mill serves wolt sites and apps, each on an origin of its own, so a page a w
 - **The Mill itself:** its own process, supervised like the other connectors. It listens only on a unix socket, `<data root>/.space/run/mill/mill.sock`. The socket itself is `0666`, as uvicorn makes it; its folder is the owner's alone (`0700`), and that's what keeps other users out. It has no TCP port.
 - **If the Mill is down:** sites answer `502` and the lodge keeps working.
 
+A page's link to its own site's old address (`/wolt/<name>/site/<page>`) redirects to `/<page>` on the site.
+
 The old addresses redirect: `/wolt/<name>/site/...` goes to `/sites/open`, and `/app/<name>/...` goes to `/apps/open`. The lodge never serves a wolt's pages on its own origin. Inside one of the lodge's own frames, with lodge auth on, the old site address shows an "open it" link instead. The lodge's sparks (`/history/...`) and tool pages (`/tools/...`) run in an opaque sandbox.
 
 ## Through the tunnel
