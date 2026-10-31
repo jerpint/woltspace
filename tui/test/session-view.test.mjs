@@ -30,7 +30,9 @@ test('the level picker offers only what the wolt engine offers here, and sends t
   assert.deepEqual(spawnLevels(caps, { harness: 'opencode' }).map(([mode]) => mode), ['', 'prompt', 'bypass']);
   assert.match(spawnLevels(caps, { harness: 'opencode' })[1][1], /^Ask \(engine settings\): /);
   assert.deepEqual(spawnLevels(caps, { harness: 'claude' }).map(([mode]) => mode), ['', 'prompt', 'auto', 'bypass']);
-  assert.deepEqual(spawnLevels(null, null).map(([mode]) => mode), ['', 'prompt', 'auto', 'bypass']);
+  const container = { levels: { codex: { bypass: 'Bypass' } }, default_harness: 'codex' };
+  assert.deepEqual(spawnLevels(container, { harness: container.default_harness }).map(([mode]) => mode),
+    ['', 'bypass']);  // a new wolt: the default engine's levels
   assert.equal(spawnTarget(caps, { home: '/w' }, '/x', 'bypass').executionPolicy, 'bypass');
   assert.equal(spawnTarget(caps, { home: '/w' }, '/x', '').executionPolicy, undefined);
 });

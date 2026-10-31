@@ -88,6 +88,7 @@ from harnesses import (
     harness_install_problem,
     levels,
     LevelNotOffered,
+    policy_flags,
     platform_skill_invoke,
     is_valid_model,
     model_catalog,
@@ -1235,6 +1236,14 @@ async def session_new_create(request: Request):
     )
     if problem:
         return JSONResponse({"detail": problem}, status_code=400)
+    # The level too, before scaffolding. A new wolt has no grant, so its default is
+    # resolve_execution_policy's: prompt on the host, bypass elsewhere.
+    isolation = RuntimeContext.from_env().isolation
+    level = body.get("execution_policy") or ("prompt" if isolation == "host" else "bypass")
+    try:
+        policy_flags(selected_harness, {"mode": level, "isolation": isolation, "policy_version": 2})
+    except ValueError as e:
+        return JSONResponse({"detail": str(e)}, status_code=400)
 
     try:
         # Step 1: Scaffold the wolt with environment-appropriate harness config.
@@ -2232,6 +2241,7 @@ async def runtime_capabilities():
         "policy_version": POLICY_VERSION,  # the host grant's
         "record_version": RECORD_VERSION,
         "levels": levels(context.isolation),
+        "default_harness": get_default_harness(),  # what a new wolt runs on
     }
 
 

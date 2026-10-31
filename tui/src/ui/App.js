@@ -40,6 +40,7 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
   const [createName, setCreateName] = useState('');
   const [createTypeCursor, setCreateTypeCursor] = useState(0);
   const [levelCursor, setLevelCursor] = useState(0);
+  const newWolt = { harness: capabilities?.default_harness };  // a created wolt runs on the default engine
   const pendingG = useRef(false);
 
   const view = sortSessions(sessions).filter((s) => showAll || agentAlive(s));
@@ -172,7 +173,7 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
     }
 
     if ((mode === 'spawn-confirm' || mode === 'create-confirm') && ch === 'p') {
-      const count = spawnLevels(capabilities, mode === 'spawn-confirm' ? wolts[spawnCursor] : null).length;
+      const count = spawnLevels(capabilities, mode === 'spawn-confirm' ? wolts[spawnCursor] : newWolt).length;
       return setLevelCursor((c) => (c + 1) % count);
     }
 
@@ -200,7 +201,7 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
       } else if (ch === 'y') {
         onAction?.(createWoltAction(
           createName, woltTypes[createTypeCursor], capabilities, launchCwd,
-          spawnLevels(capabilities, null)[levelCursor]?.[0],
+          spawnLevels(capabilities, newWolt)[levelCursor]?.[0],
         ));
         exit();
       }
@@ -411,7 +412,7 @@ export default function App({ onAction, launchCwd = process.cwd() }) {
       lines.push(h(Text, { key: 'cc1', color: color.amber }, `create ${createName}?`));
       lines.push(h(Text, { key: 'cc2' }, `   type: ${woltTypes[createTypeCursor]}`));
       lines.push(h(Text, { key: 'cc3' }, `   cwd: ${target.displayWorkdir}`));
-      lines.push(...levelLines(null));
+      lines.push(...levelLines(newWolt));
       lines.push(h(Text, { key: 'cc5', color: color.dim }, '   p level · y confirm · n/esc back'));
     } else {
       lines.push(h(Text, { key: 'k1', color: color.dim },
