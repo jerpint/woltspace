@@ -29,7 +29,7 @@ Cloudflare's rule still points everything at the lodge's port. Pointing site and
 
 For now, only the owner. The lodge decides, and tells the Mill in one header after stripping any copy the visitor sent:
 
-- **Lodge auth off** (the default): a visitor on this machine who came straight in, not through a tunnel. That's stricter than the old site address, which served anyone who reached the lodge. In a container lodge the browser's connection doesn't come from the container's loopback, so Mill sites need lodge auth there for now. The old address keeps working.
+- **Lodge auth off** (the default): a visitor on this machine who came straight in, not through a tunnel. That's stricter than the old site address, which served anyone who reached the lodge. In a container lodge the browser's connection doesn't come from the container's loopback, so local sites and apps answer `403` there unless lodge auth is on (see `docs/lodge-auth.md`). The old addresses redirect to the same place.
 - **Lodge auth on** (`WOLTSPACE_LODGE_AUTH=1`): a site has its own origin, so the lodge's cookie never reaches it.
   1. Open the site from the lodge, at `/sites/open?wolt=<name>&path=/page.html`. This needs the paired browser or the owner key.
   2. The lodge hands over a one-time grant, good for one minute and for that site only.
@@ -37,6 +37,27 @@ For now, only the owner. The lodge decides, and tells the Mill in one header aft
   4. `woltspace pair --forget` closes those site sessions too.
 
 The Mill forwards only content-negotiation, caching, range and browser-provenance headers. No cookie, `Authorization` or lodge key ever reaches it.
+
+## A visit, step by step
+
+Apps and sites get the same checks, in the same order, before any file is opened.
+
+```mermaid
+flowchart TD
+  V([Visitor opens a site]) --> H{Host names a site,<br>and exactly one Host?}
+  H -- no --> LG[The lodge's own routes,<br>or 400]
+  H -- yes --> O{Owner?}
+  O -- no --> R1[401 or 403]:::bad
+  O -- yes --> ST[Lodge strips every credential,<br>adds one header: owner]:::new
+  ST --> M[The Mill, over<br>its unix socket]:::new
+  M --> GT{GET or HEAD?}
+  GT -- no --> R2[Refused]:::bad
+  GT -- yes --> F{Real file inside<br>wolt/site?}
+  F -- no --> R3[404: no traversal,<br>no symlinks out]:::bad
+  F -- yes --> OK[Served with sandbox and<br>no-store headers]:::new
+  classDef new fill:#f4e6c8,stroke:#C98B2A,color:#2a2622
+  classDef bad fill:#f3d9cc,stroke:#C4531E,color:#2a2622
+```
 
 ## What a site can do
 
@@ -60,6 +81,19 @@ The Mill forwards only content-negotiation, caching, range and browser-provenanc
 ## Sharing an app
 
 An app can be shared with anyone who has its link: an explicit choice, one app at a time (`container/lib/app_sharing.py`). The human makes it, and a wolt may carry it out when asked (the apps skill says so).
+
+```mermaid
+flowchart TD
+  A([woltspace app share notes]) --> LOG[Logged before it goes live]:::new
+  LOG --> T[A quick tunnel, for<br>this app and this share]:::new
+  T --> V([Anyone with the link])
+  V --> C{Token still<br>this app's share?}
+  C -- no --> X[404]:::bad
+  C -- yes --> P[Served as public,<br>no credentials reach the app]:::new
+  P --> AP[This one app.<br>Never the lodge, a site, or another app]:::new
+  classDef new fill:#f4e6c8,stroke:#C98B2A,color:#2a2622
+  classDef bad fill:#f3d9cc,stroke:#C4531E,color:#2a2622
+```
 
 - **Commands:** `woltspace app share <app>`, `woltspace app unshare <app>`, `woltspace app unshare-all`, or `POST /apps/<app>/share`, `/unshare` and `/apps/unshare-all`. Starting an app never shares it, and `"public"` in a manifest does nothing.
 - **The link, with no domain:** a quick tunnel for that one app, `cloudflared tunnel --url http://localhost:<lodge port> --http-host-header <app>--<token>.share.localhost:<lodge port>`, with a fresh random token per share. The lodge serves that host only as `public`, only to that app, and only while the token is the app's current share. A tunnel that outlives its share reaches nothing, even after the app is shared again. Its `trycloudflare.com` address changes when the tunnel restarts; the lodge restarts it at boot.

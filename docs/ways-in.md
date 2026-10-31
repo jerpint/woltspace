@@ -21,6 +21,27 @@ The lodge does the rest the same way whichever way a request came:
 - it closes WebSockets at `expires_at`;
 - it serves shared apps to anyone (`docs/mill.md`), and never shares the lodge or a site.
 
+```mermaid
+flowchart TD
+  R([Request from elsewhere]) --> W
+  subgraph W[Your way in answers]
+    Q1[Is this host the lodge?<br>lodge_hosts]:::new
+    Q2[Is it a site or app?<br>content_host]:::new
+    Q3[Is this the owner?<br>owner]:::new
+    Q4[Which headers carry identity?<br>credential_headers]:::new
+    Q5[Where does a browser open it?<br>public_base]:::new
+  end
+  W --> L
+  subgraph L[The lodge does the rest, for every way in]
+    A[Checks Origin on writes and sockets]:::ok
+    B[Strips every credential]:::ok
+    C[Sends sites and apps to the Mill]:::ok
+    D[Closes sockets at expiry]:::ok
+  end
+  classDef ok fill:#dfe9df,stroke:#3A6644,color:#2a2622
+  classDef new fill:#f4e6c8,stroke:#C98B2A,color:#2a2622
+```
+
 ## Rules a way in must keep
 
 - **Each site and app gets an authority of its own.** An origin is scheme, host and port, and two sites on one origin could read each other's storage and script. A subdomain each (`<app>.example.com`) is best. A port each on one host (`machine.example.ts.net:8443`) gives each its own origin, but **cookies ignore ports**: every app on that host sees, and can set, cookies for the others and the lodge. The lodge strips its own cookies before an app and keeps an app's `Set-Cookie` host-only, but apps' own cookies aren't isolated from each other. Say so to users of such a way in. A path each (`/apps/<app>/`) doesn't work.

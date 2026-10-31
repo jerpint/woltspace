@@ -54,6 +54,7 @@ Working on Woltspace itself: [CLAUDE.md](CLAUDE.md).
 
 - [Native and Docker](docs/native-and-container.md) · [First native run on a Mac](docs/native-first-run.md)
 - [Updates](docs/updates.md): ask your wolt, or `woltspace update`
+- [How 0.6 fits together](docs/0.6.md): [the Mill](docs/mill.md), [ways in](docs/ways-in.md), [lodge auth](docs/lodge-auth.md)
 - [Shared lodge skills](docs/shared-skills.md) · [Colony seeds](docs/colony-seeds.md)
 - [Backups](docs/backup.md): `woltspace backup` and `woltspace restore`
 - [Contributing](CONTRIBUTING.md) · [Releasing](docs/releasing.md)
