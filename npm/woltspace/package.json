@@ -18,7 +18,7 @@
     "README.md"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "dependencies": {
     "@woltspace/tui": ">=0.5.3 <1"

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // woltspace tui - terminal cockpit for the colony.
-// Runs on node >= 18 or bun; host or in-container (auto-detected).
+// Runs on node >= 22 or bun; host or in-container (auto-detected).
 
 import { packageVersion, versionRecord } from './version.js';
 
