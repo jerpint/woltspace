@@ -53,6 +53,8 @@ jobs:
           test/test_lodge_skills.py
           test/test_push_view.py
           test/test_lodge_db.py
+          test/test_inbox.py
+          test/test_inbox_actor.py
           test/test_session_store.py
           test/test_lodge_boot_refusal.py
           test/test_lodge_boot_import.py

@@ -33,6 +33,20 @@ def test_connect_creates_the_file_and_sets_the_pragmas(tmp_path):
         conn.close()
 
 
+def test_a_durable_writer_is_full_from_before_its_schema_and_begin(tmp_path, monkeypatch):
+    seen = []
+    ensure = lodge_db.ensure_schema
+    def spy(conn):
+        seen.append((conn.in_transaction, conn.execute("PRAGMA synchronous").fetchone()[0]))
+        ensure(conn)
+    monkeypatch.setattr(lodge_db, "ensure_schema", spy)
+    with lodge_db.write(tmp_path, durable=True) as conn:
+        seen.append((None, conn.execute("PRAGMA synchronous").fetchone()[0]))
+    with lodge_db.write(tmp_path) as conn:
+        seen.append((None, conn.execute("PRAGMA synchronous").fetchone()[0]))
+    assert seen == [(False, 2), (None, 2), (False, 1), (None, 1)]  # FULL, then NORMAL
+
+
 def test_schema_is_created_once_and_each_migration_recorded(tmp_path):
     for _ in range(2):
         conn = lodge_db.connect(tmp_path)
