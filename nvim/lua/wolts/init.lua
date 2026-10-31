@@ -16,7 +16,7 @@
 -- this machine, through `docker exec` for a lodge in a container. Questions go
 -- through the lodge's message API, marked as coming from you.
 --
--- Needs: Neovim 0.10+, curl, tmux (and docker for a lodge in a container).
+-- Needs: Neovim 0.11+, curl, tmux (and docker for a lodge in a container).
 --
 --   require('wolts').setup {
 --     lodges = {
@@ -28,6 +28,18 @@
 
 local M = {}
 
+-- The existing TUI key contract, for the local lodge only. Other lodges opt in
+-- to their own key/callback; a local credential must not follow a changed URL.
+function M.local_key()
+  local explicit = vim.trim(vim.env.WOLTSPACE_LODGE_KEY or '')
+  if explicit ~= '' then return explicit end
+  local root = vim.env.WOLTSPACE_WOLTS_DIR or vim.env.WOLTS_DIR
+  if not root then return '' end
+  local scope = ((vim.env.WOLTSPACE_WOLT_SESSION or '') ~= '' or (vim.env.WOLT_SESSION or '') ~= '') and 'wolt' or 'owner'
+  local ok, lines = pcall(vim.fn.readfile, root .. '/.space/run/lodge/' .. scope .. '.key')
+  return ok and vim.trim(table.concat(lines, '\n')) or ''
+end
+
 local defaults = {
   -- Each lodge:
   --   name            short label shown in the picker
@@ -37,10 +49,11 @@ local defaults = {
   --                   or give its name
   --   container_user  user inside the container (default 'node')
   --   from            sender name on messages (default: `user` below)
-  --   relative_paths  file refs relative to the git root (else ~/...), never
-  --                   absolute paths: use it for a lodge whose wolts publish
-  --                   their work, so your home path does not travel with it
-  lodges = { { name = 'home', url = 'http://127.0.0.1:7777' } },
+  --   relative_paths  prefer git-root-relative refs; else shorten home to ~/.
+  --                   Files outside both can still have absolute paths.
+  --   key             this lodge's key string or callback (no implicit key
+  --                   for entries in a custom lodges list)
+  lodges = { { name = 'home', url = vim.env.WOLTSPACE_API or vim.env.WOLTSPACE_URL or 'http://127.0.0.1:7777', key = M.local_key } },
   -- Who messages say they are from (same rule as `woltspace tui`)
   user = vim.env.WOLTSPACE_USER or vim.env.HUMAN_NAME or vim.env.USER or 'human',
   resting_shown = 8, -- resting sessions offered per wolt, newest first
@@ -61,18 +74,33 @@ local function notify(msg, level) vim.notify(msg, level or vim.log.levels.INFO, 
 
 ---Call the lodge API. cb(err, decoded_json) runs on the main loop.
 local function api(lodge, method, path, body, cb, timeout)
-  local cmd = { 'curl', '-sS', '--max-time', tostring(timeout or 10), '-X', method, '-w', '\n%{http_code}' }
-  if body then vim.list_extend(cmd, { '-H', 'Content-Type: application/json', '--data-binary', '@-' }) end
-  table.insert(cmd, lodge.url .. path)
-  vim.system(cmd, { text = true, stdin = body and vim.json.encode(body) or nil }, function(r)
+  local ok_key, key_value = pcall(function()
+    if type(lodge.key) == 'function' then return lodge.key() end
+    return lodge.key
+  end)
+  if not ok_key or (key_value ~= nil and type(key_value) ~= 'string') then return cb(lodge.name .. ': key unavailable') end
+  key_value = vim.trim(key_value or '')
+  if key_value:find '[\r\n]' then return cb(lodge.name .. ': invalid key') end
+  local function quote(value)
+    return '"' .. value:gsub('\\', '\\\\'):gsub('"', '\\"'):gsub('\n', '\\n'):gsub('\r', '\\r') .. '"'
+  end
+  -- Disable curlrc and never follow redirects. Keys and JSON travel on stdin,
+  -- not in process arguments; error bodies/stderr may echo private data.
+  local cmd = { 'curl', '-q', '-sS', '--max-time', tostring(timeout or 10), '-X', method, '-w', '\n%{http_code}', '--config', '-' }
+  local input = ''
+  if key_value ~= '' then input = 'header = ' .. quote('X-Woltspace-Key: ' .. key_value) .. '\n' end
+  if body then
+    vim.list_extend(cmd, { '-H', 'Content-Type: application/json' })
+    input = input .. 'data-binary = ' .. quote(vim.json.encode(body)) .. '\n'
+  end
+  table.insert(cmd, lodge.url:gsub('/+$', '') .. path)
+  vim.system(cmd, { text = true, stdin = input }, function(r)
     vim.schedule(function()
-      if r.code ~= 0 then return cb(lodge.name .. ': ' .. vim.trim(r.stderr or 'curl failed')) end
+      if r.code ~= 0 then return cb(lodge.name .. ': request failed (curl ' .. r.code .. ')') end
       local out, status = r.stdout:match '^(.*)\n(%d+)$'
+      local code = tonumber(status) or 0
+      if code < 200 or code >= 300 then return cb(('%s: HTTP %s'):format(lodge.name, status or 'unknown')) end
       local ok, data = pcall(vim.json.decode, out or '', { luanil = { object = true, array = true } })
-      if tonumber(status or 0) >= 400 then
-        local reason = ok and type(data) == 'table' and (data.detail or data.error) or out
-        return cb(('%s: HTTP %s %s'):format(lodge.name, status, type(reason) == 'string' and reason or vim.inspect(reason)))
-      end
       if not ok then return cb(lodge.name .. ': bad JSON from ' .. path) end
       cb(nil, data)
     end)
@@ -374,7 +402,7 @@ local function send(text)
       if err then
         -- keep the question so it is not lost
         vim.fn.setreg('"', text)
-        return notify('not sent (question is in the " register): ' .. err, vim.log.levels.ERROR)
+        return notify('delivery not confirmed (question is in the " register): ' .. err, vim.log.levels.ERROR)
       end
       notify('sent to ' .. cur.wolt)
       show(false)
@@ -397,6 +425,8 @@ local function make_ref(lodge, file, l1, l2)
     local root = vim.fs.root(file, '.git')
     local rel = root and vim.fs.relpath(root, file)
     file = rel or vim.fn.fnamemodify(file, ':~')
+  else
+    file = vim.fn.fnamemodify(file, ':~')
   end
   if l1 == l2 then return ('@%s#L%d'):format(file, l1) end
   return ('@%s#L%d-%d'):format(file, l1, l2)
@@ -478,6 +508,7 @@ end
 
 ---@param opts? table see `defaults` above
 function M.setup(opts)
+  if vim.fn.has 'nvim-0.11' == 0 then error('wolts.nvim requires Neovim 0.11 or newer') end
   config = vim.tbl_deep_extend('force', vim.deepcopy(defaults), opts or {})
   -- a list replaces the default list instead of merging into it
   if opts and opts.lodges then config.lodges = opts.lodges end

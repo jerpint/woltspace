@@ -9,10 +9,11 @@ Talk to your woltspace wolts from Neovim, like a Claude / Codex side panel.
 
 ## Needs
 
-- Neovim 0.10 or newer
+- Neovim 0.11 or newer
 - `curl` and `tmux`
 - `docker`, only for a lodge that runs in a container
-- A running woltspace lodge you can reach over HTTP (by default `http://127.0.0.1:7777`)
+- A running woltspace lodge (default: `$WOLTSPACE_API`, `$WOLTSPACE_URL`, then `http://127.0.0.1:7777`)
+- Access to that lodge's tmux on this machine, or in a local Docker container. HTTP access to a remote machine alone is insufficient; SSH/WebSocket attachment is not implemented.
 
 ## Install
 
@@ -20,19 +21,25 @@ With [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
 {
-  'woltspace/wolts.nvim', -- placeholder: the repo it ships in
-  config = function() require('wolts').setup() end,
+  'jerpint/woltspace',
+  name = 'wolts.nvim',
+  config = function(plugin)
+    vim.opt.runtimepath:append(plugin.dir .. '/nvim')
+    require('wolts').setup()
+  end,
 }
 ```
 
 With the built-in `vim.pack` (Neovim 0.12+):
 
 ```lua
-vim.pack.add { 'https://github.com/woltspace/wolts.nvim' } -- placeholder URL
+vim.pack.add { 'https://github.com/jerpint/woltspace' }
+vim.opt.runtimepath:append(vim.pack.get({ 'woltspace' })[1].path .. '/nvim')
 require('wolts').setup()
 ```
 
-Or by hand: put this folder on your `runtimepath` and call `require('wolts').setup()`.
+Or by hand: add `<woltspace-checkout>/nvim` to `runtimepath`, then call `require('wolts').setup()`.
+These recipes require a revision containing `nvim/`; for an unmerged contribution, use the contributor's fork and plugin branch instead of upstream.
 
 ## Keys
 
@@ -55,7 +62,7 @@ All options, with their defaults:
 ```lua
 require('wolts').setup {
   lodges = {
-    { name = 'home', url = 'http://127.0.0.1:7777' },
+    { name = 'home', url = 'http://127.0.0.1:7777', key = require('wolts').local_key },
   },
   user = nil, -- default: $WOLTSPACE_USER, $HUMAN_NAME, $USER, then 'human'
   resting_shown = 8, -- resting sessions offered per wolt, newest first
@@ -75,7 +82,14 @@ require('wolts').setup {
 | `container` | The lodge runs in docker: attach with `docker exec`. `true` finds the container the way `woltspace tui` does (the first running one with `woltspace` in its name), or give the container's name. |
 | `container_user` | The user inside the container (default `node`) |
 | `from` | Sender name on messages to this lodge (default: `user`) |
-| `relative_paths` | File references relative to the git root (else `~/...`), never absolute paths |
+| `relative_paths` | Prefer references relative to the git root; otherwise shorten paths under home to `~/...`. Files outside home and the git root can still use absolute paths. |
+| `key` | Optional key string or callback returning a key. Custom lodge entries have no implicit credential; select a key separately for each lodge. |
+
+### Authentication
+
+When lodge authentication is enabled, requests need the existing `X-Woltspace-Key` header.
+The default local lodge uses `require('wolts').local_key`: `$WOLTSPACE_LODGE_KEY`, else the existing TUI's local key lookup (wolt scope inside a wolt session, owner scope otherwise). No key is needed when authentication is off.
+Custom `lodges` replaces the default list, including its key lookup. To use that lookup for a local entry, set `key = require('wolts').local_key` explicitly, as above. For another lodge use its own callback, for example `key = function() return vim.env.BOX_LODGE_KEY or '' end`. Do not put a credential in a URL or commit it in configuration. The plugin passes keys to curl on stdin, suppresses raw server error bodies, ignores curlrc and never follows redirects.
 
 For example, a lodge on your machine and a second one in a container whose wolts publish their work:
 
@@ -88,7 +102,9 @@ require('wolts').setup {
 }
 ```
 
-`from = 'human'` and `relative_paths = true` keep your name and your home path out of what those wolts see, so neither can end up in their commits or pull requests.
+`from = 'human'` avoids a personal sender name; `relative_paths = true` prefers repository-relative references. Check the ask box before sending: filenames, paths and question text can still contain personal details.
+
+Asking sends the reference and your question, not the selected code or unsaved edits. The agent needs access to a corresponding checkout; local paths need not exist in a different lodge.
 
 ### Your own keys
 
@@ -113,7 +129,14 @@ vim.keymap.set('n', '<leader>ak', function() local l = vim.fn.line '.'; wolts.as
 
 - **`no lodge answered`**: the lodge isn't reachable at `url`. Check with `curl http://127.0.0.1:7777/wolts`.
 - **`attach exited 1`**: tmux couldn't find the session. For a container lodge, check `docker ps` shows it and that `container_user` is right.
+- **HTTP 401/403**: check the selected lodge's key and permissions. A paired browser's cookie is not inherited by curl.
+- **HTTP 3xx**: redirects are refused; configure the final lodge URL.
+- **`delivery not confirmed`**: the question is preserved in the unnamed register. An explicit HTTP refusal differs from a lost transport response, where delivery may already have happened. POSTs are never retried automatically; check the session before sending again.
 - **Esc doesn't reach Claude / Codex**: if your config maps `<Esc><Esc>` to leave terminal mode, the plugin keeps `<Esc><Esc>` for the wolt in its own split. Use `<C-\><C-n>` or `<M-h/j/k/l>` to leave it.
+
+## Verification
+
+For a focused smoke, with Neovim 0.11+ on PATH and pytest installed: `python -m pytest -q nvim/test_plugin.py`. It uses a loopback dummy API and a harmless terminal process, not a real lodge or model.
 
 ## Author and license
 
